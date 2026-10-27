@@ -194,7 +194,16 @@ def density_filter(domain: Domain, radius: float):
                 cols.append(j[hit])
                 vals.append(np.full(int(hit.sum()), w))
     h = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n))
-    hs = np.asarray(h.sum(axis=1)).ravel()
+    # Normalize by the FULL kernel, not just the active neighbors: cells
+    # outside the design space (and inside keep-outs) count as void. With the
+    # usual truncated normalization a member lying along the domain boundary
+    # is filtered as if it were twice as thick, so the minimum member size
+    # does not hold there: round 1 of the evals grew 0.8mm skins on the faces
+    # of the arm link's design box with minMember = 3mm.
+    full = sum(max(radius - np.sqrt(dx * dx + dy * dy + dz * dz) * domain.pitch, 0.0)
+               for dx in range(-reach, reach + 1) for dy in range(-reach, reach + 1)
+               for dz in range(-reach, reach + 1))
+    hs = np.full(n, full)
     return h, hs
 
 

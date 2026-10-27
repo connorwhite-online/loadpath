@@ -1,6 +1,6 @@
 {
   "name": "motor-mount",
-  "description": "NEMA 17 stepper L-bracket: motor face with the 22mm pilot and four M3 holes on a 31mm square, base with two M4 holes. The motor body (from an STL, as an agent would hand over modeled geometry) is a keep-out. Belt tension pulls the motor sideways or up; returns a 20/30/45% trade-off gallery.",
+  "description": "NEMA 17 stepper bracket. Only the interfaces are fixed: pads round the four M3 holes on a 31mm square and a locating ring round the 22mm pilot on the motor face, and bosses round two M4 holes in the base. The motor body (an STL, as an agent would hand over modeled geometry) and screwdriver access above the M4 bosses are keep-outs. Belt tension pulls the motor sideways or up; returns a 20/30/45% trade-off gallery.",
   "designSpace": [
     {
       "type": "box",
@@ -10,30 +10,71 @@
   ],
   "preserve": [
     {
-      "id": "face",
+      "id": "pad-a",
       "shape": {
-        "type": "box",
-        "min": [-25, 0, 10],
-        "max": [25, 5, 62]
+        "type": "cylinder",
+        "p0": [15.5, 0, 50.5],
+        "p1": [15.5, 5, 50.5],
+        "r": 4.5
       }
     },
     {
-      "id": "base",
+      "id": "pad-b",
       "shape": {
-        "type": "box",
-        "min": [-25, 0, 0],
-        "max": [25, 50, 5]
+        "type": "cylinder",
+        "p0": [-15.5, 0, 50.5],
+        "p1": [-15.5, 5, 50.5],
+        "r": 4.5
+      }
+    },
+    {
+      "id": "pad-c",
+      "shape": {
+        "type": "cylinder",
+        "p0": [15.5, 0, 19.5],
+        "p1": [15.5, 5, 19.5],
+        "r": 4.5
+      }
+    },
+    {
+      "id": "pad-d",
+      "shape": {
+        "type": "cylinder",
+        "p0": [-15.5, 0, 19.5],
+        "p1": [-15.5, 5, 19.5],
+        "r": 4.5
+      }
+    },
+    {
+      "id": "pilot-ring",
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, 0, 35],
+        "p1": [0, 5, 35],
+        "r": 14.5,
+        "rInner": 11.5
+      }
+    },
+    {
+      "id": "boss-a",
+      "shape": {
+        "type": "cylinder",
+        "p0": [15, 35, 0],
+        "p1": [15, 35, 5],
+        "r": 6
+      }
+    },
+    {
+      "id": "boss-b",
+      "shape": {
+        "type": "cylinder",
+        "p0": [-15, 35, 0],
+        "p1": [-15, 35, 5],
+        "r": 6
       }
     }
   ],
   "keepOut": [
-    {
-      "id": "motor-body",
-      "shape": {
-        "type": "mesh",
-        "path": "motor-body.stl"
-      }
-    },
     {
       "id": "pilot",
       "shape": {
@@ -103,6 +144,31 @@
         "length": 20,
         "r": 2.2
       }
+    },
+    {
+      "id": "motor-body",
+      "shape": {
+        "type": "mesh",
+        "path": "motor-body.stl"
+      }
+    },
+    {
+      "id": "access-a",
+      "shape": {
+        "type": "cylinder",
+        "p0": [15, 35, 5],
+        "p1": [15, 35, 62],
+        "r": 4.5
+      }
+    },
+    {
+      "id": "access-b",
+      "shape": {
+        "type": "cylinder",
+        "p0": [-15, 35, 5],
+        "p1": [-15, 35, 62],
+        "r": 4.5
+      }
     }
   ],
   "supports": [
@@ -114,9 +180,19 @@
     },
     {
       "shape": {
-        "type": "box",
-        "min": [-26, -1, -1],
-        "max": [26, 51, 0.3]
+        "type": "cylinder",
+        "p0": [15, 35, -1],
+        "p1": [15, 35, 0.3],
+        "r": 6
+      },
+      "fix": "z"
+    },
+    {
+      "shape": {
+        "type": "cylinder",
+        "p0": [-15, 35, -1],
+        "p1": [-15, 35, 0.3],
+        "r": 6
       },
       "fix": "z"
     }
@@ -178,11 +254,12 @@
     "maxElements": 45000
   },
   "expect": {
+    "minMassReduction": 0.6,
     "minSafetyFactor": 2.0,
     "maxDeflection": 0.5,
     "maxKeepOutIntrusion": 1.0,
     "maxPreserveMissing": 1.0,
     "bodies": 1,
-    "minMassReduction": 0.5
+    "minMemberAtLeast": 2.0
   }
 }

@@ -46,7 +46,7 @@ LUG = {
     "keepOut": [{"id": "pin", "shape": {"type": "cylinder", "center": [48, 0, 0], "axis": "z",
                                         "length": 12, "r": 4}}],
     "supports": [{"shape": {"type": "box", "min": [-1, -16, -5], "max": [0.01, 16, 5]}}],
-    "loadCases": [{"name": "pull", "loads": [{"region": "pin", "force": [0, -200, 0]}]}],
+    "loadCases": [{"name": "pull", "loads": [{"region": "pin", "force": [0, -80, 0]}]}],
     "material": "pa12",
     "goal": {"volumeFraction": 0.35},
     "symmetry": ["z"],
@@ -154,6 +154,31 @@ def test_verify_bar_stress_matches_beam_theory():
     assert rep["bodies"] == 1 and rep["keepOutIntrusion"] == 0.0
 
 
+def test_verify_hole_stress_concentration():
+    # Plate with a hole in tension: Peterson's net-section Kt = 2.43 for
+    # d/W = 0.25, so the peak is ~81 MPa against a 33.3 MPa net stress. Voxel
+    # stress at the hole is the hard case for this method; the submodel
+    # refinement plus nodal averaging has to land near it, and the reported
+    # safety factor has to carry the allowance.
+    from loadpath.shapes import trimesh_from_manifold
+    from loadpath.verify import STRESS_ALLOWANCE
+    plate = trimesh_from_manifold(Box([0, -20, -2], [120, 20, 2]).to_manifold()
+                                  - Cylinder([60, 0, -5], [60, 0, 5], 5).to_manifold())
+    s = study_from_dict({
+        "designSpace": {"type": "box", "min": [0, -20, -2], "max": [120, 20, 2]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -21, -3], "max": [0.01, 21, 3]}}],
+        "loadCases": [{"name": "pull", "loads": [
+            {"shape": {"type": "box", "min": [119.99, -21, -3], "max": [121, 21, 3]}, "force": [4000, 0, 0]}]}],
+        "material": {"E": 70000, "nu": 0.33, "strength": 250, "density": 2.7},
+        "goal": {"volumeFraction": 0.5},
+    })
+    rep = verify_part(s, plate, max_cells=10 ** 7, min_pitch=0.7, contact_band=3.0)
+    c = rep["cases"][0]
+    assert 70 < c["peakStress"] < 100, c["peakStress"]
+    assert abs(c["peakAt"][0] - 60) < 2.5 and 3.5 < abs(c["peakAt"][1]) < 6.5, c["peakAt"]
+    assert abs(rep["safetyFactor"] - 250 / (c["peakStress"] * STRESS_ALLOWANCE)) < 1e-9
+
+
 def test_voxelize_volume():
     m = trimesh.creation.cylinder(radius=10, height=20, sections=96)
     solid, _ = voxelize(m, 0.5)
@@ -238,6 +263,7 @@ TESTS = [
     test_simp_keeps_volume_and_symmetry,
     test_reconstruct_keeps_bores_exact_and_preserve_whole,
     test_verify_bar_stress_matches_beam_theory,
+    test_verify_hole_stress_concentration,
     test_voxelize_volume,
     test_unreachable_load_is_refused_helpfully,
     test_run_study_end_to_end,

@@ -188,10 +188,15 @@ class MeshShape(Shape):
     """An arbitrary closed mesh (STL/3MF/OBJ path, or a trimesh in code): the
     way an agent hands over geometry it already modeled — a motor body as a
     keep-out, a flange it drew in build123d as preserved material.
-    Signed distance is approximate (exact sign, unsigned distance from the
-    surface), which is all region classification needs."""
+
+    Signed distance comes from a voxel grid built once (ray-parity occupancy
+    plus distance transforms, trilinearly interpolated), so it costs the same
+    per point as the analytic shapes. Accuracy is about half a grid cell,
+    1/160 of the mesh's largest extent, which is far below the optimizer's
+    resolution; the exact mesh is still what the final booleans use."""
 
     kind = "mesh"
+    _GRID_CELLS = 160
 
     def __init__(self, mesh, path=None):
         import trimesh
@@ -201,16 +206,37 @@ class MeshShape(Shape):
             raise ValueError("mesh shape must be watertight (closed) to have an inside")
         self.mesh = mesh
         self.path = path
+        self._grid = None
+
+    def _build_grid(self):
+        from scipy import ndimage
+        from .verify import voxelize
+
+        pitch = float(np.max(self.mesh.extents)) / self._GRID_CELLS
+        solid, origin = voxelize(self.mesh, pitch)
+        pad = 4
+        solid = np.pad(solid, pad)
+        origin = origin - pad * pitch
+        dist = (ndimage.distance_transform_edt(~solid) - ndimage.distance_transform_edt(solid)) * pitch
+        dist -= 0.5 * pitch * np.sign(dist)   # EDT is centre to centre; the surface is between
+        self._grid = (dist, origin, pitch)
 
     def sdf(self, p):
-        from trimesh.proximity import ProximityQuery
+        from scipy import ndimage
+        if self._grid is None:
+            self._build_grid()
+        dist, origin, pitch = self._grid
         p = np.asarray(p, float).reshape(-1, 3)
-        _, dist, _ = ProximityQuery(self.mesh).on_surface(p)
-        inside = self.mesh.contains(p)
-        return np.where(inside, -dist, dist)
+        coords = ((p - origin) / pitch - 0.5).T
+        inside_grid = np.all((coords >= 0) & (coords <= (np.asarray(dist.shape)[:, None] - 1)), axis=0)
+        out = ndimage.map_coordinates(dist, coords, order=1, mode="nearest")
+        # Beyond the padded grid, distance to the box is a fine lower bound.
+        lo, hi = self.bounds()
+        q = np.maximum(np.maximum(lo - p, p - hi), 0.0)
+        return np.where(inside_grid, out, np.maximum(np.linalg.norm(q, axis=1), 4 * pitch))
 
     def contains(self, p):
-        return self.mesh.contains(np.asarray(p, float).reshape(-1, 3))
+        return self.sdf(p) <= 0.0
 
     def bounds(self):
         b = np.asarray(self.mesh.bounds, float)

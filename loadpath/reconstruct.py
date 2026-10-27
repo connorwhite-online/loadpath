@@ -34,7 +34,7 @@ class ReconstructOptions:
         self.min_body_fraction = min_body_fraction
 
 
-def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions):
+def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=()):
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -44,13 +44,24 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions):
     fine = ndimage.zoom(grid, o.upsample, order=1, mode="nearest", grid_mode=True)
     if o.smooth_sigma > 0:
         fine = ndimage.gaussian_filter(fine, o.smooth_sigma)
-    if fine.max() < o.level:
-        raise ValueError("the optimized density never reaches solid; nothing to mesh")
     step = domain.pitch / o.upsample
-    verts, faces, _, _ = marching_cubes(fine, o.level, spacing=(step, step, step))
     # zoom(grid_mode=True) maps fine cell centers to coarse cell centers, so
     # fine index i sits at coarse-cell coordinate (i + 0.5) / upsample - 0.5.
     origin = domain.origin - pad * domain.pitch + 0.5 * step
+    if keep_out:
+        # Fade the field to zero at every keep-out surface. Smoothing and
+        # upsampling otherwise carry material across a keep-out (a cable
+        # channel through the middle of a link), and the exact subtract
+        # afterwards leaves a skin a fraction of a millimetre thick wrapped
+        # round it: unprintable, and found by the eval suite's member check.
+        idx = np.stack(np.meshgrid(*[np.arange(n) for n in fine.shape], indexing="ij"), -1).reshape(-1, 3)
+        pts = origin + idx * step
+        clearance = 0.5 * domain.pitch
+        d = np.min([s.sdf(pts) for s in keep_out], axis=0)
+        fine = fine * np.clip(d / clearance, 0.0, 1.0).reshape(fine.shape)
+    if fine.max() < o.level:
+        raise ValueError("the optimized density never reaches solid; nothing to mesh")
+    verts, faces, _, _ = marching_cubes(fine, o.level, spacing=(step, step, step))
     verts = verts + origin
     mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
     if mesh.volume < 0:
@@ -67,7 +78,7 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     import manifold3d as m3d
 
     o = opts or ReconstructOptions()
-    iso = _isosurface(domain, xphys, o)
+    iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out])
     info = {"isoTriangles": int(len(iso.faces))}
     try:
         organic = manifold_from_trimesh(iso)

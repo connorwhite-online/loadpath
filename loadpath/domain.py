@@ -188,6 +188,14 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
         names.append(case.name)
         weights.append(case.weight)
 
+    # A load or support needs material to act through: cells touching their
+    # nodes are pinned solid, as if preserved. Without this, a support on the
+    # edge of the design space (the textbook MBB beam's corners) can be
+    # optimized away, since the boundary-padded filter (simp.density_filter)
+    # makes edge cells expensive to fill.
+    anchor = (support_nodes | load_nodes)[mesh.enode].any(axis=1)
+    pres_el = pres_el | anchor
+
     mirror = {}
     for axis in study.symmetry:
         a = "xyz".index(axis)
