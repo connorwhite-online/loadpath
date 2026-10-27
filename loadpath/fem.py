@@ -174,6 +174,9 @@ class Stiffness:
         self.nnz = nnz
 
         # Per corner pair: the slot of entry (3a+i, 3b+j) is base + i*row + j.
+        # int32 slots when they fit: these 64 arrays are the bulk of this
+        # object's memory (9 slots per element per corner pair).
+        idx_t = np.int32 if nnz < 2 ** 31 - 1 else np.int64
         self._pairs = []
         for a in range(8):
             na = enode[:, a]
@@ -183,7 +186,9 @@ class Stiffness:
                 blk = self.ke[3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel()
                 slots = (base[:, None] + np.repeat(np.arange(3), 3)[None, :] * row[:, None]
                          + np.tile(np.arange(3), 3)[None, :])
-                self._pairs.append((slots, blk))
+                self._pairs.append((slots.astype(idx_t), blk))
+        self.indptr = self.indptr.astype(idx_t)
+        self.indices = self.indices.astype(idx_t)
 
         fixed = np.asarray(fixed, bool)
         if fixed.shape != (mesh.n_dof,):
