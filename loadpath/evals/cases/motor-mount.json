@@ -1,0 +1,188 @@
+{
+  "name": "motor-mount",
+  "description": "NEMA 17 stepper L-bracket: motor face with the 22mm pilot and four M3 holes on a 31mm square, base with two M4 holes. The motor body (from an STL, as an agent would hand over modeled geometry) is a keep-out. Belt tension pulls the motor sideways or up; returns a 20/30/45% trade-off gallery.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [-25, 0, 0],
+      "max": [25, 50, 62]
+    }
+  ],
+  "preserve": [
+    {
+      "id": "face",
+      "shape": {
+        "type": "box",
+        "min": [-25, 0, 10],
+        "max": [25, 5, 62]
+      }
+    },
+    {
+      "id": "base",
+      "shape": {
+        "type": "box",
+        "min": [-25, 0, 0],
+        "max": [25, 50, 5]
+      }
+    }
+  ],
+  "keepOut": [
+    {
+      "id": "motor-body",
+      "shape": {
+        "type": "mesh",
+        "path": "motor-body.stl"
+      }
+    },
+    {
+      "id": "pilot",
+      "shape": {
+        "type": "cylinder",
+        "center": [0, 2.5, 35],
+        "axis": "y",
+        "length": 20,
+        "r": 11.5
+      }
+    },
+    {
+      "id": "m3-a",
+      "shape": {
+        "type": "cylinder",
+        "center": [15.5, 2.5, 50.5],
+        "axis": "y",
+        "length": 20,
+        "r": 1.7
+      }
+    },
+    {
+      "id": "m3-b",
+      "shape": {
+        "type": "cylinder",
+        "center": [-15.5, 2.5, 50.5],
+        "axis": "y",
+        "length": 20,
+        "r": 1.7
+      }
+    },
+    {
+      "id": "m3-c",
+      "shape": {
+        "type": "cylinder",
+        "center": [15.5, 2.5, 19.5],
+        "axis": "y",
+        "length": 20,
+        "r": 1.7
+      }
+    },
+    {
+      "id": "m3-d",
+      "shape": {
+        "type": "cylinder",
+        "center": [-15.5, 2.5, 19.5],
+        "axis": "y",
+        "length": 20,
+        "r": 1.7
+      }
+    },
+    {
+      "id": "m4-a",
+      "shape": {
+        "type": "cylinder",
+        "center": [15, 35, 2.5],
+        "axis": "z",
+        "length": 20,
+        "r": 2.2
+      }
+    },
+    {
+      "id": "m4-b",
+      "shape": {
+        "type": "cylinder",
+        "center": [-15, 35, 2.5],
+        "axis": "z",
+        "length": 20,
+        "r": 2.2
+      }
+    }
+  ],
+  "supports": [
+    {
+      "region": "m4-a"
+    },
+    {
+      "region": "m4-b"
+    },
+    {
+      "shape": {
+        "type": "box",
+        "min": [-26, -1, -1],
+        "max": [26, 51, 0.3]
+      },
+      "fix": "z"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "belt-side",
+      "loads": [
+        {
+          "region": "m3-a",
+          "force": [25, 0, 0]
+        },
+        {
+          "region": "m3-b",
+          "force": [25, 0, 0]
+        },
+        {
+          "region": "m3-c",
+          "force": [25, 0, 0]
+        },
+        {
+          "region": "m3-d",
+          "force": [25, 0, 0]
+        }
+      ]
+    },
+    {
+      "name": "belt-up",
+      "loads": [
+        {
+          "region": "m3-a",
+          "force": [0, 0, 25]
+        },
+        {
+          "region": "m3-b",
+          "force": [0, 0, 25]
+        },
+        {
+          "region": "m3-c",
+          "force": [0, 0, 25]
+        },
+        {
+          "region": "m3-d",
+          "force": [0, 0, 25]
+        }
+      ]
+    }
+  ],
+  "material": "petg",
+  "goal": {
+    "volumeFraction": 0.3,
+    "outcomes": [0.2, 0.45]
+  },
+  "minMember": 3.0,
+  "symmetry": [
+    "x"
+  ],
+  "resolution": {
+    "maxElements": 45000
+  },
+  "expect": {
+    "minSafetyFactor": 2.0,
+    "maxDeflection": 0.5,
+    "maxKeepOutIntrusion": 1.0,
+    "maxPreserveMissing": 1.0,
+    "bodies": 1,
+    "minMassReduction": 0.5
+  }
+}

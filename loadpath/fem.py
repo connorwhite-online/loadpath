@@ -1,0 +1,325 @@
+"""
+Linear elastic finite elements on a voxel grid: 8-node hexahedra, all the
+same cube, so one element stiffness matrix serves every element and a
+density (or a material modulus) just scales it.
+
+Two things make this fast enough to sit inside an optimization loop that
+solves it a hundred times:
+
+- Assembly never sorts. The grid is structured, so every stiffness entry
+  lands in a CSR slot we can compute up front from (node, neighbor offset).
+  Re-assembling for new densities is 64 vectorized scatter-adds.
+- The solve is conjugate gradient preconditioned by smoothed-aggregation
+  algebraic multigrid (pyamg) with the six rigid-body modes as the near
+  null space. The hierarchy is expensive to build and densities change
+  slowly, so callers reuse it across iterations (`Solver`).
+
+Units are whatever the caller uses consistently; loadpath uses mm, N, MPa.
+"""
+from __future__ import annotations
+
+import numpy as np
+import scipy.sparse as sp
+from scipy.sparse.linalg import cg
+
+__all__ = ["elastic_c", "hex8_ke", "hex8_b_center", "HexMesh", "Stiffness", "Solver", "von_mises"]
+
+# Local corner order: bit 0 = +x, bit 1 = +y, bit 2 = +z.
+CORNERS = np.array([[(c >> 0) & 1, (c >> 1) & 1, (c >> 2) & 1] for c in range(8)])
+# The 27 neighbor offsets, lexicographic in (dx, dy, dz). With nodes numbered
+# in C order over (i, j, k), that is also ascending node index, so CSR rows
+# come out with sorted column indices.
+OFFSETS = np.array([[dx, dy, dz] for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)])
+
+
+def _offset_index(d):
+    return (d[..., 0] + 1) * 9 + (d[..., 1] + 1) * 3 + (d[..., 2] + 1)
+
+
+def elastic_c(e: float, nu: float) -> np.ndarray:
+    """Isotropic elasticity matrix (6x6, engineering shear strains)."""
+    lam = e * nu / ((1 + nu) * (1 - 2 * nu))
+    mu = e / (2 * (1 + nu))
+    c = np.zeros((6, 6))
+    c[:3, :3] = lam
+    c[np.arange(3), np.arange(3)] = lam + 2 * mu
+    c[np.arange(3, 6), np.arange(3, 6)] = mu
+    return c
+
+
+def _b_matrix(xi, eta, zeta):
+    """Strain-displacement matrix (6x24) of the unit cube at a natural point
+    (xi, eta, zeta in [-1, 1]). For side h, divide by h."""
+    s = 2.0 * CORNERS - 1.0
+    dn = np.empty((8, 3))
+    dn[:, 0] = 0.25 * s[:, 0] * (1 + eta * s[:, 1]) * (1 + zeta * s[:, 2])
+    dn[:, 1] = 0.25 * s[:, 1] * (1 + xi * s[:, 0]) * (1 + zeta * s[:, 2])
+    dn[:, 2] = 0.25 * s[:, 2] * (1 + xi * s[:, 0]) * (1 + eta * s[:, 1])
+    b = np.zeros((6, 24))
+    for i in range(8):
+        dx, dy, dz = dn[i]
+        col = 3 * i
+        b[0, col] = dx
+        b[1, col + 1] = dy
+        b[2, col + 2] = dz
+        b[3, col], b[3, col + 1] = dy, dx
+        b[4, col + 1], b[4, col + 2] = dz, dy
+        b[5, col], b[5, col + 2] = dz, dx
+    return b
+
+
+def hex8_ke(nu: float) -> np.ndarray:
+    """Stiffness (24x24) of a unit cube with E = 1, 2x2x2 Gauss. For side h
+    and modulus E the element matrix is E * h * this."""
+    c = elastic_c(1.0, nu)
+    g = 1.0 / np.sqrt(3.0)
+    ke = np.zeros((24, 24))
+    for xi in (-g, g):
+        for eta in (-g, g):
+            for zeta in (-g, g):
+                b = _b_matrix(xi, eta, zeta)
+                ke += b.T @ c @ b * 0.125  # det J of the unit cube map = 1/8
+    return 0.5 * (ke + ke.T)
+
+
+def hex8_b_center() -> np.ndarray:
+    return _b_matrix(0.0, 0.0, 0.0)
+
+
+def von_mises(stress: np.ndarray) -> np.ndarray:
+    sx, sy, sz, txy, tyz, tzx = stress.T
+    return np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2)
+                   + 3.0 * (txy ** 2 + tyz ** 2 + tzx ** 2))
+
+
+class HexMesh:
+    """The active elements of a voxel grid and the nodes they use.
+
+    elem_ijk: (ne, 3) integer cell indices; pitch: cell size; origin: world
+    position of node (0, 0, 0), i.e. the min corner of cell (0, 0, 0)."""
+
+    def __init__(self, elem_ijk: np.ndarray, pitch: float, origin: np.ndarray):
+        self.elem_ijk = np.asarray(elem_ijk, np.int64)
+        self.pitch = float(pitch)
+        self.origin = np.asarray(origin, float)
+        ne = len(self.elem_ijk)
+        if ne == 0:
+            raise ValueError("no active elements")
+        dims = self.elem_ijk.max(axis=0) + 2
+        self.node_dims = dims
+        corner_ijk = self.elem_ijk[:, None, :] + CORNERS[None, :, :]       # (ne, 8, 3)
+        flat = (corner_ijk[..., 0] * dims[1] + corner_ijk[..., 1]) * dims[2] + corner_ijk[..., 2]
+        used, inv = np.unique(flat, return_inverse=True)
+        self.enode = inv.reshape(ne, 8).astype(np.int64)
+        self.node_ijk = np.stack(np.unravel_index(used, tuple(dims)), axis=1).astype(np.int64)
+        self.n_nodes = len(used)
+        self.node_xyz = self.origin + self.node_ijk * self.pitch
+        self.edof = (3 * self.enode[:, :, None] + np.arange(3)).reshape(ne, 24)
+        self.n_dof = 3 * self.n_nodes
+        self._lookup = np.full(int(np.prod(dims)), -1, np.int64)
+        self._lookup[used] = np.arange(self.n_nodes)
+
+    @property
+    def n_elem(self):
+        return len(self.elem_ijk)
+
+    def elem_centers(self):
+        return self.origin + (self.elem_ijk + 0.5) * self.pitch
+
+    def node_id(self, ijk: np.ndarray) -> np.ndarray:
+        """Node id at integer node coords, -1 if absent or out of range."""
+        ijk = np.asarray(ijk, np.int64)
+        d = self.node_dims
+        ok = np.all((ijk >= 0) & (ijk < d), axis=-1)
+        flat = (ijk[..., 0] * d[1] + ijk[..., 1]) * d[2] + ijk[..., 2]
+        out = np.full(ijk.shape[:-1], -1, np.int64)
+        out[ok] = self._lookup[flat[ok]]
+        return out
+
+
+class Stiffness:
+    """Precomputed CSR layout for a HexMesh; `assemble(scale)` returns the
+    global stiffness for per-element moduli `scale` (E_e, already including
+    any density interpolation), with Dirichlet conditions applied as
+    identity rows so the matrix keeps one fixed shape."""
+
+    def __init__(self, mesh: HexMesh, nu: float, fixed: np.ndarray):
+        self.mesh = mesh
+        self.ke = hex8_ke(nu) * mesh.pitch        # E = 1, side h
+        self.nu = nu
+        nn = mesh.n_nodes
+        enode = mesh.enode
+        nijk = mesh.node_ijk
+
+        # Which (node, offset) pairs actually share an element.
+        adj = np.zeros((nn, 27), bool)
+        pair_off = np.empty((8, 8), np.int64)
+        for a in range(8):
+            for b in range(8):
+                pair_off[a, b] = _offset_index(CORNERS[b] - CORNERS[a])
+                adj[enode[:, a], pair_off[a, b]] = True
+        cnt = adj.sum(axis=1)
+        rank = np.cumsum(adj, axis=1) - 1
+        row_len = np.repeat(3 * cnt, 3)
+        self.indptr = np.concatenate([[0], np.cumsum(row_len)]).astype(np.int64)
+        nnz = int(self.indptr[-1])
+        indices = np.empty(nnz, np.int64)
+        n_idx, o_idx = np.nonzero(adj)                       # sorted by node, then offset
+        nbr = mesh.node_id(nijk[n_idx] + OFFSETS[o_idx])
+        for i in range(3):
+            base = self.indptr[3 * n_idx + i] + 3 * rank[n_idx, o_idx]
+            for j in range(3):
+                indices[base + j] = 3 * nbr + j
+        self.indices = indices
+        self.nnz = nnz
+
+        # Per corner pair: the slot of entry (3a+i, 3b+j) is base + i*row + j.
+        self._pairs = []
+        for a in range(8):
+            na = enode[:, a]
+            row = 3 * cnt[na]
+            for b in range(8):
+                base = self.indptr[3 * na] + 3 * rank[na, pair_off[a, b]]
+                blk = self.ke[3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel()
+                slots = (base[:, None] + np.repeat(np.arange(3), 3)[None, :] * row[:, None]
+                         + np.tile(np.arange(3), 3)[None, :])
+                self._pairs.append((slots, blk))
+
+        fixed = np.asarray(fixed, bool)
+        if fixed.shape != (mesh.n_dof,):
+            raise ValueError("fixed must be a bool per dof")
+        self.fixed = fixed
+        row_of_slot = np.repeat(np.arange(mesh.n_dof), row_len)
+        self._keep = ~(fixed[row_of_slot] | fixed[indices])
+        diag = np.nonzero((row_of_slot == indices) & fixed[row_of_slot])[0]
+        self._diag_fixed = diag
+        self.free = ~fixed
+
+    def assemble(self, scale: np.ndarray) -> sp.csr_matrix:
+        data = np.zeros(self.nnz)
+        s = np.asarray(scale, float)[:, None]
+        for slots, blk in self._pairs:
+            data[slots] += s * blk
+        data *= self._keep
+        data[self._diag_fixed] = 1.0
+        k = sp.csr_matrix((data, self.indices, self.indptr), shape=(self.mesh.n_dof, self.mesh.n_dof))
+        k.has_sorted_indices = True
+        return k
+
+    def strain_energy(self, u: np.ndarray) -> np.ndarray:
+        """Per element u_e^T Ke u_e at unit modulus (multiply by E_e)."""
+        ue = u[self.mesh.edof]
+        return np.einsum("ij,jk,ik->i", ue, self.ke, ue)
+
+    def stress(self, u: np.ndarray, modulus: np.ndarray | float) -> np.ndarray:
+        """Element-center stress (ne, 6) for per-element modulus."""
+        b = hex8_b_center() / self.mesh.pitch
+        c = elastic_c(1.0, self.nu)
+        strain = u[self.mesh.edof] @ b.T
+        return (strain @ c.T) * np.asarray(modulus, float).reshape(-1, 1)
+
+
+def rigid_body_modes(xyz: np.ndarray) -> np.ndarray:
+    n = len(xyz)
+    b = np.zeros((3 * n, 6))
+    x, y, z = (xyz - xyz.mean(axis=0)).T
+    for i in range(3):
+        b[i::3, i] = 1.0
+    b[0::3, 3], b[1::3, 3] = -y, x
+    b[1::3, 4], b[2::3, 4] = -z, y
+    b[0::3, 5], b[2::3, 5] = z, -x
+    return b
+
+
+class Solver:
+    """CG + AMG with a reusable hierarchy. `solve(K, f, x0)` rebuilds the
+    multigrid hierarchy when asked to, or when the last solve needed too many
+    iterations (the old hierarchy no longer matches K well)."""
+
+    def __init__(self, mesh: HexMesh, rtol=1e-6, maxiter=800, rebuild_after_iters=25):
+        self.rtol = rtol
+        self.maxiter = maxiter
+        self.rebuild_after_iters = rebuild_after_iters
+        self._b = rigid_body_modes(mesh.node_xyz)
+        self._ml = None
+        self.last_iters = 0
+        self.use_amg = True
+        try:
+            import pyamg  # noqa: F401
+        except ImportError:  # pragma: no cover - pyamg is a declared dependency
+            self.use_amg = False
+
+    def invalidate(self):
+        self._ml = None
+
+    def _precond(self, k):
+        if not self.use_amg:
+            d = k.diagonal()
+            d[d == 0] = 1.0
+            return sp.diags(1.0 / d)
+        if self._ml is None:
+            import pyamg
+            # coarse_solver: pyamg's default is a dense pseudo-inverse (an SVD)
+            # of the coarsest level. Aggregation on these stiffness matrices
+            # often stops coarsening at a few thousand unknowns, where that SVD
+            # alone took ~3s per rebuild; a sparse LU of the same level is
+            # milliseconds.
+            self._ml = pyamg.smoothed_aggregation_solver(
+                k, B=self._b, symmetry="hermitian", strength="symmetric", max_coarse=400,
+                coarse_solver="splu",
+            )
+        return self._ml.aspreconditioner(cycle="V")
+
+    def solve(self, k, f, x0=None):
+        count = [0]
+
+        def cb(_):
+            count[0] += 1
+
+        u, info = cg(k, f, x0=x0, rtol=self.rtol, maxiter=self.maxiter, M=self._precond(k), callback=cb)
+        if info != 0 and self._ml is not None:
+            # Stale hierarchy: rebuild once and retry from where we got to.
+            self._ml = None
+            count[0] = 0
+            u, info = cg(k, f, x0=u, rtol=self.rtol, maxiter=self.maxiter, M=self._precond(k), callback=cb)
+        self.last_iters = count[0]
+        if count[0] > self.rebuild_after_iters:
+            self._ml = None
+        if info != 0:
+            raise RuntimeError(f"linear solve did not converge ({count[0]} iterations); "
+                               "the structure may be a mechanism (check supports)")
+        return u
+
+    def solve_many(self, k, fs, x0s=None):
+        """Solve several right-hand sides (load cases) against one matrix.
+        The preconditioner is built once and the solves run on threads: the
+        sparse kernels release the GIL for most of their time, which measured
+        1.4x for two cases."""
+        x0s = x0s or [None] * len(fs)
+        if len(fs) == 1:
+            return [self.solve(k, fs[0], x0s[0])]
+        from concurrent.futures import ThreadPoolExecutor
+
+        m = self._precond(k)
+        counts = [0] * len(fs)
+
+        def one(i):
+            def cb(_):
+                counts[i] += 1
+            u, info = cg(k, fs[i], x0=x0s[i], rtol=self.rtol, maxiter=self.maxiter, M=m, callback=cb)
+            return u, info
+
+        with ThreadPoolExecutor(min(len(fs), 4)) as ex:
+            res = list(ex.map(one, range(len(fs))))
+        out = []
+        for i, (u, info) in enumerate(res):
+            if info != 0:
+                # Fall back to the single-solve path, which rebuilds a stale
+                # hierarchy and retries.
+                self._ml = None
+                u = self.solve(k, fs[i], u)
+            out.append(u)
+        self.last_iters = max(counts)
+        if self.last_iters > self.rebuild_after_iters:
+            self._ml = None
+        return out

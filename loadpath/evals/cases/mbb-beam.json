@@ -1,0 +1,58 @@
+{
+  "name": "mbb-beam",
+  "description": "Textbook sanity case: a simply supported beam (pinned left, roller right) with a centre load. The optimum is a well-known truss; this case guards against regressions in the solver itself.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [0, 0, 0],
+      "max": [180, 12, 30]
+    }
+  ],
+  "supports": [
+    {
+      "shape": {
+        "type": "box",
+        "min": [-1, -1, -1],
+        "max": [4, 13, 0.3]
+      }
+    },
+    {
+      "shape": {
+        "type": "box",
+        "min": [176, -1, -1],
+        "max": [181, 13, 0.3]
+      },
+      "fix": "z"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "centre",
+      "loads": [
+        {
+          "shape": {
+            "type": "box",
+            "min": [87, -1, 29.7],
+            "max": [93, 13, 31]
+          },
+          "force": [0, 0, -400]
+        }
+      ]
+    }
+  ],
+  "material": "pa12",
+  "goal": {
+    "volumeFraction": 0.3
+  },
+  "symmetry": [
+    "x",
+    "y"
+  ],
+  "resolution": {
+    "maxElements": 30000
+  },
+  "expect": {
+    "bodies": 1,
+    "minSafetyFactor": 1.5
+  }
+}

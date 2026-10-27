@@ -1,0 +1,116 @@
+{
+  "name": "bell-crank",
+  "description": "Aluminium bell crank (LPBF AlSi10Mg) for a linkage: 8mm pins at the pivot, at 60mm along x and at 45mm along y. Pivot fully held, the y-arm pin reacts along x (its link rod), 500N pushes the x-arm pin along y.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [-12, -12, -5],
+      "max": [72, 57, 5]
+    }
+  ],
+  "preserve": [
+    {
+      "id": "pivot-boss",
+      "shape": {
+        "type": "cylinder",
+        "center": [0, 0, 0],
+        "axis": "z",
+        "length": 10,
+        "r": 9
+      }
+    },
+    {
+      "id": "a-boss",
+      "shape": {
+        "type": "cylinder",
+        "center": [60, 0, 0],
+        "axis": "z",
+        "length": 10,
+        "r": 8
+      }
+    },
+    {
+      "id": "b-boss",
+      "shape": {
+        "type": "cylinder",
+        "center": [0, 45, 0],
+        "axis": "z",
+        "length": 10,
+        "r": 8
+      }
+    }
+  ],
+  "keepOut": [
+    {
+      "id": "pivot-pin",
+      "shape": {
+        "type": "cylinder",
+        "center": [0, 0, 0],
+        "axis": "z",
+        "length": 14,
+        "r": 4
+      }
+    },
+    {
+      "id": "a-pin",
+      "shape": {
+        "type": "cylinder",
+        "center": [60, 0, 0],
+        "axis": "z",
+        "length": 14,
+        "r": 4
+      }
+    },
+    {
+      "id": "b-pin",
+      "shape": {
+        "type": "cylinder",
+        "center": [0, 45, 0],
+        "axis": "z",
+        "length": 14,
+        "r": 4
+      }
+    }
+  ],
+  "supports": [
+    {
+      "region": "pivot-pin"
+    },
+    {
+      "region": "b-pin",
+      "fix": "x"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "push",
+      "loads": [
+        {
+          "region": "a-pin",
+          "force": [0, 500, 0]
+        }
+      ]
+    }
+  ],
+  "material": "alsi10mg",
+  "goal": {
+    "safetyFactor": 3.0,
+    "volumeFraction": 0.25
+  },
+  "minMember": 2.5,
+  "symmetry": [
+    "z"
+  ],
+  "resolution": {
+    "maxElements": 35000
+  },
+  "expect": {
+    "minSafetyFactor": 3.0,
+    "maxDeflection": 0.1,
+    "maxKeepOutIntrusion": 1.0,
+    "maxPreserveMissing": 1.0,
+    "bodies": 1,
+    "minMemberAtLeast": 2.0,
+    "minMassReduction": 0.6
+  }
+}

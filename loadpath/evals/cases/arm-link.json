@@ -1,0 +1,111 @@
+{
+  "name": "arm-link",
+  "description": "Upper-arm link of a desktop robot arm: 140mm between joint axes, 22mm bearing seats (608 bearing, 8mm wide) at both ends and a 10mm cable channel along the middle. Held at the shoulder bearing; the wrist carries a 1.5kg payload at full reach with a 2.7x dynamic factor (40N), plus a 15N side load. Arms are stiffness-limited: the goal is the lightest link that deflects at most 0.5mm at the wrist with a safety factor of 3.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [-16, -18, -12],
+      "max": [156, 18, 12]
+    }
+  ],
+  "preserve": [
+    {
+      "id": "shoulder-boss",
+      "shape": {
+        "type": "cylinder",
+        "center": [0, 0, 0],
+        "axis": "z",
+        "length": 24,
+        "r": 16
+      }
+    },
+    {
+      "id": "wrist-boss",
+      "shape": {
+        "type": "cylinder",
+        "center": [140, 0, 0],
+        "axis": "z",
+        "length": 24,
+        "r": 15
+      }
+    }
+  ],
+  "keepOut": [
+    {
+      "id": "shoulder-bearing",
+      "shape": {
+        "type": "cylinder",
+        "center": [0, 0, 0],
+        "axis": "z",
+        "length": 30,
+        "r": 11
+      }
+    },
+    {
+      "id": "wrist-bearing",
+      "shape": {
+        "type": "cylinder",
+        "center": [140, 0, 0],
+        "axis": "z",
+        "length": 30,
+        "r": 11
+      }
+    },
+    {
+      "id": "cable-channel",
+      "shape": {
+        "type": "cylinder",
+        "p0": [30, 0, 0],
+        "p1": [110, 0, 0],
+        "r": 5
+      }
+    }
+  ],
+  "supports": [
+    {
+      "region": "shoulder-bearing"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "payload",
+      "loads": [
+        {
+          "region": "wrist-bearing",
+          "force": [0, -40, 0]
+        }
+      ]
+    },
+    {
+      "name": "side",
+      "loads": [
+        {
+          "region": "wrist-bearing",
+          "force": [0, 0, 15]
+        }
+      ]
+    }
+  ],
+  "material": "pa12",
+  "goal": {
+    "safetyFactor": 3.0,
+    "maxDeflection": 0.5,
+    "volumeFraction": 0.3
+  },
+  "minMember": 3.0,
+  "symmetry": [
+    "z"
+  ],
+  "resolution": {
+    "maxElements": 40000
+  },
+  "expect": {
+    "minMassReduction": 0.4,
+    "minSafetyFactor": 3.0,
+    "maxDeflection": 0.5,
+    "maxKeepOutIntrusion": 1.0,
+    "maxPreserveMissing": 1.0,
+    "bodies": 1,
+    "minMemberAtLeast": 2.4
+  }
+}
