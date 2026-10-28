@@ -49,6 +49,10 @@ class MechanismOptions:
     filter_radius: float
     input_case: int = 0               # domain load case that is the actuator force
     output_case: int = 1              # domain load case whose force direction is the output (any magnitude)
+    # Several (input, output) pairs at once, e.g. contact anywhere along a
+    # finger: the objective is the sum of each pair's output displacement,
+    # each scaled by its own starting value so no one pair dominates.
+    pairs: list | None = None
     k_in: float = 0.0                 # N/mm, spread over the input's loaded dofs
     k_out: float = 0.0                # N/mm, spread over the output's dofs
     modulus: float = 1.0              # MPa: the material's E (springs are in real units)
@@ -84,12 +88,15 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
     n = mesh.n_elem
     pres = domain.preserve
     design = ~pres
-    f_in = domain.loads[opts.input_case]
-    f_out = domain.loads[opts.output_case]
+    pairs = opts.pairs or [(opts.input_case, opts.output_case)]
+    ins = sorted({i for i, _ in pairs})
+    outs = sorted({o for _, o in pairs})
     # l . u = the output region's mean displacement along the output direction
-    l = f_out / max(np.linalg.norm(f_out.reshape(-1, 3).sum(axis=0)), 1e-30)
-    springs = sp.diags(_spring_diag(f_in, opts.k_in, mesh.n_dof) + _spring_diag(f_out, opts.k_out, mesh.n_dof))
-    springs = springs.multiply(~domain.fixed[:, None]).tocsr() if domain.fixed.any() else springs.tocsr()
+    ls = {o: domain.loads[o] / max(np.linalg.norm(domain.loads[o].reshape(-1, 3).sum(axis=0)), 1e-30) for o in outs}
+    sd = sum(_spring_diag(domain.loads[i], opts.k_in, mesh.n_dof) for i in ins) + \
+        sum(_spring_diag(domain.loads[o], opts.k_out, mesh.n_dof) for o in outs)
+    sd[domain.fixed] = 0.0
+    springs = sp.diags(sd).tocsr()
 
     stiff = Stiffness(mesh, nu, domain.fixed)
     solver = Solver(mesh, rtol=1e-5)
@@ -109,7 +116,7 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
     x[pres] = 1.0
     target = opts.volume_fraction * design.sum()
     beta, since = 1.0, 0
-    u = lam = None
+    prev = None
     u0 = None
     from .mma import MMA
     mma = MMA(int(design.sum()), 1, xmin=0.0, xmax=1.0, move=opts.move)
@@ -121,12 +128,20 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
         xp[pres] = 1.0
         e = opts.modulus * (E_MIN + xp ** PENALTY * (1 - E_MIN))
         k = (stiff.assemble(e) + springs).tocsr()
-        u, lam = solver.solve_many(k, [f_in, l], [u, lam])
-        uout = float(l @ u)
-        ue, le = u[edof], lam[edof]
-        # d(u_out)/d(xp_e) = -lambda_e . k_e u_e * dE/dxp   (K lambda = l, K symmetric)
+        sol = solver.solve_many(k, [domain.loads[i] for i in ins] + [ls[o] for o in outs], prev)
+        prev = sol
+        U = dict(zip(ins, sol[:len(ins)]))
+        LAM = dict(zip(outs, sol[len(ins):]))
         dE = opts.modulus * PENALTY * xp ** (PENALTY - 1) * (1 - E_MIN)
-        g = -np.einsum("ij,jk,ik->i", le, ke, ue) * dE
+        raw = [float(ls[o] @ U[i]) for i, o in pairs]
+        if u0 is None:
+            u0 = [max(abs(r), 1e-12) for r in raw]
+        uout = sum(r / s0 for r, s0 in zip(raw, u0)) / len(pairs)
+        # d(u_out)/d(xp_e) = -lambda_e . k_e u_e * dE/dxp   (K lambda = l, K symmetric)
+        g = np.zeros(n)
+        for (i, o), s0 in zip(pairs, u0):
+            g -= np.einsum("ij,jk,ik->i", LAM[o][edof], ke, U[i][edof]) / s0
+        g = g * dE / len(pairs)
         g = g * _dproject(xt, beta, 0.5)
         g = _extrude(g, columns, design)
         g = ht @ (g / hs)
@@ -135,15 +150,13 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
         # which optimality criteria can only handle by clipping (the first
         # version did, and stalled on the fin-ray problem with half its
         # gradient thrown away)
-        if u0 is None:
-            u0 = max(abs(uout), 1e-12)
         vol = float(xp[design].sum())
         xn = x.copy()
-        xn[design] = mma.update(x[design], -uout / u0 * 10.0, (-g / u0 * 10.0)[design],
+        xn[design] = mma.update(x[design], -uout * 10.0, (-g * 10.0)[design],
                                 np.array([vol / target - 1.0]), np.array([(dv / target)[design]]))
         change = float(np.abs(xn - x).max())
         x = xn
-        rec = {"iteration": it, "outputDisplacement": uout, "beta": beta, "change": change,
+        rec = {"iteration": it, "outputDisplacement": raw[0], "objective": uout, "outputs": raw, "beta": beta, "change": change,
                "volume": float(xp[design].mean())}
         history.append(rec)
         if on_iter is not None:
@@ -157,7 +170,7 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
             # mechanisms chatter at the move limit on a few hinge cells while
             # the output has stopped moving: stop on the output instead
             if since >= 10 and len(history) > 10:
-                old = history[-11]["outputDisplacement"]
+                old = history[-11]["objective"]
                 if abs(uout - old) <= 2e-3 * abs(old):
                     break
     xt = _extrude((h @ x) / hs, columns, design)
