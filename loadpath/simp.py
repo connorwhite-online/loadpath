@@ -159,6 +159,8 @@ class SimpOptions:
     # (axis, sign) layers stack along, or None: see am.py. Every density the
     # optimizer sees is then the printable one.
     build_direction: tuple[int, int] | None = None
+    # Axis index the part is extruded along (2.5D: cut from plate), or None.
+    extrusion: int | None = None
     # A warm start is already a design; restarting projection at beta 1
     # would blur it back to grey before sharpening it again.
     beta_start: float = 1.0
@@ -193,7 +195,7 @@ def filter_radius(domain: Domain, min_member: float | None) -> float:
     return r
 
 
-def density_filter(domain: Domain, radius: float):
+def density_filter(domain: Domain, radius: float, pad: bool = True):
     """Row-normalized cone filter over active cells as a sparse matrix."""
     mesh = domain.mesh
     n = mesh.n_elem
@@ -227,7 +229,7 @@ def density_filter(domain: Domain, radius: float):
     full = sum(max(radius - np.sqrt(dx * dx + dy * dy + dz * dz) * domain.pitch, 0.0)
                for dx in range(-reach, reach + 1) for dy in range(-reach, reach + 1)
                for dz in range(-reach, reach + 1))
-    hs = np.full(n, full)
+    hs = np.full(n, full) if pad else np.asarray(h.sum(axis=1)).ravel()
     return h, hs
 
 
@@ -239,6 +241,19 @@ def _project(xt, beta, eta):
 def _dproject(xt, beta, eta):
     den = np.tanh(beta * eta) + np.tanh(beta * (1 - eta))
     return beta * (1 - np.tanh(beta * (xt - eta)) ** 2) / den
+
+
+def _extrude(v, columns, design):
+    """Average over each extrusion column's design cells, so every column is
+    one value along the extrusion axis (a 2.5D part, cut from plate)."""
+    if columns is None:
+        return v
+    col = columns[design]
+    n = col.max() + 1
+    mean = np.bincount(col, weights=v[design], minlength=n) / np.maximum(np.bincount(col, minlength=n), 1)
+    out = v.copy()
+    out[design] = mean[col]
+    return out
 
 
 def _symmetrize(v, mirror):
@@ -260,7 +275,15 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
     if n_design == 0:
         raise ValueError("nothing to optimize: every cell is preserved")
     fe = _Analysis(domain, nu, opts.solve_rtol)
-    h, hs = density_filter(domain, opts.filter_radius)
+    columns = None
+    if opts.extrusion is not None:
+        a = opts.extrusion
+        others = [i for i in range(3) if i != a]
+        ij = mesh.elem_ijk[:, others]
+        _, columns = np.unique(ij[:, 0] * (domain.dims[others[1]] + 1) + ij[:, 1], return_inverse=True)
+    # An extruded part's top and bottom are the stock's faces: padding the
+    # filter there (outside = void) would thin them, so pad only free designs.
+    h, hs = density_filter(domain, opts.filter_radius, pad=opts.extrusion is None)
     ht = h.T.tocsr()
 
     vf = float(opts.volume_fraction)
@@ -354,6 +377,8 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         if domain.mirror:
             dc = _symmetrize(dc, domain.mirror)
             dv = _symmetrize(dv, domain.mirror)
+        dc = _extrude(dc, columns, design)
+        dv = _extrude(dv, columns, design)
 
         move = opts.move if beta <= 4 else opts.move / 2
         lo_x = np.maximum(0.0, x - move)
@@ -367,6 +392,7 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
             x_new[pres] = 1.0
             if domain.mirror:
                 x_new = _symmetrize(x_new, domain.mirror)
+            x_new = _extrude(x_new, columns, design)
             vol = float(physical(x_new, beta)[1][design].sum())
             if vol > target:
                 l1 = lm

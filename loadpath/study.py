@@ -52,7 +52,7 @@ def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should
     res = optimize(coarse, study.material.nu,
                    SimpOptions(volume_fraction=vf, filter_radius=max(radius, 1.5 * coarse.pitch),
                                max_iterations=60, beta_max=_WARM_BETA, beta_every=12,
-                               build_direction=study.print_direction),
+                               build_direction=study.print_direction, extrusion=study.extrusion),
                    should_stop=should_stop)
     grid = coarse.full_grid(res.x)
     coords = (domain.mesh.elem_centers() - coarse.origin) / coarse.pitch - 0.5
@@ -72,6 +72,7 @@ class Outcome:
     def summary(self) -> dict:
         r = self.report
         return {
+            "material": r.get("material", {}).get("name"),
             "volumeFraction": self.volume_fraction,
             "mass": r.get("mass"),
             "massReduction": r.get("massReduction"),
@@ -133,7 +134,36 @@ def _domain_info(d: Domain, radius: float) -> dict:
 
 def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     """on_progress(event: dict, xphys | None) is called with
-    {"stage": "domain"|"optimize"|"mesh"|"verify"|"outcome", ...}."""
+    {"stage": "domain"|"optimize"|"mesh"|"verify"|"outcome", ...}.
+
+    With several materials, the goal is solved for each (a stiffer material
+    meets a deflection limit with less of it, a denser one weighs more for
+    the same shape) and the outcomes are pooled; `best` is the lightest that
+    passes, or the lightest overall when the goal has no pass/fail."""
+    import dataclasses
+
+    mats = study.materials or [study.material]
+    if len(mats) == 1:
+        return _run_single(study, on_progress, should_stop)
+    t0 = time.time()
+    outcomes, warnings, domain = [], [], None
+    for m in mats:
+        if should_stop is not None and should_stop():
+            break
+        if on_progress is not None:
+            on_progress({"stage": "material", "material": m.name}, None)
+        r = _run_single(dataclasses.replace(study, material=m, materials=[m]), on_progress, should_stop)
+        outcomes.extend(r.outcomes)
+        warnings.extend(w for w in r.warnings if w not in warnings)
+        domain = domain or r.domain
+    passing = [i for i, o in enumerate(outcomes) if o.passes]
+    pool = passing if passing else ([] if any(o.passes is False for o in outcomes) else range(len(outcomes)))
+    best = min(pool, key=lambda i: outcomes[i].report["mass"]) if pool else None
+    return StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
+                       seconds=time.time() - t0, warnings=warnings)
+
+
+def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     t0 = time.time()
 
     def emit(event, field_=None):
@@ -161,7 +191,7 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         res = optimize(domain, study.material.nu,
                        SimpOptions(volume_fraction=vf, filter_radius=radius,
                                    max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
-                                   build_direction=study.print_direction),
+                                   build_direction=study.print_direction, extrusion=study.extrusion),
                        on_iter=on_iter, should_stop=should_stop)
         last_x = res.x
         emit({"stage": "mesh", "volumeFraction": vf})

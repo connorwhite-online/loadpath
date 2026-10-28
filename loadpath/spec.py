@@ -117,6 +117,11 @@ class Study:
     gravity: np.ndarray | None = None
     # Build direction for overhang control, as (axis, sign); see am.py.
     print_direction: tuple[int, int] | None = None
+    # 2.5D manufacturing: the part is a profile extruded along this axis
+    # (0, 1, 2), i.e. cut from plate by waterjet, laser or a 2.5-axis mill.
+    extrusion: int | None = None
+    # Every material to try (a list in the study); `material` is the first.
+    materials: list = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
     def region_shape(self, region_id: str) -> tuple[Shape, str]:
@@ -157,6 +162,15 @@ def _target(item, label, base_dir):
     if "shape" in item:
         return None, shape_from_spec(item["shape"], base_dir)
     raise ValueError(f"{label} needs a 'region' id or an inline 'shape'")
+
+
+def _extrusion_axis(v):
+    if v is None:
+        return None
+    a = str(v).strip().lower().lstrip("+-")
+    if a not in ("x", "y", "z"):
+        raise ValueError("extrusion must be 'x', 'y' or 'z' (the axis the profile is extruded along)")
+    return "xyz".index(a)
 
 
 def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
@@ -245,6 +259,11 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         if not (0.02 <= v <= 0.95):
             raise ValueError("goal.outcomes values must be between 0.02 and 0.95")
 
+    mat_in = d.get("material", "pla")
+    materials = [material_from_spec(m) for m in mat_in] if isinstance(mat_in, list) else [material_from_spec(mat_in)]
+    if not materials:
+        raise ValueError("material list is empty")
+
     sym = [str(a).lower() for a in d.get("symmetry") or []]
     if any(a not in ("x", "y", "z") for a in sym):
         raise ValueError("symmetry entries must be 'x', 'y' or 'z' (planes through the design space center)")
@@ -265,7 +284,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         keep_out=keep_out,
         supports=supports,
         load_cases=cases,
-        material=material_from_spec(d.get("material", "pla")),
+        material=materials[0],
+        materials=materials,
         goal=goal,
         min_member=float(min_member) if min_member is not None else None,
         symmetry=sym,
@@ -274,5 +294,6 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         max_iterations=int(d.get("maxIterations", 120)),
         gravity=gravity,
         print_direction=parse_build_direction(d.get("printDirection")),
+        extrusion=_extrusion_axis(d.get("extrusion")),
         raw=d,
     )

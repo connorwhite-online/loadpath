@@ -104,8 +104,10 @@ print(best.report["mass"], best.report["safetyFactor"])
 | `keepOut` | Volume that must stay empty: bores, bolt access, cable runs, mating parts. Cut exactly at the end. |
 | `supports` | Where the part is held: a region id or an inline shape, with `fix` = `"all"` (default), axes like `"xz"`, or three booleans. |
 | `loadCases` | Each a list of forces (N) on regions. The optimizer stiffens for all cases together; verification reports each. |
-| `material` | A name (`pla`, `petg`, `abs`, `asa`, `pa-cf`, `pa12`, `pa11`, `resin`, `resin-tough`, `alsi10mg`, `ti64`, `316l`) or `{E, nu, strength, density}`. |
+| `material` | A name (`pla`, `petg`, `abs`, `asa`, `pa-cf`, `pa12`, `pa11`, `resin`, `resin-tough`, `alsi10mg`, `ti64`, `316l`) or `{E, nu, strength, density}`. A list solves the goal for each and pools the outcomes. |
 | `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space. `{"safetyFactor": 3}` and/or `{"maxDeflection": 0.5}` (mm, at the loads) search for the lightest part that meets them in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. |
+| `extrusion` | Optional axis (`x`, `y`, `z`): the part is a profile extruded along it, cuttable from plate (waterjet, laser, 2.5-axis milling). |
+| `gravity` | Optional `[gx, gy, gz]` in m/s²: the part's own weight in every load case. |
 | `printDirection` | Optional, `+x` … `-z`: the direction layers stack. Turns on overhang control (Langelaar's AM filter), so the optimizer's own surfaces are self-supporting at 45°. |
 | `minMember` | Thinnest member in mm (sets the filter radius). |
 | `symmetry` | Planes through the design-space centre, by normal axis. |
@@ -117,7 +119,11 @@ and `mesh` (a closed STL by `path`, relative to the study file, or inline as
 `stlBase64`).
 
 A load or support on a keep-out means "through the material lining it", which
-is how a shaft pushes on a bore or a bolt holds a hole.
+is how a shaft pushes on a bore or a bolt holds a hole. Loads take a `force`
+(N) and/or a `moment` (N·mm, about the region's centroid: a motor's torque);
+`"distribution": "bearing"` spreads a force over the half of a bore it pushes
+on, as a shaft does. Supports take `"fix": "pin"` on a cylinder for a joint
+that turns: held radially and axially, free to rotate.
 
 ## Reading the report
 

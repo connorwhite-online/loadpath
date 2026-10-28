@@ -356,6 +356,27 @@ def test_gravity_matches_beam_theory():
     assert abs(rep["cases"][0]["deflection"] - analytic) / analytic < 0.05, (rep["cases"][0]["deflection"], analytic)
 
 
+def test_extrusion_and_materials():
+    # Extrusion: every column along z carries one density (a 2.5D profile).
+    s = study_from_dict({**LUG, "extrusion": "z", "symmetry": []})
+    d = build_domain(s)
+    res = optimize(d, 0.39, SimpOptions(volume_fraction=0.35, filter_radius=filter_radius(d, None),
+                                        max_iterations=40, extrusion=s.extrusion))
+    g = d.full_grid(res.x)
+    act = d.full_grid(np.ones(d.n_elem)) > 0
+    des = act & ~(d.full_grid(d.preserve.astype(float)) > 0.5)
+    for i in range(g.shape[0]):
+        for j in range(g.shape[1]):
+            col = g[i, j][des[i, j]]
+            if col.size:
+                assert np.ptp(col) < 1e-9
+    # Several materials: one outcome each, tagged, best is the lightest.
+    r = run_study(study_from_dict({**LUG, "material": ["pa12", "petg"], "maxIterations": 25}))
+    names = [o.summary()["material"] for o in r.outcomes]
+    assert names == ["pa12", "petg"], names
+    assert r.best == int(np.argmin([o.report["mass"] for o in r.outcomes]))
+
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -372,6 +393,7 @@ TESTS = [
     test_local_mcp_job_functions,
     test_boundary_condition_types,
     test_gravity_matches_beam_theory,
+    test_extrusion_and_materials,
 ]
 
 
