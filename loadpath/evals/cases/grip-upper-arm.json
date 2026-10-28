@@ -1,0 +1,247 @@
+{
+  "name": "grip-upper-arm",
+  "description": "GRIP's upper arm (github.com/connorwhite-online/grip, SLS edition), rebuilt generatively from its interfaces: the J2 shoulder hub with its four M3 bolts and the hex-driver access that runs through the link to them, the J3 elbow socket that seats the 25:1 cycloidal drive (sleeve and ledge), the NEMA 17 motor and its CAN driver hanging below it, the cable run, and clearance for the forearm swinging past the elbow. Loads: the arm reaching horizontally with 1 kg at the gripper (distal weight about 3.3 kg x 1.5, plus the J3 holding torque), the J3 motor stalling (0.65 N\u00b7m x 25 = 16 N\u00b7m), and a 20 N push along the joint axis. Goal: no softer at the elbow than the original (0.54 mm in the reach case, its own verified number under the same loads) with a safety factor of 2 in every case, as light as possible. The original verifies at 214 g with a safety factor of 0.54 under the stall case.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [-50, -90, 150],
+      "max": [50, -30.5, 440]
+    }
+  ],
+  "preserve": [
+    {
+      "id": "shoulder-hub",
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, -39.5, 200],
+        "p1": [0, -30.5, 200],
+        "r": 48
+      }
+    },
+    {
+      "id": "elbow-socket",
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, -80.5, 387],
+        "p1": [0, -51.5, 387],
+        "r": 51.35
+      }
+    }
+  ],
+  "keepOut": [
+    {
+      "id": "hub-bolt-0",
+      "shape": {
+        "type": "cylinder",
+        "p0": [12.728, -29.5, 212.728],
+        "p1": [12.728, -41, 212.728],
+        "r": 1.7
+      }
+    },
+    {
+      "id": "hub-bolt-1",
+      "shape": {
+        "type": "cylinder",
+        "p0": [-12.728, -29.5, 212.728],
+        "p1": [-12.728, -41, 212.728],
+        "r": 1.7
+      }
+    },
+    {
+      "id": "hub-bolt-2",
+      "shape": {
+        "type": "cylinder",
+        "p0": [-12.728, -29.5, 187.272],
+        "p1": [-12.728, -41, 187.272],
+        "r": 1.7
+      }
+    },
+    {
+      "id": "hub-bolt-3",
+      "shape": {
+        "type": "cylinder",
+        "p0": [12.728, -29.5, 187.272],
+        "p1": [12.728, -41, 187.272],
+        "r": 1.7
+      }
+    },
+    {
+      "id": "hub-driver-0",
+      "shape": {
+        "type": "cylinder",
+        "p0": [12.728, -33.5, 212.728],
+        "p1": [12.728, -95, 212.728],
+        "r": 3.0
+      }
+    },
+    {
+      "id": "hub-driver-1",
+      "shape": {
+        "type": "cylinder",
+        "p0": [-12.728, -33.5, 212.728],
+        "p1": [-12.728, -95, 212.728],
+        "r": 3.0
+      }
+    },
+    {
+      "id": "hub-driver-2",
+      "shape": {
+        "type": "cylinder",
+        "p0": [-12.728, -33.5, 187.272],
+        "p1": [-12.728, -95, 187.272],
+        "r": 3.0
+      }
+    },
+    {
+      "id": "hub-driver-3",
+      "shape": {
+        "type": "cylinder",
+        "p0": [12.728, -33.5, 187.272],
+        "p1": [12.728, -95, 187.272],
+        "r": 3.0
+      }
+    },
+    {
+      "id": "j3-drive",
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, -74.5, 387],
+        "p1": [0, -29, 387],
+        "r": 43.35
+      }
+    },
+    {
+      "id": "j3-motor",
+      "shape": {
+        "type": "box",
+        "min": [-21.75, -135.5, 365.25],
+        "max": [21.75, -74.5, 408.75]
+      }
+    },
+    {
+      "id": "j3-driver",
+      "shape": {
+        "type": "box",
+        "min": [-21.75, -152.5, 365.25],
+        "max": [21.75, -133.5, 408.75]
+      }
+    },
+    {
+      "id": "forearm-sweep",
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, -41, 387],
+        "p1": [0, -28, 387],
+        "r": 55
+      }
+    },
+    {
+      "id": "cable-1",
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, -52, 245],
+        "p1": [0, -57, 300],
+        "r": 5
+      }
+    },
+    {
+      "id": "cable-2",
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, -57, 300],
+        "p1": [0, -64, 345],
+        "r": 5
+      }
+    },
+    {
+      "id": "cable-3",
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, -64, 345],
+        "p1": [0, -90, 375],
+        "r": 5
+      }
+    }
+  ],
+  "supports": [
+    {
+      "region": "hub-bolt-0"
+    },
+    {
+      "region": "hub-bolt-1"
+    },
+    {
+      "region": "hub-bolt-2"
+    },
+    {
+      "region": "hub-bolt-3"
+    },
+    {
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, -31, 200],
+        "p1": [0, -30, 200],
+        "r": 40
+      },
+      "fix": "y"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "reach",
+      "loads": [
+        {
+          "region": "elbow-socket",
+          "force": [-50, 0, 0],
+          "moment": [0, 10000, 0]
+        }
+      ]
+    },
+    {
+      "name": "j3-stall",
+      "loads": [
+        {
+          "region": "elbow-socket",
+          "moment": [0, 16000, 0]
+        }
+      ]
+    },
+    {
+      "name": "axial-push",
+      "loads": [
+        {
+          "region": "elbow-socket",
+          "force": [0, -20, 0]
+        }
+      ]
+    }
+  ],
+  "material": {
+    "name": "pa12-gf",
+    "E": 3200,
+    "nu": 0.37,
+    "strength": 48,
+    "density": 1.22,
+    "note": "SLS glass-filled PA12 (EOS PA 3200 GF datasheet)"
+  },
+  "goal": {
+    "safetyFactor": 2.0,
+    "maxDeflection": 0.54,
+    "volumeFraction": 0.15
+  },
+  "minMember": 3.0,
+  "symmetry": [
+    "x"
+  ],
+  "resolution": {
+    "maxElements": 80000
+  },
+  "expect": {
+    "maxDeflection": 0.54,
+    "minSafetyFactor": 2.0,
+    "maxKeepOutIntrusion": 1.0,
+    "maxPreserveMissing": 1.0,
+    "bodies": 1,
+    "maxMass": 214
+  }
+}

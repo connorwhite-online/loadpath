@@ -1,6 +1,6 @@
 {
   "name": "printed-hook",
-  "description": "Wall hook printed upright (layers along +z) with no support material: a 5mm wall plate, an eye with a 7mm pin 92mm out, 300N hanging from the pin. Overhang control must keep the optimizer's own surfaces self-supporting at 45 degrees; the eye's underside is the user's geometry and does not count.",
+  "description": "Wall hook printed upright (layers along +z) with no support material, fixed to the wall over its back face; an eye with a 7mm pin 92mm out carries 300N. Only the eye is preserved. Overhang control must keep the optimizer's own surfaces self-supporting at 45 degrees; the eye's underside is the user's geometry and does not count.",
   "designSpace": [
     {
       "type": "box",
@@ -9,14 +9,6 @@
     }
   ],
   "preserve": [
-    {
-      "id": "wall",
-      "shape": {
-        "type": "box",
-        "min": [0, -10, 0],
-        "max": [5, 10, 60]
-      }
-    },
     {
       "id": "eye",
       "shape": {

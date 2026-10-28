@@ -42,8 +42,17 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     from skimage.measure import marching_cubes
 
     grid = domain.full_grid(xphys)
-    pad = 2
-    grid = np.pad(grid, pad)
+    pad = 3
+    # Replicate the edge instead of padding with void: material that reaches
+    # the design space's boundary then runs straight through it, and the
+    # exact intersection with the design space in reconstruct() cuts it off
+    # flat. Padded with void, smoothing pulled every such face ~1 mm inside
+    # the boundary, so a part meant to sit against a wall did not touch it
+    # (the printed hook's wall support found no material).
+    # (two cells of replicated edge, then one of void so the isosurface still
+    # closes: marching cubes leaves a surface open where it meets the array's
+    # edge with material.)
+    grid = np.pad(np.pad(grid, pad - 1, mode="edge"), 1)
     # Cubic upsampling: linear interpolation of a voxel field leaves the
     # staircase in the isosurface as faceted terraces.
     fine = np.clip(ndimage.zoom(grid, o.upsample, order=3, mode="nearest", grid_mode=True), 0.0, 1.0)
@@ -116,6 +125,12 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     keep = [b for b in organic.decompose() if b.volume() >= o.min_body_fraction * total]
     organic = m3d.Manifold.batch_boolean(keep, m3d.OpType.Add) if len(keep) > 1 else keep[0]
 
+    # Trim to the design space (and preserved geometry) exactly: flat,
+    # flush faces wherever the design reaches its boundary.
+    envelope = m3d.Manifold.batch_boolean(
+        [sh.to_manifold() for sh in study.design_space] + [r.shape.to_manifold() for r in study.preserve],
+        m3d.OpType.Add)
+    organic = organic ^ envelope
     part = organic
     if study.preserve:
         pres = m3d.Manifold.batch_boolean([r.shape.to_manifold() for r in study.preserve], m3d.OpType.Add)

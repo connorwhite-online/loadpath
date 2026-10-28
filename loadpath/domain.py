@@ -126,6 +126,9 @@ def _region_nodes(study: Study, mesh: HexMesh, region: str | None, shape: Shape 
 # pin to well under a percent of the part's deflection, soft enough not to
 # wreck the solver's conditioning.
 _PIN_STIFFNESS = 100.0
+# Supports and loads touching at most this share of the cells are pinned
+# solid (see build_domain).
+_ANCHOR_MAX_FRACTION = 0.03
 
 
 @dataclass
@@ -137,6 +140,7 @@ class BoundaryConditions:
     case_load_nodes: list          # per case, bool per node
     load_nodes: np.ndarray
     gravity: np.ndarray | None     # N per mm^3 of solid material
+    regions: list = field(default_factory=list)   # node mask of every support and load region
 
 
 def _cylinder_of(study: Study, region, shape, label):
@@ -153,9 +157,11 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True) -> Bounda
     support_nodes = np.zeros(mesh.n_nodes, bool)
     fixed = np.zeros(mesh.n_dof, bool)
     spring_blocks = []
+    regions = []
     for i, s in enumerate(study.supports):
         label = f"supports[{i}]"
         nodes = _region_nodes(study, mesh, s.region, s.shape, label)
+        regions.append(nodes)
         support_nodes |= nodes
         idx = np.nonzero(nodes)[0]
         for a in range(3):
@@ -190,6 +196,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True) -> Bounda
         for li, ld in enumerate(case.loads):
             label = f"loadCases[{ci}].loads[{li}]"
             nodes = _region_nodes(study, mesh, ld.region, ld.shape, label)
+            regions.append(nodes)
             idx = np.nonzero(nodes)[0]
             cn[idx] = True
             pts = xyz[idx]
@@ -230,7 +237,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True) -> Bounda
     if study.gravity is not None:
         # g/cm^3 -> kg/mm^3 is 1e-6; times m/s^2 gives N per mm^3.
         gravity = study.material.density * 1e-6 * study.gravity
-    return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity)
+    return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions)
 
 
 def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed: np.ndarray) -> np.ndarray:
@@ -302,13 +309,17 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     names = [c.name for c in study.load_cases]
     weights = [c.weight for c in study.load_cases]
 
-    # A load or support needs material to act through: cells touching their
-    # nodes are pinned solid, as if preserved. Without this, a support on the
-    # edge of the design space (the textbook MBB beam's corners) can be
-    # optimized away, since the boundary-padded filter (simp.density_filter)
-    # makes edge cells expensive to fill.
-    anchor = (support_nodes | load_nodes)[mesh.enode].any(axis=1)
-    pres_el = pres_el | anchor
+    # A small load or support (a bolt hole, a pin, a corner support) needs
+    # material to act through: the cells touching it are pinned solid, as if
+    # preserved, or the boundary-padded filter (simp.density_filter) makes
+    # them too expensive to fill and the support is optimized away (the
+    # textbook MBB beam's corners). A large one (a whole wall face, a shelf
+    # surface) is left to the optimizer: pinning it forced a full skin over
+    # the face, which read as part of the design not being optimized at all.
+    for nodes in bc.regions:
+        touch = nodes[mesh.enode].any(axis=1)
+        if touch.sum() <= _ANCHOR_MAX_FRACTION * mesh.n_elem:
+            pres_el = pres_el | touch
 
     mirror = {}
     for axis in study.symmetry:

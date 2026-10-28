@@ -1,6 +1,6 @@
 {
   "name": "wall-bracket",
-  "description": "Shelf bracket: 120mm deep, 100mm tall, 30mm wide, screwed to a wall with two M5 screws. Carries 150N on the shelf strip (a loaded 30kg shelf on two brackets, with margin). The wall can push but the screws do the holding.",
+  "description": "Shelf bracket: 120mm deep, 100mm tall, 30mm wide, screwed to a wall with two M5 screws. Only the interfaces are fixed: bosses round the screws. The shelf board rests on the top edge (150N, a loaded 30kg shelf on two brackets with margin) and the wall can push back on the back face; where the bracket touches either is the optimizer's choice.",
   "designSpace": [
     {
       "type": "box",
@@ -10,19 +10,23 @@
   ],
   "preserve": [
     {
-      "id": "wall-plate",
+      "id": "boss-top",
       "shape": {
-        "type": "box",
-        "min": [0, -15, -100],
-        "max": [6, 15, 0]
+        "type": "cylinder",
+        "center": [3, 0, -20],
+        "axis": "x",
+        "length": 6,
+        "r": 6
       }
     },
     {
-      "id": "shelf-strip",
+      "id": "boss-bottom",
       "shape": {
-        "type": "box",
-        "min": [0, -15, -6],
-        "max": [120, 15, 0]
+        "type": "cylinder",
+        "center": [3, 0, -85],
+        "axis": "x",
+        "length": 6,
+        "r": 6
       }
     }
   ],
@@ -69,7 +73,11 @@
       "name": "shelf",
       "loads": [
         {
-          "region": "shelf-strip",
+          "shape": {
+            "type": "box",
+            "min": [10, -16, -1.5],
+            "max": [121, 16, 1]
+          },
           "force": [0, 0, -150]
         }
       ]
