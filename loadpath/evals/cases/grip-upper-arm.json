@@ -1,6 +1,6 @@
 {
   "name": "grip-upper-arm",
-  "description": "GRIP's upper arm (github.com/connorwhite-online/grip, SLS edition), rebuilt generatively from its interfaces: the J2 shoulder hub with its four M3 bolts and the hex-driver access that runs through the link to them, the J3 elbow socket that seats the 25:1 cycloidal drive (sleeve and ledge), the NEMA 17 motor and its CAN driver hanging below it, the cable run, and clearance for the forearm swinging past the elbow. Loads: the arm reaching horizontally with 1 kg at the gripper (distal weight about 3.3 kg x 1.5, plus the J3 holding torque), the J3 motor stalling (0.65 N\u00b7m x 25 = 16 N\u00b7m), and a 20 N push along the joint axis. Goal: no softer at the elbow than the original (0.54 mm in the reach case, its own verified number under the same loads) with a safety factor of 2 in every case, as light as possible. The original verifies at 214 g with a safety factor of 0.54 under the stall case.",
+  "description": "GRIP's upper arm (github.com/connorwhite-online/grip, SLS edition), rebuilt generatively from its interfaces: a bolt ring on the J2 output flange with its four M3 bolts and the hex-driver access that runs through the link to them, the J3 elbow socket (a 5 mm sleeve round the drive housing and the ledge its inserts sit in), the NEMA 17 motor and its CAN driver hanging below it, the cable run, and clearance for the forearm swinging past the elbow. Loads: reaching horizontally with 1 kg at the gripper (distal weight about 3.3 kg x 1.5, plus the J3 holding torque), J3 at its rated 13 N\u00b7m, and a 20 N push along the joint axis. Goal: no softer at the elbow than the original under the same loads (0.54 mm reaching), safety factor 2, as light as possible. The original verifies at 214 g.",
   "designSpace": [
     {
       "type": "box",
@@ -13,18 +13,30 @@
       "id": "shoulder-hub",
       "shape": {
         "type": "cylinder",
-        "p0": [0, -39.5, 200],
+        "p0": [0, -34.5, 200],
         "p1": [0, -30.5, 200],
-        "r": 48
+        "r": 24,
+        "rInner": 12
       }
     },
     {
       "id": "elbow-socket",
       "shape": {
         "type": "cylinder",
-        "p0": [0, -80.5, 387],
+        "p0": [0, -74.5, 387],
         "p1": [0, -51.5, 387],
-        "r": 51.35
+        "r": 48.35,
+        "rInner": 43.35
+      }
+    },
+    {
+      "id": "elbow-ledge",
+      "shape": {
+        "type": "cylinder",
+        "p0": [0, -80.5, 387],
+        "p1": [0, -74.5, 387],
+        "r": 48.35,
+        "rInner": 31
       }
     }
   ],
@@ -181,7 +193,7 @@
         "type": "cylinder",
         "p0": [0, -31, 200],
         "p1": [0, -30, 200],
-        "r": 40
+        "r": 24
       },
       "fix": "y"
     }
@@ -198,11 +210,11 @@
       ]
     },
     {
-      "name": "j3-stall",
+      "name": "j3-max-torque",
       "loads": [
         {
           "region": "elbow-socket",
-          "moment": [0, 16000, 0]
+          "moment": [0, 13000, 0]
         }
       ]
     },
