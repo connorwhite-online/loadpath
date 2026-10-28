@@ -26,7 +26,7 @@ __all__ = ["reconstruct", "ReconstructOptions"]
 
 class ReconstructOptions:
     def __init__(self, upsample=3, smooth_sigma=0.9, level=0.5, max_triangles=250_000,
-                 min_body_fraction=0.002, taubin_iterations=25, blend=2.0, blend_k=0.6):
+                 min_body_fraction=0.002, taubin_iterations=25, blend=3.0, blend_k=0.8):
         self.upsample = upsample            # field refinement before meshing
         self.smooth_sigma = smooth_sigma    # in fine cells
         self.level = level
