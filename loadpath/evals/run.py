@@ -41,6 +41,7 @@ CHECKS = {
     "preserveMissing": ("maxPreserveMissing", lambda o: o["preserveMissing"], "<="),
     "bodies": ("bodies", lambda o: o["bodies"], "=="),
     "member": ("minMemberAtLeast", lambda o: o["p5Member"], ">="),
+    "overhang": ("maxOverhangFraction", lambda o: o.get("designOverhangFraction"), "<="),
 }
 
 

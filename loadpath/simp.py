@@ -148,6 +148,9 @@ class SimpOptions:
     # iteration. Round 2 of the evals still grew 0.8mm skins without it.
     erode: float = 0.15
     x0: np.ndarray | None = None      # warm start (design densities)
+    # (axis, sign) layers stack along, or None: see am.py. Every density the
+    # optimizer sees is then the printable one.
+    build_direction: tuple[int, int] | None = None
     # A warm start is already a design; restarting projection at beta 1
     # would blur it back to grey before sharpening it again.
     beta_start: float = 1.0
@@ -263,23 +266,46 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
     it = 0
     change = 1.0
 
-    def physical(xv, b):
+    ijk = tuple(mesh.elem_ijk.T)
+    if opts.build_direction is not None:
+        from .am import AMFilter
+
+        pinned = domain.full_grid(pres.astype(float)) > 0.5
+        am_b = AMFilter(domain.dims, opts.build_direction, pinned)   # blueprint
+        am_e = AMFilter(domain.dims, opts.build_direction, pinned)   # eroded
+        am_v = AMFilter(domain.dims, opts.build_direction, pinned)   # volume search
+
+        def printed(am, v):
+            return am.forward(domain.full_grid(v))[ijk]
+
+        def printed_grad(am, g):
+            return am.backward(domain.full_grid(g))[ijk]
+    else:
+        am_b = am_e = am_v = None
+
+        def printed(am, v):
+            return v
+
+        def printed_grad(am, g):
+            return g
+
+    def physical(xv, b, am=None):
         xt = (h @ xv) / hs
         xp = _project(xt, b, opts.eta)
         xp[pres] = 1.0
-        return xt, xp
+        return xt, printed(am if am is not None else am_v, xp)
 
     eta_e = opts.eta + opts.erode
 
     def eroded(xt, b):
         xe = _project(xt, b, eta_e)
         xe[pres] = 1.0
-        return xe
+        return printed(am_e, xe)
 
     for it in range(1, opts.max_iterations + 1):
         if should_stop is not None and should_stop():
             break
-        xt, xp = physical(x, beta)
+        xt, xp = physical(x, beta, am_b)
         xe = eroded(xt, beta)
         e = E_MIN + xe ** PENALTY * (1 - E_MIN)
         us = fe.solve(e, xe, us)
@@ -298,8 +324,8 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         dproj_e[pres] = 0.0
         dproj = _dproject(xt, beta, opts.eta)
         dproj[pres] = 0.0
-        dc = ht @ (dc_xp * dproj_e / hs)
-        dv = ht @ (design * dproj / hs)
+        dc = ht @ (printed_grad(am_e, dc_xp) * dproj_e / hs)
+        dv = ht @ (printed_grad(am_b, design.astype(float)) * dproj / hs)
         dc = np.minimum(dc, 0.0)
         dv = np.maximum(dv, 1e-12)
         if domain.mirror:
@@ -361,6 +387,7 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         xe = eroded(xt, beta)
         xp = _project((h @ xe) / hs, beta, opts.eta - opts.erode)
         xp[pres] = 1.0
+        xp = printed(am_v, xp)
     # Final analysis on the delivered field (it moved since the last solve).
     e = E_MIN + xp ** PENALTY * (1 - E_MIN)
     us = fe.solve(e, xp, us, rtol=1e-6)

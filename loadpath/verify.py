@@ -111,6 +111,33 @@ def nodal_von_mises(stiff, u, modulus):
     return von_mises(acc / cnt[:, None])
 
 
+def _overhang(mesh, direction, study=None, max_angle_deg=45.0, tolerance_deg=5.0):
+    """Down-facing surface that needs support: faces whose normal is within
+    (max_angle - tolerance) of straight down, i.e. ceilings and slopes
+    shallower than the self-supporting limit, excluding the face on the build
+    plate. The tolerance keeps marching-cubes facets on a true 45-degree
+    slope from counting. `overhangArea` is everything; `designOverhangArea`
+    leaves out faces on preserved or keep-out geometry, which the user drew
+    (a horizontal bore's ceiling is theirs, not the optimizer's)."""
+    axis, sign = direction
+    up = np.zeros(3)
+    up[axis] = sign
+    down = -(mesh.face_normals @ up)
+    centers = mesh.triangles_center
+    height = centers @ up
+    bad = (down > np.cos(np.radians(max_angle_deg - tolerance_deg))) & (height > height.min() + 0.5)
+    area = float(mesh.area_faces[bad].sum())
+    out = {"overhangArea": area, "overhangFraction": area / float(mesh.area)}
+    if study is not None:
+        drawn = np.zeros(len(centers), bool)
+        for r in study.preserve + study.keep_out:
+            drawn |= np.abs(r.shape.sdf(centers)) < 0.6
+        d_area = float(mesh.area_faces[bad & ~drawn].sum())
+        out["designOverhangArea"] = d_area
+        out["designOverhangFraction"] = d_area / float(mesh.area)
+    return out
+
+
 def _union(shapes):
     import manifold3d as m3d
     mans = [s.to_manifold() for s in shapes]
@@ -225,6 +252,9 @@ def verify_part(study: Study, mesh, max_cells: int = 90_000, min_pitch: float | 
         report["preserveMissing"] = 0.0
     report["outsideDesignSpace"] = float((part - design).volume())
     report["bodies"] = len(part.decompose())
+
+    if study.print_direction is not None:
+        report.update(_overhang(mesh, study.print_direction, study))
 
     pitch = (vol / max_cells) ** (1.0 / 3.0)
     if min_pitch:

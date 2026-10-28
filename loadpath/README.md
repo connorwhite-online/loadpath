@@ -14,6 +14,12 @@ code can be read:
   stiffness, a cone density filter for a minimum member size, Heaviside
   projection with continuation for crisp 0/1 designs, optimality-criteria
   updates, multiple load cases, symmetry planes.
+- **Overhang control** for a chosen build direction (Langelaar's AM filter):
+  material that would need support earns nothing, so parts grow their own
+  45° supports.
+- **Minimum member size** that actually holds: stiffness is credited to the
+  eroded design and the delivered part is the opened one (robust
+  formulation), so no sub-minimum skins or webs.
 - **Linear elastic FEA** with 8-node hexahedra, solved by conjugate gradient
   with a smoothed-aggregation multigrid preconditioner (pyamg). Checked against
   Euler-Bernoulli beam theory in the tests.
@@ -29,7 +35,7 @@ Units are fixed: millimetres, newtons, megapascals, g/cm³.
 ## Quick start
 
 ```bash
-pip install numpy scipy pyamg scikit-image trimesh manifold3d matplotlib
+pip install ./loadpath[render]           # or: pip install loadpath, once published
 python -m loadpath check study.json          # validate, show the voxel problem
 python -m loadpath run study.json --out out  # optimize, mesh, verify, render
 ```
@@ -85,7 +91,8 @@ print(best.report["mass"], best.report["safetyFactor"])
 | `supports` | Where the part is held: a region id or an inline shape, with `fix` = `"all"` (default), axes like `"xz"`, or three booleans. |
 | `loadCases` | Each a list of forces (N) on regions. The optimizer stiffens for all cases together; verification reports each. |
 | `material` | A name (`pla`, `petg`, `abs`, `asa`, `pa-cf`, `pa12`, `pa11`, `resin`, `resin-tough`, `alsi10mg`, `ti64`, `316l`) or `{E, nu, strength, density}`. |
-| `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space; `{"safetyFactor": 3}` searches for the lightest part that holds that factor in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. |
+| `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space. `{"safetyFactor": 3}` and/or `{"maxDeflection": 0.5}` (mm, at the loads) search for the lightest part that meets them in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. |
+| `printDirection` | Optional, `+x` … `-z`: the direction layers stack. Turns on overhang control (Langelaar's AM filter), so the optimizer's own surfaces are self-supporting at 45°. |
 | `minMember` | Thinnest member in mm (sets the filter radius). |
 | `symmetry` | Planes through the design-space centre, by normal axis. |
 | `resolution` | `maxElements` (default 60,000) or an explicit `pitch` in mm. |
@@ -115,13 +122,21 @@ is how a shaft pushes on a bore or a bolt holds a hole.
 
 `python -m loadpath.evals.run --out evals-out/` runs real parts with hard
 requirements (a robot arm link, a shelf bracket, a NEMA 17 motor mount with an
-STL keep-out, an aluminium bell crank, the textbook MBB beam) and scores the
-delivered meshes. Exit code is the number of failing cases.
+STL keep-out, an aluminium bell crank, a wall hook printed without supports,
+the textbook MBB beam) and scores the delivered meshes. Exit code is the
+number of failing cases. Run it after any change to the solver.
+
+## License
+
+Apache-2.0.
 
 ## Limits
 
 - Linear elastic, small deflection, isotropic. No buckling, fatigue or
   contact; no anisotropy for printed layers.
-- No overhang constraint yet: results may need support material on FDM.
+- Overhang control is the 45° stencil only, along a grid axis.
+- Peak stress from a voxel model is refined at hotspots and carries a 1.15
+  allowance in the safety factor; it lands within about ±13% of the
+  textbook plate-with-hole value in the tests.
 - Pure Python and SciPy. A 40,000-cell study with two load cases takes a few
   minutes on a laptop core; a safety-factor search runs several of those.

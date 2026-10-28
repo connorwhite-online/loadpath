@@ -1,0 +1,85 @@
+{
+  "name": "printed-hook",
+  "description": "Wall hook printed upright (layers along +z) with no support material: a 5mm wall plate, an eye with a 7mm pin 92mm out, 300N hanging from the pin. Overhang control must keep the optimizer's own surfaces self-supporting at 45 degrees; the eye's underside is the user's geometry and does not count.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [0, -10, 0],
+      "max": [100, 10, 60]
+    }
+  ],
+  "preserve": [
+    {
+      "id": "wall",
+      "shape": {
+        "type": "box",
+        "min": [0, -10, 0],
+        "max": [5, 10, 60]
+      }
+    },
+    {
+      "id": "eye",
+      "shape": {
+        "type": "cylinder",
+        "center": [92, 0, 30],
+        "axis": "y",
+        "length": 20,
+        "r": 7
+      }
+    }
+  ],
+  "keepOut": [
+    {
+      "id": "pin",
+      "shape": {
+        "type": "cylinder",
+        "center": [92, 0, 30],
+        "axis": "y",
+        "length": 30,
+        "r": 3.5
+      }
+    }
+  ],
+  "supports": [
+    {
+      "shape": {
+        "type": "box",
+        "min": [-1, -11, -1],
+        "max": [0.5, 11, 61]
+      }
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "hang",
+      "loads": [
+        {
+          "region": "pin",
+          "force": [0, 0, -300]
+        }
+      ]
+    }
+  ],
+  "material": "petg",
+  "printDirection": "+z",
+  "goal": {
+    "safetyFactor": 2.5,
+    "volumeFraction": 0.2
+  },
+  "minMember": 3.0,
+  "symmetry": [
+    "y"
+  ],
+  "resolution": {
+    "maxElements": 25000
+  },
+  "expect": {
+    "minSafetyFactor": 2.5,
+    "minMassReduction": 0.6,
+    "maxOverhangFraction": 0.04,
+    "maxKeepOutIntrusion": 1.0,
+    "maxPreserveMissing": 1.0,
+    "bodies": 1,
+    "minMemberAtLeast": 2.4
+  }
+}

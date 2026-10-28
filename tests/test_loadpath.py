@@ -179,6 +179,30 @@ def test_verify_hole_stress_concentration():
     assert abs(rep["safetyFactor"] - 250 / (c["peakStress"] * STRESS_ALLOWANCE)) < 1e-9
 
 
+def test_am_filter_gradient_and_behavior():
+    from loadpath.am import AMFilter
+    rng = np.random.default_rng(0)
+    x = rng.random((5, 4, 6))
+    pin = np.zeros(x.shape, bool)
+    pin[2, 1, 3] = True
+    f = AMFilter(x.shape, (1, -1), pin)
+    w = rng.random(x.shape)
+    y = f.forward(x)
+    g = f.backward(w)
+    num = np.zeros_like(x)
+    for idx in [(0, 0, 0), (2, 3, 4), (4, 2, 1), (1, 1, 5)]:
+        xp = x.copy()
+        xp[idx] += 1e-6
+        num[idx] = ((f.forward(xp) * w).sum() - (y * w).sum()) / 1e-6
+        assert abs(num[idx] - g[idx]) < 1e-4 * max(1.0, abs(g[idx])), (idx, num[idx], g[idx])
+    # A floating slab is not printable; a column from the plate is.
+    field = np.zeros((20, 3, 20))
+    field[:, 1, 15] = 1.0
+    field[2:4, 1, 0:16] = 1.0
+    out = AMFilter(field.shape, (2, 1)).forward(field)
+    assert out[15, 1, 15] < 0.05 and out[3, 1, 10] > 0.95
+
+
 def test_voxelize_volume():
     m = trimesh.creation.cylinder(radius=10, height=20, sections=96)
     solid, _ = voxelize(m, 0.5)
@@ -264,6 +288,7 @@ TESTS = [
     test_reconstruct_keeps_bores_exact_and_preserve_whole,
     test_verify_bar_stress_matches_beam_theory,
     test_verify_hole_stress_concentration,
+    test_am_filter_gradient_and_behavior,
     test_voxelize_volume,
     test_unreachable_load_is_refused_helpfully,
     test_run_study_end_to_end,

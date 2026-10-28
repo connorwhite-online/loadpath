@@ -43,11 +43,20 @@ pushes on it. Everything is millimetres, newtons, MPa.
 
 ## Goals
 
-- `{"safetyFactor": 3}`: the lightest part that keeps that factor in every
-  load case. It runs several optimizations, so it is the slowest and the one
+- `{"safetyFactor": 3, "maxDeflection": 0.5}`: the lightest part that keeps
+  that factor and deflects at most 0.5 mm at its loads, in every load case
+  (either alone works too). Mechanisms like robot arms are usually limited by
+  deflection, not strength. It runs several optimizations, so it is the slowest and the one
   to use when you know the loads.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
+
+## Printing direction
+
+If the part will be printed without supports (FDM, metal powder bed), set
+`"printDirection": "+z"` (the direction layers stack, in the study's
+coordinates). The optimizer then only builds what can be printed at 45°;
+`report.json` gives `designOverhangFraction`.
 
 ## Resolution
 

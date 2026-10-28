@@ -37,6 +37,7 @@ from typing import Any
 
 import numpy as np
 
+from .am import parse_build_direction
 from .materials import Material, material_from_spec
 from .shapes import Shape, shape_from_spec
 
@@ -104,6 +105,8 @@ class Study:
     pitch: float | None
     max_elements: int
     max_iterations: int = 120
+    # Build direction for overhang control, as (axis, sign); see am.py.
+    print_direction: tuple[int, int] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     def region_shape(self, region_id: str) -> tuple[Shape, str]:
@@ -240,5 +243,6 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         pitch=float(pitch) if pitch is not None else None,
         max_elements=max_el,
         max_iterations=int(d.get("maxIterations", 120)),
+        print_direction=parse_build_direction(d.get("printDirection")),
         raw=d,
     )

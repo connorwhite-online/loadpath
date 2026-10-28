@@ -51,7 +51,8 @@ def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should
     coarse = build_domain(study, pitch=2.0 * domain.pitch)
     res = optimize(coarse, study.material.nu,
                    SimpOptions(volume_fraction=vf, filter_radius=max(radius, 1.5 * coarse.pitch),
-                               max_iterations=60, beta_max=_WARM_BETA, beta_every=12),
+                               max_iterations=60, beta_max=_WARM_BETA, beta_every=12,
+                               build_direction=study.print_direction),
                    should_stop=should_stop)
     grid = coarse.full_grid(res.x)
     coords = (domain.mesh.elem_centers() - coarse.origin) / coarse.pitch - 0.5
@@ -77,6 +78,7 @@ class Outcome:
             "safetyFactor": r.get("safetyFactor"),
             "cases": r.get("cases"),
             "minMember": r.get("minMember"),
+            "overhangArea": r.get("overhangArea"),
             "keepOutIntrusion": r.get("keepOutIntrusion"),
             "preserveMissing": r.get("preserveMissing"),
             "bodies": r.get("bodies"),
@@ -158,7 +160,8 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
             beta0 = _WARM_BETA
         res = optimize(domain, study.material.nu,
                        SimpOptions(volume_fraction=vf, filter_radius=radius,
-                                   max_iterations=study.max_iterations, x0=x0, beta_start=beta0),
+                                   max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
+                                   build_direction=study.print_direction),
                        on_iter=on_iter, should_stop=should_stop)
         last_x = res.x
         emit({"stage": "mesh", "volumeFraction": vf})
