@@ -433,6 +433,27 @@ def test_union_region_and_dead_material_pruning():
     assert (out[strut & (c[:, 2] > 18)] == 0.0).all()
 
 
+def test_compliant_inverter():
+    # Sigmund's force inverter, small: push right at the left middle, and the
+    # right middle should move LEFT. A stiffness design moves it right.
+    from loadpath.mechanism import MechanismOptions, optimize_mechanism
+    spec = {
+        "designSpace": {"type": "box", "min": [0, 0, 0], "max": [40, 20, 2]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [2.1, 2.1, 3]}},
+                     {"shape": {"type": "box", "min": [-1, 17.9, -1], "max": [2.1, 21, 3]}}],
+        "loadCases": [
+            {"name": "in", "loads": [{"shape": {"type": "box", "min": [-1, 8, -1], "max": [1.1, 12, 3]}, "force": [10, 0, 0]}]},
+            {"name": "out", "loads": [{"shape": {"type": "box", "min": [38.9, 8, -1], "max": [41, 12, 3]}, "force": [-1, 0, 0]}]}],
+        "material": {"E": 26, "nu": 0.45, "strength": 30, "density": 1.2},
+        "goal": {"volumeFraction": 0.3}, "resolution": {"pitch": 2.0}}
+    d = build_domain(study_from_dict(spec))
+    r = optimize_mechanism(d, 0.45, MechanismOptions(volume_fraction=0.3, filter_radius=3.0, modulus=26,
+                                                      k_in=26.0, k_out=1.3, extrusion=2, max_iterations=60))
+    assert r.output_displacement > 0, r.output_displacement
+    assert r.history[-1]["outputDisplacement"] > 2 * r.history[0]["outputDisplacement"]
+    assert abs(r.xphys[~d.preserve].mean() - 0.3) < 0.02
+
+
 
 TESTS = [
     test_shapes_sdf_and_exact_volume,
@@ -454,6 +475,7 @@ TESTS = [
     test_mma_matches_svanberg_toy_problem,
     test_constrained_deflection_limit_is_met,
     test_union_region_and_dead_material_pruning,
+    test_compliant_inverter,
 ]
 
 
