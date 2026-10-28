@@ -26,7 +26,7 @@ import time
 import numpy as np
 from scipy import ndimage
 
-from .domain import _region_nodes
+from .domain import boundary_conditions, gravity_force
 from .fem import HexMesh, Solver, Stiffness, von_mises
 from .spec import Study
 
@@ -266,47 +266,30 @@ def verify_part(study: Study, mesh, max_cells: int = 90_000, min_pitch: float | 
     lbl, nlab = ndimage.label(solid, structure=np.ones((3, 3, 3), bool))
     elem_ijk = np.argwhere(solid)
     hm = HexMesh(elem_ijk, pitch, origin)
-    support_nodes = np.zeros(hm.n_nodes, bool)
-    fixed = np.zeros(hm.n_dof, bool)
-    for i, s in enumerate(study.supports):
-        nodes = _region_nodes(study, hm, s.region, s.shape, f"supports[{i}]")
-        support_nodes |= nodes
-        for a in range(3):
-            if s.fix[a]:
-                fixed[3 * np.nonzero(nodes)[0] + a] = True
+    bc = boundary_conditions(study, hm, check_loads=False)
     # Material not connected to a support would float; it is reported as a
     # separate body above and left out of the stress analysis.
-    supported_lbls = np.unique(lbl[tuple(elem_ijk[support_nodes[hm.enode].any(axis=1)].T)])
+    supported_lbls = np.unique(lbl[tuple(elem_ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
     keep_el = np.isin(lbl[tuple(elem_ijk.T)], supported_lbls)
     if not keep_el.all():
         hm = HexMesh(elem_ijk[keep_el], pitch, origin)
-        support_nodes = np.zeros(hm.n_nodes, bool)
-        fixed = np.zeros(hm.n_dof, bool)
-        for i, s in enumerate(study.supports):
-            nodes = _region_nodes(study, hm, s.region, s.shape, f"supports[{i}]")
-            support_nodes |= nodes
-            for a in range(3):
-                if s.fix[a]:
-                    fixed[3 * np.nonzero(nodes)[0] + a] = True
+        bc = boundary_conditions(study, hm, check_loads=False)
+    support_nodes, fixed = bc.support_nodes, bc.fixed
 
     band = max(1.5 * pitch, contact_band or 0.0)
     report["contactBand"] = band
     stiff = Stiffness(hm, mat.nu, fixed)
     k = stiff.assemble(np.full(hm.n_elem, mat.E))
+    if bc.springs is not None:
+        k = (k + mat.E * bc.springs).tocsr()
     solver = Solver(hm, rtol=1e-7, maxiter=3000)
+    fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else 0.0
     from scipy.spatial import cKDTree
     cases = []
     worst_sf = np.inf
-    for case in study.load_cases:
-        f = np.zeros(hm.n_dof)
-        load_nodes = np.zeros(hm.n_nodes, bool)
-        for li, ld in enumerate(case.loads):
-            nodes = _region_nodes(study, hm, ld.region, ld.shape, f"{case.name}.loads[{li}]")
-            idx = np.nonzero(nodes)[0]
-            load_nodes[idx] = True
-            for a in range(3):
-                f[3 * idx + a] += ld.force[a] / len(idx)
-        f[fixed] = 0.0
+    for ci, case in enumerate(study.load_cases):
+        f = bc.loads[ci] + fg
+        load_nodes = bc.case_load_nodes[ci]
         u = solver.solve(k, f)
         vm = nodal_von_mises(stiff, u, mat.E)
         # Exclude nodes within the contact band of an applied load or support.

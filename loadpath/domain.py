@@ -50,6 +50,10 @@ class Domain:
     load_nodes: np.ndarray        # bool per node (any case)
     mirror: dict = field(default_factory=dict)   # axis -> element index of the mirror cell (-1 none)
     warnings: list = field(default_factory=list)
+    # Pin supports as penalty springs at unit modulus (scale by E), or None.
+    springs: object = None
+    # Self-weight: N per mm^3 of solid, or None (see BoundaryConditions).
+    gravity: np.ndarray | None = None
 
     @property
     def n_elem(self):
@@ -109,6 +113,128 @@ def _region_nodes(study: Study, mesh: HexMesh, region: str | None, shape: Shape 
     return nodes
 
 
+# Pin springs, relative to a cell's own stiffness: stiff enough to hold the
+# pin to well under a percent of the part's deflection, soft enough not to
+# wreck the solver's conditioning.
+_PIN_STIFFNESS = 100.0
+
+
+@dataclass
+class BoundaryConditions:
+    fixed: np.ndarray
+    springs: object                # scipy CSR at unit modulus, or None
+    support_nodes: np.ndarray
+    loads: list                    # per case, force per dof (N)
+    case_load_nodes: list          # per case, bool per node
+    load_nodes: np.ndarray
+    gravity: np.ndarray | None     # N per mm^3 of solid material
+
+
+def _cylinder_of(study: Study, region, shape, label):
+    sh = shape if shape is not None else study.region_shape(region)[0]
+    if not hasattr(sh, "axis"):
+        raise ValueError(f"{label} needs a cylinder region (a bore keep-out or a cylinder) for its axis")
+    return sh.p0, sh.axis
+
+
+def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True) -> BoundaryConditions:
+    """Supports, pins and loads on a mesh's nodes. Shared by the optimizer
+    and the verification, so both analyze exactly the same problem."""
+    xyz = mesh.node_xyz
+    support_nodes = np.zeros(mesh.n_nodes, bool)
+    fixed = np.zeros(mesh.n_dof, bool)
+    spring_blocks = []
+    for i, s in enumerate(study.supports):
+        label = f"supports[{i}]"
+        nodes = _region_nodes(study, mesh, s.region, s.shape, label)
+        support_nodes |= nodes
+        idx = np.nonzero(nodes)[0]
+        for a in range(3):
+            if s.fix[a]:
+                fixed[3 * idx + a] = True
+        if s.pin:
+            p0, ax = _cylinder_of(study, s.region, s.shape, label)
+            d = xyz[idx] - p0
+            rad = d - (d @ ax)[:, None] * ax
+            rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
+            blocks = rad[:, :, None] * rad[:, None, :] + np.outer(ax, ax)[None]
+            spring_blocks.append((idx, blocks * _PIN_STIFFNESS * mesh.pitch))
+    springs = None
+    if spring_blocks:
+        import scipy.sparse as sp
+        rows, cols, vals = [], [], []
+        for idx, blocks in spring_blocks:
+            for i in range(3):
+                for j in range(3):
+                    rows.append(3 * idx + i)
+                    cols.append(3 * idx + j)
+                    vals.append(blocks[:, i, j])
+        rows, cols, vals = (np.concatenate(v) for v in (rows, cols, vals))
+        keep = ~(fixed[rows] | fixed[cols])
+        springs = sp.csr_matrix((vals[keep], (rows[keep], cols[keep])), shape=(mesh.n_dof, mesh.n_dof))
+
+    load_nodes = np.zeros(mesh.n_nodes, bool)
+    loads, case_nodes = [], []
+    for ci, case in enumerate(study.load_cases):
+        f = np.zeros(mesh.n_dof)
+        cn = np.zeros(mesh.n_nodes, bool)
+        for li, ld in enumerate(case.loads):
+            label = f"loadCases[{ci}].loads[{li}]"
+            nodes = _region_nodes(study, mesh, ld.region, ld.shape, label)
+            idx = np.nonzero(nodes)[0]
+            cn[idx] = True
+            pts = xyz[idx]
+            force = ld.force
+            if ld.distribution == "bearing":
+                # A shaft pushes on the half of the bore that faces the force,
+                # most at the centre of that half: a cosine over it.
+                p0, ax = _cylinder_of(study, ld.region, ld.shape, label)
+                axial = (force @ ax) * ax
+                radial = force - axial
+                if np.any(radial):
+                    d = pts - p0
+                    rad = d - (d @ ax)[:, None] * ax
+                    rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
+                    w = np.maximum(rad @ (radial / np.linalg.norm(radial)), 0.0)
+                    if w.sum() <= 0:
+                        raise ValueError(f"{label}: no material on the loaded side of the bore")
+                    f.reshape(-1, 3)[idx] += (w / w.sum())[:, None] * radial[None]
+                force = axial
+            if np.any(force):
+                f.reshape(-1, 3)[idx] += force / len(idx)
+            if np.any(ld.moment):
+                # Forces that carry the moment and nothing else: the rigid
+                # rotation field w x r, with w from the nodes' polar inertia.
+                r = pts - pts.mean(axis=0)
+                inertia = (r * r).sum() * np.eye(3) - r.T @ r
+                omega = np.linalg.lstsq(inertia, ld.moment, rcond=None)[0]
+                f.reshape(-1, 3)[idx] += np.cross(omega, r)
+        f[fixed] = 0.0
+        if check_loads and not np.any(f) and study.gravity is None:
+            raise ValueError(f"load case {case.name!r} acts only on fixed nodes; "
+                             "a load applied where the part is held does nothing")
+        loads.append(f)
+        case_nodes.append(cn)
+        load_nodes |= cn
+
+    gravity = None
+    if study.gravity is not None:
+        # g/cm^3 -> kg/mm^3 is 1e-6; times m/s^2 gives N per mm^3.
+        gravity = study.material.density * 1e-6 * study.gravity
+    return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity)
+
+
+def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed: np.ndarray) -> np.ndarray:
+    """Nodal self-weight for per-element solid fraction `density`."""
+    per_node = (np.asarray(density, float) * mesh.pitch ** 3 / 8.0)[:, None] * gravity[None, :]
+    f = np.zeros(mesh.n_dof)
+    for a in range(3):
+        f += np.bincount(mesh.edof[:, a::3].ravel(), weights=np.repeat(per_node[:, a], 8),
+                         minlength=mesh.n_dof)
+    f[fixed] = 0.0
+    return f
+
+
 def build_domain(study: Study, pitch: float | None = None) -> Domain:
     pitch = float(pitch) if pitch else choose_pitch(study)
     lo, hi = study.bounds()
@@ -161,32 +287,11 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
         mesh = HexMesh(ijk[active], pitch, origin)
 
     pres_el = preserve[active]
-    support_nodes = np.zeros(mesh.n_nodes, bool)
-    fixed = np.zeros(mesh.n_dof, bool)
-    for i, s in enumerate(study.supports):
-        nodes = _region_nodes(study, mesh, s.region, s.shape, f"supports[{i}]")
-        support_nodes |= nodes
-        for a in range(3):
-            if s.fix[a]:
-                fixed[3 * np.nonzero(nodes)[0] + a] = True
-
-    load_nodes = np.zeros(mesh.n_nodes, bool)
-    loads, names, weights = [], [], []
-    for ci, case in enumerate(study.load_cases):
-        f = np.zeros(mesh.n_dof)
-        for li, ld in enumerate(case.loads):
-            nodes = _region_nodes(study, mesh, ld.region, ld.shape, f"loadCases[{ci}].loads[{li}]")
-            idx = np.nonzero(nodes)[0]
-            load_nodes[idx] = True
-            for a in range(3):
-                f[3 * idx + a] += ld.force[a] / len(idx)
-        f[fixed] = 0.0
-        if not np.any(f):
-            raise ValueError(f"load case {case.name!r} acts only on fixed nodes; "
-                             "a load applied where the part is held does nothing")
-        loads.append(f)
-        names.append(case.name)
-        weights.append(case.weight)
+    bc = boundary_conditions(study, mesh)
+    support_nodes, fixed, load_nodes = bc.support_nodes, bc.fixed, bc.load_nodes
+    loads = bc.loads
+    names = [c.name for c in study.load_cases]
+    weights = [c.weight for c in study.load_cases]
 
     # A load or support needs material to act through: cells touching their
     # nodes are pinned solid, as if preserved. Without this, a support on the
@@ -211,4 +316,5 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
 
     return Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
-                  support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings)
+                  support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
+                  springs=bc.springs, gravity=bc.gravity)

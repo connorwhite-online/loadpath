@@ -60,6 +60,11 @@ class Load:
     region: str | None
     shape: Shape | None
     force: np.ndarray  # N, total over the region
+    # N·mm about the region's centroid (a motor's torque on a hub).
+    moment: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    # "uniform", or "bearing": a shaft pushing on one side of a bore, with
+    # the force spread as a cosine over the half facing it.
+    distribution: str = "uniform"
 
 
 @dataclass
@@ -74,6 +79,9 @@ class Support:
     region: str | None
     shape: Shape | None
     fix: tuple[bool, bool, bool] = (True, True, True)
+    # A pin through a bore: held radially and axially, free to rotate about
+    # the bore's axis (a bolt or a shaft in a plain hole).
+    pin: bool = False
 
 
 @dataclass
@@ -105,6 +113,8 @@ class Study:
     pitch: float | None
     max_elements: int
     max_iterations: int = 120
+    # m/s², applied to the part's own mass in every load case.
+    gravity: np.ndarray | None = None
     # Build direction for overhang control, as (axis, sign); see am.py.
     print_direction: tuple[int, int] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
@@ -169,13 +179,18 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     for i, s in enumerate(d.get("supports") or []):
         region, shape = _target(s, f"supports[{i}]", base_dir)
         fix = s.get("fix", "all")
-        if fix == "all":
+        pin = fix == "pin"
+        if pin:
+            if region is None and not hasattr(shape, "axis"):
+                raise ValueError(f"supports[{i}]: a pin needs a cylinder (a bore keep-out or a cylinder shape)")
+            fix_t = (False, False, False)
+        elif fix == "all":
             fix_t = (True, True, True)
         else:
             fix_t = tuple(a in fix for a in "xyz") if isinstance(fix, str) else tuple(bool(v) for v in fix)
             if len(fix_t) != 3 or not any(fix_t):
-                raise ValueError(f"supports[{i}].fix must be 'all', axes like 'xz', or 3 booleans")
-        supports.append(Support(region, shape, fix_t))
+                raise ValueError(f"supports[{i}].fix must be 'all', 'pin', axes like 'xz', or 3 booleans")
+        supports.append(Support(region, shape, fix_t, pin))
     if not supports:
         raise ValueError("at least one support is required (where the part is held)")
 
@@ -187,15 +202,29 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         loads = []
         for li, ld in enumerate(c.get("loads") or []):
             region, shape = _target(ld, f"loadCases[{ci}].loads[{li}]", base_dir)
-            f = np.asarray(ld.get("force"), float).reshape(-1)
-            if f.shape != (3,) or not np.all(np.isfinite(f)) or not np.any(f):
-                raise ValueError(f"loadCases[{ci}].loads[{li}].force must be a nonzero [fx, fy, fz] in N")
-            loads.append(Load(region, shape, f))
+            label = f"loadCases[{ci}].loads[{li}]"
+            f = np.asarray(ld.get("force", [0, 0, 0]), float).reshape(-1)
+            m = np.asarray(ld.get("moment", ld.get("torque", [0, 0, 0])), float).reshape(-1)
+            if f.shape != (3,) or m.shape != (3,) or not np.all(np.isfinite(f)) or not np.all(np.isfinite(m)):
+                raise ValueError(f"{label}: force [fx, fy, fz] (N) and moment [mx, my, mz] (N·mm) must be 3 numbers")
+            if not np.any(f) and not np.any(m):
+                raise ValueError(f"{label} needs a nonzero force (N) or moment (N·mm)")
+            dist = str(ld.get("distribution", "uniform"))
+            if dist not in ("uniform", "bearing"):
+                raise ValueError(f"{label}.distribution must be 'uniform' or 'bearing'")
+            if dist == "bearing" and not np.any(f):
+                raise ValueError(f"{label}: a bearing load needs a force")
+            loads.append(Load(region, shape, f, m, dist))
         if not loads:
             raise ValueError(f"loadCases[{ci}] has no loads")
         cases.append(LoadCase(str(c.get("name") or f"case-{ci}"), loads, float(c.get("weight", 1.0))))
     if not cases:
         raise ValueError("at least one load case is required (loadCases: [{name, loads}])")
+    gravity = d.get("gravity")
+    if gravity is not None:
+        gravity = np.asarray(gravity, float).reshape(-1)
+        if gravity.shape != (3,) or not np.all(np.isfinite(gravity)):
+            raise ValueError("gravity must be an acceleration vector in m/s², e.g. [0, 0, -9.81]")
 
     g = d.get("goal") or {"volumeFraction": 0.3}
     goal = Goal(
@@ -243,6 +272,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         pitch=float(pitch) if pitch is not None else None,
         max_elements=max_el,
         max_iterations=int(d.get("maxIterations", 120)),
+        gravity=gravity,
         print_direction=parse_build_direction(d.get("printDirection")),
         raw=d,
     )

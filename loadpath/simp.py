@@ -83,10 +83,12 @@ class _Analysis:
         keep_l = np.unique(el[alive & self.support_touch])
         return alive & np.isin(el, keep_l[keep_l > 0])
 
-    def solve(self, e, xp, us, rtol=None):
+    def solve(self, e, xp, us, rtol=None, loads=None):
         """Solve every load case for moduli e. Returns per-case displacement on
-        the full node set."""
+        the full node set. `loads` overrides the domain's (self-weight makes
+        them depend on the design)."""
         d = self.domain
+        loads = loads if loads is not None else d.loads
         mesh = d.mesh
         rtol = rtol or self.rtol
         alive = (xp > ALIVE) | self.anchor
@@ -98,10 +100,14 @@ class _Analysis:
             in_sub = np.zeros(mesh.n_dof, bool)
             in_sub[fd] = True
             if all(not np.any(f[~in_sub]) for f in d.loads):
+                # (Self-weight on cells left out is negligible: they are below
+                # ALIVE density, so it is dropped with them.)
                 stiff = Stiffness(sub, self.nu, d.fixed[fd])
                 solver = Solver(sub, rtol=rtol)
                 k = stiff.assemble(e[keep])
-                subs = solver.solve_many(k, [f[fd] for f in d.loads],
+                if d.springs is not None:
+                    k = (k + d.springs[fd][:, fd]).tocsr()
+                subs = solver.solve_many(k, [f[fd] for f in loads],
                                          [u[fd] if u is not None else None for u in us])
                 out = []
                 for us_sub in subs:
@@ -113,7 +119,9 @@ class _Analysis:
         stiff, solver = self._full_system()
         solver.rtol = rtol
         k = stiff.assemble(e)
-        out = solver.solve_many(k, list(d.loads), list(us))
+        if d.springs is not None:
+            k = (k + d.springs).tocsr()
+        out = solver.solve_many(k, list(loads), list(us))
         self.last_iters, self.last_cells = solver.last_iters, mesh.n_elem
         return out
 
@@ -314,16 +322,25 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         xt, xp = physical(x, beta, am_b)
         xe = eroded(xt, beta)
         e = E_MIN + xe ** PENALTY * (1 - E_MIN)
-        us = fe.solve(e, xe, us)
+        loads = domain.loads
+        if domain.gravity is not None:
+            from .domain import gravity_force
+            fg = gravity_force(mesh, xe, domain.gravity, domain.fixed)
+            loads = [f + fg for f in domain.loads]
+        us = fe.solve(e, xe, us, loads=loads)
         dc_xp = np.zeros(n)
         comp = 0.0
         case_c = []
-        for ci, f in enumerate(domain.loads):
+        for ci, f in enumerate(loads):
             ce = fe.strain_energy(us[ci])
             cc = float(f @ us[ci])
             case_c.append(cc)
             comp += weights[ci] * cc
             dc_xp -= weights[ci] * PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN) * ce
+            if domain.gravity is not None:
+                # d(f.u)/dx with design-dependent weight: + 2 u . df/dx.
+                ue = us[ci].reshape(-1, 3)[mesh.enode].sum(axis=1)
+                dc_xp += weights[ci] * 2.0 * (ue @ domain.gravity) * mesh.pitch ** 3 / 8.0
         if c0 is None:
             c0 = comp
         dproj_e = _dproject(xt, beta, eta_e)
@@ -396,9 +413,14 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         xp = printed(am_v, xp)
     # Final analysis on the delivered field (it moved since the last solve).
     e = E_MIN + xp ** PENALTY * (1 - E_MIN)
-    us = fe.solve(e, xp, us, rtol=1e-6)
+    loads = domain.loads
+    if domain.gravity is not None:
+        from .domain import gravity_force
+        fg = gravity_force(mesh, xp, domain.gravity, domain.fixed)
+        loads = [f + fg for f in domain.loads]
+    us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
     case_c, comp = [], 0.0
-    for ci, f in enumerate(domain.loads):
+    for ci, f in enumerate(loads):
         cc = float(f @ us[ci])
         case_c.append(cc)
         comp += weights[ci] * cc

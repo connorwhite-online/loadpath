@@ -307,6 +307,55 @@ def test_local_mcp_job_functions():
         raise AssertionError("job ids must not be paths")
 
 
+def test_boundary_condition_types():
+    from loadpath.domain import boundary_conditions
+    from loadpath.fem import HexMesh
+    s = study_from_dict({
+        **LUG,
+        "supports": [{"region": "pin", "fix": "pin"},
+                     {"shape": {"type": "box", "min": [-1, -16, -5], "max": [0.01, 16, 5]}}],
+        "loadCases": [
+            {"name": "torque", "loads": [{"region": "eye", "moment": [0, 0, 5000]}]},
+            {"name": "bearing", "loads": [{"region": "pin", "force": [0, -300, 0], "distribution": "bearing"}]},
+        ],
+    })
+    d = build_domain(s)
+    bc = boundary_conditions(s, d.mesh, check_loads=False)
+    xyz = d.mesh.node_xyz
+    # Pure moment: no net force, exactly the requested moment about the centroid.
+    f = bc.loads[0].reshape(-1, 3)
+    on = np.abs(f).sum(axis=1) > 0
+    c = xyz[on].mean(axis=0)
+    assert np.allclose(f.sum(axis=0), 0, atol=1e-6)
+    assert np.allclose(np.cross(xyz[on] - c, f[on]).sum(axis=0), [0, 0, 5000], rtol=1e-6, atol=1e-6)
+    # Bearing: sums to the force and only pushes the half of the bore it faces.
+    fb = bc.loads[1].reshape(-1, 3)
+    onb = np.abs(fb).sum(axis=1) > 0
+    assert np.allclose(fb.sum(axis=0), [0, -300, 0], atol=1e-6)
+    assert np.all(xyz[onb][:, 1] <= 1e-6)
+    # Pin: springs resist radial and axial motion, not rotation about the axis.
+    rows = bc.springs.tocoo()
+    n0 = rows.row[0] // 3
+    blk = bc.springs[3 * n0:3 * n0 + 3, 3 * n0:3 * n0 + 3].toarray()
+    rad = xyz[n0] - np.array([48, 0, xyz[n0][2]])
+    tang = np.cross([0, 0, 1], rad / np.linalg.norm(rad))
+    assert abs(tang @ blk @ tang) < 1e-9 * np.abs(blk).max()
+    assert blk[2, 2] > 0
+
+
+def test_gravity_matches_beam_theory():
+    # Self-weight only on a clamped bar: w L^4 / (8 E I), with w = rho g A.
+    s = study_from_dict({**BEAM, "gravity": [0, 0, -9.81], "loadCases": [{"name": "tip", "loads": [
+        {"shape": {"type": "box", "min": [99.99, -1, -1], "max": [101, 11, 11]}, "force": [0, 0, -1e-9]}]}],
+        "material": {"E": 2000, "nu": 0.3, "strength": 50, "density": 7.85}})
+    bar = trimesh.creation.box(extents=[100, 10, 10])
+    bar.apply_translation([50, 5, 5])
+    rep = verify_part(s, bar, max_cells=40_000, refine=0)
+    w = 7.85e-6 * 9.81 * 100          # N/mm
+    analytic = w * 100 ** 4 / (8 * 2000 * 10 * 10 ** 3 / 12)
+    assert abs(rep["cases"][0]["deflection"] - analytic) / analytic < 0.05, (rep["cases"][0]["deflection"], analytic)
+
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -321,6 +370,8 @@ TESTS = [
     test_run_study_end_to_end,
     test_topopt_endpoints_round_trip,
     test_local_mcp_job_functions,
+    test_boundary_condition_types,
+    test_gravity_matches_beam_theory,
 ]
 
 
