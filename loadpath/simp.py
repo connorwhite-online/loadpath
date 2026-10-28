@@ -140,6 +140,13 @@ class SimpOptions:
     stall_rtol: float = 2e-3
     stall_window: int = 6
     eta: float = 0.5
+    # Stiffness is credited to the ERODED design (projected at eta + this),
+    # while volume is counted on the blueprint (eta) we deliver. A member
+    # that vanishes under erosion earns nothing, so the optimizer stops
+    # building sub-minimum sheets: the eroded-design half of the robust
+    # formulation (Wang, Lazarov & Sigmund 2011), at no extra solve per
+    # iteration. Round 2 of the evals still grew 0.8mm skins without it.
+    erode: float = 0.15
     x0: np.ndarray | None = None      # warm start (design densities)
     # A warm start is already a design; restarting projection at beta 1
     # would blur it back to grey before sharpening it again.
@@ -262,12 +269,20 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         xp[pres] = 1.0
         return xt, xp
 
+    eta_e = opts.eta + opts.erode
+
+    def eroded(xt, b):
+        xe = _project(xt, b, eta_e)
+        xe[pres] = 1.0
+        return xe
+
     for it in range(1, opts.max_iterations + 1):
         if should_stop is not None and should_stop():
             break
         xt, xp = physical(x, beta)
-        e = E_MIN + xp ** PENALTY * (1 - E_MIN)
-        us = fe.solve(e, xp, us)
+        xe = eroded(xt, beta)
+        e = E_MIN + xe ** PENALTY * (1 - E_MIN)
+        us = fe.solve(e, xe, us)
         dc_xp = np.zeros(n)
         comp = 0.0
         case_c = []
@@ -276,12 +291,14 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
             cc = float(f @ us[ci])
             case_c.append(cc)
             comp += weights[ci] * cc
-            dc_xp -= weights[ci] * PENALTY * xp ** (PENALTY - 1) * (1 - E_MIN) * ce
+            dc_xp -= weights[ci] * PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN) * ce
         if c0 is None:
             c0 = comp
+        dproj_e = _dproject(xt, beta, eta_e)
+        dproj_e[pres] = 0.0
         dproj = _dproject(xt, beta, opts.eta)
         dproj[pres] = 0.0
-        dc = ht @ (dc_xp * dproj / hs)
+        dc = ht @ (dc_xp * dproj_e / hs)
         dv = ht @ (design * dproj / hs)
         dc = np.minimum(dc, 0.0)
         dv = np.maximum(dv, 1e-12)
@@ -335,6 +352,15 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
                     break
 
     xt, xp = physical(x, beta)
+    if opts.erode > 0:
+        # Deliver the OPENING of the blueprint: erode, then dilate back by the
+        # same amount with the same filter. Everything the optimizer was
+        # credited for survives at full size; a sheet thinner than the
+        # erosion (the membrane round 3 of the evals left inside the bell
+        # crank's frame) does not come back.
+        xe = eroded(xt, beta)
+        xp = _project((h @ xe) / hs, beta, opts.eta - opts.erode)
+        xp[pres] = 1.0
     # Final analysis on the delivered field (it moved since the last solve).
     e = E_MIN + xp ** PENALTY * (1 - E_MIN)
     us = fe.solve(e, xp, us, rtol=1e-6)

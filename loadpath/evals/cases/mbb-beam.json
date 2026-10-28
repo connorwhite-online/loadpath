@@ -42,6 +42,7 @@
   ],
   "material": "pa12",
   "goal": {
+    "safetyFactor": 1.5,
     "volumeFraction": 0.3
   },
   "symmetry": [
@@ -53,6 +54,7 @@
   },
   "expect": {
     "bodies": 1,
-    "minSafetyFactor": 1.5
+    "minSafetyFactor": 1.5,
+    "minMassReduction": 0.4
   }
 }

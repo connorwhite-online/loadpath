@@ -80,7 +80,10 @@ def _thickness(solid, pitch):
     cells that are local maxima of that distance."""
     edt = ndimage.distance_transform_edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1]
     ridge = solid & (edt >= ndimage.maximum_filter(edt, size=3)) & (edt > 0)
-    vals = (2.0 * edt[ridge] - 1.0) * pitch
+    # A ridge cell's distance to void is ceil(n/2) for a member n cells
+    # thick, so 2*edt over-reads odd and 2*edt-1 under-reads even
+    # thicknesses by a whole cell; 2*edt-0.5 is within half a cell of both.
+    vals = (2.0 * edt[ridge] - 0.5) * pitch
     if vals.size == 0:
         return None, None
     return float(vals.min()), float(np.percentile(vals, 5))
