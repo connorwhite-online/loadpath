@@ -76,6 +76,9 @@ class Outcome:
     reconstruction: dict
     passes: bool | None = None
     x: object = None
+    # the optimized density field this mesh was drawn from (per domain cell),
+    # so a part can be re-meshed without optimizing again
+    xphys: object = None
 
     def summary(self) -> dict:
         r = self.report
@@ -242,6 +245,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                "compliance": res.compliance, "caseCompliance": res.case_compliance,
                "achievedVolumeFraction": res.volume_fraction}
         o = Outcome(vf, mesh, report, opt, rinfo)
+        o.xphys = res.xphys
         m = _margin(study, report)
         if m is not None:
             report["margin"] = m

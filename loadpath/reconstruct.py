@@ -49,7 +49,7 @@ def _smooth_max(a, b, k):
 
 
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
-                flush=(), preserve=()):
+                flush=(), preserve=(), design=()):
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -107,6 +107,20 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         sd = np.min([sh.sdf(pts) for sh in preserve], axis=0).reshape(fine.shape)
         pf = np.clip(0.5 - sd / (2.0 * o.blend), 0.0, 1.0)
         fine = _smooth_max(fine, pf, o.blend_k)
+    if design:
+        # Round material off before the design space's boundary, the way a
+        # keep-out is faded below. Void padding alone left the 0.5 level
+        # right on the boundary where material ran up to it, so the exact
+        # intersection still sawed a flat face there (2,600 mm2 of them on
+        # GRIP's forearm). Not where the part must sit flush (`flush`).
+        idx = np.stack(np.meshgrid(*[np.arange(n) for n in fine.shape], indexing="ij"), -1).reshape(-1, 3)
+        pts = origin + idx * step
+        inside = -np.min([sh.sdf(pts) for sh in design], axis=0)
+        fade = np.clip(inside / domain.pitch, 0.0, 1.0)
+        if flush:
+            near = np.min([sh.sdf(pts) for sh in flush], axis=0) < 1.5 * domain.pitch
+            fade[near] = 1.0
+        fine = fine * fade.reshape(fine.shape)
     if keep_out:
         # Fade the field to zero at every keep-out surface. Smoothing and
         # upsampling otherwise carry material across a keep-out (a cable
@@ -144,7 +158,7 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         except ValueError:
             pass
     iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
-                      flush=flush, preserve=[r.shape for r in study.preserve])
+                      flush=flush, preserve=[r.shape for r in study.preserve], design=list(study.design_space))
     info = {"isoTriangles": int(len(iso.faces))}
     if o.taubin_iterations:
         import trimesh
