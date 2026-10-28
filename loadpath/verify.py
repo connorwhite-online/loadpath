@@ -220,14 +220,17 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
 
 
 def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
-                contact_band: float | None = None, refine: int = 3) -> dict:
+                contact_band: float | None = None, refine: int = 3, fields: bool = False) -> dict:
     """Analyze a finished part (trimesh) against the study. Returns a JSON-able
     report. `contact_band` (mm) is how far from applied loads and supports
     stress is left out of the peak; it defaults to 1.5 analysis cells, and the
     study runner sets it to the optimization cell size so the excluded band
     does not shrink toward zero as the analysis grid gets finer (a clamped
     edge's stress grows without bound under refinement). `refine` is how many
-    hotspots per load case get a 3x finer submodel (see _submodel_peak)."""
+    hotspots per load case get a 3x finer submodel (see _submodel_peak).
+    `fields` adds report["fields"]: the analysis nodes and, per load case,
+    nodal von Mises stress and displacement (numpy arrays, not JSON) for
+    stress maps (render.render_stress)."""
     from .shapes import manifold_from_trimesh
 
     t0 = time.time()
@@ -314,6 +317,9 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
                 if r[0] > peak:
                     peak, at = r
         disp = u.reshape(-1, 3)
+        if fields:
+            report.setdefault("fields", {"nodes": hm.node_xyz, "cases": []})["cases"].append(
+                {"name": case.name, "vonMises": vm, "displacement": disp})
         defl = float(np.linalg.norm(disp[load_nodes].mean(axis=0)))
         # The safety factor carries a discretization allowance: on the
         # plate-with-hole benchmark (tests) refined voxel peaks land within
