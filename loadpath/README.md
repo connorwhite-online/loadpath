@@ -43,6 +43,20 @@ python -m loadpath run study.json --out out  # optimize, mesh, verify, render
 `out/` gets one STL and one render per outcome, and `report.json` with the
 numbers. Progress streams to stderr as one JSON object per line.
 
+### For agents (MCP)
+
+`pip install "loadpath[mcp]"`, then add a local server to any MCP client
+(Claude Code, Cursor, Claude Desktop):
+
+```json
+{"mcpServers": {"loadpath": {"command": "loadpath", "args": ["mcp"]}}}
+```
+
+Tools: `loadpath_guide` (the study format), `loadpath_check`,
+`loadpath_start`, `loadpath_status` (outcomes, STL paths and a render),
+`loadpath_cancel`. Everything runs on the agent's own machine; jobs live in
+`~/.loadpath/jobs` (`LOADPATH_HOME`).
+
 From Python:
 
 ```python

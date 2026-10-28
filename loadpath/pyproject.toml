@@ -27,6 +27,7 @@ classifiers = [
 
 [project.optional-dependencies]
 render = ["matplotlib>=3.8"]
+mcp = ["mcp>=2.0", "matplotlib>=3.8"]
 
 [project.scripts]
 loadpath = "loadpath.__main__:main"

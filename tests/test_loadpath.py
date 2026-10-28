@@ -280,6 +280,33 @@ def test_topopt_endpoints_round_trip():
     assert client.get("/topopt/" + "0" * 32).status_code == 404
 
 
+def test_local_mcp_job_functions():
+    # The tool bodies of `loadpath mcp`, without the MCP SDK: validate, run
+    # a job in a child process, read back outcomes with STL paths.
+    import os
+    import tempfile
+    os.environ["LOADPATH_HOME"] = tempfile.mkdtemp(prefix="loadpath-home-")
+    from loadpath import mcp_server
+    bad = mcp_server.check({**LUG, "supports": []})
+    assert not bad["ok"] and "support" in bad["error"]
+    job = mcp_server.start({**LUG, "maxIterations": 20})
+    assert job["ok"], job
+    deadline = time.time() + 300
+    while True:
+        info, png = mcp_server.status(job["jobId"])
+        if info["status"] != "running" or time.time() > deadline:
+            break
+        time.sleep(1.0)
+    assert info["status"] == "done", info
+    assert os.path.exists(info["outcomes"][0]["stl"]) and png and png[:4] == b"\x89PNG"
+    try:
+        mcp_server.status("../etc")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("job ids must not be paths")
+
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -293,6 +320,7 @@ TESTS = [
     test_unreachable_load_is_refused_helpfully,
     test_run_study_end_to_end,
     test_topopt_endpoints_round_trip,
+    test_local_mcp_job_functions,
 ]
 
 

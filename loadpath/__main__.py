@@ -3,6 +3,7 @@ Command line: run a study file and write the parts, a report and renders.
 
     python -m loadpath run study.json --out out/
     python -m loadpath check study.json        # validate + show the voxel problem, no solve
+    python -m loadpath mcp                     # local MCP server for agents (needs loadpath[mcp])
 
 Progress goes to stderr as one JSON object per line, so an agent can tail it.
 """
@@ -40,13 +41,19 @@ def main(argv=None):
     r.add_argument("study")
     r.add_argument("--out", default="loadpath-out")
     r.add_argument("--no-render", action="store_true")
+    r.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
     c = sub.add_parser("check", help="validate a study and report the voxel problem")
     c.add_argument("study")
+    sub.add_parser("mcp", help="run a local MCP server (stdio) for agents")
     args = p.parse_args(argv)
+    if args.cmd == "mcp":
+        from .mcp_server import serve
+        serve()
+        return 0
 
     with open(args.study) as fh:
         raw = json.load(fh)
-    base = os.path.dirname(os.path.abspath(args.study))
+    base = getattr(args, "base_dir", None) or os.path.dirname(os.path.abspath(args.study))
     try:
         study = study_from_dict(raw, base_dir=base)
     except ValueError as exc:

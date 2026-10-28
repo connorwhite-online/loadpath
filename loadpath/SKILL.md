@@ -10,6 +10,10 @@ organic geometry yourself. Your job is to get the **problem** right:
 what must be kept, what must stay empty, where the part is held, and what
 pushes on it. Everything is millimetres, newtons, MPa.
 
+With the MCP server (`loadpath mcp`, see README.md) the same workflow is the
+tools `loadpath_check`, `loadpath_start` and `loadpath_status`; without it,
+use the CLI below.
+
 ## Workflow
 
 1. **Model the interfaces exactly** (in build123d, CadQuery, or by hand):

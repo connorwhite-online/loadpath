@@ -170,12 +170,18 @@ class SimpResult:
 
 
 def filter_radius(domain: Domain, min_member: float | None) -> float:
-    """Filter radius in mm. With a projected cone filter the thinnest member
-    that survives is about the filter radius, so minMember maps to R
-    directly; never below 1.5 cells or the checkerboard comes back."""
+    """Filter radius in mm, never below 1.5 cells (or the checkerboard comes
+    back).
+
+    With minMember t, the radius is chosen so a sheet thinner than t does not
+    survive erosion: for this cone filter a slab of thickness 0.72 R reaches
+    a filtered density of 0.65 (the eroded threshold, eta + erode), so
+    R = 1.3 t puts the cut at 0.94 t. The earlier R = t/2 + pitch/2 let
+    2-cell sheets through and they meshed thinner still (eval round 4:
+    a 0.9mm web in the bell crank against a 2.5mm minimum)."""
     r = 1.5 * domain.pitch
     if min_member:
-        r = max(r, 0.5 * float(min_member) + 0.5 * domain.pitch)
+        r = max(r, 1.3 * float(min_member))
     return r
 
 
