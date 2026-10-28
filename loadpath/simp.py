@@ -64,6 +64,7 @@ class _Analysis:
         self.support_touch = domain.support_nodes[mesh.enode].any(axis=1)
         self.anchor = self.support_touch | domain.load_nodes[mesh.enode].any(axis=1) | domain.preserve
         self._full = None
+        self._sub = None
         self.last_iters = 0
         self.last_cells = mesh.n_elem
 
@@ -83,6 +84,40 @@ class _Analysis:
         keep_l = np.unique(el[alive & self.support_touch])
         return alive & np.isin(el, keep_l[keep_l > 0])
 
+    # Reuse one reduced system (its CSR layout and its multigrid hierarchy)
+    # while the live cells stay inside it, for at most REUSE iterations.
+    # Measured on the arm link: rebuilding is not the bottleneck (the CG
+    # iterations are), and dilating the live set so it can be reused more
+    # often made each iteration slower (bigger system), so DILATE is off.
+    REUSE = 6
+    DILATE = False
+
+    def _subsystem(self, alive, rtol):
+        d = self.domain
+        mesh = d.mesh
+        c = self._sub
+        if c is not None and c["age"] < self.REUSE and not np.any(alive & ~c["keep"]):
+            c["age"] += 1
+            return c["keep"], c["fd"], c["stiff"], c["solver"]
+        g = np.zeros(d.dims, bool)
+        ijk = tuple(mesh.elem_ijk.T)
+        g[ijk] = alive
+        grown = ndimage.binary_dilation(g, structure=_CONN26)[ijk] if self.DILATE else alive
+        keep = self._connected(grown)
+        sub = HexMesh(mesh.elem_ijk[keep], mesh.pitch, mesh.origin)
+        full_node = mesh.node_id(sub.node_ijk)
+        fd = (3 * full_node[:, None] + np.arange(3)).ravel()
+        in_sub = np.zeros(mesh.n_dof, bool)
+        in_sub[fd] = True
+        if any(np.any(f[~in_sub]) for f in d.loads):
+            self._sub = None
+            return None
+        # (Self-weight on cells left out is negligible: they are below ALIVE
+        # density, so it is dropped with them.)
+        self._sub = {"keep": keep, "fd": fd, "stiff": Stiffness(sub, self.nu, d.fixed[fd]),
+                     "solver": Solver(sub, rtol=rtol), "age": 0}
+        return keep, fd, self._sub["stiff"], self._sub["solver"]
+
     def solve(self, e, xp, us, rtol=None, loads=None):
         """Solve every load case for moduli e. Returns per-case displacement on
         the full node set. `loads` overrides the domain's (self-weight makes
@@ -93,17 +128,10 @@ class _Analysis:
         rtol = rtol or self.rtol
         alive = (xp > ALIVE) | self.anchor
         if alive.mean() < REDUCE_BELOW:
-            keep = self._connected(alive)
-            sub = HexMesh(mesh.elem_ijk[keep], mesh.pitch, mesh.origin)
-            full_node = mesh.node_id(sub.node_ijk)
-            fd = (3 * full_node[:, None] + np.arange(3)).ravel()
-            in_sub = np.zeros(mesh.n_dof, bool)
-            in_sub[fd] = True
-            if all(not np.any(f[~in_sub]) for f in d.loads):
-                # (Self-weight on cells left out is negligible: they are below
-                # ALIVE density, so it is dropped with them.)
-                stiff = Stiffness(sub, self.nu, d.fixed[fd])
-                solver = Solver(sub, rtol=rtol)
+            sub = self._subsystem(alive, rtol)
+            if sub is not None:
+                keep, fd, stiff, solver = sub
+                solver.rtol = rtol
                 k = stiff.assemble(e[keep])
                 if d.springs is not None:
                     k = (k + d.springs[fd][:, fd]).tocsr()

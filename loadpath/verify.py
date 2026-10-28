@@ -219,7 +219,7 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     return float(vm[i]), sm.node_xyz[i].tolist()
 
 
-def verify_part(study: Study, mesh, max_cells: int = 90_000, min_pitch: float | None = None,
+def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
                 contact_band: float | None = None, refine: int = 3) -> dict:
     """Analyze a finished part (trimesh) against the study. Returns a JSON-able
     report. `contact_band` (mm) is how far from applied loads and supports

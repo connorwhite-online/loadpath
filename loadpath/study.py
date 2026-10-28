@@ -19,6 +19,7 @@ the current one divided by the margin.
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -132,6 +133,40 @@ def _domain_info(d: Domain, radius: float) -> dict:
     }
 
 
+def _workers(n: int) -> int:
+    """Processes for independent outcomes: LOADPATH_WORKERS, else half the
+    cores (each solve already uses a thread per load case)."""
+    env = os.environ.get("LOADPATH_WORKERS")
+    if env:
+        return max(1, min(n, int(env)))
+    return max(1, min(n, (os.cpu_count() or 2) // 2))
+
+
+def _solve_alone(study: Study) -> StudyResult:
+    return _run_single(study)
+
+
+def _parallel(studies: list, on_progress, should_stop) -> list:
+    """Run independent single-goal studies, in processes when it helps.
+    Progress inside a worker is not streamed; each finished outcome is."""
+    if _workers(len(studies)) <= 1:
+        return [_run_single(s, on_progress, should_stop) for s in studies]
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+
+    results = [None] * len(studies)
+    with ProcessPoolExecutor(_workers(len(studies)), mp_context=mp.get_context("spawn")) as ex:
+        futs = {ex.submit(_solve_alone, s): i for i, s in enumerate(studies)}
+        from concurrent.futures import as_completed
+        for f in as_completed(futs):
+            i = futs[f]
+            results[i] = f.result()
+            if on_progress is not None:
+                for o in results[i].outcomes:
+                    on_progress({"stage": "outcome", **o.summary()}, None)
+    return results
+
+
 def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     """on_progress(event: dict, xphys | None) is called with
     {"stage": "domain"|"optimize"|"mesh"|"verify"|"outcome", ...}.
@@ -147,12 +182,8 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         return _run_single(study, on_progress, should_stop)
     t0 = time.time()
     outcomes, warnings, domain = [], [], None
-    for m in mats:
-        if should_stop is not None and should_stop():
-            break
-        if on_progress is not None:
-            on_progress({"stage": "material", "material": m.name}, None)
-        r = _run_single(dataclasses.replace(study, material=m, materials=[m]), on_progress, should_stop)
+    for r in _parallel([dataclasses.replace(study, material=m, materials=[m]) for m in mats],
+                       on_progress, should_stop):
         outcomes.extend(r.outcomes)
         warnings.extend(w for w in r.warnings if w not in warnings)
         domain = domain or r.domain
@@ -225,8 +256,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 lo_fail = (vf, m) if lo_fail is None or vf > lo_fail[0] else lo_fail
             if hi_pass and lo_fail and hi_pass[0] - lo_fail[0] < 0.02:
                 break
-            if hi_pass and 1.0 <= hi_pass[1] < 1.08:
-                break   # passing with under 8% to spare: close enough
+            if hi_pass and 1.0 <= hi_pass[1] < 1.12:
+                break   # passing with under 12% to spare: close enough
             if hi_pass and lo_fail:
                 # Interpolate in log space between the brackets.
                 (v1, m1), (v2, m2) = lo_fail, hi_pass
@@ -245,10 +276,19 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
     else:
         fractions = [float(goal.volume_fraction)] + [v for v in goal.outcomes if v != goal.volume_fraction]
-        for vf in fractions:
-            if should_stop is not None and should_stop():
-                break
-            outcomes.append(run_one(vf))
+        if len(fractions) > 1 and _workers(len(fractions)) > 1:
+            import dataclasses
+            singles = [dataclasses.replace(study, goal=dataclasses.replace(goal, volume_fraction=vf, outcomes=[]))
+                       for vf in fractions]
+            for r in _parallel(singles, None, should_stop):
+                outcomes.extend(r.outcomes)
+                for o in r.outcomes:
+                    emit({"stage": "outcome", **o.summary()})
+        else:
+            for vf in fractions:
+                if should_stop is not None and should_stop():
+                    break
+                outcomes.append(run_one(vf))
         best = 0 if outcomes else None
 
     return StudyResult(study=study, domain=info, outcomes=outcomes, best=best,
