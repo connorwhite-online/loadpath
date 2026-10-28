@@ -18,9 +18,9 @@ output spring is what makes the result carry a grip force.
 
 The sensitivity needs one adjoint solve, K lambda = l, and is
 lambda_e . k_e u_e scaled by the SIMP derivative: unlike compliance, it can
-take either sign, so the update is the damped optimality criteria of
-Sigmund's 104-line mechanism code (sensitivities clipped positive,
-exponent 0.3).
+take either sign. Sigmund's 104-line code uses damped optimality criteria
+with the sensitivities clipped positive; here it is MMA (mma.py), which
+takes the gradient whole.
 
 The density filter, Heaviside projection, extrusion (2.5D) and
 reconstruction are the same as for stiffness designs, so the result comes
@@ -56,7 +56,6 @@ class MechanismOptions:
     beta_max: float = 16.0
     beta_every: int = 20
     move: float = 0.1
-    damping: float = 0.3
     extrusion: int | None = None
     tol: float = 0.005
 
@@ -111,6 +110,9 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
     target = opts.volume_fraction * design.sum()
     beta, since = 1.0, 0
     u = lam = None
+    u0 = None
+    from .mma import MMA
+    mma = MMA(int(design.sum()), 1, xmin=0.0, xmax=1.0, move=opts.move)
     history = []
     it = 0
     for it in range(1, opts.max_iterations + 1):
@@ -128,20 +130,17 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
         g = g * _dproject(xt, beta, 0.5)
         g = _extrude(g, columns, design)
         g = ht @ (g / hs)
-        dv = ht @ (_dproject(xt, beta, 0.5) / hs)
-        # damped OC on a maximization: grow where g > 0
-        gp = np.maximum(g, 1e-30)
-        lo_l, hi_l = 1e-30, 1e30
-        while hi_l / lo_l > 1 + 1e-4:
-            mid = np.sqrt(lo_l * hi_l)
-            xn = np.clip(x * (gp / (mid * np.maximum(dv, 1e-30))) ** opts.damping,
-                         np.maximum(0.0, x - opts.move), np.minimum(1.0, x + opts.move))
-            xn[pres] = 1.0
-            vol = _project(_extrude((h @ xn) / hs, columns, design), beta, 0.5)[design].sum()
-            if vol > target:
-                lo_l = mid
-            else:
-                hi_l = mid
+        dv = ht @ (_extrude(_dproject(xt, beta, 0.5), columns, design) / hs)
+        # MMA on (-u_out, volume): the output sensitivity takes both signs,
+        # which optimality criteria can only handle by clipping (the first
+        # version did, and stalled on the fin-ray problem with half its
+        # gradient thrown away)
+        if u0 is None:
+            u0 = max(abs(uout), 1e-12)
+        vol = float(xp[design].sum())
+        xn = x.copy()
+        xn[design] = mma.update(x[design], -uout / u0 * 10.0, (-g / u0 * 10.0)[design],
+                                np.array([vol / target - 1.0]), np.array([(dv / target)[design]]))
         change = float(np.abs(xn - x).max())
         x = xn
         rec = {"iteration": it, "outputDisplacement": uout, "beta": beta, "change": change,
