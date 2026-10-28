@@ -16,7 +16,7 @@ interpenetrate everywhere):
 
 Verification: `check_networks(mesh, ports)` (networks.py) flood-fills the
 voids and proves the two circuits are isolated at voxel resolution. Scripts
-run by the sidecar can assign the returned ports to `fluid_ports` and the
+run by a CAD agent can assign the returned ports to `fluid_ports` and the
 check runs automatically on the produced mesh.
 
 Print notes: the off-fluid's channel stubs dead-end near each sealed face and
@@ -30,7 +30,7 @@ import numpy as np
 
 from itertools import permutations
 
-from sdf_kit import (
+from .sdf_kit import (
     box, capsule, dual_sheet, mask, seal_ramp, smin, subtract, union,
 )
 

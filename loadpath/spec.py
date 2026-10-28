@@ -45,7 +45,7 @@ __all__ = ["Region", "Load", "LoadCase", "Support", "Goal", "Study", "study_from
 
 DEFAULT_MAX_ELEMENTS = 60_000
 # Hard ceiling regardless of what a study asks for: memory and minutes both
-# grow faster than linearly past this on the sidecar's CPU budget.
+# grow faster than linearly past this on a modest CPU budget.
 MAX_ELEMENTS_CEILING = 400_000
 
 

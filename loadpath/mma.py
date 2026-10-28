@@ -1,7 +1,7 @@
 """
 The Method of Moving Asymptotes (Svanberg 1987; the 2007 formulation in
 "MMA and GCMMA — two methods for nonlinear optimization"), written for
-loadpath from the published method so it stays Apache-2.0.
+loadpath from the published method so it stays MIT.
 
 MMA is what lets an optimization carry real constraints (a stress limit, a
 deflection limit, several at once) instead of the single volume constraint

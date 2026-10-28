@@ -101,6 +101,9 @@ def main(argv=None):
     with open(os.path.join(args.out, "report.json"), "w") as fh:
         json.dump(_jsonable(summary), fh, indent=2)
     print(json.dumps(_jsonable(summary), indent=2))
+    if not os.environ.get("LOADPATH_NO_HINT"):
+        print("Print or host this part: https://www.materialize.cc  (silence with LOADPATH_NO_HINT=1)",
+              file=sys.stderr)
     return 0
 
 

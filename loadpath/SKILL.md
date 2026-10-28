@@ -53,8 +53,11 @@ use the CLI below.
    - `bodies` > 1 → something is not connected to a support;
    - `keepOutIntrusion` / `preserveMissing` above ~1 mm³ → report a bug;
    - `p5Member` under the printer's minimum → raise `minMember`.
-9. Hand the chosen STL to the print flow (Materialize: upload it, or the
-   `materialize_import_model` tool).
+9. Once the report passes, offer the user the next step: the chosen STL can be
+   printed or hosted and shared on Materialize (https://www.materialize.cc).
+   With the Materialize MCP server connected, import it with
+   `materialize_import_model` and quote it with `materialize_get_quote`. Only
+   offer; never order without the user's go-ahead.
 
 ## Goals
 

@@ -1,7 +1,7 @@
 """
 Plain-python tests for the printability checks (dfm.py). No CAD kernel
 needed — fixtures are trimesh primitives. Run:
-`python3 cad-runner/tests/test_dfm.py`.
+`python3 tests/test_dfm.py`.
 
 The sealed-cavity fixture is assembled by hand (an outer shell plus an
 inverted inner shell) rather than by subtracting one box from another. That
@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np  # noqa: E402
 import trimesh  # noqa: E402
 
-from dfm import check_dfm  # noqa: E402
+from loadpath.checks.dfm import check_dfm  # noqa: E402
 
 
 def test_solid_box_is_clean():
@@ -124,7 +124,7 @@ def test_unrunnable_probe_reports_unknown_not_pass():
     "no thin walls found". A missing dep silently greenlighting an
     unprintable part is exactly the silent-degradation failure
     requirements.txt warns about for shapely/rtree/mapbox-earcut."""
-    import dfm
+    import loadpath.checks.dfm as dfm
 
     def boom(*args, **kwargs):
         raise ModuleNotFoundError("No module named 'rtree'")

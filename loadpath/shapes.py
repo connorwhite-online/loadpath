@@ -318,7 +318,7 @@ def shape_from_spec(spec, base_dir=None) -> Shape:
         import os
         import trimesh
         if "stlBase64" in spec:
-            # Inline geometry: how a remote caller (the sidecar endpoint, an
+            # Inline geometry: how a remote caller (a remote endpoint, an
             # agent over HTTP) hands over a mesh without touching our disk.
             data = base64.b64decode(spec["stlBase64"], validate=True)
             mesh = trimesh.load(io.BytesIO(data), file_type="stl", force="mesh")

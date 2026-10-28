@@ -19,7 +19,7 @@ import os
 import numpy as np
 from scipy import ndimage
 
-from sdf_kit import _solid_voxels
+from .sdf_kit import _solid_voxels
 
 __all__ = ["check_networks"]
 

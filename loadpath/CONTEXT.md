@@ -1,11 +1,11 @@
 # loadpath: context for whoever picks this up
 
-State as of 2026-10-28. loadpath is an open-source (Apache-2.0), agent-native
+State as of 2026-10-28. loadpath is an open-source (MIT), agent-native
 generative design library: topology optimization for printed parts, driven by
 constraints, keep-outs and loads, with its own verification and an eval loop.
-It lives in Materialize's CAD sidecar today (`cad-runner/loadpath/`, branch
-`claude/project-thread-um8gfo`, PR connorwhite-online/materialize#467, Linear
-MTR-352) and is meant to move to its own repository.
+It began in Materialize's CAD sidecar (PR connorwhite-online/materialize#467,
+Linear MTR-352) and now lives in this repository; the sidecar keeps the private
+server glue.
 
 ## The goal
 
@@ -76,8 +76,8 @@ it becomes an eval metric.
 ## Next
 
 1. Validate the printed yoke against its predicted stiffness; feed the result back.
-2. Speed up tet meshing (the remaining cross-check time); try CalculiX in the sidecar image (`apt install calculix-ccx`).
+2. Speed up tet meshing (the remaining cross-check time); try CalculiX in a server image (`apt install calculix-ccx`).
 3. Stronger, cleaner blends between preserved and organic geometry; crease and fastener-clearance metrics in the evals.
 4. Field-driven lattices (TPMS) graded by stress; then conduction (thermal) as a second physics.
 5. Nonlinear: large deflection for compliant parts, buckling.
-6. Split into its own repository with GRIP as the reference project.
+6. Keep GRIP as the reference project (done: split into its own repository).

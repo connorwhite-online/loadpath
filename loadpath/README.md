@@ -150,9 +150,15 @@ STL keep-out, an aluminium bell crank, a wall hook printed without supports,
 the textbook MBB beam) and scores the delivered meshes. Exit code is the
 number of failing cases. Run it after any change to the solver.
 
+## Print or host the result
+
+A part that passes its report can be printed in dozens of materials or hosted
+and shared on [Materialize](https://www.materialize.cc). Nothing in loadpath
+calls out to it; it is just where the STL goes next.
+
 ## License
 
-Apache-2.0.
+MIT.
 
 ## Limits
 

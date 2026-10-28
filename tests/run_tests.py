@@ -1,7 +1,7 @@
 """
-Plain-python test runner for sdf_kit v2 + networks + fea (no pytest — the
-sidecar image stays lean). Run: `python3 cad-runner/tests/run_tests.py`.
-Covers the MTR-177 / MTR-179 contracts: TPMS thickness means real mm, the
+Plain-python test runner for sdf_kit v2 + networks + fea (no pytest, to keep
+the dependency set lean). Run: `python3 tests/run_tests.py`.
+Covers the contracts: TPMS thickness means real mm, the
 dual-network verifier catches both isolation and leaks, from_mesh bridges
 B-rep meshes into the SDF world, to_mesh refuses oversized grids helpfully,
 and fea_probe localizes a cantilever's root as the hotspot.
@@ -22,15 +22,15 @@ import numpy as np
 import trimesh
 import trimesh.sample
 
-from sdf_kit import (
+from loadpath.checks.sdf_kit import (
     box, capsule, dual_sheet, from_mesh, gyroid, mask, mesh_cyl, mesh_rod,
     largest_body, mesh_subtract, offset_field, pocket, seal_ramp, shell_field, smax, smin, sphere,
     sq_prism, spline_tube, subtract, superellipsoid, tapered_capsule,
     to_mesh, tpms_dist, translate, union,
 )
-from exchanger import exchanger_core
-from networks import check_networks
-from fea import fea_probe
+from loadpath.checks.exchanger import exchanger_core
+from loadpath.checks.networks import check_networks
+from loadpath.checks.fea import fea_probe
 
 THICKNESS_MEASUREMENT = {}
 
@@ -358,7 +358,7 @@ def test_check_networks_inconclusive_over_voxel_budget():
     """When the voxel budget cannot afford a min_feature-resolving pitch,
     the check must decline the verdict (inconclusive) rather than render a
     phantom-leak report — 'not verified' is honest, 'leaked' would be noise."""
-    import networks as networks_mod
+    import loadpath.checks.networks as networks_mod
 
     built = _cross_core()
     saved = networks_mod._VOXEL_BUDGET
@@ -412,7 +412,7 @@ def test_to_mesh_budget_names_a_pitch():
     except ValueError as e:
         msg = str(e)
         assert "pitch >=" in msg, f"error does not name a pitch: {msg}"
-        import sdf_kit as sdf_kit_mod
+        import loadpath.checks.sdf_kit as sdf_kit_mod
 
         suggested = float(msg.rsplit("pitch >=", 1)[1].strip())
         n = [int(np.ceil(400 / suggested)) + 1 for _ in range(3)]
@@ -486,14 +486,14 @@ def test_transforms_move_primitives():
     P = np.array([[10.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     d = sphere(translate(P, (10, 0, 0)), (0, 0, 0), 2.0)
     assert d[0] < 0 < d[1], "translate did not move the sphere to x=+10"
-    from sdf_kit import rotate_z
+    from loadpath.checks.sdf_kit import rotate_z
     Q = np.array([[0.0, 10.0, 0.0]])
     d = sphere(rotate_z(Q, 90.0), (10, 0, 0), 2.0)
     assert d[0] < 0, "rotate_z(90) did not carry (10,0,0) onto (0,10,0)"
 
 
 def test_split_shell_printed_fit():
-    from sdf_kit import box, smin, offset_field, subtract, split_shell, to_mesh
+    from loadpath.checks.sdf_kit import box, smin, offset_field, subtract, split_shell, to_mesh
     import numpy as np
 
     def cavity(P):
@@ -538,55 +538,7 @@ def test_split_shell_printed_fit():
         assert in_band.all(), "uncovered material outside the lip-clearance band"
 
 
-def test_promote_clean_base_lid_compound():
-    """MTR-213: a single `result` mesh that splits into two comparable,
-    individually-watertight bodies promotes to a base/lid assembly ordered
-    low->high z — instead of hard-failing the fragment gate (which collapsed
-    enclosures to one shell)."""
-    import app
-    base = trimesh.creation.box(extents=(40, 30, 16)).apply_translation((0, 0, 8))
-    lid = trimesh.creation.box(extents=(40, 30, 8)).apply_translation((0, 0, 22))
-    compound = trimesh.util.concatenate([base, lid])
-    assert len(compound.split(only_watertight=False)) == 2, "fixture must be 2 bodies"
-    promoted = app._promote_disconnected_bodies(compound)
-    assert promoted is not None, "clean base+lid compound must promote"
-    assert [n for n, _ in promoted] == ["base", "lid"], [n for n, _ in promoted]
-    zb, zl = float(promoted[0][1].centroid[2]), float(promoted[1][1].centroid[2])
-    assert zb < zl, f"base must sit below lid ({zb:.1f} vs {zl:.1f})"
 
-
-def test_promote_thin_lid_compound():
-    """A thin lid (~6% of base volume) must still promote — the old 15% gate
-    left stacked compounds in the preview with no parts[] split."""
-    import app
-    base = trimesh.creation.box(extents=(40, 30, 20)).apply_translation((0, 0, 10))
-    lid = trimesh.creation.box(extents=(40, 30, 1.2)).apply_translation((0, 0, 21))
-    compound = trimesh.util.concatenate([base, lid])
-    promoted = app._promote_disconnected_bodies(compound)
-    assert promoted is not None, "thin lid must promote as a real part"
-    assert [n for n, _ in promoted] == ["base", "lid"]
-
-
-def test_promote_rejects_genuine_debris():
-    """The conservative gate: a real base+lid trailing a loose chip (an
-    un-unioned nub) is NOT promoted — the fragment error must stand so the model
-    fixes it. A lone solid + chip is likewise no assembly. But a sub-mm^3
-    tessellation sliver alongside the parts IS tolerated."""
-    import app
-    base = trimesh.creation.box(extents=(40, 30, 16)).apply_translation((0, 0, 8))
-    lid = trimesh.creation.box(extents=(40, 30, 8)).apply_translation((0, 0, 22))
-    chip = trimesh.creation.box(extents=(5, 5, 5)).apply_translation((80, 80, 80))
-    assert app._promote_disconnected_bodies(
-        trimesh.util.concatenate([base, lid, chip])
-    ) is None, "a loose chip beside the parts must block promotion"
-    solid = trimesh.creation.box(extents=(40, 30, 20))
-    assert app._promote_disconnected_bodies(
-        trimesh.util.concatenate([solid, chip])
-    ) is None, "a solid + chip is not a 2-part assembly"
-    sliver = trimesh.creation.box(extents=(0.5, 0.5, 0.5)).apply_translation((80, 80, 80))
-    ok = app._promote_disconnected_bodies(trimesh.util.concatenate([base, lid, sliver]))
-    assert ok is not None and [n for n, _ in ok] == ["base", "lid"], \
-        "a sub-mm^3 sliver must be tolerated alongside the real parts"
 
 
 def test_combinators_accept_field_functions():
@@ -718,10 +670,10 @@ def test_star_import_exports_every_primitive():
     so a public function missing from __all__ passes every direct-import test
     here and is a NameError in production. pocket() shipped that way once."""
     import inspect
-    import sdf_kit
+    import loadpath.checks.sdf_kit as sdf_kit
     public = {
         n for n, f in inspect.getmembers(sdf_kit, inspect.isfunction)
-        if not n.startswith("_") and f.__module__ == "sdf_kit"
+        if not n.startswith("_") and f.__module__ == "loadpath.checks.sdf_kit"
     }
     missing = public - set(sdf_kit.__all__)
     assert not missing, sorted(missing)
@@ -731,7 +683,7 @@ def test_opening_check_tells_open_from_closed():
     """A container reads as one only if it opens from above. An open tray,
     a sealed hollow (mostly empty, so a fill ratio passes it) and a solid
     block must land on opposite sides of the blockout threshold (0.2)."""
-    from opening import check_opening
+    from loadpath.checks.opening import check_opening
     blk = lambda P: box(P, (0, 0, 20), (60, 25, 20))
     pk = lambda P, x: pocket(P, (x, 0), (16, 20), 4.0, r=5)
     tray = lambda P: subtract(subtract(subtract(blk(P), pk(P, -40)), pk(P, 0)), pk(P, 40))
@@ -794,9 +746,6 @@ TESTS = [
     test_fea_refusals,
     test_transforms_move_primitives,
     test_split_shell_printed_fit,
-    test_promote_clean_base_lid_compound,
-    test_promote_thin_lid_compound,
-    test_promote_rejects_genuine_debris,
 ]
 
 

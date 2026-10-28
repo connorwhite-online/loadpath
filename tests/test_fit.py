@@ -1,5 +1,5 @@
 """
-Kernel-verified tests for the component-fit verifier (MTR-204).
+Kernel-verified tests for the component-fit verifier .
 
 Builds REAL build123d Pico enclosures — one deliberately correct, three
 deliberately wrong (cavity too small / bosses misplaced / cutout on the wrong
@@ -7,8 +7,8 @@ edge) — and asserts `fit.check_fit` passes the right one and catches each
 wrong one with the failing check (and only that check). One test drives the
 full HTTP seam (`/run` with `checks={"fit": ...}`, engine build123d).
 
-Run: `python3 cad-runner/tests/test_fit.py` (needs build123d + trimesh +
-scipy — the same kernel the sidecar image ships).
+Run: `python3 tests/test_fit.py` (needs build123d + trimesh +
+scipy — the standard kernel).
 """
 import os
 import sys
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import trimesh
 
-from fit import check_fit
+from loadpath.checks.fit import check_fit
 
 # Mirror of lib/cad/knowledge/components.ts fitSpecForBoard(DEV_BOARDS.pico):
 # board 51 x 21 x 1, holes D2.1 at (±23.5, ±5.7), micro-USB centered on a
@@ -186,7 +186,7 @@ def test_open_mesh_reports_error_not_verdicts():
     assert report["results"] == []
 
 
-# ---- "+z" face ports: screen windows through the lid (MTR-203) --------------
+# ---- "+z" face ports: screen windows through the lid  --------------
 # A 1602-style display spec: body block, no bosses, one top-face window.
 DISPLAY_SPEC = {
     "components": [
@@ -245,55 +245,6 @@ def test_screen_window_fails_under_solid_lid():
     assert "lid" in res["note"] or "window" in res["note"]
 
 
-# ---- full HTTP seam: /run with checks.fit on the build123d engine ------------
-def test_run_endpoint_fit_checks_round_trip():
-    import app as app_module
-    from fastapi.testclient import TestClient
-
-    client = TestClient(app_module.app)
-    code = f"""
-from build123d import Align, Box, BuildPart, Cylinder, Locations, Mode
-
-WALL, FLOOR, BOSS_H, DEPTH = {WALL}, {FLOOR}, {BOSS_H}, {DEPTH}
-INNER_X, INNER_Y = 55.0, 25.0
-HOLES = {PICO_HOLES}
-USB_Z = {USB_Z}
-align = (Align.CENTER, Align.CENTER, Align.MIN)
-with BuildPart() as p:
-    Box(INNER_X + 2 * WALL, INNER_Y + 2 * WALL, FLOOR + DEPTH, align=align)
-    with Locations((0, 0, FLOOR)):
-        Box(INNER_X, INNER_Y, DEPTH + 1, align=align, mode=Mode.SUBTRACT)
-    for hx, hy in HOLES:
-        with Locations((hx, hy, FLOOR)):
-            Cylinder(radius=3.0, height=BOSS_H, align=align)
-        with Locations((hx, hy, FLOOR + BOSS_H - 6.0)):
-            Cylinder(radius=0.85, height=6.0, align=align, mode=Mode.SUBTRACT)
-    with Locations((-(INNER_X + WALL) / 2.0, 0.0, USB_Z)):
-        Box(WALL + 2.0, 9.0, 4.5, mode=Mode.SUBTRACT)
-result = p.part
-"""
-    r = client.post(
-        "/run",
-        json={
-            "code": code,
-            "formats": ["stl"],
-            "engine": "build123d",
-            "checks": {"fit": PICO_SPEC},
-        },
-    )
-    assert r.status_code == 200, r.text[:300]
-    payload = r.json()
-    assert payload["ok"] is True, payload.get("error")
-    fit = (payload.get("checks") or {}).get("fit")
-    assert fit and fit.get("error") is None, f"fit missing/errored: {fit}"
-    ids = {res["id"]: res["ok"] for res in fit["results"]}
-    assert ids == {
-        "fit:pico:cavity": True,
-        "fit:pico:bosses": True,
-        "fit:pico:port:micro-usb": True,
-    }, fit["results"]
-
-
 TESTS = [
     test_correct_enclosure_passes_all_checks,
     test_undersized_cavity_fails_cavity_check,
@@ -302,7 +253,6 @@ TESTS = [
     test_screen_window_passes_when_lid_is_open,
     test_screen_window_fails_under_solid_lid,
     test_open_mesh_reports_error_not_verdicts,
-    test_run_endpoint_fit_checks_round_trip,
 ]
 
 

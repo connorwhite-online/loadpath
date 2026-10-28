@@ -1,11 +1,11 @@
 """
-Tests for loadpath (topology optimization, MTR-352). Small grids only: the
+Tests for loadpath (topology optimization). Small grids only: the
 whole file runs in well under a minute. The slow, realistic parts live in
 the eval suite (`python -m loadpath.evals.run`), which scores delivered
 meshes against engineering requirements rather than unit contracts.
 
-Run: `python3 cad-runner/tests/test_loadpath.py` (numpy, scipy, pyamg,
-scikit-image, trimesh, manifold3d — the sidecar image's stack).
+Run: `python3 tests/test_loadpath.py` (numpy, scipy, pyamg,
+scikit-image, trimesh, manifold3d — the default dependency set).
 """
 import sys
 import time
@@ -232,53 +232,6 @@ def test_run_study_end_to_end():
     assert out["outcomes"][0]["bodies"] == 1
 
 
-def test_topopt_endpoints_round_trip():
-    import base64
-    import os
-    import tempfile
-
-    os.environ["CAD_RUNNER_ALLOW_NO_AUTH"] = "true"
-    os.environ["TOPOPT_DIR"] = tempfile.mkdtemp(prefix="topopt-test-")
-    import importlib
-
-    import topopt_jobs
-    importlib.reload(topopt_jobs)
-    import app as app_mod
-    from fastapi.testclient import TestClient
-
-    client = TestClient(app_mod.app)
-    # A path-based mesh would read the sidecar's disk: refused.
-    bad = {**LUG, "keepOut": [{"id": "x", "shape": {"type": "mesh", "path": "/etc/passwd"}}]}
-    r = client.post("/topopt", json={"study": bad})
-    assert r.status_code == 400 and "stlBase64" in r.json()["detail"], r.text
-    r = client.post("/topopt", json={"study": {**LUG, "supports": []}})
-    assert r.status_code == 400 and "support" in r.json()["detail"], r.text
-
-    # Inline mesh keep-out (a pin as an STL) + a quick solve.
-    pin = trimesh.creation.cylinder(radius=4, height=12, sections=48)
-    pin.apply_translation([48, 0, 0])
-    stl = base64.b64encode(pin.export(file_type="stl")).decode()
-    study = {**LUG, "keepOut": [{"id": "pin", "shape": {"type": "mesh", "stlBase64": stl}}],
-             "maxIterations": 25}
-    r = client.post("/topopt", json={"study": study})
-    assert r.status_code == 200, r.text
-    jid = r.json()["id"]
-    r2 = client.post("/topopt", json={"study": study})
-    assert r2.status_code == 429, r2.text          # one job at a time by default
-    deadline = time.time() + 300
-    while True:
-        st = client.get(f"/topopt/{jid}").json()
-        if st["status"] != "running" or time.time() > deadline:
-            break
-        time.sleep(1.0)
-    assert st["status"] == "done", st
-    out = st["result"]["outcomes"][0]
-    assert out["bodies"] == 1 and out["keepOutIntrusion"] < 0.5, out
-    f = client.get(f"/topopt/{jid}/files/{out['stl']}")
-    assert f.status_code == 200 and len(f.content) > 1000
-    assert client.get(f"/topopt/{jid}/files/..%2Fstudy.json").status_code == 404
-    assert client.get("/topopt/" + "0" * 32).status_code == 404
-
 
 def test_local_mcp_job_functions():
     # The tool bodies of `loadpath mcp`, without the MCP SDK: validate, run
@@ -458,7 +411,7 @@ def test_crosscheck_cantilever():
     # the independent tet check against beam theory; optional dependencies
     try:
         import gmsh  # noqa: F401
-    except ImportError:
+    except (ImportError, OSError):  # not installed, or its system libs (libGLU) are missing
         print("  (skipped: pip install loadpath[crosscheck])")
         return
     import manifold3d as m3d
@@ -506,7 +459,6 @@ TESTS = [
     test_voxelize_volume,
     test_unreachable_load_is_refused_helpfully,
     test_run_study_end_to_end,
-    test_topopt_endpoints_round_trip,
     test_local_mcp_job_functions,
     test_boundary_condition_types,
     test_gravity_matches_beam_theory,

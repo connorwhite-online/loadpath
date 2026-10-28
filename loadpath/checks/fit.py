@@ -1,5 +1,5 @@
 """
-Component-fit verifier (MTR-204): does the built enclosure actually FIT the
+Component-fit verifier : does the built enclosure actually FIT the
 component the brief promised it would?
 
 `check_fit(mesh, spec)` voxelizes the part (reusing sdf_kit's occupancy
@@ -42,7 +42,7 @@ Spec shape (built by lib/cad/dimension-check.ts buildFitChecksFromTargets):
 
 Port kinds: lateral ports carry edge/offset/height and are checked with
 outward rays through the wall; `face: "+z"` ports (screen windows, lenses,
-shafts, MTR-203) carry a center in the component frame and are checked with
+shafts) carry a center in the component frame and are checked with
 upward rays from the component top through the lid.
 
 Component frame: origin at board center, +x along length, +y along width,
@@ -53,7 +53,7 @@ the DimensionTargets that requested them.
 import numpy as np
 from scipy import ndimage
 
-from sdf_kit import _solid_voxels
+from .sdf_kit import _solid_voxels
 
 __all__ = ["check_fit"]
 

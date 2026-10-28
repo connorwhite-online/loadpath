@@ -1,7 +1,7 @@
 """
 Headless clay renders of a result, for reports and for judging outcomes by
 eye (or by a vision model). matplotlib Agg only: no GL context needed, so it
-works on the sidecar and in CI. Keep-outs draw as translucent red, load
+works headless and in CI. Keep-outs draw as translucent red, load
 regions as arrows.
 """
 from __future__ import annotations

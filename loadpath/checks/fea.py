@@ -15,7 +15,7 @@ from scipy import ndimage
 import scipy.sparse as sp
 from scipy.sparse.linalg import cg
 
-from sdf_kit import _solid_voxels
+from .sdf_kit import _solid_voxels
 
 __all__ = ["fea_probe"]
 

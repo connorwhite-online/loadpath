@@ -30,7 +30,7 @@ same arguments as their field counterparts (`mesh_cyl(x, y, r, z0, z1)`
 mirrors `cyl_z(P, x, y, r, z0, z1)`) so swapping one for the other is a
 one-word edit.
 
-Importable by sidecar-exec'd model code: `from sdf_kit import *`.
+Importable by exec'd model code: `from sdf_kit import *`.
 """
 import functools
 
@@ -722,7 +722,7 @@ def to_mesh(field, lo, hi, pitch=0.7):
     m.fix_normals()
     # Drop sub-voxel debris: hard clips (mask/subtract/split_shell planes) can
     # leave marching-cubes slivers — closed bodies a few cells across with
-    # ~zero volume. They are unprintable dust, and the sidecar's fragment gate
+    # ~zero volume. They are unprintable dust, and a fragment gate
     # rightly fails any part that ships disconnected bodies. Anything at least
     # a few voxels big is kept — genuinely disjoint REAL geometry still reaches
     # the gate and fails loudly there, as it should.
