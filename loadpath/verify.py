@@ -138,6 +138,34 @@ def _overhang(mesh, direction, study=None, max_angle_deg=45.0, tolerance_deg=5.0
     return out
 
 
+def _boundary_cut_area(study: Study, mesh) -> float:
+    """mm^2 of the part's surface lying flat on a face of a box design space,
+    away from every support and preserved shape: organic material sawn off
+    where the design box happened to end, not where anything mates. Zero on
+    a clean result (GRIP's wrist yoke QA, 10/28)."""
+    from .shapes import Box
+
+    boxes = [d for d in study.design_space if isinstance(d, Box)]
+    if not boxes:
+        return 0.0
+    c = mesh.triangles_center
+    nrm = mesh.face_normals
+    area = mesh.area_faces
+    keep = [r.shape for r in study.preserve]
+    for sup in study.supports:
+        try:
+            keep.append(sup.shape if sup.shape is not None else study.region_shape(sup.region)[0])
+        except ValueError:
+            pass
+    near = np.min([k.sdf(c) for k in keep], axis=0) < 1.0 if keep else np.zeros(len(c), bool)
+    cut = np.zeros(len(c), bool)
+    for b in boxes:
+        for ax in range(3):
+            for side, plane in ((-1, b.lo[ax]), (1, b.hi[ax])):
+                cut |= (np.abs(c[:, ax] - plane) < 0.05) & (nrm[:, ax] * side > 0.99)
+    return float(area[cut & ~near].sum())
+
+
 def _union(shapes):
     import manifold3d as m3d
     mans = [s.to_manifold() for s in shapes]
@@ -254,6 +282,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     else:
         report["preserveMissing"] = 0.0
     report["outsideDesignSpace"] = float((part - design).volume())
+    report["boundaryCutArea"] = _boundary_cut_area(study, mesh)
     report["bodies"] = len(part.decompose())
 
     if study.print_direction is not None:

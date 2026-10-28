@@ -50,8 +50,7 @@ class MechanismOptions:
     input_case: int = 0               # domain load case that is the actuator force
     output_case: int = 1              # domain load case whose force direction is the output (any magnitude)
     # Several (input, output) pairs at once, e.g. contact anywhere along a
-    # finger: the objective is the sum of each pair's output displacement,
-    # each scaled by its own starting value so no one pair dominates.
+    # finger: the objective is the sum of the pairs' output displacements.
     pairs: list | None = None
     k_in: float = 0.0                 # N/mm, spread over the input's loaded dofs
     k_out: float = 0.0                # N/mm, spread over the output's dofs
@@ -134,14 +133,17 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
         LAM = dict(zip(outs, sol[len(ins):]))
         dE = opts.modulus * PENALTY * xp ** (PENALTY - 1) * (1 - E_MIN)
         raw = [float(ls[o] @ U[i]) for i, o in pairs]
+        # Sum the outputs in mm, with one overall scale for MMA. (Scaling each
+        # pair by its own starting value let a pair that started near zero
+        # dominate; the fin-ray finger traded one contact's wrap for another's.)
         if u0 is None:
-            u0 = [max(abs(r), 1e-12) for r in raw]
-        uout = sum(r / s0 for r, s0 in zip(raw, u0)) / len(pairs)
+            u0 = max(abs(sum(raw)), max(abs(r) for r in raw), 1e-12)
+        uout = sum(raw) / u0
         # d(u_out)/d(xp_e) = -lambda_e . k_e u_e * dE/dxp   (K lambda = l, K symmetric)
         g = np.zeros(n)
-        for (i, o), s0 in zip(pairs, u0):
-            g -= np.einsum("ij,jk,ik->i", LAM[o][edof], ke, U[i][edof]) / s0
-        g = g * dE / len(pairs)
+        for i, o in pairs:
+            g -= np.einsum("ij,jk,ik->i", LAM[o][edof], ke, U[i][edof])
+        g = g * dE / u0
         g = g * _dproject(xt, beta, 0.5)
         g = _extrude(g, columns, design)
         g = ht @ (g / hs)

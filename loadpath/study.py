@@ -91,6 +91,7 @@ class Outcome:
             "keepOutIntrusion": r.get("keepOutIntrusion"),
             "preserveMissing": r.get("preserveMissing"),
             "bodies": r.get("bodies"),
+            "boundaryCutArea": r.get("boundaryCutArea"),
             "warnings": r.get("warnings", []),
             "margin": r.get("margin"),
             "passes": self.passes,

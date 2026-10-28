@@ -26,7 +26,7 @@ __all__ = ["reconstruct", "ReconstructOptions"]
 
 class ReconstructOptions:
     def __init__(self, upsample=3, smooth_sigma=0.9, level=0.5, max_triangles=250_000,
-                 min_body_fraction=0.002, taubin_iterations=25):
+                 min_body_fraction=0.002, taubin_iterations=25, blend=2.0, blend_k=0.6):
         self.upsample = upsample            # field refinement before meshing
         self.smooth_sigma = smooth_sigma    # in fine cells
         self.level = level
@@ -35,24 +35,43 @@ class ReconstructOptions:
         # Volume-preserving Taubin smoothing of the organic surface, before
         # the exact booleans (which then restore every crisp face and bore).
         self.taubin_iterations = taubin_iterations
+        # Fillet between the organic body and preserved geometry (mm of ramp
+        # in the preserve field, and the smooth-max strength).
+        self.blend = blend
+        self.blend_k = blend_k
 
 
-def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None):
+def _smooth_max(a, b, k):
+    """Polynomial smooth maximum: max(a, b) plus a bump of up to k/4 where the
+    two are close. On density fields this is a fillet where they meet."""
+    h = np.maximum(k - np.abs(a - b), 0.0) / k
+    return np.maximum(a, b) + h * h * k * 0.25
+
+
+def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
+                flush=(), preserve=()):
     import trimesh
     from skimage.measure import marching_cubes
 
     grid = domain.full_grid(xphys)
     pad = 3
-    # Replicate the edge instead of padding with void: material that reaches
-    # the design space's boundary then runs straight through it, and the
-    # exact intersection with the design space in reconstruct() cuts it off
-    # flat. Padded with void, smoothing pulled every such face ~1 mm inside
-    # the boundary, so a part meant to sit against a wall did not touch it
-    # (the printed hook's wall support found no material).
-    # (two cells of replicated edge, then one of void so the isosurface still
-    # closes: marching cubes leaves a surface open where it meets the array's
-    # edge with material.)
-    grid = np.pad(np.pad(grid, pad - 1, mode="edge"), 1)
+    # Pad with void, so material that reaches the design space's boundary
+    # rounds off just inside it: the exact intersection with the design
+    # space then has nothing to cut, and no flat sawn-off faces appear where
+    # the box happened to end (GRIP's wrist yoke had several). Only where a
+    # part must sit flush against something (`flush`: its supports, a wall)
+    # is the edge replicated, so the material runs on through the boundary
+    # and the intersection cuts it off flat there, on purpose (the printed
+    # hook's wall face). Two cells of that, then one of void so marching
+    # cubes still closes the surface.
+    padded = np.pad(grid, pad)
+    if flush:
+        edge = np.pad(np.pad(grid, pad - 1, mode="edge"), 1)
+        idx = np.stack(np.meshgrid(*[np.arange(n) for n in padded.shape], indexing="ij"), -1).reshape(-1, 3)
+        centers = domain.origin + (idx - pad + 0.5) * domain.pitch
+        near = (np.min([sh.sdf(centers) for sh in flush], axis=0) < 1.5 * domain.pitch).reshape(padded.shape)
+        padded = np.where(near, edge, padded)
+    grid = padded
     # Cubic upsampling: linear interpolation of a voxel field leaves the
     # staircase in the isosurface as faceted terraces.
     fine = np.clip(ndimage.zoom(grid, o.upsample, order=3, mode="nearest", grid_mode=True), 0.0, 1.0)
@@ -76,6 +95,18 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     # zoom(grid_mode=True) maps fine cell centers to coarse cell centers, so
     # fine index i sits at coarse-cell coordinate (i + 0.5) / upsample - 0.5.
     origin = domain.origin - pad * domain.pitch + 0.5 * step
+    if preserve and o.blend > 0:
+        # Fillet the organic body into the preserved geometry: the preserved
+        # shapes as a density field that crosses 0.5 at their surface and
+        # ramps over `blend` mm, smooth-max'd into the optimized field. Where
+        # a member meets a boss the bump fills the crease; elsewhere the
+        # preserve field stays under 0.5 and changes nothing. (The exact union
+        # in reconstruct() still restores the crisp faces and bores.)
+        idx = np.stack(np.meshgrid(*[np.arange(n) for n in fine.shape], indexing="ij"), -1).reshape(-1, 3)
+        pts = origin + idx * step
+        sd = np.min([sh.sdf(pts) for sh in preserve], axis=0).reshape(fine.shape)
+        pf = np.clip(0.5 - sd / (2.0 * o.blend), 0.0, 1.0)
+        fine = _smooth_max(fine, pf, o.blend_k)
     if keep_out:
         # Fade the field to zero at every keep-out surface. Smoothing and
         # upsampling otherwise carry material across a keep-out (a cable
@@ -106,7 +137,14 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     import manifold3d as m3d
 
     o = opts or ReconstructOptions()
-    iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member)
+    flush = []
+    for sup in study.supports:
+        try:
+            flush.append(sup.shape if sup.shape is not None else study.region_shape(sup.region)[0])
+        except ValueError:
+            pass
+    iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
+                      flush=flush, preserve=[r.shape for r in study.preserve])
     info = {"isoTriangles": int(len(iso.faces))}
     if o.taubin_iterations:
         import trimesh

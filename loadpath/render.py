@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["render_views", "render_stress"]
+__all__ = ["render_views", "render_stress", "render_interfaces"]
 
 _VIEWS = [(24, -58), (24, 32), (78, -90)]
 
@@ -131,6 +131,91 @@ def render_stress(mesh, fields, path, strength, title=None, views=_VIEWS[:2], si
     cb.set_label("von Mises / allowable (worst case)" if safety_factor != 1.0 else "von Mises / strength (worst case)")
     if title:
         fig.suptitle(title + (f"  ·  shape {k:.0f}x exaggerated ({worst['name']})" if k else ""), fontsize=10)
+    fig.savefig(path, facecolor="white")
+    plt.close(fig)
+    return path
+
+
+def render_interfaces(mesh, study, path, max_panels=16, cols=4, size=3.2, margin=6.0):
+    """Close-ups of every place the part meets the outside world: each
+    preserved region and each keep-out the part touches, cropped to a box
+    round it and shot from two sides. Whole-part renders show the layout and
+    hide the finish: GRIP's wrist yoke passed every number with sawn-off
+    faces, hard creases at its bosses and material over its bolt seats, all
+    of them a few pixels in the overview (QA, 10/28). Look at these before
+    calling a part done."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    tc = mesh.triangles_center
+    spots = []   # (label, centre, half-size)
+    for r in study.preserve:
+        shapes = getattr(r.shape, "shapes", [r.shape])   # a union: each piece is its own interface
+        for j, sh in enumerate(shapes):
+            lo, hi = sh.bounds()
+            spots.append((r.id + (f"[{j}]" if len(shapes) > 1 else ""), 0.5 * (lo + hi),
+                          min(0.5 * float(np.max(hi - lo)), 20.0) + margin))
+    for r in study.keep_out:
+        # where the part comes near a keep-out: centre on that contact, not on
+        # the keep-out (a driver channel runs 25 mm out past the part)
+        near = np.abs(r.shape.sdf(tc)) < 1.5
+        if near.any():
+            pts = tc[near]
+            ext = float(np.max(np.ptp(pts, axis=0)))
+            spots.append((r.id, pts.mean(axis=0), min(0.5 * ext, 20.0) + margin))
+    # one panel per place: spots closer than a few mm show the same thing
+    merged = []
+    for lab, c, h in spots:
+        for m in merged:
+            if np.linalg.norm(m[1] - c) < 4.0:
+                m[0].append(lab)
+                m[2] = max(m[2], h)
+                break
+        else:
+            merged.append([[lab], c, h])
+    merged = merged[:max_panels]
+    if not merged:
+        return None
+    rows = int(np.ceil(len(merged) / cols))
+    fig = plt.figure(figsize=(size * cols, size * rows), dpi=110)
+    for k, (labs, c, half) in enumerate(merged):
+        # crop exactly (boolean faces are long slivers: selecting whole
+        # triangles by centre drew planes across the panel)
+        crop = mesh
+        for ax_i in range(3):
+            for sgn in (1, -1):
+                n_ = np.zeros(3)
+                n_[ax_i] = sgn
+                crop = crop.slice_plane(c - half * n_, n_)   # keeps the side n_ points to
+                if len(crop.faces) == 0:
+                    break
+        ax = fig.add_subplot(rows, cols, k + 1, projection="3d")
+        if len(crop.faces):
+            tris = crop.triangles
+            nrm = crop.face_normals
+            # look from the side the nearby surface faces, tilted so relief
+            # (a crease, a step, a crater) shows instead of flattening out
+            vd = (nrm * crop.area_faces[:, None]).sum(axis=0)
+            vd = vd / np.linalg.norm(vd) if np.linalg.norm(vd) > 1e-6 else np.array([0.5, -0.5, 0.7])
+            elev = float(np.degrees(np.arcsin(np.clip(vd[2], -1, 1)))) + 25.0
+            azim = float(np.degrees(np.arctan2(vd[1], vd[0]))) + 30.0
+            e, a = np.radians(elev), np.radians(azim)
+            view = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
+            key = view + np.array([0.3, -0.2, 0.6])
+            key /= np.linalg.norm(key)
+            shade = np.clip(nrm @ key, 0, 1)
+            col = np.clip(np.array([0.80, 0.80, 0.82])[None] * (0.25 + 0.7 * shade)[:, None], 0, 1)
+            ax.add_collection3d(Poly3DCollection(tris, facecolors=col, edgecolor="none"))
+            ax.view_init(elev, azim)
+        for i, axis in enumerate("xyz"):
+            getattr(ax, f"set_{axis}lim")(c[i] - half, c[i] + half)
+        ax.set_box_aspect((1, 1, 1), zoom=1.25)
+        ax.set_axis_off()
+        title = ", ".join(labs[:3]) + (f" +{len(labs) - 3}" if len(labs) > 3 else "")
+        ax.set_title(title, fontsize=7)
+    fig.tight_layout()
     fig.savefig(path, facecolor="white")
     plt.close(fig)
     return path

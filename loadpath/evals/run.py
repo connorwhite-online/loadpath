@@ -40,6 +40,8 @@ CHECKS = {
     "keepOutIntrusion": ("maxKeepOutIntrusion", lambda o: o["keepOutIntrusion"], "<="),
     "preserveMissing": ("maxPreserveMissing", lambda o: o["preserveMissing"], "<="),
     "bodies": ("bodies", lambda o: o["bodies"], "=="),
+    # organic material sawn flat on the design box where nothing mates
+    "boundaryCut": ("maxBoundaryCutArea", lambda o: o.get("boundaryCutArea") or 0.0, "<="),
     "member": ("minMemberAtLeast", lambda o: o["p5Member"], ">="),
     "overhang": ("maxOverhangFraction", lambda o: o.get("designOverhangFraction"), "<="),
 }
