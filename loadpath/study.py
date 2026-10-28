@@ -35,7 +35,7 @@ __all__ = ["Outcome", "StudyResult", "run_study"]
 
 # Bounds for the safety-factor search.
 _VF_MIN, _VF_MAX = 0.04, 0.7
-_MAX_SEARCH_RUNS = 5
+_MAX_SEARCH_RUNS = 7
 # Coarse-to-fine: below this many cells the fine solve is cheap enough alone.
 _COARSE_MIN_CELLS = 12_000
 # Projection sharpness a warm-started run resumes at.
@@ -323,10 +323,13 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             if hi_pass and 1.0 <= hi_pass[1] < 1.12:
                 break   # passing with under 12% to spare: close enough
             if hi_pass and lo_fail:
-                # Interpolate in log space between the brackets.
+                # Bracketed: bisect. The margin is not smooth in the volume
+                # fraction (a slightly different fraction can settle in a
+                # different layout: the arm link read 0.49 at 30% and 1.30 at
+                # 38%), so interpolating between brackets kept landing on the
+                # wrong side of a jump; halving the bracket always closes it.
                 (v1, m1), (v2, m2) = lo_fail, hi_pass
-                t = (np.log(1.03) - np.log(m1)) / max(np.log(m2) - np.log(m1), 1e-9)
-                nxt = float(np.clip(v1 + t * (v2 - v1), v1 + 0.01, v2 - 0.01))
+                nxt = 0.5 * (v1 + v2)
             else:
                 # Aim a little past the target; never more than halve or
                 # double in one step, where the linear model stops holding.
