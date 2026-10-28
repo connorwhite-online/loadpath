@@ -25,13 +25,16 @@ __all__ = ["reconstruct", "ReconstructOptions"]
 
 
 class ReconstructOptions:
-    def __init__(self, upsample=2, smooth_sigma=0.6, level=0.5, max_triangles=250_000,
-                 min_body_fraction=0.002):
+    def __init__(self, upsample=3, smooth_sigma=0.9, level=0.5, max_triangles=250_000,
+                 min_body_fraction=0.002, taubin_iterations=25):
         self.upsample = upsample            # field refinement before meshing
         self.smooth_sigma = smooth_sigma    # in fine cells
         self.level = level
         self.max_triangles = max_triangles
         self.min_body_fraction = min_body_fraction
+        # Volume-preserving Taubin smoothing of the organic surface, before
+        # the exact booleans (which then restore every crisp face and bore).
+        self.taubin_iterations = taubin_iterations
 
 
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=()):
@@ -41,7 +44,9 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     grid = domain.full_grid(xphys)
     pad = 2
     grid = np.pad(grid, pad)
-    fine = ndimage.zoom(grid, o.upsample, order=1, mode="nearest", grid_mode=True)
+    # Cubic upsampling: linear interpolation of a voxel field leaves the
+    # staircase in the isosurface as faceted terraces.
+    fine = np.clip(ndimage.zoom(grid, o.upsample, order=3, mode="nearest", grid_mode=True), 0.0, 1.0)
     if o.smooth_sigma > 0:
         fine = ndimage.gaussian_filter(fine, o.smooth_sigma)
     step = domain.pitch / o.upsample
@@ -80,6 +85,9 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     o = opts or ReconstructOptions()
     iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out])
     info = {"isoTriangles": int(len(iso.faces))}
+    if o.taubin_iterations:
+        import trimesh
+        trimesh.smoothing.filter_taubin(iso, lamb=0.5, nu=-0.53, iterations=o.taubin_iterations)
     try:
         organic = manifold_from_trimesh(iso)
     except ValueError:
