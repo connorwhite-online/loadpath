@@ -211,6 +211,9 @@ class SimpOptions:
     # A warm start is already a design; restarting projection at beta 1
     # would blur it back to grey before sharpening it again.
     beta_start: float = 1.0
+    # Remove delivered material that carries no load in any case (see
+    # _prune_dead).
+    prune: bool = True
 
 
 @dataclass
@@ -278,6 +281,67 @@ def density_filter(domain: Domain, radius: float, pad: bool = True):
                for dz in range(-reach, reach + 1))
     hs = np.full(n, full) if pad else np.asarray(h.sum(axis=1)).ravel()
     return h, hs
+
+
+# A cell is dead when its strain energy density, in every load case, is
+# below this fraction of that case's median over the solid. A member that
+# ends in free space carries no stress at all (nothing pulls on its tip), so
+# it reads many orders below this; a member that matters to even the
+# lightest case reads far above it, because each case is judged on its own
+# scale.
+PRUNE_BELOW = 1e-3
+PRUNE_PASSES = 3
+
+
+def _prune_dead(fe, domain, xp, us, loads, design, pres):
+    """Delete dead-end material from the delivered design.
+
+    Projection continuation freezes the layout once beta is high: a member
+    the optimizer stopped needing can no longer shrink away (its gradient
+    lives only in the thin transition band), and compliance does not notice
+    a strut that carries nothing. GRIP's wrist link came out with several
+    such tendrils hanging in free space. They are pure deadweight and look
+    unfinished, so after the final solve, cells that carry essentially no
+    energy in any case are removed, the design re-solved, and repeated,
+    because removing a tendril's tip leaves the next stretch of it dead too.
+    Returns (xp, us)."""
+    for _ in range(PRUNE_PASSES):
+        solid = design & (xp > 0.5) & ~pres
+        if not solid.any():
+            break
+        live = np.zeros(len(xp), bool)
+        for u in us:
+            w = fe.strain_energy(u) * (xp ** PENALTY)
+            ref = np.median(w[xp > 0.5])
+            if ref <= 0:
+                live[:] = True
+                break
+            live |= w >= PRUNE_BELOW * ref
+        dead = solid & ~live
+        # skip specks: a lone low-energy cell inside a member is a numerical
+        # neutral axis, not a dead end
+        if dead.sum() < 0.002 * solid.sum():
+            break
+        g = np.zeros(domain.dims, bool)
+        ijk = tuple(domain.mesh.elem_ijk.T)
+        g[ijk] = dead
+        lbl, n = ndimage.label(g, structure=_CONN26)
+        if n == 0:
+            break
+        sizes = np.bincount(lbl[ijk][dead], minlength=n + 1)
+        el = lbl[ijk]
+        dead &= sizes[el] >= 4
+        if not dead.any():
+            break
+        xp = xp.copy()
+        xp[dead] = 0.0
+        # and whatever that cut loose from the supports (a tip whose root
+        # was a dead cluster under the size floor)
+        loose = (xp > 0.5) & ~fe._connected((xp > 0.5) | fe.anchor) & ~pres
+        xp[loose] = 0.0
+        e = E_MIN + xp ** PENALTY * (1 - E_MIN)
+        us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
+    return xp, us
 
 
 def _project(xt, beta, eta):
@@ -496,6 +560,8 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         fg = gravity_force(mesh, xp, domain.gravity, domain.fixed)
         loads = [f + fg for f in domain.loads]
     us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
+    if opts.prune:
+        xp, us = _prune_dead(fe, domain, xp, us, loads, design, pres)
     case_c, comp = [], 0.0
     for ci, f in enumerate(loads):
         cc = float(f @ us[ci])

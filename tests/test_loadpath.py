@@ -406,6 +406,33 @@ def test_constrained_deflection_limit_is_met():
     assert abs(last["deflection.pull"] - 0.3) < 0.03, last
     assert res.volume_fraction < 0.5
 
+def test_union_region_and_dead_material_pruning():
+    u = shape_from_spec({"type": "union", "shapes": [
+        {"type": "box", "min": [0, 0, 0], "max": [1, 1, 1]},
+        {"type": "sphere", "center": [5, 0, 0], "r": 1}]})
+    assert u.contains(np.array([[0.5, 0.5, 0.5], [5, 0, 0]])).all()
+    assert not u.contains(np.array([[3, 0, 0]]))[0]
+    assert abs(u.to_manifold().volume() - (1 + 4 / 3 * np.pi)) < 0.05
+
+    # A cantilever with a strut hanging off its middle into free space: the
+    # strut carries nothing and goes, all but a stub at its root (strained
+    # by the beam's surface it is welded to); the cantilever stays whole.
+    from loadpath.simp import _Analysis, _prune_dead, E_MIN, PENALTY
+    spec = dict(BEAM, designSpace={"type": "box", "min": [0, 0, 0], "max": [100, 10, 30]})
+    d = build_domain(study_from_dict(spec))
+    c = d.mesh.node_xyz[d.mesh.enode].mean(axis=1)
+    beam = c[:, 2] < 10
+    strut = (np.abs(c[:, 0] - 50) < 3) & (c[:, 2] >= 10)
+    xp = np.where(beam | strut, 1.0, 0.0)
+    fe = _Analysis(d, 0.3, 1e-8)
+    e = E_MIN + xp ** PENALTY * (1 - E_MIN)
+    us = fe.solve(e, xp, [None] * len(d.loads), rtol=1e-8)
+    out, _ = _prune_dead(fe, d, xp, us, d.loads, ~d.preserve, d.preserve)
+    assert (out[beam] == 1.0).all()
+    # (stress dies away over about one strut width from the root)
+    assert (out[strut & (c[:, 2] > 18)] == 0.0).all()
+
+
 
 TESTS = [
     test_shapes_sdf_and_exact_volume,
@@ -426,6 +453,7 @@ TESTS = [
     test_extrusion_and_materials,
     test_mma_matches_svanberg_toy_problem,
     test_constrained_deflection_limit_is_met,
+    test_union_region_and_dead_material_pruning,
 ]
 
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = [
-    "Box", "Cylinder", "Sphere", "MeshShape", "shape_from_spec",
+    "Box", "Cylinder", "Sphere", "MeshShape", "Union", "shape_from_spec",
     "manifold_from_trimesh", "trimesh_from_manifold",
 ]
 
@@ -254,6 +254,34 @@ class MeshShape(Shape):
 _AXES = {"x": [1.0, 0.0, 0.0], "y": [0.0, 1.0, 0.0], "z": [0.0, 0.0, 1.0]}
 
 
+class Union(Shape):
+    """Several shapes as one region: {"type": "union", "shapes": [..]}. For
+    an interface that is several separate pieces, such as the four screw
+    bosses a servo mounts on, so one load or support can act on all of them."""
+
+    kind = "union"
+
+    def __init__(self, shapes):
+        if not shapes:
+            raise ValueError("union needs at least one shape in 'shapes'")
+        self.shapes = list(shapes)
+
+    def sdf(self, p):
+        return np.min([s.sdf(p) for s in self.shapes], axis=0)
+
+    def bounds(self):
+        b = [s.bounds() for s in self.shapes]
+        return np.min([x[0] for x in b], axis=0), np.max([x[1] for x in b], axis=0)
+
+    def to_manifold(self):
+        import manifold3d as m3d
+        mans = [s.to_manifold() for s in self.shapes]
+        return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
+
+    def to_spec(self):
+        return {"type": "union", "shapes": [s.to_spec() for s in self.shapes]}
+
+
 def shape_from_spec(spec, base_dir=None) -> Shape:
     """Build a Shape from its JSON dict. Raises ValueError with a message an
     agent can act on."""
@@ -279,6 +307,11 @@ def shape_from_spec(spec, base_dir=None) -> Shape:
         return Cylinder(c - half, c + half, spec["r"], r_inner)
     if kind == "sphere":
         return Sphere(spec["center"], spec["r"])
+    if kind == "union":
+        parts = spec.get("shapes")
+        if not isinstance(parts, list) or not parts:
+            raise ValueError("union needs a non-empty 'shapes' list")
+        return Union([shape_from_spec(x, base_dir) for x in parts])
     if kind == "mesh":
         import base64
         import io

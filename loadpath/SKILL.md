@@ -20,7 +20,12 @@ use the CLI below.
    bearing seats, bolt patterns, shafts, mating faces. These become
    `preserve` (material that must exist) and `keepOut` (space that must stay
    empty). Primitive shapes cover most of it; for anything else export a
-   closed STL and use `{"type": "mesh", "path": "motor.stl"}`.
+   closed STL and use `{"type": "mesh", "path": "motor.stl"}`. An interface
+   in several pieces (a servo's four screw bosses) is one region with
+   `{"type": "union", "shapes": [...]}`, so one load or support acts on all of
+   them. Preserve only the interface itself, never a box round a component:
+   a preserved slab is a slab in the result, and the optimizer has nothing
+   to design there.
 2. **Bound the design space** generously: the envelope the part may occupy,
    minus nothing (keep-outs are subtracted for you). Too tight a box is the
    most common reason a result looks like the box.

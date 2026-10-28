@@ -40,6 +40,12 @@ _MAX_SEARCH_RUNS = 7
 _COARSE_MIN_CELLS = 12_000
 # Projection sharpness a warm-started run resumes at.
 _WARM_BETA = 4.0
+# The pick of a safety-factor search is checked again on a grid this many
+# cells finer before it is delivered. The in-loop check resolves a fillet
+# only as well as its grid: GRIP's turret read SF 2.26 there and 1.65 at
+# 120k cells, its peak at a corner the coarser grid had averaged away.
+_CONFIRM_CELLS = 150_000
+_CONFIRM_RUNS = 3
 
 
 def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should_stop) -> np.ndarray:
@@ -241,6 +247,19 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         emit({"stage": "outcome", **o.summary()})
         return o
 
+    def _confirm(o: Outcome) -> float:
+        rep = verify_part(study, o.mesh, max_cells=_CONFIRM_CELLS, min_pitch=0.3 * domain.pitch,
+                          contact_band=domain.pitch)
+        mc = _margin(study, rep)
+        o.report["confirm"] = {"safetyFactor": rep["safetyFactor"], "margin": mc,
+                               "analysisPitch": rep["analysisPitch"], "analysisCells": rep["analysisCells"],
+                               "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
+                                         for c in rep["cases"]]}
+        if mc < o.report["margin"]:
+            # report the finer (lower) reading: it is the one to trust
+            o.report["margin"], o.report["safetyFactor"], o.report["cases"] = mc, rep["safetyFactor"], rep["cases"]
+        return mc
+
     def run_constrained(limits, x0) -> Outcome:
         from .constrained import optimize_constrained
 
@@ -341,6 +360,24 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             vf = nxt
         passing = [i for i, o in enumerate(outcomes) if o.passes]
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+        # Confirm the pick on a finer grid; if it fails there, it no longer
+        # passes, and the search steps up from it by the confirmed margin.
+        for _ in range(_CONFIRM_RUNS):
+            if best is None or (should_stop is not None and should_stop()):
+                break
+            o = outcomes[best]
+            emit({"stage": "confirm", "volumeFraction": o.volume_fraction})
+            mc = _confirm(o)
+            emit({"stage": "confirmed", "volumeFraction": o.volume_fraction, "margin": mc})
+            if mc >= 1.0:
+                break
+            o.passes = False
+            vf = float(np.clip(o.volume_fraction * 1.05 / max(mc, 1e-9), o.volume_fraction + 0.01, _VF_MAX))
+            if any(abs(vf - q.volume_fraction) < 0.005 for q in outcomes):
+                vf = min(vf + 0.02, _VF_MAX)
+            outcomes.append(run_one(vf))
+            passing = [i for i, q in enumerate(outcomes) if q.passes]
+            best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
     else:
         fractions = [float(goal.volume_fraction)] + [v for v in goal.outcomes if v != goal.volume_fraction]
         if len(fractions) > 1 and _workers(len(fractions)) > 1:
