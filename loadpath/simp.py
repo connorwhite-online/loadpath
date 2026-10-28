@@ -182,11 +182,12 @@ class SimpOptions:
     filter_radius: float              # mm
     max_iterations: int = 120
     beta_max: float = 32.0
-    beta_every: int = 15              # iterations per beta doubling at most
+    beta_every: int = 10              # iterations per beta doubling at most (15 cost 20% more iterations for the same design on the arm link)
     move: float = 0.2
     tol: float = 0.01
     # Sensitivities only need a loose solve; the final analysis is tight.
     solve_rtol: float = 1e-3
+    adaptive_rtol: bool = True
     # Stop once beta is at max and compliance has moved less than this
     # (relative) over the last `stall_window` iterations. Projected designs
     # can chatter at the move limit forever on a handful of boundary cells
@@ -396,7 +397,11 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
             from .domain import gravity_force
             fg = gravity_force(mesh, xe, domain.gravity, domain.fixed)
             loads = [f + fg for f in domain.loads]
-        us = fe.solve(e, xe, us, loads=loads)
+        # Sensitivities only need to point the right way while the design is
+        # still soft; tighten the solve as the projection sharpens.
+        rtol = opts.solve_rtol * (10.0 if beta <= 2 else 3.0 if beta <= 8 else 1.0) if opts.adaptive_rtol \
+            else opts.solve_rtol
+        us = fe.solve(e, xe, us, rtol=rtol, loads=loads)
         dc_xp = np.zeros(n)
         comp = 0.0
         case_c = []

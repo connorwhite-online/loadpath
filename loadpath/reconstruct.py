@@ -37,7 +37,7 @@ class ReconstructOptions:
         self.taubin_iterations = taubin_iterations
 
 
-def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=()):
+def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None):
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -49,6 +49,20 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     fine = np.clip(ndimage.zoom(grid, o.upsample, order=3, mode="nearest", grid_mode=True), 0.0, 1.0)
     if o.smooth_sigma > 0:
         fine = ndimage.gaussian_filter(fine, o.smooth_sigma)
+    if min_member:
+        # Morphological opening with a ball of the minimum member's diameter:
+        # anything thinner than that cannot fit the ball and goes. Smoothing a
+        # member that ends inside the design space tapers it to a knife edge,
+        # and that sliver is both unprintable and a stress raiser that grew
+        # with every refinement of the verification grid (14 -> 58 MPa on the
+        # arm link at a flange tip).
+        step_ = domain.pitch / o.upsample
+        r = 0.5 * float(min_member) / step_
+        if r >= 1.0:
+            k = int(np.ceil(r))
+            zz, yy, xx = np.mgrid[-k:k + 1, -k:k + 1, -k:k + 1]
+            ball = (xx * xx + yy * yy + zz * zz) <= r * r
+            fine = ndimage.grey_opening(fine, footprint=ball)
     step = domain.pitch / o.upsample
     # zoom(grid_mode=True) maps fine cell centers to coarse cell centers, so
     # fine index i sits at coarse-cell coordinate (i + 0.5) / upsample - 0.5.
@@ -83,7 +97,7 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     import manifold3d as m3d
 
     o = opts or ReconstructOptions()
-    iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out])
+    iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member)
     info = {"isoTriangles": int(len(iso.faces))}
     if o.taubin_iterations:
         import trimesh

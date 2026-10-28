@@ -282,15 +282,18 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     k = stiff.assemble(np.full(hm.n_elem, mat.E))
     if bc.springs is not None:
         k = (k + mat.E * bc.springs).tocsr()
-    solver = Solver(hm, rtol=1e-7, maxiter=3000)
+    # 1e-6 is three-plus significant figures of stress; 1e-7 cost a third more
+    # iterations. All cases share one multigrid hierarchy and run on threads.
+    solver = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
     fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else 0.0
+    displacements = solver.solve_many(k, [bc.loads[ci] + fg for ci in range(len(study.load_cases))])
     from scipy.spatial import cKDTree
     cases = []
     worst_sf = np.inf
     for ci, case in enumerate(study.load_cases):
         f = bc.loads[ci] + fg
         load_nodes = bc.case_load_nodes[ci]
-        u = solver.solve(k, f)
+        u = displacements[ci]
         vm = nodal_von_mises(stiff, u, mat.E)
         # Exclude nodes within the contact band of an applied load or support.
         contact = support_nodes | load_nodes
