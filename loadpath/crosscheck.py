@@ -262,9 +262,11 @@ def _solve(nodes, conn, E, nu, fixed_nodes, loads, n_vertices, edges):
     def precond(r):
         r = np.asarray(r, dtype=np.float64).ravel()
         x = np.zeros_like(r)
-        gauss_seidel(kff, x, r, iterations=2, sweep="symmetric")
+        # one symmetric sweep each side: 106 iterations at 0.17 s beat two
+        # sweeps' 82 at 0.28 s (wrist yoke)
+        gauss_seidel(kff, x, r, iterations=1, sweep="symmetric")
         x += p @ ml.solve(p.T @ (r - kff @ x), maxiter=1, cycle="V", tol=1e-12)
-        gauss_seidel(kff, x, r, iterations=2, sweep="symmetric")
+        gauss_seidel(kff, x, r, iterations=1, sweep="symmetric")
         return x
     m = spla.LinearOperator(kff.shape, matvec=precond)
 
