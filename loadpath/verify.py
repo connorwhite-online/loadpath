@@ -111,6 +111,22 @@ def nodal_von_mises(stiff, u, modulus):
     return von_mises(acc / cnt[:, None])
 
 
+def nodal_stress(stiff, u, modulus):
+    """The nodal-averaged stress tensor (sx, sy, sz, txy, tyz, tzx), as
+    nodal_von_mises averages it."""
+    from .fem import CORNERS, _b_matrix, elastic_c
+
+    mesh = stiff.mesh
+    c = elastic_c(1.0, stiff.nu) * modulus
+    ue = u[mesh.edof]
+    acc = np.zeros((mesh.n_nodes, 6))
+    for k, (a, b, cc) in enumerate(2.0 * CORNERS - 1.0):
+        sk = (ue @ (_b_matrix(a, b, cc) / mesh.pitch).T) @ c.T
+        np.add.at(acc, mesh.enode[:, k], sk)
+    cnt = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)
+    return acc / cnt[:, None]
+
+
 def _overhang(mesh, direction, study=None, max_angle_deg=45.0, tolerance_deg=5.0):
     """Down-facing surface that needs support: faces whose normal is within
     (max_angle - tolerance) of straight down, i.e. ceilings and slopes
@@ -356,6 +372,17 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         # hole. Under-reading stress is the unsafe direction, so the factor
         # is computed against peak * STRESS_ALLOWANCE.
         sf = mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else np.inf
+        inter = None
+        proc = study.process
+        if proc is not None and proc.build is not None and proc.interlayer < 1.0:
+            # Layered parts part along their layers: the tension pulling
+            # layers apart (the stress normal to them) against the bond's
+            # strength, a fraction of the in-plane one.
+            sn = nodal_stress(stiff, u, mat.E)[:, proc.build[0]]
+            tens = np.where(body, np.maximum(sn, 0.0), 0.0)
+            inter = float(tens.max())
+            sf_inter = proc.interlayer * mat.strength / (inter * STRESS_ALLOWANCE) if inter > 0 else np.inf
+            sf = min(sf, sf_inter)
         worst_sf = min(worst_sf, sf)
         cases.append({
             "name": case.name,
@@ -366,6 +393,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             "p99Stress": float(np.percentile(vm[body] if body.any() else vm, 99)),
             "contactPeakStress": float(vm.max()),
             "safetyFactor": sf,
+            "interlayerStress": inter,
             "deflection": defl,
             "maxDisplacement": float(np.linalg.norm(disp, axis=1).max()),
             "compliance": float(f @ u),

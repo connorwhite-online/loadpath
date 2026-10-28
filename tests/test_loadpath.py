@@ -475,6 +475,25 @@ def test_crosscheck_cantilever():
     assert abs(c["peakStress"] - 5.1) < 0.4, c["peakStress"]
 
 
+def test_process_layers_weaken_across_build_direction():
+    # A cantilever bent along x: printed with layers stacking along x (FDM,
+    # buildDirection +x) its bending tension pulls the layers apart, so the
+    # safety factor drops to the interlayer fraction; stacked along z it
+    # does not. SLS sets no layer penalty and no overhang control.
+    mesh = trimesh.creation.box(extents=[100, 10, 10])
+    mesh.apply_translation([50, 5, 5])
+    plain = verify_part(study_from_dict(BEAM), mesh, refine=0)["safetyFactor"]
+    across = verify_part(study_from_dict(dict(BEAM, process={"type": "fdm", "buildDirection": "+x"})), mesh,
+                         refine=0)["safetyFactor"]
+    along = verify_part(study_from_dict(dict(BEAM, process={"type": "fdm", "buildDirection": "+z"})), mesh,
+                        refine=0)["safetyFactor"]
+    assert abs(across / plain - 0.6) < 0.05, (across, plain)
+    assert along > 0.9 * plain, (along, plain)
+    s = study_from_dict(dict(BEAM, process="fdm"))
+    assert s.print_direction == (2, 1) and s.min_member >= 1.6
+    assert study_from_dict(dict(BEAM, process="sls")).print_direction is None
+
+
 
 TESTS = [
     test_shapes_sdf_and_exact_volume,
@@ -498,6 +517,7 @@ TESTS = [
     test_union_region_and_dead_material_pruning,
     test_compliant_inverter,
     test_crosscheck_cantilever,
+    test_process_layers_weaken_across_build_direction,
 ]
 
 

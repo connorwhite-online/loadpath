@@ -37,17 +37,23 @@ use the CLI below.
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.
-5. `python -m loadpath check study.json`: validates and reports cells, pitch
+5. **Say how it will be made**: `"process": "fdm"` (or `{"type": "fdm",
+   "buildDirection": "+z"}`), `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`. The
+   process sets a minimum member it can make, overhang control for FDM, and
+   for layered processes checks the tension pulling layers apart against the
+   layer bond (FDM: 60% of the in-plane strength). Pick the build direction
+   so the main loads run along the layers, not across them.
+6. `python -m loadpath check study.json`: validates and reports cells, pitch
    and warnings. Fix every warning before running.
-6. `python -m loadpath run study.json --out out/`: minutes, not seconds.
+7. `python -m loadpath run study.json --out out/`: minutes, not seconds.
    Progress is JSON lines on stderr.
-7. **Read `out/report.json` and look at the renders** before trusting it:
+8. **Read `out/report.json` and look at the renders** before trusting it:
    - `safetyFactor` below target, or `passes: false` → raise the goal's
      volume fraction, the material, or check the loads are right;
    - `bodies` > 1 → something is not connected to a support;
    - `keepOutIntrusion` / `preserveMissing` above ~1 mm³ → report a bug;
    - `p5Member` under the printer's minimum → raise `minMember`.
-8. Hand the chosen STL to the print flow (Materialize: upload it, or the
+9. Hand the chosen STL to the print flow (Materialize: upload it, or the
    `materialize_import_model` tool).
 
 ## Goals

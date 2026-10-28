@@ -102,6 +102,52 @@ class Goal:
     outcomes: list[float] = field(default_factory=list)
 
 
+# How the part will be made. Each process sets what the design must respect:
+# whether layers make it weaker across them (FDM bonds layer to layer at a
+# fraction of the in-plane strength), whether overhangs need control, and
+# the smallest feature it holds. Values are typical published ranges, chosen
+# conservative; override any of them in the study.
+PROCESSES = {
+    "fdm": {"interlayer": 0.6, "minFeature": 0.8, "overhangs": True,
+            "note": "filament: layer bonds ~50-70% of in-plane strength; self-supporting at 45 degrees"},
+    "sls": {"interlayer": 0.9, "minFeature": 0.8, "overhangs": False,
+            "note": "powder bed (PA12, PA11): nearly isotropic, no supports; leave powder escape holes in closed cavities"},
+    "mjf": {"interlayer": 0.95, "minFeature": 0.8, "overhangs": False,
+            "note": "HP Multi Jet Fusion: as SLS, slightly more isotropic"},
+    "sla": {"interlayer": 1.0, "minFeature": 0.5, "overhangs": False,
+            "note": "resin vat: isotropic once cured; supports are added by the slicer"},
+    "volumetric": {"interlayer": 1.0, "minFeature": 0.3, "overhangs": False,
+                   "note": "volumetric / tomographic resin printing: no layers, no supports"},
+}
+
+
+@dataclass
+class Process:
+    kind: str
+    build: tuple[int, int] | None      # (axis, sign) the layers stack along, if layered
+    interlayer: float                  # strength across layers / in-plane strength
+    min_feature: float                 # mm
+    overhangs: bool                    # design self-supporting along `build`
+
+
+def _process(spec) -> Process | None:
+    if spec is None:
+        return None
+    if isinstance(spec, str):
+        spec = {"type": spec}
+    kind = str(spec.get("type", "")).lower()
+    if kind not in PROCESSES:
+        raise ValueError(f"process.type must be one of {sorted(PROCESSES)}, got {kind!r}")
+    base = PROCESSES[kind]
+    from .am import parse_build_direction
+    build = parse_build_direction(spec.get("buildDirection", "+z" if kind == "fdm" else None))
+    inter = float(spec.get("interlayer", base["interlayer"]))
+    if not 0.0 < inter <= 1.0:
+        raise ValueError("process.interlayer is a fraction of the in-plane strength, in (0, 1]")
+    return Process(kind, build, inter, float(spec.get("minFeature", base["minFeature"])),
+                   bool(spec.get("overhangs", base["overhangs"])))
+
+
 @dataclass
 class Study:
     name: str
@@ -126,6 +172,8 @@ class Study:
     extrusion: int | None = None
     # Every material to try (a list in the study); `material` is the first.
     materials: list = field(default_factory=list)
+    # How it is made (spec.PROCESSES): layer weakness, overhangs, min feature.
+    process: Process | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     def region_shape(self, region_id: str) -> tuple[Shape, str]:
@@ -284,6 +332,15 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError("resolution.pitch must be positive (mm)")
 
     min_member = d.get("minMember")
+    process = _process(d.get("process"))
+    print_direction = parse_build_direction(d.get("printDirection"))
+    if process is not None:
+        # the process sets what a study left open: overhang control along the
+        # build direction, and a minimum member it can actually make
+        if print_direction is None and process.overhangs and process.build is not None:
+            print_direction = process.build
+        floor = 2.0 * process.min_feature
+        min_member = max(float(min_member), floor) if min_member is not None else floor
     return Study(
         name=str(d.get("name") or "study"),
         design_space=design_space,
@@ -300,7 +357,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         max_elements=max_el,
         max_iterations=int(d.get("maxIterations", 120)),
         gravity=gravity,
-        print_direction=parse_build_direction(d.get("printDirection")),
+        print_direction=print_direction,
         extrusion=_extrusion_axis(d.get("extrusion")),
+        process=process,
         raw=d,
     )
