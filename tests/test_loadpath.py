@@ -458,7 +458,6 @@ def test_crosscheck_cantilever():
     # the independent tet check against beam theory; optional dependencies
     try:
         import gmsh  # noqa: F401
-        import skfem  # noqa: F401
     except ImportError:
         print("  (skipped: pip install loadpath[crosscheck])")
         return
