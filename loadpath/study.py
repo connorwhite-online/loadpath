@@ -91,6 +91,7 @@ class Outcome:
             "keepOutIntrusion": r.get("keepOutIntrusion"),
             "preserveMissing": r.get("preserveMissing"),
             "bodies": r.get("bodies"),
+            "warnings": r.get("warnings", []),
             "margin": r.get("margin"),
             "passes": self.passes,
             "optimizer": self.optimizer,
@@ -244,6 +245,14 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         if m is not None:
             report["margin"] = m
             o.passes = bool(m >= 1.0)
+        if report.get("bodies", 1) > 1:
+            # A preserved piece no load path reaches (a mount with no load
+            # through it) comes out as a loose part. It is not a design that
+            # meets the brief, and the fix is in the study: say so.
+            o.passes = False
+            report.setdefault("warnings", []).append(
+                f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
+                "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
         emit({"stage": "outcome", **o.summary()})
         return o
 
