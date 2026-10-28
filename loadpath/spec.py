@@ -94,6 +94,10 @@ class Goal:
     # usually stiffness-limited long before it is strength-limited.
     safety_factor: float | None = None
     max_deflection: float | None = None
+    # "search": compliance designs at a sequence of volume fractions until
+    # one passes; "constrained": minimize mass with the limits as MMA
+    # constraints, corrected against the verified mesh (constrained.py).
+    method: str = "search"
     # Extra fixed fractions to return alongside, for a trade-off gallery.
     outcomes: list[float] = field(default_factory=list)
 
@@ -245,10 +249,13 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         volume_fraction=g.get("volumeFraction"),
         safety_factor=g.get("safetyFactor"),
         max_deflection=g.get("maxDeflection"),
+        method=str(g.get("method", "search")),
         outcomes=[float(v) for v in g.get("outcomes") or []],
     )
     if goal.volume_fraction is None and goal.safety_factor is None and goal.max_deflection is None:
         raise ValueError("goal needs volumeFraction (0..1), safetyFactor (>1) and/or maxDeflection (mm)")
+    if goal.method not in ("search", "constrained"):
+        raise ValueError("goal.method must be 'search' or 'constrained'")
     if goal.max_deflection is not None and goal.max_deflection <= 0:
         raise ValueError("goal.maxDeflection must be a positive distance in mm")
     if goal.volume_fraction is not None and not (0.02 <= goal.volume_fraction <= 0.95):

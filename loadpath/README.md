@@ -20,6 +20,10 @@ code can be read:
 - **Minimum member size** that actually holds: stiffness is credited to the
   eroded design and the delivered part is the opened one (robust
   formulation), so no sub-minimum skins or webs.
+- **MMA** (Svanberg's Method of Moving Asymptotes, implemented here from the
+  published method) for minimum mass subject to stress and deflection
+  limits, with relaxed, adaptively normalized P-mean stress aggregation and
+  adjoint sensitivities.
 - **Linear elastic FEA** with 8-node hexahedra, solved by conjugate gradient
   with a smoothed-aggregation multigrid preconditioner (pyamg). Checked against
   Euler-Bernoulli beam theory in the tests.
@@ -105,7 +109,7 @@ print(best.report["mass"], best.report["safetyFactor"])
 | `supports` | Where the part is held: a region id or an inline shape, with `fix` = `"all"` (default), axes like `"xz"`, or three booleans. |
 | `loadCases` | Each a list of forces (N) on regions. The optimizer stiffens for all cases together; verification reports each. |
 | `material` | A name (`pla`, `petg`, `abs`, `asa`, `pa-cf`, `pa12`, `pa11`, `resin`, `resin-tough`, `alsi10mg`, `ti64`, `316l`) or `{E, nu, strength, density}`. A list solves the goal for each and pools the outcomes. |
-| `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space. `{"safetyFactor": 3}` and/or `{"maxDeflection": 0.5}` (mm, at the loads) search for the lightest part that meets them in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. |
+| `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space. `{"safetyFactor": 3}` and/or `{"maxDeflection": 0.5}` (mm, at the loads) search for the lightest part that meets them in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. `"method": "constrained"` (experimental) minimizes mass with the limits as MMA constraints instead of searching over volume fractions. |
 | `extrusion` | Optional axis (`x`, `y`, `z`): the part is a profile extruded along it, cuttable from plate (waterjet, laser, 2.5-axis milling). |
 | `gravity` | Optional `[gx, gy, gz]` in m/s²: the part's own weight in every load case. |
 | `printDirection` | Optional, `+x` … `-z`: the direction layers stack. Turns on overhang control (Langelaar's AM filter), so the optimizer's own surfaces are self-supporting at 45°. |

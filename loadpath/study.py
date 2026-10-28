@@ -69,6 +69,7 @@ class Outcome:
     optimizer: dict
     reconstruction: dict
     passes: bool | None = None
+    x: object = None
 
     def summary(self) -> dict:
         r = self.report
@@ -240,8 +241,71 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         emit({"stage": "outcome", **o.summary()})
         return o
 
+    def run_constrained(limits, x0) -> Outcome:
+        from .constrained import optimize_constrained
+
+        emit({"stage": "optimize", "limits": {"stress": limits.stress, "deflection": limits.deflection}})
+
+        def on_iter(rec, xp):
+            emit({"stage": "optimize", **rec}, xp)
+
+        beta0 = _WARM_BETA if x0 is not None else 1.0
+        if x0 is None and domain.n_elem >= _COARSE_MIN_CELLS:
+            x0 = _coarse_start(study, domain, float(goal.volume_fraction or 0.3), radius, should_stop)
+            beta0 = _WARM_BETA
+        res = optimize_constrained(
+            domain, study.material.nu,
+            SimpOptions(volume_fraction=float(goal.volume_fraction or 0.3), filter_radius=radius,
+                        max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
+                        extrusion=study.extrusion),
+            limits, on_iter=on_iter, should_stop=should_stop)
+        mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
+        report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
+        opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
+               "achievedVolumeFraction": res.volume_fraction, "method": "constrained",
+               "limits": {"stress": limits.stress, "deflection": limits.deflection}}
+        o = Outcome(res.volume_fraction, mesh, report, opt, rinfo)
+        m = _margin(study, report)
+        report["margin"] = m
+        o.passes = bool(m >= 1.0)
+        o.x = res.x
+        emit({"stage": "outcome", **o.summary()})
+        return o
+
     goal = study.goal
-    if goal.safety_factor is not None or goal.max_deflection is not None:
+    if goal.method == "constrained" and (goal.safety_factor is not None or goal.max_deflection is not None) \
+            and study.print_direction is None and study.gravity is None:
+        from .constrained import Limits
+        from .verify import STRESS_ALLOWANCE
+
+        mat = study.material
+        stress = mat.strength / (goal.safety_factor * STRESS_ALLOWANCE) if goal.safety_factor else None
+        limits = Limits(stress, goal.max_deflection, mat.E)
+        x0 = None
+        for _ in range(4):
+            if should_stop is not None and should_stop():
+                break
+            o = run_constrained(limits, x0)
+            outcomes.append(o)
+            x0 = o.x
+            r = o.report
+            rs = r["safetyFactor"] / goal.safety_factor if goal.safety_factor else None
+            rd = goal.max_deflection / max(c["deflection"] for c in r["cases"]) if goal.max_deflection else None
+            ratios = [v for v in (rs, rd) if v is not None]
+            if min(ratios) >= 1.0 and min(ratios) < 1.12:
+                break
+            # The verified mesh reads differently from the optimizer's model
+            # (finer grid, refined hotspots, the delivered rather than the
+            # eroded design). Rescale each limit by how far off it was:
+            # fully when it failed, halfway (geometric) when it was slack.
+            def scale(lim, ratio):
+                if lim is None or ratio is None:
+                    return lim
+                return lim * (ratio if ratio < 1.0 else ratio ** 0.5)
+            limits = Limits(scale(limits.stress, rs), scale(limits.deflection, rd), mat.E)
+        passing = [i for i, o in enumerate(outcomes) if o.passes]
+        best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+    elif goal.safety_factor is not None or goal.max_deflection is not None:
         vf = float(goal.volume_fraction or 0.3)
         lo_fail, hi_pass = None, None   # (vf, margin) brackets
         for _ in range(_MAX_SEARCH_RUNS):

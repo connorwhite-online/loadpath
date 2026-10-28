@@ -143,6 +143,7 @@ class _Analysis:
                     u[fd] = us_sub
                     out.append(u)
                 self.last_iters, self.last_cells = solver.last_iters, int(keep.sum())
+                self._last = (k, fd, solver)
                 return out
         stiff, solver = self._full_system()
         solver.rtol = rtol
@@ -151,6 +152,23 @@ class _Analysis:
             k = (k + d.springs).tocsr()
         out = solver.solve_many(k, list(loads), list(us))
         self.last_iters, self.last_cells = solver.last_iters, mesh.n_elem
+        self._last = (k, None, solver)
+        return out
+
+    def resolve(self, rhss, x0s=None):
+        """Solve more right-hand sides (adjoints) against the matrix of the
+        last solve(); full-size in, full-size out."""
+        k, fd, solver = self._last
+        n_dof = self.domain.mesh.n_dof
+        if fd is None:
+            return solver.solve_many(k, list(rhss), x0s)
+        sub = solver.solve_many(k, [r[fd] for r in rhss],
+                                [x[fd] for x in x0s] if x0s else None)
+        out = []
+        for v in sub:
+            u = np.zeros(n_dof)
+            u[fd] = v
+            out.append(u)
         return out
 
     def strain_energy(self, u):

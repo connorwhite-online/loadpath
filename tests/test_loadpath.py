@@ -377,6 +377,36 @@ def test_extrusion_and_materials():
     assert r.best == int(np.argmin([o.report["mass"] for o in r.outcomes]))
 
 
+def test_mma_matches_svanberg_toy_problem():
+    # Svanberg's reference problem: minimize |x|^2 inside two spheres.
+    from loadpath.mma import MMA
+    opt = MMA(3, 2, xmin=0, xmax=5, move=1.0)
+    x = np.array([4.0, 3.0, 2.0])
+    for _ in range(40):
+        f = np.array([((x - [5, 2, 1]) ** 2).sum() - 9, ((x - [3, 4, 3]) ** 2).sum() - 9])
+        df = np.array([2 * (x - [5, 2, 1]), 2 * (x - [3, 4, 3])])
+        xn = opt.update(x, (x ** 2).sum(), 2 * x, f, df)
+        if np.abs(xn - x).max() < 1e-8:
+            break
+        x = xn
+    assert np.allclose(x, [2.0175, 1.7800, 1.2375], atol=2e-4), x
+
+
+def test_constrained_deflection_limit_is_met():
+    # Minimum mass with a deflection limit: the optimizer's own measure must
+    # land on the limit, from a solid start.
+    from loadpath.constrained import Limits, optimize_constrained
+    s = study_from_dict(LUG)
+    d = build_domain(s)
+    res = optimize_constrained(d, s.material.nu,
+                               SimpOptions(volume_fraction=0.5, filter_radius=filter_radius(d, None),
+                                           max_iterations=60),
+                               Limits(None, 0.3, s.material.E))
+    last = res.history[-1]
+    assert abs(last["deflection.pull"] - 0.3) < 0.03, last
+    assert res.volume_fraction < 0.5
+
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -394,6 +424,8 @@ TESTS = [
     test_boundary_condition_types,
     test_gravity_matches_beam_theory,
     test_extrusion_and_materials,
+    test_mma_matches_svanberg_toy_problem,
+    test_constrained_deflection_limit_is_met,
 ]
 
 
