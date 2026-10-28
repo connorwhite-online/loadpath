@@ -36,7 +36,26 @@ __all__ = ["crosscheck"]
 
 
 def _tet_mesh(mesh, size, order=1):
-    """Tetrahedra filling a closed triangle mesh: (points, tets), 4 or 10 nodes."""
+    """Tetrahedra filling a closed triangle mesh: (points, tets), 4 or 10
+    nodes. Boolean output carries near-coincident sliver facets that gmsh's
+    boundary recovery rejects ("overlapping facets", "two facets
+    intersect"); which tolerance clears them varies by part, so on failure
+    the surface is cleaned with manifold's simplify at growing tolerances
+    (0.05 mm moved nothing visible on the GRIP wrist yoke) and tried again."""
+    from .shapes import manifold_from_trimesh, trimesh_from_manifold
+
+    last = None
+    for eps in (0.0, 0.03, 0.05, 0.08, 0.12):
+        m = mesh if eps == 0.0 else trimesh_from_manifold(manifold_from_trimesh(mesh).simplify(eps))
+        for algo in (1, 10):
+            try:
+                return _tet_mesh_once(m, size, order, algo)
+            except Exception as ex:  # noqa: BLE001 - gmsh raises bare Exception
+                last = ex
+    raise RuntimeError(f"could not tetrahedralize the part: {last}")
+
+
+def _tet_mesh_once(mesh, size, order, algo):
     import gmsh
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -55,7 +74,7 @@ def _tet_mesh(mesh, size, order=1):
             gmsh.model.geo.synchronize()
             gmsh.option.setNumber("Mesh.MeshSizeMax", size)
             gmsh.option.setNumber("Mesh.MeshSizeMin", size * 0.25)
-            gmsh.option.setNumber("Mesh.Algorithm3D", 1)           # Delaunay (HXT refuses a discrete STL surface)
+            gmsh.option.setNumber("Mesh.Algorithm3D", algo)        # 1 Delaunay, 10 HXT
             gmsh.option.setNumber("Mesh.ElementOrder", order)
             gmsh.option.setNumber("Mesh.SecondOrderLinear", 1)     # mid-nodes on the straight edge: the surface is facets
             gmsh.model.mesh.generate(3)
@@ -108,7 +127,7 @@ def _solve_skfem(pts, tets, E, nu, study, fixed_shapes, tol, loads):
     """Quadratic (P2) elasticity on the linear tet mesh: skfem adds the
     edge nodes. Supports clamp every dof on the boundary facets inside a
     support region; loads act at the region's surface vertices."""
-    from skfem import Basis, ElementTetP2, ElementVector, MeshTet, asm, condense, solve
+    from skfem import Basis, ElementTetP2, ElementVector, MeshTet, asm
     from skfem.models.elasticity import lame_parameters, linear_elasticity
 
     m = MeshTet(pts.T.copy(), tets.T.copy())
@@ -122,22 +141,45 @@ def _solve_skfem(pts, tets, E, nu, study, fixed_shapes, tol, loads):
     if len(fixed) == 0:
         raise ValueError("no boundary facet of the part lies in any support region")
     nd = ib.nodal_dofs                     # (3, n_vertices)
+    import pyamg
+    import scipy.sparse.linalg as spla
+    free = np.setdiff1d(np.arange(ib.N), fixed)
+    kff = k[free][:, free].tocsr()
+    # one multigrid hierarchy for every case (a direct solve took 23 s of a
+    # 34 s cantilever check; smoothed aggregation with the rigid-body modes
+    # is the standard preconditioner for elasticity)
+    xyz = ib.doflocs[:, free].T
+    comp_all = np.zeros(ib.N, int)
+    for c in range(3):
+        comp_all[ib.nodal_dofs[c]] = c
+        comp_all[ib.edge_dofs[c]] = c
+    comp = comp_all[free]
+    ml = pyamg.smoothed_aggregation_solver(kff, B=_rigid_modes(xyz, comp), coarse_solver="splu")
+    precond = ml.aspreconditioner()
     us = []
     for name, f, _ in loads:
         rhs = np.zeros(ib.N)
         for c in range(3):
             rhs[nd[c]] = f[:, c]
-        u = solve(*condense(k, rhs, D=fixed), solver=_amg_cg if ib.N > 150_000 else None)
+        u = np.zeros(ib.N)
+        u[free], _info = spla.cg(kff, rhs[free], M=precond, rtol=1e-9, maxiter=4000)
         us.append((u, np.stack([u[nd[0]], u[nd[1]], u[nd[2]]], axis=1)))
     return m, ib, us
 
 
-def _amg_cg(a, b, **_):
-    import pyamg
-    import scipy.sparse.linalg as spla
-    ml = pyamg.smoothed_aggregation_solver(a.tocsr(), coarse_solver="splu")
-    x, _info = spla.cg(a, b, M=ml.aspreconditioner(), rtol=1e-8, maxiter=3000)
-    return x
+def _rigid_modes(xyz, comp):
+    """The six rigid-body modes of the free dofs, the near-null space AMG
+    needs to coarsen elasticity well."""
+    n = len(comp)
+    b = np.zeros((n, 6))
+    for c in range(3):
+        b[comp == c, c] = 1.0
+    x, y, z = xyz.T
+    # rotations about x, y, z: (0,-z,y), (z,0,-x), (-y,x,0)
+    b[comp == 1, 3], b[comp == 2, 3] = -z[comp == 1], y[comp == 2]
+    b[comp == 0, 4], b[comp == 2, 4] = z[comp == 0], -x[comp == 2]
+    b[comp == 0, 5], b[comp == 1, 5] = -y[comp == 0], x[comp == 1]
+    return b
 
 
 def _nodal_von_mises(m, u, E, nu):

@@ -454,6 +454,27 @@ def test_compliant_inverter():
     assert abs(r.xphys[~d.preserve].mean() - 0.3) < 0.02
 
 
+def test_crosscheck_cantilever():
+    # the independent tet check against beam theory; optional dependencies
+    try:
+        import gmsh  # noqa: F401
+        import skfem  # noqa: F401
+    except ImportError:
+        print("  (skipped: pip install loadpath[crosscheck])")
+        return
+    import manifold3d as m3d
+    from loadpath.crosscheck import crosscheck
+    from loadpath.shapes import trimesh_from_manifold
+    spec = dict(BEAM, minMember=4)
+    mesh = trimesh_from_manifold(m3d.Manifold.cube((100, 10, 10)).refine(20))
+    r = crosscheck(study_from_dict(spec), mesh, size=2.5, contact_band=12)
+    c = r["cases"][0]
+    # tip deflection F L^3 / 3 E I = 2.0 mm (a clamped face reads a little stiff)
+    assert 1.8 < c["deflection"] < 2.1, c["deflection"]
+    # bending stress just outside the band: M c / I at x = 15 is 5.1 MPa
+    assert abs(c["peakStress"] - 5.1) < 0.4, c["peakStress"]
+
+
 
 TESTS = [
     test_shapes_sdf_and_exact_volume,
@@ -476,6 +497,7 @@ TESTS = [
     test_constrained_deflection_limit_is_met,
     test_union_region_and_dead_material_pruning,
     test_compliant_inverter,
+    test_crosscheck_cantilever,
 ]
 
 
