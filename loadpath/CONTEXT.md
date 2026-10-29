@@ -1,11 +1,14 @@
 # loadpath: context for whoever picks this up
 
-State as of 2026-10-28. loadpath is an open-source (MIT), agent-native
-generative design library: topology optimization for printed parts, driven by
+State as of 2026-10-29. loadpath is an open-source, agent-native generative
+design library: topology optimization for printed parts, driven by
 constraints, keep-outs and loads, with its own verification and an eval loop.
-It began in Materialize's CAD sidecar (PR connorwhite-online/materialize#467,
-Linear MTR-352) and now lives in this repository; the sidecar keeps the private
-server glue.
+It is published at https://github.com/connorwhite-online/loadpath (MIT,
+Linear MTR-354). It was built inside Materialize's CAD sidecar
+(`cad-runner/loadpath/`, branch `claude/project-thread-um8gfo`, PR
+connorwhite-online/materialize#467, Linear MTR-352); new loadpath work happens
+in this repository, and the Materialize copy is the sidecar's vendored
+version.
 
 ## The goal
 
@@ -48,13 +51,58 @@ it becomes an eval metric.
 | `mma.py`, `constrained.py` | MMA (from the published method), stress/deflection-constrained mode |
 | `mechanism.py` | compliant mechanisms (max output displacement against springs; several input/output pairs) |
 | `am.py` | overhang control (Langelaar filter) |
-| `reconstruct.py` | field -> printable mesh: cubic upsampling, opening at min member, fade at keep-outs and the design boundary, fillets into preserved geometry, exact booleans |
+| `reconstruct.py` | field -> printable mesh: cubic upsampling, opening at min member, fade at keep-outs, smooth-min rounding at the design boundary (flush at supports and loads), 3 mm fillets into preserved geometry, exact booleans |
 | `verify.py` | independent voxelization + FEA of the delivered mesh, hotspot submodels, layer-bond check, boundary-cut metric, stress fields |
 | `crosscheck.py` | second opinion on a tet mesh: gmsh + native P2 assembly + p-multigrid; CalculiX deck writer |
 | `study.py` | the search on safety factor / deflection, fine-grid confirm of the pick, multi-material, parallel |
 | `render.py` | clay renders, stress maps, interface close-ups |
 | `mcp_server.py`, `__main__.py` | local MCP server and CLI |
 | `evals/` | cases with engineering requirements; `python -m loadpath.evals.run` scores them |
+
+## How to run things
+
+```bash
+pip install -e ".[render,mcp,crosscheck]"         # from the repo root: numpy scipy pyamg scikit-image trimesh manifold3d (+ matplotlib, mcp, gmsh)
+python3 tests/test_loadpath.py                  # 22 tests, ~2.5 min (crosscheck test skips without gmsh)
+python -m loadpath check study.json             # validate a study
+python -m loadpath run study.json --out out/    # optimize
+python -m loadpath.evals.run --jobs 4 --out /tmp/evals   # eval suite, ~15-20 min on a laptop
+python -m loadpath mcp                          # local MCP server
+```
+
+GRIP (clone connorwhite-online/grip, branch `generative-redesign`), with
+loadpath on PYTHONPATH:
+
+```bash
+python generative/v3.py run --links forearm,wrist_yoke,wrist_link --jobs 3 --max-elements 120000
+python generative/v3.py remesh --links wrist_yoke   # after a reconstruct.py change, seconds
+python generative/sims.py                            # stress maps of every link
+python generative/hand.py fingers|studies|run        # the hand
+```
+
+Python API worth knowing: `run_study`, `verify_part(..., fields=True)`,
+`crosscheck(study, mesh, size=1.5)`, `render_interfaces(mesh, study, path)`,
+`render_stress(mesh, fields, path, strength, safety_factor=2)`,
+`optimize_mechanism(domain, nu, MechanismOptions(...))`.
+
+## Today's record (2026-10-28), in order
+
+1. GRIP v0.3 links regenerated around bus servos and the J2 spring; stress maps.
+2. Connor's QA of the wrist yoke: sawn-off faces, hard creases at bosses,
+   material over bolt seats. Fixed in reconstruction (boundary rounding,
+   fillets) and in the study (screw seats as keep-outs); interface close-ups
+   and `boundaryCutArea` added so these are caught without a human.
+3. Dead-end "tendrils" pruned; preserved boxes replaced by screw bosses (the
+   yoke went 41 -> 19-24 g).
+4. Three-finger soft hand (hand.py); compliant-mechanism optimizer; the fin-ray
+   finger experiment (finds some wrap, not yet better than the hinged finger:
+   parked).
+5. Manufacturing `process`; FDM PETG yoke designed per build direction (the
+   direction changed mass by half: 25.7 / 30.7 / 39.4 g).
+6. Independent cross-check: 644 -> ~100 s on the yoke with the same answer.
+   Decimating the surface first was 2x faster but under-read the peak by a
+   third (rejected); hotspot-adaptive refinement barely helped (off).
+7. Eval round 9 caught regressions from step 2; fixed. See the table below.
 
 ## Lessons that cost something to learn
 
@@ -72,6 +120,13 @@ it becomes an eval metric.
   it. The cross-check says the voxel solver is ~30% conservative on the yoke.
 - **Mechanism framing matters**: "curl as far as possible" gives a leaf spring.
 - **Linear only so far**: no large deflection (TPU fingers), contact, buckling.
+- **Run the eval suite after any reconstruction or boundary change.** Finish
+  fixes that looked right on GRIP thinned plates and starved support faces on
+  other cases; only the suite showed it. Results move a little run to run
+  (the search path depends on outcomes), so judge a change on the whole table.
+- **A support region holds the nodes inside it** (solid regions with nodes in
+  them). Taking a node plane half a cell outside too let the optimizer hang
+  the printed hook 0.75 mm off its wall.
 
 ## Eval status (round 9f, 2026-10-28): 6 of 8 pass
 
@@ -91,9 +146,13 @@ symmetry), so on a support face that is not a symmetry plane the first cell
 layer overhangs the design space by up to half a cell. The optimizer counts
 that overhang as material; the delivered part is cut at the real face, so the
 pad against the wall is thinner than designed. Aligning the grid to the face
-fixed the geometry but moved every case's search path (3 of 8 lost); the next
-attempt should keep the centered grid and give overhanging cells their true
-(partial) volume and stiffness instead.
+fixed the geometry but moved every case's search path (3 of 8 lost). Giving
+overhanging cells only the stiffness of the part of them that exists (round
+9i) left both failures unchanged and made the arm link 4.5 g heavier, so it
+was reverted too. Both are thin pads at a support face where the measured
+p5 member is exactly one or less than one cell (1.46, 1.95 mm at a 1.95 mm
+pitch): the next thing to try is a finer pitch near supports, or the
+reconstruction extruding the pad to the design face it bears on.
 
 ## Next
 
@@ -102,4 +161,5 @@ attempt should keep the centered grid and give overhanging cells their true
 3. Stronger, cleaner blends between preserved and organic geometry; crease and fastener-clearance metrics in the evals.
 4. Field-driven lattices (TPMS) graded by stress; then conduction (thermal) as a second physics.
 5. Nonlinear: large deflection for compliant parts, buckling.
-6. Keep GRIP as the reference project (done: split into its own repository).
+6. Point GRIP's `generative/` scripts at the published package (`pip install`
+   from the loadpath repository) instead of a Materialize checkout.
