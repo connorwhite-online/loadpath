@@ -487,6 +487,15 @@ def test_closed_bore_is_flagged():
             assert found[0]["end"] == "p1"
 
 
+def test_surface_thickness_reads_a_plate_without_a_grid():
+    """A 2.05 mm plate reads 2.05 from the surface rays, at any grid."""
+    from loadpath.verify import surface_thickness
+
+    plate = trimesh.creation.box(extents=(40, 40, 2.05))
+    p1, p5 = surface_thickness(plate, samples=3000)
+    assert abs(p5 - 2.05) < 0.02 and abs(p1 - 2.05) < 0.02, (p1, p5)
+
+
 def test_lattice_infill_is_lighter_and_walled():
     """A gyroid infill under a skin: much lighter than solid, one body, its
     voids enclosed; open (no skin) leaves nothing enclosed; graded by the
@@ -589,6 +598,7 @@ TESTS = [
     test_process_layers_weaken_across_build_direction,
     test_crease_metric_finds_unfilleted_junctions,
     test_closed_bore_is_flagged,
+    test_surface_thickness_reads_a_plate_without_a_grid,
     test_lattice_infill_is_lighter_and_walled,
     test_heat_exchanger_fluids_are_isolated_and_connected,
     test_fasteners_expand_to_rings_keepouts_and_preload,

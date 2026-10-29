@@ -72,10 +72,15 @@ def score_case(raw: dict, result, seconds: float) -> dict:
             return out
     o = result.outcomes[best]
     flat = dict(o.report)
+    if getattr(o, "mesh", None) is not None:
+        from ..verify import surface_thickness
+
+        flat["p1Thickness"], flat["p5Thickness"] = surface_thickness(o.mesh)
     out["best"] = {"volumeFraction": o.volume_fraction, "mass": flat["mass"],
                    "massReduction": flat["massReduction"], "safetyFactor": flat["safetyFactor"],
                    "p5Member": flat["p5Member"], "minMember": flat["minMember"],
                    "creaseLength": flat.get("creaseLength"),
+                   "p5Thickness": flat.get("p5Thickness"), "p1Thickness": flat.get("p1Thickness"),
                    "deflection": max(c["deflection"] for c in flat["cases"]),
                    "iterations": o.optimizer["iterations"], "optimizerSeconds": o.optimizer["seconds"]}
     ok = out.get("error") is None

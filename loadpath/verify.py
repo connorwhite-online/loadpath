@@ -89,6 +89,25 @@ def _thickness(solid, pitch):
     return float(vals.min()), float(np.percentile(vals, 5))
 
 
+def surface_thickness(mesh, samples: int = 6000, seed: int = 0):
+    """Member thickness without a grid: from evenly spread surface points, a
+    ray straight in along the inward normal to where it leaves the part (the
+    shape diameter). Returns (p1, p5) in mm. The voxel ridge reading
+    (_thickness) is quantized to the analysis cell, under-reading a 2.05 mm
+    wall at a 0.98 mm pitch as 1.46; this one is not, but it costs a ray
+    cast per sample, so it is for scoring a finished part, not every outcome."""
+    import trimesh
+
+    pts, fi = trimesh.sample.sample_surface_even(mesh, samples, seed=seed)
+    n = mesh.face_normals[fi]
+    origin = pts - n * 1e-3
+    loc, ri, _ = mesh.ray.intersects_location(origin, -n, multiple_hits=False)
+    if len(ri) == 0:
+        return None, None
+    d = np.linalg.norm(loc - origin[ri], axis=1)
+    return float(np.percentile(d, 1)), float(np.percentile(d, 5))
+
+
 def nodal_von_mises(stiff, u, modulus):
     """Von Mises at the nodes: each element's stress evaluated at its own
     corners, averaged over the elements sharing a node. Element-centre stress
