@@ -18,13 +18,19 @@ cylinder.
       "direction": "-x",            # from the seat into the part, the way the screw goes
       "grip": 6,                    # mm from the seat to the far end
       "end": "face",                # "face" (clamps on a mating part), "thread", or "none"
+      "headOn": "this",             # "mating": the head is on the mating part, which bears on
+                                    # this part at the seat (no head or driver path to keep clear)
       "threadLength": 8,            # end = "thread": engagement length past the grip
       "insert": 6.4,                # optional: heat-set insert or nut OD; else a tapped hole
       "preload": 600                # N; default from the seat's bearing area
     }]
 
-Regions it adds, by id: `<id>-bore`, `<id>-head` (and `<id>-tap` for a
-thread) as keep-outs; `<id>-seat` and `<id>-face` or `<id>-thread` as
+A screw driven from the mating part into this one is `"headOn": "mating"`,
+`"end": "thread"`: the seat is then where the mating part clamps down, and
+only the bore and the tap are kept clear.
+
+Regions it adds, by id: `<id>-bore`, `<id>-head` (unless the head is on
+the other part; and `<id>-tap` for a thread) as keep-outs; `<id>-seat` and `<id>-face` or `<id>-thread` as
 preserves. Supports and loads can name any of them. Hold a bore across
 the screw only (`"fix": "yz"` for a screw along x): fixed along it too,
 the bore would hold the preload ring and the preload would do nothing.
@@ -98,6 +104,9 @@ def expand_fasteners(d: dict) -> dict:
         end_kind = str(f.get("end", "face"))
         if end_kind not in ("face", "thread", "none"):
             raise ValueError(f"{label}.end must be 'face', 'thread' or 'none'")
+        head_on = str(f.get("headOn", "this"))
+        if head_on not in ("this", "mating"):
+            raise ValueError(f"{label}.headOn must be 'this' or 'mating'")
         # the rings: a little wider than the head, a couple of layers thick;
         # the thread sleeve's wall about a third of the screw's diameter.
         # (The optimizer adds what the loads need around them.)
@@ -108,7 +117,8 @@ def expand_fasteners(d: dict) -> dict:
         end = seat + a * grip
         r_ring = 0.5 * head + wall
         keep_out.append({"id": f"{fid}-bore", "shape": _tube(seat - a * 1.0, end + a * 2.0, 0.5 * hole)})
-        keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, 0.5 * head + 0.5)})
+        if head_on == "this":
+            keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, 0.5 * head + 0.5)})
         preserve.append({"id": f"{fid}-seat", "shape": _tube(seat, seat + a * ring, r_ring, 0.5 * hole)})
         far = None
         if end_kind == "face":

@@ -573,6 +573,13 @@ def test_fasteners_expand_to_rings_keepouts_and_preload():
     total = sum(ld.force for ld in pre.loads)
     assert np.allclose(total, 0.0) and len(pre.loads) == 4
     assert np.isclose(np.linalg.norm(pre.loads[2].force), 100.0)
+    # driven from the mating part into a tapped hole: nothing to keep clear
+    # for a head here
+    st = study_from_dict({**base, "fasteners": [
+        {"id": "c", "size": "M3", "seat": [30, 0, 0], "direction": "-x", "grip": 0.0, "end": "thread",
+         "headOn": "mating", "threadLength": 8}]})
+    assert {r.id for r in st.keep_out} == {"c-bore", "c-tap"}
+    assert {r.id for r in st.preserve} == {"c-seat", "c-thread"}
 
 TESTS = [
     test_shapes_sdf_and_exact_volume,
