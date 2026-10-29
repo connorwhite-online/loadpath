@@ -77,17 +77,17 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
 .note { color: var(--muted); font-size: 12px; margin: 0; }
 
 #legend {
-  position: absolute; right: max(14px, env(safe-area-inset-right, 0px)); bottom: 14px; background: var(--panel);
+  position: absolute; z-index: 2; right: max(14px, env(safe-area-inset-right, 0px)); bottom: 14px; background: var(--panel);
   border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 220px; max-width: calc(100% - 28px);
 }
 #legend .t { font-size: 12px; font-weight: 500; margin-bottom: 6px; }
 #legend canvas { width: 100%; height: 10px; border-radius: 2px; display: block; }
 #legend .ticks { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
 #legend .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
-#views { position: absolute; top: 12px; right: max(12px, env(safe-area-inset-right, 0px)); display: flex; gap: 4px; }
+#views { position: absolute; z-index: 2; top: 12px; right: max(12px, env(safe-area-inset-right, 0px)); display: flex; gap: 4px; }
 #views button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 12px; }
 .tag {
-  position: absolute; pointer-events: none; transform: translate(-50%, -100%); font: 500 11px var(--mono);
+  position: absolute; z-index: 1; pointer-events: none; transform: translate(-50%, -100%); font: 500 11px var(--mono);
   background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; white-space: nowrap;
 }
 .tag.load { color: var(--accent); }
@@ -95,7 +95,7 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
   border-radius: 5px; padding: 4px 7px; white-space: nowrap; transform: translate(12px, -50%); font-variant-numeric: tabular-nums; }
 
 #timeline {
-  position: absolute; left: 14px; right: 250px; bottom: 14px; background: var(--panel); border: 1px solid var(--line);
+  position: absolute; z-index: 2; left: 14px; right: 250px; bottom: 14px; background: var(--panel); border: 1px solid var(--line);
   border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
 }
 #timeline .row { flex-wrap: nowrap; }
@@ -237,7 +237,9 @@ function turbo(x) {   // Mikhailov's polynomial fit of Google Turbo, sRGB
 }
 const toLin = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 const LUT = new Float32Array(256 * 3);
-for (let i = 0; i < 256; i++) { const c = turbo(i / 255); for (let k = 0; k < 3; k++) LUT[i * 3 + k] = toLin(c[k]); }
+// the ends of Turbo are near black; the ramp runs from its blue to its red
+const ramp = (t) => turbo(0.1 + 0.85 * t);
+for (let i = 0; i < 256; i++) { const c = ramp(i / 255); for (let k = 0; k < 3; k++) LUT[i * 3 + k] = toLin(c[k]); }
 function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 
 // ---- scene ----------------------------------------------------------------
@@ -442,12 +444,12 @@ function legend() {
   const c = curCase(p);
   $("lg-title").textContent = FIELD_NAME[S.field] + " · " + c.name;
   const bar = $("lg-bar").getContext("2d"), img = bar.createImageData(256, 1);
-  for (let i = 0; i < 256; i++) { const t = turbo(S.field === "sf" ? 1 - i / 255 : i / 255); img.data.set([t[0] * 255, t[1] * 255, t[2] * 255, 255], i * 4); }
+  for (let i = 0; i < 256; i++) { const t = ramp(S.field === "sf" ? 1 - i / 255 : i / 255); img.data.set([t[0] * 255, t[1] * 255, t[2] * 255, 255], i * 4); }
   bar.putImageData(img, 0, 0);
   $("lg-lo").textContent = fmt(sc.lo) + unit; $("lg-mid").textContent = fmt((sc.lo + sc.hi) / 2) + unit;
   $("lg-hi").textContent = (S.field === "sf" ? "≥ " : "") + fmt(sc.hi) + unit;
   let sub = "";
-  if (S.field === "stress") sub = S.fit || !allowable(p) ? `Scaled to this case's peak, ${fmt(c.peak)} MPa.` : `Red is the allowable: strength ÷ ${p.allowance !== 1 ? "discretization allowance ÷ " : ""}${p.targetSF ? "safety factor goal" : "1"}.`;
+  if (S.field === "stress") sub = S.fit || !allowable(p) ? `Scaled to this case's peak, ${fmt(c.peak)} MPa.` : (p.targetSF ? `Red is the allowable: strength ÷ ${fmt(p.allowance)} stress allowance ÷ safety factor goal ${p.targetSF}.` : `Red is the material's strength ÷ the ${fmt(p.allowance)} stress allowance.`) + ` Peak here: ${fmt(c.peak)} MPa.`;
   if (S.field === "sf") sub = `Red is failure (1.0)${p.targetSF ? `; the goal is ${p.targetSF}` : ""}. Includes the ${fmt(p.allowance)}× stress allowance.`;
   if (S.field === "disp") sub = `Largest: ${fmt(c.maxDisplacement, 3)} mm.`;
   if (c.envelope) sub += ` Worst of all cases; shape from "${c.envelope}".`;
@@ -648,7 +650,9 @@ function labels() {
     const b = new THREE.Box3().setFromObject(p.group), top = b.getCenter(new THREE.Vector3()); top.z = b.max.z;
     place(p.label, top, cmp && p.group.visible);
   }
-  for (const a of arrows) place(a.label, a.tip, a.h.visible);
+  // one label per force and case: a bolt pattern repeats the same load at every hole
+  const seen = new Set();
+  for (const a of arrows) { const k = a.label + "|" + a.case, first = !seen.has(k); seen.add(k); place(a.label, a.tip, a.h.visible && first); }
 }
 
 // ---- loop -----------------------------------------------------------------

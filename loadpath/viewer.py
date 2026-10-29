@@ -390,9 +390,9 @@ def study_viewer(result, path=None, history: HistoryRecorder | None = None, outc
     v = Viewer(title or study.name, f"{study.material.name} · {len(study.load_cases)} load case"
                + ("s" if len(study.load_cases) != 1 else ""))
     mat = study.material
-    # keep the page light enough to open on a phone: ~250k faces across the parts
+    # keep the page light enough to open on a phone: ~160k faces across the parts
     n_parts = len(idx) + (baseline is not None)
-    max_faces = max(20_000, min(max_faces, 250_000 // max(1, n_parts)))
+    max_faces = max(20_000, min(max_faces, 160_000 // max(1, n_parts)))
     for i in idx:
         o = result.outcomes[i]
         rep = verify_part(study, o.mesh, fields=True, **vkw) if fields else None
