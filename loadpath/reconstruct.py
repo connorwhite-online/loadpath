@@ -26,7 +26,8 @@ __all__ = ["reconstruct", "ReconstructOptions"]
 
 class ReconstructOptions:
     def __init__(self, upsample=3, smooth_sigma=0.9, level=0.5, max_triangles=250_000,
-                 min_body_fraction=0.002, taubin_iterations=25, blend=None, blend_k=0.8, fillet=True, seat=True):
+                 min_body_fraction=0.002, taubin_iterations=25, blend=None, blend_k=0.8, fillet=True, seat=True,
+                 close=None):
         self.upsample = upsample            # field refinement before meshing
         self.smooth_sigma = smooth_sigma    # in fine cells
         self.level = level
@@ -46,6 +47,13 @@ class ReconstructOptions:
         self.fillet = fillet
         # Move material at flush faces onto the face (_seat_on_flush_faces).
         self.seat = seat
+        # Round every concave edge of the organic body itself, not only where
+        # it meets preserved geometry: a morphological closing in distance
+        # space by this radius in mm (None: half the minMember, at least 1;
+        # 0 turns it off). It only ever adds material, into corners and into
+        # slots narrower than twice the radius (below the minimum member,
+        # so unprintable anyway).
+        self.close = close
 
 
 def _smooth_max(a, b, k):
@@ -243,6 +251,22 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
             # after the boundary rounding, and never past the boundary itself
             filleted = np.minimum(filleted, env.reshape(fine.shape))
         fine = np.maximum(fine, filleted)
+    if o.fillet and o.close and o.close > 0:
+        # Closing: grow the surface out by `close`, re-distance, and shrink it
+        # back. Where the body is convex or flat that returns it unchanged;
+        # into a concave edge between two members it leaves a fillet of that
+        # radius. Struts meeting at a sharp angle otherwise keep a crease the
+        # preserve fillet never sees (GRIP's upper arm, 51 mm of it once its
+        # thrust disk was no longer pinned solid).
+        grown = _field_distance(fine, step, o.level) - o.close < 0
+        d2 = (ndimage.distance_transform_edt(~grown) - ndimage.distance_transform_edt(grown)) * step
+        d2 += np.where(grown, 0.5 * step, -0.5 * step)
+        # the re-distance is exact only to the grid's cells: smooth it over a
+        # cell, or its staircase lands just outside the body as ridges
+        closed = ndimage.gaussian_filter(np.clip(o.level - (d2 + o.close) / (4.0 * step), 0.0, 1.0), 1.0)
+        if design:
+            closed = np.minimum(closed, env.reshape(fine.shape))
+        fine = np.maximum(fine, closed)
     if keep_out:
         # Fade the field to zero at every keep-out surface. Smoothing and
         # upsampling otherwise carry material across a keep-out (a cable
@@ -286,6 +310,10 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         import copy
         o = copy.copy(o)
         o.blend = max(3.0, 1.5 * float(study.min_member or 0.0))
+    if o.close is None:
+        import copy
+        o = copy.copy(o)
+        o.close = max(1.0, 0.5 * float(study.min_member or 0.0))
     # where the part must reach the boundary: its supports and its loads
     flush = []
     for sup in study.supports:
