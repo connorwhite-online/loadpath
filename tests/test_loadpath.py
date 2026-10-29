@@ -522,6 +522,27 @@ def test_lattice_infill_is_lighter_and_walled():
     _, graded = lattice_infill(st, block, solid["fields"], o)
     assert graded["volumeRatio"] > info["volumeRatio"]
 
+
+def test_heat_exchanger_fluids_are_isolated_and_connected():
+    """Two fluids through one gyroid: each port reaches its partner and never
+    the other fluid, the wall between them is the sheet's, and the mesh is
+    closed."""
+    from loadpath.heatx import design_heat_exchanger, heat_exchanger_from_spec
+
+    hx = heat_exchanger_from_spec({"core": {"type": "box", "min": [0, 0, 0], "max": [20, 20, 16]},
+                                   "cell": 8, "wall": 1.0, "header": 4, "portDiameter": 5, "portLength": 3})
+    mesh, rep = design_heat_exchanger(hx)
+    assert rep["isolated"] and all(rep["connected"].values()), rep["ports"]
+    assert rep["minWallBetweenFluids"] > 0.8, rep["minWallBetweenFluids"]
+    assert mesh.is_watertight
+    assert 0.5 < rep["A"]["coreVolume"] / rep["B"]["coreVolume"] < 2.0
+    try:
+        heat_exchanger_from_spec({"core": {"type": "box", "min": [0, 0, 0], "max": [20, 20, 16]},
+                                  "cell": 2, "wall": 1.0})
+        raise AssertionError("a cell under 3 walls should be refused")
+    except ValueError:
+        pass
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -547,6 +568,7 @@ TESTS = [
     test_crease_metric_finds_unfilleted_junctions,
     test_closed_bore_is_flagged,
     test_lattice_infill_is_lighter_and_walled,
+    test_heat_exchanger_fluids_are_isolated_and_connected,
 ]
 
 

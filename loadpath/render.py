@@ -219,3 +219,52 @@ def render_interfaces(mesh, study, path, max_panels=16, cols=4, size=3.2, margin
     fig.savefig(path, facecolor="white")
     plt.close(fig)
     return path
+
+
+def render_heat_exchanger(mesh, spaces, core, path, title=None, size=(5.0, 4.6)):
+    """Three panels: the part, and each fluid's space cut open at the core's
+    mid-height so the two interleaved networks show (A blue, B orange)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    lo, hi = np.asarray(mesh.bounds)
+    span = (hi - lo).max()
+    mid = 0.5 * (lo + hi)
+    colors = [np.array([0.20, 0.45, 0.85]), np.array([0.92, 0.50, 0.15])]
+    names = list(spaces)
+    panels = [("part", [(mesh, np.array([0.80, 0.80, 0.82]))])]
+    zcut = 0.5 * (core.lo[2] + core.hi[2])
+    cut = []
+    for i, n in enumerate(names):
+        m = spaces[n].slice_plane([0, 0, zcut], [0, 0, -1], cap=True)
+        cut.append((m, colors[i % 2]))
+    panels.append((" + ".join(names) + f", cut at z={zcut:g}", cut))
+    panels.append((names[0], cut[:1]))
+    fig = plt.figure(figsize=(size[0] * len(panels), size[1]), dpi=110)
+    elev, azim = 28, -55
+    e, a = np.radians(elev), np.radians(azim)
+    view_dir = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
+    key = view_dir + np.array([0.3, -0.2, 0.6])
+    key /= np.linalg.norm(key)
+    for pi, (label, items) in enumerate(panels):
+        ax = fig.add_subplot(1, len(panels), pi + 1, projection="3d")
+        for m, base in items:
+            m = _decimate(m, 60_000)
+            shade = np.clip(m.face_normals @ key, 0, 1)
+            col = np.clip(base[None] * (0.35 + 0.65 * shade)[:, None], 0, 1)
+            ax.add_collection3d(Poly3DCollection(m.triangles, facecolors=col, edgecolor="none", linewidth=0))
+        ax.set_xlim(mid[0] - span / 2, mid[0] + span / 2)
+        ax.set_ylim(mid[1] - span / 2, mid[1] + span / 2)
+        ax.set_zlim(mid[2] - span / 2, mid[2] + span / 2)
+        ax.set_box_aspect((1, 1, 1), zoom=1.4)
+        ax.view_init(elev, azim)
+        ax.set_axis_off()
+        ax.set_title(label, fontsize=9)
+    if title:
+        fig.suptitle(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(path, facecolor="white")
+    plt.close(fig)
+    return path
