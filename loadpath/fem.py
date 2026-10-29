@@ -22,7 +22,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import cg
 
-__all__ = ["Layered", "elastic_c", "hex8_ke", "hex8_b_center", "HexMesh", "Stiffness", "Solver", "von_mises"]
+__all__ = ["Layered", "amg_solver", "elastic_c", "hex8_ke", "hex8_b_center", "HexMesh", "Stiffness", "Solver", "von_mises"]
 
 # Local corner order: bit 0 = +x, bit 1 = +y, bit 2 = +z.
 CORNERS = np.array([[(c >> 0) & 1, (c >> 1) & 1, (c >> 2) & 1] for c in range(8)])
@@ -329,6 +329,22 @@ def rigid_body_modes(xyz: np.ndarray) -> np.ndarray:
     return b
 
 
+def amg_solver(a, **kw):
+    """pyamg.smoothed_aggregation_solver, reproducibly. pyamg estimates
+    spectral radii (the prolongation smoother's weight) from np.random's
+    global stream, so the hierarchy, and with it every iterate, changed from
+    run to run: the printed hook's overhang read 0.040 or 0.042 on the same
+    code. Seed the stream for the setup and give the caller's back."""
+    import pyamg
+
+    state = np.random.get_state()
+    np.random.seed(0)
+    try:
+        return pyamg.smoothed_aggregation_solver(a, **kw)
+    finally:
+        np.random.set_state(state)
+
+
 class Solver:
     """CG + AMG with a reusable hierarchy. `solve(K, f, x0)` rebuilds the
     multigrid hierarchy when asked to, or when the last solve needed too many
@@ -356,16 +372,13 @@ class Solver:
             d[d == 0] = 1.0
             return sp.diags(1.0 / d)
         if self._ml is None:
-            import pyamg
             # coarse_solver: pyamg's default is a dense pseudo-inverse (an SVD)
             # of the coarsest level. Aggregation on these stiffness matrices
             # often stops coarsening at a few thousand unknowns, where that SVD
             # alone took ~3s per rebuild; a sparse LU of the same level is
             # milliseconds.
-            self._ml = pyamg.smoothed_aggregation_solver(
-                k, B=self._b, symmetry="hermitian", strength="symmetric", max_coarse=400,
-                coarse_solver="splu",
-            )
+            self._ml = amg_solver(k, B=self._b, symmetry="hermitian", strength="symmetric", max_coarse=400,
+                                  coarse_solver="splu")
         return self._ml.aspreconditioner(cycle="V")
 
     def solve(self, k, f, x0=None):

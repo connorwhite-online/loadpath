@@ -340,10 +340,10 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     solver = Solver(sm, rtol=1e-7, maxiter=4000)
     # Rigid-body modes are pinned by the driven nodes; AMG still wants a
     # near-null space sized to the free unknowns, so use plain CG+AMG on kff.
-    import pyamg
     from scipy.sparse.linalg import cg
-    ml = pyamg.smoothed_aggregation_solver(kff, symmetry="hermitian", strength="symmetric",
-                                           max_coarse=400, coarse_solver="splu")
+
+    from .fem import amg_solver
+    ml = amg_solver(kff, symmetry="hermitian", strength="symmetric", max_coarse=400, coarse_solver="splu")
     uf, info = cg(kff, rhs, rtol=1e-7, maxiter=4000, M=ml.aspreconditioner(cycle="V"))
     del solver
     if info != 0:
