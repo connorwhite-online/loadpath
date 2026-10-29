@@ -1,6 +1,6 @@
 {
  "name": "grip-wrist-yoke",
- "description": "GRIP v0.3's wrist yoke (github.com/connorwhite-online/grip, generative/v3.py): a hub on the J4 STS3215 servo horn below, and a cradle for the J5 STS3250 servo above it, held only at its eight case-screw bosses with screw and hex-driver clearance at each, the servo body and horn sweep kept clear. Loads: the arm reaching out with 1 kg at the gripper (x1.5), J5 at the servo's 4.9 N\u00b7m stall torque, and a 20 N push along J5. SF 2 in SLS PA12-GF. GRIP's part was 24.3 g; main at 8de87b2 regrows it at 23.8 g but SF 4.2, so it is overbuilt: the case asks for 20 g.",
+ "description": "GRIP v0.3's wrist yoke (github.com/connorwhite-online/grip, generative/v3.py): a hub on the J4 STS3215 servo horn below, and a cradle for the J5 STS3250 servo above it, held only at its eight case-screw bosses with screw and hex-driver clearance at each, the servo body and horn sweep kept clear. Loads: the arm reaching out with 1 kg at the gripper (x1.5), J5 at the servo's 4.9 N\u00b7m stall torque, and a 20 N push along J5. SF 2 in SLS PA12-GF. GRIP's part was 24.3 g; main at 8de87b2 regrows it at 23.8 g but SF 4.2, so it is overbuilt: the case asks for 20 g. Chain loads from GRIP: 1.50 kg distal, 3.10 N\u00b7m static torque.",
  "designSpace": [
   {
    "type": "box",
@@ -159,12 +159,38 @@
   {
    "id": "j4-horn",
    "bore": false,
-   "shape": {"type": "cylinder", "p0": [0, -25, 531.5], "p1": [0, -25, 536.0], "r": 12}
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0,
+     -25,
+     531.5
+    ],
+    "p1": [
+     0,
+     -25,
+     536.0
+    ],
+    "r": 12
+   }
   },
   {
    "id": "j4-servo-sweep",
    "bore": false,
-   "shape": {"type": "cylinder", "p0": [0, -25, 496.0], "p1": [0, -25, 532.0], "r": 37}
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0,
+     -25,
+     496.0
+    ],
+    "p1": [
+     0,
+     -25,
+     532.0
+    ],
+    "r": 37
+   }
   },
   {
    "id": "j4-horn-bolt-0",
@@ -797,10 +823,6 @@
  ],
  "resolution": {
   "maxElements": 60000
- },
- "chain": {
-  "distalKg": 1.4990999999999999,
-  "staticTorqueNm": 3.1049616781386025
  },
  "expect": {
   "maxMass": 20.0,

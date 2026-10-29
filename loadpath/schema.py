@@ -97,6 +97,16 @@ _REGION = {
     "additionalProperties": False,
 }
 
+_KEEP_OUT = {
+    "type": "object",
+    "properties": {**_REGION["properties"],
+                   "bore": {"type": "boolean",
+                            "description": "false: a clearance volume (a mating part, a sweep) that may end "
+                                           "against material; it is not checked for closed ends. Default true."}},
+    "required": ["shape"],
+    "additionalProperties": False,
+}
+
 _TARGET = ("A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') "
            "or an inline 'shape'.")
 
@@ -249,7 +259,7 @@ STUDY_SCHEMA = {
                         "description": "Shapes material may occupy (their union)."},
         "preserve": {"type": "array", "items": {"$ref": "#/$defs/region"},
                      "description": "Geometry kept exactly: bosses, mounting faces."},
-        "keepOut": {"type": "array", "items": {"$ref": "#/$defs/region"},
+        "keepOut": {"type": "array", "items": {"$ref": "#/$defs/keepOut"},
                     "description": "Volume that must stay empty: bores, bolt access, cables, mating parts."},
         "fasteners": {"type": "array", "items": {"$ref": "#/$defs/fastener"}},
         "supports": {"type": "array", "items": {"$ref": "#/$defs/support"}, "minItems": 1},
@@ -281,8 +291,8 @@ STUDY_SCHEMA = {
     "required": ["designSpace", "supports"],
     "x-requireOne": [["loadCases"], ["loads"]],
     "additionalProperties": False,
-    "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "support": _SUPPORT, "load": _LOAD,
-              "loadCase": _LOAD_CASE, "material": _ONE_MATERIAL, "fastener": _FASTENER, "goal": _GOAL},
+    "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "keepOut": _KEEP_OUT, "support": _SUPPORT,
+              "load": _LOAD, "loadCase": _LOAD_CASE, "material": _ONE_MATERIAL, "fastener": _FASTENER, "goal": _GOAL},
 }
 
 _FLUID_NAMES = ["water", "water60", "air", "glycol50", "oil"]

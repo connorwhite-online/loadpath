@@ -535,6 +535,25 @@ def test_surface_thickness_reads_a_plate_without_a_grid():
     assert abs(p5 - 2.05) < 0.02 and abs(p1 - 2.05) < 0.02, (p1, p5)
 
 
+def test_snap_runs_the_body_flush_with_a_boss_face():
+    """A body whose underside lies 0.3 mm above a boss's end face goes onto
+    the face's plane over the boss and a cell past its rim, eases back to
+    where it was further out, and keeps its sides and top where they were."""
+    from loadpath.reconstruct import _snap_to_flat_faces
+
+    boss = Cylinder([0, 0, 0], [0, 0, 5], 10)
+    slab = trimesh.creation.box(extents=(60, 60, 2.6), transform=trimesh.transformations.translation_matrix([0, 0, 1.6]))
+    slab = slab.subdivide().subdivide().subdivide()
+    before = slab.vertices.copy()
+    _snap_to_flat_faces(slab, [boss], reach=1.0, spread=4.0)
+    v = slab.vertices
+    r = np.hypot(before[:, 0], before[:, 1])
+    under = np.isclose(before[:, 2], 0.3)
+    assert np.allclose(v[under & (r < 11.0), 2], 0.0, atol=1e-9)
+    assert np.allclose(v[under & (r > 15.0), 2], 0.3)
+    assert np.allclose(v[~under], before[~under])
+
+
 def test_lattice_infill_is_lighter_and_walled():
     """A gyroid infill under a skin: much lighter than solid, one body, its
     voids enclosed; open (no skin) leaves nothing enclosed; graded by the

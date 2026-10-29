@@ -37,7 +37,7 @@
     "keepOut": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/region"
+        "$ref": "#/$defs/keepOut"
       },
       "description": "Volume that must stay empty: bores, bolt access, cables, mating parts."
     },
@@ -591,6 +591,26 @@
         },
         "shape": {
           "$ref": "#/$defs/shape"
+        }
+      },
+      "required": [
+        "shape"
+      ],
+      "additionalProperties": false
+    },
+    "keepOut": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Name loads and supports refer to."
+        },
+        "shape": {
+          "$ref": "#/$defs/shape"
+        },
+        "bore": {
+          "type": "boolean",
+          "description": "false: a clearance volume (a mating part, a sweep) that may end against material; it is not checked for closed ends. Default true."
         }
       },
       "required": [

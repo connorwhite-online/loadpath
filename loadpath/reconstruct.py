@@ -297,6 +297,66 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     return mesh
 
 
+def _flat_faces(shape):
+    """The flat faces of a preserved shape, as (point, outward normal,
+    lateral) with lateral(p) the distance from p's projection to the face
+    (0 on it). Box faces and cylinder end caps; anything else has none."""
+    from .shapes import Box, Cylinder
+
+    out = []
+    if isinstance(shape, Cylinder):
+        def lateral(p, sh=shape):
+            d = p - sh.p0
+            radial = np.linalg.norm(d - (d @ sh.axis)[:, None] * sh.axis, axis=1)
+            return np.maximum(np.maximum(radial - sh.r, sh.r_inner - radial), 0.0)
+        out += [(shape.p0, -shape.axis, lateral), (shape.p1, shape.axis, lateral)]
+    elif isinstance(shape, Box):
+        for a in range(3):
+            others = [i for i in range(3) if i != a]
+            def lateral(p, sh=shape, o=others):
+                q = p[:, o]
+                return np.linalg.norm(np.maximum(np.maximum(sh.lo[o] - q, q - sh.hi[o]), 0.0), axis=1)
+            for sign, at in ((-1.0, shape.lo), (1.0, shape.hi)):
+                n = np.zeros(3)
+                n[a] = sign
+                out.append((at, n, lateral))
+    return out
+
+
+def _snap_to_flat_faces(mesh, preserve, reach: float, spread: float):
+    """Move the organic surface onto a preserved shape's flat face where it
+    runs alongside it within `reach` (mm), facing the same way.
+
+    The density field resolves a millimetre at best, so where the body runs
+    on flush with a boss's end face its surface lands a fraction of a
+    millimetre off the face, and the exact union leaves the boss's rim
+    standing in a hairline step all round (GRIP's turret: 70 mm of crease
+    round its J1 hub's mating face, and the body half a millimetre proud of
+    that face where the fillet had bulged past it). On the face's own
+    footprint the surface goes onto the face's plane; past its edge the move
+    eases off over `spread` mm, so the body rises from the face's rim in a
+    slope instead of a step."""
+    v = np.asarray(mesh.vertices, float).copy()
+    vn = np.asarray(mesh.vertex_normals, float)
+    moved = False
+    for sh in preserve:
+        for at, n, lateral in _flat_faces(sh):
+            s = (v - at) @ n
+            cand = (np.abs(s) < reach) & (vn @ n > np.cos(np.radians(35.0)))
+            if not cand.any():
+                continue
+            i = np.nonzero(cand)[0]
+            # (fully onto the plane for a cell past the edge too: a vertex
+            # left a hundredth of a millimetre off it is still a step)
+            w = np.clip(1.0 - (lateral(v[i]) - reach) / spread, 0.0, 1.0)
+            w *= np.clip(2.0 * (reach - np.abs(s[i])) / reach, 0.0, 1.0)
+            v[i] -= (w * s[i])[:, None] * n
+            moved = moved or bool((w > 0).any())
+    if moved:
+        mesh.vertices = v
+    return mesh
+
+
 def _bodies(man):
     return sorted(man.decompose(), key=lambda b: -b.volume())
 
@@ -340,6 +400,8 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     if o.taubin_iterations:
         import trimesh
         trimesh.smoothing.filter_taubin(iso, lamb=0.5, nu=-0.53, iterations=o.taubin_iterations)
+    if study.preserve and o.fillet and o.blend > 0:
+        _snap_to_flat_faces(iso, [r.shape for r in study.preserve], domain.pitch / o.upsample, o.blend)
     if len(iso.faces) > o.max_triangles:
         # Decimate the organic surface before the booleans, never after: a
         # decimated part shaves the exact preserved faces (a bore wall moved
