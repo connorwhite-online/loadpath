@@ -40,8 +40,6 @@ _MAX_SEARCH_RUNS = 7
 _COARSE_MIN_CELLS = 12_000
 # Projection sharpness a warm-started run resumes at.
 _WARM_BETA = 4.0
-# A cold start that fails with at least this margin is retried warm (_run_single).
-_RETRY_MARGIN = 0.7
 # The pick of a safety-factor search is checked again on a grid this many
 # cells finer before it is delivered. The in-loop check resolves a fillet
 # only as well as its grid: GRIP's turret read SF 2.26 there and 1.65 at
@@ -102,6 +100,7 @@ class Outcome:
             "margin": r.get("margin"),
             "passes": self.passes,
             "start": r.get("start"),
+            "alternative": r.get("alternative"),
             "optimizer": self.optimizer,
             "reconstruction": self.reconstruction,
         }
@@ -266,31 +265,36 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
     def run_one(vf: float) -> Outcome:
         nonlocal last_x
         emit({"stage": "optimize", "volumeFraction": vf})
-        if domain.n_elem < _COARSE_MIN_CELLS:
-            o = attempt(vf, last_x, _WARM_BETA if last_x is not None else 1.0)
-            o.report["start"] = "warm" if last_x is not None else "cold"
-        else:
-            # Every fraction starts from its own coarse layout. Warm-starting
-            # from the previous fraction's design carried its layout down to
-            # fractions it no longer suited: the wall bracket read SF 1.0-1.5
-            # at 8-14% that way, and 3.2 at 10% started fresh (80 g delivered
-            # where 50 g passes). But a stiffness-bound part can be the other
-            # way round (GRIP's upper arm: 7.5% passed warm from 9% and failed
-            # cold, on deflection), so a cold start that fails is tried again
-            # from the nearest passing design above it, and the better kept.
-            # Only when it failed narrowly: a retry costs a whole run (the
-            # suite took 42 min instead of 26 retrying every failure), and
-            # the upper arm's cold miss was at margin 0.79.
-            o = attempt(vf, _coarse_start(study, domain, vf, radius, should_stop), _WARM_BETA)
+        big = domain.n_elem >= _COARSE_MIN_CELLS
+
+        def cold():
+            if big:
+                return attempt(vf, _coarse_start(study, domain, vf, radius, should_stop), _WARM_BETA)
+            return attempt(vf, None, 1.0)
+
+        if last_x is None:
+            o = cold()
             o.report["start"] = "cold"
-            above = [q for q in outcomes if q.passes and q.volume_fraction > vf and getattr(q, "x", None) is not None]
-            near = o.report.get("margin") is not None and o.report["margin"] >= _RETRY_MARGIN
-            if o.passes is False and near and above and not (should_stop is not None and should_stop()):
-                src = min(above, key=lambda q: q.volume_fraction)
-                w = attempt(vf, src.x, _WARM_BETA)
-                w.report["start"] = f"warm from {src.volume_fraction:.3f}"
-                if w.report.get("margin", 0.0) > o.report.get("margin", 0.0) or (w.passes and not o.passes):
-                    o = w
+        else:
+            # Each fraction warm-starts from the last design, which is what
+            # lets a stiffness-bound part follow its layout down (GRIP's upper
+            # arm: 7.0% passed warm at margin 1.06 and failed cold at 0.68).
+            o = attempt(vf, last_x, _WARM_BETA)
+            o.report["start"] = f"warm from {outcomes[-1].volume_fraction:.3f}" if outcomes else "warm"
+            if big and len(outcomes) == 1 and vf < outcomes[0].volume_fraction \
+                    and not (should_stop is not None and should_stop()):
+                # ...but carried from a fraction well above, the layout can
+                # be one the new fraction no longer suits: the wall bracket
+                # read SF 1.0-1.5 at 8-14% chained down from 15%, and 3.2 at
+                # 10% started fresh. So the first step down is also run from
+                # its own coarse layout, and the better margin kept (and
+                # chained on); one extra run per search.
+                c = cold()
+                c.report["start"] = "cold"
+                if (c.report.get("margin") or 0.0) > (o.report.get("margin") or 0.0):
+                    o, c = c, o
+                o.report["alternative"] = {k: c.report.get(k) for k in
+                                           ("start", "mass", "safetyFactor", "margin")} | {"passes": c.passes}
         last_x = o.x
         emit({"stage": "outcome", **o.summary()})
         return o
