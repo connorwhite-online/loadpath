@@ -30,6 +30,48 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
 Units are millimetres, newtons, megapascals. See [`loadpath/README.md`](loadpath/README.md)
 for the method, the study format, goals and limits.
 
+<!-- gallery:start -->
+
+## Examples
+
+The eval cases (9/9 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>48.2 g · 61% lighter · SF 10.75 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>58.8 g · 53% lighter · SF 12.78 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>24.7 g · 84% lighter · SF 3.67 · pass</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>205.9 g · 88% lighter · SF 5.81 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>26.5 g · 59% lighter · SF 1.54 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.2 g · 69% lighter · SF 3.35 · pass</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>31.8 g · 79% lighter · SF 3.43 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>48.0 g · 89% lighter · SF 3.19 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>80.1 g · 81% lighter · SF 4.51 · pass</sub></td>
+</tr>
+</table>
+
+Where the load goes: von Mises stress on the part bent by its worst load case:
+
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/images/stress/bell-crank.png" width="250"><br><sub>bell-crank</sub></td>
+<td align="center" valign="top"><img src="docs/images/stress/grip-upper-arm.png" width="250"><br><sub>grip-upper-arm</sub></td>
+<td align="center" valign="top"><img src="docs/images/stress/printed-hook.png" width="250"><br><sub>printed-hook</sub></td>
+</tr>
+</table>
+
+Two-fluid heat exchangers: two isolated channel networks through one sheet gyroid, with headers that print without support.
+
+![box-crossflow](docs/images/heatx/box-crossflow.png)
+
+<sub>Rendered 2026-10-29 from `a5fdad3` by `python docs/gallery.py`.</sub>
+
+<!-- gallery:end -->
+
 ## Install
 
 ```

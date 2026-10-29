@@ -80,13 +80,14 @@ def render_views(mesh, path, study=None, title=None, views=_VIEWS, size=(5.0, 4.
 
 
 def render_stress(mesh, fields, path, strength, title=None, views=_VIEWS[:2], size=(5.0, 4.2),
-                  exaggerate=None, safety_factor=1.0):
+                  exaggerate=None, safety_factor=1.0, label=None):
     """Stress map of a verified part: each vertex coloured by the worst
     nodal von Mises stress over the load cases, as a fraction of `strength`
     (verify_part(..., fields=True)["fields"]), divided by `safety_factor`:
     pass the study's goal and red means "at the allowable". `exaggerate` scales the worst
     case's displacement into the drawn shape; by default the largest
-    displacement is drawn as 4% of the part's size, so the bend reads."""
+    displacement is drawn as 4% of the part's size, so the bend reads.
+    `label` replaces the colour bar's label (say when `strength` is not one)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -128,7 +129,7 @@ def render_stress(mesh, fields, path, strength, title=None, views=_VIEWS[:2], si
         ax.view_init(elev, azim)
         ax.set_axis_off()
     cb = fig.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap), ax=fig.axes, shrink=0.7, pad=0.02)
-    cb.set_label("von Mises / allowable (worst case)" if safety_factor != 1.0 else "von Mises / strength (worst case)")
+    cb.set_label(label if label else "von Mises / allowable (worst case)" if safety_factor != 1.0 else "von Mises / strength (worst case)")
     if title:
         fig.suptitle(title + (f"  ·  shape {k:.0f}x exaggerated ({worst['name']})" if k else ""), fontsize=10)
     fig.savefig(path, facecolor="white")
