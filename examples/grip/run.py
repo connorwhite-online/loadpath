@@ -13,7 +13,7 @@ sockets, a counterbalance spring, hex-driver access to every bolt.
     python examples/grip/run.py --verify-only DIR    # check STLs already in DIR
 
 For each link: run the study, then re-verify the delivered mesh on a 150k-cell
-grid (the confirm-stage resolution) and draw its interfaces close up
+grid exactly as the study's confirm stage does and draw its interfaces close up
 (render.render_interfaces). Writes <out>/<link>.stl, <link>-interfaces.png and
 <out>/scorecard.json, and prints a table against GRIP's recorded v0.3 numbers.
 """
@@ -55,9 +55,13 @@ def _solve(link):
 def check(link, mesh, out):
     from loadpath.render import render_interfaces
     from loadpath.verify import surface_thickness, verify_part
+    from loadpath.domain import choose_pitch
     st = _study(link)
     render_interfaces(mesh, st, os.path.join(out, f"{link}-interfaces.png"))
-    rep = verify_part(st, mesh, max_cells=150_000)
+    # the study's own confirm stage: 150k cells, stress within one
+    # optimization cell of a load or support left out of the peak
+    pitch = choose_pitch(st)
+    rep = verify_part(st, mesh, max_cells=150_000, min_pitch=0.3 * pitch, contact_band=pitch)
     p1, p5 = surface_thickness(mesh)
     return {
         "g": round(rep["mass"], 1), "sf": round(rep["safetyFactor"], 2),

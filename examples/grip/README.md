@@ -23,17 +23,30 @@ interface (`render.render_interfaces`); `scorecard.json` has mass, SF with the
 peak's location per case, ray member thickness, crease length, sawn-off area,
 keep-out intrusion and lost preserved geometry.
 
-## What GRIP recorded vs loadpath main
+## What GRIP recorded vs loadpath main (2026-10-29)
 
-GRIP's v0.3 numbers are the study's own check at delivery. "Re-verified" is
-the same delivered STL checked by main at 8de87b2 (150k cells, with the
-hotspot submodels the verifier now runs). "Regrown" is the study run again
-on main.
+"Recorded" is GRIP's v0.3 summary (the study's own check at delivery).
+"Regrown" is the study run again on main at 8de87b2 and checked the way
+the study's confirm stage checks it: 150k cells, with stress within one
+optimization cell of a load or support left out of the peak. The turret
+was regrown on main with the closing fillet as the grip-turret eval case.
 
-| Link | GRIP recorded | Re-verified on main | Regrown on main |
-| --- | --- | --- | --- |
-| Turret | 236 g, SF 2.41 | SF 1.57, crease 512 mm | pending |
-| Upper arm | 179 g, SF 2.81 | SF 2.09, 1067 mm² sawn off | pending |
-| Forearm | 78 g, SF 4.19 | SF 2.14, crease 278 mm | pending |
-| Wrist yoke | 24 g, SF 4.41 | SF 2.49, crease 206 mm | 23.8 g, SF 4.22, crease 26 mm, p5 2.97 mm |
-| Wrist link | 67 g, SF 4.13 | SF 4.12, p5 member 1.07 mm, 87 mm² sawn off | pending |
+| Link | Recorded | Regrown on main | Ray p5 member | Crease | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Turret | 236 g, SF 2.41 | 257 g, SF 2.25 | | 139 mm | eval case grip-turret |
+| Upper arm | 179 g, SF 2.81 | pending | | | GRIP's part has ~1070 mm² sawn flat on the design box |
+| Forearm | 78 g, SF 4.19 | **57 g**, SF 2.54 | 3.24 mm | 3 mm | |
+| Wrist yoke | 24 g, SF 4.41 | 24 g, SF 4.35 | 2.97 mm | 26 mm | overbuilt; eval case grip-wrist-yoke asks for 20 g |
+| Wrist link | 67 g, SF 4.13 | **52 g**, SF 2.96 | 2.24 mm | 0 mm | thinnest members under the 3 mm minimum |
+
+### Known problem in the studies: no room for the servo horn
+
+GRIP's `servo_child` (v3.py) keeps the horn bolts and their drivers clear,
+but not the horn itself (0–4 mm above the servo's horn face) or the servo
+body the child rotates round. Every wrist yoke so far, GRIP's printed one
+included, is solid across the J4 horn disc from about 1.5 mm above the horn
+face (~900 mm³); the regrown yoke also cuts ~900 mm³ into the J4 servo's
+roll sweep. The studies here are left as GRIP wrote them; the eval case
+`grip-wrist-yoke` adds `j4-horn` (r 12, 0.5 mm below to 4 mm above the
+face) and `j4-servo-sweep` (r 37, the servo's depth below the face). The
+fix belongs in GRIP's `servo_child`.
