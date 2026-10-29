@@ -335,10 +335,23 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     # textbook MBB beam's corners). A large one (a whole wall face, a shelf
     # surface) is left to the optimizer: pinning it forced a full skin over
     # the face, which read as part of the design not being optimized at all.
+    # A face is told apart by its shape as well as its share of the cells: a
+    # region at most two cells thick that spans more than two filter
+    # diameters both ways is a face however small the part is around it. By
+    # share alone the printed hook's wall face (1.6%) and the wall bracket's
+    # shelf (2.5%) were pinned, one cell thick: the optimizer never had to
+    # thicken that plate, and it was delivered 1.5 and 2.9 mm thick against a
+    # 2.4 and 3.0 mm minimum member. (The MBB beam's load line and the motor
+    # mount's pads are under two diameters and stay pinned.)
+    radius = 1.3 * float(study.min_member) if study.min_member else 1.5 * pitch
     for nodes in bc.regions:
         touch = nodes[mesh.enode].any(axis=1)
-        if touch.sum() <= _ANCHOR_MAX_FRACTION * mesh.n_elem:
-            pres_el = pres_el | touch
+        if touch.sum() > _ANCHOR_MAX_FRACTION * mesh.n_elem:
+            continue
+        ext = np.sort(np.ptp(mesh.elem_ijk[touch], axis=0) + 1)
+        if ext[0] <= 2 and ext[1] * pitch > 4.0 * radius:
+            continue
+        pres_el = pres_el | touch
 
     mirror = {}
     for axis in study.symmetry:
