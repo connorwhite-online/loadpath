@@ -50,3 +50,12 @@ roll sweep. The studies here are left as GRIP wrote them; the eval case
 `grip-wrist-yoke` adds `j4-horn` (r 12, 0.5 mm below to 4 mm above the
 face) and `j4-servo-sweep` (r 37, the servo's depth below the face). The
 fix belongs in GRIP's `servo_child`.
+
+## The TPU finger (`finger.py`)
+
+GRIP's hand closes three TPU fingers with one tendon. `finger.py` curls
+`hand/finger.stl` (from GRIP's `hand.py`) with `loadpath.nonlinear`'s tendon
+loads: a cable at constant tension through guides along its channel to the
+knot. On main at 37f5ac8, 0.73 mm cells: 48° of distal curl at 7.5 N, 120° at
+16.7 N with 15 mm of cable pulled in. Three cells across the 2.2 mm flexure
+make it about 2x too stiff; `--pitch 0.55` takes that out.
