@@ -35,7 +35,10 @@ def test_solid_box_is_clean():
     r = check_dfm(mesh, {"minWall": 1.5})
     assert r["watertight"], r
     assert r["minWallOk"], r
-    assert r["minWallMm"] >= 15.0, f"20mm cube should measure ~20mm thick, got {r['minWallMm']}"
+    # The voxel probe reads members thicker than a few walls as its cap (that
+    # is what lets it run in tiles on a huge part): a cube is "at least that".
+    assert r["minWallMm"] >= min(15.0, r["wallCapMm"] - r["pitch"]), (
+        f"20mm cube should read at least the {r['wallCapMm']} mm cap, got {r['minWallMm']}")
     assert r["drainsOk"], r
     assert r["trappedVoidCount"] == 0, r
     assert r["overhangFraction"] == 0.0, f"a cube has no overhangs, got {r['overhangFraction']}"
