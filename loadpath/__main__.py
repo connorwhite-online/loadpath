@@ -148,13 +148,14 @@ def main(argv=None):
         stl = os.path.join(args.out, stem + ".stl")
         o.mesh.export(stl)
         summary["outcomes"][i]["stl"] = stl
-        build = study.print_direction if study.print_direction is not None else \
-            (study.process.build if study.process is not None and study.process.build != "auto" else None)
+        rs = result.study      # with an "auto" build direction resolved
+        build = rs.print_direction if rs.print_direction is not None else \
+            (rs.process.build if rs.process is not None and rs.process.build != "auto" else None)
         if build is not None:
             # stood the way it was designed to print, for the slicer
             from .threemf import write_3mf
             summary["outcomes"][i]["3mf"] = write_3mf(os.path.join(args.out, stem + ".3mf"), o.mesh, build,
-                                                      name=stem, material=study.material, process=study.process)
+                                                      name=stem, material=rs.material, process=rs.process)
         if not args.no_render:
             from .render import render_views
             png = os.path.join(args.out, stem + ".png")
