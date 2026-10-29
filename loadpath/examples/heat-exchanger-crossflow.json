@@ -1,0 +1,20 @@
+{
+  "name": "crossflow-cube",
+  "description": "A 30 mm cube of sheet gyroid, water across x and air across y (crossflow), with plenums and ports on four faces. The smallest heat exchanger to try first.",
+  "core": {"type": "box", "min": [0, 0, 0], "max": [30, 30, 30]},
+  "type": "gyroid",
+  "layout": "cross",
+  "axes": "xy",
+  "fluids": ["water", "air"],
+  "cell": 8,
+  "wall": 1.0,
+  "header": 4,
+  "portDiameter": 6,
+  "portLength": 4,
+  "step": 0.45,
+  "duty": {
+    "water": {"fluid": "water", "lPerMin": 1.0, "tIn": 60},
+    "air": {"fluid": "air", "kgPerS": 0.002, "tIn": 20},
+    "wall": "petg"
+  }
+}

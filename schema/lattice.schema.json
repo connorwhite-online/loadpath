@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/connorwhite-online/loadpath/schema/lattice.schema.json",
+  "title": "loadpath lattice infill",
+  "description": "Fill a finished part with a TPMS sheet lattice whose wall follows the stress.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "enum": [
+        "gyroid",
+        "schwarz-p",
+        "diamond"
+      ]
+    },
+    "cell": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "mm per TPMS period (at least 4 x maxWall)"
+    },
+    "skin": {
+      "type": "number",
+      "minimum": 0,
+      "description": "mm of solid shell; 0 leaves the lattice open (needed for SLS, MJF and resin to drain)"
+    },
+    "minWall": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "mm, where the part idles"
+    },
+    "maxWall": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "mm, where the stress nears solidAbove"
+    },
+    "solidAbove": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1,
+      "description": "utilization (stress / allowable) above which material stays solid"
+    },
+    "safetyFactor": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "the allowable is strength / this (default 2)"
+    },
+    "step": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "field sampling, mm (default minWall / 2.5)"
+    }
+  },
+  "additionalProperties": false
+}

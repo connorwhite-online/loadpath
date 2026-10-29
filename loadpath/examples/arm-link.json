@@ -1,0 +1,25 @@
+{
+  "name": "arm-link",
+  "description": "A robot arm link between two 22 mm bearings, 140 mm apart, with a cable channel through it: 1 kg at the wrist with a dynamic factor of 2, plus a side load. Printed in PA12 (SLS). Shows bores as keep-outs, a deflection-and-strength goal and symmetry.",
+  "designSpace": [{"type": "box", "min": [-16, -18, -12], "max": [156, 18, 12]}],
+  "preserve": [
+    {"id": "shoulder-boss", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 24, "r": 16}},
+    {"id": "wrist-boss", "shape": {"type": "cylinder", "center": [140, 0, 0], "axis": "z", "length": 24, "r": 15}}
+  ],
+  "keepOut": [
+    {"id": "shoulder-bearing", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 30, "r": 11}},
+    {"id": "wrist-bearing", "shape": {"type": "cylinder", "center": [140, 0, 0], "axis": "z", "length": 30, "r": 11}},
+    {"id": "cable-channel", "shape": {"type": "cylinder", "p0": [30, 0, 0], "p1": [110, 0, 0], "r": 5}}
+  ],
+  "supports": [{"region": "shoulder-bearing"}],
+  "loadCases": [
+    {"name": "payload", "loads": [{"region": "wrist-bearing", "force": [0, -20, 0], "distribution": "bearing"}]},
+    {"name": "side", "loads": [{"region": "wrist-bearing", "force": [0, 0, 8]}]}
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {"safetyFactor": 3.0, "maxDeflection": 0.5},
+  "minMember": 3.0,
+  "symmetry": ["z"],
+  "resolution": {"maxElements": 40000}
+}

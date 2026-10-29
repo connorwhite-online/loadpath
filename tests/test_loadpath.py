@@ -246,12 +246,17 @@ def test_local_mcp_job_functions():
     assert job["ok"], job
     deadline = time.time() + 300
     while True:
-        info, png = mcp_server.status(job["jobId"])
+        info, pngs = mcp_server.status(job["jobId"])
         if info["status"] != "running" or time.time() > deadline:
             break
         time.sleep(1.0)
     assert info["status"] == "done", info
-    assert os.path.exists(info["outcomes"][0]["stl"]) and png and png[:4] == b"\x89PNG"
+    assert os.path.exists(info["outcomes"][0]["stl"])
+    try:
+        import matplotlib  # noqa: F401  (renders need the render extra)
+        assert pngs and pngs[0][:4] == b"\x89PNG"
+    except ImportError:
+        pass
     try:
         mcp_server.status("../etc")
     except ValueError:

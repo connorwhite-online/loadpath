@@ -1,0 +1,504 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/connorwhite-online/loadpath/schema/heat-exchanger.schema.json",
+  "title": "loadpath heat exchanger",
+  "description": "A two-fluid sheet-TPMS heat exchanger in any core shape, with headers and ports. Units: mm; duty in L/min or kg/s and \u00b0C.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "core": {
+      "$ref": "#/$defs/shape"
+    },
+    "type": {
+      "enum": [
+        "gyroid",
+        "diamond",
+        "schwarz-p"
+      ]
+    },
+    "cell": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "mm per TPMS period (at least 3 x wall)"
+    },
+    "wall": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "mm, the sheet between the fluids"
+    },
+    "shell": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "header": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "cap": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "portDiameter": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "portLength": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "layout": {
+      "enum": [
+        "cross",
+        "counter"
+      ]
+    },
+    "axes": {
+      "type": "string",
+      "pattern": "^[xyz]{2}$",
+      "description": "cross: A along axes[0], B along axes[1]; counter: A through the ends along axes[0], B's side ports along axes[1]"
+    },
+    "fluids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "build": {
+      "anyOf": [
+        {
+          "enum": [
+            "x",
+            "y",
+            "z",
+            "none"
+          ]
+        },
+        {
+          "type": "null"
+        },
+        {
+          "const": false
+        }
+      ],
+      "description": "The axis pointing up while printing (null: no print shaping)."
+    },
+    "skirt": {
+      "type": "boolean"
+    },
+    "zones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fluid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "end": {
+            "enum": [
+              "in",
+              "out"
+            ]
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[+-]?[xyz]$",
+                "description": "like '-x' or '+z'"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "[x, y, z]"
+              }
+            ],
+            "description": "'+x' ... '-z' or a direction vector"
+          },
+          "minCos": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          },
+          "window": {
+            "type": "object",
+            "properties": {
+              "axis": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$",
+                    "description": "like '-x' or '+z'"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z]"
+                  }
+                ],
+                "description": "'+x' ... '-z' or a direction vector"
+              },
+              "from": {
+                "type": "number"
+              },
+              "to": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "axis"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "fluid",
+          "end",
+          "direction"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "step": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "grid, mm (default wall / 3); coarser is faster for a first look"
+    },
+    "duty": {
+      "type": "object",
+      "description": "Optional: rate it. One entry per fluid name, plus 'wall' (a material name or W/m\u00b7K).",
+      "properties": {
+        "wall": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          ]
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/dutySide"
+      }
+    }
+  },
+  "required": [
+    "core"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "box": {
+      "type": "object",
+      "description": "Axis-aligned box: min/max corners, or center/size.",
+      "properties": {
+        "type": {
+          "const": "box"
+        },
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "max": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "min",
+          "max"
+        ],
+        [
+          "center",
+          "size"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "cylinder": {
+      "type": "object",
+      "description": "Cylinder or tube: end points p0/p1, or center/axis/length; radius r, optional rInner.",
+      "properties": {
+        "type": {
+          "enum": [
+            "cylinder",
+            "tube"
+          ]
+        },
+        "p0": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "p1": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "'x', 'y', 'z' or a direction vector"
+        },
+        "length": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rInner": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "r"
+      ],
+      "x-requireOne": [
+        [
+          "p0",
+          "p1"
+        ],
+        [
+          "center",
+          "length"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "sphere": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "sphere"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "center",
+        "r"
+      ],
+      "additionalProperties": false
+    },
+    "mesh": {
+      "type": "object",
+      "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder, or inline stlBase64.",
+      "properties": {
+        "type": {
+          "const": "mesh"
+        },
+        "path": {
+          "type": "string"
+        },
+        "stlBase64": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "path"
+        ],
+        [
+          "stlBase64"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "union": {
+      "type": "object",
+      "description": "Several shapes acting as one region (a servo's four screw bosses).",
+      "properties": {
+        "type": {
+          "const": "union"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "shape": {
+      "title": "a shape object (box, cylinder, tube, sphere, mesh, union)",
+      "description": "A shape: box, cylinder (tube), sphere, mesh or union. Units mm.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/box"
+        },
+        {
+          "$ref": "#/$defs/cylinder"
+        },
+        {
+          "$ref": "#/$defs/sphere"
+        },
+        {
+          "$ref": "#/$defs/mesh"
+        },
+        {
+          "$ref": "#/$defs/union"
+        }
+      ],
+      "x-discriminator": {
+        "property": "type",
+        "mapping": {
+          "box": "#/$defs/box",
+          "cylinder": "#/$defs/cylinder",
+          "tube": "#/$defs/cylinder",
+          "sphere": "#/$defs/sphere",
+          "mesh": "#/$defs/mesh",
+          "union": "#/$defs/union"
+        }
+      }
+    },
+    "dutySide": {
+      "type": "object",
+      "properties": {
+        "fluid": {
+          "enum": [
+            "water",
+            "water60",
+            "air",
+            "glycol50",
+            "oil"
+          ]
+        },
+        "lPerMin": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "kgPerS": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "tIn": {
+          "type": "number",
+          "description": "\u00b0C"
+        }
+      },
+      "x-requireOne": [
+        [
+          "lPerMin"
+        ],
+        [
+          "kgPerS"
+        ]
+      ],
+      "additionalProperties": false
+    }
+  }
+}

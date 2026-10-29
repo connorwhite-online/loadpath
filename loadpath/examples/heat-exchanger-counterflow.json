@@ -1,0 +1,21 @@
+{
+  "name": "oil-cooler",
+  "description": "A cylindrical counterflow oil-to-water cooler: a 40 mm x 60 mm gyroid core, oil through the end caps, water in and out through the side. Prints upright on FDM without supports. Rated for 1 L/min of 80 °C oil against 2 L/min of 20 °C water.",
+  "core": {"type": "cylinder", "center": [0, 0, 30], "axis": "z", "length": 60, "r": 20},
+  "type": "gyroid",
+  "layout": "counter",
+  "axes": "zx",
+  "fluids": ["oil", "water"],
+  "cell": 8,
+  "wall": 1.0,
+  "header": 5,
+  "portDiameter": 6,
+  "portLength": 6,
+  "build": "z",
+  "step": 0.4,
+  "duty": {
+    "oil": {"fluid": "oil", "lPerMin": 1.0, "tIn": 80},
+    "water": {"fluid": "water", "lPerMin": 2.0, "tIn": 20},
+    "wall": "petg"
+  }
+}

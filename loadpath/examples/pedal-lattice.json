@@ -1,0 +1,23 @@
+{
+  "name": "pedal",
+  "description": "A chunky foot-pedal arm kept at half its design space, then filled with a stress-graded gyroid under a 1.2 mm skin (prints like infill on FDM). Shows the lattice option: solid where it works hard, lattice where it idles.",
+  "designSpace": [{"type": "box", "min": [0, -20, 0], "max": [120, 20, 30]}],
+  "preserve": [
+    {"id": "pivot-boss", "shape": {"type": "cylinder", "center": [12, 0, 15], "axis": "y", "length": 40, "r": 12}},
+    {"id": "foot-pad", "shape": {"type": "box", "min": [90, -20, 26], "max": [120, 20, 30]}}
+  ],
+  "keepOut": [
+    {"id": "pivot", "shape": {"type": "cylinder", "center": [12, 0, 15], "axis": "y", "length": 50, "r": 4.2}}
+  ],
+  "supports": [
+    {"region": "pivot", "fix": "pin"},
+    {"shape": {"type": "box", "min": [60, -20, 0], "max": [70, 20, 1]}, "fix": "z"}
+  ],
+  "loadCases": [{"name": "step", "loads": [{"region": "foot-pad", "force": [0, 0, -400]}]}],
+  "material": "petg",
+  "process": "fdm",
+  "goal": {"volumeFraction": 0.5},
+  "minMember": 4.0,
+  "resolution": {"maxElements": 20000},
+  "lattice": {"type": "gyroid", "cell": 10, "skin": 1.2, "minWall": 0.8, "maxWall": 2.0}
+}

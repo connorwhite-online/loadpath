@@ -39,5 +39,5 @@ loadpath = "loadpath.__main__:main"
 include = ["loadpath*"]
 
 [tool.setuptools.package-data]
-"loadpath" = ["SKILL.md", "README.md", "viewer.html"]
+"loadpath" = ["SKILL.md", "README.md", "viewer.html", "examples/*.json"]
 "loadpath.evals" = ["cases/*.json", "cases/*.stl"]

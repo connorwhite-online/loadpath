@@ -1,0 +1,865 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/connorwhite-online/loadpath/schema/study.schema.json",
+  "title": "loadpath study",
+  "description": "A generative design (topology optimization) problem. Units: mm, N, MPa, g/cm\u00b3.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Used to name the output files."
+    },
+    "description": {
+      "type": "string"
+    },
+    "designSpace": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/shape"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 1
+        }
+      ],
+      "description": "Shapes material may occupy (their union)."
+    },
+    "preserve": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/region"
+      },
+      "description": "Geometry kept exactly: bosses, mounting faces."
+    },
+    "keepOut": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/region"
+      },
+      "description": "Volume that must stay empty: bores, bolt access, cables, mating parts."
+    },
+    "fasteners": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fastener"
+      }
+    },
+    "supports": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/support"
+      },
+      "minItems": 1
+    },
+    "loadCases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/loadCase"
+      },
+      "minItems": 1
+    },
+    "loads": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/load"
+      },
+      "description": "Shorthand for a single load case."
+    },
+    "material": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/material"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/material"
+          },
+          "minItems": 1
+        }
+      ],
+      "description": "A list solves the goal in each and pools the outcomes."
+    },
+    "goal": {
+      "$ref": "#/$defs/goal"
+    },
+    "minMember": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Thinnest member, mm."
+    },
+    "symmetry": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "x",
+          "y",
+          "z"
+        ]
+      },
+      "description": "Planes through the design-space centre, by normal axis."
+    },
+    "resolution": {
+      "type": "object",
+      "properties": {
+        "maxElements": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400000
+        },
+        "pitch": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "maxIterations": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "gravity": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "m/s\u00b2, the part's own weight in every load case"
+    },
+    "printDirection": {
+      "type": "string",
+      "pattern": "^[+-]?[xyz]$",
+      "description": "The direction layers stack; turns on overhang control."
+    },
+    "extrusion": {
+      "type": "string",
+      "pattern": "^[+-]?[xyz]$",
+      "description": "The part is a profile extruded along this axis (cut from plate)."
+    },
+    "process": {
+      "anyOf": [
+        {
+          "enum": [
+            "fdm",
+            "sls",
+            "mjf",
+            "sla",
+            "volumetric"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": [
+                "fdm",
+                "sls",
+                "mjf",
+                "sla",
+                "volumetric"
+              ]
+            },
+            "buildDirection": {
+              "type": "string",
+              "pattern": "^[+-]?[xyz]$",
+              "description": "like '+z'"
+            },
+            "interlayer": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "minFeature": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "overhangs": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "How it is made: sets a minimum member, overhang control (FDM) and the layer-bond check."
+    },
+    "lattice": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "gyroid",
+            "schwarz-p",
+            "diamond"
+          ]
+        },
+        "cell": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm per TPMS period (at least 4 x maxWall)"
+        },
+        "skin": {
+          "type": "number",
+          "minimum": 0,
+          "description": "mm of solid shell; 0 leaves the lattice open (needed for SLS, MJF and resin to drain)"
+        },
+        "minWall": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm, where the part idles"
+        },
+        "maxWall": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm, where the stress nears solidAbove"
+        },
+        "solidAbove": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "utilization (stress / allowable) above which material stays solid"
+        },
+        "safetyFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "the allowable is strength / this (default 2)"
+        },
+        "step": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "field sampling, mm (default minWall / 2.5)"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Optional: fill the delivered part with a stress-graded TPMS lattice."
+    },
+    "expect": {
+      "type": "object",
+      "description": "Eval-only pass criteria (loadpath.evals)."
+    }
+  },
+  "required": [
+    "designSpace",
+    "supports"
+  ],
+  "x-requireOne": [
+    [
+      "loadCases"
+    ],
+    [
+      "loads"
+    ]
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "box": {
+      "type": "object",
+      "description": "Axis-aligned box: min/max corners, or center/size.",
+      "properties": {
+        "type": {
+          "const": "box"
+        },
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "max": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "min",
+          "max"
+        ],
+        [
+          "center",
+          "size"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "cylinder": {
+      "type": "object",
+      "description": "Cylinder or tube: end points p0/p1, or center/axis/length; radius r, optional rInner.",
+      "properties": {
+        "type": {
+          "enum": [
+            "cylinder",
+            "tube"
+          ]
+        },
+        "p0": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "p1": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "'x', 'y', 'z' or a direction vector"
+        },
+        "length": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rInner": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "r"
+      ],
+      "x-requireOne": [
+        [
+          "p0",
+          "p1"
+        ],
+        [
+          "center",
+          "length"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "sphere": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "sphere"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "center",
+        "r"
+      ],
+      "additionalProperties": false
+    },
+    "mesh": {
+      "type": "object",
+      "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder, or inline stlBase64.",
+      "properties": {
+        "type": {
+          "const": "mesh"
+        },
+        "path": {
+          "type": "string"
+        },
+        "stlBase64": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "path"
+        ],
+        [
+          "stlBase64"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "union": {
+      "type": "object",
+      "description": "Several shapes acting as one region (a servo's four screw bosses).",
+      "properties": {
+        "type": {
+          "const": "union"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "shape": {
+      "title": "a shape object (box, cylinder, tube, sphere, mesh, union)",
+      "description": "A shape: box, cylinder (tube), sphere, mesh or union. Units mm.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/box"
+        },
+        {
+          "$ref": "#/$defs/cylinder"
+        },
+        {
+          "$ref": "#/$defs/sphere"
+        },
+        {
+          "$ref": "#/$defs/mesh"
+        },
+        {
+          "$ref": "#/$defs/union"
+        }
+      ],
+      "x-discriminator": {
+        "property": "type",
+        "mapping": {
+          "box": "#/$defs/box",
+          "cylinder": "#/$defs/cylinder",
+          "tube": "#/$defs/cylinder",
+          "sphere": "#/$defs/sphere",
+          "mesh": "#/$defs/mesh",
+          "union": "#/$defs/union"
+        }
+      }
+    },
+    "region": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Name loads and supports refer to."
+        },
+        "shape": {
+          "$ref": "#/$defs/shape"
+        }
+      },
+      "required": [
+        "shape"
+      ],
+      "additionalProperties": false
+    },
+    "support": {
+      "type": "object",
+      "description": "Where the part is held. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+      "properties": {
+        "region": {
+          "type": "string"
+        },
+        "shape": {
+          "$ref": "#/$defs/shape"
+        },
+        "fix": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(all|pin|[xyz]{1,3})$",
+              "description": "'all', 'pin', or the axes held, like 'xz'"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "boolean"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          ],
+          "description": "'all' (default), 'pin' (a cylinder: turns freely), axes like 'xz', or 3 booleans"
+        }
+      },
+      "x-requireOne": [
+        [
+          "region"
+        ],
+        [
+          "shape"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "load": {
+      "type": "object",
+      "description": "A force (N) and/or a moment (N\u00b7mm, about the region's centroid). A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+      "properties": {
+        "region": {
+          "type": "string"
+        },
+        "shape": {
+          "$ref": "#/$defs/shape"
+        },
+        "force": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "moment": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "torque": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Alias of moment."
+        },
+        "distribution": {
+          "enum": [
+            "uniform",
+            "bearing"
+          ],
+          "description": "'bearing' spreads a force over the half of a bore it pushes on"
+        }
+      },
+      "x-requireOne": [
+        [
+          "region"
+        ],
+        [
+          "shape"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "loadCase": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "loads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/load"
+          },
+          "minItems": 1
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "loads"
+      ],
+      "additionalProperties": false
+    },
+    "material": {
+      "anyOf": [
+        {
+          "type": "string",
+          "description": "A name: pla, petg, abs, asa, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work)."
+        },
+        {
+          "type": "object",
+          "description": "A custom material: E (MPa), nu, strength (MPa), density (g/cm\u00b3).",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "E": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "nu": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.4999
+            },
+            "strength": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "density": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "E",
+            "strength",
+            "density"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "fastener": {
+      "type": "object",
+      "description": "A bolted joint as an interface: bearing rings or a thread sleeve are preserved, the bore and head path kept clear, and a preload case added. Adds regions <id>-bore, <id>-head, <id>-seat, <id>-face or <id>-thread (and <id>-tap).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "size": {
+          "enum": [
+            "M2",
+            "M2.5",
+            "M3",
+            "M4",
+            "M5",
+            "M6",
+            "M8",
+            "M10"
+          ]
+        },
+        "seat": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Centre of the face the head (or the mating part) bears on."
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[+-]?[xyz]$",
+              "description": "like '-x' or '+z'"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "From the seat into the part, the way the screw goes."
+        },
+        "grip": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm from the seat to the far end."
+        },
+        "end": {
+          "enum": [
+            "face",
+            "thread",
+            "none"
+          ]
+        },
+        "headOn": {
+          "enum": [
+            "this",
+            "mating"
+          ]
+        },
+        "threadLength": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "insert": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "preload": {
+          "type": "number",
+          "minimum": 0
+        },
+        "hole": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "head": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "diameter": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "wall": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "ring": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "sleeveWall": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "driver": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "seat",
+        "direction",
+        "grip"
+      ],
+      "x-requireOne": [
+        [
+          "size"
+        ],
+        [
+          "diameter",
+          "head"
+        ],
+        [
+          "hole",
+          "head"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "goal": {
+      "type": "object",
+      "description": "volumeFraction keeps that share of the design space; safetyFactor and/or maxDeflection search for the lightest part that meets them in every load case.",
+      "properties": {
+        "volumeFraction": {
+          "type": "number",
+          "minimum": 0.02,
+          "maximum": 0.95
+        },
+        "safetyFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "maxDeflection": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm, at the loads"
+        },
+        "method": {
+          "enum": [
+            "search",
+            "constrained"
+          ]
+        },
+        "outcomes": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0.02,
+            "maximum": 0.95
+          },
+          "description": "Extra fixed volume fractions for a trade-off gallery."
+        }
+      },
+      "x-requireOne": [
+        [
+          "volumeFraction"
+        ],
+        [
+          "safetyFactor"
+        ],
+        [
+          "maxDeflection"
+        ]
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -289,6 +289,14 @@ def shape_from_spec(spec, base_dir=None) -> Shape:
         return spec
     if not isinstance(spec, dict) or "type" not in spec:
         raise ValueError(f"shape must be an object with a 'type', got {spec!r}")
+    try:
+        return _shape(spec, base_dir)
+    except KeyError as exc:
+        raise ValueError(f"{spec['type']} shape is missing {exc.args[0]!r}; "
+                         "see `loadpath schema study` for each shape's fields") from None
+
+
+def _shape(spec, base_dir):
     kind = spec["type"]
     if kind == "box":
         if "min" in spec:
@@ -336,7 +344,7 @@ def shape_from_spec(spec, base_dir=None) -> Shape:
             path = full
         mesh = trimesh.load(path, force="mesh")
         return MeshShape(mesh, spec["path"])
-    raise ValueError(f"unknown shape type {kind!r} (box, cylinder, sphere, mesh)")
+    raise ValueError(f"unknown shape type {kind!r} (box, cylinder, tube, sphere, mesh, union)")
 
 
 def manifold_from_trimesh(mesh):

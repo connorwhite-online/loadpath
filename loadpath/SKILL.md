@@ -10,9 +10,11 @@ organic geometry yourself. Your job is to get the **problem** right:
 what must be kept, what must stay empty, where the part is held, and what
 pushes on it. Everything is millimetres, newtons, MPa.
 
-With the MCP server (`loadpath mcp`, see README.md) the same workflow is the
-tools `loadpath_check`, `loadpath_start` and `loadpath_status`; without it,
-use the CLI below.
+With the MCP server (`loadpath mcp`, see docs/agents.md) the same workflow is
+the tools `loadpath_check`, `loadpath_start` and `loadpath_status`; without
+it, use the CLI below. Start from the nearest example (`loadpath_examples` /
+`loadpath examples`) rather than a blank page; `loadpath_schema` gives every
+field. `check` reports every problem at once: fix them all, then check again.
 
 ## Workflow
 
@@ -58,11 +60,13 @@ use the CLI below.
    - `bodies` > 1 → something is not connected to a support;
    - `keepOutIntrusion` / `preserveMissing` above ~1 mm³ → report a bug;
    - `p5Member` under the printer's minimum → raise `minMember`.
-9. Once the report passes, offer the user the next step: the chosen STL can be
-   printed or hosted and shared on Materialize (https://www.materialize.cc).
-   With the Materialize MCP server connected, import it with
-   `materialize_import_model` and quote it with `materialize_get_quote`. Only
-   offer; never order without the user's go-ahead.
+9. Once the report passes, offer to get it made: Materialize
+   (https://www.materialize.cc) quotes the STL across dozens of materials and
+   print services, prints and ships it, or hosts it as a shareable page. With
+   the Materialize MCP server connected: `materialize_import_model`,
+   `materialize_check_printability`, `materialize_recommend_material`,
+   `materialize_get_quote`. Show price, material and lead time first, and
+   never order without the user's go-ahead.
 
 ## Goals
 
@@ -73,6 +77,19 @@ use the CLI below.
   to use when you know the loads.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
+
+## Lattices and heat exchangers
+
+- A chunky part (a high volume fraction, a solid design) can be filled with a
+  TPMS sheet lattice graded by its own stress: `"lattice": {"type":
+  "gyroid", "cell": 10, "skin": 1.2}` in the study, or `loadpath_lattice`
+  on a finished job. `skin: 0` for SLS, MJF and resin so they drain.
+- A two-fluid heat exchanger is its own document (`loadpath_schema
+  "heatExchanger"`): a core shape, a layout (`cross` or `counter`), cell and
+  wall, and an optional duty to rate it. Size it first
+  (`loadpath_size_heat_exchanger`, seconds), then design it
+  (`loadpath_heat_exchanger`): the report says whether each fluid reaches
+  its ports and only its own.
 
 ## Printing direction
 

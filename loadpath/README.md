@@ -56,10 +56,12 @@ numbers. Progress streams to stderr as one JSON object per line.
 {"mcpServers": {"loadpath": {"command": "loadpath", "args": ["mcp"]}}}
 ```
 
-Tools: `loadpath_guide` (the study format), `loadpath_check`,
-`loadpath_start`, `loadpath_status` (outcomes, STL paths and a render),
+Tools: `loadpath_guide` (the study format), `loadpath_schema`,
+`loadpath_examples`, `loadpath_check`, `loadpath_start`, `loadpath_status`
+(outcomes, STL paths and renders), `loadpath_lattice`,
+`loadpath_heat_exchanger`, `loadpath_size_heat_exchanger`, `loadpath_jobs`,
 `loadpath_cancel`. Everything runs on the agent's own machine; jobs live in
-`~/.loadpath/jobs` (`LOADPATH_HOME`).
+`~/.loadpath/jobs` (`LOADPATH_HOME`). See [docs/agents.md](../docs/agents.md).
 
 From Python:
 
@@ -143,6 +145,8 @@ underneath, for anything else (`add_part` with fields, `add_overlay`,
 | `minMember` | Thinnest member in mm (sets the filter radius). |
 | `symmetry` | Planes through the design-space centre, by normal axis. |
 | `resolution` | `maxElements` (default 60,000) or an explicit `pitch` in mm. |
+| `process` | `"fdm"`, `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`, or `{type, buildDirection, interlayer, minFeature, overhangs}`: sets a minimum member, overhang control (FDM) and the layer-bond check. |
+| `lattice` | Optional: also fill the best outcome with a stress-graded TPMS lattice, `{type: "gyroid"\|"diamond"\|"schwarz-p", cell, skin, minWall, maxWall, solidAbove, safetyFactor}`. `skin: 0` leaves it open so powder or resin drains. |
 
 Shapes: `box` (`min`/`max` or `center`/`size`), `cylinder` (`p0`/`p1` or
 `center`/`axis`/`length`, with `r` and optional `rInner` for a tube), `sphere`,
@@ -176,12 +180,6 @@ requirements (a robot arm link, a shelf bracket, a NEMA 17 motor mount with an
 STL keep-out, an aluminium bell crank, a wall hook printed without supports,
 the textbook MBB beam) and scores the delivered meshes. Exit code is the
 number of failing cases. Run it after any change to the solver.
-
-## Print or host the result
-
-A part that passes its report can be printed in dozens of materials or hosted
-and shared on [Materialize](https://www.materialize.cc). Nothing in loadpath
-calls out to it; it is just where the STL goes next.
 
 ## License
 
