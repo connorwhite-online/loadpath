@@ -50,6 +50,7 @@ it becomes an eval metric.
 | `simp.py` | SIMP with filter, Heaviside continuation, robust erode/open, OC; live-cell reduced solves; dead-material pruning |
 | `mma.py`, `constrained.py` | MMA (from the published method), stress/deflection-constrained mode |
 | `mechanism.py` | compliant mechanisms (max output displacement against springs; several input/output pairs) |
+| `nonlinear.py` | large deflection (total Lagrangian hex8, neo-Hookean, Newton, force or stroke control, stability check that follows buckled branches), linear buckling, `verify_mechanism` (also `MechanismOptions(verify_nonlinear=True)`) |
 | `am.py` | overhang control (Langelaar filter) |
 | `reconstruct.py` | field -> printable mesh: cubic upsampling, opening at min member, fade at keep-outs, smooth-min rounding at the design boundary (flush at supports and loads), 3 mm fillets into preserved geometry, exact booleans |
 | `verify.py` | independent voxelization + FEA of the delivered mesh, hotspot submodels, layer-bond check, boundary-cut metric, stress fields |
@@ -65,6 +66,7 @@ it becomes an eval metric.
 ```bash
 pip install -e ".[render,mcp,crosscheck]"         # from the repo root: numpy scipy pyamg scikit-image trimesh manifold3d (+ matplotlib, mcp, gmsh)
 python3 tests/test_loadpath.py                  # 22 tests, ~2.5 min (crosscheck test skips without gmsh)
+python3 tests/test_nonlinear.py                 # elastica, Euler, post-buckling, ~2 min
 python -m loadpath check study.json             # validate a study
 python -m loadpath run study.json --out out/    # optimize
 python -m loadpath.evals.run --jobs 4 --out /tmp/evals   # eval suite, ~15-20 min on a laptop

@@ -211,6 +211,24 @@ class Stiffness:
         k.has_sorted_indices = True
         return k
 
+    def add_elements(self, data: np.ndarray, kes: np.ndarray, elems: np.ndarray) -> None:
+        """Scatter per-element 24x24 matrices (a tangent that differs element
+        to element, not a scaled copy of one) for elements `elems` into a CSR
+        data array of length nnz. Finish with `finish(data)`."""
+        for idx, (slots, _) in enumerate(self._pairs):
+            a, b = divmod(idx, 8)
+            data[slots[elems]] += kes[:, 3 * a:3 * a + 3, 3 * b:3 * b + 3].reshape(len(elems), 9)
+
+    def finish(self, data: np.ndarray, diag: float = 1.0) -> sp.csr_matrix:
+        """CSR matrix from scattered data, Dirichlet rows and columns cleared
+        and `diag` on their diagonal (1 for a stiffness, 0 for a geometric
+        stiffness in an eigenproblem)."""
+        data = data * self._keep
+        data[self._diag_fixed] = diag
+        k = sp.csr_matrix((data, self.indices, self.indptr), shape=(self.mesh.n_dof, self.mesh.n_dof))
+        k.has_sorted_indices = True
+        return k
+
     def strain_energy(self, u: np.ndarray) -> np.ndarray:
         """Per element u_e^T Ke u_e at unit modulus (multiply by E_e)."""
         ue = u[self.mesh.edof]

@@ -24,9 +24,12 @@ takes the gradient whole.
 
 The density filter, Heaviside projection, extrusion (2.5D) and
 reconstruction are the same as for stiffness designs, so the result comes
-back as a smooth, printable part. Linear elasticity only: a TPU finger that
-curls 60 degrees is well outside small deflections, so treat the output as
-the layout, and check the curl on a print.
+back as a smooth, printable part. The optimization is linear: a TPU finger
+that curls 60 degrees is well outside small deflections, so treat the output
+as the layout. `verify_nonlinear` re-solves the solid cells of the result
+with large deflections and a buckling check (nonlinear.verify_mechanism):
+how far the output really travels, and whether the input force buckles a
+thin member first.
 """
 from __future__ import annotations
 
@@ -61,6 +64,7 @@ class MechanismOptions:
     move: float = 0.1
     extrusion: int | None = None
     tol: float = 0.005
+    verify_nonlinear: bool = False    # large-deflection + buckling check of the result (first pair)
 
 
 @dataclass
@@ -71,6 +75,7 @@ class MechanismResult:
     iterations: int
     seconds: float
     history: list = field(default_factory=list)
+    nonlinear: dict | None = None     # nonlinear.verify_mechanism's report, with verify_nonlinear
 
 
 def _spring_diag(f, k, n_dof):
@@ -178,5 +183,10 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
     xt = _extrude((h @ x) / hs, columns, design)
     xp = _project(xt, beta, 0.5)
     xp[pres] = 1.0
+    nonlinear = None
+    if opts.verify_nonlinear:
+        from .nonlinear import verify_mechanism
+        nonlinear = verify_mechanism(domain, xp, opts.modulus, nu, input_case=pairs[0][0], output_case=pairs[0][1],
+                                     k_in=opts.k_in, k_out=opts.k_out)
     return MechanismResult(x=x, xphys=xp, output_displacement=float(history[-1]["outputDisplacement"]),
-                           iterations=it, seconds=time.time() - t0, history=history)
+                           iterations=it, seconds=time.time() - t0, history=history, nonlinear=nonlinear)

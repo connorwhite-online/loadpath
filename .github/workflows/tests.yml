@@ -18,3 +18,4 @@ jobs:
       - run: pip install -e ".[render,crosscheck]"
       - run: python tests/run_tests.py
       - run: python tests/test_loadpath.py
+      - run: python tests/test_nonlinear.py
