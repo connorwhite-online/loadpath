@@ -351,7 +351,11 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 hi_pass = (vf, m) if hi_pass is None or vf < hi_pass[0] else hi_pass
             else:
                 lo_fail = (vf, m) if lo_fail is None or vf > lo_fail[0] else lo_fail
-            if hi_pass and lo_fail and hi_pass[0] - lo_fail[0] < 0.02:
+            # bracket closed to within 10% of the passing fraction (an
+            # absolute 0.02 was 30% at the low fractions large design spaces
+            # end at: the GRIP upper arm stopped at 0.075 with 0.058 failing,
+            # 222 g where ~0.066 would have passed lighter)
+            if hi_pass and lo_fail and hi_pass[0] - lo_fail[0] < max(0.005, 0.1 * hi_pass[0]):
                 break
             if hi_pass and 1.0 <= hi_pass[1] < 1.12:
                 break   # passing with under 12% to spare: close enough

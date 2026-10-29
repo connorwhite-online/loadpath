@@ -73,6 +73,28 @@ it becomes an eval metric.
 - **Mechanism framing matters**: "curl as far as possible" gives a leaf spring.
 - **Linear only so far**: no large deflection (TPU fingers), contact, buckling.
 
+## Eval status (round 9f, 2026-10-28): 6 of 8 pass
+
+| Case | Pass | Mass g | SF | p5 member mm | Note |
+| --- | --- | --- | --- | --- | --- |
+| arm-link-driven | yes | 48.1 | 11.9 | 3.41 | |
+| arm-link | yes | 57.8 | 13.5 | 3.44 | |
+| bell-crank | yes | 24.0 | 3.10 | 4.19 | |
+| grip-upper-arm | yes | 209.8 | 4.65 | 3.31 | |
+| mbb-beam | yes | 23.8 | 1.64 | 2.56 | 64% lighter (was 49%) |
+| motor-mount | yes | 25.8 | 2.73 | 3.41 | |
+| printed-hook | NO | 33.6 | 3.49 | 1.46 | thin wall plate |
+| wall-bracket | NO | 32.8 | 4.29 | 1.95 | thin seat |
+
+The two failures are one open problem: the grid is centered (for exact
+symmetry), so on a support face that is not a symmetry plane the first cell
+layer overhangs the design space by up to half a cell. The optimizer counts
+that overhang as material; the delivered part is cut at the real face, so the
+pad against the wall is thinner than designed. Aligning the grid to the face
+fixed the geometry but moved every case's search path (3 of 8 lost); the next
+attempt should keep the centered grid and give overhanging cells their true
+(partial) volume and stiffness instead.
+
 ## Next
 
 1. Validate the printed yoke against its predicted stiffness; feed the result back.

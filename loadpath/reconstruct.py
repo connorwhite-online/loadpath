@@ -48,6 +48,11 @@ def _smooth_max(a, b, k):
     return np.maximum(a, b) + h * h * k * 0.25
 
 
+def _smooth_min(a, b, k):
+    h = np.maximum(k - np.abs(a - b), 0.0) / k
+    return np.minimum(a, b) - h * h * k * 0.25
+
+
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
                 flush=(), preserve=(), design=()):
     import trimesh
@@ -108,19 +113,22 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         pf = np.clip(0.5 - sd / (2.0 * o.blend), 0.0, 1.0)
         fine = _smooth_max(fine, pf, o.blend_k)
     if design:
-        # Round material off before the design space's boundary, the way a
-        # keep-out is faded below. Void padding alone left the 0.5 level
-        # right on the boundary where material ran up to it, so the exact
-        # intersection still sawed a flat face there (2,600 mm2 of them on
-        # GRIP's forearm). Not where the part must sit flush (`flush`).
+        # Round material off where it meets the design space's boundary: a
+        # smooth minimum with the envelope's own density field, which is 0.5
+        # on the boundary and 1 a cell inside it. Material that runs into the
+        # boundary ends there with rounded edges instead of a sawn-off face
+        # with sharp ones; material lying along it keeps its full thickness.
+        # (A multiplicative fade, tried first, thinned every member lying on
+        # a boundary face by half a cell: the arm link's flange plates went
+        # from 3.4 to 1.5 mm and failed the member check.)
         idx = np.stack(np.meshgrid(*[np.arange(n) for n in fine.shape], indexing="ij"), -1).reshape(-1, 3)
         pts = origin + idx * step
-        inside = -np.min([sh.sdf(pts) for sh in design], axis=0)
-        fade = np.clip(inside / domain.pitch, 0.0, 1.0)
+        sd = np.min([sh.sdf(pts) for sh in design], axis=0)
+        env = np.clip(0.5 - sd / (2.0 * domain.pitch), 0.0, 1.0)
         if flush:
             near = np.min([sh.sdf(pts) for sh in flush], axis=0) < 1.5 * domain.pitch
-            fade[near] = 1.0
-        fine = fine * fade.reshape(fine.shape)
+            env[near] = 1.0
+        fine = _smooth_min(fine, env.reshape(fine.shape), 0.5)
     if keep_out:
         # Fade the field to zero at every keep-out surface. Smoothing and
         # upsampling otherwise carry material across a keep-out (a cable
@@ -151,12 +159,19 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     import manifold3d as m3d
 
     o = opts or ReconstructOptions()
+    # where the part must reach the boundary: its supports and its loads
     flush = []
     for sup in study.supports:
         try:
             flush.append(sup.shape if sup.shape is not None else study.region_shape(sup.region)[0])
         except ValueError:
             pass
+    for case in study.load_cases:
+        for ld in case.loads:
+            try:
+                flush.append(ld.shape if ld.shape is not None else study.region_shape(ld.region)[0])
+            except ValueError:
+                pass
     iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
                       flush=flush, preserve=[r.shape for r in study.preserve], design=list(study.design_space))
     info = {"isoTriangles": int(len(iso.faces))}

@@ -104,7 +104,8 @@ def choose_pitch(study: Study) -> float:
     return pitch
 
 
-def _region_nodes(study: Study, mesh: HexMesh, region: str | None, shape: Shape | None, label: str):
+def _region_nodes(study: Study, mesh: HexMesh, region: str | None, shape: Shape | None, label: str,
+                  tol_floor: float = 0.0):
     if shape is None:
         shape, kind = study.region_shape(region)
     else:
@@ -112,9 +113,24 @@ def _region_nodes(study: Study, mesh: HexMesh, region: str | None, shape: Shape 
     # A keep-out is a hole: the nodes that load or hold it are the ones
     # lining it, up to one cell away. Solid regions take nodes inside or on
     # their surface.
+    # `tol_floor`: a verification grid finer than the optimization's still
+    # reaches as far as the optimization did. On the printed hook the design
+    # grid's support took the node plane 0.75 mm off the wall, so the part
+    # was (correctly) designed to start there, and a 0.6 mm verification
+    # grid then found nothing at the wall to hold.
+    # Only as a fallback: widening it everywhere clamped more of every bolt
+    # ring in verification and read the GRIP upper arm at SF 10 instead of 5.
     tol = mesh.pitch * (1.0 if kind == "keepOut" else 0.5)
     d = shape.sdf(mesh.node_xyz)
     nodes = d <= tol
+    if kind != "keepOut" and (d <= 1e-9).sum() >= 4:
+        # A solid region with nodes inside it holds or loads those, not a
+        # plane half a cell outside it too. The extra plane let the printed
+        # hook's optimizer hang the part off nodes 0.75 mm short of the wall:
+        # it was designed not to touch the wall it is screwed to.
+        nodes = d <= 1e-9
+    if not nodes.any() and tol_floor > tol:
+        nodes = d <= tol_floor
     if not nodes.any():
         name = region or "inline shape"
         raise ValueError(f"{label} on {name!r} touches no material: it lies outside the design space, "
@@ -150,7 +166,7 @@ def _cylinder_of(study: Study, region, shape, label):
     return sh.p0, sh.axis
 
 
-def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True) -> BoundaryConditions:
+def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor: float = 0.0) -> BoundaryConditions:
     """Supports, pins and loads on a mesh's nodes. Shared by the optimizer
     and the verification, so both analyze exactly the same problem."""
     xyz = mesh.node_xyz
@@ -160,7 +176,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True) -> Bounda
     regions = []
     for i, s in enumerate(study.supports):
         label = f"supports[{i}]"
-        nodes = _region_nodes(study, mesh, s.region, s.shape, label)
+        nodes = _region_nodes(study, mesh, s.region, s.shape, label, tol_floor)
         regions.append(nodes)
         support_nodes |= nodes
         idx = np.nonzero(nodes)[0]
@@ -195,7 +211,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True) -> Bounda
         cn = np.zeros(mesh.n_nodes, bool)
         for li, ld in enumerate(case.loads):
             label = f"loadCases[{ci}].loads[{li}]"
-            nodes = _region_nodes(study, mesh, ld.region, ld.shape, label)
+            nodes = _region_nodes(study, mesh, ld.region, ld.shape, label, tol_floor)
             regions.append(nodes)
             idx = np.nonzero(nodes)[0]
             cn[idx] = True
@@ -257,7 +273,10 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     center = 0.5 * (lo + hi)
     dims = np.maximum(np.ceil((hi - lo) / pitch - 1e-9).astype(int), 1)
     # Centered grid, so a symmetry plane through the design space center is
-    # also a plane between cells and every cell has an exact mirror.
+    # also a plane between cells and every cell has an exact mirror. (Starting
+    # the grid on the design space's minimum face along non-symmetric axes
+    # was tried for the printed hook's half-cell overhang at its wall; it
+    # moved every case's search path and lost 3 of 8 evals. Not worth it.)
     origin = center - 0.5 * dims * pitch
     ii, jj, kk = np.meshgrid(*[np.arange(d) for d in dims], indexing="ij")
     ijk = np.stack([ii.ravel(), jj.ravel(), kk.ravel()], axis=1)

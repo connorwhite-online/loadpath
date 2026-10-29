@@ -314,14 +314,14 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     lbl, nlab = ndimage.label(solid, structure=np.ones((3, 3, 3), bool))
     elem_ijk = np.argwhere(solid)
     hm = HexMesh(elem_ijk, pitch, origin)
-    bc = boundary_conditions(study, hm, check_loads=False)
+    bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
     # Material not connected to a support would float; it is reported as a
     # separate body above and left out of the stress analysis.
     supported_lbls = np.unique(lbl[tuple(elem_ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
     keep_el = np.isin(lbl[tuple(elem_ijk.T)], supported_lbls)
     if not keep_el.all():
         hm = HexMesh(elem_ijk[keep_el], pitch, origin)
-        bc = boundary_conditions(study, hm, check_loads=False)
+        bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
     support_nodes, fixed = bc.support_nodes, bc.fixed
 
     band = max(1.5 * pitch, contact_band or 0.0)
