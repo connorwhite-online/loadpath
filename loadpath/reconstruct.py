@@ -312,6 +312,16 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     if o.taubin_iterations:
         import trimesh
         trimesh.smoothing.filter_taubin(iso, lamb=0.5, nu=-0.53, iterations=o.taubin_iterations)
+    if len(iso.faces) > o.max_triangles:
+        # Decimate the organic surface before the booleans, never after: a
+        # decimated part shaves the exact preserved faces (a bore wall moved
+        # a few hundredths of a millimetre reads as preserved geometry lost).
+        try:
+            simplified = iso.simplify_quadric_decimation(face_count=o.max_triangles)
+            if simplified.is_watertight:
+                iso = simplified
+        except Exception:  # noqa: BLE001 - decimation is an optimization, never fatal
+            pass
     try:
         organic = manifold_from_trimesh(iso)
     except ValueError:
@@ -359,13 +369,6 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     info["droppedFragmentVolume"] = float(dropped)
 
     mesh = trimesh_from_manifold(part)
-    if len(mesh.faces) > o.max_triangles:
-        try:
-            simplified = mesh.simplify_quadric_decimation(face_count=o.max_triangles)
-            if simplified.is_watertight:
-                mesh = simplified
-        except Exception:  # noqa: BLE001 - decimation is an optimization, never fatal
-            pass
     info["triangles"] = int(len(mesh.faces))
     info["volume"] = float(mesh.volume)
     info["watertight"] = bool(mesh.is_watertight)
