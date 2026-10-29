@@ -73,6 +73,32 @@ best.mesh.export("part.stl")
 print(best.report["mass"], best.report["safetyFactor"])
 ```
 
+### See it in 3D
+
+`loadpath.viewer` writes one HTML file a person can open in any browser: orbit
+the part, colour it by von Mises stress, safety factor or displacement for
+each load case (or the worst of them), scrub or animate an exaggerated
+deformation, cut it open with a section plane, hover to read the value under
+the pointer, put two outcomes (or the part it replaces) side by side, and play
+the optimization back iteration by iteration, every run of a safety-factor
+search in order.
+
+```python
+from loadpath.viewer import HistoryRecorder, study_viewer
+
+rec = HistoryRecorder()                        # keeps the density field every 2 iterations
+result = run_study(study, on_progress=rec)
+study_viewer(result, "part.html", history=rec, outcomes="all",
+             baseline="old-part.stl")          # optional: verified under the same loads
+```
+
+The page carries its own data (a few MB) and loads three.js from a CDN.
+`heat_exchanger_viewer(mesh, spaces, report, "hx.html")` does the same for
+`design_heat_exchanger(..., fluid_meshes=True)`: each fluid is a layer, and
+the section plane shows the two networks interleave. `Viewer` is the scene
+underneath, for anything else (`add_part` with fields, `add_overlay`,
+`add_arrow`, `add_study_context`).
+
 ## The study
 
 ```json

@@ -1,0 +1,687 @@
+<title>__LOADPATH_TITLE__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: the part fills the window; an instrument panel on the left (a bottom sheet on phones); the optimization timeline docks under the part. */
+:root {
+  --ground: #e7ebf0;
+  --panel: #fafbfc;
+  --ink: #17202b;
+  --muted: #5a6575;
+  --line: #d3d9e1;
+  --chip: #edf0f4;
+  --accent: #2c56c9;
+  --accent-ink: #ffffff;
+  --warn: #c2410c;
+  --ok: #15803d;
+  --clay: #c3c7ce;
+  --cut: #6d7684;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #10151c; --panel: #171e27; --ink: #e3e8ef; --muted: #8d99aa; --line: #283242;
+    --chip: #1f2833; --accent: #86a2f7; --accent-ink: #0d1424; --warn: #fb923c; --ok: #4ade80;
+    --clay: #a9aeb7; --cut: #4b5361; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #10151c; --panel: #171e27; --ink: #e3e8ef; --muted: #8d99aa; --line: #283242;
+  --chip: #1f2833; --accent: #86a2f7; --accent-ink: #0d1424; --warn: #fb923c; --ok: #4ade80;
+  --clay: #a9aeb7; --cut: #4b5361; color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 13px/1.45 var(--body); overflow: hidden; }
+#app { position: relative; height: 100%; display: grid; grid-template-columns: 300px 1fr; }
+#panel {
+  background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; min-width: 0;
+  padding-block: 18px 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: 16px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+#stage { position: relative; min-width: 0; overflow: hidden; }
+#stage > canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+header h1 { font: 600 20px/1.15 var(--display); margin: 0; letter-spacing: 0.01em; text-wrap: balance; }
+header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+section { display: flex; flex-direction: column; gap: 8px; }
+section > h2 { margin: 0; font: 500 10.5px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+select, button { font: inherit; color: inherit; }
+select {
+  width: 100%; background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+}
+.seg { display: flex; background: var(--chip); border: 1px solid var(--line); border-radius: 7px; padding: 2px; gap: 2px; }
+.seg button {
+  flex: 1 1 0; border: 0; background: transparent; padding: 6px 4px; border-radius: 5px; cursor: pointer;
+  font-size: 12px; white-space: nowrap; color: var(--muted);
+}
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 0 0 1px var(--line); font-weight: 500; }
+.seg button:disabled { opacity: 0.4; cursor: default; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.val { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 64px; text-align: right; }
+.btn {
+  border: 1px solid var(--line); background: var(--chip); border-radius: 6px; padding: 6px 10px; cursor: pointer;
+}
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 500; }
+.layers label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; }
+dt { color: var(--muted); }
+dd { margin: 0; font: 12px var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
+.cmp-head { font: 500 11px var(--mono); color: var(--muted); grid-column: 1 / -1; padding-top: 6px; border-top: 1px solid var(--line); }
+.note { color: var(--muted); font-size: 12px; margin: 0; }
+
+#legend {
+  position: absolute; right: max(14px, env(safe-area-inset-right, 0px)); bottom: 14px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 220px; max-width: calc(100% - 28px);
+}
+#legend .t { font-size: 12px; font-weight: 500; margin-bottom: 6px; }
+#legend canvas { width: 100%; height: 10px; border-radius: 2px; display: block; }
+#legend .ticks { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+#legend .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+#views { position: absolute; top: 12px; right: max(12px, env(safe-area-inset-right, 0px)); display: flex; gap: 4px; }
+#views button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 12px; }
+.tag {
+  position: absolute; pointer-events: none; transform: translate(-50%, -100%); font: 500 11px var(--mono);
+  background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+}
+.tag.load { color: var(--accent); }
+#probe { position: absolute; pointer-events: none; font: 11.5px var(--mono); background: var(--ink); color: var(--panel);
+  border-radius: 5px; padding: 4px 7px; white-space: nowrap; transform: translate(12px, -50%); font-variant-numeric: tabular-nums; }
+
+#timeline {
+  position: absolute; left: 14px; right: 250px; bottom: 14px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
+}
+#timeline .row { flex-wrap: nowrap; }
+#spark { width: 100%; height: 34px; display: block; }
+#tl-label { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+#empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+#err { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--warn); }
+
+@media (max-width: 760px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: 1fr minmax(0, 44%); }
+  #stage { grid-row: 1; }
+  #panel { grid-row: 2; border-right: 0; border-top: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  #timeline { right: 14px; bottom: 76px; }
+  #legend { width: auto; left: 14px; right: 14px; max-width: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<!--/head-->
+<div id="app">
+  <aside id="panel">
+    <header><h1 id="title"></h1><p id="subtitle"></p></header>
+
+    <section id="sec-part">
+      <h2>Part</h2>
+      <select id="part" aria-label="Part"></select>
+      <div class="row" id="cmp-row"><select id="compare" aria-label="Compare with"></select></div>
+    </section>
+
+    <section id="sec-field">
+      <h2>Result</h2>
+      <div class="seg" id="field" role="group" aria-label="Result shown">
+        <button data-v="shape" aria-pressed="true">Shape</button>
+        <button data-v="stress">Stress</button>
+        <button data-v="sf">Safety</button>
+        <button data-v="disp">Displ.</button>
+      </div>
+      <select id="case" aria-label="Load case"></select>
+      <label class="row" id="fit-row"><input type="checkbox" id="fit"> Scale colours to this part's peak</label>
+    </section>
+
+    <section id="sec-deform">
+      <h2>Deformation</h2>
+      <div class="row"><input type="range" id="deform" min="0" max="1" step="0.001" value="0" aria-label="Deformation">
+        <span class="val" id="deform-val">off</span></div>
+      <div class="row"><button class="btn" id="flex">Animate</button><span class="note" id="deform-note"></span></div>
+    </section>
+
+    <section id="sec-cut">
+      <h2>Section</h2>
+      <div class="seg" id="cut" role="group" aria-label="Section plane">
+        <button data-v="off" aria-pressed="true">Off</button><button data-v="0">X</button><button data-v="1">Y</button><button data-v="2">Z</button>
+      </div>
+      <div class="row"><input type="range" id="cut-pos" min="0" max="1" step="0.001" value="0.5" aria-label="Section position" disabled>
+        <button class="btn" id="cut-flip" disabled title="Keep the other side">Flip</button></div>
+    </section>
+
+    <section id="sec-history" hidden>
+      <h2>Optimization</h2>
+      <p class="note" id="hist-note"></p>
+      <button class="btn primary" id="hist-toggle">Play the optimization</button>
+    </section>
+
+    <section id="sec-layers">
+      <h2>Layers</h2>
+      <div class="layers" id="layers"></div>
+    </section>
+
+    <section id="sec-stats">
+      <h2>Numbers</h2>
+      <dl id="stats"></dl>
+    </section>
+    <p class="note" id="foot"></p>
+  </aside>
+
+  <main id="stage">
+    <div id="views">
+      <button data-view="iso">Iso</button><button data-view="front">Front</button><button data-view="side">Side</button><button data-view="top">Top</button>
+    </div>
+    <div id="legend" hidden>
+      <div class="t" id="lg-title"></div>
+      <canvas id="lg-bar" width="256" height="1"></canvas>
+      <div class="ticks"><span id="lg-lo"></span><span id="lg-mid"></span><span id="lg-hi"></span></div>
+      <div class="sub" id="lg-sub"></div>
+    </div>
+    <div id="timeline" hidden>
+      <canvas id="spark"></canvas>
+      <div class="row">
+        <button class="btn" id="tl-play" aria-label="Play">Play</button>
+        <input type="range" id="tl" min="0" max="0" step="1" value="0" aria-label="Optimization frame">
+      </div>
+      <div id="tl-label"></div>
+    </div>
+    <div id="probe" hidden></div>
+    <div id="empty" hidden>No solid above half density yet</div>
+  </main>
+</div>
+
+<script type="application/json" id="loadpath-data">/*__LOADPATH_DATA__*/null</script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
+
+const DATA = JSON.parse(document.getElementById("loadpath-data").textContent);
+const $ = (id) => document.getElementById(id);
+const stage = $("stage");
+
+// ---- decoding -------------------------------------------------------------
+function bytes(b64) {
+  const s = atob(b64), out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out.buffer;
+}
+function dec(o) {
+  const buf = bytes(o.d);
+  if (o.t === "f32") return new Float32Array(buf);
+  if (o.t === "u16") return new Uint16Array(buf);
+  if (o.t === "u32") return new Uint32Array(buf);
+  const q = new Uint16Array(buf), n = o.n, out = new Float32Array(q.length);
+  for (let i = 0; i < q.length; i++) { const c = i % n; out[i] = o.lo[c] + (q[i] / 65535) * (o.hi[c] - o.lo[c]); }
+  return out;
+}
+
+// ---- colour ---------------------------------------------------------------
+function turbo(x) {   // Mikhailov's polynomial fit of Google Turbo, sRGB
+  x = Math.min(1, Math.max(0, x));
+  const x2 = x * x, x3 = x2 * x, x4 = x3 * x, x5 = x4 * x;
+  return [
+    0.13572138 + 4.6153926 * x - 42.66032258 * x2 + 132.13108234 * x3 - 152.94239396 * x4 + 59.28637943 * x5,
+    0.09140261 + 2.19418839 * x + 4.84296658 * x2 - 14.18503333 * x3 + 4.27729857 * x4 + 2.82956604 * x5,
+    0.1066733 + 12.64194608 * x - 60.58204836 * x2 + 110.36276771 * x3 - 89.90310912 * x4 + 27.34824973 * x5,
+  ].map((v) => Math.min(1, Math.max(0, v)));
+}
+const toLin = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+const LUT = new Float32Array(256 * 3);
+for (let i = 0; i < 256; i++) { const c = turbo(i / 255); for (let k = 0; k < 3; k++) LUT[i * 3 + k] = toLin(c[k]); }
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+// ---- scene ----------------------------------------------------------------
+let renderer;
+try { renderer = new THREE.WebGLRenderer({ antialias: true }); }
+catch (e) { stage.innerHTML = '<div id="err">This viewer needs WebGL, which this browser has turned off.</div>'; throw e; }
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.localClippingEnabled = true;
+stage.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 1e5);
+camera.up.set(0, 0, 1);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x6b7280, 1.2));
+const key = new THREE.DirectionalLight(0xffffff, 1.6); scene.add(key); scene.add(key.target);
+const rim = new THREE.DirectionalLight(0xdfe7ff, 0.6); scene.add(rim);
+const clip = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+
+// bounds over the parts (and history) for the camera and the deformation scale
+const box = new THREE.Box3();
+function grow(arr) { for (let i = 0; i < arr.length; i += 3) box.expandByPoint(new THREE.Vector3(arr[i], arr[i + 1], arr[i + 2])); }
+
+// ---- parts ----------------------------------------------------------------
+const parts = DATA.parts.map((p, pi) => {
+  const pos = dec(p.mesh.p), idx = dec(p.mesh.i);
+  grow(pos);
+  const cases = p.cases.map((c) => ({ ...c, vm: dec(c.vonMises), d: dec(c.displacement) }));
+  if (cases.length > 1) {   // the envelope: worst stress anywhere, deformed as the case that moves most
+    const n = pos.length / 3, vm = new Float32Array(n);
+    for (const c of cases) for (let i = 0; i < n; i++) vm[i] = Math.max(vm[i], c.vm[i]);
+    const big = cases.reduce((a, b) => (b.maxDisplacement > a.maxDisplacement ? b : a));
+    cases.unshift({ name: "worst case", vm, d: big.d, peak: Math.max(...cases.map((c) => c.peak)),
+      maxDisplacement: big.maxDisplacement, envelope: big.name });
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  const geo = toCreasedNormals(g, Math.PI / 5);   // sharp at bores and cut faces, smooth on fillets
+  const corners = geo.attributes.position.count;
+  geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(corners * 3), 3));
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.04,
+    clippingPlanes: [], side: THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const mesh = new THREE.Mesh(geo, mat);
+  const capMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide, clippingPlanes: [] });
+  const cap = new THREE.Mesh(geo, capMat);
+  const group = new THREE.Group(); group.add(mesh); group.add(cap);
+  group.visible = false; scene.add(group);
+  return { ...p, pi, pos, idx, cases, geo, mesh, cap, group, label: tag(p.name) };
+});
+
+function tag(text, cls = "") { const el = document.createElement("div"); el.className = "tag " + cls; el.textContent = text; el.hidden = true; stage.append(el); return el; }
+
+// ---- overlays and loads ---------------------------------------------------
+const overlayGroups = new Map();
+for (const o of DATA.overlays) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(dec(o.mesh.p), 3));
+  g.setIndex(new THREE.BufferAttribute(dec(o.mesh.i), 1));
+  g.computeVertexNormals();
+  const opaque = o.opacity >= 0.8;
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: o.color, transparent: !opaque, opacity: o.opacity,
+    depthWrite: opaque, roughness: 0.7, side: opaque ? THREE.FrontSide : THREE.DoubleSide, clippingPlanes: [] }));
+  m.userData.section = o.section;
+  m.renderOrder = opaque ? 0 : 2;
+  if (!overlayGroups.has(o.group)) overlayGroups.set(o.group, { color: o.color, items: [], visible: o.visible });
+  const grp = overlayGroups.get(o.group);
+  grp.visible = grp.visible || o.visible;
+  grp.items.push(m); scene.add(m);
+  if (DATA.parts.length === 0) grow(g.attributes.position.array);
+}
+if (box.isEmpty()) for (const grp of overlayGroups.values()) for (const m of grp.items) grow(m.geometry.attributes.position.array);
+const size = box.getSize(new THREE.Vector3()), span = Math.max(size.x, size.y, size.z) || 1;
+const center = box.getCenter(new THREE.Vector3());
+
+const arrows = DATA.arrows.map((a) => {
+  const dir = new THREE.Vector3(...a.dir), at = new THREE.Vector3(...a.at), len = 0.24 * span;
+  const h = new THREE.ArrowHelper(dir, at.clone().addScaledVector(dir, -len), len, new THREE.Color(a.color), 0.28 * len, 0.14 * len);
+  h.line.material.depthTest = false; h.cone.material.depthTest = false; h.renderOrder = 5;
+  scene.add(h);
+  return { ...a, h, tip: at.clone().addScaledVector(dir, -len), label: tag(a.label, "load") };
+});
+let showLoads = true;
+
+// ---- history --------------------------------------------------------------
+const H = DATA.history && DATA.history.frames && DATA.history.frames.length ? DATA.history : null;
+const histMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62, metalness: 0.04, clippingPlanes: [] });
+const histMesh = new THREE.Mesh(new THREE.BufferGeometry(), histMat); histMesh.visible = false; scene.add(histMesh);
+const histCache = new Map();
+function frameGeo(i) {
+  if (histCache.has(i)) return histCache.get(i);
+  const f = H.frames[i];
+  let g = null;
+  if (f.mesh) {
+    g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(dec(f.mesh.p), 3));
+    g.setIndex(new THREE.BufferAttribute(dec(f.mesh.i), 1));
+    g.computeVertexNormals();
+  }
+  histCache.set(i, g);
+  return g;
+}
+
+// ---- state ----------------------------------------------------------------
+const S = { part: 0, compare: -1, field: "shape", caseIdx: 0, deform: 0, cut: "off", cutPos: 0.5, flip: false,
+  fit: false, flex: false, history: false, frame: 0, playing: false };
+
+function activeParts() { return [S.part, S.compare].filter((i) => i >= 0).map((i) => parts[i]); }
+function curCase(p) { return p.cases.length ? p.cases[Math.min(S.caseIdx, p.cases.length - 1)] : null; }
+function allowable(p) { return p.strength ? p.strength / ((p.allowance || 1) * (p.targetSF || 1)) : null; }
+
+function scaleFor(p) {
+  // the field range: the allowable stress (red = at the limit), or this part's own peak
+  const c = curCase(p);
+  if (!c) return null;
+  if (S.field === "stress") return { lo: 0, hi: S.fit || !allowable(p) ? c.peak : allowable(p) };
+  if (S.field === "disp") return { lo: 0, hi: maxDispAll() };
+  if (S.field === "sf") { const t = p.targetSF || 1; return { lo: 0, hi: Math.max(3, 2 * t) }; }
+  return null;
+}
+function maxDispAll() { return Math.max(1e-12, ...activeParts().map((p) => (curCase(p) ? curCase(p).maxDisplacement : 0))); }
+
+function value(p, c, v) {
+  if (S.field === "stress") return c.vm[v];
+  if (S.field === "sf") return c.vm[v] > 0 ? p.strength / (c.vm[v] * (p.allowance || 1)) : Infinity;
+  if (S.field === "disp") return Math.hypot(c.d[3 * v], c.d[3 * v + 1], c.d[3 * v + 2]);
+  return 0;
+}
+
+function paint(p) {
+  const col = p.geo.attributes.color.array, n = col.length / 3, c = curCase(p), sc = scaleFor(p);
+  const clay = new THREE.Color(p.kind === "baseline" ? css("--cut") : css("--clay"));
+  if (S.field === "shape" || !c || !sc) {
+    for (let i = 0; i < n; i++) { col[3 * i] = clay.r; col[3 * i + 1] = clay.g; col[3 * i + 2] = clay.b; }
+  } else {
+    // per original vertex, then fan out to the creased corners
+    const nv = p.pos.length / 3, t = new Float32Array(nv), rev = S.field === "sf";
+    for (let v = 0; v < nv; v++) { let x = (value(p, c, v) - sc.lo) / (sc.hi - sc.lo || 1); x = Math.min(1, Math.max(0, x)); t[v] = rev ? 1 - x : x; }
+    for (let i = 0; i < n; i++) { const k = Math.round(t[p.idx[i]] * 255) * 3; col[3 * i] = LUT[k]; col[3 * i + 1] = LUT[k + 1]; col[3 * i + 2] = LUT[k + 2]; }
+  }
+  p.geo.attributes.color.needsUpdate = true;
+}
+
+let deformK = 0;
+function shape(p, s) {
+  const pos = p.geo.attributes.position.array, c = curCase(p), n = pos.length / 3;
+  for (let i = 0; i < n; i++) {
+    const v = p.idx[i];
+    pos[3 * i] = p.pos[3 * v]; pos[3 * i + 1] = p.pos[3 * v + 1]; pos[3 * i + 2] = p.pos[3 * v + 2];
+    if (c && s) { pos[3 * i] += s * c.d[3 * v]; pos[3 * i + 1] += s * c.d[3 * v + 1]; pos[3 * i + 2] += s * c.d[3 * v + 2]; }
+  }
+  p.geo.attributes.position.needsUpdate = true;
+  p.geo.computeBoundingSphere();
+}
+function applyShape(frac) {
+  deformK = (0.06 * span) / maxDispAll();
+  for (const p of activeParts()) shape(p, frac * deformK);
+}
+
+// side by side: the second part steps over along the shorter horizontal axis
+function layout() {
+  const offAxis = size.x <= size.y ? 0 : 1, step = (offAxis === 0 ? size.x : size.y) * 1.3 + 0.1 * span;
+  for (const p of parts) { p.group.visible = false; p.group.position.set(0, 0, 0); }
+  if (S.history) return;
+  parts[S.part].group.visible = true;
+  if (S.compare >= 0) {
+    const q = parts[S.compare]; q.group.visible = true;
+    q.group.position.setComponent(offAxis, step);
+  }
+}
+
+function updateClip() {
+  const on = S.cut !== "off";
+  const planes = on ? [clip] : [];
+  if (on) {
+    const ax = +S.cut, n = new THREE.Vector3(); n.setComponent(ax, S.flip ? 1 : -1);
+    const lo = box.min.getComponent(ax), hi = box.max.getComponent(ax), x = lo + S.cutPos * (hi - lo);
+    clip.normal.copy(n); clip.constant = S.flip ? -x : x;
+  }
+  for (const p of parts) { p.mesh.material.clippingPlanes = planes; p.cap.material.clippingPlanes = planes; p.cap.visible = on; }
+  histMat.clippingPlanes = planes;
+  for (const grp of overlayGroups.values()) for (const m of grp.items) m.material.clippingPlanes = m.userData.section ? planes : [];
+  $("cut-pos").disabled = !on; $("cut-flip").disabled = !on;
+}
+
+function refreshColors() {
+  const cut = new THREE.Color(css("--cut"));
+  for (const p of parts) p.cap.material.color.copy(cut);
+  histMat.color.set(css("--clay"));
+  for (const p of activeParts()) paint(p);
+  scene.background = new THREE.Color(css("--ground"));
+}
+
+// ---- legend and numbers ---------------------------------------------------
+const FIELD_NAME = { stress: "von Mises stress", sf: "Safety factor", disp: "Displacement" };
+const fmt = (x, d = 2) => (x === Infinity ? "∞" : Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 10 ? x.toFixed(1) : x.toFixed(d));
+function legend() {
+  const p = parts[S.part], sc = p && scaleFor(p);
+  $("legend").hidden = S.history || S.field === "shape" || !sc;
+  if ($("legend").hidden) return;
+  const unit = S.field === "stress" ? " MPa" : S.field === "disp" ? " mm" : "";
+  const c = curCase(p);
+  $("lg-title").textContent = FIELD_NAME[S.field] + " · " + c.name;
+  const bar = $("lg-bar").getContext("2d"), img = bar.createImageData(256, 1);
+  for (let i = 0; i < 256; i++) { const t = turbo(S.field === "sf" ? 1 - i / 255 : i / 255); img.data.set([t[0] * 255, t[1] * 255, t[2] * 255, 255], i * 4); }
+  bar.putImageData(img, 0, 0);
+  $("lg-lo").textContent = fmt(sc.lo) + unit; $("lg-mid").textContent = fmt((sc.lo + sc.hi) / 2) + unit;
+  $("lg-hi").textContent = (S.field === "sf" ? "≥ " : "") + fmt(sc.hi) + unit;
+  let sub = "";
+  if (S.field === "stress") sub = S.fit || !allowable(p) ? `Scaled to this case's peak, ${fmt(c.peak)} MPa.` : `Red is the allowable: strength ÷ ${p.allowance !== 1 ? "discretization allowance ÷ " : ""}${p.targetSF ? "safety factor goal" : "1"}.`;
+  if (S.field === "sf") sub = `Red is failure (1.0)${p.targetSF ? `; the goal is ${p.targetSF}` : ""}. Includes the ${fmt(p.allowance)}× stress allowance.`;
+  if (S.field === "disp") sub = `Largest: ${fmt(c.maxDisplacement, 3)} mm.`;
+  if (c.envelope) sub += ` Worst of all cases; shape from "${c.envelope}".`;
+  $("lg-sub").textContent = sub;
+}
+
+function stats() {
+  const dl = $("stats"); dl.innerHTML = "";
+  const add = (k, v, cls) => { const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; if (cls) dd.className = cls; dl.append(dt, dd); };
+  const ps = activeParts();
+  ps.forEach((p, j) => {
+    if (ps.length > 1) { const h = document.createElement("div"); h.className = "cmp-head"; h.textContent = (j ? "right · " : "left · ") + p.name; dl.append(h); }
+    for (const [k, v] of Object.entries(p.stats || {})) add(k, typeof v === "number" ? fmt(v) : v, k === "meets the goal" ? (v === "yes" ? "good" : "bad") : "");
+    const c = curCase(p);
+    if (c && S.field !== "shape") {
+      add("peak stress · " + c.name, fmt(c.peak) + " MPa");
+      add("largest displacement", fmt(c.maxDisplacement, 3) + " mm");
+    }
+  });
+  if (!ps.length) $("sec-stats").hidden = true;
+}
+
+// ---- controls -------------------------------------------------------------
+$("title").textContent = DATA.title || "loadpath";
+$("subtitle").textContent = [DATA.subtitle, DATA.created].filter(Boolean).join(" · ");
+$("foot").textContent = (DATA.notes || []).join(" ") || "Drag to orbit, right-drag or two fingers to pan, scroll or pinch to zoom. Hover the part to read the value under the pointer.";
+
+const partSel = $("part"), cmpSel = $("compare");
+parts.forEach((p, i) => partSel.add(new Option(p.name, i)));
+function fillCompare() {
+  cmpSel.innerHTML = ""; cmpSel.add(new Option("Compare with… (none)", -1));
+  parts.forEach((p, i) => { if (i !== S.part) cmpSel.add(new Option("Beside it: " + p.name, i)); });
+  cmpSel.value = S.compare;
+}
+fillCompare();
+$("cmp-row").hidden = parts.length < 2;
+$("sec-part").hidden = parts.length === 0;
+function fillCases() {
+  const p = parts[S.part], cs = $("case"); cs.innerHTML = "";
+  (p ? p.cases : []).forEach((c, i) => cs.add(new Option(c.name === "worst case" ? "Worst case (envelope)" : "Load case: " + c.name, i)));
+  S.caseIdx = Math.min(S.caseIdx, Math.max(0, cs.options.length - 1)); cs.value = S.caseIdx;
+  const has = p && p.cases.length > 0;
+  cs.hidden = !has || p.cases.length < 2;
+  for (const b of $("field").querySelectorAll("button")) b.disabled = b.dataset.v !== "shape" && !has;
+  $("sec-deform").hidden = !has;
+  if (!has) S.field = "shape";
+}
+fillCases();
+if (!parts.some((p) => p.cases.length)) $("sec-field").hidden = true;
+
+function seg(id, key, fn) {
+  const el = $(id);
+  el.addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b || b.disabled) return;
+    for (const x of el.querySelectorAll("button")) x.setAttribute("aria-pressed", x === b);
+    S[key] = b.dataset.v; fn();
+  });
+}
+function setSeg(id, v) { for (const x of $(id).querySelectorAll("button")) x.setAttribute("aria-pressed", x.dataset.v === String(v)); }
+
+function update() {
+  layout(); applyShape(S.deform); refreshColors(); legend(); stats(); updateClip(); arrowsVis();
+  $("fit-row").hidden = S.field !== "stress";
+  $("deform-val").textContent = S.deform > 0 ? "×" + fmt(S.deform * deformK, 0) : "off";
+  $("deform-note").textContent = S.deform > 0 ? "Displacement drawn " + fmt(S.deform * deformK, 0) + " times its real size." : "";
+}
+partSel.onchange = () => { S.part = +partSel.value; if (S.compare === S.part) S.compare = -1; fillCompare(); fillCases(); setSeg("field", S.field); update(); };
+cmpSel.onchange = () => { S.compare = +cmpSel.value; update(); fitView(); };
+$("case").onchange = () => { S.caseIdx = +$("case").value; update(); };
+$("fit").onchange = () => { S.fit = $("fit").checked; update(); };
+seg("field", "field", update);
+seg("cut", "cut", update);
+$("deform").oninput = () => { S.deform = +$("deform").value; S.flex = false; $("flex").textContent = "Animate"; update(); };
+$("cut-pos").oninput = () => { S.cutPos = +$("cut-pos").value; updateClip(); };
+$("cut-flip").onclick = () => { S.flip = !S.flip; updateClip(); };
+$("flex").onclick = () => { S.flex = !S.flex; $("flex").textContent = S.flex ? "Stop" : "Animate"; if (!S.flex) { applyShape(S.deform); } };
+
+// layers
+const layers = $("layers");
+function layerRow(name, color, checked, fn) {
+  const l = document.createElement("label"), cb = document.createElement("input"), sw = document.createElement("span"), t = document.createElement("span");
+  cb.type = "checkbox"; cb.checked = checked; cb.onchange = () => fn(cb.checked);
+  sw.className = "swatch"; sw.style.background = color; t.textContent = name;
+  l.append(cb, sw, t); layers.append(l);
+}
+for (const [name, grp] of overlayGroups) {
+  for (const m of grp.items) m.visible = grp.visible;
+  layerRow(name, grp.color, grp.visible, (v) => { for (const m of grp.items) m.visible = v; });
+}
+if (arrows.length) layerRow("loads", arrows[0].color, true, (v) => { showLoads = v; arrowsVis(); });
+if (parts.length && overlayGroups.size) layerRow("see through the part", css("--clay"), false, (v) => {
+  for (const p of parts) { const m = p.mesh.material; m.transparent = v; m.opacity = v ? 0.28 : 1; m.depthWrite = !v; m.needsUpdate = true; p.cap.visible = !v && S.cut !== "off"; }
+});
+$("sec-layers").hidden = !layers.children.length;
+function arrowsVis() {
+  const c = parts[S.part] && curCase(parts[S.part]);
+  for (const a of arrows) a.h.visible = showLoads && (!c || c.name === "worst case" || !a.case || a.case === c.name || S.field === "shape");
+}
+
+// ---- history UI -----------------------------------------------------------
+if (H) {
+  $("sec-history").hidden = false;
+  const runs = H.runs, last = H.frames[H.frames.length - 1];
+  $("hist-note").textContent = `${H.frames.length} frames from ${runs} optimizer run${runs > 1 ? "s" : ""}` +
+    (runs > 1 ? ", one per volume fraction the search tried." : ".") + " The surface is the density field cut at one half.";
+  $("tl").max = H.frames.length - 1;
+  $("hist-toggle").onclick = () => setHistory(!S.history);
+}
+function setHistory(on) {
+  S.history = on; S.playing = false;
+  $("hist-toggle").textContent = on ? "Back to the result" : "Play the optimization";
+  $("timeline").hidden = !on; histMesh.visible = on;
+  for (const id of ["sec-field", "sec-deform", "sec-part"]) $(id).style.opacity = on ? 0.4 : 1;
+  for (const id of ["sec-field", "sec-deform", "sec-part"]) $(id).inert = on;
+  if (on) { S.frame = S.frame || 0; showFrame(S.frame); playPause(true); } else { $("empty").hidden = true; }
+  update();
+}
+function showFrame(i) {
+  S.frame = i; $("tl").value = i;
+  const f = H.frames[i], g = frameGeo(i);
+  histMesh.geometry = g || new THREE.BufferGeometry();
+  $("empty").hidden = !!g;
+  const runs = H.runs;
+  $("tl-label").textContent = (runs > 1 ? `run ${f.run + 1}/${runs} · ` : "") + (f.volumeFraction != null ? `target vf ${f.volumeFraction.toFixed(3)} · ` : "") +
+    `iteration ${f.iteration} · volume ${f.volume != null ? f.volume.toFixed(3) : "–"} · compliance ${f.compliance != null ? f.compliance.toPrecision(3) : "–"} N·mm · β ${f.beta != null ? fmt(f.beta, 1) : "–"}`;
+  spark();
+}
+function spark() {
+  const cv = $("spark"), w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
+  const dpr = Math.min(2, window.devicePixelRatio); cv.width = w * dpr; cv.height = h * dpr;
+  const g = cv.getContext("2d"); g.scale(dpr, dpr);
+  const ys = H.frames.map((f) => (f.compliance != null && f.compliance > 0 ? Math.log(f.compliance) : null));
+  const ok = ys.filter((y) => y != null); if (!ok.length) return;
+  const lo = Math.min(...ok), hi = Math.max(...ok), n = H.frames.length;
+  const X = (i) => (n > 1 ? (i / (n - 1)) * (w - 4) + 2 : w / 2), Y = (y) => h - 3 - ((y - lo) / (hi - lo || 1)) * (h - 8);
+  // run boundaries
+  g.strokeStyle = css("--line"); g.lineWidth = 1;
+  for (let i = 1; i < n; i++) if (H.frames[i].run !== H.frames[i - 1].run) { g.beginPath(); g.moveTo(X(i) - 0.5, 0); g.lineTo(X(i) - 0.5, h); g.stroke(); }
+  g.beginPath(); let started = false;
+  ys.forEach((y, i) => { if (y == null) return; if (!started) { g.moveTo(X(i), Y(y)); started = true; } else g.lineTo(X(i), Y(y)); });
+  g.strokeStyle = css("--muted"); g.lineWidth = 1.25; g.stroke();
+  const y = ys[S.frame];
+  g.fillStyle = css("--accent"); g.beginPath(); g.arc(X(S.frame), y != null ? Y(y) : h / 2, 3.5, 0, 7); g.fill();
+  g.fillStyle = css("--muted"); g.font = "10px " + css("--mono"); g.fillText("compliance (log)", 4, 10);
+}
+let lastStep = 0;
+function playPause(force) { S.playing = force === undefined ? !S.playing : force; $("tl-play").textContent = S.playing ? "Pause" : "Play"; if (S.playing && S.frame >= H.frames.length - 1) showFrame(0); }
+$("tl-play").onclick = () => playPause();
+$("tl").oninput = () => { playPause(false); showFrame(+$("tl").value); };
+
+// ---- camera ---------------------------------------------------------------
+function fitView(dir) {
+  const b = new THREE.Box3();
+  for (const p of activeParts()) if (p.group.visible) b.expandByObject(p.group);
+  if (b.isEmpty()) b.copy(box);
+  const c = b.getCenter(new THREE.Vector3()), r = b.getSize(new THREE.Vector3()).length() / 2;
+  const d = dir || camera.position.clone().sub(controls.target).normalize();
+  const dist = 0.85 * r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * (camera.aspect < 1 ? 1.25 / camera.aspect : 1.0);
+  controls.target.copy(c); camera.position.copy(c).addScaledVector(d, dist);
+  camera.near = dist / 100; camera.far = dist * 100; camera.updateProjectionMatrix();
+}
+const VIEWS = { iso: [1, -1.25, 0.85], front: [0, -1, 0.0001], side: [1, 0, 0.0001], top: [0.0001, -0.0001, 1] };
+$("views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) fitView(new THREE.Vector3(...VIEWS[b.dataset.view]).normalize()); });
+
+// ---- probe ----------------------------------------------------------------
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+let probeAt = null;
+renderer.domElement.addEventListener("pointermove", (e) => { const r = renderer.domElement.getBoundingClientRect(); probeAt = [e.clientX - r.left, e.clientY - r.top, r.width, r.height]; });
+renderer.domElement.addEventListener("pointerleave", () => { probeAt = null; $("probe").hidden = true; });
+function probe() {
+  const el = $("probe");
+  if (!probeAt || S.history || S.field === "shape") { el.hidden = true; return; }
+  ptr.set((probeAt[0] / probeAt[2]) * 2 - 1, -(probeAt[1] / probeAt[3]) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const ps = activeParts().filter((p) => p.cases.length);
+  const hits = ray.intersectObjects(ps.map((p) => p.mesh), false).filter((h) => S.cut === "off" || clip.distanceToPoint(h.point) >= 0);
+  if (!hits.length) { el.hidden = true; return; }
+  const h = hits[0], p = ps.find((q) => q.mesh === h.object), c = curCase(p);
+  const v = p.idx[h.face.a];
+  const vm = c.vm[v], sf = vm > 0 ? p.strength / (vm * (p.allowance || 1)) : Infinity, d = Math.hypot(c.d[3 * v], c.d[3 * v + 1], c.d[3 * v + 2]);
+  el.textContent = `${fmt(vm)} MPa · SF ${fmt(sf)} · ${fmt(d, 3)} mm`;
+  el.style.left = probeAt[0] + "px"; el.style.top = probeAt[1] + "px"; el.hidden = false;
+}
+
+// ---- labels ---------------------------------------------------------------
+const tmp = new THREE.Vector3();
+function place(el, v, show) {
+  if (!show) { el.hidden = true; return; }
+  tmp.copy(v).project(camera);
+  if (tmp.z > 1) { el.hidden = true; return; }
+  el.hidden = false;
+  el.style.left = ((tmp.x + 1) / 2) * stage.clientWidth + "px";
+  el.style.top = ((1 - tmp.y) / 2) * stage.clientHeight - 6 + "px";
+}
+function labels() {
+  const cmp = S.compare >= 0 && !S.history;
+  for (const p of parts) {
+    const b = new THREE.Box3().setFromObject(p.group), top = b.getCenter(new THREE.Vector3()); top.z = b.max.z;
+    place(p.label, top, cmp && p.group.visible);
+  }
+  for (const a of arrows) place(a.label, a.tip, a.h.visible);
+}
+
+// ---- loop -----------------------------------------------------------------
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
+  if (H && S.history) spark();
+}
+new ResizeObserver(resize).observe(stage);
+const mq = window.matchMedia("(prefers-color-scheme: dark)");
+mq.addEventListener?.("change", refreshColors);
+new MutationObserver(refreshColors).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const clock = new THREE.Clock();
+function frame() {
+  requestAnimationFrame(frame);
+  const t = clock.getElapsedTime();
+  if (S.flex && !S.history) applyShape((S.deform || 1) * 0.5 * (1 - Math.cos(t * 2.4)));
+  if (S.history && S.playing && t - lastStep > (reduce ? 0.5 : 0.12)) {
+    lastStep = t;
+    if (S.frame < H.frames.length - 1) showFrame(S.frame + 1); else playPause(false);
+  }
+  key.position.copy(camera.position).add(new THREE.Vector3(0.3 * span, -0.2 * span, 0.8 * span));
+  key.target.position.copy(controls.target);
+  rim.position.copy(controls.target).sub(camera.position).add(controls.target);
+  controls.update();
+  renderer.render(scene, camera);
+  labels(); probe();
+}
+resize();
+update();
+fitView(new THREE.Vector3(...VIEWS.iso).normalize());
+if (!parts.length && H) setHistory(true);
+frame();
+</script>

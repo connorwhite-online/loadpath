@@ -56,6 +56,7 @@ it becomes an eval metric.
 | `crosscheck.py` | second opinion on a tet mesh: gmsh + native P2 assembly + p-multigrid; CalculiX deck writer |
 | `study.py` | the search on safety factor / deflection, fine-grid confirm of the pick, multi-material, parallel |
 | `render.py` | clay renders, stress maps, interface close-ups |
+| `viewer.py`, `viewer.html` | interactive HTML viewer (three.js): stress / safety factor / displacement fields, deformation, section plane, compare, optimization playback, heat exchanger fluids |
 | `mcp_server.py`, `__main__.py` | local MCP server and CLI |
 | `evals/` | cases with engineering requirements; `python -m loadpath.evals.run` scores them |
 

@@ -623,6 +623,38 @@ def test_fasteners_expand_to_rings_keepouts_and_preload():
     assert {r.id for r in st.keep_out} == {"c-bore", "c-tap"}
     assert {r.id for r in st.preserve} == {"c-seat", "c-thread"}
 
+def test_viewer_page_carries_fields_and_history():
+    """The viewer page embeds the part, its stress and displacement per
+    load case, the study's context and the optimization frames, packed so
+    they decode back to the numbers they came from."""
+    import base64
+    import json
+    import re
+
+    from loadpath.viewer import HistoryRecorder, study_viewer
+
+    s = study_from_dict({**LUG, "maxIterations": 12})
+    rec = HistoryRecorder(every=3)
+    result = run_study(s, on_progress=rec)
+    page = study_viewer(result, history=rec)
+    assert page.startswith("<!doctype html>") and "three@0.160.0" in page
+    data = json.loads(re.search(r'id="loadpath-data">(.*?)</script>', page, re.S).group(1))
+    part = data["parts"][0]
+    nv = len(base64.b64decode(part["mesh"]["p"]["d"])) // 12
+    assert nv > 100 and len(part["cases"]) == 1
+    c = part["cases"][0]
+    q = np.frombuffer(base64.b64decode(c["vonMises"]["d"]), np.uint16)
+    assert len(q) == nv and c["vonMises"]["hi"][0] <= c["peak"] * 1.0001 + 1e-9
+    vm = c["vonMises"]["lo"][0] + q / 65535 * (c["vonMises"]["hi"][0] - c["vonMises"]["lo"][0])
+    assert vm.max() > 0
+    assert {o["group"] for o in data["overlays"]} >= {"keep-outs", "supports", "design space"}
+    assert data["arrows"] and data["arrows"][0]["label"] == "80 N"
+    frames = data["history"]["frames"]
+    assert len(frames) >= 4 and frames[-1]["iteration"] == result.outcomes[0].optimizer["iterations"]
+    assert frames[-1]["mesh"] is not None
+    assert "<!doctype" not in study_viewer(result, standalone=False, fields=False)
+
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -653,6 +685,7 @@ TESTS = [
     test_heat_exchanger_on_a_cylinder_counterflow,
     test_heat_exchanger_rating_limits_and_geometry,
     test_fasteners_expand_to_rings_keepouts_and_preload,
+    test_viewer_page_carries_fields_and_history,
 ]
 
 
