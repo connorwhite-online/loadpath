@@ -1,0 +1,480 @@
+{
+ "name": "grip-v3-turret",
+ "description": "GRIP v0.3 turret (generative/v3.py): j1 -> j2 with the J2 spring counterbalance",
+ "designSpace": [
+  {
+   "type": "box",
+   "min": [
+    -62.3,
+    -42.0,
+    106.5
+   ],
+   "max": [
+    78.0,
+    32.25,
+    284.0
+   ]
+  }
+ ],
+ "preserve": [
+  {
+   "id": "j1-hub",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     0.0,
+     120.5
+    ],
+    "p1": [
+     0.0,
+     0.0,
+     125.5
+    ],
+    "r": 18.25,
+    "rInner": 6.25
+   }
+  },
+  {
+   "id": "j2-sleeve",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     2.5,
+     200.0
+    ],
+    "p1": [
+     0.0,
+     -20.5,
+     200.0
+    ],
+    "r": 48.3,
+    "rInner": 43.3
+   }
+  },
+  {
+   "id": "j2-ledge",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     8.5,
+     200.0
+    ],
+    "p1": [
+     0.0,
+     2.5,
+     200.0
+    ],
+    "r": 48.3,
+    "rInner": 31.759
+   }
+  },
+  {
+   "id": "spring-pulley",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -9.0,
+     -20.0,
+     262.0
+    ],
+    "p1": [
+     9.0,
+     -20.0,
+     262.0
+    ],
+    "r": 8.0
+   }
+  },
+  {
+   "id": "spring-anchor",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     52.0,
+     -20.0,
+     140.0
+    ],
+    "p1": [
+     64.0,
+     -20.0,
+     140.0
+    ],
+    "r": 7.0
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "j1-bolt-0",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     8.662,
+     8.662,
+     119.5
+    ],
+    "p1": [
+     8.662,
+     8.662,
+     129.5
+    ],
+    "r": 1.7
+   }
+  },
+  {
+   "id": "j1-driver-access-0",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     8.662,
+     8.662,
+     123.5
+    ],
+    "p1": [
+     8.662,
+     8.662,
+     173.5
+    ],
+    "r": 3.0
+   }
+  },
+  {
+   "id": "j1-bolt-1",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -8.662,
+     8.662,
+     119.5
+    ],
+    "p1": [
+     -8.662,
+     8.662,
+     129.5
+    ],
+    "r": 1.7
+   }
+  },
+  {
+   "id": "j1-driver-access-1",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -8.662,
+     8.662,
+     123.5
+    ],
+    "p1": [
+     -8.662,
+     8.662,
+     173.5
+    ],
+    "r": 3.0
+   }
+  },
+  {
+   "id": "j1-bolt-2",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -8.662,
+     -8.662,
+     119.5
+    ],
+    "p1": [
+     -8.662,
+     -8.662,
+     129.5
+    ],
+    "r": 1.7
+   }
+  },
+  {
+   "id": "j1-driver-access-2",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -8.662,
+     -8.662,
+     123.5
+    ],
+    "p1": [
+     -8.662,
+     -8.662,
+     173.5
+    ],
+    "r": 3.0
+   }
+  },
+  {
+   "id": "j1-bolt-3",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     8.662,
+     -8.662,
+     119.5
+    ],
+    "p1": [
+     8.662,
+     -8.662,
+     129.5
+    ],
+    "r": 1.7
+   }
+  },
+  {
+   "id": "j1-driver-access-3",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     8.662,
+     -8.662,
+     123.5
+    ],
+    "p1": [
+     8.662,
+     -8.662,
+     173.5
+    ],
+    "r": 3.0
+   }
+  },
+  {
+   "id": "j1-below",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     0.0,
+     50.0
+    ],
+    "p1": [
+     0.0,
+     0.0,
+     120.0
+    ],
+    "r": 55.0
+   }
+  },
+  {
+   "id": "j2-drive",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     2.5,
+     200.0
+    ],
+    "p1": [
+     0.0,
+     -43.0,
+     200.0
+    ],
+    "r": 43.3
+   }
+  },
+  {
+   "id": "j2-motor",
+   "shape": {
+    "type": "box",
+    "min": [
+     -21.75,
+     2.5,
+     178.25
+    ],
+    "max": [
+     21.75,
+     63.5,
+     221.75
+    ]
+   }
+  },
+  {
+   "id": "j2-driver",
+   "shape": {
+    "type": "box",
+    "min": [
+     -21.75,
+     63.5,
+     178.25
+    ],
+    "max": [
+     21.75,
+     80.5,
+     221.75
+    ]
+   }
+  },
+  {
+   "id": "j2-child-sweep",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     -30.0,
+     200.0
+    ],
+    "p1": [
+     0.0,
+     -60.0,
+     200.0
+    ],
+    "r": 55.0
+   }
+  },
+  {
+   "id": "spring-pulley-pin",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -12.0,
+     -20.0,
+     262.0
+    ],
+    "p1": [
+     12.0,
+     -20.0,
+     262.0
+    ],
+    "r": 2.6
+   }
+  },
+  {
+   "id": "spring-run",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     58.0,
+     -20.0,
+     150.0
+    ],
+    "p1": [
+     58.0,
+     -20.0,
+     258.0
+    ],
+    "r": 9.0
+   }
+  },
+  {
+   "id": "spring-anchor-pin",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     49.0,
+     -20.0,
+     140.0
+    ],
+    "p1": [
+     67.0,
+     -20.0,
+     140.0
+    ],
+    "r": 2.6
+   }
+  }
+ ],
+ "supports": [
+  {
+   "region": "j1-bolt-0"
+  },
+  {
+   "region": "j1-bolt-1"
+  },
+  {
+   "region": "j1-bolt-2"
+  },
+  {
+   "region": "j1-bolt-3"
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "reach",
+   "loads": [
+    {
+     "region": "j2-sleeve",
+     "force": [
+      -42.57,
+      0.0,
+      0.0
+     ],
+     "moment": [
+      -0.0,
+      -17012.7,
+      -718.4
+     ]
+    },
+    {
+     "region": "spring-pulley",
+     "force": [
+      -62.75184140724477,
+      0.0,
+      -101.21264743103995
+     ]
+    },
+    {
+     "region": "spring-anchor",
+     "force": [
+      0.0,
+      0.0,
+      101.21264743103995
+     ]
+    }
+   ]
+  },
+  {
+   "name": "j2-rated-torque",
+   "loads": [
+    {
+     "region": "j2-sleeve",
+     "moment": [
+      0.0,
+      -13000.0,
+      0.0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "lateral",
+   "loads": [
+    {
+     "region": "j2-sleeve",
+     "force": [
+      0.0,
+      -20.0,
+      0.0
+     ]
+    }
+   ]
+  }
+ ],
+ "material": {
+  "name": "pa12-gf",
+  "E": 3200,
+  "nu": 0.37,
+  "strength": 48,
+  "density": 1.22,
+  "note": "SLS glass-filled PA12 (EOS PA 3200 GF datasheet)"
+ },
+ "goal": {
+  "safetyFactor": 2.0,
+  "volumeFraction": 0.12
+ },
+ "minMember": 3.0,
+ "symmetry": [
+  "x"
+ ],
+ "resolution": {
+  "maxElements": 120000
+ },
+ "chain": {
+  "distalKg": 2.8928,
+  "staticTorqueNm": 11.341797402303902
+ }
+}
