@@ -227,28 +227,15 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
     outcomes: list[Outcome] = []
     last_x = None
 
-    def run_one(vf: float) -> Outcome:
-        nonlocal last_x
-        emit({"stage": "optimize", "volumeFraction": vf})
-
+    def attempt(vf: float, x0, beta0) -> Outcome:
         def on_iter(rec, xp):
             emit({"stage": "optimize", "volumeFraction": vf, **rec}, xp)
 
-        # Every fraction starts from its own coarse layout where the grid is
-        # big enough for one. Warm-starting from the previous fraction's
-        # design carried its layout down to fractions it no longer suited:
-        # the wall bracket read SF 1.0-1.5 at 8-14% that way, and 3.2 at 10%
-        # started fresh (80 g delivered where 64 g passes).
-        x0, beta0 = last_x, (_WARM_BETA if last_x is not None else 1.0)
-        if domain.n_elem >= _COARSE_MIN_CELLS:
-            x0 = _coarse_start(study, domain, vf, radius, should_stop)
-            beta0 = _WARM_BETA
         res = optimize(domain, study.elastic(design=True),
                        SimpOptions(volume_fraction=vf, filter_radius=radius,
                                    max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
                                    build_direction=study.print_direction, extrusion=study.extrusion),
                        on_iter=on_iter, should_stop=should_stop)
-        last_x = res.x
         emit({"stage": "mesh", "volumeFraction": vf})
         mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
         emit({"stage": "verify", "volumeFraction": vf})
@@ -258,6 +245,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                "achievedVolumeFraction": res.volume_fraction}
         o = Outcome(vf, mesh, report, opt, rinfo)
         o.xphys = res.xphys
+        o.x = res.x
         m = _margin(study, report)
         if m is not None:
             report["margin"] = m
@@ -270,6 +258,31 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             report.setdefault("warnings", []).append(
                 f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
                 "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+        return o
+
+    def run_one(vf: float) -> Outcome:
+        nonlocal last_x
+        emit({"stage": "optimize", "volumeFraction": vf})
+        if domain.n_elem < _COARSE_MIN_CELLS:
+            o = attempt(vf, last_x, _WARM_BETA if last_x is not None else 1.0)
+        else:
+            # Every fraction starts from its own coarse layout. Warm-starting
+            # from the previous fraction's design carried its layout down to
+            # fractions it no longer suited: the wall bracket read SF 1.0-1.5
+            # at 8-14% that way, and 3.2 at 10% started fresh (80 g delivered
+            # where 50 g passes). But a stiffness-bound part can be the other
+            # way round (GRIP's upper arm: 7.5% passed warm from 9% and failed
+            # cold, on deflection), so a cold start that fails is tried again
+            # from the nearest passing design above it, and the better kept.
+            o = attempt(vf, _coarse_start(study, domain, vf, radius, should_stop), _WARM_BETA)
+            above = [q for q in outcomes if q.passes and q.volume_fraction > vf and getattr(q, "x", None) is not None]
+            if o.passes is False and above and not (should_stop is not None and should_stop()):
+                src = min(above, key=lambda q: q.volume_fraction)
+                w = attempt(vf, src.x, _WARM_BETA)
+                w.report["start"] = f"warm from {src.volume_fraction:.3f}"
+                if w.report.get("margin", 0.0) > o.report.get("margin", 0.0) or (w.passes and not o.passes):
+                    o = w
+        last_x = o.x
         emit({"stage": "outcome", **o.summary()})
         return o
 
