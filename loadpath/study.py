@@ -40,6 +40,8 @@ _MAX_SEARCH_RUNS = 7
 _COARSE_MIN_CELLS = 12_000
 # Projection sharpness a warm-started run resumes at.
 _WARM_BETA = 4.0
+# A cold start that fails with at least this margin is retried warm (_run_single).
+_RETRY_MARGIN = 0.7
 # The pick of a safety-factor search is checked again on a grid this many
 # cells finer before it is delivered. The in-loop check resolves a fillet
 # only as well as its grid: GRIP's turret read SF 2.26 there and 1.65 at
@@ -99,6 +101,7 @@ class Outcome:
             "warnings": r.get("warnings", []),
             "margin": r.get("margin"),
             "passes": self.passes,
+            "start": r.get("start"),
             "optimizer": self.optimizer,
             "reconstruction": self.reconstruction,
         }
@@ -265,6 +268,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         emit({"stage": "optimize", "volumeFraction": vf})
         if domain.n_elem < _COARSE_MIN_CELLS:
             o = attempt(vf, last_x, _WARM_BETA if last_x is not None else 1.0)
+            o.report["start"] = "warm" if last_x is not None else "cold"
         else:
             # Every fraction starts from its own coarse layout. Warm-starting
             # from the previous fraction's design carried its layout down to
@@ -274,9 +278,14 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             # way round (GRIP's upper arm: 7.5% passed warm from 9% and failed
             # cold, on deflection), so a cold start that fails is tried again
             # from the nearest passing design above it, and the better kept.
+            # Only when it failed narrowly: a retry costs a whole run (the
+            # suite took 42 min instead of 26 retrying every failure), and
+            # the upper arm's cold miss was at margin 0.79.
             o = attempt(vf, _coarse_start(study, domain, vf, radius, should_stop), _WARM_BETA)
+            o.report["start"] = "cold"
             above = [q for q in outcomes if q.passes and q.volume_fraction > vf and getattr(q, "x", None) is not None]
-            if o.passes is False and above and not (should_stop is not None and should_stop()):
+            near = o.report.get("margin") is not None and o.report["margin"] >= _RETRY_MARGIN
+            if o.passes is False and near and above and not (should_stop is not None and should_stop()):
                 src = min(above, key=lambda q: q.volume_fraction)
                 w = attempt(vf, src.x, _WARM_BETA)
                 w.report["start"] = f"warm from {src.volume_fraction:.3f}"
