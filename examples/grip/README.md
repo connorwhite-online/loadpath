@@ -9,7 +9,7 @@ reach with 1 kg at the gripper and a 1.5x dynamic factor, each joint above at
 its rated torque, a 20 N push along its axis). Goal: SF 2 in SLS PA12-GF.
 
 `studies/` is copied verbatim from GRIP's `generative/v3/studies/` (branch
-`generative-redesign`, commit 3689f8d, written by `generative/v3.py`). GRIP is
+`generative-redesign`, commit 3689f8d; wrist yoke and wrist link from de445fd, written by `generative/v3.py`). GRIP is
 CERN-OHL-W-2.0; these study files describe its parts.
 
 ```bash
@@ -39,17 +39,16 @@ was regrown on main with the closing fillet as the grip-turret eval case.
 | Wrist yoke | 24 g, SF 4.41 | 24 g, SF 4.35 | 2.97 mm | 26 mm | overbuilt; eval case grip-wrist-yoke asks for 20 g |
 | Wrist link | 67 g, SF 4.13 | **52 g**, SF 2.96 | 2.24 mm | 0 mm | thinnest members under the 3 mm minimum |
 
-### Known problem in the studies: no room for the servo horn
+### Fixed in GRIP de445fd: no room for the servo horn
 
-GRIP's `servo_child` (v3.py) keeps the horn bolts and their drivers clear,
-but not the horn itself (0–4 mm above the servo's horn face) or the servo
-body the child rotates round. Every wrist yoke so far, GRIP's printed one
-included, is solid across the J4 horn disc from about 1.5 mm above the horn
-face (~900 mm³); the regrown yoke also cuts ~900 mm³ into the J4 servo's
-roll sweep. The studies here are left as GRIP wrote them; the eval case
-`grip-wrist-yoke` adds `j4-horn` (r 12, 0.5 mm below to 4 mm above the
-face) and `j4-servo-sweep` (r 37, the servo's depth below the face). The
-fix belongs in GRIP's `servo_child`.
+GRIP's `servo_child` kept the horn bolts and their drivers clear but not
+the horn itself (0–4 mm above the servo's horn face) or the servo body the
+child turns round. Every wrist yoke up to then, GRIP's printed one included,
+was solid across the J4 horn disc from about 1.5 mm above the face
+(~900 mm³), and the yoke regrown above cut ~900 mm³ into the J4 servo's
+roll sweep. The wrist yoke and wrist link studies here now carry the fix
+(a horn keep-out, the roll sweep for J4/J6, the home-pose body for J5);
+their regrown numbers above predate it.
 
 ## The TPU finger (`finger.py`)
 
