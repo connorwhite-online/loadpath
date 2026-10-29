@@ -234,8 +234,13 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         def on_iter(rec, xp):
             emit({"stage": "optimize", "volumeFraction": vf, **rec}, xp)
 
+        # Every fraction starts from its own coarse layout where the grid is
+        # big enough for one. Warm-starting from the previous fraction's
+        # design carried its layout down to fractions it no longer suited:
+        # the wall bracket read SF 1.0-1.5 at 8-14% that way, and 3.2 at 10%
+        # started fresh (80 g delivered where 64 g passes).
         x0, beta0 = last_x, (_WARM_BETA if last_x is not None else 1.0)
-        if x0 is None and domain.n_elem >= _COARSE_MIN_CELLS:
+        if domain.n_elem >= _COARSE_MIN_CELLS:
             x0 = _coarse_start(study, domain, vf, radius, should_stop)
             beta0 = _WARM_BETA
         res = optimize(domain, study.elastic(design=True),
