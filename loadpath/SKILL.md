@@ -44,6 +44,13 @@ field. `check` reports every problem at once: fix them all, then check again.
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.
+   A housing that holds a fluid (a boost plenum, a coolant jacket): make
+   the fluid's volume a keep-out with a `wall` (mm), and load it with
+   `{"region": "<id>", "pressure": MPa}`. The wall stays as given and the
+   optimizer ribs it. A sealed vessel needs no supports; anything with an
+   open port or a flange is held where it is really held. For a cover or
+   panel that must stay closed, `"skin": {"thickness": t, "open": ["-z"]}`
+   keeps its outer surface and ribs the inside.
 5. **Say how it will be made**: `"process": "fdm"` (or `{"type": "fdm",
    "buildDirection": "+z"}`), `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`. The
    process sets a minimum member it can make, overhang control for FDM, and

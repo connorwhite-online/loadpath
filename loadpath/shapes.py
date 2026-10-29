@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = [
-    "Box", "Cylinder", "Sphere", "MeshShape", "Union", "shape_from_spec",
+    "Box", "Cylinder", "Sphere", "MeshShape", "Union", "Offset", "Shell", "grow", "shrink", "shape_from_spec",
     "manifold_from_trimesh", "trimesh_from_manifold",
 ]
 
@@ -280,6 +280,143 @@ class Union(Shape):
 
     def to_spec(self):
         return {"type": "union", "shapes": [s.to_spec() for s in self.shapes]}
+
+
+class Offset(Shape):
+    """Another shape grown (offset > 0) or shrunk (offset < 0) by a distance:
+    the level set sdf = offset. `open` lists bounding-box faces, as
+    (axis, sign), that a shrunk shape runs out through instead of stopping
+    short of: the shape is extruded straight out of each one from a cross
+    section taken 2|offset| inside it. That is how a skin is left off the
+    face a cover's ribs stand on.
+
+    Used where no exact primitive does it (`grow`, `shrink`); the exact solid
+    is marching cubes of the level set at ~1/200 of the shape's size."""
+
+    kind = "offset"
+    _CELLS = 200
+
+    def __init__(self, base: Shape, offset: float, open=()):
+        self.base = base
+        self.offset = float(offset)
+        self.open = [(int(a), int(np.sign(s))) for a, s in open]
+
+    def _clamp(self, p):
+        if not self.open:
+            return p
+        p = np.array(p, float, copy=True)
+        lo, hi = self.base.bounds()
+        inset = 2.0 * abs(self.offset)
+        for a, s in self.open:
+            if s < 0:
+                p[..., a] = np.maximum(p[..., a], lo[a] + inset)
+            else:
+                p[..., a] = np.minimum(p[..., a], hi[a] - inset)
+        return p
+
+    def sdf(self, p):
+        return self.base.sdf(self._clamp(np.asarray(p, float))) - self.offset
+
+    def bounds(self):
+        lo, hi = self.base.bounds()
+        lo, hi = lo - self.offset, hi + self.offset
+        reach = 2.0 * abs(self.offset) + 1.0
+        for a, s in self.open:
+            if s < 0:
+                lo[a] -= reach
+            else:
+                hi[a] += reach
+        return lo, hi
+
+    def to_manifold(self):
+        import trimesh
+        from skimage import measure
+
+        lo, hi = self.bounds()
+        step = float(np.max(hi - lo)) / self._CELLS
+        pad = 2
+        dims = np.ceil((hi - lo) / step).astype(int) + 1 + 2 * pad
+        origin = lo - pad * step
+        axes = [origin[i] + np.arange(dims[i]) * step for i in range(3)]
+        pts = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+        # the grid's own border counts as outside, so the surface closes
+        vals = self.sdf(pts).reshape(tuple(dims))
+        vals[[0, -1], :, :] = vals[:, [0, -1], :] = vals[:, :, [0, -1]] = step
+        verts, faces, _, _ = measure.marching_cubes(vals, level=0.0, spacing=(step, step, step))
+        mesh = trimesh.Trimesh(verts + origin, faces[:, ::-1], process=True)
+        if mesh.volume < 0:
+            mesh.invert()
+        return manifold_from_trimesh(mesh)
+
+    def to_spec(self):
+        raise ValueError("an offset shape is derived from the study and has no JSON form of its own")
+
+
+class Shell(Shape):
+    """The material of `outer` that is not in `inner`, kept inside `clip`:
+    a keep-out's wall (its grown copy minus itself, inside the design space)
+    or a design space's skin (itself minus its shrunk copy)."""
+
+    kind = "shell"
+
+    def __init__(self, outer: Shape, inner: Shape, clip: Shape | None = None):
+        self.outer = outer
+        self.inner = inner
+        self.clip = clip
+
+    def sdf(self, p):
+        d = np.maximum(self.outer.sdf(p), -self.inner.sdf(p))
+        return d if self.clip is None else np.maximum(d, self.clip.sdf(p))
+
+    def bounds(self):
+        lo, hi = self.outer.bounds()
+        if self.clip is not None:
+            clo, chi = self.clip.bounds()
+            lo, hi = np.maximum(lo, clo), np.minimum(hi, chi)
+        return lo, hi
+
+    def to_manifold(self):
+        man = self.outer.to_manifold() - self.inner.to_manifold()
+        return man if self.clip is None else man ^ self.clip.to_manifold()
+
+    def to_spec(self):
+        raise ValueError("a shell is derived from the study and has no JSON form of its own")
+
+
+def grow(shape: Shape, t: float) -> Shape:
+    """`shape` grown outward by t mm. Boxes and cylinders stay sharp-edged
+    (a little more than a true offset at their edges, never less)."""
+    if isinstance(shape, Box):
+        return Box(shape.lo - t, shape.hi + t)
+    if isinstance(shape, Cylinder):
+        a = shape.axis
+        return Cylinder(shape.p0 - t * a, shape.p1 + t * a, shape.r + t, max(shape.r_inner - t, 0.0))
+    if isinstance(shape, Sphere):
+        return Sphere(shape.center, shape.r + t)
+    if isinstance(shape, Union):
+        return Union([grow(s, t) for s in shape.shapes])
+    return Offset(shape, t)
+
+
+def shrink(shape: Shape, t: float, open=()) -> Shape:
+    """`shape` shrunk inward by t mm, running out through the `open`
+    bounding-box faces ((axis, sign) pairs)."""
+    open = list(open)
+    if isinstance(shape, Box):
+        lo, hi = shape.lo + t, shape.hi - t
+        for a, s in open:
+            if s < 0:
+                lo[a] = shape.lo[a] - t
+            else:
+                hi[a] = shape.hi[a] + t
+        if np.any(hi <= lo):
+            raise ValueError(f"a {t:g} mm skin fills the whole box; make it thinner")
+        return Box(lo, hi)
+    if isinstance(shape, Sphere) and not open:
+        if shape.r <= t:
+            raise ValueError(f"a {t:g} mm skin fills the whole sphere; make it thinner")
+        return Sphere(shape.center, shape.r - t)
+    return Offset(shape, -t, open)
 
 
 def shape_from_spec(spec, base_dir=None) -> Shape:

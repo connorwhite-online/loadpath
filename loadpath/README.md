@@ -143,9 +143,10 @@ underneath, for anything else (`add_part` with fields, `add_overlay`,
 | --- | --- |
 | `designSpace` | Shapes material may occupy (their union). |
 | `preserve` | Geometry kept exactly: bosses, mounting faces, tabs. Pinned solid in the optimization and unioned back exactly. |
-| `keepOut` | Volume that must stay empty: bores, bolt access, cable runs, mating parts. Cut exactly at the end. |
+| `keepOut` | Volume that must stay empty: bores, bolt access, cable runs, mating parts, a fluid's volume. Cut exactly at the end. `wall: 1.5` keeps 1.5 mm of material round it, pinned solid (a duct's or plenum's skin; see pressure below). |
 | `fasteners` | Optional bolted joints as interfaces: `{id, size: "M5", seat, direction, grip, end: "face"\|"thread"\|"none", headOn: "this"\|"mating"}`. A screw driven from the mating part into this one is `headOn: "mating", end: "thread"`. Adds a seat ring and a face ring or thread sleeve (preserve), the bore and the head and driver path (keep-outs, `<id>-bore`, `<id>-head`), and a self-balanced `preload` case, so the optimizer grows the clamp path instead of keeping a solid boss. See `fasteners.py`. |
-| `supports` | Where the part is held: a region id or an inline shape, with `fix` = `"all"` (default), axes like `"xz"`, or three booleans. |
+| `supports` | Where the part is held: a region id or an inline shape, with `fix` = `"all"` (default), axes like `"xz"`, or three booleans. Optional when every load is a pressure on a sealed cavity. |
+| `skin` | Optional skin-and-rib: `1.2` or `{thickness: 1.2, open: ["-z"]}` keeps that many mm of the design space's outer surface as a solid wall (except on the `open` faces) and designs only what is behind it, so the optimizer grows ribs under a skin instead of a free-form part. |
 | `loadCases` | Each a list of forces (N) on regions. The optimizer stiffens for all cases together; verification reports each. |
 | `material` | A name (`pla`, `petg`, `abs`, `asa`, `pa-cf`, `pa12`, `pa11`, `resin`, `resin-tough`, `alsi10mg`, `ti64`, `316l`) or `{E, nu, strength, density}`. A list solves the goal for each and pools the outcomes. |
 | `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space. `{"safetyFactor": 3}` and/or `{"maxDeflection": 0.5}` (mm, at the loads) search for the lightest part that meets them in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. `"method": "constrained"` (experimental) minimizes mass with the limits as MMA constraints instead of searching over volume fractions. |
@@ -170,6 +171,24 @@ is how a shaft pushes on a bore or a bolt holds a hole. Loads take a `force`
 `"distribution": "bearing"` spreads a force over the half of a bore it pushes
 on, as a shaft does. Supports take `"fix": "pin"` on a cylinder for a joint
 that turns: held radially and axially, free to rotate.
+
+A **pressure** acts in a keep-out, the fluid's volume:
+`{"region": "plenum", "pressure": 0.25}` is 2.5 bar gauge (MPa; negative is a
+vacuum) on every wall lining it, normal to the wall. The keep-out keeps a
+`wall` (default `minMember`) that is pinned solid, so the pressure boundary
+cannot be optimized open and the load does not depend on the design; the
+optimizer then puts material behind the wall where it stiffens it: ribs.
+A sealed cavity's pressure balances on itself, so a study whose only loads
+are pressures needs no `supports` (it is held by a statically determinate
+3-2-1 support that takes no load); an open duct's or a flanged housing's
+needs them where the part is held, because the thrust on its open ends goes
+there. The report's `deflection` for a pressure-only case is the most any
+wetted wall bulges. Checked against Lamé (tests/test_pressure.py): a thick
+sphere reads 5-7% over the exact bore stress and 6-9% over its bulge; a
+closed thin cylinder (3.7 cells through the wall) 8-11% over the hoop
+stress. Walls under two cells thick are warned about: on a voxel grid they
+are too stiff in bending. The tetrahedral cross-check does not apply
+pressure yet.
 
 ## Reading the report
 

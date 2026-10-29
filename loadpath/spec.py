@@ -57,6 +57,9 @@ class Region:
     # swept space) that may end against material, unlike a bore a screw or
     # pin has to pass through (verify's closed-bore check skips it)
     bore: bool = True
+    # keepOut only: mm of material kept round it, pinned solid (a duct's or
+    # a plenum's wall; see pressure.py). Set for every pressurized keep-out.
+    wall: float | None = None
 
 
 @dataclass
@@ -69,6 +72,9 @@ class Load:
     # "uniform", or "bearing": a shaft pushing on one side of a bore, with
     # the force spread as a cosine over the half facing it.
     distribution: str = "uniform"
+    # MPa gauge in the keep-out `region` names, on the material lining it
+    # (pressure.py); 0 = no pressure. Negative is a vacuum.
+    pressure: float = 0.0
 
 
 @dataclass
@@ -208,7 +214,14 @@ class Study:
     materials: list = field(default_factory=list)
     # How it is made (spec.PROCESSES): layer weakness, overhangs, min feature.
     process: Process | None = None
+    # (region id, thickness mm) of every wall and skin pinned solid
+    shells: list = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def self_equilibrated(self) -> bool:
+        """No supports: every load is a pressure, held by pressure.stabilize."""
+        return not self.supports
 
     def elastic(self, material: Material | None = None, design: bool = False):
         """What the solver takes for `nu`: the material's Poisson's ratio, or
@@ -249,8 +262,38 @@ def _regions(items, label, base_dir):
         if rid in seen:
             raise ValueError(f"duplicate {label} id {rid!r}")
         seen.add(rid)
-        out.append(Region(rid, shape_from_spec(item["shape"], base_dir), bool(item.get("bore", True))))
+        wall = item.get("wall")
+        if wall is not None and not (isinstance(wall, (int, float)) and wall > 0):
+            raise ValueError(f"{label}[{i}].wall is a thickness in mm (> 0)")
+        out.append(Region(rid, shape_from_spec(item["shape"], base_dir), bool(item.get("bore", True)),
+                          float(wall) if wall is not None else None))
     return out
+
+
+_FACES = {f"{s}{a}": (i, 1 if s == "+" else -1) for i, a in enumerate("xyz") for s in "+-"}
+
+
+def _skin(v, design):
+    """Top-level `skin`: a thickness (mm) or {thickness, open: ['-z', ..]}.
+    Returns (thickness, the skin shape)."""
+    from .shapes import Shell, Union, shrink
+
+    if isinstance(v, (int, float)):
+        v = {"thickness": v}
+    if not isinstance(v, dict):
+        raise ValueError("skin is a thickness in mm, or {thickness, open: ['-z', ...]}")
+    t = v.get("thickness")
+    if not isinstance(t, (int, float)) or t <= 0:
+        raise ValueError("skin.thickness is the wall in mm (> 0)")
+    faces = []
+    for f in v.get("open") or []:
+        key = str(f).strip().lower()
+        key = key if key[:1] in "+-" else "+" + key
+        if key not in _FACES:
+            raise ValueError(f"skin.open entries are design-space faces like '-z' or '+x', got {f!r}")
+        faces.append(_FACES[key])
+    ds = design[0] if len(design) == 1 else Union(design)
+    return float(t), Shell(ds, shrink(ds, float(t), faces))
 
 
 def _target(item, label, base_dir):
@@ -304,8 +347,6 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             if len(fix_t) != 3 or not any(fix_t):
                 raise ValueError(f"supports[{i}].fix must be 'all', 'pin', axes like 'xz', or 3 booleans")
         supports.append(Support(region, shape, fix_t, pin))
-    if not supports:
-        raise ValueError("at least one support is required (where the part is held)")
 
     cases_in = d.get("loadCases")
     if cases_in is None and "loads" in d:
@@ -316,12 +357,24 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         for li, ld in enumerate(c.get("loads") or []):
             region, shape = _target(ld, f"loadCases[{ci}].loads[{li}]", base_dir)
             label = f"loadCases[{ci}].loads[{li}]"
+            p = ld.get("pressure", 0.0)
+            if not isinstance(p, (int, float)) or not np.isfinite(p):
+                raise ValueError(f"{label}.pressure is a gauge pressure in MPa (1 bar = 0.1 MPa)")
+            if p:
+                if region is None:
+                    raise ValueError(f"{label}: a pressure acts in a keepOut (the fluid's volume); "
+                                     "name it with 'region'")
+                if any(k in ld for k in ("force", "moment", "torque", "distribution")):
+                    raise ValueError(f"{label}: a pressure load takes no force, moment or distribution; "
+                                     "put those in a load of their own")
+                loads.append(Load(region, None, np.zeros(3), pressure=float(p)))
+                continue
             f = np.asarray(ld.get("force", [0, 0, 0]), float).reshape(-1)
             m = np.asarray(ld.get("moment", ld.get("torque", [0, 0, 0])), float).reshape(-1)
             if f.shape != (3,) or m.shape != (3,) or not np.all(np.isfinite(f)) or not np.all(np.isfinite(m)):
                 raise ValueError(f"{label}: force [fx, fy, fz] (N) and moment [mx, my, mz] (N·mm) must be 3 numbers")
             if not np.any(f) and not np.any(m):
-                raise ValueError(f"{label} needs a nonzero force (N) or moment (N·mm)")
+                raise ValueError(f"{label} needs a nonzero force (N), moment (N·mm) or pressure (MPa)")
             dist = str(ld.get("distribution", "uniform"))
             if dist not in ("uniform", "bearing"):
                 raise ValueError(f"{label}.distribution must be 'uniform' or 'bearing'")
@@ -333,7 +386,17 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         cases.append(LoadCase(str(c.get("name") or f"case-{ci}"), loads, float(c.get("weight", 1.0))))
     if not cases:
         raise ValueError("at least one load case is required (loadCases: [{name, loads}])")
+    pressurized = {ld.region for c in cases for ld in c.loads if ld.pressure}
+    ko_ids = {r.id for r in keep_out}
+    for rid in sorted(pressurized - ko_ids):
+        raise ValueError(f"pressure on {rid!r}: a pressure acts in a keepOut (the fluid's volume); "
+                         f"keepOut ids: {sorted(ko_ids)}")
+    if not supports and not all(ld.pressure for c in cases for ld in c.loads):
+        raise ValueError("at least one support is required (where the part is held); only a study whose "
+                         "every load is a pressure may leave supports out")
     gravity = d.get("gravity")
+    if gravity is not None and not supports:
+        raise ValueError("gravity needs supports: a part's own weight has to be held somewhere")
     if gravity is not None:
         gravity = np.asarray(gravity, float).reshape(-1)
         if gravity.shape != (3,) or not np.all(np.isfinite(gravity)):
@@ -388,6 +451,38 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             print_direction = process.build
         floor = 2.0 * process.min_feature
         min_member = max(float(min_member), floor) if min_member is not None else floor
+    # Walls round keep-outs and the design space's skin are preserved
+    # material: fixed, pinned solid, with only what is behind them designed
+    # (skin-and-rib). Every pressurized keep-out has one: the pressure needs
+    # a surface to push on that the optimizer cannot open.
+    from .shapes import Shell, Union, grow
+
+    shells = []
+    clip = design_space[0] if len(design_space) == 1 else Union(design_space)
+    taken = {r.id for r in preserve} | {r.id for r in keep_out}
+    for r in keep_out:
+        t = r.wall
+        if t is None and r.id in pressurized:
+            if min_member is None:
+                raise ValueError(f"keepOut {r.id!r} is pressurized: give it a 'wall' (mm), the thickness of "
+                                 "the skin the pressure acts on, or set minMember")
+            t = r.wall = float(min_member)
+        if t is None:
+            continue
+        rid = f"{r.id}-wall"
+        if rid in taken:
+            raise ValueError(f"region id {rid!r} is taken; it names keepOut {r.id!r}'s wall")
+        preserve.append(Region(rid, Shell(grow(r.shape, t), r.shape, clip)))
+        shells.append((rid, t))
+        if "bore" not in next((k for k in d.get("keepOut") or [] if k.get("id") == r.id), {}):
+            # a pressure vessel's cavity is closed on purpose
+            r.bore = r.bore and r.id not in pressurized
+    if d.get("skin") is not None:
+        t, shape = _skin(d["skin"], design_space)
+        if "skin" in taken:
+            raise ValueError("region id 'skin' is taken; it names the design space's skin")
+        preserve.append(Region("skin", shape))
+        shells.append(("skin", t))
     return Study(
         name=str(d.get("name") or "study"),
         design_space=design_space,
@@ -407,5 +502,6 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         print_direction=print_direction,
         extrusion=_extrusion_axis(d.get("extrusion")),
         process=process,
+        shells=shells,
         raw=d,
     )

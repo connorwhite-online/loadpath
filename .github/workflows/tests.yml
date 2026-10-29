@@ -24,3 +24,4 @@ jobs:
       - run: python tests/test_interface.py
       - run: python tests/test_dfm.py
       - run: python tests/test_voxels.py
+      - run: python tests/test_pressure.py

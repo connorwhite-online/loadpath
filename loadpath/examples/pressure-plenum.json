@@ -1,0 +1,12 @@
+{
+  "name": "pressure-plenum",
+  "description": "Skin-and-rib under pressure: a sealed 50 x 36 x 24 mm plenum at 10 bar gauge, printed in AlSi10Mg. The cavity keeps a 2 mm wall (the skin); the optimizer adds ribs in the 6 mm outside it until the part holds a safety factor of 3. Its flat walls see the same bending stress as a 100 x 72 mm plenum's 2 mm walls at 2.5 bar of boost. No supports: a sealed cavity's pressure balances on itself.",
+  "designSpace": {"type": "box", "min": [-31, -24, -18], "max": [31, 24, 18]},
+  "keepOut": [{"id": "plenum", "shape": {"type": "box", "min": [-25, -18, -12], "max": [25, 18, 12]}, "wall": 2.0}],
+  "loadCases": [{"name": "boost", "loads": [{"region": "plenum", "pressure": 1.0}]}],
+  "material": "alsi10mg",
+  "goal": {"safetyFactor": 3.0, "volumeFraction": 0.1},
+  "minMember": 2.0,
+  "symmetry": ["x", "y", "z"],
+  "resolution": {"pitch": 1.0}
+}

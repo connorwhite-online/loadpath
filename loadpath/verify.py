@@ -332,7 +332,48 @@ def _hotspots(xyz, vm, body, peak, radius, count=3):
     return [xyz[i] for i in picked]
 
 
-def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band):
+# A wetted wall is a voxel staircase: the stress at its nodes alternates
+# between the step's teeth (unloaded corners, low) and its re-entrant corners
+# (high), and refining the grid does not settle it, the staircase being the
+# same shape at every pitch. On a closed cylinder under pressure (r 20, wall
+# 3, Lamé 7.10 MPa at the bore) the wetted nodes read 5.6 at the median and
+# 8.6-9.2 at the peak from 2.5 to 5 cells through the wall; averaged over the
+# wetted nodes within 1.5 cells of each, the peak reads 7.6-7.9, the real
+# wall's to within the discretization allowance.
+_WET_SMOOTH = 1.5
+
+
+def _smooth_wetted(xyz, vm, wet, pitch):
+    """von Mises at wetted nodes averaged over the wetted nodes near each."""
+    from scipy.spatial import cKDTree
+
+    idx = np.nonzero(wet)[0]
+    if len(idx) == 0:
+        return vm
+    import scipy.sparse as sp
+
+    tree = cKDTree(xyz[idx])
+    pairs = tree.query_pairs(_WET_SMOOTH * pitch, output_type="ndarray")
+    n = len(idx)
+    rows = np.concatenate([pairs[:, 0], pairs[:, 1], np.arange(n)])
+    cols = np.concatenate([pairs[:, 1], pairs[:, 0], np.arange(n)])
+    m = sp.csr_matrix((np.ones(len(rows)), (rows, cols)), shape=(n, n))
+    out = vm.copy()
+    out[idx] = (m @ vm[idx]) / np.asarray(m.sum(axis=1)).ravel()
+    return out
+
+
+def _rigid_free(xyz, u):
+    """u less its best-fit rigid motion (least squares over the nodes): the
+    deformation of a part held only by a 3-2-1 support."""
+    from .fem import rigid_body_modes
+
+    b = rigid_body_modes(xyz)
+    coef = np.linalg.lstsq(b, u, rcond=None)[0]
+    return u - b @ coef
+
+
+def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None):
     """Re-solve a small box around a global hotspot at a finer pitch, driven by
     the global displacement field on the box's cut faces (classic FE
     submodeling). Voxel stress converges only with about 8 cells across a
@@ -368,6 +409,15 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     free = ~pd
     kff = k[free][:, free]
     rhs = -(k[free][:, pd] @ up)
+    if case is not None:
+        # a pressure inside the box pushes on its walls here too
+        from .pressure import pressure_force
+
+        fp = np.zeros(sm.n_dof)
+        for ld in case.loads:
+            if ld.pressure:
+                fp += pressure_force(sm, study.region_shape(ld.region)[0], ld.pressure)[0]
+        rhs = rhs + fp[free]
     solver = Solver(sm, rtol=1e-7, maxiter=4000)
     # Rigid-body modes are pinned by the driven nodes; AMG still wants a
     # near-null space sized to the free unknowns, so use plain CG+AMG on kff.
@@ -383,6 +433,9 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     us[pd] = up
     us[free] = uf
     vm = nodal_von_mises(st, us, mat.E)
+    if case is not None and fp.any():
+        # over the global grid's reach: a finer staircase is no smoother
+        vm = _smooth_wetted(sm.node_xyz, vm, np.abs(fp.reshape(-1, 3)).sum(axis=1) > 0, hm.pitch)
     # Trust the inside of the box only: two global cells from the cut faces.
     margin = 2.0 * hm.pitch
     inner = np.all((sm.node_xyz > blo + margin) & (sm.node_xyz < bhi - margin), axis=1) & ~near_contact
@@ -517,6 +570,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         load_nodes = bc.case_load_nodes[ci]
         u = displacements[ci]
         vm = nodal_von_mises(stiff, u, mat.E)
+        if bc.case_pressure_nodes[ci].any():
+            vm = _smooth_wetted(hm.node_xyz, vm, bc.case_pressure_nodes[ci], pitch)
         # Exclude nodes within the contact band of an applied load or support.
         contact = support_nodes | load_nodes
         near = cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1, distance_upper_bound=band)[0] < np.inf
@@ -529,7 +584,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             half = max(8.0 * pitch, 6.0)
             for c in _hotspots(hm.node_xyz, vm, body, peak, half, count=refine):
                 r = _submodel_peak(study, mesh, hm, u, c, half, pitch / 2.5, mat,
-                                   hm.node_xyz[contact], band)
+                                   hm.node_xyz[contact], band, case)
                 if r is None:
                     continue
                 refined.append({"at": r[1], "peakStress": r[0]})
@@ -538,8 +593,21 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         disp = u.reshape(-1, 3)
         if fields:
             report.setdefault("fields", {"nodes": hm.node_xyz, "cases": []})["cases"].append(
-                {"name": case.name, "vonMises": vm, "displacement": disp})
-        defl = float(np.linalg.norm(disp[load_nodes].mean(axis=0)))
+                {"name": case.name, "vonMises": vm, "displacement": disp, "wetted": bc.case_pressure_nodes[ci]})
+        wet = bc.case_pressure_nodes[ci]
+        if load_nodes.any():
+            defl = float(np.linalg.norm(disp[load_nodes].mean(axis=0)))
+        elif wet.any():
+            # a pressure's deflection is how far its walls bulge: the most any
+            # wetted node moves (relative to the part, when nothing holds it)
+            dw = _rigid_free(hm.node_xyz, u).reshape(-1, 3) if study.self_equilibrated else disp
+            defl = float(np.linalg.norm(dw[wet], axis=1).max())
+        else:
+            defl = 0.0
+        if bc.pressure_imbalance[ci] > 0.02 and study.self_equilibrated:
+            report.setdefault("warnings", []).append(
+                f"{case.name}: the pressure no longer balances on the delivered part "
+                f"({bc.pressure_imbalance[ci]:.1%} net): a wall the cavity relies on is open (a leak)")
         # The safety factor carries a discretization allowance: on the
         # plate-with-hole benchmark (tests) refined voxel peaks land within
         # -12%..+13% of Peterson's Kt, depending on how the grid falls on the
@@ -576,6 +644,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             "deflection": defl,
             "maxDisplacement": float(np.linalg.norm(disp, axis=1).max()),
             "compliance": float(f @ u),
+            **({"pressureImbalance": bc.pressure_imbalance[ci]} if wet.any() else {}),
         })
     report["cases"] = cases
     report["safetyFactor"] = worst_sf

@@ -157,6 +157,12 @@ class BoundaryConditions:
     load_nodes: np.ndarray
     gravity: np.ndarray | None     # N per mm^3 of solid material
     regions: list = field(default_factory=list)   # node mask of every support and load region
+    # per case, bool per node: the walls a pressure acts on (pressure.py).
+    # Not contact: a pressure is a real distributed load, and the peak stress
+    # of a pressure vessel is on its wetted wall.
+    case_pressure_nodes: list = field(default_factory=list)
+    # per case, |net force| / sum |nodal force| of its pressures (0 when sealed)
+    pressure_imbalance: list = field(default_factory=list)
 
 
 def _cylinder_of(study: Study, region, shape, label):
@@ -164,6 +170,24 @@ def _cylinder_of(study: Study, region, shape, label):
     if not hasattr(sh, "axis"):
         raise ValueError(f"{label} needs a cylinder region (a bore keep-out or a cylinder) for its axis")
     return sh.p0, sh.axis
+
+
+def _wetted(study: Study, mesh: HexMesh) -> dict:
+    """Per pressurized keep-out: (nodal force per unit pressure, node mask)."""
+    from .pressure import pressure_force
+
+    out = {}
+    for case in study.load_cases:
+        for ld in case.loads:
+            if ld.pressure and ld.region not in out:
+                out[ld.region] = pressure_force(mesh, study.region_shape(ld.region)[0], 1.0)
+    return out
+
+
+# A pressure-only study is held by a 3-2-1 support, which is right only for a
+# balanced load: a sealed cavity's balances to rounding, an open duct's does
+# not (the thrust on its missing end caps).
+_IMBALANCE_MAX = 0.02
 
 
 def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor: float = 0.0) -> BoundaryConditions:
@@ -174,6 +198,14 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     fixed = np.zeros(mesh.n_dof, bool)
     spring_blocks = []
     regions = []
+    wet = _wetted(study, mesh)
+    for rid, (_, nodes) in wet.items():
+        if not nodes.any():
+            raise ValueError(f"pressure in {rid!r} pushes on no material: the keep-out is not lined by the part")
+    if study.self_equilibrated:
+        from .pressure import stabilize
+
+        fixed, support_nodes = stabilize(mesh, np.any([n for _, n in wet.values()], axis=0))
     for i, s in enumerate(study.supports):
         label = f"supports[{i}]"
         nodes = _region_nodes(study, mesh, s.region, s.shape, label, tol_floor)
@@ -205,12 +237,19 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         springs = sp.csr_matrix((vals[keep], (rows[keep], cols[keep])), shape=(mesh.n_dof, mesh.n_dof))
 
     load_nodes = np.zeros(mesh.n_nodes, bool)
-    loads, case_nodes = [], []
+    loads, case_nodes, case_wet, imbalance = [], [], [], []
     for ci, case in enumerate(study.load_cases):
         f = np.zeros(mesh.n_dof)
         cn = np.zeros(mesh.n_nodes, bool)
+        cw = np.zeros(mesh.n_nodes, bool)
+        fp = np.zeros(mesh.n_dof)
         for li, ld in enumerate(case.loads):
             label = f"loadCases[{ci}].loads[{li}]"
+            if ld.pressure:
+                unit, nodes = wet[ld.region]
+                fp += ld.pressure * unit
+                cw |= nodes
+                continue
             nodes = _region_nodes(study, mesh, ld.region, ld.shape, label, tol_floor)
             regions.append(nodes)
             idx = np.nonzero(nodes)[0]
@@ -241,19 +280,33 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
                 inertia = (r * r).sum() * np.eye(3) - r.T @ r
                 omega = np.linalg.lstsq(inertia, ld.moment, rcond=None)[0]
                 f.reshape(-1, 3)[idx] += np.cross(omega, r)
+        if cw.any():
+            fv = fp.reshape(-1, 3)
+            imb = float(np.linalg.norm(fv.sum(axis=0)) / max(np.abs(fv).sum(), 1e-300))
+            if study.self_equilibrated and imb > _IMBALANCE_MAX and check_loads:
+                raise ValueError(
+                    f"load case {case.name!r}: the pressure does not balance on itself (net force "
+                    f"{np.linalg.norm(fv.sum(axis=0)):.1f} N): the cavity is open, so its ends' thrust has "
+                    "to go somewhere. Add supports where the part is held (a flange, a clamp).")
+            imbalance.append(imb)
+            f += fp
+        else:
+            imbalance.append(0.0)
         f[fixed] = 0.0
         if check_loads and not np.any(f) and study.gravity is None:
             raise ValueError(f"load case {case.name!r} acts only on fixed nodes; "
                              "a load applied where the part is held does nothing")
         loads.append(f)
         case_nodes.append(cn)
+        case_wet.append(cw)
         load_nodes |= cn
 
     gravity = None
     if study.gravity is not None:
         # g/cm^3 -> kg/mm^3 is 1e-6; times m/s^2 gives N per mm^3.
         gravity = study.material.density * 1e-6 * study.gravity
-    return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions)
+    return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
+                              case_wet, imbalance)
 
 
 def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed: np.ndarray) -> np.ndarray:
@@ -292,6 +345,12 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
         raise ValueError("the design space is empty after removing keep-outs")
 
     warnings = []
+    for rid, t in study.shells:
+        if t < 2.0 * pitch:
+            warnings.append(
+                f"{rid} is {t:g}mm thick, {t / pitch:.1f} cells: a wall under two cells thick is too stiff in "
+                f"bending on this grid (and under one is not there at all). Set resolution.pitch to {t / 2:.2g}mm "
+                "or less, or raise resolution.maxElements.")
     if study.min_member is not None and study.min_member < 1.5 * pitch:
         warnings.append(
             f"minMember {study.min_member:g}mm is under 1.5 cells ({1.5 * pitch:.2f}mm); members that thin "
@@ -303,6 +362,10 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     support_nodes = np.zeros(mesh.n_nodes, bool)
     for i, s in enumerate(study.supports):
         support_nodes |= _region_nodes(study, mesh, s.region, s.shape, f"supports[{i}]")
+    if study.self_equilibrated:
+        # held by its own wetted walls (pressure.stabilize)
+        for _, nodes in _wetted(study, mesh).values():
+            support_nodes |= nodes
     grid = np.zeros(dims, bool)
     grid[tuple(ijk[active].T)] = True
     lbl, _ = ndimage.label(grid, structure=_CONN26)

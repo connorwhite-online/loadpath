@@ -443,12 +443,15 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         ko = m3d.Manifold.batch_boolean([r.shape.to_manifold() for r in study.keep_out], m3d.OpType.Add)
         part = part - ko
 
-    bodies = _bodies(part)
+    # decompose() lists an enclosed cavity as a body of negative volume: it
+    # is the part's (a sealed plenum's), not a fragment
+    bodies = [b for b in _bodies(part) if b.volume() > 0]
     if not bodies:
         raise ValueError("reconstruction produced an empty part")
     # A body is part of the result if it is the main one or it carries
     # preserved geometry; anything else is a fragment the subtract cut loose.
     kept = [bodies[0]]
+    loose = []
     dropped = 0.0
     if study.preserve:
         pres_man = m3d.Manifold.batch_boolean([r.shape.to_manifold() for r in study.preserve], m3d.OpType.Add)
@@ -456,8 +459,12 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         if study.preserve and (b ^ pres_man).volume() > 1e-6:
             kept.append(b)
         else:
+            loose.append(b)
             dropped += b.volume()
-    part = m3d.Manifold.batch_boolean(kept, m3d.OpType.Add) if len(kept) > 1 else kept[0]
+    if loose:
+        # cut the fragments away rather than rebuilding from the kept
+        # bodies, which would fill every enclosed cavity
+        part = part - (m3d.Manifold.batch_boolean(loose, m3d.OpType.Add) if len(loose) > 1 else loose[0])
     info["bodies"] = len(kept)
     info["droppedFragmentVolume"] = float(dropped)
 

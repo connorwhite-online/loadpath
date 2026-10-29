@@ -102,7 +102,11 @@ _KEEP_OUT = {
     "properties": {**_REGION["properties"],
                    "bore": {"type": "boolean",
                             "description": "false: a clearance volume (a mating part, a sweep) that may end "
-                                           "against material; it is not checked for closed ends. Default true."}},
+                                           "against material; it is not checked for closed ends. Default true "
+                                           "(false for a pressurized cavity)."},
+                   "wall": {**_POS, "description": "mm of material kept round it, pinned solid: a duct's or a "
+                                                   "plenum's skin, with only what is behind it designed (ribs). "
+                                                   "A pressurized keep-out gets minMember if not set."}},
     "required": ["shape"],
     "additionalProperties": False,
 }
@@ -127,7 +131,8 @@ _SUPPORT = {
 
 _LOAD = {
     "type": "object",
-    "description": "A force (N) and/or a moment (N·mm, about the region's centroid). " + _TARGET,
+    "description": "A force (N) and/or a moment (N·mm, about the region's centroid), or a pressure (MPa) "
+                   "in a keepOut. " + _TARGET,
     "properties": {
         "region": {"type": "string"},
         "shape": {"$ref": "#/$defs/shape"},
@@ -136,6 +141,10 @@ _LOAD = {
         "torque": {**_VEC3, "description": "Alias of moment."},
         "distribution": {"enum": ["uniform", "bearing"],
                          "description": "'bearing' spreads a force over the half of a bore it pushes on"},
+        "pressure": {"type": "number",
+                     "description": "MPa gauge (1 bar = 0.1 MPa) inside the keepOut named by 'region' (the fluid's "
+                                    "volume), on every wall lining it; negative is a vacuum. A study whose only "
+                                    "loads are pressures on sealed cavities needs no supports."},
     },
     "x-requireOne": [["region"], ["shape"]],
     "additionalProperties": False,
@@ -262,7 +271,16 @@ STUDY_SCHEMA = {
         "keepOut": {"type": "array", "items": {"$ref": "#/$defs/keepOut"},
                     "description": "Volume that must stay empty: bores, bolt access, cables, mating parts."},
         "fasteners": {"type": "array", "items": {"$ref": "#/$defs/fastener"}},
-        "supports": {"type": "array", "items": {"$ref": "#/$defs/support"}, "minItems": 1},
+        "supports": {"type": "array", "items": {"$ref": "#/$defs/support"},
+                     "description": "Where the part is held. Required unless every load is a pressure."},
+        "skin": {"anyOf": [_POS, {"type": "object", "properties": {
+                     "thickness": _POS,
+                     "open": {"type": "array", "items": {"type": "string", "pattern": "^[+-]?[xyz]$"},
+                              "description": "design-space faces left without skin, like '-z' (where ribs "
+                                             "stand on a cover's inside)"}},
+                     "required": ["thickness"], "additionalProperties": False}],
+                 "description": "Skin-and-rib: mm of the design space's outer surface kept as a solid wall; "
+                                "the optimizer designs the ribs behind it."},
         "loadCases": {"type": "array", "items": {"$ref": "#/$defs/loadCase"}, "minItems": 1},
         "loads": {"type": "array", "items": {"$ref": "#/$defs/load"},
                   "description": "Shorthand for a single load case."},
@@ -288,7 +306,7 @@ STUDY_SCHEMA = {
                     "description": "Optional: fill the delivered part with a stress-graded TPMS lattice."},
         "expect": {"type": "object", "description": "Eval-only pass criteria (loadpath.evals)."},
     },
-    "required": ["designSpace", "supports"],
+    "required": ["designSpace"],
     "x-requireOne": [["loadCases"], ["loads"]],
     "additionalProperties": False,
     "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "keepOut": _KEEP_OUT, "support": _SUPPORT,
@@ -520,6 +538,13 @@ def lint(doc, kind: str = "study") -> list[dict]:
             return [{"level": "error", "path": "$", "message": f"not valid JSON: {exc}"}]
     out = []
     _check(doc, root, root, "$", out)
+    if kind == "study" and isinstance(doc, dict) and not doc.get("supports"):
+        # beyond JSON Schema: supports are optional only for pressure vessels
+        cases = doc.get("loadCases") or ([{"loads": doc["loads"]}] if isinstance(doc.get("loads"), list) else [])
+        loads = [ld for c in cases if isinstance(c, dict) for ld in (c.get("loads") or [])]
+        if not loads or not all(isinstance(ld, dict) and ld.get("pressure") for ld in loads):
+            out.append(("error", "$.supports", "needs at least one support (where the part is held); only a "
+                                               "study whose every load is a pressure may leave them out"))
     return [{"level": lv, "path": p, "message": m} for lv, p, m in out]
 
 

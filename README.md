@@ -103,6 +103,7 @@ Schemas, also in [`schema/`](schema/)).
 python3 tests/test_loadpath.py
 python3 tests/run_tests.py
 python3 tests/test_interface.py
+python3 tests/test_pressure.py
 python3 -m loadpath.evals.run --out evals-out/
 python3 docs/gallery.py --evals evals-out/    # refresh the gallery renders from that run
 ```

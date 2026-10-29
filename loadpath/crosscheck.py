@@ -169,6 +169,8 @@ def _load_vectors(study, pts, surf, tol):
         f = np.zeros((len(pts), 3))
         nodes_all = []
         for ld in case.loads:
+            if ld.pressure:
+                raise ValueError("the tetrahedral cross-check does not apply pressure loads yet")
             shape = ld.shape if ld.shape is not None else study.region_shape(ld.region)[0]
             nodes = np.intersect1d(_region_nodes(study, shape, pts, tol), surf)
             if len(nodes) == 0:

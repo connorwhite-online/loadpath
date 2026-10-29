@@ -60,6 +60,8 @@ def render_views(mesh, path, study=None, title=None, views=_VIEWS, size=(5.0, 4.
                     pass
             for case in study.load_cases:
                 for ld in case.loads:
+                    if not np.any(ld.force):
+                        continue
                     shape = ld.shape if ld.shape is not None else study.region_shape(ld.region)[0]
                     blo, bhi = shape.bounds()
                     c = 0.5 * (blo + bhi)
