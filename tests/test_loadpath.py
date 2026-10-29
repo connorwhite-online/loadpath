@@ -543,6 +543,28 @@ def test_heat_exchanger_fluids_are_isolated_and_connected():
     except ValueError:
         pass
 
+
+def test_fasteners_expand_to_rings_keepouts_and_preload():
+    """A fastener becomes a seat ring and a face ring (or a thread sleeve),
+    a clear bore and head path, and a self-balanced preload case."""
+    base = {**BEAM, "designSpace": {"type": "box", "min": [0, -10, -10], "max": [30, 10, 10]}}
+    st = study_from_dict({**base, "fasteners": [
+        {"id": "a", "size": "M4", "seat": [30, 0, 0], "direction": "-x", "grip": 20, "end": "face"},
+        {"id": "b", "size": "M3", "seat": [30, 5, 5], "direction": [-1, 0, 0], "grip": 10, "end": "thread",
+         "insert": 4.0, "preload": 100}]})
+    pres = {r.id: r.shape for r in st.preserve}
+    keep = {r.id: r.shape for r in st.keep_out}
+    assert set(pres) == {"a-seat", "a-face", "b-seat", "b-thread"}
+    assert set(keep) == {"a-bore", "a-head", "b-bore", "b-head", "b-tap"}
+    assert pres["a-seat"].r_inner == keep["a-bore"].r and pres["a-seat"].r > 4.25
+    assert abs(pres["a-face"].p1[0] - 10.0) < 1e-9          # 20 mm in from the seat
+    assert keep["a-head"].p1[0] > 30 + 50                    # driver room out past the seat
+    assert abs(pres["b-thread"].r_inner - 2.0) < 1e-9        # the insert's bore
+    pre = [c for c in st.load_cases if c.name == "preload"][0]
+    total = sum(ld.force for ld in pre.loads)
+    assert np.allclose(total, 0.0) and len(pre.loads) == 4
+    assert np.isclose(np.linalg.norm(pre.loads[2].force), 100.0)
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -569,6 +591,7 @@ TESTS = [
     test_closed_bore_is_flagged,
     test_lattice_infill_is_lighter_and_walled,
     test_heat_exchanger_fluids_are_isolated_and_connected,
+    test_fasteners_expand_to_rings_keepouts_and_preload,
 ]
 
 

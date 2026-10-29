@@ -26,6 +26,11 @@ use the CLI below.
    them. Preserve only the interface itself, never a box round a component:
    a preserved slab is a slab in the result, and the optimizer has nothing
    to design there.
+   Bolted joints go in `fasteners` (size, seat point, direction, grip, and
+   whether the far end clamps on a face or engages a thread or insert): it
+   preserves only the bearing rings or the thread sleeve, keeps the bore and
+   the head and driver path clear, and adds a preload case. Don't draw a
+   solid boss round a screw.
 2. **Bound the design space** generously: the envelope the part may occupy,
    minus nothing (keep-outs are subtracted for you). Too tight a box is the
    most common reason a result looks like the box.

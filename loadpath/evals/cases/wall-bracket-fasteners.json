@@ -1,0 +1,120 @@
+{
+  "name": "wall-bracket-fasteners",
+  "description": "The wall bracket with its screws as fasteners: seat and wall-face rings preserved, not solid bosses, and a preload case.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [
+        0,
+        -15,
+        -100
+      ],
+      "max": [
+        120,
+        15,
+        0
+      ]
+    }
+  ],
+  "preserve": [],
+  "keepOut": [],
+  "supports": [
+    {
+      "region": "top-bore"
+    },
+    {
+      "region": "bottom-bore"
+    },
+    {
+      "shape": {
+        "type": "box",
+        "min": [
+          -1,
+          -16,
+          -101
+        ],
+        "max": [
+          0.3,
+          16,
+          1
+        ]
+      },
+      "fix": "x"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "shelf",
+      "loads": [
+        {
+          "shape": {
+            "type": "box",
+            "min": [
+              10,
+              -16,
+              -1.5
+            ],
+            "max": [
+              121,
+              16,
+              1
+            ]
+          },
+          "force": [
+            0,
+            0,
+            -150
+          ]
+        }
+      ]
+    }
+  ],
+  "material": "pla",
+  "goal": {
+    "safetyFactor": 2.5,
+    "volumeFraction": 0.15
+  },
+  "minMember": 4.0,
+  "symmetry": [
+    "y"
+  ],
+  "resolution": {
+    "maxElements": 40000
+  },
+  "expect": {
+    "minSafetyFactor": 2.5,
+    "maxDeflection": 1.5,
+    "maxKeepOutIntrusion": 1.0,
+    "maxPreserveMissing": 1.0,
+    "bodies": 1,
+    "minMemberAtLeast": 3.0,
+    "minMassReduction": 0.6,
+    "maxClosedBores": 0
+  },
+  "fasteners": [
+    {
+      "id": "top",
+      "size": "M5",
+      "seat": [
+        6,
+        0,
+        -20
+      ],
+      "direction": "-x",
+      "grip": 6,
+      "end": "face"
+    },
+    {
+      "id": "bottom",
+      "size": "M5",
+      "seat": [
+        6,
+        0,
+        -85
+      ],
+      "direction": "-x",
+      "grip": 6,
+      "end": "face"
+    }
+  ]
+}

@@ -234,8 +234,8 @@ def _closed_bores(study: Study, mesh) -> list:
     wall bracket's screw holes came out capped (and GRIP's yoke had material
     over its bolt seats). The fix is in the study: extend the keep-out over
     the head and the driver's reach. Probes a short way past each end cap,
-    on the axis and on a ring at half the radius; an end is closed when most
-    probes land inside the part."""
+    on the axis and on a ring at 0.3 of the radius; an end is closed when
+    most probes land inside the part."""
     from .shapes import Cylinder
 
     out = []
@@ -247,7 +247,11 @@ def _closed_bores(study: Study, mesh) -> list:
         u = np.cross(a, [1.0, 0.0, 0.0] if abs(a[0]) < 0.9 else [0.0, 1.0, 0.0])
         u /= np.linalg.norm(u)
         v = np.cross(a, u)
-        ring = [np.zeros(3)] + [0.5 * sh.r * (np.cos(t) * u + np.sin(t) * v)
+        # on and near the axis only: a head-clearance bore ending on its
+        # seat is closed round the rim by design, with the screw's own
+        # narrower bore running on through the middle (the motor mount's
+        # access holes); a capped hole is closed across the middle too
+        ring = [np.zeros(3)] + [0.3 * sh.r * (np.cos(t) * u + np.sin(t) * v)
                                 for t in np.linspace(0, 2 * np.pi, 6, endpoint=False)]
         for end, cap, out_dir in (("p0", sh.p0, -a), ("p1", sh.p1, a)):
             probes = np.array([cap + d * out_dir + o for d in (1.5, 3.0) for o in ring])

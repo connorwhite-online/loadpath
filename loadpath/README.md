@@ -106,6 +106,7 @@ print(best.report["mass"], best.report["safetyFactor"])
 | `designSpace` | Shapes material may occupy (their union). |
 | `preserve` | Geometry kept exactly: bosses, mounting faces, tabs. Pinned solid in the optimization and unioned back exactly. |
 | `keepOut` | Volume that must stay empty: bores, bolt access, cable runs, mating parts. Cut exactly at the end. |
+| `fasteners` | Optional bolted joints as interfaces: `{id, size: "M5", seat, direction, grip, end: "face"\|"thread"\|"none"}`. Adds a seat ring and a face ring or thread sleeve (preserve), the bore and the head and driver path (keep-outs, `<id>-bore`, `<id>-head`), and a self-balanced `preload` case, so the optimizer grows the clamp path instead of keeping a solid boss. See `fasteners.py`. |
 | `supports` | Where the part is held: a region id or an inline shape, with `fix` = `"all"` (default), axes like `"xz"`, or three booleans. |
 | `loadCases` | Each a list of forces (N) on regions. The optimizer stiffens for all cases together; verification reports each. |
 | `material` | A name (`pla`, `petg`, `abs`, `asa`, `pa-cf`, `pa12`, `pa11`, `resin`, `resin-tough`, `alsi10mg`, `ti64`, `316l`) or `{E, nu, strength, density}`. A list solves the goal for each and pools the outcomes. |

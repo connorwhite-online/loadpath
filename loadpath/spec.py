@@ -229,6 +229,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     """Validate and parse a study. Every error names the field to fix."""
     if not isinstance(d, dict):
         raise ValueError("study must be a JSON object")
+    from .fasteners import expand_fasteners
+    d = expand_fasteners(d)
     ds = d.get("designSpace")
     if isinstance(ds, dict):
         ds = [ds]
