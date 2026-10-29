@@ -54,6 +54,16 @@ def voxelize(mesh, pitch: float, box=None):
                       np.full(gx.size, mlo[2] - pitch)], axis=1)
     ray_d = np.tile([0.0, 0.0, 1.0], (len(ray_o), 1))
     locs, ray_idx, _ = mesh.ray.intersects_location(ray_o, ray_d, multiple_hits=True)
+    if len(ray_idx) == 0 and len(mesh.faces):
+        # A mesh handed back from a worker process (GRIP's turret) answered
+        # no ray at all, where the same mesh saved and reloaded answers
+        # 16,740: rebuild it fresh, with a fresh intersector, and ask again.
+        import trimesh
+
+        fresh = trimesh.Trimesh(np.array(mesh.vertices, float), np.array(mesh.faces), process=False)
+        locs, ray_idx, _ = fresh.ray.intersects_location(ray_o, ray_d, multiple_hits=True)
+    locs = np.asarray(locs, float).reshape(-1, 3)
+    ray_idx = np.asarray(ray_idx, int).reshape(-1)
     zc = origin[2] + (np.arange(dims[2]) + 0.5) * pitch
     solid = np.zeros(dims, bool)
     order = np.lexsort((locs[:, 2], ray_idx))
