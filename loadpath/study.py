@@ -421,22 +421,42 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
         # Confirm the pick on a finer grid; if it fails there, it no longer
         # passes, and the search steps up from it by the confirmed margin.
-        for _ in range(_CONFIRM_RUNS):
+        # Once a pick confirms, bisect back down into the gap to the fraction
+        # that failed confirmation while that gap is over 10%: the step up
+        # overshoots (GRIP's wrist yoke failed at 0.080 and confirmed at
+        # 0.102, 27.5 g, with SF 2 near 0.09).
+        confirmed, conf_fail = set(), None
+        for _ in range(2 * _CONFIRM_RUNS):
             if best is None or (should_stop is not None and should_stop()):
                 break
             o = outcomes[best]
-            emit({"stage": "confirm", "volumeFraction": o.volume_fraction})
-            mc = _confirm(o)
-            emit({"stage": "confirmed", "volumeFraction": o.volume_fraction, "margin": mc})
-            if mc >= 1.0:
+            if best not in confirmed:
+                emit({"stage": "confirm", "volumeFraction": o.volume_fraction})
+                mc = _confirm(o)
+                emit({"stage": "confirmed", "volumeFraction": o.volume_fraction, "margin": mc})
+                if mc < 1.0:
+                    o.passes = False
+                    conf_fail = max(conf_fail or 0.0, o.volume_fraction)
+                    up = [i for i in confirmed if outcomes[i].volume_fraction > o.volume_fraction]
+                    if up:
+                        best = min(up, key=lambda i: outcomes[i].report["mass"])
+                        continue
+                    vf = float(np.clip(o.volume_fraction * 1.05 / max(mc, 1e-9), o.volume_fraction + 0.01, _VF_MAX))
+                    if any(abs(vf - q.volume_fraction) < 0.005 for q in outcomes):
+                        vf = min(vf + 0.02, _VF_MAX)
+                    outcomes.append(run_one(vf))
+                    passing = [i for i, q in enumerate(outcomes) if q.passes]
+                    best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+                    continue
+                confirmed.add(best)
+            if conf_fail is None or o.volume_fraction - conf_fail < max(0.005, 0.1 * o.volume_fraction):
                 break
-            o.passes = False
-            vf = float(np.clip(o.volume_fraction * 1.05 / max(mc, 1e-9), o.volume_fraction + 0.01, _VF_MAX))
-            if any(abs(vf - q.volume_fraction) < 0.005 for q in outcomes):
-                vf = min(vf + 0.02, _VF_MAX)
-            outcomes.append(run_one(vf))
-            passing = [i for i, q in enumerate(outcomes) if q.passes]
-            best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+            q = run_one(0.5 * (conf_fail + o.volume_fraction))
+            outcomes.append(q)
+            if q.passes:
+                best = len(outcomes) - 1
+            else:
+                conf_fail = q.volume_fraction
     else:
         fractions = [float(goal.volume_fraction)] + [v for v in goal.outcomes if v != goal.volume_fraction]
         if len(fractions) > 1 and _workers(len(fractions)) > 1:
