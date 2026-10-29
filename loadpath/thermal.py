@@ -536,9 +536,8 @@ class ScalarSolver:
 
     def _precond(self, mat):
         if self._ml is None:
-            import pyamg
-            self._ml = pyamg.smoothed_aggregation_solver(mat, symmetry="hermitian", max_coarse=400,
-                                                         coarse_solver="splu")
+            from .fem import amg_solver
+            self._ml = amg_solver(mat, symmetry="hermitian", max_coarse=400, coarse_solver="splu")
         return self._ml.aspreconditioner(cycle="V")
 
     def solve(self, mat, f, x0=None):
