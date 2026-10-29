@@ -26,7 +26,7 @@ __all__ = ["reconstruct", "ReconstructOptions"]
 
 class ReconstructOptions:
     def __init__(self, upsample=3, smooth_sigma=0.9, level=0.5, max_triangles=250_000,
-                 min_body_fraction=0.002, taubin_iterations=25, blend=None, blend_k=0.8, fillet=True):
+                 min_body_fraction=0.002, taubin_iterations=25, blend=None, blend_k=0.8, fillet=True, seat=True):
         self.upsample = upsample            # field refinement before meshing
         self.smooth_sigma = smooth_sigma    # in fine cells
         self.level = level
@@ -44,6 +44,8 @@ class ReconstructOptions:
         self.blend_k = blend_k
         # Fillet in distance space (True) or the older density smooth max.
         self.fillet = fillet
+        # Move material at flush faces onto the face (_seat_on_flush_faces).
+        self.seat = seat
 
 
 def _smooth_max(a, b, k):
@@ -83,6 +85,52 @@ def _field_distance(fine, step, level=0.5):
     return d
 
 
+def _seat_on_flush_faces(fine, domain: Domain, upsample: int, pad: int, flush, design):
+    """Move material at a flush face (a wall the part is held against) onto
+    the face itself.
+
+    The grid is centered on the design space, for exact symmetry, so along an
+    axis whose length is not a whole number of cells the outer cell layer
+    hangs past each end face by up to half a cell. A plate the optimizer
+    builds against a wall occupies that layer: it was analyzed as a full cell
+    thick, but the part is trimmed at the real face, so it was delivered
+    thinner by the overhang (the printed hook's wall plate, 1.46 mm p5 against
+    a 1.95 mm cell; the wall bracket's seat). Near a box face that a flush
+    region touches, the field is translated inward by that face's overhang,
+    so the plate keeps its analyzed thickness from the face in, easing back
+    to the field as it was over the next cells."""
+    from .shapes import Box
+
+    step = domain.pitch / upsample
+    origin = domain.origin - pad * domain.pitch + 0.5 * step
+    shape = fine.shape
+    idx = np.stack(np.meshgrid(*[np.arange(n) for n in shape], indexing="ij"), -1).reshape(-1, 3)
+    pts = origin + idx * step
+    near = None
+    out = fine
+    grid_lo = domain.origin
+    grid_hi = domain.origin + np.asarray(domain.dims) * domain.pitch
+    for b in design:
+        if not isinstance(b, Box):
+            continue
+        for a in range(3):
+            for sign, face, hang in ((1, b.lo[a], b.lo[a] - grid_lo[a]), (-1, b.hi[a], grid_hi[a] - b.hi[a])):
+                if hang < 0.5 * step:
+                    continue
+                if near is None:
+                    near = np.min([sh.sdf(pts) for sh in flush], axis=0) < 1.5 * domain.pitch
+                inward = sign * (pts[:, a] - face)       # mm inside the face
+                w = np.clip((2.5 * domain.pitch - inward) / (1.5 * domain.pitch), 0.0, 1.0) * near
+                if not w.any():
+                    continue
+                shift = np.zeros(3)
+                shift[a] = sign * hang / step
+                moved = ndimage.shift(out, shift, order=1, mode="nearest")
+                w = w.reshape(shape)
+                out = w * moved + (1.0 - w) * out
+    return out
+
+
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
                 flush=(), preserve=(), design=()):
     import trimesh
@@ -110,6 +158,8 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     # Cubic upsampling: linear interpolation of a voxel field leaves the
     # staircase in the isosurface as faceted terraces.
     fine = np.clip(ndimage.zoom(grid, o.upsample, order=3, mode="nearest", grid_mode=True), 0.0, 1.0)
+    if flush and design and o.seat:
+        fine = _seat_on_flush_faces(fine, domain, o.upsample, pad, flush, design)
     if o.smooth_sigma > 0:
         fine = ndimage.gaussian_filter(fine, o.smooth_sigma)
     if min_member:
