@@ -52,13 +52,13 @@ their regrown numbers above predate it. Regrown with it on main at 42acf0b:
 wrist yoke **19.3 g**, SF 4.15, crease 3 mm, no closed bores; wrist link
 55.3 g, SF 4.71, ray p5 3.29 mm.
 
-The yoke shows the next layout problem: its horn hub is squeezed to 1.9 mm
-(ray p1 = p5 = 1.90). The J4 horn face is at z 532 and the horn takes it to
-536, but the J5 servo's keep-out starts at z 537.9, so the 4 mm hub GRIP
-preserves (536–540) is mostly inside the J5 servo. Before the horn
-keep-out, the optimizer made up the thickness by filling the horn's space.
-The fix is in GRIP's joint layout (J5 about 2–3 mm further from J4) or a
-measured horn thinner than 4 mm.
+That yoke showed the next layout problem: its horn hub was squeezed to
+1.9 mm, because the J5 servo (hanging 33.7 mm below its shaft) started 1.9 mm
+above the horn's top. GRIP 07aa65f moves J4's horn face 3 mm down its own
+axis (z_j5 − 43, no kinematic change; the forearm gives up 3 mm). Regrown
+on main at 0344844 with both fixes: wrist yoke 27.5 g, SF 4.07, ray p5
+3.6 mm, no creases, no closed bores; forearm 82.8 g, SF 3.01 (heavier than
+the 57 g it came to at 40 mm; the search settled on a stiffer outcome).
 
 ## The TPU finger (`finger.py`)
 
