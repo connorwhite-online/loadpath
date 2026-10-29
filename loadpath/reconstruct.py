@@ -342,7 +342,10 @@ def _snap_to_flat_faces(mesh, preserve, reach: float, spread: float):
     for sh in preserve:
         for at, n, lateral in _flat_faces(sh):
             s = (v - at) @ n
-            cand = (np.abs(s) < reach) & (vn @ n > np.cos(np.radians(35.0)))
+            # only ever out onto the plane, adding material: moving a surface
+            # in onto it thins whatever stands on the face (the motor mount's
+            # web over a bolt boss: SF 3.35 -> 2.73)
+            cand = (s < 0) & (s > -reach) & (vn @ n > np.cos(np.radians(35.0)))
             if not cand.any():
                 continue
             i = np.nonzero(cand)[0]
