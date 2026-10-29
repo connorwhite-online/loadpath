@@ -447,6 +447,27 @@ def test_process_layers_weaken_across_build_direction():
 
 
 
+
+def test_crease_metric_finds_unfilleted_junctions():
+    """A post stuck on a plate has a sharp concave ring where they meet; the
+    same post on the plate as preserved geometry is the user's, and a plate
+    alone has none."""
+    from loadpath.verify import _creases
+
+    plate = trimesh.creation.box(extents=(40, 40, 4))
+    post = trimesh.creation.cylinder(radius=5, height=20, sections=64)
+    post.apply_translation((0, 0, 10))
+    part = trimesh.boolean.union([plate, post], engine="manifold")
+    st = study_from_dict({**BEAM, "designSpace": {"type": "box", "min": [-20, -20, -2], "max": [20, 20, 20]}})
+    ring = _creases(st, part)
+    assert abs(ring["creaseLength"] - 2 * np.pi * 5) < 1.5, ring["creaseLength"]
+    assert np.allclose(ring["creaseAt"][0]["at"][2], 2.0, atol=0.2), ring["creaseAt"]
+    assert _creases(st, plate)["creaseLength"] == 0.0
+    st_p = study_from_dict({**BEAM, "designSpace": {"type": "box", "min": [-20, -20, -2], "max": [20, 20, 20]},
+                            "preserve": [{"id": "plate", "shape": {"type": "box", "min": [-20, -20, -2], "max": [20, 20, 2]}},
+                                         {"id": "post", "shape": {"type": "cylinder", "p0": [0, 0, 0], "p1": [0, 0, 20], "r": 5}}]})
+    assert _creases(st_p, part)["creaseLength"] < 1.0
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -469,6 +490,7 @@ TESTS = [
     test_compliant_inverter,
     test_crosscheck_cantilever,
     test_process_layers_weaken_across_build_direction,
+    test_crease_metric_finds_unfilleted_junctions,
 ]
 
 

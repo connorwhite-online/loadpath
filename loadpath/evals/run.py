@@ -13,6 +13,7 @@ Each case in cases/*.json is an ordinary study plus an `expect` block:
       "maxPreserveMissing": 1.0,  # mm^3 of preserved geometry lost
       "bodies": 1,
       "minMemberAtLeast": 2.4,    # mm, 5th percentile member thickness
+      "maxCreaseLength": 10,      # mm of sharp concave edge (verify._creases)
       "maxSeconds": 600
     }
 
@@ -43,6 +44,8 @@ CHECKS = {
     # organic material sawn flat on the design box where nothing mates
     "boundaryCut": ("maxBoundaryCutArea", lambda o: o.get("boundaryCutArea") or 0.0, "<="),
     "member": ("minMemberAtLeast", lambda o: o["p5Member"], ">="),
+    # sharp concave edges the optimizer left (verify._creases), mm
+    "crease": ("maxCreaseLength", lambda o: o.get("creaseLength"), "<="),
     "overhang": ("maxOverhangFraction", lambda o: o.get("designOverhangFraction"), "<="),
 }
 
@@ -69,6 +72,7 @@ def score_case(raw: dict, result, seconds: float) -> dict:
     out["best"] = {"volumeFraction": o.volume_fraction, "mass": flat["mass"],
                    "massReduction": flat["massReduction"], "safetyFactor": flat["safetyFactor"],
                    "p5Member": flat["p5Member"], "minMember": flat["minMember"],
+                   "creaseLength": flat.get("creaseLength"),
                    "deflection": max(c["deflection"] for c in flat["cases"]),
                    "iterations": o.optimizer["iterations"], "optimizerSeconds": o.optimizer["seconds"]}
     ok = out.get("error") is None
@@ -89,8 +93,8 @@ def score_case(raw: dict, result, seconds: float) -> dict:
 
 
 def _md(rows):
-    lines = ["| Case | Pass | Mass g | Lighter | SF | Defl. mm | p5 member mm | Time s | Failed checks |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    lines = ["| Case | Pass | Mass g | Lighter | SF | Defl. mm | p5 member mm | Crease mm | Time s | Failed checks |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for r in rows:
         b = r.get("best") or {}
         failed = ", ".join(f"{c['check']} {c['value']:.3g} (limit {c['op']} {c['limit']})"
@@ -101,6 +105,7 @@ def _md(rows):
         lines.append(f"| {r['case']} | {'yes' if r.get('pass') else 'NO'} | {fmt(b.get('mass'), '{:.1f}')} | "
                      f"{fmt(b.get('massReduction'), '{:.0%}')} | {fmt(b.get('safetyFactor'), '{:.2f}')} | "
                      f"{fmt(b.get('deflection'), '{:.3f}')} | {fmt(b.get('p5Member'), '{:.2f}')} | "
+                     f"{fmt(b.get('creaseLength'), '{:.1f}')} | "
                      f"{r['seconds']:.0f} | {failed} |")
     return "\n".join(lines) + "\n"
 

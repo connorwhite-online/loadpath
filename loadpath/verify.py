@@ -182,6 +182,49 @@ def _boundary_cut_area(study: Study, mesh) -> float:
     return float(area[cut & ~near].sum())
 
 
+# A concave edge sharper than this (the faces turn by more than 60 degrees)
+# is a crease: a notch that concentrates stress and that a fillet should have
+# rounded. Marching-cubes facets on an organic surface turn by a few degrees.
+CREASE_ANGLE_DEG = 60.0
+
+
+def _creases(study: Study, mesh, angle_deg: float = CREASE_ANGLE_DEG) -> dict:
+    """Sharp concave edges the optimizer made: where an organic member meets
+    preserved geometry without a fillet, or two members meet in a notch.
+    GRIP's wrist yoke passed every number with hard creases at its bosses,
+    found only by zooming in (QA, 10/28); this measures them. Edges lying on
+    keep-out surfaces (a blind bore's floor) or between two faces of the
+    user's own preserved geometry are the user's, and are left out.
+    Returns crease length (mm) and up to five crease locations."""
+    ang = mesh.face_adjacency_angles
+    sharp = (~mesh.face_adjacency_convex) & (ang > np.radians(angle_deg))
+    out = {"creaseLength": 0.0, "creaseAt": []}
+    if not sharp.any():
+        return out
+    e = mesh.face_adjacency_edges[sharp]
+    a, b = mesh.vertices[e[:, 0]], mesh.vertices[e[:, 1]]
+    mid = 0.5 * (a + b)
+    length = np.linalg.norm(b - a, axis=1)
+    users = np.zeros(len(mid), bool)
+    if study.keep_out:
+        users |= np.min([np.abs(r.shape.sdf(mid)) for r in study.keep_out], axis=0) < 0.3
+    if study.preserve:
+        fc = mesh.triangles_center[mesh.face_adjacency[sharp]]          # (n, 2, 3)
+        on = np.min([np.abs(r.shape.sdf(fc.reshape(-1, 3))) for r in study.preserve], axis=0).reshape(-1, 2)
+        users |= (on < 0.05).all(axis=1)
+    mine = ~users
+    out["creaseLength"] = float(length[mine].sum())
+    pts = mid[mine]
+    w = length[mine]
+    while len(pts) and len(out["creaseAt"]) < 5:
+        # heaviest cluster first, 5 mm across
+        i = int(np.argmax([w[np.linalg.norm(pts - p, axis=1) < 5.0].sum() for p in pts]))
+        near = np.linalg.norm(pts - pts[i], axis=1) < 5.0
+        out["creaseAt"].append({"at": pts[near].mean(axis=0).round(2).tolist(), "length": float(w[near].sum())})
+        pts, w = pts[~near], w[~near]
+    return out
+
+
 def _union(shapes):
     import manifold3d as m3d
     mans = [s.to_manifold() for s in shapes]
@@ -299,6 +342,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         report["preserveMissing"] = 0.0
     report["outsideDesignSpace"] = float((part - design).volume())
     report["boundaryCutArea"] = _boundary_cut_area(study, mesh)
+    report.update(_creases(study, mesh))
     report["bodies"] = len(part.decompose())
 
     if study.print_direction is not None:
