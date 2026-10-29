@@ -696,16 +696,27 @@ def lattice_infill(study: Study, mesh, fields: dict | None = None, opts: Lattice
             "sizing": sizing, "droppedBodies": len(loose),
             "solidFraction": float((util[flat_in] >= o.solid_above).mean()) if util is not None and flat_in.any()
             else (sizing or {}).get("solidCellFraction", 0.0)}
-    info["printability"] = _printability(out, d_part, lo, step, o, process, holes, filled, trapped_vol, trapped_n)
+    info["printability"] = _printability(out, d, d_part, lo, step, o, process, holes, filled, trapped_vol, trapped_n)
     # what stays walled in, where powder or resin would be trapped
     info["enclosedVoid"] = trapped_vol
     return out, info
 
 
-def _printability(mesh, dp, lo, step, o, process, holes, filled, trapped_vol, trapped_n):
-    from .verify import surface_thickness
+def _wall_thickness(d, step):
+    """(p1, p5) wall thickness, mm, from the field itself: twice the depth of
+    the medial ridge, interpolated by the field's own distance there. No ray
+    casts: on a lattice mesh of millions of faces, trimesh's ray fallback
+    (without embree) runs out of memory."""
+    depth = np.maximum(-d, 0.0)
+    ridge = (depth > 0) & (depth >= ndimage.maximum_filter(depth, size=3))
+    vals = 2.0 * depth[ridge] + 0.5 * step
+    if vals.size == 0:
+        return None, None
+    return float(np.percentile(vals, 1)), float(np.percentile(vals, 5))
 
-    p1, p5 = surface_thickness(mesh, samples=4000)
+
+def _printability(mesh, d, dp, lo, step, o, process, holes, filled, trapped_vol, trapped_n):
+    p1, p5 = _wall_thickness(d, step)
     min_feature = process.min_feature if process is not None else 0.8
     rep = {"process": process.kind if process is not None else None, "minFeature": min_feature,
            "wallP1": p1, "wallP5": p5, "wallOk": p1 is not None and p1 >= 0.9 * min_feature,
