@@ -254,6 +254,7 @@
     "maxKeepOutIntrusion": 1.0,
     "maxPreserveMissing": 1.0,
     "bodies": 1,
-    "maxMass": 214
+    "maxMass": 214,
+    "maxBoundaryCutArea": 100
   }
 }
