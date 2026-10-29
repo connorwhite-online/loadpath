@@ -14,12 +14,28 @@ _VIEWS = [(24, -58), (24, 32), (78, -90)]
 
 
 def _decimate(mesh, faces=40_000):
+    mesh = _outside(mesh)
     if len(mesh.faces) <= faces:
         return mesh
     try:
         return mesh.simplify_quadric_decimation(face_count=faces)
     except Exception:  # noqa: BLE001 - render proxy only
         return mesh
+
+
+def _outside(mesh):
+    """The mesh without its enclosed cavities' surfaces (a sealed plenum's
+    inside): matplotlib sorts faces by depth only roughly, and a cavity's
+    few large faces were drawn over the outside."""
+    try:
+        parts = mesh.split(only_watertight=False)
+        keep = [p for p in parts if p.volume > 0]
+        if 0 < len(keep) < len(parts):
+            import trimesh
+            return trimesh.util.concatenate(keep)
+    except Exception:  # noqa: BLE001 - render proxy only
+        pass
+    return mesh
 
 
 def render_views(mesh, path, study=None, title=None, views=_VIEWS, size=(5.0, 4.2)):
