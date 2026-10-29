@@ -553,6 +553,48 @@ def test_heat_exchanger_fluids_are_isolated_and_connected():
         pass
 
 
+def test_heat_exchanger_on_a_cylinder_counterflow():
+    """A cylindrical core, A through the end caps and B in and out through
+    the side: the zones follow the curved surface, the plenums print
+    without support, and the two fluids stay apart."""
+    from loadpath.heatx import design_heat_exchanger, heat_exchanger_from_spec
+
+    hx = heat_exchanger_from_spec({"core": {"type": "cylinder", "center": [0, 0, 16], "axis": "z", "length": 32, "r": 10},
+                                   "layout": "counter", "axes": "zx", "cell": 7, "wall": 1.2, "header": 4,
+                                   "portDiameter": 4, "portLength": 3})
+    hx.step = 0.45
+    mesh, rep = design_heat_exchanger(hx)
+    assert rep["isolated"] and all(rep["connected"].values()), rep["ports"]
+    assert rep["minWallBetweenFluids"] > 1.0, rep["minWallBetweenFluids"]
+    assert rep["minOuterWall"] > 1.0, rep["minOuterWall"]
+    assert mesh.is_watertight
+    z = rep["zones"]
+    assert z["A-in"]["roof"] == z["A-out"]["roof"] == "pyramid"
+    assert z["A-out"]["port"][1] == [0.0, 0.0, 1.0] and abs(z["B-in"]["port"][1][2]) < 1e-6
+    assert rep["overhangArea"] < 80.0, rep["overhangArea"]
+    assert min(rep["A"]["coreReached"], rep["B"]["coreReached"]) > 0.95
+
+
+def test_heat_exchanger_rating_limits_and_geometry():
+    """Effectiveness-NTU at its limits, the gyroid's hydraulic diameter
+    against a published exchanger, and the wall's share for polymer."""
+    from loadpath.heatx_thermal import _effectiveness, rate, tpms_geometry
+
+    assert np.isclose(_effectiveness(2.0, 1.0, "counter"), 2.0 / 3.0)
+    assert np.isclose(_effectiveness(1.5, 0.0, "cross"), 1 - np.exp(-1.5))
+    assert _effectiveness(2.0, 0.5, "counter") > _effectiveness(2.0, 0.5, "cross")
+    # Dixit et al. 2022: 4.6 mm gyroid at 80% porosity, Dh 2.39 mm
+    t = 0.2 * 4.6 / 3.09
+    assert abs(tpms_geometry("gyroid", 4.6, t)["dh"] - 2.39) < 0.05
+    duty = {"A": {"fluid": "water60", "lPerMin": 1, "tIn": 60}, "B": {"fluid": "water", "lPerMin": 1, "tIn": 20}}
+    poly = rate("gyroid", 8, 0.8, 40e3, [50, 50], {**duty, "wall": "petg"}, "counter")
+    metal = rate("gyroid", 8, 0.8, 40e3, [50, 50], {**duty, "wall": "alsi10mg"}, "counter")
+    assert poly["wallResistanceShare"] > 0.6 and metal["wallResistanceShare"] < 0.05
+    assert metal["effectiveness"] > poly["effectiveness"]
+    q = poly["duty"]
+    assert np.isclose(q, poly["fluids"]["A"]["massFlow"] * 4185 * (60 - poly["tOut"]["A"]))
+
+
 def test_fasteners_expand_to_rings_keepouts_and_preload():
     """A fastener becomes a seat ring and a face ring (or a thread sleeve),
     a clear bore and head path, and a self-balanced preload case."""
@@ -608,6 +650,8 @@ TESTS = [
     test_surface_thickness_reads_a_plate_without_a_grid,
     test_lattice_infill_is_lighter_and_walled,
     test_heat_exchanger_fluids_are_isolated_and_connected,
+    test_heat_exchanger_on_a_cylinder_counterflow,
+    test_heat_exchanger_rating_limits_and_geometry,
     test_fasteners_expand_to_rings_keepouts_and_preload,
 ]
 
