@@ -486,6 +486,42 @@ def test_closed_bore_is_flagged():
         if closed:
             assert found[0]["end"] == "p1"
 
+
+def test_lattice_infill_is_lighter_and_walled():
+    """A gyroid infill under a skin: much lighter than solid, one body, its
+    voids enclosed; open (no skin) leaves nothing enclosed; graded by the
+    stress, it keeps more material than the uniform one."""
+    from loadpath.lattice import LatticeOptions, lattice_infill, tpms
+
+    # the distance approximation: a step along the gradient by d lands on
+    # the surface, to within a few percent of d
+    p = np.random.default_rng(0).uniform(0, 10, (2000, 3))
+    d = tpms("gyroid", p, 10.0)
+    near = np.abs(d) < 0.5
+    eps = 1e-4
+    g = np.stack([(tpms("gyroid", p + eps * e, 10.0) - d) / eps for e in np.eye(3)], axis=1)
+    q = p - d[:, None] * g / np.linalg.norm(g, axis=1, keepdims=True)
+    assert np.abs(tpms("gyroid", q[near], 10.0)).max() < 0.05
+    st = study_from_dict({**BEAM, "designSpace": {"type": "box", "min": [0, 0, 0], "max": [40, 20, 20]},
+                          "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 21, 21]}}],
+                          "loadCases": [{"name": "tip", "loads": [
+                              {"shape": {"type": "box", "min": [39.99, -1, -1], "max": [41, 21, 21]},
+                               "force": [0, 0, -400]}]}]})
+    block = trimesh.creation.box(extents=(40, 20, 20))
+    block.apply_translation((20, 10, 10))
+    o = LatticeOptions(cell=8.0, step=0.4)
+    m, info = lattice_infill(st, block, None, o)
+    assert 0.3 < info["volumeRatio"] < 0.7, info
+    rep = verify_part(st, m, refine=0)
+    assert rep["bodies"] == 1 and rep["enclosedCavityVolume"] > 1000, rep["enclosedCavityVolume"]
+    o_open = LatticeOptions(cell=8.0, step=0.4, skin=0.0)
+    m2, info2 = lattice_infill(st, block, None, o_open)
+    assert info2["volumeRatio"] < info["volumeRatio"]
+    assert verify_part(st, m2, refine=0)["enclosedCavityVolume"] < 1.0
+    solid = verify_part(st, block, refine=0, fields=True)
+    _, graded = lattice_infill(st, block, solid["fields"], o)
+    assert graded["volumeRatio"] > info["volumeRatio"]
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -510,6 +546,7 @@ TESTS = [
     test_process_layers_weaken_across_build_direction,
     test_crease_metric_finds_unfilleted_junctions,
     test_closed_bore_is_flagged,
+    test_lattice_infill_is_lighter_and_walled,
 ]
 
 

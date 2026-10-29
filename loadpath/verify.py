@@ -376,7 +376,10 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     report["boundaryCutArea"] = _boundary_cut_area(study, mesh)
     report.update(_creases(study, mesh))
     report["closedBores"] = _closed_bores(study, mesh)
-    report["bodies"] = len(part.decompose())
+    # decompose() lists each enclosed cavity too, as a negative volume
+    pieces = [b.volume() for b in part.decompose()]
+    report["bodies"] = sum(1 for v in pieces if v > 0)
+    report["enclosedCavityVolume"] = float(-sum(v for v in pieces if v < 0))
 
     if study.print_direction is not None:
         report.update(_overhang(mesh, study.print_direction, study))
