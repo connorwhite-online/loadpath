@@ -225,6 +225,38 @@ def _creases(study: Study, mesh, angle_deg: float = CREASE_ANGLE_DEG) -> dict:
     return out
 
 
+def _closed_bores(study: Study, mesh) -> list:
+    """Cylindrical keep-outs (bores) with an end the part closes over.
+
+    A fastener needs its whole path clear: the shank through the bore, and
+    the head, washer and driver out past its end. A bore that stops inside
+    material is a blind hole no screw can be driven through, the way the
+    wall bracket's screw holes came out capped (and GRIP's yoke had material
+    over its bolt seats). The fix is in the study: extend the keep-out over
+    the head and the driver's reach. Probes a short way past each end cap,
+    on the axis and on a ring at half the radius; an end is closed when most
+    probes land inside the part."""
+    from .shapes import Cylinder
+
+    out = []
+    for r in study.keep_out:
+        sh = r.shape
+        if not isinstance(sh, Cylinder) or sh.r_inner > 0:
+            continue
+        a = sh.axis
+        u = np.cross(a, [1.0, 0.0, 0.0] if abs(a[0]) < 0.9 else [0.0, 1.0, 0.0])
+        u /= np.linalg.norm(u)
+        v = np.cross(a, u)
+        ring = [np.zeros(3)] + [0.5 * sh.r * (np.cos(t) * u + np.sin(t) * v)
+                                for t in np.linspace(0, 2 * np.pi, 6, endpoint=False)]
+        for end, cap, out_dir in (("p0", sh.p0, -a), ("p1", sh.p1, a)):
+            probes = np.array([cap + d * out_dir + o for d in (1.5, 3.0) for o in ring])
+            inside = mesh.contains(probes)
+            if inside.mean() > 0.5:
+                out.append({"id": r.id, "end": end, "at": cap.round(2).tolist()})
+    return out
+
+
 def _union(shapes):
     import manifold3d as m3d
     mans = [s.to_manifold() for s in shapes]
@@ -343,6 +375,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     report["outsideDesignSpace"] = float((part - design).volume())
     report["boundaryCutArea"] = _boundary_cut_area(study, mesh)
     report.update(_creases(study, mesh))
+    report["closedBores"] = _closed_bores(study, mesh)
     report["bodies"] = len(part.decompose())
 
     if study.print_direction is not None:

@@ -14,6 +14,7 @@ Each case in cases/*.json is an ordinary study plus an `expect` block:
       "bodies": 1,
       "minMemberAtLeast": 2.4,    # mm, 5th percentile member thickness
       "maxCreaseLength": 10,      # mm of sharp concave edge (verify._creases)
+      "maxClosedBores": 0,        # bore ends the part closes over (verify._closed_bores)
       "maxSeconds": 600
     }
 
@@ -46,6 +47,8 @@ CHECKS = {
     "member": ("minMemberAtLeast", lambda o: o["p5Member"], ">="),
     # sharp concave edges the optimizer left (verify._creases), mm
     "crease": ("maxCreaseLength", lambda o: o.get("creaseLength"), "<="),
+    # bores the part closes over: no screw can be driven through (verify._closed_bores)
+    "closedBores": ("maxClosedBores", lambda o: len(o.get("closedBores") or []), "<="),
     "overhang": ("maxOverhangFraction", lambda o: o.get("designOverhangFraction"), "<="),
 }
 

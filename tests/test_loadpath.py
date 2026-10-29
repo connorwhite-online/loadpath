@@ -468,6 +468,24 @@ def test_crease_metric_finds_unfilleted_junctions():
                                          {"id": "post", "shape": {"type": "cylinder", "p0": [0, 0, 0], "p1": [0, 0, 20], "r": 5}}]})
     assert _creases(st_p, part)["creaseLength"] < 1.0
 
+
+def test_closed_bore_is_flagged():
+    """A bore the part closes over at one end is a blind hole no screw can be
+    driven through; a through bore is fine."""
+    from loadpath.verify import _closed_bores
+
+    block = trimesh.creation.box(extents=(20, 20, 20))
+    base = {**BEAM, "designSpace": {"type": "box", "min": [-10, -10, -10], "max": [10, 10, 10]}}
+    for z1, closed in ((4.0, True), (12.0, False)):
+        st = study_from_dict({**base, "keepOut": [
+            {"id": "bore", "shape": {"type": "cylinder", "p0": [0, 0, -12], "p1": [0, 0, z1], "r": 2.5}}]})
+        bore = trimesh.creation.cylinder(radius=2.5, segment=[[0, 0, -12], [0, 0, z1]])
+        part = trimesh.boolean.difference([block, bore], engine="manifold")
+        found = _closed_bores(st, part)
+        assert bool(found) == closed, (z1, found)
+        if closed:
+            assert found[0]["end"] == "p1"
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -491,6 +509,7 @@ TESTS = [
     test_crosscheck_cantilever,
     test_process_layers_weaken_across_build_direction,
     test_crease_metric_finds_unfilleted_junctions,
+    test_closed_bore_is_flagged,
 ]
 
 

@@ -1,6 +1,6 @@
 {
   "name": "wall-bracket",
-  "description": "Shelf bracket: 120mm deep, 100mm tall, 30mm wide, screwed to a wall with two M5 screws. Only the interfaces are fixed: bosses round the screws. The shelf board rests on the top edge (150N, a loaded 30kg shelf on two brackets with margin) and the wall can push back on the back face; where the bracket touches either is the optimizer's choice.",
+  "description": "Shelf bracket: 120mm deep, 100mm tall, 30mm wide, screwed to a wall with two M5 screws. Only the interfaces are fixed: bosses round the screws. The shelf board rests on the top edge (150N, a loaded 30kg shelf on two brackets with margin) and the wall can push back on the back face; where the bracket touches either is the optimizer's choice. Each screw needs a clear path for its head, washer and driver from the boss face out through the bracket (head-* keep-outs: M5 pan head and washer, 11mm).",
   "designSpace": [
     {
       "type": "box",
@@ -49,6 +49,24 @@
         "axis": "x",
         "length": 20,
         "r": 2.75
+      }
+    },
+    {
+      "id": "head-top",
+      "shape": {
+        "type": "cylinder",
+        "p0": [6, 0, -20],
+        "p1": [121, 0, -20],
+        "r": 5.5
+      }
+    },
+    {
+      "id": "head-bottom",
+      "shape": {
+        "type": "cylinder",
+        "p0": [6, 0, -85],
+        "p1": [121, 0, -85],
+        "r": 5.5
       }
     }
   ],
@@ -102,6 +120,7 @@
     "maxPreserveMissing": 1.0,
     "bodies": 1,
     "minMemberAtLeast": 3.0,
-    "minMassReduction": 0.6
+    "minMassReduction": 0.6,
+    "maxClosedBores": 0
   }
 }
