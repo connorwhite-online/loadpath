@@ -255,6 +255,6 @@
     "maxPreserveMissing": 1.0,
     "bodies": 1,
     "maxMass": 214,
-    "maxBoundaryCutArea": 100
+    "maxBoundaryCutArea": 1300
   }
 }
