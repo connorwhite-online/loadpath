@@ -342,6 +342,37 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     return float(vm[i]), sm.node_xyz[i].tolist()
 
 
+
+def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
+    """Volume of preserved geometry the part lacks (mm^3). The boolean finds
+    candidate pieces; each is then confirmed by sampling points inside it and
+    asking the mesh itself (by ray parity) whether they are solid. Where a
+    keep-out shares a preserved surface (a bore the size of a boss's inner
+    wall), manifold3d can report slivers of the preserved shape missing from
+    a part that, point by point, has them: the grip upper arm's elbow socket
+    read 300 mm^3 short with every sampled point inside."""
+    import trimesh
+
+    from .shapes import trimesh_from_manifold
+
+    total = 0.0
+    for b in (pres_eff - part).decompose():
+        v = b.volume()
+        if v <= 1e-3:
+            continue
+        tb = trimesh_from_manifold(b)
+        pts = trimesh.sample.volume_mesh(tb, samples)
+        if len(pts) < 10:
+            pts = trimesh.sample.volume_mesh(tb, 20 * samples)
+        if len(pts) < 10:
+            # too thin a sliver for sampling to land in: missing only if it
+            # is thicker than a print resolves (thickness ~ 2 V / A)
+            total += v if 2.0 * v / max(b.surface_area(), 1e-9) > 0.1 else 0.0
+            continue
+        total += v * float((~mesh.contains(pts)).mean())
+    return total
+
+
 def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
                 contact_band: float | None = None, refine: int = 3, fields: bool = False) -> dict:
     """Analyze a finished part (trimesh) against the study. Returns a JSON-able
@@ -373,7 +404,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     if pres is not None:
         # Preserve minus keep-out is what must survive: a boss keeps its bore.
         pres_eff = pres - keep if keep is not None else pres
-        report["preserveMissing"] = float((pres_eff - part).volume())
+        report["preserveMissing"] = _preserve_missing(pres_eff, part, mesh)
     else:
         report["preserveMissing"] = 0.0
     report["outsideDesignSpace"] = float((part - design).volume())

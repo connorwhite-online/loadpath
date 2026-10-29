@@ -269,6 +269,11 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                                "analysisPitch": rep["analysisPitch"], "analysisCells": rep["analysisCells"],
                                "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
                                          for c in rep["cases"]]}
+        # Member thickness is geometry, not stress: the finer grid reads it
+        # more truly (a coarse one under-reads by up to half a cell, a 2 mm
+        # wall at a 0.98 mm pitch reading 1.46), so take it whichever way.
+        o.report["confirm"].update(p5Member=rep["p5Member"], minMember=rep["minMember"])
+        o.report["p5Member"], o.report["minMember"] = rep["p5Member"], rep["minMember"]
         if mc < o.report["margin"]:
             # report the finer (lower) reading: it is the one to trust
             o.report["margin"], o.report["safetyFactor"], o.report["cases"] = mc, rep["safetyFactor"], rep["cases"]

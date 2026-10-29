@@ -25,7 +25,9 @@ cylinder.
 
 Regions it adds, by id: `<id>-bore`, `<id>-head` (and `<id>-tap` for a
 thread) as keep-outs; `<id>-seat` and `<id>-face` or `<id>-thread` as
-preserves. Supports and loads can name any of them.
+preserves. Supports and loads can name any of them. Hold a bore across
+the screw only (`"fix": "yz"` for a screw along x): fixed along it too,
+the bore would hold the preload ring and the preload would do nothing.
 """
 from __future__ import annotations
 

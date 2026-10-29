@@ -1,6 +1,6 @@
 {
   "name": "wall-bracket-fasteners",
-  "description": "The wall bracket with its screws as fasteners: seat and wall-face rings preserved, not solid bosses, and a preload case.",
+  "description": "The wall bracket with its screws as fasteners: seat and wall-face rings preserved, not solid bosses, and a preload case. The screws hold the bores across (yz) only; along the screw the joint is the preload and the wall.",
   "designSpace": [
     {
       "type": "box",
@@ -20,10 +20,12 @@
   "keepOut": [],
   "supports": [
     {
-      "region": "top-bore"
+      "region": "top-bore",
+      "fix": "yz"
     },
     {
-      "region": "bottom-bore"
+      "region": "bottom-bore",
+      "fix": "yz"
     },
     {
       "shape": {
