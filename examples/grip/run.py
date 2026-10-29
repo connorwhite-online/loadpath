@@ -98,8 +98,10 @@ def main(argv=None):
             for l, mesh, s in ex.map(_solve, links):
                 secs[l] = round(s)
                 if mesh is not None:
+                    # check the file that ships: the export drops degenerate
+                    # faces the in-memory mesh can still carry
                     mesh.export(os.path.join(args.out, f"{l}.stl"))
-                    meshes[l] = mesh
+                    meshes[l] = trimesh.load(os.path.join(args.out, f"{l}.stl"))
     card = {}
     for l in links:
         if l not in meshes:

@@ -48,7 +48,17 @@ was solid across the J4 horn disc from about 1.5 mm above the face
 (~900 mm³), and the yoke regrown above cut ~900 mm³ into the J4 servo's
 roll sweep. The wrist yoke and wrist link studies here now carry the fix
 (a horn keep-out, the roll sweep for J4/J6, the home-pose body for J5);
-their regrown numbers above predate it.
+their regrown numbers above predate it. Regrown with it on main at 42acf0b:
+wrist yoke **19.3 g**, SF 4.15, crease 3 mm, no closed bores; wrist link
+55.3 g, SF 4.71, ray p5 3.29 mm.
+
+The yoke shows the next layout problem: its horn hub is squeezed to 1.9 mm
+(ray p1 = p5 = 1.90). The J4 horn face is at z 532 and the horn takes it to
+536, but the J5 servo's keep-out starts at z 537.9, so the 4 mm hub GRIP
+preserves (536–540) is mostly inside the J5 servo. Before the horn
+keep-out, the optimizer made up the thickness by filling the horn's space.
+The fix is in GRIP's joint layout (J5 about 2–3 mm further from J4) or a
+measured horn thinner than 4 mm.
 
 ## The TPU finger (`finger.py`)
 
