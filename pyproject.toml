@@ -28,9 +28,10 @@ classifiers = [
 [project.optional-dependencies]
 render = ["matplotlib>=3.8", "shapely>=2.0", "fast_simplification>=0.1"]   # shapely: render_interfaces slices meshes; fast_simplification: decimation for renders and viewers
 mcp = ["mcp>=2.0", "matplotlib>=3.8", "shapely>=2.0"]
-# independent cross-check on a tetrahedral mesh (crosscheck.py); gmsh is GPL
-# and is run as a tool, not part of loadpath's own code
-crosscheck = ["gmsh>=4.11"]
+# independent cross-check on a tetrahedral mesh (crosscheck.py): fTetWild
+# (pytetwild, MPL-2.0; its package imports pyvista) meshes, gmsh (GPL, run as
+# a tool, not part of loadpath's own code) is the fallback mesher
+crosscheck = ["gmsh>=4.11", "pytetwild>=0.4", "pyvista>=0.44"]
 
 [project.scripts]
 loadpath = "loadpath.__main__:main"
