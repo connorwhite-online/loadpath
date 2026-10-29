@@ -17,7 +17,7 @@ from scipy.integrate import solve_bvp, trapezoid
 from scipy.special import ellipk
 
 from loadpath.fem import HexMesh, Stiffness
-from loadpath.nonlinear import _element, linear_buckling, solve_nonlinear, verify_mechanism
+from loadpath.nonlinear import Tendon, _element, linear_buckling, solve_nonlinear, verify_mechanism
 
 E, NU = 1.0, 0.3
 L, T, B, H = 40.0, 2.0, 2.0, 0.5       # 80 x 4 x 4 cells
@@ -167,6 +167,50 @@ def test_large_mesh_path_follows_a_perfect_column():
     assert abs(got / sway - 1) < 0.03, (got, sway)
 
 
+def test_tendon_curls_a_cantilever_into_an_arc():
+    # A cable at tension T through closely spaced guides along the top face
+    # (offset e = T/2 from the axis), tied at the tip, pulled from the wall:
+    # every section carries the same moment T e however far it curls, so the
+    # beam bends into a circular arc with curvature T e / EI. A dead force
+    # at the tip would bend it ever harder near the root as it curls.
+    m, fixed, tip = bar()
+    x = m.node_xyz
+    top = np.abs(x[:, 1] - T) < 1e-9
+    path = [np.array([0.0, T, B / 2])] + [np.nonzero(top & (np.abs(x[:, 0] - xs) < 1e-9))[0]
+                                          for xs in np.linspace(L / 40, L, 40)]
+    e, theta = T / 2, np.pi / 2
+    tension = theta * E * I / (L * e)
+    tendon = Tendon(tension, path)
+    # the load stiffness is the derivative of the load
+    tendon._setup(m)
+    u0 = np.random.default_rng(2).normal(size=m.n_dof) * 0.05
+    f0, k0, _ = tendon._load(u0, 1.0)
+    du = np.random.default_rng(3).normal(size=m.n_dof) * 1e-6
+    f1, _, _ = tendon._load(u0 + du, 1.0)
+    assert np.linalg.norm((f0 - f1) - k0 @ du) < 1e-4 * np.linalg.norm(f0 - f1)
+
+    r = solve_nonlinear(m, NU, E, fixed, tendons=[tendon], steps=8)
+    assert r.converged, r.message
+    du3 = r.u.reshape(-1, 3)
+
+    def rotation(xs):
+        sec = np.abs(x[:, 0] - xs) < 1e-9
+        pt = (x + du3)[sec & top].mean(axis=0)
+        pb = (x + du3)[sec & (np.abs(x[:, 1]) < 1e-9)].mean(axis=0)
+        d = pt - pb
+        return np.arctan2(-d[0], d[1])
+
+    # rotation grows linearly along the beam (uniform curvature) ...
+    rot = np.array([rotation(xs) for xs in (10, 20, 30, 40)])
+    assert np.abs(rot / (rot[-1] * np.array([0.25, 0.5, 0.75, 1.0])) - 1).max() < 0.02, np.degrees(rot)
+    # ... to 90 degrees at the tip, less the element's ~4% bending error
+    assert abs(rot[-1] / theta - 0.965) < 0.02, np.degrees(rot[-1])
+    # cable pulled in: the top fibre's shortening, bending plus compression
+    travel = r.history[-1]["tendon0Travel"]
+    expect = e * rot[-1] + tension * L / (E * T * B)
+    assert abs(travel / expect - 1) < 0.03, (travel, expect)
+
+
 def test_verify_mechanism_reports_a_finger():
     # A plain TPU strip (all solid) as a "mechanism": push the tip sideways,
     # output is the same tip. Nonlinear travel is less than linear (the strip
@@ -215,6 +259,7 @@ TESTS = [
     test_stroke_control_reaction_matches_force,
     test_column_buckles_at_euler_and_bends_like_the_elastica,
     test_large_mesh_path_follows_a_perfect_column,
+    test_tendon_curls_a_cantilever_into_an_arc,
     test_verify_mechanism_reports_a_finger,
     test_mechanism_optimizer_reports_nonlinear_check,
 ]
