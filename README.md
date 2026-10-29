@@ -11,6 +11,23 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
   carries the loads, verified by a fresh FEA of the delivered mesh.
 - **Check.** `loadpath.checks` has printability (wall thickness, overhangs, trapped
   voids), component fit, fluid-network isolation, a quick FEA probe and an SDF toolkit.
+- **Get it made.** A passing part comes out as an STL with its numbers, ready for the
+  next step: the skill walks your agent through getting a print quote and ordering it
+  in real materials, or hosting the part to share, through a print service's MCP
+  server. loadpath itself never calls out; your agent offers, the user decides.
+
+### Why agents like it
+
+- **One JSON study in, one JSON report out.** Keep-outs, preserved faces, loads and
+  goals are plain shapes and numbers an agent can write from a CAD script; the report
+  says pass or fail and why, in units (`safetyFactor`, `p5Member`, `bodies`, ...).
+- **MCP or CLI.** `loadpath mcp` is a stdio MCP server; `loadpath run study.json`
+  does the same from a shell. No GUI, no GPU, no license server.
+- **Renders it can look at.** Every outcome comes with clay renders, and stress maps
+  are one call away, so a vision model can sanity-check the shape before the user does.
+- **A skill that knows the pitfalls.** [`loadpath/SKILL.md`](loadpath/SKILL.md) tells
+  the agent how to write a study, what to check in the report before trusting it, and
+  what to offer next.
 
 Units are millimetres, newtons, megapascals. See [`loadpath/README.md`](loadpath/README.md)
 for the method, the study format, goals and limits.
@@ -18,7 +35,7 @@ for the method, the study format, goals and limits.
 ## Install
 
 ```
-pip install "loadpath[mcp]"        # CLI + local MCP server for agents
+pip install "loadpath[mcp] @ git+https://github.com/connorwhite-online/loadpath"   # CLI + MCP server
 loadpath run study.json --out out/
 loadpath mcp                       # stdio MCP server
 ```
@@ -32,12 +49,8 @@ to write a study, run it, and read the report before trusting it.
 python3 tests/test_loadpath.py
 python3 tests/run_tests.py
 python3 -m loadpath.evals.run --out evals-out/
+python3 docs/gallery.py --evals evals-out/    # refresh the gallery renders from that run
 ```
-
-## Print or host the result
-
-When a part passes, [Materialize](https://www.materialize.cc) can print it in many
-materials or host and share it. loadpath never calls out to it.
 
 ## License
 
