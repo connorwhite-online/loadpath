@@ -537,6 +537,44 @@ def test_lattice_infill_is_lighter_and_walled():
     assert graded["volumeRatio"] > info["volumeRatio"]
 
 
+def test_lattice_homogenization_matches_the_fits():
+    """A coarse unit-cell homogenization lands within 15% of the fitted
+    modulus and wall stress factor the sizing uses."""
+    from loadpath.lattice import homogenize, sheet_modulus, sheet_stress_factor
+
+    h = homogenize("gyroid", 0.12, n=24)
+    assert 0.3 < h["rho"] < 0.4 and 0.3 < h["nu"] < 0.36, h
+    assert abs(h["E"] / float(sheet_modulus("gyroid", h["rho"])) - 1) < 0.15, h
+    assert abs(h["stressFactor"] / float(sheet_stress_factor("gyroid", h["rho"])) - 1) < 0.15, h
+
+
+def test_lattice_sized_to_a_safety_factor_drains_and_holds():
+    """Homogenized sizing on a cantilever block printed in SLS: much lighter
+    than solid, the delivered lattice verifies at the target (the prediction
+    errs safe), drain holes open every void and sit on flat faces, and no
+    wall is under the process's minimum."""
+    from loadpath.lattice import LatticeOptions, lattice_infill
+
+    st = study_from_dict({**BEAM, "designSpace": {"type": "box", "min": [0, 0, 0], "max": [48, 20, 20]},
+                          "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 21, 21]}}],
+                          "process": "sls",
+                          "loadCases": [{"name": "tip", "loads": [
+                              {"shape": {"type": "box", "min": [47.99, -1, -1], "max": [49, 21, 21]},
+                               "force": [0, 0, -500]}]}]})
+    block = trimesh.creation.box(extents=(48, 20, 20))
+    block.apply_translation((24, 10, 10))
+    m, info = lattice_infill(st, block, None, LatticeOptions(cell=8.0, target_sf=1.2))
+    pr = info["printability"]
+    assert info["volumeRatio"] < 0.75, info["volumeRatio"]
+    assert pr["drainHoles"] and pr["trappedVolume"] < 1.0 and pr["drainOk"], pr
+    for h in pr["drainHoles"]:
+        assert max(abs(c) for c in h["normal"]) > 0.95, h      # on a face, not an edge
+    assert pr["wallP1"] > 0.9 * 0.8, pr["wallP1"]
+    rep = verify_part(st, m, refine=0, max_cells=120_000)
+    assert rep["bodies"] == 1 and rep["enclosedCavityVolume"] < 1.0, rep["enclosedCavityVolume"]
+    assert rep["safetyFactor"] > 0.9 * 1.2, (rep["safetyFactor"], info["sizing"]["predictedSF"])
+
+
 def test_heat_exchanger_fluids_are_isolated_and_connected():
     """Two fluids through one gyroid: each port reaches its partner and never
     the other fluid, the wall between them is the sheet's, and the mesh is
@@ -686,6 +724,8 @@ TESTS = [
     test_closed_bore_is_flagged,
     test_surface_thickness_reads_a_plate_without_a_grid,
     test_lattice_infill_is_lighter_and_walled,
+    test_lattice_homogenization_matches_the_fits,
+    test_lattice_sized_to_a_safety_factor_drains_and_holds,
     test_heat_exchanger_fluids_are_isolated_and_connected,
     test_heat_exchanger_on_a_cylinder_counterflow,
     test_heat_exchanger_rating_limits_and_geometry,

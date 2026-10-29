@@ -208,15 +208,30 @@ _PROCESS = {"anyOf": [
 ], "description": "How it is made: sets a minimum member, overhang control (FDM) and the layer-bond check."}
 
 _LATTICE_PROPS = {
-    "type": {"enum": ["gyroid", "schwarz-p", "diamond"]},
+    "type": {"enum": ["gyroid", "schwarz-p", "diamond"],
+             "description": "TPMS sheet (default gyroid). Per gram, diamond is the stiffest and strongest, "
+                            "Schwarz P the weakest and has flat ceilings (FDM)."},
     "cell": {**_POS, "description": "mm per TPMS period (at least 4 x maxWall)"},
-    "skin": {"type": "number", "minimum": 0, "description": "mm of solid shell; 0 leaves the lattice open "
-                                                            "(needed for SLS, MJF and resin to drain)"},
-    "minWall": {**_POS, "description": "mm, where the part idles"},
-    "maxWall": {**_POS, "description": "mm, where the stress nears solidAbove"},
+    "skin": {"type": "number", "minimum": 0, "description": "mm of solid shell; 0 leaves the lattice open. "
+                                                            "Under a skin, SLS, MJF and resin parts get drain holes"},
+    "sizing": {"enum": ["homogenized", "solid-stress"],
+               "description": "homogenized (default): the core is analyzed as the lattice it will be and each "
+                              "cell sized to safetyFactor; solid-stress: graded from the solid part's stress "
+                              "(quick, but not a sizing)"},
+    "minWall": {**_POS, "description": "mm, where the part idles (at least the process's minFeature)"},
+    "maxWall": {**_POS, "description": "mm; homogenized cells that would need more turn solid"},
     "solidAbove": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
-                   "description": "utilization (stress / allowable) above which material stays solid"},
-    "safetyFactor": {**_POS, "description": "the allowable is strength / this (default 2)"},
+                   "description": "(solid-stress) utilization (stress / allowable) above which material stays solid"},
+    "safetyFactor": {**_POS, "description": "target safety factor of the lattice walls and skin "
+                                            "(default: the study goal's, else 2)"},
+    "collar": {"type": "number", "minimum": 0,
+               "description": "mm of solid round preserved shapes, keep-outs, supports and loads (default 2)"},
+    "blend": {**_POS, "description": "mm, fillet radius where the lattice meets solid (default maxWall)"},
+    "drains": {"enum": ["auto", "yes", "no"],
+               "description": "drain holes into enclosed voids: auto = for powder and resin processes"},
+    "drainDiameter": {**_POS, "description": "mm (default 4 for SLS/MJF, 3 for resin)"},
+    "fillPockets": {"type": "number", "minimum": 0,
+                    "description": "mm^3: enclosed voids smaller than this are filled solid (default cell^3 / 8)"},
     "step": {**_POS, "description": "field sampling, mm (default minWall / 2.5)"},
 }
 

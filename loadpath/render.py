@@ -275,3 +275,74 @@ def render_heat_exchanger(mesh, spaces, core, path, title=None, size=(5.0, 4.6),
     fig.savefig(path, facecolor="white")
     plt.close(fig)
     return path
+
+def render_lattice(mesh, path, title=None, holes=(), size=(5.0, 4.6), view=(28, -55)):
+    """A lattice part: whole, cut open across its length and its height so
+    the core and its grading show, and a close-up of the first drain hole
+    (`holes` as lattice_infill's printability["drainHoles"])."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    lo, hi = np.asarray(mesh.bounds)
+    mid = 0.5 * (lo + hi)
+    ext = hi - lo
+    long_ax = int(np.argmax(ext))
+    tall = [a for a in np.argsort(ext) if a != long_ax][0]
+    side = 3 - long_ax - tall
+    n_side, n_tall = np.zeros(3), np.zeros(3)
+    n_side[side] = 1.0
+    n_tall[tall] = -1.0
+    panels = [("part", mesh, None),
+              ("cut along its length", mesh.slice_plane(mid, n_side, cap=True), None),
+              ("cut through its height", mesh.slice_plane(mid, n_tall, cap=True), None)]
+    if holes:
+        h = holes[0]
+        c, nrm = np.asarray(h["at"]), np.asarray(h["normal"])
+        r = 4.0 * h["diameter"]
+        panels.append((f"drain hole {h['diameter']:g} mm, cut in half", mesh.slice_plane(c, _perp(nrm), cap=True),
+                       (c, r, nrm)))
+    fig = plt.figure(figsize=(size[0] * len(panels), size[1]), dpi=110)
+    grey = np.array([0.80, 0.80, 0.82])
+    for pi, (label, m, zoom) in enumerate(panels):
+        ax = fig.add_subplot(1, len(panels), pi + 1, projection="3d")
+        if zoom is not None:
+            c, r, nrm = zoom
+            keep = np.all(np.abs(m.triangles_center - c) < r, axis=1)
+            m = m.submesh([np.nonzero(keep)[0]], append=True) if keep.any() else m
+            # look at the cut face (it faces away from the kept side), a
+            # little from outside the part
+            v = -_perp(nrm) + 0.5 * nrm
+            v /= np.linalg.norm(v)
+            elev, azim = np.degrees(np.arcsin(np.clip(v[2], -1, 1))), np.degrees(np.arctan2(v[1], v[0]))
+            cen, span = c - nrm * 0.25 * r, 1.6 * r
+        else:
+            elev, azim = view
+            cen, span = mid, ext.max()
+        m = _decimate(m, 120_000)
+        e, a = np.radians(elev), np.radians(azim)
+        view_dir = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
+        key = view_dir + np.array([0.3, -0.2, 0.6])
+        key /= np.linalg.norm(key)
+        shade = np.clip(m.face_normals @ key, 0, 1)
+        col = np.clip(grey[None] * (0.30 + 0.70 * shade)[:, None], 0, 1)
+        ax.add_collection3d(Poly3DCollection(m.triangles, facecolors=col, edgecolor="none", linewidth=0))
+        for k in range(3):
+            getattr(ax, "set_" + "xyz"[k] + "lim")(cen[k] - span / 2, cen[k] + span / 2)
+        ax.set_box_aspect((1, 1, 1), zoom=1.5)
+        ax.view_init(elev, azim)
+        ax.set_axis_off()
+        ax.set_title(label, fontsize=9)
+    if title:
+        fig.suptitle(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(path, facecolor="white")
+    plt.close(fig)
+    return path
+
+
+def _perp(n):
+    """A unit vector across `n`: the plane that cuts a drain hole in half."""
+    t = np.cross(n, [1.0, 0.0, 0.0] if abs(n[0]) < 0.9 else [0.0, 1.0, 0.0])
+    return t / np.linalg.norm(t)

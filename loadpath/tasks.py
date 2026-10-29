@@ -89,12 +89,7 @@ def _lattice_options(spec, study):
     errors = [i for i in lint(spec, "lattice") if i["level"] == "error"]
     if errors:
         raise ValueError("lattice options: " + format_issues(errors))
-    o = LatticeOptions.from_spec(spec, study.process)
-    if "safetyFactor" in spec:
-        o.safety_factor = float(spec["safetyFactor"])
-    if "step" in spec:
-        o.step = float(spec["step"])
-    return o
+    return LatticeOptions.from_spec(spec, study.process, study.goal.safety_factor)
 
 
 def lattice_part(study, mesh, options: dict | None, out_dir: str, stem: str, render: bool = True,
@@ -106,10 +101,11 @@ def lattice_part(study, mesh, options: dict | None, out_dir: str, stem: str, ren
     from .verify import verify_part
 
     o = _lattice_options(options, study)
-    _emit(on_progress, stage="lattice-stress", note="analyzing the solid part for the stress field")
-    solid = verify_part(study, mesh, refine=0, fields=True)
-    _emit(on_progress, stage="lattice-build", type=o.kind, cell=o.cell)
-    lat, info = lattice_infill(study, mesh, solid["fields"], o)
+    _emit(on_progress, stage="lattice-stress", note="analyzing the solid part")
+    solid = verify_part(study, mesh, refine=0, fields=o.target_sf is None)
+    _emit(on_progress, stage="lattice-build", type=o.kind, cell=o.cell,
+          sizing="homogenized" if o.target_sf else "solid-stress")
+    lat, info = lattice_infill(study, mesh, solid.get("fields"), o)
     _emit(on_progress, stage="lattice-verify")
     rep = verify_part(study, lat, refine=0)
     os.makedirs(out_dir, exist_ok=True)
@@ -126,14 +122,15 @@ def lattice_part(study, mesh, options: dict | None, out_dir: str, stem: str, ren
     target = study.goal.safety_factor
     sf = out["safetyFactor"]
     if target and sf is not None and sf < target:
-        attention.append(f"safety factor {sf:.2f} is under the goal's {target:g}: raise minWall, maxWall or "
-                         "solidAbove's reach (lower solidAbove), or use a smaller cell")
+        attention.append(f"safety factor {sf:.2f} is under the goal's {target:g}: raise safetyFactor, minWall "
+                         "or maxWall, or use a smaller cell")
     if (out["bodies"] or 1) > 1:
         attention.append(f"{out['bodies']} separate bodies")
     out["attention"] = attention
+    out["printability"] = info.get("printability")
     if info.get("enclosedVoid", 0) > 1.0 and study.process is not None and study.process.kind != "fdm":
-        out["warning"] = (f"the skin encloses the lattice, which traps {study.process.kind} powder or resin; "
-                          "set skin to 0 or add drain holes")
+        out["warning"] = (f"{info['enclosedVoid']:.0f} mm^3 of lattice is still walled in, which traps "
+                          f"{study.process.kind} powder or resin; set drains to 'yes', or skin to 0")
     if render:
         from .render import render_views
         png = os.path.join(out_dir, stem + "-lattice.png")
