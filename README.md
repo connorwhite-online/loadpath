@@ -34,23 +34,27 @@ for the method, the study format, goals and limits.
 
 ## Examples
 
-The eval cases (9/9 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
+The eval cases (8/11 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
 
 <table>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>48.2 g · 61% lighter · SF 10.75 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>58.8 g · 53% lighter · SF 12.78 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>24.7 g · 84% lighter · SF 3.67 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>46.2 g · 63% lighter · SF 8.47 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>58.9 g · 53% lighter · SF 14.78 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>26.8 g · 82% lighter · SF 4.14 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>205.9 g · 88% lighter · SF 5.81 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>26.5 g · 59% lighter · SF 1.54 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.2 g · 69% lighter · SF 3.35 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>257.0 g · 84% lighter · SF 2.25 · **fail**</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>208.0 g · 88% lighter · SF 5.96 · **fail**</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>23.9 g · 91% lighter · SF 3.81 · **fail**</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>31.8 g · 79% lighter · SF 3.43 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>48.0 g · 89% lighter · SF 3.19 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>80.1 g · 81% lighter · SF 4.51 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>22.1 g · 66% lighter · SF 1.51 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.5 g · 69% lighter · SF 3.35 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>31.1 g · 79% lighter · SF 2.60 · pass</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>48.1 g · 89% lighter · SF 3.23 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>80.4 g · 81% lighter · SF 3.80 · pass</sub></td>
 </tr>
 </table>
 
@@ -68,7 +72,7 @@ Two-fluid heat exchangers: two isolated channel networks through one sheet gyroi
 
 ![box-crossflow](docs/images/heatx/box-crossflow.png)
 
-<sub>Rendered 2026-10-29 from `a5fdad3` by `python docs/gallery.py`.</sub>
+<sub>Rendered 2026-10-29 from `edbf0ab` by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->
 
