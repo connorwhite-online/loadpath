@@ -339,18 +339,37 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     # region at most two cells thick that spans more than two filter
     # diameters both ways is a face however small the part is around it. By
     # share alone the printed hook's wall face (1.6%) and the wall bracket's
-    # shelf (2.5%) were pinned, one cell thick: the optimizer never had to
-    # thicken that plate, and it was delivered 1.5 and 2.9 mm thick against a
-    # 2.4 and 3.0 mm minimum member. (The MBB beam's load line and the motor
-    # mount's pads are under two diameters and stay pinned.)
+    # shelf (2.5%) were pinned one cell thick: the optimizer never had to
+    # thicken that plate, and it was delivered 1.5 and 1.9 mm thick against a
+    # 2.4 and 3.0 mm minimum member. A supporting face is left to the
+    # optimizer, like any large one. A loaded face is pinned at the minimum
+    # member's thickness: its load is spread over every node of it, so the
+    # part has to cover it anyway, and left unpinned the optimizer could
+    # empty it (the fastener bracket's shelf, which the part then no longer
+    # reached). The MBB beam's load line and the motor mount's pads are
+    # under two diameters and stay pinned as they were.
     radius = 1.3 * float(study.min_member) if study.min_member else 1.5 * pitch
-    for nodes in bc.regions:
+    active_grid = np.zeros(dims, bool)
+    active_grid[tuple(mesh.elem_ijk.T)] = True
+    for ri, nodes in enumerate(bc.regions):
         touch = nodes[mesh.enode].any(axis=1)
         if touch.sum() > _ANCHOR_MAX_FRACTION * mesh.n_elem:
             continue
-        ext = np.sort(np.ptp(mesh.elem_ijk[touch], axis=0) + 1)
-        if ext[0] <= 2 and ext[1] * pitch > 4.0 * radius:
-            continue
+        ext = np.ptp(mesh.elem_ijk[touch], axis=0) + 1
+        thin = int(np.argmin(ext))
+        if ext[thin] <= 2 and np.sort(ext)[1] * pitch > 4.0 * radius:
+            if ri < len(study.supports):
+                continue
+            layers = int(np.ceil(float(study.min_member or 0.0) / pitch))
+            if layers > ext[thin]:
+                g = np.zeros(dims, bool)
+                g[tuple(mesh.elem_ijk[touch].T)] = True
+                step = np.zeros((3, 3, 3), bool)
+                step[1, 1, 1] = True
+                step[tuple(np.where(np.arange(3) == thin, [0, 0, 0], 1))] = True
+                step[tuple(np.where(np.arange(3) == thin, [2, 2, 2], 1))] = True
+                g = ndimage.binary_dilation(g, structure=step, iterations=layers - int(ext[thin])) & active_grid
+                touch = g[tuple(mesh.elem_ijk.T)]
         pres_el = pres_el | touch
 
     mirror = {}
