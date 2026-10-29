@@ -124,10 +124,22 @@ PROCESSES = {
 @dataclass
 class Process:
     kind: str
-    build: tuple[int, int] | None      # (axis, sign) the layers stack along, if layered
+    # (axis, sign) or a unit vector the layers stack along, if layered;
+    # "auto" until orient.choose_build_direction picks one
+    build: Any
     interlayer: float                  # strength across layers / in-plane strength
     min_feature: float                 # mm
     overhangs: bool                    # design self-supporting along `build`
+    # stiffness across layers / in-plane (modulus, shear); None = the
+    # process default in am._LAYER_STIFFNESS
+    ez: float | None = None
+    gz: float | None = None
+    # what the optimizer designs with: False = isotropic (verification
+    # always uses the layered stiffness), True = the physical layered
+    # stiffness, "bond" = across-layer terms cut to the bond's strength
+    # ratio (am.layered_elasticity). Neither layered option beat isotropic
+    # reliably on the motor mount and hook (2026-10-29), so off by default.
+    anisotropic: Any = False
 
 
 def _process(spec) -> Process | None:
@@ -140,12 +152,30 @@ def _process(spec) -> Process | None:
         raise ValueError(f"process.type must be one of {sorted(PROCESSES)}, got {kind!r}")
     base = PROCESSES[kind]
     from .am import parse_build_direction
-    build = parse_build_direction(spec.get("buildDirection", "+z" if kind == "fdm" else None))
+    raw_build = spec.get("buildDirection", "+z" if kind == "fdm" else None)
+    build = "auto" if isinstance(raw_build, str) and raw_build.strip().lower() == "auto" \
+        else parse_build_direction(raw_build)
     inter = float(spec.get("interlayer", base["interlayer"]))
     if not 0.0 < inter <= 1.0:
         raise ValueError("process.interlayer is a fraction of the in-plane strength, in (0, 1]")
+    stiff = {}
+    for key, name in (("ez", "stiffnessAcrossLayers"), ("gz", "shearAcrossLayers")):
+        if spec.get(name) is not None:
+            v = float(spec[name])
+            if not 0.0 < v <= 1.0:
+                raise ValueError(f"process.{name} is a fraction of the in-plane value, in (0, 1]")
+            stiff[key] = v
     return Process(kind, build, inter, float(spec.get("minFeature", base["minFeature"])),
-                   bool(spec.get("overhangs", base["overhangs"])))
+                   bool(spec.get("overhangs", base["overhangs"])),
+                   anisotropic=_anisotropic(spec.get("anisotropic", False)), **stiff)
+
+
+def _anisotropic(v):
+    if v in (True, False, "bond"):
+        return v
+    if v in ("physical", "true"):
+        return True
+    raise ValueError("process.anisotropic is false, true (physical layered stiffness) or \"bond\"")
 
 
 @dataclass
@@ -166,7 +196,7 @@ class Study:
     # m/s², applied to the part's own mass in every load case.
     gravity: np.ndarray | None = None
     # Build direction for overhang control, as (axis, sign); see am.py.
-    print_direction: tuple[int, int] | None = None
+    print_direction: Any = None
     # 2.5D manufacturing: the part is a profile extruded along this axis
     # (0, 1, 2), i.e. cut from plate by waterjet, laser or a 2.5-axis mill.
     extrusion: int | None = None
@@ -175,6 +205,17 @@ class Study:
     # How it is made (spec.PROCESSES): layer weakness, overhangs, min feature.
     process: Process | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+
+    def elastic(self, material: Material | None = None, design: bool = False):
+        """What the solver takes for `nu`: the material's Poisson's ratio, or
+        a fem.Layered when the process builds in layers (am.layered_elasticity).
+        design=True is the optimizer's surrogate stiffness."""
+        from .am import layered_elasticity
+
+        mat = material or self.material
+        if self.process is None or (design and not self.process.anisotropic):
+            return mat.nu
+        return layered_elasticity(mat.nu, self.process, design=design and self.process.anisotropic == "bond")
 
     def region_shape(self, region_id: str) -> tuple[Shape, str]:
         for r in self.preserve:
@@ -339,7 +380,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     if process is not None:
         # the process sets what a study left open: overhang control along the
         # build direction, and a minimum member it can actually make
-        if print_direction is None and process.overhangs and process.build is not None:
+        if print_direction is None and process.overhangs and process.build not in (None, "auto"):
             print_direction = process.build
         floor = 2.0 * process.min_feature
         min_member = max(float(min_member), floor) if min_member is not None else floor

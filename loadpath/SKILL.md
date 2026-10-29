@@ -48,8 +48,13 @@ field. `check` reports every problem at once: fix them all, then check again.
    "buildDirection": "+z"}`), `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`. The
    process sets a minimum member it can make, overhang control for FDM, and
    for layered processes checks the tension pulling layers apart against the
-   layer bond (FDM: 60% of the in-plane strength). Pick the build direction
-   so the main loads run along the layers, not across them.
+   layer bond (FDM: 60% of the in-plane strength); a safety-factor goal
+   sizes the part against the bond too. Pick
+   the build direction so the main loads run along the layers, or set
+   `"buildDirection": "auto"` to let it compare all six (slower: one coarse
+   run per direction). `report.json` → `print` says whether it needs
+   support, its bridges, and whether the first layer holds; `run` writes a
+   `.3mf` per part already standing the right way up for the slicer.
 6. `python -m loadpath check study.json`: validates and reports cells, pitch
    and warnings. Fix every warning before running.
 7. `python -m loadpath run study.json --out out/`: minutes, not seconds.

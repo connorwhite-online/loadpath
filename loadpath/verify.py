@@ -154,9 +154,9 @@ def _overhang(mesh, direction, study=None, max_angle_deg=45.0, tolerance_deg=5.0
     slope from counting. `overhangArea` is everything; `designOverhangArea`
     leaves out faces on preserved or keep-out geometry, which the user drew
     (a horizontal bore's ceiling is theirs, not the optimizer's)."""
-    axis, sign = direction
-    up = np.zeros(3)
-    up[axis] = sign
+    from .am import build_vector
+
+    up = build_vector(direction)
     down = -(mesh.face_normals @ up)
     centers = mesh.triangles_center
     height = centers @ up
@@ -332,7 +332,7 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     ug = u.reshape(-1, 3)[gi]
     up = (w[..., None] * ug).sum(axis=1).ravel()
     pd = np.repeat(driven, 3)
-    st = Stiffness(sm, mat.nu, np.zeros(sm.n_dof, bool))
+    st = Stiffness(sm, study.elastic(mat), np.zeros(sm.n_dof, bool))
     k = st.assemble(np.full(sm.n_elem, mat.E)).tocsr()
     free = ~pd
     kff = k[free][:, free]
@@ -437,6 +437,15 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
 
     if study.print_direction is not None:
         report.update(_overhang(mesh, study.print_direction, study))
+    proc = study.process
+    build = study.print_direction if study.print_direction is not None else \
+        (proc.build if proc is not None and proc.build != "auto" else None)
+    if build is not None:
+        # sliced as a printer would: bridges, islands, support volume, bed
+        from .printcheck import check_print
+
+        report["print"] = check_print(mesh, build, process=proc.kind if proc is not None else "fdm",
+                                      material=mat)
 
     pitch = (vol / max_cells) ** (1.0 / 3.0)
     if min_pitch:
@@ -460,7 +469,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
 
     band = max(1.5 * pitch, contact_band or 0.0)
     report["contactBand"] = band
-    stiff = Stiffness(hm, mat.nu, fixed)
+    stiff = Stiffness(hm, study.elastic(mat), fixed)
     k = stiff.assemble(np.full(hm.n_elem, mat.E))
     if bc.springs is not None:
         k = (k + mat.E * bc.springs).tocsr()
@@ -508,11 +517,16 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         sf = mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else np.inf
         inter = None
         proc = study.process
-        if proc is not None and proc.build is not None and proc.interlayer < 1.0:
+        if proc is not None and proc.build not in (None, "auto") and proc.interlayer < 1.0:
             # Layered parts part along their layers: the tension pulling
             # layers apart (the stress normal to them) against the bond's
             # strength, a fraction of the in-plane one.
-            sn = nodal_stress(stiff, u, mat.E)[:, proc.build[0]]
+            from .am import build_vector
+
+            nb = build_vector(proc.build)
+            sig = nodal_stress(stiff, u, mat.E)
+            sn = sig[:, :3] @ (nb * nb) + 2.0 * (sig[:, 3] * nb[0] * nb[1] + sig[:, 4] * nb[1] * nb[2]
+                                               + sig[:, 5] * nb[2] * nb[0])
             tens = np.where(body, np.maximum(sn, 0.0), 0.0)
             inter = float(tens.max())
             sf_inter = proc.interlayer * mat.strength / (inter * STRESS_ALLOWANCE) if inter > 0 else np.inf

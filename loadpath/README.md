@@ -16,7 +16,16 @@ code can be read:
   updates, multiple load cases, symmetry planes.
 - **Overhang control** for a chosen build direction (Langelaar's AM filter):
   material that would need support earns nothing, so parts grow their own
-  45° supports.
+  45° supports. Any direction, including tilted ones (`am.TiltedAMFilter`).
+- **Print-aware design** (`process`): layered (transversely isotropic)
+  stiffness about the build direction in verification, with the layer bond
+  checked; the safety-factor search sizes the part against it, and the
+  optimizer can design with the layered stiffness too (`anisotropic`, off by
+  default: on the motor mount and hook it did not beat isotropic, see am.py). `"buildDirection": "auto"` compares the six directions on a coarse
+  grid and keeps the strongest per gram (`orient.py`). Every layered result
+  is sliced like a slicer would (`printcheck.py`: bridges up to 15 mm are
+  fine, mid-air islands, support volume, bed contact and tipping) and written
+  as a 3MF standing the way it was designed to print (`threemf.py`).
 - **Minimum member size** that actually holds: stiffness is credited to the
   eroded design and the delivered part is the opened one (robust
   formulation), so no sub-minimum skins or webs.
@@ -141,7 +150,8 @@ underneath, for anything else (`add_part` with fields, `add_overlay`,
 | `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space. `{"safetyFactor": 3}` and/or `{"maxDeflection": 0.5}` (mm, at the loads) search for the lightest part that meets them in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. `"method": "constrained"` (experimental) minimizes mass with the limits as MMA constraints instead of searching over volume fractions. |
 | `extrusion` | Optional axis (`x`, `y`, `z`): the part is a profile extruded along it, cuttable from plate (waterjet, laser, 2.5-axis milling). |
 | `gravity` | Optional `[gx, gy, gz]` in m/s²: the part's own weight in every load case. |
-| `printDirection` | Optional, `+x` … `-z`: the direction layers stack. Turns on overhang control (Langelaar's AM filter), so the optimizer's own surfaces are self-supporting at 45°. |
+| `process` | Optional: `"fdm"`, `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`, or `{type, buildDirection, interlayer, stiffnessAcrossLayers, shearAcrossLayers, anisotropic (false \| true \| "bond"), minFeature, overhangs}`. `buildDirection` is `+x` … `-z`, a vector `[x, y, z]`, or `"auto"`. Sets a minimum member, overhang control (FDM), layered stiffness and the layer-bond check. |
+| `printDirection` | Optional, `+x` … `-z` or a vector `[x, y, z]`: the direction layers stack. Turns on overhang control (Langelaar's AM filter), so the optimizer's own surfaces are self-supporting at 45°. |
 | `minMember` | Thinnest member in mm (sets the filter radius). |
 | `symmetry` | Planes through the design-space centre, by normal axis. |
 | `resolution` | `maxElements` (default 60,000) or an explicit `pitch` in mm. |
@@ -172,6 +182,13 @@ that turns: held radially and axially, free to rotate.
 - `keepOutIntrusion` and `preserveMissing` are mm³ from exact booleans and
   should be zero to rounding.
 - `p5Member` is the 5th-percentile member thickness on the medial ridge.
+- `print` (layered processes): `supportVolume`/`supportArea` a slicer would
+  add, `bridges` and `maxBridgeSpan`, `islands` (starts in mid-air),
+  `bed` (`contactArea`, `feet`, `smallestFoot`, `comMargin` = how far the
+  centre of mass sits inside the contact, `aspect`), and `warnings`.
+- `python -m loadpath orient part.stl [--study s.json] [--3mf part.3mf]`
+  ranks build orientations of any mesh (the axes and its own flat faces) by
+  layer-bond safety under the study's loads, support and bed risk.
 
 ## Evals
 
@@ -187,9 +204,13 @@ MIT.
 
 ## Limits
 
-- Linear elastic, small deflection, isotropic. No buckling, fatigue or
-  contact; no anisotropy for printed layers.
-- Overhang control is the 45° stencil only, along a grid axis.
+- Linear elastic, small deflection. Printed layers are modelled as
+  transversely isotropic stiffness plus a tension-across-layers strength
+  check; interlayer shear is not checked separately. No buckling, fatigue or
+  contact.
+- Overhang control is the 45° stencil on the voxel grid; off-axis directions
+  use the 26-neighbour cells within 45° of straight down, which is coarser.
+  Bridges are recognized by the print check, not designed for.
 - Peak stress from a voxel model is refined at hotspots and carries a 1.15
   allowance in the safety factor; it lands within about ±13% of the
   textbook plate-with-hole value in the tests.

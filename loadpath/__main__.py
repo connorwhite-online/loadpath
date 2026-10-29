@@ -8,6 +8,8 @@ Command line: run a study file and write the parts, a report and renders.
     python -m loadpath lattice study.json part.stl --out out/ [--options lattice.json]
     python -m loadpath heatx exchanger.json --out out/ [--size]
     python -m loadpath mcp                     # local MCP server for agents (needs loadpath[mcp])
+    python -m loadpath orient part.stl [--study study.json] [--3mf part.3mf]
+                                               # rank build orientations, write the best as 3MF
 
 Progress goes to stderr as one JSON object per line, so an agent can tail it.
 Results go to stdout as one JSON document, and to report.json in --out.
@@ -78,6 +80,11 @@ def main(argv=None):
     h.add_argument("--no-viewer", action="store_true", help="skip the interactive HTML viewer")
     h.add_argument("--base-dir")
     sub.add_parser("mcp", help="run a local MCP server (stdio) for agents")
+    o = sub.add_parser("orient", help="rank build orientations of a mesh (support, bed, layer bond)")
+    o.add_argument("mesh")
+    o.add_argument("--study", help="the part's study: adds the interlayer reading under its loads")
+    o.add_argument("--3mf", dest="threemf", help="write the best orientation as a slicer-ready 3MF")
+    o.add_argument("--process", default="fdm")
     args = p.parse_args(argv)
 
     if args.cmd == "mcp":
@@ -94,6 +101,8 @@ def main(argv=None):
         return 0
     if args.cmd == "heatx":
         return _heatx(args)
+    if args.cmd == "orient":
+        return _orient(args)
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
@@ -139,6 +148,13 @@ def main(argv=None):
         stl = os.path.join(args.out, stem + ".stl")
         o.mesh.export(stl)
         summary["outcomes"][i]["stl"] = stl
+        build = study.print_direction if study.print_direction is not None else \
+            (study.process.build if study.process is not None and study.process.build != "auto" else None)
+        if build is not None:
+            # stood the way it was designed to print, for the slicer
+            from .threemf import write_3mf
+            summary["outcomes"][i]["3mf"] = write_3mf(os.path.join(args.out, stem + ".3mf"), o.mesh, build,
+                                                      name=stem, material=study.material, process=study.process)
         if not args.no_render:
             from .render import render_views
             png = os.path.join(args.out, stem + ".png")
@@ -197,6 +213,27 @@ def _heatx(args):
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
     _write_report(args.out, rep)
+def _orient(args):
+    import trimesh
+
+    from .orient import rank_orientations
+    from .spec import study_from_dict
+
+    mesh = trimesh.load(args.mesh, force="mesh")
+    study = None
+    if args.study:
+        with open(args.study) as fh:
+            study = study_from_dict(json.load(fh), base_dir=os.path.dirname(os.path.abspath(args.study)))
+    rows = rank_orientations(mesh, study, process=args.process)
+    out = [{k: v for k, v in r.items() if k != "build"} for r in rows]
+    for r in out:
+        r["print"] = {k: v for k, v in r["print"].items() if k != "bridgeList"}
+    if args.threemf:
+        from .threemf import write_3mf
+        write_3mf(args.threemf, mesh, rows[0]["build"], name=os.path.splitext(os.path.basename(args.mesh))[0],
+                  material=study.material if study else None, process=study.process if study else args.process)
+    print(json.dumps(_jsonable({"best": out[0]["direction"], "orientations": out,
+                                **({"3mf": args.threemf} if args.threemf else {})}), indent=2))
     return 0
 
 

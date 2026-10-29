@@ -22,7 +22,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import cg
 
-__all__ = ["elastic_c", "hex8_ke", "hex8_b_center", "HexMesh", "Stiffness", "Solver", "von_mises"]
+__all__ = ["Layered", "elastic_c", "hex8_ke", "hex8_b_center", "HexMesh", "Stiffness", "Solver", "von_mises"]
 
 # Local corner order: bit 0 = +x, bit 1 = +y, bit 2 = +z.
 CORNERS = np.array([[(c >> 0) & 1, (c >> 1) & 1, (c >> 2) & 1] for c in range(8)])
@@ -36,8 +36,83 @@ def _offset_index(d):
     return (d[..., 0] + 1) * 9 + (d[..., 1] + 1) * 3 + (d[..., 2] + 1)
 
 
-def elastic_c(e: float, nu: float) -> np.ndarray:
-    """Isotropic elasticity matrix (6x6, engineering shear strains)."""
+_VOIGT = ((0, 0), (1, 1), (2, 2), (0, 1), (1, 2), (2, 0))
+
+
+class Layered:
+    """Transversely isotropic elasticity for a part built in layers: the
+    same in every direction within a layer, softer across layers. Stands in
+    for a Poisson's ratio wherever one is passed (Stiffness, hex8_ke,
+    elastic_c), so a layered material threads through the solver unchanged.
+
+    nu: in-plane Poisson's ratio; ez: modulus across layers / in-plane
+    modulus; gz: shear modulus between layers / in-plane E/(2(1+nu));
+    normal: the build direction (unit vector, the axis layers stack along).
+    The Poisson's ratio of in-plane stress onto the layer normal is taken as
+    nu, so nu_zp = nu * ez, which keeps C positive definite for ez in (0, 1]
+    and nu < 0.5."""
+
+    def __init__(self, nu: float, ez: float = 1.0, gz: float = 1.0, normal=(0.0, 0.0, 1.0)):
+        n = np.asarray(normal, float)
+        if not (0.0 < ez <= 1.0 and 0.0 < gz <= 1.0):
+            raise ValueError("Layered: ez and gz are fractions in (0, 1]")
+        self.nu = float(nu)
+        self.ez = float(ez)
+        self.gz = float(gz)
+        self.normal = tuple(n / np.linalg.norm(n))
+
+    def __repr__(self):
+        return f"Layered(nu={self.nu}, ez={self.ez}, gz={self.gz}, normal={self.normal})"
+
+    def __float__(self):
+        # code that only wants a Poisson's ratio (tet cross-check decks) gets one
+        return self.nu
+
+    def c(self) -> np.ndarray:
+        """6x6 at unit in-plane modulus, in the solver's frame."""
+        nu, ez = self.nu, self.ez
+        g = 1.0 / (2.0 * (1.0 + nu))
+        s = np.zeros((6, 6))
+        s[0, 0] = s[1, 1] = 1.0
+        s[0, 1] = s[1, 0] = -nu
+        s[0, 2] = s[2, 0] = s[1, 2] = s[2, 1] = -nu
+        s[2, 2] = 1.0 / ez
+        s[3, 3] = 1.0 / g
+        s[4, 4] = s[5, 5] = 1.0 / (self.gz * g)
+        local = np.linalg.inv(s)
+        # rotate from the frame whose z is the layer normal
+        z = np.asarray(self.normal)
+        a = np.array([1.0, 0.0, 0.0]) if abs(z[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        x = np.cross(a, z)
+        x /= np.linalg.norm(x)
+        rot = np.stack([x, np.cross(z, x), z], axis=1)     # columns: local axes in solver frame
+        return _rotate_c(local, rot)
+
+
+def _to_tensor(c):
+    t = np.zeros((3, 3, 3, 3))
+    for a, (i, j) in enumerate(_VOIGT):
+        for b, (k, l) in enumerate(_VOIGT):
+            for (p, q) in {(i, j), (j, i)}:
+                for (r, s_) in {(k, l), (l, k)}:
+                    t[p, q, r, s_] = c[a, b]
+    return t
+
+
+def _rotate_c(c, rot):
+    t = np.einsum("pi,qj,rk,sl,ijkl->pqrs", rot, rot, rot, rot, _to_tensor(c))
+    out = np.empty((6, 6))
+    for a, (i, j) in enumerate(_VOIGT):
+        for b, (k, l) in enumerate(_VOIGT):
+            out[a, b] = t[i, j, k, l]
+    return out
+
+
+def elastic_c(e: float, nu) -> np.ndarray:
+    """Elasticity matrix (6x6, engineering shear strains): isotropic for a
+    Poisson's ratio, layered for a `Layered`."""
+    if isinstance(nu, Layered):
+        return e * nu.c()
     lam = e * nu / ((1 + nu) * (1 - 2 * nu))
     mu = e / (2 * (1 + nu))
     c = np.zeros((6, 6))
@@ -68,7 +143,7 @@ def _b_matrix(xi, eta, zeta):
     return b
 
 
-def hex8_ke(nu: float) -> np.ndarray:
+def hex8_ke(nu) -> np.ndarray:
     """Stiffness (24x24) of a unit cube with E = 1, 2x2x2 Gauss. For side h
     and modulus E the element matrix is E * h * this."""
     c = elastic_c(1.0, nu)
@@ -143,7 +218,7 @@ class Stiffness:
     any density interpolation), with Dirichlet conditions applied as
     identity rows so the matrix keeps one fixed shape."""
 
-    def __init__(self, mesh: HexMesh, nu: float, fixed: np.ndarray):
+    def __init__(self, mesh: HexMesh, nu, fixed: np.ndarray):
         self.mesh = mesh
         self.ke = hex8_ke(nu) * mesh.pitch        # E = 1, side h
         self.nu = nu
