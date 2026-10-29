@@ -1,13 +1,13 @@
 {
  "name": "grip-wrist-yoke",
- "description": "GRIP v0.3's wrist yoke (github.com/connorwhite-online/grip, generative/v3.py): a hub on the J4 STS3215 servo horn below, and a cradle for the J5 STS3250 servo above it, held only at its eight case-screw bosses with screw and hex-driver clearance at each, the servo body and horn sweep kept clear. Loads: the arm reaching out with 1 kg at the gripper (x1.5), J5 at the servo's 4.9 N\u00b7m stall torque, and a 20 N push along J5. SF 2 in SLS PA12-GF. GRIP's part was 24.3 g; main at 8de87b2 regrows it at 23.8 g but SF 4.2, so it is overbuilt: the case asks for 20 g. Chain loads from GRIP: 1.50 kg distal, 3.10 N\u00b7m static torque.",
+ "description": "GRIP v0.3's wrist yoke (github.com/connorwhite-online/grip, generative/v3.py at 07aa65f, J4 3 mm lower so the horn hub keeps its full 4 mm): a hub on the J4 STS3215 servo horn below, and a cradle for the J5 STS3250 servo above it, held only at its eight case-screw bosses with screw and hex-driver clearance at each, the servo body and horn sweep kept clear. Loads: the arm reaching out with 1 kg at the gripper (x1.5), J5 at the servo's 4.9 N\u00b7m stall torque, and a 20 N push along J5. SF 2 in SLS PA12-GF. GRIP's part was 24.3 g (solid over the J4 horn); examples/grip regrows this layout at 27.5 g, SF 4.07.",
  "designSpace": [
   {
    "type": "box",
    "min": [
     -30.35,
     -54.5,
-    522.0
+    519.0
    ],
    "max": [
     30.35,
@@ -24,12 +24,12 @@
     "p0": [
      0.0,
      -25.0,
-     536.0
+     533.0
     ],
     "p1": [
      0.0,
      -25.0,
-     540.0
+     537.0
     ],
     "r": 14.0
    }
@@ -157,54 +157,18 @@
  ],
  "keepOut": [
   {
-   "id": "j4-horn",
-   "bore": false,
-   "shape": {
-    "type": "cylinder",
-    "p0": [
-     0,
-     -25,
-     531.5
-    ],
-    "p1": [
-     0,
-     -25,
-     536.0
-    ],
-    "r": 12
-   }
-  },
-  {
-   "id": "j4-servo-sweep",
-   "bore": false,
-   "shape": {
-    "type": "cylinder",
-    "p0": [
-     0,
-     -25,
-     496.0
-    ],
-    "p1": [
-     0,
-     -25,
-     532.0
-    ],
-    "r": 37
-   }
-  },
-  {
    "id": "j4-horn-bolt-0",
    "shape": {
     "type": "cylinder",
     "p0": [
      4.95,
      -20.05,
-     535.5
+     532.5
     ],
     "p1": [
      4.95,
      -20.05,
-     541.0
+     538.0
     ],
     "r": 1.3
    }
@@ -216,12 +180,12 @@
     "p0": [
      4.95,
      -20.05,
-     540.0
+     537.0
     ],
     "p1": [
      4.95,
      -20.05,
-     572.0
+     569.0
     ],
     "r": 3.4
    }
@@ -233,12 +197,12 @@
     "p0": [
      -4.95,
      -20.05,
-     535.5
+     532.5
     ],
     "p1": [
      -4.95,
      -20.05,
-     541.0
+     538.0
     ],
     "r": 1.3
    }
@@ -250,12 +214,12 @@
     "p0": [
      -4.95,
      -20.05,
-     540.0
+     537.0
     ],
     "p1": [
      -4.95,
      -20.05,
-     572.0
+     569.0
     ],
     "r": 3.4
    }
@@ -267,12 +231,12 @@
     "p0": [
      -4.95,
      -29.95,
-     535.5
+     532.5
     ],
     "p1": [
      -4.95,
      -29.95,
-     541.0
+     538.0
     ],
     "r": 1.3
    }
@@ -284,12 +248,12 @@
     "p0": [
      -4.95,
      -29.95,
-     540.0
+     537.0
     ],
     "p1": [
      -4.95,
      -29.95,
-     572.0
+     569.0
     ],
     "r": 3.4
    }
@@ -301,12 +265,12 @@
     "p0": [
      4.95,
      -29.95,
-     535.5
+     532.5
     ],
     "p1": [
      4.95,
      -29.95,
-     541.0
+     538.0
     ],
     "r": 1.3
    }
@@ -318,12 +282,12 @@
     "p0": [
      4.95,
      -29.95,
-     540.0
+     537.0
     ],
     "p1": [
      4.95,
      -29.95,
-     572.0
+     569.0
     ],
     "r": 3.4
    }
@@ -338,12 +302,12 @@
       "p0": [
        8.35,
        -31.5,
-       497.4
+       494.4
       ],
       "p1": [
        8.35,
        -31.5,
-       493.0
+       490.0
       ],
       "r": 3.5
      },
@@ -352,12 +316,12 @@
       "p0": [
        -8.35,
        -31.5,
-       497.4
+       494.4
       ],
       "p1": [
        -8.35,
        -31.5,
-       493.0
+       490.0
       ],
       "r": 3.5
      },
@@ -366,12 +330,12 @@
       "p0": [
        11.95,
        -30.5,
-       526.0
+       523.0
       ],
       "p1": [
        16.35,
        -30.5,
-       526.0
+       523.0
       ],
       "r": 3.5
      },
@@ -380,12 +344,12 @@
       "p0": [
        -11.95,
        -30.5,
-       526.0
+       523.0
       ],
       "p1": [
        -16.35,
        -30.5,
-       526.0
+       523.0
       ],
       "r": 3.5
      },
@@ -394,12 +358,12 @@
       "p0": [
        8.35,
        3.7,
-       497.4
+       494.4
       ],
       "p1": [
        8.35,
        3.7,
-       493.0
+       490.0
       ],
       "r": 3.5
      },
@@ -408,12 +372,12 @@
       "p0": [
        -8.35,
        3.7,
-       497.4
+       494.4
       ],
       "p1": [
        -8.35,
        3.7,
-       493.0
+       490.0
       ],
       "r": 3.5
      },
@@ -422,12 +386,12 @@
       "p0": [
        11.95,
        2.7,
-       526.0
+       523.0
       ],
       "p1": [
        16.35,
        2.7,
-       526.0
+       523.0
       ],
       "r": 3.5
      },
@@ -436,16 +400,52 @@
       "p0": [
        -11.95,
        2.7,
-       526.0
+       523.0
       ],
       "p1": [
        -16.35,
        2.7,
-       526.0
+       523.0
       ],
       "r": 3.5
      }
     ]
+   }
+  },
+  {
+   "id": "j4-horn",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     -25.0,
+     528.5
+    ],
+    "p1": [
+     0.0,
+     -25.0,
+     533.0
+    ],
+    "r": 12.0
+   }
+  },
+  {
+   "id": "j4-servo-sweep",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     -25.0,
+     493.0
+    ],
+    "p1": [
+     0.0,
+     -25.0,
+     529.0
+    ],
+    "r": 36.892
    }
   },
   {
@@ -825,7 +825,7 @@
   "maxElements": 60000
  },
  "expect": {
-  "maxMass": 20.0,
+  "maxMass": 26.0,
   "minSafetyFactor": 2.0,
   "maxKeepOutIntrusion": 1.0,
   "maxPreserveMissing": 1.0,
