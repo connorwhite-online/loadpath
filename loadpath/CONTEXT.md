@@ -59,6 +59,26 @@ it becomes an eval metric.
 | `render.py` | clay renders, stress maps, interface close-ups |
 | `viewer.py`, `viewer.html` | interactive HTML viewer (three.js): stress / safety factor / displacement fields, deformation, section plane, compare, optimization playback, heat exchanger fluids |
 | `mcp_server.py`, `__main__.py` | local MCP server and CLI |
+| `checks/` | checks on any mesh, no study needed: `check_dfm` (wall thickness, overhangs, trapped voids), `check_networks` (two-fluid isolation), `check_fit` (a board fits its enclosure), `fea_probe` (relative hotspot finder), `opening` |
+| `sdf_kit.py`, `exchanger.py` | field-modelling toolkit (primitives, TPMS, smooth booleans, exact mesh booleans) and the rectangular dual-fluid `exchanger_core` built from it; `heatx.py` is the newer, study-driven exchanger. Old `loadpath.checks.sdf_kit` / `.exchanger` imports still resolve |
+
+Two of some things, on purpose for now:
+
+- **Voxelizers.** `verify.voxelize` fills cells by ray parity on an
+  unpadded grid whose origin is the min corner of cell (0,0,0); the
+  optimizer domain and `verify_part` depend on that alignment.
+  `sdf_kit._solid_voxels` starts from trimesh's surface voxels, pads the
+  grid, and classifies each enclosed pocket as material or cavity, so
+  internal channels stay void; `checks/` and `from_mesh` depend on that.
+  Merging them changes numbers in either the evals or the checks, so it
+  belongs with a re-baseline (a shared `voxels.py` is in progress for the
+  checks).
+- **FEA.** `fem.py` is the real solver: material modulus, units,
+  smoothed-aggregation AMG, used by the optimizer, `verify.py` and
+  `study.py`. `checks/fea.py` (`fea_probe`) is a seconds-scale critic with
+  E = 1 that only ranks hotspots on a mesh with no study behind it; its
+  numbers are relative by design. Rebuilding it on `fem.HexMesh` would drop
+  ~150 lines; do it when its output can be re-pinned.
 | `evals/` | cases with engineering requirements; `python -m loadpath.evals.run` scores them |
 
 ## How to run things

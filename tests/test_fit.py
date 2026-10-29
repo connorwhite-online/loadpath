@@ -4,8 +4,7 @@ Kernel-verified tests for the component-fit verifier .
 Builds REAL build123d Pico enclosures — one deliberately correct, three
 deliberately wrong (cavity too small / bosses misplaced / cutout on the wrong
 edge) — and asserts `fit.check_fit` passes the right one and catches each
-wrong one with the failing check (and only that check). One test drives the
-full HTTP seam (`/run` with `checks={"fit": ...}`, engine build123d).
+wrong one with the failing check (and only that check).
 
 Run: `python3 tests/test_fit.py` (needs build123d + trimesh +
 scipy — the standard kernel).
@@ -17,10 +16,6 @@ import time
 import traceback
 from pathlib import Path
 
-os.environ["CAD_RUNNER_ALLOW_NO_AUTH"] = "true"
-if __name__ == "__main__":
-    os.environ.pop("CAD_RUNNER_SECRET", None)
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
@@ -28,8 +23,7 @@ import trimesh
 
 from loadpath.checks.fit import check_fit
 
-# Mirror of lib/cad/knowledge/components.ts fitSpecForBoard(DEV_BOARDS.pico):
-# board 51 x 21 x 1, holes D2.1 at (±23.5, ±5.7), micro-USB centered on a
+# Raspberry Pi Pico: board 51 x 21 x 1, holes D2.1 at (±23.5, ±5.7), micro-USB centered on a
 # short end, 1.3 above the board top; envelope = board + 1 clearance + 3 above.
 PICO_HOLES = [[-23.5, -5.7], [-23.5, 5.7], [23.5, -5.7], [23.5, 5.7]]
 PICO_SPEC = {

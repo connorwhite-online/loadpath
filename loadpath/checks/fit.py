@@ -29,7 +29,7 @@ through the occupancy grid. The report carries the pitch used; below-board
 pin clearance is NOT yet asserted (bosses/standoffs already imply seating
 height; a dedicated pins check is future work).
 
-Spec shape (built by lib/cad/dimension-check.ts buildFitChecksFromTargets):
+Spec shape:
   {"components": [{
       "id": "pico", "label": "Raspberry Pi Pico",
       "boardMm": [L, W, T], "clearanceMm": c, "aboveMm": a, "belowMm": b,
@@ -53,7 +53,7 @@ the DimensionTargets that requested them.
 import numpy as np
 from scipy import ndimage
 
-from .sdf_kit import _solid_voxels
+from ..sdf_kit import _solid_voxels
 
 __all__ = ["check_fit"]
 

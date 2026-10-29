@@ -14,7 +14,7 @@ import numpy as np  # noqa: E402
 import trimesh  # noqa: E402
 
 from loadpath.am import AMFilter, TiltedAMFilter, layered_elasticity, parse_build_direction  # noqa: E402
-from loadpath.checks.sdf_kit import mesh_union  # noqa: E402
+from loadpath.sdf_kit import mesh_union  # noqa: E402
 from loadpath.fem import Layered, elastic_c, hex8_ke  # noqa: E402
 from loadpath.printcheck import check_print, rotation_to_z  # noqa: E402
 from loadpath.spec import study_from_dict  # noqa: E402

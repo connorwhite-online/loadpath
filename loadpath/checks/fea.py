@@ -1,6 +1,6 @@
 """
 fea_probe: coarse voxel linear-elastic critic for load-bearing parts. Seconds,
-not minutes; advises, never generates — geometry always comes from the model,
+not minutes; advises, never generates — geometry always comes from the caller,
 this just says "the root of that cantilever is the hotspot, thicken it".
 
 The mesh is voxelized on a regular grid and every solid voxel becomes an
@@ -15,7 +15,7 @@ from scipy import ndimage
 import scipy.sparse as sp
 from scipy.sparse.linalg import cg
 
-from .sdf_kit import _solid_voxels
+from ..sdf_kit import _solid_voxels
 
 __all__ = ["fea_probe"]
 

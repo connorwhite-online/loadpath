@@ -11,10 +11,10 @@ has to recognise, and it does not depend on trimesh having a boolean backend
 failing CI with "No boolean backend". Only test_open_cavity_drains still
 needs one (manifold3d, pinned in requirements.txt).
 
-Each test pins a contract the repair loop depends on: a thin part must be
+Each test pins a contract callers depend on: a thin part must be
 CALLED thin, a sealed cavity must be found, and a plain printable box must
 come back clean on all three probes (no false alarms — a check that cries
-wolf sends the loop drilling drain holes through parts that never needed
+wolf sends a designer drilling drain holes through parts that never needed
 them).
 """
 import sys
