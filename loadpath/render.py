@@ -150,13 +150,27 @@ def render_interfaces(mesh, study, path, max_panels=16, cols=4, size=3.2, margin
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     tc = mesh.triangles_center
+
+    def on_part(c, sh):
+        # A ring's or a sleeve's box centre is in its empty bore: centre the
+        # panel on the part's surface where it meets the region nearest that
+        # centre instead, so the panel shows the ring and not the hole.
+        near = np.abs(sh.sdf(tc)) < 1.5
+        if not near.any():
+            return c
+        pts = tc[near]
+        return pts[np.argmin(np.linalg.norm(pts - c, axis=1))]
+
     spots = []   # (label, centre, half-size)
     for r in study.preserve:
         shapes = getattr(r.shape, "shapes", [r.shape])   # a union: each piece is its own interface
         for j, sh in enumerate(shapes):
             lo, hi = sh.bounds()
-            spots.append((r.id + (f"[{j}]" if len(shapes) > 1 else ""), 0.5 * (lo + hi),
-                          min(0.5 * float(np.max(hi - lo)), 20.0) + margin))
+            c = 0.5 * (lo + hi)
+            half = min(0.5 * float(np.max(hi - lo)), 20.0) + margin
+            if 0.5 * float(np.max(hi - lo)) > half - margin:   # bigger than a panel: find the ring
+                c = on_part(c, sh)
+            spots.append((r.id + (f"[{j}]" if len(shapes) > 1 else ""), c, half))
     for r in study.keep_out:
         # where the part comes near a keep-out: centre on that contact, not on
         # the keep-out (a driver channel runs 25 mm out past the part)
@@ -164,7 +178,10 @@ def render_interfaces(mesh, study, path, max_panels=16, cols=4, size=3.2, margin
         if near.any():
             pts = tc[near]
             ext = float(np.max(np.ptp(pts, axis=0)))
-            spots.append((r.id, pts.mean(axis=0), min(0.5 * ext, 20.0) + margin))
+            c = pts.mean(axis=0)
+            # contact all round a bore averages to its axis: use the contact
+            # point nearest that mean
+            spots.append((r.id, pts[np.argmin(np.linalg.norm(pts - c, axis=1))], min(0.5 * ext, 20.0) + margin))
     # one panel per place: spots closer than a few mm show the same thing
     merged = []
     for lab, c, h in spots:
