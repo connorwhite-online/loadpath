@@ -53,6 +53,10 @@ MAX_ELEMENTS_CEILING = 400_000
 class Region:
     id: str
     shape: Shape
+    # keepOut only: false for a clearance volume (a drive, a spring's
+    # swept space) that may end against material, unlike a bore a screw or
+    # pin has to pass through (verify's closed-bore check skips it)
+    bore: bool = True
 
 
 @dataclass
@@ -245,7 +249,7 @@ def _regions(items, label, base_dir):
         if rid in seen:
             raise ValueError(f"duplicate {label} id {rid!r}")
         seen.add(rid)
-        out.append(Region(rid, shape_from_spec(item["shape"], base_dir)))
+        out.append(Region(rid, shape_from_spec(item["shape"], base_dir), bool(item.get("bore", True))))
     return out
 
 

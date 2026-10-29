@@ -518,6 +518,12 @@ def test_closed_bore_is_flagged():
         assert bool(found) == closed, (z1, found)
         if closed:
             assert found[0]["end"] == "p1"
+    # a clearance volume (a drive, a spring's sweep) may end against material
+    st = study_from_dict({**base, "keepOut": [
+        {"id": "drive", "bore": False,
+         "shape": {"type": "cylinder", "p0": [0, 0, -12], "p1": [0, 0, 4.0], "r": 2.5}}]})
+    bore = trimesh.creation.cylinder(radius=2.5, segment=[[0, 0, -12], [0, 0, 4.0]])
+    assert _closed_bores(st, trimesh.boolean.difference([block, bore], engine="manifold")) == []
 
 
 def test_surface_thickness_reads_a_plate_without_a_grid():

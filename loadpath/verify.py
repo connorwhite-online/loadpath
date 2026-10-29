@@ -254,11 +254,14 @@ def _closed_bores(study: Study, mesh) -> list:
     over its bolt seats). The fix is in the study: extend the keep-out over
     the head and the driver's reach. Probes a short way past each end cap,
     on the axis and on a ring at 0.3 of the radius; an end is closed when
-    most probes land inside the part."""
+    most probes land inside the part. A keep-out marked "bore": false (a
+    clearance volume that may end against material) is not checked."""
     from .shapes import Cylinder
 
     out = []
     for r in study.keep_out:
+        if not r.bore:
+            continue
         sh = r.shape
         if not isinstance(sh, Cylinder) or sh.r_inner > 0:
             continue

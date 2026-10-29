@@ -245,6 +245,7 @@
   },
   {
    "id": "j1-below",
+   "bore": false,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -345,6 +346,7 @@
   },
   {
    "id": "spring-run",
+   "bore": false,
    "shape": {
     "type": "cylinder",
     "p0": [

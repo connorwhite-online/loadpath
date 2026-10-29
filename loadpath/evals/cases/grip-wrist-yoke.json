@@ -157,6 +157,16 @@
  ],
  "keepOut": [
   {
+   "id": "j4-horn",
+   "bore": false,
+   "shape": {"type": "cylinder", "p0": [0, -25, 531.5], "p1": [0, -25, 536.0], "r": 12}
+  },
+  {
+   "id": "j4-servo-sweep",
+   "bore": false,
+   "shape": {"type": "cylinder", "p0": [0, -25, 496.0], "p1": [0, -25, 532.0], "r": 37}
+  },
+  {
    "id": "j4-horn-bolt-0",
    "shape": {
     "type": "cylinder",
