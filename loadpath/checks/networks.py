@@ -55,7 +55,10 @@ def _refill_plugs(solid, origin, pitch, plugs):
     """Virtually refill port openings before flood-fill. A real exchanger's
     ports open to the outside world, which connects BOTH plenums to the same
     air component and would flag every part as a leak. Two plug shapes:
-      - capsule {"a", "b", "r"} — a port bore, refilled;
+      - capsule {"a", "b", "r"} — a port bore, refilled; with "ends": "flat"
+        a flat-ended cylinder instead, from the inner end `a` (cut square,
+        so a wide plug never bulges into the cavity past its probes) to `b`
+        (the outer end, carried 1.5 voxels further out);
       - box {"c": center, "h": half-extents} — a full-face manifold window
         (hood lofts open the whole rectangular face; no capsule can cap
         that without bulging into the plenum and swallowing the probes).
@@ -79,6 +82,9 @@ def _refill_plugs(solid, origin, pitch, plugs):
         a = np.asarray(plug["a"], float)
         b = np.asarray(plug["b"], float)
         r = float(plug["r"]) + 1.5 * pitch
+        flat = plug.get("ends", "round") == "flat"
+        if flat and np.linalg.norm(b - a) > 0.0:
+            b = b + (b - a) / np.linalg.norm(b - a) * 1.5 * pitch
         lo = np.maximum(
             np.floor((np.minimum(a, b) - r - origin) / pitch).astype(int), 0)
         hi = np.minimum(
@@ -91,12 +97,16 @@ def _refill_plugs(solid, origin, pitch, plugs):
         ab = b - a
         denom = float(ab @ ab)
         if denom <= 0.0:
-            t = np.zeros(centers.shape[:-1])
+            t_raw = np.zeros(centers.shape[:-1])
         else:
-            t = np.clip(((centers - a) @ ab) / denom, 0.0, 1.0)
+            t_raw = ((centers - a) @ ab) / denom
+        t = np.clip(t_raw, 0.0, 1.0)
         dist = np.linalg.norm(centers - (a + t[..., None] * ab), axis=-1)
+        inside = dist <= r
+        if flat:
+            inside &= (t_raw >= 0.0) & (t_raw <= 1.0)
         sub = solid[lo[0]:hi[0], lo[1]:hi[1], lo[2]:hi[2]]
-        sub[dist <= r] = True
+        sub[inside] = True
 
 
 def check_networks(mesh, ports, pitch=None, plugs=None, min_feature=None):
@@ -104,7 +114,8 @@ def check_networks(mesh, ports, pitch=None, plugs=None, min_feature=None):
 
     ports: list of {"name": str, "point": [x, y, z] mm, "r": mm} spheres —
     inlet/outlet locations in the void space, named `<circuit>_<role>`.
-    plugs: optional list of {"a", "b", "r"} capsules to virtually refill
+    plugs: optional list of {"a", "b", "r"} capsules (add "ends": "flat" for a
+    square-cut inner end) or {"c", "h"} boxes to virtually refill
     before labeling — pass each port bore here whenever the ports open to the
     outside, or the shared outside air reads as a cross-circuit leak.
     min_feature: the smallest structure (mm) the verdict must resolve —

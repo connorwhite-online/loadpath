@@ -9,12 +9,7 @@ and fea_probe localizes a cantilever's root as the hotspot.
 import sys
 import time
 import traceback
-import os
 from pathlib import Path
-
-# app.py fails closed at import without a secret (arbitrary code execution is
-# not safe to expose); the assembly-promotion unit tests import it directly.
-os.environ.setdefault("CAD_RUNNER_ALLOW_NO_AUTH", "true")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -22,13 +17,13 @@ import numpy as np
 import trimesh
 import trimesh.sample
 
-from loadpath.checks.sdf_kit import (
+from loadpath.sdf_kit import (
     box, capsule, dual_sheet, from_mesh, gyroid, mask, mesh_cyl, mesh_rod,
     largest_body, mesh_subtract, offset_field, pocket, seal_ramp, shell_field, smax, smin, sphere,
     sq_prism, spline_tube, subtract, superellipsoid, tapered_capsule,
     to_mesh, tpms_dist, translate, union,
 )
-from loadpath.checks.exchanger import exchanger_core
+from loadpath.exchanger import exchanger_core
 from loadpath.checks.networks import check_networks
 from loadpath.checks.fea import fea_probe
 
@@ -221,7 +216,7 @@ def test_exchanger_core_counter_isolated():
 
 def test_exchanger_core_refusals():
     """Undersized cores and oversized ports must refuse with messages the
-    repair loop can act on."""
+    caller can act on."""
     try:
         exchanger_core((8, 8, 8), cell=8.0, wall=1.0)
     except ValueError as e:
@@ -300,7 +295,7 @@ def test_exchanger_core_counter_hoods_isolated():
 def test_exchanger_core_face_spec_orientation():
     """Orientation contract (a_face/b_face): the user's own exchanger spec
     ("hot ports on the 150x60 faces of a 150x60x80 core") has now shipped
-    wrong twice because the model ordered `size` by habit. With the face
+    wrong twice because `size` was ordered by habit. With the face
     dims declared, a wrong ordering must refuse AND name the right one; the
     right ordering must pass validation."""
     try:
@@ -406,13 +401,13 @@ def test_from_mesh_blends_watertight():
 
 def test_to_mesh_budget_names_a_pitch():
     """Oversized grids must be refused before allocation, with an error naming
-    a pitch that fits — a failure the repair loop can act on."""
+    a pitch that fits — a failure the caller can act on."""
     try:
         to_mesh(lambda P: sphere(P, (0, 0, 0), 10), (0, 0, 0), (400, 400, 400), pitch=0.2)
     except ValueError as e:
         msg = str(e)
         assert "pitch >=" in msg, f"error does not name a pitch: {msg}"
-        import loadpath.checks.sdf_kit as sdf_kit_mod
+        import loadpath.sdf_kit as sdf_kit_mod
 
         suggested = float(msg.rsplit("pitch >=", 1)[1].strip())
         n = [int(np.ceil(400 / suggested)) + 1 for _ in range(3)]
@@ -486,14 +481,14 @@ def test_transforms_move_primitives():
     P = np.array([[10.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     d = sphere(translate(P, (10, 0, 0)), (0, 0, 0), 2.0)
     assert d[0] < 0 < d[1], "translate did not move the sphere to x=+10"
-    from loadpath.checks.sdf_kit import rotate_z
+    from loadpath.sdf_kit import rotate_z
     Q = np.array([[0.0, 10.0, 0.0]])
     d = sphere(rotate_z(Q, 90.0), (10, 0, 0), 2.0)
     assert d[0] < 0, "rotate_z(90) did not carry (10,0,0) onto (0,10,0)"
 
 
 def test_split_shell_printed_fit():
-    from loadpath.checks.sdf_kit import box, smin, offset_field, subtract, split_shell, to_mesh
+    from loadpath.sdf_kit import box, smin, offset_field, subtract, split_shell, to_mesh
     import numpy as np
 
     def cavity(P):
@@ -543,7 +538,7 @@ def test_split_shell_printed_fit():
 
 def test_combinators_accept_field_functions():
     """Generated code passes field FUNCTIONS to offset_field & co. as often as
-    arrays (the prompt calls the field `f`). Before _lift, that failed as
+    arrays (the field is usually called `f`). Before _lift, that failed as
     "unsupported operand type(s) for -: 'function' and 'float'" on every
     attempt of a local SDF knob build. A function in gives a function out that
     matches the array path exactly."""
@@ -666,14 +661,14 @@ def test_pocket_is_open_with_a_rounded_floor():
 
 
 def test_star_import_exports_every_primitive():
-    """Generated programs only see sdf_kit through `from sdf_kit import *`,
+    """Scripts usually take sdf_kit through `from loadpath.sdf_kit import *`,
     so a public function missing from __all__ passes every direct-import test
     here and is a NameError in production. pocket() shipped that way once."""
     import inspect
-    import loadpath.checks.sdf_kit as sdf_kit
+    import loadpath.sdf_kit as sdf_kit
     public = {
         n for n, f in inspect.getmembers(sdf_kit, inspect.isfunction)
-        if not n.startswith("_") and f.__module__ == "loadpath.checks.sdf_kit"
+        if not n.startswith("_") and f.__module__ == "loadpath.sdf_kit"
     }
     missing = public - set(sdf_kit.__all__)
     assert not missing, sorted(missing)
