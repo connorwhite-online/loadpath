@@ -477,6 +477,8 @@ $("title").textContent = DATA.title || "loadpath";
 $("subtitle").textContent = [DATA.subtitle, DATA.created].filter(Boolean).join(" · ");
 $("foot").textContent = (DATA.notes || []).join(" ") || "Drag to orbit, right-drag or two fingers to pan, scroll or pinch to zoom. Hover the part to read the value under the pointer.";
 
+// open on the study's pick (starred) when there is one
+S.part = Math.max(0, parts.findIndex((p) => p.name.startsWith("★")));
 const partSel = $("part"), cmpSel = $("compare");
 parts.forEach((p, i) => partSel.add(new Option(p.name, i)));
 function fillCompare() {
@@ -484,6 +486,7 @@ function fillCompare() {
   parts.forEach((p, i) => { if (i !== S.part) cmpSel.add(new Option("Beside it: " + p.name, i)); });
   cmpSel.value = S.compare;
 }
+partSel.value = S.part;
 fillCompare();
 $("cmp-row").hidden = parts.length < 2;
 $("sec-part").hidden = parts.length === 0;
