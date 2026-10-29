@@ -26,7 +26,7 @@ __all__ = ["reconstruct", "ReconstructOptions"]
 
 class ReconstructOptions:
     def __init__(self, upsample=3, smooth_sigma=0.9, level=0.5, max_triangles=250_000,
-                 min_body_fraction=0.002, taubin_iterations=25, blend=3.0, blend_k=0.8):
+                 min_body_fraction=0.002, taubin_iterations=25, blend=None, blend_k=0.8, fillet=True):
         self.upsample = upsample            # field refinement before meshing
         self.smooth_sigma = smooth_sigma    # in fine cells
         self.level = level
@@ -35,10 +35,15 @@ class ReconstructOptions:
         # Volume-preserving Taubin smoothing of the organic surface, before
         # the exact booleans (which then restore every crisp face and bore).
         self.taubin_iterations = taubin_iterations
-        # Fillet between the organic body and preserved geometry (mm of ramp
-        # in the preserve field, and the smooth-max strength).
+        # Fillet between the organic body and preserved geometry: its radius
+        # in mm (None: 1.5 x minMember, at least 3), and the smooth-max
+        # strength of the older density blend (fillet=False). At 3 mm the
+        # motor mount's pads, which stand 1 mm proud of the plate round them,
+        # kept 108 mm of crease; at 4.5 (its minMember is 3) about 4.
         self.blend = blend
         self.blend_k = blend_k
+        # Fillet in distance space (True) or the older density smooth max.
+        self.fillet = fillet
 
 
 def _smooth_max(a, b, k):
@@ -51,6 +56,31 @@ def _smooth_max(a, b, k):
 def _smooth_min(a, b, k):
     h = np.maximum(k - np.abs(a - b), 0.0) / k
     return np.minimum(a, b) - h * h * k * 0.25
+
+
+def _smooth_union(a, b, k):
+    """Polynomial smooth minimum of two signed distances: their union with a
+    fillet where the surfaces meet. The fillet's sag from the sharp corner is
+    k/4; at a right angle it reaches about k (1 - 1/sqrt(2)) out along each
+    surface, roughly a round of radius k / (2 (sqrt(2) - 1)) = 1.2 k."""
+    h = np.maximum(k - np.abs(a - b), 0.0) / k
+    return np.minimum(a, b) - h * h * k * 0.25
+
+
+def _field_distance(fine, step, level=0.5):
+    """Signed distance (mm, negative inside) to the `level` surface of a
+    smooth density field: exact distance transforms away from the surface,
+    and the field's own gradient within a couple of cells of it, where a
+    distance transform would only resolve whole cells."""
+    inside = fine >= level
+    d = (ndimage.distance_transform_edt(~inside) - ndimage.distance_transform_edt(inside)) * step
+    d += np.where(inside, 0.5 * step, -0.5 * step)
+    g = np.linalg.norm(np.stack(np.gradient(fine, step)), axis=0)
+    near = (np.abs(fine - level) < 0.45) & (g > 1e-6)
+    lin = (level - fine) / np.maximum(g, 1e-6)
+    ok = near & (np.abs(lin) < 2.0 * step)
+    d[ok] = lin[ok]
+    return d
 
 
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
@@ -100,7 +130,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     # zoom(grid_mode=True) maps fine cell centers to coarse cell centers, so
     # fine index i sits at coarse-cell coordinate (i + 0.5) / upsample - 0.5.
     origin = domain.origin - pad * domain.pitch + 0.5 * step
-    if preserve and o.blend > 0:
+    if preserve and o.blend > 0 and not o.fillet:
         # Fillet the organic body into the preserved geometry: the preserved
         # shapes as a density field that crosses 0.5 at their surface and
         # ramps over `blend` mm, smooth-max'd into the optimized field. Where
@@ -128,7 +158,41 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         if flush:
             near = np.min([sh.sdf(pts) for sh in flush], axis=0) < 1.5 * domain.pitch
             env[near] = 1.0
+        if preserve and o.fillet and o.blend > 0:
+            # Not round a preserved shape either: where a boss runs the full
+            # height of the design space, material beside it rounded off
+            # just under the boss's crisp end face and left a lip all round
+            # its rim (the bell crank's bosses, 40 mm of crease). Within
+            # `blend` of preserved geometry the material runs on to the
+            # boundary and ends flush with the boss's face, easing back to
+            # the rounding further out.
+            dp = np.min([sh.sdf(pts) for sh in preserve], axis=0)
+            env = np.maximum(env, np.clip(2.0 - dp / o.blend, 0.0, 1.0))
         fine = _smooth_min(fine, env.reshape(fine.shape), 0.5)
+    if preserve and o.blend > 0 and o.fillet:
+        # (after the boundary rounding: a fillet made before it was rounded
+        # away again where a member's top met a full-height boss, bell crank)
+        # Fillet the organic body into the preserved geometry in distance
+        # space: the organic surface and the preserved shapes as signed
+        # distances, joined by a smooth union of radius about `blend` mm, then
+        # back to a density with its 0.5 level on the blended surface. A
+        # density-space smooth max (fillet=False, above) only bumps the
+        # field by k/4 within a cell or two of the junction, so members still
+        # met bosses in a hard crease (GRIP's wrist yoke, QA 10/28). The
+        # exact union in reconstruct() then adds the preserved shapes, which
+        # the fillet meets tangentially, so it leaves no crease of its own.
+        idx = np.stack(np.meshgrid(*[np.arange(n) for n in fine.shape], indexing="ij"), -1).reshape(-1, 3)
+        pts = origin + idx * step
+        sd = np.min([sh.sdf(pts) for sh in preserve], axis=0).reshape(fine.shape)
+        k = o.blend / 1.2
+        du = _smooth_union(_field_distance(fine, step, o.level), sd, k)
+        # back to density, over the same width the smoothing gave the field
+        width = 2.0 * step
+        filleted = np.clip(o.level - du / (2.0 * width), 0.0, 1.0)
+        if design:
+            # after the boundary rounding, and never past the boundary itself
+            filleted = np.minimum(filleted, env.reshape(fine.shape))
+        fine = np.maximum(fine, filleted)
     if keep_out:
         # Fade the field to zero at every keep-out surface. Smoothing and
         # upsampling otherwise carry material across a keep-out (a cable
@@ -139,7 +203,16 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         pts = origin + idx * step
         clearance = 0.5 * domain.pitch
         d = np.min([s.sdf(pts) for s in keep_out], axis=0)
-        fine = fine * np.clip(d / clearance, 0.0, 1.0).reshape(fine.shape)
+        fade = np.clip(d / clearance, 0.0, 1.0)
+        if preserve and o.fillet and o.blend > 0:
+            # ...except beside preserved geometry: a pad that bears on a
+            # keep-out (a motor face) ends exactly at it, and the faded
+            # material round it ended a clearance short, leaving the pad's
+            # end standing proud in a step all round (the motor mount's
+            # pads and pilot ring). There the exact subtract does the cut.
+            dp = np.min([sh.sdf(pts) for sh in preserve], axis=0)
+            fade = np.maximum(fade, np.clip(2.0 - dp / o.blend, 0.0, 1.0))
+        fine = fine * fade.reshape(fine.shape)
     if fine.max() < o.level:
         raise ValueError("the optimized density never reaches solid; nothing to mesh")
     verts, faces, _, _ = marching_cubes(fine, o.level, spacing=(step, step, step))
@@ -159,6 +232,10 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     import manifold3d as m3d
 
     o = opts or ReconstructOptions()
+    if o.blend is None:
+        import copy
+        o = copy.copy(o)
+        o.blend = max(3.0, 1.5 * float(study.min_member or 0.0))
     # where the part must reach the boundary: its supports and its loads
     flush = []
     for sup in study.supports:
@@ -172,6 +249,13 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
                 flush.append(ld.shape if ld.shape is not None else study.region_shape(ld.region)[0])
             except ValueError:
                 pass
+    if o.fillet and o.blend > 0:
+        # Material against a preserved shape runs on through the design
+        # space's boundary like a flush face, so the exact trim below cuts it
+        # level with the shape's own end face instead of leaving the end a
+        # fraction of a millimetre proud of it (a lip round every full-height
+        # boss: the bell crank's).
+        flush = flush + [r.shape for r in study.preserve]
     iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
                       flush=flush, preserve=[r.shape for r in study.preserve], design=list(study.design_space))
     info = {"isoTriangles": int(len(iso.faces))}

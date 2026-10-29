@@ -26,8 +26,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-render = ["matplotlib>=3.8"]
-mcp = ["mcp>=2.0", "matplotlib>=3.8"]
+render = ["matplotlib>=3.8", "shapely>=2.0"]   # shapely: render_interfaces slices meshes
+mcp = ["mcp>=2.0", "matplotlib>=3.8", "shapely>=2.0"]
 # independent cross-check on a tetrahedral mesh (crosscheck.py); gmsh is GPL
 # and is run as a tool, not part of loadpath's own code
 crosscheck = ["gmsh>=4.11"]
