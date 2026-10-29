@@ -656,6 +656,16 @@ def test_heat_exchanger_fluids_are_isolated_and_connected():
     assert rep["minWallBetweenFluids"] > 0.8, rep["minWallBetweenFluids"]
     assert mesh.is_watertight
     assert 0.5 < rep["A"]["coreVolume"] / rep["B"]["coreVolume"] < 2.0
+    # rounded mouths (blend, a quarter cell by default) open the channels' ends a little
+    # and cut their entry loss, without coming nearer the other fluid
+    assert rep["blend"] == 2.0
+    hx.blend = 0.0
+    _, sharp = design_heat_exchanger(hx)
+    assert sharp["isolated"] and rep["A"]["volume"] > sharp["A"]["volume"]
+    from loadpath.heatx_thermal import rate_design
+    duty = {"A": {"fluid": "water", "lPerMin": 1}, "B": {"fluid": "water", "lPerMin": 1}}
+    k_round, k_sharp = (rate_design(hx, r, duty)["fluids"]["A"]["mouthEntryK"] for r in (rep, sharp))
+    assert k_round < 0.3 * k_sharp, (k_round, k_sharp)
     try:
         heat_exchanger_from_spec({"core": {"type": "box", "min": [0, 0, 0], "max": [20, 20, 16]},
                                   "cell": 2, "wall": 1.0})

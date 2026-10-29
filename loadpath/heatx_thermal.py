@@ -29,7 +29,9 @@ Schwarz P falls back to the gyroid's (a rough stand-in, flagged).
 The wall is a plane conductor (it is thin against the channels), so
 1/U = 1/h_A + t/k_wall + 1/h_B on the wetted area. Effectiveness is the
 counterflow formula for the "counter" layout and the unmixed-unmixed cross
-flow formula otherwise. Port losses add 1.5 velocity heads per port pair.
+flow formula otherwise. Port losses add 1.5 velocity heads per port pair;
+the channels' mouths add a contraction in (less with rounded mouths, after
+Idelchik's rounded inlets) and a Borda-Carnot expansion out.
 
 Units: SI inside, mm for geometry at the edges (cells, walls, lengths).
 """
@@ -102,7 +104,23 @@ def _fluid(v):
     return FLUIDS[v]
 
 
-def _side(kind, fluid, m, phi, phi_sheet, dh, cell, length, frontal, port_area):
+# loss coefficient of an inlet from a large space by its edge radius over Dh (Idelchik,
+# rounded inlet flush with a wall): sharp 0.5 down to 0.04 once r/Dh reaches 0.15
+_ENTRY = (np.array([0.0, 0.02, 0.04, 0.06, 0.10, 0.15]), np.array([0.5, 0.28, 0.24, 0.15, 0.09, 0.04]))
+
+
+def _mouths(fluid, us, phi, dh, mouth_radius):
+    """Pressure lost getting from the plenum into the channels and back out:
+    a contraction to the open share `phi` of the face, its loss cut by
+    rounded mouths (r/Dh), and a Borda-Carnot expansion out, which rounding
+    barely helps. Both on the channel velocity U_s / phi."""
+    q = 0.5 * fluid.rho * (us / phi) ** 2
+    k_in = float(np.interp(mouth_radius / dh, *_ENTRY)) * (1.0 - phi)
+    k_out = (1.0 - phi) ** 2
+    return k_in * q, k_out * q, k_in
+
+
+def _side(kind, fluid, m, phi, phi_sheet, dh, cell, length, frontal, port_area, mouth_radius=0.0):
     """One fluid's channel: velocities, Re, h (both correlations), pressure drop."""
     us = m / (fluid.rho * frontal)                       # superficial, m/s
     dh_m = dh * 1e-3
@@ -129,11 +147,13 @@ def _side(kind, fluid, m, phi, phi_sheet, dh, cell, length, frontal, port_area):
     dp_core = dpdx * length * 1e-3
     v_port = m / (fluid.rho * port_area)
     dp_ports = 1.5 * 0.5 * fluid.rho * v_port ** 2
+    dp_in, dp_out, k_in = _mouths(fluid, us, phi, dh, mouth_radius)
     if not 20 <= re <= 100 or not 0.3 <= phi <= 0.7:
         flags.append("pressure drop extrapolated past its fit (Re 20-100, phi 0.3-0.7)")
     return {"superficialVelocity": us, "re": re, "pr": pr, "nu": nu, "nuSpread": [min(nu_main, nu_alt),
-            max(nu_main, nu_alt)], "h": h, "pressureDrop": dp_core + dp_ports, "pressureDropCore": dp_core,
-            "pressureDropPorts": dp_ports, "flags": flags}
+            max(nu_main, nu_alt)], "h": h, "pressureDrop": dp_core + dp_ports + dp_in + dp_out,
+            "pressureDropCore": dp_core, "pressureDropPorts": dp_ports, "pressureDropMouths": dp_in + dp_out,
+            "mouthEntryK": k_in, "flags": flags}
 
 
 def _effectiveness(ntu, cr, arrangement):
@@ -148,12 +168,14 @@ def _effectiveness(ntu, cr, arrangement):
     return 1 - np.exp(ntu ** 0.22 / cr * (np.exp(-cr * ntu ** 0.78) - 1))
 
 
-def rate(kind, cell, wall, core_volume, lengths, duty, arrangement="cross", port_diameter=8.0, geometry=None):
+def rate(kind, cell, wall, core_volume, lengths, duty, arrangement="cross", port_diameter=8.0, geometry=None,
+         mouth_radius=0.0):
     """Rate one design. `core_volume` mm^3; `lengths` (mm) each fluid's flow
     path through the core; `duty` = {"A": {"fluid": "water", "lPerMin": 2,
     "tIn": 80}, "B": {...}, "wall": "petg" | W/mK}. `geometry` overrides the
     analytic one per fluid (from a design report: phi, areaDensity, dh).
-    `lengths` and `geometry` follow the order the fluids are named in `duty`."""
+    `lengths` and `geometry` follow the order the fluids are named in `duty`.
+    `mouth_radius` (mm) rounds the channels' mouths (a design's blend)."""
     kw = duty.get("wall", "petg")
     k_wall = float(WALL_CONDUCTIVITY[kw] if isinstance(kw, str) else kw)
     names = [n for n in duty if n != "wall"]
@@ -170,7 +192,7 @@ def rate(kind, cell, wall, core_volume, lengths, duty, arrangement="cross", port
         m = _flow(duty[n], fl)
         frontal = core_volume / lengths[i] * 1e-6        # m^2
         s = _side(kind, fl, m, geo["phi"], geo.get("phiSheet", 2 * geo["phi"]), geo["dh"], cell, lengths[i],
-                  frontal, port_area)
+                  frontal, port_area, mouth_radius)
         s["massFlow"] = m
         sides[n] = s
         caps.append(m * fl.cp)
@@ -219,7 +241,8 @@ def rate_design(hx, report, duty):
     duty = {**{k: v_ for k, v_ in duty.items() if k == "wall"},
             **{n: duty[n] for n in hx.names}}
     return rate(hx.kind, hx.cell, hx.wall, v, _lengths(hx, report), duty,
-                "counter" if hx.layout == "counter" else "cross", hx.port_diameter, geo)
+                "counter" if hx.layout == "counter" else "cross", hx.port_diameter, geo,
+                1.2 * float(report.get("blend", 0.0)))      # a smooth union of radius k rounds about 1.2 k
 
 
 def size_core(kind, core_volume, lengths, duty, arrangement="cross", port_diameter=8.0, min_wall=0.8,

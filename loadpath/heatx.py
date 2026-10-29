@@ -44,7 +44,11 @@ every point in space through its nearest surface point. Then:
   a teardrop bore and a 45 degree gusset under the tube, and with `skirt`
   everything that overhangs the outside gets a 45 degree fill to the bed;
 - each port is a tube on the zone's centre (its point farthest from the
-  edge).
+  edge);
+- with `blend` (default a quarter cell), each plenum joins its channels by
+  a smooth union, so every channel mouth opens as a rounded
+  bellmouth instead of the sheet's square-cut end, never closer than a
+  wall to the other fluid.
 
 Built implicitly on one grid (distances in mm, negative = solid), meshed by
 marching cubes, then checked on that same grid: the fluid spaces are labeled,
@@ -65,6 +69,7 @@ import numpy as np
 from scipy import ndimage
 
 from .lattice import tpms
+from .reconstruct import _smooth_union
 from .shapes import Box, Cylinder, Shape, shape_from_spec
 
 __all__ = ["HeatExchangerSpec", "Zone", "design_heat_exchanger", "heat_exchanger_from_spec", "zones_for"]
@@ -100,6 +105,7 @@ class HeatExchangerSpec:
     shell: float = 1.6              # mm, outer walls
     header: float = 6.0             # mm, plenum depth over the surface
     cap: float | None = None        # mm, sealing depth under the other fluid's zones (default: wall + 1 mm)
+    blend: float | None = None      # mm, smooth-union radius from plenum into its channels (default cell / 4; 0: sharp)
     port_diameter: float = 8.0
     port_length: float = 8.0
     axes: tuple = (0, 1)            # cross: A along axes[0], B along axes[1]; counter: A along axes[0], B's side ports along axes[1]
@@ -151,7 +157,7 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
                          "e.g. {\"type\": \"cylinder\", \"center\": [0, 0, 30], \"axis\": \"z\", \"length\": 60, \"r\": 20}")
     hx = HeatExchangerSpec(core=shape_from_spec(core, base_dir))
     for key, attr in (("cell", "cell"), ("wall", "wall"), ("shell", "shell"), ("header", "header"),
-                      ("cap", "cap"), ("portDiameter", "port_diameter"), ("portLength", "port_length")):
+                      ("cap", "cap"), ("blend", "blend"), ("portDiameter", "port_diameter"), ("portLength", "port_length")):
         if key in spec:
             setattr(hx, attr, float(spec[key]))
     if "type" in spec:
@@ -287,6 +293,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
     from skimage.measure import marching_cubes
 
     zones = zones_for(hx)
+    blend = hx.cell * 0.25 if hx.blend is None else float(hx.blend)
     cap = hx.cap if hx.cap is not None else hx.wall + 1.0
     r_port = 0.5 * hx.port_diameter
     clo, chi = (np.asarray(b, float) for b in hx.core.bounds())
@@ -379,6 +386,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
         ell_f = np.max([ell[k] for k in ks], axis=0)
         # open in the core, but sealed within `cap` of the surface outside this fluid's zones
         void = np.maximum(-side, np.maximum(d, np.minimum(cap + d, -ell_f)))
+        net, void = void, np.full_like(void, np.inf)       # plenums and bores gather in `void`
         for k in ks:
             zi = zinfo[k]
             if zi["roof"] == "pyramid":
@@ -403,9 +411,27 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
             # evaluated only near the port: its fields are far positive elsewhere
             sel = _port_box(hx, zi, pts, up, bed)
             bore, tube = _port(hx, zi, pts[sel], up, bed)
+            # (a port's root stays sharp: rounded, it would leave a ceiling under the plenum's roof)
             void[sel] = np.minimum(void[sel], bore)
             body[-1][sel] = np.minimum(body[-1][sel], tube)
-        fluid.append(void)
+        fluid.append((net, void))
+        del net, void
+    sharp = [np.minimum(net, void) for net, void in fluid]
+    if blend > 0:
+        # the plenum flows into its channels through rounded mouths (a bellmouth on every
+        # opening) rather than over the sheet's square-cut ends: the rounding only cuts into
+        # the core (the plenum's own walls keep their shapes), may eat the sheet's end, but
+        # never comes within a wall of the other fluid
+        out = []
+        for f, (net, void) in enumerate(fluid):
+            other = sharp[1 - f] if f == 0 else out[0]
+            # (a step over the wall: the fields are near-distances, the check is on the grid)
+            rounded = np.maximum(np.maximum(_smooth_union(net, void, blend), d), hx.wall + step - other)
+            out.append(np.minimum(sharp[f], rounded))
+        fluid = out
+    else:
+        fluid = sharp
+    del sharp
     d_body = np.min(body, axis=0)
     del body, ell, coords
     grid = np.maximum(d_body, -np.minimum(fluid[0], fluid[1])).reshape(dims)
@@ -420,7 +446,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
 
     report, masks = _check(hx, zones, zinfo, grid, (side_a := g - half), d_body, d, dims, step, lo, cap)
     report.update(_overhangs(hx, mesh, up))
-    report.update({"kind": hx.kind, "cell": hx.cell, "wall": hx.wall, "step": step, "cap": cap,
+    report.update({"kind": hx.kind, "cell": hx.cell, "wall": hx.wall, "step": step, "cap": cap, "blend": blend,
                    "solidVolume": float(mesh.volume), "watertight": bool(mesh.is_watertight),
                    "bounds": [mesh.bounds[0].round(2).tolist(), mesh.bounds[1].round(2).tolist()],
                    "zones": {f"{hx.names[z.fluid]}-{z.end}": {
@@ -559,6 +585,8 @@ def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap):
         # thinnest wall between the fluids: distance from B's space to A's
         dist_to_a = ndimage.distance_transform_edt(~a) * step
         report["minWallBetweenFluids"] = float(dist_to_a[b].min())
+        i = np.argmin(np.where(b, dist_to_a, np.inf))
+        report["minWallBetweenFluidsAt"] = np.round(lo + (np.asarray(np.unravel_index(i, dims)) + 0.5) * step, 1).tolist()
         del dist_to_a
     # thinnest outer wall: from either fluid to the outside, away from the port mouths
     outside = ~solid & ~inside_body               # air (the skirt is solid, though outside the body)
