@@ -1,0 +1,35 @@
+# The full eval suite takes about an hour on a 4-core runner, so it runs on
+# request and weekly rather than on every push. Exit code = failing cases.
+name: evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "Case names, space separated (blank: all)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[render]"
+      - env:
+          CASES: ${{ github.event.inputs.cases }}
+        run: python -m loadpath.evals.run $CASES --out evals-out --jobs 2
+      - if: always()
+        run: cat evals-out/scorecard.md >> "$GITHUB_STEP_SUMMARY" || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evals-out
+          path: evals-out/
