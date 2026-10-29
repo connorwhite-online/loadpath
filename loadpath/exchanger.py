@@ -105,7 +105,7 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
       field(P) -> (N,) sdf for `to_mesh(field, *bounds, pitch<=wall/3)`,
       ports    -> [{"name": "a_in"|"a_out"|"b_in"|"b_out", "point", "r"}, ...]
                   probe spheres for check_networks,
-      plugs    -> [{"a", "b", "r"}, ...] — the port bores, for check_networks
+      plugs    -> [{"a", "b", "r", "ends": "flat"}, ...] — the port bores (flat-ended, so a plug never bulges past the probes), for check_networks
                   to virtually refill (open ports otherwise read as a leak
                   through the outside air),
       bounds   -> (lo, hi) meshing bounds with clearance.
@@ -376,7 +376,7 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
         r = per_port_r[name]
         exit_pt = mouth + axis * (skin + 2.0)
         bores.append((c, exit_pt, r))
-        plugs.append({"a": mouth.tolist(), "b": exit_pt.tolist(), "r": r})
+        plugs.append({"a": mouth.tolist(), "b": exit_pt.tolist(), "r": r, "ends": "flat"})
     for b in barbs:
         i, sign = b["i"], b["sign"]
         half_len = 0.5 * (skin * 0.5 + b["neck"] + b["barb"] + 2.0)
