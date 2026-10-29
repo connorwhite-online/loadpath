@@ -221,9 +221,12 @@ def render_interfaces(mesh, study, path, max_panels=16, cols=4, size=3.2, margin
     return path
 
 
-def render_heat_exchanger(mesh, spaces, core, path, title=None, size=(5.0, 4.6)):
-    """Three panels: the part, and each fluid's space cut open at the core's
-    mid-height so the two interleaved networks show (A blue, B orange)."""
+def render_heat_exchanger(mesh, spaces, core, path, title=None, size=(5.0, 4.6), cut=None, view=(28, -55)):
+    """Four panels: the part, the part cut open, and each fluid's space cut
+    open at the same plane so the two interleaved networks show (A blue,
+    B orange), then fluid A alone. `cut` is (point, normal), by default
+    through the core's centre across z, keeping the side the normal points
+    to (point it away from the view); `core` is any shape (its bounds)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -232,18 +235,22 @@ def render_heat_exchanger(mesh, spaces, core, path, title=None, size=(5.0, 4.6))
     lo, hi = np.asarray(mesh.bounds)
     span = (hi - lo).max()
     mid = 0.5 * (lo + hi)
+    clo, chi = (np.asarray(b, float) for b in core.bounds())
+    if cut is None:
+        cut = (0.5 * (clo + chi), np.array([0.0, 0.0, 1.0]))
+    c0, cn = np.asarray(cut[0], float), np.asarray(cut[1], float)
+    cn = cn / np.linalg.norm(cn)
+    grey = np.array([0.80, 0.80, 0.82])
     colors = [np.array([0.20, 0.45, 0.85]), np.array([0.92, 0.50, 0.15])]
     names = list(spaces)
-    panels = [("part", [(mesh, np.array([0.80, 0.80, 0.82]))])]
-    zcut = 0.5 * (core.lo[2] + core.hi[2])
-    cut = []
-    for i, n in enumerate(names):
-        m = spaces[n].slice_plane([0, 0, zcut], [0, 0, -1], cap=True)
-        cut.append((m, colors[i % 2]))
-    panels.append((" + ".join(names) + f", cut at z={zcut:g}", cut))
-    panels.append((names[0], cut[:1]))
+    panels = [("part", [(mesh, grey)]),
+              ("part, cut open", [(mesh.slice_plane(c0, cn, cap=True), grey)])]
+    # keep the half beyond the cut, so the view looks into it
+    cutf = [(spaces[n].slice_plane(c0, cn, cap=True), colors[i % 2]) for i, n in enumerate(names)]
+    panels.append((" + ".join(names) + ", cut open", cutf))
+    panels.append((names[0], cutf[:1]))
     fig = plt.figure(figsize=(size[0] * len(panels), size[1]), dpi=110)
-    elev, azim = 28, -55
+    elev, azim = view
     e, a = np.radians(elev), np.radians(azim)
     view_dir = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
     key = view_dir + np.array([0.3, -0.2, 0.6])
@@ -251,14 +258,14 @@ def render_heat_exchanger(mesh, spaces, core, path, title=None, size=(5.0, 4.6))
     for pi, (label, items) in enumerate(panels):
         ax = fig.add_subplot(1, len(panels), pi + 1, projection="3d")
         for m, base in items:
-            m = _decimate(m, 60_000)
+            m = _decimate(m, 90_000)
             shade = np.clip(m.face_normals @ key, 0, 1)
             col = np.clip(base[None] * (0.35 + 0.65 * shade)[:, None], 0, 1)
             ax.add_collection3d(Poly3DCollection(m.triangles, facecolors=col, edgecolor="none", linewidth=0))
         ax.set_xlim(mid[0] - span / 2, mid[0] + span / 2)
         ax.set_ylim(mid[1] - span / 2, mid[1] + span / 2)
         ax.set_zlim(mid[2] - span / 2, mid[2] + span / 2)
-        ax.set_box_aspect((1, 1, 1), zoom=1.4)
+        ax.set_box_aspect((1, 1, 1), zoom=1.6)
         ax.view_init(elev, azim)
         ax.set_axis_off()
         ax.set_title(label, fontsize=9)
