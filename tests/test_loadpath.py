@@ -698,6 +698,22 @@ def test_viewer_page_carries_fields_and_history():
     assert "<!doctype" not in study_viewer(result, standalone=False, fields=False)
 
 
+
+def test_optimize_is_reproducible():
+    """Same study, same machine, threads on: bit-identical densities. pyamg
+    draws its spectral-radius estimates from np.random's global stream, which
+    made every eval comparison noisy until fem.amg_solver seeded it."""
+    two = {**BEAM, "loadCases": BEAM["loadCases"] + [{"name": "side", "loads": [
+        {"shape": {"type": "box", "min": [99.99, -1, -1], "max": [101, 11, 11]}, "force": [0, 5, 0]}]}]}
+    s = study_from_dict(two)
+    outs = []
+    for _ in range(2):
+        np.random.rand(7)          # a caller that uses the global stream too
+        d = build_domain(s)
+        outs.append(optimize(d, s.material.nu, SimpOptions(volume_fraction=0.4, filter_radius=filter_radius(d, 4.0),
+                                                           max_iterations=8)).xphys)
+    assert np.array_equal(outs[0], outs[1])
+
 TESTS = [
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
@@ -731,6 +747,7 @@ TESTS = [
     test_heat_exchanger_rating_limits_and_geometry,
     test_fasteners_expand_to_rings_keepouts_and_preload,
     test_viewer_page_carries_fields_and_history,
+    test_optimize_is_reproducible,
 ]
 
 

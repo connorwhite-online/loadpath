@@ -56,7 +56,7 @@ def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should
     from scipy import ndimage
 
     coarse = build_domain(study, pitch=2.0 * domain.pitch)
-    res = optimize(coarse, study.material.nu,
+    res = optimize(coarse, study.elastic(design=True),
                    SimpOptions(volume_fraction=vf, filter_radius=max(radius, 1.5 * coarse.pitch),
                                max_iterations=60, beta_max=_WARM_BETA, beta_every=12,
                                build_direction=study.print_direction, extrusion=study.extrusion),
@@ -95,6 +95,7 @@ class Outcome:
             "preserveMissing": r.get("preserveMissing"),
             "bodies": r.get("bodies"),
             "boundaryCutArea": r.get("boundaryCutArea"),
+            **({"print": {k: v for k, v in r["print"].items() if k != "bridgeList"}} if "print" in r else {}),
             "warnings": r.get("warnings", []),
             "margin": r.get("margin"),
             "passes": self.passes,
@@ -120,6 +121,7 @@ class StudyResult:
             "best": self.best,
             "seconds": self.seconds,
             "warnings": self.warnings,
+            **({"orientation": self.study.raw["orientation"]} if "orientation" in self.study.raw else {}),
         }
 
 
@@ -189,6 +191,11 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     passes, or the lightest overall when the goal has no pass/fail."""
     import dataclasses
 
+    if study.process is not None and study.process.build == "auto":
+        # opt-in: compare build directions on a coarse grid and keep the best
+        from .orient import choose_build_direction
+
+        study = choose_build_direction(study, on_progress=on_progress)["study"]
     mats = study.materials or [study.material]
     if len(mats) == 1:
         return _run_single(study, on_progress, should_stop)
@@ -231,7 +238,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         if x0 is None and domain.n_elem >= _COARSE_MIN_CELLS:
             x0 = _coarse_start(study, domain, vf, radius, should_stop)
             beta0 = _WARM_BETA
-        res = optimize(domain, study.material.nu,
+        res = optimize(domain, study.elastic(design=True),
                        SimpOptions(volume_fraction=vf, filter_radius=radius,
                                    max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
                                    build_direction=study.print_direction, extrusion=study.extrusion),
@@ -290,7 +297,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             x0 = _coarse_start(study, domain, float(goal.volume_fraction or 0.3), radius, should_stop)
             beta0 = _WARM_BETA
         res = optimize_constrained(
-            domain, study.material.nu,
+            domain, study.elastic(),
             SimpOptions(volume_fraction=float(goal.volume_fraction or 0.3), filter_radius=radius,
                         max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
                         extrusion=study.extrusion),

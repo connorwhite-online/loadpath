@@ -283,6 +283,7 @@ def render_lattice(mesh, path, title=None, holes=(), size=(5.0, 4.6), view=(28, 
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import trimesh
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     lo, hi = np.asarray(mesh.bounds)
@@ -320,7 +321,11 @@ def render_lattice(mesh, path, title=None, holes=(), size=(5.0, 4.6), view=(28, 
         else:
             elev, azim = view
             cen, span = mid, ext.max()
-        m = _decimate(m, 120_000)
+        m = _decimate(m, 400_000)
+        # matplotlib paints back to front by face centre: the skin's long
+        # flat triangles would sort behind the lattice they cover
+        v, f = trimesh.remesh.subdivide_to_size(m.vertices, m.faces, max_edge=span / 60.0, max_iter=12)
+        m = trimesh.Trimesh(v, f, process=False)
         e, a = np.radians(elev), np.radians(azim)
         view_dir = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
         key = view_dir + np.array([0.3, -0.2, 0.6])

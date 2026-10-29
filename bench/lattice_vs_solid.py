@@ -36,6 +36,8 @@ def main(argv=None):
     p.add_argument("--sf", type=float, nargs="+", default=[3.0, 5.0, 8.0])
     p.add_argument("--kind", default="gyroid")
     p.add_argument("--cell", type=float, default=10.0)
+    p.add_argument("--skin", type=float, default=1.2)
+    p.add_argument("--process", help="override the case's process (e.g. sls: drain holes)")
     p.add_argument("--verify-cells", type=int, default=600_000)
     p.add_argument("--skip-solid", action="store_true")
     a = p.parse_args(argv)
@@ -52,9 +54,11 @@ def main(argv=None):
     path = os.path.join(CASES_DIR, "cases", a.case + ".json")
     raw = json.load(open(path))
     raw.pop("expect", None)
+    if a.process:
+        raw["process"] = a.process
     study = study_from_dict(raw, base_dir=os.path.dirname(path))
-    rows = []
     out_json = os.path.join(a.out, "results.json")
+    rows = json.load(open(out_json))["rows"] if a.skip_solid and os.path.exists(out_json) else []
 
     def save():
         json.dump({"case": a.case, "rows": rows}, open(out_json, "w"), indent=2, default=float)
@@ -73,21 +77,22 @@ def main(argv=None):
         save()
 
     env = envelope_mesh(study)
-    rep = verify_part(study, env, refine=0)
-    rows.append(_row("solid envelope", rep, None))
-    save()
+    if not any(r["design"] == "solid envelope" for r in rows):
+        rep = verify_part(study, env, refine=0)
+        rows.append(_row("solid envelope", rep, None))
+        save()
     for sf in a.sf:
         t = time.time()
-        o = LatticeOptions(kind=a.kind, cell=a.cell, target_sf=sf)
+        o = LatticeOptions(kind=a.kind, cell=a.cell, skin=a.skin, target_sf=sf)
         if study.process is not None:
             o.wall_min = max(o.wall_min, study.process.min_feature)
         lat, info = lattice_infill(study, env, None, o)
         build = time.time() - t
-        stem = f"lattice-{a.kind}-sf{sf:g}"
+        stem = f"lattice-{a.kind}-c{a.cell:g}-s{a.skin:g}-sf{sf:g}"
         lat.export(os.path.join(a.out, stem + ".stl"))
         rep = verify_part(study, lat, refine=0, max_cells=a.verify_cells)
         pr = info["printability"]
-        rows.append(_row(f"skin + {a.kind} core, target SF {sf:g}", rep, time.time() - t, {
+        rows.append(_row(f"{a.skin:g} mm skin + {a.kind} {a.cell:g} mm core, target SF {sf:g}", rep, time.time() - t, {
             "predictedSF": info["sizing"]["predictedSF"], "buildSeconds": build,
             "solidCellFraction": info["sizing"]["solidCellFraction"], "drainHoles": len(pr["drainHoles"]),
             "trappedVolume": pr["trappedVolume"], "wallP1": pr["wallP1"]}))
