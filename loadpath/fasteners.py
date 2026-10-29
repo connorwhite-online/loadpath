@@ -118,7 +118,9 @@ def expand_fasteners(d: dict) -> dict:
         r_ring = 0.5 * head + wall
         keep_out.append({"id": f"{fid}-bore", "shape": _tube(seat - a * 1.0, end + a * 2.0, 0.5 * hole)})
         if head_on == "this":
-            keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, 0.5 * head + 0.5)})
+            # as wide as the seat ring: a head path narrower than the ring
+            # leaves a sub-millimetre lip of ring standing round it
+            keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, max(0.5 * head + 0.5, r_ring))})
         preserve.append({"id": f"{fid}-seat", "shape": _tube(seat, seat + a * ring, r_ring, 0.5 * hole)})
         far = None
         if end_kind == "face":
