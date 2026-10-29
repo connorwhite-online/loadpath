@@ -54,7 +54,10 @@ loadpath run bracket.json --out out/
 ```
 
 A few minutes. Progress streams to stderr as JSON lines. `out/` gets one STL
-and one render per outcome and `report.json`.
+and one render per outcome, `report.json`, and `viewer.html`: open it in a
+browser to orbit the part, colour it by stress or safety factor, animate the
+deformation, cut it open and replay the optimization (`--viewer all` for every
+outcome, `--viewer none` to skip it).
 
 ## 5. Read the report before trusting the part
 

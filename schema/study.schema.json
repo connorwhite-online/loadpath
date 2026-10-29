@@ -164,9 +164,43 @@
               ]
             },
             "buildDirection": {
-              "type": "string",
-              "pattern": "^[+-]?[xyz]$",
-              "description": "like '+z'"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([+-]?[xyz]|auto)$",
+                  "description": "like '+z', or 'auto'"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              ],
+              "description": "the direction layers stack: '+z', a vector, or 'auto'"
+            },
+            "stiffnessAcrossLayers": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "shearAcrossLayers": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "anisotropic": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "const": "bond"
+                }
+              ]
             },
             "interlayer": {
               "type": "number",

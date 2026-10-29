@@ -38,6 +38,9 @@ import uuid
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _procs: dict[str, subprocess.Popen] = {}
 _POLL_HINT = "Poll loadpath_status every 30-60 seconds; a study takes minutes."
+_VIEWER_NOTE = ("An interactive 3D page for the user: orbit the part, colour it by stress, safety factor or "
+                "displacement, animate the deformation, cut it open, replay the optimization. Give them the path "
+                "(or open it in a browser); it is one self-contained HTML file.")
 
 
 def _home() -> str:
@@ -246,6 +249,9 @@ def _study_status(d, r):
     best = r.get("best")
     info = {"status": "done", "kind": "study", "best": best, "outcomes": outcomes, "warnings": r.get("warnings"),
             "seconds": r.get("seconds"), "report": os.path.join(d, "out", "report.json")}
+    if r.get("viewer"):
+        info["viewer"] = os.path.join(d, "out", os.path.basename(r["viewer"]))
+        info["viewerNote"] = _VIEWER_NOTE
     pngs = [_png(d, r["outcomes"][best].get("render"))] if best is not None else []
     if r.get("lattice"):
         info["lattice"] = r["lattice"]
@@ -298,6 +304,7 @@ def status(job_id: str) -> tuple[dict, list]:
         keep = ("isolated", "connected", "minWallBetweenFluids", "minOuterWall", "overhangArea", "watertight",
                 "solidVolume", "bounds", "warnings", "zones")
         info = {"status": "done", "kind": kind, "passes": r.get("passes"), "stl": r.get("stl"),
+                "viewer": r.get("viewer"),
                 "fluidSpaces": r.get("fluidSpaces"), "rating": r.get("rating"), "ratingError": r.get("ratingError"),
                 "check": {k: rep.get(k) for k in keep if k in rep},
                 "report": report}

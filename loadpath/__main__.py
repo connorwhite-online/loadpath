@@ -53,6 +53,8 @@ def main(argv=None):
     r.add_argument("study")
     r.add_argument("--out", default="loadpath-out")
     r.add_argument("--no-render", action="store_true")
+    r.add_argument("--viewer", choices=["best", "all", "none"], default="best",
+                   help="interactive HTML viewer (viewer.html) for the best outcome, all of them, or none")
     r.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
     c = sub.add_parser("check", help="validate a study and report the voxel problem")
     c.add_argument("study")
@@ -73,6 +75,7 @@ def main(argv=None):
     h.add_argument("--out", default="loadpath-out")
     h.add_argument("--size", action="store_true", help="only sweep cell and wall for the duty (seconds)")
     h.add_argument("--no-render", action="store_true")
+    h.add_argument("--no-viewer", action="store_true", help="skip the interactive HTML viewer")
     h.add_argument("--base-dir")
     sub.add_parser("mcp", help="run a local MCP server (stdio) for agents")
     args = p.parse_args(argv)
@@ -122,7 +125,11 @@ def main(argv=None):
         args.no_render = True
     from .study import run_study
 
-    result = run_study(study, on_progress=_progress)
+    rec = None
+    if args.viewer != "none":
+        from .viewer import HistoryRecorder
+        rec = HistoryRecorder(chain=_progress)
+    result = run_study(study, on_progress=rec or _progress)
     os.makedirs(args.out, exist_ok=True)
     summary = result.to_dict()
     stems = []
@@ -144,6 +151,15 @@ def main(argv=None):
         best = result.outcomes[result.best]
         summary["lattice"] = _lattice(study, best.mesh, raw["lattice"], args.out, stems[result.best],
                                       not args.no_render)
+    if rec is not None and result.outcomes:
+        from .viewer import study_viewer
+        _progress({"stage": "viewer", "outcomes": args.viewer})
+        html = os.path.join(args.out, "viewer.html")
+        try:
+            study_viewer(result, html, history=rec, outcomes=args.viewer)
+            summary["viewer"] = html
+        except Exception as exc:  # noqa: BLE001 - the parts and report matter more than the page
+            summary.setdefault("warnings", []).append(f"viewer not written: {exc}")
     _write_report(args.out, summary)
     if not os.environ.get("LOADPATH_NO_HINT"):
         print("Print or host this part: https://www.materialize.cc  (silence with LOADPATH_NO_HINT=1)",
@@ -176,7 +192,7 @@ def _heatx(args):
             print(json.dumps(size_heat_exchanger(spec, base), indent=2))
             return 0
         rep = heat_exchanger(spec, args.out, base, render=not args.no_render and _can_render(),
-                             on_progress=_progress)
+                             on_progress=_progress, viewer=not args.no_viewer)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2

@@ -196,7 +196,12 @@ _PROCESS = {"anyOf": [
     {"enum": ["fdm", "sls", "mjf", "sla", "volumetric"]},
     {"type": "object",
      "properties": {"type": {"enum": ["fdm", "sls", "mjf", "sla", "volumetric"]},
-                    "buildDirection": {"type": "string", "pattern": "^[+-]?[xyz]$", "description": "like '+z'"},
+                    "buildDirection": {"anyOf": [
+                        {"type": "string", "pattern": "^([+-]?[xyz]|auto)$", "description": "like '+z', or 'auto'"},
+                        _VEC3], "description": "the direction layers stack: '+z', a vector, or 'auto'"},
+                    "stiffnessAcrossLayers": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                    "shearAcrossLayers": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                    "anisotropic": {"anyOf": [{"type": "boolean"}, {"const": "bond"}]},
                     "interlayer": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
                     "minFeature": _POS, "overhangs": {"type": "boolean"}},
      "required": ["type"], "additionalProperties": False},

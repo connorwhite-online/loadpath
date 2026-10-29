@@ -122,6 +122,15 @@ def lattice_part(study, mesh, options: dict | None, out_dir: str, stem: str, ren
            "enclosedCavityVolume": rep.get("enclosedCavityVolume"),
            "cases": [{"name": c["name"], "peakStressMPa": c["peakStress"], "safetyFactor": c["safetyFactor"],
                       "deflectionMm": c["deflection"]} for c in rep.get("cases") or []]}
+    attention = []
+    target = study.goal.safety_factor
+    sf = out["safetyFactor"]
+    if target and sf is not None and sf < target:
+        attention.append(f"safety factor {sf:.2f} is under the goal's {target:g}: raise minWall, maxWall or "
+                         "solidAbove's reach (lower solidAbove), or use a smaller cell")
+    if (out["bodies"] or 1) > 1:
+        attention.append(f"{out['bodies']} separate bodies")
+    out["attention"] = attention
     if info.get("enclosedVoid", 0) > 1.0 and study.process is not None and study.process.kind != "fdm":
         out["warning"] = (f"the skin encloses the lattice, which traps {study.process.kind} powder or resin; "
                           "set skin to 0 or add drain holes")
@@ -164,9 +173,10 @@ def _duty(spec, hx):
 
 
 def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render: bool = True,
-                   on_progress=None) -> dict:
+                   on_progress=None, viewer: bool = True) -> dict:
     """Design a heat exchanger, check it, rate it if `duty` is given, and
-    write <name>.stl, <name>.png and the fluid spaces (<name>-<fluid>.stl)."""
+    write <name>.stl, <name>.png, the fluid spaces (<name>-<fluid>.stl) and
+    an interactive viewer (<name>.html)."""
     from .heatx import design_heat_exchanger
     from .heatx_thermal import rate_design
 
@@ -198,6 +208,11 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
         render_heat_exchanger(mesh, spaces, hx.core, png, title=f"{name}  {hx.kind} {hx.cell:g}/{hx.wall:g}mm  "
                               f"{hx.layout}")
         out["render"] = png
+    if viewer:
+        from .viewer import heat_exchanger_viewer
+        html = os.path.join(out_dir, name + ".html")
+        heat_exchanger_viewer(mesh, spaces, report, html, title=name)
+        out["viewer"] = html
     return jsonable(out)
 
 

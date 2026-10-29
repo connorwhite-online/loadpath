@@ -31,7 +31,7 @@ syntax). `loadpath_guide` returns the same text.
 | `loadpath_examples(name?)` | The example list, or one example document to adapt. | instant |
 | `loadpath_check(study, base_dir?)` | Every schema problem at once (with "did you mean"), then the voxel problem: cells, pitch, region ids, warnings. | ~1 s |
 | `loadpath_start(study, base_dir?, lattice?)` | Validate and run a study as a job. `lattice` also fills the best outcome with a lattice. | minutes |
-| `loadpath_status(job_id)` | Progress while running; when done, every outcome (mass, safety factor and deflection per case, pass/fail, keep-out and preserve checks, an `attention` list) and renders as images. | instant |
+| `loadpath_status(job_id)` | Progress while running; when done, every outcome (mass, safety factor and deflection per case, pass/fail, keep-out and preserve checks, an `attention` list), renders as images, and `viewer`: an interactive 3D page for the user. | instant |
 | `loadpath_lattice(job_id, outcome?, options?)` | Fill a finished outcome with a stress-graded TPMS lattice, as a new job. | a minute or two |
 | `loadpath_heat_exchanger(spec, base_dir?)` | Design, check and rate a two-fluid TPMS heat exchanger, as a job. | a minute or more |
 | `loadpath_size_heat_exchanger(spec, max_pressure_drop?, min_wall?)` | Sweep cell and wall for a duty before designing. | seconds |
@@ -60,6 +60,9 @@ resolve against; it defaults to the server's working directory.
    are fine. Then look at the render: does the part go where you expected,
    are the interfaces intact? A clean report on the wrong problem is still
    the wrong part.
+   Hand the user the `viewer` page: one HTML file where they can orbit the
+   part, colour it by stress, safety factor or displacement, animate the
+   deformation, cut it open and replay the optimization.
 5. **Iterate on the problem, not the shape.** Too heavy: is the design space
    bigger than it needs to be, or a load case unrealistic? Fails the goal:
    are the loads right, is it held where it really is? Then re-run.
