@@ -86,20 +86,25 @@ TETWILD_EPSILON = 1e-3
 
 def _tetwild(mesh, size):
     import pytetwild
-    pts, tets = pytetwild.tetrahedralize(np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int32),
-                                         edge_length_abs=size, epsilon=TETWILD_EPSILON,
-                                         num_threads=os.cpu_count() or 1,
-                                         # its defaults (energy 10, 80 passes) took twice as long for
-                                         # a handful fewer elements under a tenth of regular quality
-                                         stop_energy=50.0, num_opt_iter=20)
+    # fTetWild leaves files (__tracked_surface.stl, _skipped.*) in the
+    # working directory: run it in a scratch one
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chdir(tmp)
+        try:
+            pts, tets = pytetwild.tetrahedralize(
+                np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int32), edge_length_abs=size,
+                epsilon=TETWILD_EPSILON, num_threads=os.cpu_count() or 1,
+                # its defaults (energy 10, 80 passes) took twice as long for
+                # a handful fewer elements under a tenth of regular quality
+                stop_energy=50.0, num_opt_iter=20)
+        finally:
+            os.chdir(cwd)
     pts, tets = np.asarray(pts, float), np.asarray(tets, np.int64)
     x = pts[tets]
     neg = np.linalg.det(x[:, 1:] - x[:, :1]) < 0
     tets[neg] = tets[neg][:, [0, 2, 1, 3]]
     return pts, tets
-
-
-_GMSH_OPTS = {}
 
 
 def _tet_mesh_once(mesh, size, order, algo, size_at=None):
@@ -127,8 +132,6 @@ def _tet_mesh_once(mesh, size, order, algo, size_at=None):
             gmsh.option.setNumber("Mesh.Algorithm3D", algo)        # 1 Delaunay, 10 HXT
             gmsh.option.setNumber("Mesh.ElementOrder", order)
             gmsh.option.setNumber("Mesh.SecondOrderLinear", 1)     # mid-nodes on the straight edge: the surface is facets
-            for k_, v_ in _GMSH_OPTS.items():
-                gmsh.option.setNumber(k_, v_)
             gmsh.model.mesh.generate(3)
             tags, coords, _ = gmsh.model.mesh.getNodes()
             pts = coords.reshape(-1, 3)
