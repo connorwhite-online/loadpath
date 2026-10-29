@@ -45,7 +45,7 @@ from scipy.sparse.linalg import LinearOperator, eigsh, splu
 
 from .fem import CORNERS, HexMesh, Solver, Stiffness, von_mises
 
-__all__ = ["NonlinearResult", "BucklingResult", "solve_nonlinear", "linear_buckling",
+__all__ = ["NonlinearResult", "BucklingResult", "Tendon", "nodes_near", "solve_nonlinear", "linear_buckling",
            "solid_submesh", "verify_mechanism"]
 
 # Above this many dofs the Newton steps use CG + AMG instead of a direct
@@ -188,7 +188,11 @@ class _Linear:
         from scipy.sparse.linalg import lobpcg
         m = self.iter._precond(k)
         x0 = np.random.default_rng(0).standard_normal((n, 1))
-        vals, vecs = lobpcg(k, x0, M=m, largest=False, tol=1e-6, maxiter=300)
+        import warnings
+        with warnings.catch_warnings():
+            # only the sign matters here; a loose eigenvalue is fine
+            warnings.simplefilter("ignore", UserWarning)
+            vals, vecs = lobpcg(k, x0, M=m, largest=False, tol=1e-6, maxiter=300)
         return float(vals[0]), vecs[:, 0]
 
 
@@ -215,10 +219,85 @@ def _post(mesh, u, mod, nu, kind):
     return vm, stretch - 1.0
 
 
+@dataclass
+class Tendon:
+    """A cable at constant tension through guides on the part, like a
+    tendon in its channel: each point of `path` is either a fixed point in
+    space (a float array of 3, e.g. the servo's spool or a palm pulley) or
+    a guide on the part (an int array of node ids; the guide sits at their
+    mean and moves with them). The cable runs straight between consecutive
+    points and slides freely through the guides, so each guide is pulled
+    toward both its neighbours along the deformed cable and the last point
+    (the knot) toward the one before it. The load follows the part as it
+    curls, which a dead force does not: on a curling finger a fixed-
+    direction force gains moment arm, a tendon's stays in its channel.
+
+    Constant tension makes it conservative (potential T * cable length), so
+    the load stiffness is symmetric and Newton keeps its tangent symmetric.
+    Tension scales with the load factor like `force`. Each step records the
+    tendon's travel (how much cable the actuator has pulled in, mm)."""
+    tension: float
+    path: list
+
+    def _setup(self, mesh):
+        pts = []
+        for p in self.path:
+            a = np.asarray(p)
+            if a.dtype.kind in "iu":
+                ids = np.unique(a.ravel()).astype(np.int64)
+                if len(ids) == 0:
+                    raise ValueError("Tendon: a guide with no nodes")
+                w = np.full(len(ids), 1.0 / len(ids))
+                rows = np.repeat(np.arange(3), len(ids))
+                cols = (3 * ids[None, :] + np.arange(3)[:, None]).ravel()
+                g = sp.csr_matrix((np.tile(w, 3), (rows, cols)), shape=(3, mesh.n_dof))
+                pts.append((mesh.node_xyz[ids].mean(axis=0), g))
+            else:
+                if a.shape != (3,):
+                    raise ValueError("Tendon: a fixed point is 3 floats; a guide is an int array of node ids")
+                pts.append((a.astype(float), None))
+        if len(pts) < 2:
+            raise ValueError("Tendon: the path needs at least two points")
+        self._segs = []
+        for (xa, ga), (xb, gb) in zip(pts[:-1], pts[1:]):
+            gd = (gb if gb is not None else 0) - (ga if ga is not None else 0)
+            if isinstance(gd, int):
+                continue                       # between two fixed points: no load on the part
+            self._segs.append((xb - xa, sp.csr_matrix(gd)))
+        self._len0 = sum(np.linalg.norm(x0) for x0, _ in self._segs)
+
+    def _load(self, u, scale):
+        """Force on the part (per dof), load stiffness, and cable length
+        (over the segments that touch the part)."""
+        t = self.tension * scale
+        n = u.shape[0]
+        f = np.zeros(n)
+        k = sp.csr_matrix((n, n))
+        length = 0.0
+        for d0, gd in self._segs:
+            d = d0 + gd @ u
+            ell = float(np.linalg.norm(d))
+            e = d / ell
+            length += ell
+            f -= t * (gd.T @ e)
+            k = k + gd.T @ sp.csr_matrix(t * (np.eye(3) - np.outer(e, e)) / ell) @ gd
+        return f, k.tocsr(), length
+
+
+def nodes_near(mesh: HexMesh, point, radius: float) -> np.ndarray:
+    """Node ids within `radius` of `point`: a tendon guide or knot."""
+    d = np.linalg.norm(mesh.node_xyz - np.asarray(point, float), axis=1)
+    ids = np.nonzero(d <= radius)[0]
+    if len(ids) == 0:
+        raise ValueError(f"no nodes within {radius} of {point}")
+    return ids
+
+
 def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force: np.ndarray | None = None,
                     prescribed: tuple | None = None, *, material: str = "neo-hookean", steps: int = 10,
                     max_step: float = 0.25, min_step: float = 1e-4, rtol: float = 1e-7, max_newton: int = 25,
-                    springs: np.ndarray | None = None, stability: bool = True, probes: dict | None = None,
+                    springs: np.ndarray | None = None, tendons: list | None = None, stability: bool = True,
+                    probes: dict | None = None,
                     on_step=None) -> NonlinearResult:
     """Geometrically nonlinear static solve.
 
@@ -226,7 +305,9 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     force: force per dof (N) at full load. prescribed: (dofs, values) moved to
     `values` (mm) at full load, e.g. an actuator's stroke. probes: name ->
     weight per dof; each step records weight . u (with unit-sum weights over
-    a face along a direction, the face's mean travel along it). springs:
+    a face along a direction, the face's mean travel along it). tendons:
+    Tendon loads (cables through guides) that follow the deformed part.
+    springs:
     grounded linear springs, N/mm per dof (an actuator's compliance, a
     workpiece pushing back).
 
@@ -266,8 +347,12 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
         sd = np.where(cons, 0.0, np.asarray(springs, float))
         spr = sp.diags(sd).tocsr()
 
+    tendons = tendons or []
+    keep_free = sp.diags((~cons).astype(float))
+    for t in tendons:
+        t._setup(mesh)
+
     def newton(v, target):
-        fext = target * f
         rnorm0 = None
         for its in range(1, max_newton + 1):
             fint, k, jmin = _assemble(stiff, v, mod, nu, material)
@@ -276,6 +361,12 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             if spr is not None:
                 fint = fint + spr @ v
                 k = (k + spr).tocsr()
+            fext = target * f
+            for t in tendons:
+                ft, kt, _ = t._load(v, target)
+                fext = fext + ft
+                # constrained rows and columns stay identity, as Stiffness leaves them
+                k = (k + keep_free @ kt @ keep_free).tocsr()
             r = fext - fint
             r[cons] = 0.0
             ref = max(np.linalg.norm(fext), np.linalg.norm(fint[pd]) if len(pd) else 0.0, 1e-30)
@@ -370,6 +461,8 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             rec[name] = float(wv @ u)
         if len(pd):
             rec["reaction"] = fint.reshape(-1, 3)[pnodes].sum(axis=0).tolist()
+        for i, t in enumerate(tendons):
+            rec[f"tendon{i}Travel"] = t._len0 - t._load(u, lam)[2]
         history.append(rec)
         if on_step is not None:
             on_step(rec, u)

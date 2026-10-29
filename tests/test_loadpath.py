@@ -432,6 +432,34 @@ def test_crosscheck_cantilever():
     assert abs(c["peakStress"] - 5.1) < 0.4, c["peakStress"]
 
 
+def test_crosscheck_calculix_agrees():
+    # CalculiX on the same quadratic mesh and boundary conditions: the two
+    # solvers' deflection and peak stress agree; a support sliding in x and y
+    # (held in z only) at the tip side is honoured by both
+    import shutil
+    try:
+        import gmsh  # noqa: F401
+    except (ImportError, OSError):
+        print("  (skipped: pip install loadpath[crosscheck])")
+        return
+    if shutil.which("ccx") is None:
+        print("  (skipped: CalculiX ccx not on PATH)")
+        return
+    import manifold3d as m3d
+    from loadpath.crosscheck import crosscheck
+    from loadpath.shapes import trimesh_from_manifold
+    mesh = trimesh_from_manifold(m3d.Manifold.cube((100, 10, 10)).refine(20))
+    spec = dict(BEAM, minMember=4, supports=BEAM["supports"] + [
+        {"shape": {"type": "box", "min": [60, -1, -1], "max": [70, 11, 0.01]}, "fix": "z"}])
+    r = [crosscheck(study_from_dict(spec), mesh, size=2.5, contact_band=12, backend=b, mesher="gmsh")
+         for b in ("native", "ccx")]
+    a, b = r[0]["cases"][0], r[1]["cases"][0]
+    assert abs(a["deflection"] - b["deflection"]) < 0.01 * a["deflection"], (a["deflection"], b["deflection"])
+    assert abs(a["peakStress"] - b["peakStress"]) < 0.05 * a["peakStress"], (a["peakStress"], b["peakStress"])
+    # propped: far stiffer than the 2.0 mm free cantilever
+    assert a["deflection"] < 1.0, a["deflection"]
+
+
 def test_process_layers_weaken_across_build_direction():
     # A cantilever bent along x: printed with layers stacking along x (FDM,
     # buildDirection +x) its bending tension pulls the layers apart, so the
@@ -735,6 +763,7 @@ TESTS = [
     test_union_region_and_dead_material_pruning,
     test_compliant_inverter,
     test_crosscheck_cantilever,
+    test_crosscheck_calculix_agrees,
     test_process_layers_weaken_across_build_direction,
     test_crease_metric_finds_unfilleted_junctions,
     test_closed_bore_is_flagged,

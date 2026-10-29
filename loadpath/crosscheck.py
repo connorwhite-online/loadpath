@@ -36,13 +36,26 @@ from .verify import STRESS_ALLOWANCE
 __all__ = ["crosscheck"]
 
 
-def _tet_mesh(mesh, size, order=1, size_at=None):
+def _tet_mesh(mesh, size, order=1, size_at=None, mesher=None):
     """Tetrahedra filling a closed triangle mesh: (points, tets), 4 or 10
-    nodes. Boolean output carries near-coincident sliver facets that gmsh's
-    boundary recovery rejects ("overlapping facets", "two facets
-    intersect"); which tolerance clears them varies by part, so on failure
-    the surface is cleaned with manifold's simplify at growing tolerances
-    (0.05 mm moved nothing visible on the GRIP wrist yoke) and tried again."""
+    nodes.
+
+    fTetWild (pytetwild) by default when installed. Delivered parts come out
+    of the booleans with needle triangles and near-touching facets (4k of
+    60k triangles on the motor-mount eval). Constrained meshers must keep
+    those triangles, so they leave flat slivers along the surface: gmsh's
+    Delaunay ground for 20 minutes on that part and failed, HXT met it in
+    2 s with 11k interior slivers that CG could not converge on. fTetWild
+    meshes within a small envelope of the surface instead (0.1% of the
+    part's diagonal, under 0.1 mm here) and came out with no element below
+    a fifth of the regular tet's quality, in about a minute.
+
+    gmsh otherwise: on failure the surface is cleaned with manifold's
+    simplify at growing tolerances (0.05 mm moved nothing visible on the GRIP
+    wrist yoke) and tried again."""
+    mesher = mesher or ("tetwild" if _has_tetwild() and size_at is None and order == 1 else "gmsh")
+    if mesher == "tetwild":
+        return _tetwild(mesh, size)
     from .shapes import manifold_from_trimesh, trimesh_from_manifold
 
     # (Decimating a fine STL to the element size first halved the time and
@@ -57,6 +70,41 @@ def _tet_mesh(mesh, size, order=1, size_at=None):
             except Exception as ex:  # noqa: BLE001 - gmsh raises bare Exception
                 last = ex
     raise RuntimeError(f"could not tetrahedralize the part: {last}")
+
+
+def _has_tetwild():
+    try:
+        import pytetwild  # noqa: F401  (availability check)
+    except ImportError:
+        return False
+    return True
+
+
+# fTetWild's surface envelope, as a fraction of the bounding-box diagonal
+TETWILD_EPSILON = 1e-3
+
+
+def _tetwild(mesh, size):
+    import pytetwild
+    # fTetWild leaves files (__tracked_surface.stl, _skipped.*) in the
+    # working directory: run it in a scratch one
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chdir(tmp)
+        try:
+            pts, tets = pytetwild.tetrahedralize(
+                np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int32), edge_length_abs=size,
+                epsilon=TETWILD_EPSILON, num_threads=os.cpu_count() or 1,
+                # its defaults (energy 10, 80 passes) took twice as long for
+                # a handful fewer elements under a tenth of regular quality
+                stop_energy=50.0, num_opt_iter=20)
+        finally:
+            os.chdir(cwd)
+    pts, tets = np.asarray(pts, float), np.asarray(tets, np.int64)
+    x = pts[tets]
+    neg = np.linalg.det(x[:, 1:] - x[:, :1]) < 0
+    tets[neg] = tets[neg][:, [0, 2, 1, 3]]
+    return pts, tets
 
 
 def _tet_mesh_once(mesh, size, order, algo, size_at=None):
@@ -99,6 +147,15 @@ def _tet_mesh_once(mesh, size, order, algo, size_at=None):
         finally:
             gmsh.finalize()
     return pts, tets
+
+
+def _boundary_nodes(tets):
+    """Vertices on the mesh's boundary: of the faces only one tet owns.
+    (A distance to the input surface took 7 s on the motor-mount and misses
+    nodes fTetWild leaves inside its envelope.)"""
+    f = np.sort(tets[:, [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]]].reshape(-1, 3), axis=1)
+    uniq, count = np.unique(f, axis=0, return_counts=True)
+    return np.unique(uniq[count == 1])
 
 
 def _region_nodes(study, shape, pts, tol):
@@ -202,7 +259,10 @@ def _assemble(nodes, conn, E, nu, chunk=20_000):
     import scipy.sparse as sp
     c = _elastic(E, nu)
     n_dof = 3 * len(nodes)
-    rows, cols, vals = [], [], []
+    # each chunk summed into CSR as it is made: the whole COO triplet list
+    # (900 entries per element, 24 bytes each) ran a 700k-element mesh out
+    # of 15 GB; summed pairwise so no entry is copied more than log(n) times
+    parts = []
     for s0 in range(0, len(conn), chunk):
         cc = conn[s0:s0 + chunk]
         vol, g = _grads(nodes, cc)
@@ -210,33 +270,33 @@ def _assemble(nodes, conn, E, nu, chunk=20_000):
         for q in _QUAD:
             b = _b_matrices(_shape_grads(g, q))
             ke += np.einsum("eki,kl,elj->eij", b, c, b, optimize=True) * (vol / 4.0)[:, None, None]
-        dof = (3 * cc[:, :, None] + np.arange(3)).reshape(len(cc), 30)
-        rows.append(np.repeat(dof, 30, axis=1).ravel())
-        cols.append(np.tile(dof, (1, 30)).ravel())
-        vals.append(ke.ravel())
-    k = sp.coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n_dof, n_dof))
-    return k.tocsr()
+        dof = (3 * cc[:, :, None] + np.arange(3)).reshape(len(cc), 30).astype(np.int32)
+        parts.append(sp.csr_matrix((ke.ravel(), (np.repeat(dof, 30, axis=1).ravel(), np.tile(dof, (1, 30)).ravel())),
+                                   shape=(n_dof, n_dof)))
+    while len(parts) > 1:
+        parts = [parts[i] + parts[i + 1] if i + 1 < len(parts) else parts[i] for i in range(0, len(parts), 2)]
+    return parts[0]
 
 
-def _solve(nodes, conn, E, nu, fixed_nodes, loads, n_vertices, edges):
+def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     """P2 elasticity by CG with a p-multigrid preconditioner: symmetric
     Gauss-Seidel on the quadratic system, and a coarse correction on the
     linear (vertex-only) problem, Galerkin-projected and solved by node-
     blocked smoothed-aggregation AMG with the six rigid-body modes.
     Aggregation AMG coarsens the quadratic system's edge nodes badly: on the
     wrist yoke it took 166 iterations directly and 82 this way (22 s vs 38 s
-    per case)."""
+    per case). `fixed_dof` marks held dofs; `springs` (or None) is added to
+    the stiffness (pins)."""
     import pyamg
     import scipy.sparse as sp
     import scipy.sparse.linalg as spla
     from pyamg.relaxation.relaxation import gauss_seidel
 
     k = _assemble(nodes, conn, E, nu)
+    if springs is not None:
+        k = k + springs
     n = len(nodes)
-    fixed = np.zeros(n, bool)
-    fixed[fixed_nodes] = True
-    free_n = np.nonzero(~fixed)[0]
-    free = (3 * free_n[:, None] + np.arange(3)).ravel()
+    free = np.nonzero(~fixed_dof)[0]
     kff = k[free][:, free].tocsr().astype(np.float64)
     # P1 -> P2 prolongation: vertices copy, edge nodes average their ends
     nv = n_vertices
@@ -281,6 +341,26 @@ def _solve(nodes, conn, E, nu, fixed_nodes, loads, n_vertices, edges):
     return [one(f) for _n, f, _ in loads]
 
 
+# a pin's stiffness per node, per unit modulus times element size, radially
+# and along the axis: stiff against the elements' own (about E h), not so
+# stiff that CG notices
+_PIN_STIFFNESS = 1e3
+
+
+def _pin_springs(blocks, e_h, n):
+    if not blocks:
+        return None
+    import scipy.sparse as sp
+    rows, cols, vals = [], [], []
+    for idx, b in blocks:
+        for i in range(3):
+            for j in range(3):
+                rows.append(3 * idx + i)
+                cols.append(3 * idx + j)
+                vals.append(b[:, i, j] * _PIN_STIFFNESS * e_h)
+    return sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(3 * n, 3 * n))
+
+
 def _rigid_modes(xyz, comp):
     """The six rigid-body modes of the free dofs, the near-null space AMG
     needs to coarsen elasticity well."""
@@ -317,15 +397,21 @@ def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices):
 
 
 def crosscheck(study: Study, mesh, size: float | None = None, contact_band: float | None = None,
-               backend: str = "native", adaptive: bool = False) -> dict:
+               backend: str = "native", adaptive: bool = False, mesher: str | None = None) -> dict:
     """Independent analysis of `mesh` (trimesh) under the study's cases.
     Returns {safetyFactor, cases: [{name, peakStress, peakAt, deflection}],
-    nodes, elements, seconds, backend}."""
+    nodes, elements, seconds, timings, backend, mesher}.
+
+    backend: "native" (P2 here), "ccx" (CalculiX), or "both" on the same
+    mesh: then the native result carries `calculix` (CalculiX's) and
+    `agreement` (CalculiX / native per case). Supports hold the axes the
+    study gives them (`fix`), and pins hold radially and axially.
+    mesher: "tetwild" (default when pytetwild is installed) or "gmsh"."""
     t0 = time.time()
     mat = study.material
     size = size or max(0.75, 0.5 * (study.min_member or 3.0))
     band = contact_band if contact_band is not None else 2.0 * size
-    if adaptive and backend != "ccx":
+    if adaptive:
         # (Off by default: the volume mesh grows from the STL's own surface
         # triangles, so on the wrist yoke this cut elements by only 12% and
         # the extra pass cost more than it saved.)
@@ -345,33 +431,47 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
             return size if d < radius else size + (2.5 * size - size) * min(1.0, (d - radius) / radius)
         pts, tets = _tet_mesh(mesh, 2.5 * size, size_at=size_at)
     else:
-        pts, tets = _tet_mesh(mesh, size, order=2 if backend == "ccx" else 1)
+        pts, tets = _tet_mesh(mesh, size, mesher=mesher)
+    timings = {"mesh": time.time() - t0}
     from scipy.spatial import cKDTree
-    # surface nodes: on the input surface (to a hair)
-    surf = np.nonzero(np.abs(mesh.nearest.signed_distance(pts)) < 0.05 * size)[0]
+    surf = _boundary_nodes(tets)
     tol = 0.6 * size
-    fixed_shapes = [sup.shape if sup.shape is not None else study.region_shape(sup.region)[0]
-                    for sup in study.supports]
-    fixed_nodes = np.unique(np.concatenate([np.intersect1d(_region_nodes(study, sh, pts, tol), surf)
-                                            for sh in fixed_shapes]))
-    if len(fixed_nodes) == 0:
-        raise ValueError("no surface node of the part lies in any support region")
     loads = _load_vectors(study, pts, surf, tol)
 
-    if backend == "ccx":
-        cases = _solve_ccx(study, pts, tets, fixed_nodes, loads)
-    else:
-        nodes, conn, edges = _p2_mesh(pts, tets)
-        # an edge node is held when both its ends are
-        held = np.zeros(len(pts), bool)
-        held[fixed_nodes] = True
-        fixed_all = np.concatenate([fixed_nodes, len(pts) + np.nonzero(held[edges[:, 0]] & held[edges[:, 1]])[0]])
-        us = _solve(nodes, conn, mat.E, mat.nu, fixed_all, loads, len(pts), edges)
-        contact = np.unique(np.concatenate([fixed_nodes] + [l[2] for l in loads]))
-        far = cKDTree(pts[contact]).query(pts, distance_upper_bound=band)[0] == np.inf
+    t1 = time.time()
+    nodes, conn, edges = _p2_mesh(pts, tets)
+    # supports on the quadratic mesh: an edge node is held when both its
+    # ends are; per axis as the study says (a sliding support holds one)
+    fixed_dof = np.zeros(3 * len(nodes), bool)
+    supports, pin_blocks, fixed_nodes = [], [], []
+    for i, sup in enumerate(study.supports):
+        sh = sup.shape if sup.shape is not None else study.region_shape(sup.region)[0]
+        vn = np.intersect1d(_region_nodes(study, sh, pts, tol), surf)
+        if len(vn) == 0:
+            raise ValueError(f"supports[{i}] touches no surface node of the part")
+        on = np.zeros(len(pts), bool)
+        on[vn] = True
+        held = np.concatenate([vn, len(pts) + np.nonzero(on[edges[:, 0]] & on[edges[:, 1]])[0]])
+        fixed_nodes.append(vn)
+        for a in range(3):
+            if sup.fix[a]:
+                fixed_dof[3 * held + a] = True
+        pin = None
+        if sup.pin:
+            # held radially and along the axis, free to turn about it
+            pin = (np.asarray(sh.p0, float), np.asarray(sh.axis, float) / np.linalg.norm(sh.axis))
+            d = nodes[held] - pin[0]
+            rad = d - (d @ pin[1])[:, None] * pin[1]
+            rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
+            pin_blocks.append((held, rad[:, :, None] * rad[:, None, :] + np.outer(pin[1], pin[1])[None]))
+        supports.append((held, sup.fix, pin))
+    fixed_nodes = np.unique(np.concatenate(fixed_nodes))
+    contact = np.unique(np.concatenate([fixed_nodes] + [l[2] for l in loads]))
+    far = cKDTree(pts[contact]).query(pts, distance_upper_bound=band)[0] == np.inf
+
+    def summarize(results):
         cases = []
-        for (name, f, lnodes), u in zip(loads, us):
-            vm = _nodal_von_mises(nodes, conn, u.ravel(), mat.E, mat.nu, len(pts))
+        for (name, f, lnodes), (u, vm) in zip(loads, results):
             i = int(np.argmax(np.where(far, vm, -1)))
             # where the stress is within half of the peak: the next pass refines there
             order = np.argsort(-np.where(far, vm, -1))[:200]
@@ -380,61 +480,105 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                           "hotspots": hot.tolist(),
                           "deflection": float(np.linalg.norm(u[lnodes].mean(axis=0))),
                           "maxDisplacement": float(np.linalg.norm(u, axis=1).max())})
-    peak = max(c["peakStress"] for c in cases)
-    return {"backend": backend, "safetyFactor": mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else float("inf"),
-            "safetyFactorNoAllowance": mat.strength / peak if peak > 0 else float("inf"),
-            "cases": cases, "nodes": int(len(pts)), "elements": int(len(tets)), "elementSize": size,
-            "contactBand": band, "adaptive": bool(adaptive and backend != "ccx"), "seconds": time.time() - t0}
+        peak = max(c["peakStress"] for c in cases)
+        return {"safetyFactor": mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else float("inf"),
+                "safetyFactorNoAllowance": mat.strength / peak if peak > 0 else float("inf"), "cases": cases}
+
+    out = {}
+    if backend in ("native", "both"):
+        us = _solve(nodes, conn, mat.E, mat.nu, fixed_dof, _pin_springs(pin_blocks, mat.E * size, len(nodes)),
+                    loads, len(pts), edges)
+        out["native"] = summarize([(u, _nodal_von_mises(nodes, conn, u.ravel(), mat.E, mat.nu, len(pts)))
+                                   for u in us])
+        timings["native"] = time.time() - t1
+    if backend in ("ccx", "both"):
+        # the same quadratic mesh, held nodes and nodal forces: only the
+        # solver and its stress recovery differ
+        t2 = time.time()
+        out["ccx"] = summarize(_solve_ccx(mat, nodes, conn, supports, loads, len(pts)))
+        timings["ccx"] = time.time() - t2
+    if not out:
+        raise ValueError(f"backend must be 'native', 'ccx' or 'both', not {backend!r}")
+    result = dict(out.get("native") or out["ccx"])
+    if len(out) == 2:
+        # both solvers on one mesh: the native answer, CalculiX's beside it,
+        # and how far apart they are (ratio CalculiX / native per case)
+        result["calculix"] = out["ccx"]
+        result["agreement"] = [{"name": a["name"], "peakStress": b["peakStress"] / a["peakStress"],
+                                "deflection": b["deflection"] / a["deflection"]}
+                               for a, b in zip(out["native"]["cases"], out["ccx"]["cases"])]
+    return result | {"timings": timings, "backend": backend, "nodes": int(len(pts)), "elements": int(len(tets)),
+                     "elementSize": size, "contactBand": band, "adaptive": bool(adaptive),
+                     "mesher": mesher or ("tetwild" if _has_tetwild() and not adaptive else "gmsh"),
+                     "seconds": time.time() - t0}
 
 
-def _solve_ccx(study, pts, tets, fixed_nodes, loads):
-    """Write an Abaqus-style deck and run CalculiX (ccx on PATH)."""
+def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices):
+    """The quadratic system solved by CalculiX (ccx on PATH): one Abaqus-
+    style deck, one static step per load case. Returns [(u, von Mises at
+    the vertices)] per case, as the native solve does. CalculiX recovers
+    stress at its integration points and extrapolates to the nodes, a
+    different route from _nodal_von_mises."""
     exe = shutil.which("ccx")
     if exe is None:
         raise RuntimeError("CalculiX (ccx) is not on PATH; install it (Debian: apt install calculix-ccx) "
                            "or use the default backend")
-    mat = study.material
-    out = []
+    solver = _CCX_SOLVER or ("SPOOLES" if 3 * len(nodes) <= _CCX_DIRECT_MAX_DOF else "ITERATIVE CHOLESKY")
     with tempfile.TemporaryDirectory() as tmp:
-        for name, f, lnodes in loads:
-            deck = os.path.join(tmp, "job")
-            with open(deck + ".inp", "w") as fh:
-                fh.write("*NODE\n")
-                for i, p in enumerate(pts):
-                    fh.write(f"{i + 1},{p[0]:.6f},{p[1]:.6f},{p[2]:.6f}\n")
-                fh.write("*ELEMENT,TYPE=C3D10,ELSET=PART\n")
-                for j, t in enumerate(tets):
-                    # gmsh and CalculiX share the 10-node ordering up to the last two mid-edge nodes
-                    tt = t[[0, 1, 2, 3, 4, 5, 6, 7, 9, 8]] + 1
-                    fh.write(f"{j + 1}," + ",".join(str(v) for v in tt) + "\n")
-                fh.write("*NSET,NSET=FIX\n")
-                for i in fixed_nodes:
-                    fh.write(f"{i + 1}\n")
-                fh.write(f"*MATERIAL,NAME=M\n*ELASTIC\n{mat.E},{mat.nu}\n*SOLID SECTION,ELSET=PART,MATERIAL=M\n")
-                fh.write("*BOUNDARY\nFIX,1,3\n*STEP\n*STATIC\n*CLOAD\n")
-                for i in np.nonzero(np.abs(f).sum(axis=1) > 0)[0]:
-                    for c in range(3):
-                        if f[i, c]:
-                            fh.write(f"{i + 1},{c + 1},{f[i, c]:.9g}\n")
-                fh.write("*NODE FILE\nU\n*EL FILE\nS\n*END STEP\n")
-            subprocess.run([exe, "job"], cwd=tmp, check=True, capture_output=True, timeout=3600)
-            u, vm = _read_frd(deck + ".frd", len(pts))
-            i = int(np.argmax(vm))
-            out.append({"name": name, "peakStress": float(vm[i]), "peakAt": pts[i].tolist(),
-                        "deflection": float(np.linalg.norm(u[lnodes].mean(axis=0))),
-                        "maxDisplacement": float(np.linalg.norm(u, axis=1).max())})
-    return out
+        deck = os.path.join(tmp, "job")
+        with open(deck + ".inp", "w") as fh:
+            fh.write("*NODE,NSET=NALL\n")
+            np.savetxt(fh, np.column_stack([np.arange(1, len(nodes) + 1), nodes]), fmt="%d,%.9g,%.9g,%.9g")
+            # _EDGES is CalculiX's C3D10 mid-node order (12, 23, 31, 14, 24, 34)
+            fh.write("*ELEMENT,TYPE=C3D10,ELSET=PART\n")
+            np.savetxt(fh, np.column_stack([np.arange(1, len(conn) + 1), conn + 1]), fmt="%d", delimiter=",")
+            bc = []
+            for k, (held, fix, pin) in enumerate(supports):
+                fh.write(f"*NSET,NSET=S{k}\n")
+                np.savetxt(fh, held + 1, fmt="%d")
+                if pin is not None:
+                    # the pin exactly: cylindrical axes about it (radial,
+                    # tangential, axial), radial and axial held
+                    a, b = pin[0], pin[0] + pin[1]
+                    fh.write(f"*TRANSFORM,NSET=S{k},TYPE=C\n" + ",".join(f"{v:.9g}" for v in (*a, *b)) + "\n")
+                    bc += [f"S{k},1,1", f"S{k},3,3"]
+                bc += [f"S{k},{a + 1},{a + 1}" for a in range(3) if fix[a]]
+            fh.write(f"*MATERIAL,NAME=M\n*ELASTIC\n{mat.E:.9g},{mat.nu:.9g}\n"
+                     "*SOLID SECTION,ELSET=PART,MATERIAL=M\n*BOUNDARY\n" + "\n".join(bc) + "\n")
+            for _name, f, _l in loads:
+                fh.write(f"*STEP\n*STATIC,SOLVER={solver}\n*CLOAD,OP=NEW\n")
+                i, c = np.nonzero(f)
+                np.savetxt(fh, np.column_stack([i + 1, c + 1, f[i, c]]), fmt="%d,%d,%.12g")
+                fh.write("*NODE FILE\nU\n*NODE FILE\nS\n*END STEP\n")
+        env = dict(os.environ)
+        env.setdefault("OMP_NUM_THREADS", str(os.cpu_count() or 1))
+        run = subprocess.run([exe, "job"], cwd=tmp, capture_output=True, text=True, timeout=7200, env=env)
+        if run.returncode != 0 or not os.path.exists(deck + ".frd"):
+            raise RuntimeError(f"CalculiX failed: {(run.stdout + run.stderr)[-2000:]}")
+        steps = _read_frd(deck + ".frd", len(nodes))
+    if len(steps) != len(loads):
+        raise RuntimeError(f"CalculiX returned {len(steps)} steps for {len(loads)} load cases")
+    return [(u, vm[:n_vertices]) for u, vm in steps]
+
+
+# CalculiX's solver: its direct SPOOLES factorization up to this many
+# unknowns (110 s on the motor-mount's 350k, where its preconditioned CG
+# took 410 s), the CG above (memory stays linear in the mesh)
+_CCX_DIRECT_MAX_DOF = 1_000_000
+_CCX_SOLVER = None
 
 
 def _read_frd(path, n):
-    """Displacements and nodal von Mises from a CalculiX .frd result file."""
-    u = np.zeros((n, 3))
-    s = np.zeros((n, 6))
-    block = None
+    """Per step: displacements (n, 3) and nodal von Mises (n,) from a
+    CalculiX .frd result file (fixed-width records)."""
+    steps, u, s, block = [], None, None, None
     with open(path) as fh:
         for line in fh:
             if line.startswith(" -4"):
                 block = line.split()[1]
+                if block == "DISP":
+                    u, s = np.zeros((n, 3)), np.zeros((n, 6))
+                    steps.append((u, s))
             elif line.startswith(" -1") and block in ("DISP", "STRESS"):
                 i = int(line[3:13]) - 1
                 vals = [float(line[13 + 12 * k:25 + 12 * k]) for k in range((len(line.rstrip()) - 13) // 12)]
@@ -444,6 +588,9 @@ def _read_frd(path, n):
                     s[i] = vals[:6]
             elif line.startswith(" -3"):
                 block = None
-    sx, sy, sz, sxy, syz, szx = s.T
-    vm = np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2) + 3 * (sxy ** 2 + syz ** 2 + szx ** 2))
-    return u, vm
+    out = []
+    for u, s in steps:
+        sx, sy, sz, sxy, syz, szx = s.T
+        out.append((u, np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2)
+                               + 3 * (sxy ** 2 + syz ** 2 + szx ** 2))))
+    return out

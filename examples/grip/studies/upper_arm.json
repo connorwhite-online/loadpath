@@ -1,0 +1,438 @@
+{
+ "name": "grip-v3-upper-arm",
+ "description": "GRIP v0.3 upper arm (generative/v3.py): j2 -> j3 with the J2 spring counterbalance",
+ "designSpace": [
+  {
+   "type": "box",
+   "min": [
+    -62.3,
+    -94.5,
+    167.75
+   ],
+   "max": [
+    62.3,
+    -16.5,
+    449.3
+   ]
+  }
+ ],
+ "preserve": [
+  {
+   "id": "j2-hub",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     -30.5,
+     200.0
+    ],
+    "p1": [
+     0.0,
+     -35.5,
+     200.0
+    ],
+    "r": 18.25,
+    "rInner": 6.25
+   }
+  },
+  {
+   "id": "j3-sleeve",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     -74.5,
+     387.0
+    ],
+    "p1": [
+     0.0,
+     -51.5,
+     387.0
+    ],
+    "r": 48.3,
+    "rInner": 43.3
+   }
+  },
+  {
+   "id": "j3-ledge",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     -80.5,
+     387.0
+    ],
+    "p1": [
+     0.0,
+     -74.5,
+     387.0
+    ],
+    "r": 48.3,
+    "rInner": 31.759
+   }
+  },
+  {
+   "id": "spring-pin-boss",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -8.0,
+     -46.0,
+     280.0
+    ],
+    "p1": [
+     8.0,
+     -46.0,
+     280.0
+    ],
+    "r": 7.0
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "j2-bolt-0",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     8.662,
+     -29.5,
+     208.662
+    ],
+    "p1": [
+     8.662,
+     -40.5,
+     208.662
+    ],
+    "r": 1.7
+   }
+  },
+  {
+   "id": "j2-driver-access-0",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     8.662,
+     -33.5,
+     208.662
+    ],
+    "p1": [
+     8.662,
+     -84.5,
+     208.662
+    ],
+    "r": 3.0
+   }
+  },
+  {
+   "id": "j2-bolt-1",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -8.662,
+     -29.5,
+     208.662
+    ],
+    "p1": [
+     -8.662,
+     -40.5,
+     208.662
+    ],
+    "r": 1.7
+   }
+  },
+  {
+   "id": "j2-driver-access-1",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -8.662,
+     -33.5,
+     208.662
+    ],
+    "p1": [
+     -8.662,
+     -84.5,
+     208.662
+    ],
+    "r": 3.0
+   }
+  },
+  {
+   "id": "j2-bolt-2",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -8.662,
+     -29.5,
+     191.338
+    ],
+    "p1": [
+     -8.662,
+     -40.5,
+     191.338
+    ],
+    "r": 1.7
+   }
+  },
+  {
+   "id": "j2-driver-access-2",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -8.662,
+     -33.5,
+     191.338
+    ],
+    "p1": [
+     -8.662,
+     -84.5,
+     191.338
+    ],
+    "r": 3.0
+   }
+  },
+  {
+   "id": "j2-bolt-3",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     8.662,
+     -29.5,
+     191.338
+    ],
+    "p1": [
+     8.662,
+     -40.5,
+     191.338
+    ],
+    "r": 1.7
+   }
+  },
+  {
+   "id": "j2-driver-access-3",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     8.662,
+     -33.5,
+     191.338
+    ],
+    "p1": [
+     8.662,
+     -84.5,
+     191.338
+    ],
+    "r": 3.0
+   }
+  },
+  {
+   "id": "j2-below",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     40.0,
+     200.0
+    ],
+    "p1": [
+     0.0,
+     -30.0,
+     200.0
+    ],
+    "r": 55.0
+   }
+  },
+  {
+   "id": "j3-drive",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     -74.5,
+     387.0
+    ],
+    "p1": [
+     0.0,
+     -29.0,
+     387.0
+    ],
+    "r": 43.3
+   }
+  },
+  {
+   "id": "j3-motor",
+   "shape": {
+    "type": "box",
+    "min": [
+     -21.75,
+     -135.5,
+     365.25
+    ],
+    "max": [
+     21.75,
+     -74.5,
+     408.75
+    ]
+   }
+  },
+  {
+   "id": "j3-driver",
+   "shape": {
+    "type": "box",
+    "min": [
+     -21.75,
+     -152.5,
+     365.25
+    ],
+    "max": [
+     21.75,
+     -135.5,
+     408.75
+    ]
+   }
+  },
+  {
+   "id": "j3-child-sweep",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     -42.0,
+     387.0
+    ],
+    "p1": [
+     0.0,
+     -12.0,
+     387.0
+    ],
+    "r": 55.0
+   }
+  },
+  {
+   "id": "spring-pin",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -11.0,
+     -46.0,
+     280.0
+    ],
+    "p1": [
+     11.0,
+     -46.0,
+     280.0
+    ],
+    "r": 2.6
+   }
+  },
+  {
+   "id": "spring-cable",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     -46.0,
+     280.0
+    ],
+    "p1": [
+     0.0,
+     -39.0,
+     256.0
+    ],
+    "r": 4.0
+   }
+  }
+ ],
+ "supports": [
+  {
+   "region": "j2-bolt-0"
+  },
+  {
+   "region": "j2-bolt-1"
+  },
+  {
+   "region": "j2-bolt-2"
+  },
+  {
+   "region": "j2-bolt-3"
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "reach",
+   "loads": [
+    {
+     "region": "j3-sleeve",
+     "force": [
+      -27.04,
+      0.0,
+      0.0
+     ],
+     "moment": [
+      0.0,
+      -9420.6,
+      416.9
+     ]
+    },
+    {
+     "region": "spring-pin-boss",
+     "force": [
+      62.8,
+      0.0,
+      -78.9
+     ]
+    }
+   ]
+  },
+  {
+   "name": "j3-rated-torque",
+   "loads": [
+    {
+     "region": "j3-sleeve",
+     "moment": [
+      0.0,
+      13000.0,
+      0.0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "lateral",
+   "loads": [
+    {
+     "region": "j3-sleeve",
+     "force": [
+      0.0,
+      20.0,
+      0.0
+     ]
+    }
+   ]
+  }
+ ],
+ "material": {
+  "name": "pa12-gf",
+  "E": 3200,
+  "nu": 0.37,
+  "strength": 48,
+  "density": 1.22,
+  "note": "SLS glass-filled PA12 (EOS PA 3200 GF datasheet)"
+ },
+ "goal": {
+  "safetyFactor": 2.0,
+  "volumeFraction": 0.12
+ },
+ "minMember": 3.0,
+ "symmetry": [
+  "x"
+ ],
+ "resolution": {
+  "maxElements": 120000
+ },
+ "chain": {
+  "distalKg": 1.8374,
+  "staticTorqueNm": 6.280430273577902
+ }
+}
