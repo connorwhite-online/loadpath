@@ -186,9 +186,12 @@ there. The report's `deflection` for a pressure-only case is the most any
 wetted wall bulges. Checked against Lamé (tests/test_pressure.py): a thick
 sphere reads 5-7% over the exact bore stress and 6-9% over its bulge; a
 closed thin cylinder (3.7 cells through the wall) 8-11% over the hoop
-stress. Walls under two cells thick are warned about: on a voxel grid they
-are too stiff in bending. The tetrahedral cross-check does not apply
-pressure yet.
+stress. Verification resolves the thinnest wall or skin with four cells (up
+to 400,000 cells): a wall voxelizes to a whole number of cells, and at two
+or three a 2 mm plenum wall read 2.4 mm and 30% under its bending stress; at
+four, the flat wall of a 90 x 60 mm plenum reads the clamped-plate centre
+stress (50 MPa at 2.5 bar). Walls under two optimization cells are warned
+about. The tetrahedral cross-check does not apply pressure yet.
 
 ## Reading the report
 

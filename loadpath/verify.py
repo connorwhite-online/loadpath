@@ -341,6 +341,10 @@ def _hotspots(xyz, vm, body, peak, radius, count=3):
 # wetted nodes within 1.5 cells of each, the peak reads 7.6-7.9, the real
 # wall's to within the discretization allowance.
 _WET_SMOOTH = 1.5
+# cells through the thinnest pinned wall or skin (study.shells), and the most
+# cells verification will spend getting there
+_SHELL_CELLS = 4.0
+_SHELL_MAX_CELLS = 400_000
 
 
 def _smooth_wetted(xyz, vm, wet, pitch):
@@ -534,6 +538,14 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     pitch = (vol / max_cells) ** (1.0 / 3.0)
     if min_pitch:
         pitch = max(pitch, min_pitch)
+    if study.shells:
+        # A wall voxelizes to a whole number of cells, so at two or three
+        # cells through it reads up to a cell thick or thin: bending stress
+        # goes as 1/t^2, and a plenum's 2 mm wall read 2.4 mm and 30% under
+        # its stress at 0.8 mm cells. Four cells through the thinnest wall or
+        # skin, within a cell budget.
+        thin = min(t for _, t in study.shells)
+        pitch = min(pitch, max(thin / _SHELL_CELLS, (vol / _SHELL_MAX_CELLS) ** (1.0 / 3.0)))
     solid, origin = voxelize(mesh, pitch)
     report["analysisPitch"] = pitch
     report["minMember"], report["p5Member"] = _thickness(solid, pitch)
