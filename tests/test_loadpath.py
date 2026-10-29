@@ -535,6 +535,21 @@ def test_surface_thickness_reads_a_plate_without_a_grid():
     assert abs(p5 - 2.05) < 0.02 and abs(p1 - 2.05) < 0.02, (p1, p5)
 
 
+def test_surface_thickness_leaves_out_the_users_own_walls():
+    """A 1.5 mm plate that is the study's own preserved geometry is not read
+    as a thin member; a 4 mm block grown onto it is what gets measured."""
+    from types import SimpleNamespace
+
+    from loadpath.verify import surface_thickness
+
+    plate = trimesh.creation.box(bounds=[[-20, -20, 0], [20, 20, 1.5]])
+    block = trimesh.creation.box(bounds=[[-30, -20, 1.5], [-20, 20, 5.5]])
+    part = trimesh.boolean.union([plate, block], engine="manifold")
+    study = SimpleNamespace(preserve=[SimpleNamespace(shape=Box([-20, -20, 0], [20, 20, 1.5]))], keep_out=[])
+    assert surface_thickness(part, samples=3000)[1] < 1.6
+    assert surface_thickness(part, samples=3000, study=study)[1] > 3.5
+
+
 def test_snap_runs_the_body_flush_with_a_boss_face():
     """A body whose underside lies 0.3 mm above a boss's end face goes onto
     the face's plane over the boss and a cell past its rim, eases back to
@@ -793,6 +808,8 @@ TESTS = [
     test_crease_metric_finds_unfilleted_junctions,
     test_closed_bore_is_flagged,
     test_surface_thickness_reads_a_plate_without_a_grid,
+    test_surface_thickness_leaves_out_the_users_own_walls,
+    test_snap_runs_the_body_flush_with_a_boss_face,
     test_lattice_infill_is_lighter_and_walled,
     test_lattice_homogenization_matches_the_fits,
     test_lattice_sized_to_a_safety_factor_drains_and_holds,

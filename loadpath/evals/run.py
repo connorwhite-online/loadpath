@@ -62,7 +62,7 @@ def _cmp(v, op, ref):
     return {"<=": v <= ref + 1e-9, ">=": v >= ref - 1e-9, "==": v == ref}[op]
 
 
-def score_case(raw: dict, result, seconds: float) -> dict:
+def score_case(raw: dict, result, seconds: float, study=None) -> dict:
     expect = raw.get("expect", {})
     best = result.best
     out = {"case": raw.get("name"), "seconds": seconds, "checks": [], "outcomes": len(result.outcomes)}
@@ -78,7 +78,7 @@ def score_case(raw: dict, result, seconds: float) -> dict:
     if getattr(o, "mesh", None) is not None:
         from ..verify import surface_thickness
 
-        flat["p1Thickness"], flat["p5Thickness"] = surface_thickness(o.mesh)
+        flat["p1Thickness"], flat["p5Thickness"] = surface_thickness(o.mesh, study=study)
     out["best"] = {"volumeFraction": o.volume_fraction, "mass": flat["mass"],
                    "massReduction": flat["massReduction"], "safetyFactor": flat["safetyFactor"],
                    "p5Member": flat["p5Member"], "minMember": flat["minMember"],
@@ -139,7 +139,7 @@ def run_case(path: str, out: str) -> dict:
                                         if k in ("stage", "volumeFraction", "safetyFactor", "mass")}
                                        | {"case": name})),
                   file=sys.stderr, flush=True) if e.get("stage") in ("outcome",) else None))
-        row = score_case(raw, result, time.time() - t0)
+        row = score_case(raw, result, time.time() - t0, study)
         if result.best is not None or result.outcomes:
             o = result.outcomes[result.best if result.best is not None else -1]
             o.mesh.export(os.path.join(out, f"{name}.stl"))

@@ -99,22 +99,40 @@ def _thickness(solid, pitch):
     return float(vals.min()), float(np.percentile(vals, 5))
 
 
-def surface_thickness(mesh, samples: int = 6000, seed: int = 0):
+def surface_thickness(mesh, samples: int = 6000, seed: int = 0, study: Study | None = None):
     """Member thickness without a grid: from evenly spread surface points, a
     ray straight in along the inward normal to where it leaves the part (the
     shape diameter). Returns (p1, p5) in mm. The voxel ridge reading
     (_thickness) is quantized to the analysis cell, under-reading a 2.05 mm
     wall at a 0.98 mm pitch as 1.46; this one is not, but it costs a ray
-    cast per sample, so it is for scoring a finished part, not every outcome."""
+    cast per sample, so it is for scoring a finished part, not every outcome.
+    With the study, a ray that both enters and leaves on the user's own
+    surfaces (preserved or keep-out) is left out: that thickness is the
+    study's, not the optimizer's (GRIP's wrist yoke: its J5 servo sits 1.9 mm
+    above the J4 horn, so the preserved horn plate between them is 1.9 mm)."""
     import trimesh
 
+    # a fresh, merged copy: a part straight from the booleans can carry
+    # degenerate slivers whose bounds break the ray tree (the motor mount)
+    mesh = trimesh.Trimesh(np.array(mesh.vertices, float), np.array(mesh.faces), process=True)
+    mesh.update_faces(mesh.nondegenerate_faces())
     pts, fi = trimesh.sample.sample_surface_even(mesh, samples, seed=seed)
     n = mesh.face_normals[fi]
+    ok = np.isfinite(pts).all(axis=1) & (np.linalg.norm(n, axis=1) > 0.5)
+    pts, n = pts[ok], n[ok]
     origin = pts - n * 1e-3
     loc, ri, _ = mesh.ray.intersects_location(origin, -n, multiple_hits=False)
     if len(ri) == 0:
         return None, None
     d = np.linalg.norm(loc - origin[ri], axis=1)
+    if study is not None:
+        shapes = [r.shape for r in list(study.preserve) + list(study.keep_out)]
+        if shapes:
+            def on_user(q):
+                return np.min([np.abs(sh.sdf(q)) for sh in shapes], axis=0) < 0.05
+            mine = ~(on_user(pts[ri]) & on_user(loc))
+            if mine.any():
+                d = d[mine]
     return float(np.percentile(d, 1)), float(np.percentile(d, 5))
 
 
