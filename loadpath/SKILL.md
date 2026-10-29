@@ -95,6 +95,12 @@ field. `check` reports every problem at once: fix them all, then check again.
   (`loadpath_size_heat_exchanger`, seconds), then design it
   (`loadpath_heat_exchanger`): the report says whether each fluid reaches
   its ports and only its own.
+- Holding a mesh from somewhere else (your own field model, a CAD export)?
+  `loadpath_check_printability`, `loadpath_check_isolation` and
+  `loadpath_check_fit` check it directly. From Python, `check_dfm` and
+  `check_networks` also take the implicit field itself (`f(P) < 0` inside,
+  with bounds), which skips meshing and is the fast path for a part built
+  from a field.
 
 ## Printing direction
 

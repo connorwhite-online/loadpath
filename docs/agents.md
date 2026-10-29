@@ -35,6 +35,9 @@ syntax). `loadpath_guide` returns the same text.
 | `loadpath_lattice(job_id, outcome?, options?)` | Fill a finished outcome with a stress-graded TPMS lattice, as a new job. | a minute or two |
 | `loadpath_heat_exchanger(spec, base_dir?)` | Design, check and rate a two-fluid TPMS heat exchanger, as a job. | a minute or more |
 | `loadpath_size_heat_exchanger(spec, max_pressure_drop?, min_wall?)` | Sweep cell and wall for a duty before designing. | seconds |
+| `loadpath_check_printability(path, min_wall?, overhang_deg?, build?, pitch?, slicer?)` | Any STL/3MF/OBJ: wall thickness in mm with its ± (the voxel pitch) and the thinnest spots, overhang area for a build direction, trapped voids. `slicer` adds bridges, islands, support volume and bed contact. `minWallOk: null` means too coarse to judge. | seconds; under a minute at 5M triangles |
+| `loadpath_check_isolation(path, ports, plugs?, min_feature?, pitch?)` | Two-fluid isolation of a mesh: each circuit's ports (`a_in`, `a_out`…) in one void, no void shared, thinnest wall between circuits in mm ±. Plug the port openings or the outside air joins the circuits. | seconds |
+| `loadpath_check_fit(path, components)` | Does a board (with clearance, mounting holes, port cutouts) fit an enclosure's cavity. | seconds |
 | `loadpath_jobs(limit?)` | Recent jobs and their status. | instant |
 | `loadpath_cancel(job_id)` | Stop a job. | instant |
 

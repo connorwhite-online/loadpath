@@ -69,7 +69,8 @@ Tools: `loadpath_guide` (the study format), `loadpath_schema`,
 `loadpath_examples`, `loadpath_check`, `loadpath_start`, `loadpath_status`
 (outcomes, STL paths and renders), `loadpath_lattice`,
 `loadpath_heat_exchanger`, `loadpath_size_heat_exchanger`, `loadpath_jobs`,
-`loadpath_cancel`. Everything runs on the agent's own machine; jobs live in
+`loadpath_cancel`, and checks on any mesh file: `loadpath_check_printability`,
+`loadpath_check_isolation`, `loadpath_check_fit`. Everything runs on the agent's own machine; jobs live in
 `~/.loadpath/jobs` (`LOADPATH_HOME`). See [docs/agents.md](../docs/agents.md).
 
 From Python:

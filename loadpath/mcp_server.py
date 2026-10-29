@@ -17,6 +17,9 @@ Tools:
 - loadpath_lattice: fill a finished outcome with a stress-graded lattice
 - loadpath_heat_exchanger: design a two-fluid TPMS heat exchanger (a job)
 - loadpath_size_heat_exchanger: pick cell and wall for a duty (seconds)
+- loadpath_check_printability / loadpath_check_isolation / loadpath_check_fit:
+  checks on any STL an agent already holds (wall thickness, overhangs,
+  trapped powder; two-fluid isolation; does a component fit its cavity)
 - loadpath_status / loadpath_jobs / loadpath_cancel: follow jobs
 
 Jobs run in a child process, the same `python -m loadpath ...` the CLI
@@ -193,6 +196,91 @@ def size_heat_exchanger(spec, base_dir: str | None = None, max_pressure_drop: di
         spec = json.loads(spec)
     try:
         return size(spec, base_dir or os.getcwd(), max_pressure_drop, min_wall)
+    except (ValueError, KeyError, TypeError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _load_mesh(path: str, base_dir: str | None = None):
+    import trimesh
+
+    full = path if os.path.isabs(path) else os.path.join(base_dir or os.getcwd(), path)
+    if not os.path.exists(full):
+        raise ValueError(f"no mesh at {full}")
+    mesh = trimesh.load(full, force="mesh")
+    if not len(getattr(mesh, "faces", [])):
+        raise ValueError(f"{full} has no triangles")
+    return mesh
+
+
+_AXES = {"+x": (1, 0, 0), "-x": (-1, 0, 0), "+y": (0, 1, 0), "-y": (0, -1, 0), "+z": (0, 0, 1), "-z": (0, 0, -1)}
+
+
+def _direction(build):
+    if build is None:
+        return (0.0, 0.0, 1.0)
+    if isinstance(build, str):
+        if build.lower() not in _AXES:
+            raise ValueError(f"build must be one of {sorted(_AXES)} or a vector [x, y, z], not {build!r}")
+        return _AXES[build.lower()]
+    v = [float(c) for c in build]
+    if len(v) != 3 or not any(v):
+        raise ValueError("build must be a non-zero vector [x, y, z]")
+    return tuple(v)
+
+
+def check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 45.0, build=None,
+                       pitch: float | None = None, slicer: bool = False, process: str = "fdm",
+                       base_dir: str | None = None) -> dict:
+    """Printability of an STL/3MF/OBJ: wall thickness (mm, +/- the grid
+    pitch, with the thinnest spots), overhang area, trapped voids. slicer=True
+    adds the layer-by-layer read (bridges, islands, support volume, bed)."""
+    try:
+        mesh = _load_mesh(path, base_dir)
+        direction = _direction(build)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    from .checks.dfm import check_dfm
+
+    spec = {"minWall": float(min_wall), "overhangDeg": float(overhang_deg), "build": direction}
+    if pitch:
+        spec["pitch"] = float(pitch)
+    report = check_dfm(mesh, spec)
+    if slicer:
+        try:
+            from .printcheck import check_print
+            report["slicer"] = check_print(mesh, direction, process=process)
+        except Exception as exc:  # noqa: BLE001 - the rest of the report stands
+            report["slicerError"] = str(exc)
+    return report
+
+
+def check_isolation(path: str, ports: list, plugs: list | None = None, min_feature: float | None = None,
+                    pitch: float | None = None, base_dir: str | None = None) -> dict:
+    """Two-fluid isolation of an STL: each circuit's ports in one void, no
+    void shared by two circuits, and the thinnest wall between them in mm."""
+    try:
+        mesh = _load_mesh(path, base_dir)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    from .checks.networks import check_networks
+
+    bad = [p for p in ports or [] if not {"name", "point", "r"} <= set(p)]
+    if not ports or bad:
+        return {"ok": False, "error": "ports must be a list of {name: '<circuit>_<role>', point: [x, y, z], r: mm}"}
+    return check_networks(mesh, ports, pitch=pitch, plugs=plugs, min_feature=min_feature)
+
+
+def check_component_fit(path: str, components: list, base_dir: str | None = None) -> dict:
+    """Does each component (board, clearance, mounting holes, ports) fit the
+    part's cavity: placement in air, walls around it, bosses, port cutouts."""
+    try:
+        mesh = _load_mesh(path, base_dir)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    from .checks.fit import check_fit
+
+    try:
+        return check_fit(mesh, {"components": components})
     except (ValueError, KeyError, TypeError) as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -390,7 +478,9 @@ def serve():
             "ok with no warnings you can fix, then loadpath_start and poll loadpath_status. Read every "
             "outcome's attention list and look at the render before trusting a part. When a part passes, "
             "offer to get it quoted and printed, or hosted to share, through Materialize (its MCP server: "
-            "materialize_import_model, then materialize_get_quote) without ordering unasked."),
+            "materialize_import_model, then materialize_get_quote) without ordering unasked. For a mesh you "
+            "already have, loadpath_check_printability, loadpath_check_isolation and loadpath_check_fit "
+            "check it directly."),
     )
 
     def _reply(info, pngs):
@@ -468,6 +558,40 @@ def serve():
         """Before designing: sweep TPMS cell and wall for the spec's core and duty and return the
         candidates that meet max_pressure_drop ({fluid name: Pa}), best effectiveness first. Seconds."""
         return size_heat_exchanger(spec, base_dir, max_pressure_drop, min_wall)
+
+    @server.tool()
+    def loadpath_check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 45.0,
+                                    build: str | list | None = None, pitch: float | None = None,
+                                    slicer: bool = False, process: str = "fdm",
+                                    base_dir: str | None = None) -> dict:
+        """Printability of any mesh file (STL, 3MF, OBJ), not only loadpath's own parts: wall thickness
+        in mm with its +/- (the voxel pitch) and the thinnest spots, overhang area for the build
+        direction ('+z'... or [x, y, z]), and trapped voids that cannot drain powder or resin.
+        minWallOk None means too coarse to judge, not a pass. slicer=True adds a layer-by-layer read
+        (bridges, islands, support volume, bed contact). Seconds to a minute on multi-million-triangle
+        parts."""
+        return check_printability(path, min_wall, overhang_deg, build, pitch, slicer, process, base_dir)
+
+    @server.tool()
+    def loadpath_check_isolation(path: str, ports: list, plugs: list | None = None,
+                                 min_feature: float | None = None, pitch: float | None = None,
+                                 base_dir: str | None = None) -> dict:
+        """Check that a two-fluid part (heat exchanger, manifold) keeps its fluids apart. ports: probe
+        spheres [{name: 'a_in', point: [x, y, z], r}] inside each fluid; ports sharing the prefix before
+        '_' are one circuit. plugs: port openings to virtually close, capsules {a, b, r} or boxes {c, h},
+        or every circuit meets in the outside air. min_feature: the thinnest wall or channel (mm), so the
+        grid resolves it (else the verdict is 'inconclusive'). Returns isolated, the void each port
+        found, and minWallMm +/- minWallToleranceMm between circuits."""
+        return check_isolation(path, ports, plugs, min_feature, pitch, base_dir)
+
+    @server.tool()
+    def loadpath_check_fit(path: str, components: list, base_dir: str | None = None) -> dict:
+        """Check that components fit an enclosure mesh. components: [{id, boardMm: [L, W, T],
+        clearanceMm, aboveMm, belowMm, holes: {positions: [[x, y]], diaMm} | null, ports: [{id, edge:
+        '-x', offsetMm, heightMm, wMm, hMm} | {id, face: '+z', xMm, yMm, wMm, hMm}]}], in the
+        component's frame (origin at board centre, z up). Solves the placement in the cavity and
+        reports cavity, bosses and each port cutout as ok / not / null (could not check)."""
+        return check_component_fit(path, components, base_dir)
 
     @server.tool()
     def loadpath_jobs(limit: int = 20) -> dict:

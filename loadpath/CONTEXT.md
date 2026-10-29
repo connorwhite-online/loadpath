@@ -64,15 +64,18 @@ it becomes an eval metric.
 
 Two of some things, on purpose for now:
 
-- **Voxelizers.** `verify.voxelize` fills cells by ray parity on an
-  unpadded grid whose origin is the min corner of cell (0,0,0); the
-  optimizer domain and `verify_part` depend on that alignment.
-  `sdf_kit._solid_voxels` starts from trimesh's surface voxels, pads the
-  grid, and classifies each enclosed pocket as material or cavity, so
-  internal channels stay void; `checks/` and `from_mesh` depend on that.
-  Merging them changes numbers in either the evals or the checks, so it
-  belongs with a re-baseline (a shared `voxels.py` is in progress for the
-  checks).
+- **Voxelizers.** `verify.voxelize` fills cells by ray parity through
+  trimesh's ray tree on an unpadded grid whose origin is the min corner of
+  cell (0,0,0); the optimizer domain and `verify_part` depend on that
+  alignment. `voxels.py` is the scalable one: a scanline rasterizer that
+  bins triangles straight to voxel columns (no ray tree, flat memory: a
+  5.5M-triangle gyroid exchanger voxelizes in seconds), padded grids with
+  the origin at the centre of voxel (0,0,0), `field_solid` for parts built
+  from a field, and a tiled distance-transform wall probe. `check_dfm` and
+  `check_networks` use it. `sdf_kit._solid_voxels` (trimesh surface voxels
+  plus a parity vote per pocket) is still behind `from_mesh` and
+  `check_fit`. Moving `verify.voxelize` onto `voxels.mesh_solid` changes
+  eval numbers, so it belongs with a re-baseline.
 - **FEA.** `fem.py` is the real solver: material modulus, units,
   smoothed-aggregation AMG, used by the optimizer, `verify.py` and
   `study.py`. `checks/fea.py` (`fea_probe`) is a seconds-scale critic with

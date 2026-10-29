@@ -4,30 +4,37 @@ manifolds, anything carrying two fluids). Watertightness is not the interesting
 invariant for these — NETWORK TOPOLOGY is: each fluid domain must connect its
 own inlet/outlet pair, with zero cross-leak paths.
 
-`check_networks(mesh, ports)` voxelizes the part, labels the void space with
+`check_networks(part, ports)` voxelizes the part, labels the void space with
 26-connectivity, and maps each declared port to the void component it lands
 in. Port naming convention: ports of the same circuit share the prefix before
 the first underscore ("a_in" / "a_out" are one pair).
 
+The part is a trimesh or, for a part built from a field, the implicit field
+itself (f(P) < 0 inside, with bounds=(lo, hi)): sampling the field at the
+voxel centres skips meshing and voxelizing the STL, which is most of the
+time on a multi-million-triangle part. Meshes go through the scanline
+rasterizer in voxels.py, which never touches trimesh's ray tree.
+
 Resolution honesty: isolation verified at voxel pitch p means "no leak path
 wider than ~p" — a pinhole narrower than a voxel can slip through the
-occupancy grid. The report always carries the pitch used; surface UI copy
-should state exactly that bound, not "leak-free".
+occupancy grid. The report always carries the pitch used, and the thinnest
+wall between circuits in mm with its +/- pitch; state exactly that bound, not
+"leak-free".
 """
 import os
 
 import numpy as np
 from scipy import ndimage
 
-from .sdf_kit import _solid_voxels
+from ..voxels import solid_grid, tiled_edt_min
 
 __all__ = ["check_networks"]
 
-# Voxel-count ceiling for the occupancy grid (bool grid + int32 labels —
-# 128M cells ≈ 128MB + 512MB transient, well under the child's RLIMIT_AS).
-# The pitch chooser coarsens to fit under this rather than allocating
-# unboundedly on a huge part.
-_VOXEL_BUDGET = int(os.environ.get("CAD_NETWORKS_VOXEL_BUDGET", str(128_000_000)))
+# Voxel-count ceiling for the occupancy grid (bool grid + int32 labels, about
+# 5 bytes per cell). The pitch chooser coarsens to fit under this rather than
+# allocating unboundedly on a huge part.
+_VOXEL_BUDGET = int(os.environ.get("LOADPATH_NETWORKS_VOXEL_BUDGET",
+                                   os.environ.get("CAD_NETWORKS_VOXEL_BUDGET", str(128_000_000))))
 
 # 3x3x3 ones = 26-connectivity. Deliberately the LEAKIEST connectivity for the
 # void: a diagonal voxel chain counts as a connected fluid path, so we err
@@ -37,18 +44,15 @@ _CONN = np.ones((3, 3, 3), bool)
 _DILATION_CAP = 20  # min-wall search cutoff, in voxels
 
 
-def _gap_voxels(mask_a, mask_b):
-    """Solid separation between two void components, in voxels: dilate one
-    mask a step at a time (26-neighborhood) until it overlaps the other. First
-    overlap at step i means i-1 voxels of material in between. None when the
-    gap exceeds the dilation cap — 'comfortably thick' is all we need then."""
-    grow = mask_a if mask_a.sum() <= mask_b.sum() else mask_b
-    other = mask_b if grow is mask_a else mask_a
-    for i in range(1, _DILATION_CAP + 1):
-        grow = ndimage.binary_dilation(grow, structure=_CONN)
-        if np.any(grow & other):
-            return i - 1
-    return None
+def _gap_cells(mask_a, mask_b):
+    """Solid separation between two void components: the Euclidean distance,
+    in cells, between their nearest voxel centres (None beyond the cap). The
+    nearest pair is the one whose centres sit closest to their surfaces
+    (about half a cell off), and the grid counts every voxel the surface
+    touches as solid (about another half), so the wall is about d - 1 cells,
+    +/- one."""
+    small, big = (mask_a, mask_b) if mask_a.sum() <= mask_b.sum() else (mask_b, mask_a)
+    return tiled_edt_min(small, big, _DILATION_CAP + 1)
 
 
 def _refill_plugs(solid, origin, pitch, plugs):
@@ -109,8 +113,12 @@ def _refill_plugs(solid, origin, pitch, plugs):
         sub[inside] = True
 
 
-def check_networks(mesh, ports, pitch=None, plugs=None, min_feature=None):
+def check_networks(mesh, ports, pitch=None, plugs=None, min_feature=None, bounds=None):
     """Verify fluid-network isolation of `mesh` against declared `ports`.
+
+    mesh: a trimesh, or an implicit field f(P) (negative inside the solid, P
+    an (N, 3) array in mm) together with bounds=(lo, hi) — the fast path for
+    a part built from a field.
 
     ports: list of {"name": str, "point": [x, y, z] mm, "r": mm} spheres —
     inlet/outlet locations in the void space, named `<circuit>_<role>`.
@@ -131,8 +139,10 @@ def check_networks(mesh, ports, pitch=None, plugs=None, min_feature=None):
       "ports": {name: component id or None (port found no void)},
       "isolated": every port hit exactly one component, same-prefix ports
                   share a component, and no component carries two prefixes,
-      "minWallVoxels": thinnest solid separation between port-bearing
-                       components (voxels), None if single/too-far,
+      "minWallMm": thinnest solid separation between port-bearing
+                   components, in mm, None if single/too far,
+      "minWallToleranceMm": the +/- on it (one pitch),
+      "minWallVoxels": the same in voxels (kept for older callers),
       "plugs": number of plug capsules refilled,
     }
     OR, when the part is so large that a min_feature-resolving pitch would
@@ -146,7 +156,14 @@ def check_networks(mesh, ports, pitch=None, plugs=None, min_feature=None):
     min_feature (or pass an explicit pitch) when the geometry has walls or
     channels finer than that.
     """
-    extents = np.asarray(mesh.extents, float)
+    is_field = callable(mesh) and not hasattr(mesh, "faces")
+    if is_field:
+        if bounds is None:
+            raise ValueError("check_networks on a field needs bounds=(lo, hi) in mm")
+        bounds = tuple(np.asarray(b, float) for b in bounds)
+        extents = bounds[1] - bounds[0]
+    else:
+        extents = np.asarray(mesh.extents, float)
     if pitch is None:
         pitch = max(float(np.max(extents)) / 64.0, 0.4)
         if min_feature is not None:
@@ -174,7 +191,7 @@ def check_networks(mesh, ports, pitch=None, plugs=None, min_feature=None):
             "plugs": len(plugs) if plugs else 0,
         }
 
-    solid, origin = _solid_voxels(mesh, pitch, pad=2)
+    solid, origin, _info = solid_grid(mesh, pitch, pad=2, bounds=bounds, touch=True)
     if plugs:
         _refill_plugs(solid, origin, pitch, plugs)
     labels, _ = ndimage.label(~solid, structure=_CONN)
@@ -220,21 +237,24 @@ def check_networks(mesh, ports, pitch=None, plugs=None, min_feature=None):
                 isolated = False  # one circuit split across voids — a blockage
                 break
 
-    min_wall = None
+    gap = None
     if len(port_comps) >= 2:
         gaps = [
-            _gap_voxels(labels == a, labels == b)
+            _gap_cells(labels == a, labels == b)
             for i, a in enumerate(port_comps)
             for b in port_comps[i + 1:]
         ]
         gaps = [g for g in gaps if g is not None]
-        min_wall = min(gaps) if gaps else None
+        gap = min(gaps) if gaps else None
 
     return {
         "pitch": pitch,
         "components": len(port_comps),
         "ports": assignment,
         "isolated": bool(isolated),
-        "minWallVoxels": min_wall,
+        "minWallMm": None if gap is None else round(max(gap - 1.0, 0.0) * pitch, 3),
+        "minWallToleranceMm": round(pitch, 4),
+        "minWallVoxels": None if gap is None else int(round(max(gap - 1.0, 0.0))),
         "plugs": len(plugs) if plugs else 0,
+        "source": "field" if is_field else "mesh",
     }
