@@ -33,8 +33,10 @@ from .verify import verify_part
 
 __all__ = ["Outcome", "StudyResult", "run_study"]
 
-# Bounds for the safety-factor search.
-_VF_MIN, _VF_MAX = 0.04, 0.7
+# Bounds for the safety-factor search. (A floor of 0.04 stopped GRIP's upper
+# arm there with SF 5.4 against a goal of 2: large design spaces around
+# small parts end at a few percent.)
+_VF_MIN, _VF_MAX = 0.02, 0.7
 _MAX_SEARCH_RUNS = 7
 # Coarse-to-fine: below this many cells the fine solve is cheap enough alone.
 _COARSE_MIN_CELLS = 12_000
