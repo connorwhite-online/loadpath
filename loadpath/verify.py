@@ -123,7 +123,12 @@ def surface_thickness(mesh, samples: int = 6000, seed: int = 0, study: Study | N
     ok = np.isfinite(pts).all(axis=1) & (np.linalg.norm(n, axis=1) > 0.5)
     pts, n = pts[ok], n[ok]
     origin = pts - n * 1e-3
-    loc, ri, _ = mesh.ray.intersects_location(origin, -n, multiple_hits=False)
+    # in batches: without embree the ray tree's candidate pairs for all 6000
+    # rays at once took 7 GB on a 75k-face yoke (the cloud box OOMed)
+    hits = [mesh.ray.intersects_location(origin[k:k + 500], -n[k:k + 500], multiple_hits=False)[:2]
+            for k in range(0, len(origin), 500)]
+    loc = np.concatenate([h[0].reshape(-1, 3) for h in hits]) if hits else np.zeros((0, 3))
+    ri = np.concatenate([h[1] + k for h, k in zip(hits, range(0, len(origin), 500))]).astype(int) if hits else np.zeros(0, int)
     if len(ri) == 0:
         return None, None
     d = np.linalg.norm(loc - origin[ri], axis=1)
