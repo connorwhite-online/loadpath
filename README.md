@@ -121,6 +121,11 @@ Also: `loadpath lattice` (fill a part with a stress-graded TPMS lattice),
 graph of fields, [docs/fields.md](docs/fields.md)), `loadpath schema` (JSON
 Schemas, also in [`schema/`](schema/)).
 
+Large studies (100k+ cells) solve with matrix-free multigrid; install the `gpu`
+extra (`loadpath[mcp,gpu]`, PyTorch) to run it on an NVIDIA GPU, an Apple
+Silicon GPU, or torch's threaded CPU kernels. Without it everything runs on
+numpy as before.
+
 - [Quickstart](docs/quickstart.md): install to a verified part in ten minutes.
 - [Agents](docs/agents.md): the MCP server, its tools and the loop to follow.
   [`loadpath/SKILL.md`](loadpath/SKILL.md) is the skill.

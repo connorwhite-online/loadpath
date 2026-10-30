@@ -48,6 +48,7 @@ it becomes an eval metric.
 | `spec.py`, `shapes.py`, `materials.py` | JSON study -> Study; shapes (box, cylinder/tube, sphere, mesh, union); 16 materials, each tagged with the processes that make it; `process` (fdm/sls/mjf/sla/dlp/volumetric/lpbf) |
 | `processcheck.py` | SLS/MJF and SLA/DLP checks on a delivered part (mesh or field): rule cards (`RULES`), walls, enclosed and narrow-exit powder/resin, warp-prone thin panels, resin peel area, suction cups and supports (via printcheck). run_study puts it in the best outcome's `report["process"]` |
 | `domain.py`, `fem.py` | voxel domain, boundary conditions (forces, moments, bearing loads, pins, gravity), hex8 FEA, CG + smoothed-aggregation AMG |
+| `mg.py`, `gpu.py` | matrix-free geometric multigrid for large grids (SIMP uses it from 100k cells; `LOADPATH_SOLVER=mg|assembled`); `gpu.py` runs its solve with torch on CUDA, Apple Metal (V-cycle on the GPU, float64 CG on the CPU) or the CPU threads (`LOADPATH_DEVICE=auto|cuda|mps|torch|cpu`, extra `gpu`) |
 | `simp.py` | SIMP with filter, Heaviside continuation, robust erode/open, OC; live-cell reduced solves; dead-material pruning |
 | `mma.py`, `constrained.py` | MMA (from the published method), stress/deflection-constrained mode |
 | `mechanism.py` | compliant mechanisms (max output displacement against springs; several input/output pairs) |

@@ -20,6 +20,12 @@ from scipy import ndimage
 from loadpath.fem import HexMesh, Layered, Solver, Stiffness
 from loadpath.mg import GridElasticity, prolong, restrict
 
+try:
+    import torch  # noqa: F401
+    DEVICES = ("cpu", "torch")
+except ImportError:
+    DEVICES = ("cpu",)
+
 
 def _bar(nx, ny, nz, pitch=0.7, hole=True, seed=0, void=True):
     ijk = np.stack(np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij"), -1).reshape(-1, 3)
@@ -61,7 +67,7 @@ def test_matches_assembled_solver():
     for dims, cc in [((16, 9, 9), 200), ((24, 12, 12), 50), ((21, 11, 13), 300)]:
         mesh, fixed, f, e = _bar(*dims)
         ref = _reference(mesh, 0.3, fixed, e, f)
-        g = GridElasticity(mesh, 0.3, fixed, rtol=1e-9, coarse_cells=cc, maxiter=3000)
+        g = GridElasticity(mesh, 0.3, fixed, rtol=1e-9, coarse_cells=cc, maxiter=3000, device="cpu")
         g.set_moduli(e)
         assert len(g.levels) >= 2, len(g.levels)
         u = g.solve_many([f])[0]
@@ -88,11 +94,38 @@ def test_layered_springs_and_removed_cells():
     ref_sub = _reference(sub, nu, fixed[fd], e[keep], f[fd], springs[fd][:, fd])
     ref = np.zeros(mesh.n_dof)
     ref[fd] = ref_sub
-    g = GridElasticity(mesh, nu, fixed, springs=springs, rtol=1e-9, coarse_cells=100, maxiter=3000)
-    g.set_moduli(e)
-    u = g.solve_many([f * g.live_dofs()])[0]
-    err = np.linalg.norm(u - ref) / np.linalg.norm(ref)
-    assert err < 1e-6, err
+    for dev in DEVICES:
+        g = GridElasticity(mesh, nu, fixed, springs=springs, rtol=1e-9, coarse_cells=100, maxiter=3000, device=dev)
+        g.set_moduli(e)
+        u = g.solve_many([f * g.live_dofs()])[0]
+        err = np.linalg.norm(u - ref) / np.linalg.norm(ref)
+        assert err < 1e-6, (dev, err)
+
+
+def test_torch_backend_matches_numpy():
+    """gpu.py runs the same algorithm in the same precisions: same answer,
+    same CG count; warm starts give the same answer. (Warm-start CG counts
+    are left out: from a start already within ~1e-8, the count depends on
+    the last digits of the previous solve, 2 against 22 on the 21x11x13
+    bar with either backend.)"""
+    if "torch" not in DEVICES:
+        print("  (torch not installed: skipped)")
+        return
+    for dims, cc in [((16, 9, 9), 200), ((21, 11, 13), 300)]:
+        mesh, fixed, f, e = _bar(*dims)
+        res = {}
+        for dev in ("cpu", "torch"):
+            g = GridElasticity(mesh, 0.3, fixed, rtol=1e-8, coarse_cells=cc, maxiter=3000, device=dev)
+            g.set_moduli(e)
+            u = g.solve_many([f])[0]
+            it = g.last_iters
+            g.set_moduli(e * 1.1)
+            w = g.solve_many([f], [u])[0]
+            res[dev] = (u, it, w, g.last_iters)
+        (u0, i0, w0, j0), (u1, i1, w1, j1) = res["cpu"], res["torch"]
+        assert abs(i0 - i1) <= 2, (dims, i0, i1)
+        assert np.linalg.norm(u1 - u0) < 1e-6 * np.linalg.norm(u0)
+        assert np.linalg.norm(w1 - w0) < 1e-6 * np.linalg.norm(w0)
 
 
 def test_simp_mg_matches_assembled():
@@ -125,7 +158,7 @@ def test_simp_mg_matches_assembled():
 
 
 TESTS = [test_transfers_are_adjoint, test_matches_assembled_solver, test_layered_springs_and_removed_cells,
-         test_simp_mg_matches_assembled]
+         test_torch_backend_matches_numpy, test_simp_mg_matches_assembled]
 
 
 def main():

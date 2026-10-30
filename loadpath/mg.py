@@ -353,10 +353,12 @@ class GridElasticity:
 
     coarse_cells: stop coarsening geometrically once a level has fewer
     active cells than this, and assemble that level. degree: Chebyshev
-    smoothing degree (pre and post). dtype: precision of the V-cycle."""
+    smoothing degree (pre and post). dtype: precision of the V-cycle.
+    device: "auto", "cuda", "mps", "torch" or "cpu" (see gpu.py); None reads
+    LOADPATH_DEVICE."""
 
     def __init__(self, mesh, nu, fixed, springs=None, rtol=1e-6, maxiter=500, coarse_cells=2000,
-                 degree=2, dtype=np.float32, lu_max_dofs=60_000):
+                 degree=2, dtype=np.float32, lu_max_dofs=60_000, device=None):
         self.mesh = mesh
         self.nu = nu
         self.rtol = rtol
@@ -385,6 +387,15 @@ class GridElasticity:
         self.last_iters = 0
         self._coarse = None
         self._lmax_vec = {}
+        # torch copy of the hierarchy on a GPU (gpu.py), or None for numpy
+        from .gpu import resolve_device
+
+        dev = resolve_device(device)
+        self._dev = None
+        if dev is not None:
+            from .gpu import TorchMG
+
+            self._dev = TorchMG(self, dev)
 
     # --- layout conversion -------------------------------------------------
 
@@ -451,6 +462,9 @@ class GridElasticity:
             self.levels.append(coarse)
             fine = coarse
         self._build_coarse(self.levels[-1])
+        if self._dev is not None:
+            self._dev.load()
+            return
         for i in range(len(self.levels)):
             self._op(i).lmax = self._estimate_lmax(i)
 
@@ -738,7 +752,7 @@ class GridElasticity:
             b = self.to_grid(f)
             b *= self.levels[0].mask
             g0 = self.to_grid(x0) * self.levels[0].mask if x0 is not None else None
-            x, it, ok = self._pcg(b, g0)
+            x, it, ok = self._dev.solve(b, g0) if self._dev is not None else self._pcg(b, g0)
             iters = max(iters, it)
             if not ok:
                 raise RuntimeError(f"linear solve did not converge ({it} iterations); "
