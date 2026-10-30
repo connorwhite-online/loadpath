@@ -169,6 +169,12 @@ def main(argv=None):
             from .threemf import write_3mf
             summary["outcomes"][i]["3mf"] = write_3mf(os.path.join(args.out, stem + ".3mf"), o.mesh, build,
                                                       name=stem, material=rs.material, process=rs.process)
+            if o.grading is not None:
+                # the slicer grades it: infill and perimeters per region
+                summary["outcomes"][i]["graded3mf"] = write_3mf(
+                    os.path.join(args.out, stem + "-graded.3mf"), o.mesh, build, name=stem, material=rs.material,
+                    process=rs.process, object_settings=o.grading["objectSettings"],
+                    modifiers=o.grading["modifiers"])
         if not args.no_render:
             from .render import render_views
             png = os.path.join(args.out, stem + ".png")

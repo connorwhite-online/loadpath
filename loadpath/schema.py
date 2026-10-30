@@ -213,6 +213,10 @@ _GOAL = {
         "method": {"enum": ["search", "constrained"]},
         "outcomes": {"type": "array", "items": {"type": "number", "minimum": 0.02, "maximum": 0.95},
                      "description": "Extra fixed volume fractions for a trade-off gallery."},
+        "minimize": {"enum": ["mass", "printTime", "filament"],
+                     "description": "Which passing outcome is delivered: the lightest (default), or (FDM, with a "
+                                    "slicer installed) the one that prints fastest or with the least filament, "
+                                    "support included, as sliced (graded, with slicer.grade)."},
     },
     "x-requireOne": [["volumeFraction"], ["safetyFactor"], ["maxDeflection"]],
     "additionalProperties": False,
@@ -239,6 +243,49 @@ _DURABILITY = {
     },
     "additionalProperties": False,
 }
+
+_GRADE_LEVEL = {"anyOf": [
+    {"type": "array", "prefixItems": [{"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 100},
+                                      {"type": "integer", "minimum": 1}], "minItems": 2, "maxItems": 2,
+     "description": "[infill %, perimeters]"},
+    {"type": "object", "properties": {"infill": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 100},
+                                      "perimeters": {"type": "integer", "minimum": 1}},
+     "required": ["infill"], "additionalProperties": False}]}
+
+_SLICER = {"anyOf": [
+    {"type": "boolean"},
+    {"type": "object",
+     "properties": {
+         "enabled": {"anyOf": [{"type": "boolean"}, {"const": "auto"}],
+                     "description": "auto (default): slice when a slicer is installed; true: warn when none is"},
+         "executable": {"type": "string", "description": "PrusaSlicer (or SuperSlicer) executable (default: "
+                                                          "$LOADPATH_SLICER, else found on PATH)"},
+         "profile": {"type": "string", "description": "PrusaSlicer config .ini (File > Export > Export Config) for "
+                                                       "your printer's real speeds; relative to the study file"},
+         "settings": {"type": "object", "description": "PrusaSlicer config keys over the profile, like "
+                                                        "{\"layer_height\": 0.25}"},
+         "supports": {"anyOf": [{"type": "boolean"}, {"const": "auto"}],
+                      "description": "auto/true (default): the slicer's automatic supports; false: none"},
+         "infill": {"type": "number", "minimum": 0, "maximum": 100,
+                    "description": "% infill of the plain slice (default 100: the part is verified solid)"},
+         "timeout": _POS,
+         "grade": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
+             "levels": {"type": "array", "items": _GRADE_LEVEL, "minItems": 1,
+                        "description": "infill ladder, sparsest first; solid is always the level above "
+                                       "(default [[10,3],[15,3],[25,3],[40,3],[60,3]]: walls that change per region make the slicer run perimeters round each region, inside the part)"},
+             "safetyFactor": {**_POS, "description": "default: the goal's, else 2"},
+             "lineWidth": {**_POS, "description": "mm per perimeter (default 0.45)"},
+             "collar": {"type": "number", "minimum": 0,
+                        "description": "mm kept solid round preserves, keep-outs, loads, supports (default 2)"},
+             "knockdown": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
+                           "description": "infill wall strength / solid (default 0.8)"},
+             "analysisCells": {"type": "integer", "minimum": 1000}},
+             "additionalProperties": False}],
+             "description": "Size per-region infill density and perimeters from the stress, verified on a "
+                            "homogenized model, and write them as slicer modifiers in a graded 3MF"}},
+     "additionalProperties": False}],
+    "description": "FDM: slice each outcome headless (PrusaSlicer) for print time, filament and support "
+                   "(report 'slicer'); optionally grade infill by stress (report 'graded', <name>-graded.3mf)."}
 
 _PROCESS_KINDS = ["fdm", "sls", "mjf", "sla", "dlp", "volumetric", "lpbf"]
 _PROCESS = {"anyOf": [
@@ -368,6 +415,7 @@ STUDY_SCHEMA = {
                     "required": ["count"], "additionalProperties": False,
                     "description": "Circular pattern: count identical sectors round the axis."},
         "process": _PROCESS,
+        "slicer": _SLICER,
         "durability": _DURABILITY,
         "lattice": {"type": "object", "properties": _LATTICE_PROPS, "additionalProperties": False,
                     "description": "Optional: fill the delivered part with a stress-graded TPMS lattice."},

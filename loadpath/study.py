@@ -90,6 +90,8 @@ class Outcome:
     # the optimized density field this mesh was drawn from (per domain cell),
     # so a part can be re-meshed without optimizing again
     xphys: object = None
+    # infill.grade_infill's result (modifier meshes for the graded 3MF)
+    grading: object = None
 
     def summary(self) -> dict:
         r = self.report
@@ -109,6 +111,8 @@ class Outcome:
             **({"durability": r["durability"]} if "durability" in r else {}),
             **({"print": {k: v for k, v in r["print"].items() if k != "bridgeList"}} if "print" in r else {}),
             **({"process": r["process"]} if "process" in r else {}),
+            **({"slicer": r["slicer"]} if "slicer" in r else {}),
+            **({"graded": r["graded"]} if "graded" in r else {}),
             "warnings": r.get("warnings", []),
             "margin": r.get("margin"),
             "passes": self.passes,
@@ -223,7 +227,7 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         study = choose_build_direction(study, on_progress=on_progress)["study"]
     mats = study.materials or [study.material]
     if len(mats) == 1:
-        return _process_checks(_run_single(study, on_progress, should_stop), on_progress)
+        return _slice(_process_checks(_run_single(study, on_progress, should_stop), on_progress), on_progress)
     t0 = time.time()
     outcomes, warnings, domain = [], [], None
     for r in _parallel([dataclasses.replace(study, material=m, materials=[m]) for m in mats],
@@ -234,8 +238,9 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     passing = [i for i, o in enumerate(outcomes) if o.passes]
     pool = passing if passing else ([] if any(o.passes is False for o in outcomes) else range(len(outcomes)))
     best = min(pool, key=lambda i: outcomes[i].report["mass"]) if pool else None
-    return _process_checks(StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
-                                       seconds=time.time() - t0, warnings=warnings), on_progress)
+    return _slice(_process_checks(StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
+                                              seconds=time.time() - t0, warnings=warnings), on_progress),
+                  on_progress)
 
 
 def _process_checks(result: StudyResult, on_progress=None) -> StudyResult:
@@ -262,6 +267,113 @@ def _process_checks(result: StudyResult, on_progress=None) -> StudyResult:
     o.report["process"] = rep
     o.report.setdefault("warnings", []).extend(rep.get("warnings", []))
     return result
+
+
+# goal.minimize -> the slicer report's number it minimizes
+_SLICED_COST = {"printTime": "printTime", "filament": "filamentVolume"}
+# graded infill is sized for at most this many passing outcomes when the
+# goal picks by print time (each is a few FEA solves)
+_GRADE_CANDIDATES = 3
+
+
+def _slice(result: StudyResult, on_progress=None) -> StudyResult:
+    """FDM: slice every outcome (slicer.slice_mesh) for print time, filament
+    and support, into its report as "slicer"; size graded infill
+    (infill.py) when `slicer.grade` asks; and with goal.minimize printTime or
+    filament, deliver the passing outcome that is cheapest by it rather than
+    the lightest."""
+    study = result.study
+    opts = study.slicer
+    if opts is None or opts.enabled is False or not result.outcomes:
+        return result
+    from .slicer import find_slicer, slice_mesh
+
+    goal = study.goal
+    if find_slicer(opts.executable) is None:
+        if opts.enabled is True or goal.minimize != "mass" or opts.grade is not None:
+            result.warnings.append("no slicer found, so print time and filament were not measured (and the "
+                                   "outcome is the lightest): install PrusaSlicer, or set LOADPATH_SLICER")
+        return result
+    build = study.process.build if study.process.build != "auto" else None
+    for i, o in enumerate(result.outcomes):
+        if getattr(o, "mesh", None) is None:
+            continue
+        if on_progress is not None:
+            on_progress({"stage": "slice", "volumeFraction": o.volume_fraction}, None)
+        mat = _material_named((o.report.get("material") or {}).get("name"), study)
+        try:
+            o.report["slicer"] = slice_mesh(o.mesh, build, mat, opts, name=f"{study.name}-{i}")
+        except Exception as exc:  # noqa: BLE001 - a failed slice leaves the part's report standing
+            o.report["slicer"] = {"error": f"{type(exc).__name__}: {exc}"}
+    cost = _SLICED_COST.get(goal.minimize)
+    pool = [i for i, o in enumerate(result.outcomes) if o.passes] if any(o.passes is not None
+                                                                       for o in result.outcomes) else []
+    if opts.grade is not None:
+        if cost is not None and pool:
+            light = sorted(pool, key=lambda i: result.outcomes[i].report["mass"])[:_GRADE_CANDIDATES]
+            todo = sorted(set(light) | ({result.best} if result.best is not None else set()))
+        else:
+            todo = [result.best] if result.best is not None else []
+        for i in todo:
+            _grade(result, i, opts, on_progress)
+    if cost is not None and pool:
+        def sliced(i):
+            # the cheaper of its solid and graded prints: both are checked,
+            # and a thin part can print slower graded (region boundaries)
+            r = result.outcomes[i].report
+            vals = [(r.get(k) or {}).get(cost) for k in ("slicer",)] + \
+                [((r.get("graded") or {}).get("slicer") or {}).get(cost)]
+            vals = [v for v in vals if v is not None]
+            return min(vals) if vals else float("inf")
+        pick = min(pool, key=lambda i: (sliced(i), result.outcomes[i].report["mass"]))
+        if sliced(pick) < float("inf") and pick != result.best:
+            prev = result.best
+            result.best = pick
+            if opts.grade is not None and result.outcomes[pick].grading is None:
+                _grade(result, pick, opts, on_progress)
+            result.warnings.append(
+                f"goal.minimize {goal.minimize}: delivered outcome {pick} (vf {result.outcomes[pick].volume_fraction:.3f}, "
+                f"{result.outcomes[pick].report['mass']:.1f} g) over the lightest passing, outcome {prev}")
+    return result
+
+
+def _grade(result: StudyResult, i: int, opts, on_progress=None) -> None:
+    """Graded infill for outcome i: report["graded"] (sizing, and its slice
+    next to the solid one) and o.grading (the modifier meshes)."""
+    from .infill import GradeOptions, grade_infill
+    from .slicer import slice_mesh
+
+    study = result.study
+    o = result.outcomes[i]
+    mat = _material_named((o.report.get("material") or {}).get("name"), study)
+    import dataclasses
+    st = dataclasses.replace(study, material=mat, materials=[mat])
+    if on_progress is not None:
+        on_progress({"stage": "grade", "volumeFraction": o.volume_fraction}, None)
+    try:
+        g = grade_infill(st, o.mesh, o.report, GradeOptions.from_spec(opts.grade, study.goal.safety_factor))
+    except Exception as exc:  # noqa: BLE001
+        o.report["graded"] = {"error": f"{type(exc).__name__}: {exc}"}
+        return
+    o.grading = g
+    rep = {k: v for k, v in g.items() if k not in ("modifiers", "history")}
+    rep["modifiers"] = [{"name": m["name"], "settings": m["settings"], "faces": int(len(m["mesh"].faces))}
+                        for m in g["modifiers"]]
+    build = study.process.build if study.process.build != "auto" else None
+    try:
+        rep["slicer"] = slice_mesh(o.mesh, build, mat, opts, name=f"{study.name}-{i}-graded",
+                                   object_settings=g["objectSettings"], modifiers=g["modifiers"])
+        solid = o.report.get("slicer") or {}
+        if solid.get("printTime") and rep["slicer"].get("printTime"):
+            rep["printTimeSaved"] = 1.0 - rep["slicer"]["printTime"] / solid["printTime"]
+            rep["filamentSaved"] = 1.0 - rep["slicer"]["filamentVolume"] / solid["filamentVolume"]
+    except Exception as exc:  # noqa: BLE001
+        rep["slicer"] = {"error": f"{type(exc).__name__}: {exc}"}
+    goal = study.goal.safety_factor
+    if goal and g["safetyFactor"] < goal:
+        o.report.setdefault("warnings", []).append(
+            f"graded infill reads SF {g['safetyFactor']:.2f} under the goal's {goal:g}: print the solid 3MF")
+    o.report["graded"] = rep
 
 
 def _material_named(name, study):

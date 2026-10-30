@@ -63,6 +63,19 @@ field. `check` reports every problem at once: fix them all, then check again.
    run per direction). `report.json` → `print` says whether it needs
    support, its bridges, and whether the first layer holds; `run` writes a
    `.3mf` per part already standing the right way up for the slicer.
+   FDM outcomes are also sliced headless when PrusaSlicer is installed
+   (`report.json` → `slicer`: `printTime` s, `filamentVolume` cm^3,
+   `filamentMass` g, `supportVolume`); a warning says when no slicer was
+   found. For an FDM user hours matter more than grams: `"goal":
+   {"safetyFactor": 2, "minimize": "printTime"}` delivers the passing outcome
+   that prints fastest. `"slicer": {"grade": true}` sizes infill per region
+   from the stress (sparse where it idles, solid round bolts and hot spots,
+   checked to the goal's safety factor) and `run` writes `<stem>-graded.3mf`
+   with the regions as slicer modifiers; `graded` in the report gives its
+   safety factor, its slice and the time and filament saved against the
+   solid slice. The part is verified solid, so print the plain 3MF at 100%
+   infill or the graded one, never the plain one at a default 15%.
+   `slicer.profile` takes your printer's PrusaSlicer .ini for real times.
    Powder nylon (`"sls"`, `"mjf"`: `pa12`, `pa11`, `pa12-gb`, `tpu88a`) and
    resin (`"sla"`, `"dlp"`: `resin`, `resin-tough`, `resin-rigid`) parts get
    `report.json` → `process` on the delivered outcome: walls against the

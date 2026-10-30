@@ -117,6 +117,10 @@ class Goal:
     method: str = "search"
     # Extra fixed fractions to return alongside, for a trade-off gallery.
     outcomes: list[float] = field(default_factory=list)
+    # Which passing outcome is delivered: the lightest ("mass"), or for FDM
+    # the one a slicer prints fastest ("printTime") or with the least
+    # filament, support included ("filament"); see slicer.py.
+    minimize: str = "mass"
 
 
 # How the part will be made. Each process sets what the design must respect:
@@ -200,6 +204,26 @@ def _process(spec) -> Process | None:
                    escape_hole=float(esc) if esc is not None else None, **stiff)
 
 
+def _slicer(spec, process, base_dir, goal):
+    """slicer.SlicerOptions for FDM studies (None otherwise)."""
+    from .slicer import SlicerOptions
+
+    if spec is not None and (process is None or process.kind != "fdm"):
+        raise ValueError("slicer is for FDM studies: give process {\"type\": \"fdm\"}")
+    if goal.minimize != "mass" and (process is None or process.kind != "fdm"):
+        raise ValueError(f"goal.minimize {goal.minimize!r} slices the part: it needs process fdm")
+    if process is None or process.kind != "fdm":
+        return None
+    opts = SlicerOptions.from_spec(spec, base_dir)
+    if goal.minimize != "mass" and opts.enabled is False:
+        raise ValueError(f"goal.minimize {goal.minimize!r} needs the slicer: drop slicer.enabled false")
+    if opts.grade is not None:
+        from .infill import GradeOptions
+
+        GradeOptions.from_spec(opts.grade, goal.safety_factor)     # validate now, not after the solve
+    return opts
+
+
 def _anisotropic(v):
     if v in (True, False, "bond"):
         return v
@@ -245,6 +269,9 @@ class Study:
     # preload and head bearing area for the relaxation check
     durability: Any = None
     joints: list = field(default_factory=list)
+    # FDM: slicer.SlicerOptions (print time, filament, support per outcome;
+    # graded infill); None for other processes
+    slicer: Any = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -450,7 +477,10 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         max_deflection=g.get("maxDeflection"),
         method=str(g.get("method", "search")),
         outcomes=[float(v) for v in g.get("outcomes") or []],
+        minimize=str(g.get("minimize", "mass")),
     )
+    if goal.minimize not in ("mass", "printTime", "filament"):
+        raise ValueError("goal.minimize must be 'mass', 'printTime' or 'filament'")
     if goal.volume_fraction is None and goal.safety_factor is None and goal.max_deflection is None:
         raise ValueError("goal needs volumeFraction (0..1), safetyFactor (>1) and/or maxDeflection (mm)")
     if goal.method not in ("search", "constrained"):
@@ -566,5 +596,6 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         shells=shells,
         durability=durability,
         joints=joints,
+        slicer=_slicer(d.get("slicer"), process, base_dir, goal),
         raw=d,
     )

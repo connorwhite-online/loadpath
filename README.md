@@ -19,6 +19,11 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
   nylon (SLS, MJF: trapped powder, escape holes, warp-prone panels), resin (SLA, DLP:
   supports, peel area, suction cups, trapped resin) and powder-bed metal (internal
   ceilings, powder clean-outs), each with material cards.
+- **Sliced, not guessed (FDM).** With PrusaSlicer installed, every outcome is sliced
+  headless for print time, filament and support; `"goal": {"minimize": "printTime"}`
+  delivers the fastest passing part, and `"slicer": {"grade": true}` sizes infill
+  region by region from the stress and writes it as slicer modifiers in a graded 3MF
+  ([docs/slicer.md](docs/slicer.md)).
 
 ### Why agents like it
 

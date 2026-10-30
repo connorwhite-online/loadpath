@@ -247,11 +247,13 @@ def _direction(build):
 
 def check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 45.0, build=None,
                        pitch: float | None = None, slicer: bool = False, process: str = "fdm",
-                       base_dir: str | None = None, material: str | None = None) -> dict:
+                       base_dir: str | None = None, material: str | None = None, slice: bool = False) -> dict:
     """Printability of an STL/3MF/OBJ: wall thickness (mm, +/- the grid
     pitch, with the thinnest spots), overhang area, trapped voids. slicer=True
     adds the layer-by-layer read (bridges, islands, support volume, bed).
-    process sls/mjf/sla/dlp adds report["process"] (processcheck)."""
+    process sls/mjf/sla/dlp adds report["process"] (processcheck). slice=True
+    (FDM) runs PrusaSlicer headless: report["sliced"] has print time,
+    filament and support volume (slicer.py)."""
     try:
         mesh = _load_mesh(path, base_dir)
         direction = _direction(build)
@@ -269,6 +271,14 @@ def check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 4
             report["slicer"] = check_print(mesh, direction, process=process)
         except Exception as exc:  # noqa: BLE001 - the rest of the report stands
             report["slicerError"] = str(exc)
+    if slice and str(process).lower() == "fdm":
+        try:
+            from .materials import material_from_spec
+            from .slicer import slice_mesh
+
+            report["sliced"] = slice_mesh(mesh, direction, material_from_spec(material) if material else None)
+        except Exception as exc:  # noqa: BLE001 - the rest of the report stands
+            report["slicedError"] = f"{type(exc).__name__}: {exc}"
     from .processcheck import RULES
 
     if str(process).lower() in RULES:
@@ -622,7 +632,8 @@ def serve():
     def loadpath_check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 45.0,
                                     build: str | list | None = None, pitch: float | None = None,
                                     slicer: bool = False, process: str = "fdm",
-                                    base_dir: str | None = None, material: str | None = None) -> dict:
+                                    base_dir: str | None = None, material: str | None = None,
+                                    slice: bool = False) -> dict:
         """Printability of any mesh file (STL, 3MF, OBJ), not only loadpath's own parts: wall thickness
         in mm with its +/- (the voxel pitch) and the thinnest spots, overhang area for the build
         direction ('+z'... or [x, y, z]), and trapped voids that cannot drain powder or resin.
@@ -631,9 +642,11 @@ def serve():
         'sla'/'dlp' (resin) adds the process checks: walls against its minimum, powder or resin trapped
         in cavities or behind exits under the escape-hole size, warp-prone thin flat panels (powder),
         peel area, suction cups and supports (resin); material (e.g. 'pa12', 'tpu', 'resin-tough')
-        flags a card that is not made by that process. Seconds to a minute on multi-million-triangle
-        parts."""
-        return check_printability(path, min_wall, overhang_deg, build, pitch, slicer, process, base_dir, material)
+        flags a card that is not made by that process. slice=True (FDM) slices it headless with
+        PrusaSlicer: 'sliced' gives print time (s), filament (cm^3, g with material) and support volume.
+        Seconds to a minute on multi-million-triangle parts."""
+        return check_printability(path, min_wall, overhang_deg, build, pitch, slicer, process, base_dir, material,
+                                  slice)
 
     @server.tool()
     def loadpath_check_isolation(path: str, ports: list, plugs: list | None = None,
