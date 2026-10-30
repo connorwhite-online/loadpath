@@ -99,6 +99,9 @@ python3 tests/test_nonlinear.py                 # elastica, Euler, post-buckling
 python -m loadpath check study.json             # validate a study
 python -m loadpath run study.json --out out/    # optimize
 python -m loadpath.evals.run --jobs 4 --out /tmp/evals   # eval suite, ~15-20 min on a laptop
+python -m loadpath.evals.run --tier coarse --corpus 6 --baseline loadpath/evals/baselines/coarse.json \
+    --gate regressions --out /tmp/coarse                 # smoke tier for every push, ~7 min on 4 cores
+python tests/test_evals.py                      # pareto, tiers, corpus, critic
 python -m loadpath mcp                          # local MCP server
 ```
 

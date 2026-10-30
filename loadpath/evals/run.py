@@ -44,6 +44,28 @@ and always on isolated, connected and watertight.
 Run:  python -m loadpath.evals.run [case ...] --out evals-out/
 Writes scorecard.json, scorecard.md and a render per case. Exit code is the
 number of failing cases, so it can gate a change to the solver.
+
+Tiers (--tier):
+    full     the suite as written (~2 h on the 4-core cloud box at --jobs 1).
+    coarse   every case at <= COARSE["maxElements"] cells, fewer iterations,
+             a shorter search and no fine-grid confirm: a smoke run for every
+             push (minutes, not hours). Its numbers are not the full tier's;
+             compare coarse with coarse (--baseline).
+
+Every study row also gets a Pareto score (pareto.py): massAtTarget, the
+front's mass at the goal SF, and its hypervolume. They move when a case gets
+lighter at the same SF, which pass/fail does not.
+
+--baseline <scorecard.json> diffs against an earlier run of the same tier:
+a case regresses when it passed and now fails, or its massAtTarget grew more
+than --tolerance (default 5%), and the regressions are listed. With
+--gate regressions the exit code counts regressions instead of failures, so
+a coarse run can gate a push on "no worse than before".
+
+--corpus 8 (or 100:108) adds generated cases (corpus.py): parts nobody has
+tuned on. --critic anthropic|agent renders interface close-ups of each pick
+and has a vision model file findings (loadpath/critic.py); expect keys
+maxCriticBlockers and maxCriticScore gate on them.
 """
 from __future__ import annotations
 
@@ -85,6 +107,74 @@ CHECKS = {
 }
 
 
+# coarse tier: cells, optimizer iterations, outcome-search runs, fine-grid
+# confirm runs, heat-exchanger grid step multiplier
+COARSE = {"maxElements": 6000, "maxIterations": 30, "searchRuns": 3, "confirmRuns": 0, "hxStep": 1.0}
+# checks the coarse grid cannot be held to (they resolve features finer than
+# its cells, or time a different run)
+COARSE_SKIP = {"member", "crease", "seconds", "processWall", "boundaryCut", "overhang", "warpSpan",
+               "maxMass", "mass", "massReduction", "deflection", "wallBetweenFluids", "internalFlatArea",
+               "trappedVolume"}
+CRITIC = {"criticBlockers": ("maxCriticBlockers", "<="), "criticScore": ("maxCriticScore", "<=")}
+
+
+def apply_tier(raw: dict, tier: str) -> dict:
+    """The case as the tier runs it (a copy)."""
+    if tier == "full":
+        return raw
+    if tier != "coarse":
+        raise ValueError(f"unknown tier {tier!r} (full, coarse)")
+    raw = json.loads(json.dumps(raw))
+    # a case can ask for more cells (expect.coarse): thin load pads and
+    # pin-held pieces vanish below a few thousand cells
+    cfg = COARSE | {k: v for k, v in ((raw.get("expect") or {}).get("coarse") or {}).items() if k != "skip"}
+    if "core" in raw:
+        raw["step"] = raw.get("step", 0.4) * cfg["hxStep"]
+        return raw
+    res = raw.get("resolution") or {}
+    raw["resolution"] = {"maxElements": min(int(res.get("maxElements", 80000)), cfg["maxElements"])}
+    raw["maxIterations"] = min(int(raw.get("maxIterations", 120)), cfg["maxIterations"])
+    return raw
+
+
+def _tier_globals(tier: str):
+    """Search limits are study.py constants; the coarse tier lowers them in
+    this process only."""
+    if tier == "coarse":
+        # recall.py's design memory would start a rerun where the last one
+        # ended: a baseline diff must compare cold runs
+        os.environ.pop("LOADPATH_RECALL", None)
+        from .. import study as st
+        st._MAX_SEARCH_RUNS = COARSE["searchRuns"]
+        st._CONFIRM_RUNS = COARSE["confirmRuns"]
+
+
+def gate_critic(row: dict, expect: dict | None = None):
+    """Add the critic's checks to a row (expect from the row's case file when
+    not given) and redo its pass."""
+    c = row.get("critic")
+    if not c:
+        return row
+    if expect is None:
+        expect = _case_expect(row.get("case")) or {}
+    row["checks"] = [k for k in row.get("checks", []) if k["check"] not in CRITIC]
+    for name, (key, op) in CRITIC.items():
+        if key in expect:
+            v = c.get(name)
+            row["checks"].append({"check": name, "value": v, "op": op, "limit": expect[key],
+                                  "pass": _cmp(v, op, expect[key])})
+    row["pass"] = row.get("error") is None and all(k["pass"] for k in row["checks"])
+    return row
+
+
+def _case_expect(name):
+    f = os.path.join(HERE, "cases", f"{name}.json")
+    if os.path.exists(f):
+        with open(f) as fh:
+            return json.load(fh).get("expect")
+    return None
+
+
 def _undercut(o):
     a = (o.get("manufacturing") or {}).get("access")
     return None if a is None else a["undercutVolume"] - a["undercutInKeepOuts"]
@@ -113,10 +203,15 @@ def _cmp(v, op, ref):
     return {"<=": v <= ref + 1e-9, ">=": v >= ref - 1e-9, "==": v == ref}[op]
 
 
-def score_case(raw: dict, result, seconds: float, study=None) -> dict:
+def score_case(raw: dict, result, seconds: float, study=None, tier: str = "full") -> dict:
+    from .pareto import score as pareto
+
     expect = raw.get("expect", {})
     best = result.best
-    out = {"case": raw.get("name"), "seconds": seconds, "checks": [], "outcomes": len(result.outcomes)}
+    out = {"case": raw.get("name"), "seconds": seconds, "checks": [], "outcomes": len(result.outcomes),
+           "tier": tier,
+           "pareto": pareto([o.report for o in result.outcomes],
+                            (raw.get("goal") or {}).get("safetyFactor") or expect.get("minSafetyFactor"))}
     if best is None:
         out["pass"] = False
         out["error"] = "no outcome met the goal"
@@ -139,13 +234,13 @@ def score_case(raw: dict, result, seconds: float, study=None) -> dict:
                    "iterations": o.optimizer["iterations"], "optimizerSeconds": o.optimizer["seconds"]}
     ok = out.get("error") is None
     for name, (key, measure, op) in CHECKS.items():
-        if key not in expect:
+        if key not in expect or (tier == "coarse" and (name in COARSE_SKIP or key in COARSE_SKIP)):
             continue
         v = measure(flat)
         passed = _cmp(v, op, expect[key])
         ok &= passed
         out["checks"].append({"check": name, "value": v, "op": op, "limit": expect[key], "pass": passed})
-    if "maxSeconds" in expect:
+    if "maxSeconds" in expect and tier != "coarse":
         passed = seconds <= expect["maxSeconds"]
         ok &= passed
         out["checks"].append({"check": "seconds", "value": seconds, "op": "<=",
@@ -154,7 +249,7 @@ def score_case(raw: dict, result, seconds: float, study=None) -> dict:
     return out
 
 
-def score_hx_case(raw: dict, out: dict, seconds: float) -> dict:
+def score_hx_case(raw: dict, out: dict, seconds: float, tier: str = "full") -> dict:
     """A heat-exchanger case: isolated, connected and watertight always, then
     the `expect` limits (HX_CHECKS, maxPressureDrop per fluid, maxSeconds)."""
     from ..materials import material_from_spec
@@ -175,7 +270,7 @@ def score_hx_case(raw: dict, out: dict, seconds: float) -> dict:
         ok &= bool(v)
         row["checks"].append({"check": name, "value": bool(v), "op": "==", "limit": True, "pass": bool(v)})
     for name, (key, measure, op) in HX_CHECKS.items():
-        if key not in expect:
+        if key not in expect or (tier == "coarse" and name in COARSE_SKIP):
             continue
         v = measure(r)
         passed = _cmp(v, op, expect[key])
@@ -186,7 +281,7 @@ def score_hx_case(raw: dict, out: dict, seconds: float) -> dict:
         passed = _cmp(v, "<=", limit)
         ok &= passed
         row["checks"].append({"check": f"pressureDrop {fl}", "value": v, "op": "<=", "limit": limit, "pass": passed})
-    if "maxSeconds" in expect:
+    if "maxSeconds" in expect and tier != "coarse":
         passed = seconds <= expect["maxSeconds"]
         ok &= passed
         row["checks"].append({"check": "seconds", "value": seconds, "op": "<=", "limit": expect["maxSeconds"],
@@ -232,10 +327,32 @@ def _md(rows):
     return _md_study(rows) + ("\n" + _md_hx(hx) if hx else "")
 
 
+def _mat(pa):
+    """Pareto massAtTarget for the table: '~' marks an upper bound (no
+    failing outcome below it to interpolate from)."""
+    m = (pa or {}).get("massAtTarget")
+    if m is None:
+        return "-"
+    return f"{m:.1f}" if pa.get("bracketed") else f"~{m:.1f}"
+
+
+def _critic_cell(r):
+    c = r.get("critic")
+    if not c:
+        return "pending" if r.get("criticPending") else "-"
+    if c.get("error"):
+        return "error"
+    return f"{c['criticScore']} ({c['criticBlockers']}B/{c['criticMajors']}M)"
+
+
 def _md_study(rows):
-    lines = ["| Case | Pass | Mass g | Lighter | SF | Defl. mm | p5 member mm | p5 ray mm | Crease mm | Time s | Failed checks |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    lines = ["| Case | Pass | Mass g | Lighter | SF | Mass at target SF g | Defl. mm | p5 member mm | p5 ray mm | "
+             "Crease mm | Critic | Time s | Failed checks |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for r in rows:
+        if r.get("skipped"):
+            lines.append(f"| {r['case']} | skipped | " + "- | " * 10 + f"0 | {r['skipped']} |")
+            continue
         b = r.get("best") or {}
         failed = ", ".join(f"{c['check']} {c['value']:.3g} (limit {c['op']} {c['limit']})"
                            for c in r.get("checks", []) if not c["pass"] and c["value"] is not None)
@@ -244,13 +361,14 @@ def _md_study(rows):
         fmt = lambda v, f: (f.format(v) if v is not None else "-")  # noqa: E731
         lines.append(f"| {r['case']} | {'yes' if r.get('pass') else 'NO'} | {fmt(b.get('mass'), '{:.1f}')} | "
                      f"{fmt(b.get('massReduction'), '{:.0%}')} | {fmt(b.get('safetyFactor'), '{:.2f}')} | "
+                     f"{_mat(r.get('pareto'))} | "
                      f"{fmt(b.get('deflection'), '{:.3f}')} | {fmt(b.get('p5Member'), '{:.2f}')} | {fmt(b.get('p5Thickness'), '{:.2f}')} | "
-                     f"{fmt(b.get('creaseLength'), '{:.1f}')} | "
+                     f"{fmt(b.get('creaseLength'), '{:.1f}')} | {_critic_cell(r)} | "
                      f"{r['seconds']:.0f} | {failed} |")
     return "\n".join(lines) + "\n"
 
 
-def run_hx_case(raw: dict, path: str, out: str) -> dict:
+def run_hx_case(raw: dict, path: str, out: str, tier: str = "full") -> dict:
     from ..__main__ import _jsonable
     from ..tasks import heat_exchanger
 
@@ -258,8 +376,8 @@ def run_hx_case(raw: dict, path: str, out: str) -> dict:
     t0 = time.time()
     try:
         spec = {k: v for k, v in raw.items() if k != "expect"}
-        res = heat_exchanger(spec, out, base_dir=os.path.dirname(path), render=True, viewer=False)
-        row = score_hx_case(raw, res, time.time() - t0)
+        res = heat_exchanger(spec, out, base_dir=os.path.dirname(path), render=tier == "full", viewer=False)
+        row = score_hx_case(raw, res, time.time() - t0, tier)
     except Exception as exc:  # noqa: BLE001 - a crashing case is a failing case
         import traceback
         row = {"case": name, "kind": "heatExchanger", "pass": False, "seconds": time.time() - t0,
@@ -269,42 +387,113 @@ def run_hx_case(raw: dict, path: str, out: str) -> dict:
     return _jsonable(row)
 
 
-def run_case(path: str, out: str) -> dict:
+def run_case(path, out: str, tier: str = "full", critic: str | None = None) -> dict:
+    """Run one case: `path` is a case file, or a generated case dict."""
     from ..__main__ import _jsonable
-    from ..render import render_views
+    from ..render import render_interfaces, render_views
     from ..spec import study_from_dict
     from ..study import run_study
 
-    with open(path) as fh:
-        raw = json.load(fh)
-    name = raw.get("name") or os.path.basename(path)
-    print(f"== {name}", file=sys.stderr, flush=True)
+    _tier_globals(tier)
+    if isinstance(path, dict):
+        raw, base = path, HERE
+    else:
+        with open(path) as fh:
+            raw = json.load(fh)
+        base = os.path.dirname(path)
+    name = raw.get("name") or os.path.basename(str(path))
+    skip = ((raw.get("expect") or {}).get("coarse") or {}).get("skip") if tier == "coarse" else None
+    if skip:
+        print(f"== {name} (skipped in the coarse tier: {skip})", file=sys.stderr, flush=True)
+        return {"case": name, "tier": tier, "skipped": skip, "pass": True, "seconds": 0.0, "checks": []}
+    raw = apply_tier(raw, tier)
+    print(f"== {name} ({tier})", file=sys.stderr, flush=True)
     if "core" in raw:
-        return run_hx_case(raw, path, out)
+        return run_hx_case(raw, path if isinstance(path, str) else os.path.join(HERE, name), out, tier)
     t0 = time.time()
     try:
-        study = study_from_dict(raw, base_dir=os.path.dirname(path))
+        study = study_from_dict(raw, base_dir=base)
         result = run_study(study, on_progress=lambda e, _x: (
             print(json.dumps(_jsonable({k: v for k, v in e.items()
                                         if k in ("stage", "volumeFraction", "safetyFactor", "mass")}
                                        | {"case": name})),
                   file=sys.stderr, flush=True) if e.get("stage") in ("outcome",) else None))
-        row = score_case(raw, result, time.time() - t0, study)
+        row = score_case(raw, result, time.time() - t0, study, tier)
         if result.best is not None or result.outcomes:
             o = result.outcomes[result.best if result.best is not None else -1]
             o.mesh.export(os.path.join(out, f"{name}.stl"))
             render_views(o.mesh, os.path.join(out, f"{name}.png"), study,
                          title=f"{name}: {o.report['mass']:.1f} g, SF {o.report['safetyFactor']:.2f}")
+            if critic:
+                from ..critic import critique
+
+                shot = render_interfaces(o.mesh, study, os.path.join(out, f"{name}.interfaces.png"))
+                try:
+                    c = critique([shot], study, backend=critic, out_dir=out, name=name)
+                except Exception as exc:  # noqa: BLE001 - a critic outage is not a part failure
+                    c = {"error": f"{type(exc).__name__}: {exc}"}
+                if c is not None:
+                    row["critic"] = c
+                    gate_critic(row, raw.get("expect", {}))
+                elif critic == "agent":
+                    row["criticPending"] = f"{name}.critic-request.md"
         row["trace"] = [o.summary() for o in result.outcomes]
         for t in row["trace"]:
             t.pop("cases", None)
     except Exception as exc:  # noqa: BLE001 - a crashing case is a failing case
         import traceback
-        row = {"case": name, "pass": False, "seconds": time.time() - t0,
+        row = {"case": name, "pass": False, "seconds": time.time() - t0, "tier": tier,
                "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()}
     print(json.dumps(_jsonable({k: row.get(k) for k in ("case", "pass", "best", "error")})),
           file=sys.stderr, flush=True)
     return _jsonable(row)
+
+
+def compare(rows, base_rows, tolerance=0.05):
+    """Regressions against an earlier scorecard: a case that passed and now
+    fails, or whose Pareto massAtTarget grew by more than `tolerance`. Also
+    lists improvements. Adds row["vsBaseline"]."""
+    base = {r["case"]: r for r in base_rows}
+    regress, improve = [], []
+    for r in rows:
+        b = base.get(r["case"])
+        if b is None or r.get("skipped") or b.get("skipped"):
+            continue
+        d = {}
+        if b.get("pass") and not r.get("pass"):
+            d["pass"] = "lost"
+        elif r.get("pass") and not b.get("pass"):
+            d["pass"] = "gained"
+        m, mb = (r.get("pareto") or {}).get("massAtTarget"), (b.get("pareto") or {}).get("massAtTarget")
+        if m is not None and mb:
+            d["massAtTarget"] = m / mb - 1.0
+        elif mb and m is None:
+            d["massAtTarget"] = "lost"
+        r["vsBaseline"] = d
+        worse = d.get("pass") == "lost" or d.get("massAtTarget") == "lost" or \
+            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] > tolerance)
+        better = d.get("pass") == "gained" or \
+            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] < -tolerance)
+        (regress if worse else improve if better else []).append(r["case"])
+    return regress, improve
+
+
+def _md_compare(rows, regress, improve):
+    lines = ["", f"vs baseline: {len(regress)} regressed, {len(improve)} improved", "",
+             "| Case | Pass | massAtTarget g | vs baseline |", "| --- | --- | --- | --- |"]
+    for r in rows:
+        d = r.get("vsBaseline")
+        if r.get("skipped"):
+            continue
+        if d is None:
+            continue
+        m = (r.get("pareto") or {}).get("massAtTarget")
+        dm = d.get("massAtTarget")
+        txt = (f"{dm:+.1%}" if isinstance(dm, float) else (dm or "-")) + (f", pass {d['pass']}" if "pass" in d else "")
+        flag = " **regressed**" if r["case"] in regress else ""
+        lines.append(f"| {r['case']} | {'yes' if r.get('pass') else 'NO'} | "
+                     f"{'-' if m is None else f'{m:.1f}'} | {txt}{flag} |")
+    return "\n".join(lines) + "\n"
 
 
 def main(argv=None):
@@ -313,30 +502,67 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="loadpath.evals.run")
     p.add_argument("cases", nargs="*", help="case names (default: all)")
     p.add_argument("--out", default="evals-out")
-    p.add_argument("--jobs", type=int, default=1,
-                   help="cases to run at once (each case also parallelizes its own outcomes)")
+    p.add_argument("--jobs", type=int,
+                   help="cases to run at once (each case also parallelizes its own outcomes); default 1, "
+                        "or every core for the coarse tier (its cases are small)")
+    p.add_argument("--tier", choices=["full", "coarse"], default="full")
+    p.add_argument("--corpus", help="add generated cases: N (seeds 0..N-1), A:B, or a,b,c")
+    p.add_argument("--only-corpus", action="store_true", help="run the generated cases only")
+    p.add_argument("--critic", choices=["anthropic", "agent"], help="vision critic on interface close-ups")
+    p.add_argument("--baseline", help="an earlier scorecard.json to diff against")
+    p.add_argument("--tolerance", type=float, default=0.05, help="massAtTarget growth that counts as a regression")
+    p.add_argument("--save-baseline", help="also write this run's scores (no traces) here, for --baseline")
+    p.add_argument("--gate", choices=["failures", "regressions"], default="failures",
+                   help="what the exit code counts")
     args = p.parse_args(argv)
     # a scorecard measures the optimizer, not what earlier runs left behind
     os.environ.pop("LOADPATH_RECALL", None)
     files = sorted(glob.glob(os.path.join(HERE, "cases", "*.json")))
     if args.cases:
         files = [f for f in files if os.path.splitext(os.path.basename(f))[0] in args.cases]
+    if args.only_corpus:
+        files = []
+    if args.corpus:
+        from .corpus import generate, seeds
+        files += [generate(s) for s in seeds(args.corpus)]
     os.makedirs(args.out, exist_ok=True)
+    n = len(files)
+    if args.jobs is None:
+        args.jobs = (os.cpu_count() or 1) if args.tier == "coarse" else 1
     if args.jobs > 1:
         import multiprocessing as mp
         from concurrent.futures import ProcessPoolExecutor
         # One process per case; outcomes inside a case stay in that process.
         os.environ.setdefault("LOADPATH_WORKERS", "1")
+        # and one BLAS / OpenMP thread each: four cases each spinning up a
+        # core's worth of BLAS threads ran 3-10x slower than one at a time
+        for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+            os.environ.setdefault(v, "1")
         with ProcessPoolExecutor(args.jobs, mp_context=mp.get_context("spawn")) as ex:
-            rows = list(ex.map(run_case, files, [args.out] * len(files)))
+            rows = list(ex.map(run_case, files, [args.out] * n, [args.tier] * n, [args.critic] * n))
     else:
-        rows = [run_case(f, args.out) for f in files]
+        rows = [run_case(f, args.out, args.tier, args.critic) for f in files]
+    md = _md(rows)
+    regress = []
+    if args.baseline:
+        with open(args.baseline) as fh:
+            regress, improve = compare(rows, json.load(fh), args.tolerance)
+        md += _md_compare(rows, regress, improve)
     with open(os.path.join(args.out, "scorecard.json"), "w") as fh:
         json.dump(_jsonable(rows), fh, indent=2)
-    md = _md(rows)
     with open(os.path.join(args.out, "scorecard.md"), "w") as fh:
         fh.write(md)
+    if args.save_baseline:
+        keep = ("case", "tier", "pass", "skipped", "best", "pareto", "checks", "seconds", "error")
+        with open(args.save_baseline, "w") as fh:
+            json.dump(_jsonable([{k: r[k] for k in keep if k in r} for r in rows]), fh, indent=1)
     print(md)
+    pending = [r["criticPending"] for r in rows if r.get("criticPending")]
+    if pending:
+        print(f"critic: {len(pending)} request(s) in {args.out} for the agent to answer "
+              f"(<case>.critic.json), then: python -m loadpath.critic score {args.out}", file=sys.stderr)
+    if args.gate == "regressions":
+        return len(regress)
     return sum(0 if r.get("pass") else 1 for r in rows)
 
 

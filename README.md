@@ -159,7 +159,9 @@ python3 tests/test_pressure.py
 python3 tests/test_process.py
 python3 tests/test_fields.py
 python3 tests/test_recall.py
-python3 -m loadpath.evals.run --out evals-out/
+python3 tests/test_evals.py
+python3 -m loadpath.evals.run --tier coarse --corpus 6 --out evals-coarse/   # minutes: every push
+python3 -m loadpath.evals.run --out evals-out/                               # full suite
 python3 tests/test_benchmarks.py
 python3 -m loadpath.benchmarks.run --out bench-out/
 python3 docs/gallery.py --evals evals-out/    # refresh the gallery renders from that run

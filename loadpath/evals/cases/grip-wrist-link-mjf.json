@@ -921,6 +921,9 @@
     "minMemberAtLeast": 2.4,
     "minProcessWall": 0.8,
     "maxTrappedVolume": 1.0,
-    "maxWarpSpan": 100
+    "maxWarpSpan": 100,
+    "coarse": {
+      "skip": "its pin-held mounts lose all material below ~10k cells (mechanism or empty load region)"
+    }
   }
 }

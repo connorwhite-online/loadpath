@@ -241,6 +241,21 @@ STL keep-out, an aluminium bell crank, a wall hook printed without supports,
 the textbook MBB beam) and scores the delivered meshes. Exit code is the
 number of failing cases. Run it after any change to the solver.
 
+- `--tier coarse` runs every case on a coarse grid with a short search and no
+  fine-grid confirm: a smoke run for each push, compared against a coarse
+  baseline (`--baseline old/scorecard.json --gate regressions`).
+- Every case also gets a Pareto score (`pareto.py`): `massAtTarget`, the
+  mass the outcomes' mass/SF front needs at the target SF, which moves when
+  a part gets lighter at the same SF and pass/fail does not.
+- `--corpus 8` (or `100:108`) adds generated cases (`corpus.py`): links,
+  brackets and three-point mounts from a seed, so a fix tuned on the
+  hand-written cases is also tried on parts nobody tuned on.
+- `--critic anthropic|agent` renders interface close-ups of each pick and
+  has a vision model file findings (creases, sawn faces, blocked seats,
+  knife edges) as metrics (`loadpath/critic.py`). `agent` writes a request
+  for the agent running the evals to answer by looking at the images;
+  `python -m loadpath.critic score evals-out/` folds the answers in.
+
 ## License
 
 MIT.

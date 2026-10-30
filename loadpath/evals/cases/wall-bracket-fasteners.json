@@ -91,7 +91,10 @@
     "bodies": 1,
     "minMemberAtLeast": 3.0,
     "minMassReduction": 0.6,
-    "maxClosedBores": 0
+    "maxClosedBores": 0,
+    "coarse": {
+      "skip": "fastener contact makes it the slowest case (6 min coarse) and its 2.5 mm load pad is lost below ~10k cells"
+    }
   },
   "fasteners": [
     {
