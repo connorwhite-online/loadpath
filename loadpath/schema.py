@@ -350,6 +350,13 @@ HEAT_EXCHANGER_SCHEMA = {
                     "description": "fdm (default) or lpbf: laser powder-bed metal (AlSi10Mg, Ti64, 316L). "
                                    "lpbf drops the skirt (outside supports are cut off) and the report's "
                                    "internalCeilings must be near zero: nothing inside can be supported."},
+        "cleanouts": {"type": "integer", "minimum": 0,
+                      "description": "powder clean-out ports per fluid (default 0): each a bore through the outer "
+                                     "wall at the point of that fluid's space farthest from every opening, on a "
+                                     "boss to tap for a plug; the report lists each and its flat plug for "
+                                     "check_networks. With lpbf the report's powder entry says how far powder "
+                                     "must travel to get out."},
+        "cleanoutDiameter": {**_POS, "description": "mm (default 4.2: an M5 tap drill)"},
         "closure": {"type": "boolean",
                     "description": "with build (default true): channels close gently under core surface that "
                                    "looks up and flare open over plenums below, so no channel ends in a "
@@ -365,6 +372,7 @@ HEAT_EXCHANGER_SCHEMA = {
                                       "required": ["axis"], "additionalProperties": False}},
             "required": ["fluid", "end", "direction"], "additionalProperties": False}},
         "step": {**_POS, "description": "grid, mm (default wall / 3); coarser is faster for a first look"},
+        "expect": {"type": "object", "description": "Eval-only pass criteria (loadpath.evals)."},
         "duty": {"type": "object", "description": "Optional: rate it. One entry per fluid name, plus 'wall' "
                                                   "(a material name or W/m·K).",
                  "properties": {"wall": {"anyOf": [{"type": "string"}, _POS]}},

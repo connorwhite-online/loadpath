@@ -76,6 +76,8 @@ def render_case(row, evals, stress):
     from loadpath.verify import verify_part
 
     name = row["case"]
+    if row.get("kind") == "heatExchanger":
+        return None                                # not a study: no stress map, no study render
     stl = os.path.join(evals, f"{name}.stl")
     if not os.path.exists(stl):
         print(f"skip {name}: no {stl}", file=sys.stderr)

@@ -121,6 +121,8 @@ class HeatExchangerSpec:
     skirt: bool = True              # with build: fill under the outside at 45 degrees to the bed
     process: str = "fdm"            # "fdm" or "lpbf" (powder-bed metal: no skirt, ceilings must self-support)
     closure: bool = True            # with build: channels close gently under surfaces that look up, and flare open over plenums below
+    cleanouts: int = 0              # powder clean-out ports per fluid, at the points farthest from its ports (plugged after)
+    cleanout_diameter: float = 4.2  # mm: an M5 tap drill
     step: float | None = None       # grid, mm (default wall / 3)
     max_points: int = 16_000_000
     names: tuple = ("A", "B")
@@ -197,6 +199,10 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
         hx.skirt = bool(spec["skirt"])
     if "closure" in spec:
         hx.closure = bool(spec["closure"])
+    if "cleanouts" in spec:
+        hx.cleanouts = int(spec["cleanouts"])
+    if "cleanoutDiameter" in spec:
+        hx.cleanout_diameter = float(spec["cleanoutDiameter"])
     if "zones" in spec:
         zs = []
         for z in spec["zones"]:
@@ -221,6 +227,13 @@ def _grid(lo, hi, step):
     dims = np.maximum(np.ceil((hi - lo) / step).astype(int), 2)
     idx = np.stack(np.meshgrid(*[np.arange(n) for n in dims], indexing="ij"), -1).reshape(-1, 3)
     return lo + (idx + 0.5) * step, dims
+
+
+def _grid_points(lo, dims, step):
+    """The points of a grid already sized (dims), in _grid's order: rebuilding
+    it from lo + dims * step can round to one more cell."""
+    idx = np.stack(np.meshgrid(*[np.arange(n) for n in dims], indexing="ij"), -1).reshape(-1, 3)
+    return lo + (idx + 0.5) * step
 
 
 def _surface_zones(hx, zones, pitch, lo, hi, up=None):
@@ -477,13 +490,24 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
     if up is not None and hx.skirt:
         grid = _skirt(grid, d_body.reshape(dims), int(np.argmax(np.abs(up))), step)
 
+    cleanouts, powder = [], None
+    if hx.cleanouts > 0 or hx.process == "lpbf":
+        _, masks0 = _check(hx, zones, zinfo, grid, g - half, d_body, d, dims, step, lo, cap)
+        grid, cleanouts, powder = _cleanouts(hx, zones, zinfo, grid, masks0, d_body, d, lo, step, dims)
+        del masks0
+
     grid[grid == 0.0] = 1e-6                        # no vertex exactly on a grid point: keeps the mesh manifold
     verts, faces, _, _ = marching_cubes(grid, 0.0, spacing=(step, step, step), allow_degenerate=False)
     mesh = trimesh.Trimesh(verts + lo + 0.5 * step, faces[:, ::-1], process=True)
     if mesh.volume < 0:
         mesh.invert()
 
-    report, masks = _check(hx, zones, zinfo, grid, (side_a := g - half), d_body, d, dims, step, lo, cap)
+    report, masks = _check(hx, zones, zinfo, grid, (side_a := g - half), d_body, d, dims, step, lo, cap,
+                           mouths=[(c["plug"]["a"], c["plug"]["b"], c["diameter"] / 2) for c in cleanouts])
+    if powder is not None:
+        report["powder"] = powder
+    if cleanouts:
+        report["cleanouts"] = cleanouts
     report.update(_overhangs(hx, mesh, up))
     if up is not None:
         report["internalCeilings"] = _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap)
@@ -586,6 +610,124 @@ def _densest(points, weights, size):
     return np.round((points[sel] * weights[sel, None]).sum(0) / weights[sel].sum(), 1).tolist()
 
 
+# a clean-out's plug seat: the tap drill a clean-out diameter takes (mm -> thread)
+_TAPS = ((2.5, "M3x0.5"), (3.3, "M4x0.7"), (4.2, "M5x0.8"), (5.0, "M6x1"), (6.8, "M8x1.25"), (8.5, "M10x1.5"))
+
+
+def _geodesic(mask, starts, step):
+    """Distance (mm) from `starts` (voxel indices) through `mask`, inf where
+    unreached."""
+    from skimage.graph import MCP_Geometric
+
+    cost = np.where(mask, 1.0, np.inf)
+    starts = [tuple(s) for s in starts if mask[tuple(s)]]
+    if not starts:
+        return np.full(mask.shape, np.inf)
+    cum, _ = MCP_Geometric(cost, fully_connected=True).find_costs(starts)
+    return cum * step
+
+
+def _cleanouts(hx, zones, zinfo, grid, masks, d_body, d_core, lo, step, dims):
+    """Powder clean-out ports: for each fluid, `hx.cleanouts` times, a bore
+    from the point of its space farthest (through the space) from every
+    opening, straight out through the seal and the outer wall, on a boss long
+    enough to tap for a plug (1.5 diameters of thread). The other fluid's
+    channels within a wall of the bore are filled (only metal is added, so
+    no leak can open; the bore never crosses a plenum). Also reports, per
+    fluid, the longest path powder travels to an opening (`powder`).
+    Returns (grid, cleanouts, powder)."""
+    r = 0.5 * hx.cleanout_diameter
+    solid = grid < 0
+    outside = ~solid & (d_body.reshape(dims) >= 0)
+    dist_out = ndimage.distance_transform_edt(~outside) * step
+    grad = np.stack(np.gradient(dist_out, step), -1)
+    core = d_core.reshape(dims) < 0
+    body = d_body.reshape(dims) < 0
+    del outside
+    out, powder = [], {}
+    pts_all = None
+    boss_len = 3.0 * r
+    boss_wall = max(hx.shell, 0.6 * r)
+    reach_in = hx.shell + (hx.cap if hx.cap is not None else hx.wall + 1.0) + hx.cell
+    for f, m in enumerate(masks):
+        if not m.any():
+            continue
+        starts = []
+        for z, zi in zip(zones, zinfo):
+            if z.fluid != f:
+                continue
+            p0, p1 = zi["port"]
+            ax = (p1 - p0) / np.linalg.norm(p1 - p0)
+            q = p1 - ax * (0.5 * hx.port_length)
+            starts.append(np.clip(np.floor((q - lo) / step).astype(int), 0, np.asarray(dims) - 1))
+        other = masks[1 - f]
+        ok = m & core & (dist_out <= reach_in)
+        for _ in range(hx.cleanouts):
+            geo = _geodesic(m, starts, step)
+            placed = False
+            while not placed:
+                cand = np.where(ok & np.isfinite(geo), geo, -1.0)
+                i = int(np.argmax(cand))
+                if cand.flat[i] <= 0:
+                    break
+                ijk = np.asarray(np.unravel_index(i, dims))
+                ok[tuple(ijk)] = False
+                n = -grad[tuple(ijk)]
+                if np.linalg.norm(n) < 1e-6:
+                    continue
+                n /= np.linalg.norm(n)
+                site = lo + (ijk + 0.5) * step
+                depth = float(dist_out[tuple(ijk)])
+                # out of the core the bore and its boss meet only metal and then
+                # air: no plenum, no port, and the straight line does reach out
+                along = np.arange(0.0, depth + 3.0 * r + 1.0, 0.5 * step)
+                idx = np.floor((site + np.outer(along, n) - lo) / step).astype(int)
+                if (idx < 0).any() or (idx >= np.asarray(dims)).any():
+                    continue
+                ix, iy, iz = idx.T
+                if ((m | other)[ix, iy, iz] & ~core[ix, iy, iz]).any():
+                    continue
+                if (body[ix, iy, iz] & (along > depth + 2.0 * step)).any():
+                    continue
+                placed = True
+            if not placed:
+                break
+            b = site + n * (depth + boss_len)
+            if pts_all is None:
+                pts_all = _grid_points(lo, dims, step)
+            box_lo = np.minimum(site, b) - r - boss_wall - hx.wall - 2 * step
+            box_hi = np.maximum(site, b) + r + boss_wall + hx.wall + 2 * step
+            sel = np.all((pts_all >= box_lo) & (pts_all <= box_hi), axis=1)
+            q = pts_all[sel]
+            g_ = grid.reshape(-1)
+            # the other fluid kept a wall (and two grid steps) clear of the bore
+            collar = Cylinder(site - n * (r + hx.wall), b, r + hx.wall + 2 * step).sdf(q)
+            theirs = other.reshape(-1)[sel]
+            g_sel = g_[sel]
+            g_sel[theirs] = np.minimum(g_sel[theirs], collar[theirs])
+            boss = Cylinder(site + n * max(depth - hx.shell, step), b, r + boss_wall).sdf(q)
+            bore = Cylinder(site - n * step, b + n * 1.0, r).sdf(q)
+            g_[sel] = np.maximum(np.minimum(g_sel, boss), -bore)
+            grid = g_.reshape(dims)
+            starts.append(ijk)
+            tap = min(_TAPS, key=lambda t: abs(t[0] - hx.cleanout_diameter))[1]
+            plug_a = site + n * max(depth - hx.shell, step)
+            out.append({"fluid": hx.names[f], "at": np.round(site, 2).tolist(), "axis": np.round(n, 3).tolist(),
+                        "diameter": hx.cleanout_diameter, "pathBefore": round(float(geo[tuple(ijk)]), 1),
+                        "plug": {"a": np.round(plug_a, 3).tolist(), "b": np.round(b + n * 1.0, 3).tolist(),
+                                 "r": r, "ends": "flat"},
+                        "seal": f"tap {tap} through the boss; after de-powdering, a set screw with thread "
+                                "sealant, or weld it shut"})
+            near = np.zeros(dims, bool)
+            near[tuple(ijk)] = True
+            ok &= ndimage.distance_transform_edt(~near) * step > 4 * r      # not beside this one
+        geo = _geodesic(m, starts, step)
+        reach = geo[m & np.isfinite(geo)]
+        powder[hx.names[f]] = {"farthestFromOpening": round(float(reach.max()), 1) if reach.size else None,
+                               "unreached": float((m & ~np.isfinite(geo)).sum()) * step ** 3}
+    return grid, out, powder
+
+
 def _skirt(grid, envelope, axis, step):
     """Fill under the part's outside at 45 degrees, down to the bed: every
     layer of the envelope is carried down one layer at a time, eroded by a
@@ -659,9 +801,10 @@ def _port(hx, zi, pts, up, bed):
     return bore, np.minimum(tube, gus)
 
 
-def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap):
+def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap, mouths=()):
     """Isolation, walls and capacity, measured on the grid the part was
-    meshed from."""
+    meshed from. `mouths` (a, b, r): clean-out bores, left out of the outer
+    wall like the ports' mouths."""
     solid = grid < 0
     inside_body = (d_body < 0).reshape(dims)
     open_ = ~solid & inside_body
@@ -710,12 +853,16 @@ def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap):
     outside = ~solid & ~inside_body               # air (the skirt is solid, though outside the body)
     dist_out = ndimage.distance_transform_edt(~outside) * step
     near_mouth = np.zeros(int(np.prod(dims)), bool)
-    pts = _grid(lo, lo + np.asarray(dims) * step, step)[0]
+    pts = _grid_points(lo, dims, step)
     for zi in zinfo:
         p0, p1 = zi["port"]
         sel = _port_box(hx, zi, pts, None, None)
         near_mouth[sel] |= Cylinder(zi["exit"], p1 + (p1 - p0) / np.linalg.norm(p1 - p0) * 3.0,
                                    0.5 * hx.port_diameter + hx.shell + 2 * step).sdf(pts[sel]) < 0
+    for a_, b_, r_ in mouths:
+        a_, b_ = np.asarray(a_, float), np.asarray(b_, float)
+        ax_ = (b_ - a_) / np.linalg.norm(b_ - a_)
+        near_mouth |= Cylinder(a_ - ax_ * (hx.shell + 2 * step), b_, r_ + hx.shell + 2 * step).sdf(pts) < 0
     del pts
     near_mouth = near_mouth.reshape(dims)
     wet = (a | b) & ~near_mouth

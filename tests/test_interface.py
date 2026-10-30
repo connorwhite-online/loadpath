@@ -40,7 +40,8 @@ TINY = {  # test_loadpath's LUG, cut short
 
 def _docs():
     for p in CASES:
-        yield p.name, "study", json.loads(p.read_text())
+        doc = json.loads(p.read_text())
+        yield p.name, "heatExchanger" if "core" in doc else "study", doc
     for e in examples():
         yield e["name"], e["kind"], example(e["name"])
 

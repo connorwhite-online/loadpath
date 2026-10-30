@@ -143,7 +143,7 @@ def lattice_part(study, mesh, options: dict | None, out_dir: str, stem: str, ren
 
 # --- heat exchangers --------------------------------------------------------
 
-_HX_OWN = ("name", "description", "step", "duty")
+_HX_OWN = ("name", "description", "step", "duty", "expect")
 
 
 def _hx_spec(spec, base_dir):

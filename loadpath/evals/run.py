@@ -20,6 +20,21 @@ Each case in cases/*.json is an ordinary study plus an `expect` block:
       "maxSeconds": 600
     }
 
+A case with a "core" is a heat exchanger (loadpath.tasks.heat_exchanger)
+instead, scored on its own checks (HX_CHECKS):
+
+    "expect": {
+      "maxMass": 140,                  # g, solid volume x the duty's wall material
+      "minWallBetweenFluids": 0.9,     # mm, measured on the grid
+      "maxInternalFlatArea": 200,      # mm^2 of flat ceiling inside (unsupportable in metal)
+      "maxTrappedVolume": 5,           # mm^3 of open space no port reaches (trapped powder)
+      "minEffectiveness": 0.5,         # rated (needs duty)
+      "maxPressureDrop": {"air": 20000},  # Pa per fluid
+      "maxSeconds": 300
+    }
+
+and always on isolated, connected and watertight.
+
 Run:  python -m loadpath.evals.run [case ...] --out evals-out/
 Writes scorecard.json, scorecard.md and a render per case. Exit code is the
 number of failing cases, so it can gate a change to the solver.
@@ -53,6 +68,16 @@ CHECKS = {
     # bores the part closes over: no screw can be driven through (verify._closed_bores)
     "closedBores": ("maxClosedBores", lambda o: len(o.get("closedBores") or []), "<="),
     "overhang": ("maxOverhangFraction", lambda o: o.get("designOverhangFraction"), "<="),
+}
+
+
+HX_CHECKS = {
+    "mass": ("maxMass", lambda r: r.get("mass"), "<="),
+    "wallBetweenFluids": ("minWallBetweenFluids", lambda r: r["report"].get("minWallBetweenFluids"), ">="),
+    "internalFlatArea": ("maxInternalFlatArea",
+                         lambda r: (r["report"].get("internalCeilings") or {}).get("flatArea"), "<="),
+    "trappedVolume": ("maxTrappedVolume", lambda r: r["report"].get("trappedVolume"), "<="),
+    "effectiveness": ("minEffectiveness", lambda r: (r.get("rating") or {}).get("effectiveness"), ">="),
 }
 
 
@@ -103,7 +128,85 @@ def score_case(raw: dict, result, seconds: float, study=None) -> dict:
     return out
 
 
+def score_hx_case(raw: dict, out: dict, seconds: float) -> dict:
+    """A heat-exchanger case: isolated, connected and watertight always, then
+    the `expect` limits (HX_CHECKS, maxPressureDrop per fluid, maxSeconds)."""
+    from ..materials import material_from_spec
+
+    expect = raw.get("expect", {})
+    rep = out["report"]
+    row = {"case": raw.get("name"), "kind": "heatExchanger", "seconds": seconds, "checks": []}
+    wall = ((raw.get("duty") or {}).get("wall"))
+    try:
+        density = material_from_spec(wall).density if isinstance(wall, str) else None
+    except (KeyError, ValueError):
+        density = None
+    r = {"report": rep, "rating": out.get("rating"),
+         "mass": rep["solidVolume"] * density / 1000.0 if density else None}
+    ok = True
+    for name, v in (("isolated", rep.get("isolated")), ("connected", all((rep.get("connected") or {}).values())),
+                    ("watertight", rep.get("watertight"))):
+        ok &= bool(v)
+        row["checks"].append({"check": name, "value": bool(v), "op": "==", "limit": True, "pass": bool(v)})
+    for name, (key, measure, op) in HX_CHECKS.items():
+        if key not in expect:
+            continue
+        v = measure(r)
+        passed = _cmp(v, op, expect[key])
+        ok &= passed
+        row["checks"].append({"check": name, "value": v, "op": op, "limit": expect[key], "pass": passed})
+    for fl, limit in (expect.get("maxPressureDrop") or {}).items():
+        v = (((r["rating"] or {}).get("fluids") or {}).get(fl) or {}).get("pressureDrop")
+        passed = _cmp(v, "<=", limit)
+        ok &= passed
+        row["checks"].append({"check": f"pressureDrop {fl}", "value": v, "op": "<=", "limit": limit, "pass": passed})
+    if "maxSeconds" in expect:
+        passed = seconds <= expect["maxSeconds"]
+        ok &= passed
+        row["checks"].append({"check": "seconds", "value": seconds, "op": "<=", "limit": expect["maxSeconds"],
+                              "pass": passed})
+    if out.get("ratingError"):
+        row["error"] = out["ratingError"]
+        ok = False
+    row["pass"] = bool(ok)
+    ic = rep.get("internalCeilings") or {}
+    rt = r["rating"] or {}
+    row["exchanger"] = {"mass": r["mass"], "solidVolume": rep["solidVolume"],
+                        "minWallBetweenFluids": rep.get("minWallBetweenFluids"),
+                        "internalFlatArea": ic.get("flatArea"), "internalOverhangArea": ic.get("overhangArea"),
+                        "trappedVolume": rep.get("trappedVolume"), "effectiveness": rt.get("effectiveness"),
+                        "duty": rt.get("duty"),
+                        "pressureDrop": {k: v.get("pressureDrop") for k, v in (rt.get("fluids") or {}).items()},
+                        "cleanouts": len(rep.get("cleanouts") or [])}
+    return row
+
+
+def _md_hx(rows):
+    lines = ["| Exchanger | Pass | Mass g | Wall mm | Flat ceiling mm² | Trapped mm³ | Effectiveness | "
+             "Pressure drop Pa | Time s | Failed checks |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    fmt = lambda v, f: (f.format(v) if v is not None else "-")  # noqa: E731
+    for r in rows:
+        x = r.get("exchanger") or {}
+        failed = ", ".join(f"{c['check']} {c['value']} (limit {c['op']} {c['limit']})"
+                           for c in r.get("checks", []) if not c["pass"])
+        if r.get("error"):
+            failed = (r["error"] + "; " + failed).strip("; ")
+        dp = ", ".join(f"{k} {v:.0f}" for k, v in (x.get("pressureDrop") or {}).items() if v is not None) or "-"
+        lines.append(f"| {r['case']} | {'yes' if r.get('pass') else 'NO'} | {fmt(x.get('mass'), '{:.1f}')} | "
+                     f"{fmt(x.get('minWallBetweenFluids'), '{:.2f}')} | {fmt(x.get('internalFlatArea'), '{:.0f}')} | "
+                     f"{fmt(x.get('trappedVolume'), '{:.1f}')} | {fmt(x.get('effectiveness'), '{:.2f}')} | {dp} | "
+                     f"{r['seconds']:.0f} | {failed} |")
+    return "\n".join(lines) + "\n"
+
+
 def _md(rows):
+    hx = [r for r in rows if r.get("kind") == "heatExchanger"]
+    rows = [r for r in rows if r.get("kind") != "heatExchanger"]
+    return _md_study(rows) + ("\n" + _md_hx(hx) if hx else "")
+
+
+def _md_study(rows):
     lines = ["| Case | Pass | Mass g | Lighter | SF | Defl. mm | p5 member mm | p5 ray mm | Crease mm | Time s | Failed checks |",
              "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for r in rows:
@@ -121,6 +224,25 @@ def _md(rows):
     return "\n".join(lines) + "\n"
 
 
+def run_hx_case(raw: dict, path: str, out: str) -> dict:
+    from ..__main__ import _jsonable
+    from ..tasks import heat_exchanger
+
+    name = raw.get("name") or os.path.basename(path)
+    t0 = time.time()
+    try:
+        spec = {k: v for k, v in raw.items() if k != "expect"}
+        res = heat_exchanger(spec, out, base_dir=os.path.dirname(path), render=True, viewer=False)
+        row = score_hx_case(raw, res, time.time() - t0)
+    except Exception as exc:  # noqa: BLE001 - a crashing case is a failing case
+        import traceback
+        row = {"case": name, "kind": "heatExchanger", "pass": False, "seconds": time.time() - t0,
+               "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()}
+    print(json.dumps(_jsonable({k: row.get(k) for k in ("case", "pass", "exchanger", "error")})),
+          file=sys.stderr, flush=True)
+    return _jsonable(row)
+
+
 def run_case(path: str, out: str) -> dict:
     from ..__main__ import _jsonable
     from ..render import render_views
@@ -131,6 +253,8 @@ def run_case(path: str, out: str) -> dict:
         raw = json.load(fh)
     name = raw.get("name") or os.path.basename(path)
     print(f"== {name}", file=sys.stderr, flush=True)
+    if "core" in raw:
+        return run_hx_case(raw, path, out)
     t0 = time.time()
     try:
         study = study_from_dict(raw, base_dir=os.path.dirname(path))

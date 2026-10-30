@@ -99,3 +99,20 @@ def test_heatx_closure_cuts_internal_ceilings_and_keeps_the_fluids_apart():
         flat[closure] = rep["internalCeilings"]["flatArea"]
     assert not hx.skirt                       # lpbf: outside supports are cut off anyway
     assert flat[True] < 0.4 * flat[False], flat
+
+
+def test_heatx_cleanouts_open_each_fluid_to_the_outside_and_nothing_else():
+    from loadpath.heatx import design_heat_exchanger, heat_exchanger_from_spec
+
+    hx = heat_exchanger_from_spec({"core": {"type": "box", "min": [0, 0, 0], "max": [40, 30, 30]}, "layout": "cross",
+                                   "axes": "xy", "cell": 8, "wall": 1.0, "header": 4, "portDiameter": 6,
+                                   "portLength": 4, "process": "lpbf", "cleanouts": 1})
+    hx.step = 0.45
+    mesh, rep = design_heat_exchanger(hx)
+    assert rep["isolated"] and all(rep["connected"].values()), rep["ports"]
+    assert rep["minWallBetweenFluids"] > 0.9 and rep["minOuterWall"] > 1.2
+    assert mesh.is_watertight
+    assert sorted(c["fluid"] for c in rep["cleanouts"]) == ["A", "B"]
+    for c in rep["cleanouts"]:
+        assert c["plug"]["ends"] == "flat" and "M5" in c["seal"]
+    assert all(p["unreached"] == 0 for p in rep["powder"].values())

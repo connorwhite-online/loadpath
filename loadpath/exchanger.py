@@ -454,7 +454,12 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
             dist = core_half[i] - sg * P[:, i]
             # a face looking up closes its labyrinths gently (peaked channel
             # ends); any other seals over seal_len as before
-            f = _gentle_seal(dist, cell) if upward else seal_ramp(dist, seal_len)
+            # (where it seals a fluid off the other's plenum, the usual steep
+            # seal stays under the gentle one: the gentle ramp's half-thickness
+            # is a distance, and the sheet's field overstates distance near its
+            # critical points, so on its own it can leave a throat open)
+            f = np.maximum(_gentle_seal(dist, cell), seal_ramp(dist, seal_len)) if upward \
+                else seal_ramp(dist, seal_len)
             if i == 0 and flow == "cross":
                 # B's labyrinth seals shut near A's X faces and vice versa.
                 s_b = np.maximum(s_b, f)
@@ -466,7 +471,9 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
                 s_b = np.maximum(s_b, f * seal_ramp(-P[:, 2], 0.5 * cell))
                 s_a = np.maximum(s_a, f * seal_ramp(P[:, 2], 0.5 * cell))
             if upward and not (i == 0 or (i == 1 and flow == "cross")):
-                # a face no plenum serves: both labyrinths end under it
+                # a face no plenum serves: both labyrinths end under it (dead
+                # ends against the skin, no leak path: gentle alone)
+                f = _gentle_seal(dist, cell)
                 s_a = np.maximum(s_a, f)
                 s_b = np.maximum(s_b, f)
             elif upward and flow == "cross":
@@ -485,7 +492,9 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
                 # wall deeper than the flare reaches, so a wall still parts
                 # them whatever the flare's shape.
                 deep = seal_ramp(dist - flare_depth - wall_ref, seal_len)
-                g = _gentle_seal(dist, cell) * _in_window(P, i, core_half, m)
+                # (and never within a seal and a wall of the face's neighbours,
+                # where the flaring fluid is sealed for the other's plenums)
+                g = _gentle_seal(dist, cell) * _in_window(P, i, core_half, max(m, seal_len + wall_ref + 1.0))
                 if i == 0:
                     s_b = np.maximum(s_b, deep)
                     flare_a = np.maximum(flare_a, g)
