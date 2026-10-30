@@ -1,0 +1,249 @@
+{
+  "name": "arm-link-graded",
+  "description": "The arm-link example (a GRIP-style robot arm link between two 22 mm bearings) as a field-driven part: an organic envelope from smooth-unioned bosses and web, analyzed solid under the example's loads; its stress then drives the skin thickness and the gyroid wall, the gyroid cells grow away from the bearings, solid collars ring the bores, and the fillet where everything meets is larger near the bearings.",
+  "nodes": {
+    "shoulder": {
+      "op": "shape",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "axis": "z",
+        "length": 24,
+        "r": 16
+      }
+    },
+    "wrist": {
+      "op": "shape",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          140,
+          0,
+          0
+        ],
+        "axis": "z",
+        "length": 24,
+        "r": 15
+      }
+    },
+    "web": {
+      "op": "shape",
+      "shape": {
+        "type": "box",
+        "min": [
+          0,
+          -11,
+          -9
+        ],
+        "max": [
+          140,
+          11,
+          9
+        ]
+      }
+    },
+    "blob": {
+      "op": "union",
+      "inputs": [
+        "shoulder",
+        "wrist",
+        "web"
+      ],
+      "blend": 12,
+      "description": "bosses and web smooth-unioned"
+    },
+    "slab": {
+      "op": "shape",
+      "shape": {
+        "type": "box",
+        "min": [
+          -20,
+          -20,
+          -12
+        ],
+        "max": [
+          160,
+          20,
+          12
+        ]
+      }
+    },
+    "envelope": {
+      "op": "intersect",
+      "inputs": [
+        "blob",
+        "slab"
+      ],
+      "blend": 1.5,
+      "description": "the blend bulges past the bosses' faces: trim them flat, edges rounded 1.5 mm"
+    },
+    "bores": {
+      "op": "shape",
+      "shape": {
+        "type": "union",
+        "shapes": [
+          {
+            "type": "cylinder",
+            "center": [
+              0,
+              0,
+              0
+            ],
+            "axis": "z",
+            "length": 30,
+            "r": 11
+          },
+          {
+            "type": "cylinder",
+            "center": [
+              140,
+              0,
+              0
+            ],
+            "axis": "z",
+            "length": 30,
+            "r": 11
+          },
+          {
+            "type": "cylinder",
+            "p0": [
+              30,
+              0,
+              0
+            ],
+            "p1": [
+              110,
+              0,
+              0
+            ],
+            "r": 5
+          }
+        ]
+      }
+    },
+    "solid": {
+      "op": "subtract",
+      "inputs": [
+        "envelope",
+        "bores"
+      ]
+    },
+    "stress": {
+      "op": "result",
+      "study": "example:arm-link",
+      "part": "solid",
+      "pitch": 1.0,
+      "description": "von Mises (MPa) of the solid envelope, worst load case"
+    },
+    "nearBore": {
+      "op": "distance",
+      "input": "bores"
+    },
+    "skinWall": {
+      "op": "remap",
+      "input": "stress",
+      "from": [
+        2,
+        14
+      ],
+      "to": [
+        1.2,
+        3.0
+      ],
+      "curve": "smoothstep"
+    },
+    "skin": {
+      "op": "shell",
+      "input": "envelope",
+      "thickness": "skinWall"
+    },
+    "collars": {
+      "op": "shell",
+      "input": "bores",
+      "side": "outside",
+      "thickness": 3
+    },
+    "cell": {
+      "op": "remap",
+      "input": "nearBore",
+      "from": [
+        4,
+        30
+      ],
+      "to": [
+        6,
+        10
+      ]
+    },
+    "wall": {
+      "op": "remap",
+      "input": "stress",
+      "from": [
+        1,
+        12
+      ],
+      "to": [
+        0.8,
+        2.0
+      ],
+      "curve": "sqrt"
+    },
+    "core": {
+      "op": "lattice",
+      "type": "gyroid",
+      "cell": "cell",
+      "thickness": "wall"
+    },
+    "fill": {
+      "op": "intersect",
+      "inputs": [
+        "core",
+        "envelope"
+      ]
+    },
+    "fillet": {
+      "op": "remap",
+      "input": "nearBore",
+      "from": [
+        3,
+        20
+      ],
+      "to": [
+        2.0,
+        0.8
+      ]
+    },
+    "joined": {
+      "op": "union",
+      "inputs": [
+        "skin",
+        "collars",
+        "fill"
+      ],
+      "blend": "fillet"
+    },
+    "part": {
+      "op": "subtract",
+      "inputs": [
+        {
+          "op": "intersect",
+          "inputs": [
+            "joined",
+            "envelope"
+          ]
+        },
+        "bores"
+      ]
+    }
+  },
+  "output": "part",
+  "mesh": {
+    "pitch": 0.3
+  },
+  "material": "pa12",
+  "minWall": 0.8
+}

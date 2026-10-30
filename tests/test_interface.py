@@ -67,7 +67,7 @@ def test_schemas_are_valid_json_schema():
 
 def test_published_schema_files_match():
     for kind, fname in (("study", "study.schema.json"), ("heatExchanger", "heat-exchanger.schema.json"),
-                        ("lattice", "lattice.schema.json")):
+                        ("lattice", "lattice.schema.json"), ("field", "field.schema.json")):
         on_disk = json.loads((ROOT / "schema" / fname).read_text())
         assert on_disk == json.loads(json.dumps(SCHEMAS[kind])), \
             f"schema/{fname} is stale: python -m loadpath schema {kind} > schema/{fname}"

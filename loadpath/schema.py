@@ -6,6 +6,7 @@ one.
     python -m loadpath schema study          # the study, as JSON Schema 2020-12
     python -m loadpath schema heatExchanger  # a heat exchanger job
     python -m loadpath schema lattice        # lattice infill options
+    python -m loadpath schema field          # a field graph (fields.py)
 
 The schemas are what an agent (or an editor) validates against before it
 asks for a solve; `lint` is what `check` runs first, so a study with three
@@ -25,7 +26,7 @@ import difflib
 import json
 import re
 
-__all__ = ["STUDY_SCHEMA", "HEAT_EXCHANGER_SCHEMA", "LATTICE_SCHEMA", "SCHEMAS", "schema", "lint", "format_issues"]
+__all__ = ["STUDY_SCHEMA", "HEAT_EXCHANGER_SCHEMA", "LATTICE_SCHEMA", "FIELD_SCHEMA", "SCHEMAS", "schema", "lint", "format_issues"]
 
 _DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
@@ -461,11 +462,166 @@ LATTICE_SCHEMA = {
     "additionalProperties": False,
 }
 
-SCHEMAS = {"study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA}
+# --- field graphs (fields.py): nTop-style implicit modelling ---
+
+_FIELD = {"title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a "
+                         "number goes, a field can drive it.",
+          "anyOf": [{"type": "number"}, {"type": "string", "description": "a node name"},
+                    {"$ref": "#/$defs/node"}]}
+_BOX = {"type": "object", "description": "Axis-aligned box (mm).",
+        "properties": {"min": _VEC3, "max": _VEC3}, "required": ["min", "max"], "additionalProperties": False}
+_COMMON = {"description": {"type": "string", "description": "What the node is for (ignored)."},
+           "bounds": {**_BOX, "description": "Where this solid lives, when it cannot be worked out "
+                                             "(meshing needs the output's)."}}
+
+
+def _op(name, desc, props, required=(), require_one=None):
+    d = {"type": "object", "description": desc,
+         "properties": {"op": {"const": name}, **props, **_COMMON},
+         "required": ["op", *required], "additionalProperties": False}
+    if require_one:
+        d["x-requireOne"] = require_one
+    return d
+
+
+_FIELD_OPS = {
+    "constant": _op("constant", "A number everywhere.", {"value": {"type": "number"}}, ["value"]),
+    "coordinate": _op("coordinate", "Position along an axis (mm): 'x', 'y', 'z', or a direction from "
+                                    "`origin`.", {"axis": _AXIS, "origin": _VEC3}),
+    "distance": _op("distance", "Unsigned distance (mm) to a solid's surface (`input`), to points, a "
+                                "segment, a plane or a shape. The usual driver of a ramp: thicker near the "
+                                "bolts, finer cells near the load.",
+                    {"input": _FIELD, "points": {"type": "array", "items": _VEC3, "minItems": 1},
+                     "segment": {"type": "array", "items": _VEC3, "minItems": 2, "maxItems": 2},
+                     "plane": {"type": "object", "properties": {"point": _VEC3, "normal": _VEC3},
+                               "required": ["point", "normal"], "additionalProperties": False},
+                     "shape": {"$ref": "#/$defs/shape"},
+                     "signed": {"type": "boolean", "description": "with input: keep the sign (negative inside)"}},
+                    require_one=[["input"], ["points"], ["segment"], ["plane"], ["shape"]]),
+    "shape": _op("shape", "An exact primitive solid (box, cylinder, tube, sphere, union), as in a study.",
+                 {"shape": {"$ref": "#/$defs/shape"}}, ["shape"]),
+    "mesh": _op("mesh", "A closed mesh (STL/3MF/OBJ) as a solid: exact distance near its surface, so it "
+                        "re-meshes smooth.",
+                {"path": {"type": "string", "description": "relative to the graph's folder"},
+                 "source": {"type": "string", "description": "an in-memory mesh passed to FieldGraph(meshes=)"},
+                 "pitch": {**_POS, "description": "mm, far-field voxel grid (default extent/200, >= 0.25)"},
+                 "band": {**_POS, "description": "mm from the surface within which distance is exact "
+                                                 "(default 3 pitches); make it cover shell thicknesses"}},
+                require_one=[["path"], ["source"]]),
+    "result": _op("result", "A simulation result as a scalar field: von Mises stress (MPa) or displacement "
+                            "(mm) of `part` under `study` (analyzed on demand), a saved .npz (points + values, "
+                            "or verify fields), or an in-memory source.",
+                  {"path": {"type": "string", "description": ".npz with points and values (save_result_field) "
+                                                            "or a grid (origin, pitch, values)"},
+                   "source": {"type": "string"},
+                   "study": {"type": "string", "description": "study JSON, relative to the graph's folder, or "
+                                                              "'example:<name>' for a packaged example"},
+                   "part": {"type": "string", "description": "the mesh the study analyzes, or the name of a "
+                                                             "node of this graph (meshed for the analysis)"},
+                   "pitch": {**_POS, "description": "mm, meshing a node part for the analysis (default 1)"},
+                   "quantity": {"type": "string", "description": "vonMises (default) or displacement for a "
+                                                                 "study; the array name in an .npz"},
+                   "case": {"type": "string", "description": "one load case (default: the worst at each point)"},
+                   "cells": {"type": "integer", "minimum": 1000, "description": "analysis size (default 120000)"}},
+                  require_one=[["path"], ["source"], ["study", "part"]]),
+    "grid": _op("grid", "An imported scalar field on a regular grid (.npz with origin, pitch, values[nx,ny,nz]): "
+                        "a temperature map, a CFD pressure, a hand-painted density.",
+                {"path": {"type": "string"}, "source": {"type": "string"},
+                 "quantity": {"type": "string", "description": "array name (default values)"}},
+                require_one=[["path"], ["source"]]),
+    "remap": _op("remap", "Map `input` from [a, b] to [c, d] through a curve (clamped unless clamp is false).",
+                 {"input": _FIELD,
+                  "from": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                  "to": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                  "curve": {"enum": ["linear", "smoothstep", "smootherstep", "sqrt", "square"]},
+                  "clamp": {"type": "boolean"}}, ["input", "from", "to"]),
+    "expr": _op("expr", "Arithmetic over node names, x, y, z, pi, e and abs sqrt exp log sin cos tan floor ceil "
+                        "sign min max clamp lerp smoothstep step where, e.g. '0.8 + 1.2 * smoothstep(5, 30, "
+                        "stress)'.",
+                {"expr": {"type": "string"},
+                 "vars": {"type": "object", "additionalProperties": _FIELD,
+                          "description": "local names for fields used in expr"}}, ["expr"]),
+    "union": _op("union", "Join solids; `blend` (mm, or a field) is the fillet radius where they meet.",
+                 {"inputs": {"type": "array", "items": _FIELD, "minItems": 1}, "blend": _FIELD}, ["inputs"]),
+    "intersect": _op("intersect", "Keep what is inside every input; `blend` rounds the edges.",
+                     {"inputs": {"type": "array", "items": _FIELD, "minItems": 1}, "blend": _FIELD}, ["inputs"]),
+    "subtract": _op("subtract", "Cut the second and later inputs out of the first; `blend` fillets the cut.",
+                    {"inputs": {"type": "array", "items": _FIELD, "minItems": 2}, "blend": _FIELD}, ["inputs"]),
+    "shell": _op("shell", "A wall of `thickness` (mm, or a field: a variable wall) on a solid's surface.",
+                 {"input": _FIELD, "thickness": _FIELD,
+                  "side": {"enum": ["inside", "outside", "center"], "description": "default inside"}},
+                 ["input", "thickness"]),
+    "offset": _op("offset", "Grow (positive) or shrink a solid by `distance` (mm, or a field).",
+                  {"input": _FIELD, "distance": _FIELD}, ["input", "distance"]),
+    "lattice": _op("lattice", "A TPMS lattice filling all of space (intersect it with a solid). Cell size, "
+                              "wall thickness or relative density can each be a field.",
+                   {"type": {"enum": ["gyroid", "diamond", "schwarz-p"]},
+                    "cell": {**_FIELD, "description": "mm per period (default 8); a field grades it"},
+                    "thickness": {**_FIELD, "description": "wall, mm (default 1)"},
+                    "density": {**_FIELD, "description": "relative density 0.05-0.95 instead of thickness "
+                                                         "(lattice.py's homogenized tables set the wall)"},
+                    "form": {"enum": ["sheet", "network"], "description": "sheet (default): a wall on the "
+                                                                          "surface; network: one side solid"},
+                    "offset": {**_FIELD, "description": "mm, moves the level surface (network form)"},
+                    "origin": _VEC3,
+                    "frame": {"type": "object", "description": "cylindrical wraps the cells round an axis",
+                              "properties": {"type": {"enum": ["cartesian", "cylindrical"]}, "axis": _AXIS,
+                                             "center": _VEC3, "radius": {**_POS, "description":
+                                                                         "mm where cells are square"}},
+                              "required": ["type"], "additionalProperties": False}},
+                   require_one=None),
+    "transform": _op("transform", "Move, rotate or scale a field's input (translate, then rotate, then scale).",
+                     {"input": _FIELD, "translate": _VEC3,
+                      "rotate": {"type": "object", "properties": {"axis": _AXIS, "degrees": {"type": "number"},
+                                                                  "center": _VEC3},
+                                 "required": ["degrees"], "additionalProperties": False},
+                      "scale": _POS}, ["input"]),
+}
+
+_NODE = {
+    "title": "a node object with an 'op'",
+    "description": "A field node: " + ", ".join(_FIELD_OPS) + ".",
+    "oneOf": [{"$ref": f"#/$defs/op-{k}"} for k in _FIELD_OPS],
+    "x-discriminator": {"property": "op", "mapping": {k: f"#/$defs/op-{k}" for k in _FIELD_OPS}},
+}
+
+FIELD_SCHEMA = {
+    "$schema": _DIALECT,
+    "$id": "https://github.com/connorwhite-online/loadpath/schema/field.schema.json",
+    "title": "loadpath field graph",
+    "description": "An implicit (field) part, nTop style: named nodes, each a solid (signed distance, negative "
+                   "inside, mm) or a scalar field, where any numeric parameter can be another field.",
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description": "Names the output files."},
+        "description": {"type": "string"},
+        "nodes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/node"},
+                  "description": "name -> node. Names are what other nodes and expr refer to."},
+        "output": {"type": "string", "description": "The node to mesh (default the last)."},
+        "bounds": {**_BOX, "description": "Meshing box (default: worked out from the output)."},
+        "mesh": {"type": "object", "properties": {
+            "pitch": {**_POS, "description": "mm grid (default: the box over 4M cells); a third of the "
+                                             "thinnest wall or finer"},
+            "project": {"type": "integer", "minimum": 0, "description": "surface relax+projection rounds "
+                                                                       "(default 3; 0 = raw marching cubes)"}},
+                 "additionalProperties": False},
+        "material": {**_ONE_MATERIAL, "description": "Reports the mass."},
+        "minWall": {**_POS, "description": "mm, the printability check's minimum wall (default 0.8)"},
+        "build": {**_VEC3, "description": "build direction for the overhang check (default +z)"},
+        "check": {"type": "boolean", "description": "run the printability check (default true)"},
+    },
+    "required": ["nodes"],
+    "additionalProperties": False,
+    "$defs": {**_SHAPES, "shape": _SHAPE, "node": _NODE, **{f"op-{k}": v for k, v in _FIELD_OPS.items()}},
+}
+
+SCHEMAS = {"study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
+           "field": FIELD_SCHEMA}
 
 
 def schema(kind: str = "study") -> dict:
-    """A copy of one schema: 'study', 'heatExchanger' or 'lattice'."""
+    """A copy of one schema: 'study', 'heatExchanger', 'lattice' or 'field'."""
     if kind not in SCHEMAS:
         raise ValueError(f"schema kind must be one of {sorted(SCHEMAS)}")
     return copy.deepcopy(SCHEMAS[kind])
@@ -623,6 +779,13 @@ def lint(doc, kind: str = "study") -> list[dict]:
             return [{"level": "error", "path": "$", "message": f"not valid JSON: {exc}"}]
     out = []
     _check(doc, root, root, "$", out)
+    if kind == "field" and isinstance(doc, dict) and not any(lv == "error" for lv, _, _ in out):
+        # beyond JSON Schema: references, expressions and cycles
+        from .fields import FieldGraph
+        try:
+            FieldGraph(doc)
+        except ValueError as exc:
+            out.append(("error", "$.nodes", str(exc)))
     if kind == "study" and isinstance(doc, dict) and not doc.get("supports"):
         # beyond JSON Schema: supports are optional only for pressure vessels
         cases = doc.get("loadCases") or ([{"loads": doc["loads"]}] if isinstance(doc.get("loads"), list) else [])

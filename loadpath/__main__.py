@@ -7,6 +7,7 @@ Command line: run a study file and write the parts, a report and renders.
     python -m loadpath examples [name]         # list the packaged examples, or print one
     python -m loadpath lattice study.json part.stl --out out/ [--options lattice.json]
     python -m loadpath heatx exchanger.json --out out/ [--size]
+    python -m loadpath field part.json --out out/ [--pitch 0.3]   # a field graph (nTop-style implicit part)
     python -m loadpath mcp                     # local MCP server for agents (needs loadpath[mcp])
     python -m loadpath orient part.stl [--study study.json] [--3mf part.3mf]
                                                # rank build orientations, write the best as 3MF
@@ -61,8 +62,8 @@ def main(argv=None):
     c = sub.add_parser("check", help="validate a study and report the voxel problem")
     c.add_argument("study")
     c.add_argument("--base-dir")
-    s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger or lattice")
-    s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice"])
+    s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
+    s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field"])
     e = sub.add_parser("examples", help="list the packaged examples, or print one")
     e.add_argument("name", nargs="?")
     lt = sub.add_parser("lattice", help="fill a finished part with a stress-graded TPMS lattice")
@@ -83,6 +84,12 @@ def main(argv=None):
     h.add_argument("--no-render", action="store_true")
     h.add_argument("--no-viewer", action="store_true", help="skip the interactive HTML viewer")
     h.add_argument("--base-dir")
+    fg = sub.add_parser("field", help="mesh a field graph: implicit part with field-driven walls, lattices, fillets")
+    fg.add_argument("graph")
+    fg.add_argument("--out", default="loadpath-out")
+    fg.add_argument("--pitch", type=float, help="mesh grid, mm (overrides the graph's mesh.pitch)")
+    fg.add_argument("--no-render", action="store_true")
+    fg.add_argument("--base-dir")
     sub.add_parser("mcp", help="run a local MCP server (stdio) for agents")
     o = sub.add_parser("orient", help="rank build orientations of a mesh (support, bed, layer bond)")
     o.add_argument("mesh")
@@ -105,6 +112,8 @@ def main(argv=None):
         return 0
     if args.cmd == "heatx":
         return _heatx(args)
+    if args.cmd == "field":
+        return _field(args)
     if args.cmd == "orient":
         return _orient(args)
 
@@ -220,6 +229,27 @@ def _heatx(args):
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
     _write_report(args.out, rep)
+def _field(args):
+    from .fields import run_field
+    from .schema import format_issues, lint
+
+    doc = _load(args.graph)
+    issues = lint(doc, "field")
+    if any(i["level"] == "error" for i in issues):
+        print(json.dumps({"ok": False, "issues": issues, "error": format_issues(issues)}, indent=2))
+        return 2
+    if args.pitch:
+        doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "pitch": args.pitch}}
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
+    try:
+        _, rep = run_field(doc, args.out, base, progress=_progress, render=not args.no_render and _can_render())
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    _write_report(args.out, {"ok": True, **rep, **({"warnings": issues} if issues else {})})
+    return 0
+
+
 def _orient(args):
     import trimesh
 

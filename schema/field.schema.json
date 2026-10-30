@@ -1,0 +1,1898 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/connorwhite-online/loadpath/schema/field.schema.json",
+  "title": "loadpath field graph",
+  "description": "An implicit (field) part, nTop style: named nodes, each a solid (signed distance, negative inside, mm) or a scalar field, where any numeric parameter can be another field.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Names the output files."
+    },
+    "description": {
+      "type": "string"
+    },
+    "nodes": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/node"
+      },
+      "description": "name -> node. Names are what other nodes and expr refer to."
+    },
+    "output": {
+      "type": "string",
+      "description": "The node to mesh (default the last)."
+    },
+    "bounds": {
+      "type": "object",
+      "description": "Meshing box (default: worked out from the output).",
+      "properties": {
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "max": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "additionalProperties": false
+    },
+    "mesh": {
+      "type": "object",
+      "properties": {
+        "pitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm grid (default: the box over 4M cells); a third of the thinnest wall or finer"
+        },
+        "project": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "surface relax+projection rounds (default 3; 0 = raw marching cubes)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "material": {
+      "anyOf": [
+        {
+          "type": "string",
+          "description": "A name: pla, petg, abs, asa, tpu, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work)."
+        },
+        {
+          "type": "object",
+          "description": "A custom material: E (MPa), nu, strength (MPa), density (g/cm\u00b3).",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "E": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "nu": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.4999
+            },
+            "strength": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "density": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "E",
+            "strength",
+            "density"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "Reports the mass."
+    },
+    "minWall": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "mm, the printability check's minimum wall (default 0.8)"
+    },
+    "build": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "build direction for the overhang check (default +z)"
+    },
+    "check": {
+      "type": "boolean",
+      "description": "run the printability check (default true)"
+    }
+  },
+  "required": [
+    "nodes"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "box": {
+      "type": "object",
+      "description": "Axis-aligned box: min/max corners, or center/size.",
+      "properties": {
+        "type": {
+          "const": "box"
+        },
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "max": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "min",
+          "max"
+        ],
+        [
+          "center",
+          "size"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "cylinder": {
+      "type": "object",
+      "description": "Cylinder or tube: end points p0/p1, or center/axis/length; radius r, optional rInner.",
+      "properties": {
+        "type": {
+          "enum": [
+            "cylinder",
+            "tube"
+          ]
+        },
+        "p0": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "p1": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "'x', 'y', 'z' or a direction vector"
+        },
+        "length": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rInner": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "r"
+      ],
+      "x-requireOne": [
+        [
+          "p0",
+          "p1"
+        ],
+        [
+          "center",
+          "length"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "sphere": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "sphere"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "center",
+        "r"
+      ],
+      "additionalProperties": false
+    },
+    "mesh": {
+      "type": "object",
+      "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder, or inline stlBase64.",
+      "properties": {
+        "type": {
+          "const": "mesh"
+        },
+        "path": {
+          "type": "string"
+        },
+        "stlBase64": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "path"
+        ],
+        [
+          "stlBase64"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "union": {
+      "type": "object",
+      "description": "Several shapes acting as one region (a servo's four screw bosses).",
+      "properties": {
+        "type": {
+          "const": "union"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "shape": {
+      "title": "a shape object (box, cylinder, tube, sphere, mesh, union)",
+      "description": "A shape: box, cylinder (tube), sphere, mesh or union. Units mm.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/box"
+        },
+        {
+          "$ref": "#/$defs/cylinder"
+        },
+        {
+          "$ref": "#/$defs/sphere"
+        },
+        {
+          "$ref": "#/$defs/mesh"
+        },
+        {
+          "$ref": "#/$defs/union"
+        }
+      ],
+      "x-discriminator": {
+        "property": "type",
+        "mapping": {
+          "box": "#/$defs/box",
+          "cylinder": "#/$defs/cylinder",
+          "tube": "#/$defs/cylinder",
+          "sphere": "#/$defs/sphere",
+          "mesh": "#/$defs/mesh",
+          "union": "#/$defs/union"
+        }
+      }
+    },
+    "node": {
+      "title": "a node object with an 'op'",
+      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, remap, expr, union, intersect, subtract, shell, offset, lattice, transform.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/op-constant"
+        },
+        {
+          "$ref": "#/$defs/op-coordinate"
+        },
+        {
+          "$ref": "#/$defs/op-distance"
+        },
+        {
+          "$ref": "#/$defs/op-shape"
+        },
+        {
+          "$ref": "#/$defs/op-mesh"
+        },
+        {
+          "$ref": "#/$defs/op-result"
+        },
+        {
+          "$ref": "#/$defs/op-grid"
+        },
+        {
+          "$ref": "#/$defs/op-remap"
+        },
+        {
+          "$ref": "#/$defs/op-expr"
+        },
+        {
+          "$ref": "#/$defs/op-union"
+        },
+        {
+          "$ref": "#/$defs/op-intersect"
+        },
+        {
+          "$ref": "#/$defs/op-subtract"
+        },
+        {
+          "$ref": "#/$defs/op-shell"
+        },
+        {
+          "$ref": "#/$defs/op-offset"
+        },
+        {
+          "$ref": "#/$defs/op-lattice"
+        },
+        {
+          "$ref": "#/$defs/op-transform"
+        }
+      ],
+      "x-discriminator": {
+        "property": "op",
+        "mapping": {
+          "constant": "#/$defs/op-constant",
+          "coordinate": "#/$defs/op-coordinate",
+          "distance": "#/$defs/op-distance",
+          "shape": "#/$defs/op-shape",
+          "mesh": "#/$defs/op-mesh",
+          "result": "#/$defs/op-result",
+          "grid": "#/$defs/op-grid",
+          "remap": "#/$defs/op-remap",
+          "expr": "#/$defs/op-expr",
+          "union": "#/$defs/op-union",
+          "intersect": "#/$defs/op-intersect",
+          "subtract": "#/$defs/op-subtract",
+          "shell": "#/$defs/op-shell",
+          "offset": "#/$defs/op-offset",
+          "lattice": "#/$defs/op-lattice",
+          "transform": "#/$defs/op-transform"
+        }
+      }
+    },
+    "op-constant": {
+      "type": "object",
+      "description": "A number everywhere.",
+      "properties": {
+        "op": {
+          "const": "constant"
+        },
+        "value": {
+          "type": "number"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "op-coordinate": {
+      "type": "object",
+      "description": "Position along an axis (mm): 'x', 'y', 'z', or a direction from `origin`.",
+      "properties": {
+        "op": {
+          "const": "coordinate"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "'x', 'y', 'z' or a direction vector"
+        },
+        "origin": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    "op-distance": {
+      "type": "object",
+      "description": "Unsigned distance (mm) to a solid's surface (`input`), to points, a segment, a plane or a shape. The usual driver of a ramp: thicker near the bolts, finer cells near the load.",
+      "properties": {
+        "op": {
+          "const": "distance"
+        },
+        "input": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "[x, y, z]"
+          },
+          "minItems": 1
+        },
+        "segment": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "[x, y, z]"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "plane": {
+          "type": "object",
+          "properties": {
+            "point": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "normal": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "point",
+            "normal"
+          ],
+          "additionalProperties": false
+        },
+        "shape": {
+          "$ref": "#/$defs/shape"
+        },
+        "signed": {
+          "type": "boolean",
+          "description": "with input: keep the sign (negative inside)"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false,
+      "x-requireOne": [
+        [
+          "input"
+        ],
+        [
+          "points"
+        ],
+        [
+          "segment"
+        ],
+        [
+          "plane"
+        ],
+        [
+          "shape"
+        ]
+      ]
+    },
+    "op-shape": {
+      "type": "object",
+      "description": "An exact primitive solid (box, cylinder, tube, sphere, union), as in a study.",
+      "properties": {
+        "op": {
+          "const": "shape"
+        },
+        "shape": {
+          "$ref": "#/$defs/shape"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "shape"
+      ],
+      "additionalProperties": false
+    },
+    "op-mesh": {
+      "type": "object",
+      "description": "A closed mesh (STL/3MF/OBJ) as a solid: exact distance near its surface, so it re-meshes smooth.",
+      "properties": {
+        "op": {
+          "const": "mesh"
+        },
+        "path": {
+          "type": "string",
+          "description": "relative to the graph's folder"
+        },
+        "source": {
+          "type": "string",
+          "description": "an in-memory mesh passed to FieldGraph(meshes=)"
+        },
+        "pitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm, far-field voxel grid (default extent/200, >= 0.25)"
+        },
+        "band": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm from the surface within which distance is exact (default 3 pitches); make it cover shell thicknesses"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false,
+      "x-requireOne": [
+        [
+          "path"
+        ],
+        [
+          "source"
+        ]
+      ]
+    },
+    "op-result": {
+      "type": "object",
+      "description": "A simulation result as a scalar field: von Mises stress (MPa) or displacement (mm) of `part` under `study` (analyzed on demand), a saved .npz (points + values, or verify fields), or an in-memory source.",
+      "properties": {
+        "op": {
+          "const": "result"
+        },
+        "path": {
+          "type": "string",
+          "description": ".npz with points and values (save_result_field) or a grid (origin, pitch, values)"
+        },
+        "source": {
+          "type": "string"
+        },
+        "study": {
+          "type": "string",
+          "description": "study JSON, relative to the graph's folder, or 'example:<name>' for a packaged example"
+        },
+        "part": {
+          "type": "string",
+          "description": "the mesh the study analyzes, or the name of a node of this graph (meshed for the analysis)"
+        },
+        "pitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm, meshing a node part for the analysis (default 1)"
+        },
+        "quantity": {
+          "type": "string",
+          "description": "vonMises (default) or displacement for a study; the array name in an .npz"
+        },
+        "case": {
+          "type": "string",
+          "description": "one load case (default: the worst at each point)"
+        },
+        "cells": {
+          "type": "integer",
+          "minimum": 1000,
+          "description": "analysis size (default 120000)"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false,
+      "x-requireOne": [
+        [
+          "path"
+        ],
+        [
+          "source"
+        ],
+        [
+          "study",
+          "part"
+        ]
+      ]
+    },
+    "op-grid": {
+      "type": "object",
+      "description": "An imported scalar field on a regular grid (.npz with origin, pitch, values[nx,ny,nz]): a temperature map, a CFD pressure, a hand-painted density.",
+      "properties": {
+        "op": {
+          "const": "grid"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "string",
+          "description": "array name (default values)"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false,
+      "x-requireOne": [
+        [
+          "path"
+        ],
+        [
+          "source"
+        ]
+      ]
+    },
+    "op-remap": {
+      "type": "object",
+      "description": "Map `input` from [a, b] to [c, d] through a curve (clamped unless clamp is false).",
+      "properties": {
+        "op": {
+          "const": "remap"
+        },
+        "input": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "from": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "to": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "curve": {
+          "enum": [
+            "linear",
+            "smoothstep",
+            "smootherstep",
+            "sqrt",
+            "square"
+          ]
+        },
+        "clamp": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "input",
+        "from",
+        "to"
+      ],
+      "additionalProperties": false
+    },
+    "op-expr": {
+      "type": "object",
+      "description": "Arithmetic over node names, x, y, z, pi, e and abs sqrt exp log sin cos tan floor ceil sign min max clamp lerp smoothstep step where, e.g. '0.8 + 1.2 * smoothstep(5, 30, stress)'.",
+      "properties": {
+        "op": {
+          "const": "expr"
+        },
+        "expr": {
+          "type": "string"
+        },
+        "vars": {
+          "type": "object",
+          "additionalProperties": {
+            "title": "a number, a node name or a node object",
+            "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "description": "a node name"
+              },
+              {
+                "$ref": "#/$defs/node"
+              }
+            ]
+          },
+          "description": "local names for fields used in expr"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "expr"
+      ],
+      "additionalProperties": false
+    },
+    "op-union": {
+      "type": "object",
+      "description": "Join solids; `blend` (mm, or a field) is the fillet radius where they meet.",
+      "properties": {
+        "op": {
+          "const": "union"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "title": "a number, a node name or a node object",
+            "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "description": "a node name"
+              },
+              {
+                "$ref": "#/$defs/node"
+              }
+            ]
+          },
+          "minItems": 1
+        },
+        "blend": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "inputs"
+      ],
+      "additionalProperties": false
+    },
+    "op-intersect": {
+      "type": "object",
+      "description": "Keep what is inside every input; `blend` rounds the edges.",
+      "properties": {
+        "op": {
+          "const": "intersect"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "title": "a number, a node name or a node object",
+            "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "description": "a node name"
+              },
+              {
+                "$ref": "#/$defs/node"
+              }
+            ]
+          },
+          "minItems": 1
+        },
+        "blend": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "inputs"
+      ],
+      "additionalProperties": false
+    },
+    "op-subtract": {
+      "type": "object",
+      "description": "Cut the second and later inputs out of the first; `blend` fillets the cut.",
+      "properties": {
+        "op": {
+          "const": "subtract"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "title": "a number, a node name or a node object",
+            "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "description": "a node name"
+              },
+              {
+                "$ref": "#/$defs/node"
+              }
+            ]
+          },
+          "minItems": 2
+        },
+        "blend": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "inputs"
+      ],
+      "additionalProperties": false
+    },
+    "op-shell": {
+      "type": "object",
+      "description": "A wall of `thickness` (mm, or a field: a variable wall) on a solid's surface.",
+      "properties": {
+        "op": {
+          "const": "shell"
+        },
+        "input": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "thickness": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "side": {
+          "enum": [
+            "inside",
+            "outside",
+            "center"
+          ],
+          "description": "default inside"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "input",
+        "thickness"
+      ],
+      "additionalProperties": false
+    },
+    "op-offset": {
+      "type": "object",
+      "description": "Grow (positive) or shrink a solid by `distance` (mm, or a field).",
+      "properties": {
+        "op": {
+          "const": "offset"
+        },
+        "input": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "distance": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "input",
+        "distance"
+      ],
+      "additionalProperties": false
+    },
+    "op-lattice": {
+      "type": "object",
+      "description": "A TPMS lattice filling all of space (intersect it with a solid). Cell size, wall thickness or relative density can each be a field.",
+      "properties": {
+        "op": {
+          "const": "lattice"
+        },
+        "type": {
+          "enum": [
+            "gyroid",
+            "diamond",
+            "schwarz-p"
+          ]
+        },
+        "cell": {
+          "title": "a number, a node name or a node object",
+          "description": "mm per period (default 8); a field grades it",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "thickness": {
+          "title": "a number, a node name or a node object",
+          "description": "wall, mm (default 1)",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "density": {
+          "title": "a number, a node name or a node object",
+          "description": "relative density 0.05-0.95 instead of thickness (lattice.py's homogenized tables set the wall)",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "form": {
+          "enum": [
+            "sheet",
+            "network"
+          ],
+          "description": "sheet (default): a wall on the surface; network: one side solid"
+        },
+        "offset": {
+          "title": "a number, a node name or a node object",
+          "description": "mm, moves the level surface (network form)",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "origin": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "frame": {
+          "type": "object",
+          "description": "cylindrical wraps the cells round an axis",
+          "properties": {
+            "type": {
+              "enum": [
+                "cartesian",
+                "cylindrical"
+              ]
+            },
+            "axis": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              ],
+              "description": "'x', 'y', 'z' or a direction vector"
+            },
+            "center": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "radius": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm where cells are square"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    "op-transform": {
+      "type": "object",
+      "description": "Move, rotate or scale a field's input (translate, then rotate, then scale).",
+      "properties": {
+        "op": {
+          "const": "transform"
+        },
+        "input": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "translate": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "rotate": {
+          "type": "object",
+          "properties": {
+            "axis": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              ],
+              "description": "'x', 'y', 'z' or a direction vector"
+            },
+            "degrees": {
+              "type": "number"
+            },
+            "center": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "degrees"
+          ],
+          "additionalProperties": false
+        },
+        "scale": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "input"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

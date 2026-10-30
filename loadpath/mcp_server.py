@@ -189,6 +189,22 @@ def heat_exchanger(spec, base_dir: str | None = None) -> dict:
     return out
 
 
+def field(graph, base_dir: str | None = None) -> dict:
+    """Validate a field graph and mesh it in the background."""
+    if isinstance(graph, str):
+        graph = json.loads(graph)
+    from .schema import format_issues, lint
+    issues = lint(graph, "field")
+    errors = [x for x in issues if x["level"] == "error"]
+    if errors:
+        return {"ok": False, "error": format_issues(errors), "issues": issues}
+    out = _spawn("field", str(graph.get("name") or "field"), {"graph.json": graph},
+                 ["field", "{dir}/graph.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()],
+                 base_dir=base_dir or os.getcwd())
+    out["warnings"] = [f"{x['path']}: {x['message']}" for x in issues]
+    return out
+
+
 def size_heat_exchanger(spec, base_dir: str | None = None, max_pressure_drop: dict | None = None,
                         min_wall: float = 0.8, objective: str = "effectiveness",
                         min_effectiveness: float | None = None, splits: list | None = None) -> dict:
@@ -409,6 +425,13 @@ def status(job_id: str) -> tuple[dict, list]:
     elif kind == "lattice":
         info = {"status": "done", "kind": kind, "parent": meta.get("parent"), **r}
         pngs = [_png(d, r.get("render"))]
+    elif kind == "field":
+        info = {"status": "done", "kind": kind, **r, "report": report}
+        if r.get("enclosedVoids"):
+            info["attention"] = [f"{r['enclosedVoids']} void(s) sealed inside the part "
+                                 f"({r['enclosedVoidVolume']:.0f} mm^3): powder or resin stays trapped there; "
+                                 "open the skin or add drain holes for SLS, MJF and resin"]
+        pngs = [_png(d, r.get("render"))]
     else:
         rep = r.get("report", {})
         keep = ("isolated", "connected", "minWallBetweenFluids", "minOuterWall", "overhangArea", "watertight",
@@ -573,6 +596,15 @@ def serve():
         headers and ports, check the fluids are isolated and connected, and rate it if spec.duty is given.
         See loadpath_schema('heatExchanger') and loadpath_examples. Starts a job; poll loadpath_status."""
         return heat_exchanger(spec, base_dir)
+
+    @server.tool()
+    def loadpath_field(graph: dict, base_dir: str | None = None) -> dict:
+        """Mesh an implicit part described as a graph of fields (nTop style): shapes and meshes as signed
+        distances, simulation results and imported scalar fields, remap/expr math, and field-driven
+        operations (variable shell walls, variable fillets, TPMS lattices with graded cell size and wall).
+        Any numeric parameter can be another node. See loadpath_schema('field') and
+        examples/fields/arm-link-graded.json. Starts a job; poll loadpath_status."""
+        return field(graph, base_dir)
 
     @server.tool()
     def loadpath_size_heat_exchanger(spec: dict, max_pressure_drop: dict | None = None,
