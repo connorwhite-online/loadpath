@@ -2354,6 +2354,7 @@ function inspector() {
   });
   act.append(el("button", { class: "btn ghost small", title: "Make this the part that is meshed", onclick: () => { S.doc.output = name; S.target = name; structural(); partPanel(); } }, S.doc.output === name ? "output ✓" : "set output"),
     el("button", { class: "btn ghost small", title: "Duplicate node (Ctrl+D; Ctrl+C / Ctrl+V copy between graphs)", onclick: () => duplicateNode(name) }, "duplicate"),
+    ...(kindOf(name) === "solid" && S.doc.output !== name ? [el("button", { class: "btn ghost small", title: "Mesh just this node at full resolution (STL, report), not the graph's output", onclick: () => run(name) }, "mesh")] : []),
     s.op === "group" ? el("button", { class: "btn ghost small", title: "Put the group's nodes back into the graph here", onclick: () => ungroup(name) }, "ungroup")
       : el("button", { class: "btn ghost small", title: "Make this node and what only it uses a reusable group (its constants become the group's knobs)", onclick: () => makeGroup(name) }, "make group"),
     el("button", { class: "btn ghost small", title: "Delete node", onclick: () => deleteNode(name) }, "delete"));
@@ -2617,28 +2618,29 @@ async function save() {
   if (!r.ok) { S.serverIssues = b.issues || []; showIssues(); status(b.error || "Not saved.", "warn"); return; }
   status(`Saved ${b.saved}.`, "ok");
 }
-async function run() {
+async function run(node = null) {
   commit();
   if (!DATA.server) {
-    const cmd = `loadpath field ${fileName()} --out out/`;
+    const cmd = `loadpath field ${fileName()} --out out/${node ? ` --node ${node}` : ""}`;
     download(fileName(), JSON.stringify(exportDoc(), null, 2) + "\n");
     status(`Downloaded ${fileName()}. Mesh it with:  ${cmd}   (or open it with loadpath edit to run it here)`);
     try { await navigator.clipboard.writeText(cmd); } catch (e) { /* no clipboard */ }
     return;
   }
-  const r = await fetch("api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc: exportDoc() }) });
+  const r = await fetch("api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(node ? { doc: exportDoc(), node } : { doc: exportDoc() }) });
   const b = await r.json();
   if (!r.ok) { S.serverIssues = b.issues || []; showIssues(); status(b.error || "Could not start.", "warn"); return; }
   S.job = b.id; let since = 0;
   $("#run").disabled = true; $("#log").hidden = false; $("#log").textContent = ""; $("#report").hidden = true; $("#links").hidden = true;
-  status("Meshing at full resolution…");
+  const what = node ? `Meshing ${node}` : "Meshing";
+  status(`${what} at full resolution…`);
   const t0 = performance.now();
   const poll = async () => {
     const j = await (await fetch(`api/job?id=${b.id}&since=${since}`)).json();
     since = j.eventCount;
     for (const ev of j.events) $("#log").textContent += Object.entries(ev).map(([k, v]) => `${k} ${typeof v === "number" ? fmt(v) : v}`).join("  ") + "\n";
     $("#log").scrollTop = 1e9;
-    if (j.state === "running") { status(`Meshing at full resolution… ${((performance.now() - t0) / 1000).toFixed(0)} s`); setTimeout(poll, 800); return; }
+    if (j.state === "running") { status(`${what} at full resolution… ${((performance.now() - t0) / 1000).toFixed(0)} s`); setTimeout(poll, 800); return; }
     $("#run").disabled = false;
     if (j.state === "failed") { status(`Run failed: ${j.error}`, "warn"); return; }
     report(j);
@@ -2656,7 +2658,7 @@ function report(j) {
   const L = $("#links");
   L.replaceChildren(el("a", { class: "btn small", href: j.files.viewer, target: "_blank" }, "Open in viewer"), el("a", { class: "btn small", href: j.files.stl, download: "" }, "STL"), el("a", { class: "btn small", href: j.files.report, target: "_blank" }, "report.json"));
   L.hidden = false;
-  status(`Meshed: ${r.faces.toLocaleString()} faces${r.mass != null ? `, ${r.mass.toFixed(1)} g` : ""}.`, "ok");
+  status(`Meshed${j.node ? ` ${j.node}` : ""}: ${r.faces.toLocaleString()} faces${r.mass != null ? `, ${r.mass.toFixed(1)} g` : ""}.`, "ok");
   showMesh(j.mesh);
 }
 
@@ -2705,7 +2707,7 @@ $("#fit").addEventListener("click", async () => {
   try { await fitMass(key, g); } finally { $("#fit").disabled = false; }
 });
 $("#process").addEventListener("change", (e) => { const v = e.target.value; if (v) S.doc.process = v; else delete S.doc.process; commit(); legend(); kick(false); });
-$("#run").addEventListener("click", run);
+$("#run").addEventListener("click", () => run());
 $("#save").addEventListener("click", save);
 $("#export").addEventListener("click", () => { commit(); download(fileName(), JSON.stringify(exportDoc(), null, 2) + "\n"); });
 $("#import").addEventListener("change", async (e) => {
@@ -2776,7 +2778,7 @@ window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
   THREE, cam: () => { camera.updateMatrixWorld(); return camera; },
-  makeGroup: (n, g) => makeGroup(n, g), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
+  makeGroup: (n, g) => makeGroup(n, g), run: (n) => run(n), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
   paste: (text) => pasteText(text), sweep: (key, n) => sweepMass(key, n), duplicate: (n) => duplicateNode(n),
   pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),

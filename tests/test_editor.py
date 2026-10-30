@@ -233,6 +233,21 @@ def test_server_lints_bakes_saves_and_runs():
         assert code == 200
         code, _ = _request(base + "out/../graph.json")
         assert code == 404
+        # one node of a bigger part, meshed alone; a node that isn't there is refused up front
+        two = {**small, "nodes": {**small["nodes"], "b": {"op": "shape", "shape": {"type": "box", "min": [20, 0, 0],
+                                                                                   "max": [30, 10, 10]}},
+                                  "u": {"op": "union", "inputs": ["s", "b"]}}, "output": "u"}
+        code, body = _request(base + "api/run", {"doc": two, "node": "nope"})
+        assert code == 400 and "nope" in json.loads(body)["error"]
+        code, body = _request(base + "api/run", {"doc": two, "node": "s"})
+        jid = json.loads(body)["id"]
+        for _ in range(600):
+            job = json.loads(_request(base + f"api/job?id={jid}")[1])
+            if job["state"] != "running":
+                break
+            time.sleep(0.1)
+        assert job["state"] == "done" and job["node"] == "s", job.get("error")
+        assert abs(job["report"]["volume"] / want - 1) < 0.01 and job["files"]["stl"].endswith("ring-s.stl")
     finally:
         holder["srv"].shutdown()
 

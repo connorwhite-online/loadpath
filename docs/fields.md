@@ -70,6 +70,10 @@ wire, an expression) recompiles, in milliseconds.
   watertightness, sealed voids, drains, printability) and links to the
   STL, report.json and the full viewer. Runs go to `loadpath-edit/` beside
   the graph (`--out`).
+- **mesh** in a solid node's inspector meshes just that node the same way
+  (a boss, the lattice before it's clipped, one copy of a group), to its
+  own `<name>-<node>.stl`; on the command line, `loadpath field graph.json
+  --node <node>` (a copy's nodes are `<copy>__<node>`).
 - **Save** writes the graph back to its file. Inline nodes get names
   (`owner-key`) when the graph is opened, which is the same graph;
   node positions go under `editor`, which nothing else reads. The JSON tab

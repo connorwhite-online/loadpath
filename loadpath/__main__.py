@@ -170,6 +170,7 @@ def main(argv=None):
     fg.add_argument("graph")
     fg.add_argument("--out", default="loadpath-out")
     fg.add_argument("--pitch", type=float, help="mesh grid, mm (overrides the graph's mesh.pitch)")
+    fg.add_argument("--node", help="mesh this node instead of the graph's output (a copy's nodes: <copy>__<node>)")
     fg.add_argument("--stream", action="store_true", help="write the STL slab by slab in bounded memory "
                                                           "(huge lattices; skips the checks that need the mesh)")
     fg.add_argument("--no-render", action="store_true")
@@ -383,7 +384,8 @@ def _field(args):
         doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "stream": True}}
     base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
     try:
-        _, rep = run_field(doc, args.out, base, progress=_progress, render=not args.no_render and _can_render())
+        _, rep = run_field(doc, args.out, base, progress=_progress, render=not args.no_render and _can_render(),
+                           node=args.node)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2

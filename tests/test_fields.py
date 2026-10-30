@@ -16,10 +16,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import numpy as np  # noqa: E402
+import numpy as np
+import pytest  # noqa: E402
 import trimesh  # noqa: E402
 
-from loadpath.fields import FieldGraph, MeshField, _Samples, _compile_expr  # noqa: E402
+from loadpath.fields import FieldGraph, MeshField, _Samples, _compile_expr, node_doc  # noqa: E402
 from loadpath.schema import lint  # noqa: E402
 
 SPHERE = {"op": "shape", "shape": {"type": "sphere", "center": [0, 0, 0], "r": 10}}
@@ -390,6 +391,12 @@ def test_groups_are_copied_with_their_own_knobs():
     d = json.loads(json.dumps(doc))
     d["groups"]["rib"]["nodes"]["out"] = {"op": "group", "group": "rib", "inputs": {"base": "base"}}
     assert any("eight deep" in i["message"] for i in lint(d, "field"))
+    # one node of the part, a copy's inner node by its expanded name
+    one = node_doc(doc, "b__one__bar")
+    assert one["output"] == "b__one__bar" and one["name"] == "field-b__one__bar"
+    assert np.allclose(FieldGraph(one).evaluate(P), g.evaluate(P, "b__one__bar"))
+    with pytest.raises(ValueError, match="no node 'bar'"):
+        node_doc(doc, "bar")
 
 
 def test_image_is_a_field_on_a_plane():

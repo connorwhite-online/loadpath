@@ -1649,16 +1649,30 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
 
 # ---- the job ---------------------------------------------------------------------
 
+def node_doc(doc, node):
+    """The graph made to mesh one of its nodes instead of its output: groups
+    expanded (so a node inside a copy is named <copy>__<node>), `output`
+    set to `node` and the name suffixed with it, so its files don't
+    overwrite the whole part's."""
+    full = expand_groups(doc)
+    if node not in (full.get("nodes") or {}):
+        raise ValueError(f"no node {node!r} to mesh (have {', '.join(full.get('nodes') or {})})")
+    return {**full, "output": node, "name": f"{doc.get('name', 'field')}-{node}"}
+
+
 def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progress=None, render=True,
-              prebuilt=None):
+              prebuilt=None, node=None):
     """Build a field graph, mesh its output and report on it: volume,
     area, mass (with `material`), watertightness, bodies, and the printability
     check on the field itself (walls, overhangs, trapped voids) unless
     `check` is false. Writes <name>.stl and report.json to `out_dir`.
-    `prebuilt` reuses resources another graph built (FieldGraph.seed)."""
+    `prebuilt` reuses resources another graph built (FieldGraph.seed);
+    `node` meshes that node instead of the output (node_doc)."""
     import time
 
     t0 = time.time()
+    if node is not None:
+        doc = node_doc(doc, node)
     g = FieldGraph(doc, base_dir=base_dir, sources=sources, meshes=meshes).seed(prebuilt)
     process = None
     if doc.get("process") is not None:

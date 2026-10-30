@@ -347,15 +347,15 @@ class _Jobs:
         self.jobs = {}
         self.lock = threading.Lock()
 
-    def start(self, doc):
+    def start(self, doc, node=None):
         jid = uuid.uuid4().hex[:8]
-        job = {"id": jid, "state": "running", "events": [], "started": time.time()}
+        job = {"id": jid, "state": "running", "events": [], "started": time.time(), "node": node}
         self.jobs[jid] = job
-        threading.Thread(target=self._run, args=(job, doc), daemon=True).start()
+        threading.Thread(target=self._run, args=(job, doc, node), daemon=True).start()
         return job
 
-    def _run(self, job, doc):
-        from .fields import run_field
+    def _run(self, job, doc, node=None):
+        from .fields import expand_groups, run_field
         from .viewer import Viewer
 
         def progress(ev, _f=None):
@@ -366,7 +366,7 @@ class _Jobs:
             try:
                 out = os.path.join(self.out_dir, job["id"])
                 mesh, rep = run_field(doc, out, self.base_dir, progress=progress, render=False,
-                                      prebuilt=self.resources.prebuilt(doc))
+                                      prebuilt=self.resources.prebuilt(expand_groups(doc)), node=node)
                 with open(os.path.join(out, "report.json"), "w") as fh:
                     json.dump(_clean({"ok": True, **rep}), fh, indent=2)
                 stats = {"mass": f"{rep['mass']:.1f} g" if "mass" in rep else None,
@@ -388,14 +388,14 @@ class _Jobs:
 def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir=None, open_browser=True,
                  ready=None):
     """Serve the editor for the graph at `graph_path` until interrupted.
-    POST /api/bake, /api/lint, /api/save, /api/run; GET /api/job?id=,
+    POST /api/bake, /api/lint, /api/save, /api/run ({doc, node?}); GET /api/job?id=,
     /out/<job>/<file>. Binds to localhost unless told otherwise: it reads
     and writes files in the graph's folder. `ready(server)` is called once
     it listens (tests use port 0 and read server.server_port)."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlparse
 
-    from .fields import FieldGraph, expand_groups
+    from .fields import FieldGraph, expand_groups, node_doc
     from .schema import lint
 
     graph_path = os.path.abspath(graph_path)
@@ -499,11 +499,12 @@ def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir
                 issues = lint(doc, "field")
                 if any(i["level"] == "error" for i in issues):
                     return self._send(400, {"issues": issues, "error": "the graph has errors"})
+                node = body.get("node")
                 try:
-                    FieldGraph(doc, base_dir=base_dir)
+                    FieldGraph(node_doc(doc, node) if node else doc, base_dir=base_dir)
                 except ValueError as exc:
                     return self._send(400, {"error": str(exc)})
-                job = jobs.start(doc)
+                job = jobs.start(doc, node)
                 return self._send(200, {"id": job["id"]})
             return self._send(404, {"error": "not found"})
 
