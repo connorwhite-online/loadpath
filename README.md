@@ -136,6 +136,8 @@ numpy as before.
 - [Agents](docs/agents.md): the MCP server, its tools and the loop to follow.
   [`loadpath/SKILL.md`](loadpath/SKILL.md) is the skill.
 - [Reference](loadpath/README.md): the method, every study field, the report, limits.
+- [Benchmarks](docs/BENCHMARKS.md): loadpath against top88 and top3d on the textbook
+  problems (MBB beam, L-bracket, 3D cantilever, 3D bridge) and the GE bracket challenge.
 - [Examples](loadpath/examples/): a fastened bracket, a robot arm link, a
   lattice-filled pedal, two heat exchangers.
 
@@ -150,6 +152,8 @@ python3 tests/test_process.py
 python3 tests/test_fields.py
 python3 tests/test_recall.py
 python3 -m loadpath.evals.run --out evals-out/
+python3 tests/test_benchmarks.py
+python3 -m loadpath.benchmarks.run --out bench-out/
 python3 docs/gallery.py --evals evals-out/    # refresh the gallery renders from that run
 ```
 

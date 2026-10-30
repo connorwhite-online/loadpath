@@ -1,0 +1,380 @@
+{
+  "name": "ge-bracket",
+  "description": "GE jet engine bracket challenge (GrabCAD 2013), approximate: the challenge's four load cases, Ti-6Al-4V, a 0.75 in pin through a two-lug clevis and four 0.375 in bolts, minimum wall 0.050 in, pass = peak von Mises under yield (131 ksi) in every case. The design envelope is a box about the original's overall size (178 x 107 x 63 mm), roomier than the original L-shaped envelope, so masses compare only roughly with the entries. The original machined bracket weighed 4 lb (1.81 kg); the winning entry removed about 80% of it (Carter et al. 2014).",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [
+        0,
+        0,
+        0
+      ],
+      "max": [
+        178.0,
+        107.0,
+        63.0
+      ]
+    }
+  ],
+  "preserve": [
+    {
+      "id": "lug-a",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          74.7,
+          53.5,
+          50.0
+        ],
+        "axis": "x",
+        "length": 10.0,
+        "r": 14.525
+      }
+    },
+    {
+      "id": "lug-b",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          103.3,
+          53.5,
+          50.0
+        ],
+        "axis": "x",
+        "length": 10.0,
+        "r": 14.525
+      }
+    },
+    {
+      "id": "pad-0",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          14,
+          14,
+          4.0
+        ],
+        "axis": "z",
+        "length": 8.0,
+        "r": 9.085
+      }
+    },
+    {
+      "id": "pad-1",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          164.0,
+          14,
+          4.0
+        ],
+        "axis": "z",
+        "length": 8.0,
+        "r": 9.085
+      }
+    },
+    {
+      "id": "pad-2",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          14,
+          93.0,
+          4.0
+        ],
+        "axis": "z",
+        "length": 8.0,
+        "r": 9.085
+      }
+    },
+    {
+      "id": "pad-3",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          164.0,
+          93.0,
+          4.0
+        ],
+        "axis": "z",
+        "length": 8.0,
+        "r": 9.085
+      }
+    }
+  ],
+  "keepOut": [
+    {
+      "id": "pin-a",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          74.7,
+          53.5,
+          50.0
+        ],
+        "axis": "x",
+        "length": 10.2,
+        "r": 9.525
+      }
+    },
+    {
+      "id": "pin-b",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          103.3,
+          53.5,
+          50.0
+        ],
+        "axis": "x",
+        "length": 10.2,
+        "r": 9.525
+      }
+    },
+    {
+      "id": "clevis-gap",
+      "shape": {
+        "type": "box",
+        "min": [
+          79.7,
+          33.5,
+          30.0
+        ],
+        "max": [
+          98.3,
+          73.5,
+          64.0
+        ]
+      },
+      "bore": false
+    },
+    {
+      "id": "bolt-0",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          14,
+          14,
+          4.0
+        ],
+        "axis": "z",
+        "length": 8.2,
+        "r": 4.7625
+      }
+    },
+    {
+      "id": "bolt-1",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          164.0,
+          14,
+          4.0
+        ],
+        "axis": "z",
+        "length": 8.2,
+        "r": 4.7625
+      }
+    },
+    {
+      "id": "bolt-2",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          14,
+          93.0,
+          4.0
+        ],
+        "axis": "z",
+        "length": 8.2,
+        "r": 4.7625
+      }
+    },
+    {
+      "id": "bolt-3",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          164.0,
+          93.0,
+          4.0
+        ],
+        "axis": "z",
+        "length": 8.2,
+        "r": 4.7625
+      }
+    },
+    {
+      "id": "nut-0",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          14,
+          14,
+          36.0
+        ],
+        "axis": "z",
+        "length": 56.0,
+        "r": 8.085
+      },
+      "bore": false
+    },
+    {
+      "id": "nut-1",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          164.0,
+          14,
+          36.0
+        ],
+        "axis": "z",
+        "length": 56.0,
+        "r": 8.085
+      },
+      "bore": false
+    },
+    {
+      "id": "nut-2",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          14,
+          93.0,
+          36.0
+        ],
+        "axis": "z",
+        "length": 56.0,
+        "r": 8.085
+      },
+      "bore": false
+    },
+    {
+      "id": "nut-3",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          164.0,
+          93.0,
+          36.0
+        ],
+        "axis": "z",
+        "length": 56.0,
+        "r": 8.085
+      },
+      "bore": false
+    }
+  ],
+  "supports": [
+    {
+      "region": "bolt-0"
+    },
+    {
+      "region": "bolt-1"
+    },
+    {
+      "region": "bolt-2"
+    },
+    {
+      "region": "bolt-3"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "vertical",
+      "loads": [
+        {
+          "region": "pin-a",
+          "force": [
+            0,
+            0,
+            17793.0
+          ]
+        },
+        {
+          "region": "pin-b",
+          "force": [
+            0,
+            0,
+            17793.0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "horizontal",
+      "loads": [
+        {
+          "region": "pin-a",
+          "force": [
+            0,
+            18905.0,
+            0
+          ]
+        },
+        {
+          "region": "pin-b",
+          "force": [
+            0,
+            18905.0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "angled-42",
+      "loads": [
+        {
+          "region": "pin-a",
+          "force": [
+            0,
+            14138.1,
+            15701.9
+          ]
+        },
+        {
+          "region": "pin-b",
+          "force": [
+            0,
+            14138.1,
+            15701.9
+          ]
+        }
+      ]
+    },
+    {
+      "name": "torsion",
+      "loads": [
+        {
+          "region": "pin-a",
+          "force": [
+            0,
+            0,
+            19770
+          ]
+        },
+        {
+          "region": "pin-b",
+          "force": [
+            0,
+            0,
+            -19770
+          ]
+        }
+      ]
+    }
+  ],
+  "material": "ti64",
+  "goal": {
+    "safetyFactor": 1.0
+  },
+  "resolution": {
+    "maxElements": 80000
+  },
+  "expect": {
+    "bodies": 1,
+    "minSafetyFactor": 1.0,
+    "maxMass": 362
+  }
+}

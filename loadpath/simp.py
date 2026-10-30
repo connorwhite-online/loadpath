@@ -153,16 +153,25 @@ class _Analysis:
         alive = (xp > ALIVE) | self.anchor
         if self._mg is not None:
             return self._solve_mg(e, alive, us, rtol, loads)
+        self._last_e = e
         if alive.mean() < REDUCE_BELOW:
             sub = self._subsystem(alive, rtol)
+            subs = None
             if sub is not None:
                 keep, fd, stiff, solver = sub
                 solver.rtol = rtol
                 k = stiff.assemble(e[keep])
                 if d.springs is not None:
                     k = (k + d.springs[fd][:, fd]).tocsr()
-                subs = solver.solve_many(k, [f[fd] for f in loads],
-                                         [u[fd] if u is not None else None for u in us])
+                try:
+                    subs = solver.solve_many(k, [f[fd] for f in loads],
+                                             [u[fd] if u is not None else None for u in us])
+                except RuntimeError:
+                    # The live cells are joined to the rest by an edge or a
+                    # corner somewhere (26-connected but a hinge): singular.
+                    # The full system, void at E_MIN, holds the hinge.
+                    self._sub = None
+            if subs is not None:
                 out = []
                 for us_sub in subs:
                     u = np.zeros(mesh.n_dof)
@@ -206,8 +215,19 @@ class _Analysis:
         n_dof = self.domain.mesh.n_dof
         if fd is None:
             return solver.solve_many(k, list(rhss), x0s)
-        sub = solver.solve_many(k, [r[fd] for r in rhss],
-                                [x[fd] for x in x0s] if x0s else None)
+        try:
+            sub = solver.solve_many(k, [r[fd] for r in rhss],
+                                    [x[fd] for x in x0s] if x0s else None)
+        except RuntimeError:
+            # a hinge the loads did not excite but an adjoint does (see
+            # solve): solve on the full system instead
+            self._sub = None
+            stiff, solver = self._full_system()
+            k = stiff.assemble(self._last_e)
+            if self.domain.springs is not None:
+                k = (k + self.domain.springs).tocsr()
+            self._last = (k, None, solver)
+            return solver.solve_many(k, list(rhss), x0s)
         out = []
         for v in sub:
             u = np.zeros(n_dof)
@@ -265,6 +285,10 @@ class SimpOptions:
     # Remove delivered material that carries no load in any case (see
     # _prune_dead).
     prune: bool = True
+    # Normalize the filter by the full kernel (outside the design space reads
+    # as void, see density_filter), or None for the default: padded unless
+    # the part is extruded. The benchmarks turn it off to match top88/top3d.
+    pad_filter: bool | None = None
 
 
 @dataclass
@@ -439,6 +463,10 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres):
     return xp, us
 
 
+def _pad(opts) -> bool:
+    return opts.extrusion is None if opts.pad_filter is None else bool(opts.pad_filter)
+
+
 def _project(xt, beta, eta):
     den = np.tanh(beta * eta) + np.tanh(beta * (1 - eta))
     return (np.tanh(beta * eta) + np.tanh(beta * (xt - eta))) / den
@@ -494,7 +522,7 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
     columns = tie_groups(domain, opts.extrusion, opts.pattern)
     # An extruded part's top and bottom are the stock's faces: padding the
     # filter there (outside = void) would thin them, so pad only free designs.
-    h, hs = density_filter(domain, opts.filter_radius, pad=opts.extrusion is None)
+    h, hs = density_filter(domain, opts.filter_radius, pad=_pad(opts))
     ht = h.T.tocsr()
 
     vf = float(opts.volume_fraction)

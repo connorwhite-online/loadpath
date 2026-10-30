@@ -426,11 +426,18 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     active_grid[tuple(mesh.elem_ijk.T)] = True
     for ri, nodes in enumerate(bc.regions):
         touch = nodes[mesh.enode].any(axis=1)
-        if touch.sum() > _ANCHOR_MAX_FRACTION * mesh.n_elem:
+        if not touch.any():
             continue
         ext = np.ptp(mesh.elem_ijk[touch], axis=0) + 1
         thin = int(np.argmin(ext))
-        if ext[thin] <= 2 and np.sort(ext)[1] * pitch > 4.0 * radius:
+        face = ext[thin] <= 2 and np.sort(ext)[1] * pitch > 4.0 * radius
+        # A loaded face is pinned however much of the part it is: a deck
+        # under a spread load. Capped like the rest, the 3D bridge benchmark
+        # (a load over its whole top, 6% of the cells) left deck nodes on
+        # void and its compliance went up a million-fold.
+        if touch.sum() > _ANCHOR_MAX_FRACTION * mesh.n_elem and not (face and ri >= len(study.supports)):
+            continue
+        if face:
             if ri < len(study.supports):
                 continue
             layers = int(np.ceil(float(study.min_member or 0.0) / pitch))
