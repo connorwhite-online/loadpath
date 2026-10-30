@@ -637,8 +637,9 @@ def _boundary_flux_mean(mask_a, mask_b, value, weight):
 def network_flow(fluid: np.ndarray, h: float, inlet: dict, outlet: dict, *, medium="water", flow_lpm=None,
                  mass_flow=None, regions: np.ndarray | None = None, region_names=None, core: np.ndarray | None = None,
                  core_axis=None, cell: float | None = None, heat: bool = False, prt: float | None = None, u_port: float = 0.05,
-                 nu_min: float = 0.0003, cs: float = 0.1, tol: float = 2e-3, max_steps: int = 200000,
-                 chunk: int = 500, ramp_steps: int = 4000, origin=(0.0, 0.0, 0.0), verbose: bool = False) -> dict:
+                 nu_min: float = 0.0003, cs: float = 0.1, tol: float = 1e-2, max_steps: int = 300000,
+                 chunk: int = 500, ramp_steps: int = 4000, develop: float = 3.0, origin=(0.0, 0.0, 0.0),
+                 fields: bool = False, verbose: bool = False) -> dict:
     """Steady flow through one channel network, port to port.
 
     fluid: boolean voxel mask of the network (True = fluid), voxel size h
@@ -660,6 +661,12 @@ def network_flow(fluid: np.ndarray, h: float, inlet: dict, outlet: dict, *, medi
     core: optional mask of the core's voxels, and core_axis its mean flow
     direction (default: the mean velocity there), for the flow-sharing
     measure: the flow through the core's mid-section on cell-sized bins.
+
+    Runs `develop` residence times (the network's volume over the inflow)
+    and on until the inlet pressure's mean over one residence time is within
+    `tol` of the one before; what it reports comes from fields averaged over
+    the last residence times, since a port's jet into a plenum never goes
+    steady. fields: also return those averaged fields (m/s, Pa).
 
     heat: also run temperature, with the core's walls held at 0 and the
     inlet at 1 (every other wall adiabatic): the effectiveness of this side
@@ -725,6 +732,10 @@ def network_flow(fluid: np.ndarray, h: float, inlet: dict, outlet: dict, *, medi
     it = 0
     ok = False
     ramp = max(int(ramp_steps), 1)
+    residence = float(fluid.sum()) / (u_lu * a_in)             # steps for the inflow to fill the network
+    acc_r = np.zeros(shape)
+    acc_u = np.zeros((3,) + shape)
+    n_acc = 0
     while it < max_steps:
         if it < ramp:
             # start gently: an impulsive plug into still fluid near tau 0.5 throws a pressure
@@ -743,19 +754,29 @@ def network_flow(fluid: np.ndarray, h: float, inlet: dict, outlet: dict, *, medi
         hist.append(dp)
         if verbose and len(hist) % 20 == 0:
             print(f"  {it} steps  dp {dp:.3e}", flush=True)
-        if len(hist) >= 16:
-            a, b = np.mean(hist[-8:]), np.mean(hist[-16:-8])
-            if abs(a - b) < tol * abs(a):
-                ok = True
-                break
+        if it >= (develop - 1.0) * residence:          # time-average the fields for the report
+            acc_r += rho
+            for k in range(3):
+                acc_u[k] += u[k]
+            n_acc += 1
+        # windows of one residence time (the network's volume over the inflow), after
+        # `develop` of them: a plenum's jet takes several to settle into the core
+        w = max(8, int(np.ceil(residence / chunk)))
+        if it >= develop * residence and _settled(hist, w, tol):
+            ok = True
+            break
     p_unit = fl.rho * vel ** 2                               # Pa per lattice pressure
-    U = np.stack(u)
+    if n_acc:
+        R, U = acc_r / n_acc, acc_u / n_acc
+    else:
+        R, U = rho, np.stack(u)
+    del acc_r, acc_u
     speed = np.sqrt((U ** 2).sum(0))
-    p = (rho - 1.0) / 3.0
-    pt = p + 0.5 * rho * speed ** 2
-    dp = float(np.mean(hist[-8:])) if hist else float("nan")
+    p = (R - 1.0) / 3.0
+    pt = p + 0.5 * R * speed ** 2
+    dp = float(np.mean(hist[-w:])) if hist else float("nan")
     out = {"pressureDrop": dp * p_unit,
-           "steps": it, "seconds": round(time.time() - t0, 1), "converged": ok,
+           "steps": it, "residenceSteps": residence, "seconds": round(time.time() - t0, 1), "converged": ok,
            "voxel": h, "voxels": int(fluid.sum()), "inletVoxels": a_in, "portVelocity": u_phys,
            "reVoxel": re_h, "reScale": re_scale, "mach": float(u_lu * np.sqrt(3.0)),
            "maxMach": float(speed[fluid].max() * np.sqrt(3.0))}
@@ -866,6 +887,10 @@ def network_flow(fluid: np.ndarray, h: float, inlet: dict, outlet: dict, *, medi
             hc = ntu * mass_flow * fl.cp / (area * 1e-6)
             out["heat"].update({"coreWettedArea": area, "h": float(hc)})
     out["simulated"] = {"nuLattice": nu_lu, "uPortLattice": u_lu, "dt": dt}
+    if fields:
+        # time-averaged fields (padded grid: voxel (0,0,0) is at `origin`), for renders
+        out["fields"] = {"velocity": (U * vel).astype(np.float32), "pressure": (p * p_unit).astype(np.float32),
+                         "fluid": fluid, "origin": origin, "h": h}
     return out
 
 
