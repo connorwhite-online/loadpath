@@ -144,7 +144,7 @@ def _margin(study: Study, report: dict) -> float | None:
         ms.append(report["safetyFactor"] / g.safety_factor)
     dur = report.get("durability") if _durability_drives(study) else None
     if g.max_deflection is not None:
-        worst = max(c["deflection"] for c in report["cases"])
+        worst = max((c["deflection"] for c in report["cases"]), default=float("inf"))
         if dur:
             # a held load's deflection after creep, at its temperature
             worst = max([worst] + [c["creepDeflection"] for c in dur["cases"] if "creepDeflection" in c])
@@ -257,7 +257,15 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         emit({"stage": "mesh", "volumeFraction": vf})
         mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
         emit({"stage": "verify", "volumeFraction": vf})
-        report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
+        try:
+            report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
+        except RuntimeError as exc:
+            # one outcome verification cannot solve (a piece the supports do
+            # not hold) is a failed outcome, not a failed study: the search
+            # goes on past it (GRIP's wrist link died here)
+            mat = study.material
+            report = {"mass": float(mesh.volume) * mat.density / 1000.0, "safetyFactor": 0.0,
+                      "cases": [], "warnings": [f"verification failed: {exc}"]}
         opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                "compliance": res.compliance, "caseCompliance": res.case_compliance,
                "achievedVolumeFraction": res.volume_fraction}

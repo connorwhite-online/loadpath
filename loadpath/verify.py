@@ -552,7 +552,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     report["analysisPitch"] = pitch
     report["minMember"], report["p5Member"] = _thickness(solid, pitch)
 
-    lbl, nlab = ndimage.label(solid, structure=np.ones((3, 3, 3), bool))
+    # Face connectivity: cells that meet only at an edge or a corner share
+    # two nodes or one, a hinge the stiffness matrix cannot hold, and CG
+    # never converges (GRIP's upper arm: 44 such islands of 4-6 cells at a
+    # 1.04 mm pitch stalled verification for over an hour).
+    lbl, nlab = ndimage.label(solid)
     elem_ijk = np.argwhere(solid)
     hm = HexMesh(elem_ijk, pitch, origin)
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
