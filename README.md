@@ -156,6 +156,19 @@ extra (`loadpath[mcp,gpu]`, PyTorch) to run it on an NVIDIA GPU, an Apple
 Silicon GPU, or torch's threaded CPU kernels. Without it everything runs on
 numpy as before.
 
+### Impact: where lattices beat solid TO
+
+A stiff part is the wrong way to stop a falling mass: it stores energy as a spring
+and pushes back hard. A graph's `impact` block crushes a TPMS core layer by layer,
+using plateau strengths from unit-cell plastic collapse, and grades its density so
+every layer crushes at the same force ([docs/IMPACT.md](docs/IMPACT.md)). Test case:
+a corner bumper stopping a 5 kg robot falling 0.9 m (44 J) under a 6 kN limit. The
+graded gyroid (4.85 g) peaks at 5.4 kN. A uniform core of the same mass peaks at
+6.7 kN. Solid TO of the same envelope (8.25 g) holds only 0.8 J within the limit
+(`python examples/impact/end_stop.py`).
+
+![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
+
 - [Quickstart](docs/quickstart.md): install to a verified part in ten minutes.
 - [Agents](docs/agents.md): the MCP server, its tools and the loop to follow.
   [`loadpath/SKILL.md`](loadpath/SKILL.md) is the skill.
@@ -177,6 +190,7 @@ python3 tests/test_pressure.py
 python3 tests/test_process.py
 python3 tests/test_fields.py
 python3 tests/test_editor.py      # the GPU part needs node and Playwright
+python3 tests/test_impact.py
 python3 tests/test_recall.py
 python3 tests/test_evals.py
 python3 -m loadpath.evals.run --tier coarse --corpus 6 --out evals-coarse/   # minutes: every push

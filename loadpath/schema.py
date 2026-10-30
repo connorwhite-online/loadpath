@@ -601,10 +601,12 @@ _FIELD_OPS = {
                 {"path": {"type": "string"}, "source": {"type": "string"},
                  "quantity": {"type": "string", "description": "array name (default values)"}},
                 require_one=[["path"], ["source"]]),
-    "remap": _op("remap", "Map `input` from [a, b] to [c, d] through a curve (clamped unless clamp is false).",
+    "remap": _op("remap", "Map `input` from [a, b] to [c, d] through a curve (clamped unless clamp is false). "
+                          "Longer from/to lists are a piecewise-linear table (from ascending), e.g. a density "
+                          "per height for an impact core.",
                  {"input": _FIELD,
-                  "from": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
-                  "to": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                  "from": {"type": "array", "items": {"type": "number"}, "minItems": 2},
+                  "to": {"type": "array", "items": {"type": "number"}, "minItems": 2},
                   "curve": {"enum": ["linear", "smoothstep", "smootherstep", "sqrt", "square"]},
                   "clamp": {"type": "boolean"}}, ["input", "from", "to"]),
     "expr": _op("expr", "Arithmetic over node names, x, y, z, pi, e and abs sqrt exp log sin cos tan floor ceil "
@@ -687,6 +689,47 @@ FIELD_SCHEMA = {
         "check": {"type": "boolean", "description": "run the printability check (default true)"},
         "editor": {"type": "object", "description": "What `loadpath edit` keeps with the graph (node positions in "
                                                     "'layout'); nothing else reads it."},
+        "impact": {"type": "object", "properties": {
+            "envelope": {"type": "string", "description": "solid node the lattice core fills (the crush pad)"},
+            "density": {"anyOf": [{"type": "string"}, {"type": "number", "exclusiveMinimum": 0, "maximum": 1}],
+                        "description": "relative density: a scalar node (the one the lattice node uses) or a "
+                                       "number (default 1 = solid)"},
+            "lattice": {"enum": ["gyroid", "diamond", "schwarz-p"], "description": "sheet type (default gyroid)"},
+            "axis": {"enum": ["x", "y", "z"], "description": "crush direction (default z)"},
+            "mass": {**_POS, "description": "kg, the moving mass"},
+            "velocity": {**_POS, "description": "m/s at contact"},
+            "energy": {**_POS, "description": "J, instead of mass and velocity"},
+            "forceLimit": {**_POS, "description": "N, the most the part behind may feel"},
+            "pitch": {**_POS, "description": "mm sampling grid (default 0.5)"},
+            "grade": {"type": "boolean", "description": "also work out the flattest graded core for this "
+                                                         "envelope and give it as a density remap table"},
+            "rhoMin": {**_POS, "description": "lowest printable relative density for grading (default 0.12)"},
+            "rhoMax": {**_POS, "description": "highest relative density for grading (default 0.5)"},
+            "cell": {**_POS, "description": "mm lattice cell: with minWall, raises rhoMin to the thinnest "
+                                            "printable wall"},
+            "minWall": {**_POS, "description": "mm thinnest printable sheet (default 0.8)"}},
+                   "required": ["envelope"], "additionalProperties": False,
+                   "description": "Crush and impact of a lattice core (impact.py): force-crush curve, where a "
+                                  "mass at a speed stops, peak force and g, and with grade a density table that "
+                                  "crushes every layer at the same force. Needs material."},
+        "vibration": {"type": "object", "properties": {
+            "envelope": {"type": "string", "description": "solid node analysed (homogenized lattice inside)"},
+            "density": {"anyOf": [{"type": "string"}, {"type": "number", "exclusiveMinimum": 0, "maximum": 1}],
+                        "description": "relative density node or number (default 1 = solid)"},
+            "lattice": {"enum": ["gyroid", "diamond", "schwarz-p"]},
+            "fixed": {"type": "string", "description": "solid node: nodes inside it are clamped"},
+            "pointMasses": {"type": "array", "items": {"type": "object", "properties": {
+                "region": {"type": "string", "description": "solid node the mass attaches over"},
+                "mass": {**_POS, "description": "kg"}}, "required": ["region", "mass"],
+                "additionalProperties": False}},
+            "modes": {"type": "integer", "minimum": 1, "maximum": 50, "description": "how many (default 6)"},
+            "pitch": {**_POS, "description": "mm analysis grid (default 1)"},
+            "minFrequency": {**_POS, "description": "Hz the first mode must clear"},
+            "excitation": {**_POS, "description": "Hz of a known shake: reports the worst transmissibility"},
+            "lossFactor": {**_POS, "description": "material loss factor (default from modal.LOSS_FACTOR)"}},
+                      "required": ["envelope", "fixed"], "additionalProperties": False,
+                      "description": "Natural frequencies, effective masses and damping (modal.py). Needs "
+                                     "material."},
         "process": {**_PROCESS, "description": "How it is made: sets the minimum wall, the build direction and "
                                                "the drain holes (sls, mjf, sla, dlp, volumetric, lpbf drain "
                                                "sealed voids by default)."},

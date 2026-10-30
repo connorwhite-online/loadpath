@@ -146,6 +146,13 @@ field. `check` reports every problem at once: fix them all, then check again.
   TPMS sheet lattice graded by its own stress: `"lattice": {"type":
   "gyroid", "cell": 10, "skin": 1.2}` in the study, or `loadpath_lattice`
   on a finished job. `skin: 0` for SLS, MJF and resin so they drain.
+- Don't use a lattice to make a part stiffer per gram: solid topology
+  optimization wins that. Use one to stop an impact (a bumper, a hard stop, a
+  drop pad): give a field graph an `impact` block (envelope, density node,
+  mass and velocity or energy, forceLimit, `"grade": true`, cell and minWall).
+  It returns the peak force and crush, and a density table that crushes every
+  layer at the same force. A `vibration` block gives natural frequencies with
+  point masses. See docs/IMPACT.md in the repo.
 - A two-fluid heat exchanger is its own document (`loadpath_schema
   "heatExchanger"`): a core shape, a layout (`cross` or `counter`), cell and
   wall, and an optional duty to rate it. Size it first

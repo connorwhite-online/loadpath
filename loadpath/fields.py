@@ -1070,7 +1070,14 @@ class FieldGraph:
 
 def _remap(x, s, name):
     """`from` [a, b] -> `to` [c, d] through `curve`; clamped unless
-    clamp: false."""
+    clamp: false. With more than two points, `from` (ascending) and `to`
+    are a piecewise-linear table (always clamped at its ends), e.g. a
+    density per layer from impact.grade_for_impact."""
+    if len(s.get("from", ())) > 2 or len(s.get("to", ())) > 2:
+        xs, ys = np.asarray(s["from"], float), np.asarray(s["to"], float)
+        if len(xs) != len(ys) or np.any(np.diff(xs) <= 0):
+            raise ValueError(f"node {name!r}: a remap table needs equal-length 'from' (ascending) and 'to'")
+        return np.interp(np.asarray(x, float), xs, ys)
     a, b = (float(u) for u in s.get("from", (0.0, 1.0)))
     c, d = (float(u) for u in s.get("to", (0.0, 1.0)))
     if a == b:
@@ -1305,6 +1312,14 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         mat = material_from_spec(doc["material"])
         rep["mass"] = rep["volume"] * mat.density / 1000.0
         rep["material"] = mat.name
+    for key, mod, fn in (("impact", "impact", "impact_report"), ("vibration", "modal", "vibration_report")):
+        if doc.get(key) is not None:
+            if "material" not in doc:
+                raise ValueError(f"field graph: '{key}' needs a material")
+            import importlib
+
+            run = getattr(importlib.import_module(f".{mod}", __package__), fn)
+            rep[key] = run(g, doc[key], mat)
     if doc.get("check", True):
         from .checks.dfm import check_dfm
 
