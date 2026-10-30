@@ -315,6 +315,8 @@ _PROCESS = {"anyOf": [
                     "anisotropic": {"anyOf": [{"type": "boolean"}, {"const": "bond"}]},
                     "interlayer": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
                     "minFeature": _POS, "overhangs": {"type": "boolean"},
+                    "minHole": {**_POS, "description": "mm: narrowest hole or gap the optimizer may leave "
+                                                       "(default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"},
                     "escapeHole": {**_POS, "description": "mm: smallest powder escape / resin drain hole "
                                                           "(default SLS 4, MJF 5, SLA/DLP 3.5)"}},
      "required": ["type"], "additionalProperties": False},
@@ -386,7 +388,28 @@ STUDY_SCHEMA = {
                                {"type": "array", "items": {"$ref": "#/$defs/material"}, "minItems": 1}],
                      "description": "A list solves the goal in each and pools the outcomes."},
         "goal": {"$ref": "#/$defs/goal"},
-        "minMember": {**_POS, "description": "Thinnest member, mm."},
+        "minMember": {**_POS, "description": "Thinnest member, mm (default: 2 x the process's minFeature, "
+                                             "else 1.4 for the filter)."},
+        "minHole": {**_POS, "description": "Narrowest hole or gap, mm (default: the process's minHole, else "
+                                           "none). The optimizer pays for the material a hole this narrow "
+                                           "would close up with, and the delivered part has it closed."},
+        "drains": {"anyOf": [
+            {"enum": ["auto"]}, {"type": "boolean"},
+            {"type": "object", "properties": {
+                "enabled": {"type": "boolean"},
+                "diameter": {**_POS, "description": "mm (default SLS 6, MJF 7.5, SLA/DLP 5.5, volumetric 5, "
+                                                    "LPBF 6.8, else 6)"},
+                "count": {"type": "integer", "minimum": 1, "description": "holes per sealed void (default 2)"},
+                "maxPath": {"anyOf": [_POS, {"type": "null"}],
+                            "description": "mm: more holes while any powder is farther than this from one, "
+                                           "through the void (default 60; null: off)"},
+                "iterations": {"type": "integer", "minimum": 0,
+                               "description": "optimizer iterations after drilling, so the design carries "
+                                              "load round the holes (default 20)"}},
+             "additionalProperties": False}],
+            "description": "Escape holes into voids the optimizer sealed: 'auto' (default) for powder and resin "
+                           "processes and LPBF, true, false, or options. The holes are drilled where the "
+                           "wall is thin and the strain energy low, then the design re-converges round them."},
         "symmetry": {"type": "array", "items": {"enum": ["x", "y", "z"]},
                      "description": "Planes through the design-space centre, by normal axis."},
         "resolution": {"type": "object",

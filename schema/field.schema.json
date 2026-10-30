@@ -549,6 +549,11 @@
             "overhangs": {
               "type": "boolean"
             },
+            "minHole": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm: narrowest hole or gap the optimizer may leave (default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"
+            },
             "escapeHole": {
               "type": "number",
               "exclusiveMinimum": 0,

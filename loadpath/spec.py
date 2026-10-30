@@ -44,6 +44,13 @@ from .shapes import Shape, shape_from_spec
 __all__ = ["Region", "Load", "LoadCase", "Support", "Goal", "Study", "study_from_dict"]
 
 DEFAULT_MAX_ELEMENTS = 60_000
+# mm: the member size the filter holds a study to when it names neither a
+# minMember nor a process: about three FDM perimeters, and under FDM's own
+# floor (2 x its 0.8 mm minimum feature) on purpose. At 1.6 the filter grew
+# on grids coarser than a millimetre too (the mbb-beam eval, 1.29 mm cells,
+# went from passing at SF 1.52 to a search that stalled at 1.49); at 1.4 it
+# only acts below ~1.2 mm cells, where the sub-millimetre skins come from.
+DEFAULT_MIN_MEMBER = 1.4
 # Hard ceiling regardless of what a study asks for. From 100k cells the
 # optimizer is matrix-free multigrid (mg.py), ~1.5 KB per cell: an 845k-cell
 # study ran end to end in 20 min and 1.6 GB on a 4-core box. Past a few
@@ -137,22 +144,24 @@ class Goal:
 # How the part will be made. Each process sets what the design must respect:
 # whether layers make it weaker across them (FDM bonds layer to layer at a
 # fraction of the in-plane strength), whether overhangs need control, and
-# the smallest feature it holds. Values are typical published ranges, chosen
-# conservative; override any of them in the study.
+# the smallest feature it holds, and the smallest hole that stays open (unfused
+# powder sinters shut in a narrow SLS/MJF hole, resin cures shut in a narrow
+# SLA one, a nozzle bridges over a narrow FDM one). Values are typical
+# published ranges, chosen conservative; override any of them in the study.
 PROCESSES = {
-    "fdm": {"interlayer": 0.6, "minFeature": 0.8, "overhangs": True,
+    "fdm": {"interlayer": 0.6, "minFeature": 0.8, "minHole": 2.0, "overhangs": True,
             "note": "filament: layer bonds ~50-70% of in-plane strength; self-supporting at 45 degrees"},
-    "sls": {"interlayer": 0.9, "minFeature": 0.8, "overhangs": False,
+    "sls": {"interlayer": 0.9, "minFeature": 0.8, "minHole": 2.0, "overhangs": False,
             "note": "powder bed (PA12, PA11): nearly isotropic, no supports; leave powder escape holes in closed cavities"},
-    "mjf": {"interlayer": 0.95, "minFeature": 0.8, "overhangs": False,
+    "mjf": {"interlayer": 0.95, "minFeature": 0.8, "minHole": 2.0, "overhangs": False,
             "note": "HP Multi Jet Fusion: as SLS, slightly more isotropic"},
-    "sla": {"interlayer": 1.0, "minFeature": 0.5, "overhangs": False,
+    "sla": {"interlayer": 1.0, "minFeature": 0.5, "minHole": 1.0, "overhangs": False,
             "note": "resin vat: isotropic once cured; supports are added by the slicer"},
-    "dlp": {"interlayer": 1.0, "minFeature": 0.5, "overhangs": False,
+    "dlp": {"interlayer": 1.0, "minFeature": 0.5, "minHole": 1.0, "overhangs": False,
             "note": "resin vat, whole-layer exposure (DLP/LCD): as SLA; large cross-sections peel hard"},
-    "volumetric": {"interlayer": 1.0, "minFeature": 0.3, "overhangs": False,
+    "volumetric": {"interlayer": 1.0, "minFeature": 0.3, "minHole": 0.6, "overhangs": False,
                    "note": "volumetric / tomographic resin printing: no layers, no supports"},
-    "lpbf": {"interlayer": 0.85, "minFeature": 0.4, "overhangs": True,
+    "lpbf": {"interlayer": 0.85, "minFeature": 0.4, "minHole": 1.0, "overhangs": True,
              "note": "laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L): strength across layers ~85-90% "
                      "as built; overhangs past 45 degrees need supports, which cannot come out of closed "
                      "channels; bridges only ~2 mm; enclosed powder must drain"},
@@ -181,6 +190,7 @@ class Process:
     # mm: the smallest powder escape or resin drain hole the part's cavities
     # may rely on (processcheck.RULES default)
     escape_hole: float | None = None
+    min_hole: float | None = None      # mm
 
 
 def _process(spec) -> Process | None:
@@ -212,7 +222,22 @@ def _process(spec) -> Process | None:
     return Process(kind, build, inter, float(spec.get("minFeature", base["minFeature"])),
                    bool(spec.get("overhangs", base["overhangs"])),
                    anisotropic=_anisotropic(spec.get("anisotropic", False)),
-                   escape_hole=float(esc) if esc is not None else None, **stiff)
+                   escape_hole=float(esc) if esc is not None else None,
+                   min_hole=float(spec.get("minHole", base["minHole"])), **stiff)
+
+
+def _drains(spec, process):
+    """`drains`: "auto" (default; powder and resin processes and LPBF), true,
+    false, or an object of escape.EscapeOptions keys. Resolved to an
+    EscapeOptions, or None when off."""
+    from .drains import drains_wanted
+    from .escape import EscapeOptions
+
+    if spec in ("auto", None):
+        return EscapeOptions.for_process(process) if drains_wanted("auto", process) else None
+    if not drains_wanted(spec, process):
+        return None
+    return EscapeOptions.from_spec(spec if isinstance(spec, dict) else {}, process)
 
 
 def _calibrated_process(process, mat_in, spec):
@@ -301,7 +326,20 @@ class Study:
     # FDM: slicer.SlicerOptions (print time, filament, support per outcome;
     # graded infill); None for other processes
     slicer: Any = None
+    # Smallest hole (mm) the optimizer may leave, or None: see simp.SimpOptions.dilate.
+    min_hole: float | None = None
+    # Escape holes into sealed voids: "auto" (powder and resin processes),
+    # True, False, or an escape.EscapeOptions; see escape.py.
+    drains: Any = "auto"
     raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def length_scale(self) -> float:
+        """The member size the density filter enforces (mm): minMember, else
+        DEFAULT_MIN_MEMBER. A grid fine enough to resolve a sub-millimetre
+        sheet would otherwise build one (the 845k-cell arm link with no
+        minMember came out a 1 mm skin sealed round its cable channel)."""
+        return float(self.min_member) if self.min_member else DEFAULT_MIN_MEMBER
 
     @property
     def self_equilibrated(self) -> bool:
@@ -572,6 +610,11 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             print_direction = process.build
         floor = 2.0 * process.min_feature
         min_member = max(float(min_member), floor) if min_member is not None else floor
+    min_hole = d.get("minHole")
+    if min_hole is not None and not (isinstance(min_hole, (int, float)) and min_hole > 0):
+        raise ValueError("minHole is the narrowest hole or gap allowed, in mm (> 0)")
+    if min_hole is None and process is not None:
+        min_hole = process.min_hole
     # Walls round keep-outs and the design space's skin are preserved
     # material: fixed, pinned solid, with only what is behind them designed
     # (skin-and-rib). Every pressurized keep-out has one: the pressure needs
@@ -647,5 +690,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         durability=durability,
         joints=joints,
         slicer=_slicer(d.get("slicer"), process, base_dir, goal),
+        min_hole=float(min_hole) if min_hole is not None else None,
+        drains=_drains(d.get("drains", "auto"), process),
         raw=d,
     )

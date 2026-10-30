@@ -71,7 +71,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     warnings = [f"{i['path']}: {i['message']}" for i in issues] + list(d.warnings)
     return jsonable({
         "ok": True, "name": s.name, "pitch": d.pitch, "cells": d.n_elem, "dims": list(d.dims),
-        "preservedCells": int(d.preserve.sum()), "filterRadius": filter_radius(d, s.min_member),
+        "preservedCells": int(d.preserve.sum()), "filterRadius": filter_radius(d, s.length_scale, s.min_hole),
         "supportNodes": int(d.support_nodes.sum()), "loadNodes": int(d.load_nodes.sum()),
         "regions": [r.id for r in s.preserve] + [r.id for r in s.keep_out],
         "loadCases": [c.name for c in s.load_cases], "material": s.material.name,

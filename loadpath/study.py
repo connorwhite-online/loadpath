@@ -64,7 +64,12 @@ _TET_CLOSE = 1.08
 def _making(study: Study) -> dict:
     """The optimizer options that say how the part is made."""
     return dict(build_direction=study.print_direction, extrusion=study.extrusion, access=study.access,
-                pattern=study.pattern, max_member=study.max_member)
+                pattern=study.pattern, max_member=study.max_member,
+                dilate=_DILATE if study.min_hole else 0.0, escape=study.drains)
+
+
+# simp.SimpOptions.dilate when the study has a minimum hole: the erosion's twin
+_DILATE = 0.15
 
 
 def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should_stop) -> np.ndarray:
@@ -77,7 +82,8 @@ def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should
     coarse = build_domain(study, pitch=2.0 * domain.pitch)
     res = optimize(coarse, study.elastic(design=True),
                    SimpOptions(volume_fraction=vf, filter_radius=max(radius, 1.5 * coarse.pitch),
-                               max_iterations=60, beta_max=_WARM_BETA, beta_every=12, **_making(study)),
+                               max_iterations=60, beta_max=_WARM_BETA, beta_every=12,
+                               **{**_making(study), "escape": None}),
                    should_stop=should_stop)
     grid = coarse.full_grid(res.x)
     coords = (domain.mesh.elem_centers() - coarse.origin) / coarse.pitch - 0.5
@@ -200,7 +206,8 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
            "compliance": res.compliance, "caseCompliance": res.case_compliance,
            **({"caseDirection": res.case_direction} if any(d is not None for d in res.case_direction) else {}),
            "achievedVolumeFraction": res.volume_fraction,
-           "beta": res.history[-1]["beta"] if res.history else beta0}
+           "beta": res.history[-1]["beta"] if res.history else beta0,
+           **({"escape": res.escape} if res.escape else {})}
     o = Outcome(vf, mesh, {}, opt, rinfo)
     o.xphys = res.xphys
     o.x = res.x
@@ -561,7 +568,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             on_progress(event, field_)
 
     domain = build_domain(study)
-    radius = filter_radius(domain, study.min_member)
+    radius = filter_radius(domain, study.length_scale, study.min_hole)
     info = _domain_info(domain, radius)
     emit({"stage": "domain", **info, "warnings": domain.warnings})
     outcomes: list[Outcome] = []
@@ -584,7 +591,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                    "compliance": res.compliance, "caseCompliance": res.case_compliance,
                    **({"caseDirection": res.case_direction} if any(d is not None for d in res.case_direction) else {}),
-                   "achievedVolumeFraction": res.volume_fraction}
+                   "achievedVolumeFraction": res.volume_fraction,
+                   **({"escape": res.escape} if res.escape else {})}
         else:
             # a stored design for this very problem: mesh and verify it, no optimizing
             x, xphys = replay[0], replay[1]

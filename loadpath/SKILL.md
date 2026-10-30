@@ -192,6 +192,24 @@ coordinates). The optimizer then only builds what can be printed at 45°;
 about two cells cannot form; `check` warns when `minMember` is too fine for
 the grid.
 
+## Length scales and sealed voids
+
+`minMember` (mm) is the thinnest member, `minHole` the narrowest hole or
+gap. A `process` sets both if the study does not (2 x its minFeature for
+members: SLS/MJF/FDM 1.6; holes FDM/SLS/MJF 2, SLA/DLP/LPBF 1). With
+neither, the filter still holds members to 1.4 mm, so a fine grid cannot
+grow sub-millimetre skins. A hole narrower than `minHole` comes out filled.
+
+Stiffness likes closed sections, so a fine grid can seal a void (a skin
+over a cable channel). For powder and resin processes and LPBF
+(`"drains": "auto"`, the default) the optimizer then drills escape holes
+(SLS 6 mm, MJF 7.5, SLA/DLP 5.5, LPBF 6.8; at least 2 per void, more until
+no powder is over 60 mm from one) through thin, low-stress wall, and runs on
+so the part carries its load round them. `"drains": true` forces it for
+any process, `false` turns it off, or give `{"diameter", "count",
+"maxPath", "iterations"}`. `report.json`'s `optimizer.escape` lists the
+holes; `enclosedCavityVolume` should read 0.
+
 ## A robot arm link, end to end
 
 ```json
