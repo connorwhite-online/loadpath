@@ -14,6 +14,8 @@ Command line: run a study file and write the parts, a report and renders.
                                                # rank build orientations, write the best as 3MF
     python -m loadpath calibrate kit --material petg --out calibration/   # coupons to print + predictions
     python -m loadpath calibrate fit measurements.json [--predictions predictions.json] [--name petg-a1mini --save]
+    python -m loadpath assembly robot.urdf --link forearm --study forearm.json --region j4-mount --payload 1
+                                               # loads + neighbour keep-outs derived from the mechanism
 
 Progress goes to stderr as one JSON object per line, so an agent can tail it.
 Results go to stdout as one JSON document, and to report.json in --out.
@@ -194,9 +196,6 @@ def main(argv=None):
     cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
     cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
     cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
-    return 0
-
-
     asm = sub.add_parser("assembly", help="derive a part's load cases and neighbour keep-outs from a URDF")
     asm.add_argument("urdf")
     asm.add_argument("--link", required=True, help="the URDF link the study designs")
@@ -243,9 +242,6 @@ def main(argv=None):
         return _orient(args)
     if args.cmd == "calibrate":
         return _calibrate(args)
-    return 0
-
-
     if args.cmd == "assembly":
         return _assembly(args)
 
