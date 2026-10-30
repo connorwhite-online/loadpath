@@ -1,6 +1,6 @@
 # Gallery
 
-Rendered 2026-10-30 from `a88710c` by `python docs/gallery.py`.
+Rendered 2026-10-30 from `254be35` by `python docs/gallery.py`.
 
 Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress maps colour worst-case von Mises stress against the part's own 98th percentile, to show the load paths, on the shape bent by the worst load case, exaggerated; the margin against the material is the SF.
 
@@ -53,6 +53,66 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 ![grip-upper-arm](images/cases/grip-upper-arm-views.png)
 
 ![grip-upper-arm stress](images/stress/grip-upper-arm-views.png)
+
+## grip-wrist-yoke
+
+25.3 g · 90% lighter · SF 3.10 · pass
+
+<sub>deflection 0.101 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 9% · 4109 s</sub>
+
+![grip-wrist-yoke](images/cases/grip-wrist-yoke-views.png)
+
+![grip-wrist-yoke stress](images/stress/grip-wrist-yoke-views.png)
+
+## mbb-beam
+
+26.4 g · 60% lighter · SF 1.56 · pass
+
+<sub>deflection 1.669 mm · p5Member 2.65 mm · creaseLength 0.0 mm · volumeFraction 40% · 1979 s</sub>
+
+![mbb-beam](images/cases/mbb-beam-views.png)
+
+![mbb-beam stress](images/stress/mbb-beam-views.png)
+
+## motor-mount
+
+27.5 g · 69% lighter · SF 3.35 · pass
+
+<sub>deflection 0.321 mm · p5Member 1.46 mm · creaseLength 0.0 mm · volumeFraction 30% · 864 s</sub>
+
+![motor-mount](images/cases/motor-mount-views.png)
+
+![motor-mount stress](images/stress/motor-mount-views.png)
+
+## printed-hook
+
+31.3 g · 79% lighter · SF 2.95 · pass
+
+<sub>deflection 0.624 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 20% · 1516 s</sub>
+
+![printed-hook](images/cases/printed-hook-views.png)
+
+![printed-hook stress](images/stress/printed-hook-views.png)
+
+## wall-bracket-fasteners
+
+47.3 g · 89% lighter · SF 3.60 · pass
+
+<sub>deflection 0.166 mm · p5Member 4.55 mm · creaseLength 0.0 mm · volumeFraction 8% · 2008 s</sub>
+
+![wall-bracket-fasteners](images/cases/wall-bracket-fasteners-views.png)
+
+![wall-bracket-fasteners stress](images/stress/wall-bracket-fasteners-views.png)
+
+## wall-bracket
+
+57.2 g · 86% lighter · SF 2.87 · pass
+
+<sub>deflection 0.103 mm · p5Member 4.55 mm · creaseLength 0.0 mm · volumeFraction 10% · 1761 s</sub>
+
+![wall-bracket](images/cases/wall-bracket-views.png)
+
+![wall-bracket stress](images/stress/wall-bracket-views.png)
 
 ## Heat exchangers
 

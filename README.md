@@ -34,7 +34,7 @@ for the method, the study format, goals and limits.
 
 ## Examples
 
-The eval cases (6/6 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
+The eval cases (12/12 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
 
 <table>
 <tr>
@@ -45,15 +45,26 @@ The eval cases (6/6 passing): GRIP robot-arm style parts, each optimized and the
 <tr>
 <td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>148.8 g · 91% lighter · SF 2.54 · pass</sub></td>
 <td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>207.7 g · 88% lighter · SF 7.71 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>25.3 g · 90% lighter · SF 3.10 · pass</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>26.4 g · 60% lighter · SF 1.56 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.5 g · 69% lighter · SF 3.35 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>31.3 g · 79% lighter · SF 2.95 · pass</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>47.3 g · 89% lighter · SF 3.60 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>57.2 g · 86% lighter · SF 2.87 · pass</sub></td>
 </tr>
 </table>
 
-Where the load goes: von Mises stress on the part bent by its worst load case:
+Where the load goes: von Mises stress, blue (none) to red (the part's 98th percentile), on the part bent by its worst load case:
 
 <table>
 <tr>
 <td align="center" valign="top"><img src="docs/images/stress/bell-crank.png" width="250"><br><sub>bell-crank</sub></td>
 <td align="center" valign="top"><img src="docs/images/stress/grip-upper-arm.png" width="250"><br><sub>grip-upper-arm</sub></td>
+<td align="center" valign="top"><img src="docs/images/stress/printed-hook.png" width="250"><br><sub>printed-hook</sub></td>
 </tr>
 </table>
 
@@ -65,7 +76,7 @@ Printed in metal, nothing inside can be supported: the channels end in peaked ro
 
 ![metal ceilings](docs/images/heatx/lpbf-ceilings.png)
 
-<sub>Rendered 2026-10-30 from `a88710c` by `python docs/gallery.py`.</sub>
+<sub>Rendered 2026-10-30 from `254be35` by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->
 
