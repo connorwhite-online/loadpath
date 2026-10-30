@@ -119,3 +119,64 @@ def test_editor_server_tunes_and_hands_back_the_values():
         assert _request(base + job["files"]["tuned"].lstrip("/"))[0] == 200
     finally:
         holder["srv"].shutdown()
+
+
+# a skin-and-gyroid bar under the same kind of cantilever load, for the
+# homogenized check: fully resolved (meshed at 0.12 mm, verified on 150k,
+# 400k and 0.9M voxels) it deflects 0.95-1.00 mm and weighs 6.86 g
+LATTICE_STUDY = {**STUDY, "preserve": [{"id": "root", "shape": {"type": "box", "min": [0, -6, -6], "max": [4, 6, 6]}},
+                                       {"id": "tip", "shape": {"type": "box", "min": [56, -6, -6], "max": [60, 6, 6]}}],
+                 "designSpace": [{"type": "box", "min": [0, -6, -6], "max": [60, 6, 6]}],
+                 "loadCases": [{"name": "bend", "loads": [{"region": "tip", "force": [0, 0, -40]}]}],
+                 "goal": {"safetyFactor": 2}}
+LATTICE_BAR = {"name": "latbar", "nodes": {
+    "bar": {"op": "shape", "shape": {"type": "box", "min": [0, -6, -6], "max": [60, 6, 6]}},
+    "skin": {"op": "shell", "input": "bar", "thickness": 1.0},
+    "core": {"op": "lattice", "type": "gyroid", "cell": 6, "thickness": 0.8},
+    "fill": {"op": "intersect", "inputs": ["core", "bar"]},
+    "ends": {"op": "shape", "shape": {"type": "union", "shapes": [
+        {"type": "box", "min": [0, -6, -6], "max": [4, 6, 6]}, {"type": "box", "min": [56, -6, -6], "max": [60, 6, 6]}]}},
+    "part": {"op": "union", "inputs": ["skin", "fill", "ends"]}}, "output": "part"}
+
+
+def test_homogenized_lattice_matches_the_resolved_one():
+    """With the lattice homogenized, the bar deflects within 10% of the
+    fully resolved reading and weighs within 10%; a thicker wall is stiffer
+    and heavier; a solid core is stiffer still."""
+    from loadpath.homogenized import homogenized_check
+    from loadpath.spec import study_from_dict
+
+    st = study_from_dict(LATTICE_STUDY)
+    r = homogenized_check(LATTICE_BAR, st, cells=8000)
+    d = r["cases"][0]["deflection"]
+    assert abs(d / 0.975 - 1) < 0.1 and abs(r["mass"] / 6.86 - 1) < 0.1, r
+    assert r["lattice"] == "core" and r["bodies"] == 1 and r["cases"][0]["inLattice"] in (True, False)
+    thick = json.loads(json.dumps(LATTICE_BAR))
+    thick["nodes"]["core"]["thickness"] = 1.6
+    r2 = homogenized_check(thick, st, cells=8000)
+    assert r2["cases"][0]["deflection"] < 0.95 * d and r2["mass"] > r["mass"]
+    solid = json.loads(json.dumps(LATTICE_BAR))
+    solid["nodes"]["fill"] = {"op": "shape", "shape": {"type": "box", "min": [0, -6, -6], "max": [60, 6, 6]}}
+    with pytest.raises(ValueError, match="no lattice"):
+        homogenized_check(solid, st, cells=8000)
+    net = json.loads(json.dumps(LATTICE_BAR))
+    net["nodes"]["core"]["form"] = "network"
+    with pytest.raises(ValueError, match="sheet"):
+        homogenized_check(net, st, cells=8000)
+
+
+def test_tune_grades_a_lattice_homogenized():
+    """A lattice part is tuned on the homogenized analysis: the wall comes
+    down from an over-strong start while the bar still meets its limit."""
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "study.json"), "w") as fh:
+        json.dump({**LATTICE_STUDY, "goal": {"maxDeflection": 1.3}}, fh)
+    g = json.loads(json.dumps(LATTICE_BAR))
+    g["nodes"]["core"]["thickness"] = 1.6
+    g["tune"] = {"study": "study.json", "params": [{"path": "nodes/core/thickness", "min": 0.5, "max": 2.0}],
+                 "cells": 5000, "evaluations": 6}
+    out = tune_field(g, d)
+    assert out["analysis"] == "homogenized"
+    best = out["best"]
+    assert best and best["ok"] and best["values"][0] < 1.6 and best["mass"] < out["start"]["mass"], out["history"]
+    assert best["deflection"] <= 1.3

@@ -1,0 +1,32 @@
+{
+  "name": "arm-link-lattice-tune",
+  "description": "The graded-lattice arm link (arm-link-graded.json) with its skin and gyroid wall left to `loadpath tune`: the lightest skin-and-lattice link that keeps the arm-link study's safety factor and 0.5 mm deflection, the lattice analyzed homogenized. Compare arm-link-tune.json, the same envelope tuned as a solid.",
+  "nodes": {
+    "shoulder": {"op": "shape", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 24, "r": 16}},
+    "wrist": {"op": "shape", "shape": {"type": "cylinder", "center": [140, 0, 0], "axis": "z", "length": 24, "r": 15}},
+    "web": {"op": "shape", "shape": {"type": "box", "min": [0, -11, -9], "max": [140, 11, 9]}},
+    "blob": {"op": "union", "inputs": ["shoulder", "wrist", "web"], "blend": 12, "description": "bosses and web smooth-unioned"},
+    "slab": {"op": "shape", "shape": {"type": "box", "min": [-20, -20, -12], "max": [160, 20, 12]}},
+    "envelope": {"op": "intersect", "inputs": ["blob", "slab"], "blend": 1.5, "description": "the blend bulges past the bosses' faces: trim them flat, edges rounded 1.5 mm"},
+    "bores": {"op": "shape", "shape": {"type": "union", "shapes": [{"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 30, "r": 11}, {"type": "cylinder", "center": [140, 0, 0], "axis": "z", "length": 30, "r": 11}]}, "description": "the two 22 mm bearing seats"},
+    "channel": {"op": "shape", "shape": {"type": "cylinder", "p0": [30, 0, 0], "p1": [110, 0, 0], "r": 5}, "description": "cable channel"},
+    "solid": {"op": "subtract", "inputs": ["envelope", "bores", "channel"]},
+    "stress": {"op": "result", "study": "example:arm-link", "part": "solid", "pitch": 1.0, "scale": "peak", "description": "von Mises of the solid envelope, worst load case, as a fraction of its peak"},
+    "nearBore": {"op": "distance", "input": "bores"},
+    "skinWall": {"op": "remap", "input": "stress", "from": [0.1, 0.8], "to": [0.9, 3.0], "curve": "smoothstep"},
+    "skin": {"op": "shell", "input": "envelope", "thickness": "skinWall"},
+    "collars": {"op": "union", "inputs": [{"op": "shell", "input": "bores", "side": "outside", "thickness": 3}, {"op": "shell", "input": "channel", "side": "outside", "thickness": 1.0}], "description": "solid rings round the bearings, a 1 mm liner round the cable channel"},
+    "cell": {"op": "remap", "input": "nearBore", "from": [4, 40], "to": [4, 7]},
+    "wall": {"op": "remap", "input": "stress", "from": [0.05, 0.6], "to": [0.6, 1.6], "curve": "sqrt"},
+    "core": {"op": "lattice", "type": "gyroid", "cell": "cell", "thickness": "wall"},
+    "fill": {"op": "intersect", "inputs": ["core", "envelope"]},
+    "fillet": {"op": "remap", "input": "nearBore", "from": [3, 20], "to": [2.0, 0.8]},
+    "joined": {"op": "union", "inputs": ["skin", "collars", "fill"], "blend": "fillet"},
+    "part": {"op": "subtract", "inputs": [{"op": "intersect", "inputs": ["joined", "envelope"]}, "bores", "channel"]}
+  },
+  "output": "part",
+  "mesh": {"pitch": 0.3},
+  "material": "pa12",
+  "minWall": 0.8,
+  "tune": {"study": "example:arm-link", "params": [{"path": "nodes/skinWall/to/0", "min": 0.8, "max": 3.0}, {"path": "nodes/skinWall/to/1", "min": 1.5, "max": 6.0}, {"path": "nodes/wall/to/1", "min": 0.8, "max": 3.0}], "evaluations": 24}
+}

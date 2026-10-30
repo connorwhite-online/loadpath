@@ -247,6 +247,14 @@
           "minimum": 2,
           "description": "analyses to spend (default 20)"
         },
+        "analysis": {
+          "enum": [
+            "auto",
+            "solid",
+            "homogenized"
+          ],
+          "description": "auto (default): a part with a lattice is analyzed with the lattice homogenized (unit-cell stiffness and wall stress), else meshed and verified as a solid"
+        },
         "pitch": {
           "type": "number",
           "exclusiveMinimum": 0,

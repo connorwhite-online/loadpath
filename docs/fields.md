@@ -246,6 +246,36 @@ examples/fields/arm-link-tune.json is that example: its stiffness limit
 
 ![tuning the arm link in the editor](images/fields/editor-tune.png)
 
+### Lattices are tuned homogenized
+
+A lattice's walls are a fraction of a millimetre, so analyzing the real
+geometry takes cells a few tenths of a millimetre across and around a
+million of them per candidate. A part with a lattice in it is analyzed with
+the lattice homogenized instead (homogenized.py, `tune.analysis` `auto`):
+the graph is evaluated with the lattice node filled solid and with it empty,
+so each analysis cell knows its share of solid skin and of lattice; the
+lattice's own wall (or density) and cell fields give the lattice's relative
+density there, and lattice.py's unit-cell fits give its modulus
+(E C rho^n) and its peak wall stress (A rho^-m times the stress it carries
+on average). A `result` node behind the wall field runs its study once for
+the whole search. Sheet lattices only.
+
+Checked against the resolved geometry: a 60 mm skin-and-gyroid bar (1 mm
+skin, 0.8 mm walls in 6 mm cells) under a tip load deflects 0.99-1.04 mm
+homogenized (8k-50k cells, 3-12 s) and 0.95-1.00 mm meshed at 0.12 mm and
+verified on 150k-900k voxels; the homogenized mass reads about 6% heavy
+(7.3 g against 6.86 g), the safety factor 2.7-2.9 against 2.1-2.9.
+
+Tuning the graded-lattice arm link (examples/fields/arm-link-lattice-tune.json:
+the skin's thinnest and thickest wall and the gyroid's thickest wall, same
+study and limits as the solid one above) does not beat the solid: the
+lightest lattice link that came near 0.5 mm was 58.2 g (0.498 mm coarse,
+0.511 mm on the fine grid), with the skin at the top of its range (6 mm),
+against 54.9 g for the tuned solid web. It is the same answer the moonshot
+experiments got: for a stiffness-bound part, a lattice costs mass per unit
+of stiffness. Lattices earn their keep on impact, damping, heat transfer
+and print time, not here.
+
 ## What the field-driven operations mean
 
 - **Variable wall** (`shell` with a field `thickness`): the wall at each point

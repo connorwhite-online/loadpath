@@ -754,6 +754,10 @@ FIELD_SCHEMA = {
                      "maxDeflection": {**_POS, "description": "mm at the loads (default the study's goal)"},
                      "evaluations": {"type": "integer", "minimum": 2, "description": "analyses to spend "
                                                                                        "(default 20)"},
+                     "analysis": {"enum": ["auto", "solid", "homogenized"],
+                                  "description": "auto (default): a part with a lattice is analyzed with the "
+                                                 "lattice homogenized (unit-cell stiffness and wall stress), "
+                                                 "else meshed and verified as a solid"},
                      "pitch": {**_POS, "description": "mm mesh for each candidate (default 1)"},
                      "cells": {"type": "integer", "minimum": 1000, "description": "analysis cells (default 30000)"}}},
         "impact": {"type": "object", "properties": {

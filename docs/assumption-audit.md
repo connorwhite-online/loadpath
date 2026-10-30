@@ -163,6 +163,15 @@ per case on average. What was learned:
   7.1%) with the tet reading still well over target: the next gains are
   confirming those neighbours on tets directly, and cut-cell boundary
   stiffness so the voxel reading is closer to begin with.
+- The voxel reading also moves with the cell budget, and most on thin
+  sections. Tuning the arm link's field graph (tune.py, 2026-10-30), the
+  start part read 0.500 mm deflection on 30k cells and 0.487 mm on 60k, while
+  a thinner web candidate read 0.485 and 0.623 (+28%); safety factors moved
+  5-20% the same way. A search on the coarse grid alone walks into the
+  sections the coarse grid flatters. tune.py now scales coarse readings by
+  the start's coarse/fine ratio and re-checks its winners on twice the cells;
+  the same drift is likely in any study outcome that sits on a limit with
+  members only two or three cells thick.
 
 ### Thermal and flow (thermal.py, heatx_thermal.py)
 

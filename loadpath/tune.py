@@ -9,7 +9,9 @@ outcome gets) and scored by mass, worst-case safety factor and deflection.
 The search is COBYQA over the knobs scaled to [0, 1] (derivative-free: an
 analysis on a voxel grid is not smooth in its inputs), and what comes back
 is the lightest candidate that met every limit, checked again on a grid
-twice as fine, not wherever the search stopped.
+twice as fine, not wherever the search stopped. A part with a lattice in
+it is analyzed with the lattice homogenized (homogenized.py): its walls are
+far finer than a grid a search can afford.
 
 The spec lives in the graph under `tune`:
 
@@ -84,7 +86,9 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
     with `out_dir`, also writes tuned.json and tune.json there."""
     from scipy.optimize import minimize
 
-    from .fields import FieldGraph, node_doc
+    from .editor import _Resources
+    from .fields import FieldGraph, expand_groups, node_doc
+    from .homogenized import homogenized_check, lattice_nodes
     from .verify import verify_part
 
     spec = doc.get("tune")
@@ -109,6 +113,14 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
     pitch, cells = float(spec.get("pitch", 1.0)), int(spec.get("cells", 30_000))
     budget = int(evaluations or spec.get("evaluations", 20))
 
+    # a lattice's walls are finer than any analysis grid a search can
+    # afford: a part with one is analyzed with the lattice homogenized
+    analysis = spec.get("analysis", "auto")
+    if analysis not in ("auto", "solid", "homogenized"):
+        raise ValueError("tune.analysis must be auto, solid or homogenized")
+    probe = FieldGraph(node_doc(doc, node) if node else doc, base_dir=base_dir)
+    homogenized = analysis == "homogenized" or (analysis == "auto" and bool(lattice_nodes(probe)))
+    resources = _Resources()      # a `result` node's study runs once, not once per candidate
     lo = np.array([p["min"] for p in params], float)
     hi = np.array([p["max"] for p in params], float)
     start = np.array([get_at(doc, p["path"]) for p in params])
@@ -162,9 +174,13 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
         d = apply(values)
         rec = {"values": [float(v) for v in values]}
         try:
-            g = FieldGraph(node_doc(d, node) if node else d, base_dir=base_dir)
-            mesh = g.mesh(pitch=pitch, project=1)
-            rep = verify_part(study, mesh, max_cells=n_cells, refine=0)
+            dd = node_doc(d, node) if node else expand_groups(d)
+            g = resources.graph(dd, base_dir)
+            if homogenized:
+                rep = homogenized_check(dd, study, base_dir=base_dir, cells=n_cells, graph=g)
+            else:
+                rep = verify_part(study, g.mesh(pitch=pitch, project=1), max_cells=n_cells, refine=0)
+            resources.keep(g, dd)
             rec.update(mass=rep["mass"], safetyFactor=rep["safetyFactor"],
                        deflection=max((c.get("deflection") or 0.0) for c in rep["cases"]),
                        bodies=rep["bodies"])
@@ -230,7 +246,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
             break
     if best is None and good:
         best = {**good[0], "unconfirmed": True}     # passed on the coarse grid, not on the fine one
-    out = {"best": best, "start": first, "history": history,
+    out = {"best": best, "start": first, "history": history, "analysis": "homogenized" if homogenized else "solid",
            "limits": {"safetyFactor": sf_min, "maxDeflection": defl_max},
            "params": [{"path": p["path"], "min": p["min"], "max": p["max"]} for p in params]}
     tuned = doc if best is None else {**apply(best["values"]), "tune": doc["tune"]}
