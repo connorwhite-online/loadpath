@@ -457,6 +457,38 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
 
 
 
+def _inside(mesh, pts, rng):
+    """Point-in-solid by ray-crossing parity (odd = inside): a ray along +x,
+    tilted a little at random so edge and vertex grazes are measure-zero,
+    tested exactly (Moller-Trumbore) against the triangles whose y-z box it
+    can pass through. trimesh's own test (no embree) took 80 s of a 90 s
+    verify on the arm link."""
+    tri = np.asarray(mesh.triangles, float)
+    v0, e1, e2 = tri[:, 0], tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+    lo, hi = tri.min(axis=1), tri.max(axis=1)
+    span = float(np.ptp(tri[..., 0])) + 1.0
+    out = np.zeros(len(pts), bool)
+    for i, o in enumerate(np.asarray(pts, float)):
+        tilt = rng.uniform(-1e-3, 1e-3, 2)
+        d = np.array([1.0, *tilt]) / np.sqrt(1.0 + tilt @ tilt)
+        g = np.abs(tilt) * span + 1e-9
+        c = np.flatnonzero((hi[:, 0] >= o[0]) & (lo[:, 1] <= o[1] + g[0]) & (hi[:, 1] >= o[1] - g[0])
+                           & (lo[:, 2] <= o[2] + g[1]) & (hi[:, 2] >= o[2] - g[1]))
+        if not len(c):
+            continue
+        p = np.cross(d, e2[c])
+        det = np.einsum("ij,ij->i", e1[c], p)
+        ok = np.abs(det) > 1e-12
+        inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
+        tv = o - v0[c]
+        u = np.einsum("ij,ij->i", tv, p) * inv
+        q = np.cross(tv, e1[c])
+        v = (q @ d) * inv
+        t = np.einsum("ij,ij->i", q, e2[c]) * inv
+        out[i] = int((ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 1e-9)).sum()) % 2 == 1
+    return out
+
+
 def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
     """Volume of preserved geometry the part lacks (mm^3). The boolean finds
     candidate pieces; each is then confirmed by sampling points inside it and
@@ -465,29 +497,28 @@ def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
     wall), manifold3d can report slivers of the preserved shape missing from
     a part that, point by point, has them: the grip upper arm's elbow socket
     read 300 mm^3 short with every sampled point inside."""
-    import trimesh
-
     from .shapes import trimesh_from_manifold
 
+    rng = np.random.default_rng(0)
     total = 0.0
     for b in (pres_eff - part).decompose():
         v = b.volume()
         if v <= 1e-3:
             continue
         tb = trimesh_from_manifold(b)
-        pts = trimesh.sample.volume_mesh(tb, samples)
-        if len(pts) < 10:
-            pts = trimesh.sample.volume_mesh(tb, 20 * samples)
+        lo, hi = tb.bounds
+        pts = np.empty((0, 3))
+        for n in (samples, 20 * samples):     # rejection sampling in the piece's box
+            cand = lo + rng.random((n, 3)) * (hi - lo)
+            pts = cand[_inside(tb, cand, rng)][:samples]
+            if len(pts) >= 10:
+                break
         if len(pts) < 10:
             # too thin a sliver for sampling to land in: missing only if it
             # is thicker than a print resolves (thickness ~ 2 V / A)
             total += v if 2.0 * v / max(b.surface_area(), 1e-9) > 0.1 else 0.0
             continue
-        # a few rays at a time: trimesh's ray test (no embree) gathers every
-        # triangle under each ray's box, which for GRIP's 231k-face forearm
-        # and 400 points took 14 GB
-        inside = np.concatenate([mesh.contains(pts[i:i + 16]) for i in range(0, len(pts), 16)])
-        total += v * float((~inside).mean())
+        total += v * float((~_inside(mesh, pts, rng)).mean())
     return total
 
 
