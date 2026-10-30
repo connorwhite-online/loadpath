@@ -1,0 +1,132 @@
+{
+ "forearm": {
+  "g": 74.2,
+  "sf": 3.01,
+  "p1RayMm": 2.76,
+  "p5RayMm": 3.82,
+  "minMember": 3.0,
+  "creaseMm": 0.9,
+  "boundaryCutMm2": 0.0,
+  "keepOutIntrusionMm3": 0.001,
+  "preserveMissingMm3": 0.0,
+  "closedBores": [
+   "j3-below"
+  ],
+  "bodies": 1,
+  "cases": {
+   "reach": {
+    "peakMPa": 13.9,
+    "peakAt": [
+     11.2,
+     -9.6,
+     492.2
+    ],
+    "deflMm": 0.304
+   },
+   "j4-rated-torque": {
+    "peakMPa": 11.4,
+    "peakAt": [
+     -5.2,
+     -32.2,
+     399.3
+    ],
+    "deflMm": 0.155
+   },
+   "lateral": {
+    "peakMPa": 4.3,
+    "peakAt": [
+     17.3,
+     -25.5,
+     521.7
+    ],
+    "deflMm": 0.155
+   }
+  }
+ },
+ "wrist_yoke": {
+  "g": 27.6,
+  "sf": 4.03,
+  "p1RayMm": 2.4,
+  "p5RayMm": 3.58,
+  "minMember": 3.0,
+  "creaseMm": 0.0,
+  "boundaryCutMm2": 0.0,
+  "keepOutIntrusionMm3": 0.008,
+  "preserveMissingMm3": 0.0,
+  "closedBores": [],
+  "bodies": 1,
+  "cases": {
+   "reach": {
+    "peakMPa": 10.4,
+    "peakAt": [
+     17.8,
+     -34.7,
+     576.1
+    ],
+    "deflMm": 0.088
+   },
+   "j5-rated-torque": {
+    "peakMPa": 9.8,
+    "peakAt": [
+     17.8,
+     -34.7,
+     576.1
+    ],
+    "deflMm": 0.081
+   },
+   "lateral": {
+    "peakMPa": 2.4,
+    "peakAt": [
+     -19.4,
+     -15.0,
+     561.6
+    ],
+    "deflMm": 0.028
+   }
+  }
+ },
+ "wrist_link": {
+  "g": 55.1,
+  "sf": 5.12,
+  "p1RayMm": 2.4,
+  "p5RayMm": 3.07,
+  "minMember": 3.0,
+  "creaseMm": 0.4,
+  "boundaryCutMm2": 0.0,
+  "keepOutIntrusionMm3": 0.001,
+  "preserveMissingMm3": 0.0,
+  "closedBores": [
+   "j5-idler-bearing"
+  ],
+  "bodies": 1,
+  "cases": {
+   "reach": {
+    "peakMPa": 6.4,
+    "peakAt": [
+     13.6,
+     -38.7,
+     671.3
+    ],
+    "deflMm": 0.244
+   },
+   "j6-rated-torque": {
+    "peakMPa": 8.2,
+    "peakAt": [
+     12.8,
+     -38.1,
+     655.9
+    ],
+    "deflMm": 0.012
+   },
+   "lateral": {
+    "peakMPa": 4.7,
+    "peakAt": [
+     17.3,
+     -2.3,
+     691.8
+    ],
+    "deflMm": 0.172
+   }
+  }
+ }
+}

@@ -1,0 +1,47 @@
+{
+ "turret": {
+  "g": 202.9,
+  "sf": 2.33,
+  "p1RayMm": 3.76,
+  "p5RayMm": 5.23,
+  "minMember": 3.0,
+  "creaseMm": 0.9,
+  "boundaryCutMm2": 0.0,
+  "keepOutIntrusionMm3": 0.002,
+  "preserveMissingMm3": 0.0,
+  "closedBores": [
+   "j1-below",
+   "spring-run"
+  ],
+  "bodies": 1,
+  "cases": {
+   "reach": {
+    "peakMPa": 17.9,
+    "peakAt": [
+     49.8,
+     -16.9,
+     150.4
+    ],
+    "deflMm": 0.489
+   },
+   "j2-rated-torque": {
+    "peakMPa": 5.2,
+    "peakAt": [
+     13.1,
+     -8.4,
+     120.6
+    ],
+    "deflMm": 0.174
+   },
+   "lateral": {
+    "peakMPa": 1.3,
+    "peakAt": [
+     19.1,
+     -14.2,
+     148.9
+    ],
+    "deflMm": 0.05
+   }
+  }
+ }
+}

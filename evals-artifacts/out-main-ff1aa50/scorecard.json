@@ -1,0 +1,2696 @@
+[
+  {
+    "case": "arm-link-driven",
+    "seconds": 1159.5598368644714,
+    "checks": [
+      {
+        "check": "massReduction",
+        "value": 0.629033606248578,
+        "op": ">=",
+        "limit": 0.4,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 8.468878739888261,
+        "op": ">=",
+        "limit": 3.0,
+        "pass": true
+      },
+      {
+        "check": "deflection",
+        "value": 0.4932477276337179,
+        "op": "<=",
+        "limit": 0.5,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 0.0005772991158746432,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "member",
+        "value": 3.131588252943395,
+        "op": ">=",
+        "limit": 2.4,
+        "pass": true
+      }
+    ],
+    "outcomes": 3,
+    "best": {
+      "volumeFraction": 0.28356836056900003,
+      "mass": 46.206710090902554,
+      "massReduction": 0.629033606248578,
+      "safetyFactor": 8.468878739888261,
+      "p5Member": 3.4125000000000005,
+      "minMember": 1.4625000000000001,
+      "creaseLength": 0.0,
+      "p5Thickness": 3.131588252943395,
+      "p1Thickness": 2.812912543623504,
+      "deflection": 0.4932477276337179,
+      "iterations": 39,
+      "optimizerSeconds": 136.89031314849854
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "pa12",
+        "volumeFraction": 0.3,
+        "mass": 48.67383806257401,
+        "massReduction": 0.6092264924165457,
+        "safetyFactor": 13.081351701171414,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.0005452565235423261,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 332.7873305933521,
+        "warnings": [],
+        "margin": 1.1791714694187407,
+        "passes": true,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 42,
+          "converged": true,
+          "seconds": 173.4931161403656,
+          "compliance": 27477.63589030046,
+          "caseCompliance": [
+            18692.424308889193,
+            8785.211581411264
+          ],
+          "achievedVolumeFraction": 0.29303753946190747
+        },
+        "reconstruction": {
+          "isoTriangles": 146296,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 118836,
+          "volume": 48191.918873835646,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12",
+        "volumeFraction": 0.26713672113800013,
+        "mass": 45.02582278387651,
+        "massReduction": 0.6385142532120269,
+        "safetyFactor": 8.411803739903478,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.000577834363274315,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 286.7688488647573,
+        "warnings": [],
+        "margin": 0.9585236379960903,
+        "passes": false,
+        "start": "warm from 0.300",
+        "alternative": {
+          "start": "cold",
+          "mass": 44.83057237427842,
+          "safetyFactor": 1.3624391474726567,
+          "margin": 0.45414638249088557,
+          "passes": false
+        },
+        "optimizer": {
+          "iterations": 41,
+          "converged": true,
+          "seconds": 166.01665091514587,
+          "compliance": 31405.745536396193,
+          "caseCompliance": [
+            21289.56957605514,
+            10116.175960341052
+          ],
+          "achievedVolumeFraction": 0.26080879469415935
+        },
+        "reconstruction": {
+          "isoTriangles": 142608,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 115294,
+          "volume": 44580.02255829357,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12",
+        "volumeFraction": 0.28356836056900003,
+        "mass": 46.206710090902554,
+        "massReduction": 0.629033606248578,
+        "safetyFactor": 8.468878739888261,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.0005772991158746432,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 307.6603436781684,
+        "warnings": [],
+        "margin": 1.0136894140367867,
+        "passes": true,
+        "start": "warm from 0.267",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 39,
+          "converged": true,
+          "seconds": 136.89031314849854,
+          "compliance": 30051.56164602105,
+          "caseCompliance": [
+            20347.098235187776,
+            9704.463410833276
+          ],
+          "achievedVolumeFraction": 0.2714435952856445
+        },
+        "reconstruction": {
+          "isoTriangles": 143748,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 116374,
+          "volume": 45749.21791178469,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "arm-link",
+    "seconds": 820.763026714325,
+    "checks": [
+      {
+        "check": "massReduction",
+        "value": 0.5303294824754077,
+        "op": ">=",
+        "limit": 0.4,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 14.728826703699369,
+        "op": ">=",
+        "limit": 3.0,
+        "pass": true
+      },
+      {
+        "check": "deflection",
+        "value": 0.4499448455760733,
+        "op": "<=",
+        "limit": 0.5,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 0.0005191628352186597,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "member",
+        "value": 3.1481139756916856,
+        "op": ">=",
+        "limit": 2.4,
+        "pass": true
+      }
+    ],
+    "outcomes": 3,
+    "best": {
+      "volumeFraction": 0.393501948805013,
+      "mass": 58.86705286445053,
+      "massReduction": 0.5303294824754077,
+      "safetyFactor": 14.728826703699369,
+      "p5Member": 3.466314263251696,
+      "minMember": 1.4855632556792984,
+      "creaseLength": 0.0,
+      "p5Thickness": 3.1481139756916856,
+      "p1Thickness": 2.9183706443031348,
+      "deflection": 0.4499448455760733,
+      "iterations": 39,
+      "optimizerSeconds": 169.14049911499023
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "pa12",
+        "volumeFraction": 0.3,
+        "mass": 47.627970874261095,
+        "massReduction": 0.6200004477773134,
+        "safetyFactor": 10.715082963523555,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.000529200071147981,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 99.41494434348185,
+        "warnings": [],
+        "margin": 0.6468120718250184,
+        "passes": false,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 51,
+          "converged": true,
+          "seconds": 199.810555934906,
+          "compliance": 52579.92148313035,
+          "caseCompliance": [
+            37014.66015315981,
+            15565.261329970535
+          ],
+          "achievedVolumeFraction": 0.2934915034288594
+        },
+        "reconstruction": {
+          "isoTriangles": 148032,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 121694,
+          "volume": 47156.40680619911,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12",
+        "volumeFraction": 0.48700389761002594,
+        "mass": 68.51274667800996,
+        "massReduction": 0.45337135760155256,
+        "safetyFactor": 22.071828517511676,
+        "minMember": 3.646148023907007,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.0005727226643558949,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 697.5249355525673,
+        "warnings": [],
+        "margin": 1.3697996308283793,
+        "passes": true,
+        "start": "warm from 0.300",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 139.89848804473877,
+          "compliance": 31789.863762818095,
+          "caseCompliance": [
+            23547.713139558844,
+            8242.15062325925
+          ],
+          "achievedVolumeFraction": 0.4763211958831341
+        },
+        "reconstruction": {
+          "isoTriangles": 159056,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 131246,
+          "volume": 67834.40265149501,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12",
+        "volumeFraction": 0.393501948805013,
+        "mass": 58.86705286445053,
+        "massReduction": 0.5303294824754077,
+        "safetyFactor": 14.728826703699369,
+        "minMember": 1.4855632556792984,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.0005191628352186597,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 338.8599986624566,
+        "warnings": [],
+        "margin": 1.1112473115673547,
+        "passes": true,
+        "start": "warm from 0.487",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 39,
+          "converged": true,
+          "seconds": 169.14049911499023,
+          "compliance": 37991.45270957712,
+          "caseCompliance": [
+            28182.090340941133,
+            9809.362368635986
+          ],
+          "achievedVolumeFraction": 0.38643511355153476
+        },
+        "reconstruction": {
+          "isoTriangles": 155904,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 128242,
+          "volume": 58284.21075688171,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "bell-crank",
+    "seconds": 537.129754781723,
+    "checks": [
+      {
+        "check": "massReduction",
+        "value": 0.840033543663067,
+        "op": ">=",
+        "limit": 0.6,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 3.0136937479288615,
+        "op": ">=",
+        "limit": 3.0,
+        "pass": true
+      },
+      {
+        "check": "deflection",
+        "value": 0.06307182293213127,
+        "op": "<=",
+        "limit": 0.1,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 4.257861546073933e-05,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "member",
+        "value": 4.075904772647227,
+        "op": ">=",
+        "limit": 2.0,
+        "pass": true
+      }
+    ],
+    "outcomes": 6,
+    "best": {
+      "volumeFraction": 0.0703125,
+      "mass": 24.111713374844147,
+      "massReduction": 0.840033543663067,
+      "safetyFactor": 3.0136937479288615,
+      "p5Member": 4.18994407771256,
+      "minMember": 2.84375,
+      "creaseLength": 0.0,
+      "p5Thickness": 4.075904772647227,
+      "p1Thickness": 3.451914111848545,
+      "deflection": 0.06307182293213127,
+      "iterations": 46,
+      "optimizerSeconds": 34.694157123565674
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "alsi10mg",
+        "volumeFraction": 0.25,
+        "mass": 52.417797964385734,
+        "massReduction": 0.6522400022349186,
+        "safetyFactor": 15.723647795128505,
+        "minMember": 4.18994407771256,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.5901901988946966e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 115.13147599130974,
+        "warnings": [],
+        "margin": 5.241215931709502,
+        "passes": true,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 38,
+          "converged": true,
+          "seconds": 44.324480056762695,
+          "compliance": 425433.57651340927,
+          "caseCompliance": [
+            425433.57651340927
+          ],
+          "achievedVolumeFraction": 0.2517241681226761
+        },
+        "reconstruction": {
+          "isoTriangles": 81464,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 65560,
+          "volume": 19632.134069058327,
+          "watertight": true
+        }
+      },
+      {
+        "material": "alsi10mg",
+        "volumeFraction": 0.125,
+        "mass": 32.667101558367456,
+        "massReduction": 0.783273780927461,
+        "safetyFactor": 7.347186789997319,
+        "minMember": 4.18994407771256,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.3757170758603785e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.3523555027647447,
+        "warnings": [],
+        "margin": 2.4490622633324395,
+        "passes": true,
+        "start": "cold",
+        "alternative": {
+          "start": "warm from 0.250",
+          "mass": 32.798144209970516,
+          "safetyFactor": 6.087248188679778,
+          "margin": 2.029082729559926,
+          "passes": true
+        },
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 39.78129291534424,
+          "compliance": 942105.2686472514,
+          "caseCompliance": [
+            942105.2686472514
+          ],
+          "achievedVolumeFraction": 0.12367354637369087
+        },
+        "reconstruction": {
+          "isoTriangles": 67468,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 52658,
+          "volume": 12234.869497515901,
+          "watertight": true
+        }
+      },
+      {
+        "material": "alsi10mg",
+        "volumeFraction": 0.0625,
+        "mass": 22.87306729338888,
+        "massReduction": 0.8482512020777009,
+        "safetyFactor": 2.2206050697569597,
+        "minMember": 2.84375,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.4185287094988385e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 0.7402016899189866,
+        "passes": false,
+        "start": "warm from 0.125",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 45,
+          "converged": true,
+          "seconds": 49.83785009384155,
+          "compliance": 2091965.0202818038,
+          "caseCompliance": [
+            2091965.0202818038
+          ],
+          "achievedVolumeFraction": 0.0593175595764692
+        },
+        "reconstruction": {
+          "isoTriangles": 58616,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 44022,
+          "volume": 8566.691870183098,
+          "watertight": true
+        }
+      },
+      {
+        "material": "alsi10mg",
+        "volumeFraction": 0.09375,
+        "mass": 27.640993346779453,
+        "massReduction": 0.8166189317790185,
+        "safetyFactor": 4.336579088202173,
+        "minMember": 4.18994407771256,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.287314610944089e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.4455263627340578,
+        "passes": true,
+        "start": "warm from 0.062",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 47,
+          "converged": true,
+          "seconds": 34.843326807022095,
+          "compliance": 1288021.3556879978,
+          "caseCompliance": [
+            1288021.3556879978
+          ],
+          "achievedVolumeFraction": 0.09059040406925752
+        },
+        "reconstruction": {
+          "isoTriangles": 62852,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 48236,
+          "volume": 10352.431965085938,
+          "watertight": true
+        }
+      },
+      {
+        "material": "alsi10mg",
+        "volumeFraction": 0.078125,
+        "mass": 25.262802688173764,
+        "massReduction": 0.8323967708000999,
+        "safetyFactor": 3.8997674251099688,
+        "minMember": 3.574170832022664,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.2813863431881147e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.2999224750366563,
+        "passes": true,
+        "start": "warm from 0.094",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 45,
+          "converged": true,
+          "seconds": 36.46701192855835,
+          "compliance": 1579925.6448438258,
+          "caseCompliance": [
+            1579925.6448438258
+          ],
+          "achievedVolumeFraction": 0.07484118295988317
+        },
+        "reconstruction": {
+          "isoTriangles": 60472,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 45888,
+          "volume": 9461.723853248599,
+          "watertight": true
+        }
+      },
+      {
+        "material": "alsi10mg",
+        "volumeFraction": 0.0703125,
+        "mass": 24.111713374844147,
+        "massReduction": 0.840033543663067,
+        "safetyFactor": 3.0136937479288615,
+        "minMember": 2.84375,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.257861546073933e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.004564582642954,
+        "passes": true,
+        "start": "warm from 0.078",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 46,
+          "converged": true,
+          "seconds": 34.694157123565674,
+          "compliance": 1767291.904548529,
+          "caseCompliance": [
+            1767291.904548529
+          ],
+          "achievedVolumeFraction": 0.06693717439362805
+        },
+        "reconstruction": {
+          "isoTriangles": 59328,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 44748,
+          "volume": 9030.604260241254,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "grip-turret",
+    "seconds": 1087.6117091178894,
+    "checks": [
+      {
+        "check": "mass",
+        "value": 175.58590495422513,
+        "op": "<=",
+        "limit": 236.0,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 2.4695196722150716,
+        "op": ">=",
+        "limit": 2.0,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 0.0027003794504527924,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "boundaryCut",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 50,
+        "pass": true
+      },
+      {
+        "check": "member",
+        "value": 5.713367914898257,
+        "op": ">=",
+        "limit": 2.4,
+        "pass": true
+      },
+      {
+        "check": "crease",
+        "value": 27.716384723773814,
+        "op": "<=",
+        "limit": 60,
+        "pass": true
+      },
+      {
+        "check": "closedBores",
+        "value": 0,
+        "op": "<=",
+        "limit": 0,
+        "pass": true
+      }
+    ],
+    "outcomes": 3,
+    "best": {
+      "volumeFraction": 0.04168234203609301,
+      "mass": 175.58590495422513,
+      "massReduction": 0.8936838672963614,
+      "safetyFactor": 2.4695196722150716,
+      "p5Member": 5.486623096426445,
+      "minMember": 2.3514098984684764,
+      "creaseLength": 27.716384723773814,
+      "p5Thickness": 5.713367914898257,
+      "p1Thickness": 4.568097952175831,
+      "deflection": 0.4488392149384898,
+      "iterations": 51,
+      "optimizerSeconds": 145.63466382026672
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.12,
+        "mass": 295.7701406896754,
+        "massReduction": 0.8209130878954374,
+        "safetyFactor": 3.6385497580884443,
+        "minMember": 2.389125743748161,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.0027585594494712053,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.8192748790442221,
+        "passes": true,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 120.40425300598145,
+          "compliance": 321983.65554797254,
+          "caseCompliance": [
+            279726.8920993004,
+            41432.64740626754,
+            824.1160424045852
+          ],
+          "achievedVolumeFraction": 0.12146365674243881
+        },
+        "reconstruction": {
+          "isoTriangles": 112192,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 99074,
+          "volume": 242434.54154765527,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.06925836301669576,
+        "mass": 219.2462789528689,
+        "massReduction": 0.8672477925035673,
+        "safetyFactor": 3.4893087871387225,
+        "minMember": 5.486623096426445,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.0026350303603621798,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.7446543935693613,
+        "passes": true,
+        "start": "warm from 0.120",
+        "alternative": {
+          "start": "cold",
+          "mass": 218.8971863832689,
+          "safetyFactor": 3.4782845820976913,
+          "margin": 1.7391422910488457,
+          "passes": true
+        },
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 123.48398208618164,
+          "compliance": 449637.1276031841,
+          "caseCompliance": [
+            389275.5679264365,
+            58870.49688813985,
+            1491.062788607754
+          ],
+          "achievedVolumeFraction": 0.07064798251308485
+        },
+        "reconstruction": {
+          "isoTriangles": 106032,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 96776,
+          "volume": 179710.0647156483,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.04168234203609301,
+        "mass": 175.58590495422513,
+        "massReduction": 0.8936838672963614,
+        "safetyFactor": 2.4695196722150716,
+        "minMember": 2.3514098984684764,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.0027003794504527924,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.2347598361075358,
+        "passes": true,
+        "start": "warm from 0.069",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 51,
+          "converged": true,
+          "seconds": 145.63466382026672,
+          "compliance": 641408.4186163711,
+          "caseCompliance": [
+            554984.1346170392,
+            83434.05441453158,
+            2990.229584800363
+          ],
+          "achievedVolumeFraction": 0.04266495945406901
+        },
+        "reconstruction": {
+          "isoTriangles": 97172,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 88602,
+          "volume": 143922.87291329564,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "grip-upper-arm",
+    "seconds": 2055.0655579566956,
+    "checks": [
+      {
+        "check": "mass",
+        "value": 208.01346079472557,
+        "op": "<=",
+        "limit": 214,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 7.5302261770774175,
+        "op": ">=",
+        "limit": 2.0,
+        "pass": true
+      },
+      {
+        "check": "deflection",
+        "value": 0.5253666078947669,
+        "op": "<=",
+        "limit": 0.54,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 0.010886674698294282,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "boundaryCut",
+        "value": 1079.827085333772,
+        "op": "<=",
+        "limit": 1300,
+        "pass": true
+      }
+    ],
+    "outcomes": 4,
+    "best": {
+      "volumeFraction": 0.06907003602809875,
+      "mass": 208.01346079472557,
+      "massReduction": 0.877097717984141,
+      "safetyFactor": 7.5302261770774175,
+      "p5Member": 4.9574860087154065,
+      "minMember": 2.1246368608780313,
+      "creaseLength": 34.660767693156465,
+      "p5Thickness": 4.985240694345497,
+      "p1Thickness": 4.227418217061506,
+      "deflection": 0.5253666078947669,
+      "iterations": 47,
+      "optimizerSeconds": 253.8013210296631
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.15,
+        "mass": 334.37255176320804,
+        "massReduction": 0.802439950288995,
+        "safetyFactor": 15.06819227296553,
+        "minMember": 2.4888445493771187,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.010260242132373613,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 2460.4069944086673,
+        "warnings": [],
+        "margin": 2.9979096076357203,
+        "passes": true,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 280.5813419818878,
+          "compliance": 78023.96161180252,
+          "caseCompliance": [
+            13049.11675016275,
+            54625.045249235,
+            10349.799612404771
+          ],
+          "achievedVolumeFraction": 0.15059750967524058
+        },
+        "reconstruction": {
+          "isoTriangles": 215120,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 188522,
+          "volume": 274075.86209740327,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.075,
+        "mass": 219.10692655699853,
+        "massReduction": 0.8705432755339305,
+        "safetyFactor": 8.60277552918932,
+        "minMember": 2.1617539823524368,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.010666649171066177,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 990.1958930068324,
+        "warnings": [],
+        "margin": 1.2472269580229332,
+        "passes": true,
+        "start": "warm from 0.150",
+        "alternative": {
+          "start": "cold",
+          "mass": 215.7417339601776,
+          "safetyFactor": 6.454858037120453,
+          "margin": 0.8075636420680825,
+          "passes": false
+        },
+        "optimizer": {
+          "iterations": 44,
+          "converged": true,
+          "seconds": 325.00630497932434,
+          "compliance": 170158.87948299467,
+          "caseCompliance": [
+            40581.56288446323,
+            105908.64113052851,
+            23668.67546800292
+          ],
+          "achievedVolumeFraction": 0.07610355470239458
+        },
+        "reconstruction": {
+          "isoTriangles": 186412,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 164528,
+          "volume": 179595.84143689493,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.06314007205619748,
+        "mass": 198.4812183468977,
+        "massReduction": 0.882729730187056,
+        "safetyFactor": 4.369327890585241,
+        "minMember": 2.0916741911435195,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.010673195243218692,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 947.4966067523833,
+        "warnings": [],
+        "margin": 0.9005305333680458,
+        "passes": false,
+        "start": "warm from 0.075",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 204.09397506713867,
+          "compliance": 200111.0645233331,
+          "caseCompliance": [
+            47774.61650683499,
+            121229.22117926285,
+            31107.22683723527
+          ],
+          "achievedVolumeFraction": 0.06395526282232501
+        },
+        "reconstruction": {
+          "isoTriangles": 182716,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 161010,
+          "volume": 162689.52323189419,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.06907003602809875,
+        "mass": 208.01346079472557,
+        "massReduction": 0.877097717984141,
+        "safetyFactor": 7.5302261770774175,
+        "minMember": 2.1246368608780313,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.010886674698294282,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 1079.827085333772,
+        "warnings": [],
+        "margin": 1.0278536775754965,
+        "passes": true,
+        "start": "warm from 0.063",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 47,
+          "converged": true,
+          "seconds": 253.8013210296631,
+          "compliance": 178783.6532188542,
+          "caseCompliance": [
+            40948.96779311329,
+            110821.1188579361,
+            27013.566567804817
+          ],
+          "achievedVolumeFraction": 0.07001493017181153
+        },
+        "reconstruction": {
+          "isoTriangles": 186344,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 164646,
+          "volume": 170502.83671372037,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "grip-wrist-yoke",
+    "seconds": 1893.2071468830109,
+    "checks": [
+      {
+        "check": "mass",
+        "value": 24.17792175509621,
+        "op": "<=",
+        "limit": 26.0,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 2.0031925870910023,
+        "op": ">=",
+        "limit": 2.0,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 0.008025341964412326,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "boundaryCut",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 25,
+        "pass": true
+      },
+      {
+        "check": "member",
+        "value": 3.3673639312085055,
+        "op": ">=",
+        "limit": 2.4,
+        "pass": true
+      },
+      {
+        "check": "crease",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 40,
+        "pass": true
+      },
+      {
+        "check": "closedBores",
+        "value": 0,
+        "op": "<=",
+        "limit": 0,
+        "pass": true
+      }
+    ],
+    "outcomes": 8,
+    "best": {
+      "volumeFraction": 0.08548598388919791,
+      "mass": 24.17792175509621,
+      "massReduction": 0.9026178629956555,
+      "safetyFactor": 2.0031925870910023,
+      "p5Member": 3.4125000000000005,
+      "minMember": 1.4625000000000001,
+      "creaseLength": 0.0,
+      "p5Thickness": 3.3673639312085055,
+      "p1Thickness": 2.0144094871415024,
+      "deflection": 0.10610744637408272,
+      "iterations": 38,
+      "optimizerSeconds": 44.42764687538147
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.12,
+        "mass": 33.18912504133276,
+        "massReduction": 0.8663231705947537,
+        "safetyFactor": 3.151275018638202,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.009513140966737556,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.575637509319101,
+        "passes": true,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 41,
+          "converged": true,
+          "seconds": 98.72791123390198,
+          "compliance": 79963.87256147969,
+          "caseCompliance": [
+            42249.27281043208,
+            36589.34357421382,
+            1125.2561768337891
+          ],
+          "achievedVolumeFraction": 0.11575818254169128
+        },
+        "reconstruction": {
+          "isoTriangles": 78348,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 80654,
+          "volume": 27204.200853571314,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.07996763167592391,
+        "mass": 22.597817595873273,
+        "massReduction": 0.9089820956734351,
+        "safetyFactor": 1.7159023933583366,
+        "minMember": 2.270216446627536,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.007887527488907737,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 0.8579511966791683,
+        "passes": false,
+        "start": "cold",
+        "alternative": {
+          "start": "warm from 0.120",
+          "mass": 23.268300098892453,
+          "safetyFactor": 1.108442248666952,
+          "margin": 0.554221124333476,
+          "passes": false
+        },
+        "optimizer": {
+          "iterations": 45,
+          "converged": true,
+          "seconds": 90.57240319252014,
+          "compliance": 115777.50157683773,
+          "caseCompliance": [
+            60764.174391342036,
+            52335.35510708598,
+            2677.9720784097217
+          ],
+          "achievedVolumeFraction": 0.07413613248185681
+        },
+        "reconstruction": {
+          "isoTriangles": 68304,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 71516,
+          "volume": 18522.80130809285,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.05999959030397024,
+        "mass": 17.327621800191082,
+        "massReduction": 0.9302090205602553,
+        "safetyFactor": 0.794458871231938,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.007141898522980444,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 0.397229435615969,
+        "passes": false,
+        "start": "warm from 0.080",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 47,
+          "converged": true,
+          "seconds": 112.35162329673767,
+          "compliance": 154165.37254943547,
+          "caseCompliance": [
+            79664.41682281037,
+            69376.61680474773,
+            5124.338921877366
+          ],
+          "achievedVolumeFraction": 0.052919388966669846
+        },
+        "reconstruction": {
+          "isoTriangles": 61760,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 65242,
+          "volume": 14202.968688681214,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.06998361098994707,
+        "mass": 19.76480622742165,
+        "massReduction": 0.9203927001088337,
+        "safetyFactor": 1.4402595496573034,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.007172329671817407,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 0.7201297748286517,
+        "passes": false,
+        "start": "warm from 0.060",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 38,
+          "converged": true,
+          "seconds": 63.61645317077637,
+          "compliance": 131807.21201950085,
+          "caseCompliance": [
+            68784.23954912621,
+            59563.51044756187,
+            3459.4620228127505
+          ],
+          "achievedVolumeFraction": 0.062269754814675005
+        },
+        "reconstruction": {
+          "isoTriangles": 65576,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 69122,
+          "volume": 16200.660842522751,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.1020410405290199,
+        "mass": 27.55832629373803,
+        "massReduction": 0.8890025067526095,
+        "safetyFactor": 2.311200445822141,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.008080040062138279,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.1556002229110705,
+        "passes": true,
+        "start": "warm from 0.070",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 39,
+          "converged": true,
+          "seconds": 57.37567329406738,
+          "compliance": 97047.54469801184,
+          "caseCompliance": [
+            51277.519829381694,
+            44088.79553910114,
+            1681.2293295289955
+          ],
+          "achievedVolumeFraction": 0.09383634754563855
+        },
+        "reconstruction": {
+          "isoTriangles": 74136,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 77124,
+          "volume": 22588.79204314447,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.11786805308358267,
+        "mass": 32.011848857997975,
+        "massReduction": 0.8710649210122929,
+        "safetyFactor": 3.4377682206651308,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.008411022772041133,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.7188841103325654,
+        "passes": true,
+        "start": "warm from 0.102",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 45,
+          "converged": true,
+          "seconds": 60.947985887527466,
+          "compliance": 89628.69478041909,
+          "caseCompliance": [
+            47549.83482957598,
+            40849.01368918416,
+            1229.8462616589418
+          ],
+          "achievedVolumeFraction": 0.11200337410021131
+        },
+        "reconstruction": {
+          "isoTriangles": 78100,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 80806,
+          "volume": 26239.220375408175,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.09100433610247191,
+        "mass": 25.31837895915231,
+        "massReduction": 0.8980244094797604,
+        "safetyFactor": 2.4973443259191344,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.008085030814536417,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.2486721629595672,
+        "passes": true,
+        "start": "warm from 0.118",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 38,
+          "converged": true,
+          "seconds": 52.16963505744934,
+          "compliance": 100541.4245426084,
+          "caseCompliance": [
+            52886.228700306936,
+            45620.62069959892,
+            2034.5751427025455
+          ],
+          "achievedVolumeFraction": 0.08452019128073983
+        },
+        "reconstruction": {
+          "isoTriangles": 72116,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 75038,
+          "volume": 20752.76963868713,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12-gf",
+        "volumeFraction": 0.08548598388919791,
+        "mass": 24.17792175509621,
+        "massReduction": 0.9026178629956555,
+        "safetyFactor": 2.0031925870910023,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.008025341964412326,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "warnings": [],
+        "margin": 1.0015962935455012,
+        "passes": true,
+        "start": "warm from 0.091",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 38,
+          "converged": true,
+          "seconds": 44.42764687538147,
+          "compliance": 103933.1080573604,
+          "caseCompliance": [
+            54619.805211725055,
+            47116.53679153771,
+            2196.766054097636
+          ],
+          "achievedVolumeFraction": 0.07981705830869375
+        },
+        "reconstruction": {
+          "isoTriangles": 70876,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 73952,
+          "volume": 19817.968651513107,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "lpbf-intercooler-core",
+    "kind": "heatExchanger",
+    "seconds": 48.76521921157837,
+    "checks": [
+      {
+        "check": "isolated",
+        "value": true,
+        "op": "==",
+        "limit": true,
+        "pass": true
+      },
+      {
+        "check": "connected",
+        "value": true,
+        "op": "==",
+        "limit": true,
+        "pass": true
+      },
+      {
+        "check": "watertight",
+        "value": true,
+        "op": "==",
+        "limit": true,
+        "pass": true
+      },
+      {
+        "check": "mass",
+        "value": 131.83411364015433,
+        "op": "<=",
+        "limit": 140,
+        "pass": true
+      },
+      {
+        "check": "wallBetweenFluids",
+        "value": 1.0062305898749055,
+        "op": ">=",
+        "limit": 0.9,
+        "pass": true
+      },
+      {
+        "check": "internalFlatArea",
+        "value": 126.16943848285547,
+        "op": "<=",
+        "limit": 200,
+        "pass": true
+      },
+      {
+        "check": "trappedVolume",
+        "value": 0.8201250000000001,
+        "op": "<=",
+        "limit": 5,
+        "pass": true
+      },
+      {
+        "check": "effectiveness",
+        "value": 0.7684774904509297,
+        "op": ">=",
+        "limit": 0.7,
+        "pass": true
+      },
+      {
+        "check": "pressureDrop air",
+        "value": 15526.643738230254,
+        "op": "<=",
+        "limit": 20000,
+        "pass": true
+      },
+      {
+        "check": "pressureDrop coolant",
+        "value": 1212.733571492232,
+        "op": "<=",
+        "limit": 2000,
+        "pass": true
+      },
+      {
+        "check": "seconds",
+        "value": 48.76521921157837,
+        "op": "<=",
+        "limit": 300,
+        "pass": true
+      }
+    ],
+    "pass": true,
+    "exchanger": {
+      "mass": 131.83411364015433,
+      "solidVolume": 49376.07252440238,
+      "minWallBetweenFluids": 1.0062305898749055,
+      "internalFlatArea": 126.16943848285547,
+      "internalOverhangArea": 876.3585386297987,
+      "trappedVolume": 0.8201250000000001,
+      "effectiveness": 0.7684774904509297,
+      "duty": 510.74550970349685,
+      "pressureDrop": {
+        "air": 15526.643738230254,
+        "coolant": 1212.733571492232
+      },
+      "cleanouts": 2
+    }
+  },
+  {
+    "case": "mbb-beam",
+    "seconds": 464.56595611572266,
+    "checks": [
+      {
+        "check": "massReduction",
+        "value": 0.661667409770109,
+        "op": ">=",
+        "limit": 0.4,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 1.5050241416180759,
+        "op": ">=",
+        "limit": 1.5,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      }
+    ],
+    "outcomes": 2,
+    "best": {
+      "volumeFraction": 0.3426142425074752,
+      "mass": 22.143191365365908,
+      "massReduction": 0.661667409770109,
+      "safetyFactor": 1.5050241416180759,
+      "p5Member": 2.5022108757334447,
+      "minMember": 2.5022108757334447,
+      "creaseLength": 0.0,
+      "p5Thickness": 2.5243456578563115,
+      "p1Thickness": 2.4971876816566003,
+      "deflection": 1.9964667239391154,
+      "iterations": 39,
+      "optimizerSeconds": 112.34236788749695
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "pa12",
+        "volumeFraction": 0.3,
+        "mass": 19.196876873652467,
+        "massReduction": 0.7066850496019363,
+        "safetyFactor": 1.3791020377376488,
+        "minMember": 2.3859098461808697,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.0,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 924.3596477620823,
+        "warnings": [],
+        "margin": 0.9194013584917659,
+        "passes": false,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 90.25659584999084,
+          "compliance": 1366111.2398533626,
+          "caseCompliance": [
+            1366111.2398533626
+          ],
+          "achievedVolumeFraction": 0.2997588223623379
+        },
+        "reconstruction": {
+          "isoTriangles": 156824,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 150066,
+          "volume": 19006.80878579452,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pa12",
+        "volumeFraction": 0.3426142425074752,
+        "mass": 22.143191365365908,
+        "massReduction": 0.661667409770109,
+        "safetyFactor": 1.5050241416180759,
+        "minMember": 2.5022108757334447,
+        "overhangArea": null,
+        "keepOutIntrusion": 0.0,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 1076.0566294065989,
+        "warnings": [],
+        "margin": 1.0033494277453838,
+        "passes": true,
+        "start": "warm from 0.300",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 39,
+          "converged": true,
+          "seconds": 112.34236788749695,
+          "compliance": 1204412.2394494128,
+          "caseCompliance": [
+            1204412.2394494128
+          ],
+          "achievedVolumeFraction": 0.34291194728801866
+        },
+        "reconstruction": {
+          "isoTriangles": 164200,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 157318,
+          "volume": 21923.951846896936,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "motor-mount",
+    "seconds": 246.06007194519043,
+    "checks": [
+      {
+        "check": "massReduction",
+        "value": 0.6911519894468121,
+        "op": ">=",
+        "limit": 0.6,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 3.35288235495789,
+        "op": ">=",
+        "limit": 2.0,
+        "pass": true
+      },
+      {
+        "check": "deflection",
+        "value": 0.3214732818772603,
+        "op": "<=",
+        "limit": 0.5,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 9.265498115402078e-05,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "member",
+        "value": 2.8469479676428473,
+        "op": ">=",
+        "limit": 2.0,
+        "pass": true
+      }
+    ],
+    "outcomes": 3,
+    "best": {
+      "volumeFraction": 0.3,
+      "mass": 27.54171198253909,
+      "massReduction": 0.6911519894468121,
+      "safetyFactor": 3.35288235495789,
+      "p5Member": 1.4625000000000001,
+      "minMember": 1.4625000000000001,
+      "creaseLength": 0.0,
+      "p5Thickness": 2.8469479676428473,
+      "p1Thickness": 2.4726356927594146,
+      "deflection": 0.3214732818772603,
+      "iterations": 59,
+      "optimizerSeconds": 46.93398571014404
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "petg",
+        "volumeFraction": 0.3,
+        "mass": 27.54171198253909,
+        "massReduction": 0.6911519894468121,
+        "safetyFactor": 3.35288235495789,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 9.265498115402078e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 702.9260923699942,
+        "warnings": [],
+        "margin": null,
+        "passes": null,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 59,
+          "converged": true,
+          "seconds": 46.93398571014404,
+          "compliance": 65776.40377613467,
+          "caseCompliance": [
+            33682.81410356968,
+            32093.589672564987
+          ],
+          "achievedVolumeFraction": 0.2935173284182779
+        },
+        "reconstruction": {
+          "isoTriangles": 68300,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 55146,
+          "volume": 21686.387387826057,
+          "watertight": true
+        }
+      },
+      {
+        "material": "petg",
+        "volumeFraction": 0.2,
+        "mass": 20.453451371442377,
+        "massReduction": 0.7706385220707699,
+        "safetyFactor": 1.3647766646965802,
+        "minMember": 2.270216446627536,
+        "overhangArea": null,
+        "keepOutIntrusion": 7.342910822611048e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 567.2685968927653,
+        "warnings": [],
+        "margin": null,
+        "passes": null,
+        "start": "warm from 0.300",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 38,
+          "converged": true,
+          "seconds": 24.385622024536133,
+          "compliance": 99543.6986585804,
+          "caseCompliance": [
+            48196.71445608368,
+            51346.984202496715
+          ],
+          "achievedVolumeFraction": 0.19423542173788036
+        },
+        "reconstruction": {
+          "isoTriangles": 56908,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 45612,
+          "volume": 16105.079820033367,
+          "watertight": true
+        }
+      },
+      {
+        "material": "petg",
+        "volumeFraction": 0.45,
+        "mass": 32.548333879619335,
+        "massReduction": 0.6350085945305638,
+        "safetyFactor": 2.784516047204727,
+        "minMember": 1.4625000000000001,
+        "overhangArea": null,
+        "keepOutIntrusion": 8.434180063649102e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 932.5843254425284,
+        "warnings": [],
+        "margin": null,
+        "passes": null,
+        "start": "warm from 0.200",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 68,
+          "converged": true,
+          "seconds": 44.08728504180908,
+          "compliance": 62805.89679039386,
+          "caseCompliance": [
+            29845.115778041632,
+            32960.78101235223
+          ],
+          "achievedVolumeFraction": 0.3553076993218303
+        },
+        "reconstruction": {
+          "isoTriangles": 64484,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 49918,
+          "volume": 25628.60935403097,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "printed-hook",
+    "seconds": 364.376877784729,
+    "checks": [
+      {
+        "check": "massReduction",
+        "value": 0.7948607880762988,
+        "op": ">=",
+        "limit": 0.6,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 2.5955187721988735,
+        "op": ">=",
+        "limit": 2.5,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 5.321584952350932e-05,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "member",
+        "value": 4.310021798878385,
+        "op": ">=",
+        "limit": 2.4,
+        "pass": true
+      },
+      {
+        "check": "overhang",
+        "value": 0.03622610811115005,
+        "op": "<=",
+        "limit": 0.04,
+        "pass": true
+      }
+    ],
+    "outcomes": 1,
+    "best": {
+      "volumeFraction": 0.2,
+      "mass": 31.062834106523752,
+      "massReduction": 0.7948607880762988,
+      "safetyFactor": 2.5955187721988735,
+      "p5Member": 3.4125000000000005,
+      "minMember": 3.4125000000000005,
+      "creaseLength": 0.0,
+      "p5Thickness": 4.310021798878385,
+      "p1Thickness": 3.8759682018205206,
+      "deflection": 0.6334255074522237,
+      "iterations": 45,
+      "optimizerSeconds": 177.04215002059937
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "petg",
+        "volumeFraction": 0.2,
+        "mass": 31.062834106523752,
+        "massReduction": 0.7948607880762988,
+        "safetyFactor": 2.5955187721988735,
+        "minMember": 3.4125000000000005,
+        "overhangArea": 505.9036592160378,
+        "keepOutIntrusion": 5.321584952350932e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 0.0,
+        "print": {
+          "pitch": 0.42908373997324356,
+          "height": 59.66032609343529,
+          "volume": 24458.924493325787,
+          "buildDirection": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "supportArea": 250.7617097486383,
+          "supportVolume": 2349.2180276991703,
+          "islands": 0,
+          "islandArea": 0.0,
+          "bridges": 0,
+          "bridgedArea": 0.0,
+          "maxBridgeSpan": 0.0,
+          "supportFree": false,
+          "bed": {
+            "contactArea": 298.4469394291797,
+            "contactFraction": 0.35419483620511877,
+            "feet": 1,
+            "smallestFoot": 298.4469394291797,
+            "comMargin": 0.7992513984546186,
+            "baseWidth": 8.581674799464874,
+            "aspect": 6.952060930711976,
+            "footprint": [
+              99.31201934814453,
+              20.0
+            ]
+          },
+          "warnings": [
+            "stands 7.0x taller than its narrowest base: it will wobble late in the print; a brim or a lower orientation helps"
+          ]
+        },
+        "warnings": [],
+        "margin": 1.0382075088795495,
+        "passes": true,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 45,
+          "converged": true,
+          "seconds": 177.04215002059937,
+          "compliance": 359785.4793215622,
+          "caseCompliance": [
+            359785.4793215622
+          ],
+          "achievedVolumeFraction": 0.1893509962890018
+        },
+        "reconstruction": {
+          "isoTriangles": 66888,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 62896,
+          "volume": 24458.924493325787,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "wall-bracket-fasteners",
+    "seconds": 777.9355750083923,
+    "checks": [
+      {
+        "check": "massReduction",
+        "value": 0.8977651129147505,
+        "op": ">=",
+        "limit": 0.6,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 2.744691365231147,
+        "op": ">=",
+        "limit": 2.5,
+        "pass": true
+      },
+      {
+        "check": "deflection",
+        "value": 0.18237037431389266,
+        "op": "<=",
+        "limit": 1.5,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 3.847006014837622e-05,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "member",
+        "value": 4.742348059425391,
+        "op": ">=",
+        "limit": 3.0,
+        "pass": true
+      },
+      {
+        "check": "closedBores",
+        "value": 0,
+        "op": "<=",
+        "limit": 0,
+        "pass": true
+      }
+    ],
+    "outcomes": 6,
+    "best": {
+      "volumeFraction": 0.06910987759791684,
+      "mass": 43.8822660410948,
+      "massReduction": 0.8977651129147505,
+      "safetyFactor": 2.744691365231147,
+      "p5Member": 4.55,
+      "minMember": 3.853332099679081,
+      "creaseLength": 0.0,
+      "p5Thickness": 4.742348059425391,
+      "p1Thickness": 4.286369163888993,
+      "deflection": 0.18237037431389266,
+      "iterations": 43,
+      "optimizerSeconds": 45.57844400405884
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "pla",
+        "volumeFraction": 0.15,
+        "mass": 80.9134962809322,
+        "massReduction": 0.8114914542424236,
+        "safetyFactor": 12.00933972009237,
+        "minMember": 4.55,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.656334637773542e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4431.720973383315,
+        "warnings": [],
+        "margin": 4.8037358880369485,
+        "passes": true,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 62.91329503059387,
+          "compliance": 35090.38680203073,
+          "caseCompliance": [
+            14509.392898494905,
+            20580.993903535822
+          ],
+          "achievedVolumeFraction": 0.1483252018070386
+        },
+        "reconstruction": {
+          "isoTriangles": 84784,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 63352,
+          "volume": 65252.81958139691,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.075,
+        "mass": 47.2522998397372,
+        "massReduction": 0.8899137630196692,
+        "safetyFactor": 3.538475568415563,
+        "minMember": 1.9500000000000002,
+        "overhangArea": null,
+        "keepOutIntrusion": 3.841633670697495e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4357.641121338273,
+        "warnings": [],
+        "margin": 1.4153902273662253,
+        "passes": true,
+        "start": "cold",
+        "alternative": {
+          "start": "warm from 0.150",
+          "mass": 48.08700632118991,
+          "safetyFactor": 3.7069399054662515,
+          "margin": 1.4827759621865007,
+          "passes": true
+        },
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 44.392887115478516,
+          "compliance": 62331.33077382272,
+          "caseCompliance": [
+            41443.88731536205,
+            20887.44345846067
+          ],
+          "achievedVolumeFraction": 0.06976869899378825
+        },
+        "reconstruction": {
+          "isoTriangles": 68496,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 47628,
+          "volume": 38106.693419142895,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.05143951039166741,
+        "mass": 35.74323526212485,
+        "massReduction": 0.9167270528449293,
+        "safetyFactor": 1.709581407303104,
+        "minMember": 1.9500000000000002,
+        "overhangArea": null,
+        "keepOutIntrusion": 2.978838138632738e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4327.302451010309,
+        "warnings": [],
+        "margin": 0.6838325629212416,
+        "passes": false,
+        "start": "warm from 0.075",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 37,
+          "converged": true,
+          "seconds": 41.359265089035034,
+          "compliance": 81230.9761961484,
+          "caseCompliance": [
+            60154.426307249494,
+            21076.549888898917
+          ],
+          "achievedVolumeFraction": 0.04412047552032312
+        },
+        "reconstruction": {
+          "isoTriangles": 62580,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 41810,
+          "volume": 28825.189727520035,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.0632197551958337,
+        "mass": 41.8390741979823,
+        "massReduction": 0.9025252473886287,
+        "safetyFactor": 2.355290839378401,
+        "minMember": 3.0269552621700475,
+        "overhangArea": null,
+        "keepOutIntrusion": 3.8210270033950104e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4345.189671138811,
+        "warnings": [],
+        "margin": 0.9421163357513604,
+        "passes": false,
+        "start": "warm from 0.051",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 41,
+          "converged": true,
+          "seconds": 43.550644874572754,
+          "compliance": 65860.78087915809,
+          "caseCompliance": [
+            44884.624107581185,
+            20976.156771576912
+          ],
+          "achievedVolumeFraction": 0.057241360673236145
+        },
+        "reconstruction": {
+          "isoTriangles": 65476,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 44618,
+          "volume": 33741.188869340556,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.0932197551958337,
+        "mass": 53.86667950067758,
+        "massReduction": 0.8745038852083924,
+        "safetyFactor": 6.116172385083451,
+        "minMember": 4.55,
+        "overhangArea": null,
+        "keepOutIntrusion": 3.599242940911336e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4384.235114080887,
+        "warnings": [],
+        "margin": 2.4464689540333806,
+        "passes": true,
+        "start": "warm from 0.063",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 48,
+          "converged": true,
+          "seconds": 45.08096981048584,
+          "compliance": 51849.994744782336,
+          "caseCompliance": [
+            31060.396619301424,
+            20789.598125480912
+          ],
+          "achievedVolumeFraction": 0.08661943808320396
+        },
+        "reconstruction": {
+          "isoTriangles": 72012,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 50720,
+          "volume": 43440.87056506256,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.06910987759791684,
+        "mass": 43.8822660410948,
+        "massReduction": 0.8977651129147505,
+        "safetyFactor": 2.744691365231147,
+        "minMember": 3.853332099679081,
+        "overhangArea": null,
+        "keepOutIntrusion": 3.847006014837622e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4336.345308250257,
+        "warnings": [],
+        "margin": 1.0978765460924589,
+        "passes": true,
+        "start": "warm from 0.093",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 43,
+          "converged": true,
+          "seconds": 45.57844400405884,
+          "compliance": 58765.53503541194,
+          "caseCompliance": [
+            37853.17036583208,
+            20912.36466957986
+          ],
+          "achievedVolumeFraction": 0.06259994257240296
+        },
+        "reconstruction": {
+          "isoTriangles": 67592,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 46706,
+          "volume": 35388.92422668935,
+          "watertight": true
+        }
+      }
+    ]
+  },
+  {
+    "case": "wall-bracket",
+    "seconds": 890.0856823921204,
+    "checks": [
+      {
+        "check": "massReduction",
+        "value": 0.8402752893666436,
+        "op": ">=",
+        "limit": 0.6,
+        "pass": true
+      },
+      {
+        "check": "safetyFactor",
+        "value": 2.873403535165332,
+        "op": ">=",
+        "limit": 2.5,
+        "pass": true
+      },
+      {
+        "check": "deflection",
+        "value": 0.1249686718607665,
+        "op": "<=",
+        "limit": 1.5,
+        "pass": true
+      },
+      {
+        "check": "keepOutIntrusion",
+        "value": 5.406047821685986e-05,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "preserveMissing",
+        "value": 0.0,
+        "op": "<=",
+        "limit": 1.0,
+        "pass": true
+      },
+      {
+        "check": "bodies",
+        "value": 1,
+        "op": "==",
+        "limit": 1,
+        "pass": true
+      },
+      {
+        "check": "member",
+        "value": 4.765294286085063,
+        "op": ">=",
+        "limit": 3.0,
+        "pass": true
+      },
+      {
+        "check": "closedBores",
+        "value": 0,
+        "op": "<=",
+        "limit": 0,
+        "pass": true
+      }
+    ],
+    "outcomes": 7,
+    "best": {
+      "volumeFraction": 0.12432482556499519,
+      "mass": 66.956299527871,
+      "massReduction": 0.8402752893666436,
+      "safetyFactor": 2.873403535165332,
+      "p5Member": 4.55,
+      "minMember": 1.9500000000000002,
+      "creaseLength": 0.0,
+      "p5Thickness": 4.765294286085063,
+      "p1Thickness": 3.508016573961377,
+      "deflection": 0.1249686718607665,
+      "iterations": 38,
+      "optimizerSeconds": 21.42131519317627
+    },
+    "pass": true,
+    "trace": [
+      {
+        "material": "pla",
+        "volumeFraction": 0.15,
+        "mass": 80.35062447754909,
+        "massReduction": 0.8083230355562918,
+        "safetyFactor": 3.798752778634978,
+        "minMember": 1.9500000000000002,
+        "overhangArea": null,
+        "keepOutIntrusion": 5.690293534631577e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4400.826007871672,
+        "warnings": [],
+        "margin": 1.5195011114539914,
+        "passes": true,
+        "start": "cold",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 41,
+          "converged": true,
+          "seconds": 52.39500308036804,
+          "compliance": 12229.859006657494,
+          "caseCompliance": [
+            12229.859006657494
+          ],
+          "achievedVolumeFraction": 0.1499945564412258
+        },
+        "reconstruction": {
+          "isoTriangles": 88600,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 67078,
+          "volume": 64798.89070770089,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.07818402472104859,
+        "mass": 45.751236864396965,
+        "massReduction": 0.8908601114336955,
+        "safetyFactor": 2.1864689148404035,
+        "minMember": 1.9500000000000002,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.433132246733567e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4290.073181740077,
+        "warnings": [],
+        "margin": 0.8745875659361614,
+        "passes": false,
+        "start": "cold",
+        "alternative": {
+          "start": "warm from 0.150",
+          "mass": 47.783937484437814,
+          "safetyFactor": 0.8981165558138213,
+          "margin": 0.3592466223255285,
+          "passes": false
+        },
+        "optimizer": {
+          "iterations": 46,
+          "converged": true,
+          "seconds": 64.85583901405334,
+          "compliance": 44776.87738041349,
+          "caseCompliance": [
+            44776.87738041349
+          ],
+          "achievedVolumeFraction": 0.07042314232861374
+        },
+        "reconstruction": {
+          "isoTriangles": 71828,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 50452,
+          "volume": 36896.158761610466,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.0938650732693966,
+        "mass": 53.16192882361873,
+        "massReduction": 0.8731818550616132,
+        "safetyFactor": 2.1283873799526334,
+        "minMember": 1.9500000000000002,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.833563867832629e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4342.462818819013,
+        "warnings": [],
+        "margin": 0.8513549519810534,
+        "passes": false,
+        "start": "warm from 0.078",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 49,
+          "converged": true,
+          "seconds": 59.289599895477295,
+          "compliance": 28328.20222486642,
+          "caseCompliance": [
+            28328.20222486642
+          ],
+          "achievedVolumeFraction": 0.08814273564708558
+        },
+        "reconstruction": {
+          "isoTriangles": 76632,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 55058,
+          "volume": 42872.523244853815,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.11576643408666026,
+        "mass": 61.336199655125895,
+        "massReduction": 0.8536820760653487,
+        "safetyFactor": 2.0274939055904797,
+        "minMember": 3.0269552621700475,
+        "overhangArea": null,
+        "keepOutIntrusion": 4.659392530772229e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4360.567488686874,
+        "warnings": [],
+        "margin": 0.8109975622361919,
+        "passes": false,
+        "start": "warm from 0.094",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 66,
+          "converged": true,
+          "seconds": 67.45522499084473,
+          "compliance": 23569.743317030112,
+          "caseCompliance": [
+            23569.743317030112
+          ],
+          "achievedVolumeFraction": 0.10621910772219272
+        },
+        "reconstruction": {
+          "isoTriangles": 81812,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 60234,
+          "volume": 49464.67714123056,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.16988301007443982,
+        "mass": 85.52175691471801,
+        "massReduction": 0.7959872637469528,
+        "safetyFactor": 5.871589633409137,
+        "minMember": 1.9500000000000002,
+        "overhangArea": null,
+        "keepOutIntrusion": 5.905924933832194e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4440.664759405643,
+        "warnings": [],
+        "margin": 2.3486358533636547,
+        "passes": true,
+        "start": "warm from 0.116",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 92,
+          "converged": true,
+          "seconds": 75.6663088798523,
+          "compliance": 17136.625126323157,
+          "caseCompliance": [
+            17136.625126323157
+          ],
+          "achievedVolumeFraction": 0.1639653048110756
+        },
+        "reconstruction": {
+          "isoTriangles": 86804,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 64370,
+          "volume": 68969.15880219195,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.13288321704333012,
+        "mass": 70.60311109062404,
+        "massReduction": 0.8315757954325047,
+        "safetyFactor": 3.1213749140687033,
+        "minMember": 1.9500000000000002,
+        "overhangArea": null,
+        "keepOutIntrusion": 5.1713834385132626e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4412.456779133147,
+        "warnings": [],
+        "margin": 1.2485499656274812,
+        "passes": true,
+        "start": "warm from 0.170",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 44,
+          "converged": true,
+          "seconds": 44.560325145721436,
+          "compliance": 18630.700168324558,
+          "caseCompliance": [
+            18630.700168324558
+          ],
+          "achievedVolumeFraction": 0.12768210092881202
+        },
+        "reconstruction": {
+          "isoTriangles": 84064,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 62436,
+          "volume": 56937.99281501939,
+          "watertight": true
+        }
+      },
+      {
+        "material": "pla",
+        "volumeFraction": 0.12432482556499519,
+        "mass": 66.956299527871,
+        "massReduction": 0.8402752893666436,
+        "safetyFactor": 2.873403535165332,
+        "minMember": 1.9500000000000002,
+        "overhangArea": null,
+        "keepOutIntrusion": 5.406047821685986e-05,
+        "preserveMissing": 0.0,
+        "bodies": 1,
+        "boundaryCutArea": 4407.282869095659,
+        "warnings": [],
+        "margin": 1.1493614140661328,
+        "passes": true,
+        "start": "warm from 0.133",
+        "alternative": null,
+        "optimizer": {
+          "iterations": 38,
+          "converged": true,
+          "seconds": 21.42131519317627,
+          "compliance": 19246.974180394824,
+          "caseCompliance": [
+            19246.974180394824
+          ],
+          "achievedVolumeFraction": 0.11959885728727761
+        },
+        "reconstruction": {
+          "isoTriangles": 83404,
+          "bodies": 1,
+          "droppedFragmentVolume": 0.0,
+          "triangles": 61926,
+          "volume": 53997.01574828306,
+          "watertight": true
+        }
+      }
+    ]
+  }
+]

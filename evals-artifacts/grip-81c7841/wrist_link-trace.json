@@ -1,0 +1,673 @@
+{
+ "link": "wrist_link",
+ "seconds": 1384,
+ "best": 1,
+ "outcomes": [
+  {
+   "material": "pa12-gf",
+   "volumeFraction": 0.12,
+   "mass": 110.3036815594381,
+   "massReduction": 0.8831180603360578,
+   "safetyFactor": 18.4122235723775,
+   "cases": [
+    {
+     "name": "reach",
+     "peakStress": 1.5173106183565563,
+     "peakAt": [
+      20.778080842782558,
+      -26.90759037696538,
+      684.2727532061023
+     ],
+     "globalPeakStress": 1.2927318159299737,
+     "refined": [
+      {
+       "at": [
+        20.778080842782558,
+        -26.90759037696538,
+        684.2727532061023
+       ],
+       "peakStress": 1.5173106183565563
+      },
+      {
+       "at": [
+        -23.467008951848534,
+        -29.840966495946446,
+        668.3836325616214
+       ],
+       "peakStress": 1.3092523868621733
+      },
+      {
+       "at": [
+        2.6889281090659747,
+        -54.041319477540256,
+        628.783054955377
+       ],
+       "peakStress": 1.2279442290684732
+      }
+     ],
+     "p99Stress": 0.8122125584344155,
+     "contactPeakStress": 1.6165616200378643,
+     "safetyFactor": 27.508626071563047,
+     "interlayerStress": null,
+     "deflection": 0.08057984789072423,
+     "maxDisplacement": 0.11245755673373303,
+     "compliance": 3.766316849038305
+    },
+    {
+     "name": "j6-rated-torque",
+     "peakStress": 2.266925027860337,
+     "peakAt": [
+      -17.600256713886402,
+      -12.974053811805305,
+      652.9834079369708
+     ],
+     "globalPeakStress": 1.9741815585772695,
+     "refined": [
+      {
+       "at": [
+        18.82249676346185,
+        -11.262917742399686,
+        653.7167519667161
+       ],
+       "peakStress": 1.8801643306149118
+      },
+      {
+       "at": [
+        -17.600256713886402,
+        -12.974053811805305,
+        652.9834079369708
+       ],
+       "peakStress": 2.266925027860337
+      },
+      {
+       "at": [
+        -17.111360694056224,
+        4.626202902081099,
+        636.3609432627447
+       ],
+       "peakStress": 1.4347132030455676
+      }
+     ],
+     "p99Stress": 0.8382645984560864,
+     "contactPeakStress": 1.9741815585772695,
+     "safetyFactor": 18.4122235723775,
+     "interlayerStress": null,
+     "deflection": 0.013998818934009949,
+     "maxDisplacement": 0.049943482737166735,
+     "compliance": 3.4425731740707013
+    },
+    {
+     "name": "lateral",
+     "peakStress": 0.568516271174711,
+     "peakAt": [
+      22.489216912188184,
+      0.2261387236094876,
+      622.6718547074997
+     ],
+     "globalPeakStress": 0.4789989234734435,
+     "refined": [
+      {
+       "at": [
+        -22.73366492210327,
+        -2.4627893854564835,
+        615.3384144100472
+       ],
+       "peakStress": 0.5579953622100128
+      },
+      {
+       "at": [
+        22.489216912188184,
+        0.2261387236094876,
+        622.6718547074997
+       ],
+       "peakStress": 0.568516271174711
+      },
+      {
+       "at": [
+        2.4444800991508906,
+        12.937435239194121,
+        646.3833116692634
+       ],
+       "peakStress": 0.5578642165755624
+      }
+     ],
+     "p99Stress": 0.2655937331593423,
+     "contactPeakStress": 0.4789989234734435,
+     "safetyFactor": 73.41765319845302,
+     "interlayerStress": null,
+     "deflection": 0.017525069318504467,
+     "maxDisplacement": 0.026290681699146452,
+     "compliance": 0.19169378974887352
+    }
+   ],
+   "minMember": 1.833360074363167,
+   "overhangArea": null,
+   "keepOutIntrusion": 0.001390680424094246,
+   "preserveMissing": 0.0,
+   "bodies": 1,
+   "boundaryCutArea": 0.0,
+   "warnings": [],
+   "margin": 9.20611178618875,
+   "passes": true,
+   "start": "cold",
+   "alternative": null,
+   "optimizer": {
+    "iterations": 46,
+    "converged": true,
+    "seconds": 214.0925030708313,
+    "compliance": 23966.09214820653,
+    "caseCompliance": [
+     12829.344075839266,
+     10585.505713976327,
+     551.24235839094
+    ],
+    "achievedVolumeFraction": 0.11714070271652587
+   },
+   "reconstruction": {
+    "isoTriangles": 158412,
+    "bodies": 1,
+    "droppedFragmentVolume": 0.0,
+    "triangles": 168970,
+    "volume": 90412.85373724438,
+    "watertight": true
+   }
+  },
+  {
+   "material": "pa12-gf",
+   "volumeFraction": 0.06,
+   "mass": 55.128078307017695,
+   "massReduction": 0.941584209779999,
+   "safetyFactor": 4.806977516503983,
+   "cases": [
+    {
+     "name": "reach",
+     "peakStress": 8.683030093541738,
+     "peakAt": [
+      17.35580965764563,
+      -25.91722947100301,
+      694.2965864563708
+     ],
+     "globalPeakStress": 5.352699646570951,
+     "refined": [
+      {
+       "at": [
+        17.844705677475815,
+        -39.3618700163329,
+        660.0738650682584
+       ],
+       "peakStress": 6.148116644060068
+      },
+      {
+       "at": [
+        -12.711295561910305,
+        -34.47290981803113,
+        660.3183130781736
+       ],
+       "peakStress": 6.5802185625734255
+      },
+      {
+       "at": [
+        17.35580965764563,
+        -25.91722947100301,
+        694.2965864563708
+       ],
+       "peakStress": 8.683030093541738
+      }
+     ],
+     "p99Stress": 3.064280333124978,
+     "contactPeakStress": 5.352699646570951,
+     "safetyFactor": 4.806977516503983,
+     "interlayerStress": null,
+     "deflection": 0.24592005481391221,
+     "maxDisplacement": 0.3928161979802606,
+     "compliance": 14.759798702543554
+    },
+    {
+     "name": "j6-rated-torque",
+     "peakStress": 8.29040377707859,
+     "peakAt": [
+      14.422433538664563,
+      -36.672941907266924,
+      655.4293528798717
+     ],
+     "globalPeakStress": 7.496833440215314,
+     "refined": [
+      {
+       "at": [
+        14.422433538664563,
+        -36.672941907266924,
+        655.4293528798717
+       ],
+       "peakStress": 8.29040377707859
+      },
+      {
+       "at": [
+        -13.689087601570664,
+        -36.672941907266924,
+        656.6515929294471
+       ],
+       "peakStress": 7.705333384332521
+      },
+      {
+       "at": [
+        -25.667040087410022,
+        -12.228140915758031,
+        621.9399755215046
+       ],
+       "peakStress": 5.758922174484676
+      }
+     ],
+     "p99Stress": 3.3453310009927444,
+     "contactPeakStress": 7.496833440215314,
+     "safetyFactor": 5.034631793228633,
+     "interlayerStress": null,
+     "deflection": 0.008189658400231795,
+     "maxDisplacement": 0.17192523938652343,
+     "compliance": 16.787630744401806
+    },
+    {
+     "name": "lateral",
+     "peakStress": 6.450050970426273,
+     "peakAt": [
+      -14.666879641231018,
+      -1.4724284794941198,
+      689.6520742679842
+     ],
+     "globalPeakStress": 3.051848447750931,
+     "refined": [
+      {
+       "at": [
+        14.91132955849474,
+        -1.4724284794941198,
+        689.6520742679842
+       ],
+       "peakStress": 6.388401776238038
+      },
+      {
+       "at": [
+        -14.666879641231018,
+        -1.4724284794941198,
+        689.6520742679842
+       ],
+       "peakStress": 6.450050970426273
+      },
+      {
+       "at": [
+        -25.667040087410022,
+        -12.228140915758031,
+        621.9399755215046
+       ],
+       "peakStress": 2.836221614849803
+      }
+     ],
+     "p99Stress": 1.373792675592376,
+     "contactPeakStress": 3.051848447750931,
+     "safetyFactor": 6.471131875725959,
+     "interlayerStress": null,
+     "deflection": 0.1732559699071572,
+     "maxDisplacement": 0.27128241430308336,
+     "compliance": 1.6125008106567236
+    }
+   ],
+   "minMember": 1.833360074363167,
+   "overhangArea": null,
+   "keepOutIntrusion": 0.0012876525617395902,
+   "preserveMissing": 0.0,
+   "bodies": 1,
+   "boundaryCutArea": 0.0,
+   "warnings": [],
+   "margin": 2.4034887582519917,
+   "passes": true,
+   "start": "cold",
+   "alternative": {
+    "start": "warm from 0.120",
+    "mass": 48.505833862898754,
+    "safetyFactor": 1.4825054924005605,
+    "margin": 0.7412527462002803,
+    "passes": false
+   },
+   "optimizer": {
+    "iterations": 46,
+    "converged": true,
+    "seconds": 118.628751039505,
+    "compliance": 77118.4463487658,
+    "caseCompliance": [
+     35305.62755620993,
+     38513.446403033115,
+     3299.3723895227586
+    ],
+    "achievedVolumeFraction": 0.057202420548633455
+   },
+   "reconstruction": {
+    "isoTriangles": 103176,
+    "bodies": 1,
+    "droppedFragmentVolume": 0.0,
+    "triangles": 114968,
+    "volume": 45186.94943198172,
+    "watertight": true
+   }
+  },
+  {
+   "material": "pa12-gf",
+   "volumeFraction": 0.04,
+   "mass": 34.78713153037517,
+   "massReduction": 0.9631382438815159,
+   "safetyFactor": 0.31188337373458735,
+   "cases": [
+    {
+     "name": "reach",
+     "peakStress": 133.8292898880291,
+     "peakAt": [
+      -6.60020594025379,
+      -41.86638306260115,
+      687.6948117218666
+     ],
+     "globalPeakStress": 86.50537919376492,
+     "refined": [
+      {
+       "at": [
+        -6.60020594025379,
+        -41.86638306260115,
+        687.6948117218666
+       ],
+       "peakStress": 133.8292898880291
+      },
+      {
+       "at": [
+        5.622194555500657,
+        13.134419168293858,
+        678.6502353550084
+       ],
+       "peakStress": 110.02691464363643
+      },
+      {
+       "at": [
+        29.089203507349197,
+        -13.02151789262066,
+        651.7609542643485
+       ],
+       "peakStress": 61.15065844485218
+      }
+     ],
+     "p99Stress": 26.31890179994353,
+     "contactPeakStress": 86.50537919376492,
+     "safetyFactor": 0.31188337373458735,
+     "interlayerStress": null,
+     "deflection": 2.173550248235247,
+     "maxDisplacement": 7.13064530282815,
+     "compliance": 191.26724468618278
+    },
+    {
+     "name": "j6-rated-torque",
+     "peakStress": 76.9629126712878,
+     "peakAt": [
+      2.444370426604504,
+      13.867763198039123,
+      684.0280915731403
+     ],
+     "globalPeakStress": 65.20218073652873,
+     "refined": [
+      {
+       "at": [
+        -19.31150245583841,
+        -12.777069882705568,
+        646.8719940660467
+       ],
+       "peakStress": 68.60952175116832
+      },
+      {
+       "at": [
+        19.80017913057582,
+        -13.265965902535745,
+        646.3830980462166
+       ],
+       "peakStress": 60.445675290262926
+      },
+      {
+       "at": [
+        2.444370426604504,
+        13.867763198039123,
+        684.0280915731403
+       ],
+       "peakStress": 76.9629126712878
+      }
+     ],
+     "p99Stress": 21.829650585594315,
+     "contactPeakStress": 65.20218073652873,
+     "safetyFactor": 0.5423278431918552,
+     "interlayerStress": null,
+     "deflection": 0.9036664060072516,
+     "maxDisplacement": 5.884977988456025,
+     "compliance": 167.57806575539544
+    },
+    {
+     "name": "lateral",
+     "peakStress": 36.09673201284704,
+     "peakAt": [
+      -20.04484648558368,
+      -13.265965902535747,
+      648.0942341156222
+     ],
+     "globalPeakStress": 34.46545262341541,
+     "refined": [
+      {
+       "at": [
+        -20.04484648558368,
+        -13.265965902535747,
+        648.0942341156222
+       ],
+       "peakStress": 36.09673201284704
+      },
+      {
+       "at": [
+        21.75576320989653,
+        -11.799277843045212,
+        648.3386821255373
+       ],
+       "peakStress": 30.695730252106543
+      },
+      {
+       "at": [
+        -5.86686191050852,
+        14.112211207954214,
+        678.4057873450932
+       ],
+       "peakStress": 19.083755923087384
+      }
+     ],
+     "p99Stress": 6.707613746199653,
+     "contactPeakStress": 34.46545262341541,
+     "safetyFactor": 1.1563132756707009,
+     "interlayerStress": null,
+     "deflection": 1.2196316943582868,
+     "maxDisplacement": 1.962851440994432,
+     "compliance": 13.260239824373071
+    }
+   ],
+   "minMember": 1.833360074363167,
+   "overhangArea": null,
+   "keepOutIntrusion": 0.0012128493782596803,
+   "preserveMissing": 0.0,
+   "bodies": 1,
+   "boundaryCutArea": 0.0,
+   "warnings": [],
+   "margin": 0.15594168686729368,
+   "passes": false,
+   "start": "warm from 0.060",
+   "alternative": null,
+   "optimizer": {
+    "iterations": 51,
+    "converged": true,
+    "seconds": 115.52862787246704,
+    "compliance": 183358.31097941104,
+    "caseCompliance": [
+     82192.3386829203,
+     92738.58202556445,
+     8427.390270926287
+    ],
+    "achievedVolumeFraction": 0.03576869771564963
+   },
+   "reconstruction": {
+    "isoTriangles": 85692,
+    "bodies": 1,
+    "droppedFragmentVolume": 0.0,
+    "triangles": 98278,
+    "volume": 28514.04223801244,
+    "watertight": true
+   }
+  },
+  {
+   "material": "pa12-gf",
+   "volumeFraction": 0.05,
+   "mass": 43.01991303314067,
+   "massReduction": 0.9544144782078006,
+   "safetyFactor": 0.7833249260279496,
+   "cases": [
+    {
+     "name": "reach",
+     "peakStress": 53.28456818862079,
+     "peakAt": [
+      -0.48890078820176086,
+      11.912214404668118,
+      684.518574507033
+     ],
+     "globalPeakStress": 51.56018819213127,
+     "refined": [
+      {
+       "at": [
+        -0.48890078820176086,
+        11.912214404668118,
+        684.518574507033
+       ],
+       "peakStress": 53.28456818862079
+      }
+     ],
+     "p99Stress": 13.066052341501926,
+     "contactPeakStress": 51.56018819213127,
+     "safetyFactor": 0.7833249260279496,
+     "interlayerStress": null,
+     "deflection": 0.8689054912395799,
+     "maxDisplacement": 3.232382429432051,
+     "compliance": 66.22439451433091
+    },
+    {
+     "name": "j6-rated-torque",
+     "peakStress": 23.8296791722522,
+     "peakAt": [
+      4.644507420015104,
+      13.134454454243565,
+      677.4295822194953
+     ],
+     "globalPeakStress": 19.81722032843137,
+     "refined": [
+      {
+       "at": [
+        4.644507420015104,
+        13.134454454243565,
+        677.4295822194953
+       ],
+       "peakStress": 23.8296791722522
+      },
+      {
+       "at": [
+        -18.333605512003253,
+        -12.288138576925682,
+        647.6069250098545
+       ],
+       "peakStress": 13.885927267100923
+      },
+      {
+       "at": [
+        -5.3778609865035385,
+        -41.377451756821266,
+        676.2073421699199
+       ],
+       "peakStress": 13.19961039472202
+      }
+     ],
+     "p99Stress": 7.670012646175768,
+     "contactPeakStress": 19.81722032843137,
+     "safetyFactor": 1.7515607378963194,
+     "interlayerStress": null,
+     "deflection": 0.06927945871456939,
+     "maxDisplacement": 1.2022622574731647,
+     "compliance": 41.548388301213215
+    },
+    {
+     "name": "lateral",
+     "peakStress": 11.41936908642256,
+     "peakAt": [
+      -4.76837158203125e-06,
+      11.912214404668118,
+      685.0074705268631
+     ],
+     "globalPeakStress": 8.701718104150101,
+     "refined": [
+      {
+       "at": [
+        -4.76837158203125e-06,
+        11.912214404668118,
+        685.0074705268631
+       ],
+       "peakStress": 11.41936908642256
+      },
+      {
+       "at": [
+        25.911484282627846,
+        -5.1991462893881035,
+        664.7182857039107
+       ],
+       "peakStress": 8.642263624258076
+      },
+      {
+       "at": [
+        -26.1559418292861,
+        -5.688042309218281,
+        664.2293896840805
+       ],
+       "peakStress": 8.234086096907143
+      }
+     ],
+     "p99Stress": 3.098504883734347,
+     "contactPeakStress": 8.701718104150101,
+     "safetyFactor": 3.6551170313261654,
+     "interlayerStress": null,
+     "deflection": 0.4613512951826548,
+     "maxDisplacement": 0.9198361455800044,
+     "compliance": 4.438692736207754
+    }
+   ],
+   "minMember": 1.833360074363167,
+   "overhangArea": null,
+   "keepOutIntrusion": 0.0012314714479209283,
+   "preserveMissing": 0.0,
+   "bodies": 1,
+   "boundaryCutArea": 0.0,
+   "warnings": [],
+   "margin": 0.3916624630139748,
+   "passes": false,
+   "start": "warm from 0.040",
+   "alternative": null,
+   "optimizer": {
+    "iterations": 42,
+    "converged": true,
+    "seconds": 90.04289317131042,
+    "compliance": 109826.86961743969,
+    "caseCompliance": [
+     49751.66868281197,
+     54950.18740544581,
+     5125.013529181915
+    ],
+    "achievedVolumeFraction": 0.044598759913048035
+   },
+   "reconstruction": {
+    "isoTriangles": 94052,
+    "bodies": 1,
+    "droppedFragmentVolume": 0.0,
+    "triangles": 106204,
+    "volume": 35262.223797655526,
+    "watertight": true
+   }
+  }
+ ]
+}
