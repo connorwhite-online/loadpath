@@ -735,6 +735,27 @@ FIELD_SCHEMA = {
         "check": {"type": "boolean", "description": "run the printability check (default true)"},
         "editor": {"type": "object", "description": "What `loadpath edit` keeps with the graph (node positions in "
                                                     "'layout'); nothing else reads it."},
+        "tune": {"type": "object", "additionalProperties": False, "required": ["study", "params"],
+                 "description": "`loadpath tune`: turn these numbers for the lightest part that still meets the "
+                                "study's limits, each candidate meshed and analyzed (tune.py)",
+                 "properties": {
+                     "study": {"type": "string", "description": "study JSON path or example:<name>: loads, "
+                                                                "supports, material, goal"},
+                     "node": {"type": "string", "description": "the node analyzed (default the output)"},
+                     "params": {"type": "array", "minItems": 1, "items": {
+                         "type": "object", "additionalProperties": False, "required": ["path", "min", "max"],
+                         "properties": {
+                             "path": {"type": "string", "description": "where the number is, '/'-separated: "
+                                                                       "nodes/web/shape/max/2"},
+                             "also": {"type": "array", "items": {"type": "string"},
+                                      "description": "numbers that move with it ('-' first: the other way)"},
+                             "min": {"type": "number"}, "max": {"type": "number"}}}},
+                     "safetyFactor": {**_POS, "description": "least safety factor (default the study's goal)"},
+                     "maxDeflection": {**_POS, "description": "mm at the loads (default the study's goal)"},
+                     "evaluations": {"type": "integer", "minimum": 2, "description": "analyses to spend "
+                                                                                       "(default 20)"},
+                     "pitch": {**_POS, "description": "mm mesh for each candidate (default 1)"},
+                     "cells": {"type": "integer", "minimum": 1000, "description": "analysis cells (default 30000)"}}},
         "impact": {"type": "object", "properties": {
             "envelope": {"type": "string", "description": "solid node the lattice core fills (the crush pad)"},
             "density": {"anyOf": [{"type": "string"}, {"type": "number", "exclusiveMinimum": 0, "maximum": 1}],

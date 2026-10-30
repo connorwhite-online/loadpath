@@ -157,6 +157,13 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
 #sweep-chart .pt { cursor: pointer; }
 #sweep-chart .pt:hover circle { r: 5; }
 #sweep-chart text { font: 10px var(--mono); fill: var(--muted); }
+#tune-box { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+#tune-params { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 4px; }
+#tune-params li { display: flex; gap: 4px; align-items: center; font: 11px var(--mono); }
+#tune-params li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tune-params input { flex: 0 0 3.6em; width: 3.6em; min-width: 0; }
+#tune-chart svg { width: 100%; height: auto; display: block; }
+#tune-chart text { font: 10px var(--mono); fill: var(--muted); }
 
 .curve-ed svg { width: 100%; height: auto; display: block; margin-top: 6px; background: var(--panel); border-radius: 6px; touch-action: none; }
 .curve-ed .handle { cursor: grab; }
@@ -198,6 +205,17 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
         <button class="btn" id="fit" title="Find the value of the parameter that gives the target mass (on the GPU estimate)">Fit</button>
         <button class="btn" id="sweep" title="Mass across the parameter's range; click a point to use that value">Sweep</button></div>
       <div id="sweep-chart" hidden></div>
+      <div id="tune-box">
+        <p class="note">Tune for least mass under a study's loads</p>
+        <div class="pick"><span class="note">Study</span><input type="text" id="tune-study" placeholder="example:arm-link or study.json" aria-label="Study to tune against"></div>
+        <div class="row"><div class="pick" style="flex:1"><span class="note">SF ≥</span><input type="number" id="tune-sf" min="0" step="any" placeholder="goal" aria-label="Least safety factor"></div>
+          <div class="pick" style="flex:1"><span class="note">Defl. ≤ mm</span><input type="number" id="tune-defl" min="0" step="any" placeholder="goal" aria-label="Most deflection"></div></div>
+        <ul id="tune-params" aria-label="Knobs to tune"></ul>
+        <div class="row wrap"><button class="btn small" id="tune-add" title="Tune the parameter picked under 'by changing' too">+ knob</button>
+          <span class="note" style="flex:1"></span><span class="note">analyses</span><input type="number" id="tune-n" min="2" max="200" step="1" style="width:4em" aria-label="Analyses to spend">
+          <button class="btn" id="tune" title="Mesh and analyze candidates (FE, the study's loads) until the part is as light as it can be at the limits; the best values go into the graph">Tune</button></div>
+        <div id="tune-chart" hidden></div>
+      </div>
       <div class="row"><div class="pick" style="flex:1"><span class="note">Process</span>
         <select id="process"><option value="">none</option><option>fdm</option><option>sls</option><option>mjf</option><option>sla</option><option>dlp</option><option>volumetric</option><option>lpbf</option></select></div></div>
     </section>
@@ -2521,6 +2539,7 @@ function partPanel() {
   $("#pitch").value = pitch; $("#pitch-n").value = pitch;
   $("#material").value = typeof d.material === "string" ? d.material : d.material ? JSON.stringify(d.material) : "";
   $("#process").value = typeof d.process === "string" ? d.process : "";
+  tunePanel();
 }
 function showIssues() {
   const list = $("#issues");
@@ -2647,6 +2666,108 @@ async function run(node = null) {
   };
   poll();
 }
+// ---- tune: the graph's knobs against an FE check of the part ------------------------------------------
+function defaultStudy() {
+  const r = Object.values(S.doc.nodes).find((n) => n && n.op === "result" && typeof n.study === "string");
+  return r ? r.study : "";
+}
+function tuneSpec(make = false) {
+  if (!S.doc.tune && make) S.doc.tune = { study: defaultStudy(), params: [] };
+  return S.doc.tune;
+}
+function tunePanel() {
+  const t = S.doc.tune || {};
+  $("#tune-study").value = t.study || ""; $("#tune-study").placeholder = defaultStudy() || "example:arm-link or study.json";
+  $("#tune-sf").value = t.safetyFactor ?? ""; $("#tune-defl").value = t.maxDeflection ?? ""; $("#tune-n").value = t.evaluations ?? 20;
+  const lis = (t.params || []).map((p, i) => {
+    const num = (k) => { const x = el("input", { type: "number", step: "any", value: p[k], "aria-label": `${p.path} ${k}` }); x.addEventListener("change", () => { p[k] = Number(x.value); commit(); }); return x; };
+    const rm = el("button", { class: "btn ghost small", title: "Stop tuning this", onclick: () => { t.params.splice(i, 1); if (!t.params.length && !t.study) delete S.doc.tune; commit(); tunePanel(); } }, "×");
+    return el("li", { title: p.also && p.also.length ? `moves with it: ${p.also.join(", ")}` : p.path }, el("span", {}, p.path.replace(/^nodes\//, "").replace(/\//g, " · ") + (p.also && p.also.length ? ` +${p.also.length}` : "")), num("min"), num("max"), rm);
+  });
+  $("#tune-params").replaceChildren(...lis);
+  $("#tune").disabled = !(t.params && t.params.length);
+}
+function tuneField(k, v) {
+  const t = tuneSpec(true);
+  if (v === "" || v == null) delete t[k]; else t[k] = k === "study" ? v : Number(v);
+  commit(); tunePanel();
+}
+function addTuneKnob(key) {
+  if (!key) { status("Pick the parameter under 'by changing' first.", "warn"); return; }
+  const t = tuneSpec(true);
+  if (!t.study) t.study = defaultStudy();
+  if (t.params.some((p) => p.path === key)) return;
+  const [lo, hi] = paramRange(key);
+  t.params.push({ path: key, min: +lo.toPrecision(4), max: +hi.toPrecision(4) });
+  commit(); tunePanel();
+}
+async function tune() {
+  commit();
+  const t = S.doc.tune;
+  if (!t || !t.params || !t.params.length) { status("Add a knob to tune first.", "warn"); return; }
+  if (!t.study) { status("Name the study (loads, supports, limits) to tune against.", "warn"); return; }
+  if (!DATA.server) {
+    const cmd = `loadpath tune ${fileName()} --out tune/`;
+    download(fileName(), JSON.stringify(exportDoc(), null, 2) + "\n");
+    status(`Downloaded ${fileName()}. Tune it with:  ${cmd}   (or open it with loadpath edit to tune it here)`);
+    try { await navigator.clipboard.writeText(cmd); } catch (e) { /* no clipboard */ }
+    return;
+  }
+  const r = await fetch("api/tune", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc: exportDoc() }) });
+  const b = await r.json();
+  if (!r.ok) { S.serverIssues = b.issues || []; showIssues(); status(b.error || "Could not start.", "warn"); return; }
+  $("#tune").disabled = true; $("#log").hidden = false; $("#log").textContent = "";
+  const pts = [], t0 = performance.now(), n = t.evaluations || 20;
+  let since = 0;
+  status("Tuning: meshing and analyzing the first candidate…");
+  const poll = async () => {
+    const j = await (await fetch(`api/job?id=${b.id}&since=${since}`)).json();
+    since = j.eventCount;
+    for (const ev of j.events) {
+      if (ev.event === "tune") pts.push(ev);
+      $("#log").textContent += Object.entries(ev).map(([k, v]) => `${k} ${typeof v === "number" ? fmt(v) : v}`).join("  ") + "\n";
+    }
+    $("#log").scrollTop = 1e9;
+    drawTune(pts, j.limits);
+    if (j.state === "running") {
+      const last = pts[pts.length - 1];
+      status(`Tuning: ${pts.length} of up to ${n} analyses${last && last.mass != null ? `, last ${last.mass.toFixed(1)} g, SF ${fmt(last.safetyFactor)}` : ""}… ${((performance.now() - t0) / 1000).toFixed(0)} s`);
+      setTimeout(poll, 1000); return;
+    }
+    $("#tune").disabled = false;
+    if (j.state === "failed") { status(`Tune failed: ${j.error}`, "warn"); return; }
+    drawTune(j.history, j.limits, j.best);
+    if (!j.best) { status(`No candidate met the limits in ${j.history.length} analyses: widen the knobs' ranges or ease the limits.`, "warn"); return; }
+    for (const [key, v] of j.assign) { const path = key.split("/").map((x) => /^\d+$/.test(x) ? +x : x); setUniform(path, +v.toPrecision(5)); paramChanged(path); }
+    inspector(); updateMass();
+    const at = j.best.check && j.best.check.ok ? j.best.check : j.best;      // the fine grid's reading when it has one
+    const lim = [at.safetyFactor != null ? `SF ${fmt(at.safetyFactor)}` : "", at.deflection != null ? `deflection ${fmt(at.deflection)} mm` : ""].filter(Boolean).join(", ");
+    const how = j.best.unconfirmed ? " It passed once but not on a finer grid: it sits on the limit, so check it." : " Checked again on a finer grid.";
+    status(`Tuned in ${j.history.length} analyses: ${j.start.mass != null ? `${j.start.mass.toFixed(1)} → ` : ""}${j.best.mass.toFixed(1)} g (${lim}).${how} The values are in the graph; Undo puts them back.`, j.best.unconfirmed ? "warn" : "ok");
+  };
+  poll();
+}
+/** Each analysis: mass against the evaluation number, filled where it met the limits; the best ringed. */
+function drawTune(pts, limits, best) {
+  const box = $("#tune-chart"), ok = pts.filter((p) => p.mass != null);
+  if (ok.length < 1) { box.hidden = true; return; }
+  const W = 288, H = 120, L = 50, R = 8, T = 12, B = 20;
+  const ys = ok.map((p) => p.mass), y0 = Math.min(...ys), y1 = Math.max(...ys), n = Math.max(pts.length, 2);
+  const X = (i) => L + (W - L - R) * i / (n - 1), Y = (y) => T + (H - T - B) * (1 - (y - y0) / ((y1 - y0) || 1));
+  const ns = "http://www.w3.org/2000/svg", mk = (t, a, txt) => { const e = document.createElementNS(ns, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); if (txt != null) e.textContent = txt; return e; };
+  const svg = mk("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "mass of each analyzed candidate" });
+  svg.append(mk("line", { x1: L, y1: H - B, x2: W - R, y2: H - B, stroke: "var(--line)" }), mk("line", { x1: L, y1: T, x2: L, y2: H - B, stroke: "var(--line)" }));
+  svg.append(mk("text", { x: L - 4, y: T + 4, "text-anchor": "end" }, `${fmt(y1)} g`), mk("text", { x: L - 4, y: H - B, "text-anchor": "end" }, fmt(y0)),
+    mk("text", { x: W - R, y: H - 6, "text-anchor": "end" }, `analysis ${pts.length}`), mk("text", { x: L, y: H - 6 }, "filled: meets the limits"));
+  pts.forEach((p, i) => {
+    if (p.mass == null) return;
+    const c = mk("circle", { cx: X(i), cy: Y(p.mass), r: 3.2, fill: p.ok ? "var(--ok)" : "none", stroke: p.ok ? "var(--ok)" : "var(--warn)", "stroke-width": 1.3 });
+    c.append(mk("title", {}, `${p.mass.toFixed(1)} g · SF ${fmt(p.safetyFactor)} · deflection ${fmt(p.deflection)} mm · ${Array.isArray(p.values) ? p.values.map(fmt).join(", ") : p.values}`));
+    svg.append(c);
+    if (best && p.mass === best.mass && p.ok) svg.append(mk("circle", { cx: X(i), cy: Y(p.mass), r: 6.5, fill: "none", stroke: "var(--ink)", "stroke-width": 1.2 }));
+  });
+  box.replaceChildren(svg); box.hidden = false;
+}
 function report(j) {
   const r = j.report, dl = $("#report");
   const rows = [["mass", r.mass != null ? `${r.mass.toFixed(1)} g` : null], ["volume", `${(r.volume / 1000).toFixed(2)} cm³`], ["faces", r.faces.toLocaleString()],
@@ -2708,6 +2829,12 @@ $("#fit").addEventListener("click", async () => {
 });
 $("#process").addEventListener("change", (e) => { const v = e.target.value; if (v) S.doc.process = v; else delete S.doc.process; commit(); legend(); kick(false); });
 $("#run").addEventListener("click", () => run());
+$("#tune").addEventListener("click", tune);
+$("#tune-add").addEventListener("click", () => addTuneKnob($("#fit-param").value));
+$("#tune-study").addEventListener("change", (e) => tuneField("study", e.target.value.trim()));
+$("#tune-sf").addEventListener("change", (e) => tuneField("safetyFactor", e.target.value));
+$("#tune-defl").addEventListener("change", (e) => tuneField("maxDeflection", e.target.value));
+$("#tune-n").addEventListener("change", (e) => tuneField("evaluations", Math.max(2, Math.round(+e.target.value || 20))));
 $("#save").addEventListener("click", save);
 $("#export").addEventListener("click", () => { commit(); download(fileName(), JSON.stringify(exportDoc(), null, 2) + "\n"); });
 $("#import").addEventListener("change", async (e) => {
@@ -2778,7 +2905,7 @@ window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
   THREE, cam: () => { camera.updateMatrixWorld(); return camera; },
-  makeGroup: (n, g) => makeGroup(n, g), run: (n) => run(n), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
+  makeGroup: (n, g) => makeGroup(n, g), run: (n) => run(n), tune: () => tune(), addTuneKnob: (k) => addTuneKnob(k), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
   paste: (text) => pasteText(text), sweep: (key, n) => sweepMass(key, n), duplicate: (n) => duplicateNode(n),
   pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),

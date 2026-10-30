@@ -65,6 +65,12 @@ wire, an expression) recompiles, in milliseconds.
   **Fit mass** finds the value of any one number (a wall, a blend, a remap
   end) that gives a target mass, in a second or two; **Sweep** charts the
   mass across that number's range, and clicking a point uses that value.
+- **Tune** goes past mass to strength: name a study (its loads, supports
+  and limits), add knobs with **+ knob**, and the server meshes and
+  analyzes candidates until the part is as light as it can be while it
+  still meets the study's safety factor and deflection (see Tuning). The
+  chart fills in as each analysis lands; the best values go into the
+  graph, and Undo takes them back.
 - **Run** meshes the graph with `run_field`, exactly as `loadpath field`
   does, at the graph's pitch, then shows the mesh, the report (mass,
   watertightness, sealed voids, drains, printability) and links to the
@@ -196,6 +202,49 @@ beyond the picture. Pictures are resized to at most 1024 px. Use it in an
 The whole graph is examples/fields/nameplate.json. The editor bakes the
 picture into a texture once; moving the picture (origin, size) re-bakes,
 while the nodes around it stay live sliders.
+
+## Tuning against a simulation
+
+nTop's sliders move the geometry; whether the part still holds is a
+separate trip to a solver. `loadpath tune` closes that loop: it turns the
+numbers you name until the part is as light as it can be while every
+load case of a study keeps its safety factor and deflection. Each
+candidate is meshed (`tune.pitch`, default 1 mm) and analyzed by the same
+FE check a study's outcome gets (`verify_part`, `tune.cells` cells), and
+the search (COBYQA, derivative-free and inside each knob's range) spends
+`evaluations` analyses. What comes back is the lightest candidate that met
+every limit and was one body, not wherever the search stopped.
+
+The search analyzes on a coarse grid, and a voxel reading moves as the
+part slides across its grid: on the arm link the start deflects 0.500 mm
+on 30k cells and 0.487 mm on 60k, while one thinner candidate read 0.485
+coarse and 0.623 fine. So the start is analyzed on both and every coarse
+reading is scaled by that ratio before it meets the limits;
+at the end the lightest few that passed are analyzed again on the fine
+grid and the first that still passes is the answer (if none does, the
+lightest is returned marked `unconfirmed`).
+
+```json
+"tune": {"study": "example:arm-link",
+         "params": [{"path": "nodes/web/shape/max/2", "also": ["-nodes/web/shape/min/2"], "min": 6, "max": 11},
+                    {"path": "nodes/web/shape/max/1", "also": ["-nodes/web/shape/min/1"], "min": 6.5, "max": 14},
+                    {"path": "nodes/blob/blend", "min": 3, "max": 14}],
+         "evaluations": 24}
+```
+
+`path` is where the number sits in the graph, the same key the editor's
+sliders use; `also` are numbers that move with it (`-` first for the
+other way, so a box stays centred). The limits default to the study's
+`goal`; `safetyFactor` and `maxDeflection` here override them.
+`loadpath tune graph.json --out tune/` writes `tuned.json` (the graph with
+the best values) and `tune.json` (every candidate). An analysis takes
+about 12 s on the arm link, so 24 of them are about five minutes.
+examples/fields/arm-link-tune.json is that example: its stiffness limit
+(0.5 mm at the wrist bearing) is what binds. 25 analyses took it from
+61.8 g to 54.9 g (a lower, slightly wider web and a smaller blend),
+0.490 mm on the fine grid.
+
+![tuning the arm link in the editor](images/fields/editor-tune.png)
 
 ## What the field-driven operations mean
 

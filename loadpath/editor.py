@@ -347,12 +347,35 @@ class _Jobs:
         self.jobs = {}
         self.lock = threading.Lock()
 
-    def start(self, doc, node=None):
+    def start(self, doc, node=None, tune=False):
         jid = uuid.uuid4().hex[:8]
-        job = {"id": jid, "state": "running", "events": [], "started": time.time(), "node": node}
+        job = {"id": jid, "state": "running", "events": [], "started": time.time(), "node": node,
+               "kind": "tune" if tune else "run"}
         self.jobs[jid] = job
-        threading.Thread(target=self._run, args=(job, doc, node), daemon=True).start()
+        threading.Thread(target=self._tune if tune else self._run, args=(job, doc, node), daemon=True).start()
         return job
+
+    def _tune(self, job, doc, _node=None):
+        from .tune import get_at, tune_field
+
+        def progress(ev, _f=None):
+            job["events"].append(_clean({k: v for k, v in ev.items() if isinstance(v, (int, float, str, bool))}))
+            del job["events"][:-400]
+
+        with self.lock:
+            try:
+                out = tune_field(doc, self.base_dir, os.path.join(self.out_dir, job["id"]), progress=progress)
+                best, assign = out["best"], []
+                if best is not None:      # every number the tuner moved, as it wrote them into the graph
+                    for p in doc["tune"]["params"]:
+                        for q in [p["path"], *p.get("also", [])]:
+                            assign.append([q.lstrip("-"), get_at(out["doc"], q.lstrip("-"))])
+                job.update(state="done", best=_clean(best), start=_clean(out["start"]), assign=assign,
+                           history=_clean(out["history"]), limits=out["limits"],
+                           files={"tuned": f"/out/{job['id']}/tuned.json", "tune": f"/out/{job['id']}/tune.json"})
+            except Exception as exc:  # noqa: BLE001 - reported to the page
+                job.update(state="failed", error=str(exc))
+            job["seconds"] = round(time.time() - job["started"], 1)
 
     def _run(self, job, doc, node=None):
         from .fields import expand_groups, run_field
@@ -388,7 +411,7 @@ class _Jobs:
 def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir=None, open_browser=True,
                  ready=None):
     """Serve the editor for the graph at `graph_path` until interrupted.
-    POST /api/bake, /api/lint, /api/save, /api/run ({doc, node?}); GET /api/job?id=,
+    POST /api/bake, /api/lint, /api/save, /api/run ({doc, node?}), /api/tune; GET /api/job?id=,
     /out/<job>/<file>. Binds to localhost unless told otherwise: it reads
     and writes files in the graph's folder. `ready(server)` is called once
     it listens (tests use port 0 and read server.server_port)."""
@@ -495,6 +518,14 @@ def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir
                     return self._send(200, out)
                 except Exception as exc:  # noqa: BLE001
                     return self._send(400, {"error": str(exc), "node": name})
+            if u.path == "/api/tune":
+                issues = lint(doc, "field")
+                if any(i["level"] == "error" for i in issues):
+                    return self._send(400, {"issues": issues, "error": "the graph has errors"})
+                if not isinstance(doc.get("tune"), dict) or not doc["tune"].get("params"):
+                    return self._send(400, {"error": "add a study and at least one knob to tune"})
+                job = jobs.start(doc, tune=True)
+                return self._send(200, {"id": job["id"]})
             if u.path == "/api/run":
                 issues = lint(doc, "field")
                 if any(i["level"] == "error" for i in issues):

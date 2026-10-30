@@ -119,6 +119,13 @@ for real and shows the report.
 
 ![the field editor](docs/images/fields/editor.png)
 
+`loadpath tune` (or Tune in the editor) turns the numbers you pick until the part
+is as light as it can be while it still meets a study's safety factor and
+deflection, each candidate meshed and analyzed by FE: the arm link's web and blend
+went from 61.8 g to 54.9 g at its 0.5 mm stiffness limit in 25 analyses.
+
+![tuning the arm link against its loads](docs/images/fields/editor-tune.png)
+
 A graded cell bends the lattice's coordinates, so walls run continuously from 4 mm
 to 12 mm cells:
 
@@ -167,7 +174,8 @@ loadpath mcp                           # stdio MCP server for agents
 Also: `loadpath lattice` (fill a part with a stress-graded TPMS lattice),
 `loadpath heatx` (two-fluid TPMS heat exchangers), `loadpath field` (a part as a
 graph of fields, [docs/fields.md](docs/fields.md)), `loadpath edit` (edit a field
-graph in the browser with a live preview), `loadpath schema` (JSON Schemas, also
+graph in the browser with a live preview), `loadpath tune` (tune a graph's numbers
+against a study's limits), `loadpath schema` (JSON Schemas, also
 in [`schema/`](schema/)).
 
 Large studies (100k+ cells) solve with matrix-free multigrid; install the `gpu`

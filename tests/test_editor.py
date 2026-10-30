@@ -432,6 +432,12 @@ const [page_, threeDir] = process.argv.slice(2);
     const pts = await window.lpEditor.sweep("nodes/sb/thickness", 5);
     return { pts, after: window.lpEditor.doc().nodes.sb.thickness, chart: !document.querySelector("#sweep-chart").hidden };
   });
+  out.tune = await page.evaluate(() => {
+    const E = window.lpEditor;
+    E.addTuneKnob("nodes/sa/thickness");
+    E.addTuneKnob("nodes/sa/thickness");                      // once only
+    return { spec: E.doc().tune, rows: document.querySelectorAll("#tune-params li").length, can: !document.querySelector("#tune").disabled };
+  });
   out._errors = errors;
   console.log(JSON.stringify(out));
   await browser.close();
@@ -468,6 +474,9 @@ def test_overlays_paste_and_sweep():
     for k, want in (("thin", 0.5), ("thick", 2.0), ("thinSide", 0.5), ("thickSide", 2.0)):
         assert abs(out[k] - want) < 0.02, (k, out[k])
     assert "FDM minimum 0.8 mm" in out["legend"], out["legend"]
+    t = out["tune"]
+    assert t["rows"] == 1 and t["can"] and t["spec"]["params"][0]["path"] == "nodes/sa/thickness", t
+    assert t["spec"]["params"][0]["min"] < 0.5 < t["spec"]["params"][0]["max"], t
     red = lambda px: px[0] > 80 and px[0] > 2.5 * max(px[1], px[2])   # noqa: E731
     assert red(out["over"]["under"]) and not red(out["over"]["top"]), out["over"]
     # pasting nodes that clash: renamed, their references to each other follow; duplicating keeps the inputs

@@ -8,6 +8,7 @@ Command line: run a study file and write the parts, a report and renders.
     python -m loadpath lattice study.json part.stl --out out/ [--options lattice.json]
     python -m loadpath heatx exchanger.json --out out/ [--size]
     python -m loadpath field part.json --out out/ [--pitch 0.3]   # a field graph (nTop-style implicit part)
+    python -m loadpath tune part.json --out out/ [--evaluations 20]   # its `tune` knobs vs an FE check
     python -m loadpath edit part.json [--html editor.html]   # edit a field graph in the browser, live preview
     python -m loadpath mcp                     # local MCP server for agents (needs loadpath[mcp])
     python -m loadpath orient part.stl [--study study.json] [--3mf part.3mf]
@@ -177,6 +178,12 @@ def main(argv=None):
                                                           "(huge lattices; skips the checks that need the mesh)")
     fg.add_argument("--no-render", action="store_true")
     fg.add_argument("--base-dir")
+    tu = sub.add_parser("tune", help="tune a field graph's numbers (its `tune` block) for the lightest part "
+                                     "that still meets a study's safety factor and deflection")
+    tu.add_argument("graph")
+    tu.add_argument("--out", default="loadpath-tune")
+    tu.add_argument("--evaluations", type=int, help="analyses to spend (overrides tune.evaluations)")
+    tu.add_argument("--base-dir")
     ed = sub.add_parser("edit", help="edit a field graph in the browser: node graph, sliders, live GPU preview, run")
     ed.add_argument("graph")
     ed.add_argument("--html", help="write one self-contained editor page (every bake inside) instead of serving")
@@ -245,6 +252,8 @@ def main(argv=None):
         return _field(args)
     if args.cmd == "edit":
         return _edit(args)
+    if args.cmd == "tune":
+        return _tune(args)
     if args.cmd == "orient":
         return _orient(args)
     if args.cmd == "calibrate":
@@ -396,6 +405,30 @@ def _field(args):
         return 2
     _write_report(args.out, {"ok": True, **rep, **({"warnings": issues} if issues else {})})
     return 0
+
+
+def _tune(args):
+    from .schema import format_issues, lint
+    from .tune import tune_field
+
+    doc = _load(args.graph)
+    issues = lint(doc, "field")
+    if any(i["level"] == "error" for i in issues):
+        print(json.dumps({"ok": False, "issues": issues, "error": format_issues(issues)}, indent=2))
+        return 2
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
+    try:
+        out = tune_field(doc, base, args.out, progress=_progress, evaluations=args.evaluations)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    summary = {"ok": out["best"] is not None, "best": out["best"], "start": out["start"],
+               "limits": out["limits"], "evaluations": len(out["history"]),
+               "tuned": os.path.join(args.out, "tuned.json")}
+    if out["best"] is None:
+        summary["error"] = "no candidate met the limits: widen the params' ranges or ease the limits"
+    _write_report(args.out, summary)
+    return 0 if out["best"] is not None else 1
 
 
 def _edit(args):
