@@ -228,6 +228,7 @@
   },
   {
    "id": "j2-below",
+   "bore": false,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -245,6 +246,7 @@
   },
   {
    "id": "j3-drive",
+   "bore": false,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -294,6 +296,7 @@
   },
   {
    "id": "j3-child-sweep",
+   "bore": false,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -328,6 +331,7 @@
   },
   {
    "id": "spring-cable",
+   "bore": false,
    "shape": {
     "type": "cylinder",
     "p0": [

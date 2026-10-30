@@ -295,6 +295,7 @@
   },
   {
    "id": "j3-below",
+   "bore": false,
    "shape": {
     "type": "cylinder",
     "p0": [
@@ -328,6 +329,7 @@
   },
   {
    "id": "j4-horn-sweep",
+   "bore": false,
    "shape": {
     "type": "cylinder",
     "p0": [

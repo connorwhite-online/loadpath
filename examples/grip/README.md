@@ -60,6 +60,13 @@ on main at 0344844 with both fixes: wrist yoke 27.5 g, SF 4.07, ray p5
 3.6 mm, no creases, no closed bores; forearm 82.8 g, SF 3.01 (heavier than
 the 57 g it came to at 40 mm; the search settled on a stiffer outcome).
 
+### Clearance volumes are not bores
+
+The drive housings, the space below a hub, a child's or horn's swing, the J5
+idler bearing seat and the spring's run and cable are marked `"bore": false`:
+room to keep clear that material may close by design, so the closed-bore
+check skips them. Screw, bolt, driver and pin bores stay checked.
+
 ## The TPU finger (`finger.py`)
 
 GRIP's hand closes three TPU fingers with one tendon. `finger.py` curls
