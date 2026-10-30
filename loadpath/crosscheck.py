@@ -33,7 +33,7 @@ import numpy as np
 from .spec import Study
 from .verify import STRESS_ALLOWANCE
 
-__all__ = ["crosscheck"]
+__all__ = ["crosscheck", "element_size", "unsupported"]
 
 
 def _tet_mesh(mesh, size, order=1, size_at=None, mesher=None):
@@ -70,6 +70,31 @@ def _tet_mesh(mesh, size, order=1, size_at=None, mesher=None):
             except Exception as ex:  # noqa: BLE001 - gmsh raises bare Exception
                 last = ex
     raise RuntimeError(f"could not tetrahedralize the part: {last}")
+
+
+def element_size(study: Study) -> float:
+    """The default tetrahedron edge, mm: half the thinnest member."""
+    return max(0.75, 0.5 * (study.min_member or 3.0))
+
+
+def unsupported(study: Study) -> str | None:
+    """Why the cross-check cannot stand in for verify.py on this study, or
+    None when it can: it solves isotropic linear elasticity under the
+    study's supports, forces, moments and bearing loads, and nothing else."""
+    if not study.supports:
+        return "no supports (a self-equilibrated part)"
+    if study.gravity is not None:
+        return "gravity loads"
+    if study.process is not None:
+        return "a layered process (anisotropic stiffness and interlayer strength)"
+    if any(ld.pressure for c in study.load_cases for ld in c.loads):
+        return "pressure loads"
+    if not _has_tetwild():
+        try:
+            import gmsh  # noqa: F401  (availability check)
+        except ImportError:
+            return "no tetrahedral mesher (pip install loadpath[crosscheck])"
+    return None
 
 
 def _has_tetwild():
@@ -218,8 +243,25 @@ def _load_vectors(study, pts, surf, tol):
             if len(nodes) == 0:
                 raise ValueError(f"load in case {case.name!r} touches no surface node of the part")
             nodes_all.append(nodes)
-            if np.any(ld.force):
-                f[nodes] += np.asarray(ld.force, float) / len(nodes)
+            force = np.asarray(ld.force, float)
+            if ld.distribution == "bearing":
+                # as domain.py: the shaft pushes on the half of the bore facing
+                # the force, as a cosine over it
+                from .domain import _cylinder_of
+
+                p0, ax = _cylinder_of(study, ld.region, ld.shape, f"load in case {case.name!r}")
+                axial = (force @ ax) * ax
+                radial = force - axial
+                if np.any(radial):
+                    d = pts[nodes] - p0
+                    rad = d - (d @ ax)[:, None] * ax
+                    rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
+                    w = np.maximum(rad @ (radial / np.linalg.norm(radial)), 0.0)
+                    if w.sum() > 0:
+                        f[nodes] += (w / w.sum())[:, None] * radial[None]
+                        force = axial
+            if np.any(force):
+                f[nodes] += force / len(nodes)
             if ld.moment is not None and np.any(ld.moment):
                 # a couple as a rigid rotation's forces about the nodes' centroid
                 r = pts[nodes] - pts[nodes].mean(axis=0)
@@ -454,7 +496,7 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     mesher: "tetwild" (default when pytetwild is installed) or "gmsh"."""
     t0 = time.time()
     mat = study.material
-    size = size or max(0.75, 0.5 * (study.min_member or 3.0))
+    size = size or element_size(study)
     band = contact_band if contact_band is not None else 2.0 * size
     if adaptive:
         # (Off by default: the volume mesh grows from the STL's own surface

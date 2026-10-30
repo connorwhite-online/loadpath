@@ -52,6 +52,13 @@ _WARM_BETA = 4.0
 # 120k cells, its peak at a corner the coarser grid had averaged away.
 _CONFIRM_CELLS = 150_000
 _CONFIRM_RUNS = 3
+# With goal.confirm "tet", at most this many picks are confirmed on the
+# tetrahedral mesh, and the search runs at most this many more fractions
+# after its first pick (the step down the calibration allows, and back).
+_TET_CONFIRMS = 4
+_TET_EXTRA_RUNS = 4
+# A tet-confirmed pick within this of its target is close enough.
+_TET_CLOSE = 1.08
 
 
 def _making(study: Study) -> dict:
@@ -101,6 +108,10 @@ class Outcome:
             "mass": r.get("mass"),
             "massReduction": r.get("massReduction"),
             "safetyFactor": r.get("safetyFactor"),
+            **({"voxelSafetyFactor": r["voxelSafetyFactor"]} if "voxelSafetyFactor" in r else {}),
+            **({"confirm": r["confirm"]} if "confirm" in r else {}),
+            **({"calibration": r["calibration"]} if "calibration" in r else {}),
+            **({"tetCheck": r["tetCheck"]} if "tetCheck" in r else {}),
             "cases": r.get("cases"),
             "minMember": r.get("minMember"),
             "overhangArea": r.get("overhangArea"),
@@ -210,6 +221,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     if making:
         report["manufacturing"] = making
     o.report = report
+    o.voxel_sf = report.get("safetyFactor")
     m = _margin(study, report)
     if m is not None:
         report["margin"] = m
@@ -223,6 +235,23 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
             f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
             "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
     return o
+
+
+def _confirm_on_tets(study: Study, outcomes: list) -> bool:
+    """goal.confirm says tet (or auto, and the cross-check covers it)."""
+    mode = study.goal.confirm
+    if mode == "voxel":
+        return False
+    from .crosscheck import unsupported
+
+    why = unsupported(study)
+    if why is None:
+        return True
+    if mode == "tet" and outcomes:
+        outcomes[0].report.setdefault("warnings", []).append(
+            f"goal.confirm is tet, but the tetrahedral cross-check does not cover this study ({why}): "
+            "confirmed on voxels instead")
+    return False
 
 
 def _domain_info(d: Domain, radius: float) -> dict:
@@ -580,6 +609,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         o = Outcome(vf, mesh, report, opt, rinfo)
         o.xphys = xphys
         o.x = x
+        o.voxel_sf = report.get("safetyFactor")
         if memory is not None:
             memory.add(vf, x, xphys, report)
         m = _margin(study, report)
@@ -684,6 +714,75 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             if "durability" in rep:
                 o.report["durability"] = rep["durability"]
         return mc
+
+    def tet_confirm(o: Outcome) -> float | None:
+        """Confirm `o` on the tetrahedral cross-check (crosscheck.py). Its
+        safety factor replaces the voxel one, and o.tet_k (tet / voxel) is
+        the calibration for the rest of the search. Returns the confirmed
+        margin, or None when the cross-check could not run."""
+        from .crosscheck import crosscheck, element_size
+
+        emit({"stage": "confirm", "volumeFraction": o.volume_fraction, "method": "tet"})
+        # Stress is left out within two elements of a load or support, and
+        # no less than the voxel analysis leaves out: nearer, the peak is the
+        # edge of an idealized rigid support, not the part. (The MBB beam's
+        # read 23-26 MPa there on three meshes of one part, and 13.7-13.9
+        # MPa at its real peak mid-span beyond the band.)
+        band = max(2.0 * element_size(study), 1.5 * domain.pitch)
+        try:
+            cc = crosscheck(study, o.mesh, contact_band=band)
+        except Exception as exc:  # noqa: BLE001 - a mesher or solver failure means: confirm on voxels instead
+            o.report.setdefault("warnings", []).append(f"tetrahedral confirmation failed: {exc}")
+            return None
+        r = o.report
+        o.tet_k = cc["safetyFactor"] / o.voxel_sf if o.voxel_sf else 1.0
+        r["voxelSafetyFactor"] = o.voxel_sf
+        r["safetyFactor"] = cc["safetyFactor"]
+        r.pop("calibration", None)
+        mt = _margin(study, r)
+        r["margin"] = mt
+        r["confirm"] = {"method": "tet", "safetyFactor": cc["safetyFactor"], "margin": mt,
+                        "voxelSafetyFactor": o.voxel_sf, "tetOverVoxel": o.tet_k,
+                        "elementSize": cc["elementSize"], "contactBand": band, "nodes": cc["nodes"], "elements": cc["elements"],
+                        "seconds": cc["seconds"],
+                        "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
+                                  for c in cc["cases"]]}
+        o.passes = bool(mt >= 1.0) and r.get("bodies", 1) <= 1
+        emit({"stage": "confirmed", "volumeFraction": o.volume_fraction, "margin": mt, "method": "tet"})
+        return mt
+
+    def untet(o: Outcome):
+        """Put `o` back on its voxel reading, keeping the tet one as a
+        warning (where, how far below target)."""
+        r = o.report
+        c = r.pop("confirm")
+        o.tet_k = None
+        r.pop("voxelSafetyFactor", None)
+        r["safetyFactor"] = o.voxel_sf
+        r["margin"] = _margin(study, r)
+        o.passes = bool(r["margin"] >= 1.0) and r.get("bodies", 1) <= 1
+        r["tetCheck"] = c
+        worst = min(c["cases"], key=lambda q: -q["peakStress"])
+        r.setdefault("warnings", []).append(
+            f"the tetrahedral cross-check reads SF {c['safetyFactor']:.2f} (voxel {o.voxel_sf:.2f}), its peak "
+            f"{worst['peakStress']:.1f} MPa in {worst['name']!r} at "
+            f"({', '.join(f'{v:.1f}' for v in worst['peakAt'])}): a stress the voxel grid does not resolve. "
+            "Check it there (a fillet, a thicker wall, or how the part is really held).")
+
+    def calibrate(o: Outcome, k: float):
+        """Read `o`'s voxel safety factor through the tet calibration k (1
+        restores the voxel reading). A tet-confirmed outcome keeps its own."""
+        if getattr(o, "tet_k", None) is not None or not o.voxel_sf:
+            return
+        r = o.report
+        if k == 1.0:
+            r.pop("calibration", None)
+            m = _margin(study, r)
+        else:
+            r["calibration"] = {"tetOverVoxel": k, "safetyFactor": o.voxel_sf * k}
+            m = _margin(study, {**r, "safetyFactor": o.voxel_sf * k})
+        r["margin"] = m
+        o.passes = bool(m >= 1.0) and r.get("bodies", 1) <= 1
 
     def run_constrained(limits, x0) -> Outcome:
         from .constrained import optimize_constrained
@@ -800,6 +899,93 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             vf = nxt
         passing = [i for i, o in enumerate(outcomes) if o.passes]
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+        voxel_confirm = True
+        if goal.safety_factor is not None and _confirm_on_tets(study, outcomes):
+            # The voxel analysis reads peak stress high against a body-fitted
+            # mesh (24-49% on the motor mount and bell crank), so a pick
+            # that meets the target on voxels carries that much extra
+            # material. Confirm the pick on tetrahedra instead, scale every
+            # voxel safety factor by what that showed (tet / voxel), and let
+            # the search step down to the fraction that meets the target on
+            # the tet mesh; each new pick is confirmed there in turn.
+            voxel_confirm = False
+            k, tet_fail, confirms, extra = 1.0, None, 0, 0
+            while not (should_stop is not None and should_stop()):
+                passing = [i for i, q in enumerate(outcomes) if q.passes
+                           and (tet_fail is None or q.volume_fraction > tet_fail)]
+                best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+                if best is None:
+                    # nothing passes: step up from the largest fraction tried
+                    top = max(outcomes, key=lambda q: q.volume_fraction)
+                    if extra >= _TET_EXTRA_RUNS or top.volume_fraction >= _VF_MAX:
+                        break
+                    vf = float(np.clip(top.volume_fraction * 1.05 / max(top.report["margin"], 1e-9),
+                                       top.volume_fraction + 0.01, _VF_MAX))
+                    outcomes.append(run_one(vf))
+                    calibrate(outcomes[-1], k)
+                    extra += 1
+                    continue
+                o = outcomes[best]
+                if getattr(o, "tet_k", None) is None:
+                    if confirms >= _TET_CONFIRMS:
+                        break
+                    confirms += 1
+                    mt = tet_confirm(o)
+                    if mt is None:
+                        voxel_confirm = True
+                        break
+                    if mt < 1.0 and confirms == 1:
+                        # The tet mesh reads the voxel search's own pick
+                        # below target: the voxel grid missed a peak, so the
+                        # calibration has nothing to step down on. Such a
+                        # peak has sat in geometry the search cannot change
+                        # (GRIP's turret: SF 1.20 on the wall of a bolt's
+                        # driver access, 1.3 mm from the bore that holds it,
+                        # and three steps up to 0.24 left it at 230 g), so
+                        # it is not stepped up on that reading either: the
+                        # pick is confirmed on voxels, as without the tet
+                        # mesh, and the tet reading goes out as a warning.
+                        untet(o)
+                        voxel_confirm = True
+                        break
+                    k = o.tet_k
+                    for q in outcomes:
+                        calibrate(q, k)
+                    if mt < 1.0:
+                        tet_fail = max(tet_fail or 0.0, o.volume_fraction)
+                    continue   # re-pick: the calibration may pass a lighter one
+                # o is confirmed and the lightest that passes: step down
+                # toward the fraction the confirmed margin points at, unless
+                # it is already close, or a failing fraction sits within 10%
+                mt = o.report["margin"]
+                lo = max((q.volume_fraction for q in outcomes
+                          if not q.passes and q.volume_fraction < o.volume_fraction), default=None)
+                if mt < _TET_CLOSE or extra >= _TET_EXTRA_RUNS or \
+                        (lo is not None and o.volume_fraction - lo < max(0.005, 0.1 * o.volume_fraction)):
+                    break
+                nxt = max(o.volume_fraction * 1.03 / mt, 0.5 * o.volume_fraction)
+                if lo is not None:
+                    nxt = max(nxt, 0.5 * (lo + o.volume_fraction))
+                nxt = float(np.clip(nxt, _VF_MIN, _VF_MAX))
+                if any(abs(nxt - q.volume_fraction) < 0.005 for q in outcomes):
+                    break
+                outcomes.append(run_one(nxt))
+                calibrate(outcomes[-1], k)
+                extra += 1
+            confirmed_ok = [i for i, q in enumerate(outcomes) if getattr(q, "tet_k", None) is not None and q.passes]
+            if not voxel_confirm:
+                # deliver only what the tet mesh confirmed; the rest keep
+                # their calibrated reading, for the record
+                for i, q in enumerate(outcomes):
+                    if i not in confirmed_ok:
+                        q.passes = False
+                best = min(confirmed_ok, key=lambda i: outcomes[i].report["mass"]) if confirmed_ok else None
+            else:
+                for q in outcomes:
+                    if getattr(q, "tet_k", None) is None:
+                        calibrate(q, 1.0)
+                passing = [i for i, q in enumerate(outcomes) if q.passes]
+                best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
         # Confirm the pick on a finer grid; if it fails there, it no longer
         # passes, and the search steps up from it by the confirmed margin.
         # Once a pick confirms, bisect back down into the gap to the fraction
@@ -807,7 +993,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         # overshoots (GRIP's wrist yoke failed at 0.080 and confirmed at
         # 0.102, 27.5 g, with SF 2 near 0.09).
         confirmed, conf_fail = set(), None
-        for _ in range(2 * _CONFIRM_RUNS):
+        for _ in range(2 * _CONFIRM_RUNS if voxel_confirm else 0):
             if best is None or (should_stop is not None and should_stop()):
                 break
             o = outcomes[best]

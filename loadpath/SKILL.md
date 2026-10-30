@@ -137,6 +137,12 @@ field. `check` reports every problem at once: fix them all, then check again.
   (either alone works too). Mechanisms like robot arms are usually limited by
   deflection, not strength. It runs several optimizations, so it is the slowest and the one
   to use when you know the loads.
+  With `pip install loadpath[crosscheck]` the pick is confirmed on a
+  body-fitted tetrahedral mesh (`goal.confirm`, default `auto`): the report's
+  `safetyFactor` is then the tet reading (`confirm.method: "tet"`, voxel
+  reading beside it), and the search steps down to where that meets the
+  target, typically 0-45% lighter. A warning that the cross-check reads the
+  pick below target names the spot the voxel grid cannot resolve: look there.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
 

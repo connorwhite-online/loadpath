@@ -1289,6 +1289,14 @@
             "constrained"
           ]
         },
+        "confirm": {
+          "enum": [
+            "auto",
+            "voxel",
+            "tet"
+          ],
+          "description": "How the lightest passing part is confirmed: voxel (a finer voxel grid), tet (a body-fitted tetrahedral mesh, which also calibrates the search's voxel stress so it steps down to the real target), or auto (tet when installed and applicable)."
+        },
         "outcomes": {
           "type": "array",
           "items": {

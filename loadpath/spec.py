@@ -120,6 +120,12 @@ class Goal:
     # one passes; "constrained": minimize mass with the limits as MMA
     # constraints, corrected against the verified mesh (constrained.py).
     method: str = "search"
+    # How the search's pick is confirmed before delivery: "voxel" re-verifies
+    # it on a finer voxel grid; "tet" on a body-fitted tetrahedral mesh
+    # (crosscheck.py), whose reading also calibrates the search's voxel
+    # stress so it can step down to the real target; "auto" is "tet" when
+    # the cross-check is installed and covers the study, else "voxel".
+    confirm: str = "auto"
     # Extra fixed fractions to return alongside, for a trade-off gallery.
     outcomes: list[float] = field(default_factory=list)
     # Which passing outcome is delivered: the lightest ("mass"), or for FDM
@@ -516,6 +522,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         safety_factor=g.get("safetyFactor"),
         max_deflection=g.get("maxDeflection"),
         method=str(g.get("method", "search")),
+        confirm=str(g.get("confirm", "auto")),
         outcomes=[float(v) for v in g.get("outcomes") or []],
         minimize=str(g.get("minimize", "mass")),
     )
@@ -525,6 +532,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError("goal needs volumeFraction (0..1), safetyFactor (>1) and/or maxDeflection (mm)")
     if goal.method not in ("search", "constrained"):
         raise ValueError("goal.method must be 'search' or 'constrained'")
+    if goal.confirm not in ("auto", "voxel", "tet"):
+        raise ValueError("goal.confirm must be 'auto', 'voxel' or 'tet'")
     if goal.max_deflection is not None and goal.max_deflection <= 0:
         raise ValueError("goal.maxDeflection must be a positive distance in mm")
     if goal.volume_fraction is not None and not (0.02 <= goal.volume_fraction <= 0.95):

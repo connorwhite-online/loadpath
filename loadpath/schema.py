@@ -221,6 +221,11 @@ _GOAL = {
         "safetyFactor": _POS,
         "maxDeflection": {**_POS, "description": "mm, at the loads"},
         "method": {"enum": ["search", "constrained"]},
+        "confirm": {"enum": ["auto", "voxel", "tet"],
+                    "description": "How the lightest passing part is confirmed: voxel (a finer voxel grid), tet "
+                                   "(a body-fitted tetrahedral mesh, which also calibrates the search's voxel "
+                                   "stress so it steps down to the real target), or auto (tet when installed and "
+                                   "applicable)."},
         "outcomes": {"type": "array", "items": {"type": "number", "minimum": 0.02, "maximum": 0.95},
                      "description": "Extra fixed volume fractions for a trade-off gallery."},
         "minimize": {"enum": ["mass", "printTime", "filament"],
