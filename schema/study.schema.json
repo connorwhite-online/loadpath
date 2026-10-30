@@ -178,7 +178,8 @@
             "sls",
             "mjf",
             "sla",
-            "volumetric"
+            "volumetric",
+            "lpbf"
           ]
         },
         {
@@ -190,7 +191,8 @@
                 "sls",
                 "mjf",
                 "sla",
-                "volumetric"
+                "volumetric",
+                "lpbf"
               ]
             },
             "buildDirection": {
@@ -251,7 +253,7 @@
           "additionalProperties": false
         }
       ],
-      "description": "How it is made: sets a minimum member, overhang control (FDM) and the layer-bond check."
+      "description": "How it is made: sets a minimum member, overhang control (FDM, LPBF metal) and the layer-bond check. lpbf = laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L)."
     },
     "lattice": {
       "type": "object",

@@ -45,7 +45,7 @@ def _require(cond, msg):
 def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
                    skin=None, plenum=None, port_r=None, seal_len=None,
                    margin=None, hose=None, blend=None, a_face=None,
-                   b_face=None):
+                   b_face=None, build=None):
     """Build a complete dual-fluid TPMS heat-exchanger block.
 
     size:     (sx, sy, sz) mm — the TPMS core box, centered at the origin.
@@ -83,6 +83,22 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
               message. The cheap insurance against the recurring bug of
               hot ports landing on the wrong faces.
     b_face:   same for fluid B.
+    build:    the direction layers stack while printing ("+z", "-x", a
+              vector [x, y, z], or None for no print shaping). Inside a closed
+              part nothing can be supported (in powder-bed metal a support in a
+              channel never comes out), so with a build direction:
+                - every plenum ceiling that would lean flatter than 50 degrees
+                  from level is cut back by a roof plane at 50 degrees (a
+                  mono-pitch roof falling away from the core, so the core's
+                  window stays whole, or a gable when that loses less);
+                - core faces that look up (the channels' ceilings) close both
+                  labyrinths over a gentle ramp instead of a flat skin, so
+                  each channel ends in a peaked roof rather than a ceiling;
+                - port bores that run sideways get a 50 degree teardrop peak.
+              Built along a cube diagonal (e.g. [1, 1, 1]) every face of a box
+              plenum already leans 54.7 degrees and almost nothing changes.
+              `field.exclude` marks the untouched TPMS core, for
+              cavities.internal_ceilings / rank_build_directions.
     hose:     external hood-loft hose manifolds, keyed like port_r. Each
               value is the hose INNER diameter (mm) or a dict
               {"d": mm, "neck": mm, "barb": mm}. A hooded port opens its
@@ -224,7 +240,28 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
              (hx + 0.5 * plenum, 0.5 * wy, -zc - 0.5 * zh), min(wy, zh)),
         ]
 
-    plenum_boxes = [(center, half) for _, center, half, _, _ in layout]
+    up = _up_vector(build)
+    # Plenum roofs: chamfer planes per plenum box (none without a build
+    # direction), then each probe moved to the roofed cavity's roomiest
+    # point if a roof cut it off.
+    plenum_boxes = []
+    probe_room = {}                                # name -> room around a moved probe, mm
+    for li, (name, center, half, probe, wmin) in enumerate(layout):
+        c = np.asarray(center, float)
+        out = np.zeros(3)
+        k = int(np.argmax(np.abs(c) - np.asarray([hx, hy, hz])))
+        out[k] = np.sign(c[k])
+        planes = _roof_planes(c, np.asarray(half, float), out, up) if up is not None else []
+        hooded_here = bool(hose) and isinstance(hose, dict) and (name in hose or name.split("_")[0] in hose)
+        hip = _hip_roof(c, np.asarray(half, float), out, up) if up is not None and not hooded_here else None
+        plenum_boxes.append((center, half, planes, hip))
+        if planes:
+            probe_r0 = max(0.6, min(2.5, 0.3 * plenum, 0.45 * wmin))
+            cav = lambda Q, c=c, h=half, pl=planes: _cavity(np.atleast_2d(Q), c, h, pl)
+            if cav(probe)[0] > -probe_r0 - 0.5:
+                probe = _roomiest(cav, c, np.asarray(half, float), out)
+                probe_room[name] = -float(cav(probe)[0])
+                layout[li] = (name, center, half, tuple(probe), wmin)
 
     # Geometry each port needs, independent of port_r: bore axis, the tube's
     # inner mouth (on the plenum's outer wall), the off-axis probe, and the
@@ -237,7 +274,10 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
         axis = np.array([np.sign(c[0]), 0.0, 0.0]) if abs(c[0]) > hx else \
             np.array([0.0, np.sign(c[1]), 0.0])
         mouth = c + axis * 0.5 * plenum
-        probe_r = max(0.6, min(2.5, 0.3 * plenum, 0.45 * wmin))
+        hip = plenum_boxes[[n for n, *_ in layout].index(name)][3]
+        if hip is not None:
+            mouth = hip["ridge"]                   # the bore leaves through the roof's ridge
+        probe_r = max(0.6, min(2.5, 0.3 * plenum, 0.45 * wmin, 0.8 * probe_room.get(name, np.inf)))
         gap = float(np.linalg.norm(np.asarray(probe, float) - mouth))
         budget = gap - probe_r - 1.2
         resolved.append((name, c, axis, mouth, probe, probe_r, wmin, budget))
@@ -368,15 +408,22 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
     # hood (covering the hood's full envelope from mid-skin to past the tip —
     # a capsule can't cap a rectangular window without bulging into the
     # plenum and swallowing the probes).
-    ports, bores, plugs = [], [], []
+    ports, bores, plugs, tubes = [], [], [], []
+    hips = {n: plenum_boxes[i][3] for i, (n, *_) in enumerate(layout)}
     for name, c, axis, mouth, probe, probe_r, _wmin, _budget in resolved:
-        ports.append({"name": name, "point": list(probe), "r": probe_r})
+        ports.append({"name": name, "point": [float(v) for v in probe], "r": probe_r})
         if name in hooded:
             continue
         r = per_port_r[name]
         exit_pt = mouth + axis * (skin + 2.0)
-        bores.append((c, exit_pt, r))
-        plugs.append({"a": mouth.tolist(), "b": exit_pt.tolist(), "r": r, "ends": "flat"})
+        # a teardrop bore's peak reaches r / cos(lean) over its axis: the plug covers it
+        tear = up is not None and abs(float(axis @ up)) < 0.7
+        bores.append((c, exit_pt, r, tear))
+        if hips[name] is not None:
+            # a wide bore cuts the roof's sides below the ridge: a tube walls it in
+            tubes.append((hips[name]["fc"], exit_pt, r + skin))
+        plugs.append({"a": mouth.tolist(), "b": exit_pt.tolist(),
+                      "r": r / np.cos(np.radians(_ROOF_LEAN)) if tear else r, "ends": "flat"})
     for b in barbs:
         i, sign = b["i"], b["sign"]
         half_len = 0.5 * (skin * 0.5 + b["neck"] + b["barb"] + 2.0)
@@ -393,18 +440,63 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
 
     core_half = (hx, hy, hz)
 
+    # core faces looking up along the build direction: the channels' ceilings
+    looks_up = {(i, sg): up is not None and sg * float(up[i]) > np.cos(np.radians(_SEAL_FACE))
+                for i in range(3) for sg in (1.0, -1.0)}
+    looks_down = {(i, sg): up is not None and sg * float(up[i]) < -np.cos(np.radians(_SEAL_FACE))
+                  for i in range(3) for sg in (1.0, -1.0)}
+    # how far into the core a flare reaches (it opens fully, 0.45 cell, at the face)
+    flare_depth = _GENTLE_REACH * cell
+
+    def seals(P):
+        s_a, s_b, flare_a, flare_b = (np.zeros(len(P)) for _ in range(4))
+        for (i, sg), upward in looks_up.items():
+            dist = core_half[i] - sg * P[:, i]
+            # a face looking up closes its labyrinths gently (peaked channel
+            # ends); any other seals over seal_len as before
+            f = _gentle_seal(dist, cell) if upward else seal_ramp(dist, seal_len)
+            if i == 0 and flow == "cross":
+                # B's labyrinth seals shut near A's X faces and vice versa.
+                s_b = np.maximum(s_b, f)
+            elif i == 1 and flow == "cross":
+                s_a = np.maximum(s_a, f)
+            elif i == 0:
+                # Near the X faces: B seals in the upper half (A's plenums), A
+                # in the lower; both blend at z=0 into the solid divider band.
+                s_b = np.maximum(s_b, f * seal_ramp(-P[:, 2], 0.5 * cell))
+                s_a = np.maximum(s_a, f * seal_ramp(P[:, 2], 0.5 * cell))
+            if upward and not (i == 0 or (i == 1 and flow == "cross")):
+                # a face no plenum serves: both labyrinths end under it
+                s_a = np.maximum(s_a, f)
+                s_b = np.maximum(s_b, f)
+            elif upward and flow == "cross":
+                # the fluid whose plenum sits on this face stays open in its
+                # window, and closes gently beside it
+                s_open = f * (1.0 - _in_window(P, i, core_half, m))
+                if i == 0:
+                    s_a = np.maximum(s_a, s_open)
+                else:
+                    s_b = np.maximum(s_b, s_open)
+            if looks_down[(i, sg)] and flow == "cross" and i < 2:
+                # a plenum under the core: its fluid's channels flare open over
+                # the last few mm (the sheet's open side thins away), so what
+                # hangs over the plenum between the mouths leans instead of
+                # ending flat on the face. The other fluid is sealed solid a
+                # wall deeper than the flare reaches, so a wall still parts
+                # them whatever the flare's shape.
+                deep = seal_ramp(dist - flare_depth - wall_ref, seal_len)
+                g = _gentle_seal(dist, cell) * _in_window(P, i, core_half, m)
+                if i == 0:
+                    s_b = np.maximum(s_b, deep)
+                    flare_a = np.maximum(flare_a, g)
+                else:
+                    s_a = np.maximum(s_a, deep)
+                    flare_b = np.maximum(flare_b, g)
+        return s_a - flare_a, s_b - flare_b
+
     def field(P):
         P = np.asarray(P, float)
-        if flow == "cross":
-            # B's labyrinth seals shut near A's X faces and vice versa.
-            s_b = seal_ramp(hx - np.abs(P[:, 0]), seal_len)
-            s_a = seal_ramp(hy - np.abs(P[:, 1]), seal_len)
-        else:
-            # Near the X faces: B seals in the upper half (A's plenums), A in
-            # the lower; both blend at z=0 into the solid divider band.
-            face = seal_ramp(hx - np.abs(P[:, 0]), seal_len)
-            s_b = face * seal_ramp(-P[:, 2], 0.5 * cell)
-            s_a = face * seal_ramp(P[:, 2], 0.5 * cell)
+        s_a, s_b = seals(P)
         core = mask(
             dual_sheet(P, cell, wall, kind, seal_a=s_a, seal_b=s_b),
             box(P, (0.0, 0.0, 0.0), core_half),
@@ -415,10 +507,21 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
         ring = subtract(box(P, (0.0, 0.0, 0.0), outer),
                         box(P, (0.0, 0.0, 0.0), core_half))
         solid = union(core, ring)
-        for center, half in plenum_boxes:
-            solid = subtract(solid, box(P, center, half))
-        for a, b, r in bores:
-            solid = subtract(solid, capsule(P, a, b, r))
+        for center, half, planes, hip in plenum_boxes:
+            if hip is not None:
+                solid = union(solid, _hip(P, hip, skin))
+        for a, b, rt in tubes:
+            solid = union(solid, capsule(P, a, b, rt))
+        for center, half, planes, hip in plenum_boxes:
+            hole = _cavity(P, np.asarray(center, float), half, planes)
+            if hip is not None:
+                hole = np.minimum(hole, _hip(P, hip, 0.0))
+            solid = subtract(solid, hole)
+        for a, b, r, tear in bores:
+            hole = capsule(P, a, b, r)
+            if tear:
+                hole = np.minimum(hole, _teardrop(P, np.asarray(a, float), np.asarray(b, float), r, up))
+            solid = subtract(solid, hole)
         # Hoods join with a smooth union (exterior fillet) so the loft reads
         # as one continuous form, not a pipe glued onto a box. Only ever ADDS
         # material around the junction, so it cannot open a leak; the channel
@@ -433,8 +536,13 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
         return solid
 
     pad = 1.0
-    lo = [-(o + pad) for o in outer]
-    hi = [o + pad for o in outer]
+    reach_out = list(outer)                        # hip roofs stand out past the box
+    for *_, hip in plenum_boxes:
+        if hip is not None:
+            k = int(np.argmax(np.abs(hip["e"])))
+            reach_out[k] = max(reach_out[k], abs(float(hip["ridge"][k])) + skin + 3.0)
+    lo = [-(o + pad) for o in reach_out]
+    hi = [o + pad for o in reach_out]
     for b in barbs:
         i, sign = b["i"], b["sign"]
         reach = abs(b["face"]) + b["neck"] + b["barb"] + 2.0 + pad
@@ -449,7 +557,189 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
             hi[j] = max(hi[j], float(b["c"][j]) + r_out)
             lo[j] = min(lo[j], float(b["c"][j]) - r_out)
     bounds = (tuple(lo), tuple(hi))
+
+    def exclude(P):
+        """The TPMS core as the sheet itself shapes it: a sheet gyroid prints
+        unsupported, so ceiling counts leave it out (but not its seals)."""
+        P = np.asarray(P, float)
+        s_a, s_b = seals(P)
+        return np.all(np.abs(P) < np.asarray(core_half) - 1.0, axis=1) & (s_a < 1e-3) & (s_b < 1e-3)
+
+    field.exclude = exclude
+    field.build = None if up is None else up.tolist()
     return field, ports, plugs, bounds
+
+
+# ---- print shaping along a build direction ----------------------------------
+# roofs and teardrops lean at 50 degrees from level: a margin on the 45 that
+# powder-bed metal and FDM hold unsupported (a cube-diagonal build leaves box
+# faces at 54.7, which pass untouched)
+_ROOF_LEAN = 50.0
+# a core face within this many degrees of level is a ceiling over the channels
+# that end on it (a 45 degree face, from an edge-diagonal build, is left be)
+_SEAL_FACE = 40.0
+# closing slope under such a face: the sheet's half-thickness grows this many
+# mm per mm toward it. Measured on a 60x48x32 mm, 8 mm cell block built +z:
+# flat ceiling 17.4 -> 5.0 cm^2 for +4.2 cm^3 at 1.0; 0.4 bought ~1 cm^2
+# less for 1.5x the metal
+_SEAL_SLOPE = 1.0
+
+
+def _up_vector(build):
+    if build is None:
+        return None
+    from .am import build_vector, parse_build_direction
+
+    if isinstance(build, str) and build.strip().lower() == "auto":
+        raise ValueError('build="auto" is not a shape: rank directions first with '
+                         "cavities.rank_build_directions(field, bounds, plugs=plugs), then pass the best")
+    return build_vector(parse_build_direction(build))
+
+
+_GENTLE_REACH = 0.45 / _SEAL_SLOPE              # cells: how deep a gentle closure starts
+
+
+def _gentle_seal(dist, cell):
+    """Seal weight for dual_sheet that thickens the sheet by _SEAL_SLOPE mm per
+    mm toward a face, reaching ~0.45 cell of half-thickness at it (both
+    labyrinths closed) — the sheet's swallow scale is 3.5 cell."""
+    reach = _GENTLE_REACH * cell
+    return np.clip(_SEAL_SLOPE * (reach - np.asarray(dist, float)) / (3.5 * cell), 0.0, 1.0)
+
+
+def _in_window(P, i, core_half, m):
+    """1 inside the plenum window on a core face normal to axis i (inset by
+    the margin m), falling to 0 over 2 mm outside it."""
+    w = np.ones(len(P))
+    for j in range(3):
+        if j != i:
+            w = np.minimum(w, np.clip((core_half[j] - m - np.abs(P[:, j])) / 2.0 + 1.0, 0.0, 1.0))
+    return w
+
+
+def _roof_planes(c, half, out, up):
+    """Chamfer planes (point, unit normal) that cut a box cavity's faces
+    leaning flatter than 45 degrees from level down to _ROOF_LEAN. Per such face,
+    the cheapest of: a mono-pitch roof falling along any of its in-plane
+    axes (never toward the core: that would close the core's window), or a
+    gable on either axis."""
+    cos_lean = np.cos(np.radians(_ROOF_LEAN))
+    planes = []
+    for i in range(3):
+        for s in (1.0, -1.0):
+            e = np.zeros(3)
+            e[i] = s
+            if float(e @ up) <= np.cos(np.radians(45.0)) + 1e-3:
+                continue                           # self-supporting as it is
+            if abs(out[i]) > 0.5:
+                # the port face, or the window onto the core: nothing inside the
+                # box can roof the port face without closing the window; left
+                # flat (and counted)
+                continue
+            best = None
+            for j in range(3):
+                if j == i:
+                    continue
+                k = 3 - i - j
+                for sg in (1.0, -1.0):
+                    a = np.zeros(3)
+                    a[j] = sg
+                    t = _tilt(e, a, up, cos_lean)
+                    if t is None:
+                        continue
+                    if float(a @ out) < -0.5:
+                        continue                   # mono falling toward the core
+                    edge = c + e * half[i] - a * half[j]
+                    drop = min(t * 2 * half[j], 2 * half[i])
+                    cost = 0.5 * 2 * half[j] * drop * 2 * half[k]
+                    cand = [(edge, (e + t * a) / np.hypot(1.0, t))]
+                    if best is None or cost < best[0]:
+                        best = (cost, cand)
+                # gable on axis j: two planes through the ridge on the face's centre line
+                ts = [_tilt(e, sg * np.eye(3)[j], up, cos_lean) for sg in (1.0, -1.0)]
+                if None in ts:
+                    continue
+                cost = sum(0.5 * half[j] * min(t * half[j], 2 * half[i]) * 2 * half[k] for t in ts)
+                if abs(float(np.eye(3)[j] @ out)) > 0.5:
+                    cost *= 2.5                     # it cuts into the core's window
+                ridge = c + e * half[i]
+                cand = [(ridge, (e + t * sg * np.eye(3)[j]) / np.hypot(1.0, t)) for t, sg in zip(ts, (1.0, -1.0))]
+                if best is None or cost < best[0]:
+                    best = (cost, cand)
+            if best is not None:
+                planes.extend(best[1])
+    return planes
+
+
+def _hip_roof(c, half, out, up):
+    """A plenum whose port face looks up gets a hip roof over that face,
+    outside the box: its four sides rise at _ROOF_LEAN from the face's
+    edges to a ridge, and the port bore leaves through the ridge. None when
+    the port face leans 45 degrees or more."""
+    if float(out @ up) <= np.cos(np.radians(45.0)) + 1e-3:
+        return None
+    i = int(np.argmax(np.abs(out)))
+    fc = c + out * half[i]
+    sa, ca = np.sin(np.radians(_ROOF_LEAN)), np.cos(np.radians(_ROOF_LEAN))
+    planes = []
+    for j in range(3):
+        if j == i:
+            continue
+        for sg in (1.0, -1.0):
+            a = np.zeros(3)
+            a[j] = sg
+            # through the face's edge on the +a side, leaning in at the roof angle
+            planes.append((fc + a * half[j], ca * a + sa * out))
+    rise = min(half[j] for j in range(3) if j != i) * np.tan(np.radians(_ROOF_LEAN))
+    return {"fc": fc, "e": out, "planes": planes, "ridge": fc + out * rise}
+
+
+def _hip(P, hip, offset):
+    """The hip roof's space (offset 0) or its body (offset = skin)."""
+    d = -((P - hip["fc"]) @ hip["e"]) - 0.5        # from just under the face
+    for p, n in hip["planes"]:
+        d = np.maximum(d, (P - p) @ n - offset)
+    return d
+
+
+def _tilt(e, a, up, cos_lean):
+    """Least t >= 0 with normalize(e + t a) . up <= cos_lean, or None."""
+    for t in np.linspace(0.0, 12.0, 2401):
+        if (float(e @ up) + t * float(a @ up)) / np.hypot(1.0, t) <= cos_lean:
+            return float(t)
+    return None
+
+
+def _cavity(P, c, half, planes):
+    d = box(P, c, half)
+    for p, n in planes:
+        d = np.maximum(d, (P - p) @ n)
+    return d
+
+
+def _roomiest(cav, c, half, out, n=9):
+    """The point of a roofed plenum farthest inside it (off the port axis)."""
+    g = [np.linspace(-0.8, 0.8, n) * h for h in half]
+    Q = np.stack(np.meshgrid(*g, indexing="ij"), -1).reshape(-1, 3) + c
+    d = cav(Q)
+    # stay off the bore axis through the plenum centre
+    lateral = np.linalg.norm((Q - c) - np.outer((Q - c) @ out, out), axis=1)
+    d = np.where(lateral > 0.3 * float(np.min(half[np.abs(out) < 0.5])), d, np.inf)
+    return Q[int(np.argmin(d))]
+
+
+def _teardrop(P, a, b, r, up):
+    """The 50 degree peak over a sideways bore from a to b (the bore's own
+    capsule supplies the round part)."""
+    length = float(np.linalg.norm(b - a))
+    ax = (b - a) / length
+    v = up - (up @ ax) * ax
+    v /= np.linalg.norm(v)
+    w = np.cross(ax, v)
+    q = P - a
+    t, u, l = q @ ax, q @ v, np.abs(q @ w)
+    sa, ca = np.sin(np.radians(_ROOF_LEAN)), np.cos(np.radians(_ROOF_LEAN))
+    return np.maximum(np.maximum(l * sa + u * ca - r, -u), np.maximum(-t, t - length))
 
 
 # Hood/barb geometry constants shared by the profile helpers below (defined

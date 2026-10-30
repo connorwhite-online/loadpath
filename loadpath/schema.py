@@ -212,9 +212,9 @@ _GOAL = {
 }
 
 _PROCESS = {"anyOf": [
-    {"enum": ["fdm", "sls", "mjf", "sla", "volumetric"]},
+    {"enum": ["fdm", "sls", "mjf", "sla", "volumetric", "lpbf"]},
     {"type": "object",
-     "properties": {"type": {"enum": ["fdm", "sls", "mjf", "sla", "volumetric"]},
+     "properties": {"type": {"enum": ["fdm", "sls", "mjf", "sla", "volumetric", "lpbf"]},
                     "buildDirection": {"anyOf": [
                         {"type": "string", "pattern": "^([+-]?[xyz]|auto)$", "description": "like '+z', or 'auto'"},
                         _VEC3], "description": "the direction layers stack: '+z', a vector, or 'auto'"},
@@ -224,7 +224,8 @@ _PROCESS = {"anyOf": [
                     "interlayer": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
                     "minFeature": _POS, "overhangs": {"type": "boolean"}},
      "required": ["type"], "additionalProperties": False},
-], "description": "How it is made: sets a minimum member, overhang control (FDM) and the layer-bond check."}
+], "description": "How it is made: sets a minimum member, overhang control (FDM, LPBF metal) and the layer-bond check. "
+                  "lpbf = laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L)."}
 
 _LATTICE_PROPS = {
     "type": {"enum": ["gyroid", "schwarz-p", "diamond"],
@@ -345,6 +346,14 @@ HEAT_EXCHANGER_SCHEMA = {
         "build": {"anyOf": [{"enum": ["x", "y", "z", "none"]}, {"type": "null"}, {"const": False}],
                   "description": "The axis pointing up while printing (null: no print shaping)."},
         "skirt": {"type": "boolean"},
+        "process": {"enum": ["fdm", "lpbf"],
+                    "description": "fdm (default) or lpbf: laser powder-bed metal (AlSi10Mg, Ti64, 316L). "
+                                   "lpbf drops the skirt (outside supports are cut off) and the report's "
+                                   "internalCeilings must be near zero: nothing inside can be supported."},
+        "closure": {"type": "boolean",
+                    "description": "with build (default true): channels close gently under core surface that "
+                                   "looks up and flare open over plenums below, so no channel ends in a "
+                                   "flat ceiling"},
         "zones": {"type": "array", "items": {
             "type": "object",
             "properties": {"fluid": {"anyOf": [{"type": "string"}, {"type": "integer"}]},

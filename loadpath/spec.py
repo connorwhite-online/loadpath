@@ -128,6 +128,10 @@ PROCESSES = {
             "note": "resin vat: isotropic once cured; supports are added by the slicer"},
     "volumetric": {"interlayer": 1.0, "minFeature": 0.3, "overhangs": False,
                    "note": "volumetric / tomographic resin printing: no layers, no supports"},
+    "lpbf": {"interlayer": 0.85, "minFeature": 0.4, "overhangs": True,
+             "note": "laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L): strength across layers ~85-90% "
+                     "as built; overhangs past 45 degrees need supports, which cannot come out of closed "
+                     "channels; bridges only ~2 mm; enclosed powder must drain"},
 }
 
 
@@ -162,7 +166,7 @@ def _process(spec) -> Process | None:
         raise ValueError(f"process.type must be one of {sorted(PROCESSES)}, got {kind!r}")
     base = PROCESSES[kind]
     from .am import parse_build_direction
-    raw_build = spec.get("buildDirection", "+z" if kind == "fdm" else None)
+    raw_build = spec.get("buildDirection", "+z" if kind in ("fdm", "lpbf") else None)
     build = "auto" if isinstance(raw_build, str) and raw_build.strip().lower() == "auto" \
         else parse_build_direction(raw_build)
     inter = float(spec.get("interlayer", base["interlayer"]))

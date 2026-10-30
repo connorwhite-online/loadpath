@@ -52,7 +52,8 @@ field. `check` reports every problem at once: fix them all, then check again.
    panel that must stay closed, `"skin": {"thickness": t, "open": ["-z"]}`
    keeps its outer surface and ribs the inside.
 5. **Say how it will be made**: `"process": "fdm"` (or `{"type": "fdm",
-   "buildDirection": "+z"}`), `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`. The
+   "buildDirection": "+z"}`), `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`, or
+   `"lpbf"` for powder-bed metal (AlSi10Mg, Ti64, 316L). The
    process sets a minimum member it can make, overhang control for FDM, and
    for layered processes checks the tension pulling layers apart against the
    layer bond (FDM: 60% of the in-plane strength); a safety-factor goal

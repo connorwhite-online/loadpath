@@ -152,12 +152,12 @@ underneath, for anything else (`add_part` with fields, `add_overlay`,
 | `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space. `{"safetyFactor": 3}` and/or `{"maxDeflection": 0.5}` (mm, at the loads) search for the lightest part that meets them in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. `"method": "constrained"` (experimental) minimizes mass with the limits as MMA constraints instead of searching over volume fractions. |
 | `extrusion` | Optional axis (`x`, `y`, `z`): the part is a profile extruded along it, cuttable from plate (waterjet, laser, 2.5-axis milling). |
 | `gravity` | Optional `[gx, gy, gz]` in m/s²: the part's own weight in every load case. |
-| `process` | Optional: `"fdm"`, `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`, or `{type, buildDirection, interlayer, stiffnessAcrossLayers, shearAcrossLayers, anisotropic (false \| true \| "bond"), minFeature, overhangs}`. `buildDirection` is `+x` … `-z`, a vector `[x, y, z]`, or `"auto"`. Sets a minimum member, overhang control (FDM), layered stiffness and the layer-bond check. |
+| `process` | Optional: `"fdm"`, `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`, `"lpbf"` (powder-bed metal), or `{type, buildDirection, interlayer, stiffnessAcrossLayers, shearAcrossLayers, anisotropic (false \| true \| "bond"), minFeature, overhangs}`. `buildDirection` is `+x` … `-z`, a vector `[x, y, z]`, or `"auto"`. Sets a minimum member, overhang control (FDM), layered stiffness and the layer-bond check. |
 | `printDirection` | Optional, `+x` … `-z` or a vector `[x, y, z]`: the direction layers stack. Turns on overhang control (Langelaar's AM filter), so the optimizer's own surfaces are self-supporting at 45°. |
 | `minMember` | Thinnest member in mm (sets the filter radius). |
 | `symmetry` | Planes through the design-space centre, by normal axis. |
 | `resolution` | `maxElements` (default 60,000) or an explicit `pitch` in mm. |
-| `process` | `"fdm"`, `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`, or `{type, buildDirection, interlayer, minFeature, overhangs}`: sets a minimum member, overhang control (FDM) and the layer-bond check. |
+| `process` | `"fdm"`, `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`, `"lpbf"` (powder-bed metal), or `{type, buildDirection, interlayer, minFeature, overhangs}`: sets a minimum member, overhang control (FDM, LPBF) and the layer-bond check. |
 | `lattice` | Optional: also fill the best outcome with a stress-graded TPMS lattice, `{type: "gyroid"\|"diamond"\|"schwarz-p", cell, skin, minWall, maxWall, solidAbove, safetyFactor}`. `skin: 0` leaves it open so powder or resin drains. |
 
 Shapes: `box` (`min`/`max` or `center`/`size`), `cylinder` (`p0`/`p1` or

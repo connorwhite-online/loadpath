@@ -45,6 +45,12 @@ every point in space through its nearest surface point. Then:
   everything that overhangs the outside gets a 45 degree fill to the bed;
 - each port is a tube on the zone's centre (its point farthest from the
   edge);
+- with `closure` (default, with a build axis), the channels never end on a
+  flat ceiling: under core surface that looks up they close over a gentle
+  ramp into peaked roofs, and over a plenum below the core they flare open,
+  so what hangs between the mouths leans (`report["internalCeilings"]`
+  measures what is left; in powder-bed metal, `process: "lpbf"`, nothing
+  inside can be supported, so it should be near zero);
 - with `blend` (default a quarter cell), each plenum joins its channels by
   a smooth union, so every channel mouth opens as a rounded
   bellmouth instead of the sheet's square-cut end, never closer than a
@@ -113,6 +119,8 @@ class HeatExchangerSpec:
     zones: list | None = None       # explicit zones, instead of the layout's
     build: int | None = 2           # build axis for self-supporting roofs (None: no roof shaping)
     skirt: bool = True              # with build: fill under the outside at 45 degrees to the bed
+    process: str = "fdm"            # "fdm" or "lpbf" (powder-bed metal: no skirt, ceilings must self-support)
+    closure: bool = True            # with build: channels close gently under surfaces that look up, and flare open over plenums below
     step: float | None = None       # grid, mm (default wall / 3)
     max_points: int = 16_000_000
     names: tuple = ("A", "B")
@@ -178,8 +186,17 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
             raise ValueError("heatExchanger.build is the axis pointing up while printing: \"x\", \"y\" or \"z\" "
                              "(or null for no print shaping); turn the core to print it another way up")
         hx.build = None if b in (None, False, "none") else "xyz".index(b)
+    if "process" in spec:
+        hx.process = str(spec["process"])
+        if hx.process not in ("fdm", "lpbf"):
+            raise ValueError("heatExchanger.process is \"fdm\" or \"lpbf\" (laser powder-bed metal)")
+        if hx.process == "lpbf":
+            # supports outside a metal part are cut off anyway; a skirt is only weight
+            hx.skirt = False
     if "skirt" in spec:
         hx.skirt = bool(spec["skirt"])
+    if "closure" in spec:
+        hx.closure = bool(spec["closure"])
     if "zones" in spec:
         zs = []
         for z in spec["zones"]:
@@ -380,12 +397,17 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
     half = 0.5 * hx.wall
     fluid = []
     body = [d - hx.shell]
+    shape = _closure(hx, zones, ell, d, dims, step, up, cap) if up is not None and hx.closure else None
     for f in (0, 1):
         ks = [k for k, z in enumerate(zones) if z.fluid == f]
         side = g - half if f == 0 else -g - half          # > 0 inside this fluid's network
+        cap_f = cap
+        if shape is not None:
+            side = side - shape["close"][f]
+            cap_f = cap + shape["deep"][f]
         ell_f = np.max([ell[k] for k in ks], axis=0)
         # open in the core, but sealed within `cap` of the surface outside this fluid's zones
-        void = np.maximum(-side, np.maximum(d, np.minimum(cap + d, -ell_f)))
+        void = np.maximum(-side, np.maximum(d, np.minimum(cap_f + d, -ell_f)))
         net, void = void, np.full_like(void, np.inf)       # plenums and bores gather in `void`
         for k in ks:
             zi = zinfo[k]
@@ -416,6 +438,23 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
             body[-1][sel] = np.minimum(body[-1][sel], tube)
         fluid.append((net, void))
         del net, void
+    if shape is not None:
+        # flare each fluid's channels open toward a plenum below the core, never
+        # within a wall (and two grid steps) of the other fluid's space
+        for f in (0, 1):
+            pot = shape["flare"][f]
+            if not pot.any():
+                continue
+            other = (fluid[1 - f][0] < 0).reshape(dims)
+            room = ndimage.distance_transform_edt(~other).ravel() * step if other.any() else np.full(len(d), np.inf)
+            del other
+            fl = pot * np.clip((room - hx.wall - 2.0 * step) / step, 0.0, 1.0)
+            del room
+            side = (g - half if f == 0 else -g - half) - shape["close"][f] + fl
+            ell_f = np.max([ell[k] for k, z in enumerate(zones) if z.fluid == f], axis=0)
+            flared = np.maximum(-side, np.maximum(d, np.minimum(cap + shape["deep"][f] + d, -ell_f)))
+            fluid[f] = (np.minimum(fluid[f][0], flared), fluid[f][1])
+            del side, flared, fl
     sharp = [np.minimum(net, void) for net, void in fluid]
     if blend > 0:
         # the plenum flows into its channels through rounded mouths (a bellmouth on every
@@ -446,6 +485,8 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
 
     report, masks = _check(hx, zones, zinfo, grid, (side_a := g - half), d_body, d, dims, step, lo, cap)
     report.update(_overhangs(hx, mesh, up))
+    if up is not None:
+        report["internalCeilings"] = _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap)
     report.update({"kind": hx.kind, "cell": hx.cell, "wall": hx.wall, "step": step, "cap": cap, "blend": blend,
                    "solidVolume": float(mesh.volume), "watertight": bool(mesh.is_watertight),
                    "bounds": [mesh.bounds[0].round(2).tolist(), mesh.bounds[1].round(2).tolist()],
@@ -466,6 +507,83 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
                 fm.invert()
             spaces[name] = fm
     return mesh, report, spaces
+
+
+# A surface within this many degrees of level is a ceiling over the channels
+# that end under it; the sheet closes toward it (or flares open over a plenum
+# below) by _CLOSE_SLOPE mm of half-thickness per mm, as in exchanger_core.
+_CLOSE_FACE = 40.0
+_CLOSE_SLOPE = 1.0
+
+
+def _closure(hx, zones, ell, d, dims, step, up, cap):
+    """How each fluid's network is reshaped for printing, per fluid:
+    "close" (mm the fluid's side of the sheet is pushed back: under core
+    surface that looks up and is not this fluid's zone, both networks close
+    over 0.45 cell / slope before the sealing depth `cap`, so every channel
+    ends in a peaked roof, not on a flat skin); "deep" (mm added to `cap`:
+    under the other fluid's zone where it looks down, this fluid is sealed
+    deeper, to make room); "flare" (mm the fluid may open toward its own zone
+    where that looks down, a plenum under the core, so what hangs between the
+    mouths leans instead of ending flat; applied only a wall clear of the
+    other fluid). Closing and sealing only add metal, so they can never open
+    a leak."""
+    grad = np.gradient(d.reshape(dims), step)
+    nu = sum(float(up[i]) * grad[i] for i in range(3) if abs(up[i]) > 1e-9).ravel()
+    del grad
+    c = np.cos(np.radians(_CLOSE_FACE))
+    w_up = np.clip((nu - c) / 0.1, 0.0, 1.0)
+    w_dn = np.clip((-nu - c) / 0.1, 0.0, 1.0)
+    del nu
+    reach = 0.45 * hx.cell / _CLOSE_SLOPE
+    close = _CLOSE_SLOPE * np.clip(reach + cap + d, 0.0, None) * w_up
+    flare_ramp = _CLOSE_SLOPE * np.clip(reach + d, 0.0, None) * w_dn
+    out = {"close": [], "deep": [None, None], "flare": []}
+    for f in (0, 1):
+        own = np.max([ell[k] for k, z in enumerate(zones) if z.fluid == f], axis=0)
+        inzone = np.clip(own / (2.0 * step) + 0.5, 0.0, 1.0)
+        out["close"].append(close * (1.0 - inzone))
+        out["flare"].append(flare_ramp * inzone)
+        out["deep"][1 - f] = (reach + hx.wall) * w_dn * inzone
+    return out
+
+
+def _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap):
+    """Faces over either fluid's space leaning flatter than 45 degrees from
+    level (and those within 20 degrees: flat), leaving out the sheet itself,
+    which prints unsupported. Inside, no support can be
+    removed: in powder-bed metal these must be near zero."""
+    c = mesh.triangles_center
+    n = mesh.vertex_normals[mesh.faces].mean(axis=1)
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+    ijk = np.floor((c + n * step - lo) / step).astype(int)
+    dims = np.asarray(masks[0].shape)
+    ok = np.all((ijk >= 0) & (ijk < dims), axis=1)
+    wet = np.zeros(len(c), bool)
+    i = ijk[ok]
+    wet[ok] = masks[0][i[:, 0], i[:, 1], i[:, 2]] | masks[1][i[:, 0], i[:, 1], i[:, 2]]
+    # the sheet as the TPMS shapes it (not where a closure has moved it)
+    inside = hx.core.sdf(c) < -step
+    sheet = np.abs(np.abs(tpms(hx.kind, c - clo, hx.cell)) - 0.5 * hx.wall) < 1.5 * step
+    wet &= ~(inside & sheet)
+    down = -(n @ up)
+    a = mesh.area_faces
+    over = wet & (down > np.cos(np.radians(45.0)))
+    flat = wet & (down > np.cos(np.radians(20.0)))
+    out = {"overhangArea": float(a[over].sum()), "flatArea": float(a[flat].sum())}
+    if flat.any():
+        out["worstAt"] = _densest(c[flat], a[flat], hx.cell)
+    return out
+
+
+def _densest(points, weights, size):
+    """The centre of the size-mm cube holding the most weight (where the
+    worst of a scattered set of faces is)."""
+    key = np.floor(points / size).astype(np.int64)
+    uniq, inv = np.unique(key, axis=0, return_inverse=True)
+    best = int(np.argmax(np.bincount(inv.ravel(), weights=weights)))
+    sel = inv.ravel() == best
+    return np.round((points[sel] * weights[sel, None]).sum(0) / weights[sel].sum(), 1).tolist()
 
 
 def _skirt(grid, envelope, axis, step):
@@ -612,7 +730,9 @@ def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap):
         vol = float(m.sum()) * cell_vol
         core_vol = float((m & core).sum()) * cell_vol
         # how much of this fluid's side of the sheet in the core its ports reach
-        own = core & ~solid & (side_a if f == 0 else ~side_a)
+        # (a flare can carry one fluid across the sheet's mid-surface: what it
+        # takes there counts as its own side, and not the other's)
+        own = (core & ~solid & (side_a if f == 0 else ~side_a) & ~(b if f == 0 else a)) | (m & core)
         reached = core_vol / max(float(own.sum()) * cell_vol, 1e-9)
         # wetted area in the core: faces between this fluid and solid
         area = 0.0

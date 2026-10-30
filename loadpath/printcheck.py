@@ -40,7 +40,8 @@ __all__ = ["check_print", "rotation_to_z", "BRIDGE_SPAN"]
 
 # Unsupported spans a slicer bridges reliably, mm: PLA/PETG with part
 # cooling manage 10-20 mm cleanly and sag past ~25-50. Conservative default.
-BRIDGE_SPAN = {"fdm": 15.0}
+# Powder-bed metal barely bridges: a flat span past ~2 mm warps or drosses.
+BRIDGE_SPAN = {"fdm": 15.0, "lpbf": 2.0}
 # A ledge this deep prints as an overhang off the wall below it.
 _LEDGE = 1.0
 # Bed pieces smaller than this lift: a foot under ~3x3 mm rarely holds.

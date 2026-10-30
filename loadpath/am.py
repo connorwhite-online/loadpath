@@ -106,7 +106,7 @@ def direction_label(direction) -> str:
 # density FDM loses little stiffness across layers (published tensile
 # moduli across layers sit at 80-95% of in-plane for PLA/PETG/ABS) but the
 # bond carries 50-70% of the strength, and less in shear.
-_LAYER_STIFFNESS = {"fdm": (0.85, 0.75), "sls": (0.95, 0.9), "mjf": (0.97, 0.95)}
+_LAYER_STIFFNESS = {"fdm": (0.85, 0.75), "sls": (0.95, 0.9), "mjf": (0.97, 0.95), "lpbf": (0.97, 0.95)}
 
 
 def layered_elasticity(nu: float, process, design: bool = False):
