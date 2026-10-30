@@ -17,6 +17,8 @@ Each case in cases/*.json is an ordinary study plus an `expect` block:
                                   # is quantized to the analysis cell)
       "maxCreaseLength": 10,      # mm of sharp concave edge (verify._creases)
       "maxClosedBores": 0,        # bore ends the part closes over (verify._closed_bores)
+      "maxUndercutVolume": 150,   # mm^3 a cast/milled part's mold or cutter cannot reach,
+                                  # outside keep-outs (report.manufacturing.access)
       "minProcessWall": 0.8,      # mm, 1st-percentile wall (SLS/MJF/SLA/DLP: processcheck)
       "maxTrappedVolume": 1,      # mm^3 of powder or resin that cannot get out
       "maxWarpSpan": 100,         # mm, longest thin flat panel (SLS/MJF)
@@ -77,7 +79,15 @@ CHECKS = {
     "trappedVolume": ("maxTrappedVolume", lambda o: _proc(o, "trappedVolumeMm3"), "<="),
     "warpSpan": ("maxWarpSpan", lambda o: _proc(o, "warp", "maxSpan"), "<="),
     "cupArea": ("maxCupArea", lambda o: _proc(o, "cups", "maxArea"), "<="),
+    # cast or milled: mm^3 of void no mold half or cutter reaches, outside the
+    # keep-outs (an undercut keep-out is the study's own, and needs a core)
+    "undercut": ("maxUndercutVolume", lambda o: _undercut(o), "<="),
 }
+
+
+def _undercut(o):
+    a = (o.get("manufacturing") or {}).get("access")
+    return None if a is None else a["undercutVolume"] - a["undercutInKeepOuts"]
 
 
 def _proc(o, *keys):
