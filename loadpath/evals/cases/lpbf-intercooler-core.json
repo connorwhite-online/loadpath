@@ -49,7 +49,7 @@
     "minWallBetweenFluids": 0.9,
     "maxInternalFlatArea": 200,
     "maxTrappedVolume": 5,
-    "minEffectiveness": 0.5,
+    "minEffectiveness": 0.7,
     "maxPressureDrop": {
       "air": 20000,
       "coolant": 2000

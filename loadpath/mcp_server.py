@@ -190,12 +190,13 @@ def heat_exchanger(spec, base_dir: str | None = None) -> dict:
 
 
 def size_heat_exchanger(spec, base_dir: str | None = None, max_pressure_drop: dict | None = None,
-                        min_wall: float = 0.8) -> dict:
+                        min_wall: float = 0.8, objective: str = "effectiveness",
+                        min_effectiveness: float | None = None, splits: list | None = None) -> dict:
     from .tasks import size_heat_exchanger as size
     if isinstance(spec, str):
         spec = json.loads(spec)
     try:
-        return size(spec, base_dir or os.getcwd(), max_pressure_drop, min_wall)
+        return size(spec, base_dir or os.getcwd(), max_pressure_drop, min_wall, objective, min_effectiveness, splits)
     except (ValueError, KeyError, TypeError) as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -554,10 +555,15 @@ def serve():
 
     @server.tool()
     def loadpath_size_heat_exchanger(spec: dict, max_pressure_drop: dict | None = None,
-                                     min_wall: float = 0.8, base_dir: str | None = None) -> dict:
-        """Before designing: sweep TPMS cell and wall for the spec's core and duty and return the
-        candidates that meet max_pressure_drop ({fluid name: Pa}), best effectiveness first. Seconds."""
-        return size_heat_exchanger(spec, base_dir, max_pressure_drop, min_wall)
+                                     min_wall: float = 0.8, base_dir: str | None = None,
+                                     objective: str = "effectiveness", min_effectiveness: float | None = None,
+                                     splits: list | None = None) -> dict:
+        """Before designing: sweep TPMS cell and wall (and, with splits, the first fluid's share of the
+        void, e.g. [0.5, 0.6, 0.66] for air against a liquid) for the spec's core and duty. Returns the
+        candidates that meet max_pressure_drop ({fluid name: Pa}) and min_effectiveness, best
+        effectiveness first, or with objective "metal" the lightest core that meets them. Each carries
+        solidVolume (mm^3) and mass (g). Seconds."""
+        return size_heat_exchanger(spec, base_dir, max_pressure_drop, min_wall, objective, min_effectiveness, splits)
 
     @server.tool()
     def loadpath_check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 45.0,

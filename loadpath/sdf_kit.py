@@ -414,7 +414,7 @@ def seal_ramp(region, width):
     return u * u * (3.0 - 2.0 * u)
 
 
-def dual_sheet(P, cell, wall, kind="gyroid", seal_a=0.0, seal_b=0.0):
+def dual_sheet(P, cell, wall, kind="gyroid", seal_a=0.0, seal_b=0.0, offset=0.0):
     """Two-fluid TPMS separator with per-point channel sealing — the manifold
     capping primitive for heat-exchanger cores.
 
@@ -429,9 +429,12 @@ def dual_sheet(P, cell, wall, kind="gyroid", seal_a=0.0, seal_b=0.0):
     Isolation is unconditional regardless of seals: the solid always contains
     the d=0 midsurface (h_a, h_b >= wall/2 > 0), so any path between the two
     voids would have to cross solid. Keep `wall` >= the printable minimum —
-    the thinnest point of a gyroid sheet runs ~12% under nominal."""
+    the thinnest point of a gyroid sheet runs ~12% under nominal.
+
+    `offset` (mm) moves the sheet off the mid-surface onto the level d =
+    offset, which gives fluid A (d > 0) more of the void when negative."""
     P = np.asarray(P, float)
-    d = tpms_dist(P, cell, kind)
+    d = tpms_dist(P, cell, kind) - offset
     # > max|d| for every kind: |g| <= 3 (schwarz_p worst case) over the
     # 0.15*w gradient floor gives |d| <= 3/(0.15*w) ~= 3.18*cell.
     swallow = 3.5 * cell

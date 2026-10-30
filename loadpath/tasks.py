@@ -214,11 +214,15 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
 
 
 def size_heat_exchanger(spec: dict, base_dir: str | None = None, max_pressure_drop: dict | None = None,
-                        min_wall: float = 0.8) -> dict:
+                        min_wall: float = 0.8, objective: str = "effectiveness",
+                        min_effectiveness: float | None = None, splits=None) -> dict:
     """Sweep cell and wall for the core and duty in `spec` before designing
     it (seconds, not minutes): the candidates that meet the pressure-drop
-    limits ({fluid: Pa}), best effectiveness first. Flow lengths are the
-    core's extent along each fluid's axis."""
+    limits ({fluid: Pa}) and `min_effectiveness`, best effectiveness first,
+    or least metal first with objective "metal". `splits` (the first
+    fluid's share of the void) sweeps the sheet's offset too; default the
+    spec's split. Flow lengths are the core's extent along each fluid's
+    axis."""
     from .heatx_thermal import size_core
     from .shapes import manifold_from_trimesh  # noqa: F401  (manifold3d present)
 
@@ -234,9 +238,12 @@ def size_heat_exchanger(spec: dict, base_dir: str | None = None, max_pressure_dr
     lengths = [float(ext[a0]), float(ext[a0] if hx.layout == "counter" else ext[a1])]
     duty = {**{n: duty[n] for n in hx.names}, **({"wall": duty["wall"]} if "wall" in duty else {})}
     res = size_core(hx.kind, core_volume, lengths, duty, "counter" if hx.layout == "counter" else "cross",
-                    hx.port_diameter, min_wall=min_wall, max_pressure_drop=max_pressure_drop)
+                    hx.port_diameter, min_wall=min_wall, max_pressure_drop=max_pressure_drop,
+                    split=splits if splits is not None else hx.split, objective=objective,
+                    min_effectiveness=min_effectiveness)
     res.update(coreVolume=core_volume, flowLengths=dict(zip(hx.names, lengths)),
-               next="Put the best cell and wall in the spec and run it (loadpath heatx / loadpath_heat_exchanger).")
+               next="Put the best cell, wall and split in the spec and run it "
+                    "(loadpath heatx / loadpath_heat_exchanger).")
     return jsonable(res)
 
 

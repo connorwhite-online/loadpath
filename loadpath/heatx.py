@@ -120,6 +120,7 @@ class HeatExchangerSpec:
     build: int | None = 2           # build axis for self-supporting roofs (None: no roof shaping)
     skirt: bool = True              # with build: fill under the outside at 45 degrees to the bed
     process: str = "fdm"            # "fdm" or "lpbf" (powder-bed metal: no skirt, ceilings must self-support)
+    split: float = 0.5              # fluid A's share of the void (the sheet moves toward B)
     closure: bool = True            # with build: channels close gently under surfaces that look up, and flare open over plenums below
     cleanouts: int = 0              # powder clean-out ports per fluid, at the points farthest from its ports (plugged after)
     cleanout_diameter: float = 4.2  # mm: an M5 tap drill
@@ -199,6 +200,10 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
         hx.skirt = bool(spec["skirt"])
     if "closure" in spec:
         hx.closure = bool(spec["closure"])
+    if "split" in spec:
+        hx.split = float(spec["split"])
+        if not 0.05 < hx.split < 0.95:
+            raise ValueError("heatExchanger.split is the first fluid's share of the void, between 0.05 and 0.95")
     if "cleanouts" in spec:
         hx.cleanouts = int(spec["cleanouts"])
     if "cleanoutDiameter" in spec:
@@ -407,6 +412,13 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
     d = np.where(np.abs(d_far) > 3.0 * pitch, d_far, d)
     del d_far
     g = tpms(hx.kind, pts - clo, hx.cell)
+    sheet_c = 0.0
+    if abs(hx.split - 0.5) > 1e-9:
+        from .heatx_thermal import sheet_offset
+
+        # A is where g > offset + half: move the sheet so A gets `split` of the void
+        sheet_c = sheet_offset(lambda q: tpms(hx.kind, q, 1.0), hx.wall / hx.cell, hx.split) * hx.cell
+        g -= sheet_c
     half = 0.5 * hx.wall
     fluid = []
     body = [d - hx.shell]
@@ -510,7 +522,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
         report["cleanouts"] = cleanouts
     report.update(_overhangs(hx, mesh, up))
     if up is not None:
-        report["internalCeilings"] = _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap)
+        report["internalCeilings"] = _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap, sheet_c)
     report.update({"kind": hx.kind, "cell": hx.cell, "wall": hx.wall, "step": step, "cap": cap, "blend": blend,
                    "solidVolume": float(mesh.volume), "watertight": bool(mesh.is_watertight),
                    "bounds": [mesh.bounds[0].round(2).tolist(), mesh.bounds[1].round(2).tolist()],
@@ -572,7 +584,7 @@ def _closure(hx, zones, ell, d, dims, step, up, cap):
     return out
 
 
-def _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap):
+def _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap, sheet_c=0.0):
     """Faces over either fluid's space leaning flatter than 45 degrees from
     level (and those within 20 degrees: flat), leaving out the sheet itself,
     which prints unsupported. Inside, no support can be
@@ -588,7 +600,7 @@ def _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap):
     wet[ok] = masks[0][i[:, 0], i[:, 1], i[:, 2]] | masks[1][i[:, 0], i[:, 1], i[:, 2]]
     # the sheet as the TPMS shapes it (not where a closure has moved it)
     inside = hx.core.sdf(c) < -step
-    sheet = np.abs(np.abs(tpms(hx.kind, c - clo, hx.cell)) - 0.5 * hx.wall) < 1.5 * step
+    sheet = np.abs(np.abs(tpms(hx.kind, c - clo, hx.cell) - sheet_c) - 0.5 * hx.wall) < 1.5 * step
     wet &= ~(inside & sheet)
     down = -(n @ up)
     a = mesh.area_faces

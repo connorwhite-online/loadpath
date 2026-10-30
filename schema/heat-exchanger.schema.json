@@ -92,6 +92,12 @@
     "skirt": {
       "type": "boolean"
     },
+    "split": {
+      "type": "number",
+      "exclusiveMinimum": 0.05,
+      "exclusiveMaximum": 0.95,
+      "description": "the first fluid's share of the void (default 0.5): the sheet moves toward the second. An air side against a liquid wants more, e.g. 0.66"
+    },
     "process": {
       "enum": [
         "fdm",

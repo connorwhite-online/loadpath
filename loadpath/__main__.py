@@ -76,6 +76,10 @@ def main(argv=None):
     h.add_argument("spec")
     h.add_argument("--out", default="loadpath-out")
     h.add_argument("--size", action="store_true", help="only sweep cell and wall for the duty (seconds)")
+    h.add_argument("--objective", choices=["effectiveness", "metal"], default="effectiveness",
+                   help="--size ranking: best effectiveness, or least metal meeting the limits")
+    h.add_argument("--min-effectiveness", type=float, help="--size: drop candidates below this")
+    h.add_argument("--splits", help="--size: first fluid's shares of the void to sweep, e.g. 0.5,0.6,0.66")
     h.add_argument("--no-render", action="store_true")
     h.add_argument("--no-viewer", action="store_true", help="skip the interactive HTML viewer")
     h.add_argument("--base-dir")
@@ -206,7 +210,9 @@ def _heatx(args):
     base = args.base_dir or os.path.dirname(os.path.abspath(args.spec))
     try:
         if args.size:
-            print(json.dumps(size_heat_exchanger(spec, base), indent=2))
+            splits = [float(x) for x in args.splits.split(",")] if args.splits else None
+            print(json.dumps(size_heat_exchanger(spec, base, objective=args.objective,
+                                                 min_effectiveness=args.min_effectiveness, splits=splits), indent=2))
             return 0
         rep = heat_exchanger(spec, args.out, base, render=not args.no_render and _can_render(),
                              on_progress=_progress, viewer=not args.no_viewer)

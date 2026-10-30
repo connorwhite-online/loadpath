@@ -346,6 +346,9 @@ HEAT_EXCHANGER_SCHEMA = {
         "build": {"anyOf": [{"enum": ["x", "y", "z", "none"]}, {"type": "null"}, {"const": False}],
                   "description": "The axis pointing up while printing (null: no print shaping)."},
         "skirt": {"type": "boolean"},
+        "split": {"type": "number", "exclusiveMinimum": 0.05, "exclusiveMaximum": 0.95,
+                  "description": "the first fluid's share of the void (default 0.5): the sheet moves toward the "
+                                 "second. An air side against a liquid wants more, e.g. 0.66"},
         "process": {"enum": ["fdm", "lpbf"],
                     "description": "fdm (default) or lpbf: laser powder-bed metal (AlSi10Mg, Ti64, 316L). "
                                    "lpbf drops the skirt (outside supports are cut off) and the report's "

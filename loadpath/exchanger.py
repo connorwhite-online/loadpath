@@ -30,7 +30,7 @@ import numpy as np
 from itertools import permutations
 
 from .sdf_kit import (
-    box, capsule, dual_sheet, mask, seal_ramp, smin, subtract, union,
+    box, capsule, dual_sheet, mask, seal_ramp, smin, subtract, tpms_dist, union,
 )
 
 __all__ = ["exchanger_core"]
@@ -45,7 +45,7 @@ def _require(cond, msg):
 def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
                    skin=None, plenum=None, port_r=None, seal_len=None,
                    margin=None, hose=None, blend=None, a_face=None,
-                   b_face=None, build=None):
+                   b_face=None, build=None, split=0.5):
     """Build a complete dual-fluid TPMS heat-exchanger block.
 
     size:     (sx, sy, sz) mm — the TPMS core box, centered at the origin.
@@ -83,6 +83,10 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
               message. The cheap insurance against the recurring bug of
               hot ports landing on the wrong faces.
     b_face:   same for fluid B.
+    split:    fluid A's share of the void (default 0.5). The sheet moves off
+              the mid-surface toward B, as an air side wants against a
+              liquid (e.g. 0.66: air gets about twice the coolant's volume).
+              Isolation holds whatever the split: the sheet is still whole.
     build:    the direction layers stack while printing ("+z", "-x", a
               vector [x, y, z], or None for no print shaping). Inside a closed
               part nothing can be supported (in powder-bed metal a support in a
@@ -241,6 +245,12 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
         ]
 
     up = _up_vector(build)
+    offset = 0.0
+    if abs(float(split) - 0.5) > 1e-9:
+        from .heatx_thermal import sheet_offset
+
+        _require(0.05 < float(split) < 0.95, f"split {split:g} is A's share of the void, between 0.05 and 0.95")
+        offset = sheet_offset(lambda Q: tpms_dist(Q, 1.0, kind), wall_ref / cell, float(split)) * cell
     # Plenum roofs: chamfer planes per plenum box (none without a build
     # direction), then each probe moved to the roofed cavity's roomiest
     # point if a roof cut it off.
@@ -507,7 +517,7 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
         P = np.asarray(P, float)
         s_a, s_b = seals(P)
         core = mask(
-            dual_sheet(P, cell, wall, kind, seal_a=s_a, seal_b=s_b),
+            dual_sheet(P, cell, wall, kind, seal_a=s_a, seal_b=s_b, offset=offset),
             box(P, (0.0, 0.0, 0.0), core_half),
         )
         # Everything between the core box and the outer box is solid until a
