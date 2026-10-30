@@ -31,6 +31,15 @@ what the one-number epsilon-NTU rating cannot:
   core), and the outlet temperatures that follow;
 - so header and port shapes can be compared and tuned (`sweep`).
 
+The core is not uniform: outside its own zones each fluid is sealed off
+within `cap` of the surface, and with a build axis its channels close under
+surfaces that look up. exchanger_domain measures each fluid's local share
+of the core from the design's own grid (averaged over about a cell) and
+scales K, C_F and the wetted area to it. On the 30 mm crossflow cube this
+is what sends the flow away from the +z edge, as the full LBM shows, and
+doubles the core's pressure drop (144 -> 252 Pa; LBM about 250 after its
+LES correction, the rating 127).
+
 Flow, one fluid at a time (they only meet through heat): pseudo-transient
 pressure correction on a staggered (MAC) grid. Open cells (plenums,
 ports) carry momentum (upwind advection and viscosity, incompressible),
@@ -80,6 +89,8 @@ class Medium:
     dh: float
     K: float
     CF: float
+    nK: float = 2.72                # K ~ phi^nK and C_F ~ phi^nC, for a local porosity
+    nC: float = -2.04
 
 
 def savoldi_medium(phi, area_density, dh, cell):
@@ -98,7 +109,7 @@ def lbm_medium(phi, area_density, dh, cell):
     and 18%; the gain is at phi 0.17-0.26, below Savoldi's range, where
     Savoldi reads 10-29% high."""
     return Medium(float(phi), float(area_density), float(dh), 0.00932 * phi ** 2.257 * cell ** 2,
-                  0.0569 * phi ** -2.283)
+                  0.0569 * phi ** -2.283, 2.257, -2.283)
 
 
 # closures: (pressure-drop law, Nu law)
@@ -163,18 +174,32 @@ def _cell_speed(U, active):
 
 # ---------------------------------------------------------------- flow
 
+def _local(dom, f):
+    """Per cell: this fluid's porosity (1 in open cells), permeability and
+    Forchheimer coefficient, and its share relative to the medium's (which
+    scales the wetted area). Where the design seals or closes channels near
+    the core's surface (dom.extra["phi"]), the local share is lower."""
+    med = dom.media[f]
+    core = dom.core & dom.cells[f]
+    loc = (dom.extra.get("phi") or [None, None])[f]
+    r = np.where(core, 1.0 if loc is None else np.maximum(loc / med.phi, 0.05), 1.0)
+    phi = np.where(core, med.phi * r, 1.0)
+    K = med.K * r ** med.nK
+    CF = med.CF * r ** med.nC
+    return phi, K, CF, r
+
+
 def _face_props(dom, f, fluid):
-    """Per face: inertia (rho / phi), whether it's a core face (drag), and
-    the share of its length in the core."""
+    """Per face: inertia (rho / phi, averaged over the two cells), whether
+    it's a core face (drag), and the share of its length in the core."""
     m = dom.cells[f]
     core = dom.core & m
-    med = dom.media[f]
+    phi = _local(dom, f)[0]
+    inert = fluid.rho / phi
     out = []
     for ax, fa in enumerate(_faces(m)):
-        c0 = core
-        c1 = _shift(core, 1, ax)
-        share = 0.5 * (c0.astype(float) + c1.astype(float)) * fa      # 0 open, 0.5 interface, 1 core
-        rho_eff = fluid.rho * (1.0 + share * (1.0 / med.phi - 1.0))
+        share = 0.5 * (core.astype(float) + _shift(core, 1, ax).astype(float)) * fa  # 0 open, 0.5 interface, 1 core
+        rho_eff = np.where(fa, 0.5 * (inert + _shift(inert, 1, ax)), fluid.rho)
         out.append((fa, share, rho_eff))
     return out
 
@@ -216,15 +241,15 @@ def solve_flow(dom: PorousDomain, f: int, fluid, mass_flow: float, max_steps: in
     idx[free] = np.arange(int(free.sum()))
     n = int(free.sum())
 
+    _, K_c, CF_c, _ = _local(dom, f)
+    in_core = dom.core & m
+
     def drag(U):
-        """Face drag R (Pa s / m^2): Darcy-Forchheimer on core faces, by the share in the core."""
+        """Face drag R (Pa s / m^2): Darcy-Forchheimer, half of each cell's
+        on either side of the face (open cells none)."""
         speed = _cell_speed(U, m)
-        out = []
-        for ax in range(3):
-            sp = 0.5 * (speed + _shift(speed, 1, ax))
-            r = (mu / med.K + rho * med.CF * sp / np.sqrt(med.K)) * share[ax]
-            out.append(r)
-        return out
+        rc = np.where(in_core, mu / K_c + rho * CF_c * speed / np.sqrt(K_c), 0.0)
+        return [0.5 * (rc + _shift(rc, 1, ax)) * fa[ax] for ax in range(3)]
 
     def assemble(a):
         """The pressure-correction matrix for face coefficients a (Pa s / m^2 per
@@ -400,6 +425,7 @@ def solve_heat(dom: PorousDomain, fluids, flows, t_in, k_wall, nu="design"):
         i = -np.ones(core.shape, dtype=np.int64)
         i[m] = np.arange(n)
         med = dom.media[f]
+        phi_c, _, _, r_c = _local(dom, f)
         U = flows[f]["U"]
         rc = fl.rho * fl.cp
         # inflow matrix P[i, j] = capacity flowing from j into i (W/K); conduction
@@ -411,8 +437,7 @@ def solve_heat(dom: PorousDomain, fluids, flows, t_in, k_wall, nu="design"):
             pr += [a1[pos], a0[~pos]]
             pc += [a0[pos], a1[~pos]]
             pv += [F[pos], -F[~pos]]
-            sh = 0.5 * (core.astype(float) + _shift(core, 1, ax).astype(float))[sel]
-            cond.append((a0, a1, fl.k * (1.0 + sh * (med.phi - 1.0)) * h))
+            cond.append((a0, a1, fl.k * 0.5 * (phi_c + _shift(phi_c, 1, ax))[sel] * h))
         P = sparse.csr_matrix((np.concatenate(pv), (np.concatenate(pr), np.concatenate(pc))), shape=(n, n))
         inl = (dom.inlet[f] & m)[m]
         s = np.where(inl, flows[f]["massFlow"] * fl.cp / inl.sum(), 0.0)
@@ -421,10 +446,10 @@ def solve_heat(dom: PorousDomain, fluids, flows, t_in, k_wall, nu="design"):
         b = s * t_in[f]
         # exchange with the wall, on the local Re
         speed = _cell_speed(U, m)
-        re = fl.rho * (speed / med.phi) * med.dh / fl.mu
+        re = fl.rho * (speed / phi_c) * med.dh / fl.mu
         hc = np.maximum(c0 * re ** e_re * fl.pr ** e_pr, _NU_MIN) * fl.k / med.dh
         h_maps.append(np.where(wcells, hc, 0.0))
-        G = (med.area_density * vol * frac / (1.0 / hc + t_half))[wcells]
+        G = (med.area_density * r_c * vol * frac / (1.0 / hc + t_half))[wcells]
         fi = i[wcells]
         N = G / np.maximum(fin[fi], 1e-30)
         en = np.exp(-np.minimum(N, 50.0))
@@ -592,7 +617,7 @@ def _block_mean(a, r):
     return a.reshape(nx, r, ny, r, nz, r).mean(axis=(1, 3, 5))
 
 
-def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures="design"):
+def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures="design", local_porosity=True):
     """The coarse porous grid of a designed exchanger (design_heat_exchanger
     with grids=True): core cells from the core's shape, each fluid's
     plenums and ports from its space on the design grid, inlets and outlets
@@ -618,6 +643,18 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
     both = opn[0] & opn[1]
     opn[0] &= ~(both & (fr[1] > fr[0]))
     opn[1] &= ~(both & (fr[0] >= fr[1]))
+    # each fluid's local share of the core, over about a cell: lower where the design
+    # seals it off the surface (outside its zones) or closes its channels (closure);
+    # measured on cells wholly inside the core, spread to the rest
+    inner = (frac > 0.95).astype(np.float32)
+    win = max(3, int(round(hx.cell / h_mm)) | 1)
+    wsum = ndimage.uniform_filter(inner, win, mode="constant")
+    phi_loc = []
+    for f in (0, 1):
+        pl = ndimage.uniform_filter(fr[f] * inner, win, mode="constant") / np.maximum(wsum, 1e-6)
+        deep = ndimage.binary_erosion(core, iterations=win) & (inner > 0)
+        ref = float(np.median(pl[deep])) if deep.sum() > 8 else float(np.median(pl[core]))
+        phi_loc.append(pl / max(ref, 1e-6))          # relative; scaled by the medium's phi below
     pad = lambda a: np.pad(a, 1)
     # cells in the core carry all of its volume between them
     frac = pad(np.where(core, frac * frac.sum() / max(frac[core].sum(), 1e-9), 0.0))
@@ -653,6 +690,7 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
         if not (keep & ends[1]).any():
             raise ValueError(f"fluid {name}'s inlet does not reach its outlet on a {h_mm:.2f} mm grid; "
                              "use a finer voxel")
+        phi_loc[f] = pad(phi_loc[f]) * phi
         cells.append(keep)
         inlet.append(ends[0] & keep)
         outlet.append(ends[1] & keep)
@@ -660,7 +698,7 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
     phi_sheet = (report[hx.names[0]]["coreVolume"] + report[hx.names[1]]["coreVolume"]) / v
     return PorousDomain(h=h_mm * 1e-3, lo=lo, core=core, cells=cells, inlet=inlet, outlet=outlet, media=media,
                         names=tuple(hx.names), wall=hx.wall * 1e-3, phi_sheet=phi_sheet,
-                        extra={"coreFraction": frac})
+                        extra={"coreFraction": frac, "phi": phi_loc if local_porosity else None})
 
 
 def simulate_design(hx, report, grids, duty, voxel=None, closures="design", progress=None, fields=False):
