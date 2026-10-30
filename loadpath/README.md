@@ -278,5 +278,9 @@ MIT.
 - Peak stress from a voxel model is refined at hotspots and carries a 1.15
   allowance in the safety factor; it lands within about ±13% of the
   textbook plate-with-hole value in the tests.
+- Material cards are datasheet values until calibrated: `loadpath calibrate
+  kit` prints coupons, `loadpath calibrate fit` turns their measurements into
+  a card for your printer (calibration.py, docs/CALIBRATION.md); a saved card
+  is usable by name as the study's material.
 - Pure Python and SciPy. A 40,000-cell study with two load cases takes a few
   minutes on a laptop core; a safety-factor search runs several of those.

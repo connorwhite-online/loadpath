@@ -83,10 +83,20 @@ def material_from_spec(spec) -> Material:
     if isinstance(spec, str):
         key = spec.strip().lower()
         key = _ALIASES.get(key, key)
-        if key not in MATERIALS:
-            raise ValueError(f"unknown material {spec!r}; known: {sorted(MATERIALS)} "
-                             "or pass {E, nu, strength, density}")
-        return MATERIALS[key]
+        if key in MATERIALS:
+            return MATERIALS[key]
+        # a calibrated card measured on a printer (calibration.py)
+        from .calibration import list_cards, load_card
+        card = load_card(key)
+        if card is not None:
+            m = card["material"]
+            base = MATERIALS.get(card.get("basedOn", ""))
+            return Material(card["name"], float(m["E"]), float(m["nu"]), float(m["strength"]),
+                            float(m["density"]), str(m.get("note", "")),
+                            tuple(m.get("processes") or (base.processes if base else ())))
+        raise ValueError(f"unknown material {spec!r}; known: {sorted(MATERIALS)}"
+                         + (f", calibrated: {list_cards()}" if list_cards() else "")
+                         + " or pass {E, nu, strength, density}")
     if isinstance(spec, dict):
         try:
             m = Material(str(spec.get("name", "custom")), float(spec["E"]), float(spec.get("nu", 0.35)),

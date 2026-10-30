@@ -189,3 +189,5 @@ Not covered by any running thread, in order:
 5. **Physical calibration loop** (#4). Coupon generator, measurement
    format, ingest into material cards and #1's correction. Needs Connor's
    printer, so it should start with the yoke he is already printing.
+   Built (calibration.py, docs/CALIBRATION.md, examples/grip/yoke_test.py);
+   waiting on the prints and measurements.

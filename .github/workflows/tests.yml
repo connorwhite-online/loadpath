@@ -26,3 +26,4 @@ jobs:
       - run: python tests/test_voxels.py
       - run: python tests/test_pressure.py
       - run: python tests/test_durability.py
+      - run: python tests/test_calibration.py

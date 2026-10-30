@@ -72,7 +72,7 @@
       "anyOf": [
         {
           "type": "string",
-          "description": "A name: pla, petg, abs, asa, tpu, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work)."
+          "description": "A name: pla, petg, abs, asa, tpu, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py)."
         },
         {
           "type": "object",

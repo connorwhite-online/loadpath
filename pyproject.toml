@@ -45,6 +45,6 @@ loadpath = "loadpath.__main__:main"
 include = ["loadpath*"]
 
 [tool.setuptools.package-data]
-"loadpath" = ["SKILL.md", "README.md", "viewer.html", "editor.html", "examples/*.json"]
+"loadpath" = ["SKILL.md", "README.md", "viewer.html", "editor.html", "examples/*.json", "calibrations/*.json"]
 "loadpath.evals" = ["cases/*.json", "cases/*.stl", "baselines/*.json"]
 "loadpath.benchmarks" = ["cases/*.json", "reference/*.npz"]

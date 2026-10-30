@@ -12,6 +12,8 @@ Command line: run a study file and write the parts, a report and renders.
     python -m loadpath mcp                     # local MCP server for agents (needs loadpath[mcp])
     python -m loadpath orient part.stl [--study study.json] [--3mf part.3mf]
                                                # rank build orientations, write the best as 3MF
+    python -m loadpath calibrate kit --material petg --out calibration/   # coupons to print + predictions
+    python -m loadpath calibrate fit measurements.json [--predictions predictions.json] [--name petg-a1mini --save]
 
 Progress goes to stderr as one JSON object per line, so an agent can tail it.
 Results go to stdout as one JSON document, and to report.json in --out.
@@ -48,6 +50,37 @@ def _write_report(out_dir, summary):
     with open(os.path.join(out_dir, "report.json"), "w") as fh:
         json.dump(_jsonable(summary), fh, indent=2)
     print(json.dumps(_jsonable(summary), indent=2))
+
+
+def _calibrate(args):
+    from . import calibration as cal
+    if args.action == "kit":
+        kit = cal.coupon_kit(args.material, args.process)
+        paths = cal.write_kit(kit, args.out, args.material, args.process)
+        print(json.dumps({"ok": True, "files": paths,
+                          "coupons": {c.id: {"title": c.title, "test": c.test, "predicted": c.predicted}
+                                      for c in kit}}, indent=2, default=float))
+        return 0
+    if not args.measurements:
+        print(json.dumps({"ok": False, "error": "calibrate fit needs the measurements.json"}))
+        return 2
+    meas = _load(args.measurements)
+    pred = _load(args.predictions) if args.predictions else None
+    try:
+        card = cal.fit(meas, pred, args.name)
+    except (ValueError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    os.makedirs(args.out, exist_ok=True)
+    path = os.path.join(args.out, f"{card['name']}.json")
+    with open(path, "w") as fh:
+        json.dump(card, fh, indent=2)
+    if args.save:
+        os.makedirs(cal.CALIBRATION_DIR, exist_ok=True)
+        with open(os.path.join(cal.CALIBRATION_DIR, f"{card['name']}.json"), "w") as fh:
+            json.dump(card, fh, indent=2)
+    print(json.dumps(card, indent=2))
+    return 0
 
 
 def main(argv=None):
@@ -108,6 +141,15 @@ def main(argv=None):
     o.add_argument("--study", help="the part's study: adds the interlayer reading under its loads")
     o.add_argument("--3mf", dest="threemf", help="write the best orientation as a slicer-ready 3MF")
     o.add_argument("--process", default="fdm")
+    cal = sub.add_parser("calibrate", help="coupons to print, and a material card fitted from their measurements")
+    cal.add_argument("action", choices=["kit", "fit"])
+    cal.add_argument("measurements", nargs="?", help="fit: the filled-in measurements.json")
+    cal.add_argument("--material", default="petg", help="kit: the starting card")
+    cal.add_argument("--process", default="fdm")
+    cal.add_argument("--out", default="calibration", help="kit: folder for the STLs; fit: folder for the card")
+    cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
+    cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
+    cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
     args = p.parse_args(argv)
 
     if args.cmd == "mcp":
@@ -130,6 +172,8 @@ def main(argv=None):
         return _edit(args)
     if args.cmd == "orient":
         return _orient(args)
+    if args.cmd == "calibrate":
+        return _calibrate(args)
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))

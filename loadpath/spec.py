@@ -204,6 +204,24 @@ def _process(spec) -> Process | None:
                    escape_hole=float(esc) if esc is not None else None, **stiff)
 
 
+def _calibrated_process(process, mat_in, spec):
+    """A calibrated card (calibration.py) measured its printer's across-layer
+    strength and stiffness: use them unless the study sets its own."""
+    if process is None or not isinstance(mat_in, str):
+        return process
+    from .calibration import load_card
+    card = load_card(mat_in)
+    cp = (card or {}).get("process") or {}
+    if cp.get("type") != process.kind:
+        return process
+    spec = spec or {}
+    if "interlayer" not in spec and cp.get("interlayer"):
+        process.interlayer = float(cp["interlayer"])
+    if "stiffnessAcrossLayers" not in spec and cp.get("stiffnessAcrossLayers"):
+        process.ez = float(cp["stiffnessAcrossLayers"])
+    return process
+
+
 def _slicer(spec, process, base_dir, goal):
     """slicer.SlicerOptions for FDM studies (None otherwise)."""
     from .slicer import SlicerOptions
@@ -514,6 +532,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
 
     min_member = d.get("minMember")
     process = _process(d.get("process"))
+    process = _calibrated_process(process, mat_in, d.get("process"))
     print_direction = parse_build_direction(d.get("printDirection"))
     if process is not None:
         # the process sets what a study left open: overhang control along the

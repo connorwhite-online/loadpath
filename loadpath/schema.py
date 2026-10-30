@@ -177,7 +177,8 @@ _CUSTOM_MATERIAL = {
     "additionalProperties": False,
 }
 _ONE_MATERIAL = {"anyOf": [{"type": "string", "description": "A name: " + ", ".join(_MATERIAL_NAMES)
-                            + " (aliases such as 'nylon', 'aluminium', 'steel' work)."},
+                            + " (aliases such as 'nylon', 'aluminium', 'steel' work), or a calibrated card "
+                            "measured on a printer (loadpath/calibrations/, calibration.py)."},
                            _CUSTOM_MATERIAL]}
 
 _FASTENER = {
