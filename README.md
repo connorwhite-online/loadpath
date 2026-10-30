@@ -92,6 +92,20 @@ Made another way: the same arm link printed, cast (no undercuts along z), 3-axis
 
 <!-- gallery:end -->
 
+### Field-driven parts
+
+A part can also be a graph of fields ([docs/fields.md](docs/fields.md)). Here the
+arm link's skin and gyroid wall follow its own stress (colour) and the cells grow
+away from the bearings. At the same 52 g as a uniform lattice it has SF 14.8 and
+0.65 mm deflection, against SF 11.8 and 0.74 mm (`python examples/fields/arm_link.py`).
+
+![graded vs uniform arm link](docs/images/fields/arm-link-graded-vs-uniform.png)
+
+A graded cell bends the lattice's coordinates, so walls run continuously from 4 mm
+to 12 mm cells:
+
+![graded gyroid](docs/images/fields/graded-cell.png)
+
 ## Install
 
 ```
