@@ -261,11 +261,92 @@ def test_mcp_field_job():
             os.environ.pop("LOADPATH_HOME", None)
 
 
+def _skinned_box(**extra):
+    """A 40 x 30 x 14 box: a 1.2 mm skin over a gyroid, two sealed labyrinths."""
+    return {"name": "box", "mesh": {"pitch": 0.4}, "check": False, "output": "part", "nodes": {
+        "b": {"op": "shape", "shape": {"type": "box", "min": [0, 0, 0], "max": [40, 30, 14]}},
+        "core": {"op": "intersect", "inputs": [{"op": "lattice", "type": "gyroid", "cell": 6, "thickness": 0.8}, "b"]},
+        "part": {"op": "intersect", "inputs": [{"op": "union", "inputs": [
+            {"op": "shell", "input": "b", "thickness": 1.2}, "core"], "blend": 0.6}, "b"]}}, **extra}
+
+
+def test_drains_open_every_sealed_void():
+    """SLS: both labyrinths get two 4.5 mm holes each on flat faces, the
+    meshed part has no sealed shell left, every bit of each void reaches a
+    hole, and processcheck's 4 mm escape ball gets out of all of it."""
+    from loadpath.fields import run_field
+
+    mesh, rep = run_field(_skinned_box(process="sls"), render=False)
+    d = rep["drains"]
+    assert rep["enclosedVoids"] == 0 and rep["watertight"], rep
+    assert d["ok"] and d["sealedBefore"] == 2 and d["sealedAfter"] == 0, d
+    assert [v["holes"] for v in d["voids"]] == [2, 2], d["voids"]
+    assert all(v["unreachedVolume"] == 0 and v["farthestFromOpening"] < 60 for v in d["voids"]), d["voids"]
+    assert d["meshEscape"]["enclosedCount"] == 0 and d["meshEscape"]["narrowExitCount"] == 0, d
+    for h in d["holes"]:
+        assert h["diameter"] == 4.5 and max(abs(c) for c in h["axis"]) > 0.999, h     # square to a face
+        # well inside a face: a boss on an edge would poke out
+        at = np.array(h["at"])
+        assert np.all(at >= [3.5, 3.5, -0.1]) and np.all(at <= [36.5, 26.5, 14.1]), h
+    # mouths really open: the mesh's surface passes through a hole's rim, not across its middle
+    q = np.array([np.array(h["at"]) - 0.5 * np.array(h["axis"]) for h in d["holes"]])
+    assert (trimesh.proximity.signed_distance(mesh, q) < 0).all()      # trimesh: negative = outside
+
+
+def test_drains_go_where_it_is_calm():
+    """With a stress field rising along x, every hole sits in the calm half;
+    resin puts each void's first hole at the bottom (drain) and the second
+    at the top (vent)."""
+    from loadpath.fields import run_field
+
+    doc = _skinned_box(process="sla", drains={"stress": "s"})
+    doc["nodes"]["s"] = {"op": "coordinate", "axis": "x"}
+    _, rep = run_field(doc, render=False)
+    d = rep["drains"]
+    assert d["ok"] and len(d["holes"]) == 4 and d["diameter"] == 4.0, d
+    assert all(h["at"][0] < 20 for h in d["holes"]), d["holes"]
+    _, rep = run_field(_skinned_box(process="sla"), render=False)
+    axes = [round(h["axis"][2]) for h in rep["drains"]["holes"]]
+    assert axes == [-1, 1, -1, 1], axes
+
+
+def test_drains_fill_small_pockets_and_know_when_to_stop():
+    """A 2 mm bubble is filled, not drilled; FDM and drains: false leave
+    the voids alone (and the report says they are sealed)."""
+    from loadpath.fields import run_field
+
+    doc = {"name": "bubble", "mesh": {"pitch": 0.3}, "check": False, "process": "mjf", "nodes": {
+        "b": {"op": "shape", "shape": {"type": "box", "min": [0, 0, 0], "max": [12, 12, 12]}},
+        "part": {"op": "subtract", "inputs": ["b", {"op": "shape", "shape": {"type": "sphere",
+                                                                               "center": [6, 6, 6], "r": 1.5}}]}}}
+    _, rep = run_field(doc, render=False)
+    d = rep["drains"]
+    assert rep["enclosedVoids"] == 0 and d["ok"] and not d["holes"] and d["filledVolume"] > 10, d
+    assert rep["volume"] > 12 ** 3 - 5.0, rep["volume"]       # the bubble (14 mm^3) is solid; edges round a little
+    for extra in ({"process": "fdm"}, {"process": "sls", "drains": False}):
+        _, rep = run_field(_skinned_box(**extra), render=False)
+        assert "drains" not in rep and rep["enclosedVoids"] == 2, rep
+
+
+def test_drains_keep_clear():
+    """Every boss stays out of a keepClear node: here the whole top face."""
+    from loadpath.fields import run_field
+
+    doc = _skinned_box(process="sls", drains={"keepClear": ["top"]})
+    doc["nodes"]["top"] = {"op": "shape", "shape": {"type": "box", "min": [-1, -1, 10], "max": [41, 31, 15]}}
+    _, rep = run_field(doc, render=False)
+    d = rep["drains"]
+    assert d["ok"] and len(d["holes"]) == 4, d
+    assert all(h["at"][2] < 5 or abs(h["axis"][2]) < 0.5 for h in d["holes"]), d["holes"]
+
+
 TESTS = [test_shell_volume_and_projection, test_variable_shell_follows_its_field,
          test_variable_blend_is_a_bigger_fillet_where_asked, test_graded_lattice_stays_one_body, test_cell_warp_period_follows_the_field,
          test_mesh_field_is_exact_near_the_surface, test_samples_on_a_grid_interpolate_exactly,
          test_result_node_from_verify_fields, test_expressions_are_whitelisted, test_graph_errors_and_lint,
-         test_unbounded_lattice_asks_for_bounds, test_cli_writes_part_and_report, test_mcp_field_job]
+         test_unbounded_lattice_asks_for_bounds, test_cli_writes_part_and_report, test_mcp_field_job,
+         test_drains_open_every_sealed_void, test_drains_go_where_it_is_calm,
+         test_drains_fill_small_pockets_and_know_when_to_stop, test_drains_keep_clear]
 
 
 def main():

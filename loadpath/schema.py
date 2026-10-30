@@ -665,6 +665,39 @@ FIELD_SCHEMA = {
         "minWall": {**_POS, "description": "mm, the printability check's minimum wall (default 0.8)"},
         "build": {**_VEC3, "description": "build direction for the overhang check (default +z)"},
         "check": {"type": "boolean", "description": "run the printability check (default true)"},
+        "process": {**_PROCESS, "description": "How it is made: sets the minimum wall, the build direction and "
+                                               "the drain holes (sls, mjf, sla, dlp, volumetric, lpbf drain "
+                                               "sealed voids by default)."},
+        "drains": {"anyOf": [
+            {"enum": ["auto"]}, {"type": "boolean"},
+            {"type": "object", "properties": {
+                "enabled": {"type": "boolean"},
+                "diameter": {**_POS, "description": "mm (default the process's minimum escape hole + 0.5: "
+                                                    "SLS 4.5, MJF 5.5, SLA/DLP 4, volumetric 3.5; LPBF 4.2, an "
+                                                    "M5 tap drill)"},
+                "count": {"type": "integer", "minimum": 1, "description": "holes per void (default 2: one "
+                                                                         "low, one high along the build)"},
+                "stress": {"type": ["string", "null"], "description": "node that ranks the sites, calmest "
+                                                                     "first (default the first result node; "
+                                                                     "null: none)"},
+                "boss": {**_POS, "description": "mm of solid round each hole (default max(1.5 x min wall, "
+                                                "0.4 x radius))"},
+                "blend": {"type": "number", "minimum": 0, "description": "mm fillet boss to part "
+                                                                         "(default the boss wall)"},
+                "maxDepth": {**_POS, "description": "mm: sites at most this far under the outside (default 6)"},
+                "fillBelow": {"type": "number", "minimum": 0, "description": "mm^3: smaller voids are filled "
+                                                                           "solid (default the escape ball)"},
+                "keepClear": {"type": "array", "items": {"type": "string"},
+                              "description": "solid nodes the bosses stay out of (bearing seats, mating faces)"},
+                "clearance": {"type": "number", "minimum": 0, "description": "mm from keepClear (default 1)"},
+                "pitch": {**_POS, "description": "mm grid for finding voids (default the mesh pitch)"},
+                "maxPath": {**_POS, "description": "mm: add holes (up to 6 a void) while any powder is farther "
+                                                   "than this from a hole, through the void"}},
+             "additionalProperties": False}],
+            "description": "Drain holes into sealed voids (trapped powder or resin): 'auto' (default) drills "
+                           "for powder-bed and resin processes, true always, false never. Holes go at the "
+                           "calmest flat sites, each on a solid boss; pockets too small for a hole are filled; "
+                           "the report says what (if anything) is still sealed."},
     },
     "required": ["nodes"],
     "additionalProperties": False,

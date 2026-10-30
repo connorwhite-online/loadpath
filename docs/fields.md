@@ -99,6 +99,62 @@ feature with `sdf_kit.mesh_subtract`.
 
 Pick the pitch from the thinnest wall: a third of it or finer.
 
+## Drain holes
+
+A skin over a lattice traps whatever the lattice was printed in: powder
+(SLS, MJF, metal powder bed) or uncured resin (SLA, DLP, volumetric). With
+`"process": "sls"` (or `mjf`, `sla`, `dlp`, `volumetric`, `lpbf`) the
+graph drills its own drain holes before it is meshed:
+
+```json
+{"process": "sls", "drains": {"keepClear": ["bores"]}}
+```
+
+1. The output is sampled on a grid (the mesh pitch) and every void that
+   cannot reach the outside is found, down to the slivers where a lattice
+   wall grazes the skin.
+2. Voids smaller than the escape ball (`fillBelow`) are filled solid.
+3. Every other void gets `count` holes (default 2) half a millimetre over
+   the process's minimum escape hole (SLS 4.5 mm, MJF 5.5, SLA/DLP 4,
+   volumetric 3.5; LPBF 4.2, an M5 tap drill, so it can be plugged). The
+   sites are ranked by the graph's own stress (the first `result` node, or
+   `stress`), calmest first: a hole is a stress raiser. The first goes
+   lowest along the build and the second highest, well apart, so air or
+   rinse flows through, and resin has a drain at the bottom and a vent at
+   the top. A site has to be on the void's wall just under the skin, with
+   a straight way out, on a face flat out past the boss (no edges, no
+   bores or seats: a concave face is refused), and clear of `keepClear`.
+4. Each hole gets a solid boss (1.5 x the minimum wall, smooth-unioned in)
+   so the bore has a clean wall and the lattice walls it cuts are tied in.
+5. The grid is labelled again; anything a boss walled off gets the same
+   treatment, up to four rounds.
+
+The holes, bosses and fill are ordinary nodes added to the graph
+(`drain-bore-1`, `drain-boss-1`, ..., output `drained`). The report's
+`drains` says what was done and checks it: `sealedAfter` (on the grid),
+each void's `farthestFromOpening` (the powder path, mm) and
+`unreachedVolume`, processcheck's escape ball on the drilled field and on
+the delivered mesh (`meshEscape`), and the mesh's own `enclosedVoids`.
+`drains.ok` is true only when all of them are clear. `"drains": false`
+turns it off; `"drains": true` drills for any process.
+
+Sites are chosen calm first: the stress a hole sees is the worse of its
+inner end's and its mouth's (a bending part is calm at the core, not at
+the skin). Being well apart comes second, so two holes of a void can end
+up close together at the calm end, with a long powder path to the far
+end. `maxPath` (mm) adds holes, up to six a void, until no powder is
+farther than that from one, at the price of hotter sites.
+
+On the arm-link example in PA12 (`"process": "sls"`): 46 sealed voids
+(both gyroid labyrinths, the cable channel and 360 slivers by the
+bearing collars, 16.6 cm^3) become 6 holes at 5 to 15% of the peak
+stress, and 0.4 cm^3 of fill; the meshed part has no sealed shell and the
+4 mm escape ball reaches every chamber. The farthest powder is 82 to 124
+mm from a hole; with `"maxPath": 80` it is 9 holes, at most 57 mm, but
+three of the extra holes sit at 20 to 34% of the peak.
+
+![section through a drain hole](images/fields/arm-link-drain-section.png)
+
 ## Pitfalls
 
 - A big `blend` in a union bulges past the inputs by up to blend/4: a link
@@ -108,9 +164,8 @@ Pick the pitch from the thinnest wall: a third of it or finer.
   result with the envelope again, or the blend pushes lattice ridges through
   the outer skin.
 - A closed skin over a lattice seals the voids in. The report counts them
-  (`enclosedVoids`, `enclosedVoidVolume`): for SLS, MJF and resin that is
-  trapped powder or resin, so open the skin or use `loadpath lattice`, which
-  places drain holes.
+  (`enclosedVoids`, `enclosedVoidVolume`). Give the graph a `process` and
+  it drills them (next section); without one nothing is drilled.
 - A bare lattice fills all of space: intersect it with a solid, or give the
   graph `bounds`.
 

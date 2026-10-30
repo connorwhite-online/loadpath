@@ -1232,6 +1232,18 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
 
     t0 = time.time()
     g = FieldGraph(doc, base_dir=base_dir, sources=sources, meshes=meshes)
+    process = None
+    if doc.get("process") is not None:
+        from .spec import _process
+
+        process = _process(doc["process"])
+    drains = None
+    from .drains import DrainOptions, drain_graph, drains_wanted
+
+    if drains_wanted(doc.get("drains", "auto"), process):
+        opts = DrainOptions.from_spec(doc.get("drains"))
+        drains = drain_graph(g, process, opts, build=doc.get("build"), min_wall=doc.get("minWall"),
+                             pitch=(doc.get("mesh") or {}).get("pitch"), progress=progress)
     mesh = g.mesh(progress=progress)
     rep = {"name": doc.get("name", "field"), "output": g.output, "nodes": len(g.nodes),
            "pitch": mesh.metadata.get("pitch"), "faces": int(len(mesh.faces)), "watertight": bool(mesh.is_watertight),
@@ -1242,6 +1254,26 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
     rep["bodies"] = sum(v > 0 for v in shells)
     rep["enclosedVoids"] = sum(v < 0 for v in shells)
     rep["enclosedVoidVolume"] = -sum(v for v in shells if v < 0)
+    if process is not None:
+        rep["process"] = process.kind
+    if drains is not None:
+        # the mesh is the last word on whether anything is still sealed, and
+        # for powder and resin processcheck's escape ball says whether it
+        # gets out (LPBF has no card there: sealed shells only)
+        ok = rep["enclosedVoids"] == 0
+        if drains["holes"] or drains["filledVolume"]:
+            from .processcheck import RULES, check_process
+
+            if process is not None and process.kind in RULES:
+                try:
+                    esc = check_process(mesh, process, slicer=False)["escape"]
+                    drains["meshEscape"] = {k: esc[k] for k in ("enclosedCount", "enclosedVolumeMm3",
+                                                                "narrowExitCount", "narrowExitVolumeMm3")}
+                    ok = ok and esc["enclosedCount"] == 0 and esc["narrowExitCount"] == 0
+                except Exception as exc:  # noqa: BLE001 - a check never fails the job
+                    drains["meshEscape"] = {"error": str(exc)}
+        drains["ok"] = bool(drains["ok"] and ok)
+        rep["drains"] = drains
     if "material" in doc:
         from .materials import material_from_spec
 
@@ -1251,7 +1283,8 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
     if doc.get("check", True):
         from .checks.dfm import check_dfm
 
-        spec = {"minWall": float(doc.get("minWall", 0.8)), "build": doc.get("build", (0, 0, 1))}
+        spec = {"minWall": float(doc.get("minWall", process.min_feature if process is not None else 0.8)),
+                "build": doc.get("build", (0, 0, 1))}
         try:
             d = check_dfm(mesh, spec)
             rep["printability"] = d

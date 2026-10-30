@@ -437,10 +437,18 @@ def status(job_id: str) -> tuple[dict, list]:
         pngs = [_png(d, r.get("render"))]
     elif kind == "field":
         info = {"status": "done", "kind": kind, **r, "report": report}
+        att = []
         if r.get("enclosedVoids"):
-            info["attention"] = [f"{r['enclosedVoids']} void(s) sealed inside the part "
-                                 f"({r['enclosedVoidVolume']:.0f} mm^3): powder or resin stays trapped there; "
-                                 "open the skin or add drain holes for SLS, MJF and resin"]
+            att.append(f"{r['enclosedVoids']} void(s) sealed inside the part ({r['enclosedVoidVolume']:.0f} mm^3): "
+                       "powder or resin stays trapped there; " +
+                       ("see drains.undrained" if r.get("drains") else
+                        "give the graph a 'process' (sls, mjf, sla, dlp, lpbf) and it drills drain holes"))
+        esc = (r.get("drains") or {}).get("meshEscape") or {}
+        if esc.get("narrowExitCount"):
+            att.append(f"{esc['narrowExitCount']} chamber(s) open only through gaps under the escape hole: "
+                       "raise drains.diameter")
+        if att:
+            info["attention"] = att
         pngs = [_png(d, r.get("render"))]
     else:
         rep = r.get("report", {})
@@ -612,8 +620,10 @@ def serve():
         """Mesh an implicit part described as a graph of fields (nTop style): shapes and meshes as signed
         distances, simulation results and imported scalar fields, remap/expr math, and field-driven
         operations (variable shell walls, variable fillets, TPMS lattices with graded cell size and wall).
-        Any numeric parameter can be another node. See loadpath_schema('field') and
-        examples/fields/arm-link-graded.json. Starts a job; poll loadpath_status."""
+        Any numeric parameter can be another node. With a 'process' (sls, mjf, sla, dlp, volumetric, lpbf)
+        sealed voids (a skin over a lattice) get drain holes at the calmest flat sites, on bosses, verified
+        clear (report 'drains'). See loadpath_schema('field') and examples/fields/arm-link-graded.json.
+        Starts a job; poll loadpath_status."""
         return field(graph, base_dir)
 
     @server.tool()
