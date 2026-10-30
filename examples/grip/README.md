@@ -121,3 +121,29 @@ yoke has 3.5 cm³ inside the wrist link's J5 swing and the wrist link 2.4 cm³
 inside the yoke's: the clash a fixed split of the space round J5 was
 holding apart. The forearm and yoke overlap by under 0.1 cm³ round J4, and
 the turret, upper arm and forearm are clear of their neighbours.
+
+## The whole arm, regrown and checked together
+
+![GRIP's printed parts, at home and posed](arm.png)
+
+Every printed part of the arm: the five links regrown under the derived loads
+(`run.py --loads derived`, with lifetime cycles by case kind), and the base
+and palm from GRIP's `v3_rest.py`. 705 cm³ against 857 cm³ shipped (-18%),
+each part at SF 2.08 or more:
+
+| Part | Shipped | Regrown | SF |
+| --- | --- | --- | --- |
+| Base | 189.0 cm³ | 124.8 cm³ | 5.37 |
+| Turret | 205.2 cm³ | 174.6 cm³ | 2.59 |
+| Upper arm | 176.6 cm³ | 182.7 cm³ | 2.08 |
+| Forearm | 90.0 cm³ | 76.8 cm³ | 2.37 |
+| Wrist yoke | 77.8 cm³ | 10.6 cm³ | 2.35 |
+| Wrist link | 80.0 cm³ | 42.9 cm³ | 3.42 |
+| Palm | 38.4 cm³ (gripper palm) | 92.7 cm³ | 4.25 |
+
+GRIP's `assembly_check.py` (manifold booleans of every part against every
+other and against the drives, servo bodies and horns, at home and through
+each joint's URDF range in 10° steps) finds no overlap. The wrist link's
+J5 keep-out `studies/j5-parent-sweep.stl` is the yoke's allowed space and the
+J5 servo swept through ±100°; a flat split between the two left the link
+6-60 mm³ inside the yoke at -100°.
