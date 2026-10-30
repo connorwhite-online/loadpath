@@ -44,9 +44,11 @@ from .shapes import Shape, shape_from_spec
 __all__ = ["Region", "Load", "LoadCase", "Support", "Goal", "Study", "study_from_dict"]
 
 DEFAULT_MAX_ELEMENTS = 60_000
-# Hard ceiling regardless of what a study asks for: memory and minutes both
-# grow faster than linearly past this on a modest CPU budget.
-MAX_ELEMENTS_CEILING = 400_000
+# Hard ceiling regardless of what a study asks for. From 100k cells the
+# optimizer is matrix-free multigrid (mg.py), ~1.5 KB per cell: an 845k-cell
+# study ran end to end in 20 min and 1.6 GB on a 4-core box. Past a few
+# million the meshing and verification steps, not the solver, set the limit.
+MAX_ELEMENTS_CEILING = 4_000_000
 
 
 @dataclass

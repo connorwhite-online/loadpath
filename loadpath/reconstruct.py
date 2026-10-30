@@ -139,6 +139,9 @@ def _seat_on_flush_faces(fine, domain: Domain, upsample: int, pad: int, flush, d
     return out
 
 
+FINE_CELLS = 8e6
+
+
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
                 flush=(), preserve=(), design=()):
     import trimesh
@@ -289,6 +292,15 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         fine = fine * fade.reshape(fine.shape)
     if fine.max() < o.level:
         raise ValueError("the optimized density never reaches solid; nothing to mesh")
+    # One more layer of void all round: marching cubes leaves the surface open
+    # wherever the field is solid on the array's edge, and smoothing, the
+    # fillet and the closing above can carry it there through the single
+    # void layer of padding. Unseen below ~100k cells; at 845k (0.53 mm
+    # cells) the arm link's flush faces came out with 1700 open edges and
+    # manifold3d refused the mesh. Where the edge was void this changes
+    # nothing.
+    fine = np.pad(fine, 1)
+    origin = origin - step
     verts, faces, _, _ = marching_cubes(fine, o.level, spacing=(step, step, step))
     verts = verts + origin
     mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
@@ -377,6 +389,16 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         import copy
         o = copy.copy(o)
         o.close = max(1.0, 0.5 * float(study.min_member or 0.0))
+    # Upsampling refines a coarse grid's staircase; a fine grid has none to
+    # speak of, and 3x on 845k cells meant a 23M-cell field and 330 s of
+    # meshing for 2M triangles. Cap the refined field near FINE_CELLS (eval
+    # grids, all under ~150k box cells, keep their 3x).
+    box = float(np.prod(domain.dims))
+    cap = max(1, int((FINE_CELLS / box) ** (1.0 / 3.0)))
+    if o.upsample > cap:
+        import copy
+        o = copy.copy(o)
+        o.upsample = cap
     # where the part must reach the boundary: its supports and its loads
     flush = []
     for sup in study.supports:

@@ -328,7 +328,7 @@ STUDY_SCHEMA = {
         "symmetry": {"type": "array", "items": {"enum": ["x", "y", "z"]},
                      "description": "Planes through the design-space centre, by normal axis."},
         "resolution": {"type": "object",
-                       "properties": {"maxElements": {"type": "integer", "minimum": 1, "maximum": 400000},
+                       "properties": {"maxElements": {"type": "integer", "minimum": 1, "maximum": 4000000},
                                       "pitch": _POS},
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
