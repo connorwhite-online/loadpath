@@ -302,6 +302,11 @@ def _attention(o: dict, study: dict) -> list[str]:
         out.append(f"p5Member {o['p5Member']:.2f} mm is under minMember {mm} mm: raise the resolution")
     if o.get("closedBores"):
         out.append(f"closed bores: {o['closedBores']}")
+    dur = o.get("durability") or {}
+    if dur.get("safetyFactor") is not None and dur["safetyFactor"] < dur.get("target", 1.5):
+        out.append(f"durability safety factor {dur['safetyFactor']:.2f} (fatigue/creep) is under "
+                   f"{dur.get('target', 1.5):g}: set durability.constrain to size for it")
+    out.extend(dur.get("warnings") or [])
     return out
 
 
@@ -330,6 +335,9 @@ def _study_status(d, r):
             "minMemberMm": o.get("minMember"), "p5MemberMm": o.get("p5Member"), "bodies": o.get("bodies"),
             "keepOutIntrusionMm3": o.get("keepOutIntrusion"), "preserveMissingMm3": o.get("preserveMissing"),
             "designOverhangFraction": o.get("designOverhangFraction"), "cases": cases,
+            "durability": {k: (o.get("durability") or {}).get(k) for k in
+                           ("safetyFactor", "fatigueSafetyFactor", "creepSafetyFactor", "fatigueDamage",
+                            "temperature", "joints")} if o.get("durability") else None,
             "stl": os.path.join(d, "out", os.path.basename(o["stl"])) if o.get("stl") else None,
             "render": os.path.join(d, "out", os.path.basename(o["render"])) if o.get("render") else None,
         }

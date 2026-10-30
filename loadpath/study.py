@@ -11,6 +11,9 @@ Two kinds of goal:
   compliance optimization controls directly, so this searches over volume
   fractions, verifying the delivered mesh at each step, and returns the
   lightest outcome that passes. Each step warm-starts from the last.
+  With `durability.constrain` the search also holds the fatigue and creep
+  safety factor to `durability.safetyFactor` (and a held load's crept
+  deflection to `maxDeflection`); see durability.py.
 
 The search works on one number, the margin: the worst of (safety factor /
 target) and (deflection limit / deflection). Both scale roughly linearly with
@@ -97,6 +100,7 @@ class Outcome:
             "preserveMissing": r.get("preserveMissing"),
             "bodies": r.get("bodies"),
             "boundaryCutArea": r.get("boundaryCutArea"),
+            **({"durability": r["durability"]} if "durability" in r else {}),
             **({"print": {k: v for k, v in r["print"].items() if k != "bridgeList"}} if "print" in r else {}),
             "warnings": r.get("warnings", []),
             "margin": r.get("margin"),
@@ -129,14 +133,24 @@ class StudyResult:
         }
 
 
+def _durability_drives(study: Study) -> bool:
+    return study.durability is not None and study.durability.constrain
+
+
 def _margin(study: Study, report: dict) -> float | None:
     g = study.goal
     ms = []
     if g.safety_factor is not None:
         ms.append(report["safetyFactor"] / g.safety_factor)
+    dur = report.get("durability") if _durability_drives(study) else None
     if g.max_deflection is not None:
         worst = max(c["deflection"] for c in report["cases"])
+        if dur:
+            # a held load's deflection after creep, at its temperature
+            worst = max([worst] + [c["creepDeflection"] for c in dur["cases"] if "creepDeflection" in c])
         ms.append(g.max_deflection / worst if worst > 0 else float("inf"))
+    if dur and dur.get("safetyFactor") is not None:
+        ms.append(dur["safetyFactor"] / dur["target"])
     return min(ms) if ms else None
 
 
@@ -315,6 +329,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         if mc < o.report["margin"]:
             # report the finer (lower) reading: it is the one to trust
             o.report["margin"], o.report["safetyFactor"], o.report["cases"] = mc, rep["safetyFactor"], rep["cases"]
+            if "durability" in rep:
+                o.report["durability"] = rep["durability"]
         return mc
 
     def run_constrained(limits, x0) -> Outcome:
@@ -350,7 +366,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
 
     goal = study.goal
     if goal.method == "constrained" and (goal.safety_factor is not None or goal.max_deflection is not None) \
-            and study.print_direction is None and study.gravity is None:
+            and study.print_direction is None and study.gravity is None and not _durability_drives(study):
         from .constrained import Limits
         from .verify import STRESS_ALLOWANCE
 
@@ -381,7 +397,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             limits = Limits(scale(limits.stress, rs), scale(limits.deflection, rd), mat.E)
         passing = [i for i, o in enumerate(outcomes) if o.passes]
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
-    elif goal.safety_factor is not None or goal.max_deflection is not None:
+    elif goal.safety_factor is not None or goal.max_deflection is not None or _durability_drives(study):
         vf = float(goal.volume_fraction or 0.3)
         lo_fail, hi_pass = None, None   # (vf, margin) brackets
         for _ in range(_MAX_SEARCH_RUNS):

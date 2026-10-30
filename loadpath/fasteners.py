@@ -84,6 +84,7 @@ def expand_fasteners(d: dict) -> dict:
     mat_in = d.get("material", "pla")
     mat = material_from_spec(mat_in[0] if isinstance(mat_in, list) else mat_in)
     preload_loads = []
+    joints = []
     for i, f in enumerate(fs):
         label = f"fasteners[{i}]"
         fid = f.get("id") or f"fastener-{i}"
@@ -143,6 +144,7 @@ def expand_fasteners(d: dict) -> dict:
                 area = 0.25 * np.pi * (head ** 2 - hole ** 2)
                 p = 0.25 * mat.strength * area
             if p > 0:
+                joints.append({"id": fid, "preload": p, "area": 0.25 * np.pi * (head ** 2 - hole ** 2)})
                 preload_loads.append({"region": f"{fid}-seat", "force": (a * p).tolist()})
                 preload_loads.append({"region": far, "force": (-a * p).tolist()})
     d["preserve"] = preserve
@@ -152,4 +154,6 @@ def expand_fasteners(d: dict) -> dict:
         cases.append({"name": "preload", "loads": preload_loads})
         d["loadCases"] = cases
     d.pop("fasteners")
+    # for the durability check's preload relaxation (spec pops it)
+    d["_joints"] = joints
     return d

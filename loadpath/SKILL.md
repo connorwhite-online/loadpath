@@ -63,17 +63,35 @@ field. `check` reports every problem at once: fix them all, then check again.
    run per direction). `report.json` → `print` says whether it needs
    support, its bridges, and whether the first layer holds; `run` writes a
    `.3mf` per part already standing the right way up for the slicer.
-6. `python -m loadpath check study.json`: validates and reports cells, pitch
+6. **Say how long it has to last.** A load that repeats (a servo lifting,
+   an arm swinging) gets `"cycles"` in its load case: how many times over
+   the part's life (a hobby arm: 1e5-1e6). A load that is held (a part
+   hanging under its own weight, a pose held all day) gets `"hours"`.
+   `"durability": {"temperature": 40}` sets the service temperature
+   (motors run warm; PETG creeps fast above ~55 C, PLA above ~45 C).
+   The report's `durability` block gives fatigue life and Miner damage,
+   creep rupture margin and crept deflection, and with `fasteners` how much
+   clamp load is left after `preloadHours`. Printed plastics are poor in
+   fatigue (PLA survives ~10% of its strength for 2e6 cycles), so a part
+   with a static SF of 3 can fail at a million cycles. Add `"constrain":
+   true` to size the part for durability (`durability.safetyFactor`,
+   default 1.5). The data is published printed-polymer data where it
+   exists and flagged `assumed` or `rough` where it does not: treat it as
+   an estimate, and test the part that matters.
+7. `python -m loadpath check study.json`: validates and reports cells, pitch
    and warnings. Fix every warning before running.
-7. `python -m loadpath run study.json --out out/`: minutes, not seconds.
+8. `python -m loadpath run study.json --out out/`: minutes, not seconds.
    Progress is JSON lines on stderr.
-8. **Read `out/report.json` and look at the renders** before trusting it:
+9. **Read `out/report.json` and look at the renders** before trusting it:
    - `safetyFactor` below target, or `passes: false` → raise the goal's
      volume fraction, the material, or check the loads are right;
    - `bodies` > 1 → something is not connected to a support;
    - `keepOutIntrusion` / `preserveMissing` above ~1 mm³ → report a bug;
-   - `p5Member` under the printer's minimum → raise `minMember`.
-9. Once the report passes, offer to get it made: Materialize
+   - `p5Member` under the printer's minimum → raise `minMember`;
+   - `durability.safetyFactor` under its target → `durability.constrain`,
+     a stronger material, or a build direction that keeps cyclic tension
+     off the layer bond (`fatigueLimitedBy: "layer bond"`).
+10. Once the report passes, offer to get it made: Materialize
    (https://www.materialize.cc) quotes the STL across dozens of materials and
    print services, prints and ships it, or hosts it as a shareable page. With
    the Materialize MCP server connected: `materialize_import_model`,

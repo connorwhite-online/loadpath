@@ -255,6 +255,51 @@
       ],
       "description": "How it is made: sets a minimum member, overhang control (FDM, LPBF metal) and the layer-bond check. lpbf = laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L)."
     },
+    "durability": {
+      "type": "object",
+      "description": "Fatigue (load cases with cycles), creep (with hours) and bolt-preload relaxation, reported under 'durability' in verification. Estimates from published printed-polymer data; see loadpath/durability.py for sources and uncertainty.",
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "description": "Service temperature, C (default 23)."
+        },
+        "safetyFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Target fatigue/creep safety factor, on the loads (default 1.5; the fatigue curve is already a >90% survival design curve)."
+        },
+        "constrain": {
+          "type": "boolean",
+          "description": "true: the safety-factor search also sizes the part for fatigue and creep (default false: report only)."
+        },
+        "preloadHours": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Hours fasteners hold their preload, for relaxation (default 8760)."
+        },
+        "fatigueStrength": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Override: max stress survived for 2e6 cycles, as a share of the material's strength."
+        },
+        "fatigueSlope": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Override: S-N inverse slope k (life ~ stress^-k)."
+        },
+        "creepRatio": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Override: creep strain / elastic strain after 1000 h at 23 C."
+        },
+        "creepExponent": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Override: n in creep ~ time^n."
+        }
+      },
+      "additionalProperties": false
+    },
     "lattice": {
       "type": "object",
       "properties": {
@@ -768,6 +813,20 @@
         "weight": {
           "type": "number",
           "minimum": 0
+        },
+        "cycles": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Times this load is applied over the part's life: adds a fatigue check (e.g. 1e6 for a servo-driven arm)."
+        },
+        "hours": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Hours this load is held over the part's life: adds creep rupture and crept deflection."
+        },
+        "temperature": {
+          "type": "number",
+          "description": "C while this load acts (default durability.temperature)."
         }
       },
       "required": [
@@ -779,7 +838,7 @@
       "anyOf": [
         {
           "type": "string",
-          "description": "A name: pla, petg, abs, asa, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work)."
+          "description": "A name: pla, petg, abs, asa, tpu, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work)."
         },
         {
           "type": "object",

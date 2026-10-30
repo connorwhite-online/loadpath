@@ -82,6 +82,11 @@ class LoadCase:
     name: str
     loads: list[Load]
     weight: float = 1.0
+    # durability (durability.py): times applied over the part's life
+    # (fatigue), hours held (creep), and the temperature then (C)
+    cycles: float | None = None
+    hours: float | None = None
+    temperature: float | None = None
 
 
 @dataclass
@@ -220,6 +225,10 @@ class Study:
     process: Process | None = None
     # (region id, thickness mm) of every wall and skin pinned solid
     shells: list = field(default_factory=list)
+    # fatigue / creep settings (durability.Durability), and each fastener's
+    # preload and head bearing area for the relaxation check
+    durability: Any = None
+    joints: list = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -323,6 +332,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError("study must be a JSON object")
     from .fasteners import expand_fasteners
     d = expand_fasteners(d)
+    joints = d.pop("_joints", []) if isinstance(d.get("_joints"), list) else []
     ds = d.get("designSpace")
     if isinstance(ds, dict):
         ds = [ds]
@@ -387,7 +397,18 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             loads.append(Load(region, shape, f, m, dist))
         if not loads:
             raise ValueError(f"loadCases[{ci}] has no loads")
-        cases.append(LoadCase(str(c.get("name") or f"case-{ci}"), loads, float(c.get("weight", 1.0))))
+        life = {}
+        for key in ("cycles", "hours"):
+            if c.get(key) is not None:
+                v = c[key]
+                if not isinstance(v, (int, float)) or not np.isfinite(v) or v <= 0:
+                    raise ValueError(f"loadCases[{ci}].{key} must be a positive number "
+                                     + ("(load cycles over the part's life)" if key == "cycles" else
+                                        "(hours the load is held over the part's life)"))
+                life[key] = float(v)
+        if c.get("temperature") is not None:
+            life["temperature"] = float(c["temperature"])
+        cases.append(LoadCase(str(c.get("name") or f"case-{ci}"), loads, float(c.get("weight", 1.0)), **life))
     if not cases:
         raise ValueError("at least one load case is required (loadCases: [{name, loads}])")
     pressurized = {ld.region for c in cases for ld in c.loads if ld.pressure}
@@ -487,6 +508,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             raise ValueError("region id 'skin' is taken; it names the design space's skin")
         preserve.append(Region("skin", shape))
         shells.append(("skin", t))
+    from .durability import durability_from_spec
+    durability = durability_from_spec(d.get("durability"))
     return Study(
         name=str(d.get("name") or "study"),
         design_space=design_space,
@@ -507,5 +530,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         extrusion=_extrusion_axis(d.get("extrusion")),
         process=process,
         shells=shells,
+        durability=durability,
+        joints=joints,
         raw=d,
     )

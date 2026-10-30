@@ -154,12 +154,18 @@ _LOAD_CASE = {
     "type": "object",
     "properties": {"name": {"type": "string"},
                    "loads": {"type": "array", "items": {"$ref": "#/$defs/load"}, "minItems": 1},
-                   "weight": {"type": "number", "minimum": 0}},
+                   "weight": {"type": "number", "minimum": 0},
+                   "cycles": {**_POS, "description": "Times this load is applied over the part's life: adds a "
+                                                     "fatigue check (e.g. 1e6 for a servo-driven arm)."},
+                   "hours": {**_POS, "description": "Hours this load is held over the part's life: adds creep "
+                                                    "rupture and crept deflection."},
+                   "temperature": {"type": "number",
+                                   "description": "C while this load acts (default durability.temperature)."}},
     "required": ["loads"],
     "additionalProperties": False,
 }
 
-_MATERIAL_NAMES = ["pla", "petg", "abs", "asa", "pa-cf", "pa12", "pa11", "resin", "resin-tough",
+_MATERIAL_NAMES = ["pla", "petg", "abs", "asa", "tpu", "pa-cf", "pa12", "pa11", "resin", "resin-tough",
                    "alsi10mg", "ti64", "316l"]
 _CUSTOM_MATERIAL = {
     "type": "object",
@@ -208,6 +214,28 @@ _GOAL = {
                      "description": "Extra fixed volume fractions for a trade-off gallery."},
     },
     "x-requireOne": [["volumeFraction"], ["safetyFactor"], ["maxDeflection"]],
+    "additionalProperties": False,
+}
+
+_DURABILITY = {
+    "type": "object",
+    "description": "Fatigue (load cases with cycles), creep (with hours) and bolt-preload relaxation, reported "
+                   "under 'durability' in verification. Estimates from published printed-polymer data; see "
+                   "loadpath/durability.py for sources and uncertainty.",
+    "properties": {
+        "temperature": {"type": "number", "description": "Service temperature, C (default 23)."},
+        "safetyFactor": {**_POS, "description": "Target fatigue/creep safety factor, on the loads (default 1.5; "
+                                                "the fatigue curve is already a >90% survival design curve)."},
+        "constrain": {"type": "boolean", "description": "true: the safety-factor search also sizes the part for "
+                                                        "fatigue and creep (default false: report only)."},
+        "preloadHours": {**_POS, "description": "Hours fasteners hold their preload, for relaxation (default 8760)."},
+        "fatigueStrength": {**_POS, "description": "Override: max stress survived for 2e6 cycles, as a share of "
+                                                   "the material's strength."},
+        "fatigueSlope": {**_POS, "description": "Override: S-N inverse slope k (life ~ stress^-k)."},
+        "creepRatio": {"type": "number", "minimum": 0,
+                       "description": "Override: creep strain / elastic strain after 1000 h at 23 C."},
+        "creepExponent": {**_POS, "description": "Override: n in creep ~ time^n."},
+    },
     "additionalProperties": False,
 }
 
@@ -303,6 +331,7 @@ STUDY_SCHEMA = {
         "extrusion": {"type": "string", "pattern": "^[+-]?[xyz]$",
                       "description": "The part is a profile extruded along this axis (cut from plate)."},
         "process": _PROCESS,
+        "durability": _DURABILITY,
         "lattice": {"type": "object", "properties": _LATTICE_PROPS, "additionalProperties": False,
                     "description": "Optional: fill the delivered part with a stress-graded TPMS lattice."},
         "expect": {"type": "object", "description": "Eval-only pass criteria (loadpath.evals)."},

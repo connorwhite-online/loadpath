@@ -10,6 +10,8 @@ load case, and measures geometry with exact booleans:
 - peak von Mises stress per load case and the safety factor against the
   material's strength;
 - deflection at the loads;
+- fatigue life, creep and bolt-preload relaxation for load cases that
+  repeat or are held (durability.py);
 - keep-out intrusion and preserve loss (mm^3, from booleans: both should be
   zero to rounding);
 - body count and thinnest member.
@@ -661,6 +663,10 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     report["cases"] = cases
     report["safetyFactor"] = worst_sf
     report["stressAllowance"] = STRESS_ALLOWANCE
+    from .durability import active, assess
+    if active(study):
+        # fatigue (cases with cycles), creep and relaxation (hours, preload)
+        report["durability"] = assess(study, cases, STRESS_ALLOWANCE)
     report["analysisCells"] = int(hm.n_elem)
     report["seconds"] = time.time() - t0
     return report

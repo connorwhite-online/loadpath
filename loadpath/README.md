@@ -26,6 +26,13 @@ code can be read:
   is sliced like a slicer would (`printcheck.py`: bridges up to 15 mm are
   fine, mid-air islands, support volume, bed contact and tipping) and written
   as a 3MF standing the way it was designed to print (`threemf.py`).
+- **Durability for printed plastics** (`durability.py`): load cases with
+  `cycles` get a fatigue life (Ezeh and Susmel's design curve for printed
+  PLA, max stress in the cycle, Miner's rule across cases, the layer bond
+  checked in fatigue too), cases with `hours` get creep rupture and crept
+  deflection, and fasteners report how much preload relaxes away, all at the
+  service temperature through the modulus-retention tables. Optional
+  `durability.constrain` sizes the part for them.
 - **Minimum member size** that actually holds: stiffness is credited to the
   eroded design and the delivered part is the opened one (robust
   formulation), so no sub-minimum skins or webs.
@@ -147,8 +154,9 @@ underneath, for anything else (`add_part` with fields, `add_overlay`,
 | `fasteners` | Optional bolted joints as interfaces: `{id, size: "M5", seat, direction, grip, end: "face"\|"thread"\|"none", headOn: "this"\|"mating"}`. A screw driven from the mating part into this one is `headOn: "mating", end: "thread"`. Adds a seat ring and a face ring or thread sleeve (preserve), the bore and the head and driver path (keep-outs, `<id>-bore`, `<id>-head`), and a self-balanced `preload` case, so the optimizer grows the clamp path instead of keeping a solid boss. See `fasteners.py`. |
 | `supports` | Where the part is held: a region id or an inline shape, with `fix` = `"all"` (default), axes like `"xz"`, or three booleans. Optional when every load is a pressure on a sealed cavity. |
 | `skin` | Optional skin-and-rib: `1.2` or `{thickness: 1.2, open: ["-z"]}` keeps that many mm of the design space's outer surface as a solid wall (except on the `open` faces) and designs only what is behind it, so the optimizer grows ribs under a skin instead of a free-form part. |
-| `loadCases` | Each a list of forces (N) on regions. The optimizer stiffens for all cases together; verification reports each. |
-| `material` | A name (`pla`, `petg`, `abs`, `asa`, `pa-cf`, `pa12`, `pa11`, `resin`, `resin-tough`, `alsi10mg`, `ti64`, `316l`) or `{E, nu, strength, density}`. A list solves the goal for each and pools the outcomes. |
+| `loadCases` | Each a list of forces (N) on regions. The optimizer stiffens for all cases together; verification reports each. Optional `cycles` (times applied over the part's life: fatigue), `hours` (time held: creep) and `temperature` (C). |
+| `durability` | Optional `{temperature, safetyFactor, constrain, preloadHours, fatigueStrength, fatigueSlope, creepRatio, creepExponent}`: the service temperature (default 23 C), the fatigue/creep safety factor target (default 1.5), whether the safety-factor search sizes for it (default false), how long fasteners hold preload (default 8760 h), and overrides for the material's durability data. See `durability.py` for sources. |
+| `material` | A name (`pla`, `petg`, `abs`, `asa`, `tpu`, `pa-cf`, `pa12`, `pa11`, `resin`, `resin-tough`, `alsi10mg`, `ti64`, `316l`) or `{E, nu, strength, density}`. A list solves the goal for each and pools the outcomes. |
 | `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space. `{"safetyFactor": 3}` and/or `{"maxDeflection": 0.5}` (mm, at the loads) search for the lightest part that meets them in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. `"method": "constrained"` (experimental) minimizes mass with the limits as MMA constraints instead of searching over volume fractions. |
 | `extrusion` | Optional axis (`x`, `y`, `z`): the part is a profile extruded along it, cuttable from plate (waterjet, laser, 2.5-axis milling). |
 | `gravity` | Optional `[gx, gy, gz]` in m/s²: the part's own weight in every load case. |
@@ -209,6 +217,14 @@ about. The tetrahedral cross-check does not apply pressure yet.
   add, `bridges` and `maxBridgeSpan`, `islands` (starts in mid-air),
   `bed` (`contactArea`, `feet`, `smallestFoot`, `comMargin` = how far the
   centre of mass sits inside the contact, `aspect`), and `warnings`.
+- `durability` (when a case has `cycles` or `hours`, or the study has a
+  `durability` block): per case the fatigue `life` and Miner `damage`
+  (and `interlayerLife` across layers), or the `ruptureStrength`,
+  `creepRatio` and `creepDeflection` of a held load; `fatigueSafetyFactor`
+  (the factor on the cyclic loads that uses up the life), `creepSafetyFactor`,
+  their minimum `safetyFactor`, `fatigueLimitedBy`, `joints` (each fastener's
+  `preloadRetention` and head `bearingSafetyFactor`), the material data used
+  with its source and quality, and `warnings`.
 - `python -m loadpath orient part.stl [--study s.json] [--3mf part.3mf]`
   ranks build orientations of any mesh (the axes and its own flat faces) by
   layer-bond safety under the study's loads, support and bed risk.
@@ -229,8 +245,13 @@ MIT.
 
 - Linear elastic, small deflection. Printed layers are modelled as
   transversely isotropic stiffness plus a tension-across-layers strength
-  check; interlayer shear is not checked separately. No buckling, fatigue or
-  contact.
+  check; interlayer shear is not checked separately. Buckling is in
+  nonlinear.py; no contact.
+- Fatigue and creep are estimates: one published design curve for printed
+  PLA, scaled by strength for PETG, ABS and ASA; rough values for TPU,
+  resins and metals; creep from typical creep-modulus data, warmed through
+  the modulus-retention tables. No frequency (self-heating), moisture or
+  variable-amplitude counting beyond Miner's rule.
 - Overhang control is the 45° stencil on the voxel grid; off-axis directions
   use the 26-neighbour cells within 45° of straight down, which is coarser.
   Bridges are recognized by the print check, not designed for.

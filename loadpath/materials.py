@@ -39,6 +39,9 @@ MATERIALS = {m.name: m for m in [
     Material("petg", 2000, 0.38, 45, 1.27, "FDM, in-plane"),
     Material("abs", 2100, 0.35, 35, 1.04, "FDM, in-plane"),
     Material("asa", 2000, 0.35, 40, 1.07, "FDM, in-plane"),
+    # 95A: linear analysis holds only to a few percent strain; flexures
+    # want verify_nonlinear (nonlinear.py)
+    Material("tpu", 26, 0.45, 26, 1.21, "FDM TPU 95A, small strains only"),
     Material("pa-cf", 4500, 0.35, 70, 1.15, "FDM carbon-filled nylon, in-plane"),
     Material("pa12", 1800, 0.39, 48, 1.01, "SLS/MJF"),
     Material("pa11", 1600, 0.39, 48, 1.05, "SLS/MJF"),
@@ -53,6 +56,7 @@ _ALIASES = {
     "nylon": "pa12", "pa": "pa12", "pa 12": "pa12", "pa-12": "pa12",
     "aluminium": "alsi10mg", "aluminum": "alsi10mg", "titanium": "ti64",
     "stainless": "316l", "steel": "316l", "carbon nylon": "pa-cf",
+    "tpu95a": "tpu", "tpu 95a": "tpu", "flex": "tpu",
 }
 
 
