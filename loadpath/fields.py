@@ -524,6 +524,100 @@ def _smin(a, b, k):
     return np.where(hard, np.minimum(a, b), s)
 
 
+# ---- groups: reusable sub-graphs ---------------------------------------------------
+
+_REF_KEYS = ("input", "value", "thickness", "distance", "blend", "cell", "density", "offset")
+
+
+def _rename_spec(spec, names):
+    """A copy of a node spec with every reference in `names` (old -> new)
+    renamed: field parameters, inputs, vars, an analyzed part, expr text,
+    and inline nodes inside them."""
+    import re
+
+    s = json.loads(json.dumps(spec))
+
+    def ref(v):
+        if isinstance(v, str):
+            return names.get(v, v)
+        if isinstance(v, dict) and "op" in v:
+            return _rename_spec(v, names)
+        return v
+
+    for k in _REF_KEYS:
+        if k in s and not (s.get("op") == "constant" and k == "value"):
+            s[k] = ref(s[k])
+    if isinstance(s.get("inputs"), list):
+        s["inputs"] = [ref(v) for v in s["inputs"]]
+    elif s.get("op") == "group" and isinstance(s.get("inputs"), dict):
+        s["inputs"] = {k: ref(v) for k, v in s["inputs"].items()}
+    if isinstance(s.get("vars"), dict):
+        s["vars"] = {k: ref(v) for k, v in s["vars"].items()}
+    if s.get("op") == "result" and isinstance(s.get("part"), str):
+        s["part"] = names.get(s["part"], s["part"])
+    if s.get("op") == "expr" and isinstance(s.get("expr"), str):
+        # names the expr reads directly (not through vars) follow too, as vars so any name works
+        used = {m for m in re.findall(r"[A-Za-z_]\w*", s["expr"]) if m in names}
+        for m in used:
+            s.setdefault("vars", {})
+            if m not in s["vars"]:
+                s["vars"][m] = names[m]
+    return s
+
+
+def expand_groups(doc, _depth=0):
+    """The graph with every `group` node replaced by a copy of its
+    definition from `groups`: the group's nodes come in as
+    <instance>__<node>, its params as constant nodes <instance>__<param>
+    (the instance's own values over the definition's defaults), its inputs
+    are the instance's nodes, and the group's output takes the instance's
+    name, so the rest of the graph refers to it as before. Groups may use
+    groups (eight deep)."""
+    nodes = doc.get("nodes")
+    if not isinstance(nodes, dict) or not any(isinstance(v, dict) and v.get("op") == "group" for v in nodes.values()):
+        return doc
+    if _depth > 8:
+        raise ValueError("groups nest more than eight deep (does a group use itself?)")
+    groups = doc.get("groups") or {}
+    out = {}
+    for name, spec in nodes.items():
+        if not (isinstance(spec, dict) and spec.get("op") == "group"):
+            out[name] = spec
+            continue
+        gname = spec.get("group")
+        if gname not in groups:
+            raise ValueError(f"node {name!r}: no group {gname!r} (have {', '.join(groups) or 'none'})")
+        g = groups[gname]
+        gnodes = g.get("nodes") or {}
+        if not gnodes:
+            raise ValueError(f"group {gname!r} has no nodes")
+        gout = g.get("output") or list(gnodes)[-1]
+        if gout not in gnodes:
+            raise ValueError(f"group {gname!r}: output {gout!r} is not one of its nodes")
+        params = {**(g.get("params") or {}), **(spec.get("params") or {})}
+        unknown = set(spec.get("params") or {}) - set(g.get("params") or {})
+        if unknown:
+            raise ValueError(f"node {name!r}: group {gname!r} has no param {sorted(unknown)[0]!r} "
+                             f"(has {', '.join(g.get('params') or {}) or 'none'})")
+        given = spec.get("inputs") or {}
+        missing = [i for i in g.get("inputs") or [] if i not in given]
+        if missing:
+            raise ValueError(f"node {name!r}: group {gname!r} needs input {missing[0]!r}")
+        extra = set(given) - set(g.get("inputs") or [])
+        if extra:
+            raise ValueError(f"node {name!r}: group {gname!r} has no input {sorted(extra)[0]!r}")
+        names = {n: (name if n == gout else f"{name}__{n}") for n in gnodes}
+        names.update({p: f"{name}__{p}" for p in params})
+        names.update({i: given[i] for i in g.get("inputs") or []})
+        for p, v in params.items():
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ValueError(f"node {name!r}: param {p!r} must be a number")
+            out[f"{name}__{p}"] = {"op": "constant", "value": float(v)}
+        for n, ns in gnodes.items():
+            out[names[n]] = _rename_spec(ns, names)
+    return expand_groups({**doc, "nodes": out}, _depth + 1)
+
+
 # ---- the graph -----------------------------------------------------------------
 
 @dataclass
@@ -550,6 +644,7 @@ class FieldGraph:
             doc = json.loads(doc)
         if not isinstance(doc, dict) or not isinstance(doc.get("nodes"), dict) or not doc["nodes"]:
             raise ValueError("a field graph needs a non-empty 'nodes' object")
+        doc = expand_groups(doc)
         self.doc = doc
         self.base_dir = base_dir
         self.sources = dict(sources or {})

@@ -75,7 +75,13 @@ ALL_OPS = {
     "output": "all",
     "mesh": {"pitch": 1.0},
     "material": "petg",
+    "groups": {"rib": {"description": "a bar fused onto a base", "params": {"w": 1.2}, "inputs": ["base"],
+                       "nodes": {"bar": {"op": "shape", "shape": {"type": "box", "min": [-15, -2, 8], "max": [15, 2, 12]}},
+                                 "barS": {"op": "offset", "input": "bar", "distance": "w"},
+                                 "out": {"op": "union", "inputs": ["base", "barS"], "blend": 0.5}},
+                       "output": "out"}},
 }
+ALL_OPS["nodes"]["ribbed"] = {"op": "group", "group": "rib", "params": {"w": 0.8}, "inputs": {"base": "ball"}}
 
 
 def _workdir():
@@ -391,6 +397,15 @@ const [page_, threeDir] = process.argv.slice(2);
     const d = E.doc();
     return { ok, dup, names: Object.keys(d.nodes), sa2: d.nodes.sa2, both2: d.nodes[dup[0]], probe: E.probe("sa2", [[0, 30, 3.8]])[0] };
   });
+  out.group = await page.evaluate(() => {
+    const E = window.lpEditor, pts = [[15, 0, 9.5], [15, 0, 11], [16, 3, 0], [-15, 0, 10]];
+    const before = E.probe("both", pts);
+    const g = E.makeGroup("sb", "shellGroup");
+    const d1 = E.doc(), mid = E.probe("both", pts);
+    E.ungroup("sb");
+    const d2 = E.doc(), after = E.probe("both", pts);
+    return { g, before, mid, after, def: d1.groups && d1.groups[g], inst: d1.nodes.sb, back: Object.keys(d2.nodes).filter((n) => n.startsWith("sb")) };
+  });
   out.sweep = await page.evaluate(async () => {
     const pts = await window.lpEditor.sweep("nodes/sb/thickness", 5);
     return { pts, after: window.lpEditor.doc().nodes.sb.thickness, chart: !document.querySelector("#sweep-chart").hidden };
@@ -439,6 +454,12 @@ def test_overlays_paste_and_sweep():
     assert p["sa2"] == {"op": "shell", "input": "a2", "thickness": "k"}, p["sa2"]
     assert p["dup"] == ["both2"] and p["both2"]["inputs"] == ["sa", "sb"], p
     assert abs(p["probe"] - (-0.2)) < 1e-4, p["probe"]       # the pasted shell is live: 0.4 mm wall at r 3.8
+    # make group: sb and the sphere only it uses become a group with no inputs; the field does not change,
+    # nor after ungrouping
+    gr = out["group"]
+    assert gr["g"] == "shellGroup" and set(gr["def"]["nodes"]) == {"sb", "b"} and gr["inst"] == {"op": "group", "group": "shellGroup"}, gr
+    assert np.allclose(gr["before"], gr["mid"], atol=1e-5) and np.allclose(gr["before"], gr["after"], atol=1e-5), gr
+    assert set(gr["back"]) == {"sb", "sb__b"}, gr["back"]
     # a sweep: the 10 mm sphere's shell from 0 to 6 mm thick gains volume all the way, and the value is put back
     sw = out["sweep"]
     vols = [v for _, v in sw["pts"]]

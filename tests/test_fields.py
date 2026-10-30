@@ -357,9 +357,44 @@ def test_mesh_field_far_from_its_grid():
     assert abs(v - 4 / 3 * np.pi * 15 ** 3) < 0.02 * 4 / 3 * np.pi * 15 ** 3, v
 
 
+def test_groups_are_copied_with_their_own_knobs():
+    """A group is a sub-graph copied per instance: its params are the
+    instance's (else the defaults), its inputs the instance's nodes, its
+    output answers to the instance's name; groups can use groups; mistakes
+    are named."""
+    rib = {"params": {"w": 1.0}, "inputs": ["base"],
+           "nodes": {"bar": {"op": "shape", "shape": {"type": "box", "min": [-5, -1, 4], "max": [5, 1, 6]}},
+                     "grown": {"op": "offset", "input": "bar", "distance": "w"},
+                     "out": {"op": "union", "inputs": ["base", "grown"]}}}
+    twice = {"inputs": ["base"], "nodes": {"one": {"op": "group", "group": "rib", "inputs": {"base": "base"}},
+                                           "two": {"op": "group", "group": "rib", "params": {"w": 2.0},
+                                                   "inputs": {"base": "one"}}}}
+    doc = {"groups": {"rib": rib, "twice": twice},
+           "nodes": {"ball": {"op": "shape", "shape": {"type": "sphere", "center": [0, 0, -30], "r": 2}},
+                     "a": {"op": "group", "group": "rib", "params": {"w": 0.5}, "inputs": {"base": "ball"}},
+                     "b": {"op": "group", "group": "twice", "inputs": {"base": "ball"}}}, "output": "b"}
+    g = FieldGraph(doc)
+    P = np.array([[0.0, 1.4, 5.0], [0.0, 2.6, 5.0], [0.0, 3.4, 5.0]])
+    # the bar's side is at y = 1: grown by 0.5 (a), by 2 (b's outer copy)
+    assert np.allclose(g.evaluate(P, "a")[:1], -0.1, atol=1e-6) and g.evaluate(P, "a")[1] > 0
+    assert np.allclose(g.evaluate(P, "b"), [-1.6, -0.4, 0.4], atol=1e-6)
+    assert {"a__bar", "a__w", "b__one", "b__one__bar", "b__bar"} <= set(g.nodes)
+    assert not lint(doc, "field")
+    for bad, msg in ((({"p": 1}, None), "has no param 'p'"), ((None, {}), "needs input 'base'")):
+        d = json.loads(json.dumps(doc))
+        if bad[0] is not None:
+            d["nodes"]["a"]["params"] = bad[0]
+        if bad[1] is not None:
+            d["nodes"]["a"]["inputs"] = bad[1]
+        assert any(msg in i["message"] for i in lint(d, "field")), lint(d, "field")
+    d = json.loads(json.dumps(doc))
+    d["groups"]["rib"]["nodes"]["out"] = {"op": "group", "group": "rib", "inputs": {"base": "base"}}
+    assert any("eight deep" in i["message"] for i in lint(d, "field"))
+
+
 TESTS = [test_shell_volume_and_projection, test_variable_shell_follows_its_field,
          test_variable_blend_is_a_bigger_fillet_where_asked, test_graded_lattice_stays_one_body, test_cell_warp_period_follows_the_field,
-         test_mesh_field_is_exact_near_the_surface, test_mesh_field_far_from_its_grid,
+         test_mesh_field_is_exact_near_the_surface, test_mesh_field_far_from_its_grid, test_groups_are_copied_with_their_own_knobs,
          test_samples_on_a_grid_interpolate_exactly,
          test_result_node_from_verify_fields, test_expressions_are_whitelisted, test_graph_errors_and_lint,
          test_unbounded_lattice_asks_for_bounds, test_cli_writes_part_and_report, test_mcp_field_job,

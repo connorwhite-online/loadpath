@@ -131,10 +131,42 @@ back at once with suggestions.
 | `offset` | grow or shrink | `input`, `distance` |
 | `lattice` | gyroid, diamond or Schwarz P; sheet or network; cartesian or cylindrical frame | `cell`, `thickness` or `density`, `offset` |
 | `transform` | translate, rotate, scale an input | `input` |
+| `group` | a copy of a sub-graph from `groups` with its own `params` and `inputs` (see Groups) | |
 
 `expr` knows `abs sqrt exp log sin cos tan floor ceil sign min max clamp
 lerp smoothstep step where`, comparisons and `a if c else b`; nothing else
 (no attributes, no imports).
+
+## Groups
+
+A group is a sub-graph you use more than once, like nTop's custom blocks: a
+boss, a rib, a lattice infill recipe. Define it once under `groups`, with
+the knobs it takes (`params`, with defaults) and the nodes it needs from
+the graph (`inputs`); then each `group` node is a copy with its own
+values:
+
+```json
+"groups": {
+  "boss": {"params": {"r": 2, "t": 1.5}, "inputs": ["body"],
+           "nodes": {"ring": {"op": "shape", "shape": {"type": "tube", "center": [0, 0, 0], "axis": "z",
+                                                       "length": 10, "r": 8, "rInner": 4}},
+                     "wall": {"op": "shell", "input": "ring", "thickness": "t"},
+                     "out":  {"op": "union", "inputs": ["body", "wall"], "blend": "r"}},
+           "output": "out"}},
+"nodes": {
+  "plate": {"op": "shape", "shape": {"type": "box", "min": [-20, -20, -2], "max": [20, 20, 2]}},
+  "b1": {"op": "group", "group": "boss", "params": {"t": 1.0}, "inputs": {"body": "plate"}}
+}
+```
+
+Inside the group, params and inputs are referred to by name like any
+node. A copy stands for the group's output, so other nodes use `b1` as
+usual; its nodes come in as `b1__ring`, `b1__wall` (what `report.json` and
+errors call them). Groups can use groups. In the editor, **make group** on
+a node turns it and everything only it uses into a group (its constants
+become knobs, what it shares with the rest of the graph its inputs), and
+**ungroup** puts a copy's nodes back. A copy's knobs are sliders that move
+the preview without recompiling.
 
 ## What the field-driven operations mean
 

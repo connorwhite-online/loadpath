@@ -659,6 +659,13 @@ _FIELD_OPS = {
                                                                   "center": _VEC3},
                                  "required": ["degrees"], "additionalProperties": False},
                       "scale": _POS}, ["input"]),
+    "group": _op("group", "A copy of a sub-graph from the graph's `groups`, with its own param values and "
+                          "inputs; it stands for the group's output.",
+                 {"group": {"type": "string", "description": "the name of a group in `groups`"},
+                  "params": {"type": "object", "additionalProperties": {"type": "number"},
+                             "description": "param -> value (the group's defaults otherwise)"},
+                  "inputs": {"type": "object", "additionalProperties": {"type": "string"},
+                             "description": "the group's input name -> a node of this graph"}}, ["group"]),
 }
 
 _NODE = {
@@ -681,6 +688,18 @@ FIELD_SCHEMA = {
         "nodes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/node"},
                   "description": "name -> node. Names are what other nodes and expr refer to."},
         "output": {"type": "string", "description": "The node to mesh (default the last)."},
+        "groups": {"type": "object", "description": "name -> a reusable sub-graph that `group` nodes copy",
+                   "additionalProperties": {
+                       "type": "object", "additionalProperties": False, "required": ["nodes"],
+                       "properties": {
+                           "description": {"type": "string"},
+                           "params": {"type": "object", "additionalProperties": {"type": "number"},
+                                      "description": "param -> default; the group's nodes refer to it by name"},
+                           "inputs": {"type": "array", "items": {"type": "string"},
+                                      "description": "names the group's nodes use for nodes the instance gives"},
+                           "nodes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/node"}},
+                           "output": {"type": "string", "description": "the node the group stands for "
+                                                                       "(default the last)"}}}},
         "bounds": {**_BOX, "description": "Meshing box (default: worked out from the output)."},
         "mesh": {"type": "object", "properties": {
             "pitch": {**_POS, "description": "mm grid (default: the box over 4M cells); a third of the "

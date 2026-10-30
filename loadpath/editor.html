@@ -336,6 +336,8 @@ const OPS = {
   constant: { doc: "A number everywhere.", params: [{ k: "value", t: "num", def: 1 }], make: () => ({ value: 1 }) },
   coordinate: { doc: "Position along an axis, mm.", params: [{ k: "axis", t: "axis", def: "z" }, { k: "origin", t: "vec3", opt: true, def: [0, 0, 0] }], make: () => ({ axis: "z" }) },
   distance: { doc: "Unsigned distance to a solid, points, a segment, a plane or a shape.", params: [{ k: "_mode", t: "distance" }], make: () => ({}) },
+  group: { doc: "A copy of one of the graph's groups (reusable sub-graphs) with its own knobs and inputs.",
+    params: [{ k: "group", t: "group" }], make: () => ({ group: Object.keys(S.doc.groups || {})[0] || "" }) },
   remap: { doc: "Map input from [a, b] to [c, d] through a curve.",
     params: [{ k: "input", t: "field", def: 0 }, { k: "from", t: "pair", def: [0, 1] }, { k: "to", t: "pair", def: [0, 1] },
       { k: "curve", t: "curve", def: "linear" },
@@ -465,6 +467,7 @@ function refsOf(spec, nodes) {
   for (const k of FIELD_KEYS) if (typeof spec[k] === "string" && !(spec.op === "constant" && k === "value")) r.push({ key: k, target: spec[k] });
   if (Array.isArray(spec.inputs)) spec.inputs.forEach((v, i) => { if (typeof v === "string") r.push({ key: `inputs.${i}`, target: v }); });
   if (spec.vars && typeof spec.vars === "object") for (const [k, v] of Object.entries(spec.vars)) if (typeof v === "string") r.push({ key: `vars.${k}`, target: v });
+  if (spec.op === "group" && spec.inputs && typeof spec.inputs === "object") for (const [k, v] of Object.entries(spec.inputs)) if (typeof v === "string") r.push({ key: `gin.${k}`, target: v });
   if (spec.op === "expr" && typeof spec.expr === "string") {
     try {
       for (const n of exprNames(parseExpr(spec.expr))) {
@@ -479,7 +482,7 @@ function refsOf(spec, nodes) {
 const depsOf = (name) => refsOf(S.doc.nodes[name], S.doc.nodes).map((r) => r.target).filter((t) => t in S.doc.nodes);
 
 function kindOf(name, seen = new Set()) {
-  const s = S.doc.nodes[name];
+  const s = XN()[name];
   if (!s) return "scalar";
   if (SOLID_OPS.has(s.op)) return "solid";
   if (s.op === "transform") {
@@ -494,6 +497,7 @@ function kindOf(name, seen = new Set()) {
 function validate() {
   const out = [];
   const nodes = S.doc.nodes;
+  for (const e of X().errors) out.push({ node: e.split(":")[0], message: e });
   for (const [name, s] of Object.entries(nodes)) {
     if (!s || typeof s !== "object" || !(s.op in OPS)) { out.push({ node: name, message: `${name}: unknown op ${s && s.op}` }); continue; }
     if (s.op === "expr") { try { parseExpr(String(s.expr || "")); } catch (e) { out.push({ node: name, message: `${name}: ${e.message}` }); } }
@@ -627,12 +631,13 @@ float lp_texsdf(highp sampler3D T, vec3 p, vec3 lo, vec3 hi, vec3 n) { return lp
 }
 
 class Compiler {
-  constructor(doc, bakes) {
-    this.doc = doc; this.nodes = doc.nodes; this.bakes = bakes;
+  constructor(doc, bakes, origin = {}) {
+    this.doc = doc; this.nodes = doc.nodes; this.bakes = bakes; this.origin = origin;
     this.uIndex = new Map(); this.uVals = []; this.ids = new Map();
     this.textures = []; this.notes = new Set(); this.missing = new Set();
   }
   id(name) { if (!this.ids.has(name)) this.ids.set(name, this.ids.size); return this.ids.get(name); }
+  path(name, ...k) { const o = this.origin[name]; return o ? o(k) : ["nodes", name, ...k]; }
   u(path, v) {
     const key = path.join("/");
     if (!this.uIndex.has(key)) { this.uIndex.set(key, this.uVals.length); this.uVals.push(Number(v) || 0); }
@@ -647,7 +652,7 @@ class Compiler {
   // a field parameter: number (a uniform), node name, or absent (default)
   f(name, key, def, ref) {
     const v = this.nodes[name][key];
-    if (typeof v === "number") return this.u(["nodes", name, key], v);
+    if (typeof v === "number") return this.u(this.path(name, key), v);
     if (typeof v === "string") return ref(v);
     return fl(def);
   }
@@ -682,7 +687,7 @@ class Compiler {
   }
   /** GLSL for node `name` at point P; ref(dep) is the GLSL for a dependency at P; fn(dep) the name of its function. */
   expr(name, P, ref, fn) {
-    const s = this.nodes[name], op = s.op, N = (...k) => ["nodes", name, ...k];
+    const s = this.nodes[name], op = s.op, N = (...k) => this.path(name, ...k);
     switch (op) {
       case "constant": return this.u(N("value"), s.value);
       case "coordinate": {
@@ -783,7 +788,7 @@ class Compiler {
           if (n.v === "x" || n.v === "y" || n.v === "z") return `${P}.${n.v}`;
           if (n.v === "pi") return "3.14159265359";
           if (n.v === "e") return "2.71828182846";
-          if (n.v in vars) { const v = vars[n.v]; return typeof v === "number" ? this.u(["nodes", name, "vars", n.v], v) : ref(v); }
+          if (n.v in vars) { const v = vars[n.v]; return typeof v === "number" ? this.u(this.path(name, "vars", n.v), v) : ref(v); }
           return ref(n.v);
         }
         case "un": return n.op === "-" ? `(-${go(n.a)})` : go(n.a);
@@ -850,8 +855,8 @@ class Compiler {
 }
 
 /** Compile the preview (solid + colour) or a probe of one node. */
-function compileGraph(doc, bakes, roots) {
-  const c = new Compiler(doc, bakes);
+function compileGraph(doc, bakes, roots, origin) {
+  const c = new Compiler(doc, bakes, origin);
   const { code, sceneFn } = c.build(Object.values(roots));
   let scenes = "";
   for (const [fnName, root] of Object.entries(roots)) scenes += sceneFn(fnName, root);
@@ -1056,7 +1061,7 @@ function recompile() {
   let comp;
   try {
     const roots = previewRoots();
-    comp = compileGraph(S.doc, S.bakes, roots);
+    comp = compileGraph(X().doc, S.bakes, roots, X().origin);
     const t0 = performance.now();
     const prog = makeProgram(comp.head + PREVIEW_MAIN);
     if (G.prog) gl.deleteProgram(G.prog.p);
@@ -1080,6 +1085,7 @@ function recompile() {
 }
 /** A slider moved: set the uniform if there is one, else it is a structural change. */
 function paramChanged(path) {
+  S._x = null;
   const key = path.join("/");
   if (G.comp && G.comp.uIndex.has(key)) {
     const v = Number(getAt(S.doc, path));
@@ -1209,7 +1215,7 @@ function probe(name, pts) {
   if (!G.ok || !G.floatRT) return null;
   let entry = G.probes.get(name);
   if (!entry) {
-    const comp = compileGraph(S.doc, S.bakes, { scene_probe: name });
+    const comp = compileGraph(X().doc, S.bakes, { scene_probe: name }, X().origin);
     entry = { comp, prog: makeProgram(comp.head + PROBE_MAIN) };
     G.probes.set(name, entry);
   }
@@ -1274,7 +1280,7 @@ function shapeBounds(s) {
   return null;
 }
 function maxOver(name, key, box) {
-  const v = S.doc.nodes[name][key];
+  const v = XN()[name][key];
   if (v == null) return 0;
   if (typeof v === "number") return v;
   if (typeof v !== "string") return 0;
@@ -1284,9 +1290,9 @@ function maxOver(name, key, box) {
   return isFinite(m) ? m * 1.1 : 0;
 }
 function boundsOf(name, seen = new Set()) {
-  if (seen.has(name) || !(name in S.doc.nodes)) return null;
+  if (seen.has(name) || !(name in XN())) return null;
   seen = new Set(seen); seen.add(name);
-  const s = S.doc.nodes[name];
+  const s = XN()[name];
   if (s.bounds) return [s.bounds.min, s.bounds.max];
   const sub = () => (s.inputs || []).map((x) => typeof x === "string" ? boundsOf(x, seen) : null);
   switch (s.op) {
@@ -1645,6 +1651,7 @@ function setMode(m) {
 
 function getAt(o, path) { for (const k of path) { if (o == null) return undefined; o = o[k]; } return o; }
 function setAt(o, path, v) {
+  if (o === S.doc) S._x = null;
   for (let i = 0; i < path.length - 1; i++) { if (o[path[i]] == null || typeof o[path[i]] !== "object") o[path[i]] = typeof path[i + 1] === "number" ? [] : {}; o = o[path[i]]; }
   if (v === undefined) { if (Array.isArray(o)) o.splice(path[path.length - 1], 1); else delete o[path[path.length - 1]]; }
   else o[path[path.length - 1]] = v;
@@ -1660,9 +1667,9 @@ function commit() {
   lintSoon();
 }
 const commitSoon = debounce(commit, 350);
-function structural() { commit(); recompile(); fillSelects(); inspector(); }
+function structural() { S._x = null; commit(); recompile(); fillSelects(); inspector(); }
 function restore(snapshot) {
-  S.doc = JSON.parse(snapshot); lastCommitted = snapshot;
+  S.doc = JSON.parse(snapshot); lastCommitted = snapshot; S._x = null;
   if (S.sel && !(S.sel in S.doc.nodes)) S.sel = null;
   if (S.target && !(S.target in S.doc.nodes)) S.target = S.doc.output;
   if (S.color && !(S.color in S.doc.nodes)) S.color = null;
@@ -1676,6 +1683,81 @@ function exportDoc() {
   const d = clone(S.doc);
   d.editor = { ...(d.editor || {}), layout: Object.fromEntries(Object.entries(S.layout).filter(([k]) => k in d.nodes).map(([k, v]) => [k, [Math.round(v[0]), Math.round(v[1])]])) };
   return d;
+}
+
+// ---- groups in the inspector ----------------------------------------------------------------------------
+function groupEditor(name, s) {
+  const groups = S.doc.groups || {}, g = groups[s.group];
+  const box = el("div", { class: "sub" });
+  const sel = el("select", { "aria-label": "Group" }, ...Object.keys(groups).map((k) => el("option", { value: k, selected: k === s.group }, k)));
+  sel.addEventListener("change", () => { S.doc.nodes[name] = { op: "group", group: sel.value }; structural(); });
+  box.append(param("group", sel));
+  if (!g) { box.append(el("p", { class: "note warn" }, `No group called "${s.group}".`)); return box; }
+  if (g.description) box.append(el("p", { class: "note" }, g.description));
+  for (const k of g.inputs || []) {
+    const cur = (s.inputs || {})[k];
+    const pick = el("select", { "aria-label": `Input ${k}` }, el("option", { value: "" }, "pick a node…"), ...nodeOptions(cur, (n) => n !== name));
+    pick.addEventListener("change", () => { if (pick.value) connect(name, `gin.${k}`, pick.value); });
+    box.append(param(`input ${k}`, pick));
+  }
+  for (const [p, def] of Object.entries(g.params || {})) {
+    const v = s.params && p in s.params ? s.params[p] : def;
+    box.append(param(p, slider(["nodes", name, "params", p], v)));
+  }
+  const n = Object.keys(g.nodes || {}).length;
+  box.append(el("p", { class: "note" }, `${n} node${n === 1 ? "" : "s"} inside; ${Object.values(S.doc.nodes).filter((x) => x && x.op === "group" && x.group === s.group).length} cop${Object.values(S.doc.nodes).filter((x) => x && x.op === "group" && x.group === s.group).length === 1 ? "y" : "ies"} in this graph. Ungroup to edit them here; the definition is under "groups" in the JSON.`));
+  return box;
+}
+/** Turn `name` and what only it uses into a group (constants inside become its params, nodes it shares with
+ *  the rest of the graph its inputs), and `name` into a copy of it. */
+function makeGroup(name, gname) {
+  const nodes = S.doc.nodes;
+  if (!(name in nodes) || nodes[name].op === "group") return null;
+  const users = {};
+  for (const [n, sp] of Object.entries(nodes)) for (const r of refsOf(sp, nodes)) (users[r.target] = users[r.target] || new Set()).add(n);
+  // upstream of name, keeping a node only when everything that reads it is inside
+  const up = new Set([name]), todo = refsOf(nodes[name], nodes).map((r) => r.target);
+  const inner = new Set([name]);
+  while (todo.length) { const n = todo.pop(); if (up.has(n) || !(n in nodes)) continue; up.add(n); todo.push(...refsOf(nodes[n], nodes).map((r) => r.target)); }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const n of up) if (!inner.has(n) && n !== S.doc.output && [...(users[n] || [])].every((u) => inner.has(u))) { inner.add(n); changed = true; }
+  }
+  const inputs = new Set();
+  for (const n of inner) for (const r of refsOf(nodes[n], nodes)) if (!inner.has(r.target)) inputs.add(r.target);
+  gname = gname || name;
+  let gn = gname, i = 2; S.doc.groups = S.doc.groups || {};
+  while (gn in S.doc.groups) gn = `${gname}${i++}`;
+  const params = {}, gnodes = {};
+  for (const n of Object.keys(nodes)) if (inner.has(n)) {
+    if (n !== name && nodes[n].op === "constant" && typeof nodes[n].value === "number") params[n] = nodes[n].value;
+    else gnodes[n] = clone(nodes[n]);
+  }
+  S.doc.groups[gn] = { nodes: gnodes, output: name, ...(Object.keys(params).length ? { params } : {}), ...(inputs.size ? { inputs: [...inputs] } : {}) };
+  for (const n of inner) if (n !== name) { delete nodes[n]; delete S.layout[n]; }
+  nodes[name] = { op: "group", group: gn, ...(inputs.size ? { inputs: Object.fromEntries([...inputs].map((k) => [k, k])) } : {}) };
+  structural();
+  status(`${name} is now a copy of group ${gn} (${Object.keys(gnodes).length} nodes, ${Object.keys(params).length} params, ${inputs.size} inputs).`, "ok");
+  return gn;
+}
+/** Put a group's nodes back into the graph in place of the copy `name`. */
+function ungroup(name) {
+  const s = S.doc.nodes[name];
+  if (!s || s.op !== "group") return false;
+  const ex = expandGroups({ ...S.doc, nodes: { [name]: s } });
+  if (ex.errors.length) { status(ex.errors[0], "warn"); return false; }
+  const nodes = {};
+  for (const [k, v] of Object.entries(S.doc.nodes)) {
+    if (k !== name) { nodes[k] = v; continue; }
+    for (const [n, sp] of Object.entries(ex.doc.nodes)) if (n !== name) nodes[n] = sp;
+    nodes[name] = ex.doc.nodes[name];
+  }
+  const at = S.layout[name] || [0, 0];
+  Object.keys(ex.doc.nodes).forEach((n, i) => { if (n !== name) S.layout[n] = [at[0] - 214, at[1] + 40 * i]; });
+  S.doc.nodes = nodes;
+  structural();
+  return true;
 }
 
 // ---- the remap curve editor ----------------------------------------------------------------------------
@@ -1744,10 +1826,68 @@ function curveEditor(path, s) {
   }
   return el("div", { class: "curve-ed" }, sel, svg, el("p", { class: "note" }, drawn ? "Drag a point; click to add one, double-click to remove it." : "Pick “drawn” to shape the curve by hand."));
 }
+// ---- groups: reusable sub-graphs, expanded as fields.py expands them --------------------------------------
+/** A spec with references renamed (old -> new), expr names read directly turned into vars, inline nodes too. */
+function renameSpec(spec, names) {
+  const s = clone(spec);
+  const ref = (v) => typeof v === "string" ? (names[v] ?? v) : v && typeof v === "object" && !Array.isArray(v) && v.op ? renameSpec(v, names) : v;
+  for (const k of FIELD_KEYS) if (k in s && !(s.op === "constant" && k === "value")) s[k] = ref(s[k]);
+  if (Array.isArray(s.inputs)) s.inputs = s.inputs.map(ref);
+  else if (s.op === "group" && s.inputs && typeof s.inputs === "object") for (const k of Object.keys(s.inputs)) s.inputs[k] = ref(s.inputs[k]);
+  if (s.vars && typeof s.vars === "object") for (const k of Object.keys(s.vars)) s.vars[k] = ref(s.vars[k]);
+  if (s.op === "result" && typeof s.part === "string") s.part = names[s.part] ?? s.part;
+  if (s.op === "expr" && typeof s.expr === "string") {
+    for (const m of new Set(s.expr.match(/[A-Za-z_]\w*/g) || [])) if (m in names) { s.vars = s.vars || {}; if (!(m in s.vars)) s.vars[m] = names[m]; }
+  }
+  return s;
+}
+/** {doc, origin, errors}: group nodes replaced by their definitions (<instance>__<node>, params as constants
+ *  <instance>__<param>, the group's output under the instance's name). origin[name](k) is the path in the
+ *  edited doc a value of that node lives at, so a slider inside a group moves the definition's value. */
+function expandGroups(doc) {
+  let nodes = doc.nodes || {};
+  const origin = {}, errors = [], groups = doc.groups || {};
+  for (let depth = 0; depth < 9 && Object.values(nodes).some((v) => v && v.op === "group"); depth++) {
+    const out = {};
+    for (const [name, spec] of Object.entries(nodes)) {
+      if (!spec || spec.op !== "group") { out[name] = spec; continue; }
+      const g = groups[spec.group];
+      if (!g || !g.nodes || !Object.keys(g.nodes).length) { errors.push(`${name}: no group "${spec.group}"`); out[name] = { op: "constant", value: 1e3 }; continue; }
+      const gout = g.output && g.output in g.nodes ? g.output : Object.keys(g.nodes).pop();
+      const params = { ...(g.params || {}), ...(spec.params || {}) }, given = spec.inputs || {};
+      const names = {};
+      for (const n of Object.keys(g.nodes)) names[n] = n === gout ? name : `${name}__${n}`;
+      for (const p of Object.keys(params)) names[p] = `${name}__${p}`;
+      for (const i of g.inputs || []) { if (!(i in given)) errors.push(`${name}: group "${spec.group}" needs input "${i}"`); names[i] = given[i] ?? i; }
+      const instPath = origin[name] ? origin[name]([]) : ["nodes", name];   // an instance inside a group lives in that group
+      for (const [p, v] of Object.entries(params)) {
+        out[`${name}__${p}`] = { op: "constant", value: Number(v) || 0 };
+        const at = spec.params && p in spec.params ? [...instPath, "params", p] : ["groups", spec.group, "params", p];
+        origin[`${name}__${p}`] = (k) => (k[0] === "value" ? at : ["#", name, p, ...k]);
+      }
+      for (const [n, ns] of Object.entries(g.nodes)) {
+        out[names[n]] = renameSpec(ns, names);
+        origin[names[n]] = (k) => ["groups", spec.group, "nodes", n, ...k];
+      }
+    }
+    nodes = out;
+  }
+  return { doc: { ...doc, nodes }, origin, errors };
+}
+function X() {
+  if (!S._x) {
+    const has = Object.values(S.doc.nodes || {}).some((v) => v && v.op === "group");
+    if (has) { const ex = expandGroups(S.doc); S._x = { ...ex, doc: hoist(ex.doc) }; }   // inline nodes inside groups get names too
+    else S._x = { doc: S.doc, origin: {}, errors: [] };
+  }
+  return S._x;
+}
+const XN = () => X().doc.nodes;
 /** Point one node spec's references to `old` at `nu` (fields, inputs, vars, an analyzed part, expr text). */
 function renameRefs(s, old, nu) {
   for (const k of FIELD_KEYS) if (s[k] === old && !(s.op === "constant" && k === "value")) s[k] = nu;
   if (Array.isArray(s.inputs)) s.inputs = s.inputs.map((v) => (v === old ? nu : v));
+  else if (s.op === "group" && s.inputs && typeof s.inputs === "object") for (const k of Object.keys(s.inputs)) if (s.inputs[k] === old) s.inputs[k] = nu;
   if (s.vars) for (const k of Object.keys(s.vars)) if (s.vars[k] === old) s.vars[k] = nu;
   if (s.op === "result" && s.part === old) s.part = nu;
   if (s.op === "expr" && typeof s.expr === "string" && /^[A-Za-z_]\w*$/.test(nu)) s.expr = s.expr.replace(new RegExp(`\\b${old.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")}\\b`, "g"), nu);
@@ -1840,6 +1980,7 @@ function connect(target, key, source) {
   const [k, sub] = key.split(".");
   if (k === "inputs") { spec.inputs = spec.inputs || []; if (sub === "+") spec.inputs.push(source); else spec.inputs[+sub] = source; }
   else if (k === "vars") { spec.vars = spec.vars || {}; spec.vars[sub] = source; }
+  else if (k === "gin") { spec.inputs = spec.inputs && !Array.isArray(spec.inputs) ? spec.inputs : {}; spec.inputs[sub] = source; }
   else if (k === "expr") return;
   else spec[k] = source;
   S.sel = target;
@@ -1852,14 +1993,14 @@ const wantsWarp = (s) => s && s.op === "lattice" && typeof s.cell === "string" &
 /** Every bake the graph needs: a key into S.bakes, its node, and the kind the server bakes. */
 function bakeItems() {
   const out = [];
-  for (const [name, s] of Object.entries(S.doc.nodes)) {
+  for (const [name, s] of Object.entries(XN())) {
     if (BAKED.has(s.op)) out.push({ key: name, node: name, kind: "node" });
     else if (wantsWarp(s)) out.push({ key: `${name}#warp`, node: name, kind: "warp" });
   }
   return out;
 }
 function subtree(out, todo) {
-  const nodes = S.doc.nodes;
+  const nodes = XN();
   while (todo.length) {
     const n = todo.pop();
     if (n in out || !(n in nodes)) continue;
@@ -1870,7 +2011,7 @@ function subtree(out, todo) {
 }
 /** What a bake depends on (editor.py's _closure and _warp_closure): compared with what it was baked from. */
 function closure(item) {
-  const nodes = S.doc.nodes, spec = nodes[item.node];
+  const nodes = XN(), spec = nodes[item.node];
   if (item.kind === "warp") {
     const lat = {};
     for (const k of ["cell", "origin", "bounds", "grading"]) if (k in spec) lat[k] = spec[k];
@@ -1941,6 +2082,10 @@ function ports(name) {
     if (p.t === "vars") for (const [k, v] of Object.entries(s.vars || {})) add(`vars.${k}`, k, v);
     if (p.t === "distance" && s.input != null) add("input", "input", s.input);
     if (p.t === "part" && typeof s.part === "string" && s.part in S.doc.nodes) add("part", "part", s.part);
+  }
+  if (s.op === "group") {
+    const g = (S.doc.groups || {})[s.group] || {};
+    for (const k of g.inputs || []) add(`gin.${k}`, k, (s.inputs || {})[k]);
   }
   if (s.op === "expr") for (const r of refsOf(s, S.doc.nodes)) if (r.key === "expr") out.push({ key: "expr", label: `· ${r.target}`, target: r.target in S.doc.nodes ? r.target : null, bad: !(r.target in S.doc.nodes), fixed: true });
   return out;
@@ -2205,6 +2350,8 @@ function inspector() {
   });
   act.append(el("button", { class: "btn ghost small", title: "Make this the part that is meshed", onclick: () => { S.doc.output = name; S.target = name; structural(); partPanel(); } }, S.doc.output === name ? "output ✓" : "set output"),
     el("button", { class: "btn ghost small", title: "Duplicate node (Ctrl+D; Ctrl+C / Ctrl+V copy between graphs)", onclick: () => duplicateNode(name) }, "duplicate"),
+    s.op === "group" ? el("button", { class: "btn ghost small", title: "Put the group's nodes back into the graph here", onclick: () => ungroup(name) }, "ungroup")
+      : el("button", { class: "btn ghost small", title: "Make this node and what only it uses a reusable group (its constants become the group's knobs)", onclick: () => makeGroup(name) }, "make group"),
     el("button", { class: "btn ghost small", title: "Delete node", onclick: () => deleteNode(name) }, "delete"));
   body.append(el("div", { class: "row" }, nm, el("span", { class: `chip ${kindOf(name)}` }, kindOf(name))));
   body.append(ops);
@@ -2243,6 +2390,7 @@ function inspector() {
         body.append(param(p.k, el("div", { class: "vec", style: "grid-template-columns:1fr 1fr" }, scrubNum(N(p.k, 0), arr[0], "a"), scrubNum(N(p.k, 1), arr[1], "b")))); break;
       }
       case "curve": body.append(param("curve", curveEditor(N("curve"), s))); break;
+      case "group": body.append(groupEditor(name, s)); break;
       case "shape": body.append(param("shape", shapeEditor(N("shape"), s.shape || {}))); break;
       case "list": {
         const list = el("div", { class: "sub" });
@@ -2624,6 +2772,7 @@ window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
   THREE, cam: () => { camera.updateMatrixWorld(); return camera; },
+  makeGroup: (n, g) => makeGroup(n, g), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
   paste: (text) => pasteText(text), sweep: (key, n) => sweepMass(key, n), duplicate: (n) => duplicateNode(n),
   pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),

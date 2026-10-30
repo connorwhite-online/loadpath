@@ -249,19 +249,20 @@ def editor_payload(doc, base_dir=None, bake=True, server=False, graph_path=None,
     doc = json.loads(json.dumps(doc))
     bakes, errors = {}, []
     if bake:
-        from .fields import FieldGraph
+        from .fields import FieldGraph, expand_groups
 
         try:
             g = FieldGraph(doc, base_dir=base_dir)
         except ValueError as exc:
             g, errors = None, [str(exc)]
         if g is not None:
-            for name, spec in doc["nodes"].items():
+            full = expand_groups(doc)
+            for name, spec in full["nodes"].items():
                 try:
                     if isinstance(spec, dict) and spec.get("op") in BAKED_OPS:
-                        bakes[name] = bake_node(doc, name, base_dir, graph=g, progress=progress)
+                        bakes[name] = bake_node(full, name, base_dir, graph=g, progress=progress)
                     elif wants_warp(spec):
-                        bakes[f"{name}#warp"] = bake_warp(doc, name, base_dir, graph=g)
+                        bakes[f"{name}#warp"] = bake_warp(full, name, base_dir, graph=g)
                 except Exception as exc:  # noqa: BLE001 - the page says which node could not be baked
                     errors.append(f"{name}: {exc}")
     return {"version": 1, "doc": doc, "bakes": bakes, "errors": errors, "issues": lint(doc, "field"),
@@ -394,7 +395,7 @@ def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlparse
 
-    from .fields import FieldGraph
+    from .fields import FieldGraph, expand_groups
     from .schema import lint
 
     graph_path = os.path.abspath(graph_path)
@@ -479,6 +480,7 @@ def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir
                 name = body.get("node")
                 warp = body.get("kind") == "warp"
                 try:
+                    doc = expand_groups(doc)          # the page bakes nodes inside groups by their expanded names
                     spec = _warp_closure(doc, name) if warp else _closure(doc, name)
                     key = ("warp:" if warp else "") + json.dumps(spec, sort_keys=True)
                     with bake_lock:

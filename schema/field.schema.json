@@ -23,6 +23,46 @@
       "type": "string",
       "description": "The node to mesh (default the last)."
     },
+    "groups": {
+      "type": "object",
+      "description": "name -> a reusable sub-graph that `group` nodes copy",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodes"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "param -> default; the group's nodes refer to it by name"
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "names the group's nodes use for nodes the instance gives"
+          },
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/node"
+            }
+          },
+          "output": {
+            "type": "string",
+            "description": "the node the group stands for (default the last)"
+          }
+        }
+      }
+    },
     "bounds": {
       "type": "object",
       "description": "Meshing box (default: worked out from the output).",
@@ -759,7 +799,7 @@
     },
     "node": {
       "title": "a node object with an 'op'",
-      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, remap, expr, union, intersect, subtract, shell, offset, lattice, transform.",
+      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, remap, expr, union, intersect, subtract, shell, offset, lattice, transform, group.",
       "oneOf": [
         {
           "$ref": "#/$defs/op-constant"
@@ -808,6 +848,9 @@
         },
         {
           "$ref": "#/$defs/op-transform"
+        },
+        {
+          "$ref": "#/$defs/op-group"
         }
       ],
       "x-discriminator": {
@@ -828,7 +871,8 @@
           "shell": "#/$defs/op-shell",
           "offset": "#/$defs/op-offset",
           "lattice": "#/$defs/op-lattice",
-          "transform": "#/$defs/op-transform"
+          "transform": "#/$defs/op-transform",
+          "group": "#/$defs/op-group"
         }
       }
     },
@@ -2292,6 +2336,71 @@
       "required": [
         "op",
         "input"
+      ],
+      "additionalProperties": false
+    },
+    "op-group": {
+      "type": "object",
+      "description": "A copy of a sub-graph from the graph's `groups`, with its own param values and inputs; it stands for the group's output.",
+      "properties": {
+        "op": {
+          "const": "group"
+        },
+        "group": {
+          "type": "string",
+          "description": "the name of a group in `groups`"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "param -> value (the group's defaults otherwise)"
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "the group's input name -> a node of this graph"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "group"
       ],
       "additionalProperties": false
     }
