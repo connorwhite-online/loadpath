@@ -182,7 +182,7 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
             # grey start MMA otherwise ran the L-bracket down to nothing).
             # Halve the step and pull the asymptotes in, a more conservative
             # model, until the design is back inside the limits.
-            mma.move = max(0.01, 0.5 * mma.move)
+            mma.move = max(0.02, 0.5 * mma.move)
             mma.tighten(0.5)
         elif worst <= 0.02:
             mma.move = min(move_cap, 1.2 * mma.move)
@@ -205,7 +205,12 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
             on_iter(rec, xp)
 
         feasible = max(cons) <= 0.02
-        if beta < opts.beta_max and (since_beta >= opts.beta_every or (change < 2 * opts.tol and feasible)):
+        # Sharpen only once the design is inside the limits (or after three
+        # times the usual wait): each doubling raises the peak, and doubling
+        # on the timer while infeasible stacked those jumps until the run
+        # ended at twice the volume it needed (L-bracket, 0.59 against 0.31).
+        if beta < opts.beta_max and ((feasible and (since_beta >= opts.beta_every or change < 2 * opts.tol))
+                                     or since_beta >= 3 * opts.beta_every):
             beta = min(beta * 2, opts.beta_max)
             since_beta = 0
             # Stress is far more nonlinear in the design than compliance, and
