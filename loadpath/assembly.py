@@ -310,13 +310,21 @@ class LoadSweep:
     states: list                  # per sample: dict(q, qd, qdd, payload)
     region: str | None = None
 
-    def cases(self, idx, prefix="sweep") -> list:
+    def cases(self, idx, prefix="sweep", cycles: dict | None = None) -> list:
+        """Study load cases for samples idx. cycles: {kind: times applied over
+        the part's life} by sample kind ("pose", "dynamic", "push", "stall",
+        or "stall:j2" for one joint), so durability.py checks fatigue."""
         out = []
         for n, i in enumerate(idx):
             f, m = self.wrenches[i, :3], self.wrenches[i, 3:]
-            out.append({"name": f"{prefix}-{n}-{self.kinds[i].replace(':', '-')}",
-                        "loads": [{"region": self.region, "force": [round(float(v), 2) for v in f],
-                                   "moment": [round(float(v), 1) for v in m]}]})
+            case = {"name": f"{prefix}-{n}-{self.kinds[i].replace(':', '-')}",
+                    "loads": [{"region": self.region, "force": [round(float(v), 2) for v in f],
+                               "moment": [round(float(v), 1) for v in m]}]}
+            kind = self.kinds[i]
+            c = (cycles or {}).get(kind, (cycles or {}).get(kind.split(":")[0]))
+            if c:
+                case["cycles"] = float(c)
+            out.append(case)
         return out
 
 
@@ -636,14 +644,16 @@ def _unit_stress(study_dict, region, max_elements=20000, band=2.0, base_dir=None
 
 def governing_cases(sweep: LoadSweep, study: dict | None = None, *, k: int = 8, method: str | None = None,
                     threshold: float = 0.95, target: float = 0.98, max_elements: int = 20000,
-                    directions: int = 600, seed: int = 0, base_dir: str | None = None) -> dict:
+                    directions: int = 600, seed: int = 0, base_dir: str | None = None,
+                    cycles: dict | None = None) -> dict:
     """Collapse a sweep to at most k cases that come within `threshold` of
     the sweep's worst stress at (a `target` share of) every point.
 
     method "stress" (default when a study is given): six unit-wrench solves
     on the solid design space, then greedy cover of every cell's von Mises
     envelope. "hull": no solve, greedy cover of the wrench cloud's support
-    function over random directions (moments scaled by the part's size)."""
+    function over random directions (moments scaled by the part's size).
+    cycles: {sample kind: life cycles}, written on the cases (LoadSweep.cases)."""
     from .fem import von_mises
 
     W = sweep.wrenches
@@ -684,7 +694,7 @@ def governing_cases(sweep: LoadSweep, study: dict | None = None, *, k: int = 8, 
     })
     if method == "stress":
         info["peakUnitVonMises"] = round(float(env.max()), 4)
-    info["cases"] = sweep.cases(chosen)
+    info["cases"] = sweep.cases(chosen, cycles=cycles)
     return info
 
 
@@ -869,7 +879,7 @@ def region_centroid(study_dict: dict, region: str, samples: int = 20000, seed: i
 def derive_study(robot: Robot, link: str, study: dict, region: str, *, payload: Payload | None = None,
                  keep_cases: bool = False, sweep_space: bool = True, k: int = 8, method: str | None = None,
                  sweep_kw: dict | None = None, space_kw: dict | None = None, out_dir: str | None = None,
-                 base_dir: str | None = None):
+                 base_dir: str | None = None, cycles: dict | None = None):
     """A study with its loads (and, with sweep_space, its neighbour keep-outs)
     derived from the mechanism. `study` supplies the interfaces: supports,
     preserve, keep-outs for hardware, material, goal and a design space
@@ -884,7 +894,7 @@ def derive_study(robot: Robot, link: str, study: dict, region: str, *, payload: 
     s = copy.deepcopy(study)
     point = region_centroid(s, region, base_dir=base_dir)
     sweep = sweep_loads(robot, link, payload=payload, point=point, region=region, **(sweep_kw or {}))
-    picked = governing_cases(sweep, s, k=k, method=method, base_dir=base_dir)
+    picked = governing_cases(sweep, s, k=k, method=method, base_dir=base_dir, cycles=cycles)
     report = {"link": link, "joint": sweep.joint, "region": region,
               "pointMm": [round(float(v), 2) for v in point], **{kk: v for kk, v in picked.items() if kk != "cases"}}
     s["loadCases"] = (s.get("loadCases", []) if keep_cases else []) + picked["cases"]

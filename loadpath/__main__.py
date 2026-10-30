@@ -110,7 +110,8 @@ def _assembly(args):
     derived, report = derive_study(robot, args.link, study, args.region, payload=payload, keep_cases=args.keep_cases,
                                    sweep_space=not args.no_space, k=args.cases, method=args.method,
                                    sweep_kw=sweep_kw, space_kw={"clearance": args.clearance}, out_dir=args.out,
-                                   base_dir=base)
+                                   base_dir=base, cycles={k: float(v) for k, v in
+                                                          (kv.split("=") for kv in args.cycles.split(",") if kv)})
     # the study's own mesh paths are relative to its folder: make them absolute
     for key in ("designSpace", "preserve", "keepOut"):
         for item in derived.get(key, []):
@@ -217,6 +218,8 @@ def main(argv=None):
     asm.add_argument("--keep-cases", action="store_true", help="keep the study's own load cases too")
     asm.add_argument("--no-space", action="store_true", help="loads only: no swept keep-outs")
     asm.add_argument("--clearance", type=float, default=1.0, help="mm round each swept neighbour")
+    asm.add_argument("--cycles", default="", help="life cycles by sample kind, for fatigue: "
+                     "dynamic=1e6,pose=1e6,push=1e4,stall=1e3 (stall:j2=... for one joint)")
     asm.add_argument("--out", default="loadpath-out")
     args = p.parse_args(argv)
 

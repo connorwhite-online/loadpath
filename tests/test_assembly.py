@@ -124,8 +124,9 @@ def test_stress_pick_on_a_cantilever():
     W[2, 2] = -50.0           # the same, smaller
     W[3, 3] = 100.0           # a little torsion
     sw = LoadSweep("bar", "j", np.zeros(3), W, ["a", "b", "c", "d"], [{}] * 4, region="tip")
-    g = governing_cases(sw, study, k=3, max_elements=3000)
+    g = governing_cases(sw, study, k=3, max_elements=3000, cycles={"b": 1e6, "d": 50})
     assert g["chosen"][0] == 1, g
+    assert g["cases"][0]["cycles"] == 1e6
     assert 2 not in g["chosen"]
     hull = governing_cases(sw, None, k=4, method="hull")
     assert 2 not in hull["chosen"]

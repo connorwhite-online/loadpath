@@ -63,13 +63,13 @@ def robot(grip):
     return r
 
 
-def derive(r, link, study, base_dir, k=8, samples=1500):
+def derive(r, link, study, base_dir, k=8, samples=1500, cycles=None):
     region = LINKS[link]
     t = time.time()
     sw = sweep_loads(r, link, payload=PAYLOAD, point=region_centroid(study, region, base_dir=base_dir), region=region,
                      samples=samples, balanced=("j2",))
     t_sweep = time.time() - t
-    picked = governing_cases(sw, study, k=k, base_dir=base_dir)
+    picked = governing_cases(sw, study, k=k, base_dir=base_dir, cycles=cycles)
     env = {}
     for kind in sorted({kd.split(":")[0] for kd in sw.kinds}):
         m = np.array([kd.split(":")[0] == kind for kd in sw.kinds])
@@ -152,6 +152,8 @@ def main(argv=None):
     ap.add_argument("--samples", type=int, default=1500)
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--space", action="store_true", help="add the neighbours' swept keep-outs")
+    ap.add_argument("--cycles", default="", help="life cycles by sample kind for fatigue, e.g. "
+                    "dynamic=1e6,pose=1e6,push=1e4,stall=1e3")
     args = ap.parse_args(argv)
     os.makedirs(args.out, exist_ok=True)
     r = robot(args.grip)
@@ -160,7 +162,8 @@ def main(argv=None):
     for link in args.links.split(","):
         sdir = os.path.join(HERE, "studies")
         study = json.load(open(os.path.join(sdir, f"{link}.json")))
-        new, rep = derive(r, link, study, sdir, samples=args.samples)
+        cycles = {k: float(v) for k, v in (kv.split('=') for kv in args.cycles.split(',') if kv)}
+        new, rep = derive(r, link, study, sdir, samples=args.samples, cycles=cycles)
         if args.space:
             entries, rep["sweptKeepOuts"] = space(r, args.grip, link, study, sdir, args.out)
             new["keepOut"] = new["keepOut"] + [e["keepOut"] for e in entries if e["keepOut"]]
