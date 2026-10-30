@@ -72,7 +72,10 @@ wire, an expression) recompiles, in milliseconds.
 - **Save** writes the graph back to its file. Inline nodes get names
   (`owner-key`) when the graph is opened, which is the same graph;
   node positions go under `editor`, which nothing else reads. The JSON tab
-  edits the text directly; Ctrl+Z undoes.
+  edits the text directly; Ctrl+Z undoes. Ctrl+D duplicates the selected
+  node; Ctrl+C and Ctrl+V copy it between graphs, and pasting node JSON
+  (`{"nodes": {...}}` or one node) adds it, renaming what clashes and
+  keeping the pasted nodes wired to each other.
 - The standalone page (`--html`) carries its bakes, so it opens anywhere,
   offline once three.js is cached. It cannot re-bake or run: Run
   downloads the JSON and gives the `loadpath field` command.

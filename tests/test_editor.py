@@ -380,6 +380,14 @@ const [page_, threeDir] = process.argv.slice(2);
     const at = (p) => { const v = new window.lpEditor.THREE.Vector3(...p).project(window.lpEditor.cam()); return Array.from(x.getImageData(Math.round((v.x + 1) / 2 * c.width), Math.round((1 - v.y) / 2 * c.height), 1, 1).data); };
     return { under: at([15, 0, -9.5]), top: at([15, 0, 9.5]) };
   });
+  out.paste = await page.evaluate(() => {
+    const E = window.lpEditor;
+    const ok = E.paste(JSON.stringify({ nodes: { a: { op: "shape", shape: { type: "sphere", center: [0, 30, 0], r: 4 } },
+                                                sa: { op: "shell", input: "a", thickness: "k" }, k: { op: "constant", value: 0.4 } } }));
+    const dup = E.duplicate("both");
+    const d = E.doc();
+    return { ok, dup, names: Object.keys(d.nodes), sa2: d.nodes.sa2, both2: d.nodes[dup[0]], probe: E.probe("sa2", [[0, 30, 3.8]])[0] };
+  });
   out._errors = errors;
   console.log(JSON.stringify(out));
   await browser.close();
@@ -391,7 +399,9 @@ def test_printability_overlays():
     """Colour by wall thickness: a ray traced in along the normal reads a
     0.5 mm and a 2 mm spherical shell at their tops and flanks; the legend
     names the process minimum. Colour by overhangs: a sphere's underside is
-    red, its top is not. Skipped without node and Playwright."""
+    red, its top is not. Pasting and duplicating nodes renames what clashes
+    and keeps the pasted nodes wired to each other. Skipped without node
+    and Playwright."""
     node = shutil.which("node")
     npath = os.environ.get("NODE_PATH") or "/opt/node22/lib/node_modules"
     env = {**os.environ, "NODE_PATH": npath}
@@ -416,6 +426,12 @@ def test_printability_overlays():
     assert "FDM minimum 0.8 mm" in out["legend"], out["legend"]
     red = lambda px: px[0] > 80 and px[0] > 2.5 * max(px[1], px[2])   # noqa: E731
     assert red(out["over"]["under"]) and not red(out["over"]["top"]), out["over"]
+    # pasting nodes that clash: renamed, their references to each other follow; duplicating keeps the inputs
+    p = out["paste"]
+    assert p["ok"] and {"a2", "sa2", "k"} <= set(p["names"]), p
+    assert p["sa2"] == {"op": "shell", "input": "a2", "thickness": "k"}, p["sa2"]
+    assert p["dup"] == ["both2"] and p["both2"]["inputs"] == ["sa", "sb"], p
+    assert abs(p["probe"] - (-0.2)) < 1e-4, p["probe"]       # the pasted shell is live: 0.4 mm wall at r 3.8
 
 
 TESTS = [test_graph_with_layout_lints, test_bakes_sample_the_graph, test_bake_spec_follows_an_analyzed_part,

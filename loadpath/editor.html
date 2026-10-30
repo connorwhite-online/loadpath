@@ -1591,6 +1591,58 @@ function exportDoc() {
   return d;
 }
 
+/** Point one node spec's references to `old` at `nu` (fields, inputs, vars, an analyzed part, expr text). */
+function renameRefs(s, old, nu) {
+  for (const k of FIELD_KEYS) if (s[k] === old && !(s.op === "constant" && k === "value")) s[k] = nu;
+  if (Array.isArray(s.inputs)) s.inputs = s.inputs.map((v) => (v === old ? nu : v));
+  if (s.vars) for (const k of Object.keys(s.vars)) if (s.vars[k] === old) s.vars[k] = nu;
+  if (s.op === "result" && s.part === old) s.part = nu;
+  if (s.op === "expr" && typeof s.expr === "string" && /^[A-Za-z_]\w*$/.test(nu)) s.expr = s.expr.replace(new RegExp(`\\b${old.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")}\\b`, "g"), nu);
+}
+/** Add copies of nodes ({name: spec}): new names where they clash, references among them kept among them. */
+function pasteNodes(frag, at) {
+  const names = Object.keys(frag);
+  if (!names.length) return [];
+  const taken = new Set(Object.keys(S.doc.nodes)), map = {};
+  for (const n of names) {
+    const base = n.replace(/-?copy\d*$|\d+$/, "") || "node";
+    let nu = n, i = 1;
+    while (taken.has(nu) || ["x", "y", "z", "pi", "e", ...Object.keys(FUNCS)].includes(nu)) nu = `${base}${/^[A-Za-z_]\w*$/.test(base) ? "" : "-"}${++i}`;
+    taken.add(nu); map[n] = nu;
+  }
+  const specs = names.map((n) => clone(frag[n]));
+  // through placeholders, so a chain of renames (a -> a2 while a2 is also pasted) cannot collide
+  names.forEach((n, i) => specs.forEach((sp) => renameRefs(sp, n, `__lp${i}__`)));
+  names.forEach((n, i) => specs.forEach((sp) => renameRefs(sp, `__lp${i}__`, map[n])));
+  const xs = names.map((n) => S.layout[n]).filter(Boolean);
+  const ox = xs.length ? Math.min(...xs.map((p) => p[0])) : 0, oy = xs.length ? Math.min(...xs.map((p) => p[1])) : 0;
+  names.forEach((n, i) => {
+    S.doc.nodes[map[n]] = specs[i];
+    const p = S.layout[n];
+    S.layout[map[n]] = at ? [at[0] + (p ? p[0] - ox : 30 * i), at[1] + (p ? p[1] - oy : 30 * i)] : p ? [p[0] + 40, p[1] + 60] : [40, 50 + 40 * i];
+  });
+  S.sel = map[names[names.length - 1]];
+  structural();
+  status(`Added ${names.map((n) => map[n]).join(", ")}.`, "ok");
+  return names.map((n) => map[n]);
+}
+function duplicateNode(name) { return name in S.doc.nodes ? pasteNodes({ [name]: S.doc.nodes[name] }) : []; }
+function copyNode(name) {
+  if (!(name in S.doc.nodes)) return;
+  S.clip = { nodes: { [name]: clone(S.doc.nodes[name]) } };
+  try { navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(S.clip, null, 2)).catch(() => {}); } catch (e) { /* no clipboard: the page's own copy still pastes */ }
+  status(`Copied ${name}.`);
+}
+function pasteText(text) {
+  let frag = null;
+  try {
+    const j = JSON.parse(text);
+    frag = j && typeof j === "object" ? (j.nodes && typeof j.nodes === "object" ? j.nodes : typeof j.op === "string" ? { [j.op]: j } : null) : null;
+  } catch (e) { frag = null; }
+  if (!frag || Object.values(frag).some((v) => !v || typeof v !== "object" || typeof v.op !== "string")) return false;
+  pasteNodes(frag);
+  return true;
+}
 function renameNode(old, nu) {
   nu = nu.trim();
   if (!nu || nu === old) return false;
@@ -1598,13 +1650,7 @@ function renameNode(old, nu) {
   if (["x", "y", "z", "pi", "e", ...Object.keys(FUNCS)].includes(nu)) { status(`${nu} is reserved.`, "warn"); return false; }
   const nodes = {};
   for (const [k, v] of Object.entries(S.doc.nodes)) nodes[k === old ? nu : k] = v;
-  for (const s of Object.values(nodes)) {
-    for (const k of FIELD_KEYS) if (s[k] === old && !(s.op === "constant" && k === "value")) s[k] = nu;
-    if (Array.isArray(s.inputs)) s.inputs = s.inputs.map((v) => (v === old ? nu : v));
-    if (s.vars) for (const k of Object.keys(s.vars)) if (s.vars[k] === old) s.vars[k] = nu;
-    if (s.op === "result" && s.part === old) s.part = nu;
-    if (s.op === "expr" && typeof s.expr === "string" && /^[A-Za-z_]\w*$/.test(nu)) s.expr = s.expr.replace(new RegExp(`\\b${old.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")}\\b`, "g"), nu);
-  }
+  for (const s of Object.values(nodes)) renameRefs(s, old, nu);
   S.doc.nodes = nodes;
   if (S.doc.output === old) S.doc.output = nu;
   const dr = S.doc.drains;
@@ -2005,6 +2051,7 @@ function inspector() {
     structural();
   });
   act.append(el("button", { class: "btn ghost small", title: "Make this the part that is meshed", onclick: () => { S.doc.output = name; S.target = name; structural(); partPanel(); } }, S.doc.output === name ? "output ✓" : "set output"),
+    el("button", { class: "btn ghost small", title: "Duplicate node (Ctrl+D; Ctrl+C / Ctrl+V copy between graphs)", onclick: () => duplicateNode(name) }, "duplicate"),
     el("button", { class: "btn ghost small", title: "Delete node", onclick: () => deleteNode(name) }, "delete"));
   body.append(el("div", { class: "row" }, nm, el("span", { class: `chip ${kindOf(name)}` }, kindOf(name))));
   body.append(ops);
@@ -2366,6 +2413,15 @@ document.addEventListener("keydown", (e) => {
   if (e.target.closest("input, textarea, select")) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   if ((e.key === "Delete" || e.key === "Backspace") && S.sel) deleteNode(S.sel);
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d" && S.sel) { e.preventDefault(); duplicateNode(S.sel); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && S.sel && !String(window.getSelection())) { e.preventDefault(); copyNode(S.sel); }
+});
+// paste: a node or {nodes: {...}} from the clipboard (another graph, a doc, the page's own copy)
+document.addEventListener("paste", (e) => {
+  if (e.target.closest("input, textarea, select")) return;
+  const text = e.clipboardData && e.clipboardData.getData("text");
+  if (text && pasteText(text)) { e.preventDefault(); return; }
+  if (S.clip) { e.preventDefault(); pasteNodes(S.clip.nodes); }
 });
 (function divider() {
   const d = $("#divider"), right = $("#right");
@@ -2397,6 +2453,7 @@ window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
   THREE, cam: () => { camera.updateMatrixWorld(); return camera; },
+  paste: (text) => pasteText(text), duplicate: (n) => duplicateNode(n),
   pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),
   select: (n) => { S.sel = n; if (S.follow && kindOf(n) === "solid") S.target = n; afterSelect(); },
