@@ -125,7 +125,20 @@ envelope is a box about the original's size (178 x 107 x 63 mm), roomier
 than the original's L-shaped envelope, so masses compare only roughly.
 
 <!-- ge:start -->
-Result pending: the run was still going when this page was written.
+**Result: 370 g, safety factor 1.06** against yield in the worst case
+(confirmed on the finer grid), one body, 0.17 mm worst deflection at the
+pin. That is 79.6% lighter than the original's 1.81 kg, level with the
+winning entries' "about 80%". The safety-factor search took six runs
+(1540 g at SF 2.9, 803 g, 435 g, then 318 g and 343 g, both just under
+SF 1) and 53 minutes on the cloud box while sharing it with the suite.
+
+![GE bracket](images/benchmarks/ge-bracket.png)
+
+Caveats: the envelope is roomier than the original's, the bolts sit at
+assumed positions, the mounting face is not modelled as contact, and the
+challenge's stress check was a separate FE model where this is loadpath's own
+voxel verification. The case's `expect` keeps 362 g (an 80% reduction) as the
+mark to beat, so it currently reads as a narrow fail.
 <!-- ge:end -->
 
 ## Fusion 360
