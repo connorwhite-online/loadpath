@@ -913,6 +913,7 @@
     "buildDirection": "+z"
   },
   "expect": {
+    "maxMass": 46.0,
     "minSafetyFactor": 2.0,
     "maxKeepOutIntrusion": 1.0,
     "maxPreserveMissing": 1.0,
