@@ -146,7 +146,10 @@ that to 5.2 kN. A uniform core of the same mass peaks at 6.7 kN. Solid TO of the
 same envelope (8.25 g) holds only 0.8 J within the limit
 (`python examples/impact/end_stop.py`). TPU uses an elastic buckling law for
 small knocks: a forearm pad takes 0.75 J at 112 N against a 140 N limit
-(`examples/impact/knock_pad.py`).
+(`examples/impact/knock_pad.py`). Graded TPU lattice feet tune a vibration isolator
+under an off-centre robot: same 35 Hz bounce as four identical feet, but the payload
+sits level, a vertical shake no longer rocks it (0.004x vs 0.44x sideways), and it
+takes 17% more shock before a foot buckles (`examples/isolator/mount.py`).
 
 ![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
 

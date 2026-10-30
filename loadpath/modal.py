@@ -39,7 +39,7 @@ import scipy.sparse as sp
 
 from .fem import HexMesh, Stiffness
 
-__all__ = ["ModalResult", "modal_analysis", "transmissibility", "LOSS_FACTOR", "loss_factor", "vibration_report"]
+__all__ = ["ModalResult", "modal_analysis", "transmissibility", "base_transmissibility", "LOSS_FACTOR", "loss_factor", "vibration_report"]
 
 # Room-temperature loss factor (tan delta) near 10-100 Hz, typical values
 # from DMA data sheets and literature; rough (+-50%), and strongly
@@ -62,6 +62,7 @@ class ModalResult:
     modes: np.ndarray                # (n_dof, k), mass-normalized
     mass: float                      # kg, the part plus point masses
     participation: np.ndarray        # (k, 3) effective mass fraction per axis
+    mass_vector: np.ndarray | None = None    # (n_dof,) lumped mass per dof, tonnes
 
     def to_dict(self, eta: float | None = None) -> dict:
         out = {"frequencies": [round(float(f), 2) for f in self.frequencies], "mass": round(self.mass, 5),
@@ -126,7 +127,7 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
         r[a::3] = 1.0
         g = (v * (mf * r[free])[:, None]).sum(axis=0)          # participation factor phi^T M r
         part[:, a] = g ** 2 / total
-    return ModalResult(np.sqrt(w) / (2 * np.pi), modes, float(total * 1e3), part)
+    return ModalResult(np.sqrt(w) / (2 * np.pi), modes, float(total * 1e3), part, m)
 
 
 def transmissibility(f_forcing, f_natural, eta: float):
@@ -135,6 +136,27 @@ def transmissibility(f_forcing, f_natural, eta: float):
     sqrt(2) f_n (isolation)."""
     r2 = (np.asarray(f_forcing, float) / f_natural) ** 2
     return np.sqrt((1 + eta ** 2) / ((1 - r2) ** 2 + eta ** 2))
+
+
+def base_transmissibility(res: ModalResult, dofs, axis: int, freqs, eta: float, fixed=None) -> np.ndarray:
+    """|absolute motion / base motion| at the given dofs (averaged, as complex
+    numbers) for a base shaken along `axis` (0, 1, 2) at each frequency, by
+    modal superposition with structural damping eta. The base is the
+    clamped dofs; `fixed` (bool per dof) leaves their mass out of the
+    participation factors. Truncated to the computed modes, so it holds up
+    to well below the highest of them."""
+    m = res.mass_vector.copy()
+    if fixed is not None:
+        m[np.asarray(fixed, bool)] = 0.0
+    r = np.zeros(len(m))
+    r[axis::3] = 1.0
+    gam = res.modes.T @ (m * r)                                  # participation factors
+    phi = res.modes[np.asarray(dofs, np.int64)].mean(axis=0)      # (k,)
+    wr2 = (2 * np.pi * res.frequencies) ** 2
+    w2 = (2 * np.pi * np.asarray(freqs, float))[:, None] ** 2
+    drive = 1.0 if np.all(np.asarray(dofs) % 3 == axis) else 0.0
+    rel = (phi * gam)[None, :] * w2 / (wr2[None, :] - w2 + 1j * eta * wr2[None, :])
+    return np.abs(drive + rel.sum(axis=1))
 
 
 def vibration_report(graph, spec: dict, material) -> dict:

@@ -4,7 +4,7 @@ Lattices lose to solid topology optimization on stiffness per gram (a graded
 diamond/solid hybrid was 56% more compliant than solid TO at equal material on
 the arm link; see the moonshots round 1 write-up). They win where a solid can't
 compete: stopping an impact at a force you choose. This page covers
-`loadpath/impact.py` (crush and impact), `loadpath/modal.py` (natural
+`loadpath/impact.py` (crush and impact), `loadpath/isolator.py` (lattice isolator feet), `loadpath/modal.py` (natural
 frequencies and damping) and the `impact` and `vibration` blocks of a field
 graph.
 
@@ -165,6 +165,60 @@ penalty for a stiff bracket, where solid TO wins on first frequency per gram
 for the same reason it wins on stiffness. Real lattice damping gains need a
 second, lossy material (a TPU core) or unfused powder left in the cells
 (particle damping). Neither is modelled yet.
+
+## Isolators: TPU lattice feet (`isolator.py`)
+
+An isolator is the one vibration job where a soft lattice is exactly what you
+want: a spring soft enough that the payload's mounted frequency sits well
+below the excitation, so base motion above about 1.4x that frequency is cut.
+The catch is an off-centre load. Four identical feet under a payload whose
+centre of gravity is not over the middle of the footprint let it sit tilted,
+couple bounce with rocking (a vertical shake also rocks the payload), and
+overload the foot nearest the CG, which then reaches the end of its linear
+range first under shock.
+
+The fix is the "elastic centre" rule: give each foot a stiffness so the
+stiffness-weighted centre of the feet sits under the CG. With a lattice
+the stiffness of a foot is its density (k = E C rho^n A / H), so graded
+feet do this with the same footprint and part count. `tune_mount` solves
+the per-foot stiffness (sum k = K for the target frequency, sum k x = K x_cg,
+closest to equal feet, within the printable density range), and
+`density_for_stiffness` turns it into densities.
+
+`examples/isolator/mount.py`: a 3.9 kg GRIP-like robot base (aluminium plate
+and a column, CG 11 mm forward, 4 mm to the side, 75 mm up) on four
+24 x 24 x 30 mm TPU gyroid feet with 8 mm cells, tuned for a 35 Hz bounce.
+Both designs are checked by voxel FE of the whole mount (homogenized feet,
+plate, column, robot mass; ~5 min on 4 cores):
+
+| | uniform feet (rho 0.261) | graded feet (rho 0.32 / 0.28 / 0.24 / 0.20) |
+|---|---|---|
+| bounce frequency (FE / rigid-body model) | 35.0 / 34.1 Hz | 35.8 / 35.0 Hz |
+| bounce mode's vertical mass fraction | 0.988 | **0.998** |
+| static tilt under gravity | 1.1 mrad (0.13 mm sag spread) | **0.0** (all feet sag 0.193 mm) |
+| vertical shake: peak sideways motion of the robot | 0.44 x base | **0.004 x base** |
+| shock before the first foot buckles | 3.0 g | **3.5 g** (+17%) |
+| vertical isolation starts at | 50 Hz | 51 Hz |
+| at 100 Hz, vertical | 0.14 | 0.15 |
+| feet mass | 21.8 g | 21.7 g |
+
+![transmissibility](images/impact/isolator-transmissibility.png)
+
+Grading does not move the isolation band (that is set by the total
+stiffness, the same in both). What it buys is a level payload, a vertical
+shake that stays vertical (no rocking of a tall payload, which is what
+blurs a camera or a printer nozzle), and 17% more shock before buckling,
+because each foot carries load in proportion to its stiffness. The
+rigid-body model (`mount_modes`) that does the tuning agrees with the FE to
+1-3% on the bounce, and one tuning pass was already level in the FE; the
+example refines against FE sag anyway.
+
+Not yet: TPU stiffness is frequency and amplitude dependent (the dynamic
+modulus at 50-400 Hz is typically 1.2-2x the static one, which raises the
+mounted frequency by 10-40%), creep under a steady load is unmodelled, and
+the loss factor is a single number. A crushed coupon and a tap test on the
+printed mount would calibrate both. The graded feet STL (with 1 mm end
+plates) is written by the example.
 
 ## Field graph blocks
 

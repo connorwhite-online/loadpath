@@ -17,7 +17,9 @@ import numpy as np  # noqa: E402
 from loadpath.fem import HexMesh  # noqa: E402
 from loadpath.impact import (CRUSH, CRUSH_DATA, crush_curve, density_for_plateau, face_load, grade_for_impact,  # noqa: E402
                              impact_response, limit_load, plateau_stress, solid_impact)
-from loadpath.modal import modal_analysis, transmissibility  # noqa: E402
+from loadpath.isolator import (density_for_stiffness, foot_stiffness, mount_modes, rigid_body,  # noqa: E402
+                               tune_mount)
+from loadpath.modal import base_transmissibility, modal_analysis, transmissibility  # noqa: E402
 
 
 def approx(a, b, rel=1e-6, abs_=0.0):
@@ -217,6 +219,51 @@ def test_point_mass_lowers_frequency():
 def test_transmissibility():
     assert approx(transmissibility(100.0, 100.0, 0.04), 1 / 0.04, rel=1e-3)
     assert transmissibility(300.0, 100.0, 0.04) < 0.2
+
+
+def test_foot_stiffness_inverts():
+    kz, ks = foot_stiffness("gyroid", 0.3, 26.0, 24.0, 30.0)
+    assert 0 < ks < kz
+    assert approx(float(density_for_stiffness("gyroid", kz, 26.0, 24.0, 30.0)), 0.3, rel=1e-9)
+
+
+def test_mount_bounce_and_elastic_centre():
+    feet = np.array([[50, 30, 0], [50, -30, 0], [-50, 30, 0], [-50, -30, 0]], float)
+    m, cg, inertia = rigid_body([[-40, -40, 60], [40, 40, 60], [40, -40, 60], [-40, 40, 60]], [0.75] * 4)
+    f, _, mf = mount_modes(m, cg, inertia, feet, 25.0, 8.0)
+    i = int(np.argmax(mf[:, 2]))
+    assert approx(float(f[i]), np.sqrt(4 * 25e3 / 3.0) / (2 * np.pi), rel=1e-6) and mf[i, 2] > 0.999
+    # off-centre CG: equal feet couple bounce with rocking, tuned feet do not
+    m, cg, inertia = rigid_body([[-28, -36, 60], [52, 44, 60], [52, -36, 60], [-28, 44, 60]], [0.75] * 4)
+    _, _, mf_eq = mount_modes(m, cg, inertia, feet, 25.0, 8.0)
+    k, resid = tune_mount(cg[:2], feet, 100.0)
+    assert resid < 1e-3 and approx(float(k.sum()), 100.0, rel=1e-4)
+    assert approx(float((k * feet[:, 0]).sum() / k.sum()), cg[0], abs_=1e-3)
+    f, _, mf = mount_modes(m, cg, inertia, feet, k, 8.0)
+    assert mf[:, 2].max() > 0.999 and mf_eq[:, 2].max() < 0.99
+    assert approx(float(f[int(np.argmax(mf[:, 2]))]), np.sqrt(100e3 / 3.0) / (2 * np.pi), rel=1e-6)
+    # bounds bind: the leftover offset is reported
+    k, resid = tune_mount(cg[:2], feet, 100.0, 20.0, 30.0)
+    assert k.min() >= 20.0 - 1e-9 and k.max() <= 30.0 + 1e-9 and resid > 1.0
+
+
+def test_base_transmissibility_of_a_mass_on_a_soft_post():
+    # a soft 4x4x10 post, clamped at the bottom, with 1 kg on top: one axial mode
+    ijk = np.argwhere(np.ones((4, 4, 10), bool))
+    mesh = HexMesh(ijk, 2.0, np.zeros(3))
+    z = mesh.node_xyz[:, 2]
+    fixed = np.zeros(mesh.n_dof, bool)
+    bot = np.flatnonzero(z < 1e-6)
+    for a in range(3):
+        fixed[3 * bot + a] = True
+    top = np.flatnonzero(z > 20 - 1e-6)
+    res = modal_analysis(mesh, 10.0, 0.01, 0.3, fixed, 12, [(top, 1.0)])
+    fz = float(res.frequencies[int(np.argmax(res.participation[:, 2]))])
+    eta = 0.1
+    t = base_transmissibility(res, 3 * top + 2, 2, [0.1 * fz, fz, 3 * fz], eta, fixed)
+    assert approx(float(t[0]), 1.0, rel=0.02)
+    assert approx(float(t[1]), float(transmissibility(fz, fz, eta)), rel=0.1)     # the post itself is 7% of the mode
+    assert approx(float(t[2]), float(transmissibility(3 * fz, fz, eta)), rel=0.1)
 
 
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
