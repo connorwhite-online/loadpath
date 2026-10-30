@@ -370,6 +370,16 @@ const [page_, threeDir] = process.argv.slice(2);
     o.legend = document.querySelector("#lg-title").textContent;
     return o;
   });
+  // overhangs: a sphere's underside is red, its top and the face on the plate are not
+  await page.evaluate(() => { window.lpReady = false; window.lpEditor.view({ walls: false, over: true }); window.lpEditor.camera([0, -120, 0.01], [0, 0, 0]); });
+  await page.waitForFunction(() => window.lpReady === true, null, { timeout: 180000 });
+  out.over = await page.evaluate(() => {
+    const gl = document.querySelector("#gl"), c = document.createElement("canvas");
+    c.width = gl.width; c.height = gl.height;
+    const x = c.getContext("2d"); x.drawImage(gl, 0, 0);
+    const at = (p) => { const v = new window.lpEditor.THREE.Vector3(...p).project(window.lpEditor.cam()); return Array.from(x.getImageData(Math.round((v.x + 1) / 2 * c.width), Math.round((1 - v.y) / 2 * c.height), 1, 1).data); };
+    return { under: at([15, 0, -9.5]), top: at([15, 0, 9.5]) };
+  });
   out._errors = errors;
   console.log(JSON.stringify(out));
   await browser.close();
@@ -377,10 +387,11 @@ const [page_, threeDir] = process.argv.slice(2);
 """
 
 
-def test_wall_overlay_reads_thickness():
+def test_printability_overlays():
     """Colour by wall thickness: a ray traced in along the normal reads a
     0.5 mm and a 2 mm spherical shell at their tops and flanks; the legend
-    names the process minimum. Skipped without node and Playwright."""
+    names the process minimum. Colour by overhangs: a sphere's underside is
+    red, its top is not. Skipped without node and Playwright."""
     node = shutil.which("node")
     npath = os.environ.get("NODE_PATH") or "/opt/node22/lib/node_modules"
     env = {**os.environ, "NODE_PATH": npath}
@@ -403,12 +414,14 @@ def test_wall_overlay_reads_thickness():
     for k, want in (("thin", 0.5), ("thick", 2.0), ("thinSide", 0.5), ("thickSide", 2.0)):
         assert abs(out[k] - want) < 0.02, (k, out[k])
     assert "FDM minimum 0.8 mm" in out["legend"], out["legend"]
+    red = lambda px: px[0] > 80 and px[0] > 2.5 * max(px[1], px[2])   # noqa: E731
+    assert red(out["over"]["under"]) and not red(out["over"]["top"]), out["over"]
 
 
 TESTS = [test_graph_with_layout_lints, test_bakes_sample_the_graph, test_bake_spec_follows_an_analyzed_part,
          test_standalone_page_carries_its_data, test_server_lints_bakes_saves_and_runs,
          test_server_reuses_what_it_built, test_warp_solve_is_the_1d_integral,
-         test_cli_writes_a_standalone_editor, test_gpu_preview_matches_fields_py, test_wall_overlay_reads_thickness]
+         test_cli_writes_a_standalone_editor, test_gpu_preview_matches_fields_py, test_printability_overlays]
 
 
 def main():

@@ -54,6 +54,11 @@ wire, an expression) recompiles, in milliseconds.
 
   ![wall thickness on the arm link](images/fields/editor-walls.png)
 
+  **Colour → overhangs** paints faces that point down past 45 degrees
+  from vertical along the build direction (the graph's `build`, else +z)
+  red, and those within 10 degrees of it amber; the face on the plate is
+  left alone. `minWall` in the graph overrides the process's wall.
+
 - **Mass** is live: the page weighs the output on the GPU as you edit
   (its volume on a grid of samples at two spacings, extrapolated; within
   about 1% of the meshed part) and multiplies by the material's density.

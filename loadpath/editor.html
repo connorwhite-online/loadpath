@@ -847,8 +847,8 @@ out vec2 vUv;
 void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); vUv = p; gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`;
 
 const PREVIEW_MAIN = `
-uniform mat4 uInvVP; uniform vec3 uLo, uHi, uKey, uClay, uCut; uniform vec4 uPlane; uniform int uSection, uColorOn, uMode, uMaxSteps, uWalls;
-uniform float uStep, uPix, uAO, uMinWall; uniform vec2 uRange, uPickNdc;
+uniform mat4 uInvVP; uniform vec3 uLo, uHi, uKey, uClay, uCut; uniform vec4 uPlane; uniform int uSection, uColorOn, uMode, uMaxSteps, uWalls, uOver;
+uniform float uStep, uPix, uAO, uMinWall, uOverCos, uBed; uniform vec3 uBuild; uniform vec2 uRange, uPickNdc;
 in vec2 vUv; out vec4 frag;
 float map(vec3 p) { float d = scene_solid(p); if (uSection == 1) d = max(d, dot(p, uPlane.xyz) - uPlane.w); return d; }
 vec3 nrm(vec3 p, float e) {
@@ -914,6 +914,15 @@ void main() {
     // under the process minimum: red; up to twice it: amber fading to clay
     float r = wall / uMinWall;
     base = r < 1.0 ? toLin(vec3(0.86, 0.16, 0.12)) : mix(toLin(vec3(0.95, 0.66, 0.12)), base, clamp(r - 1.0, 0.0, 1.0));
+  }
+  if (uOver == 1 && !cut) {
+    // facing down past the self-supporting angle (from vertical): red; within 10 degrees of it: amber;
+    // the face on the plate is supported
+    vec3 ns = nrm(p, max(0.75 * uPix * t, 2e-3));
+    float down = dot(ns, -uBuild);
+    bool bed = dot(p, uBuild) < uBed;
+    if (!bed && down > uOverCos) base = toLin(vec3(0.86, 0.16, 0.12));
+    else if (!bed && down > uOverCos - 0.13) base = mix(base, toLin(vec3(0.95, 0.66, 0.12)), 0.85);
   }
   float occ = 0.0, w = 1.0;
   for (int i = 1; i <= 4; i++) { float h = uAO * float(i); occ += w * max(h - map(p + n * h), 0.0); w *= 0.55; }
@@ -1090,6 +1099,11 @@ function renderPreview(scale) {
   gl.uniform1i(L.uColorOn, comp && S.color ? 1 : 0);
   gl.uniform1i(L.uWalls, S.walls ? 1 : 0);
   gl.uniform1f(L.uMinWall, minWall().mm);
+  const ov = overhang();
+  gl.uniform1i(L.uOver, S.over ? 1 : 0);
+  gl.uniform3fv(L.uBuild, ov.build);
+  gl.uniform1f(L.uOverCos, Math.cos(THREE.MathUtils.degToRad(ov.deg)));
+  gl.uniform1f(L.uBed, ov.bed);
   gl.uniform2fv(L.uRange, S.range || [0, 1]);
   gl.uniform1i(L.uMode, 0);
   gl.uniform1i(L.uMaxSteps, scale < 1 ? Math.min(q.steps, 220) : q.steps);
@@ -1302,6 +1316,7 @@ function updateBounds() {
   const size = Math.max(...[0, 1, 2].map((i) => b[1][i] - b[0][i]), 1);
   const pad = 0.02 * size + 0.3;
   const first = !S.box;
+  S.solidBox = S.unbounded ? null : b;
   S.box = [b[0].map((v) => v - pad), b[1].map((v) => v + pad)];
   if (first) fitView("iso");
   updateRange();
@@ -2131,8 +2146,8 @@ function fillSelects() {
   const solids = names.filter((n) => kindOf(n) === "solid"), scalars = names.filter((n) => kindOf(n) === "scalar");
   $("#target").replaceChildren(el("option", { value: "#follow", selected: S.follow }, `follow selection${S.follow && S.target ? ` (${S.target})` : ""}`),
     ...solids.map((n) => el("option", { value: n, selected: !S.follow && n === S.target }, n + (n === S.doc.output ? "  · output" : ""))));
-  $("#colorby").replaceChildren(el("option", { value: "", selected: !S.color && !S.walls }, "plain"),
-    el("option", { value: "#walls", selected: !!S.walls }, "wall thickness"), ...scalars.map((n) => el("option", { value: n, selected: n === S.color }, n)));
+  $("#colorby").replaceChildren(el("option", { value: "", selected: !S.color && !S.walls && !S.over }, "plain"),
+    el("option", { value: "#walls", selected: !!S.walls }, "wall thickness"), el("option", { value: "#over", selected: !!S.over }, "overhangs"), ...scalars.map((n) => el("option", { value: n, selected: n === S.color }, n)));
   $("#output").replaceChildren(...solids.map((n) => el("option", { value: n, selected: n === S.doc.output }, n)));
 }
 function partPanel() {
@@ -2161,18 +2176,39 @@ function showNotes() {
   box.replaceChildren(...notes.slice(0, 5).map((n) => el("span", {}, n)));
   box.hidden = !notes.length || S.mode === "mesh";
 }
-/** The process's smallest wall (spec.PROCESSES minFeature): FDM's when the graph names no process. */
+/** The process's smallest wall: the graph's minWall, else spec.PROCESSES minFeature (FDM's when it names no process). */
 function minWall() {
   const kind = typeof S.doc.process === "string" ? S.doc.process : S.doc.process && S.doc.process.kind || "fdm";
-  const mm = (S.doc.process && typeof S.doc.process === "object" && S.doc.process.minFeature) || (DATA.minWalls || {})[kind] || 0.8;
+  const mm = S.doc.minWall || (S.doc.process && typeof S.doc.process === "object" && S.doc.process.minFeature) || (DATA.minWalls || {})[kind] || 0.8;
   return { kind, mm };
 }
+/** The overhang check's build direction (the graph's `build`, else +z), its limit and where the plate is. */
+function overhang() {
+  let b = Array.isArray(S.doc.build) ? S.doc.build : [0, 0, 1];
+  const n = Math.hypot(...b) || 1; b = b.map((x) => x / n);
+  const box = S.solidBox || S.box;
+  let bed = -1e30;
+  if (box) {
+    bed = Infinity;
+    for (const i of [0, 1]) for (const j of [0, 1]) for (const k of [0, 1]) bed = Math.min(bed, box[i][0] * b[0] + box[j][1] * b[1] + box[k][2] * b[2]);
+    bed += 0.3;
+  }
+  const kind = minWall().kind;
+  return { build: b, deg: 45, bed, needs: kind === "fdm" || kind === "lpbf", kind };
+}
 function legend() {
+  if (S.over && S.mode === "preview") {
+    const o = overhang();
+    $("#legend").hidden = false; $("#lg-bar").hidden = true;
+    $("#lg-title").textContent = `overhangs past ${o.deg}° from vertical` + (o.needs ? "" : ` (${o.kind.toUpperCase()} needs no supports)`);
+    $("#lg-lo").textContent = "red: needs support · amber: within 10°"; $("#lg-mid").textContent = ""; $("#lg-hi").textContent = "";
+    return;
+  }
   if (S.walls && S.mode === "preview") {
     const w = minWall();
     $("#legend").hidden = false; $("#lg-bar").hidden = true;
     $("#lg-title").textContent = `wall, ${w.kind.toUpperCase()} minimum ${w.mm} mm`;
-    $("#lg-lo").textContent = `red: under ${w.mm}`; $("#lg-mid").textContent = ""; $("#lg-hi").textContent = `amber: under ${fmt(2 * w.mm)}`;
+    $("#lg-lo").textContent = `red: under ${w.mm} · amber: under ${fmt(2 * w.mm)}`; $("#lg-mid").textContent = ""; $("#lg-hi").textContent = "";
     return;
   }
   $("#lg-bar").hidden = false;
@@ -2281,8 +2317,8 @@ $("#target").addEventListener("change", (e) => {
   fillSelects(); drawGraph(); recompile();
 });
 $("#colorby").addEventListener("change", (e) => {
-  S.walls = e.target.value === "#walls";
-  S.color = S.walls ? null : e.target.value || null;
+  S.walls = e.target.value === "#walls"; S.over = e.target.value === "#over";
+  S.color = S.walls || S.over ? null : e.target.value || null;
   drawGraph(); recompile(); legend();
 });
 $("#output").addEventListener("change", (e) => { S.doc.output = e.target.value; structural(); });
@@ -2360,6 +2396,7 @@ function loadDoc(doc, fresh) {
 window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
+  THREE, cam: () => { camera.updateMatrixWorld(); return camera; },
   pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),
   select: (n) => { S.sel = n; if (S.follow && kindOf(n) === "solid") S.target = n; afterSelect(); },
