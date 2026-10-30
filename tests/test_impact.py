@@ -121,6 +121,51 @@ def test_field_graph_impact_and_vibration_blocks():
     assert v["dampingRatio"] == 0.02
 
 
+def test_elastomers_use_the_buckling_law():
+    from loadpath.impact import crush_law
+    from loadpath.materials import material_from_spec
+
+    law, ref = crush_law("gyroid", material_from_spec("tpu"))
+    assert law == "gyroid:elastic" and ref == 26.0
+    # Gibson & Ashby elastic collapse: 0.05 E rho^2
+    assert approx(float(plateau_stress(law, 0.3, ref)), 0.05 * 26.0 * 0.09, rel=1e-9)
+    assert crush_law("gyroid", material_from_spec("pa12")) == ("gyroid", 48.0)
+
+
+def test_grade_3d_moves_load_off_the_idle_rim():
+    from loadpath.impact import grade_3d, limit_load
+    from loadpath.lattice import sheet_modulus
+    from loadpath.materials import material_from_spec
+
+    mat = material_from_spec("pa12")
+    h, n, nz = 2.0, 14, 8
+    c = (np.arange(n) + 0.5) * h - n * h / 2
+    zc = (np.arange(nz) + 0.5) * h
+    X, Y, Z = np.meshgrid(c, c, zc, indexing="ij")
+    w = 14.0 - 6.0 * Z / (nz * h)                 # 28 mm foot to 16 mm top
+    inside = (np.abs(X) < w) & (np.abs(Y) < w)
+    lo = np.array([-n * h / 2, -n * h / 2, 0.0])
+    area = inside.sum(axis=(0, 1)) * h * h
+    g = grade_for_impact("gyroid", area, h, 48.0, 1800.0, 20_000.0, rho_min=0.15, rho_max=0.5)
+    rho_z = np.broadcast_to(g["rho"], inside.shape)
+    r = grade_3d(inside, lo, h, "gyroid", mat, g["force"], rho0=rho_z, rho_min=0.15, iters=10)
+
+    def onset(rho, keep):
+        m = HexMesh(np.argwhere(keep), h, lo)
+        z = m.node_xyz[:, 2]
+        fixed = np.zeros(m.n_dof, bool)
+        bot = np.flatnonzero(z < 1e-9)
+        fixed[3 * bot + 2] = True
+        fixed[3 * bot[0]] = fixed[3 * bot[0] + 1] = fixed[3 * bot[-1] + 1] = True
+        rr = rho[keep]
+        return limit_load(m, mat.E * sheet_modulus("gyroid", rr), plateau_stress("gyroid", rr, 48.0), mat.nu,
+                          fixed, face_load(m, 2, -1.0), iters=6)["loadFactor"]
+
+    keep3 = inside & (r["rho"] > 0)
+    assert keep3.sum() < inside.sum()             # some idle rim emptied
+    assert onset(r["rho"], keep3) > 1.05 * onset(np.asarray(rho_z, float), inside)
+
+
 def _bar(n=(4, 4, 12), p=1.0):
     ijk = np.argwhere(np.ones(n, bool))
     return HexMesh(ijk, p, np.zeros(3))

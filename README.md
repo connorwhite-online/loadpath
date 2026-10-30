@@ -141,9 +141,12 @@ and pushes back hard. A graph's `impact` block crushes a TPMS core layer by laye
 using plateau strengths from unit-cell plastic collapse, and grades its density so
 every layer crushes at the same force ([docs/IMPACT.md](docs/IMPACT.md)). Test case:
 a corner bumper stopping a 5 kg robot falling 0.9 m (44 J) under a 6 kN limit. The
-graded gyroid (4.85 g) peaks at 5.4 kN. A uniform core of the same mass peaks at
-6.7 kN. Solid TO of the same envelope (8.25 g) holds only 0.8 J within the limit
-(`python examples/impact/end_stop.py`).
+graded gyroid (4.85 g) peaks at 5.4 kN. Grading per cell in 3D (4.39 g) brings
+that to 5.2 kN. A uniform core of the same mass peaks at 6.7 kN. Solid TO of the
+same envelope (8.25 g) holds only 0.8 J within the limit
+(`python examples/impact/end_stop.py`). TPU uses an elastic buckling law for
+small knocks: a forearm pad takes 0.75 J at 112 N against a 140 N limit
+(`examples/impact/knock_pad.py`).
 
 ![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
 

@@ -11,6 +11,8 @@ Four designs of the same envelope:
 - graded gyroid: the impact block's own grading (every layer crushes at the
   same force), built as a field graph and re-analysed from the graph's
   density field;
+- graded gyroid 3D: the same layer forces shared out per cell where the
+  load goes (impact.grade_3d), idle rim cells left empty, as a grid node;
 - uniform gyroid of the same mass;
 - solid topology optimization of the same envelope at the same mass,
   designed for the 6 kN limit load (what a stiffness-driven generative
@@ -37,8 +39,8 @@ sys.path.insert(0, str(HERE.parents[1]))
 
 from loadpath.fem import HexMesh  # noqa: E402
 from loadpath.fields import FieldGraph  # noqa: E402
-from loadpath.impact import (face_load, impact_report, layer_profile, limit_load, plateau_stress,  # noqa: E402
-                             sample_core, solid_impact)
+from loadpath.impact import (face_load, grade_3d, impact_report, layer_profile, limit_load,  # noqa: E402
+                             plateau_stress, sample_core, save_density_grid, solid_impact)
 from loadpath.lattice import sheet_modulus  # noqa: E402
 from loadpath.materials import material_from_spec  # noqa: E402
 from loadpath.modal import vibration_report  # noqa: E402
@@ -122,8 +124,25 @@ def main():
     ru = impact_report(gu, {**spec, "grade": False}, mat)
     rows["uniform gyroid"] = {"mass_g": ru["coreMass"], "density": round(rg["meanDensity"], 4), **ru["response"]}
 
+    # 3b. graded per cell (3D): the z grading's layer forces, shared out where
+    # the load actually goes, idle rim cells emptied
+    inside, rho_z, lo, h = sample_core(gg, spec["envelope"], "density", 1.0)
+    rho_min = graded["rhoMin"]
+    g3 = grade_3d(inside, lo, h, spec["lattice"], mat, graded["plateauForce"], rho0=rho_z, rho_min=rho_min)
+    grid = os.path.join(os.path.abspath(a.out), "end-stop-density-3d.npz")
+    save_density_grid(grid, g3["rho"], lo, h)
+    d3 = copy.deepcopy(doc)
+    d3["nodes"]["density"] = {"op": "grid", "source": "density3d"}       # end-stop-density-3d.npz, in memory
+    d3["nodes"]["keep"] = {"op": "expr", "expr": f"{0.5 * rho_min:.4f} - density"}     # empty cells out
+    d3["nodes"]["envelope"] = {"op": "intersect", "inputs": [doc["nodes"]["envelope"], "keep"],
+                               "bounds": doc["nodes"]["envelope"]["bounds"]}
+    src = {"density3d": dict(np.load(grid))}
+    g3g = FieldGraph(d3, base_dir=str(HERE), sources=src)
+    r3 = impact_report(g3g, {**spec, "grade": False}, mat)
+    rows["graded gyroid 3D"] = {"mass_g": r3["coreMass"], **r3["response"]}
+
     # 4. 3D check of the layer model's first collapse
-    for name, graph in (("graded gyroid", gg), ("uniform gyroid", gu)):
+    for name, graph in (("graded gyroid", gg), ("uniform gyroid", gu), ("graded gyroid 3D", g3g)):
         lam, res = collapse_3d(graph, spec, mat)
         inside, rho, lo, h = sample_core(graph, spec["envelope"], spec.get("density"), 0.25)
         area, mean = layer_profile(inside, rho, h)
@@ -155,21 +174,22 @@ def main():
     # 6. vibration: the robot (5 kg) sitting on each pad
     top = {"op": "shape", "shape": {"type": "box", "min": [-12, -12, 19.5], "max": [12, 12, 21]}}
     base = {"op": "shape", "shape": {"type": "box", "min": [-21, -21, -1], "max": [21, 21, 0.5]}}
-    for name, d in (("graded gyroid", gdoc), ("uniform gyroid", udoc)):
+    for name, d in (("graded gyroid", gdoc), ("uniform gyroid", udoc), ("graded gyroid 3D", d3)):
         vd = copy.deepcopy(d)
         vd["nodes"].update(top=top, base=base)
-        vg = FieldGraph(vd, base_dir=str(HERE))
+        vg = FieldGraph(vd, base_dir=str(HERE), sources=src)
         vr = vibration_report(vg, {"envelope": "envelope", "density": "density", "lattice": spec["lattice"],
                                    "fixed": "base", "pointMasses": [{"region": "top", "mass": spec["mass"]}],
                                    "modes": 3, "pitch": 1.0}, mat)
         rows[name]["f1_Hz"] = vr["frequencies"][0]
 
     # the graded part itself
+    g3g.mesh(pitch=doc["mesh"]["pitch"]).export(os.path.join(a.out, "end-stop-graded-3d.stl"))
     part = gg.mesh(pitch=doc["mesh"]["pitch"])
     part.export(os.path.join(a.out, "end-stop-graded.stl"))
     rows["graded gyroid"]["meshVolume"] = round(float(part.volume), 1)
     gu.mesh(pitch=doc["mesh"]["pitch"]).export(os.path.join(a.out, "end-stop-uniform.stl"))
-    curves = {"graded gyroid": rg["curve"], "uniform gyroid": ru["curve"]}
+    curves = {"graded gyroid": rg["curve"], "uniform gyroid": ru["curve"], "graded gyroid 3D": r3["curve"]}
     out = {"case": doc["description"], "energy_J": round(rg["energy"] / 1000, 2), "forceLimit_N": spec["forceLimit"],
            "rows": rows, "curves": curves, "gradedDensity": graded["density"], "seconds": round(time.time() - t0)}
     with open(os.path.join(a.out, "summary.json"), "w") as fh:

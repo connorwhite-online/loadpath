@@ -1,0 +1,20 @@
+{
+  "name": "knock-pad",
+  "description": "A TPU bumper on a GRIP-like forearm for everyday knocks: 1.5 kg of arm swinging into a hand or a fixture at 1 m/s (0.75 J) should not push harder than 140 N, about the ISO/TS 15066 quasi-static contact limit for a hand. TPU buckles instead of yielding, so this uses the elastic crush law and the pad springs back. The envelope tapers from 40 mm to 24 mm square over 14 mm; 6 mm cells keep the thinnest wall at 0.5 mm (a single FDM line). The 'density' table is the impact block's grade output.",
+  "nodes": {
+    "envelope": {"op": "expr", "expr": "max(max(abs(x) - w, abs(y) - w), max(-z, z - 14)) * 0.995",
+                 "vars": {"w": {"op": "remap", "input": {"op": "coordinate", "axis": "z"},
+                                "from": [0, 14], "to": [20, 12]}},
+                 "bounds": {"min": [-20, -20, 0], "max": [20, 20, 14]}},
+    "density": {"op": "constant", "value": 0.28},
+    "core": {"op": "lattice", "type": "gyroid", "cell": 6, "density": "density"},
+    "part": {"op": "intersect", "inputs": ["core", "envelope"]}
+  },
+  "output": "part",
+  "material": "tpu",
+  "process": "fdm",
+  "mesh": {"pitch": 0.15},
+  "impact": {"envelope": "envelope", "density": "density", "lattice": "gyroid", "axis": "z",
+             "mass": 1.5, "velocity": 1.0, "forceLimit": 140, "pitch": 0.25, "grade": true,
+             "cell": 6, "minWall": 0.5}
+}

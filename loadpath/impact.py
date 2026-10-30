@@ -60,9 +60,9 @@ import numpy as np
 
 from .lattice import SHEETS, relative_density, sheet_modulus, tpms
 
-__all__ = ["CRUSH", "CRUSH_DATA", "collapse_strength", "plateau_stress", "density_for_plateau", "densification_strain",
+__all__ = ["CRUSH", "CRUSH_DATA", "crush_law", "ELASTOMERS", "HYSTERESIS", "collapse_strength", "plateau_stress", "density_for_plateau", "densification_strain",
            "CrushCurve", "crush_curve", "layer_profile", "impact_response", "grade_for_impact", "solid_impact",
-           "limit_load", "foam_stress", "face_load", "impact_report", "sample_core", "DENSIFICATION_ALPHA"]
+           "limit_load", "foam_stress", "face_load", "grade_3d", "save_density_grid", "impact_report", "sample_core", "DENSIFICATION_ALPHA"]
 
 DENSIFICATION_ALPHA = 1.4    # Gibson & Ashby, open-cell foams: eps_D = 1 - 1.4 rho
 
@@ -80,6 +80,22 @@ CRUSH = {
     "diamond": {"D": 0.675, "p": 1.122},
     "schwarz-p": {"D": 0.795, "p": 1.380},
 }
+
+# Elastomers (TPU) do not yield: their sheets buckle elastically, the core
+# crushes at the buckling stress and springs back. Plateau sigma_el / E =
+# D rho^p, Gibson & Ashby's elastic-collapse law for elastomeric foams
+# (0.05 rho^2). Our own check, linear buckling of a 2x2x2 gyroid block
+# between glued plates (nonlinear.linear_buckling), gives 0.0043 at rho 0.3
+# with 24 voxels per cell against the law's 0.0045, but is not converged
+# (0.0144 at 16 voxels: thin walls lock), so the law stands until a
+# coupon says otherwise. Same law for every sheet type (no per-type data).
+for _k in ("gyroid", "diamond", "schwarz-p"):
+    CRUSH[f"{_k}:elastic"] = {"D": 0.05, "p": 2.0}
+ELASTOMERS = {"tpu"}
+# fraction of the absorbed energy an elastomer core dissipates (the rest
+# comes back as rebound): large-strain compression hysteresis of TPU
+# foams and lattices, roughly 0.2-0.4; rough
+HYSTERESIS = {"tpu": 0.3}
 
 # (rho, sigma_pl / sigma_y) behind the fits, for tests and re-fitting
 CRUSH_DATA = {
@@ -185,9 +201,24 @@ def _crush_fit(kind):
     return fit
 
 
+def _base(kind: str) -> str:
+    return kind.split(":")[0]
+
+
+def crush_law(kind: str, material) -> tuple:
+    """(law key, reference stress) for a lattice of `material`: plastic
+    collapse over the yield stress for polymers and metals that yield, and
+    elastic buckling over the modulus ("<kind>:elastic") for elastomers,
+    which buckle, crush and spring back."""
+    if getattr(material, "name", "") in ELASTOMERS:
+        return f"{kind}:elastic", float(material.E)
+    return kind, float(material.strength)
+
+
 def plateau_stress(kind: str, rho, sigma_y: float):
     """Crush plateau stress (MPa) of a `kind` sheet at relative density rho;
-    solid (rho >= 1) is sigma_y."""
+    solid (rho >= 1) is sigma_y. For an elastic law ("gyroid:elastic")
+    sigma_y is the solid's modulus (see crush_law)."""
     f = _crush_fit(kind)
     rho = np.asarray(rho, float)
     return np.where(rho >= 1.0, sigma_y, sigma_y * f["D"] * np.clip(rho, 1e-3, 1.0) ** f["p"])
@@ -262,7 +293,7 @@ def crush_curve(kind: str, area, rho, h: float, sigma_y: float, modulus: float,
     area, rho = area[keep], rho[keep]
     fl = plateau_stress(kind, rho, sigma_y) * area if layer_force is None else np.asarray(layer_force, float)[keep]
     stroke = densification_strain(rho, alpha) * h
-    k_layer = modulus * sheet_modulus(kind, rho) * area / h
+    k_layer = modulus * sheet_modulus(_base(kind), rho) * area / h
     comp = float(np.sum(1.0 / np.maximum(k_layer, 1e-12)))      # series compliance, mm/N
     order = np.argsort(fl, kind="stable")
     d, f = [0.0], [0.0]
@@ -478,19 +509,26 @@ def impact_report(graph, spec: dict, material) -> dict:
     axis = "xyz".index(spec.get("axis", "z"))
     pitch = float(spec.get("pitch", 0.5))
     inside, rho, lo, h = sample_core(graph, spec["envelope"], spec.get("density"), pitch)
-    sy, E = float(material.strength), float(material.E)
+    law, sy = crush_law(kind, material)
+    E = float(material.E)
     other = tuple(i for i in range(3) if i != axis)
     area, mean = layer_profile(inside, rho, h, axis)
-    lf = (plateau_stress(kind, rho, sy) * inside).sum(axis=other) * h ** 2
+    lf = (plateau_stress(law, rho, sy) * inside).sum(axis=other) * h ** 2
     energy = _energy(spec)
     mass = spec.get("mass")
     flim = spec.get("forceLimit")
-    cv = crush_curve(kind, area, mean, h, sy, E, layer_force=lf)
+    cv = crush_curve(law, area, mean, h, sy, E, layer_force=lf)
     resp = impact_response(cv, energy, mass)
     core_mass = float((rho * inside).sum() * h ** 3 * material.density / 1000.0)
-    out = {"lattice": kind, "axis": "xyz"[axis], "energy": round(energy, 1), "coreMass": round(core_mass, 2),
+    out = {"lattice": kind, "law": "elastic buckling" if law.endswith(":elastic") else "plastic collapse",
+           "axis": "xyz"[axis], "energy": round(energy, 1), "coreMass": round(core_mass, 2),
            "meanDensity": round(float((rho * inside).sum() / max(inside.sum(), 1)), 3),
            "response": resp, "curve": cv.to_dict()}
+    if law.endswith(":elastic"):
+        # an elastomer core springs back: only its hysteresis is dissipated
+        hy = HYSTERESIS.get(material.name, 0.3)
+        out["dissipated"] = hy
+        out["reboundEnergy"] = round((1 - hy) * energy, 1)
     if flim is not None:
         out["forceLimit"] = float(flim)
         out["ok"] = bool(not resp["bottomedOut"] and resp["peakForce"] <= flim)
@@ -500,7 +538,7 @@ def impact_report(graph, spec: dict, material) -> dict:
             # the thinnest printable wall sets the lowest density at this cell
             rho_min = max(rho_min, float(relative_density(kind, float(spec.get("minWall", 0.8)),
                                                           float(spec["cell"]))))
-        g = grade_for_impact(kind, area, h, sy, E, energy, flim, rho_min, float(spec.get("rhoMax", 0.5)))
+        g = grade_for_impact(law, area, h, sy, E, energy, flim, rho_min, float(spec.get("rhoMax", 0.5)))
         z = lo[axis] + (np.arange(len(area)) + 0.5) * h
         keep = area > 0
         zs, rs = z[keep], g["rho"][keep]
@@ -509,7 +547,7 @@ def impact_report(graph, spec: dict, material) -> dict:
         idx = np.unique(np.r_[np.arange(0, len(zs), step), len(zs) - 1])
         gm = float((g["rho"] * area).sum() * h * material.density / 1000.0)
         # the fair comparison: a uniform core of the same mass
-        cu = crush_curve(kind, area, g["meanRho"], h, sy, E)
+        cu = crush_curve(law, area, g["meanRho"], h, sy, E)
         out["uniformSameMass"] = {"density": round(g["meanRho"], 4), "response": impact_response(cu, energy, mass)}
         out["graded"] = {"ok": g["ok"], "plateauForce": round(g["force"], 1), "coreMass": round(gm, 2),
                          "rhoMin": round(rho_min, 4),
@@ -518,3 +556,92 @@ def impact_report(graph, spec: dict, material) -> dict:
                                      "from": [round(float(x), 3) for x in zs[idx]],
                                      "to": [round(float(x), 4) for x in rs[idx]]}}
     return out
+
+
+def grade_3d(inside, lo, h: float, kind: str, material, force: float, rho0=None, rho_min: float = 0.12,
+             rho_max: float = 0.5, axis: int = 2, iters: int = 16, alpha: float = FOAM_ALPHA,
+             keep_layers: bool = True, voids: bool = True, void_below: float = 0.5) -> dict:
+    """Density per cell, not just per layer, for a core that crushes at
+    `force` (N, pressed evenly on the top face along `axis`, foot held).
+
+    A layer-only grading (grade_for_impact) gives every layer the right
+    total strength, but in a taper the load from a narrow layer stays in a
+    column and reaches the middle of the wider layers below before their
+    rims: the middle crushes early and the rims idle. Here each pass solves
+    the homogenized core elastically and, within each layer, shares the
+    layer's crush force out in proportion to where the (crushable-foam)
+    stress goes, so each layer still crushes at `force` (`keep_layers`).
+    Cells that would need less than `void_below` x rho_min become empty
+    (`voids`): the idle rim is removed and its material moves to the loaded
+    middle, which is why the result is lighter as well. Damped, as the load
+    path moves with the densities.
+
+    inside: bool voxel grid (cell centres at lo + (ijk + 0.5) h); rho0: the
+    starting density per voxel (default rho_min). Returns the density grid
+    (0 = empty; outside cells carry the nearest inside value so a field
+    graph can sample it anywhere), the worst utilization per pass and the
+    core mass. In a graph, a grid node of it drives the lattice density and
+    an expr `0.1 - density` intersected with the envelope cuts the empty
+    cells (see examples/impact/end_stop.py)."""
+    from scipy import ndimage
+    from scipy.sparse.linalg import cg
+
+    from .fem import HexMesh, Stiffness, amg_solver
+    from .lattice import sheet_modulus
+
+    kind, sy = crush_law(_base(kind), material)
+    E = float(material.E)
+    ijk = np.argwhere(inside)
+    mesh = HexMesh(ijk, h, lo)
+    rho = (np.full(len(ijk), rho_min) if rho0 is None
+           else np.clip(np.broadcast_to(rho0, inside.shape)[inside], rho_min, rho_max)).astype(float)
+    x = mesh.node_xyz[:, axis]
+    fixed = np.zeros(mesh.n_dof, bool)
+    foot = np.flatnonzero(x < x.min() + 1e-6)
+    fixed[3 * foot + axis] = True
+    others = [a for a in range(3) if a != axis]
+    fixed[3 * foot[0] + others[0]] = fixed[3 * foot[0] + others[1]] = True     # hold it still sideways
+    fixed[3 * foot[-1] + others[1]] = True
+    f = face_load(mesh, axis, -force)
+    st = Stiffness(mesh, float(material.nu), fixed)
+    f = np.where(st.fixed, 0.0, f)
+    u, hist = None, []
+    for _ in range(iters):
+        mod = np.where(rho > 0, E * sheet_modulus(_base(kind), np.maximum(rho, 1e-3)), 1e-6 * E)
+        k = st.assemble(mod)
+        u, _info = cg(k, f, x0=u, rtol=1e-7, maxiter=1500,
+                      M=amg_solver(k, symmetry="hermitian", max_coarse=500).aspreconditioner())
+        se = foam_stress(st.stress(u, mod), alpha)
+        util = np.where(rho > 0, se / plateau_stress(kind, np.maximum(rho, 1e-3), sy), 0.0)
+        hist.append(float(util.max()))
+        if keep_layers:
+            # within each layer, share the layer's crush force out in proportion
+            # to where the stress goes: scale c per layer so sum sigma_pl A = force
+            lay = ijk[:, axis]
+            nl = lay.max() + 1
+            lo_c, hi_c = np.full(nl, 1e-3), np.full(nl, 1e3)
+            for _b in range(40):
+                c = np.sqrt(lo_c * hi_c)
+                t = np.clip(density_for_plateau(kind, c[lay] * se, sy), rho_min, rho_max)
+                if voids:
+                    t = np.where(density_for_plateau(kind, c[lay] * se, sy) < void_below * rho_min, 0.0, t)
+                tot = np.bincount(lay, plateau_stress(kind, t, sy) * h ** 2, nl)
+                over = tot > force
+                hi_c = np.where(over, c, hi_c)
+                lo_c = np.where(over, lo_c, c)
+            target = t
+        else:
+            target = np.clip(density_for_plateau(kind, se, sy), rho_min, rho_max)
+        rho = np.where(target == 0.0, 0.0, np.sqrt(np.maximum(rho, rho_min) * np.maximum(target, rho_min)))
+    grid = np.zeros(inside.shape)
+    grid[inside] = rho
+    idx = ndimage.distance_transform_edt(~inside, return_distances=False, return_indices=True)
+    return {"rho": grid[tuple(idx)], "inside": inside, "history": hist, "utilization": util,
+            "mass": float(rho.sum() * h ** 3 * material.density / 1000.0)}
+
+
+def save_density_grid(path: str, rho, lo, h: float) -> None:
+    """A density grid for a field graph's `grid` node: values at the voxel
+    centres lo + (ijk + 0.5) h."""
+    np.savez_compressed(path, values=np.asarray(rho, np.float32), origin=np.asarray(lo, float) + 0.5 * h,
+                        pitch=float(h))
