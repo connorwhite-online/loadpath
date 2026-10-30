@@ -1,0 +1,2206 @@
+<title>__LOADPATH_TITLE__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: inspector on the left; the live preview over the node graph on the right (a divider between them). Phones stack all three. */
+:root {
+  --ground: #e7ebf0;
+  --panel: #fafbfc;
+  --ink: #17202b;
+  --muted: #5a6575;
+  --line: #d3d9e1;
+  --chip: #edf0f4;
+  --accent: #2c56c9;
+  --accent-ink: #ffffff;
+  --warn: #c2410c;
+  --ok: #15803d;
+  --solid: #2c56c9;
+  --scalar: #b7791f;
+  --graph: #eef1f5;
+  --dot: #d5dbe3;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #10151c; --panel: #171e27; --ink: #e3e8ef; --muted: #8d99aa; --line: #283242;
+    --chip: #1f2833; --accent: #86a2f7; --accent-ink: #0d1424; --warn: #fb923c; --ok: #4ade80;
+    --solid: #86a2f7; --scalar: #e0b25c; --graph: #131a22; --dot: #222c39; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #10151c; --panel: #171e27; --ink: #e3e8ef; --muted: #8d99aa; --line: #283242;
+  --chip: #1f2833; --accent: #86a2f7; --accent-ink: #0d1424; --warn: #fb923c; --ok: #4ade80;
+  --solid: #86a2f7; --scalar: #e0b25c; --graph: #131a22; --dot: #222c39; color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 13px/1.45 var(--body); overflow: hidden; }
+#app { position: relative; height: 100%; display: grid; grid-template-columns: 320px 1fr; }
+#panel {
+  background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; min-width: 0;
+  padding-block: 16px 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: 16px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+#right { position: relative; min-width: 0; display: grid; grid-template-rows: var(--split, 62%) 6px 1fr; }
+#stage { position: relative; min-width: 0; overflow: hidden; }
+#stage > canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+#divider { background: var(--line); cursor: row-resize; touch-action: none; }
+#graphwrap { position: relative; min-height: 0; background: var(--graph); overflow: hidden; }
+header h1 { font: 600 20px/1.15 var(--display); margin: 0; letter-spacing: 0.01em; text-wrap: balance; }
+header h1 input { font: inherit; color: inherit; background: transparent; border: 0; padding: 0; width: 100%; }
+header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+section { display: flex; flex-direction: column; gap: 8px; }
+section > h2 { margin: 0; font: 500 10.5px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  display: flex; justify-content: space-between; align-items: center; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row.wrap { flex-wrap: wrap; }
+select, button, input, textarea { font: inherit; color: inherit; }
+select, input[type="text"], input[type="number"], textarea {
+  background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; min-width: 0;
+}
+select { width: 100%; }
+input[type="number"] { width: 74px; font: 12px var(--mono); font-variant-numeric: tabular-nums; padding: 4px 6px; }
+input[type="text"] { width: 100%; }
+textarea { width: 100%; font: 12px/1.5 var(--mono); resize: vertical; box-sizing: border-box; }
+.seg { display: flex; background: var(--chip); border: 1px solid var(--line); border-radius: 7px; padding: 2px; gap: 2px; }
+.seg button {
+  flex: 1 1 0; border: 0; background: transparent; padding: 5px 4px; border-radius: 5px; cursor: pointer;
+  font-size: 12px; white-space: nowrap; color: var(--muted);
+}
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 0 0 1px var(--line); font-weight: 500; }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.btn { border: 1px solid var(--line); background: var(--chip); border-radius: 6px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 500; }
+.btn.small { padding: 2px 7px; font-size: 12px; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.note { color: var(--muted); font-size: 12px; margin: 0; }
+.note.warn { color: var(--warn); }
+.note.ok { color: var(--ok); }
+.param { display: flex; flex-direction: column; gap: 4px; }
+.param > .lab { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.param > .lab b { font-weight: 500; color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
+.param .sub { padding-left: 10px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.vec { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.vec label { display: flex; align-items: center; gap: 3px; font: 11px var(--mono); color: var(--muted); cursor: ew-resize; user-select: none; }
+.vec input { width: 100%; }
+.pick { display: flex; gap: 6px; align-items: center; }
+.pick select { width: auto; flex: 1; }
+.chipline { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font: 11px var(--mono); background: var(--chip); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--muted); }
+.chip.solid { color: var(--solid); } .chip.scalar { color: var(--scalar); }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
+dt { color: var(--muted); }
+dd { margin: 0; font: 12px var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
+#log { font: 11px/1.5 var(--mono); color: var(--muted); max-height: 120px; overflow: auto; white-space: pre-wrap; margin: 0; }
+#issues { margin: 0; padding-left: 16px; color: var(--warn); font-size: 12px; }
+
+/* viewport overlays */
+.overlay { position: absolute; z-index: 2; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+#legend { right: max(12px, env(safe-area-inset-right, 0px)); bottom: 12px; padding: 9px 11px; width: 210px; max-width: calc(100% - 24px); }
+#legend .t { font-size: 12px; font-weight: 500; margin-bottom: 6px; }
+#legend canvas { width: 100%; height: 10px; border-radius: 2px; display: block; }
+#legend .ticks { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+#viewbar { top: 10px; right: max(10px, env(safe-area-inset-right, 0px)); display: flex; gap: 4px; background: transparent; border: 0; }
+#viewbar button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; cursor: pointer; font-size: 12px; }
+#viewbar button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+#hud { left: 12px; top: 10px; padding: 5px 9px; font: 11px var(--mono); color: var(--muted); display: flex; gap: 10px; font-variant-numeric: tabular-nums; }
+#notes { left: 12px; bottom: 12px; padding: 7px 10px; max-width: min(420px, calc(100% - 260px)); font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
+#probe { position: absolute; z-index: 3; pointer-events: none; font: 11.5px var(--mono); background: var(--ink); color: var(--panel);
+  border-radius: 5px; padding: 4px 7px; white-space: nowrap; transform: translate(14px, -50%); font-variant-numeric: tabular-nums; }
+#glerr { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--warn); }
+
+/* graph */
+#gtools { position: absolute; z-index: 2; left: 10px; top: 8px; right: 10px; display: flex; gap: 6px; align-items: center; pointer-events: none; }
+#gtools > * { pointer-events: auto; }
+#gtools select { width: auto; background: var(--panel); }
+#gtools .btn { background: var(--panel); }
+#gtools .spacer { flex: 1; pointer-events: none; }
+#graph { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; cursor: grab;
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 18px 18px; }
+#graph.panning { cursor: grabbing; }
+.gn rect.body { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+.gn.sel rect.body { stroke: var(--accent); stroke-width: 2; }
+.gn.bad rect.body { stroke: var(--warn); stroke-width: 1.5; }
+.gn .stripe { stroke: none; }
+.gn text { font: 11px var(--mono); fill: var(--muted); }
+.gn text.name { font: 600 12px var(--body); fill: var(--ink); }
+.gn .head { cursor: move; }
+.gn .port { fill: var(--panel); stroke: var(--muted); stroke-width: 1.2; cursor: crosshair; }
+.gn .port.on { fill: var(--muted); }
+.gn .port.hot { stroke: var(--accent); stroke-width: 2.5; }
+.gn .outp { stroke-width: 1.5; cursor: crosshair; }
+.gn .badge { font: 600 9.5px var(--mono); letter-spacing: 0.06em; }
+.wire { fill: none; stroke-width: 1.6; opacity: 0.75; }
+.wire.solid { stroke: var(--solid); } .wire.scalar { stroke: var(--scalar); }
+.wire.hl { stroke-width: 2.6; opacity: 1; }
+#jsonpane { position: absolute; inset: 0; z-index: 3; background: var(--graph); padding: 44px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+#jsonpane textarea { flex: 1; resize: none; background: var(--panel); }
+
+@media (max-width: 760px) {
+  body { overflow: auto; }
+  #app { grid-template-columns: 1fr; height: auto; }
+  #right { grid-template-rows: 58vh 6px 46vh; order: -1; }
+  #panel { border-right: 0; border-top: 1px solid var(--line); padding-right: max(16px, env(safe-area-inset-right, 0px)); overflow: visible; }
+  #notes { max-width: calc(100% - 24px); bottom: 64px; }
+  #legend { left: 12px; right: 12px; width: auto; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<!--/head-->
+<div id="app">
+  <aside id="panel">
+    <header><h1><input id="name" aria-label="Graph name" spellcheck="false"></h1><p id="desc"></p></header>
+
+    <section>
+      <h2>Preview</h2>
+      <div class="pick"><span class="note">Solid</span><select id="target" aria-label="Solid shown"></select></div>
+      <div class="pick"><span class="note">Colour</span><select id="colorby" aria-label="Colour by"></select></div>
+      <div class="seg" id="cut" role="group" aria-label="Section plane">
+        <button data-v="off" aria-pressed="true">No cut</button><button data-v="0">X</button><button data-v="1">Y</button><button data-v="2">Z</button>
+      </div>
+      <div class="row"><input type="range" id="cut-pos" min="0" max="1" step="0.001" value="0.5" aria-label="Section position" disabled>
+        <button class="btn small" id="cut-flip" disabled title="Keep the other side">Flip</button></div>
+      <div class="seg" id="quality" role="group" aria-label="Preview quality">
+        <button data-v="draft">Draft</button><button data-v="good" aria-pressed="true">Good</button><button data-v="fine">Fine</button>
+      </div>
+    </section>
+
+    <section id="inspector">
+      <h2><span>Node</span><span id="node-actions"></span></h2>
+      <div id="node-body"><p class="note">Pick a node in the graph.</p></div>
+    </section>
+
+    <section>
+      <h2>Part</h2>
+      <div class="pick"><span class="note">Output</span><select id="output" aria-label="Output node"></select></div>
+      <div class="param"><div class="lab"><span>Mesh pitch, mm</span></div>
+        <div class="row"><input type="range" id="pitch" min="0.1" max="2" step="0.05"><input type="number" id="pitch-n" step="0.05" min="0.05"></div></div>
+      <div class="row"><div class="pick" style="flex:1"><span class="note">Material</span><input type="text" id="material" placeholder="petg"></div></div>
+      <div class="row"><div class="pick" style="flex:1"><span class="note">Process</span>
+        <select id="process"><option value="">none</option><option>fdm</option><option>sls</option><option>mjf</option><option>sla</option><option>dlp</option><option>volumetric</option><option>lpbf</option></select></div></div>
+    </section>
+
+    <section>
+      <h2>Build</h2>
+      <div class="row wrap">
+        <button class="btn primary" id="run">Run</button>
+        <button class="btn" id="save">Save</button>
+        <button class="btn" id="export">Export JSON</button>
+        <label class="btn" for="import">Import<input type="file" id="import" accept=".json,application/json" hidden></label>
+      </div>
+      <p class="note" id="status"></p>
+      <ul id="issues" hidden></ul>
+      <pre id="log" hidden></pre>
+      <dl id="report" hidden></dl>
+      <div class="row wrap" id="links" hidden></div>
+    </section>
+    <p class="note" id="foot"></p>
+  </aside>
+
+  <div id="right">
+    <main id="stage">
+      <canvas id="gl"></canvas>
+      <canvas id="mesh3" hidden></canvas>
+      <div id="hud" class="overlay"><span id="hud-mode">preview</span><span id="hud-ms"></span><span id="hud-res"></span></div>
+      <div id="viewbar" class="overlay">
+        <span id="modebar" hidden><button data-mode="preview" aria-pressed="true">Preview</button><button data-mode="mesh">Mesh</button></span>
+        <button data-view="iso">Iso</button><button data-view="front">Front</button><button data-view="top">Top</button><button id="fit">Fit</button>
+      </div>
+      <div id="legend" class="overlay" hidden>
+        <div class="t" id="lg-title"></div>
+        <canvas id="lg-bar" width="256" height="1"></canvas>
+        <div class="ticks"><span id="lg-lo"></span><span id="lg-mid"></span><span id="lg-hi"></span></div>
+      </div>
+      <div id="notes" class="overlay" hidden></div>
+      <div id="probe" hidden></div>
+      <div id="glerr" hidden></div>
+    </main>
+    <div id="divider" role="separator" aria-orientation="horizontal" aria-label="Resize preview"></div>
+    <div id="graphwrap">
+      <div id="gtools">
+        <select id="add" aria-label="Add a node"><option value="">+ Add node</option></select>
+        <button class="btn small" id="layout">Tidy</button>
+        <button class="btn small" id="gfit">Fit</button>
+        <span class="spacer"></span>
+        <button class="btn small" id="undo" title="Undo (Ctrl+Z)">Undo</button>
+        <button class="btn small" id="redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+        <button class="btn small" id="jsonbtn" aria-pressed="false">JSON</button>
+      </div>
+      <svg id="graph" aria-label="Field graph"><g id="world"><g id="wires"></g><g id="nodes"></g><path id="dragwire" class="wire solid" hidden></path></g></svg>
+      <div id="jsonpane" hidden>
+        <textarea id="json" spellcheck="false" aria-label="Graph JSON"></textarea>
+        <div class="row"><button class="btn primary" id="json-apply">Apply</button><span class="note" id="json-note"></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="application/json" id="loadpath-data">/*__LOADPATH_DATA__*/null</script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const DATA = JSON.parse(document.getElementById("loadpath-data").textContent);
+const $ = (s) => document.querySelector(s);
+const clone = (o) => JSON.parse(JSON.stringify(o));
+function stable(o) {
+  if (Array.isArray(o)) return "[" + o.map(stable).join(",") + "]";
+  if (o && typeof o === "object") return "{" + Object.keys(o).sort().map((k) => JSON.stringify(k) + ":" + stable(o[k])).join(",") + "}";
+  return JSON.stringify(o);
+}
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "text") e.textContent = v;
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()) if (c != null) e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return e;
+}
+const svg = (tag, attrs = {}) => {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) e.setAttribute(k, v);
+  return e;
+};
+const fmt = (v) => {
+  if (!isFinite(v)) return String(v);
+  const a = Math.abs(v);
+  return a >= 1000 ? v.toFixed(0) : a >= 100 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : a >= 0.01 ? v.toFixed(3) : v.toPrecision(2);
+};
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+// ---- the operations (schema.FIELD_SCHEMA, the editor's view of it) ----------------------------
+
+const FIELD_KEYS = ["input", "value", "thickness", "distance", "blend", "cell", "density", "offset"];
+const SOLID_OPS = new Set(["shape", "mesh", "lattice", "union", "intersect", "subtract", "shell", "offset"]);
+const BAKED = new Set(["mesh", "result", "grid"]);
+const OPS = {
+  shape: { doc: "Exact primitive: box, cylinder, tube, sphere or a union of them.",
+    params: [{ k: "shape", t: "shape" }],
+    make: (c) => ({ shape: { type: "box", min: c.map((v) => +(v - 10).toFixed(2)), max: c.map((v) => +(v + 10).toFixed(2)) } }) },
+  mesh: { doc: "A closed STL/3MF/OBJ as a solid (baked for the preview).",
+    params: [{ k: "path", t: "text" }, { k: "pitch", t: "num", opt: true, def: 0.5 }, { k: "band", t: "num", opt: true, def: 3 }],
+    make: () => ({ path: "part.stl" }) },
+  lattice: { doc: "TPMS filling all of space: intersect it with a solid.",
+    params: [{ k: "type", t: "enum", opts: ["gyroid", "diamond", "schwarz-p"], def: "gyroid" },
+      { k: "form", t: "enum", opts: ["sheet", "network"], def: "sheet" },
+      { k: "cell", t: "field", def: 8, range: [1, 30] },
+      { k: "thickness", t: "field", def: 1, range: [0.1, 6], alt: "density" },
+      { k: "density", t: "field", def: 0.3, range: [0.05, 0.95], opt: true, alt: "thickness" },
+      { k: "offset", t: "field", def: 0, range: [-3, 3], opt: true },
+      { k: "grading", t: "enum", opts: ["warp", "blend"], def: "warp", opt: true },
+      { k: "origin", t: "vec3", opt: true, def: [0, 0, 0] },
+      { k: "frame", t: "frame", opt: true }],
+    make: () => ({ type: "gyroid", cell: 8, thickness: 1 }) },
+  union: { doc: "Join solids; blend is the fillet radius.", params: [{ k: "inputs", t: "list" }, { k: "blend", t: "field", def: 0, range: [0, 20] }], make: () => ({ inputs: [] }) },
+  intersect: { doc: "Keep what is inside every input; blend rounds the edges.", params: [{ k: "inputs", t: "list" }, { k: "blend", t: "field", def: 0, range: [0, 20] }], make: () => ({ inputs: [] }) },
+  subtract: { doc: "Cut the later inputs out of the first; blend fillets the cut.", params: [{ k: "inputs", t: "list" }, { k: "blend", t: "field", def: 0, range: [0, 20] }], make: () => ({ inputs: [] }) },
+  shell: { doc: "A wall of thickness on a solid's surface.",
+    params: [{ k: "input", t: "field", solid: true }, { k: "thickness", t: "field", def: 1, range: [0.1, 8] },
+      { k: "side", t: "enum", opts: ["inside", "outside", "center"], def: "inside" }], make: () => ({ thickness: 1 }) },
+  offset: { doc: "Grow (positive) or shrink a solid.", params: [{ k: "input", t: "field", solid: true }, { k: "distance", t: "field", def: 1, range: [-10, 10] }], make: () => ({ distance: 1 }) },
+  transform: { doc: "Move, rotate or scale the input.",
+    params: [{ k: "input", t: "field", solid: true }, { k: "translate", t: "vec3", opt: true, def: [0, 0, 0] },
+      { k: "rotate", t: "rotate", opt: true }, { k: "scale", t: "num", opt: true, def: 1, range: [0.1, 4] }], make: () => ({ translate: [0, 0, 0] }) },
+  constant: { doc: "A number everywhere.", params: [{ k: "value", t: "num", def: 1 }], make: () => ({ value: 1 }) },
+  coordinate: { doc: "Position along an axis, mm.", params: [{ k: "axis", t: "axis", def: "z" }, { k: "origin", t: "vec3", opt: true, def: [0, 0, 0] }], make: () => ({ axis: "z" }) },
+  distance: { doc: "Unsigned distance to a solid, points, a segment, a plane or a shape.", params: [{ k: "_mode", t: "distance" }], make: () => ({}) },
+  remap: { doc: "Map input from [a, b] to [c, d] through a curve.",
+    params: [{ k: "input", t: "field", def: 0 }, { k: "from", t: "pair", def: [0, 1] }, { k: "to", t: "pair", def: [0, 1] },
+      { k: "curve", t: "enum", opts: ["linear", "smoothstep", "smootherstep", "sqrt", "square"], def: "linear" },
+      { k: "clamp", t: "bool", def: true }], make: () => ({ from: [0, 1], to: [0, 1] }) },
+  expr: { doc: "Arithmetic over node names, x, y, z: abs sqrt exp log sin cos tan floor ceil sign min max clamp lerp smoothstep step where.",
+    params: [{ k: "expr", t: "code" }, { k: "vars", t: "vars" }], make: () => ({ expr: "z" }) },
+  result: { doc: "A simulation result: von Mises or displacement under a study (baked: the analysis runs on the server).",
+    params: [{ k: "study", t: "text", opt: true, def: "example:arm-link" }, { k: "part", t: "part", opt: true }, { k: "path", t: "text", opt: true, def: "result.npz" },
+      { k: "quantity", t: "text", opt: true, def: "vonMises" }, { k: "case", t: "text", opt: true, def: "" },
+      { k: "scale", t: "scale", opt: true }, { k: "pitch", t: "num", opt: true, def: 1 }, { k: "cells", t: "num", opt: true, def: 120000 }],
+    make: () => ({ study: "example:arm-link", part: "", scale: "peak" }) },
+  grid: { doc: "A scalar field on a regular grid (.npz: origin, pitch, values); baked.", params: [{ k: "path", t: "text" }, { k: "quantity", t: "text", opt: true, def: "values" }], make: () => ({ path: "field.npz" }) },
+};
+const AXES = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+
+// ---- the graph model ---------------------------------------------------------------------------
+
+const S = {
+  doc: null, sel: null, target: null, color: null, follow: true, bakes: {}, layout: {},
+  cut: "off", cutPos: 0.5, cutFlip: false, quality: "good", mode: "preview", issues: [], serverIssues: [],
+  undo: [], redo: [], version: 0, box: null, range: null, job: null,
+};
+
+/** Name every inline node (`owner-key`), placed before its owner so the last node (the default output) stays last. */
+function hoist(doc) {
+  doc = clone(doc);
+  const used = new Set(Object.keys(doc.nodes || {}));
+  const out = {};
+  const uniq = (base) => { let n = base, i = 2; while (used.has(n)) n = `${base}-${i++}`; used.add(n); return n; };
+  const fix = (owner, spec) => {
+    const s = { ...spec };
+    const sub = (v, key) => {
+      if (v && typeof v === "object" && !Array.isArray(v) && v.op) { const nm = uniq(`${owner}-${key}`); out[nm] = fix(nm, v); return nm; }
+      return v;
+    };
+    for (const k of FIELD_KEYS) if (k in s && !(s.op === "constant" && k === "value")) s[k] = sub(s[k], k);
+    if (Array.isArray(s.inputs)) s.inputs = s.inputs.map((v, i) => sub(v, `in${i + 1}`));
+    if (s.vars && typeof s.vars === "object") for (const k of Object.keys(s.vars)) s.vars[k] = sub(s.vars[k], k);
+    return s;
+  };
+  for (const [name, spec] of Object.entries(doc.nodes || {})) out[name] = (spec && typeof spec === "object") ? fix(name, spec) : spec;
+  doc.nodes = out;
+  return doc;
+}
+
+// expressions: Python's arithmetic, as fields.py allows it
+const FUNCS = { abs: 1, sqrt: 1, exp: 1, log: 1, sin: 1, cos: 1, tan: 1, floor: 1, ceil: 1, sign: 1, min: -1, max: -1,
+  clamp: 3, lerp: 3, smoothstep: 3, step: 2, where: 3 };
+const exprCache = new Map();
+function parseExpr(src) {
+  if (exprCache.has(src)) { const c = exprCache.get(src); if (c.err) throw new Error(c.err); return c.ast; }
+  try { const ast = parseExpr0(src); exprCache.set(src, { ast }); return ast; } catch (e) { exprCache.set(src, { err: e.message }); throw e; }
+}
+function parseExpr0(src) {
+  const toks = [];
+  const re = /\s*(?:(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)|([A-Za-z_]\w*)|(\*\*|<=|>=|==|!=|[-+*/%<>(),]))/y;
+  let i = 0;
+  while (i < src.length) {
+    re.lastIndex = i;
+    const m = re.exec(src);
+    if (!m || (!m[1] && !m[2] && !m[3])) { if (/^\s*$/.test(src.slice(i))) break; throw new Error(`cannot read "${src.slice(i).trim()}"`); }
+    i = re.lastIndex;
+    toks.push(m[1] ? { t: "num", v: parseFloat(m[1]) } : m[2] ? { t: "id", v: m[2] } : { t: "op", v: m[3] });
+  }
+  let k = 0;
+  const peek = () => toks[k];
+  const isOp = (v) => peek() && peek().t === "op" && peek().v === v;
+  const isKw = (v) => peek() && peek().t === "id" && peek().v === v;
+  const expect = (v) => { if (!isOp(v)) throw new Error(`expected "${v}"`); k++; };
+  const CMP = ["<", "<=", ">", ">="];
+  function ternary() {
+    const a = comparison();
+    if (isKw("if")) { k++; const c = comparison(); if (!isKw("else")) throw new Error("'if' needs an 'else'"); k++; return { t: "if", c, a, b: ternary() }; }
+    return a;
+  }
+  function comparison() {
+    const a = additive();
+    const p = peek();
+    if (p && p.t === "op" && CMP.includes(p.v)) {
+      k++; const b = additive();
+      if (peek() && peek().t === "op" && CMP.includes(peek().v)) throw new Error("chained comparisons are not allowed");
+      return { t: "cmp", op: p.v, a, b };
+    }
+    if (p && p.t === "op" && (p.v === "==" || p.v === "!=")) throw new Error(`"${p.v}" is not allowed (< <= > >= only)`);
+    return a;
+  }
+  function additive() { let a = term(); while (isOp("+") || isOp("-")) { const op = toks[k++].v; a = { t: "bin", op, a, b: term() }; } return a; }
+  function term() { let a = unary(); while (isOp("*") || isOp("/") || isOp("%")) { const op = toks[k++].v; a = { t: "bin", op, a, b: unary() }; } return a; }
+  function unary() { if (isOp("-") || isOp("+")) { const op = toks[k++].v; return { t: "un", op, a: unary() }; } return power(); }
+  function power() { const a = atom(); if (isOp("**")) { k++; return { t: "bin", op: "**", a, b: unary() }; } return a; }
+  function atom() {
+    const p = toks[k++];
+    if (!p) throw new Error("the expression ends too soon");
+    if (p.t === "num") return { t: "num", v: p.v };
+    if (p.t === "id") {
+      if (p.v === "if" || p.v === "else") throw new Error(`unexpected "${p.v}"`);
+      if (isOp("(")) {
+        k++;
+        const args = [];
+        if (!isOp(")")) { args.push(ternary()); while (isOp(",")) { k++; args.push(ternary()); } }
+        expect(")");
+        if (!(p.v in FUNCS)) throw new Error(`${p.v}() is not allowed (${Object.keys(FUNCS).join(" ")})`);
+        if (FUNCS[p.v] > 0 && args.length !== FUNCS[p.v]) throw new Error(`${p.v}() takes ${FUNCS[p.v]} argument${FUNCS[p.v] > 1 ? "s" : ""}`);
+        if (!args.length) throw new Error(`${p.v}() needs arguments`);
+        return { t: "call", f: p.v, args };
+      }
+      return { t: "name", v: p.v };
+    }
+    if (p.v === "(") { const e = ternary(); expect(")"); return e; }
+    throw new Error(`unexpected "${p.v}"`);
+  }
+  const ast = ternary();
+  if (k < toks.length) throw new Error(`unexpected "${toks[k].v}"`);
+  return ast;
+}
+function exprNames(ast, out = new Set()) {
+  if (!ast) return out;
+  if (ast.t === "name") out.add(ast.v);
+  for (const c of [ast.a, ast.b, ast.c, ...(ast.args || [])]) if (c) exprNames(c, out);
+  return out;
+}
+
+/** The node names a spec refers to: [{key (a path under the node), target}]. */
+function refsOf(spec, nodes) {
+  const r = [];
+  if (!spec || typeof spec !== "object") return r;
+  for (const k of FIELD_KEYS) if (typeof spec[k] === "string" && !(spec.op === "constant" && k === "value")) r.push({ key: k, target: spec[k] });
+  if (Array.isArray(spec.inputs)) spec.inputs.forEach((v, i) => { if (typeof v === "string") r.push({ key: `inputs.${i}`, target: v }); });
+  if (spec.vars && typeof spec.vars === "object") for (const [k, v] of Object.entries(spec.vars)) if (typeof v === "string") r.push({ key: `vars.${k}`, target: v });
+  if (spec.op === "expr" && typeof spec.expr === "string") {
+    try {
+      for (const n of exprNames(parseExpr(spec.expr))) {
+        if (["x", "y", "z", "pi", "e"].includes(n) || (spec.vars && n in spec.vars)) continue;
+        r.push({ key: "expr", target: n });
+      }
+    } catch (e) { /* reported by validate */ }
+  }
+  if (spec.op === "result" && typeof spec.part === "string" && nodes && spec.part in nodes) r.push({ key: "part", target: spec.part });
+  return r;
+}
+const depsOf = (name) => refsOf(S.doc.nodes[name], S.doc.nodes).map((r) => r.target).filter((t) => t in S.doc.nodes);
+
+function kindOf(name, seen = new Set()) {
+  const s = S.doc.nodes[name];
+  if (!s) return "scalar";
+  if (SOLID_OPS.has(s.op)) return "solid";
+  if (s.op === "transform") {
+    if (seen.has(name)) return "scalar";
+    seen.add(name);
+    return typeof s.input === "string" ? kindOf(s.input, seen) : "solid";
+  }
+  return "scalar";
+}
+
+/** Problems the page can see itself (the server's lint has the last word). */
+function validate() {
+  const out = [];
+  const nodes = S.doc.nodes;
+  for (const [name, s] of Object.entries(nodes)) {
+    if (!s || typeof s !== "object" || !(s.op in OPS)) { out.push({ node: name, message: `${name}: unknown op ${s && s.op}` }); continue; }
+    if (s.op === "expr") { try { parseExpr(String(s.expr || "")); } catch (e) { out.push({ node: name, message: `${name}: ${e.message}` }); } }
+    for (const r of refsOf(s, nodes)) if (!(r.target in nodes)) out.push({ node: name, message: `${name}: ${r.key} refers to "${r.target}", which is not a node` });
+    const needIn = ["shell", "offset", "transform", "remap"].includes(s.op);
+    if (needIn && s.input == null) out.push({ node: name, message: `${name}: needs an input` });
+    if (["union", "intersect", "subtract"].includes(s.op) && !(s.inputs && s.inputs.length >= (s.op === "subtract" ? 2 : 1)))
+      out.push({ node: name, message: `${name}: needs ${s.op === "subtract" ? "two inputs" : "an input"}` });
+  }
+  // cycles
+  const state = {};
+  const visit = (n, path) => {
+    if (state[n] === 1) { out.push({ node: n, message: "cycle: " + [...path, n].join(" → ") }); return; }
+    if (state[n] === 2 || !(n in nodes)) return;
+    state[n] = 1;
+    for (const d of depsOf(n)) visit(d, [...path, n]);
+    state[n] = 2;
+  };
+  for (const n of Object.keys(nodes)) visit(n, []);
+  return out;
+}
+
+// ---- GLSL: the graph as a signed distance function ------------------------------------------------
+
+const fl = (v) => {
+  v = Number(v);
+  if (!isFinite(v)) return v > 0 ? "1e30" : "-1e30";
+  let s = String(v);
+  if (!/[.eE]/.test(s)) s += ".0";
+  return s;
+};
+const KIND = { gyroid: 0, diamond: 1, "schwarz-p": 2, schwarz_p: 2, schwarzP: 2 };
+const CURVES = { linear: 0, smoothstep: 1, smootherstep: 2, sqrt: 3, square: 4 };
+
+function libGLSL(tables) {
+  const t = (k) => `float[19](${(tables && tables[k] ? tables[k] : Array.from({ length: 19 }, (_, i) => 0.05 + 0.05 * i)).map(fl).join(",")})`;
+  return `
+float uAt(int i) { return U[i >> 2][i & 3]; }
+float lp_smin(float a, float b, float k) {
+  if (k <= 1e-9) return min(a, b);
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return b * (1.0 - h) + a * h - k * h * (1.0 - h);
+}
+float lp_box(vec3 p, vec3 lo, vec3 hi) {
+  vec3 q = abs(p - 0.5 * (lo + hi)) - 0.5 * (hi - lo);
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+float lp_cyl(vec3 p, vec3 p0, vec3 p1, float r, float rin) {
+  vec3 ax = p1 - p0; float L = length(ax); ax /= max(L, 1e-9);
+  vec3 d = p - p0; float t = dot(d, ax); float radial = length(d - t * ax); float hl = 0.5 * L;
+  float rq = rin > 0.0 ? abs(radial - 0.5 * (r + rin)) - 0.5 * (r - rin) : radial - r;
+  vec2 q = vec2(rq, abs(t - hl) - hl);
+  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
+}
+float lp_cylc(vec3 p, vec3 c, vec3 a, float L, float r, float rin) { a = normalize(a); return lp_cyl(p, c - 0.5 * L * a, c + 0.5 * L * a, r, rin); }
+float lp_dseg(vec3 p, vec3 a, vec3 b) { vec3 ab = b - a; float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-30), 0.0, 1.0); return length(p - (a + t * ab)); }
+float lp_dpoints(vec3 p, int base, int n) {
+  float d = 1e30;
+  for (int i = 0; i < 4096; i++) { if (i >= n) break; vec3 q = vec3(uAt(base + 3 * i), uAt(base + 3 * i + 1), uAt(base + 3 * i + 2)); d = min(d, length(p - q)); }
+  return d;
+}
+float lp_ss(float e0, float e1, float x) { float u = clamp((x - e0) / (e1 == e0 ? 1e-12 : e1 - e0), 0.0, 1.0); return u * u * (3.0 - 2.0 * u); }
+float lp_pow(float a, float b) {
+  if (a >= 0.0) return pow(a, b);
+  float fb = floor(b);
+  if (fb == b) { float r = pow(-a, b); return mod(fb, 2.0) == 0.0 ? r : -r; }
+  return 0.0;
+}
+float lp_remap(float x, float a, float b, float c, float d, int curve, int cl) {
+  float u = (x - a) / (b == a ? 1e-12 : b - a);
+  if (cl == 1) u = clamp(u, 0.0, 1.0);
+  if (curve == 1) { float v = clamp(u, 0.0, 1.0); u = v * v * (3.0 - 2.0 * v); }
+  else if (curve == 2) { float v = clamp(u, 0.0, 1.0); u = v * v * v * (v * (6.0 * v - 15.0) + 10.0); }
+  else if (curve == 3) u = sqrt(max(u, 0.0));
+  else if (curve == 4) u = u * u;
+  return c + (d - c) * u;
+}
+float lp_tpms_f(int k, vec3 x, out vec3 g) {
+  vec3 s = sin(x), c = cos(x);
+  if (k == 0) { g = vec3(c.x * c.y - s.z * s.x, c.y * c.z - s.x * s.y, c.z * c.x - s.y * s.z); return s.x * c.y + s.y * c.z + s.z * c.x; }
+  if (k == 2) { g = -s; return c.x + c.y + c.z; }
+  g = vec3(c.x * s.y * s.z + c.x * c.y * c.z - s.x * s.y * c.z - s.x * c.y * s.z,
+           s.x * c.y * s.z - s.x * s.y * c.z + c.x * c.y * c.z - c.x * s.y * s.z,
+           s.x * s.y * c.z - s.x * c.y * s.z - c.x * s.y * s.z + c.x * c.y * c.z);
+  return s.x * s.y * s.z + s.x * c.y * c.z + c.x * s.y * c.z + c.x * c.y * s.z;
+}
+float lp_tpms(int k, vec3 q, float cell) { float kk = 6.28318530718 / cell; vec3 g; float f = lp_tpms_f(k, kk * q, g); return f / max(length(g) * kk, 0.3 * kk); }
+float lp_tpms_at(int k, vec3 q, float c, int cyl, float R) {
+  if (cyl == 1) { float n = max(1.0, floor(6.28318530718 * R / c + 0.5)); q = vec3(q.x, q.y * n * c / 6.28318530718, q.z); }
+  return lp_tpms(k, q, c);
+}
+vec3 lp_cylq(vec3 p, vec3 c, vec3 a) {
+  a = normalize(a);
+  vec3 e1 = normalize(cross(a, abs(a.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0))); vec3 e2 = cross(a, e1);
+  vec3 Q = p - c; float u = dot(Q, e1), v = dot(Q, e2);
+  return vec3(length(vec2(u, v)), atan(v, u), dot(Q, a));
+}
+// a field cell, previewed as fields.py's grading "blend": periods 1.25x apart, cross-faded
+float lp_lat(int k, vec3 q, float cell, int graded, int cyl, vec3 c, vec3 a, float R) {
+  cell = max(cell, 1e-3);
+  if (cyl == 1) { q = lp_cylq(q, c, a); if (R <= 0.0) R = max(q.x, cell); }
+  if (graded == 0) return lp_tpms_at(k, q, cell, cyl, R);
+  float s = log(cell) / log(1.25); float lev = floor(s); float t = s - lev; t = t * t * (3.0 - 2.0 * t);
+  float c0 = pow(1.25, lev);
+  float d0 = lp_tpms_at(k, q, c0, cyl, R);
+  return t < 1e-4 ? d0 : mix(d0, lp_tpms_at(k, q, c0 * 1.25, cyl, R), t);
+}
+const float RHO_G[19] = ${t("gyroid")};
+const float RHO_D[19] = ${t("diamond")};
+const float RHO_P[19] = ${t("schwarz-p")};
+float lp_wall_rho(int k, float rho, float cell) {
+  float x = (clamp(rho, 0.05, 0.95) - 0.05) / 0.05; int i = int(min(floor(x), 17.0)); float f = x - float(i);
+  float a = k == 0 ? RHO_G[i] : k == 1 ? RHO_D[i] : RHO_P[i];
+  float b = k == 0 ? RHO_G[i + 1] : k == 1 ? RHO_D[i + 1] : RHO_P[i + 1];
+  return mix(a, b, f) * cell;
+}
+vec3 lp_rot(vec3 q, vec3 a, float deg, vec3 c) {
+  a = normalize(a); float th = -radians(deg); vec3 v = q - c;
+  return v * cos(th) + cross(a, v) * sin(th) + a * dot(a, v) * (1.0 - cos(th)) + c;
+}
+float lp_tex(highp sampler3D T, vec3 p, vec3 lo, vec3 hi, vec3 n) {
+  vec3 u = clamp((p - lo) / (hi - lo), 0.0, 1.0);
+  return texture(T, (u * (n - 1.0) + 0.5) / n).r;
+}
+vec3 lp_warp(highp sampler3D W, vec3 q, vec3 lo, vec3 n, float h, float c0, float cell) {
+  vec3 idx = (q - lo) / h, cl = clamp(idx, vec3(0.0), n - 1.0);
+  return texture(W, (cl + 0.5) / n).rgb + (lo + cl * h) / c0 + (idx - cl) * h / max(cell, 1e-3);
+}
+float lp_texsdf(highp sampler3D T, vec3 p, vec3 lo, vec3 hi, vec3 n) { return lp_tex(T, p, lo, hi, n) + length(max(max(lo - p, p - hi), 0.0)); }
+`;
+}
+
+class Compiler {
+  constructor(doc, bakes) {
+    this.doc = doc; this.nodes = doc.nodes; this.bakes = bakes;
+    this.uIndex = new Map(); this.uVals = []; this.ids = new Map();
+    this.textures = []; this.notes = new Set(); this.missing = new Set();
+  }
+  id(name) { if (!this.ids.has(name)) this.ids.set(name, this.ids.size); return this.ids.get(name); }
+  u(path, v) {
+    const key = path.join("/");
+    if (!this.uIndex.has(key)) { this.uIndex.set(key, this.uVals.length); this.uVals.push(Number(v) || 0); }
+    const i = this.uIndex.get(key);
+    return `U[${i >> 2}].${"xyzw"[i & 3]}`;
+  }
+  v3(path, a) { return `vec3(${[0, 1, 2].map((i) => this.u([...path, i], a[i])).join(", ")})`; }
+  axis(path, a) {
+    if (typeof a === "string") { const v = AXES[a] || AXES.z; return `vec3(${v.map(fl).join(", ")})`; }
+    return this.v3(path, a || [0, 0, 1]);
+  }
+  // a field parameter: number (a uniform), node name, or absent (default)
+  f(name, key, def, ref) {
+    const v = this.nodes[name][key];
+    if (typeof v === "number") return this.u(["nodes", name, key], v);
+    if (typeof v === "string") return ref(v);
+    return fl(def);
+  }
+  shape(path, s, P) {
+    const t = s && s.type;
+    if (t === "box") {
+      if ("min" in s) return `lp_box(${P}, ${this.v3([...path, "min"], s.min)}, ${this.v3([...path, "max"], s.max)})`;
+      const c = this.v3([...path, "center"], s.center || [0, 0, 0]), sz = this.v3([...path, "size"], s.size || [1, 1, 1]);
+      return `lp_box(${P}, ${c} - 0.5 * ${sz}, ${c} + 0.5 * ${sz})`;
+    }
+    if (t === "cylinder" || t === "tube") {
+      const r = this.u([...path, "r"], s.r ?? 1);
+      const rin = "rInner" in s ? this.u([...path, "rInner"], s.rInner) : "r_inner" in s ? this.u([...path, "r_inner"], s.r_inner) : "0.0";
+      if ("p0" in s) return `lp_cyl(${P}, ${this.v3([...path, "p0"], s.p0)}, ${this.v3([...path, "p1"], s.p1 || [0, 0, 1])}, ${r}, ${rin})`;
+      return `lp_cylc(${P}, ${this.v3([...path, "center"], s.center || [0, 0, 0])}, ${this.axis([...path, "axis"], s.axis || "z")}, ${this.u([...path, "length"], s.length ?? 1)}, ${r}, ${rin})`;
+    }
+    if (t === "sphere") return `(length(${P} - ${this.v3([...path, "center"], s.center || [0, 0, 0])}) - ${this.u([...path, "r"], s.r ?? 1)})`;
+    if (t === "union") {
+      const parts = (s.shapes || []).map((x, i) => this.shape([...path, "shapes", i], x, P));
+      if (!parts.length) return "1e3";
+      return parts.reduce((a, b) => `min(${a}, ${b})`);
+    }
+    this.notes.add(`shape type "${t}" is not previewed`);
+    return "1e3";
+  }
+  texture(name, scalar) {
+    const b = this.bakes[name];
+    if (!b) { this.missing.add(name); return scalar ? "0.0" : "1e3"; }
+    let i = this.textures.indexOf(name);
+    if (i < 0) { i = this.textures.length; this.textures.push(name); }
+    return [`lp_${scalar ? "tex" : "texsdf"}(T${i}, `, `, vec3(${b.lo.map(fl).join(", ")}), vec3(${b.hi.map(fl).join(", ")}), vec3(${b.dims.map(fl).join(", ")}))`];
+  }
+  /** GLSL for node `name` at point P; ref(dep) is the GLSL for a dependency at P; fn(dep) the name of its function. */
+  expr(name, P, ref, fn) {
+    const s = this.nodes[name], op = s.op, N = (...k) => ["nodes", name, ...k];
+    switch (op) {
+      case "constant": return this.u(N("value"), s.value);
+      case "coordinate": {
+        const ax = s.axis ?? "z";
+        if (typeof ax === "string") return `${P}.${"xyz".includes(ax) ? ax : "z"}`;
+        return `dot(${P} - ${s.origin ? this.v3(N("origin"), s.origin) : "vec3(0.0)"}, normalize(${this.v3(N("axis"), ax)}))`;
+      }
+      case "distance": {
+        if (s.input != null) return s.signed ? this.f(name, "input", 0, ref) : `abs(${this.f(name, "input", 0, ref)})`;
+        if (Array.isArray(s.points)) {
+          s.points.forEach((pt, i) => [0, 1, 2].forEach((j) => this.u(N("points", i, j), pt[j])));
+          const base = this.uIndex.get(N("points", 0, 0).join("/"));
+          return `lp_dpoints(${P}, ${base ?? 0}, ${s.points.length})`;
+        }
+        if (Array.isArray(s.segment)) return `lp_dseg(${P}, ${this.v3(N("segment", 0), s.segment[0])}, ${this.v3(N("segment", 1), s.segment[1])})`;
+        if (s.plane) return `abs(dot(${P} - ${this.v3(N("plane", "point"), s.plane.point || [0, 0, 0])}, normalize(${this.v3(N("plane", "normal"), s.plane.normal || [0, 0, 1])})))`;
+        if (s.shape) return `abs(${this.shape(N("shape"), s.shape, P)})`;
+        return "0.0";
+      }
+      case "shape": return this.shape(N("shape"), s.shape, P);
+      case "mesh": case "result": case "grid": {
+        const t = this.texture(name, op !== "mesh");
+        return typeof t === "string" ? t : `${t[0]}${P}${t[1]}`;
+      }
+      case "remap": {
+        const fr = s.from || [0, 1], to = s.to || [0, 1];
+        return `lp_remap(${this.f(name, "input", 0, ref)}, ${this.u(N("from", 0), fr[0])}, ${this.u(N("from", 1), fr[1])}, ${this.u(N("to", 0), to[0])}, ${this.u(N("to", 1), to[1])}, ${CURVES[s.curve || "linear"] ?? 0}, ${s.clamp === false ? 0 : 1})`;
+      }
+      case "expr": return this.exprGLSL(name, parseExpr(String(s.expr || "0")), P, ref);
+      case "union": case "intersect": case "subtract": {
+        const ins = (s.inputs || []).map((v, i) => typeof v === "number" ? this.u(N("inputs", i), v) : typeof v === "string" ? ref(v) : "1e3");
+        if (!ins.length) return "1e3";
+        const k = this.f(name, "blend", 0, ref);
+        if (op === "union") return ins.reduce((a, b) => `lp_smin(${a}, ${b}, ${k})`);
+        if (op === "intersect") return ins.reduce((a, b) => `(-lp_smin(-(${a}), -(${b}), ${k}))`);
+        return ins.reduce((a, b) => `(-lp_smin(-(${a}), ${b}, ${k}))`);
+      }
+      case "shell": {
+        const f = this.f(name, "input", 1e3, ref), t = this.f(name, "thickness", 1, ref), side = s.side || "inside";
+        if (side === "outside") return `max(-(${f}), (${f}) - (${t}))`;
+        if (side === "center") return `(abs(${f}) - 0.5 * (${t}))`;
+        return `max(${f}, -((${f}) + (${t})))`;
+      }
+      case "offset": return `((${this.f(name, "input", 1e3, ref)}) - (${this.f(name, "distance", 0, ref)}))`;
+      case "lattice": {
+        const kind = KIND[s.type || "gyroid"] ?? 0;
+        const Q = s.origin ? `(${P} - ${this.v3(N("origin"), s.origin)})` : P;
+        const cell = this.f(name, "cell", 8, ref);
+        const graded = typeof s.cell === "string" ? 1 : 0;
+        const fr = s.frame && s.frame.type === "cylindrical" ? s.frame : null;
+        if (graded && !(this.bakes[`${name}#warp`] && !fr && (s.grading || "warp") === "warp"))
+          this.notes.add(`${name}: graded cell drawn as a cross-fade${(s.grading || "warp") === "warp" && !fr ? " until its warp is baked" : ""}`);
+        const cyl = fr ? `1, ${this.v3(N("frame", "center"), fr.center || [0, 0, 0])}, ${this.axis(N("frame", "axis"), fr.axis || "z")}, ${this.u(N("frame", "radius"), fr.radius || 0)}`
+          : "0, vec3(0.0), vec3(0.0, 0.0, 1.0), 0.0";
+        const wb = graded && !fr && (s.grading || "warp") === "warp" ? this.bakes[`${name}#warp`] : null;
+        let d;
+        if (wb) {
+          const t = this.texture(`${name}#warp`, true);
+          d = `(lp_tpms(${kind}, lp_warp(T${this.textures.indexOf(`${name}#warp`)}, ${Q}, vec3(${wb.lo.map(fl).join(", ")}), vec3(${wb.dims.map(fl).join(", ")}), ${fl(wb.h)}, ${fl(wb.c0)}, ${cell}), 1.0) * (${cell}))`;
+        } else d = `lp_lat(${kind}, ${Q}, ${cell}, ${graded}, ${cyl})`;
+        if (s.offset != null) d = `(${d} - (${this.f(name, "offset", 0, ref)}))`;
+        let t = "1.0";
+        if (s.thickness != null) t = this.f(name, "thickness", 1, ref);
+        else if (s.density != null) t = `lp_wall_rho(${kind}, ${this.f(name, "density", 0.3, ref)}, ${cell})`;
+        return s.form === "network" ? `(${d} - 0.5 * (${t}))` : `(abs(${d}) - 0.5 * (${t}))`;
+      }
+      case "transform": {
+        let Q = P;
+        if (s.translate) Q = `(${Q} - ${this.v3(N("translate"), s.translate)})`;
+        if (s.rotate) Q = `lp_rot(${Q}, ${this.axis(N("rotate", "axis"), s.rotate.axis || "z")}, ${this.u(N("rotate", "degrees"), s.rotate.degrees ?? 0)}, ${this.v3(N("rotate", "center"), s.rotate.center || [0, 0, 0])})`;
+        const inner = typeof s.input === "string" ? `${fn(s.input)}` : null;
+        if (!inner) return "1e3";
+        if (s.scale != null) { const sc = this.u(N("scale"), s.scale); return `(${inner}((${Q}) / ${sc}) * ${sc})`; }
+        return `${inner}(${Q})`;
+      }
+    }
+    return "1e3";
+  }
+  exprGLSL(name, ast, P, ref) {
+    const s = this.nodes[name], vars = s.vars || {};
+    const go = (n) => {
+      switch (n.t) {
+        case "num": return fl(n.v);
+        case "name": {
+          if (n.v === "x" || n.v === "y" || n.v === "z") return `${P}.${n.v}`;
+          if (n.v === "pi") return "3.14159265359";
+          if (n.v === "e") return "2.71828182846";
+          if (n.v in vars) { const v = vars[n.v]; return typeof v === "number" ? this.u(["nodes", name, "vars", n.v], v) : ref(v); }
+          return ref(n.v);
+        }
+        case "un": return n.op === "-" ? `(-${go(n.a)})` : go(n.a);
+        case "bin":
+          if (n.op === "**") return `lp_pow(${go(n.a)}, ${go(n.b)})`;
+          if (n.op === "%") return `mod(${go(n.a)}, ${go(n.b)})`;
+          return `(${go(n.a)} ${n.op} ${go(n.b)})`;
+        case "cmp": return `float(${go(n.a)} ${n.op} ${go(n.b)})`;
+        case "if": return `((${go(n.c)}) > 0.0 ? (${go(n.a)}) : (${go(n.b)}))`;
+        case "call": {
+          const a = n.args.map(go);
+          switch (n.f) {
+            case "sqrt": return `sqrt(max(${a[0]}, 0.0))`;
+            case "log": return `log(max(${a[0]}, 1e-30))`;
+            case "min": case "max": return a.reduce((x, y) => `${n.f}(${x}, ${y})`);
+            case "lerp": return `mix(${a[0]}, ${a[1]}, ${a[2]})`;
+            case "smoothstep": return `lp_ss(${a[0]}, ${a[1]}, ${a[2]})`;
+            case "where": return `((${a[0]}) > 0.0 ? (${a[1]}) : (${a[2]}))`;
+            default: return `${n.f}(${a.join(", ")})`;
+          }
+        }
+      }
+      return "0.0";
+    };
+    return go(ast);
+  }
+  /** Functions for every node a transform evaluates elsewhere, and scene functions (each node once per point) for `roots`. */
+  build(roots) {
+    const nodes = this.nodes;
+    const refsIn = (n) => refsOf(nodes[n], nodes).filter((r) => r.target in nodes && r.key !== "part");
+    // the nodes evaluated at the scene point, and the ones only through a transform
+    const scene = new Set(), fnSet = new Set();
+    const walkScene = (n) => {
+      if (scene.has(n) || !(n in nodes)) return;
+      scene.add(n);
+      for (const r of refsIn(n)) { if (nodes[n].op === "transform" && r.key === "input") walkFn(r.target); else walkScene(r.target); }
+    };
+    const walkFn = (n) => { if (fnSet.has(n) || !(n in nodes)) return; fnSet.add(n); for (const r of refsIn(n)) walkFn(r.target); };
+    for (const r of roots) if (r) walkScene(r);
+    const topo = (set) => {
+      const out = [], seen = new Set();
+      const visit = (n) => { if (seen.has(n)) return; seen.add(n); for (const r of refsIn(n)) if (set.has(r.target)) visit(r.target); out.push(n); };
+      for (const n of set) visit(n);
+      return out;
+    };
+    const fname = (n) => `f${this.id(n)}`;
+    let code = "";
+    for (const n of topo(fnSet)) {
+      code += `float ${fname(n)}(vec3 p) { return ${this.expr(n, "p", (d) => `${fname(d)}(p)`, fname)}; }\n`;
+    }
+    const order = topo(scene);
+    const sceneFn = (fnName, root) => {
+      if (!root || !(root in nodes)) return `float ${fnName}(vec3 p) { return 1e3; }\n`;
+      // only what this root needs, in dependency order
+      const need = new Set();
+      const mark = (n) => { if (need.has(n) || !scene.has(n)) return; need.add(n); for (const r of refsIn(n)) if (!(nodes[n].op === "transform" && r.key === "input")) mark(r.target); };
+      mark(root);
+      let body = "";
+      for (const n of order) if (need.has(n)) body += `  float v${this.id(n)} = ${this.expr(n, "p", (d) => `v${this.id(d)}`, fname)};\n`;
+      return `float ${fnName}(vec3 p) {\n${body}  return v${this.id(root)};\n}\n`;
+    };
+    return { code, sceneFn };
+  }
+}
+
+/** Compile the preview (solid + colour) or a probe of one node. */
+function compileGraph(doc, bakes, roots) {
+  const c = new Compiler(doc, bakes);
+  const { code, sceneFn } = c.build(Object.values(roots));
+  let scenes = "";
+  for (const [fnName, root] of Object.entries(roots)) scenes += sceneFn(fnName, root);
+  const nu = Math.max(1, Math.ceil(c.uVals.length / 4));
+  const head = `#version 300 es
+precision highp float; precision highp int; precision highp sampler3D;
+uniform vec4 U[${nu}];
+${c.textures.map((_, i) => `uniform highp sampler3D T${i};`).join("\n")}
+${libGLSL(DATA.tables)}
+${code}
+${scenes}`;
+  return { head, uIndex: c.uIndex, uVals: c.uVals, nu, textures: c.textures, notes: [...c.notes], missing: [...c.missing] };
+}
+
+const VERT = `#version 300 es
+out vec2 vUv;
+void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); vUv = p; gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`;
+
+const PREVIEW_MAIN = `
+uniform mat4 uInvVP; uniform vec3 uLo, uHi, uKey, uClay, uCut; uniform vec4 uPlane; uniform int uSection, uColorOn, uMode, uMaxSteps;
+uniform float uStep, uPix, uAO; uniform vec2 uRange, uPickNdc;
+in vec2 vUv; out vec4 frag;
+float map(vec3 p) { float d = scene_solid(p); if (uSection == 1) d = max(d, dot(p, uPlane.xyz) - uPlane.w); return d; }
+vec3 nrm(vec3 p, float e) {
+  const vec2 k = vec2(1.0, -1.0);
+  return normalize(k.xyy * map(p + k.xyy * e) + k.yyx * map(p + k.yyx * e) + k.yxy * map(p + k.yxy * e) + k.xxx * map(p + k.xxx * e));
+}
+vec3 turbo(float x) {
+  x = clamp(0.1 + 0.85 * x, 0.0, 1.0);
+  vec4 v4 = vec4(1.0, x, x * x, x * x * x); vec2 v2 = v4.zw * v4.z;
+  return clamp(vec3(
+    dot(v4, vec4(0.13572138, 4.6153926, -42.66032258, 132.13108234)) + dot(v2, vec2(-152.94239396, 59.28637943)),
+    dot(v4, vec4(0.09140261, 2.19418839, 4.84296658, -14.18503333)) + dot(v2, vec2(4.27729857, 2.82956604)),
+    dot(v4, vec4(0.1066733, 12.64194608, -60.58204836, 110.36276771)) + dot(v2, vec2(-89.90310912, 27.34824973))), 0.0, 1.0);
+}
+vec3 toLin(vec3 c) { return pow(c, vec3(2.2)); }
+void main() {
+  vec2 ndc = uMode == 1 ? uPickNdc : vUv * 2.0 - 1.0;
+  vec4 a = uInvVP * vec4(ndc, -1.0, 1.0), b = uInvVP * vec4(ndc, 1.0, 1.0);
+  vec3 ro = a.xyz / a.w, rd = normalize(b.xyz / b.w - ro);
+  vec3 inv = 1.0 / rd, t0 = (uLo - ro) * inv, t1 = (uHi - ro) * inv, tmn = min(t0, t1), tmx = max(t0, t1);
+  float tn = max(max(tmn.x, tmn.y), max(tmn.z, 0.0)), tf = min(min(tmx.x, tmx.y), tmx.z);
+  bool hit = false; float t = tn, d = 1e3;
+  if (tn < tf) {
+    for (int i = 0; i < 2000; i++) {
+      if (i >= uMaxSteps) break;
+      d = map(ro + rd * t);
+      float eps = max(uPix * t, 1e-4);
+      if (d < eps) { hit = true; break; }
+      t += max(d * uStep, 0.5 * eps);
+      if (t > tf) break;
+    }
+  }
+  if (!hit) { frag = uMode == 1 ? vec4(1e30) : vec4(0.0); return; }
+  for (int j = 0; j < 2; j++) { t += map(ro + rd * t) * 0.9; }
+  vec3 p = ro + rd * t;
+  float solid = scene_solid(p);
+  bool cut = uSection == 1 && dot(p, uPlane.xyz) - uPlane.w > solid - max(uPix * t, 1e-4) * 0.5;
+  float val = uColorOn == 1 ? scene_color(p) : 0.0;
+  if (uMode == 1) { frag = vec4(p, val); return; }
+  vec3 n = cut ? uPlane.xyz : nrm(p, max(0.75 * uPix * t, 2e-3));
+  if (dot(n, rd) > 0.0) n = -n;
+  vec3 base = uColorOn == 1 ? toLin(turbo(clamp((val - uRange.x) / max(uRange.y - uRange.x, 1e-12), 0.0, 1.0))) : (cut ? uCut : uClay);
+  float occ = 0.0, w = 1.0;
+  for (int i = 1; i <= 4; i++) { float h = uAO * float(i); occ += w * max(h - map(p + n * h), 0.0); w *= 0.55; }
+  occ = clamp(1.0 - occ / uAO * 0.45, 0.25, 1.0);
+  float diff = max(dot(n, uKey), 0.0);
+  float hemi = 0.5 + 0.5 * n.z;
+  float spec = pow(max(dot(reflect(-uKey, n), -rd), 0.0), 36.0) * (cut ? 0.0 : 0.18);
+  float rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0) * 0.12;
+  float fill = max(dot(n, normalize(vec3(-uKey.x, -uKey.y, 0.35))), 0.0);
+  vec3 col = base * (0.42 * occ * mix(0.6, 1.0, hemi) + 0.95 * diff * mix(0.65, 1.0, occ) + 0.22 * fill * occ) + spec + rim * base;
+  // under a section, what is seen through the cut (a lattice's voids) darkens with depth below it
+  if (uSection == 1 && !cut) {
+    float f = clamp((uPlane.w - dot(p, uPlane.xyz)) / (0.4 * uAO), 0.0, 1.0);
+    col = mix(col, vec3(dot(col, vec3(0.3, 0.59, 0.11))) * 0.3, 0.8 * f);
+  }
+  if (cut) col = base * (0.62 + 0.38 * max(dot(n, -rd), 0.0));
+  frag = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
+}`;
+
+const PROBE_MAIN = `
+uniform highp sampler2D uPts; out vec4 frag;
+void main() { vec3 p = texelFetch(uPts, ivec2(gl_FragCoord.xy), 0).xyz; frag = vec4(scene_probe(p), 0.0, 0.0, 1.0); }`;
+
+const BLIT = `#version 300 es
+precision highp float; uniform sampler2D uTex; in vec2 vUv; out vec4 frag; void main() { frag = texture(uTex, vUv); }`;
+
+// ---- WebGL ---------------------------------------------------------------------------------------
+
+const glCanvas = $("#gl");
+const gl = glCanvas.getContext("webgl2", { antialias: false, alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true });
+const G = { ok: !!gl, floatRT: false, prog: null, probes: new Map(), tex: new Map(), vao: null, costPerPx: null };
+if (!gl) { $("#glerr").hidden = false; $("#glerr").textContent = "This browser has no WebGL2, which the live preview needs. Export the JSON and run it with loadpath field."; }
+else {
+  G.floatRT = !!gl.getExtension("EXT_color_buffer_float");
+  G.vao = gl.createVertexArray();
+}
+
+function makeProgram(fs, vs = VERT) {
+  const sh = (type, src) => {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { const log = gl.getShaderInfoLog(s); gl.deleteShader(s); throw new Error(log); }
+    return s;
+  };
+  const p = gl.createProgram();
+  const v = sh(gl.VERTEX_SHADER, vs), f = sh(gl.FRAGMENT_SHADER, fs);
+  gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
+  gl.deleteShader(v); gl.deleteShader(f);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const locs = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const info = gl.getActiveUniform(p, i); const nm = info.name.replace(/\[0\]$/, ""); locs[nm] = gl.getUniformLocation(p, info.name); }
+  return { p, locs };
+}
+
+function b64ToU16(b64) {
+  const bin = atob(b64), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Uint16Array(u8.buffer);
+}
+function bakeTexture(name) {
+  const b = S.bakes[name];
+  const key = b && (b.dims.join("x") + b.data.length + b.data.slice(0, 64) + b.data.slice(-64));
+  const have = G.tex.get(name);
+  if (have && have.key === key) return have.tex;
+  if (have) gl.deleteTexture(have.tex);
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_3D, tex);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  const rgba = b.op === "warp";
+  gl.texImage3D(gl.TEXTURE_3D, 0, rgba ? gl.RGBA16F : gl.R16F, b.dims[0], b.dims[1], b.dims[2], 0, rgba ? gl.RGBA : gl.RED, gl.HALF_FLOAT, b64ToU16(b.data));
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]])
+    gl.texParameteri(gl.TEXTURE_3D, k, v);
+  G.tex.set(name, { tex, key });
+  return tex;
+}
+function bindCommon(prog, comp) {
+  gl.useProgram(prog.p);
+  const U = new Float32Array(comp.nu * 4); U.set(comp.uVals);
+  if (prog.locs.U) gl.uniform4fv(prog.locs.U, U);
+  comp.textures.forEach((name, i) => {
+    gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_3D, bakeTexture(name));
+    if (prog.locs[`T${i}`]) gl.uniform1i(prog.locs[`T${i}`], i);
+  });
+}
+
+// ---- the preview -----------------------------------------------------------------------------------
+
+const stage = $("#stage");
+const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 1e5);
+camera.up.set(0, 0, 1);
+const controls = new OrbitControls(camera, stage);
+controls.enableDamping = true; controls.dampingFactor = 0.18;
+let interactUntil = 0, dirty = true, fullDone = false;
+const kick = (interactive = true) => { dirty = true; fullDone = false; if (interactive) interactUntil = performance.now() + 180; };
+controls.addEventListener("change", () => kick(true));
+
+function previewRoots() {
+  const t = S.target && S.target in S.doc.nodes ? S.target : null;
+  return { scene_solid: t, scene_color: S.color && S.color in S.doc.nodes ? S.color : null };
+}
+function recompile() {
+  if (!G.ok) return;
+  const v = validate();
+  S.issues = v;
+  showIssues();
+  if (v.some((i) => /cycle|unknown op|cannot read|unexpected|not allowed|takes|needs arguments|ends too soon|expected|'if'/.test(i.message))) { drawGraph(); return; }
+  let comp;
+  try {
+    const roots = previewRoots();
+    comp = compileGraph(S.doc, S.bakes, roots);
+    const t0 = performance.now();
+    const prog = makeProgram(comp.head + PREVIEW_MAIN);
+    if (G.prog) gl.deleteProgram(G.prog.p);
+    G.prog = prog; G.comp = comp;
+    G.compileMs = performance.now() - t0;
+    $("#glerr").hidden = true;
+  } catch (e) {
+    console.error(e, comp && comp.head);
+    $("#glerr").hidden = false; $("#glerr").textContent = "Preview shader did not compile: " + String(e.message || e).slice(0, 400);
+    return;
+  }
+  for (const p of G.probes.values()) gl.deleteProgram(p.prog.p);
+  G.probes.clear();
+  S.version++;
+  showNotes();
+  updateBounds();
+  kick(false);
+  drawGraph();
+  requestBakes();
+}
+/** A slider moved: set the uniform if there is one, else it is a structural change. */
+function paramChanged(path) {
+  const key = path.join("/");
+  if (G.comp && G.comp.uIndex.has(key)) {
+    const v = Number(getAt(S.doc, path));
+    G.comp.uVals[G.comp.uIndex.get(key)] = isFinite(v) ? v : 0;
+    for (const p of G.probes.values()) if (p.comp.uIndex.has(key)) p.comp.uVals[p.comp.uIndex.get(key)] = isFinite(v) ? v : 0;
+    kick(true);
+    boundsSoon();
+    drawGraphSoon();
+    bakesSoon();
+  } else recompileSoon();
+  commitSoon();
+}
+const recompileSoon = debounce(recompile, 60);
+const boundsSoon = debounce(() => updateBounds(), 140);
+const drawGraphSoon = debounce(() => drawGraph(), 120);
+
+function quality() {
+  return { draft: { steps: 140, step: 0.9, pix: 2.2 }, good: { steps: 320, step: 0.75, pix: 1.0 }, fine: { steps: 700, step: 0.55, pix: 0.6 } }[S.quality];
+}
+let rt = null;
+function renderPreview(scale) {
+  const prog = G.prog, comp = G.comp;
+  if (!prog || !S.box) return;
+  const w = Math.max(1, Math.round(glCanvas.width * scale)), h = Math.max(1, Math.round(glCanvas.height * scale));
+  bindCommon(prog, comp);
+  const q = quality();
+  camera.updateMatrixWorld();
+  const ivp = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).invert();
+  const L = prog.locs;
+  gl.uniformMatrix4fv(L.uInvVP, false, ivp.elements);
+  gl.uniform3fv(L.uLo, S.box[0]); gl.uniform3fv(L.uHi, S.box[1]);
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1), back = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 2);
+  const key = right.multiplyScalar(-0.45).add(up.multiplyScalar(0.7)).add(back.multiplyScalar(0.55)).normalize();
+  gl.uniform3f(L.uKey, key.x, key.y, key.z);
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches && document.documentElement.dataset.theme !== "light";
+  gl.uniform3fv(L.uClay, dark ? [0.42, 0.44, 0.48] : [0.55, 0.57, 0.61]);
+  gl.uniform3fv(L.uCut, dark ? [0.2, 0.22, 0.26] : [0.24, 0.27, 0.32]);
+  const pl = planeNow();
+  gl.uniform1i(L.uSection, pl ? 1 : 0);
+  gl.uniform4fv(L.uPlane, pl || [0, 0, 1, 0]);
+  gl.uniform1i(L.uColorOn, comp && S.color ? 1 : 0);
+  gl.uniform2fv(L.uRange, S.range || [0, 1]);
+  gl.uniform1i(L.uMode, 0);
+  gl.uniform1i(L.uMaxSteps, scale < 1 ? Math.min(q.steps, 220) : q.steps);
+  gl.uniform1f(L.uStep, q.step);
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+  gl.uniform1f(L.uPix, q.pix * 2 * Math.tan(fov / 2) / h);
+  const size = Math.max(...[0, 1, 2].map((i) => S.box[1][i] - S.box[0][i]));
+  gl.uniform1f(L.uAO, size * 0.012);
+  gl.bindVertexArray(G.vao);
+  if (scale < 1) {
+    if (!rt || rt.w !== w || rt.h !== h) {
+      if (rt) { gl.deleteTexture(rt.tex); gl.deleteFramebuffer(rt.fb); }
+      const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      rt = { tex, fb, w, h };
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fb);
+    gl.viewport(0, 0, w, h); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (!G.blit) G.blit = makeProgram(BLIT);
+    gl.useProgram(G.blit.p);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, rt.tex); gl.uniform1i(G.blit.locs.uTex, 0);
+    gl.viewport(0, 0, glCanvas.width, glCanvas.height); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  } else {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+}
+
+function resize() {
+  const r = stage.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (glCanvas.width !== w || glCanvas.height !== h) { glCanvas.width = w; glCanvas.height = h; }
+  camera.aspect = Math.max(r.width, 1) / Math.max(r.height, 1); camera.updateProjectionMatrix();
+  if (three) { three.renderer.setPixelRatio(dpr); three.renderer.setSize(r.width, r.height, false); }
+  kick(false);
+}
+new ResizeObserver(resize).observe(stage);
+
+let lastFrame = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  controls.update();
+  if (S.mode === "mesh" && three) { three.renderer.render(three.scene, camera); return; }
+  if (!G.ok || !G.prog) return;
+  const interacting = now < interactUntil;
+  if (!dirty && (fullDone || interacting)) return;
+  if (interacting) {
+    // as many pixels as fit in ~28 ms, from the last full frame's cost
+    const px = glCanvas.width * glCanvas.height;
+    const scale = G.costPerPx ? Math.min(1, Math.max(0.2, Math.sqrt(28 / (G.costPerPx * px)))) : 0.5;
+    renderPreview(scale);
+    $("#hud-res").textContent = `${Math.round(scale * 100)}%`;
+    dirty = false;
+  } else {
+    const t0 = performance.now();
+    renderPreview(1);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));   // wait for the GPU, to time it
+    const ms = performance.now() - t0;
+    G.costPerPx = ms / (glCanvas.width * glCanvas.height);
+    $("#hud-ms").textContent = `${ms.toFixed(0)} ms`;
+    $("#hud-res").textContent = "100%";
+    fullDone = true; dirty = false;
+    window.lpReady = true;
+  }
+  lastFrame = now;
+}
+
+/** Evaluate node `name` at points (N x 3) on the GPU: what the preview draws, as numbers. */
+function probe(name, pts) {
+  if (!G.ok || !G.floatRT) return null;
+  let entry = G.probes.get(name);
+  if (!entry) {
+    const comp = compileGraph(S.doc, S.bakes, { scene_probe: name });
+    entry = { comp, prog: makeProgram(comp.head + PROBE_MAIN) };
+    G.probes.set(name, entry);
+  }
+  const n = pts.length / 3, W = Math.min(n, 512), H = Math.ceil(n / W);
+  const data = new Float32Array(W * H * 4);
+  for (let i = 0; i < n; i++) { data[4 * i] = pts[3 * i]; data[4 * i + 1] = pts[3 * i + 1]; data[4 * i + 2] = pts[3 * i + 2]; }
+  const ptex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE15); gl.bindTexture(gl.TEXTURE_2D, ptex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, W, H, 0, gl.RGBA, gl.FLOAT, data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  const otex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, otex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, W, H, 0, gl.RGBA, gl.FLOAT, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, otex, 0);
+  bindCommon(entry.prog, entry.comp);
+  gl.activeTexture(gl.TEXTURE15); gl.bindTexture(gl.TEXTURE_2D, ptex);
+  gl.uniform1i(entry.prog.locs.uPts, 15);
+  gl.viewport(0, 0, W, H); gl.bindVertexArray(G.vao);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  const out = new Float32Array(W * H * 4);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, out);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.deleteFramebuffer(fb); gl.deleteTexture(ptex); gl.deleteTexture(otex);
+  const vals = new Float32Array(n);
+  for (let i = 0; i < n; i++) vals[i] = out[4 * i];
+  return vals;
+}
+function gridPts(lo, hi, n) {
+  const pts = new Float32Array(n * n * n * 3);
+  let k = 0;
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) for (let l = 0; l < n; l++) {
+    pts[k++] = lo[0] + (hi[0] - lo[0]) * (i + 0.5) / n; pts[k++] = lo[1] + (hi[1] - lo[1]) * (j + 0.5) / n; pts[k++] = lo[2] + (hi[2] - lo[2]) * (l + 0.5) / n;
+  }
+  return pts;
+}
+
+// bounds, as fields.py works them out (field thicknesses: their largest value over the box, from a probe)
+function shapeBounds(s) {
+  if (!s) return null;
+  if (s.type === "box") {
+    if (s.min) return [s.min.slice(), s.max.slice()];
+    return [s.center.map((c, i) => c - s.size[i] / 2), s.center.map((c, i) => c + s.size[i] / 2)];
+  }
+  if (s.type === "cylinder" || s.type === "tube") {
+    let p0 = s.p0, p1 = s.p1;
+    if (!p0) {
+      let a = typeof s.axis === "string" || !s.axis ? AXES[s.axis || "z"] : s.axis;
+      const n = Math.hypot(...a); a = a.map((x) => x / n);
+      p0 = s.center.map((c, i) => c - 0.5 * s.length * a[i]); p1 = s.center.map((c, i) => c + 0.5 * s.length * a[i]);
+    }
+    const ax = p1.map((v, i) => v - p0[i]), L = Math.hypot(...ax) || 1;
+    const ext = ax.map((v) => s.r * Math.sqrt(Math.max(0, 1 - (v / L) ** 2)));
+    return [p0.map((v, i) => Math.min(v, p1[i]) - ext[i]), p0.map((v, i) => Math.max(v, p1[i]) + ext[i])];
+  }
+  if (s.type === "sphere") return [s.center.map((c) => c - s.r), s.center.map((c) => c + s.r)];
+  if (s.type === "union") {
+    const b = (s.shapes || []).map(shapeBounds).filter(Boolean);
+    if (!b.length) return null;
+    return [[0, 1, 2].map((i) => Math.min(...b.map((x) => x[0][i]))), [0, 1, 2].map((i) => Math.max(...b.map((x) => x[1][i])))];
+  }
+  return null;
+}
+function maxOver(name, key, box) {
+  const v = S.doc.nodes[name][key];
+  if (v == null) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v !== "string") return 0;
+  const vals = probe(v, gridPts(box[0], box[1], 12));
+  if (!vals) return 0;
+  let m = -Infinity; for (const x of vals) if (isFinite(x)) m = Math.max(m, x);
+  return isFinite(m) ? m * 1.1 : 0;
+}
+function boundsOf(name, seen = new Set()) {
+  if (seen.has(name) || !(name in S.doc.nodes)) return null;
+  seen = new Set(seen); seen.add(name);
+  const s = S.doc.nodes[name];
+  if (s.bounds) return [s.bounds.min, s.bounds.max];
+  const sub = () => (s.inputs || []).map((x) => typeof x === "string" ? boundsOf(x, seen) : null);
+  switch (s.op) {
+    case "shape": return shapeBounds(s.shape);
+    case "mesh": { const b = S.bakes[name]; return b ? [b.lo, b.hi] : null; }
+    case "union": {
+      const b = sub(); if (!b.length || b.some((x) => !x)) return null;
+      const lo = [0, 1, 2].map((i) => Math.min(...b.map((x) => x[0][i]))), hi = [0, 1, 2].map((i) => Math.max(...b.map((x) => x[1][i])));
+      const g = 0.25 * Math.max(maxOver(name, "blend", [lo, hi]), 0);
+      return [lo.map((v) => v - g), hi.map((v) => v + g)];
+    }
+    case "intersect": {
+      const b = sub().filter(Boolean); if (!b.length) return null;
+      const lo = [0, 1, 2].map((i) => Math.max(...b.map((x) => x[0][i]))), hi = [0, 1, 2].map((i) => Math.min(...b.map((x) => x[1][i])));
+      return [lo, hi.map((v, i) => Math.max(v, lo[i]))];
+    }
+    case "subtract": return sub()[0] || null;
+    case "shell": case "offset": {
+      if (typeof s.input !== "string") return null;
+      const b = boundsOf(s.input, seen); if (!b) return null;
+      let g = maxOver(name, s.op === "shell" ? "thickness" : "distance", b);
+      if (s.op === "shell" && (s.side || "inside") === "inside") g = 0;
+      g = Math.max(g, 0) + 1e-6;
+      return [b[0].map((v) => v - g), b[1].map((v) => v + g)];
+    }
+    case "transform": {
+      if (typeof s.input !== "string") return null;
+      const b = boundsOf(s.input, seen); if (!b) return null;
+      const sc = s.scale ?? 1;
+      let pts = [];
+      for (const i of [0, 1]) for (const j of [0, 1]) for (const k of [0, 1]) pts.push(new THREE.Vector3(b[i][0] * sc, b[j][1] * sc, b[k][2] * sc));
+      if (s.rotate) {
+        let a = typeof s.rotate.axis === "string" || !s.rotate.axis ? AXES[s.rotate.axis || "z"] : s.rotate.axis;
+        const ax = new THREE.Vector3(...a).normalize(), c = new THREE.Vector3(...(s.rotate.center || [0, 0, 0]));
+        pts = pts.map((p) => p.sub(c).applyAxisAngle(ax, THREE.MathUtils.degToRad(s.rotate.degrees || 0)).add(c));
+      }
+      const tr = new THREE.Vector3(...(s.translate || [0, 0, 0]));
+      pts = pts.map((p) => p.add(tr));
+      return [[0, 1, 2].map((i) => Math.min(...pts.map((p) => p.getComponent(i)))), [0, 1, 2].map((i) => Math.max(...pts.map((p) => p.getComponent(i))))];
+    }
+  }
+  return null;
+}
+function updateBounds() {
+  if (!G.prog) return;
+  let b = null;
+  try { b = S.target ? boundsOf(S.target) : null; } catch (e) { b = null; }
+  if (!b && S.doc.bounds) b = [S.doc.bounds.min, S.doc.bounds.max];
+  S.unbounded = !b;
+  if (!b) b = [[-50, -50, -50], [50, 50, 50]];
+  const size = Math.max(...[0, 1, 2].map((i) => b[1][i] - b[0][i]), 1);
+  const pad = 0.02 * size + 0.3;
+  const first = !S.box;
+  S.box = [b[0].map((v) => v - pad), b[1].map((v) => v + pad)];
+  if (first) fitView("iso");
+  updateRange();
+  showNotes();
+  kick(false);
+}
+function updateRange() {
+  if (!S.color || !G.floatRT || !S.box) { S.range = null; legend(); return; }
+  let vals, inside;
+  try {
+    const pts = gridPts(S.box[0], S.box[1], 22);
+    vals = probe(S.color, pts);
+    inside = S.target ? probe(S.target, pts) : null;
+  } catch (e) { vals = null; }
+  if (!vals) { S.range = [0, 1]; legend(); return; }
+  let use = [];
+  for (let i = 0; i < vals.length; i++) if (isFinite(vals[i]) && (!inside || inside[i] < 0)) use.push(vals[i]);
+  if (use.length < 20) use = Array.from(vals).filter(isFinite);
+  use.sort((a, b) => a - b);
+  const q = (f) => use[Math.min(use.length - 1, Math.max(0, Math.round(f * (use.length - 1))))];
+  let lo = q(0.01), hi = q(0.99);
+  if (!(hi > lo)) { lo = use[0] ?? 0; hi = (use[use.length - 1] ?? 1); if (!(hi > lo)) hi = lo + 1; }
+  S.range = [lo, hi];
+  legend();
+  kick(false);
+}
+const rangeSoon = debounce(updateRange, 200);
+
+function planeNow() {
+  if (S.cut === "off" || !S.box) return null;
+  const ax = +S.cut, n = [0, 0, 0];
+  n[ax] = S.cutFlip ? -1 : 1;
+  const pos = S.box[0][ax] + (S.box[1][ax] - S.box[0][ax]) * S.cutPos;
+  return [n[0], n[1], n[2], n[ax] * pos];
+}
+function fitView(view = "iso") {
+  if (!S.box) return;
+  const c = new THREE.Vector3(...[0, 1, 2].map((i) => 0.5 * (S.box[0][i] + S.box[1][i])));
+  const r = 0.5 * Math.hypot(...[0, 1, 2].map((i) => S.box[1][i] - S.box[0][i]));
+  const dir = { iso: [1, -1.3, 0.85], front: [0, -1, 0.0001], top: [0.0001, -0.0001, 1] }[view] || [1, -1.3, 0.85];
+  const d = new THREE.Vector3(...dir).normalize();
+  const dist = r / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2) * 1.02;
+  camera.position.copy(c).addScaledVector(d, dist);
+  camera.near = dist / 200; camera.far = dist * 20; camera.updateProjectionMatrix();
+  controls.target.copy(c); controls.update();
+  kick(false);
+}
+
+// hover: what is under the pointer, and the colour field's value there
+let pickPending = null;
+stage.addEventListener("pointermove", (e) => { pickPending = e; requestAnimationFrame(pickNow); });
+stage.addEventListener("pointerleave", () => { pickPending = null; $("#probe").hidden = true; });
+function pickNow() {
+  const e = pickPending; pickPending = null;
+  if (!e || !G.prog || !G.floatRT || S.mode !== "preview" || e.buttons) { if (e && e.buttons) $("#probe").hidden = true; return; }
+  const r = stage.getBoundingClientRect();
+  const ndc = [((e.clientX - r.left) / r.width) * 2 - 1, 1 - ((e.clientY - r.top) / r.height) * 2];
+  if (!G.pick) {
+    const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, null);
+    const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    G.pick = { tex, fb };
+  }
+  renderPreview(1);   // sets the uniforms; the canvas is redrawn below
+  const L = G.prog.locs;
+  gl.uniform1i(L.uMode, 1); gl.uniform2f(L.uPickNdc, ndc[0], ndc[1]);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, G.pick.fb); gl.viewport(0, 0, 1, 1);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  const out = new Float32Array(4);
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, out);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  const box = $("#probe");
+  if (out[0] > 1e29) { box.hidden = true; return; }
+  box.hidden = false;
+  box.style.left = `${e.clientX - r.left}px`; box.style.top = `${e.clientY - r.top}px`;
+  box.textContent = `${[0, 1, 2].map((i) => out[i].toFixed(1)).join(", ")} mm` + (S.color ? `  ·  ${S.color} ${fmt(out[3])}` : "");
+}
+
+// ---- mesh view (after a run): three.js -------------------------------------------------------------
+
+let three = null;
+function showMesh(payload) {
+  const canvas = $("#mesh3");
+  if (!three) {
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x8890a0, 1.1));
+    const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(-0.5, 0.8, 1); camera.add(key); scene.add(camera);
+    three = { renderer, scene, mesh: null };
+    resize();
+  }
+  const dec = (o) => {
+    const bin = atob(o.d), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return o.t === "f32" ? new Float32Array(u8.buffer) : o.t === "u16" ? new Uint16Array(u8.buffer) : new Uint32Array(u8.buffer);
+  };
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(dec(payload.p), 3));
+  geo.setIndex(new THREE.BufferAttribute(dec(payload.i), 1));
+  geo.computeVertexNormals();
+  if (three.mesh) { three.scene.remove(three.mesh); three.mesh.geometry.dispose(); }
+  three.mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xa9aeb7, roughness: 0.6, metalness: 0.05 }));
+  three.scene.add(three.mesh);
+  $("#modebar").hidden = false;
+  setMode("mesh");
+}
+function setMode(m) {
+  S.mode = m;
+  for (const b of document.querySelectorAll("#modebar button")) b.setAttribute("aria-pressed", String(b.dataset.mode === m));
+  $("#mesh3").hidden = m !== "mesh"; glCanvas.hidden = m === "mesh";
+  $("#hud-mode").textContent = m === "mesh" ? "meshed result" : "preview";
+  $("#legend").hidden = m === "mesh" || !S.color;
+  kick(false);
+}
+
+// ---- doc edits, undo ------------------------------------------------------------------------------
+
+function getAt(o, path) { for (const k of path) { if (o == null) return undefined; o = o[k]; } return o; }
+function setAt(o, path, v) {
+  for (let i = 0; i < path.length - 1; i++) { if (o[path[i]] == null || typeof o[path[i]] !== "object") o[path[i]] = typeof path[i + 1] === "number" ? [] : {}; o = o[path[i]]; }
+  if (v === undefined) { if (Array.isArray(o)) o.splice(path[path.length - 1], 1); else delete o[path[path.length - 1]]; }
+  else o[path[path.length - 1]] = v;
+}
+let lastCommitted = null;
+function commit() {
+  const now = stable(S.doc);
+  if (now === lastCommitted) return;
+  if (lastCommitted != null) { S.undo.push(lastCommitted); if (S.undo.length > 200) S.undo.shift(); S.redo = []; }
+  lastCommitted = now;
+  $("#undo").disabled = !S.undo.length; $("#redo").disabled = !S.redo.length;
+  if (!$("#jsonpane").hidden) $("#json").value = JSON.stringify(exportDoc(), null, 2);
+  lintSoon();
+}
+const commitSoon = debounce(commit, 350);
+function structural() { commit(); recompile(); fillSelects(); inspector(); }
+function restore(snapshot) {
+  S.doc = JSON.parse(snapshot); lastCommitted = snapshot;
+  if (S.sel && !(S.sel in S.doc.nodes)) S.sel = null;
+  if (S.target && !(S.target in S.doc.nodes)) S.target = S.doc.output;
+  if (S.color && !(S.color in S.doc.nodes)) S.color = null;
+  $("#undo").disabled = !S.undo.length; $("#redo").disabled = !S.redo.length;
+  recompile(); fillSelects(); inspector(); partPanel();
+}
+function undo() { commit(); if (!S.undo.length) return; S.redo.push(lastCommitted); restore(S.undo.pop()); }
+function redo() { if (!S.redo.length) return; S.undo.push(lastCommitted); restore(S.redo.pop()); }
+
+function exportDoc() {
+  const d = clone(S.doc);
+  d.editor = { ...(d.editor || {}), layout: Object.fromEntries(Object.entries(S.layout).filter(([k]) => k in d.nodes).map(([k, v]) => [k, [Math.round(v[0]), Math.round(v[1])]])) };
+  return d;
+}
+
+function renameNode(old, nu) {
+  nu = nu.trim();
+  if (!nu || nu === old) return false;
+  if (nu in S.doc.nodes) { status(`There is already a node called ${nu}.`, "warn"); return false; }
+  if (["x", "y", "z", "pi", "e", ...Object.keys(FUNCS)].includes(nu)) { status(`${nu} is reserved.`, "warn"); return false; }
+  const nodes = {};
+  for (const [k, v] of Object.entries(S.doc.nodes)) nodes[k === old ? nu : k] = v;
+  for (const s of Object.values(nodes)) {
+    for (const k of FIELD_KEYS) if (s[k] === old && !(s.op === "constant" && k === "value")) s[k] = nu;
+    if (Array.isArray(s.inputs)) s.inputs = s.inputs.map((v) => (v === old ? nu : v));
+    if (s.vars) for (const k of Object.keys(s.vars)) if (s.vars[k] === old) s.vars[k] = nu;
+    if (s.op === "result" && s.part === old) s.part = nu;
+    if (s.op === "expr" && typeof s.expr === "string" && /^[A-Za-z_]\w*$/.test(nu)) s.expr = s.expr.replace(new RegExp(`\\b${old.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")}\\b`, "g"), nu);
+  }
+  S.doc.nodes = nodes;
+  if (S.doc.output === old) S.doc.output = nu;
+  const dr = S.doc.drains;
+  if (dr && typeof dr === "object") { if (dr.stress === old) dr.stress = nu; if (Array.isArray(dr.keepClear)) dr.keepClear = dr.keepClear.map((v) => (v === old ? nu : v)); }
+  if (S.layout[old]) { S.layout[nu] = S.layout[old]; delete S.layout[old]; }
+  if (S.bakes[old]) { S.bakes[nu] = S.bakes[old]; delete S.bakes[old]; }
+  for (const k of ["sel", "target", "color"]) if (S[k] === old) S[k] = nu;
+  return true;
+}
+function deleteNode(name) {
+  const users = Object.keys(S.doc.nodes).filter((n) => n !== name && depsOf(n).includes(name));
+  if (users.length) { status(`${name} is used by ${users.join(", ")}: rewire those first.`, "warn"); return; }
+  delete S.doc.nodes[name];
+  if (S.doc.output === name) S.doc.output = Object.keys(S.doc.nodes).pop();
+  for (const k of ["sel", "target", "color"]) if (S[k] === name) S[k] = k === "target" ? S.doc.output : null;
+  structural(); partPanel();
+}
+function addNode(op) {
+  const c = S.box ? [0, 1, 2].map((i) => 0.5 * (S.box[0][i] + S.box[1][i])) : [0, 0, 0];
+  let base = op, i = 1, name = op;
+  while (name in S.doc.nodes) name = `${base}${++i}`;
+  S.doc.nodes[name] = { op, ...OPS[op].make(c) };
+  const sel = S.sel && S.layout[S.sel];
+  S.layout[name] = sel ? [sel[0] + 210, sel[1] + 30] : [40 - G2.tx / G2.s, 50 - G2.ty / G2.s];
+  S.sel = name;
+  structural();
+}
+/** Wire `source` into `target`'s port `key` ("input", "inputs.2", "inputs.+", "vars.k", "part"). */
+function connect(target, key, source) {
+  if (target === source) return;
+  const spec = S.doc.nodes[target];
+  const reaches = (from, to, seen = new Set()) => { if (from === to) return true; if (seen.has(from)) return false; seen.add(from); return depsOf(from).some((d) => reaches(d, to, seen)); };
+  if (reaches(source, target)) { status(`${source} already depends on ${target}: that wire would make a loop.`, "warn"); return; }
+  const [k, sub] = key.split(".");
+  if (k === "inputs") { spec.inputs = spec.inputs || []; if (sub === "+") spec.inputs.push(source); else spec.inputs[+sub] = source; }
+  else if (k === "vars") { spec.vars = spec.vars || {}; spec.vars[sub] = source; }
+  else if (k === "expr") return;
+  else spec[k] = source;
+  S.sel = target;
+  structural();
+}
+
+// ---- bakes: what the GPU cannot compute (meshes, results, grids, a graded lattice's warp) ---------------
+
+const wantsWarp = (s) => s && s.op === "lattice" && typeof s.cell === "string" && (s.grading || "warp") === "warp" && !s.frame;
+/** Every bake the graph needs: a key into S.bakes, its node, and the kind the server bakes. */
+function bakeItems() {
+  const out = [];
+  for (const [name, s] of Object.entries(S.doc.nodes)) {
+    if (BAKED.has(s.op)) out.push({ key: name, node: name, kind: "node" });
+    else if (wantsWarp(s)) out.push({ key: `${name}#warp`, node: name, kind: "warp" });
+  }
+  return out;
+}
+function subtree(out, todo) {
+  const nodes = S.doc.nodes;
+  while (todo.length) {
+    const n = todo.pop();
+    if (n in out || !(n in nodes)) continue;
+    out[n] = nodes[n];
+    for (const r of refsOf(nodes[n], nodes)) todo.push(r.target);
+  }
+  return out;
+}
+/** What a bake depends on (editor.py's _closure and _warp_closure): compared with what it was baked from. */
+function closure(item) {
+  const nodes = S.doc.nodes, spec = nodes[item.node];
+  if (item.kind === "warp") {
+    const lat = {};
+    for (const k of ["cell", "origin", "bounds", "grading"]) if (k in spec) lat[k] = spec[k];
+    return subtree({ "#lattice": lat }, typeof spec.cell === "string" ? [spec.cell] : []);
+  }
+  const out = { [item.node]: spec };
+  return spec.op === "result" && typeof spec.part === "string" && spec.part in nodes ? subtree(out, [spec.part]) : out;
+}
+const itemFor = (name) => bakeItems().find((i) => i.node === name);
+function bakeState(item) {
+  if (typeof item === "string") item = itemFor(item);
+  if (!item) return "none";
+  const b = S.bakes[item.key];
+  if (S.baking === item.key) return "baking";
+  if (!b) return "missing";
+  return stable(b.spec) === stable(closure(item)) ? "ok" : "stale";
+}
+const isAnalysis = (name) => S.doc.nodes[name] && S.doc.nodes[name].op === "result" && !!S.doc.nodes[name].study;
+const failed = {};
+function requestBakes(force) {
+  if (!DATA.server || S.baking) return;
+  for (const item of bakeItems()) {
+    const st = bakeState(item);
+    if (st === "ok") continue;
+    const now = stable(closure(item));
+    if (failed[item.key] === now && force !== item.key) continue;
+    // an analysis is minutes: run it on load and when asked, not on every edit upstream
+    if (st === "stale" && item.kind === "node" && isAnalysis(item.node) && force !== item.key) continue;
+    bake(item);
+    return;
+  }
+}
+const bakesSoon = debounce(() => { requestBakes(); showNotes(); drawGraph(); }, 500);
+async function bake(item) {
+  if (typeof item === "string") item = itemFor(item);
+  S.baking = item.key;
+  const what = item.kind === "warp" ? `${item.node}'s cell warp` : item.node;
+  status(item.kind === "node" && isAnalysis(item.node) ? `Analysing ${item.node} (the study runs on the server; about a minute)…` : `Baking ${what}…`);
+  drawGraph(); inspector();
+  const sent = stable(closure(item));
+  try {
+    const r = await fetch("api/bake", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc: S.doc, node: item.node, kind: item.kind }) });
+    const b = await r.json();
+    if (!r.ok) throw new Error(b.error || r.statusText);
+    S.bakes[item.key] = b;
+    delete failed[item.key];
+    status(`Baked ${what} in ${b.seconds} s.`, "ok");
+  } catch (e) {
+    status(`Could not bake ${what}: ${e.message}`, "warn");
+    failed[item.key] = sent;
+  }
+  S.baking = null;
+  recompile(); inspector();
+}
+
+// ---- graph view -------------------------------------------------------------------------------------
+
+const G2 = { tx: 20, ty: 46, s: 1 };
+const NW = 172, HEAD = 26, ROW = 17;
+function ports(name) {
+  const s = S.doc.nodes[name], out = [];
+  const spec = OPS[s.op];
+  if (!spec) return out;
+  const add = (key, label, v) => out.push({ key, label, target: typeof v === "string" && v in S.doc.nodes ? v : null, bad: typeof v === "string" && !(v in S.doc.nodes), num: typeof v === "number" ? v : null });
+  for (const p of spec.params) {
+    if (p.t === "field") { if (p.opt && s[p.k] == null) continue; if (p.alt && s[p.k] == null && s[p.alt] != null) continue; add(p.k, p.k, s[p.k]); }
+    if (p.t === "list") { (s.inputs || []).forEach((v, i) => add(`inputs.${i}`, `in ${i + 1}`, v)); add("inputs.+", "+ input", null); }
+    if (p.t === "vars") for (const [k, v] of Object.entries(s.vars || {})) add(`vars.${k}`, k, v);
+    if (p.t === "distance" && s.input != null) add("input", "input", s.input);
+    if (p.t === "part" && typeof s.part === "string" && s.part in S.doc.nodes) add("part", "part", s.part);
+  }
+  if (s.op === "expr") for (const r of refsOf(s, S.doc.nodes)) if (r.key === "expr") out.push({ key: "expr", label: `· ${r.target}`, target: r.target in S.doc.nodes ? r.target : null, bad: !(r.target in S.doc.nodes), fixed: true });
+  return out;
+}
+function autoLayout(keep = false) {
+  const names = Object.keys(S.doc.nodes);
+  // columns as late as they can be: each node one left of its first user, so a leaf sits by what reads it
+  const users = {};
+  for (const n of names) for (const x of depsOf(n)) (users[x] = users[x] || []).push(n);
+  const height = {};
+  const hgt = (n, seen = new Set()) => {
+    if (n in height) return height[n];
+    if (seen.has(n)) return 0;
+    seen.add(n);
+    const us = users[n] || [];
+    return (height[n] = us.length ? 1 + Math.max(...us.map((x) => hgt(x, seen))) : 0);
+  };
+  names.forEach((n) => hgt(n));
+  const top = Math.max(0, ...Object.values(height));
+  const depth = Object.fromEntries(names.map((n) => [n, top - height[n]]));
+  const cols = {};
+  for (const n of names) (cols[depth[n]] = cols[depth[n]] || []).push(n);
+  // order each column by the mean row of what feeds it, so wires cross less
+  const row = {};
+  Object.keys(cols).map(Number).sort((a, b) => a - b).forEach((c) => {
+    const col = cols[c];
+    if (c > 0) col.sort((a, b) => {
+      const m = (n) => { const ds = depsOf(n).filter((x) => x in row); return ds.length ? ds.reduce((s, x) => s + row[x], 0) / ds.length : 0; };
+      return m(a) - m(b);
+    });
+    let y = 0;
+    col.forEach((n) => { row[n] = y; if (!(keep && S.layout[n])) S.layout[n] = [c * 214, y]; y += HEAD + 12 + Math.max(1, ports(n).length) * ROW + 18; });
+  });
+}
+function drawGraph() {
+  const gN = $("#nodes"), gW = $("#wires");
+  gN.replaceChildren(); gW.replaceChildren();
+  const bad = new Set(S.issues.map((i) => i.node));
+  const portPos = {};
+  for (const name of Object.keys(S.doc.nodes)) {
+    if (!S.layout[name]) autoLayout(true);
+    const [x, y] = S.layout[name];
+    const ps = ports(name), kind = kindOf(name), op = S.doc.nodes[name].op;
+    const h = HEAD + 6 + Math.max(1, ps.length) * ROW + 4;
+    const g = svg("g", { class: `gn${S.sel === name ? " sel" : ""}${bad.has(name) ? " bad" : ""}`, transform: `translate(${x},${y})`, "data-node": name });
+    g.append(svg("rect", { class: "body", width: NW, height: h, rx: 7 }));
+    g.append(svg("rect", { class: "stripe", width: 4, height: h - 10, x: 0, y: 5, rx: 2, fill: `var(--${kind})` }));
+    const head = svg("rect", { class: "head", width: NW, height: HEAD, fill: "transparent" });
+    g.append(head);
+    const t = svg("text", { class: "name", x: 12, y: 17 }); t.textContent = name.length > 17 ? name.slice(0, 16) + "…" : name; g.append(t);
+    const o = svg("text", { x: NW - 14, y: 17, "text-anchor": "end" }); o.textContent = op; g.append(o);
+    let bx = 12;
+    const badge = (txt, color) => { const b = svg("text", { class: "badge", x: bx, y: h + 12, fill: color }); b.textContent = txt; g.append(b); bx += txt.length * 6.6 + 8; };
+    if (S.doc.output === name) badge("OUTPUT", "var(--accent)");
+    if (S.target === name && S.doc.output !== name) badge("SHOWN", "var(--accent)");
+    if (S.color === name) badge("COLOUR", "var(--scalar)");
+    if (BAKED.has(op) || wantsWarp(S.doc.nodes[name])) {
+      const st = bakeState(name), w = op === "lattice" ? "WARP " : "";
+      badge(w + (st === "ok" ? (w ? "OK" : "BAKED") : st.toUpperCase()), st === "ok" ? "var(--muted)" : "var(--warn)");
+    }
+    ps.forEach((p, i) => {
+      const py = HEAD + 6 + i * ROW + ROW / 2;
+      const c = svg("circle", { class: `port${p.target ? " on" : ""}`, cx: 0, cy: py, r: 4.2, "data-node": name, "data-key": p.key });
+      if (p.fixed) c.setAttribute("data-fixed", "1");
+      g.append(c);
+      const lt = svg("text", { x: 12, y: py + 4 });
+      lt.textContent = p.label + (p.num != null ? `  ${fmt(p.num)}` : p.target ? `  ← ${p.target.length > 10 ? p.target.slice(0, 9) + "…" : p.target}` : p.bad ? "  ?" : "");
+      g.append(lt);
+      portPos[`${name}|${p.key}|${i}`] = { x, y: y + py, target: p.target, node: name };
+    });
+    const outp = svg("circle", { class: "outp", cx: NW, cy: HEAD / 2, r: 5, fill: `var(--${kind})`, stroke: "var(--panel)", "data-out": name });
+    g.append(outp);
+    gN.append(g);
+  }
+  for (const pp of Object.values(portPos)) {
+    if (!pp.target || !S.layout[pp.target]) continue;
+    const [sx, sy] = S.layout[pp.target];
+    const x0 = sx + NW, y0 = sy + HEAD / 2, x1 = pp.x, y1 = pp.y, dx = Math.max(40, Math.abs(x1 - x0) * 0.45);
+    const hl = S.sel && (S.sel === pp.node || S.sel === pp.target);
+    gW.append(svg("path", { class: `wire ${kindOf(pp.target)}${hl ? " hl" : ""}`, d: `M${x0},${y0} C${x0 + dx},${y0} ${x1 - dx},${y1} ${x1},${y1}` }));
+  }
+  $("#world").setAttribute("transform", `translate(${G2.tx},${G2.ty}) scale(${G2.s})`);
+}
+function graphFit() {
+  const r = $("#graph").getBoundingClientRect();
+  const xs = Object.values(S.layout);
+  if (!xs.length || !r.width) return;
+  const lo = [Math.min(...xs.map((p) => p[0])), Math.min(...xs.map((p) => p[1]))];
+  const hi = [Math.max(...xs.map((p) => p[0])) + NW, Math.max(...xs.map((p) => p[1])) + 120];
+  G2.s = Math.min(1.2, (r.width - 40) / (hi[0] - lo[0]), (r.height - 70) / (hi[1] - lo[1]));
+  G2.s = Math.max(G2.s, 0.3);
+  G2.tx = 20 - lo[0] * G2.s; G2.ty = 48 - lo[1] * G2.s;
+  drawGraph();
+}
+(function graphInput() {
+  const el2 = $("#graph");
+  let drag = null;
+  const world = (e) => { const r = el2.getBoundingClientRect(); return [(e.clientX - r.left - G2.tx) / G2.s, (e.clientY - r.top - G2.ty) / G2.s]; };
+  el2.addEventListener("pointerdown", (e) => {
+    const out = e.target.closest("[data-out]"), node = e.target.closest(".gn");
+    el2.setPointerCapture(e.pointerId);
+    if (out) { drag = { kind: "wire", from: out.dataset.out }; return; }
+    if (node && !e.target.classList.contains("port")) {
+      const name = node.dataset.node, p = world(e);
+      drag = { kind: "node", name, off: [p[0] - S.layout[name][0], p[1] - S.layout[name][1]], moved: false };
+      if (S.sel !== name) { S.sel = name; if (S.follow && kindOf(name) === "solid") S.target = name; afterSelect(); }
+      return;
+    }
+    if (node && e.target.classList.contains("port")) { S.sel = node.dataset.node; afterSelect(); return; }
+    drag = { kind: "pan", x: e.clientX - G2.tx, y: e.clientY - G2.ty };
+    el2.classList.add("panning");
+  });
+  el2.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    if (drag.kind === "pan") { G2.tx = e.clientX - drag.x; G2.ty = e.clientY - drag.y; $("#world").setAttribute("transform", `translate(${G2.tx},${G2.ty}) scale(${G2.s})`); }
+    else if (drag.kind === "node") { const p = world(e); S.layout[drag.name] = [p[0] - drag.off[0], p[1] - drag.off[1]]; drag.moved = true; drawGraph(); }
+    else if (drag.kind === "wire") {
+      const [sx, sy] = S.layout[drag.from], x0 = sx + NW, y0 = sy + HEAD / 2, [x1, y1] = world(e), dx = Math.max(40, Math.abs(x1 - x0) * 0.45);
+      const w = $("#dragwire"); w.hidden = false; w.setAttribute("class", `wire ${kindOf(drag.from)} hl`);
+      w.setAttribute("d", `M${x0},${y0} C${x0 + dx},${y0} ${x1 - dx},${y1} ${x1},${y1}`);
+      document.querySelectorAll(".port.hot").forEach((p) => p.classList.remove("hot"));
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      if (under && under.classList.contains("port") && !under.dataset.fixed) under.classList.add("hot");
+    }
+  });
+  const end = (e) => {
+    if (drag && drag.kind === "wire") {
+      $("#dragwire").hidden = true;
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      if (under && under.classList.contains("port") && !under.dataset.fixed) connect(under.dataset.node, under.dataset.key, drag.from);
+      else drawGraph();
+    }
+    if (drag && drag.kind === "node" && drag.moved) commitSoon();
+    drag = null; el2.classList.remove("panning");
+  };
+  el2.addEventListener("pointerup", end);
+  el2.addEventListener("pointercancel", end);
+  el2.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = el2.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    const f = Math.exp(-e.deltaY * 0.0015), s = Math.min(2.5, Math.max(0.25, G2.s * f));
+    G2.tx = mx - (mx - G2.tx) * (s / G2.s); G2.ty = my - (my - G2.ty) * (s / G2.s); G2.s = s;
+    $("#world").setAttribute("transform", `translate(${G2.tx},${G2.ty}) scale(${G2.s})`);
+  }, { passive: false });
+})();
+function afterSelect() { drawGraph(); inspector(); fillSelects(); recompileSoon(); }
+
+// ---- inspector ----------------------------------------------------------------------------------------
+
+function niceStep(span) { const m = span / 200, p = Math.pow(10, Math.floor(Math.log10(m))); return [1, 2, 5, 10].map((k) => k * p).find((s) => s >= m) || p; }
+function rangeFor(p, v) {
+  if (p.range) return [Math.min(p.range[0], v), Math.max(p.range[1], v)];
+  const a = Math.abs(v);
+  if (v > 0) return [0, Math.max(v * 3, 1)];
+  if (v < 0) return [v * 3, -v * 3];
+  return [0, 10];
+}
+function slider(path, v, p = {}) {
+  const [lo, hi] = rangeFor(p, v);
+  const step = niceStep(hi - lo);
+  const r = el("input", { type: "range", min: lo, max: hi, step, value: v, "aria-label": path.join(".") });
+  const n = el("input", { type: "number", step, value: +(+v).toPrecision(6), "aria-label": path.join(".") });
+  r.addEventListener("input", () => { n.value = r.value; setAt(S.doc, path, +r.value); paramChanged(path); });
+  n.addEventListener("input", () => { if (n.value === "" || !isFinite(+n.value)) return; const x = +n.value; if (x < +r.min) r.min = x; if (x > +r.max) r.max = x; r.value = x; setAt(S.doc, path, x); paramChanged(path); });
+  return el("div", { class: "row" }, r, n);
+}
+function scrubNum(path, v, label) {
+  const n = el("input", { type: "number", value: +(+v).toPrecision(6), step: "any", "aria-label": `${path.join(".")}` });
+  n.addEventListener("input", () => { if (n.value === "" || !isFinite(+n.value)) return; setAt(S.doc, path, +n.value); paramChanged(path); });
+  const lab = el("label", { title: "drag to change" }, label);
+  lab.addEventListener("pointerdown", (e) => {
+    lab.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, v0 = +n.value || 0;
+    const size = S.box ? Math.max(...[0, 1, 2].map((i) => S.box[1][i] - S.box[0][i])) : 100;
+    const step = niceStep(size * 2);
+    const mv = (ev) => { const x = +(v0 + Math.round((ev.clientX - x0) / 2) * step).toPrecision(8); n.value = x; setAt(S.doc, path, x); paramChanged(path); };
+    const up = () => { lab.removeEventListener("pointermove", mv); lab.removeEventListener("pointerup", up); };
+    lab.addEventListener("pointermove", mv); lab.addEventListener("pointerup", up);
+  });
+  return el("label", {}, lab, n);
+}
+function vec3(path, v) { return el("div", { class: "vec" }, ...["x", "y", "z"].map((a, i) => scrubNum([...path, i], v[i], a))); }
+function nodeOptions(sel, filter) {
+  return Object.keys(S.doc.nodes).filter((n) => !filter || filter(n)).map((n) => el("option", { value: n, selected: n === sel }, `${n}  (${S.doc.nodes[n].op})`));
+}
+function param(label, ...kids) { return el("div", { class: "param" }, el("div", { class: "lab" }, ...(Array.isArray(label) ? label : [el("span", {}, label)])), ...kids); }
+function removeBtn(path, title = "remove") { return el("button", { class: "btn ghost small", title, onclick: () => { setAt(S.doc, path, undefined); structural(); } }, "×"); }
+
+/** A field parameter: a number with a slider, or a wire from another node. */
+function fieldParam(name, p, path, opt) {
+  const v = getAt(S.doc, path);
+  if (v == null && typeof p.def === "number") return fieldParam0(name, p, path, opt, p.def);
+  return fieldParam0(name, p, path, opt, v);
+}
+function fieldParam0(name, p, path, opt, v) {
+  const isRef = typeof v === "string";
+  const sel = el("select", { "aria-label": `${p.k} source` },
+    el("option", { value: "#num", selected: !isRef }, "number"),
+    ...nodeOptions(isRef ? v : null, (n) => n !== name && (!p.solid || kindOf(n) === "solid")));
+  sel.addEventListener("change", () => {
+    if (sel.value === "#num") { setAt(S.doc, path, typeof p.def === "number" ? p.def : 1); structural(); }
+    else connect(name, path.slice(2).join("."), sel.value);
+  });
+  const head = [el("b", {}, path.slice(2).join(".")), el("span", { class: "row" }, sel, opt ? removeBtn(path) : null)];
+  return param(head, isRef ? el("p", { class: "note" }, `driven by ${v} (${kindOf(v)})`) : typeof v === "number" ? slider(path, v, p) : null);
+}
+function enumParam(path, opts, v) {
+  const s = el("select", {}, ...opts.map((o) => el("option", { value: o, selected: o === v }, o)));
+  s.addEventListener("change", () => { setAt(S.doc, path, s.value); structural(); });
+  return s;
+}
+function axisParam(path, v) {
+  const isVec = Array.isArray(v);
+  const s = el("select", {}, ...["x", "y", "z", "vector"].map((o) => el("option", { value: o, selected: isVec ? o === "vector" : o === (v || "z") }, o)));
+  s.addEventListener("change", () => { setAt(S.doc, path, s.value === "vector" ? [0, 0, 1] : s.value); structural(); });
+  return el("div", {}, s, isVec ? vec3(path, v) : null);
+}
+function shapeEditor(path, s, depth = 0) {
+  const box = el("div", { class: "sub" });
+  const type = el("select", {}, ...["box", "cylinder", "sphere", "union"].map((t) => el("option", { value: t, selected: t === (s.type === "tube" ? "cylinder" : s.type) }, t)));
+  type.addEventListener("change", () => {
+    const b = shapeBounds(s) || [[-10, -10, -10], [10, 10, 10]];
+    const c = [0, 1, 2].map((i) => +(0.5 * (b[0][i] + b[1][i])).toFixed(3)), e = Math.max(...[0, 1, 2].map((i) => b[1][i] - b[0][i])) / 2;
+    const t = type.value;
+    setAt(S.doc, path, t === "box" ? { type: "box", min: b[0], max: b[1] } : t === "cylinder" ? { type: "cylinder", center: c, axis: "z", length: 2 * e, r: e / 2 }
+      : t === "sphere" ? { type: "sphere", center: c, r: e } : { type: "union", shapes: [clone(s)] });
+    structural();
+  });
+  box.append(type);
+  if (s.type === "box") {
+    if ("min" in s) { box.append(param("min", vec3([...path, "min"], s.min)), param("max", vec3([...path, "max"], s.max))); }
+    else box.append(param("center", vec3([...path, "center"], s.center)), param("size", vec3([...path, "size"], s.size)));
+  } else if (s.type === "cylinder" || s.type === "tube") {
+    if ("p0" in s) box.append(param("p0", vec3([...path, "p0"], s.p0)), param("p1", vec3([...path, "p1"], s.p1)));
+    else box.append(param("center", vec3([...path, "center"], s.center)), param("axis", axisParam([...path, "axis"], s.axis)), param("length", slider([...path, "length"], s.length, { range: [0.5, Math.max(s.length * 3, 50)] })));
+    box.append(param("r", slider([...path, "r"], s.r, { range: [0.1, Math.max(s.r * 3, 20)] })));
+    if (s.rInner != null) box.append(param([el("span", {}, "rInner"), removeBtn([...path, "rInner"])], slider([...path, "rInner"], s.rInner, { range: [0, s.r] })));
+    else box.append(el("button", { class: "btn small", onclick: () => { setAt(S.doc, [...path, "rInner"], +(s.r / 2).toFixed(2)); structural(); } }, "+ bore (rInner)"));
+  } else if (s.type === "sphere") {
+    box.append(param("center", vec3([...path, "center"], s.center)), param("r", slider([...path, "r"], s.r, { range: [0.1, Math.max(s.r * 3, 20)] })));
+  } else if (s.type === "union") {
+    (s.shapes || []).forEach((x, i) => box.append(param([el("span", {}, `shape ${i + 1}`), removeBtn([...path, "shapes", i])], shapeEditor([...path, "shapes", i], x, depth + 1))));
+    box.append(el("button", { class: "btn small", onclick: () => { s.shapes = s.shapes || []; s.shapes.push(clone(s.shapes[s.shapes.length - 1] || { type: "sphere", center: [0, 0, 0], r: 5 })); structural(); } }, "+ shape"));
+  }
+  return box;
+}
+
+function inspector() {
+  const body = $("#node-body"), act = $("#node-actions");
+  body.replaceChildren(); act.replaceChildren();
+  const name = S.sel;
+  if (!name || !(name in S.doc.nodes)) { body.append(el("p", { class: "note" }, "Pick a node in the graph, or add one.")); return; }
+  const s = S.doc.nodes[name], spec = OPS[s.op];
+  const nm = el("input", { type: "text", value: name, "aria-label": "Node name", spellcheck: "false" });
+  nm.addEventListener("change", () => { if (renameNode(name, nm.value)) structural(); else nm.value = name; });
+  const ops = el("select", { "aria-label": "Operation" }, ...Object.keys(OPS).map((o) => el("option", { value: o, selected: o === s.op }, o)));
+  ops.addEventListener("change", () => {
+    const keep = {};
+    for (const k of ["input", "inputs", "description"]) if (k in s) keep[k] = s[k];
+    S.doc.nodes[name] = { op: ops.value, ...OPS[ops.value].make([0, 0, 0]), ...keep };
+    structural();
+  });
+  act.append(el("button", { class: "btn ghost small", title: "Make this the part that is meshed", onclick: () => { S.doc.output = name; S.target = name; structural(); partPanel(); } }, S.doc.output === name ? "output ✓" : "set output"),
+    el("button", { class: "btn ghost small", title: "Delete node", onclick: () => deleteNode(name) }, "delete"));
+  body.append(el("div", { class: "row" }, nm, el("span", { class: `chip ${kindOf(name)}` }, kindOf(name))));
+  body.append(ops);
+  body.append(el("p", { class: "note" }, s.description || (spec ? spec.doc : "")));
+  if (!spec) return;
+  const N = (...k) => ["nodes", name, ...k];
+  const optional = [];
+  for (const p of spec.params) {
+    const v = s[p.k];
+    if (p.opt && v == null && !["frame", "rotate"].includes(p.t)) { if (!(p.alt && s[p.alt] == null && p.k === "thickness")) optional.push(p); continue; }
+    if (p.alt && v == null) { optional.push(p); continue; }
+    switch (p.t) {
+      case "field": body.append(fieldParam(name, p, N(p.k), p.opt || (p.alt && s[p.alt] != null))); break;
+      case "num": body.append(param([el("b", {}, p.k), p.opt ? removeBtn(N(p.k)) : null], slider(N(p.k), v ?? p.def, p))); break;
+      case "enum": body.append(param(p.k, enumParam(N(p.k), p.opts, v ?? p.def))); break;
+      case "bool": {
+        const c = el("input", { type: "checkbox", checked: v ?? p.def });
+        c.addEventListener("change", () => { setAt(S.doc, N(p.k), c.checked); structural(); });
+        body.append(el("label", { class: "row note" }, c, p.k)); break;
+      }
+      case "text": {
+        const t = el("input", { type: "text", value: v ?? "", spellcheck: "false" });
+        t.addEventListener("change", () => { setAt(S.doc, N(p.k), t.value); structural(); });
+        body.append(param([el("b", {}, p.k), p.opt ? removeBtn(N(p.k)) : null], t)); break;
+      }
+      case "vec3": body.append(param([el("b", {}, p.k), p.opt ? removeBtn(N(p.k)) : null], vec3(N(p.k), v ?? p.def))); break;
+      case "axis": body.append(param(p.k, axisParam(N(p.k), v ?? p.def))); break;
+      case "pair": body.append(param(p.k, el("div", { class: "vec", style: "grid-template-columns:1fr 1fr" }, scrubNum(N(p.k, 0), (v || p.def)[0], "a"), scrubNum(N(p.k, 1), (v || p.def)[1], "b")))); break;
+      case "shape": body.append(param("shape", shapeEditor(N("shape"), s.shape || {}))); break;
+      case "list": {
+        const list = el("div", { class: "sub" });
+        (s.inputs || []).forEach((x, i) => list.append(fieldParam(name, { k: `in ${i + 1}`, solid: true, def: 0 }, N("inputs", i), true)));
+        const add = el("select", { "aria-label": "Add an input" }, el("option", { value: "" }, "+ input…"), ...nodeOptions(null, (n) => n !== name && kindOf(n) === "solid"));
+        add.addEventListener("change", () => { if (add.value) connect(name, "inputs.+", add.value); });
+        list.append(add);
+        body.append(param("inputs", list)); break;
+      }
+      case "code": {
+        const t = el("textarea", { rows: 3, spellcheck: "false" }); t.value = v ?? "";
+        const msg = el("p", { class: "note" });
+        const check = () => { try { parseExpr(t.value); msg.textContent = ""; return true; } catch (e) { msg.textContent = e.message; msg.className = "note warn"; return false; } };
+        check();
+        t.addEventListener("input", debounce(() => { setAt(S.doc, N("expr"), t.value); if (check()) structural(); else { S.issues = validate(); showIssues(); } }, 250));
+        body.append(param("expr", t, msg)); break;
+      }
+      case "vars": {
+        const list = el("div", { class: "sub" });
+        for (const k of Object.keys(s.vars || {})) list.append(fieldParam(name, { k, def: 1 }, N("vars", k), true));
+        const nk = el("input", { type: "text", placeholder: "new var name", spellcheck: "false" });
+        nk.addEventListener("change", () => { const k = nk.value.trim(); if (/^[A-Za-z_]\w*$/.test(k)) { setAt(S.doc, N("vars", k), 1); structural(); } });
+        list.append(nk);
+        body.append(param("vars", list)); break;
+      }
+      case "distance": {
+        const mode = s.input != null ? "input" : s.points ? "points" : s.segment ? "segment" : s.plane ? "plane" : s.shape ? "shape" : "input";
+        const m = el("select", {}, ...["input", "points", "segment", "plane", "shape"].map((o) => el("option", { value: o, selected: o === mode }, `to ${o === "input" ? "a solid node" : o}`)));
+        m.addEventListener("change", () => {
+          for (const k of ["input", "points", "segment", "plane", "shape", "signed"]) delete s[k];
+          const c = S.box ? [0, 1, 2].map((i) => +(0.5 * (S.box[0][i] + S.box[1][i])).toFixed(2)) : [0, 0, 0];
+          Object.assign(s, { input: { input: Object.keys(S.doc.nodes).find((n) => n !== name && kindOf(n) === "solid") || 0 }, points: { points: [c] },
+            segment: { segment: [c, c.map((v, i) => v + (i === 0 ? 20 : 0))] }, plane: { plane: { point: c, normal: [0, 0, 1] } },
+            shape: { shape: { type: "sphere", center: c, r: 10 } } }[m.value]);
+          structural();
+        });
+        body.append(m);
+        if (mode === "input") {
+          body.append(fieldParam(name, { k: "input", solid: true, def: 0 }, N("input")));
+          const c = el("input", { type: "checkbox", checked: !!s.signed });
+          c.addEventListener("change", () => { s.signed = c.checked || undefined; if (!c.checked) delete s.signed; structural(); });
+          body.append(el("label", { class: "row note" }, c, "signed (negative inside)"));
+        } else if (mode === "points") {
+          s.points.forEach((pt, i) => body.append(param([el("span", {}, `point ${i + 1}`), s.points.length > 1 ? removeBtn(N("points", i)) : null], vec3(N("points", i), pt))));
+          body.append(el("button", { class: "btn small", onclick: () => { s.points.push(s.points[s.points.length - 1].slice()); structural(); } }, "+ point"));
+        } else if (mode === "segment") body.append(param("from", vec3(N("segment", 0), s.segment[0])), param("to", vec3(N("segment", 1), s.segment[1])));
+        else if (mode === "plane") body.append(param("point", vec3(N("plane", "point"), s.plane.point)), param("normal", vec3(N("plane", "normal"), s.plane.normal)));
+        else body.append(param("shape", shapeEditor(N("shape"), s.shape)));
+        break;
+      }
+      case "frame": {
+        const fr = s.frame || { type: "cartesian" };
+        const t = enumParam(N("frame", "type"), ["cartesian", "cylindrical"], fr.type);
+        t.addEventListener("change", () => { if (t.value === "cartesian") delete s.frame; else s.frame = { type: "cylindrical", axis: "z", center: [0, 0, 0], radius: 20 }; structural(); }, { capture: true });
+        const f = el("div", { class: "sub" }, t);
+        if (fr.type === "cylindrical") f.append(param("axis", axisParam(N("frame", "axis"), fr.axis || "z")), param("center", vec3(N("frame", "center"), fr.center || [0, 0, 0])), param("radius", slider(N("frame", "radius"), fr.radius || 20, { range: [1, 200] })));
+        body.append(param("frame", f)); break;
+      }
+      case "rotate": {
+        if (!s.rotate) { optional.push(p); break; }
+        body.append(param([el("b", {}, "rotate"), removeBtn(N("rotate"))], el("div", { class: "sub" },
+          param("axis", axisParam(N("rotate", "axis"), s.rotate.axis || "z")), param("degrees", slider(N("rotate", "degrees"), s.rotate.degrees ?? 0, { range: [-180, 180] })),
+          param("center", vec3(N("rotate", "center"), s.rotate.center || [0, 0, 0]))))); break;
+      }
+      case "scale": {
+        const isPeak = v === "peak";
+        const m = el("select", {}, ...["peak", "number"].map((o) => el("option", { value: o, selected: (o === "peak") === isPeak }, o === "peak" ? "fraction of its peak" : "divide by a number")));
+        m.addEventListener("change", () => { setAt(S.doc, N("scale"), m.value === "peak" ? "peak" : 1); structural(); });
+        body.append(param([el("b", {}, "scale"), removeBtn(N("scale"))], m, isPeak ? null : slider(N("scale"), +v || 1, { range: [0.01, 100] }))); break;
+      }
+      case "part": {
+        const isNode = typeof v === "string" && v in S.doc.nodes;
+        const sel = el("select", {}, el("option", { value: "#path", selected: !isNode }, "a mesh file…"), ...nodeOptions(isNode ? v : null, (n) => n !== name && kindOf(n) === "solid"));
+        sel.addEventListener("change", () => { setAt(S.doc, N("part"), sel.value === "#path" ? "part.stl" : sel.value); structural(); });
+        const path = isNode ? null : el("input", { type: "text", value: v || "", spellcheck: "false" });
+        if (path) path.addEventListener("change", () => { setAt(S.doc, N("part"), path.value); structural(); });
+        body.append(param([el("b", {}, "part"), removeBtn(N("part"))], sel, path)); break;
+      }
+    }
+  }
+  const item = itemFor(name);
+  if (item) {
+    const st = bakeState(item), b = S.bakes[item.key];
+    const msg = { ok: `Baked on a ${b ? b.dims.join(" × ") : ""} grid${b && b.seconds ? ` in ${b.seconds} s` : ""}.`, stale: "Baked from an earlier version of this node (or what it analyzes).",
+      missing: DATA.server ? "Not baked yet." : "Not baked: open the graph with `loadpath edit` to bake it.", baking: "Baking…" }[st];
+    body.append(el("p", { class: `note ${st === "ok" ? "" : "warn"}` }, msg));
+    if (b && b.analysis) body.append(el("p", { class: "note" }, Object.entries(b.analysis).slice(0, 4).map(([k, x]) => `${k} ${typeof x === "number" ? fmt(x) : x}`).join(" · ")));
+    if (item.kind === "warp") body.append(el("p", { class: "note" }, "The preview draws the graded cells through the same warp the mesher solves (on a coarser grid)."));
+    if (DATA.server && st !== "baking") body.append(el("button", { class: "btn small", disabled: !!S.baking, onclick: () => bake(item) }, isAnalysis(name) ? (st === "ok" ? "Re-run analysis" : "Run analysis") : "Re-bake"));
+  }
+  if (optional.length) {
+    const add = el("select", { "aria-label": "Add a parameter" }, el("option", { value: "" }, "+ parameter…"), ...optional.map((p) => el("option", { value: p.k }, p.k)));
+    add.addEventListener("change", () => {
+      const p = optional.find((x) => x.k === add.value);
+      if (!p) return;
+      if (p.alt) delete s[p.alt];
+      s[p.k] = p.t === "rotate" ? { axis: "z", degrees: 0 } : p.t === "scale" ? "peak" : p.t === "part" ? (Object.keys(S.doc.nodes).find((n) => n !== name && kindOf(n) === "solid") || "part.stl") : clone(p.def ?? 0);
+      structural();
+    });
+    body.append(add);
+  }
+  const d = el("input", { type: "text", value: s.description || "", placeholder: "description", spellcheck: "false" });
+  d.addEventListener("change", () => { if (d.value) s.description = d.value; else delete s.description; commit(); });
+  body.append(d);
+}
+
+// ---- panels -------------------------------------------------------------------------------------------
+
+function fillSelects() {
+  const names = Object.keys(S.doc.nodes);
+  const solids = names.filter((n) => kindOf(n) === "solid"), scalars = names.filter((n) => kindOf(n) === "scalar");
+  $("#target").replaceChildren(el("option", { value: "#follow", selected: S.follow }, `follow selection${S.follow && S.target ? ` (${S.target})` : ""}`),
+    ...solids.map((n) => el("option", { value: n, selected: !S.follow && n === S.target }, n + (n === S.doc.output ? "  · output" : ""))));
+  $("#colorby").replaceChildren(el("option", { value: "", selected: !S.color }, "plain"), ...scalars.map((n) => el("option", { value: n, selected: n === S.color }, n)));
+  $("#output").replaceChildren(...solids.map((n) => el("option", { value: n, selected: n === S.doc.output }, n)));
+}
+function partPanel() {
+  const d = S.doc;
+  $("#name").value = d.name || "field";
+  $("#desc").textContent = d.description ? (d.description.length > 220 ? d.description.slice(0, 219) + "…" : d.description) : "";
+  const pitch = (d.mesh && d.mesh.pitch) || 0.5;
+  $("#pitch").value = pitch; $("#pitch-n").value = pitch;
+  $("#material").value = typeof d.material === "string" ? d.material : d.material ? JSON.stringify(d.material) : "";
+  $("#process").value = typeof d.process === "string" ? d.process : "";
+}
+function showIssues() {
+  const list = $("#issues");
+  const all = [...S.issues.map((i) => i.message), ...S.serverIssues.filter((i) => i.level === "error").map((i) => `${i.path}: ${i.message}`)];
+  list.replaceChildren(...[...new Set(all)].slice(0, 8).map((m) => el("li", {}, m)));
+  list.hidden = !all.length;
+}
+function showNotes() {
+  const notes = [...(G.comp ? G.comp.notes : [])];
+  const missing = G.comp ? G.comp.missing : [];
+  for (const m of missing) notes.push(`${m}: not baked yet, drawn as ${S.doc.nodes[m] && S.doc.nodes[m].op === "mesh" ? "empty" : "zero"}`);
+  for (const it of bakeItems()) if (bakeState(it) === "stale")
+    notes.push(`${it.kind === "warp" ? `${it.node}'s warp` : it.node}: baked from an earlier graph${isAnalysis(it.node) ? " (re-run the analysis to update)" : DATA.server ? " (re-baking)" : ""}`);
+  if (S.unbounded) notes.push("the shown solid is unbounded (a bare lattice): intersect it with a solid");
+  const box = $("#notes");
+  box.replaceChildren(...notes.slice(0, 5).map((n) => el("span", {}, n)));
+  box.hidden = !notes.length || S.mode === "mesh";
+}
+function legend() {
+  const on = !!S.color && !!S.range && S.mode === "preview";
+  $("#legend").hidden = !on;
+  if (!on) return;
+  $("#lg-title").textContent = S.color;
+  $("#lg-lo").textContent = fmt(S.range[0]); $("#lg-mid").textContent = fmt(0.5 * (S.range[0] + S.range[1])); $("#lg-hi").textContent = fmt(S.range[1]);
+}
+(function legendBar() {
+  const c = $("#lg-bar"), x = c.getContext("2d"), img = x.createImageData(256, 1);
+  const turbo = (t) => {
+    t = Math.min(1, Math.max(0, 0.1 + 0.85 * t));
+    const t2 = t * t, t3 = t2 * t, t4 = t3 * t, t5 = t4 * t;
+    return [0.13572138 + 4.6153926 * t - 42.66032258 * t2 + 132.13108234 * t3 - 152.94239396 * t4 + 59.28637943 * t5,
+      0.09140261 + 2.19418839 * t + 4.84296658 * t2 - 14.18503333 * t3 + 4.27729857 * t4 + 2.82956604 * t5,
+      0.1066733 + 12.64194608 * t - 60.58204836 * t2 + 110.36276771 * t3 - 89.90310912 * t4 + 27.34824973 * t5].map((v) => Math.min(1, Math.max(0, v)));
+  };
+  for (let i = 0; i < 256; i++) { const t = turbo(i / 255); img.data.set([t[0] * 255, t[1] * 255, t[2] * 255, 255], i * 4); }
+  x.putImageData(img, 0, 0);
+})();
+function status(msg, cls = "") { const s = $("#status"); s.textContent = msg; s.className = `note ${cls}`; }
+
+const lintSoon = debounce(async () => {
+  if (!DATA.server) return;
+  try {
+    const r = await fetch("api/lint", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc: exportDoc() }) });
+    S.serverIssues = (await r.json()).issues || [];
+    showIssues();
+  } catch (e) { /* offline */ }
+}, 900);
+
+// run, save, export
+function download(name, text) {
+  const a = el("a", { href: URL.createObjectURL(new Blob([text], { type: "application/json" })), download: name });
+  document.body.append(a); a.click(); a.remove();
+}
+const fileName = () => DATA.graphPath || `${(S.doc.name || "field").replace(/[^\w.-]+/g, "-")}.json`;
+async function save() {
+  commit();
+  if (!DATA.server) { download(fileName(), JSON.stringify(exportDoc(), null, 2) + "\n"); status(`Downloaded ${fileName()}.`, "ok"); return; }
+  const r = await fetch("api/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc: exportDoc() }) });
+  const b = await r.json();
+  if (!r.ok) { S.serverIssues = b.issues || []; showIssues(); status(b.error || "Not saved.", "warn"); return; }
+  status(`Saved ${b.saved}.`, "ok");
+}
+async function run() {
+  commit();
+  if (!DATA.server) {
+    const cmd = `loadpath field ${fileName()} --out out/`;
+    download(fileName(), JSON.stringify(exportDoc(), null, 2) + "\n");
+    status(`Downloaded ${fileName()}. Mesh it with:  ${cmd}   (or open it with loadpath edit to run it here)`);
+    try { await navigator.clipboard.writeText(cmd); } catch (e) { /* no clipboard */ }
+    return;
+  }
+  const r = await fetch("api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc: exportDoc() }) });
+  const b = await r.json();
+  if (!r.ok) { S.serverIssues = b.issues || []; showIssues(); status(b.error || "Could not start.", "warn"); return; }
+  S.job = b.id; let since = 0;
+  $("#run").disabled = true; $("#log").hidden = false; $("#log").textContent = ""; $("#report").hidden = true; $("#links").hidden = true;
+  status("Meshing at full resolution…");
+  const t0 = performance.now();
+  const poll = async () => {
+    const j = await (await fetch(`api/job?id=${b.id}&since=${since}`)).json();
+    since = j.eventCount;
+    for (const ev of j.events) $("#log").textContent += Object.entries(ev).map(([k, v]) => `${k} ${typeof v === "number" ? fmt(v) : v}`).join("  ") + "\n";
+    $("#log").scrollTop = 1e9;
+    if (j.state === "running") { status(`Meshing at full resolution… ${((performance.now() - t0) / 1000).toFixed(0)} s`); setTimeout(poll, 800); return; }
+    $("#run").disabled = false;
+    if (j.state === "failed") { status(`Run failed: ${j.error}`, "warn"); return; }
+    report(j);
+  };
+  poll();
+}
+function report(j) {
+  const r = j.report, dl = $("#report");
+  const rows = [["mass", r.mass != null ? `${r.mass.toFixed(1)} g` : null], ["volume", `${(r.volume / 1000).toFixed(2)} cm³`], ["faces", r.faces.toLocaleString()],
+    ["watertight", r.watertight ? "yes" : "no", r.watertight], ["bodies", r.bodies, r.bodies === 1], ["sealed voids", r.enclosedVoids, r.enclosedVoids === 0],
+    ["drains", r.drains ? (r.drains.ok ? `${r.drains.holes ? r.drains.holes.length : 0} holes, clear` : "not clear") : null, r.drains ? r.drains.ok : null],
+    ["printable", r.printability && "ok" in r.printability ? (r.printability.ok ? "yes" : "issues") : null, r.printability ? r.printability.ok : null], ["seconds", j.seconds]];
+  dl.replaceChildren(...rows.filter((x) => x[1] != null).flatMap(([k, v, good]) => [el("dt", {}, k), el("dd", { class: good === true ? "good" : good === false ? "bad" : "" }, String(v))]));
+  dl.hidden = false;
+  const L = $("#links");
+  L.replaceChildren(el("a", { class: "btn small", href: j.files.viewer, target: "_blank" }, "Open in viewer"), el("a", { class: "btn small", href: j.files.stl, download: "" }, "STL"), el("a", { class: "btn small", href: j.files.report, target: "_blank" }, "report.json"));
+  L.hidden = false;
+  status(`Meshed: ${r.faces.toLocaleString()} faces${r.mass != null ? `, ${r.mass.toFixed(1)} g` : ""}.`, "ok");
+  showMesh(j.mesh);
+}
+
+// ---- wiring ---------------------------------------------------------------------------------------------
+
+function seg(id, on) {
+  for (const b of document.querySelectorAll(`#${id} button`)) b.addEventListener("click", () => {
+    for (const x of document.querySelectorAll(`#${id} button`)) x.setAttribute("aria-pressed", String(x === b));
+    on(b.dataset.v);
+  });
+}
+seg("cut", (v) => { S.cut = v; $("#cut-pos").disabled = $("#cut-flip").disabled = v === "off"; kick(false); });
+seg("quality", (v) => { S.quality = v; kick(false); });
+$("#cut-pos").addEventListener("input", (e) => { S.cutPos = +e.target.value; kick(true); });
+$("#cut-flip").addEventListener("click", () => { S.cutFlip = !S.cutFlip; kick(false); });
+$("#target").addEventListener("change", (e) => {
+  S.follow = e.target.value === "#follow";
+  if (!S.follow) S.target = e.target.value;
+  else S.target = S.sel && kindOf(S.sel) === "solid" ? S.sel : S.doc.output;
+  fillSelects(); drawGraph(); recompile();
+});
+$("#colorby").addEventListener("change", (e) => { S.color = e.target.value || null; drawGraph(); recompile(); });
+$("#output").addEventListener("change", (e) => { S.doc.output = e.target.value; structural(); });
+$("#name").addEventListener("change", (e) => { S.doc.name = e.target.value || "field"; commit(); });
+const setPitch = (v) => { if (!(v > 0)) return; S.doc.mesh = { ...(S.doc.mesh || {}), pitch: v }; $("#pitch").value = v; $("#pitch-n").value = v; commitSoon(); };
+$("#pitch").addEventListener("input", (e) => setPitch(+e.target.value));
+$("#pitch-n").addEventListener("change", (e) => setPitch(+e.target.value));
+$("#material").addEventListener("change", (e) => { const v = e.target.value.trim(); if (v) S.doc.material = v; else delete S.doc.material; commit(); });
+$("#process").addEventListener("change", (e) => { const v = e.target.value; if (v) S.doc.process = v; else delete S.doc.process; commit(); });
+$("#run").addEventListener("click", run);
+$("#save").addEventListener("click", save);
+$("#export").addEventListener("click", () => { commit(); download(fileName(), JSON.stringify(exportDoc(), null, 2) + "\n"); });
+$("#import").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  try { loadDoc(JSON.parse(await f.text()), true); status(`Loaded ${f.name}.`, "ok"); } catch (err) { status(`${f.name}: ${err.message}`, "warn"); }
+  e.target.value = "";
+});
+$("#fit").addEventListener("click", () => fitView("iso"));
+for (const b of document.querySelectorAll("[data-view]")) b.addEventListener("click", () => fitView(b.dataset.view));
+for (const b of document.querySelectorAll("#modebar button")) b.addEventListener("click", () => { setMode(b.dataset.mode); legend(); showNotes(); });
+$("#layout").addEventListener("click", () => { autoLayout(); graphFit(); commit(); });
+$("#gfit").addEventListener("click", graphFit);
+$("#undo").addEventListener("click", undo);
+$("#redo").addEventListener("click", redo);
+const addSel = $("#add");
+addSel.append(...Object.keys(OPS).map((o) => el("option", { value: o }, o)));
+addSel.addEventListener("change", () => { if (addSel.value) addNode(addSel.value); addSel.value = ""; });
+$("#jsonbtn").addEventListener("click", () => {
+  const p = $("#jsonpane"), open = p.hidden;
+  p.hidden = !open; $("#jsonbtn").setAttribute("aria-pressed", String(open));
+  if (open) { commit(); $("#json").value = JSON.stringify(exportDoc(), null, 2); $("#json-note").textContent = ""; }
+});
+$("#json-apply").addEventListener("click", () => {
+  try { loadDoc(JSON.parse($("#json").value), false); $("#json-note").textContent = "Applied."; $("#json-note").className = "note ok"; }
+  catch (e) { $("#json-note").textContent = e.message; $("#json-note").className = "note warn"; }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest("input, textarea, select")) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+  if ((e.key === "Delete" || e.key === "Backspace") && S.sel) deleteNode(S.sel);
+});
+(function divider() {
+  const d = $("#divider"), right = $("#right");
+  d.addEventListener("pointerdown", (e) => {
+    d.setPointerCapture(e.pointerId);
+    const mv = (ev) => { const r = right.getBoundingClientRect(); right.style.setProperty("--split", `${Math.min(85, Math.max(20, ((ev.clientY - r.top) / r.height) * 100))}%`); };
+    const up = () => { d.removeEventListener("pointermove", mv); d.removeEventListener("pointerup", up); graphFit(); };
+    d.addEventListener("pointermove", mv); d.addEventListener("pointerup", up);
+  });
+})();
+
+function loadDoc(doc, fresh) {
+  if (!doc || typeof doc !== "object" || !doc.nodes || typeof doc.nodes !== "object") throw new Error("a field graph needs a 'nodes' object");
+  if (!fresh) commit();
+  S.doc = hoist(doc);
+  if (!S.doc.output || !(S.doc.output in S.doc.nodes)) S.doc.output = Object.keys(S.doc.nodes).pop();
+  S.layout = { ...((doc.editor && doc.editor.layout) || {}) };
+  for (const k of Object.keys(S.layout)) if (!(k in S.doc.nodes)) delete S.layout[k];
+  if (Object.keys(S.layout).length < Object.keys(S.doc.nodes).length) autoLayout(true);
+  if (fresh) { S.sel = S.doc.output; S.target = S.doc.output; S.color = null; S.undo = []; S.redo = []; lastCommitted = null; S.box = null; }
+  if (S.target && !(S.target in S.doc.nodes)) S.target = S.doc.output;
+  if (S.color && !(S.color in S.doc.nodes)) S.color = null;
+  if (fresh && !S.color) S.color = Object.keys(S.doc.nodes).find((n) => S.doc.nodes[n].op === "result") || null;
+  commit(); partPanel(); fillSelects(); inspector(); recompile(); graphFit();
+}
+
+// test hooks (and for agents driving the page)
+window.lpEditor = {
+  probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
+  doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
+  select: (n) => { S.sel = n; if (S.follow && kindOf(n) === "solid") S.target = n; afterSelect(); },
+  view: (o) => {
+    Object.assign(S, o);
+    for (const [id, k] of [["cut", "cut"], ["quality", "quality"]]) if (o[k] !== undefined) for (const b of document.querySelectorAll(`#${id} button`)) b.setAttribute("aria-pressed", String(b.dataset.v === o[k]));
+    if (o.cut !== undefined) $("#cut-pos").disabled = $("#cut-flip").disabled = o.cut === "off";
+    if (o.cutPos !== undefined) $("#cut-pos").value = o.cutPos;
+    fillSelects(); drawGraph(); recompile();
+  },
+  camera: (pos, target) => { camera.position.set(...pos); controls.target.set(...target); controls.update(); kick(false); },
+  fit: fitView, glsl: () => G.comp && G.comp.head, recompile, load: (d) => loadDoc(d, true),
+};
+
+S.bakes = DATA.bakes || {};
+$("#foot").textContent = DATA.server ? `Serving ${DATA.graphPath}. Run meshes it with loadpath's field mesher; Save writes the file.`
+  : `Standalone page, made ${DATA.created}. Run downloads the JSON and gives the command; \`loadpath edit\` serves it with Run and Save.`;
+if (!DATA.server) { $("#run").textContent = "Run…"; $("#save").textContent = "Download"; }
+for (const e of DATA.errors || []) status(e, "warn");
+S.follow = true;
+resize();
+try { loadDoc(DATA.doc, true); } catch (e) { status(e.message, "warn"); }
+requestAnimationFrame(loop);
+</script>

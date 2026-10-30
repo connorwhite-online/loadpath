@@ -665,6 +665,8 @@ FIELD_SCHEMA = {
         "minWall": {**_POS, "description": "mm, the printability check's minimum wall (default 0.8)"},
         "build": {**_VEC3, "description": "build direction for the overhang check (default +z)"},
         "check": {"type": "boolean", "description": "run the printability check (default true)"},
+        "editor": {"type": "object", "description": "What `loadpath edit` keeps with the graph (node positions in "
+                                                    "'layout'); nothing else reads it."},
         "process": {**_PROCESS, "description": "How it is made: sets the minimum wall, the build direction and "
                                                "the drain holes (sls, mjf, sla, dlp, volumetric, lpbf drain "
                                                "sealed voids by default)."},

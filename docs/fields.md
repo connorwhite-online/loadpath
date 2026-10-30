@@ -14,6 +14,56 @@ loadpath schema field                        # the JSON Schema
 From Python: `FieldGraph(doc).mesh()` or `run_field(doc, out_dir)` in
 `loadpath.fields`; agents can call `loadpath_field` over MCP.
 
+## Editing in the browser
+
+```
+loadpath edit part.json                      # opens http://127.0.0.1:8765: edit, preview, Save, Run
+loadpath edit part.json --html editor.html   # one self-contained page, no server
+```
+
+![the field editor on the arm link](images/fields/editor.png)
+
+The editor shows the graph as nodes and wires, an inspector for the
+selected node, and a live preview of the part above them. Drag from a node's
+output dot onto another node's port to wire a field into a parameter; pick
+"number" in the inspector to unwire it. Every number has a slider. The
+preview redraws as a slider moves: the page compiles the graph to a GLSL
+signed-distance function and raymarches it on the GPU, and every number in
+the graph is a shader uniform, so only a change of structure (an op, a
+wire, an expression) recompiles, in milliseconds.
+
+- **Solid** shows the output or the selected node; **Colour** paints any
+  scalar node on it (the stress, a wall ramp, a distance); a **section**
+  cuts it open and paints the cut face the same way, which is how you see
+  a graded lattice inside its skin. Hover reads the position and the
+  colour field's value.
+- What the GPU cannot evaluate is baked on the server and sent as a 3D
+  texture: a `mesh` node's distance, a `result` node's stress (its study
+  runs on load: about a minute for the arm link), a `grid`, and the cell
+  warp of a graded lattice (the same map the mesher solves, so the
+  preview's walls sit where the part's will). A bake that a later edit
+  made stale stays on screen until its replacement arrives; an analysis
+  re-runs only when asked.
+- **Run** meshes the graph with `run_field`, exactly as `loadpath field`
+  does, at the graph's pitch, then shows the mesh, the report (mass,
+  watertightness, sealed voids, drains, printability) and links to the
+  STL, report.json and the full viewer. Runs go to `loadpath-edit/` beside
+  the graph (`--out`).
+- **Save** writes the graph back to its file. Inline nodes get names
+  (`owner-key`) when the graph is opened, which is the same graph;
+  node positions go under `editor`, which nothing else reads. The JSON tab
+  edits the text directly; Ctrl+Z undoes.
+- The standalone page (`--html`) carries its bakes, so it opens anywhere,
+  offline once three.js is cached. It cannot re-bake or run: Run
+  downloads the JSON and gives the `loadpath field` command.
+
+The preview is checked against the mesher: `tests/test_editor.py`
+evaluates every op on the GPU at 4000 points and compares them with
+`FieldGraph.evaluate` (to 1e-6 mm for shapes, booleans, shells, distances,
+remaps, expressions and lattices; to the bake's grid for meshes). The
+server listens on 127.0.0.1 unless `--host` says otherwise: it reads and
+writes files in the graph's folder.
+
 ## The graph
 
 ```json

@@ -14,7 +14,8 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
 - **Model with fields.** A part can be a graph of implicit fields, nTop style: the
   skin thickens where the stress is, the lattice cell grows away from the bolts, the
   fillet is larger where the load comes in, and the mesh comes out smooth
-  ([docs/fields.md](docs/fields.md)).
+  ([docs/fields.md](docs/fields.md)). `loadpath edit` opens the graph in a browser
+  editor with sliders and a live GPU preview.
 - **For the process you print with.** FDM (bridges, islands, bed, layer bond), powder
   nylon (SLS, MJF: trapped powder, escape holes, warp-prone panels), resin (SLA, DLP:
   supports, peel area, suction cups, trapped resin) and powder-bed metal (internal
@@ -110,6 +111,14 @@ away from the bearings. At the same 52 g as a uniform lattice it has SF 14.8 and
 
 ![graded vs uniform arm link](docs/images/fields/arm-link-graded-vs-uniform.png)
 
+`loadpath edit` opens a graph in the browser: nodes and wires below, an inspector
+with a slider for every number, and the part above, raymarched on the GPU from the
+graph itself, so it redraws as a slider moves. Here the arm link is cut open and
+painted with its stress, showing the graded gyroid inside the skin. Run meshes it
+for real and shows the report.
+
+![the field editor](docs/images/fields/editor.png)
+
 A graded cell bends the lattice's coordinates, so walls run continuously from 4 mm
 to 12 mm cells:
 
@@ -138,8 +147,9 @@ loadpath mcp                           # stdio MCP server for agents
 
 Also: `loadpath lattice` (fill a part with a stress-graded TPMS lattice),
 `loadpath heatx` (two-fluid TPMS heat exchangers), `loadpath field` (a part as a
-graph of fields, [docs/fields.md](docs/fields.md)), `loadpath schema` (JSON
-Schemas, also in [`schema/`](schema/)).
+graph of fields, [docs/fields.md](docs/fields.md)), `loadpath edit` (edit a field
+graph in the browser with a live preview), `loadpath schema` (JSON Schemas, also
+in [`schema/`](schema/)).
 
 Large studies (100k+ cells) solve with matrix-free multigrid; install the `gpu`
 extra (`loadpath[mcp,gpu]`, PyTorch) to run it on an NVIDIA GPU, an Apple
@@ -164,6 +174,7 @@ python3 tests/test_interface.py
 python3 tests/test_pressure.py
 python3 tests/test_process.py
 python3 tests/test_fields.py
+python3 tests/test_editor.py      # the GPU part needs node and Playwright
 python3 tests/test_recall.py
 python3 tests/test_evals.py
 python3 -m loadpath.evals.run --tier coarse --corpus 6 --out evals-coarse/   # minutes: every push

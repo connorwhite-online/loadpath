@@ -8,6 +8,7 @@ Command line: run a study file and write the parts, a report and renders.
     python -m loadpath lattice study.json part.stl --out out/ [--options lattice.json]
     python -m loadpath heatx exchanger.json --out out/ [--size]
     python -m loadpath field part.json --out out/ [--pitch 0.3]   # a field graph (nTop-style implicit part)
+    python -m loadpath edit part.json [--html editor.html]   # edit a field graph in the browser, live preview
     python -m loadpath mcp                     # local MCP server for agents (needs loadpath[mcp])
     python -m loadpath orient part.stl [--study study.json] [--3mf part.3mf]
                                                # rank build orientations, write the best as 3MF
@@ -93,6 +94,14 @@ def main(argv=None):
     fg.add_argument("--pitch", type=float, help="mesh grid, mm (overrides the graph's mesh.pitch)")
     fg.add_argument("--no-render", action="store_true")
     fg.add_argument("--base-dir")
+    ed = sub.add_parser("edit", help="edit a field graph in the browser: node graph, sliders, live GPU preview, run")
+    ed.add_argument("graph")
+    ed.add_argument("--html", help="write one self-contained editor page (every bake inside) instead of serving")
+    ed.add_argument("--port", type=int, default=8765)
+    ed.add_argument("--host", default="127.0.0.1", help="interface to listen on (default: this machine only)")
+    ed.add_argument("--out", help="where runs go (default: loadpath-edit/ beside the graph)")
+    ed.add_argument("--no-open", action="store_true", help="don't open a browser")
+    ed.add_argument("--base-dir")
     sub.add_parser("mcp", help="run a local MCP server (stdio) for agents")
     o = sub.add_parser("orient", help="rank build orientations of a mesh (support, bed, layer bond)")
     o.add_argument("mesh")
@@ -117,6 +126,8 @@ def main(argv=None):
         return _heatx(args)
     if args.cmd == "field":
         return _field(args)
+    if args.cmd == "edit":
+        return _edit(args)
     if args.cmd == "orient":
         return _orient(args)
 
@@ -258,6 +269,28 @@ def _field(args):
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
     _write_report(args.out, {"ok": True, **rep, **({"warnings": issues} if issues else {})})
+    return 0
+
+
+def _edit(args):
+    from .schema import lint
+
+    doc = _load(args.graph)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
+    if args.html:
+        from .editor import field_editor
+
+        issues = lint(doc, "field")
+        if any(i["level"] == "error" for i in issues):
+            print(json.dumps({"ok": False, "issues": issues}, indent=2))
+            return 2
+        field_editor(doc, args.html, base, progress=_progress)
+        print(json.dumps({"ok": True, "html": args.html}))
+        return 0
+    from .editor import serve_editor
+
+    serve_editor(args.graph, host=args.host, port=args.port, out_dir=args.out, base_dir=base,
+                 open_browser=not args.no_open)
     return 0
 
 

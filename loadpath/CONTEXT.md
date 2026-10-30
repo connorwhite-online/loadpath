@@ -61,6 +61,7 @@ it becomes an eval metric.
 | `study.py` | the search on safety factor / deflection, fine-grid confirm of the pick, multi-material, parallel |
 | `render.py` | clay renders, stress maps, interface close-ups |
 | `viewer.py`, `viewer.html` | interactive HTML viewer (three.js): stress / safety factor / displacement fields, deformation, section plane, compare, optimization playback, heat exchanger fluids |
+| `editor.py`, `editor.html` | browser editor for field graphs (`loadpath edit`): node graph, inspector sliders, the graph compiled to GLSL and raymarched live (numbers are uniforms), bakes (mesh / result / grid / cell warp) as 3D textures, local server for save, bake and run |
 | `mcp_server.py`, `__main__.py` | local MCP server and CLI |
 | `checks/` | checks on any mesh, no study needed: `check_dfm` (wall thickness, overhangs, trapped voids), `check_networks` (two-fluid isolation), `check_fit` (a board fits its enclosure), `fea_probe` (relative hotspot finder), `opening` |
 | `sdf_kit.py`, `exchanger.py` | field-modelling toolkit (primitives, TPMS, smooth booleans, exact mesh booleans) and the rectangular dual-fluid `exchanger_core` built from it; `heatx.py` is the newer, study-driven exchanger. Old `loadpath.checks.sdf_kit` / `.exchanger` imports still resolve |

@@ -448,17 +448,7 @@ class _CellWarp:
         import pyamg
         import scipy.sparse as sp
 
-        lo = np.asarray(lo, float)
-        hi = np.asarray(hi, float)
-        ext = np.maximum(hi - lo, 1e-6)
-        h = float((np.prod(ext) / max_cells) ** (1 / 3))
-        # a few grid steps per cell at least, where the grid budget allows
-        probe = np.stack(np.meshgrid(*[np.linspace(lo[i], hi[i], 12) for i in range(3)], indexing="ij"),
-                         -1).reshape(-1, 3)
-        h = max(h, 0.0) if h > 0 else 1.0
-        h = min(max(h, float(np.min(cell_fn(probe))) / 6.0), max(h, 1e-3))
-        lo = lo - 2 * h
-        dims = np.ceil((hi + 2 * h - lo) / h).astype(int) + 1
+        lo, h, dims = self.grid(cell_fn, lo, hi, max_cells)
         axes = [lo[i] + np.arange(dims[i]) * h for i in range(3)]
         G = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
         c = np.asarray(cell_fn(G), float)
@@ -497,6 +487,28 @@ class _CellWarp:
             # cell gives back the plain lattice
             self.u.append((u - u[n // 2]).reshape(tuple(dims)) + G[n // 2, comp] * g.ravel()[n // 2])
         self.lo, self.h, self.dims = lo, h, dims
+
+    @staticmethod
+    def grid(cell_fn, lo, hi, max_cells):
+        """(lo, h, dims) of the grid the map is solved on."""
+        lo = np.asarray(lo, float)
+        hi = np.asarray(hi, float)
+        ext = np.maximum(hi - lo, 1e-6)
+        h = float((np.prod(ext) / max_cells) ** (1 / 3))
+        # a few grid steps per cell at least, where the grid budget allows
+        probe = np.stack(np.meshgrid(*[np.linspace(lo[i], hi[i], 12) for i in range(3)], indexing="ij"),
+                         -1).reshape(-1, 3)
+        h = max(h, 0.0) if h > 0 else 1.0
+        h = min(max(h, float(np.min(cell_fn(probe))) / 6.0), max(h, 1e-3))
+        lo = lo - 2 * h
+        dims = np.ceil((hi + 2 * h - lo) / h).astype(int) + 1
+        return lo, h, dims
+
+    def anchor(self):
+        """The point where u = x / cell: the grid's centre node."""
+        n = int(np.prod(self.dims))
+        ijk = np.asarray(np.unravel_index(n // 2, tuple(self.dims)))
+        return self.lo + ijk * self.h
 
     def __call__(self, P, cell):
         idx = ((P - self.lo) / self.h).T
@@ -908,9 +920,15 @@ class FieldGraph:
             return d - 0.5 * t
         raise ValueError(f"node {nd.name!r}: lattice form must be 'sheet' or 'network'")
 
-    def _warp(self, nd):
+    def _warp(self, nd, max_cells=400_000):
         """The cell-grading map over the lattice's domain: its own bounds,
         else the graph's, else the output solid's box."""
+        cell_fn, lo, hi = self._warp_domain(nd)
+        return _CellWarp(cell_fn, lo, hi, max_cells=max_cells)
+
+    def _warp_domain(self, nd):
+        """(cell field, lo, hi) the warp is solved over, in the lattice's own
+        coordinates (less its origin)."""
         if "bounds" in nd.spec:
             lo, hi = nd.spec["bounds"]["min"], nd.spec["bounds"]["max"]
         elif "bounds" in self.doc:
@@ -923,7 +941,7 @@ class FieldGraph:
             lo, hi = b
         off = np.asarray(nd.spec.get("origin", (0, 0, 0)), float)
         cell_ref = nd.refs["cell"]
-        return _CellWarp(lambda G: self.evaluate(G + off, cell_ref), np.asarray(lo) - off, np.asarray(hi) - off)
+        return lambda G: self.evaluate(G + off, cell_ref), np.asarray(lo, float) - off, np.asarray(hi, float) - off
 
     def _transform(self, nd, P, memo):
         s = nd.spec

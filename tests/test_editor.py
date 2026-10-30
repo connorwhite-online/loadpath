@@ -1,0 +1,337 @@
+"""
+Tests for editor.py, the browser field-graph editor: bakes, the standalone
+page, the local server (lint, save, bake, run) and the CLI; and, when node
+and Playwright are installed, the page itself in headless Chromium: the
+GLSL it compiles from a graph gives the same numbers as fields.py on every
+op. Run: `python3 tests/test_editor.py` (about half a minute).
+"""
+import base64
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import traceback
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import numpy as np  # noqa: E402
+import trimesh  # noqa: E402
+
+from loadpath.editor import bake_node, editor_payload, field_editor, serve_editor  # noqa: E402
+from loadpath.fields import FieldGraph  # noqa: E402
+from loadpath.schema import lint  # noqa: E402
+
+# every op the GPU evaluates itself, plus a mesh and a grid it reads from bakes
+ALL_OPS = {
+    "name": "all-ops",
+    "nodes": {
+        "box": {"op": "shape", "shape": {"type": "box", "center": [0, 0, 0], "size": [40, 30, 20]}},
+        "ball": {"op": "shape", "shape": {"type": "sphere", "center": [12, 8, 6], "r": 12}},
+        "rod": {"op": "shape", "shape": {"type": "union", "shapes": [
+            {"type": "cylinder", "p0": [-25, 0, 0], "p1": [25, 0, 0], "r": 4},
+            {"type": "tube", "center": [0, 0, 0], "axis": "y", "length": 40, "r": 6, "rInner": 3}]}},
+        "blob": {"op": "union", "inputs": ["box", "ball"], "blend": 4},
+        "cut": {"op": "subtract", "inputs": ["blob", "rod"], "blend": 1.0},
+        "ramp": {"op": "grid", "path": "ramp.npz"},
+        "zc": {"op": "coordinate", "axis": "z"},
+        "dir": {"op": "coordinate", "axis": [1, 1, 0], "origin": [1, 2, 3]},
+        "dp": {"op": "distance", "points": [[0, 0, 10], [10, -5, 0]]},
+        "dseg": {"op": "distance", "segment": [[-20, 0, 0], [20, 5, 3]]},
+        "dpl": {"op": "distance", "plane": {"point": [0, 0, 2], "normal": [0, 1, 1]}},
+        "dsh": {"op": "distance", "shape": {"type": "sphere", "center": [0, 0, 0], "r": 5}},
+        "dcut": {"op": "distance", "input": "cut"},
+        "wall": {"op": "remap", "input": "ramp", "from": [0, 1], "to": [0.6, 2.5], "curve": "smoothstep"},
+        "ex": {"op": "expr", "expr": "0.8 + 1.2 * smoothstep(5, 30, k) + where(z - 1, 0.1, -0.1) + max(x, y, 0) * 0.01"
+                                     " + (2 if x > 0 else 1) + y ** 2 * 0.001 + x % 7 * 0.01 - sqrt(abs(y)) * 0.1",
+               "vars": {"k": "dcut"}},
+        "skin": {"op": "shell", "input": "cut", "thickness": "wall"},
+        "wallC": {"op": "shell", "input": "ball", "thickness": 1.5, "side": "center"},
+        "cellF": {"op": "remap", "input": "dp", "from": [0, 30], "to": [4, 9], "curve": "sqrt"},
+        "coreG": {"op": "lattice", "type": "gyroid", "cell": 6, "thickness": "ex"},
+        "coreD": {"op": "lattice", "type": "diamond", "cell": 7, "density": 0.25, "origin": [1, 1, 1]},
+        "coreP": {"op": "lattice", "type": "schwarz-p", "cell": 6, "thickness": 0.8, "form": "network", "offset": 0.3},
+        "coreC": {"op": "lattice", "type": "gyroid", "cell": 5, "thickness": 0.9,
+                  "frame": {"type": "cylindrical", "axis": "z", "center": [0, 0, 0], "radius": 15}},
+        "coreW": {"op": "lattice", "type": "gyroid", "cell": "cellF", "thickness": 1.0},
+        "fill": {"op": "intersect", "inputs": ["coreG", "cut"], "blend": 0.5},
+        "part": {"op": "union", "inputs": ["skin", "fill"], "blend": 0.8},
+        "torus": {"op": "mesh", "path": "torus.stl"},
+        "tor2": {"op": "transform", "input": "torus", "translate": [0, 0, 5],
+                 "rotate": {"axis": "y", "degrees": 30, "center": [40, 0, 0]}, "scale": 0.9},
+        "grow": {"op": "offset", "input": "tor2", "distance": 1.5},
+        "all": {"op": "union", "inputs": ["part", {"op": "intersect", "inputs": [
+            "coreD", {"op": "shape", "shape": {"type": "box", "min": [-60, -10, -10], "max": [-30, 10, 10]}}]}, "grow"]},
+    },
+    "output": "all",
+    "mesh": {"pitch": 1.0},
+    "material": "petg",
+}
+
+
+def _workdir():
+    d = tempfile.mkdtemp(prefix="lp-editor-")
+    m = trimesh.creation.torus(major_radius=14, minor_radius=5, major_sections=48, minor_sections=24)
+    m.apply_translation([40, 0, 0])
+    m.export(os.path.join(d, "torus.stl"))
+    ax = [np.linspace(-30, 30, 13)] * 3
+    X, Y, _ = np.meshgrid(*ax, indexing="ij")
+    np.savez(os.path.join(d, "ramp.npz"), origin=np.array([-30.0, -30, -30]), pitch=5.0, values=(X + 0.5 * Y + 30) / 60)
+    with open(os.path.join(d, "graph.json"), "w") as fh:
+        json.dump(ALL_OPS, fh)
+    return d
+
+
+def _grid_values(b):
+    data = np.frombuffer(base64.b64decode(b["data"]), np.float16).astype(float)
+    return data.reshape(b["dims"][::-1]).transpose(2, 1, 0)
+
+
+def test_graph_with_layout_lints():
+    """The editor keeps node positions under `editor`; the schema allows
+    it and nothing else changes."""
+    doc = {**ALL_OPS, "editor": {"layout": {"box": [0, 0]}}}
+    assert not [i for i in lint(doc, "field") if i["level"] == "error"]
+
+
+def test_bakes_sample_the_graph():
+    """A mesh is baked over its own box with a margin, a grid over the
+    output; the grid nodes are the graph's own values, x fastest."""
+    d = _workdir()
+    g = FieldGraph(ALL_OPS, base_dir=d)
+    b = bake_node(ALL_OPS, "torus", d, graph=g)
+    lo, hi = np.asarray(b["lo"]), np.asarray(b["hi"])
+    assert np.all(lo < [26 - 2.9, -19 - 2.9, -5 - 2.9]) and np.all(hi > [54 + 2.9, 19 + 2.9, 5 + 2.9]), (lo, hi)
+    vals = _grid_values(b)
+    assert list(vals.shape) == b["dims"] and max(b["dims"]) == 96
+    axes = [np.linspace(lo[i], hi[i], b["dims"][i]) for i in range(3)]
+    idx = [(10, 20, 5), (48, 40, 12), (90, 3, 20)]
+    P = np.array([[axes[0][i], axes[1][j], axes[2][k]] for i, j, k in idx])
+    want = g.evaluate(P, "torus")
+    got = np.array([vals[i, j, k] for i, j, k in idx])
+    assert np.allclose(got, want, atol=0.02 + 1e-3 * np.abs(want)), (got, want)
+    assert b["spec"] == {"torus": ALL_OPS["nodes"]["torus"]}
+    # a grid ships as it is: the GPU's trilinear filter is fields.py's interpolation
+    r = bake_node(ALL_OPS, "ramp", d, graph=g)
+    assert r["lo"] == [-30, -30, -30] and r["hi"] == [30, 30, 30] and r["dims"] == [13, 13, 13]
+    assert np.allclose(_grid_values(r), np.load(os.path.join(d, "ramp.npz"))["values"], atol=1e-3)
+    try:
+        bake_node(ALL_OPS, "box", d, graph=g)
+        raise AssertionError("a shape is not baked")
+    except ValueError:
+        pass
+
+
+def test_bake_spec_follows_an_analyzed_part():
+    """A result analyzed on one of the graph's own nodes depends on that
+    node's whole subtree: the page compares this to tell a stale bake."""
+    from loadpath.editor import _closure
+
+    doc = {"nodes": {"a": {"op": "shape", "shape": {"type": "sphere", "center": [0, 0, 0], "r": 5}},
+                     "b": {"op": "offset", "input": "a", "distance": "t"},
+                     "t": {"op": "constant", "value": 1},
+                     "unused": {"op": "constant", "value": 2},
+                     "s": {"op": "result", "study": "example:arm-link", "part": "b"}}}
+    assert set(_closure(doc, "s")) == {"s", "b", "a", "t"}
+
+
+def test_standalone_page_carries_its_data():
+    d = _workdir()
+    html = field_editor(ALL_OPS, base_dir=d)
+    assert html.startswith("<!doctype html>") and "</html>" in html
+    start = html.index('id="loadpath-data">') + len('id="loadpath-data">')
+    data = json.loads(html[start:html.index("</script>", start)])
+    assert data["doc"]["nodes"].keys() == ALL_OPS["nodes"].keys()
+    assert set(data["bakes"]) == {"torus", "ramp", "coreW#warp"} and not data["errors"] and not data["server"]
+    assert set(data["tables"]) == {"gyroid", "diamond", "schwarz-p"} and len(data["tables"]["gyroid"]) == 19
+    frag = field_editor(ALL_OPS, base_dir=d, standalone=False)
+    assert "<!doctype" not in frag and "<body>" not in frag
+    p = editor_payload({"nodes": {"m": {"op": "mesh", "path": "missing.stl"}}}, d)
+    assert p["errors"] and "m:" in p["errors"][0]
+
+
+def _request(url, body=None):
+    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+def test_server_lints_bakes_saves_and_runs():
+    d = _workdir()
+    graph = os.path.join(d, "graph.json")
+    holder = {}
+    t = threading.Thread(target=serve_editor, args=(graph,), kwargs=dict(port=0, open_browser=False,
+                                                                        ready=lambda s: holder.update(srv=s)),
+                         daemon=True)
+    t.start()
+    for _ in range(100):
+        if "srv" in holder:
+            break
+        time.sleep(0.05)
+    base = f"http://127.0.0.1:{holder['srv'].server_port}/"
+    try:
+        code, page = _request(base)
+        assert code == 200 and b"loadpath-data" in page and b'"server":true' in page
+        bad = json.loads(json.dumps(ALL_OPS))
+        bad["nodes"]["skin"]["input"] = "nope"
+        code, body = _request(base + "api/lint", {"doc": bad})
+        assert code == 200 and any("nope" in i["message"] for i in json.loads(body)["issues"])
+        code, body = _request(base + "api/save", {"doc": bad})
+        assert code == 400
+        code, body = _request(base + "api/bake", {"doc": ALL_OPS, "node": "ramp"})
+        b = json.loads(body)
+        assert code == 200 and b["node"] == "ramp" and b["dims"]
+        small = {"name": "ring", "nodes": {"s": {"op": "shape", "shape": {"type": "cylinder", "center": [0, 0, 0],
+                                                                          "axis": "z", "length": 6, "r": 10,
+                                                                          "rInner": 6}}},
+                 "mesh": {"pitch": 0.5}, "material": "petg", "editor": {"layout": {"s": [0, 0]}}}
+        code, body = _request(base + "api/save", {"doc": small})
+        assert code == 200
+        assert json.load(open(graph))["editor"]["layout"] == {"s": [0, 0]}
+        code, body = _request(base + "api/run", {"doc": small})
+        jid = json.loads(body)["id"]
+        for _ in range(600):
+            code, body = _request(base + f"api/job?id={jid}")
+            job = json.loads(body)
+            if job["state"] != "running":
+                break
+            time.sleep(0.1)
+        assert job["state"] == "done", job.get("error")
+        rep = job["report"]
+        want = np.pi * (10 ** 2 - 6 ** 2) * 6
+        assert rep["watertight"] and abs(rep["volume"] / want - 1) < 0.01, rep
+        assert job["mesh"]["p"]["t"] == "f32" and job["events"]
+        code, html = _request(base + job["files"]["viewer"].lstrip("/"))
+        assert code == 200 and b"loadpath-data" in html
+        code, _ = _request(base + job["files"]["stl"].lstrip("/"))
+        assert code == 200
+        code, _ = _request(base + "out/../graph.json")
+        assert code == 404
+    finally:
+        holder["srv"].shutdown()
+
+
+def test_cli_writes_a_standalone_editor():
+    d = _workdir()
+    out = os.path.join(d, "editor.html")
+    r = subprocess.run([sys.executable, "-m", "loadpath", "edit", os.path.join(d, "graph.json"), "--html", out],
+                       capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout.strip().splitlines()[-1])["html"] == out and os.path.getsize(out) > 100_000
+
+
+_DRIVER = r"""
+const { chromium } = require("playwright");
+const fs = require("fs"), path = require("path");
+const [page_, parity, threeDir] = process.argv.slice(2);
+(async () => {
+  const browser = await chromium.launch({ args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+  const page = await (await browser.newContext({ viewport: { width: 900, height: 600 } })).newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  if (threeDir) await page.route("https://cdn.jsdelivr.net/**", (r) => r.fulfill({ contentType: "application/javascript",
+    body: fs.readFileSync(path.join(threeDir, r.request().url().endsWith("OrbitControls.js") ? "OrbitControls.js" : "three.module.js")) }));
+  await page.route("https://fonts.googleapis.com/**", (r) => r.fulfill({ body: "", contentType: "text/css" }));
+  await page.goto("file://" + path.resolve(page_));
+  await page.waitForFunction(() => window.lpReady === true, null, { timeout: 180000 });
+  const P = JSON.parse(fs.readFileSync(parity));
+  const out = {};
+  for (const [name, exp] of Object.entries(P.expected)) {
+    const got = await page.evaluate(([n, pts]) => window.lpEditor.probe(n, pts), [name, P.points]);
+    let near = 0, band = 0;
+    for (let i = 0; i < exp.length; i++) {
+      if (Math.abs(exp[i]) < 2) near = Math.max(near, Math.abs(got[i] - exp[i]));
+      if (Math.abs(exp[i]) < 0.7) band = Math.max(band, Math.abs(got[i] - exp[i]));
+    }
+    out[name] = [near, band];
+  }
+  // a slider: a uniform changes, the shader is not rebuilt
+  const before = await page.evaluate(() => window.lpEditor.glsl());
+  await page.evaluate(() => window.lpEditor.set(["nodes", "ball", "shape", "r"], 9));
+  const after = await page.evaluate(() => [window.lpEditor.glsl(), window.lpEditor.probe("ball", [12, 8, 6])[0]]);
+  out._uniform = { same: before === after[0], center: after[1] };
+  out._notes = await page.evaluate(() => document.querySelector("#notes").textContent);
+  out._errors = errors;
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.log(JSON.stringify({ _fatal: String(e) })); process.exit(1); });
+"""
+
+
+def test_gpu_preview_matches_fields_py():
+    """The page's GLSL, evaluated on the GPU (SwiftShader here), gives
+    fields.py's numbers at 4000 points within 2 mm of each node's zero
+    level: to float precision for shapes, booleans, shells, distances,
+    remaps, expressions, lattices and transforms, to half precision for a
+    grid (shipped as it is), and to the bake's resolution for a mesh near
+    its surface. Skipped without node and Playwright."""
+    node = shutil.which("node")
+    npath = os.environ.get("NODE_PATH") or "/opt/node22/lib/node_modules"
+    env = {**os.environ, "NODE_PATH": npath}
+    if not node or subprocess.run([node, "-e", "require('playwright')"], env=env, capture_output=True).returncode:
+        print("  (skipped: needs node and playwright)")
+        return
+    d = _workdir()
+    page = field_editor(ALL_OPS, os.path.join(d, "editor.html"), base_dir=d)
+    g = FieldGraph(ALL_OPS, base_dir=d)
+    rng = np.random.default_rng(1)
+    P = rng.uniform([-60, -40, -30], [80, 40, 45], (4000, 3))
+    exp = {n: g.evaluate(P, n).tolist() for n in ALL_OPS["nodes"]}
+    with open(os.path.join(d, "parity.json"), "w") as fh:
+        json.dump({"points": P.tolist(), "expected": exp}, fh)
+    with open(os.path.join(d, "drive.cjs"), "w") as fh:
+        fh.write(_DRIVER)
+    r = subprocess.run([node, os.path.join(d, "drive.cjs"), page, os.path.join(d, "parity.json"),
+                        os.environ.get("LOADPATH_THREE_DIR", "")], env=env, capture_output=True, text=True,
+                       timeout=600)
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "_fatal" not in out and not out["_errors"], out
+    # a mesh is resampled on a 96-cell grid; past its exact band (3 voxels) fields.py's own far field is a
+    # coarse stand-in, so it is compared where the distance is exact
+    meshed = {"torus", "tor2", "grow", "all"}
+    for name, v in out.items():
+        if name.startswith("_"):
+            continue
+        near, band = v
+        # the graded lattice is drawn through the same warp, solved on a coarser grid
+        err, tol = (band, 0.1) if name in meshed else (near, 0.4) if name == "coreW" else (near, 5e-3)
+        assert err < tol, (name, err)
+        print(f"  {name:6s} {err:.2g} mm")
+    assert "earlier graph" not in out["_notes"] and "cross-fade" not in out["_notes"], out["_notes"]
+    assert out["_uniform"]["same"] and abs(out["_uniform"]["center"] + 9) < 1e-4, out["_uniform"]
+
+
+TESTS = [test_graph_with_layout_lints, test_bakes_sample_the_graph, test_bake_spec_follows_an_analyzed_part,
+         test_standalone_page_carries_its_data, test_server_lints_bakes_saves_and_runs,
+         test_cli_writes_a_standalone_editor, test_gpu_preview_matches_fields_py]
+
+
+def main():
+    failures = 0
+    for t in TESTS:
+        t0 = time.time()
+        try:
+            t()
+            print(f"PASS {t.__name__} ({time.time() - t0:.1f}s)")
+        except Exception:  # noqa: BLE001
+            failures += 1
+            print(f"FAIL {t.__name__}")
+            traceback.print_exc()
+    if failures:
+        print(f"\n{failures}/{len(TESTS)} FAILED")
+        sys.exit(1)
+    print(f"\nall {len(TESTS)} passed")
+
+
+if __name__ == "__main__":
+    main()
