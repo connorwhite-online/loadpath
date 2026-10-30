@@ -483,7 +483,11 @@ def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
             # is thicker than a print resolves (thickness ~ 2 V / A)
             total += v if 2.0 * v / max(b.surface_area(), 1e-9) > 0.1 else 0.0
             continue
-        total += v * float((~mesh.contains(pts)).mean())
+        # a few rays at a time: trimesh's ray test (no embree) gathers every
+        # triangle under each ray's box, which for GRIP's 231k-face forearm
+        # and 400 points took 14 GB
+        inside = np.concatenate([mesh.contains(pts[i:i + 16]) for i in range(0, len(pts), 16)])
+        total += v * float((~inside).mean())
     return total
 
 
