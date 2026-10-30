@@ -341,9 +341,26 @@ def test_drains_keep_clear():
     assert all(h["at"][2] < 5 or abs(h["axis"][2]) < 0.5 for h in d["holes"]), d["holes"]
 
 
+def test_mesh_field_far_from_its_grid():
+    """Past the mesh field's voxel grid the distance keeps growing with the
+    way out: a mesh sphere offset by 5 mm (well past the grid's padding) is
+    a 15 mm sphere, not the sphere's box."""
+    m = trimesh.creation.icosphere(subdivisions=4, radius=10.0)
+    f = MeshField(m)
+    P = np.array([[0, 0, 15.0], [14.0, 14.0, 14.0], [0, 0, 40.0]])
+    d = f(P)
+    exact = np.linalg.norm(P, axis=1) - 10.0
+    assert np.all(np.abs(d - exact) < 0.15), (d, exact)
+    g = FieldGraph({"nodes": {"ball": {"op": "mesh", "source": "ball"},
+                              "big": {"op": "offset", "input": "ball", "distance": 5.0}}}, meshes={"ball": m})
+    v = g.mesh(pitch=0.5).volume
+    assert abs(v - 4 / 3 * np.pi * 15 ** 3) < 0.02 * 4 / 3 * np.pi * 15 ** 3, v
+
+
 TESTS = [test_shell_volume_and_projection, test_variable_shell_follows_its_field,
          test_variable_blend_is_a_bigger_fillet_where_asked, test_graded_lattice_stays_one_body, test_cell_warp_period_follows_the_field,
-         test_mesh_field_is_exact_near_the_surface, test_samples_on_a_grid_interpolate_exactly,
+         test_mesh_field_is_exact_near_the_surface, test_mesh_field_far_from_its_grid,
+         test_samples_on_a_grid_interpolate_exactly,
          test_result_node_from_verify_fields, test_expressions_are_whitelisted, test_graph_errors_and_lint,
          test_unbounded_lattice_asks_for_bounds, test_cli_writes_part_and_report, test_mcp_field_job,
          test_drains_open_every_sealed_void, test_drains_go_where_it_is_calm,

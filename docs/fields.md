@@ -45,6 +45,11 @@ wire, an expression) recompiles, in milliseconds.
   second as a cell slider moves). A bake that a later edit made stale
   stays on screen until its replacement arrives; an analysis re-runs only
   when asked, and later bakes and Run reuse it while its part is unchanged.
+- **Mass** is live: the page weighs the output on the GPU as you edit
+  (its volume on a grid of samples at two spacings, extrapolated; within
+  about 1% of the meshed part) and multiplies by the material's density.
+  **Fit mass** finds the value of any one number (a wall, a blend, a remap
+  end) that gives a target mass, in a second or two.
 - **Run** meshes the graph with `run_field`, exactly as `loadpath field`
   does, at the graph's pitch, then shows the mesh, the report (mass,
   watertightness, sealed voids, drains, printability) and links to the

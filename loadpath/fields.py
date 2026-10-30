@@ -226,10 +226,12 @@ class MeshField:
     def _coarse(self, P):
         idx = ((P - self._origin) / self.pitch).T
         n = np.asarray(self._grid.shape)[:, None] - 1
-        inside = np.all((idx >= 0) & (idx <= n), axis=0)
-        out = ndimage.map_coordinates(self._grid, idx, order=1, mode="nearest").astype(float)
-        q = np.maximum(np.maximum(self.lo - P, P - self.hi), 0.0)
-        return np.where(inside, out, np.maximum(np.linalg.norm(q, axis=1), 4 * self.pitch))
+        cl = np.clip(idx, 0, n)
+        out = ndimage.map_coordinates(self._grid, cl, order=1, mode="nearest").astype(float)
+        # past the grid: the distance at its nearest point plus the way there (continuous at the grid's
+        # face, never short of the true distance by more than the grid's error), so an offset of the mesh
+        # by more than the grid's padding stays the mesh's shape, not its box
+        return out + np.linalg.norm(idx - cl, axis=0) * self.pitch
 
     def _exact(self, P):
         k = min(self.k, len(self._tri))

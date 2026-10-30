@@ -182,7 +182,11 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
       <div class="pick"><span class="note">Output</span><select id="output" aria-label="Output node"></select></div>
       <div class="param"><div class="lab"><span>Mesh pitch, mm</span></div>
         <div class="row"><input type="range" id="pitch" min="0.1" max="2" step="0.05"><input type="number" id="pitch-n" step="0.05" min="0.05"></div></div>
-      <div class="row"><div class="pick" style="flex:1"><span class="note">Material</span><input type="text" id="material" placeholder="petg"></div></div>
+      <div class="row"><div class="pick" style="flex:1"><span class="note">Material</span><input type="text" id="material" placeholder="petg" list="materials"><datalist id="materials"></datalist></div></div>
+      <p class="note" id="mass-est" aria-live="polite"></p>
+      <div class="row" id="fit-row"><div class="pick" style="flex:1"><span class="note">Fit mass, g</span><input type="number" id="fit-target" min="0" step="any" placeholder="target"></div>
+        <div class="pick" style="flex:1.4"><span class="note">by changing</span><select id="fit-param" aria-label="Parameter to change"></select></div>
+        <button class="btn" id="fit" title="Find the value of the parameter that gives the target mass (on the GPU estimate)">Fit</button></div>
       <div class="row"><div class="pick" style="flex:1"><span class="note">Process</span>
         <select id="process"><option value="">none</option><option>fdm</option><option>sls</option><option>mjf</option><option>sla</option><option>dlp</option><option>volumetric</option><option>lpbf</option></select></div></div>
     </section>
@@ -1011,6 +1015,7 @@ function recompile() {
   G.probes.clear();
   S.version++;
   showNotes();
+  fillFitParams();
   updateBounds();
   kick(false);
   drawGraph();
@@ -1275,6 +1280,7 @@ function updateBounds() {
   if (first) fitView("iso");
   updateRange();
   showNotes();
+  massSoon();
   kick(false);
 }
 function updateRange() {
@@ -1298,6 +1304,121 @@ function updateRange() {
   kick(false);
 }
 const rangeSoon = debounce(updateRange, 200);
+
+// ---- live mass: the output's volume on the GPU --------------------------------------------------------
+// A grid over the output's box, each point counted by clamp(0.5 - d / h): a smooth step one sample wide,
+// so the count moves smoothly with a slider. Its error falls as h^2 (curved walls, saddle-shaped lattice
+// sheets), so it is taken at two spacings and extrapolated: within about 1% of the meshed part.
+function densityOf(m) {
+  if (m && typeof m === "object") return Number(m.density) || null;
+  const d = DATA.densities || {};
+  return typeof m === "string" ? d[m.trim().toLowerCase()] ?? null : null;
+}
+function occupancy(name, b, h) {
+  const ext = [0, 1, 2].map((i) => Math.max(b[1][i] - b[0][i], 1e-3));
+  const lo = b[0].map((v) => v - h), n = ext.map((e) => Math.max(2, Math.ceil(e / h) + 2));
+  const N = n[0] * n[1] * n[2], pts = new Float32Array(N * 3);
+  let k = 0;
+  for (let i = 0; i < n[0]; i++) for (let j = 0; j < n[1]; j++) for (let l = 0; l < n[2]; l++) {
+    pts[k++] = lo[0] + (i + 0.5) * h; pts[k++] = lo[1] + (j + 0.5) * h; pts[k++] = lo[2] + (l + 0.5) * h;
+  }
+  const d = probe(name, pts);
+  if (!d) return null;
+  let occ = 0;
+  for (let i = 0; i < N; i++) { const x = 0.5 - d[i] / h; occ += x <= 0 ? 0 : x >= 1 ? 1 : x; }
+  return { volume: occ * h * h * h, points: N };
+}
+function volumeOf(name, budget) {
+  if (!G.floatRT || !name || !(name in S.doc.nodes)) return null;
+  let b = null;
+  try { b = boundsOf(name); } catch (e) { b = null; }
+  if (!b) return null;
+  const ext = [0, 1, 2].map((i) => Math.max(b[1][i] - b[0][i], 1e-3));
+  const h = Math.cbrt(ext[0] * ext[1] * ext[2] / budget), H = 1.6 * h;
+  const fine = occupancy(name, b, h), coarse = occupancy(name, b, H);
+  if (!fine || !coarse) return null;
+  const volume = fine.volume + (fine.volume - coarse.volume) * h * h / (H * H - h * h);
+  return { volume, raw: fine.volume, h, points: fine.points + coarse.points };
+}
+const MASS_BUDGET = { draft: 200000, good: 600000, fine: 2000000 };
+function updateMass() {
+  const out = $("#mass-est");
+  const v = volumeOf(S.doc.output, MASS_BUDGET[S.quality] || 600000);
+  S.mass = v;
+  if (!v) { out.textContent = ""; return; }
+  const rho = densityOf(S.doc.material);
+  const cm3 = v.volume / 1000;
+  out.textContent = (rho ? `≈ ${(cm3 * rho).toFixed(1)} g · ` : "") + `${cm3.toFixed(2)} cm³` +
+    (rho ? "" : " (name a material for mass)") + " · live estimate, about ±1%";
+}
+const massSoon = debounce(updateMass, 250);
+
+function fitParams() {
+  // every number the preview has as a uniform, the likely knobs first
+  if (!G.comp) return [];
+  // not what a bake depends on (a lattice's cell field, an analyzed part): the estimate would read the
+  // stale bake until the server sends a new one
+  const baked = new Set();
+  for (const item of bakeItems()) for (const n of Object.keys(closure(item))) baked.add(n);
+  const pref = /thickness|density|distance|blend|\/to\/|\/from\/|\/value$|\/offset/;
+  const keys = [...G.comp.uIndex.keys()].filter((k) => k.startsWith("nodes/") && !baked.has(k.split("/")[1]) &&
+    isFinite(Number(getAt(S.doc, k.split("/").map((x) => /^\d+$/.test(x) ? +x : x)))));
+  const mine = (k) => S.sel && k.startsWith(`nodes/${S.sel}/`);
+  return keys.sort((a, b) => (mine(b) - mine(a)) || (pref.test(b) - pref.test(a)) || a.localeCompare(b));
+}
+function fillFitParams() {
+  const sel = $("#fit-param"), keep = sel.value;
+  const keys = fitParams();
+  sel.replaceChildren(...keys.map((k) => el("option", { value: k }, k.slice(6).replace(/\//g, " · "))));
+  if (keys.includes(keep) && S.fitSel === S.sel) sel.value = keep;    // a new selection offers its own knobs first
+  S.fitSel = S.sel;
+  $("#fit").disabled = !keys.length;
+}
+function setUniform(path, v) {
+  setAt(S.doc, path, v);
+  const key = path.join("/");
+  for (const c of [G.comp, ...[...G.probes.values()].map((p) => p.comp)]) if (c && c.uIndex.has(key)) c.uVals[c.uIndex.get(key)] = v;
+}
+/** Find the value of the parameter at `key` whose part weighs `grams` (bracket, then bisect on the estimate). */
+async function fitMass(key, grams) {
+  const rho = densityOf(S.doc.material);
+  if (!rho) { status("Name a material first: the fit needs its density.", "warn"); return null; }
+  const path = key.split("/").map((x) => /^\d+$/.test(x) ? +x : x);
+  const v0 = Number(getAt(S.doc, path));
+  const target = grams / rho * 1000;
+  const budget = MASS_BUDGET[S.quality] || 600000;
+  const at = (v) => { setUniform(path, v); const r = volumeOf(S.doc.output, budget); return r ? r.volume - target : NaN; };
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  status(`Fitting ${key.slice(6).replace(/\//g, " · ")} to ${grams} g…`);
+  let a = v0, fa = at(a);
+  if (!isFinite(fa)) { setUniform(path, v0); status("The part has no bounds to weigh.", "warn"); return null; }
+  let step = Math.abs(v0) > 1e-6 ? Math.abs(v0) * 0.25 : 0.5, b = a + step, fb = at(b);
+  if (Math.abs(fb) > Math.abs(fa)) { step = -step; b = a + step; fb = at(b); }
+  let tries = 0;
+  while (isFinite(fb) && Math.sign(fa) === Math.sign(fb) && tries++ < 12) {
+    a = b; fa = fb; step *= 1.8; b = a + step; fb = at(b);
+    await tick();
+  }
+  if (!isFinite(fb) || Math.sign(fa) === Math.sign(fb)) {
+    setUniform(path, v0); paramChanged(path); inspector();
+    status(`No value of ${key.slice(6).replace(/\//g, " · ")} reaches ${grams} g.`, "warn");
+    return null;
+  }
+  for (let i = 0; i < 18 && Math.abs(b - a) > 1e-4 * (Math.abs(a) + Math.abs(b) + 1e-3); i++) {
+    // Illinois-flavoured false position: the mass is smooth and nearly monotone in one knob
+    const m = b - fb * (b - a) / (fb - fa);
+    const c = isFinite(m) && Math.min(a, b) < m && m < Math.max(a, b) ? m : 0.5 * (a + b), fc = at(c);
+    if (Math.sign(fc) === Math.sign(fb)) { fa *= 0.5; } else { a = b; fa = fb; }
+    b = c; fb = fc;
+    if (Math.abs(fc) < 2e-4 * target) break;
+    await tick();
+  }
+  const v = Number(b.toPrecision(4));
+  setUniform(path, v);
+  paramChanged(path); inspector(); updateMass();
+  status(`${key.slice(6).replace(/\//g, " · ")} = ${v} gives ≈ ${grams} g (was ${v0}).`, "ok");
+  return v;
+}
 
 function planeNow() {
   if (S.cut === "off" || !S.box) return null;
@@ -1720,7 +1841,7 @@ function graphFit() {
     $("#world").setAttribute("transform", `translate(${G2.tx},${G2.ty}) scale(${G2.s})`);
   }, { passive: false });
 })();
-function afterSelect() { drawGraph(); inspector(); fillSelects(); recompileSoon(); }
+function afterSelect() { drawGraph(); inspector(); fillSelects(); fillFitParams(); recompileSoon(); }
 
 // ---- inspector ----------------------------------------------------------------------------------------
 
@@ -2119,7 +2240,14 @@ $("#name").addEventListener("change", (e) => { S.doc.name = e.target.value || "f
 const setPitch = (v) => { if (!(v > 0)) return; S.doc.mesh = { ...(S.doc.mesh || {}), pitch: v }; $("#pitch").value = v; $("#pitch-n").value = v; commitSoon(); };
 $("#pitch").addEventListener("input", (e) => setPitch(+e.target.value));
 $("#pitch-n").addEventListener("change", (e) => setPitch(+e.target.value));
-$("#material").addEventListener("change", (e) => { const v = e.target.value.trim(); if (v) S.doc.material = v; else delete S.doc.material; commit(); });
+$("#material").addEventListener("change", (e) => { const v = e.target.value.trim(); if (v) S.doc.material = v; else delete S.doc.material; commit(); updateMass(); });
+$("#materials").replaceChildren(...Object.keys(DATA.densities || {}).map((k) => el("option", { value: k })));
+$("#fit").addEventListener("click", async () => {
+  const g = Number($("#fit-target").value), key = $("#fit-param").value;
+  if (!(g > 0) || !key) { status("Give a target mass and pick the parameter to change.", "warn"); return; }
+  $("#fit").disabled = true;
+  try { await fitMass(key, g); } finally { $("#fit").disabled = false; }
+});
 $("#process").addEventListener("change", (e) => { const v = e.target.value; if (v) S.doc.process = v; else delete S.doc.process; commit(); });
 $("#run").addEventListener("click", run);
 $("#save").addEventListener("click", save);
@@ -2182,6 +2310,7 @@ function loadDoc(doc, fresh) {
 window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
+  mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),
   select: (n) => { S.sel = n; if (S.follow && kindOf(n) === "solid") S.target = n; afterSelect(); },
   view: (o) => {
     Object.assign(S, o);

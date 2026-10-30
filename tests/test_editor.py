@@ -285,6 +285,7 @@ const [page_, parity, threeDir] = process.argv.slice(2);
     }
     out[name] = [near, band];
   }
+  out._volume = await page.evaluate(() => window.lpEditor.mass(600000).volume);
   // a slider: a uniform changes, the shader is not rebuilt
   const before = await page.evaluate(() => window.lpEditor.glsl());
   await page.evaluate(() => window.lpEditor.set(["nodes", "ball", "shape", "r"], 9));
@@ -304,7 +305,8 @@ def test_gpu_preview_matches_fields_py():
     level: to float precision for shapes, booleans, shells, distances,
     remaps, expressions, lattices and transforms, to half precision for a
     grid (shipped as it is), and to the bake's resolution for a mesh near
-    its surface. Skipped without node and Playwright."""
+    its surface; its live volume is the meshed part's to 1.5%. Skipped
+    without node and Playwright."""
     node = shutil.which("node")
     npath = os.environ.get("NODE_PATH") or "/opt/node22/lib/node_modules"
     env = {**os.environ, "NODE_PATH": npath}
@@ -339,6 +341,10 @@ def test_gpu_preview_matches_fields_py():
         print(f"  {name:6s} {err:.2g} mm")
     assert "earlier graph" not in out["_notes"] and "cross-fade" not in out["_notes"], out["_notes"]
     assert out["_uniform"]["same"] and abs(out["_uniform"]["center"] + 9) < 1e-4, out["_uniform"]
+    # the live mass: the GPU's volume estimate against the meshed part
+    vol = g.mesh(pitch=0.4).volume
+    print(f"  volume {out['_volume']:.0f} mm3 on the GPU, {vol:.0f} meshed")
+    assert abs(out["_volume"] - vol) < 0.015 * vol, (out["_volume"], vol)
 
 
 TESTS = [test_graph_with_layout_lints, test_bakes_sample_the_graph, test_bake_spec_follows_an_analyzed_part,

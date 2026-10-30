@@ -230,6 +230,15 @@ def _density_tables():
     return {k: [round(float(x), 5) for x in wall_for_density(k, rho, 1.0)] for k in ("gyroid", "diamond", "schwarz-p")}
 
 
+def _densities():
+    """g/cm^3 of every named material and alias, for the page's live mass."""
+    from .materials import _ALIASES, MATERIALS
+
+    out = {k: m.density for k, m in MATERIALS.items()}
+    out.update({a: MATERIALS[k].density for a, k in _ALIASES.items()})
+    return out
+
+
 def editor_payload(doc, base_dir=None, bake=True, server=False, graph_path=None, progress=None):
     """The data the page starts from: the graph, the bakes it needs (all of
     them for a standalone page; a served page asks for its own), and the
@@ -255,7 +264,7 @@ def editor_payload(doc, base_dir=None, bake=True, server=False, graph_path=None,
                 except Exception as exc:  # noqa: BLE001 - the page says which node could not be baked
                     errors.append(f"{name}: {exc}")
     return {"version": 1, "doc": doc, "bakes": bakes, "errors": errors, "issues": lint(doc, "field"),
-            "tables": _density_tables(), "server": bool(server),
+            "tables": _density_tables(), "densities": _densities(), "server": bool(server),
             "graphPath": os.path.basename(graph_path) if graph_path else None,
             "created": time.strftime("%Y-%m-%d %H:%M")}
 
