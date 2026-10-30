@@ -44,8 +44,8 @@ __all__ = ["BAKED_OPS", "bake_node", "bake_warp", "editor_payload", "field_edito
 _TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "editor.html")
 
 # ops the browser cannot evaluate: sampled here onto a grid, drawn from a 3D texture
-BAKED_OPS = ("mesh", "result", "grid")
-_BAKE_CELLS = {"mesh": 96, "result": 64, "grid": 64}
+BAKED_OPS = ("mesh", "result", "grid", "image")
+_BAKE_CELLS = {"mesh": 96, "result": 64, "grid": 64, "image": 64}
 
 
 def _closure(doc, name):
@@ -160,7 +160,7 @@ def _box_grid(lo, hi, cells):
 
 
 def bake_node(doc, name, base_dir=None, graph=None, cells=None, progress=None):
-    """Sample one `mesh`, `result` or `grid` node on a grid for the editor's
+    """Sample one `mesh`, `result`, `grid` or `image` node on a grid for the editor's
     GPU preview: {"node", "lo", "hi", "dims" [nx, ny, nz], "data" (float16,
     x fastest, base64), "spec" (what was baked, so the page can tell when it
     goes stale), "seconds"}. A result or grid whose samples already lie on

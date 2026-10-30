@@ -131,6 +131,7 @@ back at once with suggestions.
 | `offset` | grow or shrink | `input`, `distance` |
 | `lattice` | gyroid, diamond or Schwarz P; sheet or network; cartesian or cylindrical frame | `cell`, `thickness` or `density`, `offset` |
 | `transform` | translate, rotate, scale an input | `input` |
+| `image` | a picture (PNG/JPG) laid on a plane as a 0..1 field: brightness or one channel, optional invert (see Images) | `path`, `size` |
 | `group` | a copy of a sub-graph from `groups` with its own `params` and `inputs` (see Groups) | |
 
 `expr` knows `abs sqrt exp log sin cos tan floor ceil sign min max clamp
@@ -167,6 +168,30 @@ a node turns it and everything only it uses into a group (its constants
 become knobs, what it shares with the rest of the graph its inputs), and
 **ungroup** puts a copy's nodes back. A copy's knobs are sliders that move
 the preview without recompiling.
+
+## Images
+
+An `image` node lays a picture on a plane, like nTop's image-to-field: a
+logo to emboss, a texture map, a hand-painted density. `plane` is `xy`,
+`xz` or `yz`; `origin` is where the picture's lower-left corner sits (mm,
+in that plane) and `size` its width and height; the value is the pixel's
+brightness (or `channel` r, g, b, a) from 0 to 1, `invert` flips it. It
+runs through the picture along the third axis and holds its edge pixels
+beyond the picture. Pictures are resized to at most 1024 px. Use it in an
+`expr` like any field, for example raised lettering limited to a band:
+
+```json
+"logo":    {"op": "image", "path": "logo.png", "plane": "xy", "origin": [-40, -12], "size": [80, 24]},
+"band":    {"op": "shape", "shape": {"type": "box", "min": [-41, -13, -1], "max": [41, 13, 1.2]}},
+"letters": {"op": "expr", "expr": "max(band, (0.5 - logo) * 0.3)",
+            "bounds": {"min": [-41, -13, -1], "max": [41, 13, 1.2]}}
+```
+
+![name plate from a picture](images/fields/image-nameplate.png)
+
+The whole graph is examples/fields/nameplate.json. The editor bakes the
+picture into a texture once; moving the picture (origin, size) re-bakes,
+while the nodes around it stay live sliders.
 
 ## What the field-driven operations mean
 

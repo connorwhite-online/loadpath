@@ -82,6 +82,8 @@ ALL_OPS = {
                        "output": "out"}},
 }
 ALL_OPS["nodes"]["ribbed"] = {"op": "group", "group": "rib", "params": {"w": 0.8}, "inputs": {"base": "ball"}}
+ALL_OPS["nodes"]["pic"] = {"op": "image", "path": "pic.png", "plane": "xz", "origin": [-20, -10], "size": [40, 20]}
+ALL_OPS["nodes"]["embossed"] = {"op": "offset", "input": "box", "distance": "pic"}
 
 
 def _workdir():
@@ -92,6 +94,11 @@ def _workdir():
     ax = [np.linspace(-30, 30, 13)] * 3
     X, Y, _ = np.meshgrid(*ax, indexing="ij")
     np.savez(os.path.join(d, "ramp.npz"), origin=np.array([-30.0, -30, -30]), pitch=5.0, values=(X + 0.5 * Y + 30) / 60)
+    from PIL import Image
+
+    yy, xx = np.mgrid[0:16, 0:32]
+    pic = (127 + 127 * np.sin(xx / 3.0) * np.cos(yy / 2.5)).astype(np.uint8)
+    Image.fromarray(np.stack([pic, pic // 2, 255 - pic], -1)).save(os.path.join(d, "pic.png"))
     with open(os.path.join(d, "graph.json"), "w") as fh:
         json.dump(ALL_OPS, fh)
     return d
@@ -157,7 +164,7 @@ def test_standalone_page_carries_its_data():
     start = html.index('id="loadpath-data">') + len('id="loadpath-data">')
     data = json.loads(html[start:html.index("</script>", start)])
     assert data["doc"]["nodes"].keys() == ALL_OPS["nodes"].keys()
-    assert set(data["bakes"]) == {"torus", "ramp", "coreW#warp"} and not data["errors"] and not data["server"]
+    assert set(data["bakes"]) == {"torus", "ramp", "pic", "coreW#warp"} and not data["errors"] and not data["server"]
     assert set(data["tables"]) == {"gyroid", "diamond", "schwarz-p"} and len(data["tables"]["gyroid"]) == 19
     frag = field_editor(ALL_OPS, base_dir=d, standalone=False)
     assert "<!doctype" not in frag and "<body>" not in frag

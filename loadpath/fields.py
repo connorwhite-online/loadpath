@@ -56,7 +56,7 @@ from scipy import ndimage
 __all__ = ["FieldGraph", "MeshField", "field_mesh", "save_result_field", "result_samples", "OPS"]
 
 # the operations and what they take (the schema says the same, with docs)
-OPS = ("constant", "coordinate", "distance", "shape", "mesh", "result", "grid", "remap", "expr",
+OPS = ("constant", "coordinate", "distance", "shape", "mesh", "result", "grid", "image", "remap", "expr",
        "union", "intersect", "subtract", "shell", "offset", "lattice", "transform")
 
 _CELL_BUDGET = 60_000_000
@@ -823,7 +823,7 @@ class FieldGraph:
         if op == "mesh":
             mf = self._resource(nd, lambda: self._mesh_field(nd))
             return mf(P)
-        if op in ("result", "grid"):
+        if op in ("result", "grid", "image"):
             smp = self._resource(nd, lambda: self._samples(nd))
             return smp(P)
         if op == "remap":
@@ -912,8 +912,60 @@ class FieldGraph:
             mesh = trimesh.load(self._path(s["path"]), force="mesh")
         return MeshField(mesh, pitch=s.get("pitch"), band=s.get("band"))
 
+    _PLANES = {"xy": (0, 1, 2), "xz": (0, 2, 1), "yz": (1, 2, 0)}
+
+    def _image(self, nd):
+        """A picture as a scalar field: `path` (PNG, JPEG, ...) laid on
+        `plane` (xy, xz or yz) with its lower-left corner at `origin` and
+        `size` [w, h] mm, and carried straight through along the third axis.
+        Values are the `channel` (luma, r, g, b or a) from 0 to 1, `invert`
+        flips them; bilinear between pixels, the edge pixel carries on past
+        the picture. Pictures over 1024 pixels a side are resized to it."""
+        from PIL import Image
+
+        s = nd.spec
+        if "path" not in s or "size" not in s:
+            raise ValueError(f"node {nd.name!r}: an image needs a 'path' and a 'size' [w, h] in mm")
+        plane = s.get("plane", "xy")
+        if plane not in self._PLANES:
+            raise ValueError(f"node {nd.name!r}: plane must be xy, xz or yz")
+        im = Image.open(self._path(s["path"]))
+        im.load()
+        im = im.convert("RGBA")
+        if max(im.size) > 1024:
+            k = 1024 / max(im.size)
+            im = im.resize((max(2, round(im.size[0] * k)), max(2, round(im.size[1] * k))), Image.BOX)
+        a = np.asarray(im, float) / 255.0                            # rows top to bottom
+        ch = s.get("channel", "luma")
+        if ch == "luma":
+            v = a[..., 0] * 0.2126 + a[..., 1] * 0.7152 + a[..., 2] * 0.0722
+        elif ch in ("r", "g", "b", "a"):
+            v = a[..., "rgba".index(ch)]
+        else:
+            raise ValueError(f"node {nd.name!r}: channel must be luma, r, g, b or a")
+        if s.get("invert"):
+            v = 1.0 - v
+        v = v[::-1].T                                                 # [u, v]: u right, v up
+        H, W = v.shape[1], v.shape[0]
+        w, h = (float(x) for x in s["size"])
+        if w <= 0 or h <= 0:
+            raise ValueError(f"node {nd.name!r}: size must be positive")
+        u0, v0 = (float(x) for x in s.get("origin", (0.0, 0.0)))
+        iu, iv, ia = self._PLANES[plane]
+        # a regular grid in world axes, two samples deep along the projection axis (the same everywhere)
+        grid = np.repeat(v[:, :, None], 2, axis=2)
+        order = np.argsort([iu, iv, ia])
+        grid = np.transpose(grid, order)
+        origin, pitch = np.zeros(3), np.zeros(3)
+        origin[iu], pitch[iu] = u0 + 0.5 * w / W, w / W
+        origin[iv], pitch[iv] = v0 + 0.5 * h / H, h / H
+        origin[ia], pitch[ia] = -5e5, 1e6
+        return _Samples(grid=grid, origin=origin, pitch=pitch)
+
     def _samples(self, nd):
         s = nd.spec
+        if nd.op == "image":
+            return self._image(nd)
         if "source" in s:
             if s["source"] not in self.sources:
                 raise ValueError(f"node {nd.name!r}: no in-memory source named {s['source']!r}")

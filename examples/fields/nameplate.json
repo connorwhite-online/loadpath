@@ -1,0 +1,80 @@
+{
+ "name": "name plate",
+ "description": "a picture as a field: the lettering is the image's brightness, raised 1.2 mm off the plate",
+ "nodes": {
+  "plate": {
+   "op": "shape",
+   "shape": {
+    "type": "box",
+    "min": [
+     -42,
+     -14,
+     -3
+    ],
+    "max": [
+     42,
+     14,
+     0
+    ]
+   }
+  },
+  "logo": {
+   "op": "image",
+   "path": "logo.png",
+   "plane": "xy",
+   "origin": [
+    -40,
+    -12
+   ],
+   "size": [
+    80,
+    24
+   ]
+  },
+  "band": {
+   "op": "shape",
+   "shape": {
+    "type": "box",
+    "min": [
+     -41,
+     -13,
+     -1
+    ],
+    "max": [
+     41,
+     13,
+     1.2
+    ]
+   }
+  },
+  "letters": {
+   "op": "expr",
+   "expr": "max(band, (0.5 - logo) * 0.3)",
+   "bounds": {
+    "min": [
+     -41,
+     -13,
+     -1
+    ],
+    "max": [
+     41,
+     13,
+     1.2
+    ]
+   }
+  },
+  "part": {
+   "op": "union",
+   "inputs": [
+    "plate",
+    "letters"
+   ],
+   "blend": 0.3
+  }
+ },
+ "output": "part",
+ "material": "petg",
+ "mesh": {
+  "pitch": 0.15
+ }
+}

@@ -392,9 +392,31 @@ def test_groups_are_copied_with_their_own_knobs():
     assert any("eight deep" in i["message"] for i in lint(d, "field"))
 
 
+def test_image_is_a_field_on_a_plane():
+    """A picture laid on a plane: each pixel's centre reads its value (luma
+    from 0 to 1, top row at the top), the same all the way through along the
+    third axis; invert and channels work."""
+    from PIL import Image
+
+    d = tempfile.mkdtemp()
+    a = np.zeros((2, 4, 3), np.uint8)
+    a[0] = np.array([0, 85, 170, 255])[:, None]
+    a[1] = 255
+    a[1, :, 2] = 0                                   # the bottom row is yellow: no blue
+    Image.fromarray(a).save(os.path.join(d, "t.png"))
+    node = {"op": "image", "path": "t.png", "plane": "xz", "origin": [10, 0], "size": [8, 4]}
+    g = FieldGraph({"nodes": {"im": node, "inv": {**node, "invert": True}, "blue": {**node, "channel": "b"}}},
+                   base_dir=d)
+    P = np.array([[11.0, -50, 3], [17.0, 80, 3], [11.0, 0, 1], [13.0, 0, 3]])
+    assert np.allclose(g.evaluate(P, "im"), [0, 1, 1 - 0.0722, 85 / 255], atol=1e-6)
+    assert np.allclose(g.evaluate(P, "inv"), 1 - g.evaluate(P, "im"), atol=1e-9)
+    assert np.allclose(g.evaluate(P, "blue"), [0, 1, 0, 85 / 255], atol=1e-6)
+    assert not lint({"nodes": {"im": node}}, "field")
+
+
 TESTS = [test_shell_volume_and_projection, test_variable_shell_follows_its_field,
          test_variable_blend_is_a_bigger_fillet_where_asked, test_graded_lattice_stays_one_body, test_cell_warp_period_follows_the_field,
-         test_mesh_field_is_exact_near_the_surface, test_mesh_field_far_from_its_grid, test_groups_are_copied_with_their_own_knobs,
+         test_mesh_field_is_exact_near_the_surface, test_mesh_field_far_from_its_grid, test_groups_are_copied_with_their_own_knobs, test_image_is_a_field_on_a_plane,
          test_samples_on_a_grid_interpolate_exactly,
          test_result_node_from_verify_fields, test_expressions_are_whitelisted, test_graph_errors_and_lint,
          test_unbounded_lattice_asks_for_bounds, test_cli_writes_part_and_report, test_mcp_field_job,

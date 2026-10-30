@@ -304,7 +304,7 @@ function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTi
 
 const FIELD_KEYS = ["input", "value", "thickness", "distance", "blend", "cell", "density", "offset"];
 const SOLID_OPS = new Set(["shape", "mesh", "lattice", "union", "intersect", "subtract", "shell", "offset"]);
-const BAKED = new Set(["mesh", "result", "grid"]);
+const BAKED = new Set(["mesh", "result", "grid", "image"]);
 const OPS = {
   shape: { doc: "Exact primitive: box, cylinder, tube, sphere or a union of them.",
     params: [{ k: "shape", t: "shape" }],
@@ -338,6 +338,10 @@ const OPS = {
   distance: { doc: "Unsigned distance to a solid, points, a segment, a plane or a shape.", params: [{ k: "_mode", t: "distance" }], make: () => ({}) },
   group: { doc: "A copy of one of the graph's groups (reusable sub-graphs) with its own knobs and inputs.",
     params: [{ k: "group", t: "group" }], make: () => ({ group: Object.keys(S.doc.groups || {})[0] || "" }) },
+  image: { doc: "A picture as a field from 0 to 1, laid on a plane and carried straight through (baked on the server).",
+    params: [{ k: "path", t: "text" }, { k: "plane", t: "enum", opts: ["xy", "xz", "yz"], def: "xy" }, { k: "origin", t: "pair", def: [0, 0] },
+      { k: "size", t: "pair", def: [50, 50] }, { k: "channel", t: "enum", opts: ["luma", "r", "g", "b", "a"], def: "luma" }, { k: "invert", t: "bool", def: false }],
+    make: () => ({ path: "", plane: "xy", origin: [0, 0], size: [50, 50] }) },
   remap: { doc: "Map input from [a, b] to [c, d] through a curve.",
     params: [{ k: "input", t: "field", def: 0 }, { k: "from", t: "pair", def: [0, 1] }, { k: "to", t: "pair", def: [0, 1] },
       { k: "curve", t: "curve", def: "linear" },
@@ -708,7 +712,7 @@ class Compiler {
         return "0.0";
       }
       case "shape": return this.shape(N("shape"), s.shape, P);
-      case "mesh": case "result": case "grid": {
+      case "mesh": case "result": case "grid": case "image": {
         const t = this.texture(name, op !== "mesh");
         return typeof t === "string" ? t : `${t[0]}${P}${t[1]}`;
       }
@@ -2529,7 +2533,7 @@ function showNotes() {
   for (const m of missing) notes.push(`${m}: not baked yet, drawn as ${S.doc.nodes[m] && S.doc.nodes[m].op === "mesh" ? "empty" : "zero"}`);
   for (const it of bakeItems()) if (bakeState(it) === "stale")
     notes.push(`${it.kind === "warp" ? `${it.node}'s warp` : it.node}: baked from an earlier graph${isAnalysis(it.node) ? " (re-run the analysis to update)" : DATA.server ? " (re-baking)" : ""}`);
-  if (S.unbounded) notes.push("the shown solid is unbounded (a bare lattice): intersect it with a solid");
+  if (S.unbounded) notes.push("the shown solid has no bounds the editor can work out (a bare lattice or an expr): intersect it with a solid or give it bounds");
   const box = $("#notes");
   box.replaceChildren(...notes.slice(0, 5).map((n) => el("span", {}, n)));
   box.hidden = !notes.length || S.mode === "mesh";

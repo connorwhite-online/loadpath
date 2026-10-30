@@ -602,6 +602,16 @@ _FIELD_OPS = {
                 {"path": {"type": "string"}, "source": {"type": "string"},
                  "quantity": {"type": "string", "description": "array name (default values)"}},
                 require_one=[["path"], ["source"]]),
+    "image": _op("image", "A picture as a scalar field from 0 to 1, laid on a plane and carried straight through "
+                          "along the third axis: a logo to emboss, a texture to drive a wall, a hand-painted density.",
+                 {"path": {"type": "string", "description": "PNG, JPEG, ... in the graph's folder"},
+                  "plane": {"enum": ["xy", "xz", "yz"], "description": "the plane it lies in (default xy)"},
+                  "origin": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
+                             "description": "lower-left corner in the plane, mm (default [0, 0])"},
+                  "size": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2,
+                           "maxItems": 2, "description": "[width, height] mm"},
+                  "channel": {"enum": ["luma", "r", "g", "b", "a"], "description": "default luma"},
+                  "invert": {"type": "boolean"}}, ["path", "size"]),
     "remap": _op("remap", "Map `input` from [a, b] to [c, d] through a curve (clamped unless clamp is false). "
                           "Longer from/to lists are a piecewise-linear table (from ascending), e.g. a density "
                           "per height for an impact core.",

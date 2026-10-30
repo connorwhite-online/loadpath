@@ -799,7 +799,7 @@
     },
     "node": {
       "title": "a node object with an 'op'",
-      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, remap, expr, union, intersect, subtract, shell, offset, lattice, transform, group.",
+      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, image, remap, expr, union, intersect, subtract, shell, offset, lattice, transform, group.",
       "oneOf": [
         {
           "$ref": "#/$defs/op-constant"
@@ -821,6 +821,9 @@
         },
         {
           "$ref": "#/$defs/op-grid"
+        },
+        {
+          "$ref": "#/$defs/op-image"
         },
         {
           "$ref": "#/$defs/op-remap"
@@ -863,6 +866,7 @@
           "mesh": "#/$defs/op-mesh",
           "result": "#/$defs/op-result",
           "grid": "#/$defs/op-grid",
+          "image": "#/$defs/op-image",
           "remap": "#/$defs/op-remap",
           "expr": "#/$defs/op-expr",
           "union": "#/$defs/op-union",
@@ -1432,6 +1436,98 @@
           "source"
         ]
       ]
+    },
+    "op-image": {
+      "type": "object",
+      "description": "A picture as a scalar field from 0 to 1, laid on a plane and carried straight through along the third axis: a logo to emboss, a texture to drive a wall, a hand-painted density.",
+      "properties": {
+        "op": {
+          "const": "image"
+        },
+        "path": {
+          "type": "string",
+          "description": "PNG, JPEG, ... in the graph's folder"
+        },
+        "plane": {
+          "enum": [
+            "xy",
+            "xz",
+            "yz"
+          ],
+          "description": "the plane it lies in (default xy)"
+        },
+        "origin": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "lower-left corner in the plane, mm (default [0, 0])"
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[width, height] mm"
+        },
+        "channel": {
+          "enum": [
+            "luma",
+            "r",
+            "g",
+            "b",
+            "a"
+          ],
+          "description": "default luma"
+        },
+        "invert": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "size"
+      ],
+      "additionalProperties": false
     },
     "op-remap": {
       "type": "object",
