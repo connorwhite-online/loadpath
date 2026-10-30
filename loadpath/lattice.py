@@ -250,6 +250,7 @@ class LatticeOptions:
     analysis_cells: int = 120_000   # homogenized FEA size
     step: float | None = None       # field sampling, mm (default: wall_min / 2.5)
     max_points: int = 12_000_000
+    exact_surface: bool = True      # mesh the TPMS itself (projected), not its grid samples
 
     @classmethod
     def from_spec(cls, spec: dict, process=None, safety_factor: float | None = None) -> "LatticeOptions":
@@ -638,6 +639,10 @@ def lattice_infill(study: Study, mesh, fields: dict | None = None, opts: Lattice
         d_solid = np.minimum(d_solid, -d_part - o.skin)
     blend = o.blend or o.wall_max
     d = np.maximum(d_part, _smooth_union(d_lat, d_solid, blend))
+    # how much of d follows the lattice term (1 in the open lattice, fading
+    # through the blend, 0 in solid, skin, pockets and holes): the exact
+    # surface below corrects d by this much of the TPMS's own sampling error
+    sens = _lattice_share(d_lat, d_solid, d_part, blend) if o.exact_surface else None
     del d_cells
 
     # a boss can wall off a scrap of channel next to it: a second round
@@ -649,6 +654,8 @@ def lattice_infill(study: Study, mesh, fields: dict | None = None, opts: Lattice
         pockets, holes = _drains(o, d, d_part, d_collar, stress, lo, step, process)
         if pockets is not None:
             d = np.where(pockets, -0.5 * step, d)
+            if sens is not None:
+                sens[pockets] = 0.0
             filled += float(pockets.sum() * step ** 3)
         if not holes:
             break
@@ -656,22 +663,32 @@ def lattice_infill(study: Study, mesh, fields: dict | None = None, opts: Lattice
             bs, hp, shp = _local(lo, step, d.shape, a, b, rad + boss + blend)
             cap = _capsule(hp, a, b, rad).reshape(shp)
             ds = np.minimum(d_solid[bs], cap - boss)
-            d[bs] = np.minimum(d[bs], np.maximum(d_part[bs], _smooth_union(d_lat[bs], ds, blend)))
+            new = np.maximum(d_part[bs], _smooth_union(d_lat[bs], ds, blend))
+            if sens is not None:
+                sens[bs] = np.where(new < d[bs], _lattice_share(d_lat[bs], ds, d_part[bs], blend), sens[bs])
+            d[bs] = np.minimum(d[bs], new)
             d_solid[bs] = ds
         for a, b, rad, _ in all_holes + holes:
             # through the boss's rounded end and on into the void
             a = a - (b - a) / np.linalg.norm(b - a) * (boss + rad + blend)
             bs, hp, shp = _local(lo, step, d.shape, a, b, rad)
-            d[bs] = np.maximum(d[bs], -_capsule(hp, a, b, rad).reshape(shp))
+            cut = -_capsule(hp, a, b, rad).reshape(shp)
+            if sens is not None:
+                sens[bs] = np.where(cut > d[bs], 0.0, sens[bs])
+            d[bs] = np.maximum(d[bs], cut)
         all_holes += holes
     holes = all_holes
     holes = [h[3] for h in holes]
-    del d_lat, d_solid
+    del d_solid
     trapped_vol, trapped_n = _trapped(d, d_part, step)
 
-    verts, faces, _, _ = marching_cubes(d, 0.0, spacing=(step, step, step))
-    verts = verts + lo + 0.5 * step
-    lat = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
+    if o.exact_surface:
+        lat = _exact_mesh(o, d, d_lat, sens, wall, lo, step)
+    else:
+        verts, faces, _, _ = marching_cubes(d, 0.0, spacing=(step, step, step))
+        verts = verts + lo + 0.5 * step
+        lat = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
+    del d_lat, sens
     if lat.volume < 0:
         lat.invert()
     part = manifold_from_trimesh(lat)
@@ -703,6 +720,40 @@ def lattice_infill(study: Study, mesh, fields: dict | None = None, opts: Lattice
     # what stays walled in, where powder or resin would be trapped
     info["enclosedVoid"] = trapped_vol
     return out, info
+
+
+def _lattice_share(d_lat, d_solid, d_part, blend, eps=1e-3):
+    """d(d) / d(d_lat) for d = max(d_part, smooth_union(d_lat, d_solid))."""
+    from .reconstruct import _smooth_union
+
+    su = _smooth_union(d_lat, d_solid, blend)
+    share = (_smooth_union(d_lat + eps, d_solid, blend) - su) / eps
+    return np.where(su >= d_part, share, 0.0).astype(np.float32)
+
+
+def _exact_mesh(o, d, d_lat, sens, wall, lo, step):
+    """The lattice part meshed from its field with the TPMS evaluated
+    exactly: the sampled field d, trilinear between samples, plus `sens`
+    times the TPMS term's own error there (exact sheet minus its trilinear
+    samples, which also drops the samples' 0.15 step allowance for
+    marching cubes reading walls thin). The slow parts (part distance,
+    collars, sizing, drains) stay on the grid; the sheet, which is what a
+    grid gets wrong (facets, walls ~0.03 mm off), comes out on its exact
+    surface, projected by fields.field_mesh."""
+    from .fields import field_mesh
+
+    wall = np.broadcast_to(np.asarray(wall, np.float32), d.shape)
+    grids = [np.asarray(g, np.float32) for g in (d, d_lat, sens, wall)]
+    lo = np.asarray(lo, float)
+
+    def f(P):
+        c = ((P - lo) / step - 0.5).T
+        di, li, si, wi = (ndimage.map_coordinates(g, c, order=1, mode="nearest") for g in grids)
+        le = np.abs(tpms(o.kind, P, o.cell)) - 0.5 * wi
+        return di + si * (le - li)
+
+    hi = lo + (np.array(d.shape) - 0.5) * step
+    return field_mesh(f, lo + 0.5 * step, hi, pitch=step)
 
 
 def _wall_thickness(d, step):

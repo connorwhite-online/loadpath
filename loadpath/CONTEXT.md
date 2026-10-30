@@ -64,6 +64,7 @@ it becomes an eval metric.
 | `checks/` | checks on any mesh, no study needed: `check_dfm` (wall thickness, overhangs, trapped voids), `check_networks` (two-fluid isolation), `check_fit` (a board fits its enclosure), `fea_probe` (relative hotspot finder), `opening` |
 | `sdf_kit.py`, `exchanger.py` | field-modelling toolkit (primitives, TPMS, smooth booleans, exact mesh booleans) and the rectangular dual-fluid `exchanger_core` built from it; `heatx.py` is the newer, study-driven exchanger. Old `loadpath.checks.sdf_kit` / `.exchanger` imports still resolve |
 | `fields.py` | nTop-style field graphs (JSON or Python): named solid and scalar nodes, every numeric parameter can be a field (variable shell, variable fillet, graded TPMS cell/wall/density), `result` nodes from verify stress, exact mesh distance, smooth meshing (marching cubes + relax + projection). `loadpath field`, schema `field`, MCP `loadpath_field`; guide in docs/fields.md |
+| `narrowband.py` | field meshing that samples only near the surface: blocks and leaves tested against a Lipschitz bound, the rest skipped; same mesh as dense marching cubes, from 20-50% of the samples on solid parts, so the cell budget counts sampled cells, not the box. `fields.field_mesh` uses it by default (falls back to every block if the mesh is not watertight); `lattice_infill` meshes the exact TPMS through it (`exact_surface`), so walls are the specified thickness, not the grid's |
 
 Two of some things, on purpose for now:
 

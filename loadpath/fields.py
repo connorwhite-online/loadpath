@@ -1073,7 +1073,7 @@ def _remap(x, s, name):
 
 # ---- meshing ---------------------------------------------------------------------
 
-def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None):
+def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, sparse=True):
     """Smooth, watertight trimesh of field(P) < 0 over [lo, hi] (mm).
 
     Marching cubes on a grid at `pitch` (default: the box over 4M cells,
@@ -1082,7 +1082,12 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None):
     zero level (see _relax). Marching cubes alone puts vertices on the
     grid's edges, up to ~pitch/3 off a curved surface; after the
     projection every vertex is on the surface to 1e-5 mm or so, which is
-    what removes the grid from the part."""
+    what removes the grid from the part.
+
+    `sparse` (default) samples the field only in blocks near its zero
+    level (narrowband.py): the same marching-cubes mesh as the dense grid,
+    with far fewer field evaluations and memory for one batch of blocks,
+    so the cell budget applies to the sampled cells, not the box."""
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -1095,6 +1100,20 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None):
     lo = lo - pad * pitch - pitch * 0.013717        # off-grid, as sdf_kit.to_mesh
     dims = np.ceil((hi + pad * pitch - lo) / pitch).astype(int) + 1
     cells = int(np.prod(dims))
+    if sparse:
+        from .narrowband import narrowband_mc
+
+        verts, faces, stats = narrowband_mc(field, lo, dims, pitch, budget=_CELL_BUDGET, progress=progress)
+        if not len(faces):
+            raise ValueError("the field has no inside over these bounds (nothing is below zero)")
+        mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
+        if not mesh.is_watertight:
+            # the Lipschitz bound let a crossing through: sample every block
+            verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=np.inf, budget=_CELL_BUDGET,
+                                                progress=progress)
+            stats["fallback"] = True
+            mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
+        return _finish(mesh, field, pitch, project, stats)
     if cells > _CELL_BUDGET:
         p = float((np.prod(ext + 2 * pad * pitch) / _CELL_BUDGET) ** (1 / 3))
         raise ValueError(f"grid {dims[0]}x{dims[1]}x{dims[2]} = {cells / 1e6:.1f}M cells exceeds the "
@@ -1118,7 +1137,13 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None):
     verts, faces, _, _ = marching_cubes(F, 0.0, spacing=(pitch,) * 3)
     del F
     verts = verts + lo
-    mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
+    return _finish(trimesh.Trimesh(verts, faces[:, ::-1], process=True), field, pitch, project)
+
+
+def _finish(mesh, field, pitch, project, stats=None):
+    """Relax and project the marching-cubes mesh, orient it, drop debris."""
+    import trimesh
+
     if project:
         mesh.vertices = _relax(mesh, field, pitch, int(project))
     if mesh.volume < 0:
@@ -1133,6 +1158,8 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None):
     except Exception:  # noqa: BLE001 - debris filtering is best-effort
         pass
     mesh.metadata["pitch"] = pitch
+    if stats:
+        mesh.metadata["sampling"] = stats
     return mesh
 
 
