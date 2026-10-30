@@ -12,7 +12,9 @@ It reuses the eval run's meshes (evals-out/<case>.stl) and scorecard, so
 nothing is optimized again. Each part gets one fresh FEA (verify_part with
 fields) for its stress map; --no-stress skips that, --no-heatx skips the heat
 exchangers, and naming cases limits the run to them (the README keeps the
-other cases' existing images). Needs the render extra (matplotlib, shapely).
+other cases' existing images). Renders with three.js in headless Chromium
+(docs/render3d.py): needs Node with Playwright's Chromium, and the render
+extra (matplotlib, shapely).
 """
 from __future__ import annotations
 
@@ -28,7 +30,11 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from loadpath.render import _VIEWS, render_heat_exchanger, render_stress, render_views  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from render3d import FLUIDS, KEEP_OUT, Scene, ramp  # noqa: E402
+
+VIEWS = [(24, -58), (24, 32), (78, -90)]
 
 CASES = os.path.join(ROOT, "loadpath", "evals", "cases")
 IMAGES = os.path.join(ROOT, "docs", "images")
@@ -72,8 +78,39 @@ def _crop(path, pad=12):
     return path
 
 
+def _shape_mesh(shape):
+    import trimesh
+
+    m = shape.to_manifold().to_mesh()
+    return trimesh.Trimesh(np.asarray(m.vert_properties)[:, :3], np.asarray(m.tri_verts), process=False)
+
+
+def _study_panel(scene, study, mesh, view, label=None, vertex_colors=None):
+    """The part, its keep-outs (translucent red) and loads (blue arrows)."""
+    p = scene.panel(label, view=view)
+    p.mesh(mesh, vertex_colors=vertex_colors)
+    if study is None:
+        return p
+    span = float(np.max(np.subtract(*reversed(study.bounds()))))
+    for r in study.keep_out:
+        try:
+            p.mesh(_shape_mesh(r.shape), color=KEEP_OUT, opacity=0.16, crease=30)
+        except Exception:  # noqa: BLE001 - a keep-out that won't mesh is left out of the picture
+            pass
+    if vertex_colors is None:
+        for case in study.load_cases:
+            for ld in case.loads:
+                if not np.any(ld.force):
+                    continue
+                shape = ld.shape if ld.shape is not None else study.region_shape(ld.region)[0]
+                c = 0.5 * np.add(*shape.bounds())
+                p.arrow(c, np.asarray(ld.force, float) / np.linalg.norm(ld.force) * span * 0.2)
+    return p
+
+
 def render_case(row, evals, stress):
     import trimesh
+    from scipy.spatial import cKDTree
 
     from loadpath.spec import study_from_dict
     from loadpath.verify import verify_part
@@ -94,26 +131,48 @@ def render_case(row, evals, stress):
     if b.get("safetyFactor") is not None:
         title += f", SF {b['safetyFactor']:.2f}"
     out = {"case": name}
-    out["thumb"] = _crop(render_views(mesh, os.path.join(IMAGES, "cases", f"{name}.png"), study,
-                                views=[_VIEWS[0]], size=(7.0, 6.3)))
-    out["views"] = render_views(mesh, os.path.join(IMAGES, "cases", f"{name}-views.png"), study, title=title)
+    s = Scene(panel_size=(600, 520))
+    _study_panel(s, study, mesh, VIEWS[0])
+    out["thumb"] = _crop(s.render(os.path.join(IMAGES, "cases", f"{name}.png")))
+    s = Scene(title, panel_size=(520, 460))
+    for v in VIEWS:
+        _study_panel(s, study, mesh, v)
+    out["views"] = s.render(os.path.join(IMAGES, "cases", f"{name}-views.png"))
     if stress:
         print(f"   {name}: stress FEA", file=sys.stderr, flush=True)
         fields = verify_part(study, mesh, refine=0, fields=True)["fields"]
         # Coloured against the part's own stress (its 98th percentile, so a
         # support's singular corner doesn't wash it out): this shows the load
         # paths. The margin against the material is the SF in the caption.
-        vm = np.max([c["vonMises"] for c in fields["cases"]], axis=0)
-        scale = float(np.percentile(vm, 98)) or 1.0
-        label = "von Mises / part's 98th percentile"
-        out["stressThumb"] = _crop(render_stress(mesh, fields, os.path.join(IMAGES, "stress", f"{name}.png"),
-                                                 scale, views=[_VIEWS[0]], size=(7.0, 6.3), label=label))
-        out["stress"] = render_stress(mesh, fields, os.path.join(IMAGES, "stress", f"{name}-views.png"),
-                                      scale, title=name, label=label)
+        vm_nodes = np.max([c["vonMises"] for c in fields["cases"]], axis=0)
+        scale = float(np.percentile(vm_nodes, 98)) or 1.0
+        # each vertex takes its nearest analysis nodes' values, inverse-distance
+        # weighted, so the voxel grid's steps don't show as speckle
+        dist, idx = cKDTree(fields["nodes"]).query(mesh.vertices, k=8)
+        w = 1.0 / np.maximum(dist, 1e-6)
+        w /= w.sum(axis=1, keepdims=True)
+        worst = max(fields["cases"], key=lambda c: np.linalg.norm(c["displacement"], axis=1).max())
+        disp = np.einsum("vk,vkd->vd", w, worst["displacement"][idx])
+        dmax = np.linalg.norm(disp, axis=1).max()
+        k = 0.04 * float(np.ptp(mesh.bounds, axis=0).max()) / dmax if dmax > 0 else 0.0
+        bent = trimesh.Trimesh(mesh.vertices + k * disp, mesh.faces, process=False)
+        colors = ramp((w * vm_nodes[idx]).sum(axis=1) / scale)
+        bar = ("von Mises stress", "0", "98th percentile")
+        s = Scene(panel_size=(600, 520), colorbar=bar)
+        _study_panel(s, None, bent, VIEWS[0], vertex_colors=colors)
+        out["stressThumb"] = _crop(s.render(os.path.join(IMAGES, "stress", f"{name}.png")))
+        s = Scene(f"{name}: stress, shape {k:.0f}x exaggerated ({worst['name']})" if k else name,
+                  panel_size=(520, 460), colorbar=bar)
+        for v in VIEWS[:2]:
+            _study_panel(s, None, bent, v, vertex_colors=colors)
+        out["stress"] = s.render(os.path.join(IMAGES, "stress", f"{name}-views.png"))
     return out
 
 
-def render_heatx(name, spec, step, normal=None):
+def render_heatx(name, spec, step, normal=None, view=(28, -55)):
+    """The part, the part cut open, both fluid spaces cut open at the same
+    plane (A blue, B orange), and A alone. The cut keeps the side its normal
+    points to, so point it away from the view."""
     from loadpath.heatx import design_heat_exchanger, heat_exchanger_from_spec
 
     hx = heat_exchanger_from_spec(spec)
@@ -121,33 +180,47 @@ def render_heatx(name, spec, step, normal=None):
     mesh, rep, spaces = design_heat_exchanger(hx, fluid_meshes=True)
     title = f"{name}: cell {hx.cell:g} mm, wall {hx.wall:g} mm, " + \
         ("fluids isolated" if rep.get("isolated") else "FLUIDS NOT ISOLATED")
-    lo, hi = hx.core.bounds()
-    cut = None if normal is None else (0.5 * (np.asarray(lo) + np.asarray(hi)), np.asarray(normal, float))
-    return render_heat_exchanger(mesh, spaces, hx.core, os.path.join(IMAGES, "heatx", f"{name}.png"),
-                                 title=title, cut=cut)
+    lo, hi = (np.asarray(b, float) for b in hx.core.bounds())
+    c0 = 0.5 * (lo + hi)
+    cn = np.asarray(normal if normal is not None else (0, 0, 1), float)
+    cn /= np.linalg.norm(cn)
+    names = list(spaces)
+    cut = {n: spaces[n].slice_plane(c0, cn, cap=True) for n in names}
+    s = Scene(title, panel_size=(480, 460))
+    s.panel("part", view=view).mesh(mesh)
+    s.panel("part, cut open", view=view).mesh(mesh.slice_plane(c0, cn, cap=True))
+    p = s.panel(" + ".join(names) + ", cut open", view=view)
+    for i, n in enumerate(names):
+        p.mesh(cut[n], color=FLUIDS[i % 2])
+    s.panel(names[0], view=view).mesh(cut[names[0]], color=FLUIDS[0])
+    return s.render(os.path.join(IMAGES, "heatx", f"{name}.png"))
 
 
-def render_metal_ceilings():
+def render_metal_ceilings(flat=20.0, view=(30, -55)):
     """The lpbf eval exchanger's fluid spaces with and without channel
-    closure, flat internal ceilings in red."""
+    closure, flat internal ceilings (within `flat` degrees of level, facing
+    down onto the fluid from the metal above) in red."""
     from loadpath.heatx import design_heat_exchanger, heat_exchanger_from_spec
-    from loadpath.render import render_internal_ceilings
 
     with open(os.path.join(CASES, f"{METAL_CASE}.json")) as fh:
         spec = json.load(fh)
     step = spec.get("step", 0.45)
     spec = {k: v for k, v in spec.items() if k not in ("name", "description", "duty", "step", "expect")}
-    variants = []
+    s = Scene("AlSi10Mg intercooler core built +z: fluid spaces, flat ceilings in red (unsupportable in metal)",
+              panel_size=(620, 540))
+    up = np.array([0.0, 0.0, 1.0])
+    red = np.array([0.85, 0.10, 0.08])
     for closure in (False, True):
         hx = heat_exchanger_from_spec({**spec, "closure": closure, "cleanouts": 0})
         hx.step = step
         _, rep, spaces = design_heat_exchanger(hx, fluid_meshes=True)
-        flat = rep["internalCeilings"]["flatArea"] / 100.0
-        variants.append(((("channels close into peaked roofs" if closure else "flat skin over the channels")
-                          + f": {flat:.1f} cm² flat inside"), spaces))
-    return render_internal_ceilings(variants, [0, 0, 1], os.path.join(IMAGES, "heatx", "lpbf-ceilings.png"),
-                                    title="AlSi10Mg intercooler core built +z: fluid spaces, flat ceilings in red "
-                                          "(unsupportable in metal)")
+        flat_cm2 = rep["internalCeilings"]["flatArea"] / 100.0
+        p = s.panel(("channels close into peaked roofs" if closure else "flat skin over the channels")
+                    + f": {flat_cm2:.1f} cm² flat inside", view=view)
+        for i, m in enumerate(spaces.values()):
+            ceil = (m.face_normals @ up) > np.cos(np.radians(flat))
+            p.mesh(m, face_colors=np.where(ceil[:, None], red[None], np.asarray(FLUIDS[i % 2])[None]))
+    return s.render(os.path.join(IMAGES, "heatx", "lpbf-ceilings.png"))
 
 
 def _rel(p):
