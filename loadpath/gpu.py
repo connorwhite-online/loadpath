@@ -10,12 +10,24 @@ NVIDIA GPUs (CUDA) from the same code. Hierarchy setup stays in numpy (about
 
 Precision follows the CPU solver: the V-cycle in float32, the outer
 conjugate gradient and its operator in float64, so the answer is the same
-float64 one (same CG counts, compliance equal to ~1e-9). A float32 outer CG
-was tried for Apple GPUs, which have no float64: on the arm link it
-diverged after ~40 iterations where float64 needs 12 (a slender part's
-K u cancels away float32's digits), and reliable updates could not rescue
-it. So on MPS the CG runs on the CPU (torch, threaded; unified memory keeps
-the copies cheap) and the V-cycle, the bulk of the work, on the GPU.
+float64 one (same CG counts, compliance equal to ~1e-9).
+
+Apple GPUs have no float64, and consumer NVIDIA cards run it at 1/32 to
+1/64 of float32 speed. A plain float32 CG diverged on the arm link (~40
+iterations where float64 needs 12): a slender part's displacement is
+hundreds of times a cell's stretch, mostly rigid translation and rotation
+of each cell, and K u cancels that away together with float32's digits. So
+those devices run a float32-only solve (`fp32`, below): iterative
+refinement whose outer residual keeps the displacement as a float32 pair
+(hi + lo, ~48 bits) and applies each cell's matrix only to the cell's
+deformation, with its rigid translation and mean rotation taken out first
+in pair arithmetic (K annihilates rigid motion, so the product is the
+same, but now it is computed from small numbers). Inner corrections are
+plain float32 CG. On the arm link (114k cells) this lands within 4e-6 of
+the float64 compliance and 1e-5 of the peak strain energy in 33 V-cycles
+against float64's 26, with no float64 anywhere. Selection: on by default
+on MPS; LOADPATH_FP32=1 forces it on any device, 0 keeps the old split
+(CG in float64 on the CPU, V-cycle on the GPU).
 
 The coarsest level stays where it is (a sparse LU or pyamg on the CPU):
 it is a few thousand dofs, and copying its right-hand side over is cheaper
@@ -104,6 +116,39 @@ def _restrict(f):
     return out
 
 
+def _two_sum(a, b):
+    """Error-free a + b = s + e (Knuth), elementwise in the tensors' dtype."""
+    s = a + b
+    bb = s - a
+    return s, (a - (s - bb)) + (b - bb)
+
+
+def _rigid_free(h, lo, corners):
+    """(24, n) gathers of a cell's corner displacements as a float32 pair
+    (hi h, lo lo or None) -> (24, n) float32 deformation: the corner-0
+    translation and the mean (infinitesimal) rotation removed, in pair
+    arithmetic so nothing large is rounded. K times it equals K times the
+    input exactly in exact arithmetic (K annihilates rigid motion)."""
+    n = h.shape[-1]
+    h = h.reshape(8, 3, n)
+    s, e = _two_sum(h, -h[0:1])
+    if lo is not None:
+        lo = lo.reshape(8, 3, n)
+        e = e + (lo - lo[0:1])
+    d = s + e
+    # mean displacement gradient over the cell (cell units), its skew part
+    import torch
+
+    g = 0.5 * torch.einsum("ka,kin->ian", corners["c"], d)
+    w = 0.5 * (g - g.transpose(0, 1))
+    for a in range(3):
+        sel = corners["sel"][a]
+        s2, e2 = _two_sum(s[sel], -w[:, a].unsqueeze(0))
+        s[sel] = s2
+        e[sel] += e2
+    return (s + e).reshape(24, n)
+
+
 class _DevLevel:
     """A level's operator on a torch device in `dtype`, built from an mg._Level."""
 
@@ -126,6 +171,8 @@ class _DevLevel:
         if lv.kind == "scaled":
             self.ke = t(lv.ke)
             self.e = t(lv.e)
+            off = torch.as_tensor(np.array(_CORNER_OFF), device=dev)
+            self.corners = {"c": off.to(dtype) - 0.5, "sel": [off[:, a] > 0 for a in range(3)]}
         elif lv.kind == "weights":
             self.mcat = t(lv.mcat)
             self.w = t(lv.w)
@@ -183,12 +230,51 @@ class _DevLevel:
             flat_out.index_add_(0, rows, vals * u.reshape(-1)[cols])
         return out
 
+    def apply_rf(self, u, lo=None):
+        """apply() on the pair u + lo for the fine ("scaled") level, each
+        cell's matrix applied to its rigid-motion-free deformation (see
+        _rigid_free): float32 only, accurate on slender parts."""
+        import torch
+
+        m = self.mask
+        uh = u * m
+        ul = lo * m if lo is not None else None
+        out = torch.zeros(self.node_shape, dtype=u.dtype, device=u.device)
+        if self.box is not None:
+            bx0, bx1, y0, y1, z0, z1 = self.box
+            for x0 in range(bx0, bx1, self.chunk):
+                x1 = min(x0 + self.chunk, bx1)
+                gat = lambda v: torch.cat([v[:, x0 + dx:x1 + dx, y0 + dy:y1 + dy, z0 + dz:z1 + dz]
+                                           for (dx, dy, dz) in _CORNER_OFF], 0).reshape(24, -1)
+                d = _rigid_free(gat(uh), gat(ul) if ul is not None else None, self.corners)
+                f = self._kernel(d, (x0, x1, y0, y1, z0, z1))
+                for c, (dx, dy, dz) in enumerate(_CORNER_OFF):
+                    out[:, x0 + dx:x1 + dx, y0 + dy:y1 + dy, z0 + dz:z1 + dz] += f[3 * c:3 * c + 3]
+        if self.extra is not None:
+            rows, cols, vals = self.extra
+            out.view(-1).index_add_(0, rows, vals * uh.reshape(-1)[cols])
+        out.mul_(m)
+        out.add_((1 - m) * u)
+        return out
+
     def apply(self, u):
         m = self.mask
         out = self.apply_k(u * m)
         out.mul_(m)
         out.add_((1 - m) * u)
         return out
+
+
+def _pair_arithmetic_ok(dev) -> bool:
+    """True if the device rounds float32 adds to nearest without
+    reassociating them (fast-math compilers can), which _two_sum needs."""
+    import torch
+
+    a = torch.tensor([1.0, 3.0e7, -2.0], dtype=torch.float32, device=dev)
+    b = torch.tensor([1.0e-8, 1.0, 1.0e-7], dtype=torch.float32, device=dev)
+    s, e = _two_sum(a, b)
+    exact = (s.double().cpu() + e.double().cpu()).numpy()
+    return bool(np.allclose(exact, a.double().cpu().numpy() + b.double().cpu().numpy(), rtol=0, atol=1e-15))
 
 
 class TorchMG:
@@ -211,6 +297,10 @@ class TorchMG:
         # the arm link where float64 takes 12. Apple GPUs have no float64,
         # so there the CG runs on the CPU (torch, unified memory: the copies
         # are cheap) and only the V-cycle, ~85% of the work, on the GPU.
+        fp32 = os.environ.get("LOADPATH_FP32", "").strip().lower()
+        self.fp32 = device.type == "mps" if fp32 in ("", "auto") else fp32 in ("1", "true", "on", "yes")
+        if self.fp32 and not _pair_arithmetic_ok(device):
+            self.fp32 = False
         self.cg_dev = torch.device("cpu") if device.type == "mps" else device
         self.a64 = None
 
@@ -218,7 +308,7 @@ class TorchMG:
         g = self.g
         self.levels = [_DevLevel(g._l0s, self.dev, self.dtype)] + \
                       [_DevLevel(lv, self.dev, self.dtype) for lv in g.levels[1:]]
-        self.a64 = _DevLevel(g.levels[0], self.cg_dev, self.torch.float64)
+        self.a64 = None if self.fp32 else _DevLevel(g.levels[0], self.cg_dev, self.torch.float64)
         for i, lv in enumerate(self.levels):
             lv.lmax = self._estimate_lmax(i)
             # keep the CPU levels' bound in step (diagnostics, CPU fallback)
@@ -301,6 +391,95 @@ class TorchMG:
         return x.zero_(), b.clone()
 
     def solve(self, b, x0):
+        if self.fp32:
+            return self.solve_fp32(b, x0)
+        return self.solve_mixed(b, x0)
+
+    def _pcg32(self, r, tol, maxiter):
+        """Plain float32 PCG on the fine level (rigid-free operator) for a
+        correction: K d = r to tol relative. Returns (d, iterations)."""
+        torch = self.torch
+        a = self.levels[0]
+        dot = lambda p, q: float(torch.dot(p.reshape(-1), q.reshape(-1)))
+        rnorm = float(torch.linalg.vector_norm(r))
+        d = torch.zeros_like(r)
+        if rnorm == 0:
+            return d, 0
+        r = r.clone()
+        z = self._vcycle(0, r)
+        p = z.clone()
+        rz = dot(r, z)
+        for it in range(1, maxiter + 1):
+            ap = a.apply_rf(p)
+            pap = dot(p, ap)
+            if pap <= 0:
+                return d, it
+            alpha = rz / pap
+            d.add_(p, alpha=alpha)
+            r.sub_(ap, alpha=alpha)
+            if float(torch.linalg.vector_norm(r)) <= tol * rnorm:
+                return d, it
+            z = self._vcycle(0, r)
+            rz_new = dot(r, z)
+            p.mul_(rz_new / rz).add_(z)
+            rz = rz_new
+        return d, maxiter
+
+    def solve_fp32(self, b, x0, inner_rtol=3e-3, inner_max=50, outer_max=40):
+        """float32-only solve for devices without (fast) float64: iterative
+        refinement on the pair x = hi + lo. Each outer step forms the
+        residual with the rigid-free operator from the pair, solves the
+        correction with float32 PCG to 3e-3, and adds it in pair
+        arithmetic. Converged when the correction's energy d.r is under
+        rtol^2 of the solution's x.b: the residual's 2-norm floors at
+        float32 assembly noise on slender parts (internal forces dwarf the
+        load), noise that does not move the solution. Returns (x float64
+        numpy, V-cycles, converged)."""
+        torch = self.torch
+        g = self.g
+        a = self.levels[0]
+        b = np.asarray(b, np.float64)
+        if not np.any(b):
+            return np.zeros_like(b), 0, True
+        bh = torch.as_tensor(b.astype(np.float32), device=self.dev)
+        bl = torch.as_tensor((b - b.astype(np.float32)).astype(np.float32), device=self.dev)
+        dot = lambda p, q: float(torch.dot(p.reshape(-1), q.reshape(-1)))
+        xh = torch.zeros_like(bh)
+        xl = torch.zeros_like(bh)
+        if x0 is not None and np.any(x0):
+            # GridElasticity._pcg's warm start: the energy-optimal multiple
+            # of x0, or zero if even that is worse
+            hi = x0.astype(np.float32)
+            th = torch.as_tensor(hi, device=self.dev)
+            tl = torch.as_tensor((x0 - hi).astype(np.float32), device=self.dev)
+            ax = a.apply_rf(th, tl)
+            xax = dot(th, ax) + dot(tl, ax)
+            s = (dot(bh, th) + dot(bh, tl)) / xax if xax > 0 else 0.0
+            if s > 0 and float(torch.linalg.vector_norm(bh - s * ax)) < float(torch.linalg.vector_norm(bh)):
+                x = x0 * s
+                hi = x.astype(np.float32)
+                xh = torch.as_tensor(hi, device=self.dev)
+                xl = torch.as_tensor((x - hi).astype(np.float32), device=self.dev)
+        tol2 = g.rtol ** 2
+        total = 0
+        for _ in range(outer_max):
+            r = (bh - a.apply_rf(xh, xl)) + bl
+            d, it = self._pcg32(r, inner_rtol, inner_max)
+            total += it
+            xh, e = _two_sum(xh, d)
+            xl = xl + e
+            xh, xl = _two_sum(xh, xl)
+            de = abs(dot(d, r))
+            xe = dot(xh, bh)
+            if xe <= 0 or not np.isfinite(de):
+                break
+            if de <= tol2 * xe:
+                x = xh.cpu().numpy().astype(np.float64) + xl.cpu().numpy()
+                return x, total, True
+        x = xh.cpu().numpy().astype(np.float64) + xl.cpu().numpy()
+        return x, total, False
+
+    def solve_mixed(self, b, x0):
         """GridElasticity._pcg with torch: float64 CG on `cg_dev`, float32
         V-cycle on `dev`. float64 b, x0 (node grids, masked) -> (x,
         iterations, converged)."""

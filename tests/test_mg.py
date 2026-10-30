@@ -128,6 +128,48 @@ def test_torch_backend_matches_numpy():
         assert np.linalg.norm(w1 - w0) < 1e-6 * np.linalg.norm(w0)
 
 
+def test_fp32_only_solve():
+    """The float32-only solve (gpu.solve_fp32, for Apple GPUs) on a slender
+    bar (L/h 40, the case where plain float32 CG fails): the answer within
+    1e-5 of float64, from a cold and a warm start, with no float64 on the
+    device."""
+    if "torch" not in DEVICES:
+        print("  (torch not installed: skipped)")
+        return
+    nx, ny, nz = 160, 4, 4
+    ijk = np.stack(np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij"), -1).reshape(-1, 3)
+    mesh = HexMesh(ijk, 0.5, np.zeros(3))
+    fixed = np.zeros(mesh.n_dof, bool)
+    root = np.nonzero(mesh.node_ijk[:, 0] == 0)[0]
+    for i in range(3):
+        fixed[3 * root + i] = True
+    f = np.zeros(mesh.n_dof)
+    tip = np.nonzero(mesh.node_ijk[:, 0] == nx)[0]
+    f[3 * tip + 2] = -1.0 / len(tip)
+    f[3 * tip + 1] = 0.3 / len(tip)
+    e = np.full(mesh.n_elem, 1700.0)
+    ref = GridElasticity(mesh, 0.35, fixed, rtol=1e-10, coarse_cells=100, maxiter=3000, device="cpu")
+    ref.set_moduli(e)
+    u0 = ref.solve_many([f])[0]
+    old = os.environ.get("LOADPATH_FP32")
+    os.environ["LOADPATH_FP32"] = "1"
+    try:
+        g = GridElasticity(mesh, 0.35, fixed, rtol=1e-6, coarse_cells=100, maxiter=3000, device="torch")
+        assert g._dev.fp32 and g._dev.a64 is None
+        g.set_moduli(e)
+        u = g.solve_many([f])[0]
+        assert abs(f @ u - f @ u0) < 1e-5 * (f @ u0), (f @ u, f @ u0)
+        assert np.abs(u - u0).max() < 1e-5 * np.abs(u0).max()
+        g.set_moduli(e * 1.1)
+        w = g.solve_many([f], [u])[0]
+        assert np.abs(w - u0 / 1.1).max() < 1e-5 * np.abs(u0).max()
+    finally:
+        if old is None:
+            os.environ.pop("LOADPATH_FP32", None)
+        else:
+            os.environ["LOADPATH_FP32"] = old
+
+
 def test_simp_mg_matches_assembled():
     import json
 
@@ -158,7 +200,7 @@ def test_simp_mg_matches_assembled():
 
 
 TESTS = [test_transfers_are_adjoint, test_matches_assembled_solver, test_layered_springs_and_removed_cells,
-         test_torch_backend_matches_numpy, test_simp_mg_matches_assembled]
+         test_torch_backend_matches_numpy, test_fp32_only_solve, test_simp_mg_matches_assembled]
 
 
 def main():
