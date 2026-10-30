@@ -152,6 +152,10 @@ stress, and 0.4 cm^3 of fill; the meshed part has no sealed shell and the
 4 mm escape ball reaches every chamber. The farthest powder is 82 to 124
 mm from a hole; with `"maxPath": 80` it is 9 holes, at most 57 mm, but
 three of the extra holes sit at 20 to 34% of the peak.
+Verified under the arm-link study (verify_part, 400k cells): undrilled SF
+13.4 and 0.587 mm, drilled SF 12.8 and 0.607 mm, `maxPath` 80 SF 14.4 and
+0.605 mm. The SF moves within the voxel model's own scatter; the holes
+cost about 3% of stiffness.
 
 ![section through a drain hole](images/fields/arm-link-drain-section.png)
 
