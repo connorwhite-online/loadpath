@@ -716,6 +716,9 @@ FIELD_SCHEMA = {
                                              "thinnest wall or finer"},
             "project": {"type": "integer", "minimum": 0, "description": "surface relax+projection rounds "
                                                                        "(default 3; 0 = raw marching cubes)"},
+            "decimate": {**_POS, "description": "mm: thin the triangles wherever the mesh stays this close to "
+                                                "the surface (flat and gently curved regions lose most of "
+                                                "theirs; creases and small features keep them), e.g. 0.01-0.05"},
             "stream": {"type": "boolean", "description": "write the STL slab by slab without holding the mesh, "
                                                          "in bounded memory and with no cell budget: for parts "
                                                          "of tens of millions of triangles (fine lattices). "

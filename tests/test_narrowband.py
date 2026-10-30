@@ -1,7 +1,7 @@
 """
 Tests for narrowband.py (field meshing that samples only near the
 surface) and the exact-TPMS lattice surface it enables. Run:
-`python3 tests/test_narrowband.py` (about a minute and a half).
+`python3 tests/test_narrowband.py` (about two minutes).
 """
 import sys
 import time
@@ -215,9 +215,43 @@ def test_bookkeeping_matches_trimesh():
             os.environ["LOADPATH_THREADS"] = old
 
 
+def test_decimation_stays_within_tolerance():
+    """decimate thins the mesh where it stays within tol of the surface:
+    a solid link loses most of its triangles, no triangle that was within
+    tol leaves it, the mesh stays watertight with every vertex on the
+    surface, and the streamed export decimates each slab without opening
+    its seams."""
+    import tempfile
+
+    from loadpath.decimate import decimate
+    from loadpath.fields import field_stl
+    from loadpath.narrowband import peval, signed_volume, watertight
+
+    def over(f, V, F, tol):
+        T = V[F]
+        S = np.concatenate([T.mean(1), (T[:, 0] + T[:, 1]) / 2, (T[:, 1] + T[:, 2]) / 2, (T[:, 2] + T[:, 0]) / 2])
+        return int((np.abs(peval(f, S)).reshape(4, -1).max(0) > tol).sum())
+
+    f = FieldGraph(LINK).field()
+    g = FieldGraph(LINK)
+    m = field_mesh(f, *g.bounds(), pitch=0.3)
+    V0, F0 = np.asarray(m.vertices), np.asarray(m.faces)
+    V, F, st, _ = decimate(V0, F0, f, 0.02, 0.3)
+    assert len(F) < 0.25 * len(F0), (len(F), len(F0))
+    assert watertight(F, len(V)) and np.abs(f(V)).max() < 0.005
+    assert over(f, V, F, 0.02) <= over(f, V0, F0, 0.02)
+    assert abs(signed_volume(V, F) / signed_volume(V0, F0) - 1) < 2e-3
+    gl = FieldGraph(GRADED)
+    with tempfile.TemporaryDirectory() as d:
+        rep = field_stl(gl.field(), *gl.bounds(), f"{d}/p.stl", pitch=0.25, block=16, decimate=0.02)
+        Vs, Fs = _stl_arrays(f"{d}/p.stl")
+    assert rep["faces"] < 0.7 * rep["facesBeforeDecimation"] and watertight(Fs, len(Vs)), rep
+
+
 TESTS = [test_same_mesh_as_dense_with_fewer_samples, test_finer_than_the_dense_budget,
          test_steep_lattice_field_matches_dense, test_lattice_walls_are_exact, test_streamed_stl_matches_the_mesh,
-         test_streamed_stl_recovers_from_a_low_lipschitz_bound, test_bookkeeping_matches_trimesh]
+         test_streamed_stl_recovers_from_a_low_lipschitz_bound, test_bookkeeping_matches_trimesh,
+         test_decimation_stays_within_tolerance]
 
 
 def main():

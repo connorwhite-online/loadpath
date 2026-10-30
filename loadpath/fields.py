@@ -1212,7 +1212,8 @@ class FieldGraph:
             if bounds is None:
                 raise ValueError(f"{name or self.output!r} is unbounded (a lattice with nothing to clip it): "
                                  "intersect it with a solid or give the graph 'bounds'")
-        return field_mesh(self.field(name), bounds[0], bounds[1], pitch=pitch, project=project, progress=progress)
+        return field_mesh(self.field(name), bounds[0], bounds[1], pitch=pitch, project=project, progress=progress,
+                          decimate=m.get("decimate"))
 
 
 def _run_streamed(doc, g, out_dir, drains, process, progress, t0):
@@ -1232,10 +1233,12 @@ def _run_streamed(doc, g, out_dir, drains, process, progress, t0):
     name = doc.get("name", "field")
     path = os.path.join(out_dir, f"{name}.stl")
     st = field_stl(g.field(), bounds[0], bounds[1], path, pitch=m.get("pitch"), project=m.get("project", 3),
-                   progress=progress)
+                   progress=progress, decimate=m.get("decimate"))
     rep = {"name": name, "output": g.output, "nodes": len(g.nodes), "streamed": True,
            **{k: st[k] for k in ("pitch", "faces", "watertight", "volume", "area", "slabs", "maxSlabFaces",
                                  "droppedShells", "sampling")}, "stl": path}
+    if m.get("decimate"):
+        rep["decimation"] = {"tolerance": float(m["decimate"]), "facesBefore": st["facesBeforeDecimation"]}
     if process is not None:
         rep["process"] = process.kind
     if drains is not None:
@@ -1293,7 +1296,7 @@ def _remap(x, s, name):
 
 # ---- meshing ---------------------------------------------------------------------
 
-def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, sparse=True):
+def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, sparse=True, decimate=None):
     """Smooth, watertight trimesh of field(P) < 0 over [lo, hi] (mm).
 
     Marching cubes on a grid at `pitch` (default: the box over 4M cells,
@@ -1307,7 +1310,11 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
     `sparse` (default) samples the field only in blocks near its zero
     level (narrowband.py): the same marching-cubes mesh as the dense grid,
     with far fewer field evaluations and memory for one batch of blocks,
-    so the cell budget applies to the sampled cells, not the box."""
+    so the cell budget applies to the sampled cells, not the box.
+
+    `decimate` (mm) thins the triangles wherever the mesh stays that close
+    to the surface (decimate.py): flat and gently curved regions lose most
+    of theirs, creases and small features keep them."""
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -1331,7 +1338,7 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
             verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=np.inf, budget=_CELL_BUDGET,
                                                 progress=progress)
             stats["fallback"] = True
-        return _finish(verts, faces[:, ::-1], field, pitch, project, stats)
+        return _finish(verts, faces[:, ::-1], field, pitch, project, stats, decimate)
     if cells > _CELL_BUDGET:
         p = float((np.prod(ext + 2 * pad * pitch) / _CELL_BUDGET) ** (1 / 3))
         raise ValueError(f"grid {dims[0]}x{dims[1]}x{dims[2]} = {cells / 1e6:.1f}M cells exceeds the "
@@ -1355,10 +1362,11 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
     verts, faces, _, _ = marching_cubes(F, 0.0, spacing=(pitch,) * 3)
     del F
     m = trimesh.Trimesh(verts + lo, faces[:, ::-1], process=True)
-    return _finish(np.asarray(m.vertices), np.asarray(m.faces), field, pitch, project)
+    return _finish(np.asarray(m.vertices), np.asarray(m.faces), field, pitch, project, None, decimate)
 
 
-def field_stl(field, lo, hi, path, pitch=None, project=3, pad=2, progress=None, block=32, lipschitz=None):
+def field_stl(field, lo, hi, path, pitch=None, project=3, pad=2, progress=None, block=32, lipschitz=None,
+              decimate=None):
     """field(P) < 0 straight to a binary STL at `path`, one x slab of
     narrow-band blocks at a time, for parts whose mesh does not fit in
     memory (lattices at fine pitch: tens of millions of triangles). Memory
@@ -1373,12 +1381,13 @@ def field_stl(field, lo, hi, path, pitch=None, project=3, pad=2, progress=None, 
     file is watertight without ever holding it. Small closed shells inside
     one slab, under (2 pitch)^3, are dropped as field_mesh drops debris. A
     crossing the Lipschitz skip missed shows as an unmatched edge, and the
-    export starts over with every block sampled."""
+    export starts over with every block sampled. `decimate` (mm) thins each
+    slab as field_mesh does, its seam vertices left where they are."""
     lo, dims, pitch = _grid(lo, hi, pitch, pad)
     try:
-        return _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschitz)
+        return _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschitz, decimate)
     except _Unmatched:
-        rep = _stream_stl(field, lo, dims, pitch, path, project, progress, block, np.inf)
+        rep = _stream_stl(field, lo, dims, pitch, path, project, progress, block, np.inf, decimate)
         rep["sampling"]["fallback"] = True
         return rep
 
@@ -1390,14 +1399,15 @@ class _Unmatched(Exception):
 _STL_DTYPE = np.dtype([("n", "<f4", (3,)), ("v", "<f4", (3, 3)), ("a", "<u2")])
 
 
-def _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschitz):
+def _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschitz, decimate=None):
     import time
 
     from .narrowband import march_blocks, merge_blocks, shell_volumes
 
     t0 = time.time()
     stats = {}
-    rep = {"faces": 0, "volume": 0.0, "area": 0.0, "slabs": 0, "maxSlabFaces": 0, "droppedShells": 0}
+    rep = {"faces": 0, "volume": 0.0, "area": 0.0, "slabs": 0, "maxSlabFaces": 0, "droppedShells": 0,
+           "facesBeforeDecimation": 0}
     carry, carry_edges, carry_x = {}, set(), None
     tol = (2.0 * pitch) ** 3
 
@@ -1463,6 +1473,11 @@ def _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschit
         if project:
             Vmm = _relax(Vmm, F, field, pitch, int(project), pinned=start, seam=end)
         carry = dict(zip(end_keys, Vmm[end]))
+        if decimate:
+            from .decimate import decimate as thin
+
+            Vmm, F, dst, _ = thin(Vmm, F, field, float(decimate), pitch, locked=start | end)
+            rep["facesBeforeDecimation"] += dst["facesBefore"]
         carry_x = x1
         # write
         tri = Vmm[F]
@@ -1522,7 +1537,7 @@ def _grid(lo, hi, pitch, pad):
     return lo, dims, pitch
 
 
-def _finish(V, F, field, pitch, project, stats=None):
+def _finish(V, F, field, pitch, project, stats=None, decimate=None):
     """Relax and project the marching-cubes mesh, orient it, drop debris
     (shells under (2 pitch)^3), as a trimesh. The bookkeeping is numpy on
     the arrays: trimesh's own (process, split, volume) took longer than
@@ -1535,6 +1550,11 @@ def _finish(V, F, field, pitch, project, stats=None):
     F = np.asarray(F, np.int64)
     if project:
         V = _relax(V, F, field, pitch, int(project))
+    dec = None
+    if decimate:
+        from .decimate import decimate as thin
+
+        V, F, dec, _ = thin(V, F, field, float(decimate), pitch)
     try:
         lab, vol = shell_volumes(V, F)
         tol = (2.0 * pitch) ** 3
@@ -1555,6 +1575,8 @@ def _finish(V, F, field, pitch, project, stats=None):
     mesh.metadata["pitch"] = pitch
     if stats:
         mesh.metadata["sampling"] = stats
+    if dec:
+        mesh.metadata["decimation"] = dec
     return mesh
 
 
@@ -1696,6 +1718,8 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
            "pitch": mesh.metadata.get("pitch"), "faces": int(len(mesh.faces)), "watertight": watertight(F, len(V)),
            "volume": signed_volume(V, F), "area": float(mesh.area),
            "bounds": [mesh.bounds[0].tolist(), mesh.bounds[1].tolist()]}
+    if "decimation" in mesh.metadata:
+        rep["decimation"] = mesh.metadata["decimation"]
     # shells: a body's outside, or the wall of a void sealed inside it (normals in)
     shells = shell_volumes(V, F)[1].tolist()
     rep["bodies"] = sum(v > 0 for v in shells)

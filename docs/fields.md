@@ -234,6 +234,17 @@ feature with `sdf_kit.mesh_subtract`.
 
 Pick the pitch from the thinnest wall: a third of it or finer.
 
+### Fewer triangles: decimation
+
+`"mesh": {"decimate": 0.02}` (or `--decimate 0.02`) collapses edges
+wherever the mesh stays within 0.02 mm of the true surface, checked
+against the field itself at every reshaped triangle. Flat and gently
+curved regions lose most of their triangles, creases and small fillets
+keep theirs, the mesh stays watertight and every vertex stays on the
+surface. A solid link at 0.15 mm pitch drops from 781k to 49k triangles;
+a gyroid lattice, curved everywhere, to about a quarter. It also works
+with `stream`.
+
 ### Very large parts
 
 A fine lattice through a big part is tens of millions of triangles, more
