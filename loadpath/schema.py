@@ -563,6 +563,10 @@ _FIELD_OPS = {
                                                          "(lattice.py's homogenized tables set the wall)"},
                     "form": {"enum": ["sheet", "network"], "description": "sheet (default): a wall on the "
                                                                           "surface; network: one side solid"},
+                    "grading": {"enum": ["warp", "blend"],
+                                "description": "how a field cell grades: warp (default) bends the lattice's "
+                                               "coordinates so one period is one local cell, continuous "
+                                               "everywhere; blend cross-fades fixed periods (cylindrical frame)"},
                     "offset": {**_FIELD, "description": "mm, moves the level surface (network form)"},
                     "origin": _VEC3,
                     "frame": {"type": "object", "description": "cylindrical wraps the cells round an axis",

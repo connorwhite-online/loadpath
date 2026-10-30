@@ -385,10 +385,11 @@ def _frame_points(P, frame):
 
 def _tpms_distance(kind, P, cell, frame=None):
     """Signed mm distance to the TPMS midsurface with period `cell` (a scalar
-    or a per-point array). A varying cell is graded by blending the distance
-    fields of a ladder of fixed periods (at most 1.25x apart) with a
-    smoothstep: inside a level the lattice is exact, and across a step the two
-    neighbouring lattices cross-fade, which keeps every channel connected."""
+    or a per-point array). This is the `grading: "blend"` path for a varying
+    cell: the distance fields of a ladder of fixed periods (at most 1.25x
+    apart) cross-faded with a smoothstep. Exact inside a level; across a step
+    the two lattices disagree and leave crumbs, which is why the default is
+    the warp (_CellWarp)."""
     from .lattice import tpms
 
     kind = _TPMS_KIND.get(kind)
@@ -431,6 +432,79 @@ def _tpms_distance(kind, P, cell, frame=None):
             d[mix] = (1 - tk[mix]) * d[mix] + tk[mix] * d_hi
         out[idx] = d
     return out
+
+
+class _CellWarp:
+    """Lattice coordinates u(x) for a cell size that varies in space: the
+    least-squares map whose gradient is I / cell(x) (a Poisson solve on a
+    grid over the lattice's domain, smoothed-aggregation AMG), so one period
+    of u is one local cell. In 1D that is exactly u = integral of dx / cell;
+    in 3D, where a cell field has curl the map cannot follow everywhere, the
+    misfit spreads out smoothly instead of tearing. Every wall stays
+    continuous across a grading, unlike cross-fading lattices of different
+    periods, which leaves crumbs where they disagree."""
+
+    def __init__(self, cell_fn, lo, hi, max_cells=400_000):
+        import pyamg
+        import scipy.sparse as sp
+
+        lo = np.asarray(lo, float)
+        hi = np.asarray(hi, float)
+        ext = np.maximum(hi - lo, 1e-6)
+        h = float((np.prod(ext) / max_cells) ** (1 / 3))
+        # a few grid steps per cell at least, where the grid budget allows
+        probe = np.stack(np.meshgrid(*[np.linspace(lo[i], hi[i], 12) for i in range(3)], indexing="ij"),
+                         -1).reshape(-1, 3)
+        h = max(h, 0.0) if h > 0 else 1.0
+        h = min(max(h, float(np.min(cell_fn(probe))) / 6.0), max(h, 1e-3))
+        lo = lo - 2 * h
+        dims = np.ceil((hi + 2 * h - lo) / h).astype(int) + 1
+        axes = [lo[i] + np.arange(dims[i]) * h for i in range(3)]
+        G = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+        c = np.asarray(cell_fn(G), float)
+        if np.any(c <= 0):
+            raise ValueError("lattice cell must be positive everywhere")
+        g = (1.0 / c).reshape(tuple(dims))
+        n = int(np.prod(dims))
+        idx = np.arange(n).reshape(tuple(dims))
+        rows, a_, b_, targets = [], [], [], []
+        k = 0
+        for ax in range(3):
+            sl0 = [slice(None)] * 3
+            sl1 = [slice(None)] * 3
+            sl0[ax] = slice(0, -1)
+            sl1[ax] = slice(1, None)
+            i0, i1 = idx[tuple(sl0)].ravel(), idx[tuple(sl1)].ravel()
+            ge = 0.5 * (g[tuple(sl0)] + g[tuple(sl1)]).ravel()
+            a_.append(i0)
+            b_.append(i1)
+            targets.append((ax, ge * h, k, len(i0)))
+            k += len(i0)
+        i0, i1 = np.concatenate(a_), np.concatenate(b_)
+        m = len(i0)
+        D = sp.csr_matrix((np.r_[-np.ones(m), np.ones(m)], (np.r_[np.arange(m), np.arange(m)], np.r_[i0, i1])),
+                          shape=(m, n))
+        A = (D.T @ D + 1e-8 * sp.identity(n)).tocsr()
+        ml = pyamg.smoothed_aggregation_solver(A, max_coarse=500)
+        self.u = []
+        for comp in range(3):
+            t = np.zeros(m)
+            for ax, te, start, cnt in targets:
+                if ax == comp:
+                    t[start:start + cnt] = te
+            u = ml.solve(D.T @ t, tol=1e-8, maxiter=200, accel="cg")
+            # anchor: u = x / cell at the domain's centre point, so a constant
+            # cell gives back the plain lattice
+            self.u.append((u - u[n // 2]).reshape(tuple(dims)) + G[n // 2, comp] * g.ravel()[n // 2])
+        self.lo, self.h, self.dims = lo, h, dims
+
+    def __call__(self, P, cell):
+        idx = ((P - self.lo) / self.h).T
+        n = (self.dims - 1)[:, None]
+        cl = np.clip(idx, 0, n)
+        out = np.stack([ndimage.map_coordinates(u, cl, order=1, mode="nearest") for u in self.u], axis=1)
+        # past the grid: carry on at the local rate
+        return out + (idx - cl).T * self.h / np.broadcast_to(np.asarray(cell, float), (len(P),))[:, None]
 
 
 # ---- smooth booleans with a field radius -----------------------------------------
@@ -790,7 +864,16 @@ class FieldGraph:
         Q = P
         if "origin" in s:
             Q = P - np.asarray(s["origin"], float)
-        d = _tpms_distance(kind, Q, cell, s.get("frame"))
+        if isinstance(r.get("cell"), str) and s.get("grading", "warp") == "warp":
+            from .lattice import tpms
+
+            if s.get("frame"):
+                raise ValueError(f"node {nd.name!r}: a graded cell (warp) works in the cartesian frame only; "
+                                 "use grading: 'blend' with a cylindrical frame")
+            warp = self._resource(nd, lambda: self._warp(nd))
+            d = tpms(_TPMS_KIND[kind], warp(Q, cell), 1.0) * np.asarray(cell, float)
+        else:
+            d = _tpms_distance(kind, Q, cell, s.get("frame"))
         if "offset" in r:
             d = d - self._val(r["offset"], P, memo)
         if "thickness" in r:
@@ -809,6 +892,23 @@ class FieldGraph:
         if form == "network":
             return d - 0.5 * t
         raise ValueError(f"node {nd.name!r}: lattice form must be 'sheet' or 'network'")
+
+    def _warp(self, nd):
+        """The cell-grading map over the lattice's domain: its own bounds,
+        else the graph's, else the output solid's box."""
+        if "bounds" in nd.spec:
+            lo, hi = nd.spec["bounds"]["min"], nd.spec["bounds"]["max"]
+        elif "bounds" in self.doc:
+            lo, hi = self.doc["bounds"]["min"], self.doc["bounds"]["max"]
+        else:
+            b = self.bounds()
+            if b is None:
+                raise ValueError(f"node {nd.name!r}: a graded cell needs a domain: give the lattice or the "
+                                 "graph 'bounds'")
+            lo, hi = b
+        off = np.asarray(nd.spec.get("origin", (0, 0, 0)), float)
+        cell_ref = nd.refs["cell"]
+        return _CellWarp(lambda G: self.evaluate(G + off, cell_ref), np.asarray(lo) - off, np.asarray(hi) - off)
 
     def _transform(self, nd, P, memo):
         s = nd.spec

@@ -1659,6 +1659,13 @@
           ],
           "description": "sheet (default): a wall on the surface; network: one side solid"
         },
+        "grading": {
+          "enum": [
+            "warp",
+            "blend"
+          ],
+          "description": "how a field cell grades: warp (default) bends the lattice's coordinates so one period is one local cell, continuous everywhere; blend cross-fades fixed periods (cylindrical frame)"
+        },
         "offset": {
           "title": "a number, a node name or a node object",
           "description": "mm, moves the level surface (network form)",

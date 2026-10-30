@@ -32,7 +32,7 @@ def main():
     ap.add_argument("--out", default="arm-link-fields-out")
     ap.add_argument("--pitch", type=float)
     ap.add_argument("--cells", type=int, default=150_000)
-    ap.add_argument("--uniform", default="1.5,1.0", help="skin,wall (mm) of the uniform comparison")
+    ap.add_argument("--uniform", default="1.4,0.9", help="skin,wall (mm) of the uniform comparison")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     doc = json.loads((HERE / "arm-link-graded.json").read_text())
@@ -41,7 +41,7 @@ def main():
     skin, wall = (float(x) for x in a.uniform.split(","))
     u = copy.deepcopy(doc)
     u["nodes"].update(skinWall={"op": "constant", "value": skin}, wall={"op": "constant", "value": wall},
-                      cell={"op": "constant", "value": 8.0})
+                      cell={"op": "constant", "value": 5.5})
     del u["nodes"]["stress"]
     gu = FieldGraph(u, base_dir=str(HERE))
     rows = {}

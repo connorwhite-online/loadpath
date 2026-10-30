@@ -94,6 +94,24 @@ def test_graded_lattice_stays_one_body():
     assert abs(m.volume / (60 * 20 * 20) - 0.3) < 0.06, m.volume / 24000
 
 
+def test_cell_warp_period_follows_the_field():
+    """With the cell a function of x alone, the warp is u = integral of
+    dx / cell: the local period along x is the cell, and y and z keep
+    theirs."""
+    from loadpath.fields import _CellWarp
+
+    cell = lambda P: 4.0 + 0.1 * P[:, 0]  # noqa: E731
+    w = _CellWarp(cell, [0, 0, 0], [80, 20, 20], max_cells=200_000)
+    x = np.linspace(5, 75, 15)
+    P = np.stack([x, np.full_like(x, 10), np.full_like(x, 10)], 1)
+    dx = 0.5
+    du = (w(P + [dx, 0, 0], cell(P + [dx, 0, 0]))[:, 0] - w(P, cell(P))[:, 0]) / dx
+    assert np.allclose(du * cell(P), 1.0, rtol=0.02), du * cell(P)
+    dv = (w(P + [0, dx, 0], cell(P))[:, 1] - w(P, cell(P))[:, 1]) / dx
+    # u_y cannot be exact (1/cell has curl along y): least squares keeps it close
+    assert np.allclose(dv * cell(P), 1.0, rtol=0.08), dv * cell(P)
+
+
 def test_mesh_field_is_exact_near_the_surface():
     """A coarse icosphere as a mesh field: distances near the surface are
     the mesh's own (to the triangles, not a voxel staircase), and the sign
@@ -242,7 +260,7 @@ def test_mcp_field_job():
 
 
 TESTS = [test_shell_volume_and_projection, test_variable_shell_follows_its_field,
-         test_variable_blend_is_a_bigger_fillet_where_asked, test_graded_lattice_stays_one_body,
+         test_variable_blend_is_a_bigger_fillet_where_asked, test_graded_lattice_stays_one_body, test_cell_warp_period_follows_the_field,
          test_mesh_field_is_exact_near_the_surface, test_samples_on_a_grid_interpolate_exactly,
          test_result_node_from_verify_fields, test_expressions_are_whitelisted, test_graph_errors_and_lint,
          test_unbounded_lattice_asks_for_bounds, test_cli_writes_part_and_report, test_mcp_field_job]

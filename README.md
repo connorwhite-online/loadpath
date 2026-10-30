@@ -11,6 +11,10 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
   carries the loads, verified by a fresh FEA of the delivered mesh.
 - **Check.** `loadpath.checks` has printability (wall thickness, overhangs, trapped
   voids), component fit, fluid-network isolation, a quick FEA probe and an SDF toolkit.
+- **Model with fields.** A part can be a graph of implicit fields, nTop style: the
+  skin thickens where the stress is, the lattice cell grows away from the bolts, the
+  fillet is larger where the load comes in, and the mesh comes out smooth
+  ([docs/fields.md](docs/fields.md)).
 - **For the process you print with.** FDM (bridges, islands, bed, layer bond), powder
   nylon (SLS, MJF: trapped powder, escape holes, warp-prone panels), resin (SLA, DLP:
   supports, peel area, suction cups, trapped resin) and powder-bed metal (internal
@@ -99,7 +103,8 @@ loadpath mcp                           # stdio MCP server for agents
 ```
 
 Also: `loadpath lattice` (fill a part with a stress-graded TPMS lattice),
-`loadpath heatx` (two-fluid TPMS heat exchangers), `loadpath schema` (JSON
+`loadpath heatx` (two-fluid TPMS heat exchangers), `loadpath field` (a part as a
+graph of fields, [docs/fields.md](docs/fields.md)), `loadpath schema` (JSON
 Schemas, also in [`schema/`](schema/)).
 
 - [Quickstart](docs/quickstart.md): install to a verified part in ten minutes.
@@ -117,6 +122,7 @@ python3 tests/run_tests.py
 python3 tests/test_interface.py
 python3 tests/test_pressure.py
 python3 tests/test_process.py
+python3 tests/test_fields.py
 python3 -m loadpath.evals.run --out evals-out/
 python3 docs/gallery.py --evals evals-out/    # refresh the gallery renders from that run
 ```

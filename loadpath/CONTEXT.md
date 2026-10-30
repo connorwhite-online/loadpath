@@ -63,6 +63,7 @@ it becomes an eval metric.
 | `mcp_server.py`, `__main__.py` | local MCP server and CLI |
 | `checks/` | checks on any mesh, no study needed: `check_dfm` (wall thickness, overhangs, trapped voids), `check_networks` (two-fluid isolation), `check_fit` (a board fits its enclosure), `fea_probe` (relative hotspot finder), `opening` |
 | `sdf_kit.py`, `exchanger.py` | field-modelling toolkit (primitives, TPMS, smooth booleans, exact mesh booleans) and the rectangular dual-fluid `exchanger_core` built from it; `heatx.py` is the newer, study-driven exchanger. Old `loadpath.checks.sdf_kit` / `.exchanger` imports still resolve |
+| `fields.py` | nTop-style field graphs (JSON or Python): named solid and scalar nodes, every numeric parameter can be a field (variable shell, variable fillet, graded TPMS cell/wall/density), `result` nodes from verify stress, exact mesh distance, smooth meshing (marching cubes + relax + projection). `loadpath field`, schema `field`, MCP `loadpath_field`; guide in docs/fields.md |
 
 Two of some things, on purpose for now:
 
