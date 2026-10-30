@@ -338,8 +338,16 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             # Each fraction warm-starts from the last design, which is what
             # lets a stiffness-bound part follow its layout down (GRIP's upper
             # arm: 7.0% passed warm at margin 1.06 and failed cold at 0.68).
-            o = attempt(vf, last_x, _WARM_BETA)
-            o.report["start"] = f"warm from {outcomes[-1].volume_fraction:.3f}" if outcomes else "warm"
+            try:
+                o = attempt(vf, last_x, _WARM_BETA)
+                o.report["start"] = f"warm from {outcomes[-1].volume_fraction:.3f}" if outcomes else "warm"
+            except RuntimeError:
+                # A carried layout can leave a support hanging on void
+                # (GRIP's wrist link: a pin-held idler with its material
+                # gone, so the stiffness solve never converged). Start this
+                # fraction afresh instead.
+                o = cold()
+                o.report["start"] = "cold (the warm start did not solve)"
             if big and len(outcomes) == 1 and vf < outcomes[0].volume_fraction \
                     and not (should_stop is not None and should_stop()):
                 # ...but carried from a fraction well above, the layout can
@@ -359,8 +367,13 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         return o
 
     def _confirm(o: Outcome) -> float:
-        rep = verify_part(study, o.mesh, max_cells=_CONFIRM_CELLS, min_pitch=0.3 * domain.pitch,
-                          contact_band=domain.pitch)
+        try:
+            rep = verify_part(study, o.mesh, max_cells=_CONFIRM_CELLS, min_pitch=0.3 * domain.pitch,
+                              contact_band=domain.pitch)
+        except RuntimeError as exc:
+            o.report.setdefault("warnings", []).append(f"confirmation failed: {exc}")
+            o.report["margin"] = 0.0
+            return 0.0
         mc = _margin(study, rep)
         o.report["confirm"] = {"safetyFactor": rep["safetyFactor"], "margin": mc,
                                "analysisPitch": rep["analysisPitch"], "analysisCells": rep["analysisCells"],
