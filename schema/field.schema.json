@@ -241,7 +241,7 @@
             "diameter": {
               "type": "number",
               "exclusiveMinimum": 0,
-              "description": "mm (default the process's minimum escape hole + 0.5: SLS 4.5, MJF 5.5, SLA/DLP 4, volumetric 3.5; LPBF 4.2, an M5 tap drill)"
+              "description": "mm (default 1.5 x the process's minimum escape hole or 2 mm over it, whichever is larger: SLS 6, MJF 7.5, SLA/DLP 5.5, volumetric 5; LPBF 6.8, an M8 tap drill)"
             },
             "count": {
               "type": "integer",
@@ -293,9 +293,16 @@
               "description": "mm grid for finding voids (default the mesh pitch)"
             },
             "maxPath": {
-              "type": "number",
-              "exclusiveMinimum": 0,
-              "description": "mm: add holes (up to 6 a void) while any powder is farther than this from a hole, through the void"
+              "anyOf": [
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "mm: add holes (up to 8 a void) while any powder is farther than this from a hole, through the void (default 60; null: just count)"
             }
           },
           "additionalProperties": false

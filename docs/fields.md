@@ -114,9 +114,13 @@ graph drills its own drain holes before it is meshed:
    cannot reach the outside is found, down to the slivers where a lattice
    wall grazes the skin.
 2. Voids smaller than the escape ball (`fillBelow`) are filled solid.
-3. Every other void gets `count` holes (default 2) half a millimetre over
-   the process's minimum escape hole (SLS 4.5 mm, MJF 5.5, SLA/DLP 4,
-   volumetric 3.5; LPBF 4.2, an M5 tap drill, so it can be plugged). The
+3. Every other void gets `count` holes (default 2), then more until no
+   powder is over `maxPath` (default 60 mm) from one. Powder removal is
+   where a part fails in production, so the holes are well over the
+   process's minimum escape hole: 1.5 x it or 2 mm over, whichever is
+   larger (SLS 6 mm, MJF 7.5, SLA/DLP 5.5, volumetric 5; LPBF 6.8, an M8
+   tap drill, so it can be plugged). `diameter` and `"maxPath": null`
+   take it back toward the minimum. The
    sites are ranked by the graph's own stress (the first `result` node, or
    `stress`), calmest first: a hole is a stress raiser. The first goes
    lowest along the build and the second highest, well apart, so air or
@@ -140,24 +144,20 @@ turns it off; `"drains": true` drills for any process.
 
 Sites are chosen calm first: the stress a hole sees is the worse of its
 inner end's and its mouth's (a bending part is calm at the core, not at
-the skin). Being well apart comes second, so two holes of a void can end
-up close together at the calm end, with a long powder path to the far
-end. `maxPath` (mm) adds holes, up to six a void, until no powder is
-farther than that from one, at the price of hotter sites.
+the skin). The holes `maxPath` adds go where the powder is farthest,
+calmest first, so they sit hotter than the first two.
 
-On the arm-link example in PA12 (`"process": "sls"`): 46 sealed voids
-(both gyroid labyrinths, the cable channel and 360 slivers by the
-bearing collars, 16.6 cm^3) become 6 holes at 5 to 15% of the peak
-stress, and 0.4 cm^3 of fill; the meshed part has no sealed shell and the
-4 mm escape ball reaches every chamber. The farthest powder is 82 to 124
-mm from a hole; with `"maxPath": 80` it is 9 holes, at most 57 mm, but
-three of the extra holes sit at 20 to 34% of the peak.
-Verified under the arm-link study (verify_part, 400k cells): undrilled SF
-13.4 and 0.587 mm, drilled SF 12.8 and 0.607 mm, `maxPath` 80 SF 14.4 and
-0.605 mm. The SF moves within the voxel model's own scatter; the holes
-cost about 3% of stiffness.
+On the arm-link example in PA12 (`"process": "sls"`): 47 sealed voids
+(both gyroid labyrinths, the cable channel and 378 slivers by the bearing
+collars, 16.6 cm^3) become 14 holes of 6 mm and 0.4 cm^3 of fill. No
+powder is more than 50 mm from a hole (two minimum-size holes a void left
+it 124 mm away). The meshed part has no sealed shell and the 4 mm escape
+ball reaches every chamber. The first holes sit at 4 to 15% of the peak
+stress, the added ones at 17 to 30%. Under the arm-link study
+(verify_part, 400k cells): undrilled SF 13.4 and 0.587 mm, drilled SF
+13.5 and 0.647 mm, 0.9 g lighter. The holes cost about 10% of stiffness,
+not strength.
 
-![section through a drain hole](images/fields/arm-link-drain-section.png)
 
 ## Pitfalls
 

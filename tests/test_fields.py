@@ -271,7 +271,7 @@ def _skinned_box(**extra):
 
 
 def test_drains_open_every_sealed_void():
-    """SLS: both labyrinths get two 4.5 mm holes each on flat faces, the
+    """SLS: both labyrinths get two 6 mm holes each on flat faces, the
     meshed part has no sealed shell left, every bit of each void reaches a
     hole, and processcheck's 4 mm escape ball gets out of all of it."""
     from loadpath.fields import run_field
@@ -284,10 +284,11 @@ def test_drains_open_every_sealed_void():
     assert all(v["unreachedVolume"] == 0 and v["farthestFromOpening"] < 60 for v in d["voids"]), d["voids"]
     assert d["meshEscape"]["enclosedCount"] == 0 and d["meshEscape"]["narrowExitCount"] == 0, d
     for h in d["holes"]:
-        assert h["diameter"] == 4.5 and max(abs(c) for c in h["axis"]) > 0.999, h     # square to a face
+        assert h["diameter"] == 6.0 and max(abs(c) for c in h["axis"]) > 0.999, h     # square to a face
         # well inside a face: a boss on an edge would poke out
-        at = np.array(h["at"])
-        assert np.all(at >= [3.5, 3.5, -0.1]) and np.all(at <= [36.5, 26.5, 14.1]), h
+        at, k = np.array(h["at"]), int(np.argmax(np.abs(h["axis"])))
+        off = np.minimum(at, [40, 30, 14] - at)
+        assert abs(off[k]) < 0.1 and all(off[j] > 4.0 for j in range(3) if j != k), h
     # mouths really open: the mesh's surface passes through a hole's rim, not across its middle
     q = np.array([np.array(h["at"]) - 0.5 * np.array(h["axis"]) for h in d["holes"]])
     assert (trimesh.proximity.signed_distance(mesh, q) < 0).all()      # trimesh: negative = outside
@@ -303,7 +304,7 @@ def test_drains_go_where_it_is_calm():
     doc["nodes"]["s"] = {"op": "coordinate", "axis": "x"}
     _, rep = run_field(doc, render=False)
     d = rep["drains"]
-    assert d["ok"] and len(d["holes"]) == 4 and d["diameter"] == 4.0, d
+    assert d["ok"] and len(d["holes"]) == 4 and d["diameter"] == 5.5, d
     assert all(h["at"][0] < 20 for h in d["holes"]), d["holes"]
     _, rep = run_field(_skinned_box(process="sla"), render=False)
     axes = [round(h["axis"][2]) for h in rep["drains"]["holes"]]

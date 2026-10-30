@@ -672,9 +672,9 @@ FIELD_SCHEMA = {
             {"enum": ["auto"]}, {"type": "boolean"},
             {"type": "object", "properties": {
                 "enabled": {"type": "boolean"},
-                "diameter": {**_POS, "description": "mm (default the process's minimum escape hole + 0.5: "
-                                                    "SLS 4.5, MJF 5.5, SLA/DLP 4, volumetric 3.5; LPBF 4.2, an "
-                                                    "M5 tap drill)"},
+                "diameter": {**_POS, "description": "mm (default 1.5 x the process's minimum escape hole or 2 mm "
+                                                    "over it, whichever is larger: SLS 6, MJF 7.5, SLA/DLP 5.5, "
+                                                    "volumetric 5; LPBF 6.8, an M8 tap drill)"},
                 "count": {"type": "integer", "minimum": 1, "description": "holes per void (default 2: one "
                                                                          "low, one high along the build)"},
                 "stress": {"type": ["string", "null"], "description": "node that ranks the sites, calmest "
@@ -691,8 +691,9 @@ FIELD_SCHEMA = {
                               "description": "solid nodes the bosses stay out of (bearing seats, mating faces)"},
                 "clearance": {"type": "number", "minimum": 0, "description": "mm from keepClear (default 1)"},
                 "pitch": {**_POS, "description": "mm grid for finding voids (default the mesh pitch)"},
-                "maxPath": {**_POS, "description": "mm: add holes (up to 6 a void) while any powder is farther "
-                                                   "than this from a hole, through the void"}},
+                "maxPath": {"anyOf": [_POS, {"type": "null"}],
+                            "description": "mm: add holes (up to 8 a void) while any powder is farther than this "
+                                           "from a hole, through the void (default 60; null: just count)"}},
              "additionalProperties": False}],
             "description": "Drain holes into sealed voids (trapped powder or resin): 'auto' (default) drills "
                            "for powder-bed and resin processes, true always, false never. Holes go at the "

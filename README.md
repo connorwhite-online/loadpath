@@ -112,12 +112,14 @@ to 12 mm cells:
 ![graded gyroid](docs/images/fields/graded-cell.png)
 
 A skin over a lattice traps powder or resin. Give the graph a `"process"` and it
-drills its own drain holes: the process's escape size, on bosses, at the calmest
-flat faces (here 5 to 15% of the link's peak stress, clear of the bearing seats),
-then checks that nothing is still sealed and the escape ball reaches every chamber.
+drills its own drain holes, sized well over the process minimum (6 mm for SLS) and
+added until no powder is more than 60 mm from one, on bosses, at the calmest flat
+faces clear of the bearing seats. Then it checks that nothing is still sealed and
+the escape ball reaches every chamber. The arm link takes 14 holes; SF 13.5
+against 13.4 undrilled, 10% softer.
 
-![drain holes in the arm link](docs/images/fields/arm-link-drains.png)
-![section through a drain hole](docs/images/fields/arm-link-drain-section.png)
+![drain holes in the arm link](docs/images/fields/arm-link-drains-top.png)
+![drain holes in the arm link, underside](docs/images/fields/arm-link-drains.png)
 
 ## Install
 

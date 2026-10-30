@@ -8,9 +8,10 @@ output on a voxel grid of the field itself and opens each one:
 
 - voids too small to hold a hole (under the escape hole's own ball by
   default) are filled solid;
-- every other void gets holes half a millimetre over the process's
-  minimum escape hole (SLS 4 mm, MJF 5, resin 3.5, volumetric 3; LPBF 4.2,
-  an M5 tap drill, so it can be plugged), two per void by default:
+- every other void gets holes well over the process's minimum escape hole
+  (1.5 x it or 2 mm over, whichever is larger: SLS 6 mm, MJF 7.5, resin
+  5.5, volumetric 5; LPBF 6.8, an M8 tap drill, so it can be plugged), two
+  per void, then more until no powder is over 60 mm (`maxPath`) from one:
   the calmest flat site first, lowest along the build, then the calmest one
   well away from it, highest along the build, so air or rinse flows
   through (and resin has its drain at the bottom and its vent at the top);
@@ -40,6 +41,7 @@ Units are millimetres.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -49,17 +51,18 @@ __all__ = ["DrainOptions", "drain_graph", "drains_wanted", "hole_defaults"]
 
 # processes with something to drain, and the ones processcheck has no card for
 _DRAINED = ("sls", "mjf", "sla", "dlp", "volumetric", "lpbf")
-_EXTRA = {"volumetric": 3.0, "lpbf": 4.2}         # lpbf: an M5 tap drill, so a hole can be plugged
+_EXTRA = {"volumetric": 3.0, "lpbf": 4.0}         # minimum escape holes processcheck has no card for
+_LPBF_DRILL = 6.8                                 # an M8 tap drill: big, and it can be plugged
 _TINY = 1.0                                       # mm^3: smaller is aliasing, not a void
 _ROUNDS = 6                                       # relabellings; holes in the first four, then fill only
 _DRILL_ROUNDS = 4
-_MAX_HOLES = 6                                    # a void, with maxPath
+_MAX_HOLES = 8                                     # a void, with maxPath
 _BUDGET = 16_000_000
 
 
 @dataclass
 class DrainOptions:
-    diameter: float | None = None     # mm (default the process's escape hole + 0.5; LPBF 4.2, an M5 tap drill)
+    diameter: float | None = None     # mm (default see hole_defaults: SLS 6, MJF 7.5, resin 5.5, LPBF 6.8)
     count: int = 2                    # holes per void
     stress: str | None = "auto"       # node whose value ranks the sites: "auto" = the first result node, None = none
     boss: float | None = None         # mm of solid round each hole (default max(1.5 x min wall, 0.4 x radius))
@@ -68,7 +71,7 @@ class DrainOptions:
     fill_below: float | None = None   # mm^3: fill smaller voids solid (default the escape ball's volume)
     keep_clear: list = field(default_factory=list)   # solid nodes the bosses stay out of
     clearance: float = 1.0            # mm from those
-    max_path: float | None = None     # mm: more holes (up to 6 a void) while powder is farther than this from one
+    max_path: float | None = 60.0     # mm: more holes (up to 8 a void) while powder is farther than this from one (None: off)
     pitch: float | None = None        # mm grid (default 0.75 x min wall, at most diameter / 8)
 
     _KEYS = {"diameter": "diameter", "count": "count", "stress": "stress", "boss": "boss", "blend": "blend",
@@ -113,19 +116,26 @@ def drains_wanted(spec, process) -> bool:
 
 def hole_defaults(process):
     """(drilled diameter mm, the process's minimum escape hole mm, holes per
-    void) for a process (spec.Process or name). Powder and resin holes are
-    drilled half a millimetre over the minimum: a hole exactly at it is a
-    narrow exit to processcheck's escape ball on any grid, and to powder
-    that has caked a little. LPBF drills an M5 tap size, to plug."""
+    void) for a process (spec.Process or name).
+
+    Powder removal is where a part fails in production, so the drilled hole
+    is well over the bare minimum: 1.5 x the minimum or 2 mm over it,
+    whichever is larger, rounded up to half a millimetre (SLS 6, MJF 7.5,
+    SLA/DLP 5.5, volumetric 5). A hole at the minimum is a narrow exit to
+    processcheck's escape ball on any grid, and to powder that has caked or
+    resin that has thickened. LPBF drills 6.8 mm, an M8 tap drill, so it
+    can still be plugged."""
     from .processcheck import RULES
 
     kind = str(getattr(process, "kind", process) or "").lower()
     esc = getattr(process, "escape_hole", None)
     if kind in RULES:
-        least = float(esc or RULES[kind]["escapeHole"])
-        return least + 0.5, least, int(RULES[kind]["escapeHoles"])
-    least = float(esc or _EXTRA.get(kind, 4.0))
-    return least + (0.0 if kind == "lpbf" and esc is None else 0.5), least, 2
+        least, per = float(esc or RULES[kind]["escapeHole"]), int(RULES[kind]["escapeHoles"])
+    else:
+        least, per = float(esc or _EXTRA.get(kind, 4.0)), 2
+    if kind == "lpbf" and esc is None:
+        return _LPBF_DRILL, least, per
+    return math.ceil(2.0 * max(1.5 * least, least + 2.0)) / 2.0, least, per
 
 
 def _as_process(process):
