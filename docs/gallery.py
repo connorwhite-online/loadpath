@@ -39,6 +39,9 @@ COLS = 3
 # Stress maps shown in the README (the rest are in docs/GALLERY.md).
 STRESS_PICKS = ["bell-crank", "printed-hook", "grip-upper-arm"]
 
+# The metal heat exchanger case whose internal ceilings the gallery shows.
+METAL_CASE = "lpbf-intercooler-core"
+
 # Heat exchangers shown in the gallery: (name, caption, spec, grid step mm, cut normal or None).
 HEATX = [
     ("box-crossflow", "Gyroid crossflow in a box: A left to right, B front to back",
@@ -124,6 +127,29 @@ def render_heatx(name, spec, step, normal=None):
                                  title=title, cut=cut)
 
 
+def render_metal_ceilings():
+    """The lpbf eval exchanger's fluid spaces with and without channel
+    closure, flat internal ceilings in red."""
+    from loadpath.heatx import design_heat_exchanger, heat_exchanger_from_spec
+    from loadpath.render import render_internal_ceilings
+
+    with open(os.path.join(CASES, f"{METAL_CASE}.json")) as fh:
+        spec = json.load(fh)
+    step = spec.get("step", 0.45)
+    spec = {k: v for k, v in spec.items() if k not in ("name", "description", "duty", "step", "expect")}
+    variants = []
+    for closure in (False, True):
+        hx = heat_exchanger_from_spec({**spec, "closure": closure, "cleanouts": 0})
+        hx.step = step
+        _, rep, spaces = design_heat_exchanger(hx, fluid_meshes=True)
+        flat = rep["internalCeilings"]["flatArea"] / 100.0
+        variants.append(((("channels close into peaked roofs" if closure else "flat skin over the channels")
+                          + f": {flat:.1f} cm² flat inside"), spaces))
+    return render_internal_ceilings(variants, [0, 0, 1], os.path.join(IMAGES, "heatx", "lpbf-ceilings.png"),
+                                    title="AlSi10Mg intercooler core built +z: fluid spaces, flat ceilings in red "
+                                          "(unsupportable in metal)")
+
+
 def _rel(p):
     return os.path.relpath(p, ROOT).replace(os.sep, "/")
 
@@ -183,6 +209,9 @@ def write_docs(rows, evals):
         n, cap = hx[0]
         readme += ["", "Two-fluid heat exchangers: two isolated channel networks through one sheet gyroid, "
                    "with headers that print without support.", "", f"![{n}](docs/images/heatx/{n}.png)"]
+    if exist("heatx", "lpbf-ceilings.png"):
+        readme += ["", "Printed in metal, nothing inside can be supported: the channels end in peaked roofs "
+                   "instead of flat ceilings (red).", "", "![metal ceilings](docs/images/heatx/lpbf-ceilings.png)"]
     readme += ["", f"<sub>{_stamp(evals)}</sub>", "", END]
 
     with open(README) as fh:
@@ -217,6 +246,12 @@ def write_docs(rows, evals):
         g += ["## Heat exchangers", ""]
         for n, cap in hx:
             g += [f"### {n}", "", cap, "", f"![{n}](images/heatx/{n}.png)", ""]
+    if exist("heatx", "lpbf-ceilings.png"):
+        g += ["### Printed in metal", "",
+              f"The `{METAL_CASE}` eval case built along +z in AlSi10Mg. Nothing inside a metal part can be "
+              "supported, so every flat ceiling over a channel is a defect: with `closure` the channels end in "
+              "peaked roofs under the top skin and flare open over plenums below.", "",
+              "![lpbf ceilings](images/heatx/lpbf-ceilings.png)", ""]
     with open(GALLERY, "w") as fh:
         fh.write("\n".join(g))
 
@@ -241,6 +276,8 @@ def main(argv=None):
         for name, _cap, spec, step, normal in HEATX:
             print(f"== heatx {name}", file=sys.stderr, flush=True)
             render_heatx(name, spec, step, normal)
+        print("== heatx metal ceilings", file=sys.stderr, flush=True)
+        render_metal_ceilings()
     write_docs(rows, args.evals)
     print(f"wrote {_rel(README)}, {_rel(GALLERY)} and {_rel(IMAGES)}/", file=sys.stderr)
 

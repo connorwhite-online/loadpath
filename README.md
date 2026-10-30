@@ -72,6 +72,10 @@ Two-fluid heat exchangers: two isolated channel networks through one sheet gyroi
 
 ![box-crossflow](docs/images/heatx/box-crossflow.png)
 
+Printed in metal, nothing inside can be supported: the channels end in peaked roofs instead of flat ceilings (red).
+
+![metal ceilings](docs/images/heatx/lpbf-ceilings.png)
+
 <sub>Rendered 2026-10-29 from `f5b3a9d` by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->

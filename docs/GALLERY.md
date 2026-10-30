@@ -127,3 +127,9 @@ Gyroid crossflow in a box: A left to right, B front to back
 Gyroid counterflow in a cylinder: A through the ends, B in and out the side
 
 ![cylinder-counterflow](images/heatx/cylinder-counterflow.png)
+
+### Printed in metal
+
+The `lpbf-intercooler-core` eval case built along +z in AlSi10Mg. Nothing inside a metal part can be supported, so every flat ceiling over a channel is a defect: with `closure` the channels end in peaked roofs under the top skin and flare open over plenums below.
+
+![lpbf ceilings](images/heatx/lpbf-ceilings.png)

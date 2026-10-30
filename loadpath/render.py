@@ -312,6 +312,53 @@ def render_heat_exchanger(mesh, spaces, core, path, title=None, size=(5.0, 4.6),
     plt.close(fig)
     return path
 
+def render_internal_ceilings(variants, up, path, title=None, size=(5.0, 4.6), view=(30, -55), flat=20.0):
+    """One panel per variant (label, {fluid: space mesh}): the fluid spaces
+    seen from above, the top of each (where it meets metal above it, a
+    ceiling) red where it lies within `flat` degrees of level along `up`.
+    Inside a metal part nothing there can be supported."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    up = np.asarray(up, float) / np.linalg.norm(up)
+    meshes = [m for _, sp in variants for m in sp.values()]
+    lo = np.min([m.bounds[0] for m in meshes], axis=0)
+    hi = np.max([m.bounds[1] for m in meshes], axis=0)
+    span, mid = (hi - lo).max(), 0.5 * (lo + hi)
+    colors = [np.array([0.20, 0.45, 0.85]), np.array([0.92, 0.65, 0.25])]
+    red = np.array([0.85, 0.08, 0.08])
+    fig = plt.figure(figsize=(size[0] * len(variants), size[1]), dpi=110)
+    elev, azim = view
+    e, a = np.radians(elev), np.radians(azim)
+    view_dir = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
+    key = view_dir + np.array([0.3, -0.2, 0.6])
+    key /= np.linalg.norm(key)
+    for pi, (label, spaces) in enumerate(variants):
+        ax = fig.add_subplot(1, len(variants), pi + 1, projection="3d")
+        for i, m in enumerate(spaces.values()):
+            m = _decimate(m, 120_000)
+            n = m.face_normals
+            shade = np.clip(n @ key, 0, 1)
+            base = np.where((n @ up > np.cos(np.radians(flat)))[:, None], red[None], colors[i % 2][None])
+            col = np.clip(base * (0.35 + 0.65 * shade)[:, None], 0, 1)
+            ax.add_collection3d(Poly3DCollection(m.triangles, facecolors=col, edgecolor="none", linewidth=0))
+        ax.set_xlim(mid[0] - span / 2, mid[0] + span / 2)
+        ax.set_ylim(mid[1] - span / 2, mid[1] + span / 2)
+        ax.set_zlim(mid[2] - span / 2, mid[2] + span / 2)
+        ax.set_box_aspect((1, 1, 1), zoom=1.5)
+        ax.view_init(elev, azim)
+        ax.set_axis_off()
+        ax.set_title(label, fontsize=9)
+    if title:
+        fig.suptitle(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(path, facecolor="white")
+    plt.close(fig)
+    return path
+
+
 def render_lattice(mesh, path, title=None, holes=(), size=(5.0, 4.6), view=(28, -55)):
     """A lattice part: whole, cut open across its length and its height so
     the core and its grading show, and a close-up of the first drain hole
