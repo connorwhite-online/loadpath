@@ -117,11 +117,26 @@ def tpms(kind: str, pts: np.ndarray, cell: float) -> np.ndarray:
     as a sheet wall reaches."""
     if kind not in TPMS:
         raise ValueError(f"lattice type must be one of {sorted(TPMS)}, got {kind!r}")
-    f, grad = TPMS[kind]
     k = 2.0 * np.pi / cell
     x, y, z = (k * pts[:, i] for i in range(3))
-    g = np.stack(grad(x, y, z), axis=-1) * k
-    return f(x, y, z) / np.maximum(np.linalg.norm(g, axis=-1), 0.3 * k)
+    if kind == "schwarz-p":
+        f, grad = TPMS[kind]
+        g = np.stack(grad(x, y, z), axis=-1) * k
+        return f(x, y, z) / np.maximum(np.linalg.norm(g, axis=-1), 0.3 * k)
+    # gyroid and diamond from one set of sines and cosines (the separate
+    # value and gradient functions above take each three times): the same
+    # expressions, so the same numbers, in a third of the trig
+    sx, cx, sy, cy, sz, cz = np.sin(x), np.cos(x), np.sin(y), np.cos(y), np.sin(z), np.cos(z)
+    if kind == "gyroid":
+        f = sx * cy + sy * cz + sz * cx
+        g = (cx * cy - sz * sx, cy * cz - sx * sy, cz * cx - sy * sz)
+    else:
+        f = sx * sy * sz + sx * cy * cz + cx * sy * cz + cx * cy * sz
+        g = (cx * sy * sz + cx * cy * cz - sx * sy * cz - sx * cy * sz,
+             sx * cy * sz - sx * sy * cz + cx * cy * cz - cx * sy * sz,
+             sx * sy * cz - sx * cy * sz - cx * sy * sz + cx * cy * cz)
+    g = np.stack(g, axis=-1) * k
+    return f / np.maximum(np.linalg.norm(g, axis=-1), 0.3 * k)
 
 
 @lru_cache(maxsize=None)

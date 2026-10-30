@@ -125,6 +125,8 @@ def main(argv=None):
     fg.add_argument("graph")
     fg.add_argument("--out", default="loadpath-out")
     fg.add_argument("--pitch", type=float, help="mesh grid, mm (overrides the graph's mesh.pitch)")
+    fg.add_argument("--stream", action="store_true", help="write the STL slab by slab in bounded memory "
+                                                          "(huge lattices; skips the checks that need the mesh)")
     fg.add_argument("--no-render", action="store_true")
     fg.add_argument("--base-dir")
     ed = sub.add_parser("edit", help="edit a field graph in the browser: node graph, sliders, live GPU preview, run")
@@ -306,6 +308,8 @@ def _field(args):
         return 2
     if args.pitch:
         doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "pitch": args.pitch}}
+    if args.stream:
+        doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "stream": True}}
     base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
     try:
         _, rep = run_field(doc, args.out, base, progress=_progress, render=not args.no_render and _can_render())

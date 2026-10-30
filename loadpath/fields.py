@@ -1068,6 +1068,42 @@ class FieldGraph:
         return field_mesh(self.field(name), bounds[0], bounds[1], pitch=pitch, project=project, progress=progress)
 
 
+def _run_streamed(doc, g, out_dir, drains, process, progress, t0):
+    """run_field with mesh.stream: the STL goes to disk slab by slab
+    (field_stl) and is never held, so the checks that need the whole mesh
+    (printability, drains' mesh escape, bodies, the render) are skipped."""
+    import time
+
+    if not out_dir:
+        raise ValueError("mesh.stream writes the STL as it goes: give an output folder")
+    m = doc.get("mesh") or {}
+    bounds = (doc["bounds"]["min"], doc["bounds"]["max"]) if "bounds" in doc else g.bounds()
+    if bounds is None:
+        raise ValueError(f"{g.output!r} is unbounded (a lattice with nothing to clip it): "
+                         "intersect it with a solid or give the graph 'bounds'")
+    os.makedirs(out_dir, exist_ok=True)
+    name = doc.get("name", "field")
+    path = os.path.join(out_dir, f"{name}.stl")
+    st = field_stl(g.field(), bounds[0], bounds[1], path, pitch=m.get("pitch"), project=m.get("project", 3),
+                   progress=progress)
+    rep = {"name": name, "output": g.output, "nodes": len(g.nodes), "streamed": True,
+           **{k: st[k] for k in ("pitch", "faces", "watertight", "volume", "area", "slabs", "maxSlabFaces",
+                                 "droppedShells", "sampling")}, "stl": path}
+    if process is not None:
+        rep["process"] = process.kind
+    if drains is not None:
+        rep["drains"] = drains
+    if "material" in doc:
+        from .materials import material_from_spec
+
+        mat = material_from_spec(doc["material"])
+        rep["mass"] = rep["volume"] * mat.density / 1000.0
+        rep["material"] = mat.name
+    rep["skipped"] = ["printability", "bodies", "render"]
+    rep["seconds"] = round(time.time() - t0, 1)
+    return rep
+
+
 def _remap(x, s, name):
     """`from` [a, b] -> `to` [c, d] through `curve`; clamped unless
     clamp: false. With more than two points, `from` (ascending) and `to`
@@ -1131,19 +1167,17 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
     dims = np.ceil((hi + pad * pitch - lo) / pitch).astype(int) + 1
     cells = int(np.prod(dims))
     if sparse:
-        from .narrowband import narrowband_mc
+        from .narrowband import narrowband_mc, watertight
 
         verts, faces, stats = narrowband_mc(field, lo, dims, pitch, budget=_CELL_BUDGET, progress=progress)
         if not len(faces):
             raise ValueError("the field has no inside over these bounds (nothing is below zero)")
-        mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
-        if not mesh.is_watertight:
+        if not watertight(faces, len(verts)):
             # the Lipschitz bound let a crossing through: sample every block
             verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=np.inf, budget=_CELL_BUDGET,
                                                 progress=progress)
             stats["fallback"] = True
-            mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
-        return _finish(mesh, field, pitch, project, stats)
+        return _finish(verts, faces[:, ::-1], field, pitch, project, stats)
     if cells > _CELL_BUDGET:
         p = float((np.prod(ext + 2 * pad * pitch) / _CELL_BUDGET) ** (1 / 3))
         raise ValueError(f"grid {dims[0]}x{dims[1]}x{dims[2]} = {cells / 1e6:.1f}M cells exceeds the "
@@ -1166,42 +1200,222 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
         raise ValueError("the field has no inside over these bounds (nothing is below zero)")
     verts, faces, _, _ = marching_cubes(F, 0.0, spacing=(pitch,) * 3)
     del F
-    verts = verts + lo
-    return _finish(trimesh.Trimesh(verts, faces[:, ::-1], process=True), field, pitch, project)
+    m = trimesh.Trimesh(verts + lo, faces[:, ::-1], process=True)
+    return _finish(np.asarray(m.vertices), np.asarray(m.faces), field, pitch, project)
 
 
-def _finish(mesh, field, pitch, project, stats=None):
-    """Relax and project the marching-cubes mesh, orient it, drop debris."""
+def field_stl(field, lo, hi, path, pitch=None, project=3, pad=2, progress=None, block=32, lipschitz=None):
+    """field(P) < 0 straight to a binary STL at `path`, one x slab of
+    narrow-band blocks at a time, for parts whose mesh does not fit in
+    memory (lattices at fine pitch: tens of millions of triangles). Memory
+    is one slab (`block` cells thick), whatever the part; there is no cell
+    budget. Returns the report: faces, volume, area, watertight, sampling.
+
+    The same marching cubes, relaxation and projection as field_mesh, slab
+    by slab. A vertex on the plane two slabs share is relaxed along the
+    seam only and projected by the first slab, and reused, bit for bit, by the second, so the STL
+    closes across the seam; the open edges each slab leaves on its two
+    planes are matched against its neighbours', which checks the whole
+    file is watertight without ever holding it. Small closed shells inside
+    one slab, under (2 pitch)^3, are dropped as field_mesh drops debris. A
+    crossing the Lipschitz skip missed shows as an unmatched edge, and the
+    export starts over with every block sampled."""
+    lo, dims, pitch = _grid(lo, hi, pitch, pad)
+    try:
+        return _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschitz)
+    except _Unmatched:
+        rep = _stream_stl(field, lo, dims, pitch, path, project, progress, block, np.inf)
+        rep["sampling"]["fallback"] = True
+        return rep
+
+
+class _Unmatched(Exception):
+    pass
+
+
+_STL_DTYPE = np.dtype([("n", "<f4", (3,)), ("v", "<f4", (3, 3)), ("a", "<u2")])
+
+
+def _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschitz):
+    import time
+
+    from .narrowband import march_blocks, merge_blocks, shell_volumes
+
+    t0 = time.time()
+    stats = {}
+    rep = {"faces": 0, "volume": 0.0, "area": 0.0, "slabs": 0, "maxSlabFaces": 0, "droppedShells": 0}
+    carry, carry_edges, carry_x = {}, set(), None
+    tol = (2.0 * pitch) ** 3
+
+    def keys(V):
+        return [r.tobytes() for r in np.ascontiguousarray(V)]
+
+    def slab(blocks, fh):
+        nonlocal carry, carry_edges, carry_x
+        x0 = int(blocks[0][0][0])
+        x1 = x0 + int(blocks[0][1][0]) - 1
+        if carry_x != x0 and carry_edges:
+            raise _Unmatched()              # the last slab left edges open and nothing meets them
+        nv, Vs, Fs = 0, [], []
+        for _, _, v, fa in blocks:
+            Vs.append(v)
+            Fs.append(fa + nv)
+            nv += len(v)
+        V, F = merge_blocks(np.concatenate(Vs), np.concatenate(Fs), block)
+        del Vs, Fs
+        F = F[:, ::-1]
+        start = V[:, 0] == x0
+        end = V[:, 0] == x1
+        # open edges: allowed only on the two planes, and matched across them
+        n = len(V)
+        a, b = F.ravel(), np.roll(F, -1, axis=1).ravel()
+        e = np.minimum(a, b) * n + np.maximum(a, b)
+        u, cnt = np.unique(e, return_counts=True)
+        if (cnt > 2).any():
+            raise _Unmatched()
+        op = u[cnt == 1]
+        ea, eb = op // n, op % n
+        at_start = start[ea] & start[eb]
+        at_end = end[ea] & end[eb]
+        if not (at_start | at_end).all():
+            raise _Unmatched()
+        kv = {}
+
+        def key(i):
+            if i not in kv:
+                kv[i] = V[i].tobytes()
+            return kv[i]
+
+        mine = {frozenset((key(i), key(j))) for i, j in zip(ea[at_start], eb[at_start])}
+        if mine != (carry_edges if carry_x == x0 else set()):
+            raise _Unmatched()
+        carry_edges = {frozenset((key(i), key(j))) for i, j in zip(ea[at_end], eb[at_end])}
+        # debris: a small shell that touches neither plane is whole and here
+        lab, vol = shell_volumes(V, F)
+        seam = np.zeros(len(vol), bool)
+        seam[np.unique(lab[np.flatnonzero((start | end)[F].any(axis=1))])] = True
+        drop = ~seam & (np.abs(vol) * pitch ** 3 <= tol)
+        if drop.any():
+            rep["droppedShells"] += int(drop.sum())
+            F = F[~drop[lab]]
+        Vmm = lo + V * pitch
+        si = np.flatnonzero(start)
+        if len(si):
+            got = [carry.get(k) for k in keys(V[si])]
+            if any(g is None for g in got):
+                raise _Unmatched()
+            Vmm[si] = np.array(got)
+        end_keys = keys(V[end])
+        if project:
+            Vmm = _relax(Vmm, F, field, pitch, int(project), pinned=start, seam=end)
+        carry = dict(zip(end_keys, Vmm[end]))
+        carry_x = x1
+        # write
+        tri = Vmm[F]
+        nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        ln = np.linalg.norm(nrm, axis=1)
+        rep["area"] += float(ln.sum() / 2)
+        rep["volume"] += float(np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])).sum() / 6)
+        out = np.zeros(len(F), _STL_DTYPE)
+        out["n"] = nrm / np.maximum(ln, 1e-300)[:, None]
+        out["v"] = tri
+        fh.write(out.tobytes())
+        rep["faces"] += len(F)
+        rep["slabs"] += 1
+        rep["maxSlabFaces"] = max(rep["maxSlabFaces"], len(F))
+
+    with open(path, "wb") as fh:
+        fh.write(b"loadpath field_stl".ljust(80, b" ") + b"\0\0\0\0")
+        cur = []
+        for blk in march_blocks(field, lo, dims, pitch, block=block, lipschitz=lipschitz, progress=progress,
+                                stats=stats):
+            if cur and blk[0][0] != cur[0][0][0]:
+                slab(cur, fh)
+                cur = []
+            cur.append(blk)
+        if cur:
+            slab(cur, fh)
+        if carry_edges:
+            raise _Unmatched()
+        if not rep["faces"]:
+            raise ValueError("the field has no inside over these bounds (nothing is below zero)")
+        fh.seek(80)
+        fh.write(np.uint32(rep["faces"]).tobytes())
+    if rep["volume"] < 0:
+        # wound inside out: flip every triangle in place
+        mm = np.memmap(path, dtype=_STL_DTYPE, mode="r+", offset=84, shape=(rep["faces"],))
+        for i in range(0, len(mm), 1_000_000):
+            c = mm[i:i + 1_000_000]
+            c["v"] = c["v"][:, ::-1]
+            c["n"] = -c["n"]
+        mm.flush()
+        del mm
+        rep["volume"] = -rep["volume"]
+    rep.update({"watertight": True, "pitch": pitch, "sampling": stats, "path": path,
+                "seconds": round(time.time() - t0, 1)})
+    return rep
+
+
+def _grid(lo, hi, pitch, pad):
+    """field_mesh's sampling grid: (lo, dims, pitch), off-grid by a hair."""
+    lo = np.asarray(lo, float)
+    hi = np.asarray(hi, float)
+    if pitch is None:
+        pitch = float((np.prod(hi - lo) / 4e6) ** (1 / 3))
+    pitch = float(pitch)
+    lo = lo - pad * pitch - pitch * 0.013717        # off-grid, as sdf_kit.to_mesh
+    dims = np.ceil((hi + pad * pitch - lo) / pitch).astype(int) + 1
+    return lo, dims, pitch
+
+
+def _finish(V, F, field, pitch, project, stats=None):
+    """Relax and project the marching-cubes mesh, orient it, drop debris
+    (shells under (2 pitch)^3), as a trimesh. The bookkeeping is numpy on
+    the arrays: trimesh's own (process, split, volume) took longer than
+    the meshing on a lattice of a few million faces."""
     import trimesh
 
+    from .narrowband import shell_volumes, signed_volume
+
+    V = np.asarray(V, float)
+    F = np.asarray(F, np.int64)
     if project:
-        mesh.vertices = _relax(mesh, field, pitch, int(project))
-    if mesh.volume < 0:
-        mesh.invert()
+        V = _relax(V, F, field, pitch, int(project))
     try:
-        bodies = mesh.split(only_watertight=False)
-        if len(bodies) > 1:
-            tol = (2.0 * pitch) ** 3
-            kept = [b for b in bodies if abs(float(b.volume)) > tol]
-            if kept and len(kept) < len(bodies):
-                mesh = trimesh.util.concatenate(kept) if len(kept) > 1 else kept[0]
+        lab, vol = shell_volumes(V, F)
+        tol = (2.0 * pitch) ** 3
+        if vol.sum() < 0:
+            F, vol = F[:, ::-1].copy(), -vol
+        small = np.abs(vol) <= tol
+        if len(vol) > 1 and small.any() and not small.all():
+            F = F[~small[lab]]
+            used = np.zeros(len(V), bool)
+            used[F] = True
+            new = np.cumsum(used) - 1
+            V, F = V[used], new[F]
     except Exception:  # noqa: BLE001 - debris filtering is best-effort
         pass
+    if signed_volume(V, F) < 0:
+        F = F[:, ::-1].copy()
+    mesh = trimesh.Trimesh(V, F, process=False)
     mesh.metadata["pitch"] = pitch
     if stats:
         mesh.metadata["sampling"] = stats
     return mesh
 
 
-def _gradient(field, V, h, chunk=400_000):
+def _gradient(field, V, h):
     """(f, grad f) at V from a tetrahedral stencil (five evaluations)."""
+    from .narrowband import peval
+
     tet = np.array([[1, -1, -1], [-1, -1, 1], [-1, 1, -1], [1, 1, 1]], float) * h
     f0 = np.empty(len(V))
     g = np.empty((len(V), 3))
+    chunk = 400_000
     for i in range(0, len(V), chunk):
         v = V[i:i + chunk]
         n = len(v)
-        f = np.asarray(field(np.concatenate([v] + [v + t for t in tet])), float)
+        f = peval(field, np.concatenate([v] + [v + t for t in tet]))
         ft = f[n:].reshape(4, n)
         f0[i:i + chunk] = f[:n]
         g[i:i + chunk] = (tet[:, :, None] * ft[:, None, :]).sum(axis=0).T / (4 * h * h)
@@ -1211,6 +1425,8 @@ def _gradient(field, V, h, chunk=400_000):
 def _project(field, V, pitch, f0=None, g=None):
     """One Newton step of every vertex onto field = 0, step capped at
     pitch / 2 and kept only where |f| drops."""
+    from .narrowband import peval
+
     if f0 is None:
         f0, g = _gradient(field, V, 0.05 * pitch)
     gg = np.maximum((g * g).sum(axis=1), 1e-12)
@@ -1218,37 +1434,63 @@ def _project(field, V, pitch, f0=None, g=None):
     ln = np.linalg.norm(step, axis=1)
     step *= np.minimum(1.0, 0.5 * pitch / np.maximum(ln, 1e-300))[:, None]
     cand = V + step
-    f1 = np.asarray(field(cand), float)
+    f1 = peval(field, cand)
     ok = np.abs(f1) < np.abs(f0)
     return np.where(ok[:, None], cand, V)
 
 
-def _relax(mesh, field, pitch, rounds):
+def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
     """Even out the marching-cubes vertices on the surface: each round moves
     every vertex halfway to its neighbours' centroid, within the tangent
     plane of the field (so the surface does not shrink), then projects it
     back onto the zero level. Marching cubes leaves a sawtooth along every
     crease (a vertex lands on one face or the other at random); relaxed and
     projected, a crease comes out as a clean edge rounded over about one
-    pitch. Exact sharp features are mesh booleans' job (sdf_kit.mesh_subtract)."""
+    pitch. Exact sharp features are mesh booleans' job (sdf_kit.mesh_subtract).
+
+    Two closing Newton passes take every vertex the rest of the way; a
+    vertex already within 1e-6 pitch of the zero level is left alone
+    there, so those passes cost about one evaluation per vertex instead of
+    six. `pinned` vertices do not move at all, and `seam` ones slide only
+    along the seam they form (toward their seam neighbours' centroid): the
+    streamed export's planes between slabs, which the next slab reuses
+    as they are, so they must not lean on one side's vertices."""
     import scipy.sparse as sp
 
-    e = mesh.edges_unique
-    n = len(mesh.vertices)
-    A = sp.coo_matrix((np.ones(2 * len(e)), (np.r_[e[:, 0], e[:, 1]], np.r_[e[:, 1], e[:, 0]])),
-                      shape=(n, n)).tocsr()
-    deg = np.maximum(np.asarray(A.sum(axis=1)).ravel(), 1)
-    V = np.asarray(mesh.vertices, float)
+    from .narrowband import peval
+
+    V = np.array(V, float)
+    n = len(V)
+    a = np.r_[F[:, 0], F[:, 1], F[:, 2]]
+    b = np.r_[F[:, 1], F[:, 2], F[:, 0]]
+    r, c = np.r_[a, b], np.r_[b, a]
+    if seam is not None:
+        seam = np.asarray(seam, bool)
+        k = ~seam[r] | seam[c]
+        r, c = r[k], c[k]
+    A = sp.coo_matrix((np.ones(len(r), np.float32), (r, c)), shape=(n, n)).tocsr()
+    A.data[:] = 1.0                       # an edge counts once, from either face
+    deg = np.maximum(np.diff(A.indptr), 1)
+    move = np.ones(n, bool) if pinned is None else ~np.asarray(pinned, bool)
     h = 0.05 * pitch
     for _ in range(rounds):
-        f0, g = _gradient(field, V, h)
-        V = _project(field, V, pitch, f0, g)
-        nrm = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+        idx = np.flatnonzero(move)
+        f0, g = _gradient(field, V[idx], h)
+        V[idx] = _project(field, V[idx], pitch, f0, g)
+        nrm = np.zeros((n, 3))
+        nrm[idx] = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
         d = (A @ V) / deg[:, None] - V
         d -= (d * nrm).sum(axis=1, keepdims=True) * nrm
-        V = V + 0.5 * d
-    V = _project(field, V, pitch)
-    return _project(field, V, pitch)
+        V[move] += 0.5 * d[move]
+    tol = 1e-6 * pitch
+    for _ in range(2):
+        idx = np.flatnonzero(move)
+        f0 = peval(field, V[idx])
+        far = np.abs(f0) > tol
+        idx = idx[far]
+        if len(idx):
+            V[idx] = _project(field, V[idx], pitch)
+    return V
 
 
 # ---- the job ---------------------------------------------------------------------
@@ -1276,13 +1518,18 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         opts = DrainOptions.from_spec(doc.get("drains"))
         drains = drain_graph(g, process, opts, build=doc.get("build"), min_wall=doc.get("minWall"),
                              pitch=(doc.get("mesh") or {}).get("pitch"), progress=progress)
+    if (doc.get("mesh") or {}).get("stream"):
+        return None, _run_streamed(doc, g, out_dir, drains, process, progress, t0)
     mesh = g.mesh(progress=progress)
+    from .narrowband import shell_volumes, signed_volume, watertight
+
+    V, F = np.asarray(mesh.vertices), np.asarray(mesh.faces)
     rep = {"name": doc.get("name", "field"), "output": g.output, "nodes": len(g.nodes),
-           "pitch": mesh.metadata.get("pitch"), "faces": int(len(mesh.faces)), "watertight": bool(mesh.is_watertight),
-           "volume": float(mesh.volume), "area": float(mesh.area),
+           "pitch": mesh.metadata.get("pitch"), "faces": int(len(mesh.faces)), "watertight": watertight(F, len(V)),
+           "volume": signed_volume(V, F), "area": float(mesh.area),
            "bounds": [mesh.bounds[0].tolist(), mesh.bounds[1].tolist()]}
     # shells: a body's outside, or the wall of a void sealed inside it (normals in)
-    shells = [float(b.volume) for b in mesh.split(only_watertight=False)]
+    shells = shell_volumes(V, F)[1].tolist()
     rep["bodies"] = sum(v > 0 for v in shells)
     rep["enclosedVoids"] = sum(v < 0 for v in shells)
     rep["enclosedVoidVolume"] = -sum(v for v in shells if v < 0)

@@ -682,7 +682,11 @@ FIELD_SCHEMA = {
             "pitch": {**_POS, "description": "mm grid (default: the box over 4M cells); a third of the "
                                              "thinnest wall or finer"},
             "project": {"type": "integer", "minimum": 0, "description": "surface relax+projection rounds "
-                                                                       "(default 3; 0 = raw marching cubes)"}},
+                                                                       "(default 3; 0 = raw marching cubes)"},
+            "stream": {"type": "boolean", "description": "write the STL slab by slab without holding the mesh, "
+                                                         "in bounded memory and with no cell budget: for parts "
+                                                         "of tens of millions of triangles (fine lattices). "
+                                                         "Skips the printability check, bodies and the render."}},
                  "additionalProperties": False},
         "material": {**_ONE_MATERIAL, "description": "Reports the mass."},
         "minWall": {**_POS, "description": "mm, the printability check's minimum wall (default 0.8)"},

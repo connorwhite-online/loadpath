@@ -173,6 +173,17 @@ feature with `sdf_kit.mesh_subtract`.
 
 Pick the pitch from the thinnest wall: a third of it or finer.
 
+### Very large parts
+
+A fine lattice through a big part is tens of millions of triangles, more
+than fits in memory as one mesh. `"mesh": {"stream": true}` (or
+`loadpath field --stream`) writes the STL slab by slab instead: memory is
+one slab of blocks 32 cells thick whatever the part, there is no cell
+budget, and the report still has the volume, area, mass and a watertight
+check (each slab's open edges are matched against its neighbours'). The
+checks that need the whole mesh (printability, bodies, the render) are
+skipped. Field evaluation runs on every core (`LOADPATH_THREADS` caps it).
+
 ## Drain holes
 
 A skin over a lattice traps whatever the lattice was printed in: powder
