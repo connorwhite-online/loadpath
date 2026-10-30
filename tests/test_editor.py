@@ -347,10 +347,68 @@ def test_gpu_preview_matches_fields_py():
     assert abs(out["_volume"] - vol) < 0.015 * vol, (out["_volume"], vol)
 
 
+_WALLS_DRIVER = r"""
+const { chromium } = require("playwright");
+const fs = require("fs"), path = require("path");
+const [page_, threeDir] = process.argv.slice(2);
+(async () => {
+  const browser = await chromium.launch({ args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+  const page = await (await browser.newContext({ viewport: { width: 900, height: 600 } })).newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  if (threeDir) await page.route("https://cdn.jsdelivr.net/**", (r) => r.fulfill({ contentType: "application/javascript",
+    body: fs.readFileSync(path.join(threeDir, r.request().url().endsWith("OrbitControls.js") ? "OrbitControls.js" : "three.module.js")) }));
+  await page.route("https://fonts.googleapis.com/**", (r) => r.fulfill({ body: "", contentType: "text/css" }));
+  await page.goto("file://" + path.resolve(page_));
+  await page.waitForFunction(() => window.lpReady === true, null, { timeout: 180000 });
+  const out = await page.evaluate(() => {
+    const E = window.lpEditor;
+    E.view({ walls: true, color: null });
+    E.camera([0, -0.01, 120], [0, 0, 0]);
+    const o = {};
+    for (const [k, p] of [["thin", [-15, 0, 10]], ["thick", [15, 0, 10]], ["thinSide", [-22, 0, 6]], ["thickSide", [22, 0, 6]]]) o[k] = E.pick(p)[3];
+    o.legend = document.querySelector("#lg-title").textContent;
+    return o;
+  });
+  out._errors = errors;
+  console.log(JSON.stringify(out));
+  await browser.close();
+})().catch((e) => { console.log(JSON.stringify({ _fatal: String(e) })); process.exit(1); });
+"""
+
+
+def test_wall_overlay_reads_thickness():
+    """Colour by wall thickness: a ray traced in along the normal reads a
+    0.5 mm and a 2 mm spherical shell at their tops and flanks; the legend
+    names the process minimum. Skipped without node and Playwright."""
+    node = shutil.which("node")
+    npath = os.environ.get("NODE_PATH") or "/opt/node22/lib/node_modules"
+    env = {**os.environ, "NODE_PATH": npath}
+    if not node or subprocess.run([node, "-e", "require('playwright')"], env=env, capture_output=True).returncode:
+        print("  (skipped: needs node and playwright)")
+        return
+    d = tempfile.mkdtemp(prefix="lp-walls-")
+    doc = {"nodes": {"a": {"op": "shape", "shape": {"type": "sphere", "center": [-15, 0, 0], "r": 10}},
+                     "b": {"op": "shape", "shape": {"type": "sphere", "center": [15, 0, 0], "r": 10}},
+                     "sa": {"op": "shell", "input": "a", "thickness": 0.5},
+                     "sb": {"op": "shell", "input": "b", "thickness": 2.0},
+                     "both": {"op": "union", "inputs": ["sa", "sb"]}}, "output": "both", "process": "fdm"}
+    page = field_editor(doc, os.path.join(d, "editor.html"), base_dir=d)
+    with open(os.path.join(d, "drive.cjs"), "w") as fh:
+        fh.write(_WALLS_DRIVER)
+    r = subprocess.run([node, os.path.join(d, "drive.cjs"), page, os.environ.get("LOADPATH_THREE_DIR", "")], env=env,
+                       capture_output=True, text=True, timeout=600)
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "_fatal" not in out and not out["_errors"], out
+    for k, want in (("thin", 0.5), ("thick", 2.0), ("thinSide", 0.5), ("thickSide", 2.0)):
+        assert abs(out[k] - want) < 0.02, (k, out[k])
+    assert "FDM minimum 0.8 mm" in out["legend"], out["legend"]
+
+
 TESTS = [test_graph_with_layout_lints, test_bakes_sample_the_graph, test_bake_spec_follows_an_analyzed_part,
          test_standalone_page_carries_its_data, test_server_lints_bakes_saves_and_runs,
          test_server_reuses_what_it_built, test_warp_solve_is_the_1d_integral,
-         test_cli_writes_a_standalone_editor, test_gpu_preview_matches_fields_py]
+         test_cli_writes_a_standalone_editor, test_gpu_preview_matches_fields_py, test_wall_overlay_reads_thickness]
 
 
 def main():

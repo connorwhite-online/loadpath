@@ -847,8 +847,8 @@ out vec2 vUv;
 void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); vUv = p; gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`;
 
 const PREVIEW_MAIN = `
-uniform mat4 uInvVP; uniform vec3 uLo, uHi, uKey, uClay, uCut; uniform vec4 uPlane; uniform int uSection, uColorOn, uMode, uMaxSteps;
-uniform float uStep, uPix, uAO; uniform vec2 uRange, uPickNdc;
+uniform mat4 uInvVP; uniform vec3 uLo, uHi, uKey, uClay, uCut; uniform vec4 uPlane; uniform int uSection, uColorOn, uMode, uMaxSteps, uWalls;
+uniform float uStep, uPix, uAO, uMinWall; uniform vec2 uRange, uPickNdc;
 in vec2 vUv; out vec4 frag;
 float map(vec3 p) { float d = scene_solid(p); if (uSection == 1) d = max(d, dot(p, uPlane.xyz) - uPlane.w); return d; }
 vec3 nrm(vec3 p, float e) {
@@ -864,6 +864,21 @@ vec3 turbo(float x) {
     dot(v4, vec4(0.1066733, 12.64194608, -60.58204836, 110.36276771)) + dot(v2, vec2(-89.90310912, 27.34824973))), 0.0, 1.0);
 }
 vec3 toLin(vec3 c) { return pow(c, vec3(2.2)); }
+// wall thickness at a surface point: trace a ray in along -n until it leaves the solid (inside, -d is a
+// safe step); past 3 x the process minimum it is thick enough and the trace stops
+float wallAt(vec3 p, vec3 n) {
+  p -= n * scene_solid(p);                 // onto the surface: a grazing hit stops just short of it
+  float cap = 3.0 * uMinWall, t = max(0.02 * uMinWall, 1e-3);
+  bool in_ = false;
+  for (int i = 0; i < 64; i++) {
+    float d = scene_solid(p - n * t);
+    if (d < 0.0) in_ = true;
+    else if (in_) return max(t - d, 0.0);
+    t += max(-d, 0.04 * uMinWall);
+    if (t > cap) return cap;
+  }
+  return cap;
+}
 void main() {
   vec2 ndc = uMode == 1 ? uPickNdc : vUv * 2.0 - 1.0;
   vec4 a = uInvVP * vec4(ndc, -1.0, 1.0), b = uInvVP * vec4(ndc, 1.0, 1.0);
@@ -887,10 +902,19 @@ void main() {
   float solid = scene_solid(p);
   bool cut = uSection == 1 && dot(p, uPlane.xyz) - uPlane.w > solid - max(uPix * t, 1e-4) * 0.5;
   float val = uColorOn == 1 ? scene_color(p) : 0.0;
-  if (uMode == 1) { frag = vec4(p, val); return; }
   vec3 n = cut ? uPlane.xyz : nrm(p, max(0.75 * uPix * t, 2e-3));
-  if (dot(n, rd) > 0.0) n = -n;
+  // the cut plane faces whichever way the viewer is; a surface normal that leans away (finite differences
+  // across a hard edge seen edge-on) is tilted back to face the viewer, not flipped to face down
+  if (cut) { if (dot(n, rd) > 0.0) n = -n; }
+  else if (dot(n, rd) > 0.0) n = normalize(n - rd * (dot(n, rd) + 0.05));
+  float wall = uWalls == 1 && !cut ? wallAt(p, n) : 0.0;
+  if (uMode == 1) { frag = vec4(p, uWalls == 1 ? wall : val); return; }
   vec3 base = uColorOn == 1 ? toLin(turbo(clamp((val - uRange.x) / max(uRange.y - uRange.x, 1e-12), 0.0, 1.0))) : (cut ? uCut : uClay);
+  if (uWalls == 1 && !cut) {
+    // under the process minimum: red; up to twice it: amber fading to clay
+    float r = wall / uMinWall;
+    base = r < 1.0 ? toLin(vec3(0.86, 0.16, 0.12)) : mix(toLin(vec3(0.95, 0.66, 0.12)), base, clamp(r - 1.0, 0.0, 1.0));
+  }
   float occ = 0.0, w = 1.0;
   for (int i = 1; i <= 4; i++) { float h = uAO * float(i); occ += w * max(h - map(p + n * h), 0.0); w *= 0.55; }
   occ = clamp(1.0 - occ / uAO * 0.45, 0.25, 1.0);
@@ -1064,6 +1088,8 @@ function renderPreview(scale) {
   gl.uniform1i(L.uSection, pl ? 1 : 0);
   gl.uniform4fv(L.uPlane, pl || [0, 0, 1, 0]);
   gl.uniform1i(L.uColorOn, comp && S.color ? 1 : 0);
+  gl.uniform1i(L.uWalls, S.walls ? 1 : 0);
+  gl.uniform1f(L.uMinWall, minWall().mm);
   gl.uniform2fv(L.uRange, S.range || [0, 1]);
   gl.uniform1i(L.uMode, 0);
   gl.uniform1i(L.uMaxSteps, scale < 1 ? Math.min(q.steps, 220) : q.steps);
@@ -1448,7 +1474,16 @@ function pickNow() {
   const e = pickPending; pickPending = null;
   if (!e || !G.prog || !G.floatRT || S.mode !== "preview" || e.buttons) { if (e && e.buttons) $("#probe").hidden = true; return; }
   const r = stage.getBoundingClientRect();
-  const ndc = [((e.clientX - r.left) / r.width) * 2 - 1, 1 - ((e.clientY - r.top) / r.height) * 2];
+  const out = pickNdc([((e.clientX - r.left) / r.width) * 2 - 1, 1 - ((e.clientY - r.top) / r.height) * 2]);
+  const box = $("#probe");
+  if (out[0] > 1e29) { box.hidden = true; return; }
+  box.hidden = false;
+  box.style.left = `${e.clientX - r.left}px`; box.style.top = `${e.clientY - r.top}px`;
+  box.textContent = `${[0, 1, 2].map((i) => out[i].toFixed(1)).join(", ")} mm` +
+    (S.walls ? `  ·  wall ${out[3] >= 3 * minWall().mm - 1e-3 ? `over ${fmt(3 * minWall().mm)}` : fmt(out[3])} mm` : S.color ? `  ·  ${S.color} ${fmt(out[3])}` : "");
+}
+/** What the preview hits through a point of the screen (NDC): [x, y, z, colour value or wall], x > 1e29 for nothing. */
+function pickNdc(ndc) {
   if (!G.pick) {
     const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, null);
@@ -1464,11 +1499,7 @@ function pickNow() {
   const out = new Float32Array(4);
   gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, out);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  const box = $("#probe");
-  if (out[0] > 1e29) { box.hidden = true; return; }
-  box.hidden = false;
-  box.style.left = `${e.clientX - r.left}px`; box.style.top = `${e.clientY - r.top}px`;
-  box.textContent = `${[0, 1, 2].map((i) => out[i].toFixed(1)).join(", ")} mm` + (S.color ? `  ·  ${S.color} ${fmt(out[3])}` : "");
+  return Array.from(out);
 }
 
 // ---- mesh view (after a run): three.js -------------------------------------------------------------
@@ -2100,7 +2131,8 @@ function fillSelects() {
   const solids = names.filter((n) => kindOf(n) === "solid"), scalars = names.filter((n) => kindOf(n) === "scalar");
   $("#target").replaceChildren(el("option", { value: "#follow", selected: S.follow }, `follow selection${S.follow && S.target ? ` (${S.target})` : ""}`),
     ...solids.map((n) => el("option", { value: n, selected: !S.follow && n === S.target }, n + (n === S.doc.output ? "  · output" : ""))));
-  $("#colorby").replaceChildren(el("option", { value: "", selected: !S.color }, "plain"), ...scalars.map((n) => el("option", { value: n, selected: n === S.color }, n)));
+  $("#colorby").replaceChildren(el("option", { value: "", selected: !S.color && !S.walls }, "plain"),
+    el("option", { value: "#walls", selected: !!S.walls }, "wall thickness"), ...scalars.map((n) => el("option", { value: n, selected: n === S.color }, n)));
   $("#output").replaceChildren(...solids.map((n) => el("option", { value: n, selected: n === S.doc.output }, n)));
 }
 function partPanel() {
@@ -2129,7 +2161,21 @@ function showNotes() {
   box.replaceChildren(...notes.slice(0, 5).map((n) => el("span", {}, n)));
   box.hidden = !notes.length || S.mode === "mesh";
 }
+/** The process's smallest wall (spec.PROCESSES minFeature): FDM's when the graph names no process. */
+function minWall() {
+  const kind = typeof S.doc.process === "string" ? S.doc.process : S.doc.process && S.doc.process.kind || "fdm";
+  const mm = (S.doc.process && typeof S.doc.process === "object" && S.doc.process.minFeature) || (DATA.minWalls || {})[kind] || 0.8;
+  return { kind, mm };
+}
 function legend() {
+  if (S.walls && S.mode === "preview") {
+    const w = minWall();
+    $("#legend").hidden = false; $("#lg-bar").hidden = true;
+    $("#lg-title").textContent = `wall, ${w.kind.toUpperCase()} minimum ${w.mm} mm`;
+    $("#lg-lo").textContent = `red: under ${w.mm}`; $("#lg-mid").textContent = ""; $("#lg-hi").textContent = `amber: under ${fmt(2 * w.mm)}`;
+    return;
+  }
+  $("#lg-bar").hidden = false;
   const on = !!S.color && !!S.range && S.mode === "preview";
   $("#legend").hidden = !on;
   if (!on) return;
@@ -2234,7 +2280,11 @@ $("#target").addEventListener("change", (e) => {
   else S.target = S.sel && kindOf(S.sel) === "solid" ? S.sel : S.doc.output;
   fillSelects(); drawGraph(); recompile();
 });
-$("#colorby").addEventListener("change", (e) => { S.color = e.target.value || null; drawGraph(); recompile(); });
+$("#colorby").addEventListener("change", (e) => {
+  S.walls = e.target.value === "#walls";
+  S.color = S.walls ? null : e.target.value || null;
+  drawGraph(); recompile(); legend();
+});
 $("#output").addEventListener("change", (e) => { S.doc.output = e.target.value; structural(); });
 $("#name").addEventListener("change", (e) => { S.doc.name = e.target.value || "field"; commit(); });
 const setPitch = (v) => { if (!(v > 0)) return; S.doc.mesh = { ...(S.doc.mesh || {}), pitch: v }; $("#pitch").value = v; $("#pitch-n").value = v; commitSoon(); };
@@ -2248,7 +2298,7 @@ $("#fit").addEventListener("click", async () => {
   $("#fit").disabled = true;
   try { await fitMass(key, g); } finally { $("#fit").disabled = false; }
 });
-$("#process").addEventListener("change", (e) => { const v = e.target.value; if (v) S.doc.process = v; else delete S.doc.process; commit(); });
+$("#process").addEventListener("change", (e) => { const v = e.target.value; if (v) S.doc.process = v; else delete S.doc.process; commit(); legend(); kick(false); });
 $("#run").addEventListener("click", run);
 $("#save").addEventListener("click", save);
 $("#export").addEventListener("click", () => { commit(); download(fileName(), JSON.stringify(exportDoc(), null, 2) + "\n"); });
@@ -2310,6 +2360,7 @@ function loadDoc(doc, fresh) {
 window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
+  pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),
   select: (n) => { S.sel = n; if (S.follow && kindOf(n) === "solid") S.target = n; afterSelect(); },
   view: (o) => {

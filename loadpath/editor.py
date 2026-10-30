@@ -244,6 +244,7 @@ def editor_payload(doc, base_dir=None, bake=True, server=False, graph_path=None,
     them for a standalone page; a served page asks for its own), and the
     lattice density tables."""
     from .schema import lint
+    from .spec import PROCESSES
 
     doc = json.loads(json.dumps(doc))
     bakes, errors = {}, []
@@ -264,7 +265,8 @@ def editor_payload(doc, base_dir=None, bake=True, server=False, graph_path=None,
                 except Exception as exc:  # noqa: BLE001 - the page says which node could not be baked
                     errors.append(f"{name}: {exc}")
     return {"version": 1, "doc": doc, "bakes": bakes, "errors": errors, "issues": lint(doc, "field"),
-            "tables": _density_tables(), "densities": _densities(), "server": bool(server),
+            "tables": _density_tables(), "densities": _densities(),
+            "minWalls": {k: v["minFeature"] for k, v in PROCESSES.items()}, "server": bool(server),
             "graphPath": os.path.basename(graph_path) if graph_path else None,
             "created": time.strftime("%Y-%m-%d %H:%M")}
 

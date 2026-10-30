@@ -45,6 +45,15 @@ wire, an expression) recompiles, in milliseconds.
   second as a cell slider moves). A bake that a later edit made stale
   stays on screen until its replacement arrives; an analysis re-runs only
   when asked, and later bakes and Run reuse it while its part is unchanged.
+- **Colour → wall thickness** paints every wall by its thickness, traced
+  in along the surface normal: red under the process's smallest feature
+  (`minFeature`: FDM and SLS 0.8 mm, SLA 0.5, LPBF 0.4, ...), amber under
+  twice it. Hover reads the thickness. On the arm link it shows the skin
+  over the gyroid's voids at 1 to 1.6 mm, thicker where a lattice wall
+  backs it.
+
+  ![wall thickness on the arm link](images/fields/editor-walls.png)
+
 - **Mass** is live: the page weighs the output on the GPU as you edit
   (its volume on a grid of samples at two spacings, extrapolated; within
   about 1% of the meshed part) and multiplies by the material's density.
