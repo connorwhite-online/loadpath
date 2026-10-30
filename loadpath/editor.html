@@ -1537,7 +1537,7 @@ function requestBakes(force) {
     return;
   }
 }
-const bakesSoon = debounce(() => { requestBakes(); showNotes(); drawGraph(); }, 500);
+const bakesSoon = debounce(() => { requestBakes(); showNotes(); drawGraph(); }, 200);
 async function bake(item) {
   if (typeof item === "string") item = itemFor(item);
   S.baking = item.key;

@@ -33,6 +33,7 @@ import os
 import threading
 import time
 import uuid
+from collections import OrderedDict
 
 import numpy as np
 
@@ -291,11 +292,46 @@ def field_editor(doc, path=None, base_dir=None, title=None, standalone=True, pro
 
 # ---- the local server -----------------------------------------------------------
 
+class _Resources:
+    """What the server has built (an analysis behind a result, a mesh's
+    distance field, a loaded grid), kept between bakes and runs and keyed by
+    the node's closure, so an edit elsewhere in the graph reuses them: the
+    stress study runs once, not on every bake that touches the output's box."""
+
+    def __init__(self, cap=16):
+        self.items, self.cap = OrderedDict(), cap
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def _keys(doc):
+        return {name: json.dumps(_closure(doc, name), sort_keys=True) for name, spec in doc["nodes"].items()
+                if isinstance(spec, dict) and spec.get("op") in BAKED_OPS}
+
+    def prebuilt(self, doc):
+        with self.lock:
+            return {name: self.items[k] for name, k in self._keys(doc).items() if k in self.items}
+
+    def graph(self, doc, base_dir):
+        from .fields import FieldGraph
+
+        return FieldGraph(doc, base_dir=base_dir).seed(self.prebuilt(doc))
+
+    def keep(self, g, doc):
+        with self.lock:
+            for name, k in self._keys(doc).items():
+                if name in g._built:
+                    self.items[k] = (g._built[name], g.analyses.get(name))
+                    self.items.move_to_end(k)
+            while len(self.items) > self.cap:
+                self.items.popitem(last=False)
+
+
 class _Jobs:
     """Runs one field job at a time in a thread and keeps what it said."""
 
-    def __init__(self, out_dir, base_dir):
+    def __init__(self, out_dir, base_dir, resources=None):
         self.out_dir, self.base_dir = out_dir, base_dir
+        self.resources = resources or _Resources()
         self.jobs = {}
         self.lock = threading.Lock()
 
@@ -317,7 +353,8 @@ class _Jobs:
         with self.lock:
             try:
                 out = os.path.join(self.out_dir, job["id"])
-                mesh, rep = run_field(doc, out, self.base_dir, progress=progress, render=False)
+                mesh, rep = run_field(doc, out, self.base_dir, progress=progress, render=False,
+                                      prebuilt=self.resources.prebuilt(doc))
                 with open(os.path.join(out, "report.json"), "w") as fh:
                     json.dump(_clean({"ok": True, **rep}), fh, indent=2)
                 stats = {"mass": f"{rep['mass']:.1f} g" if "mass" in rep else None,
@@ -352,8 +389,9 @@ def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir
     graph_path = os.path.abspath(graph_path)
     base_dir = base_dir or os.path.dirname(graph_path)
     out_dir = os.path.abspath(out_dir or os.path.join(base_dir, "loadpath-edit"))
-    jobs = _Jobs(out_dir, base_dir)
-    bake_cache, bake_lock = {}, threading.Lock()
+    resources = _Resources()
+    jobs = _Jobs(out_dir, base_dir, resources)
+    bake_cache, bake_lock = OrderedDict(), threading.Lock()
 
     def load():
         with open(graph_path) as fh:
@@ -434,7 +472,12 @@ def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir
                     key = ("warp:" if warp else "") + json.dumps(spec, sort_keys=True)
                     with bake_lock:
                         if key not in bake_cache:
-                            bake_cache[key] = (bake_warp if warp else bake_node)(doc, name, base_dir)
+                            g = resources.graph(doc, base_dir)
+                            bake_cache[key] = (bake_warp if warp else bake_node)(doc, name, base_dir, graph=g)
+                            resources.keep(g, doc)
+                            while len(bake_cache) > 48:          # a slider dragged through many values
+                                bake_cache.popitem(last=False)
+                        bake_cache.move_to_end(key)
                         out = dict(bake_cache[key], spec=spec)
                     return self._send(200, out)
                 except Exception as exc:  # noqa: BLE001

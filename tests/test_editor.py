@@ -221,6 +221,36 @@ def test_server_lints_bakes_saves_and_runs():
         holder["srv"].shutdown()
 
 
+def test_server_reuses_what_it_built():
+    """Resources (a mesh's field, a grid, an analysis) carry over to the
+    next graph while their node's closure is unchanged, and not after."""
+    from loadpath.editor import _Resources
+
+    d = _workdir()
+    res = _Resources()
+    g = res.graph(ALL_OPS, d)
+    g.evaluate(np.zeros((1, 3)), "grow")
+    res.keep(g, ALL_OPS)
+    torus = g._built["torus"]
+    doc = json.loads(json.dumps(ALL_OPS))
+    doc["nodes"]["grow"]["distance"] = 2.0                 # an edit downstream: the mesh is reused
+    assert res.graph(doc, d)._built.get("torus") is torus
+    doc["nodes"]["torus"]["path"] = "other.stl"            # the node itself changed: rebuilt
+    assert "torus" not in res.graph(doc, d)._built
+
+
+def test_warp_solve_is_the_1d_integral():
+    """The DCT solve of the cell warp: along a cell that grades in x only,
+    u_x is the integral of dx / cell, so each period is one local cell."""
+    from loadpath.fields import _CellWarp
+
+    w = _CellWarp(lambda P: 4.0 + 0.1 * P[:, 0], np.array([0.0, 0, 0]), np.array([60.0, 10, 10]), max_cells=60_000)
+    x = np.array([[5.0, 5, 5], [50.0, 5, 5]])
+    ux = w(x, 4.0 + 0.1 * x[:, 0])[:, 0]
+    exact = 10 * np.log(4.0 + 0.1 * x[:, 0])
+    assert abs((ux[1] - ux[0]) - (exact[1] - exact[0])) < 2e-3, (ux, exact)
+
+
 def test_cli_writes_a_standalone_editor():
     d = _workdir()
     out = os.path.join(d, "editor.html")
@@ -313,6 +343,7 @@ def test_gpu_preview_matches_fields_py():
 
 TESTS = [test_graph_with_layout_lints, test_bakes_sample_the_graph, test_bake_spec_follows_an_analyzed_part,
          test_standalone_page_carries_its_data, test_server_lints_bakes_saves_and_runs,
+         test_server_reuses_what_it_built, test_warp_solve_is_the_1d_integral,
          test_cli_writes_a_standalone_editor, test_gpu_preview_matches_fields_py]
 
 

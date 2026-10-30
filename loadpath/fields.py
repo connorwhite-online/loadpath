@@ -437,7 +437,7 @@ def _tpms_distance(kind, P, cell, frame=None):
 class _CellWarp:
     """Lattice coordinates u(x) for a cell size that varies in space: the
     least-squares map whose gradient is I / cell(x) (a Poisson solve on a
-    grid over the lattice's domain, smoothed-aggregation AMG), so one period
+    grid over the lattice's domain, direct by DCT), so one period
     of u is one local cell. In 1D that is exactly u = integral of dx / cell;
     in 3D, where a cell field has curl the map cannot follow everywhere, the
     misfit spreads out smoothly instead of tearing. Every wall stays
@@ -445,8 +445,7 @@ class _CellWarp:
     periods, which leaves crumbs where they disagree."""
 
     def __init__(self, cell_fn, lo, hi, max_cells=400_000):
-        import pyamg
-        import scipy.sparse as sp
+        from scipy import fft
 
         lo, h, dims = self.grid(cell_fn, lo, hi, max_cells)
         axes = [lo[i] + np.arange(dims[i]) * h for i in range(3)]
@@ -456,33 +455,25 @@ class _CellWarp:
             raise ValueError("lattice cell must be positive everywhere")
         g = (1.0 / c).reshape(tuple(dims))
         n = int(np.prod(dims))
-        idx = np.arange(n).reshape(tuple(dims))
-        rows, a_, b_, targets = [], [], [], []
-        k = 0
-        for ax in range(3):
-            sl0 = [slice(None)] * 3
-            sl1 = [slice(None)] * 3
-            sl0[ax] = slice(0, -1)
-            sl1[ax] = slice(1, None)
-            i0, i1 = idx[tuple(sl0)].ravel(), idx[tuple(sl1)].ravel()
-            ge = 0.5 * (g[tuple(sl0)] + g[tuple(sl1)]).ravel()
-            a_.append(i0)
-            b_.append(i1)
-            targets.append((ax, ge * h, k, len(i0)))
-            k += len(i0)
-        i0, i1 = np.concatenate(a_), np.concatenate(b_)
-        m = len(i0)
-        D = sp.csr_matrix((np.r_[-np.ones(m), np.ones(m)], (np.r_[np.arange(m), np.arange(m)], np.r_[i0, i1])),
-                          shape=(m, n))
-        A = (D.T @ D + 1e-8 * sp.identity(n)).tocsr()
-        ml = pyamg.smoothed_aggregation_solver(A, max_coarse=500)
+        # D^T D is the grid graph's Laplacian with free (Neumann) ends, which
+        # the DCT-II diagonalizes exactly: a direct solve in O(n log n)
+        lam = sum((2 - 2 * np.cos(np.pi * np.arange(dims[a]) / dims[a])).reshape([-1 if i == a else 1
+                                                                                  for i in range(3)])
+                  for a in range(3))
+        lam[0, 0, 0] = 1.0
         self.u = []
         for comp in range(3):
-            t = np.zeros(m)
-            for ax, te, start, cnt in targets:
-                if ax == comp:
-                    t[start:start + cnt] = te
-            u = ml.solve(D.T @ t, tol=1e-8, maxiter=200, accel="cg")
+            sl0 = [slice(None)] * 3
+            sl1 = [slice(None)] * 3
+            sl0[comp] = slice(0, -1)
+            sl1[comp] = slice(1, None)
+            te = 0.5 * (g[tuple(sl0)] + g[tuple(sl1)]) * h     # target step along each edge
+            b = np.zeros(tuple(dims))
+            b[tuple(sl0)] -= te
+            b[tuple(sl1)] += te                                 # D^T t
+            B = fft.dctn(b, type=2, norm="ortho") / lam
+            B[0, 0, 0] = 0.0
+            u = fft.idctn(B, type=2, norm="ortho").ravel()
             # anchor: u = x / cell at the domain's centre point, so a constant
             # cell gives back the plain lattice
             self.u.append((u - u[n // 2]).reshape(tuple(dims)) + G[n // 2, comp] * g.ravel()[n // 2])
@@ -684,6 +675,18 @@ class FieldGraph:
         out = self._compute(self.nodes[name], P, memo)
         memo[key] = (P, out)          # keep P alive so its id stays unique
         return out
+
+    def seed(self, prebuilt):
+        """Use resources built by another graph of the same nodes (an
+        analysis, a meshed field, a loaded grid): {name: (resource,
+        analysis or None)}. The caller vouches that each node and what it
+        depends on are unchanged; the editor keys them by the node's closure."""
+        for name, (res, analysis) in (prebuilt or {}).items():
+            if name in self.nodes:
+                self._built[name] = res
+                if analysis is not None:
+                    self.analyses[name] = analysis
+        return self
 
     def _resource(self, nd, make):
         if nd.name not in self._built:
@@ -1241,15 +1244,17 @@ def _relax(mesh, field, pitch, rounds):
 
 # ---- the job ---------------------------------------------------------------------
 
-def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progress=None, render=True):
+def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progress=None, render=True,
+              prebuilt=None):
     """Build a field graph, mesh its output and report on it: volume,
     area, mass (with `material`), watertightness, bodies, and the printability
     check on the field itself (walls, overhangs, trapped voids) unless
-    `check` is false. Writes <name>.stl and report.json to `out_dir`."""
+    `check` is false. Writes <name>.stl and report.json to `out_dir`.
+    `prebuilt` reuses resources another graph built (FieldGraph.seed)."""
     import time
 
     t0 = time.time()
-    g = FieldGraph(doc, base_dir=base_dir, sources=sources, meshes=meshes)
+    g = FieldGraph(doc, base_dir=base_dir, sources=sources, meshes=meshes).seed(prebuilt)
     process = None
     if doc.get("process") is not None:
         from .spec import _process

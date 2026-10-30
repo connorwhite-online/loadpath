@@ -41,9 +41,10 @@ wire, an expression) recompiles, in milliseconds.
   texture: a `mesh` node's distance, a `result` node's stress (its study
   runs on load: about a minute for the arm link), a `grid`, and the cell
   warp of a graded lattice (the same map the mesher solves, so the
-  preview's walls sit where the part's will). A bake that a later edit
-  made stale stays on screen until its replacement arrives; an analysis
-  re-runs only when asked.
+  preview's walls sit where the part's will; it re-bakes in under a
+  second as a cell slider moves). A bake that a later edit made stale
+  stays on screen until its replacement arrives; an analysis re-runs only
+  when asked, and later bakes and Run reuse it while its part is unchanged.
 - **Run** meshes the graph with `run_field`, exactly as `loadpath field`
   does, at the graph's pitch, then shows the mesh, the report (mass,
   watertightness, sealed voids, drains, printability) and links to the
