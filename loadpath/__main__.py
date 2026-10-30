@@ -59,6 +59,9 @@ def main(argv=None):
     r.add_argument("--viewer", choices=["best", "all", "none"], default="best",
                    help="interactive HTML viewer (viewer.html) for the best outcome, all of them, or none")
     r.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
+    r.add_argument("--recall", action="store_true",
+                   help="start from what earlier runs on the same design space found (recall.py; "
+                        "or set LOADPATH_RECALL=1)")
     c = sub.add_parser("check", help="validate a study and report the voxel problem")
     c.add_argument("study")
     c.add_argument("--base-dir")
@@ -119,6 +122,8 @@ def main(argv=None):
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
+    if getattr(args, "recall", False):
+        os.environ.setdefault("LOADPATH_RECALL", "1")
     from .tasks import check_study
     checked = check_study(raw, base)
     if not checked["ok"]:

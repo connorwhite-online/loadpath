@@ -69,6 +69,16 @@ resolve against; it defaults to the server's working directory.
 5. **Iterate on the problem, not the shape.** Too heavy: is the design space
    bigger than it needs to be, or a load case unrealistic? Fails the goal:
    are the loads right, is it held where it really is? Then re-run.
+   With `LOADPATH_RECALL=1` in the server's environment
+   (`{"command": "loadpath", "args": ["mcp"], "env": {"LOADPATH_RECALL": "1"}}`),
+   a re-run on the same design space starts from what the last runs found:
+   designs it already optimized are re-meshed and re-verified instead of
+   optimized again, and their margins, rescaled to a new safety factor,
+   material or load, tell the search where to start. On the bell crank an
+   identical re-run went from 8 optimizations to none, a lower safety
+   factor target from 6 to 1 (316 s to 103 s, and 8% lighter), a 30%
+   heavier load from 6 to 2 (and 4% lighter). A changed design space, load direction or
+   symmetry starts fresh. Each outcome's `start` says what it came from.
 6. Offer the next step: a lattice (`loadpath_lattice`) for a chunky part,
    or getting it made (below).
 

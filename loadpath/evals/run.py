@@ -316,6 +316,8 @@ def main(argv=None):
     p.add_argument("--jobs", type=int, default=1,
                    help="cases to run at once (each case also parallelizes its own outcomes)")
     args = p.parse_args(argv)
+    # a scorecard measures the optimizer, not what earlier runs left behind
+    os.environ.pop("LOADPATH_RECALL", None)
     files = sorted(glob.glob(os.path.join(HERE, "cases", "*.json")))
     if args.cases:
         files = [f for f in files if os.path.splitext(os.path.basename(f))[0] in args.cases]

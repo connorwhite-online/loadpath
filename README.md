@@ -118,6 +118,7 @@ pip install "loadpath[mcp] @ git+https://github.com/connorwhite-online/loadpath"
 loadpath examples shelf-bracket > bracket.json
 loadpath check bracket.json            # every problem at once, with suggestions
 loadpath run bracket.json --out out/   # optimize, mesh, verify, render
+loadpath run bracket.json --recall     # re-run: start from what earlier runs found
 loadpath mcp                           # stdio MCP server for agents
 ```
 
@@ -147,6 +148,7 @@ python3 tests/test_interface.py
 python3 tests/test_pressure.py
 python3 tests/test_process.py
 python3 tests/test_fields.py
+python3 tests/test_recall.py
 python3 -m loadpath.evals.run --out evals-out/
 python3 docs/gallery.py --evals evals-out/    # refresh the gallery renders from that run
 ```

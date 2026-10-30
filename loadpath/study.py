@@ -397,18 +397,31 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
     emit({"stage": "domain", **info, "warnings": domain.warnings})
     outcomes: list[Outcome] = []
     last_x = None
+    # what earlier runs on this domain found (recall.py), when turned on
+    from .recall import Recall
+    memory = Recall.open(study, domain, radius, _making(study))
 
-    def attempt(vf: float, x0, beta0) -> Outcome:
+    def attempt(vf: float, x0, beta0, replay=None) -> Outcome:
         def on_iter(rec, xp):
             emit({"stage": "optimize", "volumeFraction": vf, **rec}, xp)
 
-        res = optimize(domain, study.elastic(design=True),
-                       SimpOptions(volume_fraction=vf, filter_radius=radius,
-                                   max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
-                                   **_making(study)),
-                       on_iter=on_iter, should_stop=should_stop)
+        if replay is None:
+            res = optimize(domain, study.elastic(design=True),
+                           SimpOptions(volume_fraction=vf, filter_radius=radius,
+                                       max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
+                                       **_making(study)),
+                           on_iter=on_iter, should_stop=should_stop)
+            x, xphys = res.x, res.xphys
+            opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
+                   "compliance": res.compliance, "caseCompliance": res.case_compliance,
+                   "achievedVolumeFraction": res.volume_fraction}
+        else:
+            # a stored design for this very problem: mesh and verify it, no optimizing
+            x, xphys = replay[0], replay[1]
+            opt = {"iterations": 0, "converged": True, "seconds": 0.0, "recalled": True,
+                   "achievedVolumeFraction": float(xphys.mean())}
         emit({"stage": "mesh", "volumeFraction": vf})
-        mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
+        mesh, rinfo = reconstruct(study, domain, xphys, ReconstructOptions())
         emit({"stage": "verify", "volumeFraction": vf})
         try:
             report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
@@ -422,12 +435,11 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         making = manufacturing_report(study, domain, mesh)
         if making:
             report["manufacturing"] = making
-        opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
-               "compliance": res.compliance, "caseCompliance": res.case_compliance,
-               "achievedVolumeFraction": res.volume_fraction}
         o = Outcome(vf, mesh, report, opt, rinfo)
-        o.xphys = res.xphys
-        o.x = res.x
+        o.xphys = xphys
+        o.x = x
+        if memory is not None:
+            memory.add(vf, x, xphys, report)
         m = _margin(study, report)
         if m is not None:
             report["margin"] = m
@@ -452,7 +464,19 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 return attempt(vf, _coarse_start(study, domain, vf, radius, should_stop), _WARM_BETA)
             return attempt(vf, None, 1.0)
 
-        if last_x is None:
+        rp = memory.replay(vf) if memory is not None else None
+        w = memory.warm_start(vf) if memory is not None and rp is None and last_x is None else None
+        if rp is not None:
+            o = attempt(vf, None, None, replay=rp)
+            o.report["start"] = f"recalled {vf:.3f}"
+        elif w is not None:
+            try:
+                o = attempt(vf, w[0], _WARM_BETA)
+                o.report["start"] = w[1]
+            except RuntimeError:
+                o = cold()
+                o.report["start"] = "cold (the recalled start did not solve)"
+        elif last_x is None:
             o = cold()
             o.report["start"] = "cold"
         else:
@@ -470,6 +494,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 o = cold()
                 o.report["start"] = "cold (the warm start did not solve)"
             if big and len(outcomes) == 1 and vf < outcomes[0].volume_fraction \
+                    and "recalled" not in str(outcomes[0].report.get("start")) \
                     and not (should_stop is not None and should_stop()):
                 # ...but carried from a fraction well above, the layout can
                 # be one the new fraction no longer suits: the wall bracket
@@ -488,13 +513,19 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         return o
 
     def _confirm(o: Outcome) -> float:
-        try:
-            rep = verify_part(study, o.mesh, max_cells=_CONFIRM_CELLS, min_pitch=0.3 * domain.pitch,
-                              contact_band=domain.pitch)
-        except RuntimeError as exc:
-            o.report.setdefault("warnings", []).append(f"confirmation failed: {exc}")
-            o.report["margin"] = 0.0
-            return 0.0
+        # a replayed design's mesh is the one confirmed before: rescale that reading
+        rep = memory.confirm_for(o.volume_fraction) if memory is not None and o.optimizer.get("recalled") else None
+        recalled = rep is not None
+        if rep is None:
+            try:
+                rep = verify_part(study, o.mesh, max_cells=_CONFIRM_CELLS, min_pitch=0.3 * domain.pitch,
+                                  contact_band=domain.pitch)
+            except RuntimeError as exc:
+                o.report.setdefault("warnings", []).append(f"confirmation failed: {exc}")
+                o.report["margin"] = 0.0
+                return 0.0
+            if memory is not None:
+                memory.confirmed(o.volume_fraction, rep)
         mc = _margin(study, rep)
         o.report["confirm"] = {"safetyFactor": rep["safetyFactor"], "margin": mc,
                                "analysisPitch": rep["analysisPitch"], "analysisCells": rep["analysisCells"],
@@ -503,6 +534,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         # recorded, not adopted: the finer grid also resolves small features
         # the analysis grid smooths over, so its percentile is not comparable
         o.report["confirm"].update(p5Member=rep["p5Member"], minMember=rep["minMember"])
+        if recalled:
+            o.report["confirm"]["recalled"] = True
         if mc < o.report["margin"]:
             # report the finer (lower) reading: it is the one to trust
             o.report["margin"], o.report["safetyFactor"], o.report["cases"] = mc, rep["safetyFactor"], rep["cases"]
@@ -577,6 +610,10 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
     elif goal.safety_factor is not None or goal.max_deflection is not None or _durability_drives(study):
         vf = float(goal.volume_fraction or 0.3)
+        if memory is not None:
+            vf, why = memory.first_fraction(vf)
+            if why:
+                emit({"stage": "recall", "volumeFraction": vf, "reason": why})
         lo_fail, hi_pass = None, None   # (vf, margin) brackets
         for _ in range(_MAX_SEARCH_RUNS):
             if should_stop is not None and should_stop():
@@ -604,11 +641,16 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 # wrong side of a jump; halving the bracket always closes it.
                 (v1, m1), (v2, m2) = lo_fail, hi_pass
                 nxt = 0.5 * (v1 + v2)
+                if memory is not None:
+                    # any fraction inside the bracket closes it; a stored one is free
+                    nxt = memory.snap(nxt, v1, v2, skip=[q.volume_fraction for q in outcomes])
             else:
                 # Aim a little past the target; never more than halve or
                 # double in one step, where the linear model stops holding.
                 nxt = vf * 1.05 / max(m, 1e-9)
                 nxt = float(np.clip(nxt, vf * 0.5, vf * 2.0))
+                if memory is not None:
+                    nxt = memory.snap(nxt, skip=[q.volume_fraction for q in outcomes])
             nxt = float(np.clip(nxt, _VF_MIN, _VF_MAX))
             if abs(nxt - vf) < 0.005:
                 break
@@ -640,6 +682,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                     vf = float(np.clip(o.volume_fraction * 1.05 / max(mc, 1e-9), o.volume_fraction + 0.01, _VF_MAX))
                     if any(abs(vf - q.volume_fraction) < 0.005 for q in outcomes):
                         vf = min(vf + 0.02, _VF_MAX)
+                    if memory is not None:
+                        vf = memory.snap(vf, skip=[q.volume_fraction for q in outcomes])
                     outcomes.append(run_one(vf))
                     passing = [i for i, q in enumerate(outcomes) if q.passes]
                     best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
@@ -670,5 +714,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 outcomes.append(run_one(vf))
         best = 0 if outcomes else None
 
+    if memory is not None:
+        memory.save()
+        info["recall"] = dict(memory.used)
     return StudyResult(study=study, domain=info, outcomes=outcomes, best=best,
                        seconds=time.time() - t0, warnings=list(domain.warnings))
