@@ -93,3 +93,13 @@ def test_whole_exchanger_agrees_with_the_rating():
         assert 0.5 < f["entry"]["uniformity"] <= 1.0
         assert 0 < f["pressureDropCore"] < f["pressureDrop"]
     assert 20 < s["wall"]["min"] < s["wall"]["max"] < 80
+
+
+def test_lbm_law_has_the_cells_creeping_flow_limit():
+    from loadpath.porous import lbm_medium
+
+    # the a10 air cell: phi 0.3886, Dh 5.131 mm; TRT gives f Re -> 183 as Re -> 0
+    phi, dh, a = 0.38861, 5.1309e-3, 10e-3
+    for law, lo, hi in ((lbm_medium, 175, 192), (savoldi_medium, 160, 175)):
+        m = law(phi, 4 * phi / dh, dh, a)
+        assert lo < 2 * phi * dh ** 2 / m.K < hi

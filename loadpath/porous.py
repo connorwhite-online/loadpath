@@ -17,7 +17,8 @@ the cell (the same law heatx_thermal rates on, checked there against the
 
     q = h a_w (T_fluid - T_wall),  Nu = 0.49 Re^0.62 Pr^0.4   (Reynolds 2023)
 
-(or the LBM cells' 1.66 Re^0.464 Pr^0.217) on the local Re, so a slow
+on the local Re (closures "lbm": the LBM cells' 1.66 Re^0.464 Pr^0.217,
+and K and C_F refitted to the same cells, lbm_medium), so a slow
 corner of the core gets the weak h it deserves. That is cheap on voxels
 a few mm across (a core is 10-100 thousand cells, not millions) and gives
 what the one-number epsilon-NTU rating cannot:
@@ -66,7 +67,7 @@ from scipy import ndimage, sparse
 from .heatx_thermal import WALL_CONDUCTIVITY, _flow, _fluid
 
 __all__ = ["PorousDomain", "Medium", "exchanger_domain", "solve_flow", "solve_heat", "simulate_exchanger",
-           "simulate_design", "sweep", "savoldi_medium", "summarize", "plot_fields"]
+           "simulate_design", "sweep", "savoldi_medium", "lbm_medium", "summarize", "plot_fields"]
 
 
 @dataclass
@@ -85,6 +86,23 @@ def savoldi_medium(phi, area_density, dh, cell):
     """The Savoldi 2026 network-gyroid law (as heatx_thermal): `cell` in m."""
     return Medium(float(phi), float(area_density), float(dh), 0.0157 * phi ** 2.72 * cell ** 2,
                   0.0784 * phi ** -2.04)
+
+
+def lbm_medium(phi, area_density, dh, cell):
+    """The same form refitted to periodic gyroid-sheet cells run with LBM
+    (/mnt/project-files/flow/gyroid-cells.json: the 1KZ cooler's 39 BGK
+    points, loadpath.flow's TRT re-runs and its creeping-flow limit, f Re
+    183 on the a10 air cell): K = 0.00932 phi^2.257 a^2, C_F = 0.0569
+    phi^-2.283. Median ratio 0.99, 90% of points within 13% (the rest is the
+    ~20% scatter between flow states past Re ~200), against Savoldi's 1.08
+    and 18%; the gain is at phi 0.17-0.26, below Savoldi's range, where
+    Savoldi reads 10-29% high."""
+    return Medium(float(phi), float(area_density), float(dh), 0.00932 * phi ** 2.257 * cell ** 2,
+                  0.0569 * phi ** -2.283)
+
+
+# closures: (pressure-drop law, Nu law)
+_CLOSURES = {"design": (savoldi_medium, "design"), "lbm": (lbm_medium, "lbm")}
 
 
 @dataclass
@@ -574,7 +592,7 @@ def _block_mean(a, r):
     return a.reshape(nx, r, ny, r, nz, r).mean(axis=(1, 3, 5))
 
 
-def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3):
+def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures="design"):
     """The coarse porous grid of a designed exchanger (design_heat_exchanger
     with grids=True): core cells from the core's shape, each fluid's
     plenums and ports from its space on the design grid, inlets and outlets
@@ -613,7 +631,7 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3):
     for f, name in enumerate(hx.names):
         rep = report[name]
         phi = rep["coreVolume"] / v
-        med = savoldi_medium(phi, rep["coreWettedArea"] / v * 1e3, rep["hydraulicDiameter"] * 1e-3, hx.cell * 1e-3)
+        med = _CLOSURES[closures][0](phi, rep["coreWettedArea"] / v * 1e3, rep["hydraulicDiameter"] * 1e-3, hx.cell * 1e-3)
         m = core | opn[f]
         ends = []
         for end in ("in", "out"):
@@ -645,14 +663,16 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3):
                         extra={"coreFraction": frac})
 
 
-def simulate_design(hx, report, grids, duty, voxel=None, nu="design", progress=None, fields=False):
+def simulate_design(hx, report, grids, duty, voxel=None, closures="design", progress=None, fields=False):
     """Simulate a designed exchanger (design_heat_exchanger(..., grids=True))
     under `duty` (the rating's: {"A": {"fluid", "lPerMin" | "kgPerS",
     "tIn"}, "B": {...}, "wall": "petg" | W/m K})."""
     import time
 
     t0 = time.time()
-    dom = exchanger_domain(hx, report, grids, voxel)
+    if closures not in _CLOSURES:
+        raise ValueError(f"closures is one of {sorted(_CLOSURES)}")
+    dom = exchanger_domain(hx, report, grids, voxel, closures=closures)
     kw = duty.get("wall", "petg")
     k_wall = float(WALL_CONDUCTIVITY[kw] if isinstance(kw, str) else kw)
     fluids = [_fluid(duty[n].get("fluid", "water")) for n in hx.names]
@@ -664,23 +684,23 @@ def simulate_design(hx, report, grids, duty, voxel=None, nu="design", progress=N
     t_in = [duty[n].get("tIn") for n in hx.names]
     heat = None
     if None not in t_in:
-        heat = solve_heat(dom, fluids, flows, [float(t) for t in t_in], k_wall, nu)
+        heat = solve_heat(dom, fluids, flows, [float(t) for t in t_in], k_wall, _CLOSURES[closures][1])
     out = summarize(dom, fluids, flows, heat, t_in)
     out["seconds"] = round(time.time() - t0, 1)
-    out["nu"] = nu if isinstance(nu, str) else "custom"
+    out["closures"] = closures
     if fields:
         out["_fields"] = {"domain": dom, "flows": flows, "heat": heat}
     return out
 
 
-def simulate_exchanger(hx, duty, voxel=None, nu="design", progress=None, fields=False):
+def simulate_exchanger(hx, duty, voxel=None, closures="design", progress=None, fields=False):
     """Design `hx` and simulate it whole under `duty`; with the epsilon-NTU
     rating alongside for comparison."""
     from .heatx import design_heat_exchanger
     from .heatx_thermal import rate_design
 
     mesh, report, grids = design_heat_exchanger(hx, grids=True)
-    sim = simulate_design(hx, report, grids, duty, voxel, nu, progress, fields)
+    sim = simulate_design(hx, report, grids, duty, voxel, closures, progress, fields)
     try:
         sim["rating"] = rate_design(hx, report, duty)
     except ValueError as exc:
@@ -688,7 +708,7 @@ def simulate_exchanger(hx, duty, voxel=None, nu="design", progress=None, fields=
     return mesh, report, sim
 
 
-def sweep(hx, duty, variants, voxel=None, nu="design", progress=None):
+def sweep(hx, duty, variants, voxel=None, closures="design", progress=None):
     """Compare header and port shapes: each variant is a dict of
     HeatExchangerSpec fields ({"header": 4}, {"port_diameter": 10}, ...)
     applied to a copy of `hx`. Rows: each variant's pressure drops, flow
@@ -700,7 +720,7 @@ def sweep(hx, duty, variants, voxel=None, nu="design", progress=None):
         h2 = copy.deepcopy(hx)
         for k, val in v.items():
             setattr(h2, k, val)
-        _, rep, sim = simulate_exchanger(h2, duty, voxel, nu, progress)
+        _, rep, sim = simulate_exchanger(h2, duty, voxel, closures, progress)
         rows.append({"variant": v, "effectiveness": sim.get("effectiveness"),
                      "fluids": {n: {"pressureDrop": r["pressureDrop"], "pressureDropCore": r["pressureDropCore"],
                                     "uniformity": r["entry"].get("uniformity"), "deadShare": r["deadShare"]}

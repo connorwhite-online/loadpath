@@ -206,7 +206,7 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
         _emit(on_progress, stage="simulate")
         from .porous import plot_fields, simulate_design
         try:
-            sim = simulate_design(hx, report, grids, duty, sim_opts.get("voxel"), sim_opts.get("nu", "design"),
+            sim = simulate_design(hx, report, grids, duty, sim_opts.get("voxel"), sim_opts.get("closures", "design"),
                                   fields=render)
             f = sim.pop("_fields", None)
             if f is not None:

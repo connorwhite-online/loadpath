@@ -503,9 +503,10 @@ HEAT_EXCHANGER_SCHEMA = {
         "simulate": {"anyOf": [{"type": "boolean"}, {
             "type": "object",
             "properties": {"voxel": {**_POS, "description": "mm (default min(cell/2, port/4, header/3))"},
-                           "nu": {"enum": ["design", "lbm"],
-                                  "description": "Nu law: design (Reynolds 2023) or lbm (the intercooler's "
-                                                 "LBM cells)"}},
+                           "closures": {"enum": ["design", "lbm"],
+                                        "description": "design: the rating's laws (Savoldi pressure drop, "
+                                                       "Reynolds 2023 Nu); lbm: both refitted to LBM gyroid "
+                                                       "cells (better for thick walls, phi under 0.3)"}},
             "additionalProperties": False}],
             "description": "With duty: simulate the whole exchanger (porous core, open headers, both fluids "
                            "and the wall): flow uniformity, pressure field, temperatures and hot spots, "
