@@ -186,6 +186,20 @@ def _stamp(evals):
             " by `python docs/gallery.py`.")
 
 
+# docs/images/manufacturing/ comes from full study runs of the variants named
+# here (2026-10-30, cloud box), not from the eval suite: re-run them by hand
+# when the optimizer changes enough to matter.
+MFG_README = ("Made another way: the same arm link printed, cast (no undercuts along z), 3-axis milled from both "
+              "sides with a 6 mm cutter, and with members capped at 6 mm. Each meets SF 3 and 0.5 mm.")
+MFG_GALLERY = ("The `arm-link` eval case (SF 3, 0.5 mm at the wrist, PA12) with each of loadpath's manufacturing "
+               "constraints. Cast two-sided along z and milled from +z and -z, every hole runs straight through; "
+               "the cable channel along x is the one undercut left (it needs a side core), and the report says so "
+               "(`manufacturing.access.undercutInKeepOuts`). maxMember 6 mm came out 6.8 mm thick at its "
+               "thickest, under a 2 mm analysis cell over (the free part: 9.8 mm), and 2 g lighter.")
+MFG_YOKE = ("GRIP's wrist yoke in 6061-T6 aluminium at SF 2: free (38.4 g, SF 4.8) and 5-axis milled with a "
+            "4 mm cutter (38.8 g, SF 3.7): every void reachable from one of the six sides, no slot under 4 mm.")
+
+
 def write_docs(rows, evals):
     """Lists whatever images exist in docs/images, so a partial run keeps the rest."""
     exist = lambda *p: os.path.exists(os.path.join(IMAGES, *p))  # noqa: E731
@@ -212,6 +226,8 @@ def write_docs(rows, evals):
     if exist("heatx", "lpbf-ceilings.png"):
         readme += ["", "Printed in metal, nothing inside can be supported: the channels end in peaked roofs "
                    "instead of flat ceilings (red).", "", "![metal ceilings](docs/images/heatx/lpbf-ceilings.png)"]
+    if exist("manufacturing", "arm-link.png"):
+        readme += ["", MFG_README, "", "![manufacturing constraints](docs/images/manufacturing/arm-link.png)"]
     readme += ["", f"<sub>{_stamp(evals)}</sub>", "", END]
 
     with open(README) as fh:
@@ -252,6 +268,11 @@ def write_docs(rows, evals):
               "supported, so every flat ceiling over a channel is a defect: with `closure` the channels end in "
               "peaked roofs under the top skin and flare open over plenums below.", "",
               "![lpbf ceilings](images/heatx/lpbf-ceilings.png)", ""]
+    if exist("manufacturing", "arm-link.png"):
+        g += ["## Manufacturing constraints", "", MFG_GALLERY, "",
+              "![arm link](images/manufacturing/arm-link.png)", ""]
+        if exist("manufacturing", "wrist-yoke.png"):
+            g += [MFG_YOKE, "", "![wrist yoke](images/manufacturing/wrist-yoke.png)", ""]
     with open(GALLERY, "w") as fh:
         fh.write("\n".join(g))
 

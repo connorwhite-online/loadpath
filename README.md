@@ -80,6 +80,10 @@ Printed in metal, nothing inside can be supported: the channels end in peaked ro
 
 ![metal ceilings](docs/images/heatx/lpbf-ceilings.png)
 
+Made another way: the same arm link printed, cast (no undercuts along z), 3-axis milled from both sides with a 6 mm cutter, and with members capped at 6 mm. Each meets SF 3 and 0.5 mm.
+
+![manufacturing constraints](docs/images/manufacturing/arm-link.png)
+
 <sub>Rendered 2026-10-29 from `f5b3a9d` by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->

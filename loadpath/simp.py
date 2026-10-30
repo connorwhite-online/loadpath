@@ -30,6 +30,7 @@ from scipy import ndimage
 
 from .domain import Domain
 from .fem import HexMesh, Solver, Stiffness, hex8_ke
+from .manufacture import AccessFilter, MaxMember, machinable, tie_groups
 
 import os
 
@@ -253,6 +254,11 @@ class SimpOptions:
     build_direction: tuple[int, int] | None = None
     # Axis index the part is extruded along (2.5D: cut from plate), or None.
     extrusion: int | None = None
+    # Milling / casting access (manufacture.Access), a circular pattern
+    # (manufacture.Pattern), and the thickest member (mm): see manufacture.py.
+    access: object = None
+    pattern: object = None
+    max_member: float | None = None
     # A warm start is already a design; restarting projection at beta 1
     # would blur it back to grey before sharpening it again.
     beta_start: float = 1.0
@@ -456,6 +462,16 @@ def _extrude(v, columns, design):
     return out
 
 
+def _machined(domain, xp, access):
+    """Fill every design cell a cutter of the access's radius (and 2.5-axis
+    floors) cannot reach: the exact delivery step (manufacture.machinable)."""
+    ijk = tuple(domain.mesh.elem_ijk.T)
+    blocked = machinable(domain.full_grid(xp) > 0.5, access, domain.pitch)[ijk]
+    xp = xp.copy()
+    xp[blocked] = np.maximum(xp[blocked], 1.0)
+    return xp
+
+
 def _symmetrize(v, mirror):
     for m in mirror.values():
         has = m >= 0
@@ -475,12 +491,7 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
     if n_design == 0:
         raise ValueError("nothing to optimize: every cell is preserved")
     fe = _Analysis(domain, nu, opts.solve_rtol)
-    columns = None
-    if opts.extrusion is not None:
-        a = opts.extrusion
-        others = [i for i in range(3) if i != a]
-        ij = mesh.elem_ijk[:, others]
-        _, columns = np.unique(ij[:, 0] * (domain.dims[others[1]] + 1) + ij[:, 1], return_inverse=True)
+    columns = tie_groups(domain, opts.extrusion, opts.pattern)
     # An extruded part's top and bottom are the stock's faces: padding the
     # filter there (outside = void) would thin them, so pad only free designs.
     h, hs = density_filter(domain, opts.filter_radius, pad=opts.extrusion is None)
@@ -517,6 +528,18 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
 
         def printed_grad(am, g):
             return am.backward(domain.full_grid(g))[ijk]
+    elif opts.access is not None:
+        # milling / casting: material that would leave an undercut is
+        # credited as filled (manufacture.AccessFilter)
+        dirs = opts.access.directions
+        am_b, am_e = AccessFilter(domain.dims, dirs), AccessFilter(domain.dims, dirs)
+        am_v = AccessFilter(domain.dims, dirs, track=False)
+
+        def printed(am, v):
+            return am.forward(domain.full_grid(v))[ijk]
+
+        def printed_grad(am, g):
+            return am.backward(domain.full_grid(g))[ijk]
     else:
         am_b = am_e = am_v = None
 
@@ -533,6 +556,8 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         return xt, printed(am if am is not None else am_v, xp)
 
     eta_e = opts.eta + opts.erode
+    thick = MaxMember(domain, opts.max_member, design) if opts.max_member else None
+    mu = 0.0
 
     def eroded(xt, b):
         xe = _project(xt, b, eta_e)
@@ -578,6 +603,23 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         dv = ht @ (printed_grad(am_b, design.astype(float)) * dproj / hs)
         dc = np.minimum(dc, 0.0)
         dv = np.maximum(dv, 1e-12)
+        excess = None
+        if thick is not None:
+            # max member: a cost on top of volume where a ball is too full,
+            # weighted up while the solid's 95th percentile is over and
+            # eased off when it is not (manufacture.MaxMember). The worst
+            # ball sits at a junction and stays over whatever the weight:
+            # steering on it ran the weight to 1000 and broke the beam.
+            # Measured on the delivered (projected) field, but carried back
+            # through the filter only, as if the projection were the
+            # identity: deep in a thick member the projection's slope is
+            # nil, so the true gradient only ever shaved the member's skin,
+            # and measured on the filtered field the penalty let go as soon
+            # as the design variables sank to 0.7, still projecting solid.
+            excess, over, dp = thick(xp)
+            mu = min(max(mu * 1.15, 0.1), 100.0) if over > 0.05 else mu * 0.9
+            if mu > 0:
+                dv = dv + mu * (ht @ (dp / hs))
         if domain.mirror:
             dc = _symmetrize(dc, domain.mirror)
             dv = _symmetrize(dv, domain.mirror)
@@ -612,6 +654,9 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
                "volume": float(xp[design].mean()), "beta": beta, "change": change,
                "seconds": time.time() - t0, "cgIterations": fe.last_iters,
                "solvedCells": fe.last_cells}
+        if excess is not None:
+            rec["maxMemberExcess"] = excess
+            rec["maxMemberWeight"] = mu
         history.append(rec)
         if on_iter is not None:
             on_iter(rec, xp)
@@ -641,6 +686,8 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         xp = _project((h @ xe) / hs, beta, opts.eta - opts.erode)
         xp[pres] = 1.0
         xp = printed(am_v, xp)
+    if opts.access is not None:
+        xp = _machined(domain, xp, opts.access)
     # Final analysis on the delivered field (it moved since the last solve).
     e = E_MIN + xp ** PENALTY * (1 - E_MIN)
     loads = domain.loads
@@ -651,6 +698,12 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
     us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
     if opts.prune:
         xp, us = _prune_dead(fe, domain, xp, us, loads, design, pres)
+        if opts.access is not None:
+            # pruning a dead end can leave a void under material: refill
+            xq = _machined(domain, xp, opts.access)
+            if (xq != xp).any():
+                xp = xq
+                us = fe.solve(E_MIN + xp ** PENALTY * (1 - E_MIN), xp, us, rtol=1e-6, loads=loads)
     case_c, comp = [], 0.0
     for ci, f in enumerate(loads):
         cc = float(f @ us[ci])

@@ -336,6 +336,36 @@ STUDY_SCHEMA = {
                            "description": "The direction layers stack; turns on overhang control."},
         "extrusion": {"type": "string", "pattern": "^[+-]?[xyz]$",
                       "description": "The part is a profile extruded along this axis (cut from plate)."},
+        "maxMember": {**_POS, "description": "Thickest member, mm (at least 2 x minMember): thick members "
+                                             "hollow out or split."},
+        "milling": {"type": "object", "properties": {
+                        "axes": {"enum": [2.5, 3, 5], "description": "2.5: flat pocket floors every stepDown; "
+                                                                    "5: 3+2 positional, all six sides"},
+                        "directions": {"type": "array", "items": {"type": "string", "pattern": "^[+-]?[xyz]$"},
+                                       "minItems": 1,
+                                       "description": "sides the cutter comes from, like '+z' (default +z; "
+                                                      "all six for 5-axis)"},
+                        "toolDiameter": {**_POS, "description": "mm, smallest cutter: narrower slots and "
+                                                                "tighter inside corners are filled"},
+                        "stepDown": {**_POS, "description": "mm between 2.5-axis pocket floors (default 2)"}},
+                    "additionalProperties": False,
+                    "description": "The part is machined: every void reachable by a cutter coming straight in."},
+        "casting": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"},
+                              {"type": "object", "properties": {
+                                  "draw": {"type": "string", "pattern": "^[+-]?[xyz]$",
+                                           "description": "the direction the mold opens"},
+                                  "sides": {"enum": [1, 2], "description": "2 (default): halves pull both ways "
+                                                                           "along the draw; 1: one half pulls off "
+                                                                           "a flat parting plane"}},
+                               "required": ["draw"], "additionalProperties": False}],
+                    "description": "Cast or molded: no undercuts along the draw direction."},
+        "pattern": {"type": "object", "properties": {
+                        "type": {"const": "circular"},
+                        "axis": {"enum": ["x", "y", "z"]},
+                        "count": {"type": "integer", "minimum": 2},
+                        "center": {**_VEC3, "description": "a point on the axis (default: design-space centre)"}},
+                    "required": ["count"], "additionalProperties": False,
+                    "description": "Circular pattern: count identical sectors round the axis."},
         "process": _PROCESS,
         "durability": _DURABILITY,
         "lattice": {"type": "object", "properties": _LATTICE_PROPS, "additionalProperties": False,

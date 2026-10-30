@@ -356,6 +356,16 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
             f"minMember {study.min_member:g}mm is under 1.5 cells ({1.5 * pitch:.2f}mm); members that thin "
             "cannot be resolved. Raise resolution.maxElements or set resolution.pitch.")
 
+    if study.max_member is not None and study.max_member < 3.0 * pitch:
+        warnings.append(
+            f"maxMember {study.max_member:g}mm is under 3 cells ({3 * pitch:.2f}mm); the thickness limit is too "
+            "coarse to hold on this grid. Raise resolution.maxElements or set resolution.pitch.")
+    access = getattr(study, "access", None)
+    if access is not None and access.tool_radius and access.tool_radius < pitch:
+        warnings.append(
+            f"milling.toolDiameter {2 * access.tool_radius:g}mm is under two cells ({2 * pitch:.2f}mm); slots "
+            "that narrow are left to the grid, which is coarser.")
+
     # Support nodes on a provisional mesh, then drop islands that do not
     # reach one, then rebuild the mesh over what remains.
     mesh = HexMesh(ijk[active], pitch, origin)

@@ -27,6 +27,7 @@ import numpy as np
 
 from .domain import Domain
 from .fem import elastic_c, hex8_b_center
+from .manufacture import tie_groups
 from .mma import MMA
 from .simp import (E_MIN, PENALTY, SimpOptions, SimpResult, _Analysis, _dproject, _extrude,
                    _project, _symmetrize, density_filter)
@@ -60,12 +61,9 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     pres = domain.preserve
     design = ~pres
     fe = _Analysis(domain, nu, opts.solve_rtol)
-    columns = None
-    if opts.extrusion is not None:
-        a = opts.extrusion
-        others = [i for i in range(3) if i != a]
-        ij = mesh.elem_ijk[:, others]
-        _, columns = np.unique(ij[:, 0] * (domain.dims[others[1]] + 1) + ij[:, 1], return_inverse=True)
+    if opts.access is not None or opts.max_member:
+        raise ValueError("optimize_constrained does not take milling, casting or maxMember: use the search")
+    columns = tie_groups(domain, opts.extrusion, opts.pattern)
     h, hs = density_filter(domain, opts.filter_radius, pad=opts.extrusion is None)
     ht = h.T.tocsr()
     eta_e = opts.eta + opts.erode

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .domain import Domain, build_domain
+from .manufacture import report as manufacturing_report
 from .reconstruct import ReconstructOptions, reconstruct
 from .simp import SimpOptions, filter_radius, optimize
 from .spec import Study
@@ -53,6 +54,12 @@ _CONFIRM_CELLS = 150_000
 _CONFIRM_RUNS = 3
 
 
+def _making(study: Study) -> dict:
+    """The optimizer options that say how the part is made."""
+    return dict(build_direction=study.print_direction, extrusion=study.extrusion, access=study.access,
+                pattern=study.pattern, max_member=study.max_member)
+
+
 def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should_stop) -> np.ndarray:
     """Find the layout on a grid twice as coarse (an eighth of the cells, so
     each iteration is roughly ten times cheaper), stopping while it is still
@@ -63,8 +70,7 @@ def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should
     coarse = build_domain(study, pitch=2.0 * domain.pitch)
     res = optimize(coarse, study.elastic(design=True),
                    SimpOptions(volume_fraction=vf, filter_radius=max(radius, 1.5 * coarse.pitch),
-                               max_iterations=60, beta_max=_WARM_BETA, beta_every=12,
-                               build_direction=study.print_direction, extrusion=study.extrusion),
+                               max_iterations=60, beta_max=_WARM_BETA, beta_every=12, **_making(study)),
                    should_stop=should_stop)
     grid = coarse.full_grid(res.x)
     coords = (domain.mesh.elem_centers() - coarse.origin) / coarse.pitch - 0.5
@@ -287,7 +293,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         res = optimize(domain, study.elastic(design=True),
                        SimpOptions(volume_fraction=vf, filter_radius=radius,
                                    max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
-                                   build_direction=study.print_direction, extrusion=study.extrusion),
+                                   **_making(study)),
                        on_iter=on_iter, should_stop=should_stop)
         emit({"stage": "mesh", "volumeFraction": vf})
         mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
@@ -301,6 +307,9 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             mat = study.material
             report = {"mass": float(mesh.volume) * mat.density / 1000.0, "safetyFactor": 0.0,
                       "cases": [], "warnings": [f"verification failed: {exc}"]}
+        making = manufacturing_report(study, domain, mesh)
+        if making:
+            report["manufacturing"] = making
         opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                "compliance": res.compliance, "caseCompliance": res.case_compliance,
                "achievedVolumeFraction": res.volume_fraction}
@@ -405,7 +414,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             domain, study.elastic(),
             SimpOptions(volume_fraction=float(goal.volume_fraction or 0.3), filter_radius=radius,
                         max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
-                        extrusion=study.extrusion),
+                        extrusion=study.extrusion, pattern=study.pattern),
             limits, on_iter=on_iter, should_stop=should_stop)
         mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
         report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
@@ -422,7 +431,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
 
     goal = study.goal
     if goal.method == "constrained" and (goal.safety_factor is not None or goal.max_deflection is not None) \
-            and study.print_direction is None and study.gravity is None and not _durability_drives(study):
+            and study.print_direction is None and study.gravity is None and not _durability_drives(study) \
+            and study.access is None and study.max_member is None:
         from .constrained import Limits
         from .verify import STRESS_ALLOWANCE
 

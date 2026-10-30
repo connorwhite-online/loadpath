@@ -53,6 +53,7 @@ it becomes an eval metric.
 | `mechanism.py` | compliant mechanisms (max output displacement against springs; several input/output pairs) |
 | `nonlinear.py` | large deflection (total Lagrangian hex8, neo-Hookean, Newton, force, stroke or tendon (`Tendon`: cable through guides, follows the part) loads, stability check that follows buckled branches), linear buckling, `verify_mechanism` (also `MechanismOptions(verify_nonlinear=True)`) |
 | `am.py` | overhang control (Langelaar filter) |
+| `manufacture.py` | non-additive constraints: milling (2.5/3/5-axis access, cutter diameter, pocket floors) and casting (draw, 1/2-sided) through one tool/mold access filter on the projected field, circular patterns (tied sectors), maxMember (local volume penalty); `report` measures undercuts and the thickest member on the delivered mesh |
 | `reconstruct.py` | field -> printable mesh: cubic upsampling, opening at min member, fade at keep-outs, smooth-min rounding at the design boundary (flush at supports and loads), 3 mm fillets into preserved geometry, exact booleans |
 | `verify.py` | independent voxelization + FEA of the delivered mesh, hotspot submodels, layer-bond check, boundary-cut metric, stress fields |
 | `crosscheck.py` | second opinion on a tet mesh: gmsh + native P2 assembly + p-multigrid; CalculiX deck writer |

@@ -228,6 +228,11 @@ class Study:
     # 2.5D manufacturing: the part is a profile extruded along this axis
     # (0, 1, 2), i.e. cut from plate by waterjet, laser or a 2.5-axis mill.
     extrusion: int | None = None
+    # Milling or casting access (manufacture.Access), a circular pattern
+    # (manufacture.Pattern), and the thickest member allowed (mm).
+    access: Any = None
+    pattern: Any = None
+    max_member: float | None = None
     # Every material to try (a list in the study); `material` is the first.
     materials: list = field(default_factory=list)
     # How it is made (spec.PROCESSES): layer weakness, overhangs, min feature.
@@ -519,6 +524,21 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         shells.append(("skin", t))
     from .durability import durability_from_spec
     durability = durability_from_spec(d.get("durability"))
+    from .manufacture import parse_casting, parse_milling, parse_pattern
+
+    if d.get("milling") is not None and d.get("casting") is not None:
+        raise ValueError("a study is milled or cast, not both: give milling or casting")
+    access = parse_milling(d.get("milling")) or parse_casting(d.get("casting"))
+    if access is not None and print_direction is not None:
+        raise ValueError(f"{access.kind} and overhang control (printDirection, or a process that prints with "
+                         "overhang limits) do not go together: drop one")
+    max_member = d.get("maxMember")
+    if max_member is not None:
+        if not (isinstance(max_member, (int, float)) and max_member > 0):
+            raise ValueError("maxMember is the thickest member allowed, in mm (> 0)")
+        if min_member is not None and max_member < 2.0 * float(min_member):
+            raise ValueError(f"maxMember ({max_member:g}mm) must be at least twice minMember "
+                             f"({float(min_member):g}mm) to leave the optimizer room")
     return Study(
         name=str(d.get("name") or "study"),
         design_space=design_space,
@@ -537,6 +557,9 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         gravity=gravity,
         print_direction=print_direction,
         extrusion=_extrusion_axis(d.get("extrusion")),
+        access=access,
+        pattern=parse_pattern(d.get("pattern")),
+        max_member=float(max_member) if max_member is not None else None,
         process=process,
         shells=shells,
         durability=durability,
