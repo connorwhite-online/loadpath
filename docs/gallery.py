@@ -158,7 +158,7 @@ def render_case(row, evals, stress):
         bent = trimesh.Trimesh(mesh.vertices + k * disp, mesh.faces, process=False)
         colors = ramp((w * vm_nodes[idx]).sum(axis=1) / scale)
         bar = ("von Mises stress", "0", "98th percentile")
-        s = Scene(panel_size=(600, 520), colorbar=bar)
+        s = Scene(panel_size=(600, 520))     # the README says what the colours mean
         _study_panel(s, None, bent, VIEWS[0], vertex_colors=colors)
         out["stressThumb"] = _crop(s.render(os.path.join(IMAGES, "stress", f"{name}.png")))
         s = Scene(f"{name}: stress, shape {k:.0f}x exaggerated ({worst['name']})" if k else name,
@@ -275,7 +275,7 @@ def write_docs(rows, evals):
     stress = [r for r in cases if exist("stress", f"{r['case']}.png")]
     stress = ([r for r in stress if r["case"] in STRESS_PICKS] or stress)[:COLS]
     if stress:
-        readme += ["", "Where the load goes: von Mises stress on the part bent by its worst load case:", "",
+        readme += ["", "Where the load goes: von Mises stress, blue (none) to red (the part's 98th percentile), on the part bent by its worst load case:", "",
                    _grid([(img("stress", f"{r['case']}.png"), f"<sub>{r['case']}</sub>") for r in stress], width=250)]
     hx = [(n, cap) for n, cap, *_ in HEATX if exist("heatx", f"{n}.png")]
     if hx:
