@@ -73,6 +73,12 @@ def _child_prolongations() -> np.ndarray:
 
 _PK = _child_prolongations()
 
+# Chebyshev needs an upper bound on the spectrum of D^-1 A. A dozen power
+# iterations land ~10% under it, and an underestimate lets the top modes
+# grow: on a uniform 500k-cell bar 1.1x took 16 CG iterations, the converged
+# bound 6. Overestimating costs far less than underestimating.
+LMAX_SAFETY = 1.3
+
 
 def prolong(c: np.ndarray) -> np.ndarray:
     """Trilinear prolongation of a node-grid field (..., nx+1, ny+1, nz+1) to
@@ -126,32 +132,36 @@ def _slab(cells_yz: int, dtype) -> int:
     return max(1, int(32e6 // per_plane))
 
 
-def _gather(u, a, b, ny, nz, out):
+def _gather(u, r, out):
+    x0, x1, y0, y1, z0, z1 = r
     for c, (dx, dy, dz) in enumerate(_CORNER_OFF):
-        out[3 * c:3 * c + 3] = u[:, a + dx:b + dx, dy:dy + ny, dz:dz + nz]
+        out[3 * c:3 * c + 3] = u[:, x0 + dx:x1 + dx, y0 + dy:y1 + dy, z0 + dz:z1 + dz]
 
 
-def _scatter(f, a, b, ny, nz, out):
+def _scatter(f, r, out):
+    x0, x1, y0, y1, z0, z1 = r
     for c, (dx, dy, dz) in enumerate(_CORNER_OFF):
-        out[:, a + dx:b + dx, dy:dy + ny, dz:dz + nz] += f[3 * c:3 * c + 3]
+        out[:, x0 + dx:x1 + dx, y0 + dy:y1 + dy, z0 + dz:z1 + dz] += f[3 * c:3 * c + 3]
 
 
-_POOL = None
+# Tiles the operator is applied over: TILE_X x-planes by TILE_Y y-rows, cut
+# to the z-range of cells that carry stiffness, and skipped when none do.
+# A converged design fills a third of its box or less, and the box itself
+# includes keep-outs, so most of the grid is never touched.
+TILE_X, TILE_Y = 8, 16
 
 
-def _threads() -> int:
-    # Opt-in: on the 4-core cloud box the kernels are memory bound and BLAS
-    # already threads the GEMMs, so slabs on threads gained ~1.3x at best.
-    return max(1, int(os.environ.get("LOADPATH_THREADS", "1") or 1))
-
-
-def _pool():
-    global _POOL
-    if _POOL is None:
-        from concurrent.futures import ThreadPoolExecutor
-
-        _POOL = ThreadPoolExecutor(_threads())
-    return _POOL
+def _tiles(active: np.ndarray) -> list:
+    nx, ny, nz = active.shape
+    out = []
+    for x0 in range(0, nx, TILE_X):
+        x1 = min(x0 + TILE_X, nx)
+        for y0 in range(0, ny, TILE_Y):
+            y1 = min(y0 + TILE_Y, ny)
+            zs = np.flatnonzero(active[x0:x1, y0:y1].any(axis=(0, 1)))
+            if len(zs):
+                out.append((x0, x1, y0, y1, int(zs[0]), int(zs[-1]) + 1))
+    return out
 
 
 class _Level:
@@ -179,61 +189,49 @@ class _Level:
         self.mask = None
         self.dinv = None
         self.lmax = None
+        self.tiles = None
 
     @property
     def node_shape(self):
         nx, ny, nz = self.dims
         return (3, nx + 1, ny + 1, nz + 1)
 
-    def _cell_kernel(self, buf, a, b):
-        """f (24, m, ny, nz) = cell matrices of x-slab [a, b) times buf."""
-        m = b - a
-        ny, nz = self.dims[1:]
+    def active(self) -> np.ndarray:
+        """Cells with a nonzero matrix outside the patch."""
+        if self.kind == "scaled":
+            return self.e != 0
+        if self.kind == "weights":
+            return self.w.any(axis=0)
+        return np.einsum("iixyz->xyz", self.k) > 0
+
+    def _cell_kernel(self, buf, r):
+        """f (24, cells of region r) = the cells' matrices times buf."""
+        x0, x1, y0, y1, z0, z1 = r
+        shp = (x1 - x0, y1 - y0, z1 - z0)
         flat = buf.reshape(24, -1)
         if self.kind == "scaled":
-            f = (self.ke @ flat).reshape(24, m, ny, nz)
-            f *= self.e[a:b][None]
+            f = (self.ke @ flat).reshape((24,) + shp)
+            f *= self.e[x0:x1, y0:y1, z0:z1][None]
             return f
         if self.kind == "weights":
-            g = (self.mcat @ flat).reshape(8, 24, m, ny, nz)
-            w = self.w[:, a:b]
+            g = (self.mcat @ flat).reshape((8, 24) + shp)
+            w = self.w[:, x0:x1, y0:y1, z0:z1]
             f = g[0] * w[0][None]
             for k in range(1, 8):
                 f += g[k] * w[k][None]
             return f
-        kk = self.k[:, :, a:b].reshape(24, 24, -1)
-        return np.einsum("ijn,jn->in", kk, flat).reshape(24, m, ny, nz)
-
-    def _apply_slab(self, u, a, b):
-        """K u restricted to the cells of x-slab [a, b): a (3, b-a+1, ...)
-        node slab."""
-        ny, nz = self.dims[1:]
-        out = np.zeros((3, b - a + 1, ny + 1, nz + 1), u.dtype)
-        step = _slab(ny * nz, u.dtype)
-        buf = np.empty((24, min(step, b - a), ny, nz), u.dtype)
-        for c0 in range(a, b, step):
-            c1 = min(c0 + step, b)
-            bb = buf[:, :c1 - c0]
-            _gather(u, c0, c1, ny, nz, bb)
-            _scatter(self._cell_kernel(bb, c0, c1), c0 - a, c1 - a, ny, nz, out)
-        return out
+        kk = self.k[:, :, x0:x1, y0:y1, z0:z1].reshape(24, 24, -1)
+        return np.einsum("ijn,jn->in", kk, flat).reshape((24,) + shp)
 
     def apply_k(self, u):
         """Unmasked K u on the node grid."""
-        nx, ny, nz = self.dims
-        nt = _threads()
-        if nt > 1 and nx * ny * nz >= 50_000:
-            # x-slabs on threads (numpy and BLAS release the GIL), each into
-            # its own node slab; neighbours share one node plane, summed here
-            cuts = np.linspace(0, nx, min(nt, nx) + 1).astype(int)
-            parts = list(_pool().map(lambda ab: self._apply_slab(u, *ab), zip(cuts[:-1], cuts[1:])))
-            out = np.empty(self.node_shape, u.dtype)
-            out[:, 0] = 0
-            for (a, b), part in zip(zip(cuts[:-1], cuts[1:]), parts):
-                out[:, a + 1:b + 1] = part[:, 1:]
-                out[:, a] += part[:, 0]
-        else:
-            out = self._apply_slab(u, 0, nx)
+        if self.tiles is None:
+            self.tiles = _tiles(self.active())
+        out = np.zeros(self.node_shape, u.dtype)
+        for r in self.tiles:
+            buf = np.empty((24, r[1] - r[0], r[3] - r[2], r[5] - r[4]), u.dtype)
+            _gather(u, r, buf)
+            _scatter(self._cell_kernel(buf, r), r, out)
         if self.patch_ijk is not None and len(self.patch_ijk):
             ue = self._patch_gather(u)
             fe = np.matmul(self.patch_k.astype(u.dtype, copy=False), ue[:, :, None])[:, :, 0]
@@ -357,7 +355,7 @@ class GridElasticity:
     active cells than this, and assemble that level. degree: Chebyshev
     smoothing degree (pre and post). dtype: precision of the V-cycle."""
 
-    def __init__(self, mesh, nu, fixed, springs=None, rtol=1e-6, maxiter=500, coarse_cells=6000,
+    def __init__(self, mesh, nu, fixed, springs=None, rtol=1e-6, maxiter=500, coarse_cells=2000,
                  degree=2, dtype=np.float32, lu_max_dofs=60_000):
         self.mesh = mesh
         self.nu = nu
@@ -611,10 +609,17 @@ class GridElasticity:
 
     def _estimate_lmax(self, i, its=12):
         """Largest eigenvalue of D^-1 A at level i, by power iteration (a
-        Chebyshev smoother needs an upper bound; 1.1x the estimate)."""
+        Chebyshev smoother needs an upper bound; see LMAX_SAFETY)."""
         lv = self._op(i)
-        rng = np.random.default_rng(i)
-        v = (rng.random(lv.node_shape) - 0.5).astype(lv.dinv.dtype) * lv.mask
+        prev = self._lmax_vec.get(i)
+        if prev is not None and prev.shape == lv.node_shape:
+            # warm start from the last hierarchy's vector. Not fewer
+            # iterations: cutting them to 4 underestimated the bound once
+            # cells dropped out of the design, and the CG count tripled.
+            v = prev.astype(lv.dinv.dtype) * lv.mask
+        else:
+            rng = np.random.default_rng(i)
+            v = (rng.random(lv.node_shape) - 0.5).astype(lv.dinv.dtype) * lv.mask
         lam = 1.0
         for _ in range(its):
             nv = np.linalg.norm(v)
@@ -624,7 +629,8 @@ class GridElasticity:
             av = lv.dinv * lv.apply(v) * lv.mask
             lam = float(np.vdot(v, av))
             v = av
-        return 1.1 * max(lam, 1e-12)
+        self._lmax_vec[i] = v
+        return LMAX_SAFETY * max(lam, 1e-12)
 
     def _smooth(self, lv, b, x):
         """Chebyshev iteration on D^-1 A over [lmax/30, lmax]."""
@@ -682,7 +688,24 @@ class GridElasticity:
         bnorm = float(np.linalg.norm(b))
         if bnorm == 0:
             return np.zeros_like(b), 0, True
-        r = b - a.apply(x)
+        r = b.copy()
+        if x0 is not None:
+            # Scale the warm start to its energy-optimal multiple, and drop
+            # it if even that is worse than zero: after a projection step or
+            # a cut of the live cells the last displacement can start 8x
+            # further off than zero does (35 CG iterations against 15).
+            ax = a.apply(x)
+            xax = float(np.vdot(x, ax))
+            s = float(np.vdot(b, x)) / xax if xax > 0 else 0.0
+            if s > 0:
+                rs = b - s * ax
+                if np.linalg.norm(rs) < bnorm:
+                    x *= s
+                    r = rs
+                else:
+                    x[:] = 0
+            else:
+                x[:] = 0
         z = self.precondition(r)
         p = z.copy()
         rz = float(np.vdot(r, z))
@@ -742,7 +765,7 @@ class GridElasticity:
         for a in range(0, nx, step):
             b = min(a + step, nx)
             buf = np.empty((24, b - a, ny, nz))
-            _gather(g, a, b, ny, nz, buf)
+            _gather(g, (a, b, 0, ny, 0, nz), buf)
             flat = buf.reshape(24, -1)
             se[a:b] = np.einsum("in,in->n", flat, ke @ flat).reshape(b - a, ny, nz)
         return se[tuple(self.elem_ijk.T)]
