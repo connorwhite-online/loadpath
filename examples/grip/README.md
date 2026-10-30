@@ -75,3 +75,49 @@ loads: a cable at constant tension through guides along its channel to the
 knot. On main at 37f5ac8, 0.73 mm cells: 48° of distal curl at 7.5 N, 120° at
 16.7 N with 15 mm of cable pulled in. Three cells across the 2.2 mm flexure
 make it about 2x too stiff; `--pitch 0.55` takes that out.
+
+## Loads from the arm (`derive.py`)
+
+The studies above carry GRIP's hand-written loads: one pose at full reach
+times 1.5, the joint above at its rating, and 20 N along the joint's axis
+applied at the socket. `derive.py` replaces them with loads swept from
+GRIP's URDF by `loadpath.assembly` (v0.3 servo masses and efforts, J2's
+static weight on its spring): about 11,000 states per link (limit corners
+and random poses; the same poses moving at up to the URDF speed limits with
+0.2 s ramps, cut back to what each joint's rated torque can deliver; a 0-1 kg
+payload scattered 30 mm round the tool point; a 20 N push at the tool in any
+direction; each upstream joint stalled against an obstacle at the tool, up
+to 20 N), collapsed to two or three governing cases on the solid design
+space.
+
+GRIP's committed v0.3 parts, verified on main (150k cells) under both sets.
+The old-load numbers match GRIP's recorded ones (forearm 4.2 vs 4.19).
+
+| Link | Mass | SF, hand-written loads | SF, derived loads | Governing derived case |
+| --- | --- | --- | --- | --- |
+| Turret | 236 g | 2.67 | 2.13 | dynamic |
+| Upper arm | 179 g | 2.81 | **0.93** | dynamic, 3.9 mm deflection |
+| Forearm | 78 g | 4.20 | **0.69** | dynamic, 2.3 mm |
+| Wrist yoke | 24 g | 2.89 | **0.61** | dynamic (J3 stall close behind) |
+| Wrist link | 67 g | 4.23 | 1.72 | dynamic |
+
+The peak loads are not much bigger (on the solid upper-arm space the
+derived worst case is 1.35x the hand-written worst; at 0.5 s ramps, 1.17x,
+the same as a 20 N push at the tool). What changes is direction: every
+hand-written case loads the links in the arm's plane, while J1 swinging the
+arm, or a push at the tool from the side, bends them out of it, about the
+axis the optimizer was never asked to make stiff. Regrowing from
+`<link>.derived.json` is the fix; the inputs worth questioning first are the
+ramp (what the controller really commands) and the 20 N contact.
+
+```bash
+python examples/grip/derive.py --grip ../grip                  # derive + verify, ~1 h on 4 cores
+python examples/grip/derive.py --grip ../grip --space --no-verify   # + neighbours' swept keep-outs
+```
+
+With `--space` the parent and child (GRIP's committed parts) swept through
+their joints' ranges become keep-outs (1 mm clearance). The committed wrist
+yoke has 3.5 cm³ inside the wrist link's J5 swing and the wrist link 2.4 cm³
+inside the yoke's: the clash a fixed split of the space round J5 was
+holding apart. The forearm and yoke overlap by under 0.1 cm³ round J4, and
+the turret, upper arm and forearm are clear of their neighbours.
