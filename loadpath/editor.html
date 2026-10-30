@@ -152,6 +152,11 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
   #legend { left: 12px; right: 12px; width: auto; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+#sweep-chart svg { width: 100%; height: auto; display: block; }
+#sweep-chart .pt { cursor: pointer; }
+#sweep-chart .pt:hover circle { r: 5; }
+#sweep-chart text { font: 10px var(--mono); fill: var(--muted); }
 </style>
 <!--/head-->
 <div id="app">
@@ -184,9 +189,11 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
         <div class="row"><input type="range" id="pitch" min="0.1" max="2" step="0.05"><input type="number" id="pitch-n" step="0.05" min="0.05"></div></div>
       <div class="row"><div class="pick" style="flex:1"><span class="note">Material</span><input type="text" id="material" placeholder="petg" list="materials"><datalist id="materials"></datalist></div></div>
       <p class="note" id="mass-est" aria-live="polite"></p>
-      <div class="row" id="fit-row"><div class="pick" style="flex:1"><span class="note">Fit mass, g</span><input type="number" id="fit-target" min="0" step="any" placeholder="target"></div>
+      <div class="row wrap" id="fit-row"><div class="pick" style="flex:1"><span class="note">Fit mass, g</span><input type="number" id="fit-target" min="0" step="any" placeholder="target"></div>
         <div class="pick" style="flex:1.4"><span class="note">by changing</span><select id="fit-param" aria-label="Parameter to change"></select></div>
-        <button class="btn" id="fit" title="Find the value of the parameter that gives the target mass (on the GPU estimate)">Fit</button></div>
+        <button class="btn" id="fit" title="Find the value of the parameter that gives the target mass (on the GPU estimate)">Fit</button>
+        <button class="btn" id="sweep" title="Mass across the parameter's range; click a point to use that value">Sweep</button></div>
+      <div id="sweep-chart" hidden></div>
       <div class="row"><div class="pick" style="flex:1"><span class="note">Process</span>
         <select id="process"><option value="">none</option><option>fdm</option><option>sls</option><option>mjf</option><option>sla</option><option>dlp</option><option>volumetric</option><option>lpbf</option></select></div></div>
     </section>
@@ -1383,6 +1390,7 @@ function volumeOf(name, budget) {
 }
 const MASS_BUDGET = { draft: 200000, good: 600000, fine: 2000000 };
 function updateMass() {
+  if (S.probing) return;                  // a sweep or a fit is moving a value: it reads the mass itself
   const out = $("#mass-est");
   const v = volumeOf(S.doc.output, MASS_BUDGET[S.quality] || 600000);
   S.mass = v;
@@ -1413,12 +1421,70 @@ function fillFitParams() {
   sel.replaceChildren(...keys.map((k) => el("option", { value: k }, k.slice(6).replace(/\//g, " · "))));
   if (keys.includes(keep) && S.fitSel === S.sel) sel.value = keep;    // a new selection offers its own knobs first
   S.fitSel = S.sel;
-  $("#fit").disabled = !keys.length;
+  $("#fit").disabled = $("#sweep").disabled = !keys.length;
 }
 function setUniform(path, v) {
   setAt(S.doc, path, v);
   const key = path.join("/");
   for (const c of [G.comp, ...[...G.probes.values()].map((p) => p.comp)]) if (c && c.uIndex.has(key)) c.uVals[c.uIndex.get(key)] = v;
+}
+/** The range a parameter's slider covers: the op's own range for it, else around its value. */
+function paramRange(key) {
+  const parts = key.split("/"), node = S.doc.nodes[parts[1]];
+  const p = node && OPS[node.op] && OPS[node.op].params.find((q) => q.k === parts[2]) || {};
+  const v = Number(getAt(S.doc, parts.map((x) => /^\d+$/.test(x) ? +x : x)));
+  return rangeFor(p.range && parts.length === 3 ? p : {}, v);
+}
+/** Mass across a parameter's range (n points, the GPU estimate), drawn as a chart; the value is put back. */
+async function sweepMass(key, n = 15) {
+  const rho = densityOf(S.doc.material) || 1, named = !!densityOf(S.doc.material);
+  const path = key.split("/").map((x) => /^\d+$/.test(x) ? +x : x);
+  const v0 = Number(getAt(S.doc, path));
+  const [lo, hi] = paramRange(key);
+  const budget = Math.round((MASS_BUDGET[S.quality] || 600000) / 2);
+  const pts = [];
+  S.probing = true;
+  try {
+  for (let i = 0; i < n; i++) {
+    const x = lo + (hi - lo) * i / (n - 1);
+    setUniform(path, x);
+    const r = volumeOf(S.doc.output, budget);
+    if (r) pts.push([x, r.volume / 1000 * rho]);
+    if (i % 3 === 2) await new Promise((res) => setTimeout(res, 0));
+  }
+  } finally { S.probing = false; setUniform(path, v0); }
+  const cur = volumeOf(S.doc.output, budget);
+  drawSweep(key, pts, [v0, cur ? cur.volume / 1000 * rho : null], named ? "g" : "cm³");
+  updateMass();
+  return pts;
+}
+function drawSweep(key, pts, cur, unit) {
+  const box = $("#sweep-chart");
+  if (pts.length < 2) { box.hidden = true; return; }
+  const W = 288, H = 132, L = 40, R = 8, T = 16, B = 22;
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]).concat(cur[1] != null ? [cur[1]] : []);
+  const tgt = Number($("#fit-target").value);
+  if (tgt > 0 && unit === "g") ys.push(tgt);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys) || 1;
+  const X = (x) => L + (W - L - R) * (x - x0) / ((x1 - x0) || 1), Y = (y) => T + (H - T - B) * (1 - (y - y0) / ((y1 - y0) || 1));
+  const ns = "http://www.w3.org/2000/svg", mk = (t, a, txt) => { const e = document.createElementNS(ns, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); if (txt != null) e.textContent = txt; return e; };
+  const svg = mk("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `mass against ${key.slice(6).replace(/\//g, " ")}` });
+  svg.append(mk("line", { x1: L, y1: H - B, x2: W - R, y2: H - B, stroke: "var(--line)" }), mk("line", { x1: L, y1: T, x2: L, y2: H - B, stroke: "var(--line)" }));
+  svg.append(mk("text", { x: L - 4, y: T + 4, "text-anchor": "end" }, fmt(y1)), mk("text", { x: L - 4, y: H - B, "text-anchor": "end" }, fmt(y0)));
+  svg.append(mk("text", { x: L, y: H - 6 }, fmt(x0)), mk("text", { x: W - R, y: H - 6, "text-anchor": "end" }, fmt(x1)));
+  svg.append(mk("text", { x: L + 4, y: T - 5 }, `${unit} · ${key.slice(6).replace(/\//g, " · ")}`));
+  if (tgt > 0 && unit === "g") svg.append(mk("line", { x1: L, x2: W - R, y1: Y(tgt), y2: Y(tgt), stroke: "var(--warn)", "stroke-dasharray": "4 3" }));
+  svg.append(mk("polyline", { points: pts.map((p) => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" "), fill: "none", stroke: "var(--accent)", "stroke-width": 2 }));
+  if (cur[1] != null) svg.append(mk("circle", { cx: X(cur[0]), cy: Y(cur[1]), r: 4, fill: "var(--ink)" }));
+  const path = key.split("/").map((x) => /^\d+$/.test(x) ? +x : x);
+  for (const p of pts) {
+    const g = mk("g", { class: "pt", tabindex: 0 });
+    g.append(mk("title", {}, `${fmt(p[0])} → ${fmt(p[1])} ${unit}`), mk("circle", { cx: X(p[0]), cy: Y(p[1]), r: 3.5, fill: "var(--accent)" }));
+    const use = () => { const v = Number(p[0].toPrecision(4)); setUniform(path, v); paramChanged(path); inspector(); updateMass(); drawSweep(key, pts, [v, p[1]], unit); };
+    g.addEventListener("click", use); g.addEventListener("keydown", (e) => { if (e.key === "Enter") use(); });
+    svg.append(g);
+  }
+  box.replaceChildren(svg); box.hidden = false;
 }
 /** Find the value of the parameter at `key` whose part weighs `grams` (bracket, then bisect on the estimate). */
 async function fitMass(key, grams) {
@@ -1429,6 +1495,8 @@ async function fitMass(key, grams) {
   const target = grams / rho * 1000;
   const budget = MASS_BUDGET[S.quality] || 600000;
   const at = (v) => { setUniform(path, v); const r = volumeOf(S.doc.output, budget); return r ? r.volume - target : NaN; };
+  S.probing = true;
+  try {
   const tick = () => new Promise((r) => setTimeout(r, 0));
   status(`Fitting ${key.slice(6).replace(/\//g, " · ")} to ${grams} g…`);
   let a = v0, fa = at(a);
@@ -1456,9 +1524,11 @@ async function fitMass(key, grams) {
   }
   const v = Number(b.toPrecision(4));
   setUniform(path, v);
+  S.probing = false;
   paramChanged(path); inspector(); updateMass();
   status(`${key.slice(6).replace(/\//g, " · ")} = ${v} gives ≈ ${grams} g (was ${v0}).`, "ok");
   return v;
+  } finally { S.probing = false; }
 }
 
 function planeNow() {
@@ -2375,6 +2445,14 @@ $("#pitch").addEventListener("input", (e) => setPitch(+e.target.value));
 $("#pitch-n").addEventListener("change", (e) => setPitch(+e.target.value));
 $("#material").addEventListener("change", (e) => { const v = e.target.value.trim(); if (v) S.doc.material = v; else delete S.doc.material; commit(); updateMass(); });
 $("#materials").replaceChildren(...Object.keys(DATA.densities || {}).map((k) => el("option", { value: k })));
+$("#sweep").addEventListener("click", async () => {
+  const key = $("#fit-param").value;
+  if (!key) return;
+  $("#sweep").disabled = true;
+  status(`Sweeping ${key.slice(6).replace(/\//g, " · ")}…`);
+  try { await sweepMass(key); status(""); } finally { $("#sweep").disabled = false; }
+});
+$("#fit-param").addEventListener("change", () => { $("#sweep-chart").hidden = true; });
 $("#fit").addEventListener("click", async () => {
   const g = Number($("#fit-target").value), key = $("#fit-param").value;
   if (!(g > 0) || !key) { status("Give a target mass and pick the parameter to change.", "warn"); return; }
@@ -2453,7 +2531,7 @@ window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
   THREE, cam: () => { camera.updateMatrixWorld(); return camera; },
-  paste: (text) => pasteText(text), duplicate: (n) => duplicateNode(n),
+  paste: (text) => pasteText(text), sweep: (key, n) => sweepMass(key, n), duplicate: (n) => duplicateNode(n),
   pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),
   select: (n) => { S.sel = n; if (S.follow && kindOf(n) === "solid") S.target = n; afterSelect(); },

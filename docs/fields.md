@@ -63,7 +63,8 @@ wire, an expression) recompiles, in milliseconds.
   (its volume on a grid of samples at two spacings, extrapolated; within
   about 1% of the meshed part) and multiplies by the material's density.
   **Fit mass** finds the value of any one number (a wall, a blend, a remap
-  end) that gives a target mass, in a second or two.
+  end) that gives a target mass, in a second or two; **Sweep** charts the
+  mass across that number's range, and clicking a point uses that value.
 - **Run** meshes the graph with `run_field`, exactly as `loadpath field`
   does, at the graph's pitch, then shows the mesh, the report (mass,
   watertightness, sealed voids, drains, printability) and links to the

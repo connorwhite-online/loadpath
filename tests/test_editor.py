@@ -388,6 +388,10 @@ const [page_, threeDir] = process.argv.slice(2);
     const d = E.doc();
     return { ok, dup, names: Object.keys(d.nodes), sa2: d.nodes.sa2, both2: d.nodes[dup[0]], probe: E.probe("sa2", [[0, 30, 3.8]])[0] };
   });
+  out.sweep = await page.evaluate(async () => {
+    const pts = await window.lpEditor.sweep("nodes/sb/thickness", 5);
+    return { pts, after: window.lpEditor.doc().nodes.sb.thickness, chart: !document.querySelector("#sweep-chart").hidden };
+  });
   out._errors = errors;
   console.log(JSON.stringify(out));
   await browser.close();
@@ -395,13 +399,13 @@ const [page_, threeDir] = process.argv.slice(2);
 """
 
 
-def test_printability_overlays():
+def test_overlays_paste_and_sweep():
     """Colour by wall thickness: a ray traced in along the normal reads a
     0.5 mm and a 2 mm spherical shell at their tops and flanks; the legend
     names the process minimum. Colour by overhangs: a sphere's underside is
     red, its top is not. Pasting and duplicating nodes renames what clashes
-    and keeps the pasted nodes wired to each other. Skipped without node
-    and Playwright."""
+    and keeps the pasted nodes wired to each other; a sweep reads the mass
+    across a parameter's range. Skipped without node and Playwright."""
     node = shutil.which("node")
     npath = os.environ.get("NODE_PATH") or "/opt/node22/lib/node_modules"
     env = {**os.environ, "NODE_PATH": npath}
@@ -432,12 +436,16 @@ def test_printability_overlays():
     assert p["sa2"] == {"op": "shell", "input": "a2", "thickness": "k"}, p["sa2"]
     assert p["dup"] == ["both2"] and p["both2"]["inputs"] == ["sa", "sb"], p
     assert abs(p["probe"] - (-0.2)) < 1e-4, p["probe"]       # the pasted shell is live: 0.4 mm wall at r 3.8
+    # a sweep: the 10 mm sphere's shell from 0 to 6 mm thick gains volume all the way, and the value is put back
+    sw = out["sweep"]
+    vols = [v for _, v in sw["pts"]]
+    assert len(vols) == 5 and all(b > a for a, b in zip(vols, vols[1:])) and sw["after"] == 2.0 and sw["chart"], sw
 
 
 TESTS = [test_graph_with_layout_lints, test_bakes_sample_the_graph, test_bake_spec_follows_an_analyzed_part,
          test_standalone_page_carries_its_data, test_server_lints_bakes_saves_and_runs,
          test_server_reuses_what_it_built, test_warp_solve_is_the_1d_integral,
-         test_cli_writes_a_standalone_editor, test_gpu_preview_matches_fields_py, test_printability_overlays]
+         test_cli_writes_a_standalone_editor, test_gpu_preview_matches_fields_py, test_overlays_paste_and_sweep]
 
 
 def main():
