@@ -84,26 +84,68 @@ def _has_tetwild():
 TETWILD_EPSILON = 1e-3
 
 
+def _tet_cache_dir():
+    """Where volume meshes are kept, by surface: LOADPATH_TET_CACHE (a
+    directory, or "0" for none), else ~/.cache/loadpath/tets."""
+    env = os.environ.get("LOADPATH_TET_CACHE")
+    if env == "0":
+        return None
+    return env or os.path.join(os.path.expanduser("~"), ".cache", "loadpath", "tets")
+
+
 def _tetwild(mesh, size):
+    """fTetWild's mesh of `mesh`, the same one every time for the same
+    surface and settings.
+
+    fTetWild is not reproducible: the same surface comes back with a
+    different mesh on every call (4,904 vs 4,920 vertices on a small lug with
+    one thread, optimization and simplification off, address randomization
+    off; its triangle insertion already differs), and the cross-check's
+    peak stress moved 3-8% with it. None of that is reachable from Python,
+    so the mesh is kept by a hash of the surface and the settings, and the
+    same part is analysed on the same mesh, and reads the same, every time
+    after the first."""
+    import hashlib
+
     import pytetwild
+
+    v = np.ascontiguousarray(mesh.vertices, np.float64)
+    f = np.ascontiguousarray(mesh.faces, np.int32)
+    opts = dict(edge_length_abs=float(size), epsilon=TETWILD_EPSILON,
+                # its defaults (energy 10, 80 passes) took twice as long for
+                # a handful fewer elements under a tenth of regular quality
+                stop_energy=50.0, num_opt_iter=20)
+    key = hashlib.sha256(v.tobytes() + f.tobytes() + repr(sorted(opts.items())).encode()
+                         + str(getattr(pytetwild, "__version__", "")).encode()).hexdigest()[:24]
+    cache = _tet_cache_dir()
+    path = os.path.join(cache, key + ".npz") if cache else None
+    if path and os.path.exists(path):
+        try:
+            with np.load(path) as z:
+                return z["pts"].astype(float), z["tets"].astype(np.int64)
+        except (OSError, ValueError, KeyError):
+            pass
     # fTetWild leaves files (__tracked_surface.stl, _skipped.*) in the
     # working directory: run it in a scratch one
     cwd = os.getcwd()
     with tempfile.TemporaryDirectory() as tmp:
         os.chdir(tmp)
         try:
-            pts, tets = pytetwild.tetrahedralize(
-                np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int32), edge_length_abs=size,
-                epsilon=TETWILD_EPSILON, num_threads=os.cpu_count() or 1,
-                # its defaults (energy 10, 80 passes) took twice as long for
-                # a handful fewer elements under a tenth of regular quality
-                stop_energy=50.0, num_opt_iter=20)
+            pts, tets = pytetwild.tetrahedralize(v, f, num_threads=os.cpu_count() or 1, **opts)
         finally:
             os.chdir(cwd)
     pts, tets = np.asarray(pts, float), np.asarray(tets, np.int64)
     x = pts[tets]
     neg = np.linalg.det(x[:, 1:] - x[:, :1]) < 0
     tets[neg] = tets[neg][:, [0, 2, 1, 3]]
+    if path:
+        try:
+            os.makedirs(cache, exist_ok=True)
+            tmp_path = path + f".{os.getpid()}.tmp.npz"
+            np.savez_compressed(tmp_path, pts=pts, tets=tets.astype(np.int32))
+            os.replace(tmp_path, path)
+        except OSError:
+            pass
     return pts, tets
 
 
@@ -289,10 +331,11 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     wrist yoke it took 166 iterations directly and 82 this way (22 s vs 38 s
     per case). `fixed_dof` marks held dofs; `springs` (or None) is added to
     the stiffness (pins)."""
-    import pyamg
     import scipy.sparse as sp
     import scipy.sparse.linalg as spla
     from pyamg.relaxation.relaxation import gauss_seidel
+
+    from .fem import amg_solver
 
     k = _assemble(nodes, conn, E, nu)
     if springs is not None:
@@ -317,9 +360,9 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     a1 = (p.T @ kff @ p).tocsr()
     cn = np.nonzero(used)[0]
     blocked = a1.shape[0] % 3 == 0 and np.all(np.bincount(cn // 3, minlength=nv)[np.unique(cn // 3)] == 3)
-    ml = pyamg.smoothed_aggregation_solver(a1.tobsr(blocksize=(3, 3)) if blocked else a1,
-                                           B=_rigid_modes(nodes[cn // 3], cn % 3), coarse_solver="splu",
-                                           max_coarse=3000)
+    # seeded (fem.amg_solver): pyamg draws its setup from np.random
+    ml = amg_solver(a1.tobsr(blocksize=(3, 3)) if blocked else a1,
+                    B=_rigid_modes(nodes[cn // 3], cn % 3), coarse_solver="splu", max_coarse=3000)
 
     def precond(r):
         r = np.asarray(r, dtype=np.float64).ravel()

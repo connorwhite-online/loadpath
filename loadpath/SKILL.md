@@ -59,8 +59,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    layer bond (FDM: 60% of the in-plane strength); a safety-factor goal
    sizes the part against the bond too. Pick
    the build direction so the main loads run along the layers, or set
-   `"buildDirection": "auto"` to let it compare all six (slower: one coarse
-   run per direction). `report.json` → `print` says whether it needs
+   `"buildDirection": "auto"` to let it compare all six (slower: every
+   direction half-designed on a coarse grid, the best three finished; with
+   no overhang control, one design checked per axis). `report.json` → `print` says whether it needs
    support, its bridges, and whether the first layer holds; `run` writes a
    `.3mf` per part already standing the right way up for the slicer.
    FDM outcomes are also sliced headless when PrusaSlicer is installed

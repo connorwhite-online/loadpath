@@ -22,7 +22,8 @@ code can be read:
   checked; the safety-factor search sizes the part against it, and the
   optimizer can design with the layered stiffness too (`anisotropic`, off by
   default: on the motor mount and hook it did not beat isotropic, see am.py). `"buildDirection": "auto"` compares the six directions on a coarse
-  grid and keeps the strongest per gram (`orient.py`). Every layered result
+  grid by successive halving (all half-way, the best three finished) and keeps the strongest per gram
+  (`orient.py`). Every layered result
   is sliced like a slicer would (`printcheck.py`: bridges up to 15 mm are
   fine, mid-air islands, support volume, bed contact and tipping) and written
   as a 3MF standing the way it was designed to print (`threemf.py`).

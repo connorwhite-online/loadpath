@@ -365,12 +365,19 @@ class Solver:
     multigrid hierarchy when asked to, or when the last solve needed too many
     iterations (the old hierarchy no longer matches K well)."""
 
-    def __init__(self, mesh: HexMesh, rtol=1e-6, maxiter=800, rebuild_after_iters=25):
+    # Refresh (rather than rebuild) the hierarchy for a new matrix at most
+    # this many times in a row.
+    REFRESH_AGE = 8
+
+    def __init__(self, mesh: HexMesh, rtol=1e-6, maxiter=800, rebuild_after_iters=25, refresh=True):
         self.rtol = rtol
+        self.refresh = refresh
+        self.max_age = self.REFRESH_AGE
         self.maxiter = maxiter
         self.rebuild_after_iters = rebuild_after_iters
         self._b = rigid_body_modes(mesh.node_xyz)
         self._ml = None
+        self._age = 0
         self.last_iters = 0
         self.use_amg = True
         try:
@@ -386,6 +393,21 @@ class Solver:
             d = k.diagonal()
             d[d == 0] = 1.0
             return sp.diags(1.0 / d)
+        if self._ml is not None and self._ml.levels[0].A is not k:
+            if self.refresh and self._age < self.max_age:
+                # A new matrix on the same mesh (the optimizer's next design):
+                # keep the hierarchy but smooth with the matrix being solved.
+                # Smoothing with the previous design's matrix (as this did
+                # until 2026-10-30) took 2-5x the CG iterations of a fresh
+                # hierarchy, so every other step paid for a rebuild; this
+                # cut an arm-link step from 3.1 s to 2.3 s. (Recomputing the
+                # coarse operators too, R A P, was slower: the old
+                # prolongators span void and solid alike, and on a design
+                # that had just moved they converged worse than these.)
+                self._ml.levels[0].A = k
+                self._age += 1
+            else:
+                self._ml = None
         if self._ml is None:
             # coarse_solver: pyamg's default is a dense pseudo-inverse (an SVD)
             # of the coarsest level. Aggregation on these stiffness matrices
@@ -394,7 +416,16 @@ class Solver:
             # milliseconds.
             self._ml = amg_solver(k, B=self._b, symmetry="hermitian", strength="symmetric", max_coarse=400,
                                   coarse_solver="splu")
+            self._age = 0
         return self._ml.aspreconditioner(cycle="V")
+
+    def _maxiter(self):
+        """A refreshed hierarchy that stops working (the design moved too far
+        from the one it was aggregated on) gives up early and is rebuilt,
+        rather than running to maxiter."""
+        if self._age == 0:
+            return self.maxiter
+        return min(self.maxiter, 3 * self.rebuild_after_iters)
 
     def solve(self, k, f, x0=None):
         count = [0]
@@ -402,7 +433,8 @@ class Solver:
         def cb(_):
             count[0] += 1
 
-        u, info = cg(k, f, x0=x0, rtol=self.rtol, maxiter=self.maxiter, M=self._precond(k), callback=cb)
+        m = self._precond(k)
+        u, info = cg(k, f, x0=x0, rtol=self.rtol, maxiter=self._maxiter(), M=m, callback=cb)
         if info != 0 and self._ml is not None:
             # Stale hierarchy: rebuild once and retry from where we got to.
             self._ml = None
@@ -427,12 +459,13 @@ class Solver:
         from concurrent.futures import ThreadPoolExecutor
 
         m = self._precond(k)
+        maxiter = self._maxiter()
         counts = [0] * len(fs)
 
         def one(i):
             def cb(_):
                 counts[i] += 1
-            u, info = cg(k, fs[i], x0=x0s[i], rtol=self.rtol, maxiter=self.maxiter, M=m, callback=cb)
+            u, info = cg(k, fs[i], x0=x0s[i], rtol=self.rtol, maxiter=maxiter, M=m, callback=cb)
             return u, info
 
         with ThreadPoolExecutor(min(len(fs), 4)) as ex:

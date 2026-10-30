@@ -220,6 +220,48 @@ def test_rank_orientations_reads_interlayer_tension():
     assert rows[0]["direction"] == "+z"
 
 
+def test_choose_build_direction_halves_and_shares():
+    """The orientation search by successive halving: every direction half
+    way and checked cheaply, only the leaders finished. A flat lug pulled in
+    its plane bends along its length (x): stood on its root (+-x) that
+    bending crosses the layers."""
+    from loadpath.orient import _FINALISTS, choose_build_direction
+
+    spec = {
+        "designSpace": {"type": "box", "min": [0, -15, -4], "max": [60, 15, 4]},
+        "preserve": [{"id": "eye", "shape": {"type": "cylinder", "center": [48, 0, 0], "axis": "z",
+                                             "length": 8, "r": 9}}],
+        "keepOut": [{"id": "pin", "shape": {"type": "cylinder", "center": [48, 0, 0], "axis": "z",
+                                            "length": 12, "r": 4}}],
+        "supports": [{"shape": {"type": "box", "min": [-1, -16, -5], "max": [0.01, 16, 5]}}],
+        "loadCases": [{"name": "pull", "loads": [{"region": "pin", "force": [0, -80, 0]}]}],
+        "material": "petg", "process": {"type": "fdm", "buildDirection": "auto"},
+        "goal": {"volumeFraction": 0.35}, "maxIterations": 60}
+    events = []
+    out = choose_build_direction(study_from_dict(spec), candidates=["+z", "-z", "+y", "+x"], max_elements=1500,
+                                 on_progress=lambda e, _: events.append(e))
+    rows = out["candidates"]
+    assert {r["direction"] for r in rows} == {"+z", "-z", "+y", "+x"}
+    done = [r for r in rows if r["designed"]]
+    dropped = [r for r in rows if not r["designed"]]
+    assert 1 <= len(done) <= _FINALISTS and dropped, rows
+    # the finalists were the best half-way, and the pick is one of them
+    eff = lambda r: r["screenSafetyFactor"] / r["screenMass"]  # noqa: E731
+    assert min(eff(r) for r in done) >= max(eff(r) for r in dropped), rows
+    assert rows[0]["designed"] and rows[0]["direction"] == out["chosen"]
+    assert all(r["safetyFactor"] is None for r in dropped)
+    assert out["study"].process.build == parse_build_direction(out["chosen"])
+    assert any("screen" in e for e in events)
+    # without overhang control every direction shares the one design: it is
+    # verified once per axis, nothing is optimized per direction
+    sls = choose_build_direction(study_from_dict({**spec, "process": {"type": "sls", "buildDirection": "auto"}}),
+                                 candidates=["+z", "-z", "+x"], max_elements=1500)
+    by = {r["direction"]: r for r in sls["candidates"]}
+    assert all(r["designed"] for r in by.values())
+    assert by["+z"]["safetyFactor"] == by["-z"]["safetyFactor"]
+    assert by["+x"]["safetyFactor"] < by["+z"]["safetyFactor"]
+
+
 def test_write_3mf_places_part_on_bed():
     from loadpath.threemf import write_3mf
     import tempfile

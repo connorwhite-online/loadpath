@@ -35,7 +35,7 @@ from .simp import SimpOptions, filter_radius, optimize
 from .spec import Study
 from .verify import verify_part
 
-__all__ = ["Outcome", "StudyResult", "run_study"]
+__all__ = ["Outcome", "StudyResult", "run_study", "design_at"]
 
 # Bounds for the safety-factor search. (A floor of 0.04 stopped GRIP's upper
 # arm there with SF 5.4 against a goal of 2: large design spaces around
@@ -165,6 +165,65 @@ def _margin(study: Study, report: dict) -> float | None:
     return min(ms) if ms else None
 
 
+def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, beta0: float = 1.0,
+              max_iterations: int | None = None, on_iter=None, should_stop=None, emit=None,
+              verify: bool = True, verify_cells: int = 60_000, refine: int = 3) -> Outcome:
+    """One optimize -> mesh -> verify pass at volume fraction `vf`, from
+    design `x0` (None: uniform) with projection starting at `beta0`. The
+    outcome carries its margin and pass/fail against the study's goal
+    (verify=False skips the check: an empty report, for a design that is
+    only a starting point; verify_cells and refine set how closely it is
+    checked, see verify_part)."""
+    def note(event):
+        if emit is not None:
+            emit(event)
+
+    res = optimize(domain, study.elastic(design=True),
+                   SimpOptions(volume_fraction=vf, filter_radius=radius,
+                               max_iterations=max_iterations or study.max_iterations, x0=x0, beta_start=beta0,
+                               **_making(study)),
+                   on_iter=on_iter, should_stop=should_stop)
+    note({"stage": "mesh", "volumeFraction": vf})
+    mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
+    opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
+           "compliance": res.compliance, "caseCompliance": res.case_compliance,
+           "achievedVolumeFraction": res.volume_fraction,
+           "beta": res.history[-1]["beta"] if res.history else beta0}
+    o = Outcome(vf, mesh, {}, opt, rinfo)
+    o.xphys = res.xphys
+    o.x = res.x
+    if not verify:
+        return o
+    note({"stage": "verify", "volumeFraction": vf})
+    try:
+        report = verify_part(study, mesh, max_cells=verify_cells, min_pitch=0.5 * domain.pitch,
+                             contact_band=domain.pitch, refine=refine)
+    except (RuntimeError, ValueError) as exc:
+        # one outcome verification cannot solve (a piece the supports do
+        # not hold) is a failed outcome, not a failed study: the search
+        # goes on past it (GRIP's wrist link died here)
+        mat = study.material
+        report = {"mass": float(mesh.volume) * mat.density / 1000.0, "safetyFactor": 0.0,
+                  "cases": [], "warnings": [f"verification failed: {exc}"]}
+    making = manufacturing_report(study, domain, mesh)
+    if making:
+        report["manufacturing"] = making
+    o.report = report
+    m = _margin(study, report)
+    if m is not None:
+        report["margin"] = m
+        o.passes = bool(m >= 1.0)
+    if report.get("bodies", 1) > 1:
+        # A preserved piece no load path reaches (a mount with no load
+        # through it) comes out as a loose part. It is not a design that
+        # meets the brief, and the fix is in the study: say so.
+        o.passes = False
+        report.setdefault("warnings", []).append(
+            f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
+            "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+    return o
+
+
 def _domain_info(d: Domain, radius: float) -> dict:
     return {
         "pitch": d.pitch,
@@ -176,29 +235,109 @@ def _domain_info(d: Domain, radius: float) -> dict:
     }
 
 
-def _workers(n: int) -> int:
-    """Processes for independent outcomes: LOADPATH_WORKERS, else half the
-    cores (each solve already uses a thread per load case)."""
+# Peak memory of one worker, roughly, by the most cells it solves at once
+# (study._study_cells): GRIP's turret, a safety-factor search confirmed at
+# 150k cells, peaked at 8.4 GB.
+_RUN_BASE_BYTES = 0.6e9
+_RUN_CELL_BYTES = 55e3
+def _run_bytes(cells: int) -> float:
+    return _RUN_BASE_BYTES + _RUN_CELL_BYTES * int(cells)
+
+
+def _cgroup_limit() -> float | None:
+    """The memory limit of the container this runs in, if any (cgroup v2,
+    then v1): MemAvailable reports the host's, and the cloud box's 14.3 GB
+    limit is what the kernel enforces."""
+    paths = []
+    try:
+        with open("/proc/self/cgroup") as f:
+            for line in f:
+                _, ctrl, rel = line.strip().split(":", 2)
+                if ctrl == "":
+                    paths.append(f"/sys/fs/cgroup{rel}/memory.max")
+                elif "memory" in ctrl.split(","):
+                    paths.append(f"/sys/fs/cgroup/memory{rel}/memory.limit_in_bytes")
+    except (OSError, ValueError):
+        pass
+    for path in paths + ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"]:
+        try:
+            with open(path) as f:
+                v = f.read().strip()
+            if v.isdigit() and int(v) < 1 << 60:
+                return float(v)
+        except OSError:
+            pass
+    return None
+
+
+def _available_bytes() -> float | None:
+    avail = _meminfo_available()
+    cap = _cgroup_limit()
+    if avail is None:
+        return cap
+    return min(avail, cap) if cap else avail
+
+
+def _meminfo_available() -> float | None:
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return float(line.split()[1]) * 1024.0
+    except OSError:
+        pass
+    try:
+        import psutil  # optional
+        return float(psutil.virtual_memory().available)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        # macOS has no /proc: count most of physical memory as available
+        return 0.6 * os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+def _workers(n: int, cells: int | None = None) -> int:
+    """Processes for independent outcomes: LOADPATH_WORKERS, else one per
+    core, and no more than fit in the memory available when each solves
+    `cells` cells (the 4-core, 15 GB cloud box ran out at two GRIP cases at
+    once). (This was half the cores, leaving room for the thread per load
+    case each solve runs; but Gauss-Seidel holds the GIL, so those threads
+    mostly take turns, and with one BLAS thread four arm-link directions
+    took 121 s on four workers against 194 s on two.)"""
     env = os.environ.get("LOADPATH_WORKERS")
     if env:
         return max(1, min(n, int(env)))
-    return max(1, min(n, (os.cpu_count() or 2) // 2))
+    w = max(1, min(n, os.cpu_count() or 1))
+    avail = _available_bytes() if cells else None
+    if avail:
+        w = min(w, max(1, int(0.8 * avail // _run_bytes(cells))))
+    return w
 
 
 def _solve_alone(study: Study) -> StudyResult:
     return _run_single(study)
 
 
+def _study_cells(st: Study) -> int:
+    """The most cells one run of `st` solves at once."""
+    g = st.goal
+    search = g.safety_factor is not None or g.max_deflection is not None
+    return max(st.max_elements, _CONFIRM_CELLS if search else 60_000)
+
+
 def _parallel(studies: list, on_progress, should_stop) -> list:
     """Run independent single-goal studies, in processes when it helps.
     Progress inside a worker is not streamed; each finished outcome is."""
-    if _workers(len(studies)) <= 1:
+    workers = _workers(len(studies), cells=max(_study_cells(s) for s in studies)) if studies else 1
+    if workers <= 1:
         return [_run_single(s, on_progress, should_stop) for s in studies]
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
 
     results = [None] * len(studies)
-    with ProcessPoolExecutor(_workers(len(studies)), mp_context=mp.get_context("spawn")) as ex:
+    with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as ex:
         futs = {ex.submit(_solve_alone, s): i for i, s in enumerate(studies)}
         from concurrent.futures import as_completed
         for f in as_completed(futs):
@@ -425,8 +564,9 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         emit({"stage": "verify", "volumeFraction": vf})
         try:
             report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
-        except RuntimeError as exc:
-            # one outcome verification cannot solve (a piece the supports do
+        except (RuntimeError, ValueError) as exc:
+            # one outcome verification cannot solve (or a load pad the
+            # design let go of: GRIP's wrist link at 5% after 43 g at 6%) (a piece the supports do
             # not hold) is a failed outcome, not a failed study: the search
             # goes on past it (GRIP's wrist link died here)
             mat = study.material
@@ -699,7 +839,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 conf_fail = q.volume_fraction
     else:
         fractions = [float(goal.volume_fraction)] + [v for v in goal.outcomes if v != goal.volume_fraction]
-        if len(fractions) > 1 and _workers(len(fractions)) > 1:
+        if len(fractions) > 1 and _workers(len(fractions), cells=_study_cells(study)) > 1:
             import dataclasses
             singles = [dataclasses.replace(study, goal=dataclasses.replace(goal, volume_fraction=vf, outcomes=[]))
                        for vf in fractions]

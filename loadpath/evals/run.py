@@ -496,15 +496,69 @@ def _md_compare(rows, regress, improve):
     return "\n".join(lines) + "\n"
 
 
+def _case_bytes(path: str) -> float:
+    """Peak memory a case is expected to need (study._run_bytes by the most
+    cells it solves at once)."""
+    from ..spec import study_from_dict
+    from ..study import _run_bytes, _study_cells
+
+    with open(path) as fh:
+        raw = json.load(fh)
+    if "core" in raw:
+        return _run_bytes(60_000)
+    try:
+        return _run_bytes(_study_cells(study_from_dict(raw, base_dir=os.path.dirname(path))))
+    except Exception:  # noqa: BLE001 - it fails properly when run
+        return _run_bytes(60_000)
+
+
+def _run_budgeted(files: list, out: str, tier: str = "full", critic=None) -> list:
+    """Run cases in processes, largest first, starting each only while the
+    expected peaks of everything running fit in 80% of the memory available (the
+    container's limit, when it has one)
+    (and no more at once than there are cores). The 4-core 15 GB cloud box ran
+    out of memory at a flat --jobs 2: two GRIP cases at their 150k-cell
+    confirmation solves."""
+    import multiprocessing as mp
+    from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+
+    from ..study import _available_bytes
+
+    os.environ.setdefault("LOADPATH_WORKERS", "1")
+    need = {f: _case_bytes(f) for f in files}
+    budget = 0.8 * (_available_bytes() or 8e9)
+    slots = max(1, os.cpu_count() or 1)
+    queue = sorted(files, key=lambda f: -need[f])
+    rows, running = {}, {}
+    # a fresh process per case: a finished case's worker keeps its peak
+    # (Python does not hand freed memory back), which the next case then
+    # sits on top of
+    with ProcessPoolExecutor(slots, mp_context=mp.get_context("spawn"), max_tasks_per_child=1) as ex:
+        while queue or running:
+            used = sum(need[f] for f in running.values())
+            for f in list(queue):
+                if len(running) >= slots:
+                    break
+                if not running or used + need[f] <= budget:
+                    running[ex.submit(run_case, f, out, tier, critic)] = f
+                    used += need[f]
+                    queue.remove(f)
+            done, _ = wait(running, return_when=FIRST_COMPLETED)
+            for fut in done:
+                rows[running.pop(fut)] = fut.result()
+    return [rows[f] for f in files]
+
+
 def main(argv=None):
     from ..__main__ import _jsonable
 
     p = argparse.ArgumentParser(prog="loadpath.evals.run")
     p.add_argument("cases", nargs="*", help="case names (default: all)")
     p.add_argument("--out", default="evals-out")
-    p.add_argument("--jobs", type=int,
+    p.add_argument("--jobs",
                    help="cases to run at once (each case also parallelizes its own outcomes); default 1, "
-                        "or every core for the coarse tier (its cases are small)")
+                        "or every core for the coarse tier (its cases are small); 'auto': as many as fit in "
+                        "the memory available, by each case's size")
     p.add_argument("--tier", choices=["full", "coarse"], default="full")
     p.add_argument("--corpus", help="add generated cases: N (seeds 0..N-1), A:B, or a,b,c")
     p.add_argument("--only-corpus", action="store_true", help="run the generated cases only")
@@ -529,7 +583,9 @@ def main(argv=None):
     n = len(files)
     if args.jobs is None:
         args.jobs = (os.cpu_count() or 1) if args.tier == "coarse" else 1
-    if args.jobs > 1:
+    if args.jobs == "auto":
+        rows = _run_budgeted(files, args.out, args.tier, args.critic)
+    elif int(args.jobs) > 1:
         import multiprocessing as mp
         from concurrent.futures import ProcessPoolExecutor
         # One process per case; outcomes inside a case stay in that process.
@@ -538,7 +594,7 @@ def main(argv=None):
         # core's worth of BLAS threads ran 3-10x slower than one at a time
         for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
             os.environ.setdefault(v, "1")
-        with ProcessPoolExecutor(args.jobs, mp_context=mp.get_context("spawn")) as ex:
+        with ProcessPoolExecutor(int(args.jobs), mp_context=mp.get_context("spawn")) as ex:
             rows = list(ex.map(run_case, files, [args.out] * n, [args.tier] * n, [args.critic] * n))
     else:
         rows = [run_case(f, args.out, args.tier, args.critic) for f in files]
