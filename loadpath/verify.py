@@ -571,15 +571,31 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
 
     band = max(1.5 * pitch, contact_band or 0.0)
     report["contactBand"] = band
-    stiff = Stiffness(hm, study.elastic(mat), fixed)
-    k = stiff.assemble(np.full(hm.n_elem, mat.E))
-    if bc.springs is not None:
-        k = (k + mat.E * bc.springs).tocsr()
-    # 1e-6 is three-plus significant figures of stress; 1e-7 cost a third more
-    # iterations. All cases share one multigrid hierarchy and run on threads.
-    solver = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
     fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else 0.0
-    displacements = solver.solve_many(k, [bc.loads[ci] + fg for ci in range(len(study.load_cases))])
+    rhs = [bc.loads[ci] + fg for ci in range(len(study.load_cases))]
+    from .simp import _use_mg
+    if _use_mg(hm.n_elem):
+        # From simp.MG_MIN_CELLS up, matrix-free multigrid (as the optimizer
+        # uses): no assembled matrix, a fraction of the memory and time. It
+        # raises RuntimeError on non-convergence like Solver does. It also
+        # carries .mesh and .nu, which is all the stress recovery reads.
+        from .mg import GridElasticity
+
+        stiff = GridElasticity(hm, study.elastic(mat), fixed,
+                               springs=mat.E * bc.springs if bc.springs is not None else None,
+                               rtol=1e-6, maxiter=3000)
+        stiff.set_moduli(np.full(hm.n_elem, mat.E))
+        displacements = stiff.solve_many(rhs)
+    else:
+        stiff = Stiffness(hm, study.elastic(mat), fixed)
+        k = stiff.assemble(np.full(hm.n_elem, mat.E))
+        if bc.springs is not None:
+            k = (k + mat.E * bc.springs).tocsr()
+        # 1e-6 is three-plus significant figures of stress; 1e-7 cost a third
+        # more iterations. All cases share one multigrid hierarchy and run on
+        # threads.
+        solver = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
+        displacements = solver.solve_many(k, rhs)
     from scipy.spatial import cKDTree
     cases = []
     worst_sf = np.inf
