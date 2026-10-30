@@ -102,6 +102,7 @@ class Outcome:
             "boundaryCutArea": r.get("boundaryCutArea"),
             **({"durability": r["durability"]} if "durability" in r else {}),
             **({"print": {k: v for k, v in r["print"].items() if k != "bridgeList"}} if "print" in r else {}),
+            **({"process": r["process"]} if "process" in r else {}),
             "warnings": r.get("warnings", []),
             "margin": r.get("margin"),
             "passes": self.passes,
@@ -216,7 +217,7 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         study = choose_build_direction(study, on_progress=on_progress)["study"]
     mats = study.materials or [study.material]
     if len(mats) == 1:
-        return _run_single(study, on_progress, should_stop)
+        return _process_checks(_run_single(study, on_progress, should_stop), on_progress)
     t0 = time.time()
     outcomes, warnings, domain = [], [], None
     for r in _parallel([dataclasses.replace(study, material=m, materials=[m]) for m in mats],
@@ -227,8 +228,42 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     passing = [i for i, o in enumerate(outcomes) if o.passes]
     pool = passing if passing else ([] if any(o.passes is False for o in outcomes) else range(len(outcomes)))
     best = min(pool, key=lambda i: outcomes[i].report["mass"]) if pool else None
-    return StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
-                       seconds=time.time() - t0, warnings=warnings)
+    return _process_checks(StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
+                                       seconds=time.time() - t0, warnings=warnings), on_progress)
+
+
+def _process_checks(result: StudyResult, on_progress=None) -> StudyResult:
+    """Powder-bed polymer and resin parts: the process checks
+    (processcheck.check_process) on the delivered outcome, into its report
+    as "process", with its warnings added to the outcome's."""
+    proc = result.study.process
+    if proc is None or result.best is None:
+        return result
+    from .processcheck import RULES, check_process
+
+    if proc.kind not in RULES:
+        return result
+    o = result.outcomes[result.best]
+    if getattr(o, "mesh", None) is None:
+        return result
+    if on_progress is not None:
+        on_progress({"stage": "process", "process": proc.kind}, None)
+    try:
+        mat = _material_named((o.report.get("material") or {}).get("name"), result.study)
+        rep = check_process(o.mesh, proc, material=mat)
+    except Exception as exc:  # noqa: BLE001 - a failed check leaves the part's report standing
+        rep = {"process": proc.kind, "error": f"{type(exc).__name__}: {exc}", "ok": None, "warnings": []}
+    o.report["process"] = rep
+    o.report.setdefault("warnings", []).extend(rep.get("warnings", []))
+    return result
+
+
+def _material_named(name, study):
+    """The study's Material called `name` (a study can try several)."""
+    for m in study.materials or [study.material]:
+        if m.name == name:
+            return m
+    return study.material
 
 
 def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult:

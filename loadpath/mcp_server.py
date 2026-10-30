@@ -231,10 +231,11 @@ def _direction(build):
 
 def check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 45.0, build=None,
                        pitch: float | None = None, slicer: bool = False, process: str = "fdm",
-                       base_dir: str | None = None) -> dict:
+                       base_dir: str | None = None, material: str | None = None) -> dict:
     """Printability of an STL/3MF/OBJ: wall thickness (mm, +/- the grid
     pitch, with the thinnest spots), overhang area, trapped voids. slicer=True
-    adds the layer-by-layer read (bridges, islands, support volume, bed)."""
+    adds the layer-by-layer read (bridges, islands, support volume, bed).
+    process sls/mjf/sla/dlp adds report["process"] (processcheck)."""
     try:
         mesh = _load_mesh(path, base_dir)
         direction = _direction(build)
@@ -252,6 +253,18 @@ def check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 4
             report["slicer"] = check_print(mesh, direction, process=process)
         except Exception as exc:  # noqa: BLE001 - the rest of the report stands
             report["slicerError"] = str(exc)
+    from .processcheck import RULES
+
+    if str(process).lower() in RULES:
+        try:
+            from .materials import material_from_spec
+            from .processcheck import check_process
+
+            mat = material_from_spec(material) if material else None
+            report["process"] = check_process(mesh, str(process).lower(), build=direction, material=mat,
+                                              slicer=slicer)
+        except Exception as exc:  # noqa: BLE001 - the rest of the report stands
+            report["processError"] = str(exc)
     return report
 
 
@@ -577,14 +590,18 @@ def serve():
     def loadpath_check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 45.0,
                                     build: str | list | None = None, pitch: float | None = None,
                                     slicer: bool = False, process: str = "fdm",
-                                    base_dir: str | None = None) -> dict:
+                                    base_dir: str | None = None, material: str | None = None) -> dict:
         """Printability of any mesh file (STL, 3MF, OBJ), not only loadpath's own parts: wall thickness
         in mm with its +/- (the voxel pitch) and the thinnest spots, overhang area for the build
         direction ('+z'... or [x, y, z]), and trapped voids that cannot drain powder or resin.
         minWallOk None means too coarse to judge, not a pass. slicer=True adds a layer-by-layer read
-        (bridges, islands, support volume, bed contact). Seconds to a minute on multi-million-triangle
+        (bridges, islands, support volume, bed contact). process 'sls'/'mjf' (powder nylon, TPU) or
+        'sla'/'dlp' (resin) adds the process checks: walls against its minimum, powder or resin trapped
+        in cavities or behind exits under the escape-hole size, warp-prone thin flat panels (powder),
+        peel area, suction cups and supports (resin); material (e.g. 'pa12', 'tpu', 'resin-tough')
+        flags a card that is not made by that process. Seconds to a minute on multi-million-triangle
         parts."""
-        return check_printability(path, min_wall, overhang_deg, build, pitch, slicer, process, base_dir)
+        return check_printability(path, min_wall, overhang_deg, build, pitch, slicer, process, base_dir, material)
 
     @server.tool()
     def loadpath_check_isolation(path: str, ports: list, plugs: list | None = None,

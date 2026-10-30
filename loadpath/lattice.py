@@ -244,7 +244,7 @@ class LatticeOptions:
     collar: float = 2.0             # mm of solid round preserved shapes, keep-outs, supports and loads
     blend: float | None = None      # mm, smooth-union radius between solid and lattice (default wall_max)
     drains: str = "auto"            # "auto" (powder and resin processes), "yes", "no"
-    drain_diameter: float | None = None   # mm (default 4 for powder, 3 for resin)
+    drain_diameter: float | None = None   # mm (default the process's escape hole: SLS 4, MJF 5, resin 3.5)
     fill_pockets: float | None = None     # mm^3: enclosed voids smaller than this are filled (default cell^3/8)
     iterations: int = 12            # sizing passes
     analysis_cells: int = 120_000   # homogenized FEA size
@@ -499,7 +499,10 @@ def _drains(o, d, dp, d_collar, stress, lo, step, process):
     if o.drain_diameter is not None:
         dia = o.drain_diameter
     else:
-        dia = 3.0 if process is not None and process.kind in ("sla", "volumetric") else 4.0
+        from .processcheck import RULES
+
+        dia = getattr(process, "escape_hole", None) or \
+            (RULES[process.kind]["escapeHole"] if process.kind in RULES else 3.0 if process.kind == "volumetric" else 4.0)
     rad = 0.5 * dia
     axis, sign = process.build if process is not None and process.build is not None else (2, 1)
     objs = ndimage.find_objects(lbl)

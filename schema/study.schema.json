@@ -178,6 +178,7 @@
             "sls",
             "mjf",
             "sla",
+            "dlp",
             "volumetric",
             "lpbf"
           ]
@@ -191,6 +192,7 @@
                 "sls",
                 "mjf",
                 "sla",
+                "dlp",
                 "volumetric",
                 "lpbf"
               ]
@@ -245,6 +247,11 @@
             },
             "overhangs": {
               "type": "boolean"
+            },
+            "escapeHole": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm: smallest powder escape / resin drain hole (default SLS 4, MJF 5, SLA/DLP 3.5)"
             }
           },
           "required": [
@@ -253,7 +260,7 @@
           "additionalProperties": false
         }
       ],
-      "description": "How it is made: sets a minimum member, overhang control (FDM, LPBF metal) and the layer-bond check. lpbf = laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L)."
+      "description": "How it is made: sets a minimum member, overhang control (FDM, LPBF metal) and the layer-bond check. lpbf = laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L). sls/mjf (PA12, PA11, PA12-GB, TPU) and sla/dlp (resins) get process checks on the delivered part (report 'process': walls, trapped powder or resin, warp-prone panels; resin supports, peel area and suction cups)."
     },
     "durability": {
       "type": "object",
@@ -370,7 +377,7 @@
         "drainDiameter": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "mm (default 4 for SLS/MJF, 3 for resin)"
+          "description": "mm (default the process's escape hole: SLS 4, MJF 5, SLA/DLP 3.5, volumetric 3)"
         },
         "fillPockets": {
           "type": "number",

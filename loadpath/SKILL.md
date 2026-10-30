@@ -52,7 +52,7 @@ field. `check` reports every problem at once: fix them all, then check again.
    panel that must stay closed, `"skin": {"thickness": t, "open": ["-z"]}`
    keeps its outer surface and ribs the inside.
 5. **Say how it will be made**: `"process": "fdm"` (or `{"type": "fdm",
-   "buildDirection": "+z"}`), `"sls"`, `"mjf"`, `"sla"`, `"volumetric"`, or
+   "buildDirection": "+z"}`), `"sls"`, `"mjf"`, `"sla"`, `"dlp"`, `"volumetric"`, or
    `"lpbf"` for powder-bed metal (AlSi10Mg, Ti64, 316L). The
    process sets a minimum member it can make, overhang control for FDM, and
    for layered processes checks the tension pulling layers apart against the
@@ -63,6 +63,14 @@ field. `check` reports every problem at once: fix them all, then check again.
    run per direction). `report.json` → `print` says whether it needs
    support, its bridges, and whether the first layer holds; `run` writes a
    `.3mf` per part already standing the right way up for the slicer.
+   Powder nylon (`"sls"`, `"mjf"`: `pa12`, `pa11`, `pa12-gb`, `tpu88a`) and
+   resin (`"sla"`, `"dlp"`: `resin`, `resin-tough`, `resin-rigid`) parts get
+   `report.json` → `process` on the delivered outcome: walls against the
+   process minimum, powder or resin trapped in a cavity or behind an exit
+   under the escape-hole size (SLS 4, MJF 5, resin 3.5 mm; override with
+   `"escapeHole"`), thin flat panels that warp (powder), and for resin the
+   supports, the largest layer (peel) and suction cups. Its warnings are the
+   outcome's. Fix each before ordering the print.
 6. **Say how long it has to last.** A load that repeats (a servo lifting,
    an arm swinging) gets `"cycles"` in its load case: how many times over
    the part's life (a hobby arm: 1e5-1e6). A load that is held (a part

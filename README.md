@@ -11,6 +11,10 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
   carries the loads, verified by a fresh FEA of the delivered mesh.
 - **Check.** `loadpath.checks` has printability (wall thickness, overhangs, trapped
   voids), component fit, fluid-network isolation, a quick FEA probe and an SDF toolkit.
+- **For the process you print with.** FDM (bridges, islands, bed, layer bond), powder
+  nylon (SLS, MJF: trapped powder, escape holes, warp-prone panels), resin (SLA, DLP:
+  supports, peel area, suction cups, trapped resin) and powder-bed metal (internal
+  ceilings, powder clean-outs), each with material cards.
 
 ### Why agents like it
 
@@ -108,6 +112,7 @@ python3 tests/test_loadpath.py
 python3 tests/run_tests.py
 python3 tests/test_interface.py
 python3 tests/test_pressure.py
+python3 tests/test_process.py
 python3 -m loadpath.evals.run --out evals-out/
 python3 docs/gallery.py --evals evals-out/    # refresh the gallery renders from that run
 ```

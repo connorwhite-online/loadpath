@@ -72,7 +72,7 @@
     "drainDiameter": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "mm (default 4 for SLS/MJF, 3 for resin)"
+      "description": "mm (default the process's escape hole: SLS 4, MJF 5, SLA/DLP 3.5, volumetric 3)"
     },
     "fillPockets": {
       "type": "number",

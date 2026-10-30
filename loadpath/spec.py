@@ -131,6 +131,8 @@ PROCESSES = {
             "note": "HP Multi Jet Fusion: as SLS, slightly more isotropic"},
     "sla": {"interlayer": 1.0, "minFeature": 0.5, "overhangs": False,
             "note": "resin vat: isotropic once cured; supports are added by the slicer"},
+    "dlp": {"interlayer": 1.0, "minFeature": 0.5, "overhangs": False,
+            "note": "resin vat, whole-layer exposure (DLP/LCD): as SLA; large cross-sections peel hard"},
     "volumetric": {"interlayer": 1.0, "minFeature": 0.3, "overhangs": False,
                    "note": "volumetric / tomographic resin printing: no layers, no supports"},
     "lpbf": {"interlayer": 0.85, "minFeature": 0.4, "overhangs": True,
@@ -159,6 +161,9 @@ class Process:
     # ratio (am.layered_elasticity). Neither layered option beat isotropic
     # reliably on the motor mount and hook (2026-10-29), so off by default.
     anisotropic: Any = False
+    # mm: the smallest powder escape or resin drain hole the part's cavities
+    # may rely on (processcheck.RULES default)
+    escape_hole: float | None = None
 
 
 def _process(spec) -> Process | None:
@@ -184,9 +189,13 @@ def _process(spec) -> Process | None:
             if not 0.0 < v <= 1.0:
                 raise ValueError(f"process.{name} is a fraction of the in-plane value, in (0, 1]")
             stiff[key] = v
+    esc = spec.get("escapeHole")
+    if esc is not None and float(esc) <= 0:
+        raise ValueError("process.escapeHole is a hole diameter in mm, > 0")
     return Process(kind, build, inter, float(spec.get("minFeature", base["minFeature"])),
                    bool(spec.get("overhangs", base["overhangs"])),
-                   anisotropic=_anisotropic(spec.get("anisotropic", False)), **stiff)
+                   anisotropic=_anisotropic(spec.get("anisotropic", False)),
+                   escape_hole=float(esc) if esc is not None else None, **stiff)
 
 
 def _anisotropic(v):

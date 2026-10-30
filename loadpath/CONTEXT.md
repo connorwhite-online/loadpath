@@ -45,7 +45,8 @@ it becomes an eval metric.
 
 | Module | Role |
 | --- | --- |
-| `spec.py`, `shapes.py`, `materials.py` | JSON study -> Study; shapes (box, cylinder/tube, sphere, mesh, union); 12 materials; `process` (fdm/sls/mjf/sla/volumetric) |
+| `spec.py`, `shapes.py`, `materials.py` | JSON study -> Study; shapes (box, cylinder/tube, sphere, mesh, union); 16 materials, each tagged with the processes that make it; `process` (fdm/sls/mjf/sla/dlp/volumetric/lpbf) |
+| `processcheck.py` | SLS/MJF and SLA/DLP checks on a delivered part (mesh or field): rule cards (`RULES`), walls, enclosed and narrow-exit powder/resin, warp-prone thin panels, resin peel area, suction cups and supports (via printcheck). run_study puts it in the best outcome's `report["process"]` |
 | `domain.py`, `fem.py` | voxel domain, boundary conditions (forces, moments, bearing loads, pins, gravity), hex8 FEA, CG + smoothed-aggregation AMG |
 | `simp.py` | SIMP with filter, Heaviside continuation, robust erode/open, OC; live-cell reduced solves; dead-material pruning |
 | `mma.py`, `constrained.py` | MMA (from the published method), stress/deflection-constrained mode |

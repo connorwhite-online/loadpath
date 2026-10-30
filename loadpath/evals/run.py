@@ -17,6 +17,10 @@ Each case in cases/*.json is an ordinary study plus an `expect` block:
                                   # is quantized to the analysis cell)
       "maxCreaseLength": 10,      # mm of sharp concave edge (verify._creases)
       "maxClosedBores": 0,        # bore ends the part closes over (verify._closed_bores)
+      "minProcessWall": 0.8,      # mm, 1st-percentile wall (SLS/MJF/SLA/DLP: processcheck)
+      "maxTrappedVolume": 1,      # mm^3 of powder or resin that cannot get out
+      "maxWarpSpan": 100,         # mm, longest thin flat panel (SLS/MJF)
+      "maxCupArea": 10,           # mm^2, largest suction cup (SLA/DLP)
       "maxSeconds": 600
     }
 
@@ -68,7 +72,19 @@ CHECKS = {
     # bores the part closes over: no screw can be driven through (verify._closed_bores)
     "closedBores": ("maxClosedBores", lambda o: len(o.get("closedBores") or []), "<="),
     "overhang": ("maxOverhangFraction", lambda o: o.get("designOverhangFraction"), "<="),
+    # SLS/MJF/SLA/DLP process checks on the delivered part (processcheck.py)
+    "processWall": ("minProcessWall", lambda o: _proc(o, "walls", "p1WallMm"), ">="),
+    "trappedVolume": ("maxTrappedVolume", lambda o: _proc(o, "trappedVolumeMm3"), "<="),
+    "warpSpan": ("maxWarpSpan", lambda o: _proc(o, "warp", "maxSpan"), "<="),
+    "cupArea": ("maxCupArea", lambda o: _proc(o, "cups", "maxArea"), "<="),
 }
+
+
+def _proc(o, *keys):
+    v = o.get("process")
+    for k in keys:
+        v = v.get(k) if isinstance(v, dict) else None
+    return v
 
 
 HX_CHECKS = {

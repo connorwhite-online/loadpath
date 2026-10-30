@@ -239,10 +239,11 @@ _DURABILITY = {
     "additionalProperties": False,
 }
 
+_PROCESS_KINDS = ["fdm", "sls", "mjf", "sla", "dlp", "volumetric", "lpbf"]
 _PROCESS = {"anyOf": [
-    {"enum": ["fdm", "sls", "mjf", "sla", "volumetric", "lpbf"]},
+    {"enum": _PROCESS_KINDS},
     {"type": "object",
-     "properties": {"type": {"enum": ["fdm", "sls", "mjf", "sla", "volumetric", "lpbf"]},
+     "properties": {"type": {"enum": _PROCESS_KINDS},
                     "buildDirection": {"anyOf": [
                         {"type": "string", "pattern": "^([+-]?[xyz]|auto)$", "description": "like '+z', or 'auto'"},
                         _VEC3], "description": "the direction layers stack: '+z', a vector, or 'auto'"},
@@ -250,10 +251,14 @@ _PROCESS = {"anyOf": [
                     "shearAcrossLayers": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
                     "anisotropic": {"anyOf": [{"type": "boolean"}, {"const": "bond"}]},
                     "interlayer": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-                    "minFeature": _POS, "overhangs": {"type": "boolean"}},
+                    "minFeature": _POS, "overhangs": {"type": "boolean"},
+                    "escapeHole": {**_POS, "description": "mm: smallest powder escape / resin drain hole "
+                                                          "(default SLS 4, MJF 5, SLA/DLP 3.5)"}},
      "required": ["type"], "additionalProperties": False},
 ], "description": "How it is made: sets a minimum member, overhang control (FDM, LPBF metal) and the layer-bond check. "
-                  "lpbf = laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L)."}
+                  "lpbf = laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L). sls/mjf (PA12, PA11, PA12-GB, TPU) "
+                  "and sla/dlp (resins) get process checks on the delivered part (report 'process': walls, trapped "
+                  "powder or resin, warp-prone panels; resin supports, peel area and suction cups)."}
 
 _LATTICE_PROPS = {
     "type": {"enum": ["gyroid", "schwarz-p", "diamond"],
@@ -277,7 +282,8 @@ _LATTICE_PROPS = {
     "blend": {**_POS, "description": "mm, fillet radius where the lattice meets solid (default maxWall)"},
     "drains": {"enum": ["auto", "yes", "no"],
                "description": "drain holes into enclosed voids: auto = for powder and resin processes"},
-    "drainDiameter": {**_POS, "description": "mm (default 4 for SLS/MJF, 3 for resin)"},
+    "drainDiameter": {**_POS, "description": "mm (default the process's escape hole: SLS 4, MJF 5, SLA/DLP 3.5, "
+                                            "volumetric 3)"},
     "fillPockets": {"type": "number", "minimum": 0,
                     "description": "mm^3: enclosed voids smaller than this are filled solid (default cell^3 / 8)"},
     "step": {**_POS, "description": "field sampling, mm (default minWall / 2.5)"},
