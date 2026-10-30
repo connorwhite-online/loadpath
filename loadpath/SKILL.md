@@ -151,7 +151,13 @@ field. `check` reports every problem at once: fix them all, then check again.
   wall, and an optional duty to rate it. Size it first
   (`loadpath_size_heat_exchanger`, seconds), then design it
   (`loadpath_heat_exchanger`): the report says whether each fluid reaches
-  its ports and only its own.
+  its ports and only its own. With a duty, `"simulate": true` also
+  simulates the whole exchanger (porous core, open headers, both fluids and
+  the wall; porous.py, about a minute): how evenly each fluid shares out
+  over the core (`entry.uniformity`, 1 = even), core vs header pressure
+  drop, outlet temperatures and the hottest wall point. Use it to compare
+  header depths and port sizes (`porous.sweep`); the rating alone assumes
+  even flow.
 - Holding a mesh from somewhere else (your own field model, a CAD export)?
   `loadpath_check_printability`, `loadpath_check_isolation` and
   `loadpath_check_fit` check it directly. From Python, `check_dfm` and

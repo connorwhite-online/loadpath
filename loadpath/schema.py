@@ -500,6 +500,16 @@ HEAT_EXCHANGER_SCHEMA = {
             "required": ["fluid", "end", "direction"], "additionalProperties": False}},
         "step": {**_POS, "description": "grid, mm (default wall / 3); coarser is faster for a first look"},
         "expect": {"type": "object", "description": "Eval-only pass criteria (loadpath.evals)."},
+        "simulate": {"anyOf": [{"type": "boolean"}, {
+            "type": "object",
+            "properties": {"voxel": {**_POS, "description": "mm (default min(cell/2, port/4, header/3))"},
+                           "nu": {"enum": ["design", "lbm"],
+                                  "description": "Nu law: design (Reynolds 2023) or lbm (the intercooler's "
+                                                 "LBM cells)"}},
+            "additionalProperties": False}],
+            "description": "With duty: simulate the whole exchanger (porous core, open headers, both fluids "
+                           "and the wall): flow uniformity, pressure field, temperatures and hot spots, "
+                           "beside the epsilon-NTU rating. Seconds to a few minutes."},
         "duty": {"type": "object", "description": "Optional: rate it. One entry per fluid name, plus 'wall' "
                                                   "(a material name or W/m·K).",
                  "properties": {"wall": {"anyOf": [{"type": "string"}, _POS]}},

@@ -320,10 +320,12 @@ def _surface_zones(hx, zones, pitch, lo, hi, up=None):
     return ell, slopes, far, lo, pitch, info
 
 
-def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
+def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, grids: bool = False):
     """Returns (trimesh.Trimesh, report), and with `fluid_meshes` a third
     item: each fluid's space as a mesh, by fluid name (for renders and
-    flow simulation)."""
+    flow simulation). With `grids`, a last item: each fluid's space on the
+    design grid ({"masks": (A, B) bool arrays, "lo", "step", "dims"}), for
+    the whole-exchanger simulation (porous.py)."""
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -532,8 +534,9 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
                        for z, zi in zip(zones, zinfo)},
                    "warnings": warnings})
     del side_a
+    extra = ({"masks": masks, "lo": lo, "step": step, "dims": tuple(dims)},) if grids else ()
     if not fluid_meshes:
-        return mesh, report
+        return (mesh, report, *extra)
     # Each space is the part's own void (grid > 0, inside the body), so its
     # walls come from the same smooth field as the part; the voxel label
     # only says which fluid, by a distance 1.5 voxels past its mask (inside
@@ -551,7 +554,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
             if fm.volume < 0:
                 fm.invert()
             spaces[name] = fm
-    return mesh, report, spaces
+    return (mesh, report, spaces, *extra)
 
 
 # A surface within this many degrees of level is a ceiling over the channels
