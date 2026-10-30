@@ -10,7 +10,7 @@ constraints, so one run lands on (or near) them, and a short correction
 loop in study.py closes the remaining gap against the verified mesh.
 
 - Stress: relaxed von Mises per cell, sigma_e = x_e^q * vm(C B u_e) with
-  q = 0.5 (qp-relaxation), aggregated with a P-mean (P = 8) and the
+  q = 1 (qp-relaxation), aggregated with a P-mean (P = 8) and the
   adaptive normalization of Le et al. 2010, which rescales the P-mean to
   the true maximum from the previous iteration. Cells touching loads and
   supports are left out, as in verification. One adjoint solve per case.
@@ -34,7 +34,12 @@ from .simp import (E_MIN, PENALTY, SimpOptions, SimpResult, _Analysis, _dproject
 
 __all__ = ["Limits", "optimize_constrained"]
 
-_Q = 0.5
+# q = 0.5 (Le et al.'s choice) let near-void cells next to a member, strained
+# by the member's motion across them, read 100-1000 times the limit: the
+# aggregate chased those cells, and MMA either emptied the part or
+# oscillated on the L-bracket benchmark. At q = 1 they fade with their
+# density and the run converges onto the limit.
+_Q = 1.0
 _P = 8.0
 _VM = np.array([
     [1.0, -0.5, -0.5, 0, 0, 0],
@@ -89,6 +94,8 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
         x = np.clip(np.asarray(opts.x0, float), 0.0, 1.0)
     x[pres] = 1.0
     mma = MMA(len(free), m, xmin=0.0, xmax=1.0, move=min(opts.move, 0.1))
+    move_cap = mma.move
+    worst_prev = np.inf
     kappa = [1.0] * cases
     us = [None] * cases
     lams = [None] * cases
@@ -168,6 +175,18 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
         df0 = _extrude(df0, columns, design)
         grads = [_extrude(g, columns, design) for g in grads]
 
+        worst = max(cons)
+        if worst > 0.02 and worst > worst_prev:
+            # Getting less feasible: the convex model promised a step that
+            # cut volume and stress together, and the stress went up (from a
+            # grey start MMA otherwise ran the L-bracket down to nothing).
+            # Halve the step and pull the asymptotes in, a more conservative
+            # model, until the design is back inside the limits.
+            mma.move = max(0.01, 0.5 * mma.move)
+            mma.tighten(0.5)
+        elif worst <= 0.02:
+            mma.move = min(move_cap, 1.2 * mma.move)
+        worst_prev = worst
         xnew_free = mma.update(x[free], f0, df0[free], np.array(cons), np.array([g[free] for g in grads]))
         xnew = x.copy()
         xnew[free] = xnew_free
@@ -193,7 +212,8 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
             # more so as the projection sharpens: with the full move limit a
             # single slack step at beta 8 cut the lug's volume in half and
             # disconnected it. Shrink the steps instead of resetting them.
-            mma.move = max(0.02, mma.move * 0.6)
+            move_cap = max(0.02, move_cap * 0.6)
+            mma.move = min(mma.move, move_cap)
         elif beta >= opts.beta_max and since_beta >= 5 and feasible:
             w = opts.stall_window
             if change < opts.tol or (len(history) > w and
@@ -201,10 +221,12 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                 converged = True
                 break
 
-    xt = (h @ x) / hs
-    xe = _project(xt, beta, eta_e)
-    xe[pres] = 1.0
-    xp = _project((h @ xe) / hs, beta, opts.eta - opts.erode) if opts.erode > 0 else _project(xt, beta, opts.eta)
+    # Deliver the blueprint, the design whose volume was minimized. The
+    # compliance optimizer delivers the opening of the eroded design instead
+    # (simp.optimize), but here that reshaped thin members after their stress
+    # was checked: on the L-bracket the opening read up to 4x the limit where
+    # the blueprint reads within about 10% of it, at the same volume.
+    xp = _project((h @ x) / hs, beta, opts.eta)
     xp[pres] = 1.0
     return SimpResult(x=x, xphys=xp, compliance=float("nan"), case_compliance=[],
                       volume_fraction=float(xp[design].mean()), iterations=it,
