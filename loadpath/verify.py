@@ -320,7 +320,10 @@ def _closed_bores(study: Study, mesh) -> list:
 
 def _union(shapes):
     import manifold3d as m3d
-    mans = [s.to_manifold() for s in shapes]
+
+    from .sharp import exact_manifold
+    # the same exact solids reconstruct.py cut and added (circles 0.002 mm true)
+    mans = [exact_manifold(s) for s in shapes]
     if not mans:
         return None
     return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]

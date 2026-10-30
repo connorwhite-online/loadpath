@@ -135,7 +135,7 @@ def _bool(op, shapes):
     return _bool1(cls, shapes[:1], shapes[1:])
 
 
-def _bool1(cls, args, tools):
+def _bool1(cls, args, tools, fuzzy=FUZZY):
     from OCP.OCP.collections import List_TopoDS_Shape
 
     a, t = List_TopoDS_Shape(), List_TopoDS_Shape()
@@ -146,7 +146,7 @@ def _bool1(cls, args, tools):
     op = cls()
     op.SetArguments(a)
     op.SetTools(t)
-    op.SetFuzzyValue(FUZZY)
+    op.SetFuzzyValue(fuzzy)
     op.SetRunParallel(True)
     op.SetNonDestructive(True)
     op.Build()
@@ -186,19 +186,84 @@ def _organic_budget(plan, faces):
     return {id(lf): max(500, int(faces * len(lf.mesh.faces) / total)) for lf in org}
 
 
+def _pieces(shape, faces):
+    """An exact shape as separate OpenCascade solids (a union's members):
+    booleans take them as separate tools, which survives members that share
+    faces (a motor box against its driver's box) where a pre-fused union
+    can come out invalid."""
+    from .shapes import Union
+
+    if isinstance(shape, Union):
+        return [p for s in shape.shapes for p in _pieces(s, faces)]
+    return [_exact(shape, faces)]
+
+
 def _build(plan, budget, faces, notes):
-    from .sharp import Exact, Organic
+    """(OpenCascade solids, the same thing as a manifold3d Manifold). The
+    manifold is the referee: each OpenCascade boolean is tried a few ways
+    (fuzz, tools separate or fused) until it is valid and its volume agrees
+    with manifold3d's."""
+    import manifold3d as m3d
+
+    from .sharp import Exact, Organic, exact_manifold
+    from .shapes import manifold_from_trimesh
 
     if isinstance(plan, Exact):
-        return _exact(plan.shape, faces)
+        return _pieces(plan.shape, faces), exact_manifold(plan.shape)
     if isinstance(plan, Organic):
         m = plan.mesh
         d = _decimate(m, budget.get(id(plan), faces))
         if len(d.faces) < len(m.faces):
             notes.append({"leaf": ",".join(plan.names) or "organic", "faces": int(len(m.faces)),
                           "stepFaces": int(len(d.faces)), "deviation": _deviation(m, d)})
-        return _faceted(d)
-    return _bool(plan.op, [_build(k, budget, faces, notes) for k in plan.kids])
+        return [_faceted(d)], manifold_from_trimesh(d)
+    kids = [_build(k, budget, faces, notes) for k in plan.kids]
+    kind = {"union": m3d.OpType.Add, "intersect": m3d.OpType.Intersect, "subtract": m3d.OpType.Subtract}[plan.op]
+    want = m3d.Manifold.batch_boolean([k[1] for k in kids], kind)
+    if plan.op == "union":
+        first, tools = kids[0][0][:1], kids[0][0][1:] + [s for k in kids[1:] for s in k[0]]
+    else:
+        first = [_fuse_all(kids[0][0])]
+        tools = [s for k in kids[1:] for s in k[0]]
+        if plan.op == "intersect":
+            tools = [_fuse_all(tools)]
+    shape = _referee(plan.op, first, tools, want.volume(), notes)
+    return [shape], want
+
+
+def _fuse_all(shapes):
+    return shapes[0] if len(shapes) == 1 else _bool1(_cls("union"), shapes[:1], shapes[1:])
+
+
+def _cls(op):
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
+
+    return {"union": BRepAlgoAPI_Fuse, "intersect": BRepAlgoAPI_Common, "subtract": BRepAlgoAPI_Cut}[op]
+
+
+def _referee(op, first, tools, want, notes):
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
+    tries = [(FUZZY, False), (1e-6, False), (FUZZY, True), (0.0, False), (1e-3, False)]
+    best = None
+    for fuzzy, fused in tries:
+        t = [_fuse_all(tools)] if fused and len(tools) > 1 else tools
+        try:
+            r = _bool1(_cls(op), first, t, fuzzy)
+        except RuntimeError:
+            continue
+        ok = bool(BRepCheck_Analyzer(r).IsValid())
+        err = abs(_volume(r) - want) / max(abs(want), 1e-9)
+        if ok and err < 2e-3:
+            return r
+        score = (not ok, err)
+        if best is None or score < best[0]:
+            best = (score, r)
+    if best is None:
+        raise RuntimeError(f"OpenCascade could not {op} the part")
+    notes.append({"warning": f"{op}: no clean OpenCascade result; kept the closest "
+                             f"(valid {not best[0][0]}, volume off {best[0][1]:.2%})"})
+    return best[1]
 
 
 def _deviation(full, coarse, n=4000):
@@ -338,7 +403,8 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
         plan = Organic(None, ["mesh"], mesh=part)
     keep = getattr(plan, "keep_with", None)
     budget = _organic_budget(plan, faces)
-    shape = _build(plan, budget, faces, notes)
+    shapes, _ = _build(plan, budget, faces, notes)
+    shape = _fuse_all(shapes) if len(shapes) > 1 else shapes[0]
     dropped = 0
     if keep is not None:
         keep_with = _exact(keep, faces)
