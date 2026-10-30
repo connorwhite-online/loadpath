@@ -890,6 +890,18 @@
           "type": "string",
           "description": "one load case (default: the worst at each point)"
         },
+        "scale": {
+          "anyOf": [
+            {
+              "const": "peak"
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          ],
+          "description": "divide by this, or 'peak' (the 99.5th percentile): remap in fractions of the part's own worst stress"
+        },
         "cells": {
           "type": "integer",
           "minimum": 1000,

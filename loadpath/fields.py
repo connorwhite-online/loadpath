@@ -816,7 +816,7 @@ class FieldGraph:
                              "'part' to analyze, or a 'source'")
         if isinstance(data, dict) and "cases" in data and "nodes" in data:   # verify_part fields
             pts, vals = result_samples(data, s.get("quantity", "vonMises"), s.get("case"))
-            return _Samples(pts, vals)
+            return _Samples(pts, self._scaled(nd, vals))
         if isinstance(data, dict) and "grid" in data or nd.op == "grid":
             key = s.get("quantity", "values")
             if "origin" not in data or "pitch" not in data:
@@ -825,7 +825,22 @@ class FieldGraph:
         key = s.get("quantity", "values")
         if key not in data:
             raise ValueError(f"node {nd.name!r}: no {key!r} in the result (have {', '.join(data)})")
-        return _Samples(data["points"], data[key])
+        return _Samples(data["points"], self._scaled(nd, np.asarray(data[key], float)))
+
+    @staticmethod
+    def _scaled(nd, vals):
+        """`scale`: a number to divide by, or "peak" for the 99.5th
+        percentile of the samples, so a remap can be written in fractions of
+        the part's own worst stress without knowing it in advance (1.0 = the
+        peak, ignoring the few hottest nodes at a load or support)."""
+        sc = nd.spec.get("scale")
+        if sc is None:
+            return vals
+        if sc == "peak":
+            sc = float(np.percentile(vals, 99.5))
+        if not float(sc) > 0:
+            raise ValueError(f"node {nd.name!r}: scale must be positive or 'peak'")
+        return vals / float(sc)
 
     def _analyze(self, nd):
         """verify_part fields of `part` under `study`: the stress a part

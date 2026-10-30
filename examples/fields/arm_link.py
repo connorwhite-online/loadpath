@@ -32,7 +32,7 @@ def main():
     ap.add_argument("--out", default="arm-link-fields-out")
     ap.add_argument("--pitch", type=float)
     ap.add_argument("--cells", type=int, default=150_000)
-    ap.add_argument("--uniform", default="1.4,0.9", help="skin,wall (mm) of the uniform comparison")
+    ap.add_argument("--uniform", default="1.9,1.05", help="skin,wall (mm) of the uniform comparison")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     doc = json.loads((HERE / "arm-link-graded.json").read_text())

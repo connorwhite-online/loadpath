@@ -523,6 +523,9 @@ _FIELD_OPS = {
                    "quantity": {"type": "string", "description": "vonMises (default) or displacement for a "
                                                                  "study; the array name in an .npz"},
                    "case": {"type": "string", "description": "one load case (default: the worst at each point)"},
+                   "scale": {"anyOf": [{"const": "peak"}, _POS],
+                             "description": "divide by this, or 'peak' (the 99.5th percentile): remap in "
+                                            "fractions of the part's own worst stress"},
                    "cells": {"type": "integer", "minimum": 1000, "description": "analysis size (default 120000)"}},
                   require_one=[["path"], ["source"], ["study", "part"]]),
     "grid": _op("grid", "An imported scalar field on a regular grid (.npz with origin, pitch, values[nx,ny,nz]): "

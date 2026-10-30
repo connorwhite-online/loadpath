@@ -158,6 +158,8 @@ def test_result_node_from_verify_fields():
     assert np.isclose(g.evaluate([[0, 1, 1]], "s")[0], 2.0)
     assert np.isclose(g.evaluate([[1, 1, 1]], "s")[0], 1.0)
     assert np.isclose(g.evaluate([[0.5, 1, 1]], "a")[0], 0.5)
+    pk = FieldGraph({"nodes": {"s": {"op": "result", "source": "r", "scale": "peak"}}}, sources={"r": fields})
+    assert np.isclose(pk.evaluate([[0, 1, 1]])[0], 1.0)
 
 
 def test_expressions_are_whitelisted():

@@ -66,7 +66,10 @@ lerp smoothstep step where`, comparisons and `a if c else b`; nothing else
 
 - **Variable wall** (`shell` with a field `thickness`): the wall at each point
   of the surface is the field's value there. Drive it from `result` to put
-  material where the stress is.
+  material where the stress is. `"scale": "peak"` on the result divides it
+  by the part's own peak (99.5th percentile), so the remap reads in
+  fractions of the worst stress (`"from": [0.1, 0.8]`) and works whatever the
+  load level.
 - **Variable fillet** (`blend` as a field): a smooth union whose radius
   changes along the joint. Larger where members meet under load, small where
   they don't.
