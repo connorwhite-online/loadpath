@@ -534,10 +534,19 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False):
     del side_a
     if not fluid_meshes:
         return mesh, report
+    # Each space is the part's own void (grid > 0, inside the body), so its
+    # walls come from the same smooth field as the part; the voxel label
+    # only says which fluid, by a distance 1.5 voxels past its mask (inside
+    # metal there, where the field governs).
     spaces = {}
+    inside = -d_body.reshape(dims)
     for name, m in zip(hx.names, masks):
         if m.any():
-            v, fc, _, _ = marching_cubes(np.pad(m, 1).astype(np.float32), 0.5, spacing=(step, step, step))
+            near = 1.5 * step - ndimage.distance_transform_edt(~m) * step
+            f = np.minimum(np.minimum(grid, inside), near).astype(np.float32)
+            f[f == 0.0] = -1e-6
+            v, fc, _, _ = marching_cubes(np.pad(f, 1, constant_values=-1.0), 0.0, spacing=(step, step, step),
+                                         allow_degenerate=False)
             fm = trimesh.Trimesh(v + lo - 0.5 * step, fc[:, ::-1], process=True)
             if fm.volume < 0:
                 fm.invert()
