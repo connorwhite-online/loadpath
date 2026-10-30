@@ -83,6 +83,48 @@ def _calibrate(args):
     return 0
 
 
+def _assembly(args):
+    from .assembly import Payload, Robot, derive_study
+
+    robot = Robot.from_urdf(args.urdf)
+    study = _load(args.study)
+    base = os.path.dirname(os.path.abspath(args.study))
+    payload = None
+    if args.payload > 0:
+        link = args.payload_link
+        if link is None:
+            # down the chain of revolute joints from the part to its end (the tool)
+            link = robot.joints[args.joint or robot.far_joint(args.link)].child
+            while True:
+                kids = [j for j in robot.order if j.parent == link and j.type in ("revolute", "continuous")]
+                if len(kids) != 1:
+                    break
+                link = kids[0].child
+        payload = Payload(args.payload, link, tuple(float(v) for v in args.payload_at.split(",")),
+                          radius=args.payload_radius, min_kg=0.0)
+    sweep_kw = {"samples": args.samples, "ramp": args.ramp, "push": args.push, "contact_max": args.contact_max,
+                "balanced": tuple(j for j in args.balanced.split(",") if j), "joint": args.joint}
+    os.makedirs(args.out, exist_ok=True)
+    derived, report = derive_study(robot, args.link, study, args.region, payload=payload, keep_cases=args.keep_cases,
+                                   sweep_space=not args.no_space, k=args.cases, method=args.method,
+                                   sweep_kw=sweep_kw, space_kw={"clearance": args.clearance}, out_dir=args.out,
+                                   base_dir=base)
+    # the study's own mesh paths are relative to its folder: make them absolute
+    for key in ("designSpace", "preserve", "keepOut"):
+        for item in derived.get(key, []):
+            sh = item.get("shape", item)
+            if sh.get("type") == "mesh" and sh.get("path") and not os.path.isabs(sh["path"]) \
+                    and not os.path.exists(os.path.join(args.out, sh["path"])):
+                sh["path"] = os.path.join(base, sh["path"])
+    name = os.path.splitext(os.path.basename(args.study))[0]
+    with open(os.path.join(args.out, f"{name}.derived.json"), "w") as fh:
+        json.dump(derived, fh, indent=1)
+    with open(os.path.join(args.out, "assembly.json"), "w") as fh:
+        json.dump(_jsonable(report), fh, indent=1)
+    print(json.dumps(_jsonable({k: v for k, v in report.items() if k != "states"}), indent=1))
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="loadpath", description="Generative design for printed parts.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -152,6 +194,31 @@ def main(argv=None):
     cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
     cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
     cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
+    return 0
+
+
+    asm = sub.add_parser("assembly", help="derive a part's load cases and neighbour keep-outs from a URDF")
+    asm.add_argument("urdf")
+    asm.add_argument("--link", required=True, help="the URDF link the study designs")
+    asm.add_argument("--study", required=True, help="the part's study: interfaces, material, goal, design space")
+    asm.add_argument("--region", required=True, help="the study region the far joint loads (a socket, a mount)")
+    asm.add_argument("--joint", help="the far joint, if the link has more than one moving child joint")
+    asm.add_argument("--payload", type=float, default=0.0, help="kg at the end of the chain")
+    asm.add_argument("--payload-link", help="link that carries the payload (default: the chain's last link)")
+    asm.add_argument("--payload-at", default="0,0,0", help="payload position in that link's frame, m: x,y,z")
+    asm.add_argument("--payload-radius", type=float, default=0.0, help="m: payload position scatters this far")
+    asm.add_argument("--samples", type=int, default=1500, help="random poses (on top of the limit corners)")
+    asm.add_argument("--ramp", type=float, default=0.2, help="s to full speed (before the effort limit)")
+    asm.add_argument("--push", type=float, default=20.0, help="N: contact at the payload, any direction")
+    asm.add_argument("--contact-max", type=float, help="N: hardest an obstacle pushes back on a stalled joint "
+                     "(default: --push)")
+    asm.add_argument("--balanced", default="", help="joints a counterbalance holds against gravity: j2,...")
+    asm.add_argument("--cases", type=int, default=8, help="most governing cases to keep")
+    asm.add_argument("--method", choices=["stress", "hull"], default="stress")
+    asm.add_argument("--keep-cases", action="store_true", help="keep the study's own load cases too")
+    asm.add_argument("--no-space", action="store_true", help="loads only: no swept keep-outs")
+    asm.add_argument("--clearance", type=float, default=1.0, help="mm round each swept neighbour")
+    asm.add_argument("--out", default="loadpath-out")
     args = p.parse_args(argv)
 
     if args.cmd == "mcp":
@@ -176,6 +243,11 @@ def main(argv=None):
         return _orient(args)
     if args.cmd == "calibrate":
         return _calibrate(args)
+    return 0
+
+
+    if args.cmd == "assembly":
+        return _assembly(args)
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))

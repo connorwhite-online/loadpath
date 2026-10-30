@@ -218,4 +218,27 @@ the grid.
 from being a flat plate that folds sideways. `symmetry: ["z"]` makes it
 printable flat in either orientation.
 
+For a link in a mechanism with a URDF, don't write those loads by hand:
+derive them, and the neighbours' swept space, from the arm itself.
+
+```bash
+loadpath assembly robot.urdf --link forearm --study forearm.json --region j4-mount \
+    --payload 1.0 --payload-at 0,0,0.07 --payload-radius 0.03 --out derived/
+loadpath run derived/forearm.derived.json
+```
+
+It sweeps poses over the joint limits, speeds and accelerations (scaled to
+what each joint's rated effort can deliver), a scattered payload, a push at
+the tool and each joint upstream stalled against an obstacle, does
+Newton-Euler for the wrench the part carries at its far joint, and keeps the
+few samples that set the peak stress everywhere in the solid design space
+(`assembly.json` says how close they come: `envelopeRatio`). The parent and
+child links, swept through their joints' ranges, become `bore: false` mesh
+keep-outs with the study's preserved interfaces cut out. Inputs worth
+setting: `--ramp` (seconds to full speed, what the controller allows),
+`--push` (N, the hardest contact at the tool; a stalled joint pushes up to it) and `--balanced`
+for joints a spring counterbalances. Python: `loadpath.assembly`
+(`Robot.from_urdf`, `sweep_loads`, `governing_cases`, `swept_keepouts`,
+`derive_study`).
+
 The full field reference is in README.md next to this file.

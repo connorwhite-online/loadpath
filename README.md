@@ -192,6 +192,7 @@ python3 tests/test_fields.py
 python3 tests/test_editor.py      # the GPU part needs node and Playwright
 python3 tests/test_impact.py
 python3 tests/test_recall.py
+python3 tests/test_assembly.py
 python3 tests/test_evals.py
 python3 -m loadpath.evals.run --tier coarse --corpus 6 --out evals-coarse/   # minutes: every push
 python3 -m loadpath.evals.run --out evals-out/                               # full suite
