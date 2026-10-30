@@ -1,0 +1,345 @@
+{
+ "name": "grip-v3-base",
+ "description": "GRIP v0.3 base (generative/v3_rest.py): three M5 feet on the table, the J1 drive socket, a service opening below the motor and a cable exit at the back",
+ "designSpace": [
+  {
+   "type": "cylinder",
+   "p0": [
+    0,
+    0,
+    0
+   ],
+   "p1": [
+    0,
+    0,
+    119.0
+   ],
+   "r": 82.0
+  }
+ ],
+ "preserve": [
+  {
+   "id": "j1-sleeve",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     0.0,
+     87.5
+    ],
+    "p1": [
+     0.0,
+     0.0,
+     110.5
+    ],
+    "r": 48.3,
+    "rInner": 43.3
+   }
+  },
+  {
+   "id": "j1-ledge",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     0.0,
+     81.5
+    ],
+    "p1": [
+     0.0,
+     0.0,
+     87.5
+    ],
+    "r": 48.3,
+    "rInner": 31.759
+   }
+  },
+  {
+   "id": "feet",
+   "shape": {
+    "type": "union",
+    "shapes": [
+     {
+      "type": "cylinder",
+      "p0": [
+       4.0413344371862654e-15,
+       66.0,
+       0.0
+      ],
+      "p1": [
+       4.0413344371862654e-15,
+       66.0,
+       16.0
+      ],
+      "r": 8.0
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       -57.15767664977296,
+       -32.99999999999998,
+       0.0
+      ],
+      "p1": [
+       -57.15767664977296,
+       -32.99999999999998,
+       16.0
+      ],
+      "r": 8.0
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       57.15767664977293,
+       -33.00000000000003,
+       0.0
+      ],
+      "p1": [
+       57.15767664977293,
+       -33.00000000000003,
+       16.0
+      ],
+      "r": 8.0
+     }
+    ]
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "j1-drive",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     0.0,
+     87.5
+    ],
+    "p1": [
+     0.0,
+     0.0,
+     133.0
+    ],
+    "r": 43.3
+   }
+  },
+  {
+   "id": "j1-motor",
+   "shape": {
+    "type": "box",
+    "min": [
+     -21.75,
+     -21.75,
+     26.5
+    ],
+    "max": [
+     21.75,
+     21.75,
+     87.5
+    ]
+   }
+  },
+  {
+   "id": "j1-driver",
+   "shape": {
+    "type": "box",
+    "min": [
+     -21.75,
+     -21.75,
+     9.5
+    ],
+    "max": [
+     21.75,
+     21.75,
+     26.5
+    ]
+   }
+  },
+  {
+   "id": "foot-insert-0",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     4.0413344371862654e-15,
+     66.0,
+     -1.0
+    ],
+    "p1": [
+     4.0413344371862654e-15,
+     66.0,
+     10.0
+    ],
+    "r": 3.2
+   }
+  },
+  {
+   "id": "foot-insert-1",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     -57.15767664977296,
+     -32.99999999999998,
+     -1.0
+    ],
+    "p1": [
+     -57.15767664977296,
+     -32.99999999999998,
+     10.0
+    ],
+    "r": 3.2
+   }
+  },
+  {
+   "id": "foot-insert-2",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     57.15767664977293,
+     -33.00000000000003,
+     -1.0
+    ],
+    "p1": [
+     57.15767664977293,
+     -33.00000000000003,
+     10.0
+    ],
+    "r": 3.2
+   }
+  },
+  {
+   "id": "service",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0,
+     0,
+     -1.0
+    ],
+    "p1": [
+     0,
+     0,
+     3.0
+    ],
+    "r": 40.0
+   }
+  },
+  {
+   "id": "cable-exit",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     42.0,
+     22.0
+    ],
+    "p1": [
+     0.0,
+     90.0,
+     22.0
+    ],
+    "r": 6.0
+   }
+  },
+  {
+   "id": "turret-above",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0,
+     0,
+     119.0
+    ],
+    "p1": [
+     0,
+     0,
+     159.0
+    ],
+    "r": 87.0
+   }
+  }
+ ],
+ "supports": [
+  {
+   "region": "foot-insert-0"
+  },
+  {
+   "region": "foot-insert-1"
+  },
+  {
+   "region": "foot-insert-2"
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "reach",
+   "loads": [
+    {
+     "region": "j1-sleeve",
+     "force": [
+      0.0,
+      0.0,
+      -63.33
+     ],
+     "moment": [
+      0.0,
+      16926.9,
+      0.0
+     ]
+    }
+   ],
+   "cycles": 100000.0
+  },
+  {
+   "name": "j1-rated-torque",
+   "loads": [
+    {
+     "region": "j1-sleeve",
+     "moment": [
+      0.0,
+      0.0,
+      13000.0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "lateral",
+   "loads": [
+    {
+     "region": "j1-sleeve",
+     "force": [
+      20.0,
+      0.0,
+      0.0
+     ]
+    }
+   ]
+  }
+ ],
+ "material": {
+  "name": "pa12-gf",
+  "E": 3200,
+  "nu": 0.37,
+  "strength": 48,
+  "density": 1.22,
+  "note": "SLS glass-filled PA12 (EOS PA 3200 GF datasheet)"
+ },
+ "goal": {
+  "safetyFactor": 2.0,
+  "volumeFraction": 0.12
+ },
+ "minMember": 3.0,
+ "resolution": {
+  "maxElements": 80000
+ },
+ "chain": {
+  "distalKg": 4.3037,
+  "reachMm": 267.28584619978164
+ }
+}
