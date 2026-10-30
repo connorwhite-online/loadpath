@@ -124,7 +124,7 @@ back at once with suggestions.
 | `distance` | unsigned distance to a solid (`input`), points, a segment, a plane or a shape | `input` |
 | `result` | von Mises or displacement of a part under a study (run on demand, also on one of the graph's own nodes), or a saved `.npz` | |
 | `grid` | an imported scalar field on a regular grid (`.npz`: origin, pitch, values) | |
-| `remap` | `from` [a, b] to `to` [c, d], linear / smoothstep / smootherstep / sqrt / square, clamped | `input` |
+| `remap` | `from` [a, b] to `to` [c, d], linear / smoothstep / smootherstep / sqrt / square or a drawn curve (`[[u, v], ...]` over the unit square; the editor has a curve editor), clamped | `input` |
 | `expr` | arithmetic over node names and x, y, z: `"0.8 + 1.2 * smoothstep(5, 30, stress)"` | `vars` |
 | `union`, `intersect`, `subtract` | booleans; `blend` is the fillet radius | `inputs`, `blend` |
 | `shell` | a wall inside, outside or centred on a surface | `input`, `thickness` |

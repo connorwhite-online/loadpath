@@ -1427,12 +1427,29 @@
           "minItems": 2
         },
         "curve": {
-          "enum": [
-            "linear",
-            "smoothstep",
-            "smootherstep",
-            "sqrt",
-            "square"
+          "anyOf": [
+            {
+              "enum": [
+                "linear",
+                "smoothstep",
+                "smootherstep",
+                "sqrt",
+                "square"
+              ]
+            },
+            {
+              "type": "array",
+              "minItems": 2,
+              "description": "points [u, v] over the unit square, u ascending from 0 to 1: a drawn curve",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
           ]
         },
         "clamp": {

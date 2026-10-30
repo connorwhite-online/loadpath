@@ -608,7 +608,11 @@ _FIELD_OPS = {
                  {"input": _FIELD,
                   "from": {"type": "array", "items": {"type": "number"}, "minItems": 2},
                   "to": {"type": "array", "items": {"type": "number"}, "minItems": 2},
-                  "curve": {"enum": ["linear", "smoothstep", "smootherstep", "sqrt", "square"]},
+                  "curve": {"anyOf": [
+                      {"enum": ["linear", "smoothstep", "smootherstep", "sqrt", "square"]},
+                      {"type": "array", "minItems": 2, "description": "points [u, v] over the unit square, u "
+                                                                       "ascending from 0 to 1: a drawn curve",
+                       "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}}]},
                   "clamp": {"type": "boolean"}}, ["input", "from", "to"]),
     "expr": _op("expr", "Arithmetic over node names, x, y, z, pi, e and abs sqrt exp log sin cos tan floor ceil "
                         "sign min max clamp lerp smoothstep step where, e.g. '0.8 + 1.2 * smoothstep(5, 30, "

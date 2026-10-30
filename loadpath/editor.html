@@ -157,6 +157,10 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
 #sweep-chart .pt { cursor: pointer; }
 #sweep-chart .pt:hover circle { r: 5; }
 #sweep-chart text { font: 10px var(--mono); fill: var(--muted); }
+
+.curve-ed svg { width: 100%; height: auto; display: block; margin-top: 6px; background: var(--panel); border-radius: 6px; touch-action: none; }
+.curve-ed .handle { cursor: grab; }
+.curve-ed text.ax { font: 10px var(--mono); fill: var(--muted); }
 </style>
 <!--/head-->
 <div id="app">
@@ -334,7 +338,7 @@ const OPS = {
   distance: { doc: "Unsigned distance to a solid, points, a segment, a plane or a shape.", params: [{ k: "_mode", t: "distance" }], make: () => ({}) },
   remap: { doc: "Map input from [a, b] to [c, d] through a curve.",
     params: [{ k: "input", t: "field", def: 0 }, { k: "from", t: "pair", def: [0, 1] }, { k: "to", t: "pair", def: [0, 1] },
-      { k: "curve", t: "enum", opts: ["linear", "smoothstep", "smootherstep", "sqrt", "square"], def: "linear" },
+      { k: "curve", t: "curve", def: "linear" },
       { k: "clamp", t: "bool", def: true }], make: () => ({ from: [0, 1], to: [0, 1] }) },
   expr: { doc: "Arithmetic over node names, x, y, z: abs sqrt exp log sin cos tan floor ceil sign min max clamp lerp smoothstep step where.",
     params: [{ k: "expr", t: "code" }, { k: "vars", t: "vars" }], make: () => ({ expr: "z" }) },
@@ -705,6 +709,19 @@ class Compiler {
       }
       case "remap": {
         const fr = s.from || [0, 1], to = s.to || [0, 1];
+        // straight segments: y0 + sum of each segment's rise times how far along it x is (np.interp)
+        const pw = (x, xs, ys) => [ys[0], ...xs.slice(1).map((_, i) => `(${ys[i + 1]} - ${ys[i]}) * clamp((${x} - ${xs[i]}) / max(${xs[i + 1]} - ${xs[i]}, 1e-9), 0.0, 1.0)`)].join(" + ");
+        if (fr.length > 2 || to.length > 2) {
+          const x = `(${this.f(name, "input", 0, ref)})`;
+          return `(${pw(x, fr.map((v, i) => this.u(N("from", i), v)), to.map((v, i) => this.u(N("to", i), v)))})`;
+        }
+        if (Array.isArray(s.curve)) {
+          const xs = s.curve.map((q, i) => this.u(N("curve", i, 0), q[0])), ys = s.curve.map((q, i) => this.u(N("curve", i, 1), q[1]));
+          const a = this.u(N("from", 0), fr[0]), b = this.u(N("from", 1), fr[1]);
+          const uu = `clamp((${this.f(name, "input", 0, ref)} - ${a}) / (${b} - ${a}), ${xs[0]}, ${xs[xs.length - 1]})`;
+          const c = this.u(N("to", 0), to[0]), d = this.u(N("to", 1), to[1]);
+          return `(${c} + (${d} - ${c}) * (${pw(uu, xs, ys)}))`;
+        }
         return `lp_remap(${this.f(name, "input", 0, ref)}, ${this.u(N("from", 0), fr[0])}, ${this.u(N("from", 1), fr[1])}, ${this.u(N("to", 0), to[0])}, ${this.u(N("to", 1), to[1])}, ${CURVES[s.curve || "linear"] ?? 0}, ${s.clamp === false ? 0 : 1})`;
       }
       case "expr": return this.exprGLSL(name, parseExpr(String(s.expr || "0")), P, ref);
@@ -1661,6 +1678,72 @@ function exportDoc() {
   return d;
 }
 
+// ---- the remap curve editor ----------------------------------------------------------------------------
+const CURVE_FN = { linear: (u) => u, smoothstep: (u) => u * u * (3 - 2 * u), smootherstep: (u) => u ** 3 * (u * (6 * u - 15) + 10), sqrt: Math.sqrt, square: (u) => u * u };
+/** The remap's curve: a preset, or points over the unit square to drag (click adds one, double-click removes). */
+function curveEditor(path, s) {
+  const W = 288, H = 168, M = 14;
+  const drawn = Array.isArray(s.curve);
+  const sel = el("select", { "aria-label": "Curve" }, ...Object.keys(CURVE_FN).map((k) => el("option", { value: k, selected: !drawn && (s.curve || "linear") === k }, k)),
+    el("option", { value: "#drawn", selected: drawn }, "drawn (drag points)"));
+  sel.addEventListener("change", () => {
+    if (sel.value === "#drawn") {
+      const f = CURVE_FN[typeof s.curve === "string" ? s.curve : "linear"] || CURVE_FN.linear;
+      setAt(S.doc, path, [0, 0.25, 0.5, 0.75, 1].map((u) => [u, +f(u).toFixed(4)]));
+    } else setAt(S.doc, path, sel.value === "linear" ? undefined : sel.value);
+    structural();
+  });
+  const ns = "http://www.w3.org/2000/svg", mk = (t, a) => { const e = document.createElementNS(ns, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); return e; };
+  const svg = mk("svg", { viewBox: `0 0 ${W} ${H}`, class: "curve", role: "img", "aria-label": "Remap curve" });
+  const X = (u) => M + (W - 2 * M) * u, Y = (v) => H - M - (H - 2 * M) * v;
+  const U = (px) => (px - M) / (W - 2 * M), V = (py) => (H - M - py) / (H - 2 * M);
+  const line = mk("polyline", { fill: "none", stroke: "var(--accent)", "stroke-width": 2 });
+  svg.append(mk("rect", { x: M, y: M, width: W - 2 * M, height: H - 2 * M, fill: "none", stroke: "var(--line)" }));
+  for (const g of [0.25, 0.5, 0.75]) svg.append(mk("line", { x1: X(g), x2: X(g), y1: M, y2: H - M, stroke: "var(--line)", "stroke-dasharray": "2 3" }), mk("line", { x1: M, x2: W - M, y1: Y(g), y2: Y(g), stroke: "var(--line)", "stroke-dasharray": "2 3" }));
+  const fr = s.from || [0, 1], to = s.to || [0, 1];
+  const lab = (x, y, t, a = "start") => { const e = mk("text", { x, y, "text-anchor": a, class: "ax" }); e.textContent = t; return e; };
+  svg.append(lab(M, H - 2, fmt(fr[0])), lab(W - M, H - 2, fmt(fr[fr.length - 1]), "end"), lab(W - M - 3, M + 11, fmt(to[to.length - 1]), "end"), lab(W - M - 3, H - M - 4, fmt(to[0]), "end"));
+  svg.append(line);
+  const pts = () => (Array.isArray(s.curve) ? s.curve : null);
+  const draw = () => {
+    const p = pts();
+    if (p) line.setAttribute("points", p.map((q) => `${X(q[0]).toFixed(1)},${Y(q[1]).toFixed(1)}`).join(" "));
+    else { const f = CURVE_FN[s.curve || "linear"] || CURVE_FN.linear; line.setAttribute("points", Array.from({ length: 49 }, (_, i) => `${X(i / 48).toFixed(1)},${Y(f(i / 48)).toFixed(1)}`).join(" ")); }
+  };
+  draw();
+  if (drawn) {
+    const toLocal = (e) => { const r = svg.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; };
+    s.curve.forEach((q, i) => {
+      const h = mk("circle", { cx: X(q[0]), cy: Y(q[1]), r: 6, fill: "var(--panel)", stroke: "var(--accent)", "stroke-width": 2, class: "handle", tabindex: 0 });
+      const end = i === 0 || i === s.curve.length - 1;
+      h.addEventListener("pointerdown", (e) => {
+        e.preventDefault(); e.stopPropagation(); h.setPointerCapture(e.pointerId);
+        const mv = (ev) => {
+          const [px, py] = toLocal(ev), c = s.curve;
+          let u = end ? q[0] : Math.min(Math.max(U(px), c[i - 1][0] + 0.005), c[i + 1][0] - 0.005);
+          const v = Math.min(Math.max(V(py), -0.25), 1.25);
+          c[i] = [+u.toFixed(4), +v.toFixed(4)]; q = c[i];
+          h.setAttribute("cx", X(u)); h.setAttribute("cy", Y(v)); draw();
+          paramChanged([...path, i, 0]); paramChanged([...path, i, 1]);
+        };
+        const up = () => { h.removeEventListener("pointermove", mv); h.removeEventListener("pointerup", up); commit(); };
+        h.addEventListener("pointermove", mv); h.addEventListener("pointerup", up);
+      });
+      h.addEventListener("dblclick", (e) => { e.stopPropagation(); if (!end && s.curve.length > 2) { s.curve.splice(i, 1); structural(); } });
+      svg.append(h);
+    });
+    svg.addEventListener("click", (e) => {
+      if (e.target.classList && e.target.classList.contains("handle")) return;
+      const [px, py] = toLocal(e), u = U(px), v = V(py), c = s.curve;
+      if (!(u > c[0][0] && u < c[c.length - 1][0])) return;
+      const at = c.findIndex((q) => q[0] > u);
+      if (Math.abs(c[at][0] - u) < 0.01 || Math.abs(c[at - 1][0] - u) < 0.01) return;
+      c.splice(at, 0, [+u.toFixed(4), +Math.min(Math.max(v, -0.25), 1.25).toFixed(4)]);
+      structural();
+    });
+  }
+  return el("div", { class: "curve-ed" }, sel, svg, el("p", { class: "note" }, drawn ? "Drag a point; click to add one, double-click to remove it." : "Pick “drawn” to shape the curve by hand."));
+}
 /** Point one node spec's references to `old` at `nu` (fields, inputs, vars, an analyzed part, expr text). */
 function renameRefs(s, old, nu) {
   for (const k of FIELD_KEYS) if (s[k] === old && !(s.op === "constant" && k === "value")) s[k] = nu;
@@ -2149,7 +2232,17 @@ function inspector() {
       }
       case "vec3": body.append(param([el("b", {}, p.k), p.opt ? removeBtn(N(p.k)) : null], vec3(N(p.k), v ?? p.def))); break;
       case "axis": body.append(param(p.k, axisParam(N(p.k), v ?? p.def))); break;
-      case "pair": body.append(param(p.k, el("div", { class: "vec", style: "grid-template-columns:1fr 1fr" }, scrubNum(N(p.k, 0), (v || p.def)[0], "a"), scrubNum(N(p.k, 1), (v || p.def)[1], "b")))); break;
+      case "pair": {
+        const arr = v || p.def;
+        if (arr.length > 2) {
+          // a remap table: the whole list, edited as text
+          const t = el("input", { type: "text", value: arr.join(", "), spellcheck: "false", "aria-label": p.k });
+          t.addEventListener("change", () => { const xs = t.value.split(/[ ,]+/).filter(Boolean).map(Number); if (xs.length >= 2 && xs.every(isFinite)) { setAt(S.doc, N(p.k), xs); structural(); } else t.value = arr.join(", "); });
+          body.append(param(`${p.k} (table)`, t)); break;
+        }
+        body.append(param(p.k, el("div", { class: "vec", style: "grid-template-columns:1fr 1fr" }, scrubNum(N(p.k, 0), arr[0], "a"), scrubNum(N(p.k, 1), arr[1], "b")))); break;
+      }
+      case "curve": body.append(param("curve", curveEditor(N("curve"), s))); break;
       case "shape": body.append(param("shape", shapeEditor(N("shape"), s.shape || {}))); break;
       case "list": {
         const list = el("div", { class: "sub" });

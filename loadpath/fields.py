@@ -1105,7 +1105,8 @@ def _run_streamed(doc, g, out_dir, drains, process, progress, t0):
 
 
 def _remap(x, s, name):
-    """`from` [a, b] -> `to` [c, d] through `curve`; clamped unless
+    """`from` [a, b] -> `to` [c, d] through `curve` (a name, or points
+    [[u, v], ...] over the unit square drawn in the editor); clamped unless
     clamp: false. With more than two points, `from` (ascending) and `to`
     are a piecewise-linear table (always clamped at its ends), e.g. a
     density per layer from impact.grade_for_impact."""
@@ -1122,6 +1123,12 @@ def _remap(x, s, name):
     if s.get("clamp", True):
         u = np.clip(u, 0.0, 1.0)
     curve = s.get("curve", "linear")
+    if isinstance(curve, (list, tuple)):
+        # a drawn curve: points (u, v) over the unit square, u ascending from 0 to 1, straight between them
+        pts = np.asarray(curve, float)
+        if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) < 2 or np.any(np.diff(pts[:, 0]) <= 0):
+            raise ValueError(f"node {name!r}: a remap curve as points needs [[u, v], ...] with u ascending")
+        return c + (d - c) * np.interp(np.clip(u, pts[0, 0], pts[-1, 0]), pts[:, 0], pts[:, 1])
     if curve == "smoothstep":
         uc = np.clip(u, 0.0, 1.0)
         u = uc * uc * (3 - 2 * uc)
