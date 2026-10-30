@@ -182,21 +182,36 @@ class HexMesh:
             raise ValueError("no active elements")
         dims = self.elem_ijk.max(axis=0) + 2
         self.node_dims = dims
-        corner_ijk = self.elem_ijk[:, None, :] + CORNERS[None, :, :]       # (ne, 8, 3)
-        flat = (corner_ijk[..., 0] * dims[1] + corner_ijk[..., 1]) * dims[2] + corner_ijk[..., 2]
-        used, inv = np.unique(flat, return_inverse=True)
-        self.enode = inv.reshape(ne, 8).astype(np.int64)
+        # Node ids in ascending grid order (what np.unique over the corner
+        # indices gave), by marking the node grid instead of sorting 8 ids
+        # per cell: linear time and memory, which matters from ~1M cells.
+        e_flat = (self.elem_ijk[:, 0] * dims[1] + self.elem_ijk[:, 1]) * dims[2] + self.elem_ijk[:, 2]
+        offs = (CORNERS[:, 0] * dims[1] + CORNERS[:, 1]) * dims[2] + CORNERS[:, 2]
+        mark = np.zeros(int(np.prod(dims)), bool)
+        for o in offs:
+            mark[e_flat + o] = True
+        used = np.flatnonzero(mark)
+        del mark
+        self._lookup = np.full(int(np.prod(dims)), -1, np.int64)
+        self._lookup[used] = np.arange(len(used))
+        self.enode = self._lookup[e_flat[:, None] + offs[None, :]]
         self.node_ijk = np.stack(np.unravel_index(used, tuple(dims)), axis=1).astype(np.int64)
         self.n_nodes = len(used)
         self.node_xyz = self.origin + self.node_ijk * self.pitch
-        self.edof = (3 * self.enode[:, :, None] + np.arange(3)).reshape(ne, 24)
         self.n_dof = 3 * self.n_nodes
-        self._lookup = np.full(int(np.prod(dims)), -1, np.int64)
-        self._lookup[used] = np.arange(self.n_nodes)
+        self._edof = None
 
     @property
     def n_elem(self):
         return len(self.elem_ijk)
+
+    @property
+    def edof(self):
+        # built on first use: 192 bytes per cell, and the multigrid path
+        # never needs it
+        if self._edof is None:
+            self._edof = (3 * self.enode[:, :, None] + np.arange(3)).reshape(self.n_elem, 24)
+        return self._edof
 
     def elem_centers(self):
         return self.origin + (self.elem_ijk + 0.5) * self.pitch

@@ -31,6 +31,8 @@ from scipy import ndimage
 from .domain import Domain
 from .fem import HexMesh, Solver, Stiffness, hex8_ke
 
+import os
+
 __all__ = ["SimpOptions", "SimpResult", "filter_radius", "density_filter", "optimize"]
 
 E_MIN = 1e-6
@@ -40,6 +42,22 @@ ALIVE = 1e-3
 # ...but only once the design has emptied out enough for it to pay.
 REDUCE_BELOW = 0.8
 _CONN26 = np.ones((3, 3, 3), bool)
+# From this many cells up the analysis is matrix-free geometric multigrid
+# (mg.GridElasticity) and the density filter a grid stencil (GridFilter):
+# the assembled stiffness and sparse filter cost ~3 KB per cell and pyamg's
+# setup grows faster than the grid. Below it the assembled path stays, so
+# every eval case (all at 80k cells or fewer) runs exactly as before.
+# LOADPATH_SOLVER=mg|assembled forces one or the other.
+MG_MIN_CELLS = 100_000
+
+
+def _use_mg(n_cells: int) -> bool:
+    force = os.environ.get("LOADPATH_SOLVER", "").lower()
+    if force in ("mg", "multigrid"):
+        return True
+    if force in ("assembled", "amg"):
+        return False
+    return n_cells >= MG_MIN_CELLS
 
 
 class _Analysis:
@@ -67,6 +85,11 @@ class _Analysis:
         self._sub = None
         self.last_iters = 0
         self.last_cells = mesh.n_elem
+        self._mg = None
+        if _use_mg(mesh.n_elem):
+            from .mg import GridElasticity
+
+            self._mg = GridElasticity(mesh, nu, domain.fixed, springs=domain.springs, rtol=rtol, maxiter=2000)
 
     def _full_system(self):
         if self._full is None:
@@ -127,6 +150,8 @@ class _Analysis:
         mesh = d.mesh
         rtol = rtol or self.rtol
         alive = (xp > ALIVE) | self.anchor
+        if self._mg is not None:
+            return self._solve_mg(e, alive, us, rtol, loads)
         if alive.mean() < REDUCE_BELOW:
             sub = self._subsystem(alive, rtol)
             if sub is not None:
@@ -155,9 +180,27 @@ class _Analysis:
         self._last = (k, None, solver)
         return out
 
+    def _solve_mg(self, e, alive, us, rtol, loads):
+        """The multigrid path: the same reduction (cells below ALIVE and
+        islands left out), done by zeroing their moduli on the fixed grid
+        rather than building a smaller mesh."""
+        mg = self._mg
+        mg.rtol = rtol
+        keep = self._connected(alive) if alive.mean() < REDUCE_BELOW else np.ones(len(e), bool)
+        mg.set_moduli(np.where(keep, e, 0.0))
+        if not keep.all() and any(np.any(f[~mg.live_dofs()]) for f in loads):
+            keep = np.ones(len(e), bool)
+            mg.set_moduli(e)
+        out = mg.solve_many(list(loads), list(us))
+        self.last_iters, self.last_cells = mg.last_iters, int(keep.sum())
+        self._last = None
+        return out
+
     def resolve(self, rhss, x0s=None):
         """Solve more right-hand sides (adjoints) against the matrix of the
         last solve(); full-size in, full-size out."""
+        if self._mg is not None:
+            return self._mg.solve_many(list(rhss), x0s)
         k, fd, solver = self._last
         n_dof = self.domain.mesh.n_dof
         if fd is None:
@@ -172,6 +215,8 @@ class _Analysis:
         return out
 
     def strain_energy(self, u):
+        if self._mg is not None:
+            return self._mg.strain_energy(u)
         ue = u[self.domain.mesh.edof]
         return np.einsum("ij,jk,ik->i", ue, self.ke, ue)
 
@@ -245,9 +290,53 @@ def filter_radius(domain: Domain, min_member: float | None) -> float:
     return r
 
 
+class GridFilter:
+    """The cone filter's matrix H (unnormalized, symmetric) as a stencil on
+    the domain grid: `h @ x` gives what the sparse matrix would, without
+    storing ~100 weights per cell. Used from MG_MIN_CELLS up."""
+
+    def __init__(self, domain: Domain, radius: float):
+        self.ijk = tuple(domain.mesh.elem_ijk.T)
+        self.dims = tuple(domain.dims)
+        self.n = domain.mesh.n_elem
+        self.shape = (self.n, self.n)
+        reach = int(np.floor(radius / domain.pitch))
+        self.reach = reach
+        self.taps = []
+        for dx in range(-reach, reach + 1):
+            for dy in range(-reach, reach + 1):
+                for dz in range(-reach, reach + 1):
+                    w = radius - np.sqrt(dx * dx + dy * dy + dz * dz) * domain.pitch
+                    if w > 0:
+                        self.taps.append(((dx, dy, dz), float(w)))
+        self.T = self
+
+    def __matmul__(self, v):
+        r = self.reach
+        g = np.zeros(tuple(d + 2 * r for d in self.dims))
+        nx, ny, nz = self.dims
+        g[r:r + nx, r:r + ny, r:r + nz][self.ijk] = v
+        out = np.zeros(self.dims)
+        for (dx, dy, dz), w in self.taps:
+            out += w * g[r + dx:r + dx + nx, r + dy:r + dy + ny, r + dz:r + dz + nz]
+        return out[self.ijk]
+
+    def tocsr(self):
+        return self
+
+    def sum(self, axis=1):
+        return self @ np.ones(self.n)
+
+
 def density_filter(domain: Domain, radius: float, pad: bool = True):
-    """Row-normalized cone filter over active cells as a sparse matrix."""
+    """Row-normalized cone filter over active cells as a sparse matrix
+    (a GridFilter stencil from MG_MIN_CELLS cells up)."""
     mesh = domain.mesh
+    if _use_mg(mesh.n_elem):
+        h = GridFilter(domain, radius)
+        full = sum(w for _, w in h.taps)
+        hs = np.full(mesh.n_elem, full) if pad else h.sum()
+        return h, hs
     n = mesh.n_elem
     reach = int(np.floor(radius / domain.pitch))
     lut = np.full(domain.dims, -1, np.int64)
