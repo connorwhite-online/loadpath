@@ -246,6 +246,31 @@ examples/fields/arm-link-tune.json is that example: its stiffness limit
 
 ![tuning the arm link in the editor](images/fields/editor-tune.png)
 
+### The trade-off
+
+One limit is rarely fixed in stone: 0.5 mm of deflection might be worth
+relaxing for a few grams, or tightening for a stiffer arm. `tune.sweep`
+runs the search again held to each value of one limit, each warm-started
+from the lightest candidate that already meets it and sharing every
+analysis so far:
+
+```json
+"tune": {"study": "example:arm-link", "params": [...], "sweep": {"maxDeflection": [0.4, 0.6, 0.8]}}
+```
+
+Each value's lightest confirmed part is in `tune.json` under `sweep`, and
+`front` lists every candidate no other beats on mass, deflection and safety
+factor at once. In the editor (Trade-off: `defl 0.4 0.6 0.8` or `SF 2 4 6`)
+the chart becomes mass against deflection when the run ends, with the
+sweep's picks ringed; click any point to put its values in the graph.
+
+On the arm link (three knobs, 14 analyses per limit, 56 in all, about 20
+minutes) the lightest confirmed link is 61.2 g at 0.4 mm, 55.9 g at 0.5,
+51.3 g at 0.6 and 45.0 g at 0.8: every tenth of a millimetre of deflection
+the arm can live with is worth 4-6 g of web.
+
+![the arm link's mass against deflection](images/fields/editor-tradeoff.png)
+
 ### Lattices are tuned homogenized
 
 A lattice's walls are a fraction of a millimetre, so analyzing the real

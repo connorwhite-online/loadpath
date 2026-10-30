@@ -356,7 +356,7 @@ class _Jobs:
         return job
 
     def _tune(self, job, doc, _node=None):
-        from .tune import get_at, tune_field
+        from .tune import tune_field
 
         def progress(ev, _f=None):
             job["events"].append(_clean({k: v for k, v in ev.items() if isinstance(v, (int, float, str, bool))}))
@@ -365,13 +365,11 @@ class _Jobs:
         with self.lock:
             try:
                 out = tune_field(doc, self.base_dir, os.path.join(self.out_dir, job["id"]), progress=progress)
-                best, assign = out["best"], []
-                if best is not None:      # every number the tuner moved, as it wrote them into the graph
-                    for p in doc["tune"]["params"]:
-                        for q in [p["path"], *p.get("also", [])]:
-                            assign.append([q.lstrip("-"), get_at(out["doc"], q.lstrip("-"))])
+                best = out["best"]
+                assign = best.pop("assign") if best is not None else []
                 job.update(state="done", best=_clean(best), start=_clean(out["start"]), assign=assign,
                            history=_clean(out["history"]), limits=out["limits"],
+                           front=_clean(out["front"]), sweep=_clean(out.get("sweep")),
                            files={"tuned": f"/out/{job['id']}/tuned.json", "tune": f"/out/{job['id']}/tune.json"})
             except Exception as exc:  # noqa: BLE001 - reported to the page
                 job.update(state="failed", error=str(exc))

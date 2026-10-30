@@ -164,6 +164,7 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
 #tune-params input { flex: 0 0 3.6em; width: 3.6em; min-width: 0; }
 #tune-chart svg { width: 100%; height: auto; display: block; }
 #tune-chart text { font: 10px var(--mono); fill: var(--muted); }
+#tune-chart .pt { cursor: pointer; }
 
 .curve-ed svg { width: 100%; height: auto; display: block; margin-top: 6px; background: var(--panel); border-radius: 6px; touch-action: none; }
 .curve-ed .handle { cursor: grab; }
@@ -211,6 +212,7 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
         <div class="row"><div class="pick" style="flex:1"><span class="note">SF ≥</span><input type="number" id="tune-sf" min="0" step="any" placeholder="goal" aria-label="Least safety factor"></div>
           <div class="pick" style="flex:1"><span class="note">Defl. ≤ mm</span><input type="number" id="tune-defl" min="0" step="any" placeholder="goal" aria-label="Most deflection"></div></div>
         <ul id="tune-params" aria-label="Knobs to tune"></ul>
+        <div class="pick"><span class="note">Trade-off</span><input type="text" id="tune-sweep" placeholder="e.g. defl 0.4 0.6 0.8, or SF 2 4 6" aria-label="Limit values to sweep"></div>
         <div class="row wrap"><button class="btn small" id="tune-add" title="Tune the parameter picked under 'by changing' too">+ knob</button>
           <span class="note" style="flex:1"></span><span class="note">analyses</span><input type="number" id="tune-n" min="2" max="200" step="1" style="width:4em" aria-label="Analyses to spend">
           <button class="btn" id="tune" title="Mesh and analyze candidates (FE, the study's loads) until the part is as light as it can be at the limits; the best values go into the graph">Tune</button></div>
@@ -2685,12 +2687,62 @@ function tunePanel() {
     return el("li", { title: p.also && p.also.length ? `moves with it: ${p.also.join(", ")}` : p.path }, el("span", {}, p.path.replace(/^nodes\//, "").replace(/\//g, " · ") + (p.also && p.also.length ? ` +${p.also.length}` : "")), num("min"), num("max"), rm);
   });
   $("#tune-params").replaceChildren(...lis);
+  const sw = t.sweep && Object.entries(t.sweep)[0];
+  $("#tune-sweep").value = sw ? `${sw[0] === "maxDeflection" ? "defl" : "SF"} ${sw[1].join(" ")}` : "";
   $("#tune").disabled = !(t.params && t.params.length);
 }
 function tuneField(k, v) {
   const t = tuneSpec(true);
   if (v === "" || v == null) delete t[k]; else t[k] = k === "study" ? v : Number(v);
   commit(); tunePanel();
+}
+/** "defl 0.4 0.6" or "SF 2 4" -> tune.sweep; empty clears it. */
+function tuneSweep(text) {
+  const t = tuneSpec(true), w = text.trim().split(/[\s,]+/).filter(Boolean);
+  if (!w.length) { delete t.sweep; commit(); tunePanel(); return; }
+  const key = /^(defl|deflection|maxdeflection|d)$/i.test(w[0]) ? "maxDeflection" : /^(sf|safety|safetyfactor)$/i.test(w[0]) ? "safetyFactor" : null;
+  const vals = w.slice(key ? 1 : 0).map(Number).filter((v) => v > 0);
+  if (!vals.length) { status("Trade-off: a limit and its values, e.g. defl 0.4 0.6 0.8", "warn"); return; }
+  t.sweep = { [key || (t.maxDeflection != null || !t.safetyFactor ? "maxDeflection" : "safetyFactor")]: vals };
+  commit(); tunePanel();
+}
+function applyAssign(assign) {
+  for (const [key, v] of assign) { const path = key.split("/").map((x) => /^\d+$/.test(x) ? +x : x); setUniform(path, +v.toPrecision(5)); paramChanged(path); }
+  inspector(); updateMass();
+}
+/** The trade-off: every candidate no other beats on mass, deflection and SF, mass against deflection;
+ *  the sweep's picks ringed with their limit; click one to put its values in the graph. */
+function drawFront(j) {
+  const box = $("#tune-chart"), pts = j.front || [];
+  if (pts.length < 2) return;
+  const W = 288, H = 132, L = 50, R = 8, T = 12, B = 24;
+  const xs = pts.map((p) => p.deflection), ys = pts.map((p) => p.mass);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const X = (x) => L + (W - L - R) * (x - x0) / ((x1 - x0) || 1), Y = (y) => T + (H - T - B) * (1 - (y - y0) / ((y1 - y0) || 1));
+  const ns = "http://www.w3.org/2000/svg", mk = (t, a, txt) => { const e = document.createElementNS(ns, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); if (txt != null) e.textContent = txt; return e; };
+  const svg = mk("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "lightest part for each deflection: the trade-off" });
+  svg.append(mk("line", { x1: L, y1: H - B, x2: W - R, y2: H - B, stroke: "var(--line)" }), mk("line", { x1: L, y1: T, x2: L, y2: H - B, stroke: "var(--line)" }));
+  svg.append(mk("text", { x: L - 4, y: T + 4, "text-anchor": "end" }, `${fmt(y1)} g`), mk("text", { x: L - 4, y: H - B, "text-anchor": "end" }, fmt(y0)),
+    mk("text", { x: L, y: H - 8 }, `${fmt(x0)} mm`), mk("text", { x: W - R, y: H - 8, "text-anchor": "end" }, `${fmt(x1)} mm deflection`));
+  svg.append(mk("polyline", { points: [...pts].sort((a, b) => a.deflection - b.deflection).map((p) => `${X(p.deflection)},${Y(p.mass)}`).join(" "), fill: "none", stroke: "var(--muted)", "stroke-width": 1, "stroke-dasharray": "3 3" }));
+  const picks = (j.sweep || []).filter((s) => s.best);
+  for (const p of pts) {
+    const g = mk("g", { class: "pt" });
+    g.append(mk("circle", { cx: X(p.deflection), cy: Y(p.mass), r: 3.2, fill: "var(--accent)" }));
+    g.append(mk("title", {}, `${p.mass.toFixed(1)} g · ${fmt(p.deflection)} mm · SF ${fmt(p.safetyFactor)} · click to use`));
+    g.addEventListener("click", () => { applyAssign(p.assign); status(`Using the ${p.mass.toFixed(1)} g candidate (${fmt(p.deflection)} mm, SF ${fmt(p.safetyFactor)}). Undo puts the last values back.`, "ok"); });
+    svg.append(g);
+  }
+  for (const s of picks) {
+    const k = Object.keys(s).find((x) => x !== "best"), b = s.best;
+    const g = mk("g", { class: "pt" });
+    g.append(mk("circle", { cx: X(b.deflection), cy: Y(b.mass), r: 6.5, fill: "none", stroke: b.unconfirmed ? "var(--warn)" : "var(--ink)", "stroke-width": 1.2 }));
+    g.append(mk("text", { x: X(b.deflection) + 8, y: Y(b.mass) - 6 }, `${k === "maxDeflection" ? "≤" : "SF ≥"} ${fmt(s[k])}`));
+    g.append(mk("title", {}, `lightest at ${k === "maxDeflection" ? "deflection ≤" : "SF ≥"} ${fmt(s[k])}: ${b.mass.toFixed(1)} g${b.unconfirmed ? " (not confirmed on the fine grid)" : ""} · click to use`));
+    g.addEventListener("click", () => { applyAssign(b.assign); status(`Using the lightest part at ${k === "maxDeflection" ? "deflection ≤" : "SF ≥"} ${fmt(s[k])}: ${b.mass.toFixed(1)} g.`, "ok"); });
+    svg.append(g);
+  }
+  box.replaceChildren(svg); box.hidden = false;
 }
 function addTuneKnob(key) {
   if (!key) { status("Pick the parameter under 'by changing' first.", "warn"); return; }
@@ -2737,9 +2789,9 @@ async function tune() {
     $("#tune").disabled = false;
     if (j.state === "failed") { status(`Tune failed: ${j.error}`, "warn"); return; }
     drawTune(j.history, j.limits, j.best);
-    if (!j.best) { status(`No candidate met the limits in ${j.history.length} analyses: widen the knobs' ranges or ease the limits.`, "warn"); return; }
-    for (const [key, v] of j.assign) { const path = key.split("/").map((x) => /^\d+$/.test(x) ? +x : x); setUniform(path, +v.toPrecision(5)); paramChanged(path); }
-    inspector(); updateMass();
+    if (!j.best) { drawFront(j); status(`No candidate met the limits in ${j.history.length} analyses: widen the knobs' ranges or ease the limits.`, "warn"); return; }
+    applyAssign(j.assign);
+    drawFront(j);
     const at = j.best.check && j.best.check.ok ? j.best.check : j.best;      // the fine grid's reading when it has one
     const lim = [at.safetyFactor != null ? `SF ${fmt(at.safetyFactor)}` : "", at.deflection != null ? `deflection ${fmt(at.deflection)} mm` : ""].filter(Boolean).join(", ");
     const how = j.best.unconfirmed ? " It passed once but not on a finer grid: it sits on the limit, so check it." : " Checked again on a finer grid.";
@@ -2834,6 +2886,7 @@ $("#tune-add").addEventListener("click", () => addTuneKnob($("#fit-param").value
 $("#tune-study").addEventListener("change", (e) => tuneField("study", e.target.value.trim()));
 $("#tune-sf").addEventListener("change", (e) => tuneField("safetyFactor", e.target.value));
 $("#tune-defl").addEventListener("change", (e) => tuneField("maxDeflection", e.target.value));
+$("#tune-sweep").addEventListener("change", (e) => tuneSweep(e.target.value));
 $("#tune-n").addEventListener("change", (e) => tuneField("evaluations", Math.max(2, Math.round(+e.target.value || 20))));
 $("#save").addEventListener("click", save);
 $("#export").addEventListener("click", () => { commit(); download(fileName(), JSON.stringify(exportDoc(), null, 2) + "\n"); });
@@ -2905,7 +2958,7 @@ window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
   THREE, cam: () => { camera.updateMatrixWorld(); return camera; },
-  makeGroup: (n, g) => makeGroup(n, g), run: (n) => run(n), tune: () => tune(), addTuneKnob: (k) => addTuneKnob(k), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
+  makeGroup: (n, g) => makeGroup(n, g), run: (n) => run(n), tune: () => tune(), addTuneKnob: (k) => addTuneKnob(k), tuneSweep: (t) => tuneSweep(t), drawFront: (j) => drawFront(j), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
   paste: (text) => pasteText(text), sweep: (key, n) => sweepMass(key, n), duplicate: (n) => duplicateNode(n),
   pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),

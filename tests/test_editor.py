@@ -436,7 +436,13 @@ const [page_, threeDir] = process.argv.slice(2);
     const E = window.lpEditor;
     E.addTuneKnob("nodes/sa/thickness");
     E.addTuneKnob("nodes/sa/thickness");                      // once only
-    return { spec: E.doc().tune, rows: document.querySelectorAll("#tune-params li").length, can: !document.querySelector("#tune").disabled };
+    E.tuneSweep("defl 0.4, 0.6");
+    const pt = (m, d, t) => ({ mass: m, deflection: d, safetyFactor: 3, values: [t], assign: [["nodes/sa/thickness", t]] });
+    E.drawFront({ front: [pt(5, 0.7, 0.4), pt(6, 0.5, 0.6), pt(8, 0.3, 0.9)], sweep: [{ maxDeflection: 0.6, best: pt(6, 0.5, 0.6) }] });
+    const dots = document.querySelectorAll("#tune-chart .pt");
+    dots[dots.length - 1].dispatchEvent(new MouseEvent("click"));
+    return { spec: E.doc().tune, rows: document.querySelectorAll("#tune-params li").length, can: !document.querySelector("#tune").disabled,
+             dots: dots.length, applied: E.doc().nodes.sa.thickness };
   });
   out._errors = errors;
   console.log(JSON.stringify(out));
@@ -477,6 +483,7 @@ def test_overlays_paste_and_sweep():
     t = out["tune"]
     assert t["rows"] == 1 and t["can"] and t["spec"]["params"][0]["path"] == "nodes/sa/thickness", t
     assert t["spec"]["params"][0]["min"] < 0.5 < t["spec"]["params"][0]["max"], t
+    assert t["spec"]["sweep"] == {"maxDeflection": [0.4, 0.6]} and t["dots"] == 4 and t["applied"] == 0.6, t
     red = lambda px: px[0] > 80 and px[0] > 2.5 * max(px[1], px[2])   # noqa: E731
     assert red(out["over"]["under"]) and not red(out["over"]["top"]), out["over"]
     # pasting nodes that clash: renamed, their references to each other follow; duplicating keeps the inputs

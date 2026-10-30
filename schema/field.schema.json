@@ -247,6 +247,31 @@
           "minimum": 2,
           "description": "analyses to spend (default 20)"
         },
+        "sweep": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "description": "the trade-off: tune again held to each of these values of one limit, e.g. {\"maxDeflection\": [0.4, 0.6, 0.8]}",
+          "properties": {
+            "safetyFactor": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "maxDeflection": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "analysis": {
           "enum": [
             "auto",

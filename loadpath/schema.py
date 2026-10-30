@@ -754,6 +754,12 @@ FIELD_SCHEMA = {
                      "maxDeflection": {**_POS, "description": "mm at the loads (default the study's goal)"},
                      "evaluations": {"type": "integer", "minimum": 2, "description": "analyses to spend "
                                                                                        "(default 20)"},
+                     "sweep": {"type": "object", "minProperties": 1, "maxProperties": 1,
+                               "description": "the trade-off: tune again held to each of these values of one "
+                                              "limit, e.g. {\"maxDeflection\": [0.4, 0.6, 0.8]}",
+                               "properties": {k: {"type": "array", "minItems": 1, "items": _POS}
+                                              for k in ("safetyFactor", "maxDeflection")},
+                               "additionalProperties": False},
                      "analysis": {"enum": ["auto", "solid", "homogenized"],
                                   "description": "auto (default): a part with a lattice is analyzed with the "
                                                  "lattice homogenized (unit-cell stiffness and wall stress), "

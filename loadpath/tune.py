@@ -105,10 +105,15 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
             get_at(doc, q)
     study = _study(spec, base_dir)
     goal = study.goal
-    sf_min = spec.get("safetyFactor", goal.safety_factor)
-    defl_max = spec.get("maxDeflection", goal.max_deflection)
-    if sf_min is None and defl_max is None:
+    lim = {"safetyFactor": spec.get("safetyFactor", goal.safety_factor),
+           "maxDeflection": spec.get("maxDeflection", goal.max_deflection)}
+    if lim["safetyFactor"] is None and lim["maxDeflection"] is None:
         raise ValueError("tune: no limit to hold (safetyFactor or maxDeflection, here or in the study's goal)")
+    sweep = spec.get("sweep") or {}
+    if sweep and (len(sweep) != 1 or next(iter(sweep)) not in lim
+                  or not all(isinstance(v, (int, float)) and v > 0 for v in next(iter(sweep.values())))):
+        raise ValueError("tune.sweep is one limit and its values: {\"maxDeflection\": [0.4, 0.6]} "
+                         "or {\"safetyFactor\": [2, 4]}")
     node = spec.get("node") or doc.get("output")
     pitch, cells = float(spec.get("pitch", 1.0)), int(spec.get("cells", 30_000))
     budget = int(evaluations or spec.get("evaluations", 20))
@@ -195,10 +200,10 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
         if "error" in rec:
             return -1.0
         m = [] if rec["bodies"] == 1 else [-0.5]
-        if sf_min is not None:
-            m.append(rec["safetyFactor"] / sf_min - 1.0)
-        if defl_max is not None:
-            m.append(1.0 - rec["deflection"] / max(defl_max, 1e-12))
+        if lim["safetyFactor"] is not None:
+            m.append(rec["safetyFactor"] / lim["safetyFactor"] - 1.0)
+        if lim["maxDeflection"] is not None:
+            m.append(1.0 - rec["deflection"] / max(lim["maxDeflection"], 1e-12))
         return min(m)
 
     def report_check(r, check):
@@ -208,7 +213,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
                       **{k: v for k, v in r["check"].items() if v is not None},
                       "values": ", ".join(f"{v:.3g}" for v in r["values"])})
 
-    first = evaluate((start - lo) / (hi - lo))
+    first, first_fine = evaluate((start - lo) / (hi - lo)), None
     if "error" not in first:
         fine = analyze(first["values"], 2 * cells)
         if "error" not in fine:
@@ -216,7 +221,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
                 c = first["coarse"][k]
                 bias[k] = fine[k] / c if c > 0 else 1.0
             judge(first)
-            report_check(first, fine)
+            first_fine = fine
     m0 = first.get("mass") or 1.0
     cons = [{"type": "ineq", "fun": lambda x: margin(evaluate(x))}]
 
@@ -224,31 +229,67 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
         rec = evaluate(x)
         return rec["mass"] / m0 if "mass" in rec else 10.0
 
-    x0 = np.clip((start - lo) / (hi - lo), 0.0, 1.0)
-    # COBYQA keeps every candidate inside the knobs' ranges and spends one
-    # analysis per point (objective and limits come from the same one, cached)
-    minimize(objective, x0, method="COBYQA", bounds=[(0.0, 1.0)] * len(params), constraints=cons,
-             options={"initial_tr_radius": 0.25, "final_tr_radius": 5e-3, "maxfev": max(budget, 2)})
-    # The ratio holds only roughly away from the start, and a voxel reading
-    # moves a few percent as the part slides across its grid: the lightest
-    # few that passed are analyzed again on the fine grid, and the first that
-    # still passes is the answer.
-    good = sorted((r for r in history if r["ok"]), key=lambda r: r["mass"])
-    best = None
-    for r in good[:3]:
-        if r is first and "check" in r:
-            check = r["check"]
-        else:
-            check = analyze(r["values"], 2 * cells)
-            report_check(r, check)
-        if check["ok"]:
-            best = r
-            break
-    if best is None and good:
-        best = {**good[0], "unconfirmed": True}     # passed on the coarse grid, not on the fine one
-    out = {"best": best, "start": first, "history": history, "analysis": "homogenized" if homogenized else "solid",
-           "limits": {"safetyFactor": sf_min, "maxDeflection": defl_max},
-           "params": [{"path": p["path"], "min": p["min"], "max": p["max"]} for p in params]}
+    def search(x0):
+        # COBYQA keeps every candidate inside the knobs' ranges and spends
+        # one analysis per point (objective and limits come from the same
+        # one, cached across searches)
+        minimize(objective, x0, method="COBYQA", bounds=[(0.0, 1.0)] * len(params), constraints=cons,
+                 options={"initial_tr_radius": 0.25, "final_tr_radius": 5e-3, "maxfev": max(budget, 2)})
+
+    checks = {}
+
+    def pick():
+        """The lightest candidate that meets the current limits on the fine
+        grid too. The coarse/fine ratio holds only roughly away from the
+        start, and a voxel reading moves a few percent as the part slides
+        across its grid: the lightest few that pass are analyzed again on
+        twice the cells, and the first that still passes is the answer."""
+        good = sorted((r for r in history if "error" not in r and margin(r) >= 0), key=lambda r: r["mass"])
+        for r in good[:3]:
+            key = tuple(r["values"])
+            if key not in checks:
+                checks[key] = first_fine if r is first and first_fine is not None else analyze(r["values"], 2 * cells)
+            check = checks[key]
+            report_check(r, {**check, "ok": "error" not in check and margin(check) >= 0})
+            if r["check"]["ok"]:
+                return {**r, "ok": True}
+        return {**good[0], "ok": True, "unconfirmed": True} if good else None    # passed coarse, not fine
+
+    def x_of(r):
+        return (np.asarray(r["values"]) - lo) / (hi - lo)
+
+    search(np.clip(x_of(first), 0.0, 1.0))
+    best = pick()
+    out = {"best": best, "start": first, "analysis": "homogenized" if homogenized else "solid",
+           "limits": dict(lim), "params": [{"path": p["path"], "min": p["min"], "max": p["max"]} for p in params]}
+    if sweep:
+        # the trade-off: the same search held to each value of one limit in
+        # turn, each warm-started from the lightest candidate that already
+        # meets it (or the start)
+        key, values = next(iter(sweep.items()))
+        base_limit, out["sweep"] = lim[key], []
+        for v in values:
+            lim[key] = float(v)
+            near = [r for r in history if "error" not in r and margin(r) >= 0]
+            x0 = x_of(min(near, key=lambda r: r["mass"])) if near else x_of(first)
+            if progress:
+                progress({"event": "tune-sweep", key: float(v)})
+            search(np.clip(x0, 0.0, 1.0))
+            out["sweep"].append({key: float(v), "best": pick()})
+        lim[key] = base_limit
+    out["history"] = history
+
+    def assign(values):
+        """Every number these values set, as written into the graph."""
+        d = apply(values)
+        return [[q.lstrip("-"), get_at(d, q.lstrip("-"))] for p in params for q in [p["path"], *p.get("also", [])]]
+
+    out["front"] = [{**r, "assign": assign(r["values"])} for r in _front(history)]
+    for sp in out.get("sweep", []):
+        if sp["best"] is not None:
+            sp["best"]["assign"] = assign(sp["best"]["values"])
+    if best is not None:
+        best["assign"] = assign(best["values"])
     tuned = doc if best is None else {**apply(best["values"]), "tune": doc["tune"]}
     out["doc"] = tuned
     if out_dir:
@@ -260,3 +301,17 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
             json.dump({k: v for k, v in out.items() if k != "doc"}, fh, indent=2)
             fh.write("\n")
     return out
+
+
+def _front(history):
+    """The candidates no other beats on mass, deflection and safety factor
+    all at once (coarse readings, corrected), lightest first."""
+    rs = [r for r in history if "error" not in r and r.get("bodies") == 1]
+    out = []
+    for r in rs:
+        if not any(o["mass"] <= r["mass"] and o["deflection"] <= r["deflection"]
+                   and o["safetyFactor"] >= r["safetyFactor"]
+                   and (o["mass"], o["deflection"], -o["safetyFactor"]) != (r["mass"], r["deflection"], -r["safetyFactor"])
+                   for o in rs):
+            out.append({k: r[k] for k in ("values", "mass", "deflection", "safetyFactor")})
+    return sorted(out, key=lambda r: r["mass"])

@@ -180,3 +180,25 @@ def test_tune_grades_a_lattice_homogenized():
     best = out["best"]
     assert best and best["ok"] and best["values"][0] < 1.6 and best["mass"] < out["start"]["mass"], out["history"]
     assert best["deflection"] <= 1.3
+
+
+def test_sweep_traces_the_trade_off():
+    """Held to a higher safety factor the bar comes out heavier; every
+    candidate on the front is beaten by none on mass, deflection and SF."""
+    d = _dir()
+    g = json.loads(json.dumps(GRAPH))
+    g["tune"].update(evaluations=6, sweep={"safetyFactor": [3, 5.5]})
+    assert not lint(g, "field")
+    out = tune_field(g, d)
+    (lo_sf, hi_sf) = out["sweep"]
+    assert lo_sf["safetyFactor"] == 3 and hi_sf["safetyFactor"] == 5.5
+    assert lo_sf["best"]["mass"] < out["best"]["mass"] < hi_sf["best"]["mass"], out["sweep"]
+    assert hi_sf["best"]["safetyFactor"] >= 5.5 and lo_sf["best"]["safetyFactor"] >= 3
+    front = out["front"]
+    assert len(front) >= 3 and [r["mass"] for r in front] == sorted(r["mass"] for r in front)
+    for r in front:
+        assert not any(o["mass"] < r["mass"] and o["deflection"] < r["deflection"]
+                       and o["safetyFactor"] > r["safetyFactor"] for o in front)
+    bad = json.loads(json.dumps(g))
+    bad["tune"]["sweep"] = {"mass": [1]}
+    assert lint(bad, "field")
