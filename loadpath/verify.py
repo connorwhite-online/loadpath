@@ -577,7 +577,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     band = max(1.5 * pitch, contact_band or 0.0)
     report["contactBand"] = band
     fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else 0.0
-    rhs = [bc.loads[ci] + fg for ci in range(len(study.load_cases))]
+    # A force of unknown direction is solved along each axis and judged in
+    # the direction that stresses the part most (directions.py).
+    from .directions import expand, worst_stress_direction
+    spreads = bc.spreads or [None] * len(study.load_cases)
+    rhs, layout = expand(bc.loads, spreads, fg if bc.gravity is not None else None)
     from .simp import _use_mg
     if _use_mg(hm.n_elem):
         # From simp.MG_MIN_CELLS up, matrix-free multigrid (as the optimizer
@@ -605,16 +609,27 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     cases = []
     worst_sf = np.inf
     for ci, case in enumerate(study.load_cases):
-        f = bc.loads[ci] + fg
         load_nodes = bc.case_load_nodes[ci]
-        u = displacements[ci]
-        vm = nodal_von_mises(stiff, u, mat.E)
-        if bc.case_pressure_nodes[ci].any():
-            vm = _smooth_wetted(hm.node_xyz, vm, bc.case_pressure_nodes[ci], pitch)
         # Exclude nodes within the contact band of an applied load or support.
         contact = support_nodes | load_nodes
         near = cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1, distance_upper_bound=band)[0] < np.inf
         body = ~near
+        idx = layout[ci]
+        direction = None
+        if len(idx) == 1:
+            f, u = rhs[idx[0]], displacements[idx[0]]
+        else:
+            sp = spreads[ci]
+            s0 = nodal_stress(stiff, displacements[idx[0]], mat.E) if idx[0] is not None else None
+            sb = [nodal_stress(stiff, displacements[i], mat.E) for i in idx[1:]]
+            direction, _ = worst_stress_direction(sp, s0, sb, body)
+            f = sum(direction[j] * rhs[i] for j, i in enumerate(idx[1:]))
+            u = sum(direction[j] * displacements[i] for j, i in enumerate(idx[1:]))
+            if idx[0] is not None:
+                f, u = f + rhs[idx[0]], u + displacements[idx[0]]
+        vm = nodal_von_mises(stiff, u, mat.E)
+        if bc.case_pressure_nodes[ci].any():
+            vm = _smooth_wetted(hm.node_xyz, vm, bc.case_pressure_nodes[ci], pitch)
         peak = float(vm[body].max()) if body.any() else float(vm.max())
         at = hm.node_xyz[np.argmax(np.where(body, vm, -1))].tolist()
         global_peak = peak
@@ -684,6 +699,9 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             "maxDisplacement": float(np.linalg.norm(disp, axis=1).max()),
             "compliance": float(f @ u),
             **({"pressureImbalance": bc.pressure_imbalance[ci]} if wet.any() else {}),
+            # the uncertain force's most stressful direction, which the
+            # numbers above are for (unit vector)
+            **({"worstDirection": [float(v) for v in direction]} if direction is not None else {}),
         })
     report["cases"] = cases
     report["safetyFactor"] = worst_sf

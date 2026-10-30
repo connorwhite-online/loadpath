@@ -28,6 +28,7 @@ import scipy.sparse as sp
 
 from scipy import ndimage
 
+from .directions import collapse, expand
 from .domain import Domain
 from .fem import HexMesh, Solver, Stiffness, hex8_ke
 from .manufacture import AccessFilter, MaxMember, machinable, tie_groups
@@ -302,6 +303,9 @@ class SimpResult:
     converged: bool
     seconds: float
     history: list = field(default_factory=list)
+    # per case: the worst direction of a force of unknown direction
+    # (directions.py), or None
+    case_direction: list = field(default_factory=list)
 
 
 def filter_radius(domain: Domain, min_member: float | None) -> float:
@@ -534,7 +538,10 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
 
     beta = float(opts.beta_start)
     since_beta = 0
-    us = [None] * len(domain.loads)
+    spreads = domain.spreads or [None] * len(domain.loads)
+    us = [None] * len(expand(domain.loads, spreads)[0])
+    robust = any(s is not None for s in spreads)
+    dc_prev = None
     weights = np.asarray(domain.case_weights, float)
     history = []
     c0 = None
@@ -598,28 +605,32 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         xt, xp = physical(x, beta, am_b)
         xe = eroded(xt, beta)
         e = E_MIN + xe ** PENALTY * (1 - E_MIN)
-        loads = domain.loads
+        fg = None
         if domain.gravity is not None:
             from .domain import gravity_force
             fg = gravity_force(mesh, xe, domain.gravity, domain.fixed)
-            loads = [f + fg for f in domain.loads]
+        # A force of unknown direction is three solves, one per axis, and
+        # each case is judged in its worst direction (directions.py).
+        rhs, layout = expand(domain.loads, spreads, fg)
         # Sensitivities only need to point the right way while the design is
         # still soft; tighten the solve as the projection sharpens.
         rtol = opts.solve_rtol * (10.0 if beta <= 2 else 3.0 if beta <= 8 else 1.0) if opts.adaptive_rtol \
             else opts.solve_rtol
-        us = fe.solve(e, xe, us, rtol=rtol, loads=loads)
+        us = fe.solve(e, xe, us, rtol=rtol, loads=rhs)
         dc_xp = np.zeros(n)
         comp = 0.0
         case_c = []
-        for ci, f in enumerate(loads):
-            ce = fe.strain_energy(us[ci])
-            cc = float(f @ us[ci])
+        for ci, wc in enumerate(collapse(rhs, layout, us, spreads)):
+            # the worst direction's sensitivity is its own (envelope theorem),
+            # softened over near-ties (directions.SMOOTH)
+            cc = wc.compliance
+            ce = sum(m * fe.strain_energy(v) for m, v in wc.energy)
             case_c.append(cc)
             comp += weights[ci] * cc
             dc_xp -= weights[ci] * PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN) * ce
             if domain.gravity is not None:
                 # d(f.u)/dx with design-dependent weight: + 2 u . df/dx.
-                ue = us[ci].reshape(-1, 3)[mesh.enode].sum(axis=1)
+                ue = wc.u_mean.reshape(-1, 3)[mesh.enode].sum(axis=1)
                 dc_xp += weights[ci] * 2.0 * (ue @ domain.gravity) * mesh.pitch ** 3 / 8.0
         if c0 is None:
             c0 = comp
@@ -630,6 +641,18 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         dc = ht @ (printed_grad(am_e, dc_xp) * dproj_e / hs)
         dv = ht @ (printed_grad(am_b, design.astype(float)) * dproj / hs)
         dc = np.minimum(dc, 0.0)
+        if robust:
+            # A worst case over directions swings: stiffening the weakest
+            # direction makes another the weakest, and the full step of the
+            # optimality criteria overshoots into it every iteration (a
+            # square cantilever's webs flipped diagonal to diagonal and its
+            # worst case came out 4.6 times its tuned-for-down twin's). The
+            # mean of this iteration's and the last one's sensitivities
+            # damps the swing: 5 times stiffer in its worst direction than
+            # the twin, where undamped it was barely better.
+            if dc_prev is not None:
+                dc = 0.5 * (dc + dc_prev)
+            dc_prev = dc
         dv = np.maximum(dv, 1e-12)
         excess = None
         if thick is not None:
@@ -718,11 +741,11 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         xp = _machined(domain, xp, opts.access)
     # Final analysis on the delivered field (it moved since the last solve).
     e = E_MIN + xp ** PENALTY * (1 - E_MIN)
-    loads = domain.loads
+    fg = None
     if domain.gravity is not None:
         from .domain import gravity_force
         fg = gravity_force(mesh, xp, domain.gravity, domain.fixed)
-        loads = [f + fg for f in domain.loads]
+    loads, layout = expand(domain.loads, spreads, fg)
     us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
     if opts.prune:
         xp, us = _prune_dead(fe, domain, xp, us, loads, design, pres)
@@ -732,11 +755,12 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
             if (xq != xp).any():
                 xp = xq
                 us = fe.solve(E_MIN + xp ** PENALTY * (1 - E_MIN), xp, us, rtol=1e-6, loads=loads)
-    case_c, comp = [], 0.0
-    for ci, f in enumerate(loads):
-        cc = float(f @ us[ci])
-        case_c.append(cc)
-        comp += weights[ci] * cc
+    case_c, case_d, comp = [], [], 0.0
+    for ci, wc in enumerate(collapse(loads, layout, us, spreads)):
+        case_c.append(wc.compliance)
+        case_d.append(None if wc.direction is None else [float(v) for v in wc.direction])
+        comp += weights[ci] * wc.compliance
     return SimpResult(x=x, xphys=xp, compliance=comp, case_compliance=case_c,
                       volume_fraction=float(xp[design].mean()), iterations=it,
-                      converged=converged, seconds=time.time() - t0, history=history)
+                      converged=converged, seconds=time.time() - t0, history=history,
+                      case_direction=case_d)

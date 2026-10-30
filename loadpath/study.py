@@ -187,6 +187,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
     opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
            "compliance": res.compliance, "caseCompliance": res.case_compliance,
+           **({"caseDirection": res.case_direction} if any(d is not None for d in res.case_direction) else {}),
            "achievedVolumeFraction": res.volume_fraction,
            "beta": res.history[-1]["beta"] if res.history else beta0}
     o = Outcome(vf, mesh, {}, opt, rinfo)
@@ -553,6 +554,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             x, xphys = res.x, res.xphys
             opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                    "compliance": res.compliance, "caseCompliance": res.case_compliance,
+                   **({"caseDirection": res.case_direction} if any(d is not None for d in res.case_direction) else {}),
                    "achievedVolumeFraction": res.volume_fraction}
         else:
             # a stored design for this very problem: mesh and verify it, no optimizing
@@ -717,7 +719,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
     goal = study.goal
     if goal.method == "constrained" and (goal.safety_factor is not None or goal.max_deflection is not None) \
             and study.print_direction is None and study.gravity is None and not _durability_drives(study) \
-            and study.access is None and study.max_member is None:
+            and study.access is None and study.max_member is None \
+            and not any(ld.direction for c in study.load_cases for ld in c.loads):
         from .constrained import Limits
         from .verify import STRESS_ALLOWANCE
 

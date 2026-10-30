@@ -1035,6 +1035,18 @@
         "pressure": {
           "type": "number",
           "description": "MPa gauge (1 bar = 0.1 MPa) inside the keepOut named by 'region' (the fluid's volume), on every wall lining it; negative is a vacuum. A study whose only loads are pressures on sealed cavities needs no supports."
+        },
+        "direction": {
+          "enum": [
+            "any"
+          ],
+          "description": "'any': the force's size may point in any direction (contact, bumps, handling); the part is designed and checked for the worst one, found exactly from three unit-force solves. At most one per load case; a bearing load's uncertain force is spread evenly over the region."
+        },
+        "cone": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 180,
+          "description": "Degrees: the force may tilt up to this far from its written direction, and the worst tilt is designed for (180 is the same as direction 'any')."
         }
       },
       "x-requireOne": [

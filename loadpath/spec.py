@@ -77,6 +77,11 @@ class Load:
     # MPa gauge in the keep-out `region` names, on the material lining it
     # (pressure.py); 0 = no pressure. Negative is a vacuum.
     pressure: float = 0.0
+    # The force's direction is not known: None (as written), "any" (its size
+    # in every direction) or "cone" (within `cone` degrees of it). The
+    # optimizer and verification design for the worst one (directions.py).
+    direction: str | None = None
+    cone: float | None = None
 
 
 @dataclass
@@ -455,9 +460,26 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
                 raise ValueError(f"{label}.distribution must be 'uniform' or 'bearing'")
             if dist == "bearing" and not np.any(f):
                 raise ValueError(f"{label}: a bearing load needs a force")
-            loads.append(Load(region, shape, f, m, dist))
+            spread, cone = None, None
+            if ld.get("direction") is not None:
+                if ld["direction"] != "any":
+                    raise ValueError(f"{label}.direction must be 'any' (the force's size, in every direction)")
+                spread = "any"
+            if ld.get("cone") is not None:
+                cone = ld["cone"]
+                if spread or not isinstance(cone, (int, float)) or not 0 < cone <= 180:
+                    raise ValueError(f"{label}.cone is a half-angle in degrees (0-180] round the force's "
+                                     "direction, and cannot go with direction 'any'")
+                spread, cone = ("any", None) if cone >= 180 else ("cone", float(cone))
+            if spread and not np.any(f):
+                raise ValueError(f"{label}: direction 'any' or a cone needs a force (its size and, for a cone, "
+                                 "its axis)")
+            loads.append(Load(region, shape, f, m, dist, direction=spread, cone=cone))
         if not loads:
             raise ValueError(f"loadCases[{ci}] has no loads")
+        if sum(ld.direction is not None for ld in loads) > 1:
+            raise ValueError(f"loadCases[{ci}]: at most one load per case may have an unknown direction "
+                             "(direction 'any' or a cone); put another in a load case of its own")
         life = {}
         for key in ("cycles", "hours"):
             if c.get(key) is not None:

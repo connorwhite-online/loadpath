@@ -41,6 +41,15 @@ field. `check` reports every problem at once: fix them all, then check again.
    moving robot joint, 3 for anything that can be dropped or crashed), at the
    interface that carries it. Add a sideways or torsional case if the part
    can see one; a design optimized for one direction is weak in the others.
+   When the direction is genuinely unknown (contact, bumps, handling, a
+   push at the tool "from anywhere"), say so instead of guessing:
+   `{"region": "tool", "force": [0, 0, -20], "direction": "any"}` designs
+   and checks for the force's size in its worst direction, and `"cone": 30`
+   for anything within 30 degrees of the written one. The worst case is
+   exact (three solves, a 3x3 eigenproblem), and `report.json` gives each
+   case's `worstDirection`. It costs stiffness in the nominal direction (the
+   arm link: about half again more compliant under its payload), so use it
+   for the uncertain load and keep known loads as plain vectors.
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.
