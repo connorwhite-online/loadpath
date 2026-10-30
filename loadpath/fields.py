@@ -96,10 +96,16 @@ _BINOPS = {ast.Add: np.add, ast.Sub: np.subtract, ast.Mult: np.multiply, ast.Div
 _CMPOPS = {ast.Lt: np.less, ast.LtE: np.less_equal, ast.Gt: np.greater, ast.GtE: np.greater_equal}
 
 
-def _compile_expr(text: str):
+def _compile_expr(text: str, lib=None):
     """(names it reads, fn(env) -> value) for an arithmetic expression over
     node names, x, y, z, pi, e and the functions in _FUNCS. A whitelist over
-    Python's AST: no attributes, no subscripts, no calls but those."""
+    Python's AST: no attributes, no subscripts, no calls but those. `lib`
+    swaps the array functions (funcs, binops, cmpops, where, float) for
+    another array library's (fieldtorch.py)."""
+    lib = lib or {}
+    funcs, binops, cmpops = lib.get("funcs", _FUNCS), lib.get("binops", _BINOPS), lib.get("cmpops", _CMPOPS)
+    where = lib.get("where", lambda c, a, b: np.where(np.asarray(c) > 0, a, b))
+    as_float = lib.get("float", lambda a: a.astype(float))
     try:
         tree = ast.parse(text, mode="eval")
     except SyntaxError as exc:
@@ -119,20 +125,20 @@ def _compile_expr(text: str):
             names.add(n.id)
             k = n.id
             return lambda env: env[k]
-        if isinstance(n, ast.BinOp) and type(n.op) in _BINOPS:
-            f, a, b = _BINOPS[type(n.op)], build(n.left), build(n.right)
+        if isinstance(n, ast.BinOp) and type(n.op) in binops:
+            f, a, b = binops[type(n.op)], build(n.left), build(n.right)
             return lambda env: f(a(env), b(env))
         if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
             a = build(n.operand)
             return (lambda env: -a(env)) if isinstance(n.op, ast.USub) else a
-        if isinstance(n, ast.Compare) and len(n.ops) == 1 and type(n.ops[0]) in _CMPOPS:
-            f, a, b = _CMPOPS[type(n.ops[0])], build(n.left), build(n.comparators[0])
-            return lambda env: f(a(env), b(env)).astype(float)
+        if isinstance(n, ast.Compare) and len(n.ops) == 1 and type(n.ops[0]) in cmpops:
+            f, a, b = cmpops[type(n.ops[0])], build(n.left), build(n.comparators[0])
+            return lambda env: as_float(f(a(env), b(env)))
         if isinstance(n, ast.IfExp):
             c, a, b = build(n.test), build(n.body), build(n.orelse)
-            return lambda env: np.where(np.asarray(c(env)) > 0, a(env), b(env))
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _FUNCS and not n.keywords:
-            f, args = _FUNCS[n.func.id], [build(a) for a in n.args]
+            return lambda env: where(c(env), a(env), b(env))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in funcs and not n.keywords:
+            f, args = funcs[n.func.id], [build(a) for a in n.args]
             return lambda env: f(*(a(env) for a in args))
         bad = ast.unparse(n) if hasattr(ast, "unparse") else type(n).__name__
         raise ValueError(f"expr {text!r}: {bad!r} is not allowed (arithmetic, comparisons, "
@@ -753,12 +759,30 @@ class FieldGraph:
 
     def field(self, name=None):
         name = name or self.output
-        return lambda P: self.evaluate(P, name)
+
+        def f(P):
+            return self.evaluate(P, name)
+        if self._torch_field() is not None and self._tf.batch:
+            f.batch = self._tf.batch
+        return f
 
     def evaluate(self, P, name=None):
+        tf = self._torch_field()
+        if tf is not None:
+            return tf(P, name)
         P = np.asarray(P, float).reshape(-1, 3)
         memo = {}
         return np.broadcast_to(self._eval(name or self.output, P, memo), (len(P),)).astype(float)
+
+    def _torch_field(self):
+        """fieldtorch.TorchField on the device LOADPATH_FIELD_DEVICE picks
+        (a GPU by default when there is one), or None for numpy."""
+        if not hasattr(self, "_tf"):
+            from .fieldtorch import TorchField, field_device
+
+            dev = field_device()
+            self._tf = TorchField(self, dev) if dev is not None else None
+        return self._tf
 
     def _val(self, r, P, memo):
         if isinstance(r, float):

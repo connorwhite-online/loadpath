@@ -60,11 +60,16 @@ def peval(field, P, chunk=_CHUNK):
     3.7x faster, and every chunk is the same computation, so the result is
     bit for bit the serial one. The first chunk runs alone, so a field that
     builds a cached resource on first use (a warp, a mesh's distance grid)
-    builds it once. LOADPATH_THREADS=1 turns this off."""
+    builds it once. LOADPATH_THREADS=1 turns this off. A field with a
+    `batch` attribute (the torch evaluator, which threads itself or runs
+    on a GPU) is called serially in chunks of that many points instead."""
     global _POOL
     n = len(P)
     out = np.empty(n)
     nt = _threads()
+    batch = getattr(field, "batch", None)
+    if batch:
+        nt, chunk = 1, batch
     if nt == 1 or n <= 2 * chunk:
         for i in range(0, n, chunk):
             out[i:i + chunk] = np.asarray(field(P[i:i + chunk]), float)

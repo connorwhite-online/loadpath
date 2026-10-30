@@ -360,6 +360,27 @@ check (each slab's open edges are matched against its neighbours'). The
 checks that need the whole mesh (printability, bodies, the render) are
 skipped. Field evaluation runs on every core (`LOADPATH_THREADS` caps it).
 
+### Evaluating on the GPU
+
+Once meshing is narrow-band, evaluating the graph is most of the time
+(marching cubes is ~4%). With the `gpu` extra installed (PyTorch), graphs
+evaluate with torch (`loadpath/fieldtorch.py`): on an NVIDIA or Apple
+Silicon GPU by default, or on the CPU with `LOADPATH_FIELD_DEVICE=torch`.
+`LOADPATH_FIELD_DEVICE=numpy` turns it off, and `LOADPATH_FIELD_DTYPE`
+picks float32 (GPU default) or float64 (CPU default). Every op runs in
+torch except meshes, point clouds, scattered samples, strut lattices and a
+few rarer options, which run on numpy for that node only and are copied
+over. Answers match numpy to ~1e-7 mm in float64
+and ~5e-4 mm in float32 (the arm link meshes to the same 822,842 faces).
+
+Measured on the 4-core cloud box, graded arm link at 0.4 mm pitch: numpy
+17.3 s, torch on the CPU 10.5 s (float32) or 12.3 s (float64); raw
+evaluation of 1M points goes 2.1 s to 0.3 s. **The GPU speedup is
+unmeasured** (no GPU in the cloud). On the CPU, evaluation is still ~7 of
+those 10 s; a GPU should take most of that away, leaving marching cubes
+and the vertex bookkeeping (~2-3 s) as the floor. Graphs with numpy-only
+nodes gain less.
+
 ## Drain holes
 
 A skin over a lattice traps whatever the lattice was printed in: powder

@@ -180,7 +180,9 @@ in [`schema/`](schema/)).
 
 Large studies (100k+ cells) solve with matrix-free multigrid; install the `gpu`
 extra (`loadpath[mcp,gpu]`, PyTorch) to run it on an NVIDIA GPU, an Apple
-Silicon GPU, or torch's threaded CPU kernels. Without it everything runs on
+Silicon GPU, or torch's threaded CPU kernels. The same extra evaluates field
+graphs on the GPU when meshing (`LOADPATH_FIELD_DEVICE=torch` uses torch on the
+CPU, 1.7x faster than numpy on the arm link). Without it everything runs on
 numpy as before.
 
 - [Quickstart](docs/quickstart.md): install to a verified part in ten minutes.
