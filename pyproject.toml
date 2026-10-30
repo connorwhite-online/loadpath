@@ -37,6 +37,8 @@ gpu = ["torch>=2.2"]
 crosscheck = ["gmsh>=4.11", "pytetwild>=0.4", "pyvista>=0.44"]
 # vision critic over interface close-ups (critic.py, evals --critic anthropic)
 critic = ["anthropic", "matplotlib>=3.8", "shapely>=2.0"]
+# STEP export with exact planes and cylinders (step.py): OpenCascade's Python bindings
+step = ["cadquery-ocp>=7.7"]
 
 [project.scripts]
 loadpath = "loadpath.__main__:main"

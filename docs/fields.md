@@ -92,10 +92,45 @@ Marching cubes alone leaves every vertex on a grid edge, up to a third of a
 pitch off a curved surface. `field_mesh` then relaxes the vertices along the
 surface and projects each one onto the field's zero level along its
 gradient, so vertices sit on the true surface to about 1e-5 mm: a bore is
-round and a sweep is smooth at any pitch. A crease (two flat faces meeting)
-comes out rounded over about one pitch; when an edge must be exact (a
-bearing seat, a mating face), mesh the organic part with fields and cut the
-feature with `sdf_kit.mesh_subtract`.
+round and a sweep is smooth at any pitch. A crease made inside the field
+(two field surfaces meeting) comes out rounded over about one pitch.
+
+## Sharp edges where the graph asks for them
+
+A hard boolean (`union`, `intersect` or `subtract` with no `blend`) between
+the organic part and a plain shape (a `shape` node: box, cylinder, sphere,
+a union of those) or an imported `mesh` node is done exactly (sharp.py):
+the organic side is meshed from its field, the shape is built exactly, and
+manifold3d does the boolean. So a bearing bore, a bolt face or a keep-out
+cut from the part has a true edge where it meets the part, not a fillet one
+pitch wide. Booleans with a blend, and booleans between field-only inputs
+(a skin and the envelope it was shelled from), stay in the field, rounded
+as before. `"mesh": {"sharp": false}` turns it off.
+
+The organic side is meshed from an extended field: inside what the exact
+shape cuts away it carries on from just outside along the shape's normal,
+so a collar built as a shell of the bore, whose inner wall sits exactly on
+the bore, leaves no film of slivers behind when the bore is cut.
+
+`run_field` reports `sharpEdges`: samples of every exact shape's surface
+where it is the part's boundary, and how far the mesh is from them (mean,
+p99, max, `exactFraction` within 0.01 mm, and the same for the samples
+within 1 mm of a crease, `edges`). On the arm link (bench/sharp_edges.py),
+the bearing bores and cable channel:
+
+SHARP_TABLE
+
+## STEP
+
+`"step": true` (or `loadpath field graph.json --step`) also writes
+`<name>.step` (needs `pip install "loadpath[step]"`, OpenCascade). The exact
+shapes stay exact: bores are cylinders, box faces planes, so a CAD user can
+mate and dimension against them. Organic regions are faceted, one planar
+face per triangle, decimated first to `"step": {"faces": 20000}` (about
+45 MB; coplanar facets merge). The report gives the faces by type, the
+share of the area on exact geometry, the volume against the STL's, and what
+decimating cost (`decimated[].deviation`, mm). A lattice does not decimate
+and is refused: ship lattice parts as STL or 3MF.
 
 Pick the pitch from the thinnest wall: a third of it or finer.
 

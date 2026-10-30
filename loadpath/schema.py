@@ -659,8 +659,18 @@ FIELD_SCHEMA = {
             "pitch": {**_POS, "description": "mm grid (default: the box over 4M cells); a third of the "
                                              "thinnest wall or finer"},
             "project": {"type": "integer", "minimum": 0, "description": "surface relax+projection rounds "
-                                                                       "(default 3; 0 = raw marching cubes)"}},
+                                                                       "(default 3; 0 = raw marching cubes)"},
+            "sharp": {"type": "boolean", "description": "hard booleans (no blend) with plain shapes and meshes are "
+                                                        "done exactly, so bores, bolt faces and keep-outs keep "
+                                                        "sharp edges (default true; false meshes the whole field, "
+                                                        "every crease rounded over about one pitch)"}},
                  "additionalProperties": False},
+        "step": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
+            "faces": {"type": "integer", "minimum": 100, "description": "organic facets in the B-rep "
+                                                                      "(default 20000, ~45 MB)"}},
+            "additionalProperties": False}],
+                 "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres "
+                                "where the graph's hard booleans use plain shapes, the rest faceted"},
         "material": {**_ONE_MATERIAL, "description": "Reports the mass."},
         "minWall": {**_POS, "description": "mm, the printability check's minimum wall (default 0.8)"},
         "build": {**_VEC3, "description": "build direction for the overhang check (default +z)"},

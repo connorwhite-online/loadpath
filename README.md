@@ -14,7 +14,11 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
 - **Model with fields.** A part can be a graph of implicit fields, nTop style: the
   skin thickens where the stress is, the lattice cell grows away from the bolts, the
   fillet is larger where the load comes in, and the mesh comes out smooth
-  ([docs/fields.md](docs/fields.md)).
+  ([docs/fields.md](docs/fields.md)). Bores, bolt faces and keep-outs cut with a plain
+  shape keep exact, sharp edges.
+- **STEP out.** `--step` writes the part as a B-rep for CAD: keep-outs, preserved
+  shapes and the design space as true planes and cylinders, the organic body faceted
+  (`loadpath[step]`, OpenCascade).
 - **For the process you print with.** FDM (bridges, islands, bed, layer bond), powder
   nylon (SLS, MJF: trapped powder, escape holes, warp-prone panels), resin (SLA, DLP:
   supports, peel area, suction cups, trapped resin) and powder-bed metal (internal
@@ -160,6 +164,7 @@ python3 tests/test_interface.py
 python3 tests/test_pressure.py
 python3 tests/test_process.py
 python3 tests/test_fields.py
+python3 tests/test_sharp.py
 python3 tests/test_recall.py
 python3 tests/test_evals.py
 python3 -m loadpath.evals.run --tier coarse --corpus 6 --out evals-coarse/   # minutes: every push

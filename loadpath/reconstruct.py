@@ -372,6 +372,31 @@ def _snap_to_flat_faces(mesh, preserve, reach: float, spread: float):
     return mesh
 
 
+def _attach_plan(mesh, study, organic):
+    """Remember how the part was built, exact shapes and all, for STEP
+    export (step.py): ((organic & envelope) | preserved) - keep-outs."""
+    from .shapes import Union
+    from .sharp import Exact, Op, Organic
+    from .step import attach_plan
+
+    def one(shapes):
+        return shapes[0] if len(shapes) == 1 else Union(shapes)
+
+    org = Organic(None, ["organic"], mesh=trimesh_from_manifold(organic))   # a trimesh: parts cross processes
+    env = list(study.design_space) + [r.shape for r in study.preserve]
+    p = Op("intersect", [org, Exact(one(env), "envelope")])
+    if study.preserve:
+        pres = one([r.shape for r in study.preserve])
+        p = Op("union", [p, Exact(pres, "preserve")])
+        p.keep_with = pres
+    if study.keep_out:
+        keep = getattr(p, "keep_with", None)
+        p = Op("subtract", [p, Exact(one([r.shape for r in study.keep_out]), "keep-out")])
+        if keep is not None:
+            p.keep_with = keep
+    attach_plan(mesh, p)
+
+
 def _bodies(man):
     return sorted(man.decompose(), key=lambda b: -b.volume())
 
@@ -452,17 +477,22 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     organic = m3d.Manifold.batch_boolean(keep, m3d.OpType.Add) if len(keep) > 1 else keep[0]
 
     # Trim to the design space (and preserved geometry) exactly: flat,
-    # flush faces wherever the design reaches its boundary.
+    # flush faces wherever the design reaches its boundary. Circles fine
+    # enough to be 0.002 mm true (sharp.exact_manifold): at a fixed 96
+    # segments a 48 mm sleeve's facets were 0.026 mm off its cylinder.
+    from .sharp import exact_manifold
+
     envelope = m3d.Manifold.batch_boolean(
-        [sh.to_manifold() for sh in study.design_space] + [r.shape.to_manifold() for r in study.preserve],
+        [exact_manifold(sh) for sh in study.design_space] + [exact_manifold(r.shape) for r in study.preserve],
         m3d.OpType.Add)
+    organic_raw = organic
     organic = organic ^ envelope
     part = organic
     if study.preserve:
-        pres = m3d.Manifold.batch_boolean([r.shape.to_manifold() for r in study.preserve], m3d.OpType.Add)
+        pres = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
         part = part + pres
     if study.keep_out:
-        ko = m3d.Manifold.batch_boolean([r.shape.to_manifold() for r in study.keep_out], m3d.OpType.Add)
+        ko = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.keep_out], m3d.OpType.Add)
         part = part - ko
 
     # decompose() lists an enclosed cavity as a body of negative volume: it
@@ -476,7 +506,7 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     loose = []
     dropped = 0.0
     if study.preserve:
-        pres_man = m3d.Manifold.batch_boolean([r.shape.to_manifold() for r in study.preserve], m3d.OpType.Add)
+        pres_man = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
     for b in bodies[1:]:
         if study.preserve and (b ^ pres_man).volume() > 1e-6:
             kept.append(b)
@@ -491,6 +521,7 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     info["droppedFragmentVolume"] = float(dropped)
 
     mesh = trimesh_from_manifold(part)
+    _attach_plan(mesh, study, organic_raw)
     info["triangles"] = int(len(mesh.faces))
     info["volume"] = float(mesh.volume)
     info["watertight"] = bool(mesh.is_watertight)

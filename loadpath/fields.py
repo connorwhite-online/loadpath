@@ -559,6 +559,7 @@ class FieldGraph:
         if self.output not in self.nodes:
             raise ValueError(f"output {self.output!r} is not a node (have {', '.join(doc['nodes'])})")
         self._built = {}
+        self.plan = None             # the sharp CSG plan of the last mesh(), when it had one
         self.analyses = {}          # verify reports behind `result` nodes that ran a study
         self._check_refs()
 
@@ -1031,10 +1032,15 @@ class FieldGraph:
 
     # -- meshing --
 
-    def mesh(self, pitch=None, bounds=None, project=None, name=None, progress=None):
+    def mesh(self, pitch=None, bounds=None, project=None, name=None, progress=None, sharp=None):
+        """`sharp` (default the graph's mesh.sharp, else true): hard booleans
+        with plain shapes and meshes are done exactly (sharp.py), so bores,
+        flat faces and keep-outs keep their edges; false meshes the whole
+        field, every crease rounded over about one pitch."""
         m = self.doc.get("mesh") or {}
         pitch = pitch or m.get("pitch")
         project = m.get("project", 3) if project is None else project
+        sharp = m.get("sharp", True) if sharp is None else sharp
         if bounds is None and "bounds" in self.doc:
             bounds = (self.doc["bounds"]["min"], self.doc["bounds"]["max"])
         if bounds is None:
@@ -1042,7 +1048,18 @@ class FieldGraph:
             if bounds is None:
                 raise ValueError(f"{name or self.output!r} is unbounded (a lattice with nothing to clip it): "
                                  "intersect it with a solid or give the graph 'bounds'")
-        return field_mesh(self.field(name), bounds[0], bounds[1], pitch=pitch, project=project, progress=progress)
+        if sharp:
+            from .sharp import has_exact, mesh_plan, plan
+
+            p = plan(self, name)
+            if has_exact(p):
+                # set after meshing: a result node meshes another node on the way
+                mesh = mesh_plan(p, bounds[0], bounds[1], pitch=pitch, project=project, progress=progress)
+                self.plan = p
+                return mesh
+        mesh = field_mesh(self.field(name), bounds[0], bounds[1], pitch=pitch, project=project, progress=progress)
+        self.plan = None
+        return mesh
 
 
 def _remap(x, s, name):
@@ -1227,7 +1244,9 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
     """Build a field graph, mesh its output and report on it: volume,
     area, mass (with `material`), watertightness, bodies, and the printability
     check on the field itself (walls, overhangs, trapped voids) unless
-    `check` is false. Writes <name>.stl and report.json to `out_dir`."""
+    `check` is false. Writes <name>.stl (and <name>.step with `step`) to
+    `out_dir`; with sharp booleans, `sharpEdges` says how exactly the mesh
+    keeps the plain shapes' surfaces (sharp.edge_accuracy)."""
     import time
 
     t0 = time.time()
@@ -1280,6 +1299,14 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         mat = material_from_spec(doc["material"])
         rep["mass"] = rep["volume"] * mat.density / 1000.0
         rep["material"] = mat.name
+    if g.plan is not None:
+        from .sharp import edge_accuracy, plan_refs
+
+        F = g.field()
+        try:
+            rep["sharpEdges"] = edge_accuracy(mesh, plan_refs(g.plan), boundary=lambda P: np.abs(F(P)) < 1e-6)
+        except Exception as exc:  # noqa: BLE001 - a measurement never fails the job
+            rep["sharpEdges"] = {"error": str(exc)}
     if doc.get("check", True):
         from .checks.dfm import check_dfm
 
@@ -1296,6 +1323,17 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         path = os.path.join(out_dir, f"{rep['name']}.stl")
         mesh.export(path)
         rep["stl"] = path
+        if doc.get("step"):
+            from .step import DEFAULT_FACES, export_step
+
+            opts = doc["step"] if isinstance(doc["step"], dict) else {}
+            try:
+                st = export_step(mesh, os.path.join(out_dir, f"{rep['name']}.step"),
+                                 faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"])
+                st.pop("shape", None)
+                rep["step"] = st
+            except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing
+                rep["step"] = {"error": f"{type(exc).__name__}: {exc}"}
         if render:
             try:
                 from .render import render_views

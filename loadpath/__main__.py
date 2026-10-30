@@ -59,6 +59,9 @@ def main(argv=None):
     r.add_argument("--viewer", choices=["best", "all", "none"], default="best",
                    help="interactive HTML viewer (viewer.html) for the best outcome, all of them, or none")
     r.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
+    r.add_argument("--step", action="store_true",
+                   help="also write the best outcome as STEP: keep-outs, preserved shapes and the design space "
+                        "exact (planes, cylinders), the organic body faceted (needs loadpath[step])")
     r.add_argument("--recall", action="store_true",
                    help="start from what earlier runs on the same design space found (recall.py; "
                         "or set LOADPATH_RECALL=1)")
@@ -92,6 +95,8 @@ def main(argv=None):
     fg.add_argument("--out", default="loadpath-out")
     fg.add_argument("--pitch", type=float, help="mesh grid, mm (overrides the graph's mesh.pitch)")
     fg.add_argument("--no-render", action="store_true")
+    fg.add_argument("--step", action="store_true", help="also write a STEP file (exact planes and cylinders; "
+                                                         "needs loadpath[step])")
     fg.add_argument("--base-dir")
     sub.add_parser("mcp", help="run a local MCP server (stdio) for agents")
     o = sub.add_parser("orient", help="rank build orientations of a mesh (support, bed, layer bond)")
@@ -188,6 +193,16 @@ def main(argv=None):
                          title=f"{study.name}  vf {o.volume_fraction:.2f}  {o.report['mass']:.1f} g  "
                                f"SF {sf:.2f}" if sf is not None else stem)
             summary["outcomes"][i]["render"] = png
+    if args.step and result.outcomes:
+        from .step import export_step
+
+        bi = result.best if result.best is not None else len(result.outcomes) - 1
+        try:
+            st = export_step(result.outcomes[bi].mesh, os.path.join(args.out, stems[bi] + ".step"), name=stems[bi])
+            st.pop("shape", None)
+            summary["outcomes"][bi]["step"] = st
+        except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing
+            summary.setdefault("warnings", []).append(f"STEP not written: {type(exc).__name__}: {exc}")
     if raw.get("lattice") is not None and result.best is not None:
         best = result.outcomes[result.best]
         summary["lattice"] = _lattice(study, best.mesh, raw["lattice"], args.out, stems[result.best],
@@ -251,6 +266,8 @@ def _field(args):
         return 2
     if args.pitch:
         doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "pitch": args.pitch}}
+    if args.step and not doc.get("step"):
+        doc = {**doc, "step": True}
     base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
     try:
         _, rep = run_field(doc, args.out, base, progress=_progress, render=not args.no_render and _can_render())

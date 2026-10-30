@@ -64,9 +64,32 @@
           "type": "integer",
           "minimum": 0,
           "description": "surface relax+projection rounds (default 3; 0 = raw marching cubes)"
+        },
+        "sharp": {
+          "type": "boolean",
+          "description": "hard booleans (no blend) with plain shapes and meshes are done exactly, so bores, bolt faces and keep-outs keep sharp edges (default true; false meshes the whole field, every crease rounded over about one pitch)"
         }
       },
       "additionalProperties": false
+    },
+    "step": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "faces": {
+              "type": "integer",
+              "minimum": 100,
+              "description": "organic facets in the B-rep (default 20000, ~45 MB)"
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres where the graph's hard booleans use plain shapes, the rest faceted"
     },
     "material": {
       "anyOf": [
