@@ -84,8 +84,11 @@ Efficiency is energy / (peak force x crush): 1 is a perfect square pulse.
 
 - **The plateau is a perfect-cell estimate.** No buckling, no print defects,
   quasi-static. Polymers are 10-30% stronger at impact rates, which raises the
-  real force. Treat forces as +-25% until a printed crush coupon calibrates D:
-  one gyroid cube per density, crushed on a test machine, then scale D.
+  real force. Treat forces as +-25% until crush coupons calibrate them.
+  `calibrate kit --crush` makes two gyroid blocks per material; they can be
+  tested at home (TPU under weights, PA12 on a 15:1 lever with a bucket of
+  water; see CALIBRATION.md). A saved card's crush factor then scales every
+  impact prediction made with that material.
 - **Lateral load spreading, and grading in 3D.** A 3D check (`limit_load`:
   elastic compensation on the homogenized pad, Deshpande-Fleck crushable-foam
   yield) shows where a layer-only grading falls short. In a taper the load

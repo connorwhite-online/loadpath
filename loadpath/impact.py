@@ -205,14 +205,29 @@ def _base(kind: str) -> str:
     return kind.split(":")[0]
 
 
-def crush_law(kind: str, material) -> tuple:
+def crush_law(kind: str, material, calibrated: bool = True) -> tuple:
     """(law key, reference stress) for a lattice of `material`: plastic
     collapse over the yield stress for polymers and metals that yield, and
     elastic buckling over the modulus ("<kind>:elastic") for elastomers,
-    which buckle, crush and spring back."""
-    if getattr(material, "name", "") in ELASTOMERS:
-        return f"{kind}:elastic", float(material.E)
-    return kind, float(material.strength)
+    which buckle, crush and spring back. A calibration card of that name
+    with a crush block (calibration.fit on crush coupons) scales the
+    reference by its measured factor."""
+    name = getattr(material, "name", "")
+    elastic = name in ELASTOMERS or str(getattr(material, "note", "")).startswith("elastomer")
+    if not elastic:
+        try:
+            from .calibration import load_card
+
+            card = load_card(name) or {}
+            elastic = card.get("basedOn") in ELASTOMERS
+        except Exception:  # noqa: BLE001 - a missing or broken card is no card
+            card = {}
+    law, ref = (f"{kind}:elastic", float(material.E)) if elastic else (kind, float(material.strength))
+    if calibrated:
+        from .calibration import crush_factor
+
+        ref *= crush_factor(name, "elastic" if elastic else "plastic")
+    return law, ref
 
 
 def plateau_stress(kind: str, rho, sigma_y: float):

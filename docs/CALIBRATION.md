@@ -25,6 +25,7 @@ python -m loadpath calibrate kit --material petg --out calibration/
 | T-XY | flat, two copies | pull to break with a luggage scale | tensile strength |
 | T-Z | standing, two copies | the same | strength across layers (`interlayer`) |
 | L-GY | flat | cantilever with a gyroid core | how a printed lattice compares with `lattice.SHEETS` |
+| X-.. (with `--crush`) | either | crush under growing weight | the lattice crush plateau for impact.py (see below) |
 
 Every coupon's mass gives the as-printed density. The STLs sit on the bed in
 their print orientation and fit a 180 mm bed. Print them at 100% infill with
@@ -62,6 +63,73 @@ measured independently of the solver it feeds. It writes a card with:
 With `--save` the card goes to `loadpath/calibrations/<name>.json`, and a
 study can then say `"material": "petg-a1mini"`. Its `process` factors apply
 to a study whose process is the same type, unless the study sets its own.
+
+## Crush coupons (impact and bumpers)
+
+`impact.py` predicts how hard a lattice core pushes back while it crushes:
+the plateau. That number decides whether a bumper meets its force limit, and
+it comes from a perfect-cell model, good to about ±25%. Two gyroid crush
+blocks pin it down for your material and printer:
+
+```bash
+python -m loadpath calibrate kit --material pa12 --process sls --crush --out calibration/pa12/
+python -m loadpath calibrate kit --material tpu --process fdm --crush --out calibration/tpu/
+```
+
+Each block is a gyroid core between two solid plates. There are two
+densities, so the fit gets both the level and how fast it rises with
+density. The cell is sized so the thinner block's walls are the process
+minimum.
+
+| Coupon | Size | Predicted plateau | Load to start it |
+| --- | --- | --- | --- |
+| PA12 X-20 (SLS) | 24 mm cube, 12 mm cells | 2.6 kN | 17.8 kg in the bucket at 15:1 |
+| PA12 X-30 (SLS) | the same | 4.2 kN | 28.8 kg at 15:1 |
+| TPU X-25 (FDM) | 19 mm block, 9.6 mm cells | 30 N | 3.1 kg on top |
+| TPU X-40 (FDM) | the same | 77 N | 7.8 kg on top |
+
+Weigh each block first: its mass gives the density that actually printed,
+and the fit compares the model at that density.
+
+**TPU: weights on a plate.** Stand the block on a table and lay a small
+board or a hardcover book on it. Add weights one at a time (water bottles
+weighed on a kitchen scale; count the board). After each one, write down the
+total kg and how far the top has come down (calipers, or a ruler against
+the board). It holds, then squashes in one go at the plateau and stops when
+the walls touch. Add one or two more after that. TPU springs back; note how
+far, for interest.
+
+**PA12: a 15:1 lever and a bucket.** PA12 needs kilonewtons. A stiff board
+about 1 m long (a 2x4) gives that from a bucket of water:
+
+1. Hold one end of the board down under something that cannot lift: a
+   strap round a heavy bench leg, or the underside of a bolted shelf.
+2. Stand the block on the floor under the board, 1/15 of the way from that
+   end to the bucket's hook (6.7 cm on a 1 m lever).
+3. Hang a bucket at the far end and pour water in a litre at a time.
+4. After each litre, write down the bucket's total kg and how far the
+   board's end has dropped from where it started (a ruler against a pencil
+   mark on the wall).
+5. Weigh the board once; the fit counts half of it at the bucket.
+
+Wear safety glasses and keep feet clear: the board drops several
+centimetres when the block gives way. A makerspace or university press also
+works. Then set leverRatio to 1 and write each reading as
+[force in N / 9.81, crosshead travel in mm].
+
+In `measurements.json` each X- coupon has `points` as
+`[kg, mm the load point dropped]`, plus `leverRatio` (1 for weights on top)
+and `boardKg`. The same `calibrate fit` command adds a `crush` block to the
+card:
+
+- `factor`: measured plateau over impact.py's, at the printed density (geometric mean of the two blocks);
+- `p` and `D`: the measured density exponent and coefficient;
+- `densificationAlpha`: from how far each block ran (eps_D = 1 - alpha rho);
+- per block: the load bracket it gave way in, the strain it ran to, the density it printed at.
+
+Save the card (`--save`) and use its name as a field graph's `material`.
+The `impact` block then scales its plateau by `factor`, so a bumper graded
+from that card is sized for your printer.
 
 ## Part tests: the GRIP wrist yoke
 

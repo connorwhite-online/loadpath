@@ -22,6 +22,11 @@ The coupons (each STL sits on the bed in its print orientation):
         (the process's `interlayer`)
   L-GY  cantilever with a gyroid sheet core -> how a printed lattice compares
         with the homogenized model lattice.py uses (SHEETS)
+  X-20, X-30 ... (with crush=True) gyroid crush blocks at two densities,
+        squashed under growing weight -> the crush plateau impact.py
+        predicts (CRUSH), its density exponent, and the densification
+        strain. PA12 needs a 10:1 lever (a board and a bucket of water);
+        TPU takes weights on a plate.
 
 Every coupon's mass gives the as-printed density. A part test (a finished
 part on a fixture with a known weight) compares measured deflection with
@@ -44,8 +49,8 @@ import numpy as np
 
 from .materials import Material, material_from_spec
 
-__all__ = ["Coupon", "coupon_kit", "write_kit", "fit", "measurement_template", "part_prediction",
-           "rigid_motion", "CALIBRATION_DIR", "load_card", "list_cards"]
+__all__ = ["Coupon", "coupon_kit", "crush_coupons", "write_kit", "fit", "fit_crush", "measurement_template",
+           "part_prediction", "rigid_motion", "CALIBRATION_DIR", "load_card", "list_cards", "crush_factor"]
 
 G = 9.81                                  # N per kg
 CALIBRATION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibrations")
@@ -60,6 +65,11 @@ _BONE = {"tab": (20.0, 18.0, 8.0), "taper": 16.0, "gauge": (2.0, 3.0, 24.0), "ho
 _LAT = {"block": 30.0, "width": 20.0, "height": 12.0, "core": 80.0, "end": 12.0, "cell": 10.0, "wall": 1.0,
         "hole": 4.5, "kind": "gyroid"}
 _LOADS_KG = (0.2, 0.5, 1.0)
+# crush blocks: n x n cells in plan, m cells tall, between solid plates;
+# the cell is set so the thinnest wall (at the lower density) is the
+# process minimum
+_CRUSH = {"densities": (0.2, 0.3), "plan": 2, "tall": 2, "plate": 2.0, "kind": "gyroid", "lever": 15.0}
+_CRUSH_ELASTIC = {"densities": (0.25, 0.4), "plan": 2, "tall": 2, "plate": 1.5, "kind": "gyroid", "lever": 1.0}
 
 
 @dataclass
@@ -253,7 +263,7 @@ def _lattice_compliance(E_star, c=_LAT, nu_star=0.35):
 # ---------------------------------------------------------------- the kit
 
 def coupon_kit(material="petg", process="fdm", loads_kg=_LOADS_KG, interlayer=None,
-               stiffness_across=None) -> list:
+               stiffness_across=None, crush=False) -> list:
     """The coupons for one material, each with what to measure and what the
     starting card predicts. FDM by default; for powder or resin the same
     coupons read the (small) anisotropy of those processes."""
@@ -319,7 +329,83 @@ def coupon_kit(material="petg", process="fdm", loads_kg=_LOADS_KG, interlayer=No
                    "relativeDensity": round(rho, 3), "Estar": round(e_star, 1)},
         geometry={k: lc[k] for k in ("block", "width", "height", "core", "end", "cell", "wall", "kind")}
         | {"solidVolume": _lattice_solid_volume(lc), "coreVolume": lc["core"] * lc["width"] * lc["height"]}))
+    if crush:
+        kit.extend(crush_coupons(material, process))
     return kit
+
+
+def _crush_spec(mat, process):
+    from .impact import ELASTOMERS
+    from .lattice import wall_for_density
+    from .spec import PROCESSES
+
+    c = dict(_CRUSH_ELASTIC if mat.name in ELASTOMERS else _CRUSH)
+    wall = float(PROCESSES[process]["minFeature"])
+    c["cell"] = round(wall / float(wall_for_density(c["kind"], min(c["densities"]), 1.0)), 1)
+    c["side"] = c["plan"] * c["cell"]
+    c["core"] = c["tall"] * c["cell"]
+    return c
+
+
+def _crush_mesh(c, rho, pitch=None):
+    from .fields import FieldGraph
+
+    s, hcore, t = c["side"], c["core"], c["plate"]
+    doc = {"nodes": {
+        "core": {"op": "lattice", "type": c["kind"], "cell": c["cell"], "density": rho},
+        "box": {"op": "shape", "shape": {"type": "box", "min": [0, 0, t], "max": [s, s, t + hcore]}},
+        "plates": {"op": "union", "inputs": [
+            {"op": "shape", "shape": {"type": "box", "min": [0, 0, 0], "max": [s, s, t + 0.3]}},
+            {"op": "shape", "shape": {"type": "box", "min": [0, 0, t + hcore - 0.3], "max": [s, s, 2 * t + hcore]}}]},
+        "part": {"op": "union", "inputs": ["plates", {"op": "intersect", "inputs": ["core", "box"]}]}},
+        "output": "part"}
+    return FieldGraph(doc).mesh(pitch=pitch or c["cell"] / 40)
+
+
+def crush_coupons(material="pa12", process="sls") -> list:
+    """Gyroid crush blocks at two densities for calibrating impact.py's crush
+    law on a real printer: each block's predicted plateau force (and, for
+    the lever test, the bucket load that starts it), its densification, and
+    what to write down."""
+    from .impact import crush_law, densification_strain, plateau_stress
+
+    mat = material_from_spec(material)
+    c = _crush_spec(mat, process)
+    law, ref = crush_law(c["kind"], mat, calibrated=False)
+    area = c["side"] ** 2
+    lever = c["lever"]
+    out = []
+    for rho in c["densities"]:
+        m = _crush_mesh(c, rho)
+        f = float(plateau_stress(law, rho, ref)) * area
+        cid = f"X-{round(rho * 100):d}"
+        if lever > 1:
+            test = (f"Lever test, {lever:.0f}:1. Use a stiff board about 1 m long (a 2x4). Hold one end down "
+                    "under something that cannot lift (a strap round a heavy bench leg, the underside of a "
+                    "bolted shelf). Stand the coupon on the floor under the board, its centre 1/"
+                    f"{lever:.0f} of the way from that end to where the bucket hangs (6.7 cm for a 1 m "
+                    "lever at 15:1). Hang a bucket at the far end and pour water in a litre at a time. After each "
+                    "litre, weigh or note the bucket's total kg and measure how far the board's end has "
+                    "dropped from where it started (a ruler against a wall mark). The block holds, then "
+                    "squashes in one go when the bucket reaches the plateau load; keep adding until it "
+                    "stops sinking. Write down the board's mass once (half of it counts at the bucket).")
+        else:
+            test = ("Weights on a plate. Stand the coupon on a table, lay a small flat board or a hardcover "
+                    "book on it, and add weights (water bottles weighed on a kitchen scale) one at a time. "
+                    "After each, note the total kg on top (board included) and the coupon's height "
+                    "with calipers or a ruler. It squashes suddenly at the plateau and stops when the walls "
+                    "touch; take it a bit past that. It springs back afterwards: measure that too.")
+        out.append(Coupon(
+            cid, f"{c['kind']} crush block, relative density {rho:.2f}", m, test=test,
+            measure={"massG": None, "height": None, "leverRatio": lever, "boardKg": None if lever > 1 else 0.0,
+                     "points": [[None, None]]},
+            predicted={"massG": round(float(m.volume) * mat.density / 1000, 2),
+                       "plateauN": round(f, 1), "plateauKgAtLoad": round(f / G / lever, 1),
+                       "densificationStrain": round(float(densification_strain(rho)), 2),
+                       "law": "elastic buckling" if law.endswith(":elastic") else "plastic collapse"},
+            geometry={"rho": rho, "cell": c["cell"], "side": c["side"], "core": c["core"], "plate": c["plate"],
+                      "kind": c["kind"], "lever": lever}))
+    return out
 
 
 def _lattice_solid_volume(c=_LAT):
@@ -587,6 +673,9 @@ def fit(measurements: dict, predictions: dict | None = None, name: str | None = 
         process["stiffnessAcrossLayers"] = round(float(min(ez, 1.0)), 3)
     else:
         kept.append(f"stiffnessAcrossLayers (no F-Z points; default {_LAYER_STIFFNESS.get(proc, (1.0,))[0]})")
+    crush = fit_crush(co, mat, base, proc)
+    if crush is None and any(k.startswith("X-") for k in co):
+        kept.append("crush plateau (no X- crush points)")
     sf = [p["stiffnessFactor"] for p in parts.values() if "stiffnessFactor" in p]
     card = {
         "name": mat.name,
@@ -597,6 +686,7 @@ def fit(measurements: dict, predictions: dict | None = None, name: str | None = 
         "change": {"E": round(mat.E / base.E, 3), "strength": round(mat.strength / base.strength, 3),
                    "density": round(mat.density / base.density, 3)},
         "lattice": lat,
+        "crush": crush,
         "parts": parts,
         # a part's measured stiffness over verify's, both at the calibrated
         # modulus: what the voxel model, bonded joints and slicer fill miss
@@ -619,6 +709,78 @@ def _coupon_volumes():
     bone = _bone_manifold()[0].volume()
     _VOLS = {"F-XY": cant, "F-Z": cant, "T-XY": bone, "T-Z": bone}
     return _VOLS
+
+
+def fit_crush(coupons: dict, mat, base, process: str) -> dict | None:
+    """The crush block from filled-in X-* coupons: per coupon the plateau
+    (the load at which it ran away, between the last load it held and the
+    one that squashed it), the strain it ran to (densification) and the
+    density it printed at; overall the factor on impact.py's plateau (the
+    geometric mean of measured over predicted at the printed density) and,
+    with two densities, the measured exponent."""
+    from .impact import crush_law, plateau_stress
+
+    spec = _crush_spec(base, process)
+    law, _ = crush_law(spec["kind"], base, calibrated=False)       # the law goes with the base material
+    ref = float(mat.E) if law.endswith(":elastic") else float(mat.strength)
+    area, hcore, t = spec["side"] ** 2, spec["core"], spec["plate"]
+    ev = {}
+    for cid, e in sorted(coupons.items()):
+        if not cid.startswith("X-"):
+            continue
+        pts = sorted((float(k), float(d)) for k, d in (e.get("points") or []) if k is not None and d is not None)
+        if not pts:
+            continue
+        ratio = float(e.get("leverRatio") or 1.0)
+        board = float(e.get("boardKg") or 0.0)
+        force = np.array([(k + board / 2) * G * ratio for k, _ in pts])
+        strain = np.array([d / ratio / hcore for _, d in pts])
+        rho_draw = int(cid[2:]) / 100
+        rho = rho_draw
+        if e.get("massG"):
+            core_g = float(e["massG"]) - 2 * t * area * mat.density / 1000
+            rho = max(core_g * 1000 / (mat.density * area * hcore), 1e-3)
+        out = {"relativeDensityDrawn": rho_draw, "relativeDensityPrinted": round(rho, 3)}
+        jump = np.flatnonzero(strain > 0.08)
+        if len(jump) == 0:
+            out.update(plateauAtLeastN=round(float(force.max()), 1),
+                       note="never squashed: the plateau is above the largest load")
+            ev[cid] = out
+            continue
+        i = int(jump[0])
+        pl = 0.5 * (force[i - 1] + force[i]) if i > 0 else force[i]
+        model = float(plateau_stress(law, rho, ref)) * area
+        out.update(plateauN=round(float(pl), 1), bracketN=[round(float(force[i - 1]), 1) if i > 0 else 0.0,
+                                                          round(float(force[i]), 1)],
+                   densificationStrain=round(float(strain[i:].max()), 3), predictedN=round(model, 1),
+                   factor=round(float(pl / model), 3), plateauMPa=round(float(pl / area), 3))
+        ev[cid] = out
+    got = [v for v in ev.values() if "factor" in v]
+    if not got:
+        return {"coupons": ev} if ev else None
+    crush = {"law": "elastic" if law.endswith(":elastic") else "plastic", "kind": spec["kind"],
+             "factor": round(float(np.exp(np.mean(np.log([v["factor"] for v in got])))), 3),
+             "densificationAlpha": round(float(np.mean([(1 - v["densificationStrain"]) / v["relativeDensityPrinted"]
+                                                         for v in got])), 2),
+             "coupons": ev}
+    if len(got) >= 2:
+        a, b = sorted(got, key=lambda v: v["relativeDensityPrinted"])[:: len(got) - 1]
+        s1, s2 = a["plateauMPa"] / ref, b["plateauMPa"] / ref
+        p = float(np.log(s2 / s1) / np.log(b["relativeDensityPrinted"] / a["relativeDensityPrinted"]))
+        crush.update(p=round(p, 3), D=round(float(s1 / a["relativeDensityPrinted"] ** p), 4))
+    return crush
+
+
+def crush_factor(name: str, law: str) -> float:
+    """The measured factor on impact.py's crush plateau from a saved card
+    of this name (1 when there is none, or it was fitted for the other
+    law)."""
+    try:
+        card = load_card(name) if name else None
+    except Exception:  # noqa: BLE001
+        card = None
+    cr = (card or {}).get("crush") or {}
+    return float(cr["factor"]) if cr.get("factor") and cr.get("law") == law else 1.0
 
 
 # ---------------------------------------------------------------- cards

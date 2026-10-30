@@ -176,6 +176,67 @@ def test_write_kit_and_cli_fit():
         assert abs(card["material"]["E"] / 1600 - 1) < 0.01
 
 
+def _crush_points(f_plateau, eps_d, ratio, board, core, steps):
+    """A load-controlled crush: the block holds below the plateau, runs to
+    densification at it. Points are [kg in the bucket, mm the load point
+    dropped]."""
+    pts = []
+    for kg in steps:
+        f = (kg + board / 2) * 9.81 * ratio
+        strain = 0.01 * f / f_plateau if f < f_plateau else eps_d
+        pts.append([kg, round(strain * core * ratio, 2)])
+    return pts
+
+
+def test_crush_fit_recovers_a_known_plateau():
+    from loadpath.calibration import _crush_spec, fit
+    from loadpath.impact import crush_law, plateau_stress
+    from loadpath.materials import material_from_spec
+
+    for material, process in (("pa12", "sls"), ("tpu", "fdm")):
+        mat = material_from_spec(material)
+        c = _crush_spec(mat, process)
+        law, ref = crush_law(c["kind"], mat, calibrated=False)
+        area = c["side"] ** 2
+        coupons = {}
+        for rho, true in zip(c["densities"], (0.8, 0.8 * (c["densities"][1] / c["densities"][0]) ** 0.2)):
+            f = true * float(plateau_stress(law, rho, ref)) * area
+            ratio, board = c["lever"], (2.0 if c["lever"] > 1 else 0.0)
+            kg_pl = f / 9.81 / ratio - board / 2
+            steps = np.linspace(0.3 * kg_pl, 1.3 * kg_pl, 41)
+            coupons[f"X-{round(rho * 100)}"] = {"leverRatio": ratio, "boardKg": board,
+                                                 "points": _crush_points(f, 0.55, ratio, board, c["core"], steps)}
+        card = fit({"material": material, "process": process, "coupons": coupons})
+        cr = card["crush"]
+        assert cr["law"] == ("elastic" if material == "tpu" else "plastic")
+        x = cr["coupons"][f"X-{round(c['densities'][0] * 100)}"]
+        assert abs(x["factor"] / 0.8 - 1) < 0.03, x
+        assert abs(x["densificationStrain"] - 0.55) < 1e-6
+        # the exponent: the model's plus the 0.2 put in
+        from loadpath.impact import CRUSH
+        assert abs(cr["p"] - (CRUSH[law]["p"] + 0.2)) < 0.15, cr
+
+
+def test_crush_card_scales_impact():
+    import tempfile
+
+    from loadpath import calibration
+    from loadpath.impact import crush_law
+    from loadpath.materials import material_from_spec
+
+    with tempfile.TemporaryDirectory() as d:
+        old = calibration.CALIBRATION_DIR
+        calibration.CALIBRATION_DIR = d
+        try:
+            json.dump({"name": "pa12-test", "basedOn": "pa12", "crush": {"law": "plastic", "factor": 0.7}},
+                      open(os.path.join(d, "pa12-test.json"), "w"))
+            mat = material_from_spec({"name": "pa12-test", "E": 1800, "nu": 0.39, "strength": 48, "density": 1.0})
+            assert crush_law("gyroid", mat) == ("gyroid", 48 * 0.7)
+            assert crush_law("gyroid", mat, calibrated=False) == ("gyroid", 48.0)
+        finally:
+            calibration.CALIBRATION_DIR = old
+
+
 def test_rigid_motion_fit():
     rng = np.random.default_rng(0)
     x = rng.uniform(0, 20, (60, 3))
