@@ -150,6 +150,19 @@ def test_networks_field_matches_mesh():
           f"mesh: {rm['minWallMm']}")
 
 
+def test_networks_field_counterflow_and_hoods():
+    """Counterflow (each X face split between the fluids) and hooded
+    crossflow, both isolated from the field at two pitches. A distance-level
+    thickening shut the channel throats where the field's gradient is
+    shallow and read each fluid split in two."""
+    for size, kw in (((60, 48, 32), {"flow": "counter"}),
+                     ((60, 48, 40), {"flow": "cross", "hose": {"a": 20, "b": 10}})):
+        field, ports, plugs, bounds = exchanger_core(size, cell=8.0, wall=1.0, **kw)
+        for pitch in (0.3, 0.5):
+            r = check_networks(field, ports, plugs=plugs, bounds=bounds, pitch=pitch)
+            assert r["isolated"] and r["components"] == 2, (kw, pitch, r)
+
+
 def test_networks_field_finds_a_leak():
     """Drill a hole through the separator: the field path must call it."""
     from loadpath.sdf_kit import capsule, subtract

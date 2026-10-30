@@ -235,15 +235,10 @@ def mesh_solid(mesh, pitch, pad=2, bounds=None, axes=None, touch=False):
                            "overlapMm3": float(min(overlaps) * pitch ** 3) if overlaps else 0.0}
 
 
-def field_solid(field, lo, hi, pitch, pad=2, chunk=2_000_000, touch=False):
-    """(bool grid, origin) of an implicit solid: field(P) < 0 inside, P an
-    (N, 3) array in mm. Evaluated at voxel centres, a slab at a time.
-    touch: count a voxel as solid when its centre is within half a cell of
-    the solid (field < pitch/2), the field's version of mesh_solid's touch."""
-    level = 0.5 * pitch if touch else 0.0
-    dims, origin = grid_for(lo, hi, pitch, pad)
+def _sample(field, origin, dims, pitch, chunk):
+    """field < 0 at the points origin + ijk * pitch, a slab at a time."""
     nx, ny, nz = (int(d) for d in dims)
-    solid = np.zeros((nx, ny, nz), bool)
+    out = np.zeros((nx, ny, nz), bool)
     ys = origin[1] + np.arange(ny) * pitch
     zs = origin[2] + np.arange(nz) * pitch
     gy, gz = np.meshgrid(ys, zs, indexing="ij")
@@ -252,8 +247,29 @@ def field_solid(field, lo, hi, pitch, pad=2, chunk=2_000_000, touch=False):
     for i0 in range(0, nx, rows):
         i1 = min(nx, i0 + rows)
         P = np.concatenate([plane + [origin[0] + i * pitch, 0.0, 0.0] for i in range(i0, i1)])
-        val = np.asarray(field(P), float).reshape(i1 - i0, ny, nz)
-        solid[i0:i1] = val < level
+        out[i0:i1] = np.asarray(field(P), float).reshape(i1 - i0, ny, nz) < 0.0
+    return out
+
+
+def field_solid(field, lo, hi, pitch, pad=2, chunk=2_000_000, touch=False):
+    """(bool grid, origin) of an implicit solid: field(P) < 0 inside, P an
+    (N, 3) array in mm. Evaluated at voxel centres, a slab at a time.
+
+    touch: also count a voxel as solid when any of its eight corners is in
+    the solid, the field's version of mesh_solid's touch. Corners, not a
+    distance threshold: a field is often not a true distance (smooth unions,
+    seal ramps, TPMS sheets read 0.35-2.5 per mm of gradient), and a level
+    of pitch/2 shut real channel throats where the gradient is shallow
+    (counterflow exchanger_core read each fluid split in two)."""
+    dims, origin = grid_for(lo, hi, pitch, pad)
+    solid = _sample(field, origin, dims, pitch, chunk)
+    if touch:
+        corner = _sample(field, origin - 0.5 * pitch, dims + 1, pitch, chunk)
+        for dx in (0, 1):
+            for dy in (0, 1):
+                for dz in (0, 1):
+                    solid |= corner[dx:dx + dims[0], dy:dy + dims[1], dz:dz + dims[2]]
+        del corner
     # the pad is void by construction, whatever the field says out there
     if pad:
         solid[:pad] = solid[-pad:] = False
