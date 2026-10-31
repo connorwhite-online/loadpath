@@ -18,7 +18,18 @@ def attention(o: dict, study: dict) -> list[str]:
     """What SKILL.md tells an agent to look for, already looked for."""
     out = []
     if o.get("passes") is False:
-        out.append("does not meet the goal: raise the volume fraction or the material, or check the loads")
+        # which limit it misses, so an agent can tell a weak part from a floppy one
+        goal = study.get("goal") or {}
+        why = []
+        sf, want = o.get("safetyFactor"), goal.get("safetyFactor")
+        if want and sf is not None and sf < want:
+            why.append(f"safety factor {sf:.2f} under {want:g}")
+        dmax = goal.get("maxDeflection")
+        defl = max((c.get("deflection") or 0.0 for c in o.get("cases") or []), default=0.0)
+        if dmax and defl > dmax:
+            why.append(f"deflection {defl:.2f} mm over {dmax:g}")
+        out.append("does not meet the goal" + (f" ({', '.join(why)})" if why else "") +
+                   ": raise the volume fraction or the material, or check the loads")
     if (o.get("bodies") or 1) > 1:
         out.append(f"{o['bodies']} separate bodies: something is not connected to a support")
     if (o.get("keepOutIntrusion") or 0) > 1.0:
