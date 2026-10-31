@@ -154,6 +154,49 @@ Airbus's partition) give percentages without the problems. Fusion's shape
 optimization is SIMP-based, like loadpath; its generative design uses a level
 set method. The GE challenge entries are the closest public yardstick.
 
+## Lattice heat sinks against solid topology optimization
+
+Do field-graded lattices win where they should, in heat sinks? An air-cooled
+LPBF sink in a duct (`bench/lattice_heatsink.py`): a 40 x 40 x 3 mm AlSi10Mg
+base, 30 W into a 20 x 20 mm die under its centre, a 40 x 40 x 15 mm fin
+space closed over by the duct, 10 mm of empty duct before and after. Every
+design holds 20% of the fin space in metal that touches the base and is rated
+at the same 20 Pa across the duct, by `conjugate.py`: lattice Boltzmann flow
+(flow.py, Smagorinsky 0.17), then solid and air heat in one finite-volume
+solve (energy balance closes to 1e-9). 0.5 mm voxels, 326k cells. Score: the
+die's hottest point over the inlet air, per watt (lower is better).
+
+| Design | Metal | Air L/min at 20 Pa | Die max K/W | vs solid TO |
+| --- | --- | --- | --- | --- |
+| Solid topology optimization (thermal.py, constant h 50 W/m²K) | 20% | 53.4 | 3.19 | baseline |
+| Straight plate fins (8 fins) | 20% | 91.1 | 2.56 | -20% |
+| Uniform gyroid network, 8 mm cells | 21.4%* | 49.4 | 2.39 | -25% |
+| Gyroid graded by the uniform lattice's heat flux (exponent 0.25) | 20% | 51.7 | 2.41 | -25% |
+| Gyroid graded by heat flux (exponent 0.5) | 20% | 51.1 | 2.47 | -23% |
+| Gyroid graded by height, 2:1 base to top | 20% | 52.9 | 2.37 | -26% |
+| Gyroid graded by height, 3:1 base to top | 20% | 53.4 | **2.36** | **-26%** |
+
+\* the uniform gyroid's connected metal jumps from under 20% to 21.4% (its
+ligaments break below that at 0.5 mm); the graded ones hold exactly 20%.
+
+What it says:
+
+- Lattices win this one. Every gyroid beat the solid topology by a quarter at
+  equal metal and pressure drop, and beat plate fins by 6-8%. The solid TO's
+  weakness is its model, not its search: a constant h pays for surface
+  anywhere, so it grows a dense pin field that chokes the flow (53 L/min
+  against the plates' 91) without being charged for it.
+- Grading by height (denser at the base, where all the heat enters) is the
+  best of the graded rules, 1-2% over uniform at slightly less metal. Grading
+  by the heat flux is no better than uniform, and an uncapped flux grading
+  (density up to 0.6 at the base) rated 2-3x worse on a 1 mm grid: a
+  near-solid layer of lattice over the base walls the air off from it, so
+  graded densities are capped at 0.4.
+- Limits: one geometry, one pressure drop, one grid (0.5 mm; at 1 mm the
+  ranking held but the numbers moved 2x, so the absolute K/W are not
+  grid-converged); the TO design was made on a 1 mm grid and resampled;
+  plate fins were not tuned for count.
+
 ## Gaps found
 
 Fixed in this round:
