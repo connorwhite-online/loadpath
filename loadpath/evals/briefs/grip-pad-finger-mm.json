@@ -1,0 +1,354 @@
+{
+ "id": "grip-pad-finger-mm",
+ "kind": "multimat",
+ "brief": "A finger for my GRIP robot gripper, printed on a Bambu with the AMS in two materials: a rigid\ncore (PLA, PETG or PA-CF, your call) and a TPU 95A grip pad, printed flat (layers along Z).\nIt pivots on a 3 mm pin along Z at the origin (3.2 mm hole with 2.5 mm of wall round it); the\ndrive link pin is at (12, -8), also along Z, same hole and wall. The finger fits in x = -6 to\n70, y = -14 to 8, z = -5 to 5. The contact face is the +Y face from x = 38 to 70: put a 2 mm\nTPU pad there (y = 6 to 8, full height), all TPU through its thickness, with rigid material\nright behind it, and keep the pin bosses rigid. Loads: hold it at both pins; grip is 20 N on\nthe pad face pushing in -Y; slip is the same squeeze plus 8 N of friction along -X dragging the\npad (that's what peels pads off) and 4 N along Z. Safety factor 2 on the plastic and on the\nbond between the TPU and the core. Under 9 g please.",
+ "attachments": [],
+ "tags": [
+  "gripper",
+  "fdm",
+  "multimat",
+  "mass"
+ ],
+ "gold": {
+  "name": "grip-pad-finger-mm",
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -6,
+     -14,
+     -5
+    ],
+    "max": [
+     70,
+     8,
+     5
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "pivot-boss",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0,
+      0,
+      -5
+     ],
+     "p1": [
+      0,
+      0,
+      5
+     ],
+     "r": 4.1
+    }
+   },
+   {
+    "id": "link-boss",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      12,
+      -8,
+      -5
+     ],
+     "p1": [
+      12,
+      -8,
+      5
+     ],
+     "r": 4.1
+    }
+   },
+   {
+    "id": "pad",
+    "shape": {
+     "type": "box",
+     "min": [
+      38,
+      6,
+      -5
+     ],
+     "max": [
+      70,
+      8,
+      5
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "pivot",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0,
+      0,
+      -7
+     ],
+     "p1": [
+      0,
+      0,
+      7
+     ],
+     "r": 1.6
+    }
+   },
+   {
+    "id": "link",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      12,
+      -8,
+      -7
+     ],
+     "p1": [
+      12,
+      -8,
+      7
+     ],
+     "r": 1.6
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "pivot"
+   },
+   {
+    "region": "link"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "grip",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        38,
+        7.8,
+        -5
+       ],
+       "max": [
+        70,
+        8,
+        5
+       ]
+      },
+      "force": [
+       0,
+       -20,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "slip",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        38,
+        7.8,
+        -5
+       ],
+       "max": [
+        70,
+        8,
+        5
+       ]
+      },
+      "force": [
+       -8,
+       -20,
+       4
+      ]
+     }
+    ]
+   }
+  ],
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "multiMaterial": {
+   "materials": [
+    "pla",
+    "tpu"
+   ],
+   "assign": [
+    {
+     "region": "pad",
+     "material": "tpu"
+    },
+    {
+     "region": "pivot-boss",
+     "material": "pla"
+    },
+    {
+     "region": "link-boss",
+     "material": "pla"
+    }
+   ],
+   "interfaceSafetyFactor": 2.0
+  },
+  "goal": {
+   "safetyFactor": 2.0
+  },
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "reference": [
+  {
+   "material": "tpu",
+   "shape": {
+    "type": "box",
+    "min": [
+     38,
+     6,
+     -5
+    ],
+    "max": [
+     70,
+     8,
+     5
+    ]
+   }
+  },
+  {
+   "material": "pla",
+   "shape": {
+    "type": "union",
+    "shapes": [
+     {
+      "type": "box",
+      "min": [
+       -2,
+       0,
+       -5
+      ],
+      "max": [
+       70,
+       6,
+       5
+      ]
+     },
+     {
+      "type": "box",
+      "min": [
+       8,
+       -10,
+       -5
+      ],
+      "max": [
+       16,
+       0,
+       5
+      ]
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       0,
+       0,
+       -5
+      ],
+      "p1": [
+       0,
+       0,
+       5
+      ],
+      "r": 4.1
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       12,
+       -8,
+       -5
+      ],
+      "p1": [
+       12,
+       -8,
+       5
+      ],
+      "r": 4.1
+     }
+    ]
+   }
+  }
+ ],
+ "pass": {
+  "safetyFactor": 2.0,
+  "interfaceSafetyFactor": 2.0,
+  "maxMass": 9,
+  "materials": [
+   "pla",
+   "petg",
+   "pa-cf",
+   "tpu"
+  ],
+  "minMaterials": 2,
+  "zones": [
+   {
+    "id": "pad",
+    "region": "pad",
+    "materials": [
+     "tpu"
+    ],
+    "minShare": 0.85,
+    "minFill": 0.9
+   },
+   {
+    "id": "backing",
+    "shape": {
+     "type": "box",
+     "min": [
+      38,
+      2,
+      -5
+     ],
+     "max": [
+      70,
+      6,
+      5
+     ]
+    },
+    "materials": [
+     "pla",
+     "petg",
+     "pa-cf"
+    ],
+    "minShare": 0.5
+   },
+   {
+    "id": "pivot-boss",
+    "region": "pivot-boss",
+    "materials": [
+     "pla",
+     "petg",
+     "pa-cf"
+    ],
+    "minShare": 0.9
+   },
+   {
+    "id": "link-boss",
+    "region": "link-boss",
+    "materials": [
+     "pla",
+     "petg",
+     "pa-cf"
+    ],
+    "minShare": 0.9
+   }
+  ]
+ }
+}

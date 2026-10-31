@@ -1,0 +1,305 @@
+{
+ "id": "polyjet-fingertip-mm",
+ "kind": "multimat",
+ "brief": "A soft fingertip for the parallel jaw on my robot, to be printed on a Stratasys PolyJet in\nVeroWhite and Agilus30 in one build. It screws to the jaw's flat face at y = 0 with two M2.5\nscrews along Y at (x, z) = (-5, 6) and (5, 6), into 2.2 mm pilot holes 8 mm deep from that\nface (y = 0 to 8), with 2 mm of rigid material round each hole. The tip fits in x = -9 to 9,\ny = 0 to 18, z = 0 to 12. The front (+Y) face is what grips: the front 3 mm (y = 15 to 18,\nthe whole face) must be Agilus30 so it conforms to the part, backed by rigid Vero; the screw\narea must be Vero. Loads: it's held by the screws against the jaw; squeeze is 15 N on the\nfront face pushing in -Y, and lift is the squeeze plus 6 N along -Z (the object's weight\ndragging on the pad, which shears the soft-rigid bond). Safety factor 2 on both materials and\non the bond, and keep it under 6 g.",
+ "attachments": [],
+ "tags": [
+  "gripper",
+  "jetting",
+  "multimat",
+  "mass"
+ ],
+ "gold": {
+  "name": "polyjet-fingertip-mm",
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -9,
+     0,
+     0
+    ],
+    "max": [
+     9,
+     18,
+     12
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "pilot-bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -5,
+        0,
+        6
+       ],
+       "p1": [
+        -5,
+        9,
+        6
+       ],
+       "r": 3.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        5,
+        0,
+        6
+       ],
+       "p1": [
+        5,
+        9,
+        6
+       ],
+       "r": 3.1
+      }
+     ]
+    }
+   },
+   {
+    "id": "skin",
+    "shape": {
+     "type": "box",
+     "min": [
+      -9,
+      15,
+      0
+     ],
+     "max": [
+      9,
+      18,
+      12
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "pilots",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -5,
+        -1,
+        6
+       ],
+       "p1": [
+        -5,
+        8,
+        6
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        5,
+        -1,
+        6
+       ],
+       "p1": [
+        5,
+        8,
+        6
+       ],
+       "r": 1.1
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "pilots"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -9,
+      -0.5,
+      0
+     ],
+     "max": [
+      9,
+      0.3,
+      12
+     ]
+    },
+    "fix": "y"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "squeeze",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -9,
+        17.8,
+        0
+       ],
+       "max": [
+        9,
+        18,
+        12
+       ]
+      },
+      "force": [
+       0,
+       -15,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "lift",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -9,
+        17.8,
+        0
+       ],
+       "max": [
+        9,
+        18,
+        12
+       ]
+      },
+      "force": [
+       0,
+       -15,
+       -6
+      ]
+     }
+    ]
+   }
+  ],
+  "process": {
+   "type": "jetting",
+   "buildDirection": "+z"
+  },
+  "multiMaterial": {
+   "materials": [
+    "vero",
+    "agilus30"
+   ],
+   "assign": [
+    {
+     "region": "skin",
+     "material": "agilus30"
+    },
+    {
+     "region": "pilot-bosses",
+     "material": "vero"
+    }
+   ],
+   "interfaceSafetyFactor": 2.0
+  },
+  "goal": {
+   "safetyFactor": 2.0
+  },
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "reference": [
+  {
+   "material": "agilus30",
+   "shape": {
+    "type": "box",
+    "min": [
+     -9,
+     15,
+     0
+    ],
+    "max": [
+     9,
+     18,
+     12
+    ]
+   }
+  },
+  {
+   "material": "vero",
+   "shape": {
+    "type": "box",
+    "min": [
+     -9,
+     0,
+     0
+    ],
+    "max": [
+     9,
+     15,
+     12
+    ]
+   }
+  }
+ ],
+ "pass": {
+  "safetyFactor": 2.0,
+  "interfaceSafetyFactor": 2.0,
+  "maxMass": 6,
+  "materials": [
+   "vero",
+   "agilus30"
+  ],
+  "minMaterials": 2,
+  "zones": [
+   {
+    "id": "skin",
+    "region": "skin",
+    "materials": [
+     "agilus30"
+    ],
+    "minShare": 0.85,
+    "minFill": 0.9
+   },
+   {
+    "id": "backing",
+    "shape": {
+     "type": "box",
+     "min": [
+      -9,
+      11,
+      0
+     ],
+     "max": [
+      9,
+      15,
+      12
+     ]
+    },
+    "materials": [
+     "vero"
+    ],
+    "minShare": 0.5
+   },
+   {
+    "id": "pilot-bosses",
+    "region": "pilot-bosses",
+    "materials": [
+     "vero"
+    ],
+    "minShare": 0.9
+   }
+  ]
+ }
+}
