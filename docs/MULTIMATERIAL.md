@@ -127,6 +127,46 @@ loophole but on the bracket met the knock by geometry and left a bolt boss
 floating, so it is off. Use an assigned pad (as the finger does) until this
 is fixed.
 
+## Interlocks
+
+A flat PETG/TPU butt joint holds 1.5 MPa. `"interlock": true` in the
+`multiMaterial` block interlocks the materials where they meet
+(`loadpath/interlock.py`). A 2 mm band straddling each interface is cut into
+beams 0.8 mm wide (two extrusions) and 0.4 mm tall (two layers). Layers
+alternate between beams along x and beams along y, and the beams alternate
+material, so each material forms a woodpile connected to its own side and
+the two woodpiles interpenetrate. This is the interlaced lattice of Kuipers
+et al. (ITIL, Additive Manufacturing 2022), the one behind Cura's and Bambu
+Studio's "interlocking beams". The delivered bodies carry it, so any slicer
+prints it; PrusaSlicer 2.7.2 slices it on two tools.
+
+The bond is credited `S_eff = min(gain * S, cap)`:
+
+* `gain` 2.5 at 2 mm depth (scaled down for shallower bands). Measured
+  gains are x3.0 for PETG/TPU (Frenkel et al. 2022, interdigitated, 2 mm
+  overlap, +202% UTS) and about x3.8 for PLA/TPU (a 2026 study: 45 deg
+  interlock 2 mm deep, 5.91 MPa, against interface_library's 1.55 MPa flat
+  card).
+* `cap` is what the lattice can carry. In a print layer, a plane across
+  the band cuts each material over at least a quarter of its area, so the
+  cap is a quarter of the weaker material's strength (TPU 23.7 MPa: 5.9).
+  Between layers, the plane is a quarter each material on itself (at
+  their across-layer strengths) and half bond: 0.25 * 6.4 + 0.5 * 1.48 =
+  2.3 MPa for PETG/TPU. Shear caps at 0.6 of those.
+
+So PETG/TPU goes from 1.48 / 0.89 MPa (tensile / shear) to 3.7 / 2.2 in
+layer and 2.3 / 1.4 across layers. The optimizer's bond stage and
+verification both use the credited card. Verification judges the smooth
+interface the optimizer designed; a voxel model at analysis pitch cannot
+resolve 0.8 mm beams, so the lattice is a homogenized bond, not analysed
+beam by beam. For a part that matters, print a pull coupon with and
+without the lattice and put the measured bond in `interfaces` and the ratio
+in `interlock.gain`.
+
+```json
+"interlock": {"depth": 2, "beamWidth": 0.8, "layers": 2, "pairs": ["petg+tpu"]}
+```
+
 ## Bond strengths
 
 `interface_library.py` (sources and test geometry in the module). MPa,

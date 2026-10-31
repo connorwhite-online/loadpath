@@ -172,8 +172,10 @@ _LOAD = {
                                      "exactly from three unit-force solves. At most one per load case; a bearing "
                                      "load's uncertain force is spread evenly over the region. 'xy', 'xz' or "
                                      "'yz': any direction in that plane (a shaft's radial load, a swinging "
-                                     "strap, a sideways crash): the case becomes eight cases 22.5 degrees "
-                                     "apart (within 2% of the worst), named case@angle; a moment on the same "
+                                     "strap, a sideways crash): the case becomes cases 22.5 degrees "
+                                     "apart (within 2% of the worst), named case@angle: eight over half "
+                                     "the plane, or sixteen over all of it when -F is not the mirror of F "
+                                     "(bearing distribution, other loads, a moment, a layered process); a moment on the same "
                                      "load turns with the force (right when its lever arm is along the "
                                      "plane's normal)."},
         "cone": {"type": "number", "exclusiveMinimum": 0, "maximum": 180,
@@ -200,7 +202,7 @@ _LOAD_CASE = {
     "properties": {"name": {"type": "string"},
                    "loads": {"type": "array", "items": {"$ref": "#/$defs/load"}, "minItems": 1},
                    "weight": {"type": "number", "minimum": 0},
-                   "cycles": {**_POS, "description": "Times this load is applied over the part's life: adds a "
+                   "cycles": {**_POS, "description": "Times this whole case is applied over the part's life (set on the case, not a load): adds a "
                                                      "fatigue check (e.g. 1e6 for a servo-driven arm)."},
                    "hours": {**_POS, "description": "Hours this load is held over the part's life: adds creep "
                                                     "rupture and crept deflection."},
@@ -389,9 +391,9 @@ _THERMAL = {
                                                        "the swing's stress over strength retention, weighted "
                                                        "against the hot moment's objective at the start. 0 "
                                                        "(default): hot moment only. Experimental: on the motor "
-                                                       "mount 0.3 lifted the verified fatigue SF 2.48 -> 2.94 "
-                                                       "at 12k cells but lowered it 2.83 -> 2.25 at 45k, so "
-                                                       "verify the result. Adding material does not help "
+                                                       "mount 1 lifted the verified fatigue SF 2.48 -> 3.38 at "
+                                                       "12k cells, but at 45k no weight beat 2.83 (0.3 tied "
+                                                       "it, 1 lowered it), so verify the result. Adding material does not help "
                                                        "thermal cycling (stiffer parts hold more expansion)."}},
                   "required": ["period", "on"], "additionalProperties": False},
     },
@@ -478,7 +480,18 @@ _BUILD_SIM = {"anyOf": [
                                       "displacement of the layer-by-layer build on the plate (D0 at the start); "
                                       "0 (default) only verifies. Needs a grid-axis buildDirection. About 1 trades "
                                       "stiffness for a large cut in distortion and recoater lift"},
-        "warpLayer": {**_POS, "description": "mm per analysis layer of the warp term (default 4 cells)"}},
+        "warpLayer": {**_POS, "description": "mm per analysis layer of the warp term (default 4 cells)"},
+        "maxDistortion": {**_POS, "description": "lpbf/fdm: a limit, mm, on the largest as-built displacement "
+                                                 "(on the plate, end of the build). The optimizer holds it as a "
+                                                 "constraint and the search only passes designs that meet it and "
+                                                 "the safety factor; report 'warp'. Needs a grid-axis "
+                                                 "buildDirection"},
+        "maxRecoaterLift": {**_POS, "description": "lpbf: a limit, mm, on how far the part rises at the build "
+                                                   "plane as each layer goes down (the recoater's clearance, "
+                                                   "~0.05 mm); held like maxDistortion"},
+        "warpCoarsen": {"type": "integer", "minimum": 1,
+                        "description": "the build model in the optimizer runs on a grid this many times "
+                                       "coarser (default 2 on grids of 4000 cells or more, else 1)"}},
      "additionalProperties": False}],
     "description": "Simulate the build of the delivered part (report 'buildSim'): layer-by-layer inherent-strain "
                    "residual stress and distortion for lpbf (validated on NIST AM-Bench 2018), fdm warp and bed "
@@ -565,8 +578,10 @@ _MULTI_MATERIAL = {
             "knock": {"type": "object", "properties": {
                 "energy": {**_POS, "description": "J the knock brings"},
                 "maxForce": {**_POS, "description": "N: the peak force it may stop with"},
-                "safetyFactor": {**_POS, "description": "on the stored energy's stress (default "
-                                                        "interfaceSafetyFactor or the goal's)"}},
+                "safetyFactor": {**_POS, "description": "the knock's own safety factor: on its stored "
+                                                        "energy, and on materials and bonds at its peak force "
+                                                        "(an accidental load; default the goal's / "
+                                                        "interfaceSafetyFactor)"}},
                 "required": ["energy", "maxForce"], "additionalProperties": False},
             "indentation": {"type": "object", "properties": {
                 "relativeTo": {"type": "string", "description": "the same force spread out (a case)"},
@@ -583,6 +598,19 @@ _MULTI_MATERIAL = {
                            "required": ["tensile"], "additionalProperties": False},
                        "description": "'a+b' -> bond strength (MPa), overriding interface_library.py's "
                                       "sourced card (measure your printer's: it varies a lot)"},
+        "interlock": {"oneOf": [{"type": "boolean"}, {"type": "object", "properties": {
+            "pattern": {"enum": ["beams"]},
+            "depth": {**_POS, "description": "mm of interlocking band straddling the interface (default 2)"},
+            "beamWidth": {**_POS, "description": "mm (default two extrusion widths, 0.8)"},
+            "layers": {"type": "integer", "minimum": 1, "description": "print layers per beam (default 2)"},
+            "layerHeight": {**_POS, "description": "mm per beam layer, instead of layers"},
+            "gain": {"type": "number", "minimum": 1,
+                     "description": "interlocked / flat bond strength credited (default 2.5 at 2 mm, sourced)"},
+            "pairs": {"type": "array", "items": {"type": "string"}, "description": "'a+b' pairs (default all)"}},
+            "additionalProperties": False}],
+            "description": "Interlock the materials where they meet (an interlaced beam lattice, as Cura's / "
+                           "Bambu's interlocking beams): the delivered bodies interpenetrate and the bond is "
+                           "credited with the measured gain, capped by what the lattice carries (interlock.py)"},
         "interfacePenalty": {"type": "boolean", "description": "constrain the bond in the optimizer "
                                                               "(default true); verification always checks it"},
         "export": {"type": "object", "properties": {
@@ -1356,7 +1384,10 @@ def _check(v, node, root, path, out):
             elif node.get("additionalProperties") is False:
                 near = [p for p in _ALIASES.get(k, []) if p in props] or \
                     [p for p in props if p.lower() == k.lower()] or difflib.get_close_matches(k, list(props), 1, 0.6)
-                if near:
+                if k in ("cycles", "hours", "temperature") and ".loads[" in path:
+                    out.append(("error", f"{path}.{k}", f"{k} goes on the load case, not on a load "
+                                "(it applies to the whole case)"))
+                elif near:
                     out.append(("error", f"{path}.{k}", f"unknown key; did you mean '{near[0]}'?"))
                 else:
                     out.append(("warning", f"{path}.{k}", "unknown key, ignored (known: "

@@ -343,6 +343,8 @@ class SimpResult:
     energy: np.ndarray | None = None
     # escape holes drilled (escape.drill's report), or None
     escape: dict | None = None
+    # buildSim warp design: the delivered field's as-built measures, or None
+    warp: dict | None = None
 
 
 def filter_radius(domain: Domain, min_member: float | None, min_hole: float | None = None) -> float:
@@ -574,6 +576,25 @@ def _symmetrize(v, mirror):
     return v
 
 
+def _warp_report(domain: Domain, xp):
+    """The delivered field's as-built measures (buildsim): max distortion
+    and recoater lift, mm, on the optimizer's build model and, when that
+    one was coarsened, on the full grid too (one forward build, which is
+    what the limits are checked on)."""
+    ws = domain.warp
+    e = E_MIN + xp ** PENALTY * (1 - E_MIN)
+    v, _ = ws.term.measures(e)
+    out = {"maxDistortion": v["max"], "recoaterLift": v["lift"], "meanSquare": v["mean"],
+           "limits": {"maxDistortion": ws.max_distortion, "maxRecoaterLift": ws.max_lift},
+           "weight": ws.weight, "coarsen": ws.coarsen}
+    if ws.coarsen > 1:
+        vf, _ = ws.term.fine().measures(e)
+        out["optimizerGrid"] = {"maxDistortion": v["max"], "recoaterLift": v["lift"],
+                                "fullOverCoarse": dict(ws.term.ratio)}
+        out.update(maxDistortion=vf["max"], recoaterLift=vf["lift"], meanSquare=vf["mean"])
+    return out
+
+
 def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_stop=None) -> SimpResult:
     """Optimize, then (opts.escape) open every void the design sealed: drill
     escape holes into it (escape.drill), pin them void, and run on from the
@@ -767,16 +788,44 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 # d(f.u)/dx with design-dependent weight: + 2 u . df/dx.
                 ue = wc.u_mean.reshape(-1, 3)[mesh.enode].sum(axis=1)
                 dc_xp += weights[ci] * 2.0 * (ue @ domain.gravity) * mesh.pitch ** 3 / 8.0
-        warp_d = None
+        warp_v = None
         if domain.warp is not None:
-            # buildSim.warpWeight: compliance * (1 + w D / D0), D the as-
-            # built distortion of the layer-by-layer build (buildsim.WarpTerm)
-            term, ww = domain.warp
-            warp_d, dd = term.evaluate(e, PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN))
-            if warp_state.get("d0") is None:
-                warp_state["d0"], warp_state["c0"] = max(warp_d, 1e-30), comp
-            dc_xp = dc_xp + ww * warp_state["c0"] * dd / warp_state["d0"]
-            comp = comp + ww * warp_state["c0"] * warp_d / warp_state["d0"]
+            # buildSim warp design (buildsim.WarpTerm on the build axis):
+            # compliance * (1 + w D / D0) for warpWeight, plus each limit
+            # (maxDistortion, maxRecoaterLift) held by an adaptive weight,
+            # raised while the design is over it and eased off under it (a
+            # penalty the optimality-criteria step can take, as maxMember's)
+            ws = domain.warp
+            lam = warp_state.setdefault("lam", {"max": 0.0, "lift": 0.0})
+            c_now = comp
+
+            def warp_weights(v):
+                if warp_state.get("d0") is None:
+                    warp_state["d0"], warp_state["c0"] = max(v["mean"], 1e-30), c_now
+                c0w = warp_state["c0"]
+                w = {"mean": ws.weight * c0w / warp_state["d0"]}
+                for key, lim in (("max", ws.max_distortion), ("lift", ws.max_lift)):
+                    if lim:
+                        over = v[key] / lim
+                        lam[key] = min(max(lam[key] * 1.3, 0.05), 50.0) if over > 1.0 else lam[key] * 0.85
+                        w[key] = lam[key] * c0w / lim
+                return w
+
+            n_warp = warp_state["n"] = warp_state.get("n", -1) + 1
+            dxe = PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN)
+            if ws.coarsen > 1:
+                # re-read the coarse grid's bias on the full grid every 10
+                warp_v, dd = ws.term.measures(e, dxe, warp_weights, refresh=n_warp % 10 == 0)
+            else:
+                warp_v, dd = ws.term.measures(e, dxe, warp_weights)
+            c0w = warp_state["c0"]
+            extra = ws.weight * c0w * warp_v["mean"] / warp_state["d0"]
+            if ws.max_distortion:
+                extra += lam["max"] * c0w * warp_v["max"] / ws.max_distortion
+            if ws.max_lift:
+                extra += lam["lift"] * c0w * warp_v["lift"] / ws.max_lift
+            dc_xp = dc_xp + dd
+            comp = comp + extra
         if c0 is None:
             c0 = comp
         dproj_e = _dproject(xt, beta, eta_e)
@@ -800,6 +849,21 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 g += (-opts.deflate_power * a / (a + 1.0)) * diff / (d2 * n_design)
             dc = dc + ht @ (printed_grad(am_b, comp * g) * dproj / hs)
         dv = ht @ (printed_grad(am_b, design.astype(float)) * dproj / hs)
+        if heat is not None and heat.swing_weight > 0:
+            # The thermal-cycling swing's stress rises where material is
+            # added near the heat (a stiffer part holds more of its own
+            # expansion), so its sensitivities are positive there, and the
+            # clip below threw that half away: the optimizer never saw why
+            # to remove material, and at 45k cells its own swing measure
+            # rose 4.3 -> 6.8 with fatigueWeight 0.3. Shifting dc by s dv
+            # keeps every sensitivity negative without moving the optimum
+            # (the volume multiplier absorbs s: -dc/dv = l becomes
+            # s - dc/dv = l + s).
+            live = design & (dv > 1e-12)
+            if live.any():
+                s_sh = float(np.max(dc[live] / dv[live]))
+                if s_sh > 0:
+                    dc = dc - 1.05 * s_sh * dv - 1e-12
         dc = np.minimum(dc, 0.0)
         if robust:
             # A worst case over directions swings: stiffening the weakest
@@ -869,8 +933,12 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                "volume": float(xp[design].mean()), "beta": beta, "change": change,
                "seconds": time.time() - t0, "cgIterations": fe.last_iters,
                "solvedCells": fe.last_cells}
-        if warp_d is not None:
-            rec["warpDistortion"] = warp_d
+        if warp_v is not None:
+            rec["warpDistortion"] = warp_v["mean"]
+            rec["warpMax"] = warp_v["max"]
+            rec["warpLift"] = warp_v["lift"]
+            if domain.warp.max_distortion or domain.warp.max_lift:
+                rec["warpMultipliers"] = dict(warp_state["lam"])
         if excess is not None:
             rec["maxMemberExcess"] = excess
             rec["maxMemberWeight"] = mu
@@ -959,7 +1027,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             case_c.append(wc.compliance)
             comp += weights[ci] * wc.compliance
         energy += weights[ci] * stiff * sum(m * fe.strain_energy(v) for m, v in wc.energy)
+    warp = _warp_report(domain, xp) if domain.warp is not None else None
     return SimpResult(x=x, xphys=xp, compliance=comp, case_compliance=case_c,
                       volume_fraction=float(xp[design].mean()), iterations=it,
                       converged=converged, seconds=time.time() - t0, history=history,
-                      case_direction=case_d, energy=energy / mesh.pitch ** 3)
+                      case_direction=case_d, energy=energy / mesh.pitch ** 3, warp=warp)

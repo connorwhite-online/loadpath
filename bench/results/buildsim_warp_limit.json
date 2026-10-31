@@ -1,0 +1,666 @@
+[
+ {
+  "name": "no limit",
+  "limits": {
+   "maxDistortion": 100.0
+  },
+  "seconds": 1682,
+  "tried": [
+   {
+    "vf": 0.3,
+    "mass": 8.78,
+    "sf": 0.548813051797557,
+    "warp": {
+     "maxDistortion": 0.31145962633864827,
+     "recoaterLift": 0.11859993307468275,
+     "meanSquare": 0.008899245773178549,
+     "limits": {
+      "maxDistortion": 100.0,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.3094117035413014,
+      "recoaterLift": 0.11847394068460053,
+      "fullOverCoarse": {
+       "mean": 0.880942458091518,
+       "max": 0.9373566936426329,
+       "lift": 0.9294948038679232
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.6,
+    "mass": 15.92,
+    "sf": 3.026052640958556,
+    "warp": {
+     "maxDistortion": 0.3139812235987929,
+     "recoaterLift": 0.08711992425273396,
+     "meanSquare": 0.008379568489784819,
+     "limits": {
+      "maxDistortion": 100.0,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.32104342986751394,
+      "recoaterLift": 0.08743705091443277,
+      "fullOverCoarse": {
+       "mean": 0.6959923450878165,
+       "max": 0.8220791088182703,
+       "lift": 0.8962985766740469
+      }
+     }
+    },
+    "passes": true
+   },
+   {
+    "vf": 0.45,
+    "mass": 12.18,
+    "sf": 2.6950890859935233,
+    "warp": {
+     "maxDistortion": 0.3333948195044917,
+     "recoaterLift": 0.13518506720534787,
+     "meanSquare": 0.009729851965851586,
+     "limits": {
+      "maxDistortion": 100.0,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.33818224262765456,
+      "recoaterLift": 0.13500264441858797,
+      "fullOverCoarse": {
+       "mean": 0.8670031951020699,
+       "max": 0.9549241908119586,
+       "lift": 0.9339432806981626
+      }
+     }
+    },
+    "passes": true
+   },
+   {
+    "vf": 0.375,
+    "mass": 10.41,
+    "sf": 1.6462112295330944,
+    "warp": {
+     "maxDistortion": 0.27985649444617844,
+     "recoaterLift": 0.10086981185771265,
+     "meanSquare": 0.005881425781360248,
+     "limits": {
+      "maxDistortion": 100.0,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.2872422890486932,
+      "recoaterLift": 0.10097806966898704,
+      "fullOverCoarse": {
+       "mean": 0.514981788328571,
+       "max": 0.7949071414632736,
+       "lift": 0.5965490153652214
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.4784,
+    "mass": 12.88,
+    "sf": 3.4485558995671743,
+    "warp": {
+     "maxDistortion": 0.3353217803903463,
+     "recoaterLift": 0.126913250059389,
+     "meanSquare": 0.010485471302315185,
+     "limits": {
+      "maxDistortion": 100.0,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.3374351865739334,
+      "recoaterLift": 0.12623404928567145,
+      "fullOverCoarse": {
+       "mean": 0.8934555928552017,
+       "max": 0.9583207003718279,
+       "lift": 0.9438725033114717
+      }
+     }
+    },
+    "passes": true
+   },
+   {
+    "vf": 0.4125,
+    "mass": 11.41,
+    "sf": 2.665558427281376,
+    "warp": {
+     "maxDistortion": 0.339967056914218,
+     "recoaterLift": 0.15464196769685187,
+     "meanSquare": 0.01009021704295663,
+     "limits": {
+      "maxDistortion": 100.0,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.3492797511967706,
+      "recoaterLift": 0.1538145148281293,
+      "fullOverCoarse": {
+       "mean": 0.847141665552131,
+       "max": 0.9412230362029607,
+       "lift": 0.9048676084318982
+      }
+     }
+    },
+    "passes": true
+   }
+  ],
+  "mass": 11.411654983042189,
+  "safetyFactor": 2.665558427281376,
+  "warp": {
+   "maxDistortion": 0.339967056914218,
+   "recoaterLift": 0.15464196769685187,
+   "meanSquare": 0.01009021704295663,
+   "limits": {
+    "maxDistortion": 100.0,
+    "maxRecoaterLift": null
+   },
+   "weight": 0.0,
+   "coarsen": 2,
+   "optimizerGrid": {
+    "maxDistortion": 0.3492797511967706,
+    "recoaterLift": 0.1538145148281293,
+    "fullOverCoarse": {
+     "mean": 0.847141665552131,
+     "max": 0.9412230362029607,
+     "lift": 0.9048676084318982
+    }
+   }
+  },
+  "volumeFraction": 0.4125,
+  "buildSim": {
+   "distortionMax": 0.4930772945608916,
+   "recoaterLift": 0.08594105406151997
+  }
+ },
+ {
+  "name": "distortion <= 0.6 x",
+  "limits": {
+   "maxDistortion": 0.204
+  },
+  "seconds": 897,
+  "tried": [
+   {
+    "vf": 0.3,
+    "mass": 8.71,
+    "sf": 1.4966124941649732,
+    "warp": {
+     "maxDistortion": 0.18167417832032728,
+     "recoaterLift": 0.042786453636134966,
+     "meanSquare": 0.0031191378424212375,
+     "limits": {
+      "maxDistortion": 0.204,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.1872564595515855,
+      "recoaterLift": 0.04404299392289253,
+      "fullOverCoarse": {
+       "mean": 0.809579604505477,
+       "max": 0.9819300557550605,
+       "lift": 1.363953897081837
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.421,
+    "mass": 11.5,
+    "sf": 2.664595908839789,
+    "warp": {
+     "maxDistortion": 0.16816775133256034,
+     "recoaterLift": 0.029829029598603053,
+     "meanSquare": 0.003124898529263436,
+     "limits": {
+      "maxDistortion": 0.204,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.1712345539228125,
+      "recoaterLift": 0.03053124897595452,
+      "fullOverCoarse": {
+       "mean": 0.7529628444375073,
+       "max": 0.8919231168469982,
+       "lift": 0.7695111369775827
+      }
+     }
+    },
+    "passes": true
+   },
+   {
+    "vf": 0.3605,
+    "mass": 10.04,
+    "sf": 2.10707366291387,
+    "warp": {
+     "maxDistortion": 0.16558124940258206,
+     "recoaterLift": 0.03311683547848714,
+     "meanSquare": 0.003125528149747225,
+     "limits": {
+      "maxDistortion": 0.204,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.1617584647573207,
+      "recoaterLift": 0.03348324782239517,
+      "fullOverCoarse": {
+       "mean": 0.7605236038092442,
+       "max": 0.8707132851257474,
+       "lift": 0.8951771034026126
+      }
+     }
+    },
+    "passes": true
+   },
+   {
+    "vf": 0.3302,
+    "mass": 9.35,
+    "sf": 1.6895357125207022,
+    "warp": {
+     "maxDistortion": 0.1665566645615392,
+     "recoaterLift": 0.022059300210562346,
+     "meanSquare": 0.002870273186711387,
+     "limits": {
+      "maxDistortion": 0.204,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.16263556508481256,
+      "recoaterLift": 0.026869260466328787,
+      "fullOverCoarse": {
+       "mean": 0.7178922563618291,
+       "max": 0.8939498991052736,
+       "lift": 0.736033230321889
+      }
+     }
+    },
+    "passes": false
+   }
+  ],
+  "mass": 10.037520407800992,
+  "safetyFactor": 2.10707366291387,
+  "warp": {
+   "maxDistortion": 0.16558124940258206,
+   "recoaterLift": 0.03311683547848714,
+   "meanSquare": 0.003125528149747225,
+   "limits": {
+    "maxDistortion": 0.204,
+    "maxRecoaterLift": null
+   },
+   "weight": 0.0,
+   "coarsen": 2,
+   "optimizerGrid": {
+    "maxDistortion": 0.1617584647573207,
+    "recoaterLift": 0.03348324782239517,
+    "fullOverCoarse": {
+     "mean": 0.7605236038092442,
+     "max": 0.8707132851257474,
+     "lift": 0.8951771034026126
+    }
+   }
+  },
+  "volumeFraction": 0.36047532425937184,
+  "buildSim": {
+   "distortionMax": 0.27762940382312745,
+   "recoaterLift": 0.06682886516805571
+  }
+ },
+ {
+  "name": "distortion <= 0.35 x",
+  "limits": {
+   "maxDistortion": 0.119
+  },
+  "seconds": 810,
+  "tried": [
+   {
+    "vf": 0.3,
+    "mass": 8.45,
+    "sf": 0.38303164072156576,
+    "warp": {
+     "maxDistortion": 0.14471161731240495,
+     "recoaterLift": 0.027030213298584887,
+     "meanSquare": 0.002009665566210173,
+     "limits": {
+      "maxDistortion": 0.119,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.1567440704929585,
+      "recoaterLift": 0.010267264141481264,
+      "fullOverCoarse": {
+       "mean": 0.7308960053190902,
+       "max": 0.9118344165849439,
+       "lift": 0.28556878084593834
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.6,
+    "mass": 10.93,
+    "sf": 0.8366410076933304,
+    "warp": {
+     "maxDistortion": 0.1727562046101738,
+     "recoaterLift": 0.042314236352382434,
+     "meanSquare": 0.0022401143251523613,
+     "limits": {
+      "maxDistortion": 0.119,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.16215271694312738,
+      "recoaterLift": 0.03391367623576927,
+      "fullOverCoarse": {
+       "mean": 0.6937270578731034,
+       "max": 0.8563047717587071,
+       "lift": 1.0146575618992477
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.7,
+    "mass": 10.91,
+    "sf": 0.83663338077468,
+    "warp": {
+     "maxDistortion": 0.17163762681366157,
+     "recoaterLift": 0.04231425070109379,
+     "meanSquare": 0.002238566018754086,
+     "limits": {
+      "maxDistortion": 0.119,
+      "maxRecoaterLift": null
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.1605248605204398,
+      "recoaterLift": 0.025747182641234902,
+      "fullOverCoarse": {
+       "mean": 0.7953406529616887,
+       "max": 0.8498698873993096,
+       "lift": 0.7769983691357542
+      }
+     }
+    },
+    "passes": false
+   }
+  ],
+  "error": "no outcome met the goal"
+ },
+ {
+  "name": "lift <= 0.35 x",
+  "limits": {
+   "maxRecoaterLift": 0.0541
+  },
+  "seconds": 2251,
+  "tried": [
+   {
+    "vf": 0.3,
+    "mass": 8.57,
+    "sf": 0.8342662044518495,
+    "warp": {
+     "maxDistortion": 0.2011394599087242,
+     "recoaterLift": 0.04666315948789043,
+     "meanSquare": 0.003969174251524802,
+     "limits": {
+      "maxDistortion": null,
+      "maxRecoaterLift": 0.0541
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.20259547695821092,
+      "recoaterLift": 0.0406798070508916,
+      "fullOverCoarse": {
+       "mean": 1.0321387612144952,
+       "max": 1.0429543393236749,
+       "lift": 1.7169079241436631
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.6,
+    "mass": 14.03,
+    "sf": 1.7810229158165514,
+    "warp": {
+     "maxDistortion": 0.27313442962668844,
+     "recoaterLift": 0.044757150962706195,
+     "meanSquare": 0.00675673697870128,
+     "limits": {
+      "maxDistortion": null,
+      "maxRecoaterLift": 0.0541
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.2766071597292416,
+      "recoaterLift": 0.0466017465508486,
+      "fullOverCoarse": {
+       "mean": 0.961845380482571,
+       "max": 0.9539325282526103,
+       "lift": 0.8357071036925492
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.7,
+    "mass": 14.03,
+    "sf": 1.7810229158165514,
+    "warp": {
+     "maxDistortion": 0.2731344371368598,
+     "recoaterLift": 0.044757150962706195,
+     "meanSquare": 0.006756725802078272,
+     "limits": {
+      "maxDistortion": null,
+      "maxRecoaterLift": 0.0541
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.27019935861926864,
+      "recoaterLift": 0.05238884971898152,
+      "fullOverCoarse": {
+       "mean": 0.9686573695095366,
+       "max": 0.9318340005943523,
+       "lift": 0.9394869743060524
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.7,
+    "mass": 14.03,
+    "sf": 1.7810229158165514,
+    "warp": {
+     "maxDistortion": 0.2731344371368598,
+     "recoaterLift": 0.044757150962706195,
+     "meanSquare": 0.006756725802078272,
+     "limits": {
+      "maxDistortion": null,
+      "maxRecoaterLift": 0.0541
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.2701992003968176,
+      "recoaterLift": 0.05238884971898152,
+      "fullOverCoarse": {
+       "mean": 0.9685195456806636,
+       "max": 0.9318334549340654,
+       "lift": 0.9394869743060524
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.7,
+    "mass": 14.03,
+    "sf": 1.7810229158165514,
+    "warp": {
+     "maxDistortion": 0.2731344371368598,
+     "recoaterLift": 0.044757150962706195,
+     "meanSquare": 0.006756725802078272,
+     "limits": {
+      "maxDistortion": null,
+      "maxRecoaterLift": 0.0541
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.2701992003968176,
+      "recoaterLift": 0.05238884971898152,
+      "fullOverCoarse": {
+       "mean": 0.9685195456806636,
+       "max": 0.9318334549340654,
+       "lift": 0.9394869743060524
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.7,
+    "mass": 14.03,
+    "sf": 1.7810229158165514,
+    "warp": {
+     "maxDistortion": 0.2731344371368598,
+     "recoaterLift": 0.044757150962706195,
+     "meanSquare": 0.006756725802078272,
+     "limits": {
+      "maxDistortion": null,
+      "maxRecoaterLift": 0.0541
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.2701992003968176,
+      "recoaterLift": 0.05238884971898152,
+      "fullOverCoarse": {
+       "mean": 0.9685195456806636,
+       "max": 0.9318334549340654,
+       "lift": 0.9394869743060524
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.7,
+    "mass": 14.03,
+    "sf": 1.7810229158165514,
+    "warp": {
+     "maxDistortion": 0.2731344371368598,
+     "recoaterLift": 0.044757150962706195,
+     "meanSquare": 0.006756725802078272,
+     "limits": {
+      "maxDistortion": null,
+      "maxRecoaterLift": 0.0541
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.2701992003968176,
+      "recoaterLift": 0.05238884971898152,
+      "fullOverCoarse": {
+       "mean": 0.9685195456806636,
+       "max": 0.9318334549340654,
+       "lift": 0.9394869743060524
+      }
+     }
+    },
+    "passes": false
+   },
+   {
+    "vf": 0.7,
+    "mass": 14.03,
+    "sf": 2.126108839648139,
+    "warp": {
+     "maxDistortion": 0.2731344371368598,
+     "recoaterLift": 0.044757150962706195,
+     "meanSquare": 0.006756725802078272,
+     "limits": {
+      "maxDistortion": null,
+      "maxRecoaterLift": 0.0541
+     },
+     "weight": 0.0,
+     "coarsen": 2,
+     "optimizerGrid": {
+      "maxDistortion": 0.2701992003968176,
+      "recoaterLift": 0.05238884971898152,
+      "fullOverCoarse": {
+       "mean": 0.9685195456806636,
+       "max": 0.9318334549340654,
+       "lift": 0.9394869743060524
+      }
+     }
+    },
+    "passes": true
+   }
+  ],
+  "mass": 14.032748983174837,
+  "safetyFactor": 2.126108839648139,
+  "warp": {
+   "maxDistortion": 0.2731344371368598,
+   "recoaterLift": 0.044757150962706195,
+   "meanSquare": 0.006756725802078272,
+   "limits": {
+    "maxDistortion": null,
+    "maxRecoaterLift": 0.0541
+   },
+   "weight": 0.0,
+   "coarsen": 2,
+   "optimizerGrid": {
+    "maxDistortion": 0.2701992003968176,
+    "recoaterLift": 0.05238884971898152,
+    "fullOverCoarse": {
+     "mean": 0.9685195456806636,
+     "max": 0.9318334549340654,
+     "lift": 0.9394869743060524
+    }
+   }
+  },
+  "volumeFraction": 0.7,
+  "buildSim": {
+   "distortionMax": 0.2704228962340231,
+   "recoaterLift": 0.10432026369274205
+  }
+ }
+]

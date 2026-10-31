@@ -332,6 +332,67 @@ safety-factor goal that the plain design meets fails. Use a smaller weight
 (untested here), or a volume that leaves room, when strength must hold; the
 study reports both numbers. The run is about 7x slower.
 
+### Warp limits in the safety-factor search
+
+A weight trades strength for flatness blindly. A limit does not: set
+`buildSim.maxDistortion` (mm, the largest as-built displacement on the
+plate) and/or `buildSim.maxRecoaterLift` (mm, how far the part rises at the
+build plane as each layer goes down), keep the safety-factor goal, and the
+search delivers the lightest part that meets both:
+
+```json
+"goal": {"safetyFactor": 2},
+"process": {"type": "lpbf", "buildDirection": "+z"},
+"buildSim": {"maxDistortion": 0.2}
+```
+
+Inside each optimizer run the limit is a constraint held by an adaptive
+weight (raised while the design is over it, eased off under it), steered
+by the exact gradient of a 16-norm of the displacements rescaled to the
+true maximum at the current design. Each outcome's report gets `warp`
+(the as-built measures of the delivered field) and its margin includes
+limit / measured, so a part over a limit fails like a part under its
+safety factor and the search moves on.
+
+**Speed.** The build model runs on a grid 2x coarser than the optimizer's
+(`warpCoarsen`, default 2 at 4000 cells and up): 8x fewer cells and half
+the layers. Averaging moduli misreads thin members, so every 10 iterations
+one forward build on the full grid re-measures the bias and the coarse
+measures are scaled by it. On the bracket's 7000-cell grid a 60-iteration
+run takes about 2.5 min with the limit (53 s with the coarse grid alone, no
+bias correction), where the full-grid term ran at about 10-15 s per
+iteration (1003 s for the single-fraction study in the table above, against 147 s without it). The pass/fail check reads the full grid.
+
+**What a limit costs** (`bench/buildsim_warp_limit.py`; the Ti64 shelf
+bracket, SF 2, 1500 N; `warp` is the optimizer's build model, `buildSim`
+the study's independent re-simulation of the delivered mesh with 1-voxel
+layers on a 5 mm plate):
+
+| limit | mass | SF | warp: max / lift | buildSim: max / lift | study time |
+|---|---|---|---|---|---|
+| none | 11.4 g | 2.67 | 0.34 / 0.15 mm | 0.49 / 0.086 mm | 28 min |
+| maxDistortion 0.20 mm (0.6x) | 10.0 g | 2.11 | 0.17 / 0.033 mm | 0.28 / 0.067 mm | 15 min |
+| maxDistortion 0.12 mm (0.35x) | none passed | | | | 14 min |
+| maxRecoaterLift 0.054 mm (0.35x) | 14.0 g (+23%) | 2.13 | 0.27 / 0.045 mm | 0.27 / 0.104 mm | 38 min |
+
+- A distortion limit at 0.6x of the unlimited design cost no mass here: the
+  limited part came out lighter (10.0 against 11.4 g), with the
+  independent check's distortion down 44%. That is the search's noise as
+  much as anything (the unlimited search failed at 10.4 g with SF 1.65 and
+  stopped at 11.4), so read it as "no measurable cost", not a saving.
+- At 0.35x nothing met both: the warp-limited designs reached SF 0.84 at
+  most, so the study reports no passing part. That is the answer to give:
+  this bracket, built this way up, cannot be that flat at SF 2.
+- The lift limit cost 23% mass, and it is the weak one: the optimizer's
+  model met it (0.045 mm), but the independent re-simulation reads 0.104
+  mm, more than the unlimited part's 0.086. Recoater lift is a per-layer
+  quantity, and lumping layers (the optimizer's build lays 4 cells at a
+  time) misjudges it. Prefer `maxDistortion`; treat `maxRecoaterLift` as
+  steering, and read `buildSim.recoater` on the result.
+- The unlimited row still carried the build model (its limit was set out of
+  reach to report `warp`), which is why it took 28 min; a study without
+  warp terms runs the same search in a few minutes.
+
 ## Limits
 
 - Speed. Each analysis layer is one solve over the part plus two layers

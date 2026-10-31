@@ -1,0 +1,100 @@
+{
+ "id": "coolant-isolator-petg",
+ "kind": "heatx",
+ "brief": "I want to keep my robot arm's motor coolant loop separate from the lab chiller with a printed\nwater-to-water heat exchanger: a counterflow dual-gyroid block, PETG on an FDM printer, standing on its\n100 x 60 face. It must fit in a 100 x 60 x 50 mm box (x along the 100 mm length, y across the 60, z up,\norigin at a bottom corner). Chiller water comes in at the x = 0 end and leaves at the x = 100 end; the\narm's loop goes in and out through the two long sides (y = 0 and y = 60), running against the chiller\nwater. Flows: chiller 1.5 L/min at 15 C, arm loop 1 L/min at 45 C. It has to move at least 150 W out of\nthe arm's loop, and neither side may lose more than 0.1 bar. I'm using 6 mm hose barbs, so give every\nport at least a 5 mm bore.",
+ "attachments": [],
+ "tags": [
+  "heatx",
+  "fdm",
+  "counterflow",
+  "water"
+ ],
+ "gold": {
+  "name": "coolant-isolator",
+  "core": {
+   "type": "box",
+   "min": [
+    15.6,
+    15.6,
+    1.6
+   ],
+   "max": [
+    84.4,
+    44.4,
+    46
+   ]
+  },
+  "type": "gyroid",
+  "layout": "counter",
+  "axes": "xy",
+  "fluids": [
+   "chiller",
+   "loop"
+  ],
+  "cell": 5,
+  "wall": 0.8,
+  "header": 6,
+  "shell": 1.6,
+  "portLength": 8,
+  "portDiameter": {
+   "chiller": 6,
+   "loop": 6
+  },
+  "build": "z",
+  "process": "fdm",
+  "duty": {
+   "chiller": {
+    "fluid": "water",
+    "lPerMin": 1.5,
+    "tIn": 15
+   },
+   "loop": {
+    "fluid": "water",
+    "lPerMin": 1.0,
+    "tIn": 45
+   },
+   "wall": "petg"
+  }
+ },
+ "pass": {
+  "envelope": {
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    100,
+    60,
+    50
+   ]
+  },
+  "ports": {
+   "chiller-in": {
+    "direction": "-x",
+    "minDiameter": 5
+   },
+   "chiller-out": {
+    "direction": "+x",
+    "minDiameter": 5
+   },
+   "loop-in": {
+    "direction": "y",
+    "minDiameter": 5
+   },
+   "loop-out": {
+    "direction": "y",
+    "minDiameter": 5
+   }
+  },
+  "counterflow": [
+   "chiller",
+   "loop"
+  ],
+  "minDuty": 150,
+  "maxPressureDrop": {
+   "chiller": 10000,
+   "loop": 10000
+  }
+ }
+}

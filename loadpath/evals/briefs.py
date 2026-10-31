@@ -84,11 +84,45 @@ def gold_study(brief: dict):
     return study_from_dict(brief["gold"], base_dir=ASSETS)
 
 
+def kind(brief: dict):
+    """The brief's kind module, for briefs that are not a single structural
+    part: loadpath/evals/brief_kinds/<kind>.py with DELIVER (what the agent
+    leaves), score(brief, folder) and gold(brief) (the gold's own check).
+    None for the default "study" kind (part.stl under a gold study)."""
+    k = brief.get("kind", "study")
+    if k == "study":
+        return None
+    import importlib
+    return importlib.import_module(f"loadpath.evals.brief_kinds.{k}")
+
+
 def prompt(brief: dict, max_elements: int = 20000) -> str:
     att = ""
     if brief.get("attachments"):
         att = "Attached (in the current folder): " + ", ".join(os.path.basename(a) for a in brief["attachments"]) + "\n\n"
-    return PROMPT.format(brief=brief["brief"], attachments=att, max_elements=max_elements)
+    text = PROMPT.format(brief=brief["brief"], attachments=att, max_elements=max_elements)
+    mod = kind(brief)
+    if mod is not None:
+        head, _, rest = text.partition("When you are done, leave in the current folder:\n")
+        tail = rest[rest.index("This machine is shared"):]
+        text = head + "When you are done, leave in the current folder:\n" + mod.DELIVER.rstrip("\n") + "\n" + tail
+    return text
+
+
+def score_dir(brief: dict, folder: str, max_cells: int = VERIFY_CELLS) -> dict:
+    """Score what an agent left in `folder`, by the brief's kind."""
+    mod = kind(brief)
+    if mod is None:
+        return score(brief, os.path.join(folder, "part.stl"), max_cells)
+    try:
+        row = mod.score(brief, folder)
+    except Exception as exc:  # noqa: BLE001 - a broken delivery is a failed brief, not a crashed eval
+        msg = str(exc).strip().splitlines()[-1] if str(exc).strip() else type(exc).__name__
+        row = {"pass": False, "failures": [f"scoring failed: {msg[:200]}"]}
+    row.setdefault("failures", [])
+    row["id"] = brief["id"]
+    row["pass"] = bool(row.get("pass")) and not row["failures"]
+    return row
 
 
 def score(brief: dict, stl: str, max_cells: int = VERIFY_CELLS) -> dict:
@@ -220,7 +254,7 @@ def run_agent(brief: dict, out: str, agent: str = "claude", model: str | None = 
         except subprocess.TimeoutExpired:
             status = "timeout"
     seconds = time.time() - t0
-    row = score(brief, os.path.join(work, "part.stl"))
+    row = score_dir(brief, work)
     row.update(_tool_stats(os.path.join(work, ".transcript.jsonl")))
     row.update({"seconds": round(seconds, 1), "agentStatus": status,
                 "studyWritten": os.path.exists(os.path.join(work, "study.json")), "tags": brief.get("tags", [])})
@@ -252,7 +286,7 @@ def main(argv=None):
     p.add_argument("id")
     s = sub.add_parser("score")
     s.add_argument("id")
-    s.add_argument("stl")
+    s.add_argument("path", help="the agent's folder (any kind), or part.stl (a study brief)")
     r = sub.add_parser("run")
     r.add_argument("ids", nargs="*")
     r.add_argument("--out", default="briefs-out")
@@ -280,7 +314,9 @@ def main(argv=None):
         from ..tasks import check_study
         bad = 0
         for i in a.ids or all_ids():
-            res = check_study(load(i)["gold"], base_dir=ASSETS)
+            b = load(i)
+            mod = kind(b)
+            res = mod.gold(b) if mod is not None else check_study(b["gold"], base_dir=ASSETS)
             bad += not res["ok"]
             print(i, "ok" if res["ok"] else res["error"], res.get("cells", ""), "; ".join(res.get("warnings", []))[:300])
         return bad
@@ -288,7 +324,12 @@ def main(argv=None):
         print(prompt(load(a.id)))
         return 0
     if a.cmd == "score":
-        print(json.dumps(score(load(a.id), a.stl), indent=1))
+        b = load(a.id)
+        if os.path.isdir(a.path):
+            row = score_dir(b, a.path)
+        else:
+            row = score(b, a.path)
+        print(json.dumps(row, indent=1))
         return 0
     if a.cmd == "run":
         os.makedirs(a.out, exist_ok=True)
@@ -319,7 +360,7 @@ def main(argv=None):
             stl = os.path.join(d, "part.stl")
             stale = old is not None and os.path.exists(stl) and os.path.getmtime(stl) > os.path.getmtime(f)
             if old is None or a.rescore or stale:
-                row = score(load(os.path.basename(d)), os.path.join(d, "part.stl"))
+                row = score_dir(load(os.path.basename(d)), d)
                 row["studyWritten"] = os.path.exists(os.path.join(d, "study.json"))
                 if old:
                     row.update({k: old[k] for k in old if k not in row})

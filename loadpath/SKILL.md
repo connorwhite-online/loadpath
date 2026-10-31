@@ -39,6 +39,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    runs through for the shaft or inner race, and the preserved ring covers
    the seat's width. Keep-outs win over preserves: `check` warns when one
    eats into a preserved piece (a fastener's driver path clipping a boss).
+   Anything inserted (a shaft, pin, bearing, cable) needs its keep-out to
+   run past the design space on the side it goes in from, or the part may
+   close over it; `check` warns about a bore with no open end.
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and
@@ -60,6 +63,10 @@ field. `check` reports every problem at once: fix them all, then check again.
    bore: add `"distribution": "bearing"` so a radial force presses on the
    half of the bore it pushes, as a real shaft does. Add a sideways or torsional case if the part
    can see one; a design optimized for one direction is weak in the others.
+   A link that carries or is driven by a servo or motor: add a case with
+   its full stall torque about the joint axis at that interface (a 1.5 N·m
+   servo is `"moment": [0, 1500, 0]` about y), since a jam or a hard stop
+   puts all of it through the part; it often sets the size.
    When the direction is genuinely unknown (contact, bumps, handling, a
    push at the tool "from anywhere"), say so instead of guessing:
    `{"region": "tool", "force": [0, 0, -20], "direction": "any"}` designs
@@ -73,10 +80,19 @@ field. `check` reports every problem at once: fix them all, then check again.
    one that would swing on a pin rather than resist sideways) cannot carry.
    For an in-plane uncertainty (a shaft's radial load, a swinging strap, a
    sideways crash) use `"direction": "xz"` (or `"xy"`, `"yz"`): the case
-   becomes eight cases round that plane, named `case@0` ... `case@157.5`.
+   becomes eight cases round half that plane, named `case@0` ... `case@157.5`,
+   or sixteen round all of it (to `case@337.5`) when -F is not the mirror of
+   F: a bearing distribution, other loads in the case, a moment, or a
+   layered process. Each is a solve per step, so the run takes that many
+   times longer; the mass form cannot take a plane, so write the force
+   (kg x 9.81 x the dynamic factor).
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.
+   A part that hangs on a rod, hook or peg bears only where it touches:
+   support the strip of the hole that carries the weight (`fix` on a
+   narrow box over its top), not the whole hole, or the model hides the
+   bending at the hook's mouth.
    A housing that holds a fluid (a boost plenum, a coolant jacket): make
    the fluid's volume a keep-out with a `wall` (mm), and load it with
    `{"region": "<id>", "pressure": MPa}`. The wall stays as given and the
@@ -127,10 +143,13 @@ field. `check` reports every problem at once: fix them all, then check again.
    15-5 PH are calibrated (NIST AM-Bench); for other alloys the size of the
    distortion is a rough guide (could be off 2x), though comparing designs
    is still sound. `"warpWeight": 1` (lpbf/fdm, grid-axis buildDirection)
-   designs against build distortion too: in the demo it cut as-built warp
-   66% and recoater lift 73% but halved the safety factor at the same mass
-   and ran 7x slower, so use it when warp or recoater crashes are the
-   problem, and check the safety factor. FDM: `bedAdhesion` (MPa) lets
+   designs against build distortion too, but at a fixed mass it halved the
+   safety factor in the demo. Prefer a limit with the safety-factor goal:
+   `"maxDistortion": 0.2` (mm, as built on the plate) makes the search
+   deliver the lightest part meeting both (report `warp`; on the demo
+   bracket a 40% cut cost no measurable mass, 65% was infeasible at SF 2).
+   `maxRecoaterLift` exists but the optimizer's lumped layers misjudge
+   lift: check `buildSim.recoater` on the result. FDM: `bedAdhesion` (MPa) lets
    the first layer let go; `bedFailed` in the report means the part
    popped off. docs/BUILDSIM.md has the validation.
 6. **Say how long it has to last.** A load that repeats (a servo lifting,
@@ -201,6 +220,10 @@ field. `check` reports every problem at once: fix them all, then check again.
   reading beside it), and the search steps down to where that meets the
   target, typically 0-45% lighter. A warning that the cross-check reads the
   pick below target names the spot the voxel grid cannot resolve: look there.
+  It is isotropic, so it never runs for a `process` (FDM layers, SLS, resin)
+  or gravity or pressure loads: those are confirmed on a finer voxel grid,
+  `deliver.tetCrossCheck` says why. That fine re-check is the memory peak
+  `check` reports (`peakMemoryGB`); `LOADPATH_CONFIRM_CELLS=60000` lowers it.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
 
@@ -342,7 +365,9 @@ loadpath run derived/forearm.derived.json
 
 It sweeps poses over the joint limits, speeds and accelerations (scaled to
 what each joint's rated effort can deliver), a scattered payload, a push at
-the tool and each joint upstream stalled against an obstacle, does
+the tool, each joint upstream stalled against an obstacle, and the part's
+far joint jammed at its full rated torque (a hard stop or a blocked
+hand: a servo-driven link must survive its own servo's stall torque), does
 Newton-Euler for the wrench the part carries at its far joint, and keeps the
 few samples that set the peak stress everywhere in the solid design space
 (`assembly.json` says how close they come: `envelopeRatio`). The parent and

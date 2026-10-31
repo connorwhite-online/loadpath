@@ -71,10 +71,21 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     warnings = [f"{i['path']}: {i['message']}" for i in issues] + list(d.warnings)
     notes = []
     warnings += _preserve_cut(s)
+    notes += _resting_supports(s)
+    w, n = _blind_bores(s)
+    warnings += w
+    notes += n
+    # only moments the study wrote: one loadpath derived (mass or force 'at'
+    # an offset) is in N·mm by construction
+    typed = set()
+    for rc in (raw.get("loadCases") or []) if isinstance(raw, dict) else []:
+        for li, rl in enumerate((rc.get("loads") or []) if isinstance(rc, dict) else []):
+            if isinstance(rl, dict) and ("moment" in rl or "torque" in rl):
+                typed.add((str(rc.get("name")), li))
     for ci, c in enumerate(s.load_cases):
         for li, ld in enumerate(c.loads):
             mm = float((ld.moment ** 2).sum() ** 0.5)
-            if 0 < mm < 50:
+            if 0 < mm < 50 and (str(c.name).split("@")[0], li) in typed:
                 warnings.append(f"loadCases[{ci}].loads[{li}].moment: {mm:g} N·mm is tiny; moments are in N·mm, "
                                 f"so {mm:g} N·m is {mm * 1000:g}")
     dur = raw.get("durability") if isinstance(raw, dict) else None
@@ -89,11 +100,18 @@ def check_study(raw, base_dir: str | None = None) -> dict:
         notes.append(f"pitch {d.pitch:.2f} mm is set by minMember {s.min_member:g} mm (two cells per filter "
                      f"radius; finer cells only cost time), so the grid has {d.n_elem} cells, fewer than "
                      f"resolution.maxElements {s.max_elements}")
+    planar = [c.name for c in s.load_cases if "@" in c.name]
+    if planar:
+        notes.append(f"{len(s.load_cases)} load cases ({len(planar)} from in-plane directions, 8 each): every "
+                     "optimizer step solves each one, so the run takes about that many times as long as one case")
     from .study import _available_bytes, _confirm_cells, _run_bytes
     g = s.goal
     peak = max(d.n_elem, _confirm_cells(s) if (g.safety_factor or g.max_deflection) else 0)
     mem = _run_bytes(peak) / 1e9
     avail = _available_bytes()
+    if mem > 4 and (g.safety_factor or g.max_deflection) and not os.environ.get("LOADPATH_CONFIRM_CELLS"):
+        notes.append(f"the fine re-check sets the peak ({mem:.1f} GB); on a shared machine cap it with "
+                     "LOADPATH_CONFIRM_CELLS (e.g. 50000 for about a third of the memory)")
     if avail and mem * 1e9 > 0.8 * avail:
         warnings.append(f"this run needs about {mem:.1f} GB at its peak and {avail / 1e9:.1f} GB is free: "
                         "lower resolution.maxElements, or set LOADPATH_CONFIRM_CELLS for the confirm stage")
@@ -108,7 +126,8 @@ def check_study(raw, base_dir: str | None = None) -> dict:
         "resolvedLoads": [{"case": c.name, "loads": [
             {"region": ld.region, "force": np.round(ld.force, 3).tolist(),
              **({"moment": np.round(ld.moment, 1).tolist()} if np.any(ld.moment) else {}),
-             **({"direction": ld.direction} if ld.direction else {})}
+             **({"direction": ld.direction} if ld.direction else {}),
+             **({"distribution": ld.distribution} if ld.distribution != "uniform" else {})}
             for ld in c.loads if not ld.pressure]} for c in s.load_cases],
         "minMember": s.min_member, "warnings": warnings, "notes": notes,
     })
@@ -168,6 +187,88 @@ def _bore_through(p, k) -> bool:
     t = np.linspace(0.0, 1.0, 33)[:, None]
     axis = k.p0 + t * (k.p1 - k.p0)
     return bool((p.sdf(axis) < 0).any())
+
+
+def _resting_supports(s) -> list[str]:
+    """A support on a whole round hole (a rod, a peg, a pin the part hangs
+    on) holds it all round, bonded. A part that only rests on it bears on a
+    narrow line where the load pushes it; holding the rest of the hole
+    hides the bending at the hook's mouth (agents under-read such parts by
+    up to 3x). Say so; a bolted or clamped bore is the user's call."""
+    import numpy as np
+
+    out = []
+    try:
+        ko = {str(k.id): k for k in s.keep_out}
+        for sp in s.supports:
+            k = ko.get(str(sp.region)) if sp.region else None
+            if k is None or sp.pin or str(k.id).endswith("-bore") or not all(sp.fix):
+                continue
+            leaves = [c for c in _leaves(k.shape) if getattr(c, "kind", None) == "cylinder"]
+            if len(leaves) != 1 or leaves[0].r < 4:
+                continue
+            c = leaves[0]
+            net = [np.sum([ld.force for ld in lc.loads], axis=0) for lc in s.load_cases]
+            radial = [f - c.axis * (c.axis @ f) for f in net]
+            if not any(np.linalg.norm(f) > 1e-9 for f in radial):
+                continue
+            out.append(f"supports: {k.id!r} is held all round, bonded. If the part only rests on it (a hook on a "
+                       "rod, a cradle, a peg), it bears on a narrow line where the load pushes it: support a thin "
+                       "box over that line instead (e.g. ±0.2 r wide, the hole's top), or the bending at the "
+                       "opening is hidden")
+    except Exception:  # noqa: BLE001 - a lint
+        return out
+    return out
+
+
+def _blind_bores(s) -> tuple[list[str], list[str]]:
+    """A bore keep-out (a shaft, pin or bearing seat) that ends inside the
+    design space: the optimizer may close material over its end, and then the
+    shaft cannot go in. Sealed at both ends is almost always a mistake; at
+    one end it is a blind pocket, which is right only if nothing passes
+    through."""
+    import numpy as np
+
+    warn, note = [], []
+    try:
+        ds = list(s.design_space)
+        others = [k for k in s.keep_out]
+
+        def end(pt, own):
+            pt = np.asarray(pt, float)[None, :]
+            if min(float(d.sdf(pt)[0]) for d in ds) >= 0:
+                return "open"       # outside the design space
+            if any(float(k.shape.sdf(pt)[0]) < 0 for k in others if k is not own):
+                return "pocket"     # into another keep-out
+            return "closed"
+
+        for k in s.keep_out:
+            # a fastener's head and driver path: `driver` sizes it, and its
+            # far end against material is the user's call (a side tool)
+            if not getattr(k, "bore", True) or str(k.id).endswith("-head"):
+                continue
+            for c in _leaves(k.shape):
+                if getattr(c, "kind", None) != "cylinder" or c.r_inner > 0:
+                    continue
+                e = max(1.0, 0.5 * c.r)
+                ends = [end(c.p0 - e * c.axis, k), end(c.p1 + e * c.axis, k)]
+                ax = "[" + ", ".join(f"{v:g}" for v in np.round(c.axis, 3)) + "]"
+                if "closed" not in ends:
+                    continue
+                if "open" not in ends:
+                    how = "at both ends" if ends == ["closed", "closed"] else "at one end and into another keep-out at the other"
+                    warn.append(f"keepOut {k.id!r}: the cylinder along {ax} ends inside the design space {how}, "
+                                "so the part can close over it and a shaft or pin may have no way in. Extend "
+                                "it past the design space on the side it is inserted from (or set "
+                                "\"bore\": false if that is on purpose)")
+                elif c.r >= 2.5:    # a blind tapped or insert hole is normal; a blind shaft seat is worth a look
+                    note.append(f"keepOut {k.id!r}: the cylinder along {ax} ends inside the design space at "
+                                "one end, a blind pocket. If a shaft, pin or bearing passes through, extend "
+                                "it past the design space")
+                break
+    except Exception:  # noqa: BLE001 - a lint
+        pass
+    return list(dict.fromkeys(warn)), list(dict.fromkeys(note))
 
 
 def _preserve_cut(s) -> list[str]:

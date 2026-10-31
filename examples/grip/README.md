@@ -147,3 +147,56 @@ each joint's URDF range in 10° steps) finds no overlap. The wrist link's
 J5 keep-out `studies/j5-parent-sweep.stl` is the yoke's allowed space and the
 J5 servo swept through ±100°; a flat split between the two left the link
 6-60 mm³ inside the yoke at -100°.
+
+## The links sized together (`coopt.py`)
+
+`derive.py` swept each link's loads with the URDF's masses, so every link
+was sized as if it carried the old, heavy forearm, wrist and gripper.
+`coopt.py` (`loadpath.coopt`) puts the per-link arm's own parts into the
+URDF bodies, with the hardware kept and the old part's mass properties
+taken out. It sweeps the loads again and regrows the links from the tip to
+the base until no link's loads move by more than 2%. A regrown part
+replaces the current one only if it is lighter, or if the current one fails.
+
+```bash
+python examples/grip/coopt.py --grip ../grip --build DIR demand   # masses, joint torques, payload; no solves
+python examples/grip/coopt.py --grip ../grip --build DIR run      # resumable
+python examples/grip/coopt.py --grip ../grip --build DIR report
+python examples/grip/fatigue_spectrum.py --grip ../grip --build DIR
+```
+
+Results are on 2026-10-31, in `derived/coopt.json`. Every part is verified
+on 150k cells under the loads its own arm puts on it.
+
+| Link | Per-link arm | SF | Co-optimized | SF |
+| --- | --- | --- | --- | --- |
+| Wrist link | 52.3 g | 4.60 | 52.3 g (kept) | 4.60 |
+| Wrist yoke | 13.0 g | 2.24 | 10.9 g | 2.01 |
+| Forearm | 93.8 g | 2.73 | 93.8 g (kept) | 2.73 |
+| Upper arm | 222.9 g | **1.89** | 260.3 g | 2.59 |
+| Turret | 213.0 g | 2.78 | 203.1 g | 2.66 |
+| Printed links | 595.0 g | | 620.4 g | |
+
+- It converged in one pass. A serial chain is triangular: a link's loads
+  depend only on the masses beyond it, and those were already this pass's.
+  Pass 2 moved no link's loads.
+- The real masses are 30% lighter beyond J3 (the hand alone loses 115 g),
+  yet link loads moved only 9-14%. They are set by J3 stalls and 20 N tool
+  pushes, which the drives' torque bounds, not by inertia. Regrowing for
+  them moved masses less than the optimizer's run-to-run spread: regrown
+  under the new loads, the forearm came out at 112 g while the 94 g part
+  still carried them at SF 2.73. Hence the keep-the-lighter rule.
+- What changed is that each link's governing cases were re-picked from its
+  real sweep. The per-link upper arm reads SF 1.89 under them (J1 stalled
+  sideways against an obstacle), below the goal of 2, so the 37 g it gains
+  is a correction. Regrown on today's code under its old loads, it comes to
+  251 g anyway (the control runs).
+- Joint torque, with the payload 70 mm past J6 and J2's spring holding the
+  arm's own weight: the arm can hold 1.24 kg still anywhere in range, against
+  1.11 kg with the URDF's masses. J4 limits it (STS3215, 2.9 N·m; margin 1.19
+  at 1 kg). Moving at the URDF speed limits with 0.5 s ramps on every joint
+  at once, it carries only 0.42 kg (J4 again; J2 at margin 0.80, J5 0.86).
+  Both arms are the same here, because the wrist masses barely differ.
+- Fatigue on the PA12 curve: the per-link links read 0.91-2.20 with every
+  cycle at the governing peak, and 1.76-3.47 with the sweep's own spread of
+  states as the duty spectrum (`fatigue_spectrum.py`).

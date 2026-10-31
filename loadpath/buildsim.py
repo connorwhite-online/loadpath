@@ -1074,6 +1074,9 @@ class WarpTerm:
         hgt = hgt - hgt.min()
         hn = sign * mesh.node_ijk[:, axis]
         self.fixed = np.repeat(hn == hn.min(), 3)
+        self.sign = sign
+        self.hgt = hgt
+        self.hn = hn - hn.min()
         self.kern = _Kernel(mesh, nu, self.fixed)
         eps, self.info = inherent_strain(setup, z=(hgt + 0.5) * mesh.pitch if setup.process == "fdm" else None)
         eps = np.broadcast_to(eps, (mesh.n_elem, 6))
@@ -1094,11 +1097,25 @@ class WarpTerm:
     def evaluate(self, e, de=None):
         """(D, dD/dx) for moduli e (per cell) and their derivative de with
         respect to the design density (None: D only)."""
+        vals, grad = self.measures(e, de, lambda v: {"mean": 1.0})
+        return vals["mean"], grad
+
+    def measures(self, e, de=None, weights=None):
+        """The as-built measures of moduli e: "mean" (D), "max" (the largest
+        |u| at the end of the build, mm) and "lift" (the largest rise along
+        the build at the build plane, over the layers as each goes down: the
+        recoater's clearance, mm). With de, also the gradient with respect
+        to the design density of sum(w[m] * measure m), w = weights(vals)
+        (a callable, so weights can depend on this design's values). The
+        maxima are steered through 16-norms rescaled to the true maximum at
+        this design (adaptive normalization), so the gradient is that of
+        the maximum to first order."""
         from scipy.sparse.linalg import splu
         mesh, kern = self.mesh, self.kern
         ne = mesh.n_elem
         u = np.zeros(mesh.n_dof)
         steps = []
+        lifts = []                      # (step, build-plane dofs along the build, their rise)
         node_on = np.zeros(mesh.n_nodes, bool)
         active = np.zeros(ne, bool)
         for li in range(self.n_layers):
@@ -1120,22 +1137,115 @@ class WarpTerm:
                 du[d] = _solve(k, f[d], mesh.node_xyz, d)
                 solve = (lambda kk, dd: (lambda r: _solve(kk, r, mesh.node_xyz, dd)))(k, d)
             u += du
-            if de is not None:
-                steps.append((d, solve, el, du, np.flatnonzero(active)))
+            plane = np.flatnonzero(node_on & (self.hn == self.hgt[el].max() + 1))
+            ldof = 3 * plane + self.axis
+            lifts.append((len(steps), ldof, self.sign * u[ldof]))
+            steps.append((d, solve, el, du, np.flatnonzero(active)))
         self.last_u = u
-        dist = float((self.wdof * u * u).sum())
+        un = np.linalg.norm(u.reshape(-1, 3), axis=1)
+        allrise = np.concatenate([r for _, _, r in lifts]) if lifts else np.zeros(1)
+        vals = {"mean": float((self.wdof * u * u).sum()), "max": float(un.max()),
+                "lift": float(max(allrise.max(), 0.0))}
+        # the 16-norms the gradient steers (checks)
+        vals["_maxP"] = float(np.sum(un ** 16) ** (1 / 16))
+        vals["_liftP"] = float(np.sum(np.maximum(allrise, 0.0) ** 16) ** (1 / 16))
         if de is None:
-            return dist, None
-        # adjoint: D = u^T W u, u the sum of the layer increments, so
-        # dD/d du_k = 2 W u on step k's dofs; K_k lam_k = that, and
-        # dD/de = sum_k lam_k^T (df_k/de - dK_k/de du_k)
-        gu = 2.0 * self.wdof * u
+            return vals, None
+        w = weights(vals) if callable(weights) else (weights or {"mean": 1.0})
+        q = 16.0
+        # dJ/du at the end of the build, and per step (the lift)
+        gu = 2.0 * w.get("mean", 0.0) * self.wdof * u
+        if w.get("max") and vals["max"] > 0:
+            r = un / vals["max"]
+            c = r ** (q - 1) / (r ** q).sum()
+            gu += w["max"] * ((c / np.maximum(un, 1e-30))[:, None] * u.reshape(-1, 3)).ravel()
+        gstep = {}
+        if w.get("lift") and vals["lift"] > 0:
+            tot = float(np.sum((np.maximum(allrise, 0.0) / vals["lift"]) ** q))
+            for si, ldof, rs in lifts:
+                g = np.zeros(mesh.n_dof)
+                g[ldof] = w["lift"] * self.sign * (np.maximum(rs, 0.0) / vals["lift"]) ** (q - 1) / tot
+                gstep[si] = g
+        # adjoint: J depends on the final u = sum of the layer increments
+        # and on each step's u_k (the lift), so dJ/d du_j = gu + the sum of
+        # the step terms from j on; K_j lam_j = that, and
+        # dJ/de = sum_j lam_j^T (df_j/de - dK_j/de du_j)
         dd = np.zeros(ne)
         ke, g = kern.st.ke, kern.g
-        for d, solve, el, du, ia in steps:
+        acc = np.zeros(mesh.n_dof)
+        for si in range(len(steps) - 1, -1, -1):
+            d, solve, el, du, ia = steps[si]
+            if si in gstep:
+                acc = acc + gstep[si]
+            rhs = gu + acc
             lam = np.zeros(mesh.n_dof)
-            lam[d] = solve(gu[d])
+            lam[d] = solve(rhs[d])
             dd[el] += np.einsum("ij,ij->i", lam[mesh.edof[el]], self.eps[el] @ g.T)
             dd[ia] -= np.einsum("ij,jk,ik->i", lam[mesh.edof[ia]], ke, du[mesh.edof[ia]])
-        return dist, dd * de
+        return vals, dd * de
 
+
+class CoarseWarp:
+    """A WarpTerm on a grid `factor` times coarser than the optimizer's:
+    each coarse cell's modulus is the mean of its fine cells' (absent ones
+    count as void), and the gradient goes back to each fine cell as its
+    share. factor 2 has 8x fewer cells and half the layers, so the build
+    solves in the optimizer loop cost a small fraction of the fine ones."""
+
+    def __init__(self, mesh: HexMesh, setup: BuildSetup, factor=2, build=(2, 1), layer=None, nu=None):
+        f = int(factor)
+        cijk = mesh.elem_ijk // f
+        uniq, self.parent = np.unique(cijk, axis=0, return_inverse=True)
+        self.parent = self.parent.ravel()
+        self.n = len(uniq)
+        self.share = 1.0 / f ** 3
+        self.mesh = HexMesh(uniq, mesh.pitch * f, mesh.origin)
+        self.fine_mesh = mesh
+        self._fine = None
+        self.ratio = {"mean": 1.0, "max": 1.0, "lift": 1.0}
+        self.layer = layer or 4 * mesh.pitch
+        self.setup, self.build = setup, build
+        self.term = WarpTerm(self.mesh, setup, build=build, layer=self.layer, nu=nu)
+        self.factor = f
+
+    def _coarse(self, e):
+        return np.bincount(self.parent, weights=e, minlength=self.n) * self.share
+
+    def fine(self):
+        """The same build model on the full grid."""
+        if self._fine is None:
+            self._fine = WarpTerm(self.fine_mesh, self.setup, build=self.build, layer=self.layer,
+                                  nu=self.term.kern.nu)
+        return self._fine
+
+    def measures(self, e, de=None, weights=None, refresh=False):
+        """As WarpTerm.measures, on the coarse grid, with each measure scaled
+        by its full-grid / coarse-grid ratio (refresh: re-measure that ratio
+        on this design, one forward build on the full grid). Averaging the
+        moduli makes thin members softer and stiffer by turns than they are,
+        so the coarse grid alone misreads a design far from where the ratio
+        was taken."""
+        ec = np.maximum(self._coarse(e), 1e-9)
+        if refresh:
+            vf, _ = self.fine().measures(e)
+            vc, _ = self.term.measures(ec)
+            self.ratio = {k: (vf[k] / vc[k] if vc[k] > 1e-12 else 1.0) for k in ("mean", "max", "lift")}
+        r = self.ratio
+
+        def scaled(v):
+            return {**v, **{k: v[k] * r[k] for k in r}}
+
+        if de is None:
+            v, _ = self.term.measures(ec)
+            return scaled(v), None
+
+        def wc(v):
+            w = weights(scaled(v)) if callable(weights) else (weights or {"mean": 1.0})
+            return {k: w[k] * r.get(k, 1.0) for k in w}
+
+        vals, gc = self.term.measures(ec, np.ones(self.n), wc)
+        return scaled(vals), gc[self.parent] * self.share * de
+
+    def evaluate(self, e, de=None):
+        vals, g = self.measures(e, de, lambda v: {"mean": 1.0})
+        return vals["mean"], g

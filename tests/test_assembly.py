@@ -94,6 +94,9 @@ def test_dynamics_and_contacts_respect_effort():
     my = np.abs(sw.wrenches[:, 4])
     assert my[kinds == "dynamic"].max() <= 600.0 + 1e-6, my[kinds == "dynamic"].max()
     assert my[kinds == "stall"].max() <= 600.0 + 1e-6
+    # j2 jammed at full effort: its whole 0.6 N·m goes through link1
+    jam = np.array([bool(s.get("jam")) for s in sw.states])
+    assert jam.any() and np.allclose(my[jam], 600.0, atol=1e-6), my[jam]
     # bang-bang at ramp 0.01 s asks for 300 rad/s²: the effort cut it back
     scales = [s["accelScale"] for s, k in zip(sw.states, kinds) if k == "dynamic"]
     assert max(scales) < 1.0
