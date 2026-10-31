@@ -40,6 +40,18 @@ that material near the motor is both hot and soft, and that material which
 conducts heat into the structure softens it. A weighted temperature term
 can be added to the objective as well.
 
+Thermal expansion (`alpha=` on optimize_thermomechanical, and
+`thermoelastic` to rate a design): each cell wants to grow by
+alpha (T - t_ref), fem.thermal_load turns what stops it into nodal forces,
+and the stress comes off the elastic part of the strain. The objective is
+then twice the elastic strain energy, which is the compliance without
+expansion: f.u would count the work of free growth and pay the optimizer
+to cut whatever hot material moves most. The load depends on density and
+on the design's temperature, so the gradient takes a mechanical adjoint
+besides the thermal one. Checked against a bar held between rollers
+(sigma = -E alpha dT exactly) and Timoshenko's bimetal strip (within 2.5%
+at 4 cells per layer); bench/thermal_expansion.py runs the motor mount.
+
 Units: mm, W, K (or C) throughout; conductivity is given in W/(m K) and
 convection in W/(m^2 K) at the edges, as datasheets quote them, and
 converted here.
@@ -61,6 +73,7 @@ __all__ = [
     "thermal_grid", "grid_from_domain", "Faces", "Conduction", "ScalarSolver", "ThermalBC",
     "Convection", "nodes_in", "cells_in", "thermal_bc", "solve_temperature", "ThermalResult",
     "ThermalOptions", "ThermalOptResult", "optimize_thermal", "optimize_thermomechanical",
+    "EXPANSION", "expansion", "thermoelastic",
 ]
 
 # W/(m K), dense printed parts, in plane. The polymer values match
@@ -91,6 +104,15 @@ MODULUS_RETENTION = {
     "316l": [(23, 1.0), (300, 0.9), (500, 0.82)],
 }
 
+# Linear thermal expansion, 1/K, near room temperature (datasheets; FDM
+# parts in plane, PA-CF along the fibres it is laid with). Printed polymers
+# grow 5-10x more than aluminium, which is what loads a plastic part bolted
+# to a metal frame when the motor beside it warms up.
+EXPANSION = {
+    "pla": 68e-6, "petg": 68e-6, "abs": 90e-6, "asa": 95e-6, "tpu": 150e-6, "pa-cf": 30e-6, "pa12": 109e-6,
+    "pa11": 100e-6, "resin": 80e-6, "resin-tough": 90e-6, "alsi10mg": 21e-6, "ti64": 8.6e-6, "316l": 16e-6,
+}
+
 K_MIN = 1e-3          # void conductivity, relative to the material's
 PENALTY = 3.0
 _SMOOTH = 0.05        # smoothing of |rho_i - rho_j| on interface faces
@@ -109,6 +131,14 @@ def conductivity(material) -> float:
     if key not in CONDUCTIVITY:
         raise ValueError(f"no conductivity for {material!r}; known: {sorted(CONDUCTIVITY)} (or pass k)")
     return CONDUCTIVITY[key]
+
+
+def expansion(material) -> float:
+    """1/K for a material name (or Material), from EXPANSION."""
+    key = _material_key(material)
+    if key not in EXPANSION:
+        raise ValueError(f"no expansion coefficient for {material!r}; known: {sorted(EXPANSION)} (or pass a number)")
+    return EXPANSION[key]
 
 
 def retention(material, t: np.ndarray):
@@ -652,7 +682,7 @@ class ThermalOptResult:
     iterations: int
     converged: bool
     seconds: float
-    compliance: float = float("nan")   # thermo-mechanical: weighted compliance at temperature
+    compliance: float = float("nan")   # thermo-mechanical: weighted compliance at temperature, N mm
     case_compliance: list = field(default_factory=list)
     history: list = field(default_factory=list)
 
@@ -878,14 +908,25 @@ def optimize_thermal(grid: ThermalGrid, bc: ThermalBC, opts: ThermalOptions, on_
 
 
 def optimize_thermomechanical(domain, nu: float, bc: ThermalBC, opts: ThermalOptions, material="petg",
-                              thermal_weight: float = 0.0, on_iter=None, should_stop=None) -> ThermalOptResult:
+                              thermal_weight: float = 0.0, on_iter=None, should_stop=None, alpha=None,
+                              t_ref=None, modulus=None) -> ThermalOptResult:
     """Minimize the weighted compliance of a mechanical simp.Domain whose
     moduli are derated by temperature (`material`'s MODULUS_RETENTION, or a
     list of (C, retention) points), plus `thermal_weight` times the mean
     temperature rise (normalized by its starting value), for a volume.
 
     The temperature field is the design's own: solved on the same cells with
-    `bc` every iteration, and the compliance gradient includes its adjoint."""
+    `bc` every iteration, and the compliance gradient includes its adjoint.
+
+    `alpha` adds thermal expansion: True for the material's EXPANSION, a
+    number (1/K), or one per cell (a metal insert in a polymer part: the
+    mismatch warps it). Each cell then wants to grow by alpha (T - t_ref)
+    (t_ref, the stress-free temperature, defaults to bc.ambient), and
+    wherever the supports, the loads' fixtures or its neighbours stop it,
+    that is a load. It is applied in every load case, scales with the
+    cell's (derated) stiffness, so it depends on the design, and its
+    gradient (through density and through temperature) is in the
+    sensitivities. `modulus` (MPa) defaults to the material's E."""
     from .simp import E_MIN
 
     grid = grid_from_domain(domain)
@@ -893,33 +934,106 @@ def optimize_thermomechanical(domain, nu: float, bc: ThermalBC, opts: ThermalOpt
     pres = grid.preserve.copy()
     if opts.anchor:
         pres |= _anchor_cells(grid, bc)
-    evaluate, fe, th = _thermomech_evaluator(domain, nu, bc, opts, material, thermal_weight)
+    evaluate, fe, th = _thermomech_evaluator(domain, nu, bc, opts, material, thermal_weight, alpha=alpha,
+                                             t_ref=t_ref, modulus=modulus)
     weights = np.asarray(domain.case_weights, float)
 
     x, xp, it, conv, hist, secs = _mma_loop(grid, opts, pres, evaluate, on_iter, should_stop)
     xp = _crisp_connected(grid, xp, bc, pres | (domain.support_nodes | domain.load_nodes)[mesh.enode].any(axis=1))
     res = solve_temperature(mesh, opts.k, bc, density=xp)
-    g, _ = retention(material, res.elem_temperature)
-    e = (E_MIN + xp ** 3 * (1 - E_MIN)) * g
-    us = fe.solve(e, xp, [None] * len(domain.loads), rtol=1e-6)
-    case_c = [float(f @ u) for f, u in zip(domain.loads, us)]
-    comp = float(np.dot(weights, case_c))
+    ev = thermoelastic(domain, nu, xp, res.elem_temperature, material, alpha=alpha,
+                       t_ref=bc.ambient if t_ref is None else t_ref, modulus=modulus, fe=fe)
+    comp = float(np.dot(weights, ev["caseCompliance"]))
     tobj = float(th.l @ (res.temperature - bc.ambient))
-    return ThermalOptResult(x=x, xphys=xp, objective=tobj, temperature=res,
-                            volume_fraction=float(xp[~pres].mean()), iterations=it, converged=conv,
-                            seconds=secs, compliance=comp, case_compliance=case_c, history=hist)
+    out = ThermalOptResult(x=x, xphys=xp, objective=tobj, temperature=res,
+                           volume_fraction=float(xp[~pres].mean()), iterations=it, converged=conv,
+                           seconds=secs, compliance=comp, case_compliance=ev["caseCompliance"], history=hist)
+    out.thermoelastic = ev
+    return out
 
 
-def _thermomech_evaluator(domain, nu, bc, opts, material, thermal_weight, rtol=1e-4):
+def _alpha_cells(alpha, material, n):
+    if alpha is None or alpha is False:
+        return None
+    a = expansion(material) if alpha is True else alpha
+    return np.asarray(a, float) * np.ones(n)
+
+
+def _modulus(material, modulus):
+    if modulus is not None:
+        return float(modulus)
+    from .materials import material_from_spec
+
+    return float(material_from_spec(material).E)
+
+
+def thermoelastic(domain, nu, xp, elem_temperature, material="petg", alpha=True, t_ref=25.0, modulus=None,
+                  fe=None, rtol=1e-6):
+    """Solve a design (densities xp) at a temperature field (per cell, C):
+    the load cases plus the thermal expansion load (alpha as in
+    optimize_thermomechanical; None for none), moduli derated by
+    temperature. Returns per-case displacements (mm), compliance (N mm),
+    twice the elastic strain energy (N mm: the optimizer's
+    objective with expansion, the compliance without), von Mises stress per cell (MPa, the expansion strain taken off) and the
+    largest displacement."""
+    from .fem import elastic_c, hex8_b_center, thermal_load, von_mises
+    from .simp import E_MIN, _Analysis
+
+    mesh = domain.mesh
+    fe = fe or _Analysis(domain, nu, rtol)
+    E0 = _modulus(material, modulus)
+    te = np.asarray(elem_temperature, float)
+    g, _ = retention(material, te)
+    e = (E_MIN + xp ** 3 * (1 - E_MIN)) * g
+    a = _alpha_cells(alpha, material, mesh.n_elem)
+    loads = list(domain.loads)
+    if a is not None:
+        # in fe's units (stiffness at E = 1, so u scaled by E0): E0 E_e eps
+        eps = a * (te - t_ref)
+        fth = thermal_load(mesh, nu, E0 * xp ** 3 * (1 - E_MIN) * g, eps, domain.fixed)
+        loads = [f + fth for f in loads] if loads else [fth]
+    us = fe.solve(e, xp, [None] * len(loads), rtol=rtol, loads=loads)
+    b = hex8_b_center() / mesh.pitch
+    c = elastic_c(1.0, nu)
+    vm = np.zeros(mesh.n_elem)
+    for u in us:
+        strain = u[mesh.edof] @ b.T / E0
+        if a is not None:
+            strain[:, :3] -= eps[:, None]
+        sig = (strain @ c.T) * (E0 * e)[:, None]
+        vm = np.maximum(vm, von_mises(sig))
+    # twice the elastic strain energy, exactly: u.(f_m - f_th) + sum E eps^2 m^T C m V
+    energy = [float(u @ f) / E0 for f, u in zip(loads, us)]
+    if a is not None:
+        cm = float(np.array([1, 1, 1, 0, 0, 0]) @ c @ np.array([1, 1, 1, 0, 0, 0])) * mesh.pitch ** 3
+        self_e = float(np.sum(E0 * xp ** 3 * (1 - E_MIN) * g * eps * eps)) * cm
+        energy = [float(u @ (f - 2 * fth)) / E0 + self_e for f, u in zip(loads, us)]
+    solid = xp > 0.5
+    disp = [np.linalg.norm(u.reshape(-1, 3), axis=1) / E0 for u in us]
+    return {"displacement": [u / E0 for u in us], "caseCompliance": [float(f @ u) / E0 for f, u in zip(loads, us)],
+            "strainEnergy2": energy, "vonMises": vm, "maxVonMises": float(vm[solid].max()) if solid.any() else 0.0,
+            "maxDisplacement": float(max(d.max() for d in disp)), "thermal": a is not None}
+
+
+def _thermomech_evaluator(domain, nu, bc, opts, material, thermal_weight, rtol=1e-4, alpha=None, t_ref=None,
+                          modulus=None):
     """evaluate(xe) -> (objective, gradient w.r.t. xe, record) for
     optimize_thermomechanical; normalized by the first evaluation."""
-    from .simp import E_MIN, _Analysis
+    from .fem import elastic_c, hex8_fth
+    from .simp import ALIVE, E_MIN, _Analysis
 
     mesh = domain.mesh
     fe = _Analysis(domain, nu, rtol)
     th = _Thermal(grid_from_domain(domain), bc, opts.k, opts.target, opts.porous)
     weights = np.asarray(domain.case_weights, float)
-    state = {"us": [None] * len(domain.loads)}
+    a = _alpha_cells(alpha, material, mesh.n_elem)
+    tr = bc.ambient if t_ref is None else float(t_ref)
+    E0 = _modulus(material, modulus) if a is not None else 1.0
+    vth = hex8_fth(nu) * mesh.pitch ** 2
+    # m^T C0 m V: a free-growth strain's energy density at E = 1, times the cell
+    cm = float(np.array([1, 1, 1, 0, 0, 0]) @ elastic_c(1.0, nu) @ np.array([1, 1, 1, 0, 0, 0])) * mesh.pitch ** 3
+    ncase = max(1, len(domain.loads)) if a is not None else len(domain.loads)
+    state = {"us": [None] * ncase}
     refs = {}
 
     def evaluate(xe):
@@ -927,19 +1041,61 @@ def _thermomech_evaluator(domain, nu, bc, opts, material, thermal_weight, rtol=1
         te = (theta + bc.ambient)[mesh.enode].mean(axis=1)
         g, dg = retention(material, te)
         estiff = E_MIN + xe ** 3 * (1 - E_MIN)
-        us = fe.solve(estiff * g, xe, state["us"], rtol=rtol)
+        loads = list(domain.loads)
+        if a is not None:
+            # expansion load per cell: E0 p(x) g(T) alpha (T - t_ref) vth,
+            # p = x^3 without the void floor, and none from cells the
+            # solve leaves out (their share is ~x^3, nothing)
+            live = xe > ALIVE
+            pth = np.where(live, xe ** 3 * (1 - E_MIN), 0.0)
+            eps = a * (te - tr)
+            w = E0 * pth * g * eps
+            fth = np.bincount(mesh.edof.ravel(), weights=(w[:, None] * vth[None, :]).ravel(), minlength=mesh.n_dof)
+            fth[domain.fixed] = 0.0
+            loads = [f + fth for f in loads] if loads else [fth]
+        us = fe.solve(estiff * g, xe, state["us"], rtol=rtol, loads=loads)
         state["us"] = us
-        comp = 0.0
-        w_e = np.zeros(mesh.n_elem)           # sum_c w_c u_e^T K0 u_e
-        for ci, f in enumerate(domain.loads):
-            comp += weights[ci] * float(f @ us[ci])
-            w_e += weights[ci] * fe.strain_energy(us[ci])
-        refs.setdefault("c", comp)
-        # explicit part, at fixed temperature
-        g_xe = -(3 * xe ** 2 * (1 - E_MIN)) * g * w_e / refs["c"]
-        # through temperature: dC/dT_e = -E_e g'(T_e) w_e, a node holds 1/8 of
-        # each of its cells' temperature
-        dc_dte = -estiff * dg * w_e / refs["c"]
+        cw = weights if len(weights) == len(loads) else np.ones(len(loads))
+        if a is None:
+            comp = 0.0
+            w_e = np.zeros(mesh.n_elem)           # sum_c w_c u_e^T K0 u_e
+            for ci, f in enumerate(loads):
+                comp += cw[ci] * float(f @ us[ci])
+                w_e += cw[ci] * fe.strain_energy(us[ci])
+            refs.setdefault("c", comp)
+            # explicit part, at fixed temperature
+            g_xe = -(3 * xe ** 2 * (1 - E_MIN)) * g * w_e / refs["c"]
+            # through temperature: dC/dT_e = -E_e g'(T_e) w_e, a node holds 1/8
+            # of each of its cells' temperature
+            dc_dte = -estiff * dg * w_e / refs["c"]
+        else:
+            # With expansion the objective is twice the elastic strain energy,
+            # sum_e E_e (eps - eps_th)^T C0 (eps - eps_th) V, not f.u: free
+            # growth does work on its load without stressing anything, and
+            # f.u would pay the optimizer to cut the hot material that moves
+            # most rather than the material that is fought over. Without
+            # expansion it is the compliance. In fe's units:
+            # J = u.f_m - u.f_th + E0^2 sum_e p_e g_e eps_e^2 cm V, adjoint
+            # K lam = f_m - f_th.
+            # (loads already carry f_th: f_m - f_th = f - 2 f_th)
+            lams = fe.resolve([f - 2 * fth for f in loads], state.get("lams"))
+            state["lams"] = lams
+            comp = 0.0
+            m_e = np.zeros(mesh.n_elem)           # sum_c w_c lam_e^T K0 u_e
+            q_e = np.zeros(mesh.n_elem)           # sum_c w_c (lam_e - u_e) . vth
+            self_e = E0 * E0 * eps * eps * cm
+            for ci, f in enumerate(loads):
+                u, lam = us[ci], lams[ci]
+                comp += cw[ci] * (float(u @ (f - 2 * fth)) + float(np.sum(pth * g * self_e)))
+                m_e += cw[ci] * 0.25 * (fe.strain_energy(lam + u) - fe.strain_energy(lam - u))
+                q_e += cw[ci] * ((lam - u)[mesh.edof] @ vth)
+            refs.setdefault("c", comp)
+            dp = np.where(live, 3 * xe ** 2 * (1 - E_MIN), 0.0)
+            sw = cw.sum()
+            g_xe = (-(3 * xe ** 2 * (1 - E_MIN)) * g * m_e + E0 * dp * g * eps * q_e
+                    + sw * dp * g * self_e) / refs["c"]
+            dc_dte = (-estiff * dg * m_e + E0 * pth * (dg * eps + g * a) * q_e
+                      + sw * E0 * E0 * pth * cm * (dg * eps * eps + 2 * g * eps * a)) / refs["c"]
         rhs = np.bincount(mesh.enode.ravel(), weights=np.repeat(dc_dte / 8.0, 8), minlength=mesh.n_nodes)
         obj = comp / refs["c"]
         if thermal_weight > 0:
@@ -950,7 +1106,7 @@ def _thermomech_evaluator(domain, nu, bc, opts, material, thermal_weight, rtol=1
         if np.any(rhs):
             th.lam = th.adjoint(rhs, th.lam)
             g_xe = g_xe + th.gradient(xe, th.lam)
-        rec = {"compliance": comp, "maxT": float(theta.max() + bc.ambient),
+        rec = {"compliance" if a is None else "strainEnergy2": comp / E0, "maxT": float(theta.max() + bc.ambient),
                "minRetention": float(g[xe > 0.5].min()) if np.any(xe > 0.5) else 1.0}
         return obj, g_xe, rec
 
