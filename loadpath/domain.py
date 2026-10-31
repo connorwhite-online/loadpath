@@ -97,6 +97,7 @@ def choose_pitch(study: Study) -> float:
         inside |= s.contains(pts)
     frac = max(float(inside.mean()), 0.05)
     pitch = (vol * frac / study.max_elements) ** (1.0 / 3.0)
+    budget = pitch
     if study.min_member:
         # No finer than two cells per filter radius (1.3 x minMember, see
         # simp.filter_radius): the filter sets the feature scale, so finer
@@ -105,6 +106,17 @@ def choose_pitch(study: Study) -> float:
         # stiffer (0.58mm vs 1.06mm deflection at the same 30% volume): the
         # finer grid had settled in a worse local optimum.
         pitch = max(pitch, 1.3 * float(study.min_member) / 2.0)
+        if study.goal.method == "constrained":
+            # The stress-constrained method sits its members right at the
+            # minimum, and at two cells per filter radius that is 1.5 cells:
+            # the wall bracket's 4 mm members on a 2.6 mm grid meshed three
+            # times floppier than their voxels, its first run verified at SF
+            # 0.1 with the optimizer reading the limit, and four targets
+            # 2.45-2.6 ended at 55-75 g. With the member 2.5 cells across
+            # (1.6 mm) the optimizer's reading holds on the mesh (first run
+            # SF 1.7) and the four land at 29.2-30.1 g, in about 4x the time.
+            # Up to 4x maxElements cells for it, no more.
+            pitch = min(pitch, max(float(study.min_member) / 2.5, budget / 4.0 ** (1.0 / 3.0)))
     return pitch
 
 
