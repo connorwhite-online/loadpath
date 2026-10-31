@@ -1226,15 +1226,21 @@ class FieldGraph:
 
     # -- meshing --
 
-    def mesh(self, pitch=None, bounds=None, project=None, name=None, progress=None, sharp=None):
+    def mesh(self, pitch=None, bounds=None, project=None, name=None, progress=None, sharp=None, creases=None):
         """`sharp` (default the graph's mesh.sharp, else true): hard booleans
         with plain shapes and meshes are done exactly (sharp.py), so bores,
         flat faces and keep-outs keep their edges; false meshes the whole
-        field, every crease rounded over about one pitch."""
+        field, every crease rounded over about one pitch.
+
+        `creases` (default the graph's mesh.creases, else false): hard
+        booleans between field surfaces (a lattice clipped by a body, two
+        bodies unioned without a blend, a shell's rim) get their creases back
+        on the meshed field (crease.py)."""
         m = self.doc.get("mesh") or {}
         pitch = pitch or m.get("pitch")
         project = m.get("project", 3) if project is None else project
         sharp = m.get("sharp", True) if sharp is None else sharp
+        creases = m.get("creases", False) if creases is None else creases
         if bounds is None and "bounds" in self.doc:
             bounds = (self.doc["bounds"]["min"], self.doc["bounds"]["max"])
         if bounds is None:
@@ -1249,11 +1255,16 @@ class FieldGraph:
             if has_exact(p):
                 # set after meshing: a result node meshes another node on the way
                 mesh = mesh_plan(p, bounds[0], bounds[1], pitch=pitch, project=project, progress=progress,
-                                 decimate=m.get("decimate"))
+                                 decimate=m.get("decimate"), creases=self if creases else None)
                 self.plan = p
                 return mesh
+        tree = None
+        if creases:
+            from .crease import CreaseTree
+
+            tree = CreaseTree.from_graph(self, name)
         mesh = field_mesh(self.field(name), bounds[0], bounds[1], pitch=pitch, project=project, progress=progress,
-                          decimate=m.get("decimate"))
+                          decimate=m.get("decimate"), creases=tree)
         self.plan = None
         return mesh
 
@@ -1338,7 +1349,7 @@ def _remap(x, s, name):
 
 # ---- meshing ---------------------------------------------------------------------
 
-def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, sparse=True, decimate=None):
+def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, sparse=True, decimate=None, creases=None):
     """Smooth, watertight trimesh of field(P) < 0 over [lo, hi] (mm).
 
     Marching cubes on a grid at `pitch` (default: the box over 4M cells,
@@ -1356,7 +1367,12 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
 
     `decimate` (mm) thins the triangles wherever the mesh stays that close
     to the surface (decimate.py): flat and gently curved regions lose most
-    of theirs, creases and small features keep them."""
+    of theirs, creases and small features keep them.
+
+    `creases` (a crease.CreaseTree of the field: its hard min/max over
+    smooth leaves) puts the creases between field surfaces back after the
+    projection: the edges that cross from one leaf's surface to another's
+    are split on the true intersection curve (crease.py)."""
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -1380,7 +1396,7 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
             verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=np.inf, budget=_CELL_BUDGET,
                                                 progress=progress)
             stats["fallback"] = True
-        return _finish(verts, faces[:, ::-1], field, pitch, project, stats, decimate)
+        return _finish(verts, faces[:, ::-1], field, pitch, project, stats, decimate, creases)
     if cells > _CELL_BUDGET:
         p = float((np.prod(ext + 2 * pad * pitch) / _CELL_BUDGET) ** (1 / 3))
         raise ValueError(f"grid {dims[0]}x{dims[1]}x{dims[2]} = {cells / 1e6:.1f}M cells exceeds the "
@@ -1404,7 +1420,7 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
     verts, faces, _, _ = marching_cubes(F, 0.0, spacing=(pitch,) * 3)
     del F
     m = trimesh.Trimesh(verts + lo, faces[:, ::-1], process=True)
-    return _finish(np.asarray(m.vertices), np.asarray(m.faces), field, pitch, project, None, decimate)
+    return _finish(np.asarray(m.vertices), np.asarray(m.faces), field, pitch, project, None, decimate, creases)
 
 
 def field_stl(field, lo, hi, path, pitch=None, project=3, pad=2, progress=None, block=32, lipschitz=None,
@@ -1579,7 +1595,7 @@ def _grid(lo, hi, pitch, pad):
     return lo, dims, pitch
 
 
-def _finish(V, F, field, pitch, project, stats=None, decimate=None):
+def _finish(V, F, field, pitch, project, stats=None, decimate=None, creases=None):
     """Relax and project the marching-cubes mesh, orient it, drop debris
     (shells under (2 pitch)^3), as a trimesh. The bookkeeping is numpy on
     the arrays: trimesh's own (process, split, volume) took longer than
@@ -1592,11 +1608,19 @@ def _finish(V, F, field, pitch, project, stats=None, decimate=None):
     F = np.asarray(F, np.int64)
     if project:
         V = _relax(V, F, field, pitch, int(project))
+    locked, sharp_st = None, None
+    if creases is not None and project:
+        from .crease import sharpen
+
+        sharp_st = {}
+        if signed_volume(V, F) < 0:          # sharpen checks faces against the surface normals
+            F = F[:, ::-1].copy()
+        V, F, locked = sharpen(V, F, creases, pitch, field=field, stats=sharp_st)
     dec = None
     if decimate:
         from .decimate import decimate as thin
 
-        V, F, dec, _ = thin(V, F, field, float(decimate), pitch)
+        V, F, dec, kept = thin(V, F, field, float(decimate), pitch, locked=locked)
     try:
         lab, vol = shell_volumes(V, F)
         tol = (2.0 * pitch) ** 3
@@ -1619,6 +1643,8 @@ def _finish(V, F, field, pitch, project, stats=None, decimate=None):
         mesh.metadata["sampling"] = stats
     if dec:
         mesh.metadata["decimation"] = dec
+    if sharp_st is not None:
+        mesh.metadata["creases"] = sharp_st
     return mesh
 
 
