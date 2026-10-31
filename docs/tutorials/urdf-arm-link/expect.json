@@ -1,0 +1,30 @@
+{
+  "quick": [
+    {"file": "derived/assembly.json", "value": "len(r['kinds'])", "min": 1, "max": 8, "what": "governing cases"},
+    {"file": "derived/assembly.json", "value": "r['sweptKeepOuts']['sweep-upper_arm']['mm3']", "min": 40000, "max": 49000, "what": "upper arm's sweep, mm3"},
+    {"file": "derived/assembly.json", "value": "r['sweptKeepOuts']['sweep-wrist']['mm3']", "min": 48000, "max": 59000, "what": "wrist's sweep, mm3"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 60, "max": 100, "what": "derived design's mass, g"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 2.0, "max": 6.0, "what": "derived design's SF"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "derived design passes"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['bodies']", "equals": 1, "what": "derived design is one piece"},
+    {"file": "hand/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "hand-loaded design passes its own case"},
+    {"file": "hand-check/verify.json", "value": "r['passes']", "equals": false, "what": "hand-loaded design under the derived study passes"},
+    {"file": "hand-check/verify.json", "value": "r['safetyFactor']", "max": 2.0, "what": "hand-loaded design's SF under the derived cases"},
+    {"file": "hand-check/verify.json", "value": "r['keepOutIntrusion']", "min": 1000, "what": "hand-loaded design inside the neighbours' sweeps, mm3"}
+  ],
+  "full": [
+    {"file": "derived/assembly.json", "value": "r['kinds']", "equals": ["push", "push", "push"], "what": "governing cases"},
+    {"file": "derived/assembly.json", "value": "r['envelopeRatio']['p5Top20']", "min": 0.88, "max": 0.9, "what": "envelope ratio, p5 of the top 20%"},
+    {"file": "derived/assembly.json", "value": "r['sweptKeepOuts']['sweep-upper_arm']['mm3']", "min": 44000, "max": 45000, "what": "upper arm's sweep, mm3 (44 cm3)"},
+    {"file": "derived/assembly.json", "value": "r['sweptKeepOuts']['sweep-wrist']['mm3']", "min": 53000, "max": 54500, "what": "wrist's sweep, mm3 (54 cm3)"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 62, "max": 70, "what": "derived design's mass, g (66)"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 2.8, "max": 3.5, "what": "derived design's SF (3.14)"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "derived design passes"},
+    {"file": "hand/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 55, "max": 62, "what": "hand-loaded design's mass, g (58.6)"},
+    {"file": "hand/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 2.5, "max": 3.1, "what": "hand-loaded design's SF, own case (2.80)"},
+    {"file": "hand-check/verify.json", "value": "r['safetyFactor']", "min": 0.8, "max": 1.0, "what": "hand-loaded design's SF under the derived cases (0.89)"},
+    {"file": "hand-check/verify.json", "value": "r['passes']", "equals": false, "what": "hand-loaded design under the derived study passes"},
+    {"file": "hand-check/verify.json", "value": "r['keepOutIntrusion']", "min": 4000, "max": 5000, "what": "hand-loaded design inside the neighbours' sweeps, mm3 (4.5 cm3)"}
+  ],
+  "files": ["derived/forearm.derived.json", "derived/sweep-wrist.stl", "derived/sweep-upper_arm.stl", "out/*.stl", "hand-check/verify.json"]
+}
