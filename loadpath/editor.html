@@ -106,6 +106,7 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
 #legend { right: max(12px, env(safe-area-inset-right, 0px)); bottom: 12px; padding: 9px 11px; width: 210px; max-width: calc(100% - 24px); }
 #legend .t { font-size: 12px; font-weight: 500; margin-bottom: 6px; }
 #legend canvas { width: 100%; height: 10px; border-radius: 2px; display: block; }
+#legend .lgn { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
 #legend .ticks { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
 #viewbar { top: 10px; right: max(10px, env(safe-area-inset-right, 0px)); display: flex; gap: 4px; background: transparent; border: 0; }
 #viewbar button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; cursor: pointer; font-size: 12px; }
@@ -255,6 +256,7 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
         <div class="t" id="lg-title"></div>
         <canvas id="lg-bar" width="256" height="1"></canvas>
         <div class="ticks"><span id="lg-lo"></span><span id="lg-mid"></span><span id="lg-hi"></span></div>
+        <div class="lgn" id="lg-note" hidden></div>
       </div>
       <div id="notes" class="overlay" hidden></div>
       <div id="probe" hidden></div>
@@ -386,6 +388,7 @@ const S = {
   doc: null, sel: null, target: null, color: null, follow: true, bakes: {}, layout: {},
   cut: "off", cutPos: 0.5, cutFlip: false, quality: "good", mode: "preview", issues: [], serverIssues: [],
   undo: [], redo: [], version: 0, box: null, range: null, job: null,
+  stress: false, sp: { busy: false, again: false, result: null, error: null, ms: null },
 };
 
 /** Name every inline node (`owner-key`), placed before its owner so the last node (the default output) stays last. */
@@ -905,6 +908,7 @@ void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2
 const PREVIEW_MAIN = `
 uniform mat4 uInvVP; uniform vec3 uLo, uHi, uKey, uClay, uCut; uniform vec4 uPlane; uniform int uSection, uColorOn, uMode, uMaxSteps, uWalls, uOver;
 uniform float uStep, uPix, uAO, uMinWall, uOverCos, uBed; uniform vec3 uBuild; uniform vec2 uRange, uPickNdc;
+uniform int uStressOn; uniform highp sampler3D uStressTex; uniform vec3 uSA, uSB; uniform float uSMax, uSGoal, uSStale;
 in vec2 vUv; out vec4 frag;
 float map(vec3 p) { float d = scene_solid(p); if (uSection == 1) d = max(d, dot(p, uPlane.xyz) - uPlane.w); return d; }
 vec3 nrm(vec3 p, float e) {
@@ -979,6 +983,13 @@ void main() {
     bool bed = dot(p, uBuild) < uBed;
     if (!bed && down > uOverCos) base = toLin(vec3(0.86, 0.16, 0.12));
     else if (!bed && down > uOverCos - 0.13) base = mix(base, toLin(vec3(0.95, 0.66, 0.12)), 0.85);
+  }
+  if (uStressOn == 1) {
+    // the live preview's stress over allowed, scaled to its peak; deep red past the goal's safety factor.
+    // While a newer preview is on its way the old map fades toward clay.
+    float u = texture(uStressTex, p * uSA + uSB).r;
+    vec3 sc = u > uSGoal ? toLin(vec3(0.55, 0.0, 0.06)) : toLin(turbo(u / uSMax));
+    base = mix(sc, base, uSStale);
   }
   float occ = 0.0, w = 1.0;
   for (int i = 1; i <= 4; i++) { float h = uAO * float(i); occ += w * max(h - map(p + n * h), 0.0); w *= 0.55; }
@@ -1109,6 +1120,7 @@ function recompile() {
   kick(false);
   drawGraph();
   requestBakes();
+  stressSoon();
 }
 /** A slider moved: set the uniform if there is one, else it is a structural change. */
 function paramChanged(path) {
@@ -1122,6 +1134,7 @@ function paramChanged(path) {
     boundsSoon();
     drawGraphSoon();
     bakesSoon();
+    stressSoon();
   } else recompileSoon();
   commitSoon();
 }
@@ -1162,6 +1175,13 @@ function renderPreview(scale) {
   gl.uniform1f(L.uOverCos, Math.cos(THREE.MathUtils.degToRad(ov.deg)));
   gl.uniform1f(L.uBed, ov.bed);
   gl.uniform2fv(L.uRange, S.range || [0, 1]);
+  const sp = S.stress && G.stress;
+  gl.uniform1i(L.uStressOn, sp ? 1 : 0);
+  if (sp) {
+    gl.activeTexture(gl.TEXTURE15); gl.bindTexture(gl.TEXTURE_3D, G.stress.tex); gl.uniform1i(L.uStressTex, 15);
+    gl.uniform3fv(L.uSA, G.stress.a); gl.uniform3fv(L.uSB, G.stress.b);
+    gl.uniform1f(L.uSMax, G.stress.max); gl.uniform1f(L.uSGoal, G.stress.goal); gl.uniform1f(L.uSStale, S.sp.busy ? 0.35 : 0.0);
+  }
   gl.uniform1i(L.uMode, 0);
   gl.uniform1i(L.uMaxSteps, scale < 1 ? Math.min(q.steps, 220) : q.steps);
   gl.uniform1f(L.uStep, q.step);
@@ -2584,8 +2604,9 @@ function fillSelects() {
   const solids = names.filter((n) => kindOf(n) === "solid"), scalars = names.filter((n) => kindOf(n) === "scalar");
   $("#target").replaceChildren(el("option", { value: "#follow", selected: S.follow }, `follow selection${S.follow && S.target ? ` (${S.target})` : ""}`),
     ...solids.map((n) => el("option", { value: n, selected: !S.follow && n === S.target }, n + (n === S.doc.output ? "  · output" : ""))));
-  $("#colorby").replaceChildren(el("option", { value: "", selected: !S.color && !S.walls && !S.over }, "plain"),
-    el("option", { value: "#walls", selected: !!S.walls }, "wall thickness"), el("option", { value: "#over", selected: !!S.over }, "overhangs"), ...scalars.map((n) => el("option", { value: n, selected: n === S.color }, n)));
+  $("#colorby").replaceChildren(el("option", { value: "", selected: !S.color && !S.walls && !S.over && !S.stress }, "plain"),
+    el("option", { value: "#walls", selected: !!S.walls }, "wall thickness"), el("option", { value: "#over", selected: !!S.over }, "overhangs"),
+    el("option", { value: "#stress", selected: !!S.stress, disabled: !DATA.server }, DATA.server ? "stress (live preview)" : "stress (needs loadpath edit)"), ...scalars.map((n) => el("option", { value: n, selected: n === S.color }, n)));
   $("#output").replaceChildren(...solids.map((n) => el("option", { value: n, selected: n === S.doc.output }, n)));
 }
 function partPanel() {
@@ -2636,7 +2657,62 @@ function overhang() {
   const kind = minWall().kind;
   return { build: b, deg: 45, bed, needs: kind === "fdm" || kind === "lpbf", kind };
 }
+/** The live stress preview: the server solves the part on a coarse grid (preview.py); one request at a
+ * time, and the newest graph goes next, so a dragged slider is followed without a queue. */
+async function requestStress() {
+  if (!S.stress || !DATA.server) return;
+  if (S.sp.busy) { S.sp.again = true; return; }
+  S.sp.busy = true; S.sp.again = false; legend(); kick(false);
+  const t0 = performance.now();
+  try {
+    const r = await fetch("api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc: exportDoc() }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    stressTexture(j);
+    S.sp.result = j; S.sp.error = null; S.sp.ms = performance.now() - t0;
+  } catch (e) {
+    S.sp.error = String(e.message || e); S.sp.result = null; G.stress = null;
+  }
+  S.sp.busy = false;
+  if (S.sp.again && S.stress) return requestStress();
+  legend(); kick(false);
+}
+const stressSoon = debounce(() => { if (S.stress) requestStress(); }, 90);
+function stressTexture(j) {
+  if (!G.ok) return;
+  const tex = (G.stress && G.stress.tex) || gl.createTexture();
+  gl.activeTexture(gl.TEXTURE15);
+  gl.bindTexture(gl.TEXTURE_3D, tex);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texImage3D(gl.TEXTURE_3D, 0, gl.R16F, j.dims[0], j.dims[1], j.dims[2], 0, gl.RED, gl.HALF_FLOAT, b64ToU16(j.data));
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]])
+    gl.texParameteri(gl.TEXTURE_3D, k, v);
+  // node i sits at lo + i * pitch, the centre of texel i
+  const a = j.dims.map((n) => 1 / (j.pitch * n)), b = j.dims.map((n, i) => (0.5 - j.lo[i] / j.pitch) / n);
+  const goal = j.goal && j.goal.safetyFactor || 1;
+  G.stress = { tex, a, b, max: Math.max(j.peak, 1e-6), goal: 1 / goal };
+}
+
 function legend() {
+  $("#lg-note").hidden = true;
+  if (S.stress && S.mode === "preview") {
+    $("#legend").hidden = false;
+    const r = S.sp.result, goal = r && r.goal && r.goal.safetyFactor || 1;
+    $("#lg-bar").hidden = !r;
+    $("#lg-title").textContent = "Stress preview (coarse)";
+    $("#lg-note").hidden = false;
+    if (!r) {
+      $("#lg-note").textContent = S.sp.error || "solving…";
+      $("#lg-lo").textContent = $("#lg-mid").textContent = $("#lg-hi").textContent = "";
+      return;
+    }
+    $("#lg-lo").textContent = "0 MPa"; $("#lg-mid").textContent = ""; $("#lg-hi").textContent = `${fmt(r.peak * r.allowed)} MPa peak`;
+    const d = r.goal && r.goal.maxDeflection;
+    $("#lg-note").textContent = `SF ≈ ${fmt(r.safetyFactor)}${goal > 1 ? ` (goal ${fmt(goal)}, darker red past it)` : ""} · deflection ≈ ${fmt(r.deflection)} mm${d ? ` (limit ${fmt(d)})` : ""} · ` +
+      `${(r.cells / 1000).toFixed(1)}k cells in ${((S.sp.ms != null ? S.sp.ms : 1000 * r.seconds) / 1000).toFixed(1)} s` +
+      `${S.sp.busy ? " · updating…" : ""}. A coarse preview with no hot-spot refinement, so its SF reads high near fillets and notches: Run checks the part.`;
+    return;
+  }
   if (S.over && S.mode === "preview") {
     const o = overhang();
     $("#legend").hidden = false; $("#lg-bar").hidden = true;
@@ -2913,9 +2989,10 @@ $("#target").addEventListener("change", (e) => {
   fillSelects(); drawGraph(); recompile();
 });
 $("#colorby").addEventListener("change", (e) => {
-  S.walls = e.target.value === "#walls"; S.over = e.target.value === "#over";
-  S.color = S.walls || S.over ? null : e.target.value || null;
+  S.walls = e.target.value === "#walls"; S.over = e.target.value === "#over"; S.stress = e.target.value === "#stress";
+  S.color = S.walls || S.over || S.stress ? null : e.target.value || null;
   drawGraph(); recompile(); legend();
+  if (S.stress) requestStress();
 });
 $("#output").addEventListener("change", (e) => { S.doc.output = e.target.value; structural(); });
 $("#name").addEventListener("change", (e) => { S.doc.name = e.target.value || "field"; commit(); });
@@ -2927,14 +3004,14 @@ $("#material").addEventListener("change", (e) => {
   let m = v;
   if (v.startsWith("{")) { try { m = JSON.parse(v); } catch (err) { status("That custom material isn't valid JSON.", "warn"); return; } }
   if (v) S.doc.material = m; else delete S.doc.material;
-  commit(); materialPanel(); updateMass();
+  commit(); materialPanel(); updateMass(); stressSoon();
 });
 $("#material-pick").addEventListener("change", (e) => {
   const v = e.target.value;
   if (v === "custom") { $("#material-custom").hidden = false; $("#material").focus(); return; }
   if (v) S.doc.material = v; else delete S.doc.material;
   $("#material").value = v;
-  commit(); materialPanel(); updateMass();
+  commit(); materialPanel(); updateMass(); stressSoon();
 });
 $("#materials").replaceChildren(...Object.keys(DATA.densities || {}).map((k) => el("option", { value: k })));
 $("#sweep").addEventListener("click", async () => {
@@ -3030,7 +3107,7 @@ window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
   THREE, cam: () => { camera.updateMatrixWorld(); return camera; },
-  makeGroup: (n, g) => makeGroup(n, g), run: (n) => run(n), setCheck: (sf, d) => setCheck(sf, d), tune: () => tune(), addTuneKnob: (k) => addTuneKnob(k), tuneSweep: (t) => tuneSweep(t), drawFront: (j) => drawFront(j), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
+  makeGroup: (n, g) => makeGroup(n, g), run: (n) => run(n), stress: () => S.sp, requestStress: () => requestStress(), setCheck: (sf, d) => setCheck(sf, d), tune: () => tune(), addTuneKnob: (k) => addTuneKnob(k), tuneSweep: (t) => tuneSweep(t), drawFront: (j) => drawFront(j), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
   paste: (text) => pasteText(text), sweep: (key, n) => sweepMass(key, n), duplicate: (n) => duplicateNode(n),
   pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),

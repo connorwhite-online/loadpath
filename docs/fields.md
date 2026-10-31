@@ -70,6 +70,23 @@ wire, an expression) recompiles, in milliseconds.
   **Fit mass** finds the value of any one number (a wall, a blend, a remap
   end) that gives a target mass, in a second or two; **Sweep** charts the
   mass across that number's range, and clicking a point uses that value.
+- **Colour → stress (live preview)** solves the part under the graph's
+  study (its tune block's, else a result node's) on a coarse grid and
+  paints the stress on it, scaled to its peak, deep red past the goal's
+  safety factor. It updates as you drag: the server samples the field at
+  cell centres (no mesh), gives each surface cell its filled share of the
+  stiffness so the reading moves smoothly with a slider, and solves with
+  the matrix-free multigrid (on a GPU when torch has one). On the arm link
+  that is 16-19k cells and 0.9-1.3 s per slider value on the 4-core cloud
+  box. The legend says it is a preview. Against the full check of the
+  same envelope (verify on the meshed part, about 50 s), mass agrees to
+  0.2% and deflection to 0-6%, but the safety factor reads about 1.35x
+  high (24 against 18, 18 against 13): the preview has no hot-spot
+  submodels, so a fillet or notch reads low. Use it to see where the part
+  works and which way a knob moves it, and Run or Tune for the number.
+
+  ![stress preview on the arm link](images/fields/editor-stress-preview.png)
+
 - **Tune** goes past mass to strength: name a study (its loads, supports
   and limits), add knobs with **+ knob**, and the server meshes and
   analyzes candidates until the part is as light as it can be while it
@@ -228,6 +245,13 @@ reading is scaled by that ratio before it meets the limits;
 at the end the lightest few that passed are analyzed again on the fine
 grid and the first that still passes is the answer (if none does, the
 lightest is returned marked `unconfirmed`).
+
+The coarse grid also gives each surface cell its filled share of the
+stiffness (`verify_part(fractional=True)`). With whole cells a 7.4 mm bar
+read as 8.1 mm at one height and 7.2 mm at the next, so its safety factor
+jumped about as the search thinned it (a thinner bar read stronger, 4.29
+against 4.05). With filled shares the reading rises steadily with the
+height. The fine check that confirms the answer stays on whole cells.
 
 ```json
 "tune": {"study": "example:arm-link",

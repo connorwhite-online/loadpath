@@ -435,7 +435,8 @@ class _Jobs:
 def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir=None, open_browser=True,
                  ready=None):
     """Serve the editor for the graph at `graph_path` until interrupted.
-    POST /api/bake, /api/lint, /api/save, /api/run ({doc, node?}), /api/tune; GET /api/job?id=,
+    POST /api/bake, /api/lint, /api/save, /api/run ({doc, node?}), /api/tune, /api/preview
+    ({doc, cells?}: the live coarse stress, preview.py); GET /api/job?id=,
     /out/<job>/<file>. Binds to localhost unless told otherwise: it reads
     and writes files in the graph's folder. `ready(server)` is called once
     it listens (tests use port 0 and read server.server_port)."""
@@ -451,6 +452,11 @@ def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir
     resources = _Resources()
     jobs = _Jobs(out_dir, base_dir, resources)
     bake_cache, bake_lock = OrderedDict(), threading.Lock()
+    from .preview import PreviewState
+
+    # the live stress preview: one at a time (a slider's newest value is
+    # what the page sends next), its grid and last solve carried over
+    preview = {"state": PreviewState(), "lock": threading.Lock(), "studies": {}}
 
     def load():
         with open(graph_path) as fh:
@@ -542,6 +548,28 @@ def serve_editor(graph_path, host="127.0.0.1", port=8765, out_dir=None, base_dir
                     return self._send(200, out)
                 except Exception as exc:  # noqa: BLE001
                     return self._send(400, {"error": str(exc), "node": name})
+            if u.path == "/api/preview":
+                from .fields import load_study
+                from .preview import PREVIEW_CELLS, study_ref, stress_preview
+
+                try:
+                    doc = expand_groups(doc)
+                    ref = study_ref(doc)
+                    if ref is None:
+                        raise ValueError("the stress preview needs a study: add one in the Tune panel "
+                                         "(or a result node)")
+                    skey = json.dumps([ref, doc.get("material")])
+                    with preview["lock"]:
+                        if skey not in preview["studies"]:
+                            preview["studies"] = {skey: load_study(ref, base_dir, doc.get("material"))}
+                        g = resources.graph(doc, base_dir)
+                        out = stress_preview(doc, base_dir, study=preview["studies"][skey], graph=g,
+                                             cells=int(body.get("cells") or PREVIEW_CELLS),
+                                             state=preview["state"])
+                        resources.keep(g, doc)
+                    return self._send(200, out)
+                except Exception as exc:  # noqa: BLE001 - reported to the page
+                    return self._send(400, {"error": str(exc)})
             if u.path == "/api/tune":
                 issues = lint(doc, "field")
                 if any(i["level"] == "error" for i in issues):
