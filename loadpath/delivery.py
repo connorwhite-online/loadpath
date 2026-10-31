@@ -128,6 +128,9 @@ def delivery(summary: dict, study: dict) -> dict | None:
     if str(kind or "").lower() == "fdm" and "slicer" not in o:
         d["slicer"] = "not run: no slicer found or none asked for (install PrusaSlicer or set LOADPATH_SLICER " \
                       "for print time and filament)"
+    # the one number to quote: the factor of whichever limit sets the part
+    d["governingSafetyFactor"] = d.get("durabilitySafetyFactor") if d["governedBy"] == "durability" \
+        else d.get("safetyFactor")
     if d["governedBy"] == "durability" and d.get("durabilitySafetyFactor") is not None:
         d["warnings"].insert(0, f"durability (fatigue/creep) sets this part: quote its safety factor "
                                 f"{d['durabilitySafetyFactor']:.2f}, not the static {d['safetyFactor']:.2f}")
