@@ -1,0 +1,34 @@
+{
+  "name": "forearm-conformal",
+  "description": "The tuned forearm (tune/tuned.json's rim and struts) with its octet laid along the link's surface instead: a conformal frame on the envelope taken 1 mm in, so the outer layer of nodes sits just under the skin. Shown in the tutorial to compare, not delivered.",
+  "nodes": {
+    "elbow": {"op": "shape", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 24, "r": 16}},
+    "wrist": {"op": "shape", "shape": {"type": "cylinder", "center": [120, 0, 0], "axis": "z", "length": 20, "r": 12}},
+    "beam": {"op": "shape", "shape": {"type": "cylinder", "p0": [0, 0, 0], "p1": [120, 0, 0], "r": 10}},
+    "blob": {"op": "union", "inputs": ["elbow", "wrist", "beam"], "blend": 10},
+    "slab": {"op": "shape", "shape": {"type": "box", "min": [-20, -20, -11], "max": [140, 20, 11]}},
+    "envelope": {"op": "intersect", "inputs": ["blob", "slab"], "blend": 2},
+    "bores": {"op": "shape", "shape": {"type": "union", "shapes": [
+      {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 30, "r": 11},
+      {"type": "cylinder", "center": [120, 0, 0], "axis": "z", "length": 30, "r": 8}]}},
+    "solid": {"op": "subtract", "inputs": ["envelope", "bores"]},
+    "stress": {"op": "result", "study": "forearm.study.json", "part": "solid", "pitch": 1.0, "scale": "peak"},
+    "inset": {"op": "offset", "input": "envelope", "distance": -1.0,
+              "description": "the envelope 1 mm in: the outer layer of nodes sits here, so the outermost struts are whole, not halved by the skin"},
+    "core": {"op": "lattice", "type": "octet", "cell": 7, "thickness": 1.0, "blend": 0.5,
+             "frame": {"type": "conformal", "surface": "inset", "axis": "x"},
+             "description": "octet cells laid along the link's surface, lined up with its length"},
+    "fill": {"op": "intersect", "inputs": ["core", {"op": "offset", "input": "envelope", "distance": -0.2}]},
+    "collars": {"op": "shell", "input": "bores", "side": "outside", "thickness": 5.5},
+    "rimWall": {"op": "remap", "input": "stress", "from": [0.1, 0.8], "to": [1.0, 3.44], "curve": "smoothstep"},
+    "rim": {"op": "intersect", "inputs": [{"op": "shell", "input": "envelope", "thickness": "rimWall"},
+                                          {"op": "shape", "shape": {"type": "box", "min": [-20, -20, -8.5], "max": [140, 20, 8.5]}}]},
+    "joined": {"op": "union", "inputs": ["collars", "rim", "fill"], "blend": 1.0},
+    "part": {"op": "subtract", "inputs": [{"op": "intersect", "inputs": ["joined", "envelope"]}, "bores"]}
+  },
+  "output": "part",
+  "mesh": {"pitch": 0.25},
+  "material": "pa12",
+  "process": "sls",
+  "minWall": 0.8
+}

@@ -1,0 +1,23 @@
+{
+  "name": "forearm",
+  "description": "A GRIP-style forearm link between a 22 mm elbow bearing and a 16 mm wrist bearing, 120 mm apart: 1.5 kg at the wrist with a dynamic factor of 2 (30 N), the wrist servo's 1.5 N m reaction twisting the wrist boss, and a 15 N side knock. Elbow bearing held. PA12, SLS.",
+  "designSpace": [{"type": "box", "min": [-17, -17, -12], "max": [133, 17, 12]}],
+  "preserve": [
+    {"id": "elbow-boss", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 24, "r": 16}},
+    {"id": "wrist-boss", "shape": {"type": "cylinder", "center": [120, 0, 0], "axis": "z", "length": 20, "r": 12}}
+  ],
+  "keepOut": [
+    {"id": "elbow-bearing", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 30, "r": 11}},
+    {"id": "wrist-bearing", "shape": {"type": "cylinder", "center": [120, 0, 0], "axis": "z", "length": 26, "r": 8}}
+  ],
+  "supports": [{"region": "elbow-bearing"}],
+  "loadCases": [
+    {"name": "payload", "loads": [{"region": "wrist-bearing", "force": [0, -30, 0], "distribution": "bearing"}]},
+    {"name": "twist", "loads": [{"region": "wrist-bearing", "moment": [1500, 0, 0]}]},
+    {"name": "side", "loads": [{"region": "wrist-bearing", "force": [0, 0, 15]}]}
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {"safetyFactor": 2.0},
+  "resolution": {"maxElements": 40000}
+}

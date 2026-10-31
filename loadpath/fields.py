@@ -1289,7 +1289,8 @@ class FieldGraph:
             mesh = trimesh.load(self._path(s["part"]), force="mesh")
         from . import quick
 
-        rep = verify_part(study, mesh, max_cells=quick.result_cells(int(s.get("cells", 120_000))), fields=True)
+        rep = verify_part(study, mesh, max_cells=quick.result_cells(int(s.get("cells", 120_000))), fields=True,
+                          refine=quick.result_refine(3))
         self.analyses[nd.name] = {k: v for k, v in rep.items() if k != "fields"}
         return rep["fields"]
 

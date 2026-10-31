@@ -138,6 +138,7 @@ class Outcome:
             "preserveMissing": r.get("preserveMissing"),
             "bodies": r.get("bodies"),
             "boundaryCutArea": r.get("boundaryCutArea"),
+            **({"thermal": r["thermal"]} if "thermal" in r else {}),
             **({"durability": r["durability"]} if "durability" in r else {}),
             **({"print": {k: v for k, v in r["print"].items() if k != "bridgeList"}} if "print" in r else {}),
             **({"process": r["process"]} if "process" in r else {}),
@@ -877,8 +878,9 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         if mc < o.report["margin"]:
             # report the finer (lower) reading: it is the one to trust
             o.report["margin"], o.report["safetyFactor"], o.report["cases"] = mc, rep["safetyFactor"], rep["cases"]
-            if "durability" in rep:
-                o.report["durability"] = rep["durability"]
+            for k in ("thermal", "durability"):
+                if k in rep:
+                    o.report[k] = rep[k]
         return mc
 
     def tet_confirm(o: Outcome) -> float | None:
