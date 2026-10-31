@@ -1,0 +1,150 @@
+{
+ "id": "sensor-arm-resin",
+ "brief": "An arm that holds a 120 g lidar 80 mm out from my robot's 20 mm aluminium frame tube.\nTough resin (SLA). The tube runs along Z through the origin; the part clamps round it with a\n3 mm thick collar (radius 10.2 to 13.2 mm, z = -8 to 8) and must not intrude into the tube.\nThe lidar screws on with two M2.5 screws along Z at (80, -6) and (80, 6) through a 4 mm thick\npad (x = 72 to 88, y = -10 to 10, z = -2 to 2). Keep the part within x = -14 to 88,\ny = -14 to 14, z = -8 to 8. The robot drives over bumps: design for 5 g vertical (along Z) and\n2 g sideways (along Y). Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "resin",
+  "sla"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -14.0,
+     -14.0,
+     -8.0
+    ],
+    "max": [
+     88.0,
+     14.0,
+     8.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "collar",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 16.0,
+     "r": 13.2,
+     "rInner": 10.2
+    }
+   },
+   {
+    "id": "pad",
+    "shape": {
+     "type": "box",
+     "min": [
+      72.0,
+      -10.0,
+      -2.0
+     ],
+     "max": [
+      88.0,
+      10.0,
+      2.0
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "tube",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 20.0,
+     "r": 10.2
+    }
+   },
+   {
+    "id": "m25",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        80.0,
+        -6.0,
+        0.0
+       ],
+       "axis": "z",
+       "length": 8.0,
+       "r": 1.4
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        80.0,
+        6.0,
+        0.0
+       ],
+       "axis": "z",
+       "length": 8.0,
+       "r": 1.4
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "tube"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "bump",
+    "loads": [
+     {
+      "region": "pad",
+      "force": [
+       0,
+       0,
+       -5.886
+      ]
+     }
+    ]
+   },
+   {
+    "name": "side",
+    "loads": [
+     {
+      "region": "pad",
+      "force": [
+       0,
+       2.3544,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "resin-tough",
+  "process": "sla",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "sensor-arm-resin",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

@@ -1,0 +1,219 @@
+{
+ "id": "pillow-block-sls",
+ "brief": "A bearing block for a 608 bearing (22 mm OD, 7 mm wide) in SLS PA12. The bearing's axis is\nalong Y through (0, 0, 25), the seat is 22 mm diameter and 7 mm long (y = -3.5 to 3.5); leave at\nleast 4 mm of wall round it and a 12 mm hole through for the shaft. It bolts to a flat base at\nz = 0 with two M5 screws along Z at (+/-30, 0); the screw heads sit on top of 12 mm diameter,\n6 mm tall bosses (z = 0 to 6) and need a 10 mm diameter column clear above each for the socket. The block can\noccupy x = -40 to 40, y = -6 to 6, z = 0 to 42. The shaft pushes on the bearing with up to\n300 N, and the direction depends on the belt so treat it as any direction perpendicular to the\nshaft. Safety factor 2.5.",
+ "attachments": [],
+ "tags": [
+  "sls",
+  "any-direction",
+  "bearing"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -40.0,
+     -6.0,
+     0.0
+    ],
+    "max": [
+     40.0,
+     6.0,
+     42.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "housing",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      25.0
+     ],
+     "axis": "y",
+     "length": 7.0,
+     "r": 15.0
+    }
+   },
+   {
+    "id": "bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        30.0,
+        0.0,
+        3.0
+       ],
+       "axis": "z",
+       "length": 6.0,
+       "r": 6.0
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -30.0,
+        0.0,
+        3.0
+       ],
+       "axis": "z",
+       "length": 6.0,
+       "r": 6.0
+      }
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "bearing",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      25.0
+     ],
+     "axis": "y",
+     "length": 7.2,
+     "r": 11.0
+    }
+   },
+   {
+    "id": "shaft",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      25.0
+     ],
+     "axis": "y",
+     "length": 20.0,
+     "r": 6.0
+    }
+   },
+   {
+    "id": "m5",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        30.0,
+        0.0,
+        3.0
+       ],
+       "axis": "z",
+       "length": 14.0,
+       "r": 2.75
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -30.0,
+        0.0,
+        3.0
+       ],
+       "axis": "z",
+       "length": 14.0,
+       "r": 2.75
+      }
+     ]
+    }
+   },
+   {
+    "id": "socket",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        30.0,
+        0.0,
+        6.0
+       ],
+       "p1": [
+        30.0,
+        0.0,
+        45.0
+       ],
+       "r": 5.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -30.0,
+        0.0,
+        6.0
+       ],
+       "p1": [
+        -30.0,
+        0.0,
+        45.0
+       ],
+       "r": 5.0
+      }
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "region": "m5"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -40.0,
+      -6.0,
+      -0.5
+     ],
+     "max": [
+      40.0,
+      6.0,
+      0.3
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "radial",
+    "loads": [
+     {
+      "region": "bearing",
+      "force": [
+       0,
+       0,
+       -300
+      ],
+      "direction": "any"
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "pillow-block-sls",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5
+ }
+}

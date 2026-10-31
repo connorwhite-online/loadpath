@@ -1,0 +1,155 @@
+{
+ "id": "gripper-finger-fdm",
+ "brief": "A gripper finger in PETG, FDM, printed flat (layers along Z). It pivots on a 3 mm pin along Z at\nthe origin (3.2 mm hole, keep 2.5 mm of wall round it). A second 3.2 mm hole for the drive link\npin is at (12, -8), also along Z, with the same 2.5 mm wall. The fingertip is a flat gripping\npad: x = 60 to 70, y = 4 to 7, z = -5 to 5, and its +Y face is what touches the object. The\nfinger fits in x = -6 to 70, y = -14 to 7, z = -5 to 5. In use the pivot pin holds it and the\ndrive link pushes it: model it as the part held at both pins and squeezing with 20 N on the pad\n(the object pushes back on the pad in -Y), plus a 5 N side load along Z on the pad if the\nobject slips. Safety factor 2.5, and I'd like it under 8 g.",
+ "attachments": [],
+ "tags": [
+  "gripper",
+  "fdm",
+  "mass"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -6.0,
+     -14.0,
+     -5.0
+    ],
+    "max": [
+     70.0,
+     7.0,
+     5.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "pivot-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 6.0,
+     "r": 4.1
+    }
+   },
+   {
+    "id": "link-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      12.0,
+      -8.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 6.0,
+     "r": 4.1
+    }
+   },
+   {
+    "id": "pad",
+    "shape": {
+     "type": "box",
+     "min": [
+      60.0,
+      4.0,
+      -5.0
+     ],
+     "max": [
+      70.0,
+      7.0,
+      5.0
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "pivot",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 14.0,
+     "r": 1.6
+    }
+   },
+   {
+    "id": "link",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      12.0,
+      -8.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 14.0,
+     "r": 1.6
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "pivot"
+   },
+   {
+    "region": "link"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "grip",
+    "loads": [
+     {
+      "region": "pad",
+      "force": [
+       0,
+       -20,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "slip",
+    "loads": [
+     {
+      "region": "pad",
+      "force": [
+       0,
+       0,
+       5
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "gripper-finger-fdm",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5,
+  "maxMass": 8
+ }
+}

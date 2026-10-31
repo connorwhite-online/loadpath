@@ -1,0 +1,153 @@
+{
+ "id": "rod-hook-pla",
+ "brief": "A hook that hangs over a 25 mm diameter closet rod and holds a 5 kg bag. PLA, FDM, printed flat\n(layers along Y), 10 mm thick (y = -5 to 5). The rod runs along Y at the origin; the hook must\nnot intrude into it (keep a 12.8 mm radius clear) and should wrap its top half: give it a\n3 mm thick saddle over the rod (the half ring from 12.8 to 15.8 mm radius, z >= 0). The bag's\nstrap hangs on a 10 mm bar along Y at (0, 0, -80), so leave that bar's 5.2 mm radius clear\nand give it a 3 mm ring of material, closed except for an opening 8 mm wide on the +X side so\nthe strap can be slipped on. Fits in x = -25 to 25, z = -92 to 20. Bags get yanked off, call it\n2x the weight. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "fdm"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -25.0,
+     -5.0,
+     -92.0
+    ],
+    "max": [
+     25.0,
+     5.0,
+     20.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "saddle-top",
+    "shape": {
+     "type": "box",
+     "min": [
+      -5.0,
+      -5.0,
+      13.2
+     ],
+     "max": [
+      5.0,
+      5.0,
+      14.8
+     ]
+    }
+   },
+   {
+    "id": "eye",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      -80.0
+     ],
+     "axis": "y",
+     "length": 10.0,
+     "r": 8.2,
+     "rInner": 5.2
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "rod",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "y",
+     "length": 14.0,
+     "r": 12.8
+    }
+   },
+   {
+    "id": "bar",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      -80.0
+     ],
+     "axis": "y",
+     "length": 14.0,
+     "r": 5.2
+    }
+   },
+   {
+    "id": "slot",
+    "shape": {
+     "type": "box",
+     "min": [
+      0.0,
+      -6.0,
+      -84.0
+     ],
+     "max": [
+      26.0,
+      6.0,
+      -76.0
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -12.0,
+      -5.0,
+      12.5
+     ],
+     "max": [
+      12.0,
+      5.0,
+      13.2
+     ]
+    },
+    "fix": "all"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "bag",
+    "loads": [
+     {
+      "region": "bar",
+      "force": [
+       0,
+       0,
+       -98.10000000000001
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+y"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "rod-hook-pla",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

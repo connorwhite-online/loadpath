@@ -134,6 +134,16 @@ def test_mcp_tools_return_errors_instead_of_raising():
     assert not r["ok"] and "not found in" in r["error"], r
 
 
+def test_brief_gold_studies_check():
+    from loadpath.evals import briefs
+
+    ids = briefs.all_ids()
+    assert len(ids) == 20, ids
+    for i in ids:
+        r = check_study(briefs.load(i)["gold"], briefs.ASSETS)
+        assert r["ok"], (i, r.get("error"))
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in list(globals().items()):

@@ -1,0 +1,280 @@
+{
+ "id": "tool-flange-ti64",
+ "brief": "A tool adapter between my arm's wrist flange and a small gripper, printed in Ti64 on a metal\npowder-bed machine, built along +Z. Wrist side: a 40 mm diameter, 4 mm thick disc at z = 0 to 4\nwith four M4 clearance holes (4.5 mm) on a 31.5 mm circle at 45, 135, 225 and 315 degrees;\nthe wrist holds it there. Tool side: a 30 x 30 mm, 3 mm thick plate at z = 37 to 40 with four\nM3 clearance holes (3.4 mm) on a 25 mm square; the gripper bolts onto its top face. A 12 mm air\nhose runs straight through the middle along Z, keep that clear. Everything within a 22 mm\nradius of the Z axis, z = 0 to 40. The gripper is 0.4 kg with its centre of mass 80 mm above\nthe tool plate, and in a crash it can see 5 g sideways. Safety factor 3, under 45 g.",
+ "attachments": [],
+ "tags": [
+  "metal",
+  "lpbf",
+  "mass",
+  "moment"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "cylinder",
+    "center": [
+     0.0,
+     0.0,
+     20.0
+    ],
+    "axis": "z",
+    "length": 40.0,
+    "r": 22.0
+   }
+  ],
+  "preserve": [
+   {
+    "id": "wrist-disc",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      4.0
+     ],
+     "r": 20.0
+    }
+   },
+   {
+    "id": "tool-plate",
+    "shape": {
+     "type": "box",
+     "min": [
+      -15.0,
+      -15.0,
+      37.0
+     ],
+     "max": [
+      15.0,
+      15.0,
+      40.0
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m4",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        11.136931803688125,
+        11.136931803688123,
+        -1.0
+       ],
+       "p1": [
+        11.136931803688125,
+        11.136931803688123,
+        5.0
+       ],
+       "r": 2.25
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -11.136931803688123,
+        11.136931803688125,
+        -1.0
+       ],
+       "p1": [
+        -11.136931803688123,
+        11.136931803688125,
+        5.0
+       ],
+       "r": 2.25
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -11.136931803688126,
+        -11.136931803688123,
+        -1.0
+       ],
+       "p1": [
+        -11.136931803688126,
+        -11.136931803688123,
+        5.0
+       ],
+       "r": 2.25
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        11.136931803688121,
+        -11.136931803688126,
+        -1.0
+       ],
+       "p1": [
+        11.136931803688121,
+        -11.136931803688126,
+        5.0
+       ],
+       "r": 2.25
+      }
+     ]
+    }
+   },
+   {
+    "id": "m3",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -12.5,
+        -12.5,
+        36.0
+       ],
+       "p1": [
+        -12.5,
+        -12.5,
+        41.0
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -12.5,
+        12.5,
+        36.0
+       ],
+       "p1": [
+        -12.5,
+        12.5,
+        41.0
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        12.5,
+        -12.5,
+        36.0
+       ],
+       "p1": [
+        12.5,
+        -12.5,
+        41.0
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        12.5,
+        12.5,
+        36.0
+       ],
+       "p1": [
+        12.5,
+        12.5,
+        41.0
+       ],
+       "r": 1.7
+      }
+     ]
+    }
+   },
+   {
+    "id": "hose",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -1.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      41.0
+     ],
+     "r": 6.0
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "region": "m4"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -0.5
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      0.3
+     ],
+     "r": 20.0
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "crash",
+    "loads": [
+     {
+      "region": "tool-plate",
+      "force": [
+       19.62,
+       0,
+       0
+      ],
+      "moment": [
+       0,
+       1569.6000000000001,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "weight",
+    "loads": [
+     {
+      "region": "tool-plate",
+      "force": [
+       0,
+       0,
+       -7.848000000000001
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "ti64",
+  "process": {
+   "type": "lpbf",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 3
+  },
+  "name": "tool-flange-ti64",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 3,
+  "maxMass": 45
+ }
+}

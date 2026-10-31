@@ -1,0 +1,158 @@
+{
+ "id": "shelf-bracket-pla",
+ "brief": "A shelf bracket in PLA on an FDM printer, printed on its side so the layers stack along Z.\nIt screws to the wall (the plane x = 0, bracket on +X) with two screws along X at\n(y = 20, z = 0) and (y = 100, z = 0): 4.5 mm holes, each in a 12 mm diameter, 5 mm thick boss\nagainst the wall (x = 0 to 5). The shelf sits on the bracket's top edge: a 150 mm long, 5 mm\nthick, 16 mm wide flat (x = 0 to 150, y = 115 to 120, z = -8 to 8) whose top face carries the\nshelf. Keep it within x = 0 to 150, y = 0 to 120, z = -8 to 8. Each bracket takes half of a\n16 kg shelf load, evenly along the flat. It must not fail; safety factor 2, under 60 g.",
+ "attachments": [],
+ "tags": [
+  "fdm",
+  "mass"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0.0,
+     0.0,
+     -8.0
+    ],
+    "max": [
+     150.0,
+     120.0,
+     8.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        2.5,
+        20.0,
+        0.0
+       ],
+       "axis": "x",
+       "length": 5.0,
+       "r": 6.0
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        2.5,
+        100.0,
+        0.0
+       ],
+       "axis": "x",
+       "length": 5.0,
+       "r": 6.0
+      }
+     ]
+    }
+   },
+   {
+    "id": "shelf",
+    "shape": {
+     "type": "box",
+     "min": [
+      0.0,
+      115.0,
+      -8.0
+     ],
+     "max": [
+      150.0,
+      120.0,
+      8.0
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "screws",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        2.5,
+        20.0,
+        0.0
+       ],
+       "axis": "x",
+       "length": 12.0,
+       "r": 2.25
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        2.5,
+        100.0,
+        0.0
+       ],
+       "axis": "x",
+       "length": 12.0,
+       "r": 2.25
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "screws"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -0.5,
+      0.0,
+      -8.0
+     ],
+     "max": [
+      0.3,
+      120.0,
+      8.0
+     ]
+    },
+    "fix": "x"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "shelf",
+    "loads": [
+     {
+      "region": "shelf",
+      "force": [
+       0,
+       -78.48,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "shelf-bracket-pla",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxMass": 60
+ }
+}

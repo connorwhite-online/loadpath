@@ -1,0 +1,151 @@
+{
+ "id": "belt-tensioner-fdm",
+ "brief": "A belt tensioner arm for my robot's base, PETG FDM, printed flat (layers along Z), 8 mm thick\n(z = -4 to 4). It swings on an M5 shoulder bolt along Z at the origin (5.2 mm hole, 4 mm of wall)\nand carries an idler pulley on an M5 axle 50 mm away at (50, 0), also a 5.2 mm hole with 4 mm of\nwall. A spring hooks into a 4 mm hole at (20, -15) (along Z, 3 mm of wall) and holds the arm\nstill. Fits in x = -10 to 60, y = -22 to 10. The belt wraps the idler and pulls it with\n2 x 40 N, the resultant points roughly toward +X+Y at 45 degrees (about 75 N). It runs for\nyears. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "fdm"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -10.0,
+     -22.0,
+     -4.0
+    ],
+    "max": [
+     60.0,
+     10.0,
+     4.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "pivot-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 8.0,
+     "r": 6.6
+    }
+   },
+   {
+    "id": "idler-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      50.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 8.0,
+     "r": 6.6
+    }
+   },
+   {
+    "id": "spring-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      20.0,
+      -15.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 8.0,
+     "r": 5.0
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "pivot",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 12.0,
+     "r": 2.6
+    }
+   },
+   {
+    "id": "idler",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      50.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 12.0,
+     "r": 2.6
+    }
+   },
+   {
+    "id": "spring",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      20.0,
+      -15.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 12.0,
+     "r": 2.0
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "pivot"
+   },
+   {
+    "region": "spring"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "belt",
+    "loads": [
+     {
+      "region": "idler",
+      "force": [
+       53,
+       53,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "belt-tensioner-fdm",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

@@ -1,0 +1,220 @@
+{
+ "id": "lighten-step-bracket",
+ "brief": "bracket.step (attached) is our current machined-style bracket, a solid L in millimetres. It's far\ntoo heavy. Please make a lighter version printed in SLS PA12 that keeps the same mounting: the\ntwo M5 holes in the base (they bolt it down onto a frame at z = 0) and the 10.2 mm shaft hole in\nthe upright, and stays inside the current bracket's bounding box. Keep at least 3 mm of\nmaterial round every hole. The shaft through the upright hole carries 250 N straight down\n(-Z) and up to 80 N sideways along X. Safety factor 2.5.",
+ "attachments": [
+  "assets/bracket.step"
+ ],
+ "tags": [
+  "step",
+  "sls",
+  "import"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -30.0,
+     0.0,
+     0.0
+    ],
+    "max": [
+     30.0,
+     40.0,
+     50.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "m5-rings",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        20.0,
+        14.0,
+        0.0
+       ],
+       "p1": [
+        20.0,
+        14.0,
+        6.0
+       ],
+       "r": 5.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -20.0,
+        14.0,
+        0.0
+       ],
+       "p1": [
+        -20.0,
+        14.0,
+        6.0
+       ],
+       "r": 5.75
+      }
+     ]
+    }
+   },
+   {
+    "id": "shaft-boss",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      32.0,
+      38.0
+     ],
+     "p1": [
+      0.0,
+      40.0,
+      38.0
+     ],
+     "r": 8.1
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m5",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        20.0,
+        14.0,
+        -1.0
+       ],
+       "p1": [
+        20.0,
+        14.0,
+        7.0
+       ],
+       "r": 2.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -20.0,
+        14.0,
+        -1.0
+       ],
+       "p1": [
+        -20.0,
+        14.0,
+        7.0
+       ],
+       "r": 2.75
+      }
+     ]
+    }
+   },
+   {
+    "id": "shaft",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      28.0,
+      38.0
+     ],
+     "p1": [
+      0.0,
+      44.0,
+      38.0
+     ],
+     "r": 5.1
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m5"
+   },
+   {
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        20.0,
+        14.0,
+        -0.5
+       ],
+       "p1": [
+        20.0,
+        14.0,
+        0.3
+       ],
+       "r": 5.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -20.0,
+        14.0,
+        -0.5
+       ],
+       "p1": [
+        -20.0,
+        14.0,
+        0.3
+       ],
+       "r": 5.75
+      }
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "down",
+    "loads": [
+     {
+      "region": "shaft",
+      "force": [
+       0,
+       0,
+       -250
+      ]
+     }
+    ]
+   },
+   {
+    "name": "side",
+    "loads": [
+     {
+      "region": "shaft",
+      "force": [
+       80,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "lighten-step-bracket",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5
+ }
+}

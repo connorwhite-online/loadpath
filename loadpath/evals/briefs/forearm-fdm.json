@@ -1,0 +1,146 @@
+{
+ "id": "forearm-fdm",
+ "brief": "Forearm for a small robot arm, PETG on my FDM printer, printed lying flat so the layers stack\nalong Z. The elbow end has an 8 mm steel shaft running through it along Z at the origin (make\nthe hole 8.2 mm, with at least 3 mm of wall). At the wrist end the wrist servo bolts onto a flat\npad: the pad occupies x = 110 to 115, y = -12 to 12, z = -6 to 6, and it has two M3 clearance\nholes along X at y = +8 and y = -8 (z = 0). The whole part has to fit in x = -12 to 115,\ny = -15 to 15, z = -8 to 8. The wrist and gripper weigh 600 g and swing around. The shaft\nholds the forearm. It must not sag more than 0.5 mm at the wrist and needs a safety factor of 2.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "fdm",
+  "deflection"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -12.0,
+     -15.0,
+     -8.0
+    ],
+    "max": [
+     115.0,
+     15.0,
+     8.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "elbow-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 8.0,
+     "r": 7.1
+    }
+   },
+   {
+    "id": "wrist-pad",
+    "shape": {
+     "type": "box",
+     "min": [
+      110.0,
+      -12.0,
+      -6.0
+     ],
+     "max": [
+      115.0,
+      12.0,
+      6.0
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "shaft",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 20.0,
+     "r": 4.1
+    }
+   },
+   {
+    "id": "m3-a",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      105.0,
+      8.0,
+      0.0
+     ],
+     "p1": [
+      120.0,
+      8.0,
+      0.0
+     ],
+     "r": 1.7
+    }
+   },
+   {
+    "id": "m3-b",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      105.0,
+      -8.0,
+      0.0
+     ],
+     "p1": [
+      120.0,
+      -8.0,
+      0.0
+     ],
+     "r": 1.7
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "shaft"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "payload",
+    "loads": [
+     {
+      "region": "wrist-pad",
+      "force": [
+       0,
+       -8.829,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2,
+   "maxDeflection": 0.5
+  },
+  "name": "forearm-fdm",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxDeflection": 0.5
+ }
+}

@@ -1,0 +1,281 @@
+{
+ "id": "turret-fdm",
+ "brief": "The turret for my robot arm's base, PETG, printed with its base on the bed (layers along +Z).\nIt bolts down onto a slewing ring: the bottom of the part is a flat ring 70 mm OD / 50 mm ID,\n4 mm thick (z = 0 to 4), with six M3 clearance holes on a 60 mm bolt circle (the first one on\n+X, every 60 degrees). Above it, two uprights carry the shoulder shaft: a 10 mm shaft along Y at\nz = 50, passing through 10.2 mm holes at y = +25 and y = -25 (each upright has a boss at least\n4 mm of wall round its hole, 8 mm long along Y, from |y| = 21 to 29). The shoulder servo sits\nbetween the uprights: x = -20 to 20, y = -18 to 18, z = 8 to 62 stays clear. The part has to\nstay within a 40 mm radius of the Z axis and below z = 62. The arm it carries weighs 1.5 kg with\nits centre of mass 150 mm out along +X from the shaft; it also slews, with up to 1 N\u00b7m about Z.\nSafety factor 2.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "fdm",
+  "moment"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "cylinder",
+    "center": [
+     0.0,
+     0.0,
+     31.0
+    ],
+    "axis": "z",
+    "length": 62.0,
+    "r": 40.0
+   }
+  ],
+  "preserve": [
+   {
+    "id": "base-ring",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      4.0
+     ],
+     "r": 35.0,
+     "rInner": 25.0
+    }
+   },
+   {
+    "id": "bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        0.0,
+        21.0,
+        50.0
+       ],
+       "p1": [
+        0.0,
+        29.0,
+        50.0
+       ],
+       "r": 9.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0.0,
+        -29.0,
+        50.0
+       ],
+       "p1": [
+        0.0,
+        -21.0,
+        50.0
+       ],
+       "r": 9.1
+      }
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "ring-screws",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        30.0,
+        0.0,
+        -1.0
+       ],
+       "p1": [
+        30.0,
+        0.0,
+        8.0
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        15.000000000000004,
+        25.980762113533157,
+        -1.0
+       ],
+       "p1": [
+        15.000000000000004,
+        25.980762113533157,
+        8.0
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -14.999999999999993,
+        25.98076211353316,
+        -1.0
+       ],
+       "p1": [
+        -14.999999999999993,
+        25.98076211353316,
+        8.0
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -30.0,
+        3.67394039744206e-15,
+        -1.0
+       ],
+       "p1": [
+        -30.0,
+        3.67394039744206e-15,
+        8.0
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -15.000000000000014,
+        -25.980762113533153,
+        -1.0
+       ],
+       "p1": [
+        -15.000000000000014,
+        -25.980762113533153,
+        8.0
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        15.000000000000004,
+        -25.980762113533157,
+        -1.0
+       ],
+       "p1": [
+        15.000000000000004,
+        -25.980762113533157,
+        8.0
+       ],
+       "r": 1.7
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "shaft",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      -45.0,
+      50.0
+     ],
+     "p1": [
+      0.0,
+      45.0,
+      50.0
+     ],
+     "r": 5.1
+    }
+   },
+   {
+    "id": "servo",
+    "shape": {
+     "type": "box",
+     "min": [
+      -20.0,
+      -18.0,
+      8.0
+     ],
+     "max": [
+      20.0,
+      18.0,
+      62.0
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "region": "ring-screws"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -0.5
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      0.3
+     ],
+     "r": 35.0,
+     "rInner": 25.0
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "arm",
+    "loads": [
+     {
+      "region": "shaft",
+      "force": [
+       0,
+       0,
+       -22.072499999999998
+      ],
+      "moment": [
+       0,
+       -3310.8749999999995,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "slew",
+    "loads": [
+     {
+      "region": "shaft",
+      "moment": [
+       0,
+       0,
+       1000
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "turret-fdm",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

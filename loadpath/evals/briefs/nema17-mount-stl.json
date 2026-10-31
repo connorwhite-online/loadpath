@@ -1,0 +1,429 @@
+{
+ "id": "nema17-mount-stl",
+ "brief": "I need a bracket that holds a NEMA 17 stepper (motor-body.stl is the motor body, attached, in\nmillimetres, already placed where it sits: its body is y = 5 to 53) onto a flat plate. PETG, FDM,\nprinted with the base on the bed (layers along +Z). The bracket's face plate goes against the\nmotor's front face, between y = 0 and 5; the rest of the bracket may wrap round the motor body\n(but not into it) to reach the base screws. The four M3 face screws are on a 31 mm square\ncentred on the shaft at (0, 0, 35) and run along Y, so the holes are at x = +/-15.5,\nz = 19.5 and 50.5; each needs a 4.5 mm radius pad 5 mm thick (y = 0 to 5). The 22 mm pilot\nboss on the motor face needs a 23 mm hole with a 1.5 mm ring round it. The bracket screws down\nto the plate (z = 0) with two M4 screws along Z at (+/-15, 35), each with a 6 mm radius,\n5 mm tall boss, and I need a screwdriver to reach those screws from above (keep a 9 mm diameter\ncolumn clear above each). It has to fit in x = -25 to 25, y = 0 to 50, z = 0 to 62. The belt\npulls the shaft with up to 60 N, mostly upward (+Z) but it can also pull sideways along X.\nThe motor is 350 g. Safety factor 2.",
+ "attachments": [
+  "assets/motor-body.stl"
+ ],
+ "tags": [
+  "stl",
+  "fdm",
+  "fasteners"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -25,
+     0,
+     0
+    ],
+    "max": [
+     25,
+     50,
+     62
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "pad-a",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      15.5,
+      0,
+      50.5
+     ],
+     "p1": [
+      15.5,
+      5,
+      50.5
+     ],
+     "r": 4.5
+    }
+   },
+   {
+    "id": "pad-b",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      -15.5,
+      0,
+      50.5
+     ],
+     "p1": [
+      -15.5,
+      5,
+      50.5
+     ],
+     "r": 4.5
+    }
+   },
+   {
+    "id": "pad-c",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      15.5,
+      0,
+      19.5
+     ],
+     "p1": [
+      15.5,
+      5,
+      19.5
+     ],
+     "r": 4.5
+    }
+   },
+   {
+    "id": "pad-d",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      -15.5,
+      0,
+      19.5
+     ],
+     "p1": [
+      -15.5,
+      5,
+      19.5
+     ],
+     "r": 4.5
+    }
+   },
+   {
+    "id": "pilot-ring",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0,
+      0,
+      35
+     ],
+     "p1": [
+      0,
+      5,
+      35
+     ],
+     "r": 13.0,
+     "rInner": 11.5
+    }
+   },
+   {
+    "id": "boss-a",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      15,
+      35,
+      0
+     ],
+     "p1": [
+      15,
+      35,
+      5
+     ],
+     "r": 6
+    }
+   },
+   {
+    "id": "boss-b",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      -15,
+      35,
+      0
+     ],
+     "p1": [
+      -15,
+      35,
+      5
+     ],
+     "r": 6
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "pilot",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0,
+      2.5,
+      35
+     ],
+     "axis": "y",
+     "length": 20,
+     "r": 11.5
+    }
+   },
+   {
+    "id": "m3-a",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      15.5,
+      2.5,
+      50.5
+     ],
+     "axis": "y",
+     "length": 20,
+     "r": 1.7
+    }
+   },
+   {
+    "id": "m3-b",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -15.5,
+      2.5,
+      50.5
+     ],
+     "axis": "y",
+     "length": 20,
+     "r": 1.7
+    }
+   },
+   {
+    "id": "m3-c",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      15.5,
+      2.5,
+      19.5
+     ],
+     "axis": "y",
+     "length": 20,
+     "r": 1.7
+    }
+   },
+   {
+    "id": "m3-d",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -15.5,
+      2.5,
+      19.5
+     ],
+     "axis": "y",
+     "length": 20,
+     "r": 1.7
+    }
+   },
+   {
+    "id": "m4-a",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      15,
+      35,
+      2.5
+     ],
+     "axis": "z",
+     "length": 20,
+     "r": 2.2
+    }
+   },
+   {
+    "id": "m4-b",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      -15,
+      35,
+      2.5
+     ],
+     "axis": "z",
+     "length": 20,
+     "r": 2.2
+    }
+   },
+   {
+    "id": "motor-body",
+    "shape": {
+     "type": "mesh",
+     "path": "motor-body.stl"
+    }
+   },
+   {
+    "id": "access-a",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      15,
+      35,
+      5
+     ],
+     "p1": [
+      15,
+      35,
+      62
+     ],
+     "r": 4.5
+    }
+   },
+   {
+    "id": "access-b",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      -15,
+      35,
+      5
+     ],
+     "p1": [
+      -15,
+      35,
+      62
+     ],
+     "r": 4.5
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m4-a"
+   },
+   {
+    "region": "m4-b"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      15,
+      35,
+      -1
+     ],
+     "p1": [
+      15,
+      35,
+      0.3
+     ],
+     "r": 6
+    },
+    "fix": "z"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      -15,
+      35,
+      -1
+     ],
+     "p1": [
+      -15,
+      35,
+      0.3
+     ],
+     "r": 6
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "belt-side",
+    "loads": [
+     {
+      "region": "m3-a",
+      "force": [
+       15.0,
+       0.0,
+       0.0
+      ]
+     },
+     {
+      "region": "m3-b",
+      "force": [
+       15.0,
+       0.0,
+       0.0
+      ]
+     },
+     {
+      "region": "m3-c",
+      "force": [
+       15.0,
+       0.0,
+       0.0
+      ]
+     },
+     {
+      "region": "m3-d",
+      "force": [
+       15.0,
+       0.0,
+       0.0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "belt-up",
+    "loads": [
+     {
+      "region": "m3-a",
+      "force": [
+       0.0,
+       0.0,
+       15.0
+      ]
+     },
+     {
+      "region": "m3-b",
+      "force": [
+       0.0,
+       0.0,
+       15.0
+      ]
+     },
+     {
+      "region": "m3-c",
+      "force": [
+       0.0,
+       0.0,
+       15.0
+      ]
+     },
+     {
+      "region": "m3-d",
+      "force": [
+       0.0,
+       0.0,
+       15.0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "minMember": 3.0,
+  "symmetry": [
+   "x"
+  ],
+  "resolution": {
+   "maxElements": 45000
+  },
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "nema17-mount-stl"
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

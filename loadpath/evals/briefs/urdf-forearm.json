@@ -1,0 +1,233 @@
+{
+ "id": "urdf-forearm",
+ "brief": "desk_arm.urdf (attached) is my 3-joint desk arm. Design the `forearm` link, SLS PA12, in the\nforearm's own frame in millimetres (the URDF is in metres). At the elbow end (forearm frame\norigin) it bolts to the elbow servo's horn: a 24 mm diameter, 4 mm thick disc in the XZ plane at\ny = 0 to 4 with an 8 mm centre hole along Y and four M2.5 screws on a 16 mm circle (at\n(+/-8, 0) and (0, +/-8) in X-Z). At the wrist end (x = 120 mm) it carries the wrist servo\nthrough a 10 mm wrist bearing along Y at (120, 0, 0) with a 4 mm wall, 8 mm long (y = 0 to 8).\nThe forearm fits in x = -14 to 134, y = 0 to 16, z = -14 to 14. The arm carries 0.4 kg at the\ntool, about 60 mm past the wrist, and moves as fast as its servos allow. Safety factor 2.",
+ "attachments": [
+  "assets/desk_arm.urdf"
+ ],
+ "tags": [
+  "urdf",
+  "arm",
+  "sls"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -14.0,
+     0.0,
+     -14.0
+    ],
+    "max": [
+     134.0,
+     16.0,
+     14.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "horn-disc",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      0.0,
+      4.0,
+      0.0
+     ],
+     "r": 12.0
+    }
+   },
+   {
+    "id": "wrist-boss",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      120.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      120.0,
+      8.0,
+      0.0
+     ],
+     "r": 9.0
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "horn-screws",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        8.0,
+        -1.0,
+        0.0
+       ],
+       "p1": [
+        8.0,
+        6.0,
+        0.0
+       ],
+       "r": 1.4
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -8.0,
+        -1.0,
+        0.0
+       ],
+       "p1": [
+        -8.0,
+        6.0,
+        0.0
+       ],
+       "r": 1.4
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0.0,
+        -1.0,
+        8.0
+       ],
+       "p1": [
+        0.0,
+        6.0,
+        8.0
+       ],
+       "r": 1.4
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0.0,
+        -1.0,
+        -8.0
+       ],
+       "p1": [
+        0.0,
+        6.0,
+        -8.0
+       ],
+       "r": 1.4
+      }
+     ]
+    }
+   },
+   {
+    "id": "horn-centre",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      -1.0,
+      0.0
+     ],
+     "p1": [
+      0.0,
+      6.0,
+      0.0
+     ],
+     "r": 4.0
+    },
+    "bore": false
+   },
+   {
+    "id": "wrist-bearing",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      120.0,
+      -1.0,
+      0.0
+     ],
+     "p1": [
+      120.0,
+      17.0,
+      0.0
+     ],
+     "r": 5.0
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "horn-screws"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      -0.5,
+      0.0
+     ],
+     "p1": [
+      0.0,
+      0.3,
+      0.0
+     ],
+     "r": 12.0
+    },
+    "fix": "y"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "reach",
+    "loads": [
+     {
+      "region": "wrist-bearing",
+      "force": [
+       0,
+       0,
+       -7.3575
+      ],
+      "moment": [
+       0,
+       353.1600000000001,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "stall",
+    "loads": [
+     {
+      "region": "wrist-bearing",
+      "moment": [
+       0,
+       1500,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "urdf-forearm",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

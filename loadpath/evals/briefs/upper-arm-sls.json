@@ -1,0 +1,179 @@
+{
+ "id": "upper-arm-sls",
+ "brief": "I need the upper arm for my desktop robot arm, printed in SLS PA12. It has a 608 bearing\n(22 mm OD, 7 mm wide) pressed in at each end, 140 mm apart, both bearing axes along Z. Put the\nshoulder bearing's center at the origin and the elbow bearing at x = 140. The arm can be up to\n36 mm tall (Y, centred) and 24 mm thick (Z, centred), and may extend 16 mm past each bearing\ncenter. Leave at least 3.5 mm of wall around each bearing seat, and keep a 10 mm diameter cable\nchannel clear along the arm's centreline from x = 30 to x = 110. The shoulder bearing is the\nfixed end. The elbow carries about 1 kg of forearm and payload and the arm moves quickly; it\nalso gets knocked sideways now and then (call it 8 N along Z at the elbow). Safety factor 3.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "sls"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -16.0,
+     -18.0,
+     -12.0
+    ],
+    "max": [
+     156.0,
+     18.0,
+     12.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "shoulder-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 7.0,
+     "r": 14.5
+    }
+   },
+   {
+    "id": "elbow-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      140.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 7.0,
+     "r": 14.5
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "shoulder-bearing",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 7.0,
+     "r": 11.0
+    }
+   },
+   {
+    "id": "elbow-bearing",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      140.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 7.0,
+     "r": 11.0
+    }
+   },
+   {
+    "id": "shafts",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "axis": "z",
+       "length": 30.0,
+       "r": 6.0
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        140.0,
+        0.0,
+        0.0
+       ],
+       "axis": "z",
+       "length": 30.0,
+       "r": 6.0
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "cable",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      30.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      110.0,
+      0.0,
+      0.0
+     ],
+     "r": 5.0
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "shoulder-bearing"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "payload",
+    "loads": [
+     {
+      "region": "elbow-bearing",
+      "force": [
+       0,
+       -14.715,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "side",
+    "loads": [
+     {
+      "region": "elbow-bearing",
+      "force": [
+       0,
+       0,
+       8
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+   "safetyFactor": 3
+  },
+  "name": "upper-arm-sls",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 3
+ }
+}
