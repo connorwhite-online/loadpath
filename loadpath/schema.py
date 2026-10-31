@@ -642,7 +642,11 @@ HEAT_EXCHANGER_SCHEMA = {
         "type": {"enum": ["gyroid", "diamond", "schwarz-p"]},
         "cell": {**_POS, "description": "mm per TPMS period (at least 3 x wall)"},
         "wall": {**_POS, "description": "mm, the sheet between the fluids"},
-        "shell": _POS, "header": _POS, "cap": _POS, "portLength": _POS,
+        "shell": _POS, "header": _POS,
+        "cap": {**_POS, "description": "mm: how deep each plenum seals off the other fluid's channels at the "
+                                       "core's ends (default wall + 1); thinner leaves more core open to flow "
+                                       "and fewer dead pockets"},
+        "portLength": _POS,
         "phase": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
                   "description": "mm: shift the TPMS against the core's low corner, which moves where the core's "
                                  "faces cut the channels (a partial channel at an edge starves)"},

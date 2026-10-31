@@ -51,6 +51,9 @@ def main():
         s.panel(n, view=VIEW).mesh(spaces[n], color=FLUIDS[i % 2])
     s.render(os.path.join(IMAGES, f"{name}-fluids.png"), out_scale=1.05)
 
+    final = os.path.join(HERE, "hx-final", f"{name}-simulation.png")
+    if os.path.exists(final):
+        shutil.copy(final, os.path.join(IMAGES, f"{name}-final-simulation.png"))
     sim = rep.get("simulation", {}).get("render")
     if sim:
         shutil.copy(sim if os.path.isabs(sim) else os.path.join(HERE, sim),

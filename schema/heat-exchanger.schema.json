@@ -41,7 +41,8 @@
     },
     "cap": {
       "type": "number",
-      "exclusiveMinimum": 0
+      "exclusiveMinimum": 0,
+      "description": "mm: how deep each plenum seals off the other fluid's channels at the core's ends (default wall + 1); thinner leaves more core open to flow and fewer dead pockets"
     },
     "portLength": {
       "type": "number",
