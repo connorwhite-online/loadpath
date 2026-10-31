@@ -1,0 +1,41 @@
+{
+  "quick": [
+    {"file": "start/report.json", "value": "r['impact']['response']['peakForce']", "min": 4200, "max": 5000,
+     "what": "starting uniform core (density 0.20): peak force, N"},
+    {"file": "start/report.json", "value": "r['impact']['ok']", "equals": false, "what": "starting core meets 4 kN"},
+    {"file": "start/report.json", "value": "r['impact']['uniformSameMass']['response']['peakForce']", "min": 4200,
+     "max": 5100, "what": "uniform core of the graded mass: peak force, N"},
+    {"file": "start/report.json", "value": "r['impact']['graded']['ok']", "equals": true, "what": "grading meets 4 kN"},
+    {"file": "graded/report.json", "value": "r['impact']['ok']", "equals": true, "what": "graded bumper meets 4 kN"},
+    {"file": "graded/report.json", "value": "r['impact']['response']['peakForce']", "min": 3400, "max": 3990,
+     "what": "graded bumper: peak force, N"},
+    {"file": "graded/report.json", "value": "r['impact']['response']['crush']", "min": 9, "max": 13,
+     "what": "graded bumper: crush, mm"},
+    {"file": "graded/report.json", "value": "r['impact']['response']['bottomedOut']", "equals": false,
+     "what": "graded bumper bottoms out"},
+    {"file": "graded/report.json", "value": "r['impact']['response']['efficiency']", "min": 0.85, "max": 1.0,
+     "what": "graded bumper: efficiency"},
+    {"file": "graded/report.json", "value": "r['impact']['coreMass']", "min": 5.0, "max": 7.0, "what": "graded core mass, g"},
+    {"file": "graded/report.json", "value": "r['mass']", "min": 6.5, "max": 8.7, "what": "graded part mass with plates, g"},
+    {"file": "graded/report.json", "value": "r['watertight'] and r['bodies'] == 1", "equals": true,
+     "what": "graded part watertight, one body"}
+  ],
+  "full": [
+    {"file": "start/report.json", "value": "r['impact']['response']['peakForce']", "min": 4490, "max": 4670,
+     "what": "starting uniform core: peak force (4581), N"},
+    {"file": "start/report.json", "value": "r['impact']['uniformSameMass']['density']", "min": 0.198, "max": 0.206,
+     "what": "uniform core of the graded mass: density (0.202)"},
+    {"file": "start/report.json", "value": "r['impact']['uniformSameMass']['response']['peakForce']", "min": 4540,
+     "max": 4730, "what": "uniform core of the graded mass: peak force (4636), N"},
+    {"file": "start/report.json", "value": "r['impact']['uniformSameMass']['response']['crush']", "min": 12.3,
+     "max": 12.85, "what": "uniform core of the graded mass: crush (12.6), mm"},
+    {"file": "graded/report.json", "value": "r['impact']['response']['peakForce']", "min": 3740, "max": 3890,
+     "what": "graded bumper: peak force (3814), N"},
+    {"file": "graded/report.json", "value": "r['impact']['response']['crush']", "min": 10.6, "max": 11.1,
+     "what": "graded bumper: crush (10.8), mm"},
+    {"file": "graded/report.json", "value": "r['impact']['coreMass']", "min": 5.87, "max": 6.11,
+     "what": "graded core mass (5.99), g"},
+    {"file": "graded/report.json", "value": "r['mass']", "min": 7.45, "max": 7.75, "what": "graded part mass (7.6), g"}
+  ],
+  "files": ["start/bumper.stl", "start/bumper-graded.json", "graded/bumper-graded.stl"]
+}
