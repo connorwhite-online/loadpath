@@ -57,7 +57,7 @@ def test_sharp_bore_is_exact_where_the_field_rounds_it():
     the bore wall is within the chord tolerance, and the collar's coincident
     inner wall leaves nothing behind."""
     g = FieldGraph(PLATE)
-    before = g.mesh(pitch=0.5, sharp=False)
+    before = g.mesh(pitch=0.5, sharp=False, creases=False)
     a0 = _acc(g, before)
     sharp = g.mesh(pitch=0.5)
     a1 = _acc(g, sharp)

@@ -278,9 +278,9 @@ def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, de
     """Mesh a plan: organic leaves by fields.field_mesh over [lo, hi] (from
     their extended fields), exact leaves exactly, booleans by manifold3d.
     Returns a trimesh; each Organic leaf keeps its mesh in `.mesh`.
-    `creases` (the FieldGraph): an organic leaf that is one graph node, and
-    not extended, gets the creases between its own field surfaces back
-    (crease.py)."""
+    `creases` (the FieldGraph): an organic leaf that is one graph node gets
+    the creases between its own field surfaces back (crease.py); near an
+    exact cut, where the mesh is the extended field, none are put in.""" 
     import manifold3d as m3d
 
     from .fields import _finish, field_mesh
@@ -298,33 +298,51 @@ def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, de
             fld = _Extended(leaf.field, regions, eps=pitch, core=pitch)
             leaf.extended = True
         tree = None
-        if creases is not None and not regions and len(leaf.names) == 1:
+        if creases is not None and len(leaf.names) == 1:
             from .crease import CreaseTree
 
             tree = CreaseTree.from_graph(creases, leaf.names[0])
+            if tree is not None and regions:
+                # near the exact cuts the mesh is the extended field, not the
+                # tree's (and the boolean cuts it away): no creases there
+                margin = fld.eps + 4 * pitch
+                tree.ignore = lambda P, fld=fld, margin=margin: fld.g(np.asarray(P, float)) < margin
         leaf.mesh = field_mesh(fld, lo, hi, pitch=pitch, project=project, progress=progress, decimate=decimate,
                                creases=tree)
+        leaf.plain = None
+        if tree is not None:
+            # if the creased mesh will not close, the plain one is used instead
+            leaf.plain = lambda fld=fld: field_mesh(fld, lo, hi, pitch=pitch, project=project, decimate=decimate)
         if leaf.mesh.metadata.get("sampling"):
             stats = leaf.mesh.metadata["sampling"]
+
+    def organic(m):
+        try:
+            return manifold_from_trimesh(m)
+        except ValueError:
+            import trimesh
+            m = m.copy()
+            trimesh.repair.fix_winding(m)
+            trimesh.repair.fill_holes(m)
+            try:
+                return manifold_from_trimesh(m)
+            except ValueError:
+                # fill_holes leaves loops over four edges: a few slivers a
+                # thin lattice wall left open at a coarse pitch
+                return manifold_from_trimesh(_close_loops(m))
 
     def build(q):
         if isinstance(q, Exact):
             return exact_manifold(q.shape, tol)
         if isinstance(q, Organic):
-            m = q.mesh
             try:
-                return manifold_from_trimesh(m)
+                return organic(q.mesh)
             except ValueError:
-                import trimesh
-                m = m.copy()
-                trimesh.repair.fix_winding(m)
-                trimesh.repair.fill_holes(m)
-                try:
-                    return manifold_from_trimesh(m)
-                except ValueError:
-                    # fill_holes leaves loops over four edges: a few slivers a
-                    # thin lattice wall left open at a coarse pitch
-                    return manifold_from_trimesh(_close_loops(m))
+                if getattr(q, "plain", None) is None:
+                    raise
+                q.mesh = q.plain()
+                q.mesh.metadata["creases"] = {"reverted": "the creased mesh would not close"}
+                return organic(q.mesh)
         kids = [build(k) for k in q.kids]
         if q.op == "union":
             return m3d.Manifold.batch_boolean(kids, m3d.OpType.Add)

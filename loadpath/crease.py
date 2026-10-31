@@ -34,6 +34,20 @@ marching-cubes mesh:
    or face the wrong way goes back to where the plain mesh had it: the
    crease is kept only where it does no harm.
 
+Edges are left alone where there is no crease to see or the tree does not
+describe the mesh: two leaves meeting at under `tangent` degrees (a skin's
+outside lying on the body it was shelled from), within a few rings of a hole
+the mesher left (a thin wall; the boolean step repairs it), and where
+`tree.ignore` says so (sharp.py: near an exact cut, where the mesh is the
+extended field). 
+
+Where lattice walls meet a body at under ~45 degrees the material (or the
+gap) between them is thinner than one pitch for a pitch or more back from
+the true crease: that knife edge is not in the marching-cubes mesh at all,
+and no relax or snapping of its vertices brings it back (moonshots round 2,
+crease-aware relax tried 2026-10-31: same-side smoothing, own-leaf
+projection, a flip guard; none beat the plain relax before this pass).
+
 The split is decided per edge, so both triangles of an edge agree and the
 mesh stays watertight; no vertex off the crease moves (other than the few
 collapsed into it). A crease point that
@@ -95,6 +109,9 @@ class CreaseTree:
                     walk(k)
         walk(root)
         self._evaluator = evaluator
+        # optional P -> bool: points where the mesh is not this tree's field
+        # (sharp.py's extended field near an exact cut): no crease there
+        self.ignore = None
 
     def __len__(self):
         return len(self.leaves)
@@ -276,13 +293,15 @@ def _edges(F):
     return E, inv.reshape(-1, 3)
 
 
-def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab=None, mask=None, clean=True):
+def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab=None, mask=None, clean=True,
+            tangent=12.0):
     """Put the creases of `tree` back into the projected marching-cubes
     mesh (V, F). Returns (V, F, crease) with `crease` a bool mask of the
     vertices on a crease (snapped or inserted). `snap` (fraction of an
     edge) moves a vertex onto the crease instead of splitting next to it;
     `reach` (pitches) is how far a crease point may be from its edge.
-    `field` (default the tree's own min/max) projects fallback points."""
+    `field` (default the tree's own min/max) projects fallback points.
+    Two leaves meeting at under `tangent` degrees are no crease."""
     V = np.asarray(V, float)
     F = np.asarray(F, np.int64)
     if field is None:
@@ -299,6 +318,33 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
     mask = np.array(mask, np.int64)
     E, fe = _edges(F)
     cross = (mask[E[:, 0]] & mask[E[:, 1]]) == 0
+    # edges that are no crease: an end the tree does not describe (tree.ignore),
+    # or two leaves that meet tangentially (a skin's outside lying on the body
+    # it was shelled from: no edge to see, and Gauss-Newton is ill-posed there)
+    skip = np.zeros(len(E), bool)
+    ign = np.zeros(len(V), bool)
+    if tree.ignore is not None and cross.any():
+        ends = np.unique(E[cross].ravel())
+        ign[ends] = np.asarray(tree.ignore(V[ends]), bool)
+    # and near a hole (a thin wall the mesher left open, which the boolean
+    # step repairs): leave the mesh round it as it was, so the repair holds
+    ecount = np.bincount(fe.ravel(), minlength=len(E))
+    if (ecount != 2).any():
+        near = np.zeros(len(V), bool)
+        near[E[ecount != 2].ravel()] = True
+        for _r in range(3):
+            near[F[near[F].any(axis=1)].ravel()] = True
+        ign |= near
+        st["nearHoles"] = int(near.sum())
+    skip |= ign[E[:, 0]] | ign[E[:, 1]]
+    ci = np.flatnonzero(cross & ~skip)
+    if len(ci):
+        mid = 0.5 * (V[E[ci, 0]] + V[E[ci, 1]])
+        _, gr = _leaf_grad(tree, mid, np.stack([lab[E[ci, 0]], lab[E[ci, 1]]], 1), 1e-3 * pitch)
+        gr /= np.maximum(np.linalg.norm(gr, axis=2, keepdims=True), 1e-300)
+        skip[ci[(gr[:, 0] * gr[:, 1]).sum(1) > np.cos(np.radians(tangent))]] = True
+    st["tangentOrIgnored"] = int((cross & skip).sum())
+    cross &= ~skip
     st["crossingEdges"] = int(cross.sum())
     crease = (mask & (mask - 1)) != 0          # more than one label: on a crease already
     if not cross.any():
@@ -380,7 +426,7 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
     st["snapped"] = int(snapped)
 
     # 2. split the edges that still cross
-    cross = (mask[E[:, 0]] & mask[E[:, 1]]) == 0
+    cross = ((mask[E[:, 0]] & mask[E[:, 1]]) == 0) & ~skip
     ci = np.flatnonzero(cross)
     X, ok, _ = crease_points(ci)
     # fallback: the midpoint on the field (where the mesh had it)
@@ -652,7 +698,8 @@ def crossing_faces(V, F, faces):
     lst = cKDTree(C).query_ball_point(C[faces], rad[faces] + np.percentile(rad, 99) + 1e-12)
     A = np.repeat(faces, [len(x) for x in lst])
     B = np.concatenate([np.asarray(x, np.int64) for x in lst]) if len(lst) else np.zeros(0, np.int64)
-    keep = A != B
+    # only faces whose bounding spheres overlap can cross
+    keep = (A != B) & (np.linalg.norm(C[A] - C[B], axis=1) < rad[A] + rad[B] + 1e-12)
     A, B = A[keep], B[keep]
     share = (F[A][:, :, None] == F[B][:, None, :]).any(axis=(1, 2))
     A, B = A[~share], B[~share]
@@ -671,10 +718,15 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
     V = np.array(V, float)
     crease = np.array(crease, bool)
     back = 0
+    near = None
     for _ in range(rounds):
-        # only where a crease vertex moved: elsewhere the mesh is as it was
+        # only where a crease vertex moved: elsewhere the mesh is as it was;
+        # after the first round, only around what the last round sent back
         moved = crease & (np.linalg.norm(V - home, axis=1) > 0.05 * pitch)
-        cf = np.flatnonzero(moved[F].any(axis=1))
+        sel = moved[F].any(axis=1)
+        if near is not None:
+            sel &= near[F].any(axis=1)
+        cf = np.flatnonzero(sel)
         if not len(cf):
             break
         bad = crossing_faces(V, F, cf)
@@ -689,6 +741,11 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
         V[verts] = home[verts]
         crease[verts] = False
         back += len(verts)
+        # the faces that could cross now: within a few rings of those moved back
+        near = np.zeros(len(V), bool)
+        near[verts] = True
+        for _r in range(3):
+            near[F[near[F].any(axis=1)].ravel()] = True
     if stats is not None:
         stats["untangled"] = int(back)
     return V, crease

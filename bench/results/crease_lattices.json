@@ -1,0 +1,279 @@
+{
+ "gyroid_hard": {
+  "before": {
+   "seconds": 40.6,
+   "faces": 1429774,
+   "max": 0.599951334786812,
+   "rms": 0.18216445588723776,
+   "p95": 0.361852494908778,
+   "watertight": false,
+   "winding": true,
+   "manifold3d": "NotManifold",
+   "selfX": 3188,
+   "stats": null,
+   "unresolved": 8016,
+   "n": 202854,
+   "0-60": [
+    46317,
+    0.589,
+    0.0495
+   ],
+   "60-90": [
+    52524,
+    0.598,
+    0.0997
+   ],
+   "90-120": [
+    51470,
+    0.597,
+    0.1906
+   ],
+   "120-135": [
+    30257,
+    0.596,
+    0.2635
+   ],
+   "135-150": [
+    12235,
+    0.6,
+    0.3502
+   ],
+   "150-180": [
+    2035,
+    0.6,
+    0.4189
+   ]
+  },
+  "after": {
+   "seconds": 139.1,
+   "faces": 1493317,
+   "max": 0.6610199223278641,
+   "rms": 0.040533739719374885,
+   "p95": 0.03961969993985146,
+   "watertight": false,
+   "winding": true,
+   "manifold3d": "NotManifold",
+   "selfX": 1306,
+   "stats": {
+    "tangentOrIgnored": 19869,
+    "crossingEdges": 64927,
+    "snapped": 10092,
+    "split": 37705,
+    "splitFallback": 828,
+    "corners": 286,
+    "collapsed": 6032,
+    "untangled": 1507,
+    "creaseVertices": 43141
+   },
+   "unresolved": 8016,
+   "n": 202854,
+   "0-60": [
+    46317,
+    0.653,
+    0.0146
+   ],
+   "60-90": [
+    52524,
+    0.598,
+    0.0244
+   ],
+   "90-120": [
+    51470,
+    0.653,
+    0.0403
+   ],
+   "120-135": [
+    30257,
+    0.603,
+    0.0542
+   ],
+   "135-150": [
+    12235,
+    0.661,
+    0.08
+   ],
+   "150-180": [
+    2035,
+    0.564,
+    0.1177
+   ]
+  }
+ },
+ "octet_hard": {
+  "before": {
+   "seconds": 39.8,
+   "faces": 881872,
+   "max": 0.5998071064338993,
+   "rms": 0.15090367793415552,
+   "p95": 0.2973067439393299,
+   "watertight": true,
+   "winding": true,
+   "manifold3d": "NoError",
+   "selfX": 151,
+   "stats": null,
+   "unresolved": 7479,
+   "n": 82012,
+   "0-60": [
+    18132,
+    0.285,
+    0.0506
+   ],
+   "60-90": [
+    24850,
+    0.575,
+    0.1063
+   ],
+   "90-120": [
+    25162,
+    0.599,
+    0.1758
+   ],
+   "120-135": [
+    3589,
+    0.587,
+    0.2573
+   ],
+   "135-150": [
+    1700,
+    0.6,
+    0.3359
+   ],
+   "150-180": [
+    1100,
+    0.584,
+    0.3849
+   ]
+  },
+  "after": {
+   "seconds": 91.5,
+   "faces": 907070,
+   "max": 0.6591039245260909,
+   "rms": 0.045355890783106353,
+   "p95": 0.06177480450013539,
+   "watertight": true,
+   "winding": true,
+   "manifold3d": "NoError",
+   "selfX": 66,
+   "stats": {
+    "tangentOrIgnored": 16667,
+    "crossingEdges": 23779,
+    "snapped": 4031,
+    "split": 13251,
+    "splitFallback": 15,
+    "corners": 0,
+    "collapsed": 1511,
+    "untangled": 301,
+    "creaseVertices": 16436
+   },
+   "unresolved": 7479,
+   "n": 82012,
+   "0-60": [
+    18132,
+    0.161,
+    0.0112
+   ],
+   "60-90": [
+    24850,
+    0.437,
+    0.0231
+   ],
+   "90-120": [
+    25162,
+    0.654,
+    0.048
+   ],
+   "120-135": [
+    3589,
+    0.659,
+    0.0903
+   ],
+   "135-150": [
+    1700,
+    0.58,
+    0.1487
+   ],
+   "150-180": [
+    1100,
+    0.555,
+    0.1077
+   ]
+  }
+ },
+ "gyroid_soft": {
+  "before": {
+   "seconds": 36.4,
+   "faces": 1312724,
+   "max": 0.14669614367693926,
+   "rms": 0.005815634627023852,
+   "p95": 0.0009285918869288151,
+   "watertight": false,
+   "winding": true,
+   "manifold3d": "NotManifold",
+   "selfX": 0,
+   "stats": null,
+   "unresolved": 0,
+   "n": 140267,
+   "0-60": [
+    140267,
+    0.147,
+    0.0058
+   ]
+  },
+  "after": {
+   "seconds": 55.7,
+   "faces": 1320252,
+   "max": 0.14669614367693926,
+   "rms": 0.005771104986026888,
+   "p95": 0.000827936554581447,
+   "watertight": false,
+   "winding": true,
+   "manifold3d": "NotManifold",
+   "selfX": 0,
+   "stats": {
+    "tangentOrIgnored": 25766,
+    "crossingEdges": 14092,
+    "snapped": 4093,
+    "split": 4321,
+    "splitFallback": 2,
+    "corners": 0,
+    "collapsed": 557,
+    "untangled": 0,
+    "creaseVertices": 8220
+   },
+   "unresolved": 0,
+   "n": 140267,
+   "0-60": [
+    140267,
+    0.147,
+    0.0058
+   ]
+  }
+ },
+ "fullPart": {
+  "gyroid-hard-0": {
+   "seconds": 67.7,
+   "faces": 1395552,
+   "watertight": true,
+   "volume": 49400.0
+  },
+  "gyroid-hard-1": {
+   "seconds": 131.1,
+   "faces": 1459170,
+   "watertight": true,
+   "volume": 49245.5
+  },
+  "octet-hard-0": {
+   "seconds": 55.4,
+   "faces": 846150,
+   "watertight": true,
+   "volume": 54660.5
+  },
+  "octet-hard-1": {
+   "seconds": 91.7,
+   "faces": 871348,
+   "watertight": true,
+   "volume": 54606.5
+  }
+ },
+ "note": "pitch 0.3, cloud box one thread; leaf meshes before the exact bore cut (gyroid leaf is open before the boolean repair on main too); fullPart is FieldGraph.mesh (with sharp.py booleans), timings before the untangle speed-up in 2026-10-31 change are the leaf rows"
+}

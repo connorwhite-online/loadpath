@@ -83,7 +83,7 @@ def test_creases_are_sharp_where_the_field_rounds_them():
         doc, d = _lens(op)
         g = FieldGraph(doc)
         C = _circle(d, 10.0)
-        before = g.mesh(pitch=0.4)
+        before = g.mesh(pitch=0.4, creases=False)
         after = g.mesh(pitch=0.4, creases=True)
         e0 = mesh_distance(before, C).max()
         e1 = mesh_distance(after, C).max()
@@ -111,11 +111,37 @@ def test_a_graph_option_and_the_default():
     m = FieldGraph(doc).mesh(pitch=0.6)
     assert "creases" in m.metadata
     doc, _ = _lens()
+    assert "creases" not in FieldGraph(doc).mesh(pitch=0.6).metadata      # off by default
+    doc, _ = _lens(creases=False)
     assert "creases" not in FieldGraph(doc).mesh(pitch=0.6).metadata
 
 
+def test_creases_beside_an_exact_cut_and_tangent_ties():
+    """A leaf with an exact cut (a bore through two organic balls) meshes
+    from sharp.py's extended field: its crease is sharpened away from the
+    bore, none is put in near it, and the part stays watertight. A shell's
+    outside lying on the body it was shelled from is a tangent tie, no crease."""
+    doc, d = _lens()
+    doc["nodes"]["bore"] = {"op": "shape", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "y",
+                                                     "length": 30, "r": 2.0}}
+    doc["nodes"]["cut"] = {"op": "subtract", "inputs": ["part", "bore"]}
+    doc["output"] = "cut"
+    m = FieldGraph(doc).mesh(pitch=0.5, creases=True)
+    assert _closed(m)
+    ring = _circle(d, 10.0)
+    ring = ring[np.abs(ring[:, 2]) > 5]          # well away from the bore
+    err = mesh_distance(m, ring, edge=0.5)
+    assert err.max() < 0.05, err.max()
+    nodes = {"a": _ball(0, 8), "s": {"op": "shell", "input": "a", "thickness": 1.5},
+             "part": {"op": "intersect", "inputs": ["s", "a"]}}
+    g = FieldGraph({"nodes": nodes, "output": "part", "bounds": {"min": [-9] * 3, "max": [9] * 3}})
+    st = g.mesh(pitch=0.6, creases=True).metadata["creases"]
+    assert st["crossingEdges"] == 0, st
+
+
 TESTS = [test_tree_from_graph, test_meet_finds_the_intersection_curve,
-         test_creases_are_sharp_where_the_field_rounds_them, test_a_graph_option_and_the_default]
+         test_creases_are_sharp_where_the_field_rounds_them, test_a_graph_option_and_the_default,
+         test_creases_beside_an_exact_cut_and_tangent_ties]
 
 
 def main():
