@@ -935,7 +935,8 @@ def exchanger_flow(hx, fluid: str, duty: dict | None = None, *, pitch: float | N
     P = origin + idx * pitch
     in_core = (hx.core.sdf(P) < 0).reshape(solid.shape)
     zi, zo = report["zones"][f"{fluid}-in"], report["zones"][f"{fluid}-out"]
-    r_port = 0.5 * hx.port_diameter
+    from .heatx import port_diameter
+    r_port = 0.5 * port_diameter(hx, hx.names.index(fluid))
 
     def port_region(z):
         p1, ax = np.asarray(z["port"][0], float), np.asarray(z["port"][1], float)

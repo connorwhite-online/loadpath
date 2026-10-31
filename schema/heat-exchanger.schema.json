@@ -43,13 +43,25 @@
       "type": "number",
       "exclusiveMinimum": 0
     },
-    "portDiameter": {
-      "type": "number",
-      "exclusiveMinimum": 0
-    },
     "portLength": {
       "type": "number",
       "exclusiveMinimum": 0
+    },
+    "portDiameter": {
+      "anyOf": [
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      ],
+      "description": "mm, every port; or one per fluid name, e.g. {\"water\": 8, \"air\": 14} (a gas side's ports set most of its pressure drop)"
     },
     "layout": {
       "enum": [

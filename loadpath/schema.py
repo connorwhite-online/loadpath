@@ -496,7 +496,10 @@ HEAT_EXCHANGER_SCHEMA = {
         "type": {"enum": ["gyroid", "diamond", "schwarz-p"]},
         "cell": {**_POS, "description": "mm per TPMS period (at least 3 x wall)"},
         "wall": {**_POS, "description": "mm, the sheet between the fluids"},
-        "shell": _POS, "header": _POS, "cap": _POS, "portDiameter": _POS, "portLength": _POS,
+        "shell": _POS, "header": _POS, "cap": _POS, "portLength": _POS,
+        "portDiameter": {"anyOf": [_POS, {"type": "object", "additionalProperties": _POS}],
+                         "description": "mm, every port; or one per fluid name, e.g. {\"water\": 8, \"air\": 14} "
+                                        "(a gas side's ports set most of its pressure drop)"},
         "layout": {"enum": ["cross", "counter"]},
         "axes": {"type": "string", "pattern": "^[xyz]{2}$",
                  "description": "cross: A along axes[0], B along axes[1]; counter: A through the ends along "

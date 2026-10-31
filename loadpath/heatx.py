@@ -112,7 +112,7 @@ class HeatExchangerSpec:
     header: float = 6.0             # mm, plenum depth over the surface
     cap: float | None = None        # mm, sealing depth under the other fluid's zones (default: wall + 1 mm)
     blend: float | None = None      # mm, smooth-union radius from plenum into its channels (default cell / 4; 0: sharp)
-    port_diameter: float = 8.0
+    port_diameter: float = 8.0      # mm; or one per fluid, (A, B): an air side wants a far bigger port
     port_length: float = 8.0
     axes: tuple = (0, 1)            # cross: A along axes[0], B along axes[1]; counter: A along axes[0], B's side ports along axes[1]
     layout: str = "cross"
@@ -128,6 +128,16 @@ class HeatExchangerSpec:
     max_points: int = 16_000_000
     names: tuple = ("A", "B")
     extra: dict = field(default_factory=dict)
+
+
+def port_diameter(hx, fluid: int) -> float:
+    """The port bore of fluid 0 or 1 (mm)."""
+    d = hx.port_diameter
+    return float(d[fluid]) if isinstance(d, (tuple, list)) else float(d)
+
+
+def _max_port(hx) -> float:
+    return max(port_diameter(hx, 0), port_diameter(hx, 1))
 
 
 def _unit(v):
@@ -168,9 +178,19 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
                          "e.g. {\"type\": \"cylinder\", \"center\": [0, 0, 30], \"axis\": \"z\", \"length\": 60, \"r\": 20}")
     hx = HeatExchangerSpec(core=shape_from_spec(core, base_dir))
     for key, attr in (("cell", "cell"), ("wall", "wall"), ("shell", "shell"), ("header", "header"),
-                      ("cap", "cap"), ("blend", "blend"), ("portDiameter", "port_diameter"), ("portLength", "port_length")):
+                      ("cap", "cap"), ("blend", "blend"), ("portLength", "port_length")):
         if key in spec:
             setattr(hx, attr, float(spec[key]))
+    if "portDiameter" in spec:
+        pd = spec["portDiameter"]
+        if isinstance(pd, dict):
+            names = tuple(str(n) for n in spec.get("fluids", hx.names))
+            if set(pd) != set(names):
+                raise ValueError(f"heatExchanger.portDiameter per fluid names each of {list(names)}, e.g. "
+                                 f"{{\"{names[0]}\": 8, \"{names[1]}\": 14}}")
+            hx.port_diameter = tuple(float(pd[n]) for n in names)
+        else:
+            hx.port_diameter = float(pd)
     if "type" in spec:
         hx.kind = str(spec["type"])
     if "layout" in spec:
@@ -332,7 +352,6 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     zones = zones_for(hx)
     blend = hx.cell * 0.25 if hx.blend is None else float(hx.blend)
     cap = hx.cap if hx.cap is not None else hx.wall + 1.0
-    r_port = 0.5 * hx.port_diameter
     clo, chi = (np.asarray(b, float) for b in hx.core.bounds())
     step = hx.step or hx.wall / 3.0
 
@@ -348,6 +367,8 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     warnings = []
     tan_lean = np.tan(np.radians(_LEAN))
     for k, (z, zi) in enumerate(zip(zones, zinfo)):
+        zi["portDiameter"] = port_diameter(hx, z.fluid)
+        r_port = 0.5 * zi["portDiameter"]
         pyramid = up is not None and abs(float(zi["meanNormal"] @ up)) > 0.6
         if pyramid:
             s = np.sign(float(zi["meanNormal"] @ up))
@@ -358,7 +379,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
             rad = (zi["ellMax"] - cap) * cos_tilt
             if rad < r_port + 1.0:
                 raise ValueError(f"zone {hx.names[z.fluid]}-{z.end} is too small for a "
-                                 f"{hx.port_diameter:g} mm port under a 55 degree roof; use a smaller port")
+                                 f"{zi['portDiameter']:g} mm port under a 55 degree roof; use a smaller port")
             h = rad * tan_lean
             # the cone's walls reach down (toward the core) to the lowest surface under them
             # that faces the zone's way, so they always close on the core
@@ -376,7 +397,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
         else:
             h = hx.header
             if zi["ellMax"] - cap - 0.5 * h < r_port:
-                warnings.append(f"{hx.names[z.fluid]}-{z.end}: the {hx.port_diameter:g} mm port is wider than "
+                warnings.append(f"{hx.names[z.fluid]}-{z.end}: the {zi['portDiameter']:g} mm port is wider than "
                                 f"the plenum at its centre ({2 * (zi['ellMax'] - cap - 0.5 * h):.1f} mm); "
                                 "use a smaller port or a larger zone")
             a = zi["normal"]
@@ -530,7 +551,8 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                    "bounds": [mesh.bounds[0].round(2).tolist(), mesh.bounds[1].round(2).tolist()],
                    "zones": {f"{hx.names[z.fluid]}-{z.end}": {
                        "roof": zi["roof"], "center": np.round(zi["center"], 2).tolist(), "plenumHeight": round(zi["height"], 2),
-                       "port": [np.round(zi["port"][1], 2).tolist(), np.round(zi["axis"], 3).tolist()]}
+                       "port": [np.round(zi["port"][1], 2).tolist(), np.round(zi["axis"], 3).tolist()],
+                       "portDiameter": zi["portDiameter"]}
                        for z, zi in zip(zones, zinfo)},
                    "warnings": warnings})
     del side_a
@@ -784,7 +806,7 @@ def _port_box(hx, zi, pts, up, bed):
     p0, p1 = zi["port"]
     ax = (p1 - p0) / np.linalg.norm(p1 - p0)
     ends = np.array([p0, p1 + ax * 3.0])
-    pad = _SQRT2 * 0.5 * hx.port_diameter + hx.shell + 1.0
+    pad = _SQRT2 * 0.5 * zi["portDiameter"] + hx.shell + 1.0
     blo, bhi = ends.min(axis=0) - pad, ends.max(axis=0) + pad
     if up is not None and abs(float(ax @ up)) <= 0.7:
         k = int(np.argmax(np.abs(up)))
@@ -797,7 +819,7 @@ def _port(hx, zi, pts, up, bed):
     sideways to the build direction gets a teardrop bore, peaked at 45
     degrees, and a gusset under its tube that rises at 45 degrees from the
     plenum wall, so FDM prints it without support."""
-    r = 0.5 * hx.port_diameter
+    r = 0.5 * zi["portDiameter"]
     ro = r + hx.shell
     p0, p1 = zi["port"]
     length = float(np.linalg.norm(p1 - p0))
@@ -882,7 +904,7 @@ def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap, 
         p0, p1 = zi["port"]
         sel = _port_box(hx, zi, pts, None, None)
         near_mouth[sel] |= Cylinder(zi["exit"], p1 + (p1 - p0) / np.linalg.norm(p1 - p0) * 3.0,
-                                   0.5 * hx.port_diameter + hx.shell + 2 * step).sdf(pts[sel]) < 0
+                                   0.5 * zi["portDiameter"] + hx.shell + 2 * step).sdf(pts[sel]) < 0
     for a_, b_, r_ in mouths:
         a_, b_ = np.asarray(a_, float), np.asarray(b_, float)
         ax_ = (b_ - a_) / np.linalg.norm(b_ - a_)

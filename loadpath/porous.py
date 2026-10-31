@@ -112,6 +112,10 @@ def lbm_medium(phi, area_density, dh, cell):
                   0.0569 * phi ** -2.283, 2.257, -2.283)
 
 
+# local porosity: averaging window (cells) and a percolation-like threshold below
+# which a band of partial channels stops carrying flow
+_PERC = {"window": 0.5, "rc": 0.0}
+
 # closures: (pressure-drop law, Nu law)
 _CLOSURES = {"design": (savoldi_medium, "design"), "lbm": (lbm_medium, "lbm")}
 
@@ -184,8 +188,10 @@ def _local(dom, f):
     loc = (dom.extra.get("phi") or [None, None])[f]
     r = np.where(core, 1.0 if loc is None else np.maximum(loc / med.phi, 0.05), 1.0)
     phi = np.where(core, med.phi * r, 1.0)
-    K = med.K * r ** med.nK
-    CF = med.CF * r ** med.nC
+    rc = _PERC["rc"]
+    rk = np.maximum((r - rc) / (1.0 - rc), 0.02) if rc > 0 else r
+    K = med.K * rk ** med.nK
+    CF = med.CF * rk ** med.nC
     return phi, K, CF, r
 
 
@@ -348,6 +354,12 @@ def solve_flow(dom: PorousDomain, f: int, fluid, mass_flow: float, max_steps: in
             U[ax] = un
         p = p + dp
         rel = change / u_ref
+        if not np.isfinite(rel) or rel > 50.0:
+            # the explicit header momentum outran its local step: start again, more carefully
+            if local_dt <= 1.0 and cfl < 0.1:
+                raise ValueError(f"fluid {dom.names[f]}'s flow solve diverged")
+            return solve_flow(dom, f, fluid, mass_flow, max_steps, tol, cfl * (0.7 if local_dt <= 1.0 else 1.0),
+                              max(1.0, local_dt / 4.0), progress)
         hist.append(rel)
         if progress is not None and step % 100 == 0:
             progress(step=step, change=rel)
@@ -624,7 +636,8 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
     at the ports' ends."""
     step = float(grids["step"])
     if voxel is None:
-        voxel = min(hx.cell / 2.0, hx.port_diameter / 4.0, hx.header / 3.0)
+        from .heatx import port_diameter
+        voxel = min(hx.cell / 2.0, min(port_diameter(hx, 0), port_diameter(hx, 1)) / 4.0, hx.header / 3.0)
     r = max(1, int(round(voxel / step)))
     h_mm = r * step
     fr = [_block_mean(m.reshape(grids["dims"]), r) for m in grids["masks"]]
@@ -647,7 +660,7 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
     # seals it off the surface (outside its zones) or closes its channels (closure);
     # measured on cells wholly inside the core, spread to the rest
     inner = (frac > 0.95).astype(np.float32)
-    win = max(3, int(round(hx.cell / h_mm)) | 1)
+    win = max(3, int(round(_PERC["window"] * hx.cell / h_mm)) | 1)
     wsum = ndimage.uniform_filter(inner, win, mode="constant")
     phi_loc = []
     for f in (0, 1):
@@ -678,7 +691,7 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
             t = rel @ ax
             rad = np.linalg.norm(rel - np.outer(t, ax), axis=1)
             sel = ((t <= 0) & (t >= -max(0.5 * hx.port_length, 1.5 * h_mm)) &
-                   (rad <= 0.5 * hx.port_diameter + 0.5 * h_mm)).reshape(dims) & opn[f]
+                   (rad <= 0.5 * z.get("portDiameter", hx.port_diameter) + 0.5 * h_mm)).reshape(dims) & opn[f]
             if not sel.any():
                 d = np.linalg.norm(rel, axis=1).reshape(dims)
                 d[~opn[f]] = np.inf
