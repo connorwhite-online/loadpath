@@ -709,15 +709,39 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
 
     def bore_cyls(b, extend):
         segs = [dict(s) for s in b["segments"]]
+        ends = [np.asarray(b["p0"], float), np.asarray(b["p1"], float)]
         out = []
         for s in segs:
             p0, p1 = np.asarray(s["p0"]), np.asarray(s["p1"])
             a = _unit(p1 - p0)
-            e0 = e1 = 0.5 if b["through"] else 0.0
-            if extend and b["through"]:
-                e0 = e1 = reach
+            ext = (reach if extend else 0.5) if b["through"] else 0.0
+            # only past the bore's own ends: a counterbore stretched past its
+            # step would cut away the material its screw clamps
+            e0, e1 = (ext if min(np.linalg.norm(q - e) for e in ends) < 1e-6 else 0.0 for q in (p0, p1))
             out.append({"type": "cylinder", "p0": (p0 - e0 * a).round(4).tolist(),
                         "p1": (p1 + e1 * a).round(4).tolist(), "r": s["r"]})
+        return out
+
+    def bore_path(b, face_n=None, face_c=None):
+        """The bore's line out of each end, from near where its keep-out
+        stops (0.5 mm past the end) to past the design space, not over the
+        hole: coincident cylinders (or caps) are what OpenCascade's booleans
+        (the STEP export) handle worst, to the point of hanging. Not out of
+        a bolt's head end: its driver path is there already."""
+        ends = [np.asarray(b[k], float) for k in ("p0", "p1")]
+        if b["kind"] == "bolt":
+            far = _bolt_ends(b, face_n, face_c)[1]
+            ends = [min(ends, key=lambda e: np.linalg.norm(e - far))]
+        out = []
+        for s in b["segments"]:
+            p0, p1 = np.asarray(s["p0"], float), np.asarray(s["p1"], float)
+            a = _unit(p1 - p0)
+            for q, d in ((p0, -a), (p1, a)):
+                if min(np.linalg.norm(q - e) for e in ends) < 1e-6:
+                    # overlapping the hole's last 0.25 mm, 0.01 mm thinner:
+                    # no shared face, coincident or end to end
+                    out.append({"type": "cylinder", "p0": (q + 0.25 * d).round(4).tolist(),
+                                "p1": (q + reach * d).round(4).tolist(), "r": round(s["r"] - 0.01, 4)})
         return out
 
     grown = space != "part" or grow > 0
@@ -730,12 +754,22 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
     used = {support or setup.get("support")} | ({p[0] for p in pairs} if pairs else {setup.get("load")})
     for it in feats["interfaces"]:
         bores = [by_id[h] for h in it["bores"]]
-        # grown past the part, a through bore runs out of it: the bolt goes in,
-        # the shaft goes on through
-        cyls = [c for b in bores for c in bore_cyls(b, grown)]
+        cyls = [c for b in bores for c in bore_cyls(b, False)]
         keep_out.append({"id": f"{it['id']}-hole" if it["kind"] == "bolted-face" or len(bores) > 1
                          else it["id"],
                          "shape": cyls[0] if len(cyls) == 1 else {"type": "union", "shapes": cyls}})
+        fn = fc = None
+        if it["kind"] == "bolted-face":
+            fn, fc = np.asarray(faces[it["face"]]["normal"]), np.asarray(faces[it["face"]]["center"])
+        path = [c for b in bores if grown and b["through"] for c in bore_path(b, fn, fc)]
+        if path:
+            # the bolts and shafts run on out of a grown space (or material
+            # grows over a bearing seat's ends and the shaft can't go in):
+            # kept clear, but not the region that holds or loads the
+            # interface, or the optimizer hangs the part off the line far
+            # from the bore
+            keep_out.append({"id": f"{it['id']}-path",
+                             "shape": path[0] if len(path) == 1 else {"type": "union", "shapes": path}})
         if it["kind"] == "bore" and bores[0]["r"] < SEAT_MIN_R and it["id"] not in used:
             continue                  # a cable pass or a pilot hole: kept open, not kept solid
         # preserved: rings round the bores, a pad under a bolted face, cut to the part

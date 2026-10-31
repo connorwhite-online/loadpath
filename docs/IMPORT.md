@@ -71,9 +71,12 @@ designer drew.
   (2 mm plus a tenth of the radius, at most 5). Plain bores under 5 mm radius
   that neither hold nor carry a load (cable passes, pilot holes) stay open
   but are not ringed, or the optimizer grows a strut out to them.
-- **Kept out**: every bore, through bores 0.5 mm past their ends; when the
-  space grows past the part, through bores run out of it (the bolt goes in, the
-  shaft goes on through), each bolt gets a
+- **Kept out**: every bore, through bores 0.5 mm past their ends (a
+  counterbore only past its open end, not into the material its screw
+  clamps); when the space grows past the part, through bores (bolts, and
+  shafts, whose seat would otherwise be capped over) run on out of it
+  (`<interface>-path`; the support or load stays on the hole in the part,
+  so nothing hangs off the bore's line far from the bore), each bolt gets a
   `bore: false` head-and-driver path out of its head end, and a slab in front
   of each bolted face keeps material off the mating face.
 - **Suggested setup**: the bolted interface with the most bolts holds the

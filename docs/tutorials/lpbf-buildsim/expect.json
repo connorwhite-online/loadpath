@@ -1,0 +1,26 @@
+{
+  "files": ["sim/bracket-printed.stl", "comp/bracket-compensated.stl", "check/bracket-compensated-printed.stl"],
+  "quick": [
+    {"file": "sim/report.json", "value": "r['distortion']['max']", "min": 0.8, "max": 1.25, "what": "distortion after cut-off, as drawn, mm"},
+    {"file": "sim/report.json", "value": "r['deviation']['max']", "min": 0.6, "max": 0.95, "what": "deviation from the design, as drawn, mm"},
+    {"file": "sim/report.json", "value": "r['recoater']['risk']", "equals": true, "what": "recoater risk standing"},
+    {"file": "sim/report.json", "value": "r['recoater']['maxLift']", "min": 0.55, "max": 0.9, "what": "build-plane lift standing, mm"},
+    {"file": "comp/report.json", "value": "len(r['compensation']['rounds'])", "equals": 3, "what": "compensation rounds (0, 1, 2)"},
+    {"file": "comp/report.json", "value": "r['compensation']['rounds'][-1]['maxDeviation'] < 0.4 * r['compensation']['rounds'][0]['maxDeviation']", "equals": true, "what": "two rounds take out over 60% of the max deviation"},
+    {"file": "check/report.json", "value": "r['deviation']['max']", "max": 0.25, "what": "compensated part as printed: deviation from the design, mm"},
+    {"file": "side/report.json", "value": "r['recoater']['risk']", "equals": false, "what": "recoater risk on its side"},
+    {"file": "side/report.json", "value": "r['distortion']['max']", "min": 0.15, "max": 0.35, "what": "distortion on its side, mm"}
+  ],
+  "full": [
+    {"file": "sim/report.json", "value": "r['distortion']['max']", "min": 2.85, "max": 3.15, "what": "distortion after cut-off, as drawn (3.01), mm"},
+    {"file": "sim/report.json", "value": "r['deviation']['max']", "min": 2.9, "max": 3.25, "what": "deviation from the design, as drawn (3.08), mm"},
+    {"file": "sim/report.json", "value": "r['deviation']['p95']", "min": 0.58, "max": 0.68, "what": "deviation p95, as drawn (0.63), mm"},
+    {"file": "sim/report.json", "value": "r['recoater']['maxLift']", "min": 1.2, "max": 1.35, "what": "build-plane lift standing (1.27), mm"},
+    {"file": "sim/report.json", "value": "r['residualStress']['vmP95Built']", "min": 1480, "max": 1650, "what": "residual stress p95 on the plate (1566), MPa"},
+    {"file": "comp/report.json", "value": "[round(x['maxDeviation'], 1) for x in r['compensation']['rounds']]", "equals": [2.7, 1.4, 1.1], "what": "compensation rounds' max deviation, mm"},
+    {"file": "check/report.json", "value": "r['deviation']['max']", "min": 0.33, "max": 0.41, "what": "compensated, printed: deviation max (0.37), mm"},
+    {"file": "check/report.json", "value": "r['deviation']['p95']", "min": 0.11, "max": 0.135, "what": "compensated, printed: deviation p95 (0.12), mm"},
+    {"file": "side/report.json", "value": "r['recoater']['risk']", "equals": false, "what": "recoater risk on its side"},
+    {"file": "side/report.json", "value": "r['distortion']['max']", "min": 0.25, "max": 0.3, "what": "distortion on its side (0.27), mm"}
+  ]
+}

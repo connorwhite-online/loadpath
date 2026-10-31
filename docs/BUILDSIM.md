@@ -14,7 +14,18 @@ distortion against stiffness.
 
 adds `report.buildSim` to the delivered outcome (distortion, residual stress,
 recoater lift, warnings) and writes `<name>-compensated.stl` next to the part.
-From Python:
+Any mesh, from the command line (the walk-through is
+[docs/tutorials/lpbf-buildsim](tutorials/lpbf-buildsim/)):
+
+```sh
+loadpath buildsim part.stl --material ti64 --pitch 0.5 --out sim/          # report.json, part-printed.stl
+loadpath buildsim part.stl --material ti64 --pitch 0.5 --compensate 2 --out comp/   # + part-compensated.stl
+loadpath buildsim comp/part-compensated.stl --nominal part.stl --material ti64 --pitch 0.5 --out check/
+```
+
+`deviation` in its report is the printed surface against the design
+(`--nominal`, default the part itself) after a best fit, both ways, as a
+scan comparison reads it. From Python:
 
 ```python
 from loadpath.buildsim import BuildSetup, simulate_part, compensate_mesh
