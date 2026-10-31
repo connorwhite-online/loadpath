@@ -85,6 +85,20 @@ def _axis_rot(a, q):
     return np.eye(3) + np.sin(q) * k + (1 - np.cos(q)) * k @ k
 
 
+def _primitive(geom):
+    """A URDF <box>, <cylinder> or <sphere> as (kind, dimensions in metres),
+    or None."""
+    if geom is None:
+        return None
+    if (el := geom.find("box")) is not None:
+        return "box", tuple(float(v) for v in el.get("size").split())
+    if (el := geom.find("cylinder")) is not None:
+        return "cylinder", (float(el.get("radius")), float(el.get("length")))
+    if (el := geom.find("sphere")) is not None:
+        return "sphere", (float(el.get("radius")),)
+    return None
+
+
 @dataclass
 class Joint:
     name: str
@@ -160,10 +174,13 @@ class Robot:
             for tag in ("collision", "visual"):
                 for el in link.findall(tag):
                     m = el.find("geometry/mesh")
-                    if m is None:
+                    if m is not None:
+                        scale = np.array([float(v) for v in m.get("scale", "1 1 1").split()])
+                        b.meshes.append((m.get("filename"), _origin(el.find("origin")), scale))
                         continue
-                    scale = np.array([float(v) for v in m.get("scale", "1 1 1").split()])
-                    b.meshes.append((m.get("filename"), _origin(el.find("origin")), scale))
+                    prim = _primitive(el.find("geometry"))
+                    if prim is not None:
+                        b.meshes.append((prim, _origin(el.find("origin")), np.ones(3)))
                 if b.meshes:
                     break
             bodies[b.name] = b
@@ -270,8 +287,27 @@ class Robot:
         """The link's mesh in its own frame, metres (trimesh), or None."""
         import trimesh
 
+        parts = self.meshes(link)
+        if not parts:
+            return None
+        return trimesh.util.concatenate(parts) if len(parts) > 1 else parts[0]
+
+    def meshes(self, link: str) -> list:
+        """The link's collision (else visual) shapes in its own frame, metres,
+        one closed trimesh each (they may overlap)."""
+        import trimesh
+
         parts = []
         for fn, org, scale in self.bodies[link].meshes:
+            if not isinstance(fn, str):
+                # a URDF box, cylinder or sphere (metres, centred on its origin)
+                kind, dims = fn
+                m = (trimesh.creation.box(extents=dims) if kind == "box" else
+                     trimesh.creation.cylinder(radius=dims[0], height=dims[1], sections=48) if kind == "cylinder"
+                     else trimesh.creation.icosphere(subdivisions=3, radius=dims[0]))
+                m.apply_transform(org)
+                parts.append(m)
+                continue
             p = fn.split("://", 1)[1] if "://" in fn else fn
             cands = [os.path.join(self.base_dir, p), os.path.join(self.base_dir, os.path.basename(p))]
             if "://" in fn:
@@ -284,9 +320,7 @@ class Robot:
             m.vertices = np.asarray(m.vertices) * scale
             m.apply_transform(org)
             parts.append(m)
-        if not parts:
-            return None
-        return trimesh.util.concatenate(parts) if len(parts) > 1 else parts[0]
+        return parts
 
 
 # --------------------------------------------------------------------------- load sweep
@@ -765,13 +799,18 @@ def swept_keepouts(robot: Robot, link: str, *, box, pitch: float = 1.0, clearanc
                                          indexing="ij"), -1).reshape(-1, 3)
                 pb_mm = g[sh.contains(g)]
             else:
-                m = shapes[b] if shapes and b in shapes else robot.mesh(b)
-                if m is None:
+                # each shape on its own: ray parity over overlapping shapes
+                # would read their overlap as outside
+                ms = [shapes[b]] if shapes and b in shapes else robot.meshes(b)
+                if not ms:
                     continue
-                if not (shapes and b in shapes):
-                    m.apply_scale(1000.0)
-                solid, org = voxelize(m, fine)
-                pb_mm = org + (np.argwhere(solid) + 0.5) * fine
+                pb_mm = []
+                for m in ms:
+                    if not (shapes and b in shapes):
+                        m.apply_scale(1000.0)
+                    solid, org = voxelize(m, fine)
+                    pb_mm.append(org + (np.argwhere(solid) + 0.5) * fine)
+                pb_mm = np.concatenate(pb_mm)
             rel = np.linalg.inv(T0[nb]) @ T0[b]
             pts.append(pb_mm @ rel[:3, :3].T + rel[:3, 3] * 1000.0)
         pts = np.concatenate(pts) if pts else np.zeros((0, 3))
