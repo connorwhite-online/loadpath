@@ -96,17 +96,17 @@ def _import(args):
             r = import_part(args.part, tolerance=args.tolerance)
             print(json.dumps({**r["summary"], "suggested": r["features"]["suggested"]}, indent=1))
             return 0
-        loads = {}
+        loads = []
         for item in args.load:
             k, _, v = item.partition("=")
             f = [float(x) for x in v.split(",")]
             if len(f) != 3:
                 raise ValueError(f"--load {item!r}: write ID=FX,FY,FZ in N")
-            loads[k] = f
+            loads.append((k, f))
         out = import_part(args.part, args.out, tolerance=args.tolerance, space=args.space, grow=args.grow,
                           material=args.material or "petg", force=args.force, pad=args.pad,
                           safety_factor=args.safety_factor, process=args.process, support=args.support,
-                          loads=loads or None)
+                          loads=loads or None, ring=args.ring)
     except (ValueError, RuntimeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
@@ -114,12 +114,18 @@ def _import(args):
     stem = out["study"]["name"]
     given = bool(loads)
     todo = [] if given else [f"replace the placeholder load ({f['suggested'].get('note', 'none suggested')}): "
-                             "--load ID=FX,FY,FZ with an interface id below"]
+                             "--load ID=FX,FY,FZ with an interface id below, one load case per --load"]
     if not args.material:
         todo.append("material is the default (petg, FDM): pass --material/--process for anything else")
+    if args.space == "part" and not args.grow:
+        todo.append("the design space is the part as drawn, so the optimizer can only remove material from it: "
+                    "to lighten within the same envelope, or let it find a new shape, use --space box (or hull)")
+    setup = {"setup": {"support": args.support or f["suggested"].get("support"),
+                       "loads": [{"interface": k, "force": v} for k, v in loads]}} if given else \
+        {"suggested": f["suggested"]}
     print(json.dumps({"ok": True, "study": os.path.join(args.out, f"{stem}.study.json"),
                       "features": os.path.join(args.out, f"{stem}.features.json"),
-                      **out["summary"], "suggested": f["suggested"], "material": args.material or "petg",
+                      **out["summary"], **setup, "material": args.material or "petg",
                       "todo": todo, **({"healed": f["healed"]} if "healed" in f else {})}, indent=1))
     return 0
 
@@ -352,7 +358,10 @@ def main(argv=None):
     im.add_argument("--process", help="fdm, sls, mjf, sla, dlp, lpbf, volumetric")
     im.add_argument("--support", help="interface id that holds the part (default: the suggested one)")
     im.add_argument("--load", action="append", default=[], metavar="ID=FX,FY,FZ",
-                    help="N on an interface, e.g. bore-0=0,0,-250 (repeatable); replaces the placeholder")
+                    help="N on an interface, e.g. bore-0=0,0,-250; repeat it for more load cases, one per --load; "
+                    "replaces the placeholder")
+    im.add_argument("--ring", type=float, help="mm of wall kept round every bore, as exact tubes in the study "
+                    "(default: 2 mm + a tenth of the radius, cut to the part)")
     im.add_argument("--force", type=float, default=100.0, help="N: the suggested (placeholder) load")
     im.add_argument("--pad", type=float, default=2.0, help="mm of material kept under each bolted face")
     im.add_argument("--safety-factor", type=float, default=2.0)

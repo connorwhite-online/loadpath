@@ -263,7 +263,7 @@ def _load_mesh(path: str, base_dir: str | None = None):
 
 def import_cad(path: str, out_dir: str | None = None, base_dir: str | None = None, space: str = "part",
                material: str = "petg", force: float = 100.0, grow: float = 0.0, process: str | None = None,
-               support: str | None = None, loads: dict | None = None) -> dict:
+               support: str | None = None, loads=None, ring: float | None = None) -> dict:
     """A STEP/STL part's bores, bolt patterns, mounting faces and
     interfaces, and with out_dir a draft study written there (cadimport.py)."""
     from .cadimport import import_part
@@ -276,7 +276,7 @@ def import_cad(path: str, out_dir: str | None = None, base_dir: str | None = Non
             return {"ok": True, **import_part(full)}
         out = os.path.abspath(out_dir if os.path.isabs(out_dir) else os.path.join(base_dir or os.getcwd(), out_dir))
         r = import_part(full, out, space=space, material=material, force=force, grow=grow, process=process,
-                        support=support, loads=loads)
+                        support=support, loads=loads, ring=ring)
     except (ValueError, RuntimeError) as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": True, "baseDir": out, **r}
@@ -725,7 +725,7 @@ def serve():
     def loadpath_import_cad(path: str, out_dir: str | None = None, base_dir: str | None = None,
                             space: str = "part", material: str = "petg", force: float = 100.0,
                             grow: float = 0.0, process: str | None = None, support: str | None = None,
-                            loads: dict | None = None) -> dict:
+                            loads: list | None = None, ring: float | None = None) -> dict:
         """Bring a CAD part in: a STEP (.step/.stp) or STL/3MF/OBJ file in mm. Finds its bores (axis,
         radius, counterbore steps, through or blind; 'bolt' up to M6 clearance, else 'bore'), the flat
         exposed faces it mounts by with the bolts opening onto each, and its interfaces (a bolted face,
@@ -736,10 +736,12 @@ def serve():
         main bolted interface) and load (force N, a placeholder, across the lever to the farthest
         large interface). Call it first without out_dir: `summary.interfaces` lists each interface id
         with what it is. Then pass material (and process, e.g. 'sls'), support (an interface id) and
-        loads ({interface id: [fx, fy, fz] N}) so the draft carries the real setup instead of the
-        placeholder; bolts get washer seats, not bosses. Then loadpath_check and loadpath_start with
+        loads ([{interface, force: [fx, fy, fz] N}], one load case each) so the draft carries the real
+        setup instead of the placeholder; bolts get washer seats, not bosses. ring (mm) keeps an exact
+        tube of that wall round every bore. space 'part' only removes material from the part as drawn:
+        to lighten within its envelope use 'box' or 'hull'. Then loadpath_check and loadpath_start with
         base_dir = the returned baseDir. Seconds."""
-        return import_cad(path, out_dir, base_dir, space, material, force, grow, process, support, loads)
+        return import_cad(path, out_dir, base_dir, space, material, force, grow, process, support, loads, ring)
 
     @tool
     def loadpath_verify(study: dict | str, path: str, base_dir: str | None = None, max_cells: int = 60000) -> dict:

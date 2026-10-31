@@ -194,18 +194,30 @@ def test_l_bracket_given_setup_seats_not_slabs():
         shaft = next(i["id"] for i in s["interfaces"] if i["kind"] == "bore")
         out = subprocess.run([sys.executable, "-m", "loadpath", "import", path, "--out", os.path.join(d, "o"),
                               "--material", "pa12", "--process", "sls", "--support", mount,
-                              "--load", f"{shaft}=0,0,-250"], capture_output=True, text=True, cwd=ROOT)
+                              "--load", f"{shaft}=0,0,-250", "--load", f"{shaft}=80,0,0", "--space", "box"],
+                             capture_output=True, text=True, cwd=ROOT)
         assert out.returncode == 0, out.stderr
         rep = json.loads(out.stdout)
         assert rep["todo"] == [], rep["todo"]
+        assert "suggested" not in rep and len(rep["setup"]["loads"]) == 2
         st = json.load(open(rep["study"]))
         assert st["material"] == "pa12" and st["process"] == "sls"
-        assert st["loadCases"][0]["loads"][0]["force"] == [0, 0, -250]
+        # one load case per --load, none dropped
+        assert [c["loads"][0]["force"] for c in st["loadCases"]] == [[0, 0, -250], [80, 0, 0]]
+        # grown past the part, bolts get a head and driver path and the shaft bore runs through
+        assert sum(k["id"].endswith("-driver") for k in st["keepOut"]) == 2
+        shaft_ko = next(k for k in st["keepOut"] if k["id"] == shaft)["shape"]
+        assert abs(shaft_ko["p1"][1] - shaft_ko["p0"][1]) > 40
         assert check_study(st, os.path.join(d, "o"))["ok"]
         # the bolts keep washer seats, not a plate: well under the foot's volume
         keep = [trimesh.load(os.path.join(d, "o", p["shape"]["path"]), force="mesh") for p in st["preserve"]
                 if p["id"].startswith(mount)]
         assert keep and sum(k.volume for k in keep) < 0.25 * 40 * 30 * 5
+        # --ring: exact tubes round the bores, wall readable in the study
+        r = import_part(path, os.path.join(d, "r"), ring=3.0, support=mount, loads=[(shaft, [0, 0, -250])])
+        tubes = [p["shape"] for p in r["study"]["preserve"] if p["shape"]["type"] == "cylinder"]
+        assert tubes and all(abs(t["r"] - t["rInner"] - 3.0) < 1e-9 for t in tubes)
+        assert check_study(r["study"], os.path.join(d, "r"))["ok"]
 
 
 TESTS = [test_l_bracket_given_setup_seats_not_slabs, test_heal_closes_a_cracked_mesh, test_mesh_features_and_draft_study, test_grown_space_clears_mating_faces,

@@ -13,6 +13,12 @@ loadpath import bracket.step --out draft/ --material pa12 --process sls \
 loadpath run draft/bracket.study.json --out out/
 ```
 
+Each `--load` is its own load case. `--space part` (the default) only takes
+material away from the part as drawn, so for "lighter, same envelope" use
+`--space box` (or `hull`): the `todo` in the output says so. `--ring T` keeps
+an exact T mm tube round every bore, written as a cylinder in the study so the
+wall is readable, instead of the default ring cut to the part.
+
 Without `--support` / `--load` the draft carries the suggested setup and a
 placeholder force, and the command's `todo` says so; without `--material` it
 says the material is the default (PETG, FDM).
@@ -66,7 +72,8 @@ designer drew.
   that neither hold nor carry a load (cable passes, pilot holes) stay open
   but are not ringed, or the optimizer grows a strut out to them.
 - **Kept out**: every bore, through bores 0.5 mm past their ends; when the
-  space grows past the part, bolt bores run out of it, each bolt gets a
+  space grows past the part, through bores run out of it (the bolt goes in, the
+  shaft goes on through), each bolt gets a
   `bore: false` head-and-driver path out of its head end, and a slab in front
   of each bolted face keeps material off the mating face.
 - **Suggested setup**: the bolted interface with the most bolts holds the
