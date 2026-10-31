@@ -117,7 +117,17 @@ def lbm_medium(phi, area_density, dh, cell):
 
 
 # dead edge band beyond the seal, in cells (box_domain, sizing.py): where the
-# calibrated local porosity puts the dead partial channels on designed cores
+# calibrated local porosity puts the dead partial channels on designed cores.
+# Checked with box_domain at 1.5 mm on the 30 mm crossflow cubes (water side):
+#   band  original: eff  core Pa  cv     tuned: eff  total/core Pa  cv
+#   0          0.341   100   0.29         0.379   198 /  79   0.27
+#   0.1        0.304   123   0.43         0.341   216 /  97   0.30
+#   0.2        0.269   155   0.48         0.304   241 / 120   0.43
+# designed porous 0.336 / 225 / 0.52 and 0.377 / 267 / 183 / 0.47; LBM tuned
+# 197 static, core ~110 corrected, cv 0.52. A quarter cell gets the tuned core
+# dp and flow sharing near LBM; it reads effectiveness ~20% under the designed
+# model on a core only 3.75 cells across (conservative), and the band is a small
+# share of a big core, where box_domain is meant to be used.
 _BAND_CELLS = 0.25
 
 # local porosity: averaging window (cells), and a threshold (share of the bulk's
