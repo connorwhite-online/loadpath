@@ -39,6 +39,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    runs through for the shaft or inner race, and the preserved ring covers
    the seat's width. Keep-outs win over preserves: `check` warns when one
    eats into a preserved piece (a fastener's driver path clipping a boss).
+   Anything inserted (a shaft, pin, bearing, cable) needs its keep-out to
+   run past the design space on the side it goes in from, or the part may
+   close over it; `check` warns about a bore with no open end.
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and

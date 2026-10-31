@@ -202,3 +202,23 @@ if __name__ == "__main__":
                 print("FAIL", name)
                 traceback.print_exc()
     sys.exit(failed)
+
+
+def test_check_warns_on_bore_with_no_way_in():
+    from loadpath.tasks import check_study
+
+    base = {"name": "b", "material": "PLA",
+            "designSpace": [{"type": "box", "min": [0, 0, 0], "max": [40, 20, 20]}],
+            "preserve": [{"id": "pad", "shape": {"type": "box", "min": [0, 0, 0], "max": [4, 20, 20]}}],
+            "supports": [{"region": "pad"}],
+            "loadCases": [{"name": "c", "loads": [{"region": "shaft", "force": [0, 0, -50]}]}],
+            "goal": {"safetyFactor": 2}, "resolution": {"maxElements": 4000}}
+    sealed = dict(base, keepOut=[{"id": "shaft", "shape": {"type": "cylinder", "p0": [30, 5, 10], "p1": [30, 15, 10], "r": 3}}])
+    r = check_study(sealed)
+    assert r["ok"] and any("shaft" in w and "both ends" in w for w in r["warnings"])
+    through = dict(base, keepOut=[{"id": "shaft", "shape": {"type": "cylinder", "p0": [30, -1, 10], "p1": [30, 21, 10], "r": 3}}])
+    r = check_study(through)
+    assert not any("design space at" in w for w in r["warnings"] + r["notes"])
+    blind = dict(base, keepOut=[{"id": "shaft", "shape": {"type": "cylinder", "p0": [30, -1, 10], "p1": [30, 12, 10], "r": 3}}])
+    r = check_study(blind)
+    assert any("blind pocket" in n for n in r["notes"])
