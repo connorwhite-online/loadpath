@@ -24,7 +24,8 @@ field. `check` reports every problem at once: fix them all, then check again.
    empty). If the part already exists as CAD, start from it:
    `loadpath import part.step --out draft/` (MCP `loadpath_import_cad`) finds the
    bores, bolt patterns and mounting faces and writes a draft study with them
-   preserved and kept out, and a placeholder support and load you replace. Primitive shapes cover most of it; for anything else export a
+   preserved and kept out; pass `--material`, `--support` and `--load ID=FX,FY,FZ`
+   (interface ids from `--features-only`) so it carries the real setup. Primitive shapes cover most of it; for anything else export a
    closed STL and use `{"type": "mesh", "path": "motor.stl"}`. An interface
    in several pieces (a servo's four screw bosses) is one region with
    `{"type": "union", "shapes": [...]}`, so one load or support acts on all of
@@ -97,6 +98,15 @@ field. `check` reports every problem at once: fix them all, then check again.
    `"escapeHole"`), thin flat panels that warp (powder), and for resin the
    supports, the largest layer (peel) and suction cups. Its warnings are the
    outcome's. Fix each before ordering the print.
+   `"buildSim": true` (lpbf, fdm, sls, mjf) simulates the build of the
+   delivered part: `report.json` → `buildSim` gives `distortion` (mm, off the
+   plate or bed), `residualStress` (MPa vs yield), `recoater.maxLift` (LPBF:
+   above ~0.05 mm the recoater can hit it) and `peel` (FDM: mean pull on the
+   bed, MPa). Add `"compensate": true` for `<stem>-compensated.stl`,
+   pre-distorted to print to shape. Read `strain.kSource`: only IN625 and
+   15-5 PH are calibrated (NIST AM-Bench); for other alloys the size of the
+   distortion is a rough guide (could be off 2x), though comparing designs
+   is still sound. docs/BUILDSIM.md has the validation.
 6. **Say how long it has to last.** A load that repeats (a servo lifting,
    an arm swinging) gets `"cycles"` in its load case: how many times over
    the part's life (a hobby arm: 1e5-1e6). A load that is held (a part
@@ -155,6 +165,14 @@ field. `check` reports every problem at once: fix them all, then check again.
   TPMS sheet lattice graded by its own stress: `"lattice": {"type":
   "gyroid", "cell": 10, "skin": 1.2}` in the study, or `loadpath_lattice`
   on a finished job. `skin: 0` for SLS, MJF and resin so they drain.
+- Field graphs take strut lattices too (`"type": "octet"`, `kelvin`, `bcc`,
+  `fcc`, `voronoi`, ...; `thickness` is the strut diameter, `blend` fillets
+  the nodes) and conformal cells (`"frame": {"type": "conformal",
+  "surface": "envelope"}`: layers parallel to the skin, no cell cut by it).
+  For strength per gram a gyroid sheet beats every strut cell (arm link at
+  equal mass: SF 16 vs 9-13); pick struts for open, drainable cells, very
+  low density, or FDM (`"aspect": [1, 1, 1.5]` BCC prints unsupported; the
+  field report's `lattices` block gives the bridging strut length).
 - Don't use a lattice to make a part stiffer per gram: solid topology
   optimization wins that. Use one to stop an impact (a bumper, a hard stop, a
   drop pad): give a field graph an `impact` block (envelope, density node,

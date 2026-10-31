@@ -375,7 +375,7 @@ def _frame_points(P, frame):
     if not frame or frame.get("type", "cartesian") == "cartesian":
         return P, None
     if frame["type"] != "cylindrical":
-        raise ValueError("lattice frame type must be 'cartesian' or 'cylindrical'")
+        raise ValueError("lattice frame type must be 'cartesian', 'cylindrical', 'spherical' or 'conformal'")
     c = np.asarray(frame.get("center", (0, 0, 0)), float)
     ax = frame.get("axis", "z")
     a = np.asarray({"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[ax] if isinstance(ax, str) else ax, float)
@@ -442,6 +442,33 @@ def _tpms_distance(kind, P, cell, frame=None):
     return out
 
 
+def _lsq_potential(T, h):
+    """The grid scalar u whose differences along every grid edge best match
+    the target gradient T (dims + (3,), per unit length) times the step h:
+    least squares, D^T D u = D^T t. D^T D is the grid graph's Laplacian with
+    free (Neumann) ends, which the DCT-II diagonalizes exactly, so the solve
+    is direct, O(n log n). Defined up to a constant (its mean is zero)."""
+    from scipy import fft
+
+    dims = T.shape[:3]
+    lam = sum((2 - 2 * np.cos(np.pi * np.arange(dims[a]) / dims[a])).reshape([-1 if i == a else 1
+                                                                              for i in range(3)])
+              for a in range(3))
+    lam[0, 0, 0] = 1.0
+    b = np.zeros(dims)
+    for a in range(3):
+        sl0 = [slice(None)] * 3
+        sl1 = [slice(None)] * 3
+        sl0[a] = slice(0, -1)
+        sl1[a] = slice(1, None)
+        te = 0.5 * (T[tuple(sl0) + (a,)] + T[tuple(sl1) + (a,)]) * h      # target step along each edge
+        b[tuple(sl0)] -= te
+        b[tuple(sl1)] += te                                                 # D^T t
+    B = fft.dctn(b, type=2, norm="ortho") / lam
+    B[0, 0, 0] = 0.0
+    return fft.idctn(B, type=2, norm="ortho")
+
+
 class _CellWarp:
     """Lattice coordinates u(x) for a cell size that varies in space: the
     least-squares map whose gradient is I / cell(x) (a Poisson solve on a
@@ -453,8 +480,6 @@ class _CellWarp:
     periods, which leaves crumbs where they disagree."""
 
     def __init__(self, cell_fn, lo, hi, max_cells=400_000):
-        from scipy import fft
-
         lo, h, dims = self.grid(cell_fn, lo, hi, max_cells)
         axes = [lo[i] + np.arange(dims[i]) * h for i in range(3)]
         G = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
@@ -463,25 +488,11 @@ class _CellWarp:
             raise ValueError("lattice cell must be positive everywhere")
         g = (1.0 / c).reshape(tuple(dims))
         n = int(np.prod(dims))
-        # D^T D is the grid graph's Laplacian with free (Neumann) ends, which
-        # the DCT-II diagonalizes exactly: a direct solve in O(n log n)
-        lam = sum((2 - 2 * np.cos(np.pi * np.arange(dims[a]) / dims[a])).reshape([-1 if i == a else 1
-                                                                                  for i in range(3)])
-                  for a in range(3))
-        lam[0, 0, 0] = 1.0
         self.u = []
         for comp in range(3):
-            sl0 = [slice(None)] * 3
-            sl1 = [slice(None)] * 3
-            sl0[comp] = slice(0, -1)
-            sl1[comp] = slice(1, None)
-            te = 0.5 * (g[tuple(sl0)] + g[tuple(sl1)]) * h     # target step along each edge
-            b = np.zeros(tuple(dims))
-            b[tuple(sl0)] -= te
-            b[tuple(sl1)] += te                                 # D^T t
-            B = fft.dctn(b, type=2, norm="ortho") / lam
-            B[0, 0, 0] = 0.0
-            u = fft.idctn(B, type=2, norm="ortho").ravel()
+            T = np.zeros(tuple(dims) + (3,))
+            T[..., comp] = g
+            u = _lsq_potential(T, h).ravel()
             # anchor: u = x / cell at the domain's centre point, so a constant
             # cell gives back the plain lattice
             self.u.append((u - u[n // 2]).reshape(tuple(dims)) + G[n // 2, comp] * g.ravel()[n // 2])
@@ -516,6 +527,169 @@ class _CellWarp:
         out = np.stack([ndimage.map_coordinates(u, cl, order=1, mode="nearest") for u in self.u], axis=1)
         # past the grid: carry on at the local rate
         return out + (idx - cl).T * self.h / np.broadcast_to(np.asarray(cell, float), (len(P),))[:, None]
+
+
+class _ConformalMap:
+    """Lattice coordinates that follow a surface (nTop's conformal lattice):
+    u3 counts cell layers in from the surface (its signed distance over the
+    through-thickness cell, exact, so every layer is parallel to the skin
+    and the first one sits on it), and (u1, u2) run along the surface. The
+    tangent directions are a reference axis projected onto the tangent
+    plane and its cross with the normal (where the normal turns towards the
+    reference, a second axis takes over smoothly). Round a closed surface (a
+    tube, a boss, the section of a link) the tangent field circulates and no
+    coordinate follows it, so (u1, u2) are phases, defined modulo one cell,
+    which is all a periodic cell reads: stripe patterns (_stripe_phase). Where
+    a whole number of cells cannot fit round a loop the pattern puts a phase
+    defect deep inside, not a shear in every cell at the skin.
+
+    `surface_fn(P)` is the surface's signed distance, `cell_fn(P)` the
+    in-plane cell (mm, a field grades it), `normal_cell` the cell through
+    the thickness (mm; default the cell)."""
+
+    def __init__(self, surface_fn, cell_fn, lo, hi, axis=None, normal_cell=None, max_cells=40_000):
+        # a phase needs only a few grid steps a cell (_phase_at unwraps
+        # between nodes); the solve is a sparse LU, so the grid stays small
+        lo = np.asarray(lo, float)
+        hi = np.asarray(hi, float)
+        probe = np.stack(np.meshgrid(*[np.linspace(lo[i], hi[i], 12) for i in range(3)], indexing="ij"),
+                         -1).reshape(-1, 3)
+        h = max(float(np.min(cell_fn(probe))) / 3.5, float((np.prod(hi - lo + 4.0) / max_cells) ** (1 / 3)))
+        ext = hi - lo
+        lo = lo - 2 * h
+        dims = np.ceil((hi + 2 * h - lo) / h).astype(int) + 1
+        axes = [lo[i] + np.arange(dims[i]) * h for i in range(3)]
+        G = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+        c = np.asarray(cell_fn(G), float).reshape(tuple(dims))
+        if np.any(c <= 0):
+            raise ValueError("lattice cell must be positive everywhere")
+        d = np.asarray(surface_fn(G), float).reshape(tuple(dims))
+        n = np.stack(np.gradient(d, h), -1)
+        n /= np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-9)
+        if axis is None:
+            a = np.eye(3)[int(np.argmax(ext))]
+            b = np.eye(3)[int(np.argsort(ext)[1])]
+        else:
+            a = np.asarray(_axis_vector(axis), float)
+            b = np.eye(3)[int(np.argmin(np.abs(a)))]
+        b = b - (b @ a) * a
+        b /= np.linalg.norm(b)
+        w = np.abs(n @ a)[..., None]
+        sw = np.clip((w - 0.8) / 0.15, 0, 1)
+        sw = sw * sw * (3 - 2 * sw)
+        ref = (1 - sw) * a + sw * b
+        t1 = ref - (ref * n).sum(-1, keepdims=True) * n
+        t1 /= np.maximum(np.linalg.norm(t1, axis=-1, keepdims=True), 1e-9)
+        t2 = np.cross(n, t1)
+        # what matters is the cells at and just under the skin: weight
+        # there, so a cell count that has to change with depth (fewer cells
+        # round a smaller circle) changes deep inside, and the box outside
+        # the solid barely counts
+        depth = np.maximum(-d, 0.0) / c
+        wgt = np.where(d > 0, np.exp(-(d / h) ** 2) + 1e-3, np.exp(-depth / 1.5))
+        self.phase = [_stripe_phase(t / c[..., None], h, weight=wgt) for t in (t1, t2)]
+        self.lo, self.h, self.dims = lo, h, dims
+        self.normal_cell = normal_cell
+        self.surface_fn = surface_fn
+
+    def __call__(self, P, cell, surface=None):
+        """(N, 3) coordinates, period 1 a cell (the two tangent ones are
+        phases, modulo 1). `surface` is the surface's distance at P when the
+        caller has it already."""
+        cell = np.broadcast_to(np.asarray(cell, float), (len(P),))
+        out = [_phase_at(phi, self.lo, self.h, P) for phi in self.phase]
+        dist = np.asarray(self.surface_fn(P) if surface is None else surface, float)
+        cn = cell if self.normal_cell is None else self.normal_cell
+        return np.stack(out + [-dist / cn], axis=1)
+
+
+def _stripe_phase(T, h, weight=None):
+    """The phase (cycles, 0-1, on the grid) that advances by T . e h along
+    every grid edge as nearly as it can: Knoeppel et al.'s stripe patterns,
+    psi = exp(2 pi i phase) the lowest eigenvector of the connection
+    Laplacian sum |psi_j - exp(2 pi i w_ij) psi_i|^2. Where the target
+    cannot be followed (a whole number of cells has to fit round a loop)
+    the pattern puts a phase defect, a line where |psi| -> 0, instead of
+    shearing every cell. `weight` (dims) says where following the target
+    matters (each edge counts the mean of its ends'): a cell count that has
+    to change with depth is settled where the weight is low."""
+    import scipy.sparse as sp
+    from scipy.sparse.linalg import eigsh
+
+    dims = T.shape[:3]
+    n = int(np.prod(dims))
+    ids = np.arange(n).reshape(dims)
+    I, J, W, K = [], [], [], []
+    wgt = np.ones(dims) if weight is None else weight
+    for a in range(3):
+        sl0 = [slice(None)] * 3
+        sl1 = [slice(None)] * 3
+        sl0[a] = slice(0, -1)
+        sl1[a] = slice(1, None)
+        I.append(ids[tuple(sl0)].ravel())
+        J.append(ids[tuple(sl1)].ravel())
+        W.append((0.5 * (T[tuple(sl0) + (a,)] + T[tuple(sl1) + (a,)]) * h).ravel())
+        K.append((0.5 * (wgt[tuple(sl0)] + wgt[tuple(sl1)])).ravel())
+    I, J, W, K = np.concatenate(I), np.concatenate(J), np.concatenate(W), np.concatenate(K)
+    deg = np.bincount(I, K, minlength=n) + np.bincount(J, K, minlength=n)
+    rot = K * np.exp(2j * np.pi * W)
+    # psi_j ~ rot psi_i: L_jj += 1, L_ii += 1, L_ji -= rot, L_ij -= conj(rot)
+    L = sp.csr_matrix((np.concatenate([-rot, -np.conj(rot)]), (np.concatenate([J, I]), np.concatenate([I, J]))),
+                      shape=(n, n)) + sp.diags(deg.astype(complex))
+    # shift-invert Lanczos on one sparse LU: the grid is a few steps a cell,
+    # so the factorization takes seconds
+    psi0 = np.exp(2j * np.pi * _lsq_potential(T, h).ravel())
+    _, vec = eigsh(L.tocsc(), k=1, sigma=-1e-6 * float(deg.mean()), which="LM", v0=psi0, tol=1e-8)
+    return (np.angle(vec[:, 0]) / (2 * np.pi) % 1.0).reshape(dims)
+
+
+def _phase_at(phi, lo, h, P):
+    """Trilinear interpolation of a phase grid (cycles, mod 1): the eight
+    corners are unwrapped against the first, so a phase that advances by
+    less than half a cycle a step interpolates exactly where it is linear."""
+    dims = np.asarray(phi.shape)
+    x = np.clip((P - lo) / h, 0, dims - 1 - 1e-9)
+    i0 = np.floor(x).astype(int)
+    f = x - i0
+    i1 = np.minimum(i0 + 1, dims - 1)
+    base = phi[i0[:, 0], i0[:, 1], i0[:, 2]]
+    out = np.zeros(len(P))
+    for cx in (0, 1):
+        for cy in (0, 1):
+            for cz in (0, 1):
+                v = phi[(i1 if cx else i0)[:, 0], (i1 if cy else i0)[:, 1], (i1 if cz else i0)[:, 2]] - base
+                v -= np.round(v)
+                out += ((f[:, 0] if cx else 1 - f[:, 0]) * (f[:, 1] if cy else 1 - f[:, 1])
+                        * (f[:, 2] if cz else 1 - f[:, 2])) * v
+    return base + out
+
+
+def _axis_vector(ax):
+    if isinstance(ax, str):
+        return {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[ax]
+    a = np.asarray(ax, float)
+    return a / np.linalg.norm(a)
+
+
+def _frame_coords(P, frame, cell):
+    """Lattice coordinates, period 1 a cell, of a cylindrical or spherical
+    frame with a constant cell: whole cells round each closed direction."""
+    c = float(np.asarray(cell, float).ravel()[0])
+    if frame["type"] == "cylindrical":
+        Q, radius = _frame_points(P, frame)
+        R = radius or float(np.median(Q[:, 0]))
+        n = max(1, round(2 * np.pi * R / c))
+        return np.stack([Q[:, 0] / c, Q[:, 1] * n / (2 * np.pi), Q[:, 2] / c], axis=1)
+    if frame["type"] == "spherical":
+        Q = P - np.asarray(frame.get("center", (0, 0, 0)), float)
+        r = np.linalg.norm(Q, axis=1)
+        az = np.arctan2(Q[:, 1], Q[:, 0])
+        pol = np.arccos(np.clip(Q[:, 2] / np.maximum(r, 1e-12), -1, 1))
+        R = float(frame.get("radius", 0) or np.median(r))
+        n_az = max(1, round(2 * np.pi * R / c))
+        n_pol = max(1, round(np.pi * R / c))
+        return np.stack([r / c, az * n_az / (2 * np.pi), pol * n_pol / np.pi], axis=1)
+    raise ValueError(f"lattice frame type {frame['type']!r} has no constant-cell coordinates")
 
 
 # ---- smooth booleans with a field radius -----------------------------------------
@@ -564,6 +738,8 @@ def _rename_spec(spec, names):
         s["vars"] = {k: ref(v) for k, v in s["vars"].items()}
     if s.get("op") == "result" and isinstance(s.get("part"), str):
         s["part"] = names.get(s["part"], s["part"])
+    if s.get("op") == "lattice" and isinstance(s.get("frame"), dict) and "surface" in s["frame"]:
+        s["frame"]["surface"] = ref(s["frame"]["surface"])
     if s.get("op") == "expr" and isinstance(s.get("expr"), str):
         # names the expr reads directly (not through vars) follow too, as vars so any name works
         used = {m for m in re.findall(r"[A-Za-z_]\w*", s["expr"]) if m in names}
@@ -782,6 +958,12 @@ class FieldGraph:
             if not isinstance(s["inputs"], list) or not s["inputs"]:
                 raise ValueError(f"node {nd.name!r}: inputs must be a non-empty list")
             refs["inputs"] = [self._ref(v, nd.name, f"inputs[{i}]") for i, v in enumerate(s["inputs"])]
+        if nd.op == "lattice" and isinstance(s.get("frame"), dict) and s["frame"].get("type") == "conformal":
+            if "surface" not in s["frame"]:
+                raise ValueError(f"node {nd.name!r}: a conformal frame needs 'surface' (the solid it follows)")
+            refs["surface"] = self._ref(s["frame"]["surface"], nd.name, "frame.surface")
+            if isinstance(refs["surface"], float):
+                raise ValueError(f"node {nd.name!r}: frame.surface must be a solid node")
         if nd.op == "expr":
             if not isinstance(s.get("expr"), str):
                 raise ValueError(f"node {nd.name!r}: expr needs an 'expr' string")
@@ -1121,6 +1303,12 @@ class FieldGraph:
     def _lattice(self, nd, P, memo):
         s, r = nd.spec, nd.refs
         kind = s.get("type", "gyroid")
+        from .struts import canonical, is_strut
+
+        frame = s.get("frame") or {}
+        ftype = frame.get("type", "cartesian")
+        if is_strut(kind) or ftype in ("conformal", "spherical") or "aspect" in s:
+            return self._lattice_general(nd, P, memo, canonical(kind) if is_strut(kind) else kind)
         cell = self._val(r["cell"], P, memo) if "cell" in r else 8.0
         Q = P
         if "origin" in s:
@@ -1154,6 +1342,111 @@ class FieldGraph:
             return d - 0.5 * t
         raise ValueError(f"node {nd.name!r}: lattice form must be 'sheet' or 'network'")
 
+    def lattice_coords(self, nd, P, memo=None):
+        """(U, cell): a lattice node's coordinates at P (period 1 a cell)
+        and its local cell (mm, per point), whatever its frame and grading.
+        Voronoi foams have no coordinates (None)."""
+        memo = {} if memo is None else memo
+        s, r = nd.spec, nd.refs
+        cell = self._val(r["cell"], P, memo) if "cell" in r else 8.0
+        cell = np.broadcast_to(np.asarray(cell, float), (len(P),))
+        Q = P - np.asarray(s["origin"], float) if "origin" in s else P
+        frame = s.get("frame") or {}
+        ftype = frame.get("type", "cartesian")
+        aspect = np.asarray(s.get("aspect", (1, 1, 1)), float)
+        if ftype == "conformal":
+            cmap = self._resource(nd, lambda: self._conformal(nd))
+            U = cmap(Q, cell, surface=self._val(r["surface"], P, memo))
+        elif ftype in ("cylindrical", "spherical"):
+            if isinstance(r.get("cell"), str):
+                raise ValueError(f"node {nd.name!r}: a {ftype} frame takes a constant cell; grade the struts' "
+                                 "thickness instead, or use a conformal frame")
+            U = _frame_coords(Q, frame, cell[:1])
+        elif isinstance(r.get("cell"), str):
+            warp = self._resource(nd, lambda: self._warp(nd))
+            U = warp(Q, cell)
+        else:
+            U = Q / cell[:, None]
+        if "aspect" in s:
+            U = U / aspect
+        return U, cell
+
+    def _lattice_general(self, nd, P, memo, kind):
+        """Strut lattices (any frame), and TPMS in the conformal and
+        spherical frames or with a stretched cell: distance in cell units
+        through lattice_coords, scaled back to mm by the local cell."""
+        from . import struts
+
+        s, r = nd.spec, nd.refs
+        strut = struts.is_strut(kind)
+        if not strut and _TPMS_KIND.get(kind) is None:
+            raise ValueError(f"node {nd.name!r}: lattice type must be a TPMS ({', '.join(sorted(set(_TPMS_KIND.values())))})"
+                             f" or a strut cell ({', '.join(struts.STRUT_KINDS)})")
+        form = s.get("form", "beam" if strut else "sheet")
+        if strut and form != "beam":
+            raise ValueError(f"node {nd.name!r}: a strut lattice's form is 'beam' (got {form!r})")
+        blend = np.asarray(self._val(r["blend"], P, memo), float) if "blend" in r else 0.0
+        if kind == "voronoi":
+            if (s.get("frame") or {}).get("type", "cartesian") != "cartesian" or "aspect" in s:
+                raise ValueError(f"node {nd.name!r}: a voronoi foam is cartesian (no frame or aspect)")
+            vor = self._resource(nd, lambda: self._voronoi(nd))
+            Q = P - np.asarray(s["origin"], float) if "origin" in s else P
+            cell = np.broadcast_to(np.asarray(self._val(r["cell"], P, memo) if "cell" in r else 8.0, float),
+                                   (len(P),))
+            d_c = vor.distance(Q, blend)                   # mm
+            scale = 1.0
+        else:
+            U, cell = self.lattice_coords(nd, P, memo)
+            if strut:
+                aspect = np.asarray(s.get("aspect", (1, 1, 1)), float) if "aspect" in s else None
+                d_c = struts.unit_cell_distance(kind, U, np.asarray(blend, float) / cell, aspect=aspect)
+            else:
+                from .lattice import tpms
+
+                d_c = tpms(_TPMS_KIND[kind], U, 1.0)
+                if "aspect" in s:
+                    d_c = d_c * float(np.min(s["aspect"]))
+            scale = cell
+        d = d_c * scale
+        if "offset" in r:
+            d = d - self._val(r["offset"], P, memo)
+        bl = float(np.mean(blend)) if np.ndim(blend) else float(blend)
+        if "thickness" in r:
+            t = np.asarray(self._val(r["thickness"], P, memo), float)
+        elif "density" in r:
+            rho = np.clip(np.asarray(self._val(r["density"], P, memo), float), 0.02 if strut else 0.05, 0.95)
+            rho, cl = np.broadcast_arrays(rho, np.asarray(cell, float))
+            if strut:
+                t = struts.strut_diameter_for_density(kind, rho, cl, blend=bl / float(np.mean(cl)))
+            else:
+                from .lattice import wall_for_density
+
+                t = wall_for_density(_TPMS_KIND[kind], rho, cl)
+        else:
+            t = 1.0
+        if strut:
+            return d - 0.5 * t
+        if form == "sheet":
+            return np.abs(d) - 0.5 * t
+        if form == "network":
+            return d - 0.5 * t
+        raise ValueError(f"node {nd.name!r}: lattice form must be 'sheet' or 'network'")
+
+    def _conformal(self, nd, max_cells=40_000):
+        """The surface-following map over the lattice's domain."""
+        frame = nd.spec["frame"]
+        cell_fn, lo, hi = self._warp_domain(nd)
+        off = np.asarray(nd.spec.get("origin", (0, 0, 0)), float)
+        surf = nd.refs["surface"]
+        return _ConformalMap(lambda G: self.evaluate(G + off, surf), cell_fn, lo, hi, axis=frame.get("axis"),
+                             normal_cell=frame.get("normalCell"), max_cells=max_cells)
+
+    def _voronoi(self, nd):
+        from .struts import VoronoiStruts
+
+        cell_fn, lo, hi = self._warp_domain(nd)
+        return VoronoiStruts(lo, hi, cell_fn, seed=int(nd.spec.get("seed", 0)))
+
     def _warp(self, nd, max_cells=400_000):
         """The cell-grading map over the lattice's domain: its own bounds,
         else the graph's, else the output solid's box."""
@@ -1170,11 +1463,13 @@ class FieldGraph:
         else:
             b = self.bounds()
             if b is None:
-                raise ValueError(f"node {nd.name!r}: a graded cell needs a domain: give the lattice or the "
+                raise ValueError(f"node {nd.name!r}: a graded, conformal or voronoi lattice needs a domain: give the lattice or the "
                                  "graph 'bounds'")
             lo, hi = b
         off = np.asarray(nd.spec.get("origin", (0, 0, 0)), float)
-        cell_ref = nd.refs["cell"]
+        cell_ref = nd.refs.get("cell", 8.0)
+        if isinstance(cell_ref, float):
+            return (lambda G, c=cell_ref: np.full(len(G), c)), np.asarray(lo, float) - off, np.asarray(hi, float) - off
         return lambda G: self.evaluate(G + off, cell_ref), np.asarray(lo, float) - off, np.asarray(hi, float) - off
 
     def _transform(self, nd, P, memo):
@@ -2215,6 +2510,21 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
             rep["printability"] = d
         except Exception as exc:  # noqa: BLE001 - a check never fails the job
             rep["printability"] = {"error": str(exc)}
+        # strut lattices: how much strut length bridges at the build
+        # direction (FDM prints a strut flatter than 45 degrees as a bridge;
+        # powder and resin processes support them, so it is information there)
+        from .homogenized import lattice_nodes
+        from .struts import is_strut, lattice_printability
+
+        for lat in lattice_nodes(g, g.output):
+            if not is_strut(g.nodes[lat].spec.get("type", "gyroid")):
+                continue
+            try:
+                lp = lattice_printability(g, lat, build=doc.get("build", (0, 0, 1)))
+                lp["matters"] = process is None or process.kind == "fdm"
+            except Exception as exc:  # noqa: BLE001
+                lp = {"error": str(exc)}
+            rep.setdefault("lattices", {})[lat] = lp
     if g.bodies and node is None:
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)

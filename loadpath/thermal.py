@@ -1197,54 +1197,111 @@ class StudyHeat:
         f[self.fixed] = 0.0
         return f
 
-    def sensitivities(self, fe, xe, loads, us, fth, weights, gravity=None, state=None):
-        """(objective, per-case objective, gradient w.r.t. xe) of the weighted
-        cases at the last temperature(xe), in fe's units (forces in N, u
-        scaled by E0). `loads` already carry fth (and self-weight). Without
-        expansion the objective is the compliance; with it, twice the
-        elastic strain energy: J = u.(f - 2 fth) + E0^2 sum p g eps^2 cm V,
-        adjoint K lam = f - 2 fth. Self-weight (gravity, N/mm^3 linear in
-        xe) adds (lam + u) . df/dx."""
+    def sensitivities(self, fe, xe, rhs, us, fth, weights, gravity=None, state=None, layout=None,
+                      spreads=None, smooth=None):
+        """(objective, per-case objective, gradient w.r.t. xe, per-case worst
+        direction or None) of the weighted cases at the last temperature(xe),
+        in fe's units (forces in N, u scaled by E0). `rhs` (directions.expand,
+        with `layout` and `spreads`; one per case without them) already carry
+        fth and self-weight. Without expansion the objective is the
+        compliance; with it, twice the elastic strain energy:
+        J = u.(f - 2 fth) + E0^2 sum p g eps^2 cm V, adjoint
+        K lam = f - 2 fth. Self-weight (gravity, N/mm^3 linear in xe) adds
+        (lam + u) . df/dx.
+
+        A force of unknown direction (directions.py) keeps J quadratic in the
+        direction d: with the case's fixed part f0 (fth in it) and the
+        uncertain force b_j along each axis, J(d) = J0 + 2 g.d + d'Ad with
+        g_j = b_j.(u0 + lam0) / 2 and A_ij = b_i.u_j, since the basis loads
+        carry no expansion (their adjoints are their displacements). The
+        worst d is the same 3x3 problem as for compliance, and the gradient
+        is the soft maximum over directions that directions.collapse uses,
+        with lam = lam0 + U d beside u = u0 + U d."""
+        from .directions import SMOOTH, _cap_samples, worst_direction
         from .fem import elastic_c
         from .simp import ALIVE, E_MIN, PENALTY
 
         mesh = self.mesh
         state = state if state is not None else {}
+        smooth = SMOOTH if smooth is None else smooth
+        layout = layout if layout is not None else [(i,) for i in range(len(rhs))]
+        spreads = spreads or [None] * len(layout)
         g, dg, eps = self.g, self.dg, self.eps
         live = xe > ALIVE
         pth = np.where(live, xe ** PENALTY * (1 - E_MIN), 0.0)
         dp = np.where(live, PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN), 0.0)
         estiff = E_MIN + xe ** PENALTY * (1 - E_MIN)
         dE = PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN)
+        S = 0.0
         if self.expands:
-            lams = fe.resolve([f - 2 * fth for f in loads], state.get("lams"))
-            state["lams"] = lams
+            if self.vth is None:
+                self.load(pth)
+            # adjoints of the right-hand sides that carry the expansion: every
+            # plain case, and each spread case's fixed part
+            fixed_part = [idx[0] for idx in layout if idx[0] is not None]
+            sol = fe.resolve([rhs[i] - 2 * fth for i in fixed_part], state.get("lams"))
+            state["lams"] = sol
+            lams = list(us)
+            for i, lam in zip(fixed_part, sol):
+                lams[i] = lam
             cm = float(np.array([1, 1, 1, 0, 0, 0]) @ elastic_c(1.0, self.nu)
                        @ np.array([1, 1, 1, 0, 0, 0])) * mesh.pitch ** 3
             self_e = self.E0 ** 2 * eps * eps * cm
-            if self.vth is None:
-                self.load(pth)
+            S = float(np.sum(pth * g * self_e))
         else:
             lams = us
-        case_j, j = [], 0.0
+        rmod = [r - 2 * fth if self.expands else r for r in rhs]
+        case_j, dirs, j = [], [], 0.0
         m_e = np.zeros(mesh.n_elem)           # sum_c w_c lam_e^T K0 u_e
         q_e = np.zeros(mesh.n_elem)           # sum_c w_c (lam_e - u_e) . vth
         grav = np.zeros(mesh.n_elem)
-        for ci, f in enumerate(loads):
-            u, lam = us[ci], lams[ci]
-            if self.expands:
-                jc = float(u @ (f - 2 * fth)) + float(np.sum(pth * g * self_e))
-                m_e += weights[ci] * 0.25 * (fe.strain_energy(lam + u) - fe.strain_energy(lam - u))
-                q_e += weights[ci] * ((lam - u)[mesh.edof] @ self.vth)
+        for ci, idx in enumerate(layout):
+            if len(idx) == 1:
+                i = idx[0]
+                jc = float(us[i] @ rmod[i]) + S
+                pairs = [(1.0, lams[i], us[i])]
+                lam_m, u_m, d = lams[i], us[i], None
             else:
-                jc = float(f @ u)
-                m_e += weights[ci] * fe.strain_energy(u)
+                i0, ib = idx[0], idx[1:]
+                ub = [us[i] for i in ib]
+                bb = [rhs[i] for i in ib]
+                a = np.array([[bb[i] @ ub[k] for k in range(3)] for i in range(3)])
+                a = 0.5 * (a + a.T)
+                if i0 is None:
+                    u0 = lam0 = np.zeros_like(ub[0])
+                    c00, gv = S, np.zeros(3)
+                else:
+                    u0, lam0 = us[i0], lams[i0]
+                    c00 = float(u0 @ rmod[i0]) + S
+                    gv = 0.5 * np.array([bk @ (u0 + lam0) for bk in bb])
+                sp = spreads[ci]
+                d, jc = worst_direction(c00, gv, a, sp.nominal, sp.cos_half)
+                cand = np.vstack([_cap_samples(sp), d[None]])
+                vals = c00 + 2.0 * cand @ gv + np.einsum("ij,jk,ik->i", cand, a, cand)
+                w = np.exp(smooth * (vals - jc) / max(abs(jc), 1e-300))
+                w /= w.sum()
+                dd = np.column_stack([np.ones(len(cand)), cand])
+                mu, q = np.linalg.eigh((dd * w[:, None]).T @ dd)
+                uu, ll = [u0] + ub, [lam0] + ub
+                pairs = [(float(m), sum(q[k, n] * ll[k] for k in range(4)), sum(q[k, n] * uu[k] for k in range(4)))
+                         for n, m in enumerate(mu) if m > 1e-9 * mu[-1]]
+                mean = dd.T @ w
+                lam_m = sum(mean[k] * ll[k] for k in range(4))
+                u_m = sum(mean[k] * uu[k] for k in range(4))
+            for m, lam, u in pairs:
+                if lam is u:
+                    m_e += weights[ci] * m * fe.strain_energy(u)
+                else:
+                    m_e += weights[ci] * m * 0.25 * (fe.strain_energy(lam + u) - fe.strain_energy(lam - u))
+            if self.expands:
+                q_e += weights[ci] * ((lam_m - u_m)[mesh.edof] @ self.vth)
             if gravity is not None:
-                s = (lam + u).reshape(-1, 3)[mesh.enode].sum(axis=1)
+                s = (lam_m + u_m).reshape(-1, 3)[mesh.enode].sum(axis=1)
                 grav += weights[ci] * (s @ gravity) * mesh.pitch ** 3 / 8.0
             case_j.append(jc)
+            dirs.append(d)
             j += weights[ci] * jc
-        sw = float(np.sum(weights[:len(loads)]))
+        sw = float(np.sum(weights[:len(layout)]))
         dx = -dE * g * m_e + grav
         dte = -estiff * dg * m_e
         if self.expands:
@@ -1253,10 +1310,10 @@ class StudyHeat:
                     + sw * self.E0 ** 2 * pth * cm * (dg * eps * eps + 2 * g * eps * self.alpha))
         # through temperature: a node holds 1/8 of each of its cells' T
         if np.any(dte) and not self.bc.fixed.all():
-            rhs = np.bincount(mesh.enode.ravel(), weights=np.repeat(dte / 8.0, 8), minlength=mesh.n_nodes)
-            self.th.lam = self.th.adjoint(rhs, self.th.lam)
+            r = np.bincount(mesh.enode.ravel(), weights=np.repeat(dte / 8.0, 8), minlength=mesh.n_nodes)
+            self.th.lam = self.th.adjoint(r, self.th.lam)
             dx = dx + self.th.gradient(xe, self.th.lam)
-        return j, case_j, dx
+        return j, case_j, dx, dirs
 
 
 def _card(get, material, what):

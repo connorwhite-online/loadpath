@@ -724,12 +724,16 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         fth = None
         if heat is not None:
             # the design's own temperature, softening and expansion load
-            # (thermal.StudyHeat); the spec keeps unknown directions out
+            # (thermal.StudyHeat)
             fg, fth = _heat_state(heat, xe, fg)
             e = e * heat.g
         # A force of unknown direction is three solves, one per axis, and
         # each case is judged in its worst direction (directions.py).
         rhs, layout = expand(domain.loads, spreads, fg)
+        if len(us) != len(rhs):
+            # an uncertain force alone in its case gains a fixed part (the
+            # expansion load) once the design is warm
+            us = [None] * len(rhs)
         # Sensitivities only need to point the right way while the design is
         # still soft; tighten the solve as the projection sharpens.
         rtol = opts.solve_rtol * (10.0 if beta <= 2 else 3.0 if beta <= 8 else 1.0) if opts.adaptive_rtol \
@@ -739,7 +743,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         comp = 0.0
         case_c = []
         if heat is not None:
-            comp, case_c, dc_xp = heat.sensitivities(fe, xe, rhs, us, fth, weights, domain.gravity, heat_state)
+            comp, case_c, dc_xp, _ = heat.sensitivities(fe, xe, rhs, us, fth, weights, domain.gravity, heat_state,
+                                                        layout, spreads)
         for ci, wc in enumerate(collapse(rhs, layout, us, spreads) if heat is None else ()):
             # the worst direction's sensitivity is its own (envelope theorem),
             # softened over near-ties (directions.SMOOTH)
@@ -910,10 +915,12 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             fg, fth = _heat_state(heat, xp, fg)
             loads, layout = expand(domain.loads, spreads, fg)
             us = fe.solve(stiff * heat.g, xp, us, rtol=1e-6, loads=loads)
-        comp, case_c, _ = heat.sensitivities(fe, xp, loads, us, fth, weights, domain.gravity, heat_state)
+        comp, case_c, _, heat_d = heat.sensitivities(fe, xp, loads, us, fth, weights, domain.gravity, heat_state,
+                                                     layout, spreads)
         stiff = stiff * heat.g
     for ci, wc in enumerate(collapse(loads, layout, us, spreads)):
-        case_d.append(None if wc.direction is None else [float(v) for v in wc.direction])
+        d = wc.direction if heat is None else heat_d[ci]
+        case_d.append(None if d is None else [float(v) for v in d])
         if heat is None:
             case_c.append(wc.compliance)
             comp += weights[ci] * wc.compliance

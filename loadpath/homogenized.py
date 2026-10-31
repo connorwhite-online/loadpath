@@ -20,7 +20,10 @@ material it holds on average, as lattice.py does for its own infill:
 Safety factor and deflection are read as verify_part reads them: peaks
 outside a contact band round supports and loads, the stress allowance
 included, deflection the mean displacement of each case's loaded nodes.
-Sheet lattices only (the fits are for sheets).
+Sheet lattices (lattice.SHEETS) and strut cells (lattice.STRUTS, the
+conservative isotropic reading of an anisotropic cell); a stretched
+`aspect` cell has no fit and is refused. The cell's frame (graded,
+cylindrical, conformal) only moves cells around: the fits are per cell.
 """
 from __future__ import annotations
 
@@ -76,7 +79,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     from .domain import boundary_conditions
     from .fem import HexMesh, Solver, Stiffness, von_mises
     from .fields import FieldGraph, expand_groups
-    from .lattice import SHEETS, relative_density, sheet_modulus, sheet_stress_factor
+    from .lattice import lattice_fit, relative_density, sheet_modulus, sheet_stress_factor
+    from .struts import is_strut
     from .verify import STRESS_ALLOWANCE
 
     t0 = time.time()
@@ -92,11 +96,13 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     lat = lats[0]
     lnode = g.nodes[lat]
     lspec, lrefs = lnode.spec, lnode.refs
-    if lspec.get("form", "sheet") != "sheet":
-        raise ValueError(f"lattice {lat!r}: the homogenized fits are for sheet lattices, not network")
     kind = lspec.get("type", "gyroid")
-    if kind not in SHEETS:
-        raise ValueError(f"lattice {lat!r}: no homogenized fit for {kind!r}")
+    if not is_strut(kind) and lspec.get("form", "sheet") != "sheet":
+        raise ValueError(f"lattice {lat!r}: the homogenized fits are for sheet lattices, not network")
+    lattice_fit(kind)                    # refuse a cell with no fit before any work
+    if "aspect" in lspec:
+        raise ValueError(f"lattice {lat!r}: the homogenized fits are for cubic cells, not a stretched 'aspect' "
+                         "cell; check it resolved (verify_part on the mesh)")
     g_solid = _variant(g, full, base_dir, lat, _SOLID)
     g_empty = _variant(g, full, base_dir, lat, _EMPTY)
     b = g_solid.bounds(name)
@@ -131,7 +137,9 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     else:
         wall = np.broadcast_to(_field(g, lrefs.get("thickness", 1.0), centers), (len(centers),))
         cell = np.broadcast_to(_field(g, lrefs.get("cell", 8.0), centers), (len(centers),))
-        rho = relative_density(kind, wall / cell, 1.0)
+        blend = lrefs.get("blend", 0.0)
+        blend = float(np.mean(_field(g, blend, centers))) if not isinstance(blend, float) else blend
+        rho = relative_density(kind, wall / cell, 1.0, blend=blend / float(np.mean(cell)))
     rho = np.clip(np.broadcast_to(np.asarray(rho, float), (len(centers),)), 1e-3, 1.0)
 
     hm = HexMesh(e_ijk, pitch, origin)

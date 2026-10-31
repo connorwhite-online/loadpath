@@ -56,7 +56,7 @@ from scipy import ndimage
 
 from .spec import Study
 
-__all__ = ["LatticeOptions", "tpms", "lattice_infill", "TPMS", "SHEETS", "homogenize",
+__all__ = ["LatticeOptions", "tpms", "lattice_infill", "TPMS", "SHEETS", "STRUTS", "lattice_fit", "homogenize",
            "relative_density", "wall_for_density", "envelope_mesh"]
 
 
@@ -110,6 +110,40 @@ SHEETS = {
     "schwarz-p": {"C": 0.669, "n": 1.68, "A": 3.82, "m": 1.04},
 }
 
+# Homogenized strut cells (struts.py), from `homogenize` the same way
+# (bench/strut_fits.py: periodic unit cell, 48 voxels a cell, relative
+# density 0.06-0.34). Struts are cubic but anisotropic, so these are the
+# conservative isotropic reading: the modulus is the lesser of the [100]
+# and [111] moduli, the stress factor the largest of a [100] pull, a [111]
+# pull and a shear. BCCz and FCCz are stiff along z and the octet along its
+# struts; the fits do not count on it. The thickness is the strut diameter.
+STRUTS = {
+    "cubic": {"C": 0.739, "n": 2.38, "A": 3.09, "m": 1.84},
+    "bcc": {"C": 0.61, "n": 2.49, "A": 4.63, "m": 1.64},
+    "bccz": {"C": 0.488, "n": 2.5, "A": 4.12, "m": 2.3},
+    "fcc": {"C": 0.443, "n": 1.4, "A": 5.96, "m": 0.97},
+    "fccz": {"C": 0.435, "n": 1.44, "A": 5.26, "m": 1.19},
+    "octet": {"C": 0.363, "n": 1.36, "A": 7.22, "m": 0.91},
+    "kelvin": {"C": 0.937, "n": 2.07, "A": 3.28, "m": 1.62},
+    # one periodic draw of 8 relaxed seeds (struts._periodic_voronoi), the
+    # thickness over the seed spacing; a foam is near isotropic
+    "voronoi": {"C": 0.841, "n": 1.93, "A": 2.87, "m": 1.57},
+    "diamond-strut": {"C": 0.695, "n": 2.1, "A": 2.63, "m": 1.77},
+}
+
+
+def lattice_fit(kind: str) -> dict:
+    """The homogenized fit (C, n, A, m) of a sheet or strut cell."""
+    from .struts import canonical
+
+    if kind in SHEETS:
+        return SHEETS[kind]
+    k = canonical(kind)
+    if k in STRUTS:
+        return STRUTS[k]
+    raise ValueError(f"no homogenized fit for lattice {kind!r} (have {', '.join(list(SHEETS) + list(STRUTS))})")
+
+
 def tpms(kind: str, pts: np.ndarray, cell: float) -> np.ndarray:
     """Approximate signed distance (mm) to the TPMS mid-surface, `cell` mm per
     period: the level-set value over its gradient's magnitude. Exact on the
@@ -152,8 +186,13 @@ def _density_table(kind: str):
     return t, rho
 
 
-def relative_density(kind: str, wall, cell: float):
-    """Volume fraction of a `wall` mm sheet in `cell` mm cells."""
+def relative_density(kind: str, wall, cell: float, blend: float = 0.0):
+    """Volume fraction of a `wall` mm sheet (or strut diameter) in `cell` mm
+    cells; `blend` (mm) is a strut cell's node fillet."""
+    from .struts import is_strut, strut_relative_density
+
+    if is_strut(kind):
+        return strut_relative_density(kind, wall, cell, blend=float(blend) / float(np.mean(cell)))
     t, rho = _density_table(kind)
     return np.interp(np.asarray(wall, float) / cell, t, rho)
 
@@ -165,27 +204,32 @@ def wall_for_density(kind: str, rho, cell: float):
 
 
 def sheet_modulus(kind: str, rho):
-    s = SHEETS[kind]
+    """E*/E of a sheet or strut cell at relative density rho."""
+    s = lattice_fit(kind)
     rho = np.asarray(rho, float)
     return np.where(rho >= 1.0, 1.0, s["C"] * np.clip(rho, 1e-3, 1.0) ** s["n"])
 
 
 def sheet_stress_factor(kind: str, rho):
     """Peak wall stress over the macro stress the lattice carries."""
-    s = SHEETS[kind]
+    s = lattice_fit(kind)
     rho = np.asarray(rho, float)
     return np.where(rho >= 1.0, 1.0, s["A"] * np.clip(rho, 1e-3, 1.0) ** -s["m"])
 
 
-def homogenize(kind: str, wall_over_cell: float, n: int = 40, nu: float = 0.35) -> dict:
+def homogenize(kind: str, wall_over_cell: float, n: int = 40, nu: float = 0.35, blend: float = 0.0) -> dict:
     """Effective properties of a TPMS sheet by periodic homogenization of one
     unit cell on an n^3 voxel grid (only the solid voxels; their nodes wrap
     across the cell faces). Returns relative density, uniaxial modulus and
     Poisson ratio, shear modulus (all over the solid's E), the Zener
     anisotropy ratio, and the peak wall stress factor under a uniaxial and a
     shear macro stress (99.5th percentile and max of nodal von Mises over
-    the macro von Mises). Slow (tens of seconds at n = 40): the fits in
-    SHEETS come from it."""
+    the macro von Mises). Strut cells too (struts.py): `wall_over_cell` is
+    then the strut diameter over the cell and `blend` the node fillet over
+    the cell; they are cubic but far from isotropic, so the modulus along
+    the cube diagonal [111] and the wall stress under a [111] pull come
+    too (E111, stressFactor111). Slow (tens of seconds at n = 40): the fits
+    in SHEETS and STRUTS come from it."""
     import pyamg
     import scipy.sparse as sp
     from scipy.sparse.linalg import cg
@@ -195,7 +239,12 @@ def homogenize(kind: str, wall_over_cell: float, n: int = 40, nu: float = 0.35) 
     h = 1.0 / n
     c = (np.arange(n) + 0.5) * h
     g = np.stack(np.meshgrid(c, c, c, indexing="ij"), -1).reshape(-1, 3)
-    solid = np.abs(tpms(kind, g, 1.0)) < 0.5 * wall_over_cell
+    from .struts import is_strut, unit_cell_distance
+
+    if is_strut(kind):
+        solid = unit_cell_distance(kind, g, blend) < 0.5 * wall_over_cell
+    else:
+        solid = np.abs(tpms(kind, g, 1.0)) < 0.5 * wall_over_cell
     eijk = np.argwhere(solid.reshape(n, n, n))
     ne = len(eijk)
     corner = (eijk[:, None, :] + CORNERS[None]) % n
@@ -240,7 +289,17 @@ def homogenize(kind: str, wall_over_cell: float, n: int = 40, nu: float = 0.35) 
     nu_h = c12 / (c11 + c12)
     _, vm_z = load([-nu_h / e_uni, -nu_h / e_uni, 1 / e_uni, 0, 0, 0])
     _, vm_s = load([0, 0, 0, 1 / c44, 0, 0])
+    # [111]: macro stress n n^T (unit von Mises) through the cubic compliance
+    s11 = (c11 + c12) / ((c11 - c12) * (c11 + 2 * c12))
+    s12 = -c12 / ((c11 - c12) * (c11 + 2 * c12))
+    s44 = 1.0 / c44
+    e111 = 1.0 / (s11 - 2 * (s11 - s12 - 0.5 * s44) / 3.0)
+    sig = np.full(6, 1.0 / 3.0)
+    eps = np.array([s11 * sig[0] + s12 * (sig[1] + sig[2]), s11 * sig[1] + s12 * (sig[0] + sig[2]),
+                    s11 * sig[2] + s12 * (sig[0] + sig[1]), s44 * sig[3], s44 * sig[4], s44 * sig[5]])
+    _, vm_d = load(list(eps))
     return {"rho": float(solid.mean()), "E": float(e_uni), "nu": float(nu_h), "G": float(c44),
+            "E111": float(e111), "stressFactor111": float(np.percentile(vm_d, 99.5)),
             "zener": float(2 * c44 / (c11 - c12)),
             "stressFactor": float(np.percentile(vm_z, 99.5)), "stressFactorMax": float(vm_z.max()),
             "shearStressFactor": float(np.percentile(vm_s, 99.5) / np.sqrt(3.0))}

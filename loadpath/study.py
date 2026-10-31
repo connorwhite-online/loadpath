@@ -110,6 +110,8 @@ class Outcome:
     xphys: object = None
     # infill.grade_infill's result (modifier meshes for the graded 3MF)
     grading: object = None
+    # buildsim.compensate_mesh's pre-distorted part (buildSim.compensate)
+    compensated: object = None
 
     def summary(self) -> dict:
         r = self.report
@@ -134,6 +136,7 @@ class Outcome:
             **({"print": {k: v for k, v in r["print"].items() if k != "bridgeList"}} if "print" in r else {}),
             **({"process": r["process"]} if "process" in r else {}),
             **({"slicer": r["slicer"]} if "slicer" in r else {}),
+            **({"buildSim": r["buildSim"]} if "buildSim" in r else {}),
             **({"graded": r["graded"]} if "graded" in r else {}),
             "warnings": r.get("warnings", []),
             "margin": r.get("margin"),
@@ -408,7 +411,8 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         study = choose_build_direction(study, on_progress=on_progress)["study"]
     mats = study.materials or [study.material]
     if len(mats) == 1:
-        return _slice(_process_checks(_run_single(study, on_progress, should_stop), on_progress), on_progress)
+        return _build_sim(_slice(_process_checks(_run_single(study, on_progress, should_stop), on_progress),
+                                 on_progress), on_progress)
     t0 = time.time()
     outcomes, warnings, domain = [], [], None
     for r in _parallel([dataclasses.replace(study, material=m, materials=[m]) for m in mats],
@@ -419,9 +423,46 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     passing = [i for i, o in enumerate(outcomes) if o.passes]
     pool = passing if passing else ([] if any(o.passes is False for o in outcomes) else range(len(outcomes)))
     best = min(pool, key=lambda i: outcomes[i].report["mass"]) if pool else None
-    return _slice(_process_checks(StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
-                                              seconds=time.time() - t0, warnings=warnings), on_progress),
-                  on_progress)
+    return _build_sim(_slice(_process_checks(StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
+                                                         seconds=time.time() - t0, warnings=warnings), on_progress),
+                             on_progress), on_progress)
+
+
+def _build_sim(result: StudyResult, on_progress=None) -> StudyResult:
+    """buildSim: simulate printing the delivered outcome (buildsim.py) into
+    its report as "buildSim" (distortion, residual stress, recoater lift,
+    bed peel), with its warnings; with compensate, also a pre-distorted
+    mesh on the outcome (`compensated`, written as <name>-compensated.stl)."""
+    bs = result.study.build_sim
+    if bs is None or result.best is None:
+        return result
+    o = result.outcomes[result.best]
+    if getattr(o, "mesh", None) is None:
+        return result
+    import dataclasses as _dc
+    from .buildsim import compensate_mesh, simulate_part
+
+    st = result.study
+    mat = (o.report.get("material") or {}).get("name") or bs["setup"].material
+    setup = _dc.replace(bs["setup"], material=mat)
+    build = st.process.build if st.process is not None and st.process.build not in (None, "auto") else "+z"
+    if st.print_direction is not None:
+        build = st.print_direction
+    if on_progress is not None:
+        on_progress({"stage": "buildSim", "process": setup.process}, None)
+    try:
+        if bs["compensate"]:
+            comp, crep = compensate_mesh(o.mesh, setup, build=build, iterations=bs["iterations"], cells=bs["cells"])
+            rep = simulate_part(o.mesh, setup, pitch=crep["pitch"], build=build).report
+            rep["compensation"] = crep
+            o.compensated = comp
+        else:
+            rep = simulate_part(o.mesh, setup, build=build, cells=bs["cells"]).report
+    except Exception as exc:  # noqa: BLE001 - a failed simulation leaves the part's report standing
+        rep = {"process": setup.process, "error": f"{type(exc).__name__}: {exc}", "warnings": []}
+    o.report["buildSim"] = rep
+    o.report.setdefault("warnings", []).extend(rep.get("warnings", []))
+    return result
 
 
 def _process_checks(result: StudyResult, on_progress=None) -> StudyResult:

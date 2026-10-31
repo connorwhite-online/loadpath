@@ -176,11 +176,18 @@ def nodal_stress(stiff, u, modulus, thermal=None):
     return acc / cnt[:, None]
 
 
+# mm above the lowest point that still counts as standing on the build plate
+_PLATE_BAND = 1.0
+
+
 def _overhang(mesh, direction, study=None, max_angle_deg=45.0, tolerance_deg=5.0):
     """Down-facing surface that needs support: faces whose normal is within
     (max_angle - tolerance) of straight down, i.e. ceilings and slopes
     shallower than the self-supporting limit, excluding the face on the build
-    plate. The tolerance keeps marching-cubes facets on a true 45-degree
+    plate and the rounded bottom edge within 1 mm of it (a few layers, which
+    print without support; marching cubes rounds every edge on the plate, and
+    on the printed hook the 0.5-1 mm band alone was a point of its 4.3%). The
+    tolerance keeps marching-cubes facets on a true 45-degree
     slope from counting. `overhangArea` is everything; `designOverhangArea`
     leaves out faces on preserved or keep-out geometry, which the user drew
     (a horizontal bore's ceiling is theirs, not the optimizer's)."""
@@ -190,7 +197,7 @@ def _overhang(mesh, direction, study=None, max_angle_deg=45.0, tolerance_deg=5.0
     down = -(mesh.face_normals @ up)
     centers = mesh.triangles_center
     height = centers @ up
-    bad = (down > np.cos(np.radians(max_angle_deg - tolerance_deg))) & (height > height.min() + 0.5)
+    bad = (down > np.cos(np.radians(max_angle_deg - tolerance_deg))) & (height > height.min() + _PLATE_BAND)
     area = float(mesh.area_faces[bad].sum())
     out = {"overhangArea": area, "overhangFraction": area / float(mesh.area)}
     if study is not None:
@@ -389,17 +396,41 @@ def _user_edges(study: Study, band: float):
     grows without bound as the grid gets finer, like a clamped edge's, so it
     is left out of the peak over the same band. (The wall bracket's 150k-cell
     confirm check peaked there and read SF 1.6, 2.6, 2.5, 1.9, 3.7 at 11.5-15%
-    of the space, out of order, against 2.7-3.8 on the 60k check.) Returns a
+    of the space, out of order, against 2.7-3.8 on the 60k check.)
+
+    Being near both surfaces is not enough: a pressure vessel's wall, or a
+    ring whose bore is the keep-out's, lines the keep-out, and the two
+    surfaces coincide over the whole cavity (a thick sphere's bore, Lame's
+    peak, was left out entirely). An edge is where the surfaces cross
+    (their normals not opposed) or where the keep-out's own surface turns
+    within the band (a tunnel's rim on the face it ends on). Returns a
     function of points -> bool, or None when the study has no such edges."""
     keep = [r.shape for r in study.keep_out]
     pres = [r.shape for r in study.preserve]
     if not keep or not pres:
         return None
+    h = 0.05 * band
+    axes = np.eye(3)
+
+    def sdf(shapes, xyz):
+        return np.min([sh.sdf(xyz) for sh in shapes], axis=0)
+
+    def normal(shapes, xyz):
+        g = np.stack([sdf(shapes, xyz + h * a) - sdf(shapes, xyz - h * a) for a in axes], axis=1)
+        return g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
 
     def near(xyz):
-        dk = np.min([np.abs(sh.sdf(xyz)) for sh in keep], axis=0)
-        dp = np.min([np.abs(sh.sdf(xyz)) for sh in pres], axis=0)
-        return (dk < band) & (dp < band)
+        xyz = np.asarray(xyz, float)
+        out = (np.abs(sdf(keep, xyz)) < band) & (np.abs(sdf(pres, xyz)) < band)
+        if not out.any():
+            return out
+        x = xyz[out]
+        nk = normal(keep, x)
+        edge = np.einsum("ij,ij->i", nk, normal(pres, x)) > -0.9
+        for o in np.concatenate([axes, -axes]) * band:
+            edge |= np.einsum("ij,ij->i", nk, normal(keep, x + o)) < 0.9
+        out[out] = edge
+        return out
     return near
 
 
@@ -704,8 +735,15 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             f, u = rhs[idx[0]], displacements[idx[0]]
         else:
             sp = spreads[ci]
-            s0 = nodal_stress(stiff, displacements[idx[0]], mat.E) if idx[0] is not None else None
-            sb = [nodal_stress(stiff, displacements[i], mat.E) for i in idx[1:]]
+            # the fixed part carries the expansion, the uncertain force none;
+            # stress over retention, so the worst direction is the one
+            # nearest failure where hot material is weak
+            s0 = nodal_stress(stiff, displacements[idx[0]], moduli, eps) if idx[0] is not None else None
+            sb = [nodal_stress(stiff, displacements[i], moduli) for i in idx[1:]]
+            if g_node is not None:
+                kn = 1.0 / np.maximum(g_node, 1e-3)[:, None]
+                s0 = s0 * kn if s0 is not None else None
+                sb = [b * kn for b in sb]
             direction, _ = worst_stress_direction(sp, s0, sb, body)
             f = sum(direction[j] * rhs[i] for j, i in enumerate(idx[1:]))
             u = sum(direction[j] * displacements[i] for j, i in enumerate(idx[1:]))

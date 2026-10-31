@@ -365,6 +365,35 @@ _SLICER = {"anyOf": [
     "description": "FDM: slice each outcome headless (PrusaSlicer) for print time, filament and support "
                    "(report 'slicer'); optionally grade infill by stress (report 'graded', <name>-graded.3mf)."}
 
+_BUILD_SIM = {"anyOf": [
+    {"type": "boolean"},
+    {"type": "object", "properties": {
+        "layer": {**_POS, "description": "mm per analysis layer (lumped real layers; default one voxel)"},
+        "plate": {"type": "number", "minimum": 0, "description": "lpbf: mm of build plate modelled under the part "
+                                                                   "(default 10; 0 = rigid)"},
+        "scale": {**_POS, "description": "multiplies the inherent strain (a calibration for your machine)"},
+        "strain": {**_VEC3, "description": "inherent strain (exx, eyy, ezz) in the build frame, overriding "
+                                           "the material model (negative = shrink)"},
+        "release": {"enum": ["full", "none"],
+                    "description": "full: cut off the plate / peeled off the bed and free (default); none: as built"},
+        "bedTemperature": {"type": "number", "description": "fdm: C (default per material)"},
+        "chamberTemperature": {"type": "number", "description": "fdm: C, air round the part while printing"},
+        "bedStiffness": {"type": "number", "minimum": 0,
+                         "description": "fdm: N/mm^3 the bed holds the first layer with (default: the value fitted "
+                                        "to Armillotta 2018; omit for that)"},
+        "relax": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
+                  "description": "fdm: share of the shrink below Tg kept as stress"},
+        "recoaterGap": {**_POS, "description": "lpbf: mm of lift at the build plane that counts as recoater "
+                                               "contact risk (default 0.05)"},
+        "compensate": {"type": "boolean", "description": "also write <name>-compensated.stl, pre-distorted so "
+                                                         "the print lands on the design"},
+        "iterations": {"type": "integer", "minimum": 1, "description": "compensation rounds (default 2)"},
+        "cells": {"type": "integer", "minimum": 1000, "description": "voxels in the simulated part (default 60000)"}},
+     "additionalProperties": False}],
+    "description": "Simulate the build of the delivered part (report 'buildSim'): layer-by-layer inherent-strain "
+                   "residual stress and distortion for lpbf (validated on NIST AM-Bench 2018), fdm warp and bed "
+                   "peel (ABS/ASA/PETG...), sls/mjf differential shrink; optionally a pre-distorted STL."}
+
 _PROCESS_KINDS = ["fdm", "sls", "mjf", "sla", "dlp", "volumetric", "jetting", "lpbf"]
 _PROCESS = {"anyOf": [
     {"enum": _PROCESS_KINDS},
@@ -576,6 +605,7 @@ STUDY_SCHEMA = {
                     "description": "Circular pattern: count identical sectors round the axis."},
         "process": _PROCESS,
         "slicer": _SLICER,
+        "buildSim": _BUILD_SIM,
         "durability": _DURABILITY,
         "lattice": {"type": "object", "properties": _LATTICE_PROPS, "additionalProperties": False,
                     "description": "Optional: fill the delivered part with a stress-graded TPMS lattice."},
@@ -813,25 +843,55 @@ _FIELD_OPS = {
                  ["input", "thickness"]),
     "offset": _op("offset", "Grow (positive) or shrink a solid by `distance` (mm, or a field).",
                   {"input": _FIELD, "distance": _FIELD}, ["input", "distance"]),
-    "lattice": _op("lattice", "A TPMS lattice filling all of space (intersect it with a solid). Cell size, "
-                              "wall thickness or relative density can each be a field.",
-                   {"type": {"enum": ["gyroid", "diamond", "schwarz-p"]},
-                    "cell": {**_FIELD, "description": "mm per period (default 8); a field grades it"},
-                    "thickness": {**_FIELD, "description": "wall, mm (default 1)"},
-                    "density": {**_FIELD, "description": "relative density 0.05-0.95 instead of thickness "
-                                                         "(lattice.py's homogenized tables set the wall)"},
-                    "form": {"enum": ["sheet", "network"], "description": "sheet (default): a wall on the "
-                                                                          "surface; network: one side solid"},
+    "lattice": _op("lattice", "A lattice filling all of space (intersect it with a solid): a TPMS sheet "
+                              "(gyroid, diamond, schwarz-p) or a strut cell (cubic, bcc, bccz, fcc, fccz, octet, "
+                              "kelvin, diamond-strut) or a stochastic voronoi foam. Cell size, wall or strut "
+                              "thickness, relative density and node blend can each be a field; a conformal frame "
+                              "lays the cells along a surface.",
+                   {"type": {"enum": ["gyroid", "diamond", "schwarz-p", "cubic", "bcc", "bccz", "fcc", "fccz",
+                                      "octet", "kelvin", "diamond-strut", "voronoi"],
+                             "description": "TPMS sheets are stiffer and stronger per gram (lattice.SHEETS vs "
+                                            "STRUTS); struts are open, easy to clear of powder, and print on FDM "
+                                            "when the cell is oriented (lattice report's overhangs)"},
+                    "cell": {**_FIELD, "description": "mm per period (default 8); a field grades it (voronoi: "
+                                                      "mean seed spacing)"},
+                    "thickness": {**_FIELD, "description": "sheet wall or strut diameter, mm (default 1)"},
+                    "density": {**_FIELD, "description": "relative density instead of thickness (sheets "
+                                                         "0.05-0.95, struts 0.02-0.95; the unit-cell tables "
+                                                         "set the wall or diameter)"},
+                    "blend": {**_FIELD, "description": "strut cells: mm smooth-union radius at the nodes "
+                                                       "(node fillets; default 0)"},
+                    "form": {"enum": ["sheet", "network", "beam"],
+                             "description": "sheet (TPMS default): a wall on the surface; network: one side "
+                                            "solid; beam: strut cells (their only form)"},
                     "grading": {"enum": ["warp", "blend"],
                                 "description": "how a field cell grades: warp (default) bends the lattice's "
                                                "coordinates so one period is one local cell, continuous "
                                                "everywhere; blend cross-fades fixed periods (cylindrical frame)"},
+                    "aspect": {"type": "array", "items": _POS, "minItems": 3, "maxItems": 3,
+                               "description": "stretch the cell per axis, e.g. [1, 1, 1.5]: a tall BCC cell's "
+                                              "struts rise above 45 degrees and print on FDM unsupported"},
+                    "seed": {"type": "integer", "description": "voronoi: random seed (default 0)"},
                     "offset": {**_FIELD, "description": "mm, moves the level surface (network form)"},
                     "origin": _VEC3,
-                    "frame": {"type": "object", "description": "cylindrical wraps the cells round an axis",
-                              "properties": {"type": {"enum": ["cartesian", "cylindrical"]}, "axis": _AXIS,
-                                             "center": _VEC3, "radius": {**_POS, "description":
-                                                                         "mm where cells are square"}},
+                    "frame": {"type": "object",
+                              "description": "cylindrical wraps the cells round an axis, spherical round a "
+                                             "centre; conformal lays them along a solid's surface (layers "
+                                             "parallel to the skin, the first on it; in-plane cells follow the "
+                                             "surface as a stripe pattern)",
+                              "properties": {"type": {"enum": ["cartesian", "cylindrical", "spherical",
+                                                               "conformal"]},
+                                             "axis": {**_AXIS, "description": "cylindrical: the axis; conformal: "
+                                                                              "the direction cells line up with "
+                                                                              "along the surface (default the "
+                                                                              "longest extent)"},
+                                             "center": _VEC3,
+                                             "radius": {**_POS, "description": "mm where cells are square"},
+                                             "surface": {**_FIELD, "description": "conformal: the solid whose "
+                                                                                  "surface the cells follow"},
+                                             "normalCell": {**_POS, "description": "conformal: mm cell through "
+                                                                                   "the thickness (default the "
+                                                                                   "cell)"}},
                               "required": ["type"], "additionalProperties": False}},
                    require_one=None),
     "transform": _op("transform", "Move, rotate or scale a field's input (translate, then rotate, then scale).",

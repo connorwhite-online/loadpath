@@ -131,6 +131,16 @@ SOURCES = {
     "tychanicz-2025": Source(
         "Tychanicz-Kwiecien et al. 2025, thermal conductivity of FDM-printed PLA and PETG "
         "(as used by heatx_thermal.WALL_CONDUCTIVITY)", "", "dense printed parts, in plane"),
+    "eos-in625": Source(
+        "EOS NickelAlloy IN625 material data sheet (EOS M 290), 06.2022",
+        "https://uk.eos.info/03_system-related-assets/material-related-contents/metal-materials-and-examples/"
+        "metal-material-datasheet/nickelalloy-inconel/niall-in625-m290_material_data_sheet_06-22_en.pdf",
+        "ISO 6892-1, as built; the modulus is from EOS's general IN625 sheet (heat treated, 204 GPa Z / 214 XY)"),
+    "eos-ph1": Source(
+        "EOS StainlessSteel PH1 (15-5 PH) material data sheet (EOS M 290), 07.2022",
+        "https://www.eos.info/05-datasheet-images/Assets_MDS_Metal/EOS_StainlessSteel_PH1/"
+        "ss-ph1-m290_material_data_sheet_07-22_en.pdf",
+        "ISO 6892-1 Annex C, 20 um layers, as built"),
     "handbook": Source(
         "typical wrought/cast handbook value for the alloy (ASM Handbook class data)", "",
         "used where the AM datasheet gives none; AM parts sit within a few percent"),
@@ -384,6 +394,24 @@ LIBRARY = {
                fatigue=("316l", "durability", "rough, as-built surface"),
                cte=(17.2, "addup-316l", "um/(m K), RT-200 C (the sheet's literature value)"),
                retention=([(23, 1.0), (300, 0.9), (500, 0.82)], "dma-estimate", _RET)),
+    "in625": _c("LPBF Inconel 625, as built (values from EOS)", ("lpbf",),
+                E=(204000, "eos-in625", "modulus Z, heat treated (as built reads 10-20% lower on other sheets)"),
+                nu=(0.31, "handbook", "nickel alloy 625"),
+                strength=(720, "eos-in625", "yield strength Rp0.2 XY, as built"),
+                strengthZ=(630, "eos-in625", "yield strength Rp0.2 Z, as built"),
+                density=(8.44, "handbook", "alloy 625"),
+                conductivity=(9.8, "handbook", "W/(m K) at 20 C, alloy 625"),
+                cte=(12.8, "handbook", "um/(m K), 20-100 C, alloy 625"),
+                retention=([(23, 1.0), (300, 0.93), (500, 0.88)], "dma-estimate", _RET)),
+    "15-5ph": _c("LPBF 15-5 PH stainless, as built (values from EOS PH1)", ("lpbf",),
+                 E=(196000, "handbook", "wrought 15-5 PH; the EOS sheet gives none"),
+                 nu=(0.27, "handbook", "precipitation-hardening stainless"),
+                 strength=(1025, "eos-ph1", "yield strength Rp0.2 XY, as built"),
+                 strengthZ=(930, "eos-ph1", "yield strength Rp0.2 Z, as built"),
+                 density=(7.8, "handbook", "15-5 PH"),
+                 conductivity=(17.8, "handbook", "W/(m K) at 100 C, 15-5 PH"),
+                 cte=(10.8, "handbook", "um/(m K), 20-100 C, 15-5 PH"),
+                 retention=([(23, 1.0), (300, 0.9), (500, 0.8)], "dma-estimate", _RET)),
 }
 
 

@@ -40,7 +40,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-__all__ = ["Part", "load_part", "detect_features", "suggest_setup", "draft_study", "import_part", "heal_mesh"]
+__all__ = ["Part", "load_part", "detect_features", "suggest_setup", "summarize", "draft_study", "import_part",
+           "heal_mesh"]
 
 STEP_EXT = (".step", ".stp")
 # mm chord error of the STEP tessellation: a tenth of the finest grid the
@@ -451,7 +452,9 @@ def detect_features(part: Part) -> dict:
 
     # mounting faces: exposed planes big enough to sit on
     total = float(mesh.area)
-    min_area = max(10.0, 0.002 * total)
+    # big enough to bolt to: 1% of the surface (a chamfer or a step is not
+    # a mounting face; a plain L bracket read 14 of them at 0.2%)
+    min_area = max(10.0, 0.01 * total)
     faces = []
     for pl in sorted(planes, key=lambda q: -q["area"]):
         if pl["area"] < min_area:
@@ -607,6 +610,32 @@ def _tube(seg, wall, extend=0.0):
     return Cylinder(p0 - extend * a, p1 + extend * a, seg["r"] + wall, 0.0)
 
 
+def washer_r(r):
+    """mm: the radius a bolt's head or washer bears on, for a clearance
+    hole of radius r (ISO metric, fasteners.METRIC; about 1.9 r between)."""
+    from .fasteners import METRIC
+    best = min(METRIC.values(), key=lambda v: abs(v[0] / 2 - r))
+    return best[1] / 2 if abs(best[0] / 2 - r) < 0.4 else 1.9 * r
+
+
+def _bolt_ends(b, face_n=None, face_c=None):
+    """(head end, far end, head-recess radius) of a bolt bore. The head sits
+    in a counterbore when there is one (at its step); else on the end away
+    from the face the part bolts against."""
+    p0, p1 = np.asarray(b["p0"], float), np.asarray(b["p1"], float)
+    segs = b["segments"]
+    if len(segs) > 1:
+        cb = max(segs, key=lambda s: s["r"])
+        q0, q1 = np.asarray(cb["p0"], float), np.asarray(cb["p1"], float)
+        # the counterbore's outer end is the bore's own end; its other end is the step
+        if np.linalg.norm(q0 - p0) < np.linalg.norm(q1 - p1):
+            return q1, p1, cb["r"]
+        return q0, p0, cb["r"]
+    if face_n is not None and abs(np.dot(p1 - face_c, face_n)) < abs(np.dot(p0 - face_c, face_n)):
+        return p0, p1, b["r"]
+    return p1, p0, b["r"]
+
+
 def ring_wall(r):
     """mm of material kept round a bore of radius r: three FDM perimeters
     round a bolt, a little more round a bearing seat."""
@@ -620,9 +649,13 @@ def _write_stl(mesh, path):
 
 def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = None, space: str = "part",
                 material: str = "petg", force: float = 100.0, pad: float = 2.0, grow: float = 0.0,
-                safety_factor: float = 2.0) -> dict:
+                safety_factor: float = 2.0, process: str | None = None, support: str | None = None,
+                loads: dict | None = None) -> dict:
     """Write a study for the part into `out_dir` (design space, preserved
-    interfaces and clearance slabs as STL beside it) and return it."""
+    interfaces and clearance slabs as STL beside it) and return it.
+    `support` (an interface id) and `loads` ({interface id: [fx, fy, fz] N})
+    replace the suggested setup; the suggestion stands for whichever is
+    not given."""
     import trimesh
 
     from .shapes import Cylinder, manifold_from_trimesh, trimesh_from_manifold
@@ -668,42 +701,52 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
 
     grown = space != "part" or grow > 0
     setup = suggest_setup(feats, force)
+    ids = {it["id"] for it in feats["interfaces"]}
+    for k in [support] + list(loads or {}):
+        if k is not None and k not in ids:
+            raise ValueError(f"no interface {k!r}; this part has {sorted(ids)} (see features.json)")
+    used = {support or setup.get("support")} | (set(loads) if loads else {setup.get("load")})
     for it in feats["interfaces"]:
         bores = [by_id[h] for h in it["bores"]]
         cyls = [c for b in bores for c in bore_cyls(b, grown and b["kind"] == "bolt")]
         keep_out.append({"id": f"{it['id']}-hole" if it["kind"] == "bolted-face" or len(bores) > 1
                          else it["id"],
                          "shape": cyls[0] if len(cyls) == 1 else {"type": "union", "shapes": cyls}})
-        if it["kind"] == "bore" and bores[0]["r"] < SEAT_MIN_R and it["id"] not in setup.values():
+        if it["kind"] == "bore" and bores[0]["r"] < SEAT_MIN_R and it["id"] not in used:
             continue                  # a cable pass or a pilot hole: kept open, not kept solid
         # preserved: rings round the bores, a pad under a bolted face, cut to the part
         keep = []
+        face_n = face_c = None
+        if it["kind"] == "bolted-face":
+            f = faces[it["face"]]
+            face_n, face_c = np.asarray(f["normal"]), np.asarray(f["center"])
         for b in bores:
+            if b["kind"] == "bolt":
+                # a bolt needs a flat seat under its head and where it clamps,
+                # not a boss: a washer-sized ring `pad` mm deep at each (the way
+                # fasteners.py preserves a bolted joint)
+                head, far, r_head = _bolt_ends(b, face_n, face_c)
+                a = _unit(far - head)
+                rw = washer_r(b["r"])
+                keep.append(Cylinder(head - 0.5 * a, head + pad * a, rw, 0.0).to_manifold())
+                keep.append(Cylinder(far - pad * a, far + 0.5 * a, rw, 0.0).to_manifold())
+                if grown:
+                    # the head and the driver come in from outside
+                    keep_out.append({"id": f"{b['id']}-driver", "bore": False, "shape": {
+                        "type": "cylinder", "p0": (head - reach * a).round(4).tolist(),
+                        "p1": head.round(4).tolist(), "r": round(max(r_head, rw), 4)}})
+                continue
             w = ring_wall(b["r"])
             for s in b["segments"]:
                 # past the bore's ends, so no cap lies on the part's own face
                 # (coplanar caps leave slivers that do not survive an STL)
                 keep.append(_tube(s, w, extend=0.5).to_manifold())
-        if it["kind"] == "bolted-face":
-            f = faces[it["face"]]
-            nrm = np.asarray(f["normal"])
-            pad_m = _extrude(mesh, f["_tris"], -nrm, pad + 0.5)
-            pad_m.apply_translation(0.5 * nrm)
-            # only under the bolt pattern (what the mating part clamps), not
-            # the whole face: a preserved plate is a plate in the result
-            cs = np.array([b["center"] for b in bores])
-            c = cs.mean(0)
-            reach_r = max(float(np.max(np.linalg.norm((cs - c) - np.outer((cs - c) @ nrm, nrm), axis=1))
-                                + max(s["r"] for b in bores for s in b["segments"])
-                                + ring_wall(min(b["r"] for b in bores))), 1.0)
-            disc = Cylinder(c - 2 * reach * nrm, c + 2 * reach * nrm, reach_r).to_manifold()
-            keep.append(manifold_from_trimesh(pad_m) ^ disc)
-            if grown:
-                # don't grow over the mating face: clear a slab in front of it
-                slab = _extrude(mesh, f["_tris"], np.asarray(f["normal"]), max(grow, 0.0) + reach)
-                keep_out.append({"id": f"{it['id']}-clear", "bore": False,
-                                 "shape": {"type": "mesh", "path": _write_stl(
-                                     slab, os.path.join(out_dir, f"{stem}-{it['id']}-clear.stl"))}})
+        if it["kind"] == "bolted-face" and grown:
+            # don't grow over the mating face: clear a slab in front of it
+            slab = _extrude(mesh, f["_tris"], face_n, max(grow, 0.0) + reach)
+            keep_out.append({"id": f"{it['id']}-clear", "bore": False,
+                             "shape": {"type": "mesh", "path": _write_stl(
+                                 slab, os.path.join(out_dir, f"{stem}-{it['id']}-clear.stl"))}})
         if not keep:
             continue
         acc = keep[0]
@@ -729,18 +772,25 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
                             f"{len(feats['interfaces'])} interfaces. Check the loads before trusting a result.",
              "designSpace": design, "preserve": preserve, "keepOut": keep_out,
              "material": material, "goal": {"safetyFactor": safety_factor}}
+    if process:
+        study["process"] = process
     ko_of = {}
     for it in feats["interfaces"]:
         bores = it["bores"]
         ko_of[it["id"]] = f"{it['id']}-hole" if it["kind"] == "bolted-face" or len(bores) > 1 else it["id"]
-    if setup.get("support"):
-        study["supports"] = [{"region": ko_of[setup["support"]]}]
-    if setup.get("load"):
-        it = next(i for i in feats["interfaces"] if i["id"] == setup["load"])
-        ld = {"region": ko_of[it["id"]], "force": setup["force"]}
-        if it["kind"] == "bore" and len(by_id[it["bores"][0]]["segments"]) == 1:
-            ld["distribution"] = "bearing"
-        study["loadCases"] = [{"name": "suggested", "loads": [ld]}]
+    hold = support or setup.get("support")
+    if hold:
+        study["supports"] = [{"region": ko_of[hold]}]
+    pairs = list(loads.items()) if loads else ([(setup["load"], setup["force"])] if setup.get("load") else [])
+    if pairs:
+        lds = []
+        for iid, fv in pairs:
+            it = next(i for i in feats["interfaces"] if i["id"] == iid)
+            ld = {"region": ko_of[iid], "force": [float(x) for x in fv]}
+            if it["kind"] == "bore" and len(by_id[it["bores"][0]]["segments"]) == 1:
+                ld["distribution"] = "bearing"
+            lds.append(ld)
+        study["loadCases"] = [{"name": "given" if loads else "suggested", "loads": lds}]
     feats_out = {k: v for k, v in feats.items() if k != "faces"}
     feats_out["faces"] = [{k: v for k, v in f.items() if not k.startswith("_")} for f in feats["faces"]]
     feats_out["suggested"] = setup
@@ -751,6 +801,27 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
     return study
 
 
+def summarize(feats: dict) -> dict:
+    """The short read of a part's features: counts, and each interface in a
+    line an agent can pick from."""
+    by_id = {b["id"]: b for b in feats["bores"]}
+    rows = []
+    for it in feats["interfaces"]:
+        bs = [by_id[h] for h in it["bores"]]
+        if it["kind"] == "bore":
+            b = bs[0]
+            what = f"bore r {b['r']:g} mm x {b['length']:g} mm, {'through' if b['through'] else 'blind'}"
+        else:
+            rs = sorted({round(b["r"], 2) for b in bs})
+            what = f"{len(bs)} bolt hole(s) r {'/'.join(f'{r:g}' for r in rs)} mm" + (
+                f" on {it['face']}" if it["kind"] == "bolted-face" else "")
+        rows.append({"id": it["id"], "kind": it["kind"], "what": what, "center": it["center"]})
+    return {"bolts": sum(b["kind"] == "bolt" for b in feats["bores"]),
+            "bores": sum(b["kind"] == "bore" for b in feats["bores"]),
+            "boltedFaces": sum(it["kind"] == "bolted-face" for it in feats["interfaces"]),
+            "mountingFaces": len(feats["faces"]), "interfaces": rows}
+
+
 def import_part(path, out_dir: str | None = None, *, tolerance: float = DEFAULT_TOLERANCE, **kw) -> dict:
     """Read a part, find its features and (with `out_dir`) draft its study.
     Returns {"features", "study"?}."""
@@ -759,6 +830,7 @@ def import_part(path, out_dir: str | None = None, *, tolerance: float = DEFAULT_
     out = {"features": {k: v for k, v in feats.items() if k != "faces"}}
     out["features"]["faces"] = [{k: v for k, v in f.items() if not k.startswith("_")} for f in feats["faces"]]
     out["features"]["suggested"] = suggest_setup(feats, kw.get("force", 100.0))
+    out["summary"] = summarize(out["features"])
     if out_dir is not None:
         out["study"] = draft_study(part, feats, out_dir, **kw)
     return out

@@ -92,21 +92,34 @@ def _import(args):
 
     try:
         if args.features_only:
-            print(json.dumps(import_part(args.part, tolerance=args.tolerance)["features"], indent=1))
+            r = import_part(args.part, tolerance=args.tolerance)
+            print(json.dumps({**r["summary"], "suggested": r["features"]["suggested"]}, indent=1))
             return 0
+        loads = {}
+        for item in args.load:
+            k, _, v = item.partition("=")
+            f = [float(x) for x in v.split(",")]
+            if len(f) != 3:
+                raise ValueError(f"--load {item!r}: write ID=FX,FY,FZ in N")
+            loads[k] = f
         out = import_part(args.part, args.out, tolerance=args.tolerance, space=args.space, grow=args.grow,
-                          material=args.material, force=args.force, pad=args.pad,
-                          safety_factor=args.safety_factor)
+                          material=args.material or "petg", force=args.force, pad=args.pad,
+                          safety_factor=args.safety_factor, process=args.process, support=args.support,
+                          loads=loads or None)
     except (ValueError, RuntimeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
     f = out["features"]
     stem = out["study"]["name"]
+    given = bool(loads)
+    todo = [] if given else [f"replace the placeholder load ({f['suggested'].get('note', 'none suggested')}): "
+                             "--load ID=FX,FY,FZ with an interface id below"]
+    if not args.material:
+        todo.append("material is the default (petg, FDM): pass --material/--process for anything else")
     print(json.dumps({"ok": True, "study": os.path.join(args.out, f"{stem}.study.json"),
                       "features": os.path.join(args.out, f"{stem}.features.json"),
-                      "bores": len(f["bores"]), "mountingFaces": len(f["faces"]),
-                      "interfaces": [i["id"] for i in f["interfaces"]], "suggested": f["suggested"],
-                      **({"healed": f["healed"]} if "healed" in f else {})}, indent=1))
+                      **out["summary"], "suggested": f["suggested"], "material": args.material or "petg",
+                      "todo": todo, **({"healed": f["healed"]} if "healed" in f else {})}, indent=1))
     return 0
 
 
@@ -333,7 +346,11 @@ def main(argv=None):
     im.add_argument("--space", choices=["part", "hull", "box"], default="part",
                     help="design space: the part as drawn, its convex hull, or its bounding box")
     im.add_argument("--grow", type=float, default=0.0, help="mm to grow the design space by")
-    im.add_argument("--material", default="petg")
+    im.add_argument("--material", help="material card (`loadpath materials`); without it the draft says petg")
+    im.add_argument("--process", help="fdm, sls, mjf, sla, dlp, lpbf, volumetric")
+    im.add_argument("--support", help="interface id that holds the part (default: the suggested one)")
+    im.add_argument("--load", action="append", default=[], metavar="ID=FX,FY,FZ",
+                    help="N on an interface, e.g. bore-0=0,0,-250 (repeatable); replaces the placeholder")
     im.add_argument("--force", type=float, default=100.0, help="N: the suggested (placeholder) load")
     im.add_argument("--pad", type=float, default=2.0, help="mm of material kept under each bolted face")
     im.add_argument("--safety-factor", type=float, default=2.0)
@@ -450,6 +467,11 @@ def main(argv=None):
         stl = os.path.join(args.out, stem + ".stl")
         o.mesh.export(stl)
         summary["outcomes"][i]["stl"] = stl
+        if getattr(o, "compensated", None) is not None:
+            # pre-distorted against the simulated build: print this one
+            cstl = os.path.join(args.out, stem + "-compensated.stl")
+            o.compensated.export(cstl)
+            summary["outcomes"][i]["compensatedStl"] = cstl
         rs = result.study      # with an "auto" build direction resolved
         build = rs.print_direction if rs.print_direction is not None else \
             (rs.process.build if rs.process is not None and rs.process.build != "auto" else None)

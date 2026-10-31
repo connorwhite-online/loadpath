@@ -6,13 +6,18 @@ must not grow over. Most of that is already in the geometry. `loadpath
 import` reads the part, finds it, and writes a study for you to finish:
 
 ```bash
-pip install "loadpath[step]"                  # OpenCascade, for STEP (STL needs nothing)
-loadpath import wrist_yoke.step --out draft/  # or an .stl / .3mf / .obj, in mm
-# edit draft/wrist_yoke.study.json: put the real loads on the right interfaces
-loadpath run draft/wrist_yoke.study.json --out out/
+pip install "loadpath[step]"                         # OpenCascade, for STEP (STL needs nothing)
+loadpath import bracket.step --features-only         # the interfaces, one line each, with ids
+loadpath import bracket.step --out draft/ --material pa12 --process sls \
+    --support face-1-mount --load bore-0=0,0,-250    # the real setup, no placeholder
+loadpath run draft/bracket.study.json --out out/
 ```
 
-MCP: `loadpath_import_cad(path, out_dir)`. Python: `loadpath.cadimport`
+Without `--support` / `--load` the draft carries the suggested setup and a
+placeholder force, and the command's `todo` says so; without `--material` it
+says the material is the default (PETG, FDM).
+
+MCP: `loadpath_import_cad(path, out_dir, material, process, support, loads)`. Python: `loadpath.cadimport`
 (`load_part`, `detect_features`, `suggest_setup`, `draft_study`,
 `import_part`).
 
@@ -24,7 +29,7 @@ MCP: `loadpath_import_cad(path, out_dir)`. Python: `loadpath.cadimport`
   goes through, and a kind: `bolt` up to M6 clearance (3.6 mm radius), else
   `bore` (a bearing seat, a shaft, a socket). Partial arcs (fillets, slot ends)
   and convex cylinders (bosses, listed apart) are not bores.
-- **Mounting faces.** Planar faces big enough to sit on that nothing of the
+- **Mounting faces.** Planar faces of at least 1% of the surface that nothing of the
   part covers (rays from the face escape), with the bolt holes that open onto
   each.
 - **Interfaces.** A face with two or more bolts (`bolted-face`), bolts that share
@@ -53,16 +58,17 @@ designer drew.
 - **Design space** (`--space`): `part`, the part as drawn (default; the
   optimizer only takes material away), `hull`, its convex hull, or `box`, its
   bounding box, grown by `--grow` mm.
-- **Preserved**: per interface (except plain bores under 5 mm radius that
-  neither hold nor carry the suggested load: cable passes, pilot holes stay
-  open but are not ringed, or the optimizer grows a strut out to them), a ring round each bore (2 mm plus a tenth of
-  the radius, at most 5) and, under a bolted face, a `--pad` (2 mm) layer under
-  the bolt pattern only, both cut to the part, as one STL each. A preserved
-  plate would be a plate in the result, so the whole face is not kept.
+- **Preserved**, cut to the part, one STL per interface: round each bolt, a
+  washer-sized seat (ISO head diameter for its clearance hole) `--pad` (2 mm)
+  deep under the head (at a counterbore's step when there is one) and where it
+  clamps, as `fasteners` would, not a boss or a plate; round each bore, a ring
+  (2 mm plus a tenth of the radius, at most 5). Plain bores under 5 mm radius
+  that neither hold nor carry a load (cable passes, pilot holes) stay open
+  but are not ringed, or the optimizer grows a strut out to them.
 - **Kept out**: every bore, through bores 0.5 mm past their ends; when the
-  space grows past the part, bolt bores run out of it (the bolt has to go in)
-  and a `bore: false` slab in front of each bolted face keeps material off the
-  mating face.
+  space grows past the part, bolt bores run out of it, each bolt gets a
+  `bore: false` head-and-driver path out of its head end, and a slab in front
+  of each bolted face keeps material off the mating face.
 - **Suggested setup**: the bolted interface with the most bolts holds the
   part (the largest bore when nothing is bolted). The load goes on the
   interface that carries the most farthest away (bore radius x length x
