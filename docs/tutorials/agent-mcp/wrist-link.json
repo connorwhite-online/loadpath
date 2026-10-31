@@ -1,0 +1,32 @@
+{
+  "name": "grip-wrist-link",
+  "description": "A GRIP-style wrist link: bolted to a servo horn at one end, carrying the next joint's 22 mm bearing 110 mm out.",
+  "designSpace": [{"type": "box", "min": [-14, -16, -10], "max": [124, 16, 10]}],
+  "fasteners": [
+    {"id": "h1", "size": "M3", "seat": [8, 0, 10], "direction": "-z", "grip": 20, "end": "face"},
+    {"id": "h2", "size": "M3", "seat": [0, 8, 10], "direction": "-z", "grip": 20, "end": "face"},
+    {"id": "h3", "size": "M3", "seat": [-8, 0, 10], "direction": "-z", "grip": 20, "end": "face"},
+    {"id": "h4", "size": "M3", "seat": [0, -8, 10], "direction": "-z", "grip": 20, "end": "face"}
+  ],
+  "preserve": [
+    {"id": "bearing-boss", "shape": {"type": "cylinder", "center": [110, 0, 0], "axis": "z", "length": 20, "r": 14.5}}
+  ],
+  "keepOut": [
+    {"id": "horn-hub", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 24, "r": 3.5}},
+    {"id": "bearing", "shape": {"type": "cylinder", "center": [110, 0, 0], "axis": "z", "length": 24, "r": 11}},
+    {"id": "cable", "shape": {"type": "cylinder", "p0": [28, 0, 0], "p1": [88, 0, 0], "r": 4}}
+  ],
+  "supports": [
+    {"region": "h1-bore"}, {"region": "h2-bore"}, {"region": "h3-bore"}, {"region": "h4-bore"}
+  ],
+  "loadCases": [
+    {"name": "payload", "loads": [{"region": "bearing", "mass": 1.0, "dynamic": 1.5, "gravity": "-z", "at": [180, 0, 0]}]},
+    {"name": "push", "loads": [{"region": "bearing", "force": [-20, 0, 0]}]},
+    {"name": "side", "loads": [{"region": "bearing", "force": [0, 15, 0], "distribution": "bearing"}]}
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {"safetyFactor": 2.0},
+  "minMember": 3.0,
+  "resolution": {"maxElements": 20000}
+}

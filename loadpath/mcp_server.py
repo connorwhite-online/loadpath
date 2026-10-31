@@ -41,6 +41,9 @@ import uuid
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _procs: dict[str, subprocess.Popen] = {}
 _POLL_HINT = "Poll loadpath_status every 30-60 seconds; a study takes minutes."
+_QUICK_NOTE = ("LOADPATH_QUICK is set in the server's environment: a coarse grid and fewer iterations (a first "
+               "look; masses and safety factors move by a few to tens of percent). Restart the server without it "
+               "for the part to print.")
 _VIEWER_NOTE = ("An interactive 3D page for the user: orbit the part, colour it by stress, safety factor or "
                 "displacement, animate the deformation, cut it open, replay the optimization. Give them the path "
                 "(or open it in a browser); it is one self-contained HTML file.")
@@ -126,8 +129,12 @@ def guide() -> str:
 
 
 def check(study, base_dir: str | None = None) -> dict:
+    from . import quick
     from .tasks import check_study
-    return check_study(study, base_dir)
+    out = check_study(study, base_dir)
+    if quick.on():
+        out["quick"] = _QUICK_NOTE
+    return out
 
 
 def _spawn(kind: str, name: str, inputs: dict, argv: list, cells=None, warnings=None, parent=None,
@@ -145,11 +152,14 @@ def _spawn(kind: str, name: str, inputs: dict, argv: list, cells=None, warnings=
         proc = subprocess.Popen([sys.executable, "-m", "loadpath", *argv], stdout=out, stderr=err,
                                 stdin=subprocess.DEVNULL, env=env, cwd=d)
     _procs[job_id] = proc
+    from . import quick
     meta = {"kind": kind, "name": name, "pid": proc.pid, "started": time.time(), "parent": parent,
-            "baseDir": base_dir}
+            "baseDir": base_dir, "quick": quick.on()}
     with open(os.path.join(d, "job.json"), "w") as fh:
         json.dump(meta, fh)
     out = {"ok": True, "jobId": job_id, "kind": kind, "dir": d, "next": _POLL_HINT}
+    if meta["quick"]:
+        out["quick"] = _QUICK_NOTE
     if cells is not None:
         out["cells"] = cells
     if warnings:
@@ -408,6 +418,7 @@ def _study_status(d, r):
             "minMemberMm": o.get("minMember"), "p5MemberMm": o.get("p5Member"), "bodies": o.get("bodies"),
             "keepOutIntrusionMm3": o.get("keepOutIntrusion"), "preserveMissingMm3": o.get("preserveMissing"),
             "designOverhangFraction": o.get("designOverhangFraction"), "cases": cases,
+            "start": o.get("start"),
             "durability": {k: (o.get("durability") or {}).get(k) for k in
                            ("safetyFactor", "fatigueSafetyFactor", "creepSafetyFactor", "fatigueDamage",
                             "temperature", "joints")} if o.get("durability") else None,
@@ -509,6 +520,8 @@ def status(job_id: str) -> tuple[dict, list]:
                 "flags": sorted({x for f in rt.get("fluids", {}).values() for x in f.get("flags", [])})}
         info = {k: v for k, v in info.items() if v is not None}
         pngs = [_png(d, r.get("render"))]
+    if meta.get("quick"):
+        info["quick"] = _QUICK_NOTE
     return jsonable(info), [p for p in pngs if p]
 
 

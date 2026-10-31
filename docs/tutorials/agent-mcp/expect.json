@@ -1,0 +1,39 @@
+{
+  "files": ["transcript.json", "report.json", "wrist-link.stl"],
+  "quick": [
+    {"file": "transcript.json", "value": "r['tools']", "equals": ["loadpath_examples", "loadpath_examples", "loadpath_schema", "loadpath_check", "loadpath_check", "loadpath_start", "loadpath_status", "loadpath_status", "loadpath_start", "loadpath_status", "loadpath_status", "loadpath_check_printability"], "what": "the tool calls, in order"},
+    {"file": "transcript.json", "value": "r['checkError']", "equals": "$.keepout: unknown key; did you mean 'keepOut'?; $.loadCases[0].loads[0].gravity: 'down' is not valid: like '-x' or '+z'", "what": "check's answer to the draft, word for word as the README quotes it"},
+    {"file": "transcript.json", "value": "r['checkOk']", "equals": true, "what": "the fixed study checks clean"},
+    {"file": "transcript.json", "value": "'quick' in r['steps'][5]['result'] and 'quick' in r['steps'][7]['result']", "equals": true, "what": "a quick job says so"},
+    {"file": "transcript.json", "value": "r['first']['passes']", "equals": true, "what": "first run passes SF 2"},
+    {"file": "transcript.json", "value": "r['first']['payloadDeflection'] > r['maxDeflectionGoal']", "equals": true, "what": "first run bends past the deflection the agent then asks for"},
+    {"file": "transcript.json", "value": "r['first']['mass']", "min": 20, "max": 32, "what": "first run's mass, g"},
+    {"file": "transcript.json", "value": "r['final']['passes']", "equals": true, "what": "final part passes SF 2 and the deflection goal"},
+    {"file": "transcript.json", "value": "r['final']['payloadDeflection']", "max": 0.8, "what": "final payload deflection, mm"},
+    {"file": "transcript.json", "value": "r['final']['mass']", "min": 30, "max": 47, "what": "final mass, g"},
+    {"file": "transcript.json", "value": "r['final']['safetyFactor']", "min": 2.0, "what": "final safety factor"},
+    {"file": "transcript.json", "value": "r['final']['bodies']", "equals": 1, "what": "one body"},
+    {"file": "transcript.json", "value": "r['final']['recalled']", "min": 1, "what": "outcomes the rerun replayed from the first run"},
+    {"file": "transcript.json", "value": "r['printable']", "equals": true, "what": "the delivered STL passes the printability check"},
+    {"file": "transcript.json", "value": "any('deflection' in a for o in r['steps'][10]['result']['outcomes'] for a in o['attention'])", "equals": true, "what": "a failing outcome's attention names the deflection it missed"}
+  ],
+  "full": [
+    {"file": "transcript.json", "value": "r['tools']", "equals": ["loadpath_examples", "loadpath_examples", "loadpath_schema", "loadpath_check", "loadpath_check", "loadpath_start", "loadpath_status", "loadpath_status", "loadpath_start", "loadpath_status", "loadpath_status", "loadpath_check_printability"], "what": "the tool calls, in order"},
+    {"file": "transcript.json", "value": "r['checkError']", "equals": "$.keepout: unknown key; did you mean 'keepOut'?; $.loadCases[0].loads[0].gravity: 'down' is not valid: like '-x' or '+z'", "what": "check's answer to the draft"},
+    {"file": "transcript.json", "value": "r['steps'][4]['result']['warnings']", "equals": [], "what": "no warnings on the fixed study"},
+    {"file": "transcript.json", "value": "r['steps'][4]['result']['cells']", "equals": 10862, "what": "grid cells"},
+    {"file": "transcript.json", "value": "r['first']['passes']", "equals": true, "what": "first run passes SF 2"},
+    {"file": "transcript.json", "value": "r['first']['mass']", "min": 23.0, "max": 26.0, "what": "first run's mass, g (24.5)"},
+    {"file": "transcript.json", "value": "r['first']['safetyFactor']", "min": 4.0, "max": 5.6, "what": "first run's SF (4.82)"},
+    {"file": "transcript.json", "value": "r['first']['payloadDeflection']", "min": 0.95, "max": 1.15, "what": "first run's payload deflection, mm (1.04)"},
+    {"file": "transcript.json", "value": "r['final']['passes']", "equals": true, "what": "final part passes"},
+    {"file": "transcript.json", "value": "r['final']['mass']", "min": 26.0, "max": 29.5, "what": "final mass, g (27.6)"},
+    {"file": "transcript.json", "value": "r['final']['safetyFactor']", "min": 7.0, "max": 9.0, "what": "final SF (8.06)"},
+    {"file": "transcript.json", "value": "r['final']['payloadDeflection']", "min": 0.7, "max": 0.8, "what": "final payload deflection, mm (0.78)"},
+    {"file": "transcript.json", "value": "r['steps'][10]['result']['deliver']['governedBy']", "equals": "maxDeflection", "what": "what set the final part's size"},
+    {"file": "transcript.json", "value": "r['final']['recalled']", "equals": 3, "what": "outcomes the rerun replayed (3 of 4)"},
+    {"file": "transcript.json", "value": "r['final']['bodies']", "equals": 1, "what": "one body"},
+    {"file": "transcript.json", "value": "r['printable']", "equals": true, "what": "the delivered STL passes the printability check"},
+    {"file": "transcript.json", "value": "any('deflection' in a for o in r['steps'][10]['result']['outcomes'] for a in o['attention'])", "equals": true, "what": "a failing outcome's attention names the deflection it missed"}
+  ]
+}
