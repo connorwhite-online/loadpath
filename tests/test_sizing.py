@@ -52,3 +52,13 @@ def test_heatx_size_takes_an_envelope_spec():
     res = size_heat_exchanger(spec)
     assert res["best"] and res["best"]["spec"]["name"].startswith("box-")
     assert res["best"]["spec"]["process"] == "lpbf"
+
+
+def test_verify_simulates_a_cross_candidate_whole():
+    from loadpath.sizing import verify
+
+    res = size_exchanger(DUTY, ENV, process="lpbf", layout="cross", cells=[8.0], walls=[0.8], splits=(0.5,),
+                         fractions=(1.0,), max_pressure_drop={"A": 5000, "B": 5000}, objective="effectiveness")
+    v = verify(res["best"], voxel=3.0, method="box")
+    assert v["method"] == "box"
+    assert abs(v["simulated"]["effectiveness"] / v["sized"]["effectiveness"] - 1) < 0.15

@@ -516,10 +516,22 @@ def solve_heat(dom: PorousDomain, fluids, flows, t_in, k_wall, nu="design"):
     K = sparse.bmat([[A0, None, C0], [None, A1, C1], [R0, R1, W]], format="csc")
     b = np.concatenate([rhs[0], rhs[1], wall_rhs])
     n_tot = K.shape[0]
+    # cells nothing reaches (no flow, no exchange, e.g. a dead band with no wall): pin them
+    dead = np.flatnonzero(abs(K).sum(axis=1).A1 == 0)
+    if dead.size:
+        K = (K + sparse.csc_matrix((np.ones(dead.size), (dead, dead)), shape=K.shape)).tocsc()
+        b[dead] = float(np.mean(t_in))
     if n_tot < 200_000:
         x = sparse.linalg.spsolve(K, b)
     else:
-        ilu = spilu(K, drop_tol=1e-5, fill_factor=20)
+        try:
+            ilu = spilu(K, drop_tol=1e-5, fill_factor=20)
+        except RuntimeError:
+            # an exactly singular pivot (dead cells with no flow and no exchange): factor
+            # with a tiny diagonal shift and let GMRES correct against K itself
+            d = abs(K.diagonal())
+            ilu = spilu((K + sparse.diags(1e-8 * max(float(d.max()), 1.0) + 1e-6 * d)).tocsc(),
+                        drop_tol=1e-5, fill_factor=20)
         x, _ = gmres(K, b, M=LinearOperator(K.shape, ilu.solve), rtol=1e-10, restart=50, maxiter=200,
                      x0=np.full(n_tot, float(np.mean(t_in))))
     T, off = [], 0

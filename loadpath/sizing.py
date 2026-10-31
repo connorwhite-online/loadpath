@@ -21,6 +21,15 @@ What the rating misses, and how it is put back:
   at the core's face than the porous medium can show. Each port is sized
   so its velocity heads stay under a share of the fluid's budget
   (`port_share`), as large as its face allows.
+- Plenums. The port turns into its plenum through a ring pi d around and
+  `header` deep; a velocity head of that speed in and out is added. On
+  Connor's intercooler duty (0.143 kg/s charge air) a 6 mm plenum behind
+  a 47 mm port cost more than the core, so the header depth is swept too
+  (6-20 mm) and pays for itself out of the envelope.
+
+Checked whole (porous.simulate_box, 3 mm voxels) on intercooler-sized
+cores 200 x 70-100 x 62 mm: effectiveness within 5% (the sim reads
+higher), core pressure drop within 10%.
 
 The envelope is the part's bounding box. Each face with a zone gives up
 header + shell + port length to its plenum and port; the other faces a
@@ -68,7 +77,7 @@ def _port(m, fl, dp_budget, share, d_max, d_min=4.0):
 def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_drop: dict | None = None,
                    layout: str = "auto", kind: str = "gyroid", cells=None, walls=None, splits=(0.4, 0.5, 0.6, 0.66),
                    min_effectiveness: float | None = None, target_duty: float | None = None,
-                   objective: str = "mass", header: float = 6.0, shell: float | None = None,
+                   objective: str = "mass", header: float | None = None, shell: float | None = None,
                    port_length: float = 8.0, cap: float | None = None, port_share: float = 0.25,
                    fractions=(0.4, 0.55, 0.7, 0.85, 1.0), keep: int = 8) -> dict:
     """Sweep the core's dimensions (fractions of what the envelope leaves),
@@ -103,12 +112,13 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
     density = WALL_DENSITY.get(wall_mat) if isinstance(wall_mat, str) else None
     shell = shell if shell is not None else max(1.6, 2 * lim["minWall"])
     env = np.asarray(envelope, float)
-    allow = header + shell + port_length
+    headers = [float(header)] if header is not None else [6.0, 9.0, 12.0, 16.0, 20.0]
     walls = walls if walls is not None else [w for w in (0.5, 0.6, 0.8, 1.0, 1.2, 1.5) if w >= lim["minWall"]]
     cells = cells if cells is not None else [4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 14.0]
     layouts = ["cross", "counter"] if layout == "auto" else [layout]
     rows, rejected = [], 0
-    for lay, axes in itertools.product(layouts, ("xy", "yx")):
+    for hd, lay, axes in itertools.product(headers, layouts, ("xy", "yx")):
+        allow = hd + shell + port_length
         # what the envelope leaves the core: A's zones on its axis, B's on the other (both
         # layouts); `room` is in A's frame (A along its first entry)
         e = env if axes == "xy" else env[[1, 0, 2]]
@@ -147,6 +157,9 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
                     d, over = _port(ms[i], fls[i], budget.get(n, np.inf), port_share, d_max)
                     ports.append(d)
                     too_big |= over
+                # the port turns into the plenum through a ring pi d deep `header`: a
+                # velocity head of that speed (whole-exchanger sims put most of the
+                # header loss there; a shallow plenum on a big air port dominates)
                 if min(ports) < 3.0:
                     continue
                 # rate the working core: its volume, each fluid's frontal area through
@@ -154,15 +167,18 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
                 r = rate(kind, a, t, v_eff, [v_eff / f for f in frontal],
                          {**{n: duty[n] for n in names}, "wall": wall_mat},
                          "counter" if lay == "counter" else "cross", tuple(ports), split=sp)
-                dp = {}
+                dp, plen = {}, {}
                 for i, n in enumerate(names):
                     s = r["fluids"][n]
+                    v_ring = ms[i] / (fls[i].rho * np.pi * ports[i] * 1e-3 * hd * 1e-3)
+                    plen[n] = 2 * 0.5 * fls[i].rho * v_ring ** 2  # in and out
                     dp[n] = s["pressureDropCore"] * lengths[i] / (v_eff / frontal[i]) + \
-                        s["pressureDropPorts"] + s["pressureDropMouths"]
+                        s["pressureDropPorts"] + s["pressureDropMouths"] + plen[n]
                 solid = float(np.prod(dims)) * (1.0 - geo["phiSheet"])
                 world = dims if axes == "xy" else dims[[1, 0, 2]]
                 row = {"layout": lay, "axes": axes, "core": np.round(world, 1).tolist(), "cell": float(a), "wall": float(t),
-                       "split": float(sp), "cap": cp_, "ports": dict(zip(names, ports)),
+                       "split": float(sp), "cap": cp_, "header": hd,
+                       "pressureDropPlenums": plen, "ports": dict(zip(names, ports)),
                        "effectiveness": r["effectiveness"], "effectivenessRange": r["effectivenessRange"],
                        "duty": r.get("duty"), "tOut": r.get("tOut"), "pressureDrop": dp,
                        "workingCore": round(v_eff / float(np.prod(dims)), 3),
@@ -186,7 +202,7 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
         if any(b["cell"] == x["cell"] and b["wall"] == x["wall"] and b["layout"] == x["layout"]
                and b["axes"] == x["axes"] for b in best):
             continue
-        x["spec"] = _spec(x, names, kind, header, shell, port_length, lim["heatx"], duty)
+        x["spec"] = _spec(x, names, kind, x["header"], shell, port_length, lim["heatx"], duty)
         best.append(x)
         if len(best) >= keep:
             break
@@ -205,19 +221,30 @@ def _spec(row, names, kind, header, shell, port_length, heatx_process, duty):
             "duty": duty}
 
 
-def verify(candidate: dict, voxel=None, closures="design", progress=None, max_points=None):
-    """Design a sized candidate and simulate it whole (porous.py): returns
-    the simulation's effectiveness, pressure drops and flow sharing next to
-    the sizing's own."""
+def verify(candidate: dict, voxel=None, closures="design", progress=None, max_points=None, method="auto"):
+    """Simulate a sized candidate whole (porous.py): returns the
+    simulation's effectiveness, pressure drops and flow sharing next to the
+    sizing's own. `method` "design" designs it first (heatx, wall-resolving:
+    small cores); "box" builds the porous grid straight from the spec
+    (porous.box_domain, cross layout, any size); "auto" takes "box" for a
+    cross core over 1e5 mm3. The box sim's header losses read 3-5 port
+    velocity heads at 3 mm voxels where cell-resolved LBM of the tuned cube
+    measured ~1.4: take its header dp as an upper bound."""
     from .heatx import heat_exchanger_from_spec
-    from .porous import simulate_exchanger
+    from .porous import simulate_box, simulate_exchanger
 
     spec = dict(candidate["spec"])
     duty = spec.pop("duty")
     hx = heat_exchanger_from_spec(spec)
     if max_points:
         hx.max_points = int(max_points)
-    _, rep, sim = simulate_exchanger(hx, duty, voxel=voxel, closures=closures, progress=progress)
+    if method == "auto":
+        method = "box" if spec.get("layout") == "cross" and float(np.prod(candidate["core"])) > 1e5 else "design"
+    if method == "box":
+        sim = simulate_box(hx, duty, voxel=voxel, closures=closures, progress=progress)
+        rep = {}
+    else:
+        _, rep, sim = simulate_exchanger(hx, duty, voxel=voxel, closures=closures, progress=progress)
     return {"sized": {k: candidate[k] for k in ("effectiveness", "pressureDrop", "tOut")},
             "simulated": {"effectiveness": sim.get("effectiveness"),
                           "pressureDrop": {n: f["pressureDrop"] for n, f in sim["fluids"].items()},
@@ -226,4 +253,4 @@ def verify(candidate: dict, voxel=None, closures="design", progress=None, max_po
             "design": {"isolated": rep.get("isolated"), "connected": rep.get("connected"),
                        "minWallBetweenFluids": rep.get("minWallBetweenFluids"), "solidVolume": rep.get("solidVolume"),
                        "warnings": rep.get("warnings")},
-            "seconds": sim.get("seconds")}
+            "method": method, "seconds": sim.get("seconds")}

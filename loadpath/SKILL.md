@@ -228,6 +228,16 @@ field. `check` reports every problem at once: fix them all, then check again.
   1 mm wall) opens the starved edge channels; plenum depth hardly matters.
   Together: water 745 -> 267 Pa, air 8.5 -> 1.9 kPa, effectiveness +8%
   (example heat-exchanger-crossflow-tuned).
+  Only an envelope, not a core? Give `"envelope": [x, y, z]` (the whole
+  part, ports included) and `"sizing": {"process": "lpbf", "maxPressureDrop":
+  {...}, "minEffectiveness": 0.7, "objective": "mass"}` instead of `core`,
+  and `loadpath_size_heat_exchanger` picks the core's size, cell, wall,
+  split, layout, plenum depth and each fluid's port within the process's
+  wall and channel limits (sizing.py), returning ranked specs to design.
+  For gas sides at high flow the plenum depth matters (a 6 mm plenum behind
+  a 47 mm charge-air port cost more than the core). `sizing.verify` then
+  simulates a candidate whole; big cross cores skip the design and use
+  `porous.simulate_box` (minutes; its header dp is an upper bound).
 - Holding a mesh from somewhere else (your own field model, a CAD export)?
   `loadpath_check_printability`, `loadpath_check_isolation` and
   `loadpath_check_fit` check it directly. From Python, `check_dfm` and
