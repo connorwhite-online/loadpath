@@ -183,6 +183,17 @@ per case on average. What was learned:
   the hotspot. The hook's 0.176 pick now fails its eval's overhang check
   (4.3% for 4%): a lighter part than the search used to deliver, not a
   restart.
+- Stress-aware objective (2026-10-31): the constrained method (MMA with a
+  p-norm stress limit, constrained.py) is now steered by the tet reading
+  when the cross-check is installed. Against the search on the same main:
+  wall bracket 68.7 -> 28.1 g (tet SF 3.00 for 2.5), fastener bracket 35.5
+  -> 26.5 g (3.10), MBB 12.5 -> 15.6 g (1.63 for 1.5, worse). On voxels
+  alone it gave 27.6 g and 28.0 g for the brackets at tet SF 3.65. Mass
+  levels off near 26-28 g on both brackets (the next limit down read
+  2.34-2.37), which looks like the minimum member, not the stress limit.
+  The search stays the default until the full suite (GRIP cases, arm
+  links) is measured with `"method": "constrained"`; the hook is
+  excluded (print direction).
 - The voxel reading also moves with the cell budget, and most on thin
   sections. Tuning the arm link's field graph (tune.py, 2026-10-30), the
   start part read 0.500 mm deflection on 30k cells and 0.487 mm on 60k, while

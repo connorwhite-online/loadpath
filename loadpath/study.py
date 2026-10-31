@@ -963,6 +963,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                "achievedVolumeFraction": res.volume_fraction, "method": "constrained",
                "limits": {"stress": limits.stress, "deflection": limits.deflection}}
         o = Outcome(res.volume_fraction, mesh, report, opt, rinfo)
+        o.voxel_sf = report.get("safetyFactor")
         m = _margin(study, report)
         report["margin"] = m
         o.passes = bool(m >= 1.0)
@@ -990,6 +991,10 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         # with the target nudged by 2%. Once one run passes and one fails,
         # bisect t between them (geometrically), and warm-start only from a
         # passing design, never from a collapsed one.
+        # With the tet cross-check (goal.confirm), each run is read on tets
+        # and t is steered by that reading: the voxel one left the wall
+        # brackets at SF 2.7-2.8 on voxels and 3.6 on tets for 2.5.
+        tets = goal.safety_factor is not None and _confirm_on_tets(study, outcomes)
         t, t_pass, t_fail, x_pass = 1.0, None, None, None
         for _ in range(_MAX_CONSTRAINED_RUNS):
             if should_stop is not None and should_stop():
@@ -998,6 +1003,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                             goal.max_deflection * t if goal.max_deflection is not None else None, mat.E)
             o = run_constrained(limits, x_pass)
             outcomes.append(o)
+            if tets and o.voxel_sf and o.report.get("bodies", 1) <= 1 and tet_confirm(o) is None:
+                tets = False   # the mesher failed: voxels from here on
             r = o.report
             rs = r["safetyFactor"] / goal.safety_factor if goal.safety_factor else None
             rd = goal.max_deflection / max(c["deflection"] for c in r["cases"]) if goal.max_deflection else None
