@@ -11,6 +11,8 @@ factor where the report had replaced it with a finer one.
 """
 from __future__ import annotations
 
+_VF_CEILING = 0.7   # study._VF_MAX: the search never goes past it
+
 
 def attention(o: dict, study: dict) -> list[str]:
     """What SKILL.md tells an agent to look for, already looked for."""
@@ -112,6 +114,10 @@ def delivery(summary: dict, study: dict) -> dict | None:
         sat = _saturated(outs)
         if sat:
             d["warnings"].insert(1, sat)
+        top = max((x.get("volumeFraction") or 0.0) for x in outs)
+        if top >= _VF_CEILING - 1e-6:
+            d["warnings"].insert(1, f"the search stopped at the volume-fraction ceiling ({_VF_CEILING:.0%} of the design "
+                                    "space): more material is not allowed, so change the material, the design space or the loads")
     return d
 
 

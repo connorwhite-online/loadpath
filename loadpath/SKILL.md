@@ -64,7 +64,11 @@ field. `check` reports every problem at once: fix them all, then check again.
    exact (three solves, a 3x3 eigenproblem), and `report.json` gives each
    case's `worstDirection`. It costs stiffness in the nominal direction (the
    arm link: about half again more compliant under its payload), so use it
-   for the uncertain load and keep known loads as plain vectors.
+   for the uncertain load and keep known loads as plain vectors. A cone is
+   3D: it tilts the force out of plane too, which a thin plate-like part (or
+   one that would swing on a pin rather than resist sideways) cannot carry.
+   For an in-plane uncertainty write two or three plain load cases at the
+   tilted directions instead.
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.

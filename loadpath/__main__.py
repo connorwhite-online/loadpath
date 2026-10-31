@@ -736,5 +736,15 @@ def _orient(args):
     return 0
 
 
+def _main():
+    # `loadpath check study.json | head` closes the pipe early: exit quietly
+    try:
+        return main()
+    except BrokenPipeError:
+        import os
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main())

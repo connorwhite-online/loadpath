@@ -93,6 +93,8 @@ def test_deliver_gathers_the_best_outcome_and_its_warnings():
     assert any("durability" in w for w in d["warnings"]), d
     none = delivery({**summary, "best": None}, {"goal": {"safetyFactor": 2}})
     assert none["passes"] is False and "not a passing part" in none["warnings"][0], none
+    capped = {"best": None, "warnings": [], "outcomes": [{"volumeFraction": 0.7, "safetyFactor": 1.5, "cases": []}]}
+    assert any("ceiling" in w for w in delivery(capped, {"goal": {"safetyFactor": 2}})["warnings"])
 
 
 def test_verify_any_stl():
