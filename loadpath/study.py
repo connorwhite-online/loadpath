@@ -1015,7 +1015,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             domain, study.elastic(),
             SimpOptions(volume_fraction=float(goal.volume_fraction or 0.3), filter_radius=radius,
                         max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
-                        extrusion=study.extrusion, pattern=study.pattern),
+                        extrusion=study.extrusion, pattern=study.pattern,
+                        build_direction=study.print_direction),
             limits, on_iter=on_iter, should_stop=should_stop)
         mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
         report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
@@ -1033,7 +1034,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
 
     goal = study.goal
     if goal.method == "constrained" and (goal.safety_factor is not None or goal.max_deflection is not None) \
-            and study.print_direction is None and study.gravity is None and not _durability_drives(study) \
+            and study.gravity is None and not _durability_drives(study) \
             and study.access is None and study.max_member is None \
             and not any(ld.direction for c in study.load_cases for ld in c.loads):
         from .constrained import Limits
