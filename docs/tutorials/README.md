@@ -4,14 +4,14 @@ Six workflows end to end, each in its own folder with the input files, the
 commands, the numbers you should get and renders of the result. Run the
 commands from inside the tutorial's folder.
 
-| tutorial | what you make | process |
+| tutorial | what you make | headline result (full grid) |
 |---|---|---|
-| [FDM bracket](fdm-bracket/) | topology-optimized wall bracket, oriented and sliced for printing | PETG, FDM |
-| [Graded lattice with drains](sls-lattice-drains/) | stress-graded gyroid part with powder drain holes | PA12, SLS |
-| [Heat exchanger](heat-exchanger/) | two-fluid gyroid exchanger, sized, designed and simulated whole | |
-| [Impact bumper](impact-bumper/) | graded gyroid that stops a falling robot under a force limit | PA12, SLS |
-| [Field editor](field-editor/) | an implicit part designed in the browser editor, then tuned | |
-| [Arm link from a URDF](urdf-arm-link/) | robot link whose loads and keep-outs come from the robot's URDF | |
+| [FDM bracket](fdm-bracket/) | PETG wall bracket: topology optimization to an oriented 3MF | 48.6 g, SF 5.4 against a goal of 3 |
+| [Graded lattice with drains](sls-lattice-drains/) | PA12 SLS wrist link: stress-graded skin and gyroid, powder drain holes | 23% lighter than solid, 0 sealed voids after 4 drains |
+| [Heat exchanger](heat-exchanger/) | AlSi10Mg LPBF oil cooler: sized, designed, simulated whole | effectiveness 0.50 rated, 0.48 simulated; fluids isolated |
+| [Impact bumper](impact-bumper/) | PETG graded gyroid that stops a 4 kg rover falling 1 m | 3.8 kN peak against a 4 kN limit; a uniform core of the same mass hits 4.6 kN |
+| [Field editor](field-editor/) | PA12 link drawn in the browser editor, then tuned | 11% lighter after `tune`, still SF 3 and 0.8 mm |
+| [Arm link from a URDF](urdf-arm-link/) | SLS forearm whose loads and keep-outs come from the robot's URDF | 66 g, SF 3.1; the hand-loaded design reads SF 0.89 under the derived cases |
 
 ## Quick mode
 

@@ -53,6 +53,13 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
 Units are millimetres, newtons, megapascals. See [`loadpath/README.md`](loadpath/README.md)
 for the method, the study format, goals and limits.
 
+**Tutorials.** Six workflows end to end, each with its files, commands, the numbers
+you should get and renders, and each run by CI so it can't go stale
+([docs/tutorials/](docs/tutorials/)): an FDM bracket to a 3MF, a graded SLS lattice
+with powder drains, a simulated metal heat exchanger, an impact bumper, a part drawn in
+the field editor and tuned, and an arm link loaded by its robot's URDF. Every command
+takes `--quick` for a first look in a minute or two.
+
 <!-- gallery:start -->
 
 ## Examples

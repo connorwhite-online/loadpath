@@ -92,6 +92,12 @@ loadpath heatx cooler.json --out hx/       # design, check isolation, rate, rend
 
 `loadpath schema heatExchanger` lists every field.
 
+## Tutorials
+
+[tutorials/](tutorials/) has six workflows end to end (FDM bracket, graded SLS
+lattice with drains, heat exchanger with simulation, impact bumper, field
+editor, arm link from a URDF), each with the numbers you should get.
+
 ## For agents
 
 See [agents.md](agents.md): the MCP server, its tools, and the loop an agent
