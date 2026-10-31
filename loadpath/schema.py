@@ -499,8 +499,10 @@ _MULTI_MATERIAL = {
             "knock": {"type": "object", "properties": {
                 "energy": {**_POS, "description": "J the knock brings"},
                 "maxForce": {**_POS, "description": "N: the peak force it may stop with"},
-                "safetyFactor": {**_POS, "description": "on the stored energy's stress (default "
-                                                        "interfaceSafetyFactor or the goal's)"}},
+                "safetyFactor": {**_POS, "description": "the knock's own safety factor: on its stored "
+                                                        "energy, and on materials and bonds at its peak force "
+                                                        "(an accidental load; default the goal's / "
+                                                        "interfaceSafetyFactor)"}},
                 "required": ["energy", "maxForce"], "additionalProperties": False},
             "indentation": {"type": "object", "properties": {
                 "relativeTo": {"type": "string", "description": "the same force spread out (a case)"},
@@ -517,6 +519,19 @@ _MULTI_MATERIAL = {
                            "required": ["tensile"], "additionalProperties": False},
                        "description": "'a+b' -> bond strength (MPa), overriding interface_library.py's "
                                       "sourced card (measure your printer's: it varies a lot)"},
+        "interlock": {"oneOf": [{"type": "boolean"}, {"type": "object", "properties": {
+            "pattern": {"enum": ["beams"]},
+            "depth": {**_POS, "description": "mm of interlocking band straddling the interface (default 2)"},
+            "beamWidth": {**_POS, "description": "mm (default two extrusion widths, 0.8)"},
+            "layers": {"type": "integer", "minimum": 1, "description": "print layers per beam (default 2)"},
+            "layerHeight": {**_POS, "description": "mm per beam layer, instead of layers"},
+            "gain": {"type": "number", "minimum": 1,
+                     "description": "interlocked / flat bond strength credited (default 2.5 at 2 mm, sourced)"},
+            "pairs": {"type": "array", "items": {"type": "string"}, "description": "'a+b' pairs (default all)"}},
+            "additionalProperties": False}],
+            "description": "Interlock the materials where they meet (an interlaced beam lattice, as Cura's / "
+                           "Bambu's interlocking beams): the delivered bodies interpenetrate and the bond is "
+                           "credited with the measured gain, capped by what the lattice carries (interlock.py)"},
         "interfacePenalty": {"type": "boolean", "description": "constrain the bond in the optimizer "
                                                               "(default true); verification always checks it"},
         "export": {"type": "object", "properties": {

@@ -1062,7 +1062,7 @@
                   "safetyFactor": {
                     "type": "number",
                     "exclusiveMinimum": 0,
-                    "description": "on the stored energy's stress (default interfaceSafetyFactor or the goal's)"
+                    "description": "the knock's own safety factor: on its stored energy, and on materials and bonds at its peak force (an accidental load; default the goal's / interfaceSafetyFactor)"
                   }
                 },
                 "required": [
@@ -1131,6 +1131,57 @@
             "additionalProperties": false
           },
           "description": "'a+b' -> bond strength (MPa), overriding interface_library.py's sourced card (measure your printer's: it varies a lot)"
+        },
+        "interlock": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "pattern": {
+                  "enum": [
+                    "beams"
+                  ]
+                },
+                "depth": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "mm of interlocking band straddling the interface (default 2)"
+                },
+                "beamWidth": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "mm (default two extrusion widths, 0.8)"
+                },
+                "layers": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "print layers per beam (default 2)"
+                },
+                "layerHeight": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "mm per beam layer, instead of layers"
+                },
+                "gain": {
+                  "type": "number",
+                  "minimum": 1,
+                  "description": "interlocked / flat bond strength credited (default 2.5 at 2 mm, sourced)"
+                },
+                "pairs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "'a+b' pairs (default all)"
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "description": "Interlock the materials where they meet (an interlaced beam lattice, as Cura's / Bambu's interlocking beams): the delivered bodies interpenetrate and the bond is credited with the measured gain, capped by what the lattice carries (interlock.py)"
         },
         "interfacePenalty": {
           "type": "boolean",
