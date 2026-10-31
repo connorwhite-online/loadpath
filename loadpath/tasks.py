@@ -143,7 +143,7 @@ def lattice_part(study, mesh, options: dict | None, out_dir: str, stem: str, ren
 
 # --- heat exchangers --------------------------------------------------------
 
-_HX_OWN = ("name", "description", "step", "duty", "expect")
+_HX_OWN = ("name", "description", "step", "duty", "expect", "envelope", "sizing", "simulate")
 
 
 def _hx_spec(spec, base_dir):
@@ -233,6 +233,33 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
     return jsonable(out)
 
 
+def _size_in_envelope(spec, max_pressure_drop, objective, min_effectiveness):
+    """Size core, cell, wall, split, layout and ports to fit `envelope` (sizing.py)."""
+    from .schema import format_issues, lint
+    from .sizing import size_exchanger
+
+    errors = [i for i in lint(spec, "heatExchanger") if i["level"] == "error"]
+    if errors:
+        raise ValueError(format_issues(errors))
+    duty = spec.get("duty")
+    names = spec.get("fluids", ["A", "B"])
+    if not duty or any(n not in duty for n in names):
+        raise ValueError(f"sizing needs a duty with an entry for each fluid {names}")
+    sz = spec.get("sizing") or {}
+    obj = sz.get("objective") or ("mass" if objective == "metal" else objective)
+    res = size_exchanger({**{n: duty[n] for n in names}, **({"wall": duty["wall"]} if "wall" in duty else {})},
+                         spec["envelope"], process=sz.get("process", spec.get("process", "fdm")),
+                         max_pressure_drop=sz.get("maxPressureDrop", max_pressure_drop),
+                         min_effectiveness=sz.get("minEffectiveness", min_effectiveness),
+                         target_duty=sz.get("targetDuty"), objective=obj, kind=spec.get("type", "gyroid"),
+                         layout=spec.get("layout", "auto"))
+    for c in res["candidates"]:
+        c["spec"]["name"] = f"{spec.get('name', 'sized')}-{c['layout']}-{c['cell']:g}-{c['wall']:g}"
+    res["next"] = ("Design the best one: write its \"spec\" to a file and run loadpath heatx on it (add "
+                   "\"simulate\": true to check flow sharing and outlet temperatures whole).")
+    return res
+
+
 def size_heat_exchanger(spec: dict, base_dir: str | None = None, max_pressure_drop: dict | None = None,
                         min_wall: float = 0.8, objective: str = "effectiveness",
                         min_effectiveness: float | None = None, splits=None) -> dict:
@@ -246,6 +273,8 @@ def size_heat_exchanger(spec: dict, base_dir: str | None = None, max_pressure_dr
     from .heatx_thermal import size_core
     from .shapes import manifold_from_trimesh  # noqa: F401  (manifold3d present)
 
+    if "envelope" in spec:
+        return jsonable(_size_in_envelope(spec, max_pressure_drop, objective, min_effectiveness))
     hx = _hx_spec(spec, base_dir)
     duty = _duty(spec, hx)
     if duty is None:

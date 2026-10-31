@@ -237,6 +237,58 @@
       "type": "object",
       "description": "Eval-only pass criteria (loadpath.evals)."
     },
+    "envelope": {
+      "type": "array",
+      "items": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "Instead of a core: the box (mm, x y z) the whole part must fit, ports and headers included. `loadpath heatx --size` then picks the core's size, cell, wall, split, layout and each fluid's port for the duty (sizing.py)."
+    },
+    "sizing": {
+      "type": "object",
+      "properties": {
+        "process": {
+          "enum": [
+            "fdm",
+            "lpbf",
+            "sls",
+            "mjf",
+            "sla",
+            "dlp"
+          ]
+        },
+        "maxPressureDrop": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "description": "Pa per fluid name"
+        },
+        "minEffectiveness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "targetDuty": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "W"
+        },
+        "objective": {
+          "enum": [
+            "mass",
+            "effectiveness",
+            "pressure"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "description": "With envelope: what the sized exchanger must meet, and what to rank by."
+    },
     "simulate": {
       "anyOf": [
         {
@@ -284,8 +336,13 @@
       }
     }
   },
-  "required": [
-    "core"
+  "x-requireOne": [
+    [
+      "core"
+    ],
+    [
+      "envelope"
+    ]
   ],
   "additionalProperties": false,
   "$defs": {
