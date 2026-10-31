@@ -367,6 +367,23 @@ def _workers(n: int, cells: int | None = None) -> int:
     return w
 
 
+def _confirm_cells(st: Study | None = None) -> int:
+    """Cells for the confirming re-analysis: LOADPATH_CONFIRM_CELLS, else
+    150k, but no more than fit in the memory free right now. A brief-eval
+    agent's search on a shared 15 GB box was OOM-killed at this stage after
+    35 minutes, losing every verified outcome; a coarser confirm (never
+    under the design grid) is better than none."""
+    env = os.environ.get("LOADPATH_CONFIRM_CELLS")
+    if env:
+        return max(1000, int(env))
+    floor = max(st.max_elements if st is not None else 0, 20_000)
+    avail = _available_bytes()
+    if not avail:
+        return _CONFIRM_CELLS
+    fit = int((0.6 * avail - _RUN_BASE_BYTES) // _RUN_CELL_BYTES)
+    return int(max(floor, min(_CONFIRM_CELLS, fit)))
+
+
 def _solve_alone(study: Study) -> StudyResult:
     return _run_single(study)
 
@@ -763,7 +780,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         recalled = rep is not None
         if rep is None:
             try:
-                rep = verify_part(study, o.mesh, max_cells=_CONFIRM_CELLS, min_pitch=0.3 * domain.pitch,
+                cc = _confirm_cells(study)
+                rep = verify_part(study, o.mesh, max_cells=cc, min_pitch=0.3 * domain.pitch,
                                   contact_band=domain.pitch)
             except RuntimeError as exc:
                 o.report.setdefault("warnings", []).append(f"confirmation failed: {exc}")
@@ -774,6 +792,9 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         mc = _margin(study, rep)
         o.report["confirm"] = {"safetyFactor": rep["safetyFactor"], "margin": mc,
                                "analysisPitch": rep["analysisPitch"], "analysisCells": rep["analysisCells"],
+                               **({"cellsCapped": "by free memory (LOADPATH_CONFIRM_CELLS sets it)"}
+                                  if not recalled and cc < _CONFIRM_CELLS and not os.environ.get("LOADPATH_CONFIRM_CELLS")
+                                  else {}),
                                "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
                                          for c in rep["cases"]]}
         # recorded, not adopted: the finer grid also resolves small features

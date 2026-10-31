@@ -246,7 +246,11 @@ coordinates). The optimizer then only builds what can be printed at 45°;
 40-60k for a part you will print (each optimization scales a little worse
 than linearly with cells; a safety-factor search runs several). Members thinner than
 about two cells cannot form; `check` warns when `minMember` is too fine for
-the grid.
+the grid. `maxElements` is a target the pitch is estimated from, so the grid
+can come out a few percent over; set `resolution.pitch` for an exact grid.
+A safety-factor search re-checks its pick on a finer grid (up to 150k
+cells, about 55 kB a cell): that stage is capped to the memory free at the
+time, and `LOADPATH_CONFIRM_CELLS` sets it outright on a shared machine.
 
 ## Length scales and sealed voids
 

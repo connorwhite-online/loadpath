@@ -78,6 +78,16 @@ def test_cancelling_load_names_its_cause():
         raise AssertionError("a load case that cancels itself should not build")
 
 
+def test_lone_pin_is_refused():
+    s = copy.deepcopy(LINK)
+    s["supports"] = [{"region": "a", "fix": "pin"}]
+    r = check_study(s)
+    assert not r["ok"] and "turning" in r["error"], r
+    s["supports"].append({"region": "b", "fix": "pin"})
+    s["loadCases"][0]["loads"][0]["region"] = "boss-b"
+    assert check_study(s)["ok"]
+
+
 def test_deliver_gathers_the_best_outcome_and_its_warnings():
     summary = {"best": 1, "warnings": ["run-level"], "outcomes": [
         {"volumeFraction": 0.2, "passes": False, "safetyFactor": 1.0, "cases": []},
