@@ -391,9 +391,9 @@ _THERMAL = {
                                                        "the swing's stress over strength retention, weighted "
                                                        "against the hot moment's objective at the start. 0 "
                                                        "(default): hot moment only. Experimental: on the motor "
-                                                       "mount 0.3 lifted the verified fatigue SF 2.48 -> 2.94 "
-                                                       "at 12k cells but lowered it 2.83 -> 2.25 at 45k, so "
-                                                       "verify the result. Adding material does not help "
+                                                       "mount 1 lifted the verified fatigue SF 2.48 -> 3.38 at "
+                                                       "12k cells, but at 45k no weight beat 2.83 (0.3 tied "
+                                                       "it, 1 lowered it), so verify the result. Adding material does not help "
                                                        "thermal cycling (stiffer parts hold more expansion)."}},
                   "required": ["period", "on"], "additionalProperties": False},
     },

@@ -849,6 +849,21 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 g += (-opts.deflate_power * a / (a + 1.0)) * diff / (d2 * n_design)
             dc = dc + ht @ (printed_grad(am_b, comp * g) * dproj / hs)
         dv = ht @ (printed_grad(am_b, design.astype(float)) * dproj / hs)
+        if heat is not None and heat.swing_weight > 0:
+            # The thermal-cycling swing's stress rises where material is
+            # added near the heat (a stiffer part holds more of its own
+            # expansion), so its sensitivities are positive there, and the
+            # clip below threw that half away: the optimizer never saw why
+            # to remove material, and at 45k cells its own swing measure
+            # rose 4.3 -> 6.8 with fatigueWeight 0.3. Shifting dc by s dv
+            # keeps every sensitivity negative without moving the optimum
+            # (the volume multiplier absorbs s: -dc/dv = l becomes
+            # s - dc/dv = l + s).
+            live = design & (dv > 1e-12)
+            if live.any():
+                s_sh = float(np.max(dc[live] / dv[live]))
+                if s_sh > 0:
+                    dc = dc - 1.05 * s_sh * dv - 1e-12
         dc = np.minimum(dc, 0.0)
         if robust:
             # A worst case over directions swings: stiffening the weakest
