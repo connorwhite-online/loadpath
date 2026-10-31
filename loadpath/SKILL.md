@@ -85,6 +85,10 @@ field. `check` reports every problem at once: fix them all, then check again.
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.
+   A part that hangs on a rod, hook or peg bears only where it touches:
+   support the strip of the hole that carries the weight (`fix` on a
+   narrow box over its top), not the whole hole, or the model hides the
+   bending at the hook's mouth.
    A housing that holds a fluid (a boost plenum, a coolant jacket): make
    the fluid's volume a keep-out with a `wall` (mm), and load it with
    `{"region": "<id>", "pressure": MPa}`. The wall stays as given and the
