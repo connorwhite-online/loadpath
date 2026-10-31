@@ -110,7 +110,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
              **({"moment": np.round(ld.moment, 1).tolist()} if np.any(ld.moment) else {}),
              **({"direction": ld.direction} if ld.direction else {})}
             for ld in c.loads if not ld.pressure]} for c in s.load_cases],
-        "minMember": s.min_member, "warnings": warnings, **({"notes": notes} if notes else {}),
+        "minMember": s.min_member, "warnings": warnings, "notes": notes,
     })
 
 
@@ -184,9 +184,14 @@ def _preserve_cut(s) -> list[str]:
                 pm = _union([p])
                 vol = float(pm.volume())
                 for k in s.keep_out:
+                    kid, rid = str(k.id), str(r.id)
+                    if "-" in kid and "-" in rid and kid.rsplit("-", 1)[0] == rid.rsplit("-", 1)[0]:
+                        continue    # one fastener's own tap through its own seat or sleeve
+                    # a head and driver path is not a bore: it cuts what it passes through
+                    head = kid.endswith("-head")
                     cut = 0.0
                     for kl in _leaves(k.shape):
-                        if not _bore_through(p, kl):
+                        if head or not _bore_through(p, kl):
                             cut += float((pm ^ _union([kl])).volume())
                     if vol > 0 and cut > 1.0 and cut > 0.05 * vol:
                         out.append(f"keepOut {k.id!r} removes {cut:.0f} mm^3 ({cut / vol:.0%}) of preserve {r.id!r}: "

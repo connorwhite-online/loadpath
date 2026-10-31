@@ -102,6 +102,9 @@ def expand_fasteners(d: dict) -> dict:
         seat = np.asarray(f["seat"], float)
         a = _direction(f["direction"], label)
         grip = float(f["grip"])
+        if grip < 0 or (grip == 0 and str(f.get("end", "face")) != "thread"):
+            raise ValueError(f"{label}.grip is mm from the seat to the far end: > 0, or 0 for a thread or "
+                             "insert that starts right at the seat")
         end_kind = str(f.get("end", "face"))
         if end_kind not in ("face", "thread", "none"):
             raise ValueError(f"{label}.end must be 'face', 'thread' or 'none'")

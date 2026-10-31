@@ -85,7 +85,9 @@ def delivery(summary: dict, study: dict) -> dict | None:
               + list((o.get("process") or {}).get("warnings") or []) + attention(o, study)):
         if w not in warn:
             warn.append(w)
+    peaks = {c.get("name"): c.get("peakStress") for c in (o.get("confirm") or {}).get("cases") or []}
     cases = [{"name": c.get("name"), "safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection"),
+              "peakStress": c.get("peakStress") if c.get("peakStress") is not None else peaks.get(c.get("name")),
               **({"worstDirection": c["worstDirection"]} if c.get("worstDirection") else {})}
              for c in o.get("cases") or []]
     d = {
@@ -113,6 +115,9 @@ def delivery(summary: dict, study: dict) -> dict | None:
         **({"print": {k: v for k, v in o["print"].items() if k != "warnings"}} if o.get("print") else {}),
         "warnings": warn,
     }
+    if d["governedBy"] == "durability" and d.get("durabilitySafetyFactor") is not None:
+        d["warnings"].insert(0, f"durability (fatigue/creep) sets this part: quote its safety factor "
+                                f"{d['durabilitySafetyFactor']:.2f}, not the static {d['safetyFactor']:.2f}")
     if summary.get("best") is not None and (o.get("volumeFraction") or 1.0) <= _VF_FLOOR + 1e-6:
         d["governedBy"] = "volumeFraction floor"
         d["warnings"].insert(0, f"the search stopped at its smallest volume fraction ({_VF_FLOOR:.0%}) with the "

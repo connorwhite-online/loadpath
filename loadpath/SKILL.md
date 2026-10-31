@@ -258,10 +258,13 @@ field. `check` reports every problem at once: fix them all, then check again.
 
 ## Printing direction
 
-If the part will be printed without supports (FDM, metal powder bed), set
+A `process` of `fdm` or `lpbf` already designs self-supporting along its
+`buildDirection` (the optimizer only builds what prints at 45°); setting
+`printDirection` as well changes nothing. Without a process, set
 `"printDirection": "+z"` (the direction layers stack, in the study's
-coordinates). The optimizer then only builds what can be printed at 45°;
-`report.json` gives `designOverhangFraction`.
+coordinates). Preserved geometry is kept as drawn, so a preserved overhang
+(a platform, a ring's underside) still needs support: chamfer it in the
+preserve or accept the supports `deliver` → `print` reports.
 
 ## Resolution
 

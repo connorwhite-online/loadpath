@@ -240,7 +240,7 @@ _FASTENER = {
         "size": {"enum": ["M2", "M2.5", "M3", "M4", "M5", "M6", "M8", "M10"]},
         "seat": {**_VEC3, "description": "Centre of the face the head (or the mating part) bears on."},
         "direction": {**_SIGNED_AXIS, "description": "From the seat into the part, the way the screw goes."},
-        "grip": {**_POS, "description": "mm from the seat to the far end."},
+        "grip": {"type": "number", "minimum": 0, "description": "mm from the seat to the far end (0 for a thread or insert starting right at the seat)."},
         "end": {"enum": ["face", "thread", "none"]},
         "headOn": {"enum": ["this", "mating"]},
         "threadLength": {**_POS, "description": "end 'thread': engagement length past the grip (default 2x the "

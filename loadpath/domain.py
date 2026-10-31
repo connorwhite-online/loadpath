@@ -387,7 +387,21 @@ def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed
 
 
 def build_domain(study: Study, pitch: float | None = None) -> Domain:
-    pitch = float(pitch) if pitch else choose_pitch(study)
+    if pitch or study.pitch:
+        return _build_domain(study, float(pitch) if pitch else float(study.pitch))
+    # maxElements is a cap: the pitch is estimated from a coarse occupancy
+    # sample, which came out 2-5% over in the brief evals (20988 cells for
+    # 20000); grow the cells until the grid fits
+    p = choose_pitch(study)
+    for _ in range(4):
+        d = _build_domain(study, p)
+        if d.n_elem <= study.max_elements:
+            return d
+        p *= (d.n_elem / study.max_elements) ** (1.0 / 3.0) * 1.003
+    return d
+
+
+def _build_domain(study: Study, pitch: float) -> Domain:
     lo, hi = study.bounds()
     center = 0.5 * (lo + hi)
     dims = np.maximum(np.ceil((hi - lo) / pitch - 1e-9).astype(int), 1)
