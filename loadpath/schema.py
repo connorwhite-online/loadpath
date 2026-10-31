@@ -657,6 +657,20 @@ HEAT_EXCHANGER_SCHEMA = {
             "required": ["fluid", "end", "direction"], "additionalProperties": False}},
         "step": {**_POS, "description": "grid, mm (default wall / 3); coarser is faster for a first look"},
         "expect": {"type": "object", "description": "Eval-only pass criteria (loadpath.evals)."},
+        "envelope": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 3,
+                     "maxItems": 3,
+                     "description": "Instead of a core: the box (mm, x y z) the whole part must fit, ports and "
+                                    "headers included. `loadpath heatx --size` then picks the core's size, cell, "
+                                    "wall, split, layout and each fluid's port for the duty (sizing.py)."},
+        "sizing": {"type": "object", "properties": {
+            "process": {"enum": ["fdm", "lpbf", "sls", "mjf", "sla", "dlp"]},
+            "maxPressureDrop": {"type": "object", "additionalProperties": _POS,
+                                "description": "Pa per fluid name"},
+            "minEffectiveness": {"type": "number", "minimum": 0, "maximum": 1},
+            "targetDuty": {**_POS, "description": "W"},
+            "objective": {"enum": ["mass", "effectiveness", "pressure"]}},
+            "additionalProperties": False,
+            "description": "With envelope: what the sized exchanger must meet, and what to rank by."},
         "simulate": {"anyOf": [{"type": "boolean"}, {
             "type": "object",
             "properties": {"voxel": {**_POS, "description": "mm (default min(cell/2, port/4, header/3))"},
@@ -673,7 +687,7 @@ HEAT_EXCHANGER_SCHEMA = {
                  "properties": {"wall": {"anyOf": [{"type": "string"}, _POS]}},
                  "additionalProperties": {"$ref": "#/$defs/dutySide"}},
     },
-    "required": ["core"],
+    "x-requireOne": [["core"], ["envelope"]],
     "additionalProperties": False,
     "$defs": {**_SHAPES, "shape": _SHAPE, "dutySide": _DUTY_SIDE},
 }
