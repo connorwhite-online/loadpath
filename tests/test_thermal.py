@@ -157,6 +157,77 @@ def test_heat_sink_beats_bare_plate_and_conserves_heat():
     assert abs(r.temperature.heat_out_convection - 2.0) < 1e-3
 
 
+def test_thermal_expansion_matches_closed_forms():
+    """The expansion load (fem.thermal_load) against two closed forms: a
+    bar held between rollers carries -E alpha dT exactly and grows sideways
+    by (1 + nu) alpha dT; an aluminium-on-PETG bimetal cantilever bends to
+    Timoshenko's curvature (within 2.5% at 4 cells per layer: hex8 is a
+    little stiff in bending)."""
+    import scipy.sparse.linalg as spl
+
+    from loadpath.fem import HexMesh, Stiffness, thermal_load
+
+    def box(n, h):
+        return HexMesh(np.stack(np.meshgrid(*[np.arange(k) for k in n], indexing="ij"), -1).reshape(-1, 3), h,
+                       np.zeros(3))
+
+    E, nu, a, dT = 2000.0, 0.38, 68e-6, 35.0
+    m = box((20, 3, 3), 1.0)
+    X = m.node_xyz
+    fixed = np.zeros(m.n_dof, bool)
+    fixed[3 * np.flatnonzero((X[:, 0] < 1e-9) | (X[:, 0] > 20 - 1e-9))] = True
+    fixed[3 * np.flatnonzero(X[:, 1] < 1e-9) + 1] = True
+    fixed[3 * np.flatnonzero(X[:, 2] < 1e-9) + 2] = True
+    st = Stiffness(m, nu, fixed)
+    u = spl.spsolve(st.assemble(np.full(m.n_elem, E)).tocsc(), thermal_load(m, nu, E, a * dT, fixed))
+    s = st.stress(u, E, a * dT)
+    assert np.allclose(s[:, 0], -E * a * dT, rtol=1e-9) and np.abs(s[:, 1:]).max() < 1e-9
+    assert abs(u[3 * np.flatnonzero(X[:, 1] > 3 - 1e-9) + 1].mean() / ((1 + nu) * a * dT * 3) - 1) < 1e-9
+
+    t, L, E1, E2, a1, a2, dT = 1.0, 40.0, 70e3, 2000.0, 23e-6, 68e-6, 50.0
+    h = t / 4
+    m = box((int(L / h), 4, 8), h)
+    X = m.node_xyz
+    top = m.elem_centers()[:, 2] > t
+    Ee, eps = np.where(top, E2, E1), np.where(top, a2, a1) * dT
+    fixed = np.zeros(m.n_dof, bool)
+    fixed[(3 * np.flatnonzero(X[:, 0] < 1e-9)[:, None] + np.arange(3)).ravel()] = True
+    st = Stiffness(m, 0.3, fixed)
+    u = spl.spsolve(st.assemble(Ee).tocsc(), thermal_load(m, 0.3, Ee, eps, fixed))
+    tip = u[3 * np.flatnonzero(X[:, 0] > L - 1e-9) + 2].mean()
+    n = E1 / E2
+    kappa = 6 * (a2 - a1) * dT * 4 / (2 * t * (3 * 4 + (1 + n) * (1 + 1 / n)))
+    assert abs(tip / (-kappa * L * L / 2) - 1) < 0.025, (tip, -kappa * L * L / 2)
+
+
+def test_expansion_gradient_matches_finite_differences():
+    """The thermo-mechanical gradient with thermal expansion on: the
+    objective (twice the elastic strain energy) has a load that depends on
+    density and on the design's own temperature (stiffness times
+    alpha (T - t_ref)), so it takes a mechanical adjoint as well as the
+    thermal one, and both paths are in the sensitivity."""
+    beam = {
+        "designSpace": {"type": "box", "min": [0, 0, 0], "max": [16, 6, 4]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 11, 11]}},
+                     {"shape": {"type": "box", "min": [15.99, -1, -1], "max": [17, 11, 11]}}],
+        "loadCases": [{"name": "mid", "loads": [
+            {"shape": {"type": "box", "min": [7.5, -1, 3.5], "max": [8.5, 11, 5]}, "force": [0, 0, -10]}]}],
+        "material": "petg", "goal": {"volumeFraction": 0.5}, "resolution": {"pitch": 1.0},
+    }
+    d = build_domain(study_from_dict(beam))
+    mesh = d.mesh
+    bc = T.thermal_bc(mesh, ambient=25, temperatures=[(Box([15.5, -1, -1], [17, 7, 5]), 60)],
+                      convection=[T.Convection(10.0)])
+    opts = T.ThermalOptions(volume_fraction=0.5, filter_radius=1.5, k=0.2, target=mesh.node_xyz[:, 0] > 8)
+    ev, fe, th = T._thermomech_evaluator(d, 0.38, bc, opts, "petg", 0.0, rtol=1e-12, alpha=True)
+    th.solver.rtol = 1e-13
+    rho = np.random.default_rng(2).uniform(0.3, 1, mesh.n_elem)
+    _, grad, rec = ev(rho)
+    # (rel 1e-3: PETG's retention curve is piecewise linear, and a cell
+    # near a knee sees the kink in a central difference)
+    _fd_check(lambda r: ev(r)[0], grad, rho, [183, 164, 75, 248, 300], rel=1e-3)
+
+
 TESTS = [
     test_slab_with_generation_is_exact,
     test_convective_fin_matches_closed_form,
@@ -165,6 +236,8 @@ TESTS = [
     test_thermomechanical_gradient_matches_finite_differences,
     test_volume_to_point_grows_a_tree,
     test_heat_sink_beats_bare_plate_and_conserves_heat,
+    test_thermal_expansion_matches_closed_forms,
+    test_expansion_gradient_matches_finite_differences,
 ]
 
 

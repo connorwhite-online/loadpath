@@ -46,6 +46,8 @@ _MAX_SEARCH_RUNS = 7
 _COARSE_MIN_CELLS = 12_000
 # Projection sharpness a warm-started run resumes at.
 _WARM_BETA = 4.0
+# runs of the constrained method's limit search (study.run, method constrained)
+_MAX_CONSTRAINED_RUNS = 6
 # The pick of a safety-factor search is checked again on a grid this many
 # cells finer before it is delivered. The in-loop check resolves a fillet
 # only as well as its grid: GRIP's turret read SF 2.26 there and 1.65 at
@@ -833,29 +835,45 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
 
         mat = study.material
         stress = mat.strength / (goal.safety_factor * STRESS_ALLOWANCE) if goal.safety_factor else None
-        limits = Limits(stress, goal.max_deflection, mat.E)
-        x0 = None
-        for _ in range(4):
+        # The verified mesh reads differently from the optimizer's model
+        # (finer grid, refined hotspots, members a cell thick that mesh
+        # thinner), so the limits are scaled by one factor t until the
+        # verified part lands on the target. Rescaling by each run's ratio
+        # alone swung: the wall bracket's first run reads 17 MPa in the
+        # optimizer and 377 MPa verified, the next limit (0.8 MPa) built
+        # 100 g at SF 13, and four runs ended anywhere from 43 g to 174 g
+        # with the target nudged by 2%. Once one run passes and one fails,
+        # bisect t between them (geometrically), and warm-start only from a
+        # passing design, never from a collapsed one.
+        t, t_pass, t_fail, x_pass = 1.0, None, None, None
+        for _ in range(_MAX_CONSTRAINED_RUNS):
             if should_stop is not None and should_stop():
                 break
-            o = run_constrained(limits, x0)
+            limits = Limits(stress * t if stress is not None else None,
+                            goal.max_deflection * t if goal.max_deflection is not None else None, mat.E)
+            o = run_constrained(limits, x_pass)
             outcomes.append(o)
-            x0 = o.x
             r = o.report
             rs = r["safetyFactor"] / goal.safety_factor if goal.safety_factor else None
             rd = goal.max_deflection / max(c["deflection"] for c in r["cases"]) if goal.max_deflection else None
-            ratios = [v for v in (rs, rd) if v is not None]
-            if min(ratios) >= 1.0 and min(ratios) < 1.12:
-                break
-            # The verified mesh reads differently from the optimizer's model
-            # (finer grid, refined hotspots, the delivered rather than the
-            # eroded design). Rescale each limit by how far off it was:
-            # fully when it failed, halfway (geometric) when it was slack.
-            def scale(lim, ratio):
-                if lim is None or ratio is None:
-                    return lim
-                return lim * (ratio if ratio < 1.0 else ratio ** 0.5)
-            limits = Limits(scale(limits.stress, rs), scale(limits.deflection, rd), mat.E)
+            ratio = min(v for v in (rs, rd) if v is not None)
+            if ratio >= 1.0:
+                if ratio < 1.12:
+                    break
+                if t_pass is None or t > t_pass:
+                    t_pass, x_pass = t, o.x
+            elif t_fail is None or t < t_fail:
+                t_fail = t
+            if t_pass is not None and t_fail is not None:
+                if t_fail / t_pass < 1.15:
+                    break
+                t = (t_pass * t_fail) ** 0.5
+            elif t_fail is not None:
+                # a stress limit acts roughly in proportion; never more than
+                # 4x a step, so one wild reading cannot overshoot far
+                t *= min(max(ratio, 0.25), 0.9)
+            else:
+                t *= min(ratio ** 0.5, 4.0)
         passing = [i for i, o in enumerate(outcomes) if o.passes]
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
     elif goal.safety_factor is not None or goal.max_deflection is not None or _durability_drives(study):

@@ -240,6 +240,21 @@ def _drains(spec, process):
     return EscapeOptions.from_spec(spec if isinstance(spec, dict) else {}, process)
 
 
+def _card_process(process, mat, spec):
+    """A library card that measured across-layer strength and stiffness on
+    the study's process (material_library.py) sets the process's factors,
+    unless the study sets its own; a calibrated card then overrides both."""
+    if process is None or not mat.measured or mat.measured != process.kind:
+        return process
+    spec = spec if isinstance(spec, dict) else {}
+    inter, ez = mat.across_layers()
+    if inter is not None and "interlayer" not in spec:
+        process.interlayer = inter
+    if ez is not None and "stiffnessAcrossLayers" not in spec:
+        process.ez = ez
+    return process
+
+
 def _calibrated_process(process, mat_in, spec):
     """A calibrated card (calibration.py) measured its printer's across-layer
     strength and stiffness: use them unless the study sets its own."""
@@ -601,6 +616,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
 
     min_member = d.get("minMember")
     process = _process(d.get("process"))
+    process = _card_process(process, materials[0], d.get("process"))
     process = _calibrated_process(process, mat_in, d.get("process"))
     print_direction = parse_build_direction(d.get("printDirection"))
     if process is not None:

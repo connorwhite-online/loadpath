@@ -99,8 +99,9 @@ def test_fit_recovers_a_known_card():
     m, pred = _synthetic()
     card = cal.fit(m, pred, name="petg-test")
     mat = card["material"]
-    assert abs(mat["E"] / 1600 - 1) < 0.01, mat
-    assert abs(mat["strength"] / 49.5 - 1) < 0.01, mat
+    petg = material_from_spec("petg")
+    assert abs(mat["E"] / (0.8 * petg.E) - 1) < 0.01, mat
+    assert abs(mat["strength"] / (1.1 * petg.strength) - 1) < 0.01, mat
     assert abs(mat["density"] - 1.25) < 0.005, mat
     assert abs(card["process"]["interlayer"] - 0.5) < 0.005, card["process"]
     assert abs(card["process"]["stiffnessAcrossLayers"] - 0.9) < 0.01, card["process"]
@@ -111,7 +112,7 @@ def test_fit_recovers_a_known_card():
     # the same part read with a laser 3 m away
     pred["parts"]["bracket"]["laserSpotMmPerKgPerM"] = 2.0
     m["parts"]["bracket"]["laserDistanceM"] = 3.0
-    m["parts"]["bracket"]["points"] = [[kg, 6.0 * 2000 / 1600 / 0.6 * kg] for kg in (0.5, 1, 2)]
+    m["parts"]["bracket"]["points"] = [[kg, 6.0 / 0.8 / 0.6 * kg] for kg in (0.5, 1, 2)]
     card = cal.fit(m, pred)
     assert abs(card["parts"]["bracket"]["stiffnessFactor"] - 0.6) < 0.01, card["parts"]
     # the card's material is a valid study material as it stands
@@ -173,7 +174,7 @@ def test_write_kit_and_cli_fit():
                    "--out", d])
         assert rc == 0
         card = json.load(open(os.path.join(d, "cli-card.json")))
-        assert abs(card["material"]["E"] / 1600 - 1) < 0.01
+        assert abs(card["material"]["E"] / (0.8 * material_from_spec("petg").E) - 1) < 0.01
 
 
 def _crush_points(f_plateau, eps_d, ratio, board, core, steps):

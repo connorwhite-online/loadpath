@@ -22,7 +22,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import cg
 
-__all__ = ["Layered", "amg_solver", "elastic_c", "hex8_ke", "hex8_b_center", "HexMesh", "Stiffness", "Solver", "von_mises"]
+__all__ = ["Layered", "amg_solver", "elastic_c", "hex8_ke", "hex8_b_center", "hex8_fth", "thermal_load", "HexMesh", "Stiffness", "Solver", "von_mises"]
 
 # Local corner order: bit 0 = +x, bit 1 = +y, bit 2 = +z.
 CORNERS = np.array([[(c >> 0) & 1, (c >> 1) & 1, (c >> 2) & 1] for c in range(8)])
@@ -155,6 +155,38 @@ def hex8_ke(nu) -> np.ndarray:
                 b = _b_matrix(xi, eta, zeta)
                 ke += b.T @ c @ b * 0.125  # det J of the unit cube map = 1/8
     return 0.5 * (ke + ke.T)
+
+
+def hex8_fth(nu) -> np.ndarray:
+    """Thermal load (24,) of a unit cube with E = 1 and a free expansion
+    strain of 1 in every direction (alpha * dT = 1): the integral of
+    B^T C m, m = (1, 1, 1, 0, 0, 0), 2x2x2 Gauss. For side h, modulus E and
+    expansion strain eps the element's load is E * eps * h^2 * this: the
+    nodal forces that hold the cube at its size when it wants to grow."""
+    c = elastic_c(1.0, nu)
+    m = np.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+    g = 1.0 / np.sqrt(3.0)
+    f = np.zeros(24)
+    for xi in (-g, g):
+        for eta in (-g, g):
+            for zeta in (-g, g):
+                f += _b_matrix(xi, eta, zeta).T @ (c @ m) * 0.125
+    return f
+
+
+def thermal_load(mesh, nu, modulus, strain, fixed=None) -> np.ndarray:
+    """Global load vector (n_dof,) of per-element expansion strains
+    (`strain` = alpha * (T - T_ref), a scalar or per element) at per-element
+    `modulus` (E_e, density interpolation included). Solving K u = this
+    (plus any mechanical load) gives the thermo-elastic displacement; the
+    stress is then Stiffness.stress(u, modulus, strain). Entries on `fixed`
+    dofs are zeroed (Dirichlet rows are identity rows here)."""
+    w = (np.asarray(modulus, float) * np.asarray(strain, float)) * np.ones(mesh.n_elem)
+    fe = hex8_fth(nu) * mesh.pitch ** 2
+    f = np.bincount(mesh.edof.ravel(), weights=(w[:, None] * fe[None, :]).ravel(), minlength=mesh.n_dof)
+    if fixed is not None:
+        f[np.asarray(fixed, bool)] = 0.0
+    return f
 
 
 def hex8_b_center() -> np.ndarray:
@@ -324,11 +356,15 @@ class Stiffness:
         ue = u[self.mesh.edof]
         return np.einsum("ij,jk,ik->i", ue, self.ke, ue)
 
-    def stress(self, u: np.ndarray, modulus: np.ndarray | float) -> np.ndarray:
-        """Element-center stress (ne, 6) for per-element modulus."""
+    def stress(self, u: np.ndarray, modulus: np.ndarray | float, thermal=None) -> np.ndarray:
+        """Element-center stress (ne, 6) for per-element modulus; `thermal`
+        is the free expansion strain alpha * dT (scalar or per element),
+        which does not stress the cell, so it comes off the normal strains."""
         b = hex8_b_center() / self.mesh.pitch
         c = elastic_c(1.0, self.nu)
         strain = u[self.mesh.edof] @ b.T
+        if thermal is not None:
+            strain[:, :3] -= (np.asarray(thermal, float) * np.ones(len(strain)))[:, None]
         return (strain @ c.T) * np.asarray(modulus, float).reshape(-1, 1)
 
 

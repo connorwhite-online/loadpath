@@ -26,6 +26,8 @@ import difflib
 import json
 import re
 
+from .material_library import LIBRARY as _LIBRARY
+
 __all__ = ["STUDY_SCHEMA", "HEAT_EXCHANGER_SCHEMA", "LATTICE_SCHEMA", "FIELD_SCHEMA", "SCHEMAS", "schema", "lint", "format_issues"]
 
 _DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -175,19 +177,24 @@ _LOAD_CASE = {
     "additionalProperties": False,
 }
 
-_MATERIAL_NAMES = ["pla", "petg", "abs", "asa", "tpu", "pa-cf", "pa12", "pa11", "resin", "resin-tough",
-                   "alsi10mg", "ti64", "316l"]
+_MATERIAL_NAMES = sorted(_LIBRARY)
 _CUSTOM_MATERIAL = {
     "type": "object",
-    "description": "A custom material: E (MPa), nu, strength (MPa), density (g/cm³).",
-    "properties": {"name": {"type": "string"}, "E": _POS, "nu": {"type": "number", "minimum": 0, "maximum": 0.4999},
-                   "strength": _POS, "density": _POS, "note": {"type": "string"}},
-    "required": ["E", "strength", "density"],
+    "description": "A custom material: E (MPa), nu, strength (MPa), density (g/cm³); or \"base\": a library "
+                   "name and only the values that differ. EZ and strengthZ are across-layer values, used when "
+                   "the study's process is the one named in \"measured\".",
+    "properties": {"name": {"type": "string"}, "base": {"type": "string"},
+                   "E": _POS, "nu": {"type": "number", "minimum": 0, "maximum": 0.4999},
+                   "strength": _POS, "density": _POS, "EZ": _POS, "strengthZ": _POS,
+                   "measured": {"type": "string"}, "note": {"type": "string"}},
+    "x-requireOne": [["E", "strength", "density"], ["base"]],
     "additionalProperties": False,
 }
 _ONE_MATERIAL = {"anyOf": [{"type": "string", "description": "A name: " + ", ".join(_MATERIAL_NAMES)
-                            + " (aliases such as 'nylon', 'aluminium', 'steel' work), or a calibrated card "
-                            "measured on a printer (loadpath/calibrations/, calibration.py)."},
+                            + " (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in "
+                            "material_library.py, `loadpath materials`), or a calibrated card measured on a "
+                            "printer (loadpath/calibrations/, calibration.py), which replaces a library card "
+                            "of the same name."},
                            _CUSTOM_MATERIAL]}
 
 _FASTENER = {

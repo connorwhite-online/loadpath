@@ -85,7 +85,7 @@ def test_process_sets_layered_design_and_physical_stiffness():
     s = study_from_dict({**base, "process": {"type": "fdm", "buildDirection": "+y", "anisotropic": "bond"}})
     phys, design = s.elastic(), s.elastic(design=True)
     assert isinstance(phys, Layered) and isinstance(design, Layered)
-    assert phys.normal == (0.0, 1.0, 0.0) and phys.ez == 0.85 and design.ez == 0.6
+    assert phys.normal == (0.0, 1.0, 0.0) and phys.ez == 0.85 and design.ez == s.process.interlayer == 18 / 47
     assert s.print_direction == (1, 1)
     iso = study_from_dict({**base, "process": {"type": "fdm"}})
     assert iso.elastic(design=True) == iso.material.nu and isinstance(iso.elastic(), Layered)

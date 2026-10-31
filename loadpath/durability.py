@@ -238,6 +238,12 @@ def active(study) -> bool:
     return study.durability is not None or any(c.cycles or c.hours for c in study.load_cases)
 
 
+def _hdt(mat):
+    """The library card's heat deflection temperature at 0.45 MPa, if any."""
+    from .material_library import value
+    return value(_key(mat), "hdt")
+
+
 def assess(study, cases: list, allowance: float = 1.0) -> dict:
     """The durability block of a verification report. `cases` are the
     report's per-case dicts (peakStress, interlayerStress, deflection) in
@@ -269,6 +275,12 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
             continue
         t = lc.temperature if lc.temperature is not None else dur.temperature
         r = ret(t)
+        hdt = _hdt(mat)
+        if hdt is not None and t >= hdt:
+            msg = (f"{lc.name}: {t:g} C is at or above {mat.name}'s heat deflection temperature ({hdt:g} C at "
+                   "0.45 MPa, material_library.py): the part will sag; use a material rated hotter")
+            if msg not in out["warnings"]:
+                out["warnings"].append(msg)
         s_t = mat.strength * r
         peak = c["peakStress"] * allowance
         tens = (c.get("interlayerStress") or 0.0) * allowance if inter is not None else 0.0
