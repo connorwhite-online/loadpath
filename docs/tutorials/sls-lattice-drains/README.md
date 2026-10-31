@@ -8,7 +8,7 @@ cells grow away from the bearings. A skin over a lattice seals the powder
 in, so loadpath finds every sealed pocket, fills the ones too small to
 matter and drills 6 mm drain holes (with a boss round each) where the part
 is calm. The result is 23% lighter than the solid link, one body, with no
-sealed powder left. About 4 minutes on 4 cores, 3 with `--quick`.
+sealed powder left. About 4 minutes on 4 cores, under 2 with `--quick`.
 
 ![the graded link with its drain holes](images/link.png)
 
@@ -102,14 +102,14 @@ wrist end, cells widening away from the bearings.
 
 | | full run | `--quick` |
 |---|---|---|
-| solid link (`solid/report.json` `mass`) | **30.8 g**, SF 7.1, 0.50 mm | 30.8 g, SF 6.6, 0.51 mm |
-| graded link (`out/report.json` `mass`) | **23.8 g** (23% lighter) | 23.8 g |
+| solid link (`solid/report.json` `mass`) | **30.8 g**, SF 7.1, 0.50 mm | 30.8 g, SF 7.0, 0.50 mm |
+| graded link (`out/report.json` `mass`) | **23.8 g** (23% lighter) | 23.9 g |
 | `bodies` | 1 | 1 |
 | `enclosedVoids` (sealed shells in the mesh) | **0** | 0 |
 | sealed voids before drilling (`drains.sealedBefore`) | 37 | |
 | small pockets filled solid (`drains.filledVolume`) | 35, 0.49 cm³ | |
-| drained voids | 2, 3.38 cm³ each | 2, 3.36 cm³ each |
-| drain holes (`drains.holes`) | **4** x 6 mm | 6 (3 a void) |
+| drained voids | 2, 3.38 cm³ each | 2, 3.37 cm³ each |
+| drain holes (`drains.holes`) | **4** x 6 mm | 5 (3 + 2) |
 | farthest powder from a hole | 35 mm | |
 | `drains.ok` / `printability.ok` | true / true | true |
 
@@ -154,10 +154,10 @@ graded arm link meshed against its solid one on a fine voxel grid.
 ## Quick mode
 
 The same two commands with `--quick` (or `LOADPATH_QUICK=1`) mesh at
-0.48 mm instead of 0.3 and find voids on the same coarser grid: about 3
-minutes in all. The masses agree to under 1% and the drains' verdict holds;
-the coarser grid reads the labyrinths' far ends a little farther out and
-puts three holes in each instead of two. CI runs this tutorial that way
+0.48 mm instead of 0.3, find voids on the same coarser grid and analyze
+the solid link on 30k cells instead of 120k: under 2 minutes in all. The masses agree to under 1% and the drains' verdict holds;
+the coarser grid reads one labyrinth's far end a little farther out and
+gives it a third hole. CI runs this tutorial that way
 ([test_tutorials.py](../../../tests/test_tutorials.py)) and holds it to
 [expect.json](expect.json).
 
