@@ -165,8 +165,8 @@ per case on average. What was learned:
   stiffness so the voxel reading is closer to begin with.
 - Follow-up (2026-10-31): the nearest lighter fraction that failed only on
   its scaled voxel reading is now confirmed on tets before the search stops.
-  On current main it ran on the hook (7.1% failed voxel; tets 2.21 for 2.5)
-  and MBB (tets 1.29 for 1.5) and both were rightly rejected; the
+  On current main it ran on the hook (18.8%: tets 2.21 for 2.5)
+  and MBB (18.8%: tets 1.29 for 1.5), both rightly rejected; the
   wall bracket's 10.2% and 11.4% read 2.29 and 2.12 on tets, so its pick
   stays at 12.6% (67.8 g, the same as voxel confirm on this main: the
   search landscape moved since 1d500e0, where 7.8% held 4.06). Its designs
