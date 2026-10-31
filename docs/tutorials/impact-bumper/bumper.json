@@ -1,0 +1,23 @@
+{
+  "name": "bumper",
+  "description": "A round corner bumper for a 4 kg rover that rolls off a 1 m ledge (4.43 m/s, 39 J). The chassis behind it must not take more than 4 kN (about 100 g). A truncated cone, 44 mm across at the chassis and 24 mm at the tip, 25 mm tall: a PETG sheet gyroid printed on FDM between a 0.8 mm foot plate and a 0.8 mm face plate. 14 mm cells keep the thinnest sheet at two 0.4 mm lines.",
+  "nodes": {
+    "envelope": {"op": "expr", "expr": "max(sqrt(x*x + y*y) - r, max(-z, z - 25)) * 0.995",
+                 "vars": {"r": {"op": "remap", "input": {"op": "coordinate", "axis": "z"},
+                                "from": [0, 25], "to": [22, 12]}},
+                 "bounds": {"min": [-22, -22, 0], "max": [22, 22, 25]}},
+    "plates": {"op": "expr", "expr": "max(envelope, min(z - 0.8, 24.2 - z))",
+               "bounds": {"min": [-22, -22, 0], "max": [22, 22, 25]}},
+    "density": {"op": "constant", "value": 0.2},
+    "core": {"op": "lattice", "type": "gyroid", "cell": 14, "density": "density"},
+    "part": {"op": "union", "inputs": ["plates", {"op": "intersect", "inputs": ["core", "envelope"]}]}
+  },
+  "output": "part",
+  "material": "petg",
+  "process": "fdm",
+  "drains": false,
+  "mesh": {"pitch": 0.25},
+  "impact": {"envelope": "envelope", "density": "density", "lattice": "gyroid", "axis": "z",
+             "mass": 4.0, "velocity": 4.43, "forceLimit": 4000, "pitch": 0.25, "grade": true,
+             "cell": 14, "minWall": 0.8}
+}

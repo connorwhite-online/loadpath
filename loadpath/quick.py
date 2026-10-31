@@ -61,7 +61,8 @@ def heatx(hx, sim_opts):
     quick mode runs them."""
     if not on():
         return sim_opts
-    hx.step = (hx.step or hx.wall / 3) * HX_STEP
+    # coarser, but at most half the wall: heatx.py refuses a grid past that
+    hx.step = min((hx.step or hx.wall / 3) * HX_STEP, hx.wall * 0.45)
     if sim_opts is not None and sim_opts.get("voxel"):
         sim_opts = {**sim_opts, "voxel": float(sim_opts["voxel"]) * HX_SIM_VOXEL}
     return sim_opts

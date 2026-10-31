@@ -123,6 +123,32 @@ def test_field_graph_impact_and_vibration_blocks():
     assert v["dampingRatio"] == 0.02
 
 
+def test_run_field_writes_the_graded_graph():
+    import json
+    import tempfile
+
+    from loadpath.fields import run_field
+
+    doc = {"name": "pad", "material": "pa12", "check": False,
+           "nodes": {"pad": {"op": "expr", "expr": "max(max(abs(x), abs(y)) - (15 - 0.4 * z), max(-z, z - 15))",
+                             "bounds": {"min": [-15, -15, 0], "max": [15, 15, 15]}},
+                     "rho": {"op": "constant", "value": 0.25},
+                     "core": {"op": "lattice", "type": "gyroid", "cell": 10, "density": "rho"},
+                     "part": {"op": "intersect", "inputs": ["core", "pad"]}},
+           "output": "part", "mesh": {"pitch": 0.8},
+           "impact": {"envelope": "pad", "density": "rho", "energy": 15.0, "pitch": 0.5, "grade": True}}
+    with tempfile.TemporaryDirectory() as d:
+        _, rep = run_field(doc, d, render=False)
+        imp = rep["impact"]
+        assert len(imp["uniformSameMass"]["curve"]["force"]) > 10
+        with open(imp["gradedGraph"]) as fh:
+            gd = json.load(fh)
+    assert gd["name"] == "pad-graded" and gd["impact"]["grade"] is False
+    assert gd["nodes"]["rho"] == imp["graded"]["density"]
+    # a taper grades denser where it is narrow
+    assert gd["nodes"]["rho"]["to"][-1] > gd["nodes"]["rho"]["to"][0]
+
+
 def test_elastomers_use_the_buckling_law():
     from loadpath.impact import crush_law
     from loadpath.materials import material_from_spec

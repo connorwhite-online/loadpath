@@ -213,7 +213,8 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
             f = sim.pop("_fields", None)
             if f is not None:
                 png = os.path.join(out_dir, name + "-simulation.png")
-                plot_fields(f, png, axis=hx.build if isinstance(hx.build, int) else 2,
+                # the plane both fluids flow in (a counterflow: A end to end, B across)
+                plot_fields(f, png, axis=({0, 1, 2} - {int(a) for a in hx.axes}).pop(),
                             title=f"{name}: whole-exchanger simulation, middle of the core")
                 sim["render"] = png
             out["simulation"] = sim
