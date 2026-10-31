@@ -124,7 +124,13 @@ field. `check` reports every problem at once: fix them all, then check again.
    pre-distorted to print to shape. Read `strain.kSource`: only IN625 and
    15-5 PH are calibrated (NIST AM-Bench); for other alloys the size of the
    distortion is a rough guide (could be off 2x), though comparing designs
-   is still sound. docs/BUILDSIM.md has the validation.
+   is still sound. `"warpWeight": 1` (lpbf/fdm, grid-axis buildDirection)
+   designs against build distortion too: in the demo it cut as-built warp
+   66% and recoater lift 73% but halved the safety factor at the same mass
+   and ran 7x slower, so use it when warp or recoater crashes are the
+   problem, and check the safety factor. FDM: `bedAdhesion` (MPa) lets
+   the first layer let go; `bedFailed` in the report means the part
+   popped off. docs/BUILDSIM.md has the validation.
 6. **Say how long it has to last.** A load that repeats (a servo lifting,
    an arm swinging) gets `"cycles"` in its load case: how many times over
    the part's life (a hobby arm: 1e5-1e6). A load that is held (a part

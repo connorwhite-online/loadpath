@@ -663,6 +663,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
 
     heat = domain.thermal
     heat_state = {}
+    warp_state = {}
 
     ijk = tuple(mesh.elem_ijk.T)
     if opts.build_direction is not None:
@@ -766,6 +767,16 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 # d(f.u)/dx with design-dependent weight: + 2 u . df/dx.
                 ue = wc.u_mean.reshape(-1, 3)[mesh.enode].sum(axis=1)
                 dc_xp += weights[ci] * 2.0 * (ue @ domain.gravity) * mesh.pitch ** 3 / 8.0
+        warp_d = None
+        if domain.warp is not None:
+            # buildSim.warpWeight: compliance * (1 + w D / D0), D the as-
+            # built distortion of the layer-by-layer build (buildsim.WarpTerm)
+            term, ww = domain.warp
+            warp_d, dd = term.evaluate(e, PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN))
+            if warp_state.get("d0") is None:
+                warp_state["d0"], warp_state["c0"] = max(warp_d, 1e-30), comp
+            dc_xp = dc_xp + ww * warp_state["c0"] * dd / warp_state["d0"]
+            comp = comp + ww * warp_state["c0"] * warp_d / warp_state["d0"]
         if c0 is None:
             c0 = comp
         dproj_e = _dproject(xt, beta, eta_e)
@@ -858,6 +869,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                "volume": float(xp[design].mean()), "beta": beta, "change": change,
                "seconds": time.time() - t0, "cgIterations": fe.last_iters,
                "solvedCells": fe.last_cells}
+        if warp_d is not None:
+            rec["warpDistortion"] = warp_d
         if excess is not None:
             rec["maxMemberExcess"] = excess
             rec["maxMemberWeight"] = mu

@@ -443,12 +443,26 @@ _BUILD_SIM = {"anyOf": [
                                         "to Armillotta 2018; omit for that)"},
         "relax": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
                   "description": "fdm: share of the shrink below Tg kept as stress"},
+        "bedAdhesion": {"type": "number", "exclusiveMinimum": 0,
+                        "description": "fdm: MPa of bond tension the first layer holds before it lets go of the "
+                                       "bed (corners lift and the part re-balances; default: the value fitted to "
+                                       "Armillotta 2018)"},
+        "plateCells": {"type": "integer", "minimum": 1,
+                       "description": "lpbf: voxel layers modelling the build plate, its stiffness scaled to the "
+                                      "full plate (default 2; the default k is fitted with it)"},
         "recoaterGap": {**_POS, "description": "lpbf: mm of lift at the build plane that counts as recoater "
                                                "contact risk (default 0.05)"},
         "compensate": {"type": "boolean", "description": "also write <name>-compensated.stl, pre-distorted so "
                                                          "the print lands on the design"},
         "iterations": {"type": "integer", "minimum": 1, "description": "compensation rounds (default 2)"},
-        "cells": {"type": "integer", "minimum": 1000, "description": "voxels in the simulated part (default 60000)"}},
+        "cells": {"type": "integer", "minimum": 1000, "description": "voxels in the simulated part (default 60000)"},
+        "warpWeight": {"type": "number", "minimum": 0,
+                       "description": "lpbf/fdm: design against build distortion too. The optimizer minimizes "
+                                      "compliance * (1 + warpWeight * D / D0), D the mean squared as-built "
+                                      "displacement of the layer-by-layer build on the plate (D0 at the start); "
+                                      "0 (default) only verifies. Needs a grid-axis buildDirection. About 1 trades "
+                                      "stiffness for a large cut in distortion and recoater lift"},
+        "warpLayer": {**_POS, "description": "mm per analysis layer of the warp term (default 4 cells)"}},
      "additionalProperties": False}],
     "description": "Simulate the build of the delivered part (report 'buildSim'): layer-by-layer inherent-strain "
                    "residual stress and distortion for lpbf (validated on NIST AM-Bench 2018), fdm warp and bed "

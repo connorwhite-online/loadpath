@@ -33,9 +33,10 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
   down layer by layer with inherent strain and reports its distortion off the plate,
   residual stress, recoater lift and bed peel; `"compensate": true` writes a
   pre-distorted STL that prints to shape. The LPBF model was fitted to the NIST AM-Bench
-  2018 bridge: one factor, then all 11 measured ridges within 9 µm rms. The same factor
-  on a second alloy (15-5 PH) reads 60% high, and the docs say so
-  ([docs/BUILDSIM.md](docs/BUILDSIM.md)).
+  2018 bridge: one factor, then all 11 measured ridges within 7 µm rms, in about a minute.
+  The same factor on a second alloy (15-5 PH) reads 61% high, and the docs say so
+  ([docs/BUILDSIM.md](docs/BUILDSIM.md)). `"warpWeight"` puts the as-built warp into the
+  optimizer itself.
 - **Sliced, not guessed (FDM).** With PrusaSlicer installed, every outcome is sliced
   headless for print time, filament and support; `"goal": {"minimize": "printTime"}`
   delivers the fastest passing part, and `"slicer": {"grade": true}` sizes infill

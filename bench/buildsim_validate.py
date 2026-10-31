@@ -61,10 +61,10 @@ def bridge(pitch):
     return np.repeat(solid[:, None, :], ny, axis=1), np.zeros(3)
 
 
-def run(material, pitch, k=None, plate=12.7, layer=None):
+def run(material, pitch, k=None, plate=12.7, layer=None, plate_cells=2):
     solid, origin = bridge(pitch)
     setup = BuildSetup(process="lpbf", material=material, plate=plate, plate_margin=1.0, k=k, layer=layer,
-                       release="cut", cut=((-5.0, -5.0, -1e-6), (CUT_END, 10.0, pitch)))
+                       plate_cells=plate_cells or None, release="cut", cut=((-5.0, -5.0, -1e-6), (CUT_END, 10.0, pitch)))
     t0 = time.time()
     r = simulate_build(solid, pitch, origin, setup)
     m = r.mesh
@@ -82,18 +82,19 @@ def main():
     ap.add_argument("--plate", type=float, default=12.7)
     ap.add_argument("--k", type=float, default=None)
     ap.add_argument("--fit", action="store_true", help="fit k on IN625 (the model is linear in k)")
+    ap.add_argument("--plate-cells", type=int, default=2, help="voxel layers of plate (0: the whole plate)")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
     out = {"pitch": a.pitch, "plate": a.plate}
     k = a.k
     if a.fit:
-        rise1, r, secs = run("in625", a.pitch, k=1.0, plate=a.plate)
+        rise1, r, secs = run("in625", a.pitch, k=1.0, plate=a.plate, plate_cells=a.plate_cells)
         meas = np.array(MEASURED["in625"])
         k = float(rise1 @ meas / (rise1 @ rise1))
         out["fit"] = {"k": k, "secondsPerRun": secs}
         print(f"fitted k = {k:.4f} ({secs:.0f} s)")
     for mat in ("in625", "15-5ph"):
-        rise, r, secs = run(mat, a.pitch, k=k, plate=a.plate)
+        rise, r, secs = run(mat, a.pitch, k=k, plate=a.plate, plate_cells=a.plate_cells)
         meas = np.array(MEASURED[mat])
         err = rise - meas
         row = {"rise": rise.round(4).tolist(), "measured": meas.tolist(),

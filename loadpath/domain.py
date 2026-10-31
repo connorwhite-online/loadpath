@@ -58,6 +58,8 @@ class Domain:
     spreads: list = field(default_factory=list)
     # The study's thermal block on this mesh (thermal.StudyHeat), or None.
     thermal: object = None
+    # buildSim.warpWeight: (buildsim.WarpTerm, weight), or None.
+    warp: object = None
 
     @property
     def n_elem(self):
@@ -550,4 +552,17 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
                   springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads,
-                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed))
+                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed),
+                  warp=_warp_term(study, mesh))
+
+
+def _warp_term(study, mesh):
+    """buildSim.warpWeight > 0: the as-built distortion term the optimizer
+    adds (buildsim.WarpTerm), with its weight."""
+    bs = getattr(study, "build_sim", None)
+    if not bs or not bs.get("warpWeight"):
+        return None
+    from .buildsim import WarpTerm
+    nu = study.elastic(design=True)
+    return WarpTerm(mesh, bs["setup"], build=study.process.build, layer=bs.get("warpLayer"),
+                    nu=float(nu)), float(bs["warpWeight"])

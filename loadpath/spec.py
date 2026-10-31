@@ -278,7 +278,8 @@ def _calibrated_process(process, mat_in, spec):
 
 _BUILD_SIM_KEYS = {"layer": "layer", "plate": "plate", "scale": "scale", "release": "release",
                    "bedTemperature": "bed", "chamberTemperature": "chamber", "bedStiffness": "bed_stiffness",
-                   "relax": "relax", "recoaterGap": "recoater_gap"}
+                   "relax": "relax", "recoaterGap": "recoater_gap", "plateCells": "plate_cells",
+                   "bedAdhesion": "bed_adhesion"}
 
 
 def _build_sim(spec, process, material):
@@ -299,8 +300,18 @@ def _build_sim(spec, process, material):
         raise ValueError("buildSim.release is 'full' (off the plate) or 'none' (as built, on it)")
     mat = material if isinstance(material, str) else "pla"
     setup = BuildSetup(process="sls" if kind == "mjf" else kind, material=mat, **kw)
+    warp = float(spec.get("warpWeight", 0.0))
+    if warp < 0:
+        raise ValueError("buildSim.warpWeight is a weight >= 0 (0: verify only)")
+    if warp > 0:
+        if kind not in ("lpbf", "fdm"):
+            raise ValueError("buildSim.warpWeight designs against a layer-by-layer build: process lpbf or fdm")
+        if process.build == "auto" or process.build is None or len(process.build) != 2:
+            raise ValueError("buildSim.warpWeight needs process.buildDirection along a grid axis "
+                             "('+z', '-y', ...), not 'auto' or a tilted vector")
     return {"setup": setup, "compensate": bool(spec.get("compensate", False)),
-            "cells": int(spec.get("cells", 60_000)), "iterations": int(spec.get("iterations", 2))}
+            "cells": int(spec.get("cells", 60_000)), "iterations": int(spec.get("iterations", 2)),
+            "warpWeight": warp, "warpLayer": float(spec["warpLayer"]) if spec.get("warpLayer") else None}
 
 
 def _slicer(spec, process, base_dir, goal):
