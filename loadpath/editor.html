@@ -199,8 +199,11 @@ dd.good { color: var(--ok); } dd.bad { color: var(--warn); }
       <div class="pick"><span class="note">Output</span><select id="output" aria-label="Output node"></select></div>
       <div class="param"><div class="lab"><span>Mesh pitch, mm</span></div>
         <div class="row"><input type="range" id="pitch" min="0.1" max="2" step="0.05"><input type="number" id="pitch-n" step="0.05" min="0.05"></div></div>
-      <div class="row"><div class="pick" style="flex:1"><span class="note">Material</span><input type="text" id="material" placeholder="petg" list="materials"><datalist id="materials"></datalist></div></div>
+      <div class="row"><div class="pick" style="flex:1"><span class="note">Material</span><select id="material-pick" aria-label="Material from the library"></select></div></div>
+      <div class="row" id="material-custom" hidden><input type="text" id="material" style="flex:1" aria-label="Custom material" placeholder='a calibrated card, or {"base": "petg", "strength": 40}' list="materials"><datalist id="materials"></datalist></div>
+      <p class="note" id="material-card"></p>
       <p class="note" id="mass-est" aria-live="polite"></p>
+      <p class="note" id="check-est" aria-live="polite"></p>
       <div class="row wrap" id="fit-row"><div class="pick" style="flex:1"><span class="note">Fit mass, g</span><input type="number" id="fit-target" min="0" step="any" placeholder="target"></div>
         <div class="pick" style="flex:1.4"><span class="note">by changing</span><select id="fit-param" aria-label="Parameter to change"></select></div>
         <button class="btn" id="fit" title="Find the value of the parameter that gives the target mass (on the GPU estimate)">Fit</button>
@@ -1404,8 +1407,60 @@ const rangeSoon = debounce(updateRange, 200);
 // A grid over the output's box, each point counted by clamp(0.5 - d / h): a smooth step one sample wide,
 // so the count moves smoothly with a slider. Its error falls as h^2 (curved walls, saddle-shaped lattice
 // sheets), so it is taken at two spacings and extrapolated: within about 1% of the meshed part.
+// ---- material: the library's cards, and the last check rescaled to the one picked -----------------------
+function cardOf(m) {
+  const L = DATA.materials || [];
+  if (typeof m === "string") {
+    const k = m.trim().toLowerCase();
+    return L.find((c) => c.name === k || (c.aliases || []).includes(k)) || null;
+  }
+  if (m && typeof m === "object") {
+    const b = m.base ? cardOf(m.base) : null;
+    if (!b && !(m.E > 0 && m.strength > 0)) return null;
+    return { ...(b || {}), ...m, name: m.name || (b ? `${b.name}-custom` : "custom"), title: m.note || (b ? `${b.title}, changed` : "custom material"), source: b ? b.source : "your numbers", url: b ? b.url : "" };
+  }
+  return null;
+}
+const PROCESS_ORDER = ["fdm", "sls", "mjf", "sla", "dlp", "lpbf"];
+function materialPanel() {
+  const pick = $("#material-pick"), m = S.doc.material;
+  if (!pick.options.length) {
+    const L = DATA.materials || [], groups = {};
+    for (const c of L) { const p = c.calibrated ? "calibrated" : (c.processes || [])[0] || "other"; (groups[p] = groups[p] || []).push(c); }
+    const keys = Object.keys(groups).sort((a, b) => (PROCESS_ORDER.indexOf(a) + 1 || 99) - (PROCESS_ORDER.indexOf(b) + 1 || 99));
+    pick.replaceChildren(el("option", { value: "" }, "none (no mass)"),
+      ...keys.map((p) => { const g = el("optgroup", { label: p === "calibrated" ? "calibrated on your printer" : p.toUpperCase() });
+        g.append(...groups[p].map((c) => el("option", { value: c.name }, `${c.name}: ${c.title.replace(/\s*\(values from ([^)]*)\).*/, " ($1)")}`))); return g; }),
+      el("option", { value: "custom" }, "custom…"));
+  }
+  const c = typeof m === "string" ? cardOf(m) : null;
+  pick.value = m == null ? "" : c ? c.name : "custom";
+  $("#material-custom").hidden = pick.value !== "custom";
+  const card = cardOf(m), out = $("#material-card");
+  if (!card) { out.textContent = m != null ? "Not a library card: mass and checks need E, strength and density." : ""; updateCheck(); return; }
+  out.replaceChildren(`E ${fmt(card.E)} MPa · strength ${fmt(card.strength)} MPa${card.strengthZ ? ` (${fmt(card.strengthZ)} across layers)` : ""} · ${fmt(card.density)} g/cm³ · `,
+    card.url ? el("a", { href: card.url, target: "_blank", rel: "noopener" }, card.source) : card.source);
+  updateCheck();
+}
+function setCheck(sf, defl) {
+  const card = cardOf(S.doc.material);
+  S.check = sf != null || defl != null ? { safetyFactor: sf, deflection: defl, card, material: S.doc.material } : null;
+  updateCheck();
+}
+// A part of one material carries the same stress whatever its modulus (linear, loads not displacements),
+// so the last check's safety factor scales with strength and its deflection with 1 / E.
+function updateCheck() {
+  const out = $("#check-est"), a = S.check, c = cardOf(S.doc.material);
+  if (!a || !a.card || !c) { out.textContent = ""; return; }
+  const same = JSON.stringify(a.material) === JSON.stringify(S.doc.material);
+  const sf = a.safetyFactor != null ? a.safetyFactor * c.strength / a.card.strength : null;
+  const d = a.deflection != null ? a.deflection * a.card.E / c.E : null;
+  const vals = [sf != null ? `SF ${same ? "" : "≈ "}${fmt(sf)}` : "", d != null ? `deflection ${same ? "" : "≈ "}${fmt(d)} mm` : ""].filter(Boolean).join(" · ");
+  out.textContent = same ? `${vals} · last check` :
+    `${vals} in ${c.name}, scaled from the last check in ${a.card.name} (stress doesn't depend on the material; across-layer bonds may differ). Run to confirm.`;
+}
 function densityOf(m) {
-  if (m && typeof m === "object") return Number(m.density) || null;
+  if (m && typeof m === "object") return Number(m.density) || (m.base ? densityOf(m.base) : null);
   const d = DATA.densities || {};
   return typeof m === "string" ? d[m.trim().toLowerCase()] ?? null : null;
 }
@@ -2540,6 +2595,7 @@ function partPanel() {
   const pitch = (d.mesh && d.mesh.pitch) || 0.5;
   $("#pitch").value = pitch; $("#pitch-n").value = pitch;
   $("#material").value = typeof d.material === "string" ? d.material : d.material ? JSON.stringify(d.material) : "";
+  materialPanel();
   $("#process").value = typeof d.process === "string" ? d.process : "";
   tunePanel();
 }
@@ -2793,6 +2849,7 @@ async function tune() {
     applyAssign(j.assign);
     drawFront(j);
     const at = j.best.check && j.best.check.ok ? j.best.check : j.best;      // the fine grid's reading when it has one
+    setCheck(at.safetyFactor, at.deflection);
     const lim = [at.safetyFactor != null ? `SF ${fmt(at.safetyFactor)}` : "", at.deflection != null ? `deflection ${fmt(at.deflection)} mm` : ""].filter(Boolean).join(", ");
     const how = j.best.unconfirmed ? " It passed once but not on a finer grid: it sits on the limit, so check it." : " Checked again on a finer grid.";
     status(`Tuned in ${j.history.length} analyses: ${j.start.mass != null ? `${j.start.mass.toFixed(1)} → ` : ""}${j.best.mass.toFixed(1)} g (${lim}).${how} The values are in the graph; Undo puts them back.`, j.best.unconfirmed ? "warn" : "ok");
@@ -2831,6 +2888,8 @@ function report(j) {
   const L = $("#links");
   L.replaceChildren(el("a", { class: "btn small", href: j.files.viewer, target: "_blank" }, "Open in viewer"), el("a", { class: "btn small", href: j.files.stl, download: "" }, "STL"), el("a", { class: "btn small", href: j.files.report, target: "_blank" }, "report.json"));
   L.hidden = false;
+  const an = Object.values(r.analyses || {}).filter((a) => a && a.safetyFactor != null);
+  if (an.length) setCheck(Math.min(...an.map((a) => a.safetyFactor)), Math.max(...an.map((a) => a.deflection ?? 0)) || null);
   status(`Meshed${j.node ? ` ${j.node}` : ""}: ${r.faces.toLocaleString()} faces${r.mass != null ? `, ${r.mass.toFixed(1)} g` : ""}.`, "ok");
   showMesh(j.mesh);
 }
@@ -2863,7 +2922,20 @@ $("#name").addEventListener("change", (e) => { S.doc.name = e.target.value || "f
 const setPitch = (v) => { if (!(v > 0)) return; S.doc.mesh = { ...(S.doc.mesh || {}), pitch: v }; $("#pitch").value = v; $("#pitch-n").value = v; commitSoon(); };
 $("#pitch").addEventListener("input", (e) => setPitch(+e.target.value));
 $("#pitch-n").addEventListener("change", (e) => setPitch(+e.target.value));
-$("#material").addEventListener("change", (e) => { const v = e.target.value.trim(); if (v) S.doc.material = v; else delete S.doc.material; commit(); updateMass(); });
+$("#material").addEventListener("change", (e) => {
+  const v = e.target.value.trim();
+  let m = v;
+  if (v.startsWith("{")) { try { m = JSON.parse(v); } catch (err) { status("That custom material isn't valid JSON.", "warn"); return; } }
+  if (v) S.doc.material = m; else delete S.doc.material;
+  commit(); materialPanel(); updateMass();
+});
+$("#material-pick").addEventListener("change", (e) => {
+  const v = e.target.value;
+  if (v === "custom") { $("#material-custom").hidden = false; $("#material").focus(); return; }
+  if (v) S.doc.material = v; else delete S.doc.material;
+  $("#material").value = v;
+  commit(); materialPanel(); updateMass();
+});
 $("#materials").replaceChildren(...Object.keys(DATA.densities || {}).map((k) => el("option", { value: k })));
 $("#sweep").addEventListener("click", async () => {
   const key = $("#fit-param").value;
@@ -2958,7 +3030,7 @@ window.lpEditor = {
   probe: (name, pts) => Array.from(probe(name, Float32Array.from(pts.flat ? pts.flat() : pts)) || []),
   doc: () => exportDoc(), state: S, set: (path, v) => { setAt(S.doc, path, v); paramChanged(path); },
   THREE, cam: () => { camera.updateMatrixWorld(); return camera; },
-  makeGroup: (n, g) => makeGroup(n, g), run: (n) => run(n), tune: () => tune(), addTuneKnob: (k) => addTuneKnob(k), tuneSweep: (t) => tuneSweep(t), drawFront: (j) => drawFront(j), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
+  makeGroup: (n, g) => makeGroup(n, g), run: (n) => run(n), setCheck: (sf, d) => setCheck(sf, d), tune: () => tune(), addTuneKnob: (k) => addTuneKnob(k), tuneSweep: (t) => tuneSweep(t), drawFront: (j) => drawFront(j), ungroup: (n) => ungroup(n), expanded: () => clone(X().doc),
   paste: (text) => pasteText(text), sweep: (key, n) => sweepMass(key, n), duplicate: (n) => duplicateNode(n),
   pick: (world) => { camera.updateMatrixWorld(); const v = new THREE.Vector3(...world).project(camera); return pickNdc([v.x, v.y]); },
   mass: (budget, name) => volumeOf(name || S.doc.output, budget || 600000), fitMass: (key, grams) => fitMass(key, grams),

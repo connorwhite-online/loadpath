@@ -24,6 +24,7 @@ Strength means yield for metals and tensile strength for polymers.
 | `pa12` | HP 3D HR PA 12 (MJF 5200 white paper) | 1900 | 1900 | 50 | 50 | 1.01 | - |
 | `pa11` | HP 3D HR PA 11 (same) | 1700 | 1800 | 54 | 54 | 1.05 | - |
 | `pa12-gb` | HP 3D HR PA 12 GB (same) | 2900 | 3000 | 31 | 30 | 1.30 | 170 C |
+| `pa12-gf` | EOS PA 3200 GF (SLS), status 30.08.2026 | 3200 | 2500 | 51 | 47 | 1.22 | 157 C |
 | `tpu88a` | BASF Ultrasint TPU 88A v2.2 (SLS) | 75 | 75 | 8 | 7 | 1.10 | - |
 | `resin` | Formlabs Grey V4, post-cured | 2800 | - | 65 | - | 1.18* | 73 C |
 | `resin-tough` | Formlabs Tough 2000, post-cured | 2200 | - | 46 | - | 1.15* | 63 C |
@@ -79,6 +80,23 @@ matters should be calibrated. Print the coupons, fit a card
 ([CALIBRATION.md](CALIBRATION.md)), and save it under the library name (for
 example `petg`). It then replaces the library card for every study on that
 machine, including its process factors.
+
+## In the editor
+
+The Part panel's material picker lists the library by process, including
+calibrated cards. Under the picker it shows the card's E, strength and
+density, with a link to its datasheet. Mass updates live as you switch. After
+a run or a tune, the panel keeps that check's safety factor and deflection.
+When you pick another material, it rescales them:
+
+- SF by the strength ratio;
+- deflection by the modulus ratio.
+
+That rescaling is exact for a part made of one material under fixed loads,
+because the stress doesn't depend on the material. It doesn't account for
+across-layer bonds, which can differ between cards, so run again to confirm.
+A graph's `material` is also the material its result nodes and its `tune`
+study check the part in. It replaces the study's own material.
 
 ## Changing one value
 

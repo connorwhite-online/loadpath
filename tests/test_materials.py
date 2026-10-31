@@ -123,3 +123,15 @@ def test_thermal_tables_come_from_the_cards():
         if hdt:
             g, _ = retention(name, [hdt[0]])
             assert g[0] < 0.9, (name, g)     # well softened by its own HDT
+
+
+def test_a_graph_checks_its_part_in_its_own_material():
+    from loadpath.editor import _library
+    from loadpath.fields import load_study
+
+    assert load_study("example:arm-link").material.name == "pa12"
+    s = load_study("example:arm-link", material="petg")
+    assert s.material.name == "petg" and s.material.strength == MATERIALS["petg"].strength
+    lib = {c["name"]: c for c in _library()}
+    assert set(LIBRARY) <= set(lib) and lib["pa12-gf"]["source"].startswith("EOS PA 3200 GF")
+    assert "nylon" in lib["pa12"]["aliases"]

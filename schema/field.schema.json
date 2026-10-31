@@ -148,7 +148,7 @@
       "anyOf": [
         {
           "type": "string",
-          "description": "A name: 15-5ph, 316l, abs, agilus30, alsi10mg, asa, in625, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
+          "description": "A name: 15-5ph, 316l, abs, agilus30, alsi10mg, asa, in625, pa-cf, pa11, pa12, pa12-gb, pa12-gf, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
         },
         {
           "type": "object",
@@ -229,7 +229,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "description": "A name: 15-5ph, 316l, abs, agilus30, alsi10mg, asa, in625, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
+                    "description": "A name: 15-5ph, 316l, abs, agilus30, alsi10mg, asa, in625, pa-cf, pa11, pa12, pa12-gb, pa12-gf, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
                   },
                   {
                     "type": "object",
@@ -293,7 +293,7 @@
                   "anyOf": [
                     {
                       "type": "string",
-                      "description": "A name: 15-5ph, 316l, abs, agilus30, alsi10mg, asa, in625, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
+                      "description": "A name: 15-5ph, 316l, abs, agilus30, alsi10mg, asa, in625, pa-cf, pa11, pa12, pa12-gb, pa12-gf, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
                     },
                     {
                       "type": "object",

@@ -63,6 +63,10 @@ wire, an expression) recompiles, in milliseconds.
 - **Mass** is live: the page weighs the output on the GPU as you edit
   (its volume on a grid of samples at two spacings, extrapolated; within
   about 1% of the meshed part) and multiplies by the material's density.
+  The **material picker** lists the library with each card's datasheet, and
+  rescales the last run's or tune's safety factor and deflection as you
+  switch ([materials.md](materials.md#in-the-editor)). The graph's material
+  is also the one its studies check the part in.
   **Fit mass** finds the value of any one number (a wall, a blend, a remap
   end) that gives a target mass, in a second or two; **Sweep** charts the
   mass across that number's range, and clicking a point uses that value.

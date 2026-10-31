@@ -1276,20 +1276,13 @@ class FieldGraph:
         1 mm), so a graph can grade itself from its own solid's stress."""
         import trimesh
 
-        from .spec import study_from_dict
         from .verify import verify_part
 
         s = nd.spec
         if "part" not in s:
             raise ValueError(f"node {nd.name!r}: a result from a study needs the 'part' it analyzes")
-        if s["study"].startswith("example:"):
-            from .tasks import example
-
-            study = study_from_dict(example(s["study"].split(":", 1)[1]), base_dir=self.base_dir)
-        else:
-            sp = self._path(s["study"])
-            with open(sp) as fh:
-                study = study_from_dict(json.load(fh), base_dir=os.path.dirname(sp))
+        ref = s["study"] if s["study"].startswith("example:") else self._path(s["study"])
+        study = load_study(ref, self.base_dir, self.doc.get("material"))
         if s["part"] in self.nodes:
             mesh = self.mesh(pitch=float(s.get("pitch", 1.0)), name=s["part"], project=1)
         else:
@@ -2373,6 +2366,27 @@ def _material_report(g, doc, part, out_dir, stem, progress):
 
 
 # ---- the job ---------------------------------------------------------------------
+
+def load_study(ref, base_dir=None, material=None):
+    """The study a graph analyzes its part under: a JSON path (relative to
+    base_dir) or "example:<name>". The graph's own `material`, when it has
+    one, replaces the study's, so the part is checked in what it will be
+    printed in (and its process takes that card's across-layer values)."""
+    from .spec import study_from_dict
+
+    if ref.startswith("example:"):
+        from .tasks import example
+
+        d, sdir = example(ref.split(":", 1)[1]), base_dir
+    else:
+        sp = ref if os.path.isabs(ref) else os.path.join(base_dir or ".", ref)
+        with open(sp) as fh:
+            d = json.load(fh)
+        sdir = os.path.dirname(sp)
+    if material is not None:
+        d = {**d, "material": material}
+    return study_from_dict(d, base_dir=sdir)
+
 
 def node_doc(doc, node):
     """The graph made to mesh one of its nodes instead of its output: groups

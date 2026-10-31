@@ -86,6 +86,10 @@ SOURCES = {
         "https://info.sculpteo.com/hubfs/Material%20documentation/PA11%20HP/"
         "TDS%20HP%20pa12%20pa12gb%20pa11%20pp%20(1).pdf",
         "ASTM D638 Type I, Balanced print profile, 349-part test job, XY and Z averages"),
+    "eos-pa3200gf": Source(
+        "EOS PA 3200 GF material data sheet, status 30.08.2026",
+        "https://www.indus3design.com/wp-content/uploads/2026/08/i3d-datasheets-eos-pa-3200-gf.pdf",
+        "laser sintered; ISO 527-1/-2 X and Z orientations, ISO 75 HDT"),
     "basf-tpu88a": Source(
         "BASF Forward AM Ultrasint TPU 88A technical data sheet v2.2 (08/2021)",
         "https://3dprinting.rpamerica.us/hubfs/BASF/UltrasintTM%20TPU%20Line.pdf",
@@ -302,6 +306,16 @@ LIBRARY = {
                   elongation=(9, "hp-5200-whitepaper", "% at break XY"),
                   hdt=(170, "hp-5200-whitepaper", "ASTM D648, 0.45 MPa, XY"),
                   hdt18=(113, "hp-5200-whitepaper", "ASTM D648, 1.82 MPa, XY")),
+    "pa12-gf": _c("glass-filled PA 12 (values from EOS PA 3200 GF, SLS): stiff, wear resistant", ("sls",),
+                  E=(3200, "eos-pa3200gf", "tensile modulus X"),
+                  EZ=(2500, "eos-pa3200gf", "tensile modulus Z"),
+                  nu=(0.37, "estimate", "filled nylon"),
+                  strength=(51, "eos-pa3200gf", "tensile strength X"),
+                  strengthZ=(47, "eos-pa3200gf", "tensile strength Z"),
+                  density=(1.22, "eos-pa3200gf", "laser-sintered part density (EOS method)"),
+                  elongation=(9, "eos-pa3200gf", "% at break X (Z: 5.5)"),
+                  hdt=(157, "eos-pa3200gf", "ISO 75, 0.45 MPa, X"),
+                  hdt18=(96, "eos-pa3200gf", "ISO 75, 1.80 MPa, X")),
     "tpu88a": _c("TPU 88A (values from BASF Ultrasint TPU 88A, SLS): a linear analysis is a rough estimate "
                  "past a few percent strain; run verify_nonlinear", ("sls", "mjf"),
                  E=(75, "basf-tpu88a", "tensile modulus X (ISO 527-2 1A)"),

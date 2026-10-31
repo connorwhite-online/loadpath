@@ -64,19 +64,13 @@ def set_at(doc, path, value):
     v[keys[-1]] = -float(value) if neg else float(value)
 
 
-def _study(spec, base_dir):
-    from .spec import study_from_dict
+def _study(spec, base_dir, material=None):
+    from .fields import load_study
 
     s = spec.get("study")
     if not isinstance(s, str):
         raise ValueError("tune needs a 'study' (a study JSON path or example:<name>) to load the part with")
-    if s.startswith("example:"):
-        from .tasks import example
-
-        return study_from_dict(example(s.split(":", 1)[1]), base_dir=base_dir)
-    sp = s if os.path.isabs(s) else os.path.join(base_dir or ".", s)
-    with open(sp) as fh:
-        return study_from_dict(json.load(fh), base_dir=os.path.dirname(sp))
+    return load_study(s, base_dir, material)
 
 
 def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None):
@@ -103,7 +97,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
             raise ValueError(f"tune: param {p.get('path')!r} needs min < max")
         for q in [p["path"], *p.get("also", [])]:
             get_at(doc, q)
-    study = _study(spec, base_dir)
+    study = _study(spec, base_dir, doc.get("material"))
     goal = study.goal
     lim = {"safetyFactor": spec.get("safetyFactor", goal.safety_factor),
            "maxDeflection": spec.get("maxDeflection", goal.max_deflection)}

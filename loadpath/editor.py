@@ -239,6 +239,29 @@ def _densities():
     return out
 
 
+def _library():
+    """The material library for the page's picker: each card's numbers and
+    where they came from, plus calibrated cards by name."""
+    from .calibration import list_cards
+    from .material_library import SOURCES, card_names
+    from .material_library import card as get_card  # noqa: I001 - `card` would shadow the loop's card
+    from .materials import _ALIASES, material_from_spec
+
+    out = []
+    for name in card_names() + [c for c in list_cards() if c not in card_names()]:
+        try:
+            m = material_from_spec(name)
+        except ValueError:
+            continue
+        c = get_card(name)
+        src = SOURCES[c["values"]["strength"][1]] if c else None
+        out.append({"name": name, "title": m.note or name, "E": m.E, "strength": m.strength,
+                    "strengthZ": m.strength_z, "density": m.density, "processes": list(m.processes),
+                    "calibrated": name in list_cards(), "aliases": sorted(a for a, k in _ALIASES.items() if k == name),
+                    "source": src.title if src else "calibrated on your printer", "url": src.url if src else ""})
+    return out
+
+
 def editor_payload(doc, base_dir=None, bake=True, server=False, graph_path=None, progress=None):
     """The data the page starts from: the graph, the bakes it needs (all of
     them for a standalone page; a served page asks for its own), and the
@@ -266,7 +289,7 @@ def editor_payload(doc, base_dir=None, bake=True, server=False, graph_path=None,
                 except Exception as exc:  # noqa: BLE001 - the page says which node could not be baked
                     errors.append(f"{name}: {exc}")
     return {"version": 1, "doc": doc, "bakes": bakes, "errors": errors, "issues": lint(doc, "field"),
-            "tables": _density_tables(), "densities": _densities(),
+            "tables": _density_tables(), "densities": _densities(), "materials": _library(),
             "minWalls": {k: v["minFeature"] for k, v in PROCESSES.items()}, "server": bool(server),
             "graphPath": os.path.basename(graph_path) if graph_path else None,
             "created": time.strftime("%Y-%m-%d %H:%M")}
@@ -316,8 +339,11 @@ class _Resources:
 
     @staticmethod
     def _keys(doc):
-        return {name: json.dumps(_closure(doc, name), sort_keys=True) for name, spec in doc["nodes"].items()
-                if isinstance(spec, dict) and spec.get("op") in BAKED_OPS}
+        # a result node's study is checked in the graph's material, so that
+        # is part of its key
+        return {name: json.dumps([_closure(doc, name), doc.get("material") if spec.get("op") == "result" else None],
+                                 sort_keys=True)
+                for name, spec in doc["nodes"].items() if isinstance(spec, dict) and spec.get("op") in BAKED_OPS}
 
     def prebuilt(self, doc):
         with self.lock:
