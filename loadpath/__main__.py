@@ -481,6 +481,9 @@ def _tune(args):
     summary = {"ok": out["best"] is not None, "best": out["best"], "start": out["start"],
                "limits": out["limits"], "evaluations": len(out["history"]),
                "tuned": os.path.join(args.out, "tuned.json")}
+    if out["best"] is not None:
+        # tuned.json keeps the graph's relative paths (its study): they resolve from the graph's folder
+        summary["next"] = f"loadpath field {summary['tuned']} --base-dir {os.path.relpath(base)}"
     if out["best"] is None:
         summary["error"] = "no candidate met the limits: widen the params' ranges or ease the limits"
     _write_report(args.out, summary)

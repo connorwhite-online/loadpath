@@ -822,6 +822,9 @@ class FieldGraph:
         full = os.path.realpath(os.path.join(root, path))
         if os.path.commonpath([root, full]) != root:
             raise ValueError(f"path {path!r} must stay inside the graph's folder")
+        if not os.path.exists(full):
+            raise ValueError(f"no file {path!r} in {root} (paths resolve from the graph's folder; "
+                             "--base-dir picks another)")
         return full
 
     def _compute(self, nd, P, memo):
@@ -1057,7 +1060,9 @@ class FieldGraph:
             mesh = self.mesh(pitch=float(s.get("pitch", 1.0)), name=s["part"], project=1)
         else:
             mesh = trimesh.load(self._path(s["part"]), force="mesh")
-        rep = verify_part(study, mesh, max_cells=int(s.get("cells", 120_000)), fields=True)
+        from . import quick
+
+        rep = verify_part(study, mesh, max_cells=quick.result_cells(int(s.get("cells", 120_000))), fields=True)
         self.analyses[nd.name] = {k: v for k, v in rep.items() if k != "fields"}
         return rep["fields"]
 

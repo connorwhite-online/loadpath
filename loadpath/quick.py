@@ -7,7 +7,8 @@ tutorial's commands this way so the docs can't drift from the code.
 
 What it lowers: a study's cells, optimizer iterations and outcome-search runs
 (the evals' coarse tier, evals/run.py COARSE), a heat exchanger's grid and
-whole-exchanger simulation, a field graph's mesh pitch, `tune`'s analyses and
+whole-exchanger simulation, a field graph's mesh pitch (and its drain search's)
+and the analysis behind its `result` nodes, `tune`'s analyses and
 `assembly`'s sampled poses. Numbers move (mass a few %, safety factor more on
 thin members): read a quick run for direction, run without it to print.
 """
@@ -22,6 +23,7 @@ HX_STEP = 1.6          # x the heat exchanger's grid step (default wall / 3)
 HX_SIM_VOXEL = 1.5     # x the whole-exchanger simulation's voxel
 FIELD_CELLS = 600_000  # mesh grid cells for a field graph without its own pitch
 FIELD_PITCH = 1.6      # x a field graph's own mesh pitch
+RESULT_CELLS = 30_000  # analysis cells behind a field graph's `result` node (default 120k)
 TUNE_EVALUATIONS = 6
 ASSEMBLY_SAMPLES = 150
 
@@ -77,6 +79,11 @@ def mesh_pitch(pitch, bounds):
     import numpy as np
     ext = np.asarray(bounds[1], float) - np.asarray(bounds[0], float)
     return float((np.prod(ext) / FIELD_CELLS) ** (1 / 3))
+
+
+def result_cells(n):
+    """Analysis cells behind a field graph's `result` node."""
+    return min(int(n), RESULT_CELLS) if on() else n
 
 
 def tune_evaluations(n):
