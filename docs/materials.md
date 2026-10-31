@@ -96,9 +96,16 @@ optional `EZ`, `strengthZ` and `measured` (the process those were measured on).
 
 `durability.temperature` (or a load case's `temperature`) at or above the
 card's HDT at 0.45 MPa adds a warning to the durability report. The part
-will sag there, whatever the stress check says. Modulus retention with
-temperature (`thermal.MODULUS_RETENTION`) is still read off typical DMA
-curves and has not been refitted to these cards. Treat it as an estimate.
+will sag there, whatever the stress check says. Each card also carries how much
+modulus it keeps with temperature (`retention`, feeding
+`thermal.MODULUS_RETENTION`). It is read off typical DMA curves for the polymer
+family and checked against the card's HDT, so treat it as an estimate.
+
+Thermal expansion (`cte`, feeding `thermal.EXPANSION`) comes from the Formlabs
+sheets for the resins (Grey 79, Tough 2000 91, Rigid 10K 47 um/(m K), 0-150 C)
+and from AddUp for AlSi10Mg (21) and 316L (17.2). The filament datasheets
+don't give it, so the FDM, nylon and Ti64 values are marked estimates and
+handbook values.
 
 ## What changed from the earlier cards (2026-10-31)
 

@@ -36,7 +36,7 @@ def test_every_value_is_sourced():
         for key, (num, src, note) in v.items():
             assert src in SOURCES, (name, key, src)
             assert note, (name, key)
-            if src not in ("estimate", "handbook", "durability", "tychanicz-2025"):
+            if src not in ("estimate", "handbook", "durability", "tychanicz-2025", "dma-estimate"):
                 assert SOURCES[src].url.startswith("https://"), src
         assert c["measured"] in c["processes"], name
         if "strengthZ" in v:
@@ -110,3 +110,16 @@ def test_cli_lists_cards():
     out = subprocess.run([sys.executable, "-m", "loadpath", "materials", "steel"], capture_output=True,
                          text=True, env=env, check=True)
     assert json.loads(out.stdout)["values"]["E"]["value"] == 193000
+
+
+def test_thermal_tables_come_from_the_cards():
+    from loadpath.thermal import EXPANSION, MODULUS_RETENTION, retention
+
+    assert EXPANSION["alsi10mg"] == 21e-6 and EXPANSION["resin-rigid"] == 47e-6
+    for name, pts in MODULUS_RETENTION.items():
+        assert pts[0] == (23, 1.0), name
+        assert all(b[1] <= a[1] for a, b in zip(pts, pts[1:])), name     # never stiffer when warmer
+        hdt = LIBRARY[name]["values"].get("hdt")
+        if hdt:
+            g, _ = retention(name, [hdt[0]])
+            assert g[0] < 0.9, (name, g)     # well softened by its own HDT

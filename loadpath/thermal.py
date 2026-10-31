@@ -85,33 +85,19 @@ CONDUCTIVITY = {k: float(c["values"]["conductivity"][0]) for k, c in _LIBRARY.it
                 if "conductivity" in c["values"]}
 
 # Fraction of room-temperature modulus kept at temperature (C), piecewise
-# linear. Read off typical DMA storage-modulus curves and heat deflection
-# temperatures; approximate, and the cliff at the glass transition is where
-# they disagree most. Above the last point the last value holds.
-MODULUS_RETENTION = {
-    "pla": [(23, 1.0), (45, 0.92), (55, 0.6), (60, 0.2), (65, 0.04)],
-    "petg": [(23, 1.0), (40, 0.93), (55, 0.8), (65, 0.6), (75, 0.25), (85, 0.05)],
-    "abs": [(23, 1.0), (60, 0.85), (80, 0.65), (95, 0.25), (105, 0.04)],
-    "asa": [(23, 1.0), (60, 0.85), (80, 0.65), (95, 0.25), (105, 0.04)],
-    "tpu": [(23, 1.0), (40, 0.85), (60, 0.7), (80, 0.55), (100, 0.4)],
-    "pa-cf": [(23, 1.0), (50, 0.8), (80, 0.55), (120, 0.35), (150, 0.2)],
-    "pa12": [(23, 1.0), (45, 0.75), (80, 0.45), (120, 0.25), (160, 0.1)],
-    "pa11": [(23, 1.0), (45, 0.75), (80, 0.45), (120, 0.25), (160, 0.1)],
-    "resin": [(23, 1.0), (40, 0.8), (50, 0.5), (60, 0.2), (70, 0.05)],
-    "resin-tough": [(23, 1.0), (40, 0.75), (50, 0.45), (60, 0.2), (70, 0.05)],
-    "alsi10mg": [(23, 1.0), (150, 0.92), (200, 0.85), (300, 0.6)],
-    "ti64": [(23, 1.0), (300, 0.85), (500, 0.75)],
-    "316l": [(23, 1.0), (300, 0.9), (500, 0.82)],
-}
+# linear, from the cards' `retention` (read off typical DMA curves and
+# checked against each card's heat deflection temperature; approximate,
+# and the cliff at the glass transition is where sources disagree most).
+MODULUS_RETENTION = {k: [tuple(p) for p in c["values"]["retention"][0]] for k, c in _LIBRARY.items()
+                     if "retention" in c["values"]}
 
-# Linear thermal expansion, 1/K, near room temperature (datasheets; FDM
-# parts in plane, PA-CF along the fibres it is laid with). Printed polymers
-# grow 5-10x more than aluminium, which is what loads a plastic part bolted
-# to a metal frame when the motor beside it warms up.
-EXPANSION = {
-    "pla": 68e-6, "petg": 68e-6, "abs": 90e-6, "asa": 95e-6, "tpu": 150e-6, "pa-cf": 30e-6, "pa12": 109e-6,
-    "pa11": 100e-6, "resin": 80e-6, "resin-tough": 90e-6, "alsi10mg": 21e-6, "ti64": 8.6e-6, "316l": 16e-6,
-}
+# Linear thermal expansion, 1/K, near room temperature, from the cards'
+# `cte` (um/(m K); Formlabs and AddUp sheets where they give it, estimates
+# for the filaments, whose datasheets don't). FDM parts in plane, PA-CF
+# along the fibres it is laid with. Printed polymers grow 5-10x more than
+# aluminium, which is what loads a plastic part bolted to a metal frame
+# when the motor beside it warms up.
+EXPANSION = {k: float(c["values"]["cte"][0]) / 1e6 for k, c in _LIBRARY.items() if "cte" in c["values"]}
 
 K_MIN = 1e-3          # void conductivity, relative to the material's
 PENALTY = 3.0
