@@ -660,7 +660,7 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
         dlam_dx = PENALTY * xb ** (PENALTY - 1) * (wp.T @ lam_i)
         dmu_dx = PENALTY * xb ** (PENALTY - 1) * (wp.T @ mu_i)
         dwp = PENALTY * w ** (PENALTY - 1)                     # (N, n)
-        energies = [stiff.energies(u) for u in us]
+        energies = [stiff.energies(u, lam_e, mu_e) for u in us]
 
         def grad_c(ci):
             """dC_ci / d(xb) and / d(yb) (m_y, n)."""
@@ -760,8 +760,7 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
             def grad_v(ca, cb):
                 """d(f_ca . u_cb) on the Voigt model = -u_ca^T dK u_cb."""
                 ua, ub = uv[ca][mesh.edof], uv[cb][mesh.edof]
-                el = np.einsum("ij,jk,ik->i", ua, stiff.kl, ub)
-                em = np.einsum("ij,jk,ik->i", ua, stiff.km, ub)
+                el, em = stiff.pair(ua, ub, lam_v, mu_v)
                 gx = -(el * dlv_dx + em * dmv_dx)
                 gw = -wfac * (el[None, :] * lam_i[:, None] + em[None, :] * mu_i[:, None])
                 return gx, np.einsum("in,ijn->jn", gw, dw)
