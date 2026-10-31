@@ -569,9 +569,51 @@
       ],
       "additionalProperties": false
     },
+    "intersect": {
+      "type": "object",
+      "description": "Where all the shapes overlap: a half ring is a tube intersected with a box.",
+      "properties": {
+        "type": {
+          "const": "intersect"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 2
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "subtract": {
+      "type": "object",
+      "description": "The first shape with the others cut away: a ring with a gap is a tube minus a box.",
+      "properties": {
+        "type": {
+          "const": "subtract"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 2
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
     "shape": {
-      "title": "a shape object (box, cylinder, tube, sphere, mesh, union)",
-      "description": "A shape: box, cylinder (tube), sphere, mesh or union. Units mm.",
+      "title": "a shape object (box, cylinder, tube, sphere, mesh, union, intersect, subtract)",
+      "description": "A shape: box, cylinder (tube), sphere, mesh, union, intersect or subtract. Units mm.",
       "oneOf": [
         {
           "$ref": "#/$defs/box"
@@ -587,6 +629,12 @@
         },
         {
           "$ref": "#/$defs/union"
+        },
+        {
+          "$ref": "#/$defs/intersect"
+        },
+        {
+          "$ref": "#/$defs/subtract"
         }
       ],
       "x-discriminator": {
@@ -597,7 +645,9 @@
           "tube": "#/$defs/cylinder",
           "sphere": "#/$defs/sphere",
           "mesh": "#/$defs/mesh",
-          "union": "#/$defs/union"
+          "union": "#/$defs/union",
+          "intersect": "#/$defs/intersect",
+          "subtract": "#/$defs/subtract"
         }
       }
     },
