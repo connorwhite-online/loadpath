@@ -369,6 +369,34 @@ Sharp meshing costs nothing extra (9 s either way on the solid; 100 s
 against 138 s on the lattice part, since the organic field no longer has to
 draw the bores).
 
+### Creases between field surfaces (opt-in)
+
+A hard boolean between two fields (a lattice clipped by a body, two bodies
+unioned with no blend, a body minus another, a shell's rim) has no exact
+shape to hand to manifold3d. `"mesh": {"creases": true}` puts those creases
+back on the meshed field instead (crease.py). The graph says which input is
+active on each side, so every edge whose ends lie on different inputs'
+surfaces is split on the true intersection curve (Gauss-Newton on both
+inputs' zero levels), slivers and turned-over triangles near the crease are
+collapsed, and any crease vertex that would make the mesh cross itself goes
+back to where the plain mesh had it. Measured in
+`moonshots/round2/crease_bench.py` against the true curve, distance from the
+curve to the mesh (max / RMS, mm):
+
+| part | pitch | plain | creases |
+| --- | --- | --- | --- |
+| two organic spheres, 90 degree rim | 0.4 | 0.258 / 0.149 | 0.004 / 0.001 |
+| the same, 30 degree wedge | 0.4 | 0.956 / 0.749 | 0.008 / 0.003 |
+| organic body minus a torus | 0.4 | 0.805 / 0.361 | 0.255 / 0.014 |
+| gyroid clipped by an organic body | 0.25 | 0.634 / 0.134 | 0.445 / 0.026 |
+
+On smooth bodies the rim comes out at its true dihedral angle with no
+slivers or folds. On lattices the RMS error drops five to ten times, but
+the plain lattice mesh already has folds and self-intersections where its
+walls meet the body, and wherever a crease would touch those it is left
+rounded, so the worst point barely moves. The pass costs 2 to 4 times the
+meshing time on a lattice, a fraction of it on a solid. Not with `stream`.
+
 ## STEP
 
 `"step": true` (or `loadpath field graph.json --step`) also writes

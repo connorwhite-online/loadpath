@@ -274,10 +274,13 @@ def exact_manifold(shape, tol=CHORD_TOL):
     return shape.to_manifold()
 
 
-def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, decimate=None):
+def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, decimate=None, creases=None):
     """Mesh a plan: organic leaves by fields.field_mesh over [lo, hi] (from
     their extended fields), exact leaves exactly, booleans by manifold3d.
-    Returns a trimesh; each Organic leaf keeps its mesh in `.mesh`."""
+    Returns a trimesh; each Organic leaf keeps its mesh in `.mesh`.
+    `creases` (the FieldGraph): an organic leaf that is one graph node, and
+    not extended, gets the creases between its own field surfaces back
+    (crease.py)."""
     import manifold3d as m3d
 
     from .fields import _finish, field_mesh
@@ -294,7 +297,13 @@ def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, de
         if regions:
             fld = _Extended(leaf.field, regions, eps=pitch, core=pitch)
             leaf.extended = True
-        leaf.mesh = field_mesh(fld, lo, hi, pitch=pitch, project=project, progress=progress, decimate=decimate)
+        tree = None
+        if creases is not None and not regions and len(leaf.names) == 1:
+            from .crease import CreaseTree
+
+            tree = CreaseTree.from_graph(creases, leaf.names[0])
+        leaf.mesh = field_mesh(fld, lo, hi, pitch=pitch, project=project, progress=progress, decimate=decimate,
+                               creases=tree)
         if leaf.mesh.metadata.get("sampling"):
             stats = leaf.mesh.metadata["sampling"]
 

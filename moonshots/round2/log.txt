@@ -1,0 +1,66 @@
+[lens90] leaves: ['a', 'b']
+[lens90] true crease: {'points': 1604, 'refPitch': 0.13333333333333333, 'seconds': 0.5, 'sphereResidual': 9.744489659624378e-10}
+[lens90] 0.8 before   c->m max 0.5003 rms 0.3439 | dih 52.4/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 19.65
+[lens90] 0.8 sharpen  c->m max 0.0127 rms 0.0040 | dih 93.5/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 19.70
+      times: mesh 0.01s  sharpen 0.01s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 136, 'snapped': 19, 'split': 84, 'splitFallback': 0, 'corners': 0, 'collapsed': 0, 'untangled': 0, 'creaseVertices': 103} {}
+[lens90] 0.4 before   c->m max 0.2580 rms 0.1490 | dih 64.8/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 12.25
+[lens90] 0.4 sharpen  c->m max 0.0039 rms 0.0011 | dih 91.8/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 12.38
+      times: mesh 0.03s  sharpen 0.03s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 295, 'snapped': 69, 'split': 128, 'splitFallback': 0, 'corners': 0, 'collapsed': 2, 'untangled': 0, 'creaseVertices': 195} {}
+[lens90] 0.2 before   c->m max 0.1247 rms 0.0748 | dih 64.4/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 9.86
+[lens90] 0.2 sharpen  c->m max 0.0010 rms 0.0003 | dih 91.0/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 8.23
+      times: mesh 0.08s  sharpen 0.07s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 599, 'snapped': 137, 'split': 265, 'splitFallback': 0, 'corners': 0, 'collapsed': 16, 'untangled': 0, 'creaseVertices': 389} {}
+[lens30] leaves: ['a', 'b']
+[lens30] true crease: {'points': 571, 'refPitch': 0.13333333333333333, 'seconds': 0.0, 'sphereResidual': 9.486100793765218e-10}
+[lens30] 0.8 before   c->m max 1.2105 rms 0.9484 | dih 0.0/150.1 | wt True m3d NoError folds 34 selfX 30 sliv5 0 minAng 11.53
+[lens30] 0.8 sharpen  c->m max 0.0525 rms 0.0193 | dih 157.8/150.1 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 8.81
+      times: mesh 0.01s  sharpen 0.01s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 26, 'snapped': 0, 'split': 26, 'splitFallback': 0, 'corners': 0, 'collapsed': 13, 'untangled': 0, 'creaseVertices': 26} {}
+[lens30] 0.4 before   c->m max 0.9563 rms 0.7487 | dih 0.0/150.1 | wt True m3d NoError folds 46 selfX 45 sliv5 4 minAng 0.72
+[lens30] 0.4 sharpen  c->m max 0.0075 rms 0.0030 | dih 155.2/150.1 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 8.49
+      times: mesh 0.02s  sharpen 0.03s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 67, 'snapped': 0, 'split': 67, 'splitFallback': 0, 'corners': 0, 'collapsed': 26, 'untangled': 0, 'creaseVertices': 64} {}
+[lens30] 0.2 before   c->m max 0.4550 rms 0.3150 | dih 0.0/150.1 | wt True m3d NoError folds 105 selfX 91 sliv5 12 minAng 1.46
+[lens30] 0.2 sharpen  c->m max 0.0020 rms 0.0005 | dih 152.4/150.1 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 8.11
+      times: mesh 0.02s  sharpen 0.06s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 167, 'snapped': 9, 'split': 154, 'splitFallback': 0, 'corners': 0, 'collapsed': 43, 'untangled': 0, 'creaseVertices': 158} {}
+[union90] leaves: ['a', 'b']
+[union90] true crease: {'points': 1628, 'refPitch': 0.13333333333333333, 'seconds': 1.2, 'sphereResidual': 9.93205517829665e-10}
+[union90] 0.8 before   c->m max 0.4591 rms 0.2999 | dih 60.5/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 20.13
+[union90] 0.8 sharpen  c->m max 0.0099 rms 0.0027 | dih 87.4/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 14.54
+      times: mesh 0.03s  sharpen 0.03s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 161, 'snapped': 32, 'split': 78, 'splitFallback': 0, 'corners': 0, 'collapsed': 1, 'untangled': 0, 'creaseVertices': 109} {}
+[union90] 0.4 before   c->m max 0.2407 rms 0.1421 | dih 62.1/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 10.17
+[union90] 0.4 sharpen  c->m max 0.0037 rms 0.0010 | dih 88.8/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 8.34
+      times: mesh 0.10s  sharpen 0.06s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 307, 'snapped': 69, 'split': 127, 'splitFallback': 0, 'corners': 0, 'collapsed': 7, 'untangled': 0, 'creaseVertices': 190} {}
+[union90] 0.2 before   c->m max 0.1212 rms 0.0719 | dih 59.5/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 10.01
+[union90] 0.2 sharpen  c->m max 0.0007 rms 0.0002 | dih 89.4/90.0 | wt True m3d NoError folds 0 selfX 0 sliv5 0 minAng 8.31
+      times: mesh 0.47s  sharpen 0.24s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 587, 'snapped': 114, 'split': 289, 'splitFallback': 0, 'corners': 0, 'collapsed': 9, 'untangled': 0, 'creaseVertices': 396} {}
+[gyroid_clip] leaves: ['gyr', 'body']
+[gyroid_clip] true crease: {'points': 32395, 'refPitch': 0.09999999999999999, 'seconds': 7.2}
+[gyroid_clip] 0.4 before   c->m max 0.8442 rms 0.2089 | dih 53.6/89.0 | wt True m3d NoError folds 236 selfX 113 sliv5 53 minAng 0.21
+[gyroid_clip] 0.4 sharpen  c->m max 0.5735 rms 0.0424 | dih 95.6/89.0 | wt True m3d NoError folds 122 selfX 86 sliv5 50 minAng 0.05
+      times: mesh 0.26s  sharpen 2.95s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 4814, 'snapped': 695, 'split': 2875, 'splitFallback': 0, 'corners': 0, 'collapsed': 705, 'untangled': 128, 'creaseVertices': 2998} {}
+[gyroid_clip] 0.25 before   c->m max 0.6340 rms 0.1341 | dih 54.5/89.0 | wt True m3d NoError folds 385 selfX 233 sliv5 89 minAng 0.08
+[gyroid_clip] 0.25 sharpen  c->m max 0.4452 rms 0.0263 | dih 93.0/89.0 | wt True m3d NoError folds 148 selfX 98 sliv5 71 minAng 0.06
+      times: mesh 0.73s  sharpen 4.32s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 7552, 'snapped': 1118, 'split': 4415, 'splitFallback': 0, 'corners': 0, 'collapsed': 1024, 'untangled': 147, 'creaseVertices': 4763} {}
+[gyroid_clip] 0.15 before   c->m max 0.4464 rms 0.0828 | dih 53.5/89.0 | wt True m3d NoError folds 476 selfX 225 sliv5 118 minAng 0.05
+[gyroid_clip] 0.15 sharpen  c->m max 0.1863 rms 0.0091 | dih 91.6/89.0 | wt True m3d NoError folds 112 selfX 76 sliv5 42 minAng 0.14
+      times: mesh 2.28s  sharpen 7.90s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 12613, 'snapped': 1849, 'split': 7410, 'splitFallback': 17, 'corners': 0, 'collapsed': 1536, 'untangled': 132, 'creaseVertices': 8185} {}
+[skin_core] leaves: ['body', 'body+1.5', 'gyr']
+[skin_core] true crease: {'points': 21405, 'refPitch': 0.09999999999999999, 'seconds': 6.2}
+[skin_core] 0.4 before   c->m max 1.0787 rms 0.2648 | dih 56.3/89.7 | wt True m3d NoError folds 149 selfX 55 sliv5 24 minAng 0.49
+[skin_core] 0.4 sharpen  c->m max 0.9039 rms 0.0799 | dih 98.9/89.7 | wt True m3d NoError folds 112 selfX 86 sliv5 16 minAng 0.26
+      times: mesh 0.25s  sharpen 1.36s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 2749, 'snapped': 426, 'split': 1557, 'splitFallback': 0, 'corners': 0, 'collapsed': 258, 'untangled': 69, 'creaseVertices': 1771} {}
+[skin_core] 0.25 before   c->m max 0.9452 rms 0.1742 | dih 54.8/89.7 | wt True m3d NoError folds 235 selfX 103 sliv5 43 minAng 0.11
+[skin_core] 0.25 sharpen  c->m max 0.8038 rms 0.0530 | dih 96.2/89.7 | wt True m3d NoError folds 82 selfX 63 sliv5 24 minAng 0.49
+      times: mesh 0.69s  sharpen 2.35s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 4418, 'snapped': 640, 'split': 2652, 'splitFallback': 2, 'corners': 0, 'collapsed': 296, 'untangled': 82, 'creaseVertices': 3046} {}
+[skin_core] 0.15 before   c->m max 0.6606 rms 0.0967 | dih 56.4/89.7 | wt True m3d NoError folds 358 selfX 170 sliv5 54 minAng 0.02
+[skin_core] 0.15 sharpen  c->m max 0.5090 rms 0.0247 | dih 93.4/89.7 | wt True m3d NoError folds 124 selfX 150 sliv5 20 minAng 0.17
+      times: mesh 2.09s  sharpen 4.80s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 7943, 'snapped': 1202, 'split': 4561, 'splitFallback': 3, 'corners': 0, 'collapsed': 721, 'untangled': 125, 'creaseVertices': 5210} {}
+[minus] leaves: ['body', 'tor']
+[minus] true crease: {'points': 2348, 'refPitch': 0.13333333333333333, 'seconds': 0.8}
+[minus] 0.8 before   c->m max 1.6532 rms 0.7282 | dih 60.8/132.5 | wt True m3d NoError folds 18 selfX 4 sliv5 6 minAng 0.28
+[minus] 0.8 sharpen  c->m max 0.4397 rms 0.0298 | dih 133.4/132.5 | wt True m3d NoError folds 1 selfX 0 sliv5 0 minAng 5.71
+      times: mesh 0.03s  sharpen 0.09s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 223, 'snapped': 26, 'split': 159, 'splitFallback': 0, 'corners': 0, 'collapsed': 33, 'untangled': 2, 'creaseVertices': 159} {}
+[minus] 0.4 before   c->m max 0.8050 rms 0.3610 | dih 64.2/132.5 | wt True m3d NoError folds 54 selfX 34 sliv5 17 minAng 0.53
+[minus] 0.4 sharpen  c->m max 0.2554 rms 0.0144 | dih 132.9/132.5 | wt True m3d NoError folds 1 selfX 0 sliv5 0 minAng 5.70
+      times: mesh 0.08s  sharpen 0.31s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 475, 'snapped': 54, 'split': 340, 'splitFallback': 0, 'corners': 0, 'collapsed': 97, 'untangled': 3, 'creaseVertices': 331} {}
+[minus] 0.2 before   c->m max 0.3939 rms 0.1798 | dih 62.1/132.5 | wt True m3d NoError folds 113 selfX 57 sliv5 30 minAng 0.14
+[minus] 0.2 sharpen  c->m max 0.2267 rms 0.0236 | dih 132.3/132.5 | wt True m3d NoError folds 32 selfX 13 sliv5 16 minAng 0.13
+      times: mesh 0.33s  sharpen 0.92s  rawMC 0.00s  aware 0.00s  {'crossingEdges': 997, 'snapped': 86, 'split': 783, 'splitFallback': 0, 'corners': 0, 'collapsed': 273, 'untangled': 36, 'creaseVertices': 669} {}
