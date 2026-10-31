@@ -349,12 +349,14 @@ few samples that set the peak stress everywhere in the solid design space
 child links, swept through their joints' ranges, become `bore: false` mesh
 keep-outs with the study's preserved interfaces cut out. Inputs worth
 setting: `--ramp` (seconds to full speed, what the controller allows),
-`--push` (N, the hardest contact at the tool; a stalled joint pushes up to it) and `--balanced`
+`--push` (N, the hardest contact at the tool in any direction, default 20: often the case that sizes the part, so set it from the job, 0 if nothing pushes) and `--balanced`
 for joints a spring counterbalances. Write the study in the URDF's world
 frame at the home pose (mm), or pass `--frame link` if it is in the link's own
 frame (origin at its joint): a mismatch silently gives wrong moment arms. The
 study needs no load cases (they are replaced; `fasteners` and their preload are
-kept). Python: `loadpath.assembly`
+kept), though `loadpath check` on it alone wants one: check the derived study.
+`sweptKeepOuts` is empty when the URDF has no collision or visual geometry.
+The derived loads are the sweep's own accelerations: no extra dynamic factor. Python: `loadpath.assembly`
 (`Robot.from_urdf`, `sweep_loads`, `governing_cases`, `swept_keepouts`,
 `derive_study`).
 

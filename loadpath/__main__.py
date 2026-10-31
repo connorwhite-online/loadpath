@@ -382,7 +382,7 @@ def main(argv=None):
     asm.add_argument("--payload-radius", type=float, default=0.0, help="m: payload position scatters this far")
     asm.add_argument("--samples", type=int, default=1500, help="random poses (on top of the limit corners)")
     asm.add_argument("--ramp", type=float, default=0.2, help="s to full speed (before the effort limit)")
-    asm.add_argument("--push", type=float, default=20.0, help="N: contact at the payload, any direction")
+    asm.add_argument("--push", type=float, default=20.0, help="N: contact at the payload, any direction (default 20; often sizes the part, 0 if nothing pushes)")
     asm.add_argument("--contact-max", type=float, help="N: hardest an obstacle pushes back on a stalled joint "
                      "(default: --push)")
     asm.add_argument("--balanced", default="", help="joints a counterbalance holds against gravity: j2,...")
