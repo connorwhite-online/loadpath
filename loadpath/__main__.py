@@ -29,6 +29,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from .tasks import jsonable as _jsonable
 
@@ -149,7 +150,7 @@ def _assembly(args):
     derived, report = derive_study(robot, args.link, study, args.region, payload=payload, keep_cases=args.keep_cases,
                                    sweep_space=not args.no_space, k=args.cases, method=args.method,
                                    sweep_kw=sweep_kw, space_kw={"clearance": args.clearance}, out_dir=args.out,
-                                   base_dir=base, cycles={k: float(v) for k, v in
+                                   base_dir=base, frame=args.frame, cycles={k: float(v) for k, v in
                                                           (kv.split("=") for kv in args.cycles.split(",") if kv)})
     # the study's own mesh paths are relative to its folder: make them absolute
     for key in ("designSpace", "preserve", "keepOut"):
@@ -339,6 +340,7 @@ def main(argv=None):
     cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
     cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
     cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
+    sub.add_parser("guide", help="print the agent guide (SKILL.md: how to turn a request into a study)")
     im = sub.add_parser("import", help="a STEP/STL part as a draft study: bores, bolt patterns and mounting "
                                        "faces found, interfaces preserved, a support and load suggested")
     im.add_argument("part", help="STEP (.step/.stp, needs loadpath[step]), STL, 3MF or OBJ, in mm")
@@ -362,6 +364,9 @@ def main(argv=None):
     asm.add_argument("--study", required=True, help="the part's study: interfaces, material, goal, design space")
     asm.add_argument("--region", required=True, help="the study region the far joint loads (a socket, a mount)")
     asm.add_argument("--joint", help="the far joint, if the link has more than one moving child joint")
+    asm.add_argument("--frame", choices=["world", "link"], default="world",
+                     help="the study's frame: world (the URDF's world at the home pose, mm) or link (the "
+                     "designed link's own frame, mm, origin at its joint)")
     asm.add_argument("--payload", type=float, default=0.0, help="kg at the end of the chain")
     asm.add_argument("--payload-link", help="link that carries the payload (default: the chain's last link)")
     asm.add_argument("--payload-at", default="0,0,0", help="payload position in that link's frame, m: x,y,z")
@@ -420,6 +425,10 @@ def main(argv=None):
         return _verify(args)
     if args.cmd == "import":
         return _import(args)
+    if args.cmd == "guide":
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKILL.md")) as fh:
+            print(fh.read())
+        return 0
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
@@ -449,20 +458,55 @@ def main(argv=None):
         _write_report(args.out, rep)
         return 0
 
+    if study.multi_material is not None:
+        # several materials placed by the optimizer (multimat.py): bodies,
+        # an STL per material, a multi-material 3MF and report.json
+        from .multimat import run_multimaterial
+
+        mres = run_multimaterial(study, on_progress=lambda ev, *_: _progress(ev, None))
+        files = mres.write(args.out)
+        print(json.dumps(_jsonable({"ok": True, "mass": mres.report.get("mass"),
+                          "materialMass": mres.report.get("materialMass"),
+                          "safetyFactor": mres.report.get("safetyFactor"),
+                          "interfaceSafetyFactor": mres.report.get("interfaceSafetyFactor"),
+                          "requirementsMet": mres.report.get("requirementsMet"), "files": files}),
+                         indent=2, default=str))
+        return 0
     if not args.no_render and not _can_render():
         args.no_render = True
     from .study import run_study
 
+    # a run can take half an hour: say which process it is, so a caller polling
+    # from elsewhere can tell it apart from other runs and see it finish
+    os.makedirs(args.out, exist_ok=True)
+    status_path = os.path.join(args.out, "status.json")
+
+    def _status(state, **kw):
+        with open(status_path, "w") as fh:
+            json.dump({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study), **kw}, fh)
+
+    _status("running", started=time.time())
     rec = None
     if args.viewer != "none" and not os.environ.get("LOADPATH_NO_RENDER"):
         from .viewer import HistoryRecorder
         rec = HistoryRecorder(chain=_progress)
-    result = run_study(study, on_progress=rec or _progress)
+    try:
+        result = run_study(study, on_progress=rec or _progress)
+    except BaseException as exc:
+        _status("failed", error=f"{type(exc).__name__}: {exc}")
+        raise
     os.makedirs(args.out, exist_ok=True)
     summary = result.to_dict()
     stems = []
     for i, o in enumerate(result.outcomes):
         stem = f"{study.name}-{int(round(o.volume_fraction * 100)):02d}"
+        if stem in stems:
+            # two outcomes within half a percent (a search bisecting): one
+            # file each, or the second overwrites the first's STL
+            stem = f"{study.name}-{o.volume_fraction * 100:.1f}".replace(".", "p")
+            k = 2
+            while stem in stems:
+                stem, k = f"{study.name}-{int(round(o.volume_fraction * 100)):02d}-{k}", k + 1
         stems.append(stem)
         stl = os.path.join(args.out, stem + ".stl")
         o.mesh.export(stl)
@@ -522,7 +566,10 @@ def main(argv=None):
             summary["viewer"] = html
         except Exception as exc:  # noqa: BLE001 - the parts and report matter more than the page
             summary.setdefault("warnings", []).append(f"viewer not written: {exc}")
+    from .delivery import delivery
+    summary["deliver"] = delivery(summary, raw)
     _write_report(args.out, summary)
+    _status("done", report=os.path.join(os.path.abspath(args.out), "report.json"))
     if not os.environ.get("LOADPATH_NO_HINT"):
         print("Print or host this part: https://www.materialize.cc  (silence with LOADPATH_NO_HINT=1)",
               file=sys.stderr)
@@ -680,5 +727,15 @@ def _orient(args):
     return 0
 
 
+def _main():
+    # `loadpath check study.json | head` closes the pipe early: exit quietly
+    try:
+        return main()
+    except BrokenPipeError:
+        import os
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main())

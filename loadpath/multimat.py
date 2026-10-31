@@ -37,10 +37,10 @@ What a design can be asked for (MMA, mma.py, carries the constraints):
   F = sqrt(2 E / c), c the part's compliance there (mm/N), so the peak
   force limit is a lower limit on c (impact.py's solid_impact, as a
   constraint). An indentation case (`"indentation": {"relativeTo": case,
-  "atLeast": mm}`) asks a small patch to sink at least that far into the
-  part more than the same force spread over the pad does: the grip pad's
-  conformity, measured apart from the finger's bending (both cases share
-  the bending, so the difference is the local give);
+  "atLeast": mm}`) asks a small patch to sink at least that far more under
+  its own load than the same patch moves when the same force is spread
+  over the pad (relativeTo): the grip pad's conformity, read at the patch
+  so the finger's bending there cancels;
 * interfaces that hold. Two materials meet at a bond that is weaker than
   either (interface_library.py sources it per pair: PETG/TPU bonds,
   PLA/PETG barely does). The traction across each interface (normal pull
@@ -513,6 +513,11 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
     c0 = None
     history = []
     gamma, p0 = 0.0, None
+    # the cases a softness requirement reads, solved on the Voigt model
+    req_idx = sorted({names.index(r.case) for r in mm.requirements} |
+                     {names.index(r.relative_to) for r in mm.requirements if r.relative_to})
+    solver_v = Solver(mesh, rtol=1e-6, maxiter=2000)
+    uv = {}
     frozen = False
     f0_frozen = None
     beta_max_at = 0 if beta >= beta_max else None
@@ -571,7 +576,9 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
         # to where the bond is not loaded, or by having less of it there.
         int_g = None
         if use_int and frozen:
-            stress = [stiff.stress(u, lam_e, mu_e) * sc for u, wc, sc in zip(us, weights, scales) if wc > 0 or sc != 1.0]
+            # every case: a softness case is a real load too (the poke's
+            # edge presses on the pad's bond as hard as anything)
+            stress = [stiff.stress(u, lam_e, mu_e) * sc for u, sc in zip(us, scales)]
             normals = _material_normals(domain, w)
             num, den = 0.0, 0.0
             gnum_x, gden_x = np.zeros(n), np.zeros(n)
@@ -625,25 +632,65 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
             g_vals.append(1.0 - v / (lo * solid))
             g_x.append(-(w[kk] * solid - v) / (lo * solid ** 2))
             g_y.append(-np.einsum("n,jn->jn", xb / (lo * solid), dw[kk]))
+        # Softness on the penalized model (as the objective) by default. The
+        # Voigt bound (density and material mixed linearly, so grey is as
+        # stiff as it could be) was tried so grey core could not fake a soft
+        # pad: on the bracket it met the knock by geometry instead and left a
+        # bolt boss floating, so it is off (VOIGT_SOFTNESS).
+        if req_idx and VOIGT_SOFTNESS:
+            lam_v = lam_min + xb * (w.T @ lam_i)
+            mu_v = mu_min + xb * (w.T @ mu_i)
+            kv = stiff.assemble(lam_v, mu_v, springs)
+            got = solver_v.solve_many(kv, [loads[c] for c in req_idx], [uv.get(c) for c in req_idx])
+            uv = dict(zip(req_idx, got))
+            dlv_dx, dmv_dx = w.T @ lam_i, w.T @ mu_i
+            wfac, sol_v = np.broadcast_to(xb, w.shape), solver_v
+        elif req_idx:
+            lam_v, mu_v, kv, sol_v = lam_e, mu_e, k, solver
+            uv = {c: us[c] for c in req_idx}
+            dlv_dx, dmv_dx, wfac = dlam_dx, dmu_dx, xpp * dwp
+        if req_idx:
+
+            def grad_v(ca, cb):
+                """d(f_ca . u_cb) on the Voigt model = -u_ca^T dK u_cb."""
+                ua, ub = uv[ca][mesh.edof], uv[cb][mesh.edof]
+                el = np.einsum("ij,jk,ik->i", ua, stiff.kl, ub)
+                em = np.einsum("ij,jk,ik->i", ua, stiff.km, ub)
+                gx = -(el * dlv_dx + em * dmv_dx)
+                gw = -wfac * (el[None, :] * lam_i[:, None] + em[None, :] * mu_i[:, None])
+                return gx, np.einsum("in,ijn->jn", gw, dw)
+
         for r in mm.requirements:
             ci = names.index(r.case)
             F = max(forces[ci], 1e-12)
+            cv = float(loads[ci] @ uv[ci])
             if r.kind == "knock":
                 # c = C / F^2 (mm/N) >= 2 E / Fmax^2 ; E in J = 1000 N mm
                 cmin = 2.0 * r.energy * 1000.0 / r.max_force ** 2
-                c = comp[ci] / F ** 2
+                c = cv / F ** 2
                 req_vals[r.case] = {"compliance": c, "peakForce": float(np.sqrt(2.0 * r.energy * 1000.0 / c))}
+                gcx, gcy = grad_v(ci, ci)
                 g_vals.append(1.0 - c / cmin)
-                g_x.append(-grads[ci][0] / (F ** 2 * cmin))
-                g_y.append(-grads[ci][1] / (F ** 2 * cmin))
+                g_x.append(-gcx / (F ** 2 * cmin))
+                g_y.append(-gcy / (F ** 2 * cmin))
             else:
                 ri = names.index(r.relative_to)
                 Fr = max(forces[ri], 1e-12)
-                dind = F * (comp[ci] / F ** 2 - comp[ri] / Fr ** 2)
+                # how far the patch sinks under its own load, less how far the
+                # same patch moves when the force is spread (relativeTo) and
+                # scaled to the same size: both read at the patch, so the
+                # finger's bending there cancels. (Comparing with the spread
+                # case's own mean displacement mixed in the tip's larger
+                # bending.)
+                mut = float(loads[ci] @ uv[ri])
+                dind = cv / F - mut / Fr
                 req_vals[r.case] = {"indentation": dind}
-                g_vals.append(1.0 - dind / r.at_least)
-                g_x.append(-(F / F ** 2 * grads[ci][0] - F / Fr ** 2 * grads[ri][0]) / r.at_least)
-                g_y.append(-(F / F ** 2 * grads[ci][1] - F / Fr ** 2 * grads[ri][1]) / r.at_least)
+                gcx, gcy = grad_v(ci, ci)
+                gmx, gmy = grad_v(ci, ri)
+                tgt = INDENT_MARGIN * r.at_least
+                g_vals.append(1.0 - dind / tgt)
+                g_x.append(-(gcx / F - gmx / Fr) / tgt)
+                g_y.append(-(gcy / F - gmy / Fr) / tgt)
         if use_int:
             if int_g is None or f0_frozen is None:
                 g_vals.append(-1.0)
@@ -662,9 +709,9 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
                 continue
             ci = names.index(r.case)
             gv, gxx, gyy, peak_r = _energy_constraint(
-                stiff, solver, k, loads[ci], us[ci], comp[ci], r.energy * 1000.0, lam_e, mu_e, xb, w,
-                dlam_dx, dmu_dx, xpp, dwp, dw, lam_i, mu_i, resil, (r.safety_factor or sf_int) ** 2,
-                max(volume_fraction * n, 1.0))
+                stiff, sol_v, kv, loads[ci], uv[ci], float(loads[ci] @ uv[ci]), r.energy * 1000.0, lam_v, mu_v,
+                xb, w, dlv_dx, dmv_dx, *((xb, np.ones_like(w)) if VOIGT_SOFTNESS else (xpp, dwp)), dw, lam_i, mu_i, resil,
+                (r.safety_factor or sf_int) ** 2, max(volume_fraction * n, 1.0))
             req_vals[r.case]["energyUtilization"] = peak_r
             # as ln P, for the same reason as the interface
             pv = max(gv + 1.0, 1e-12)
@@ -747,6 +794,8 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
 PNORM = 10.0
 # how much stiffness the bond stage may give up to unload the interfaces
 STIFFNESS_GIVE = 0.10
+INDENT_MARGIN = 1.1
+VOIGT_SOFTNESS = False
 
 
 def _energy_constraint(stiff, solver, k, f, u, comp, energy, lam_e, mu_e, xb, w, dlam_dx, dmu_dx, xpp, dwp,
@@ -1008,8 +1057,7 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
                 sf = min(sf, entry["acrossLayers"]["safetyFactor"])
                 entry["safetyFactor"] = sf
             per[m.name] = entry
-            if r is None or r.kind == "knock":
-                worst["material"] = min(worst["material"], sf)
+            worst["material"] = min(worst["material"], sf)
         rec["materials"] = per
         # interfaces: traction from the two cells' mean stress, on the axis normal
         ints = {}
@@ -1037,8 +1085,7 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
             ints[name] = {"faces": int(len(ut)), "peakUtilization": float(ut.max()),
                           "utilization": p99, "safetyFactor": 1.0 / p99 if p99 > 0 else np.inf,
                           "at": wh[np.argmax(ut)].tolist()}
-            if r is None or r.kind == "knock":
-                worst["interface"] = min(worst["interface"], ints[name]["safetyFactor"])
+            worst["interface"] = min(worst["interface"], ints[name]["safetyFactor"])
         rec["interfaces"] = ints
         cases.append(rec)
     for r in mm.requirements:
@@ -1046,7 +1093,7 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
             continue
         ci, ri = names.index(r.case), names.index(r.relative_to)
         F, Fr = _case_force(bc.loads[ci]), _case_force(bc.loads[ri])
-        d = F * (cases[ci]["compliance"] / F ** 2 - cases[ri]["compliance"] / Fr ** 2)
+        d = cases[ci]["compliance"] / F - float(bc.loads[ci] @ us[ri]) / Fr
         cases[ci]["indentation"] = {"value": d, "atLeast": r.at_least, "meets": bool(d >= r.at_least * 0.999),
                                     "relativeTo": r.relative_to}
 

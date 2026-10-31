@@ -313,6 +313,15 @@ class SimpOptions:
     # as void, see density_filter), or None for the default: padded unless
     # the part is extruded. The benchmarks turn it off to match top88/top3d.
     pad_filter: bool | None = None
+    # Deflation (after Papadopoulos, Farrell & Surowiec 2021): delivered
+    # designs (xphys per element) to repel this run from. The objective is
+    # compliance times prod_k (deflate_weight * d_k^-deflate_power + 1), d_k
+    # the RMS density difference to design k over the design cells, so a run
+    # that heads back into a basin already found pays for it and settles in
+    # another. Empty: off.
+    deflate: tuple = ()
+    deflate_weight: float = 0.05
+    deflate_power: float = 2.0
 
 
 @dataclass
@@ -500,12 +509,12 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres):
     return xp, us
 
 
-def _heat_state(heat, x, fg):
+def _heat_state(heat, x, fg, reuse=False):
     """Solve the temperature at densities x and return (self-weight plus
     expansion load, expansion load or None), in the optimizer's units: forces
     in N against unit-modulus stiffness, so the expansion's E0 is in the
     load."""
-    heat.temperature(x)
+    heat.temperature(x, reuse=reuse)
     if not heat.expands:
         return fg, None
     fth = heat.load(np.where(x > ALIVE, x ** PENALTY * (1 - E_MIN), 0.0), heat.E0)
@@ -725,7 +734,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if heat is not None:
             # the design's own temperature, softening and expansion load
             # (thermal.StudyHeat)
-            fg, fth = _heat_state(heat, xe, fg)
+            fg, fth = _heat_state(heat, xe, fg, reuse=True)
             e = e * heat.g
         # A force of unknown direction is three solves, one per axis, and
         # each case is judged in its worst direction (directions.py).
@@ -767,6 +776,18 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             dproj[void] = 0.0
             dproj_e[void] = 0.0
         dc = ht @ (printed_grad(am_e, dc_xp) * dproj_e / hs)
+        if opts.deflate:
+            # d log M / d xp, scaled by compliance (J = c M, divided by M so
+            # the step size stays the plain compliance one), carried back
+            # through the blueprint's projection and the filter
+            g = np.zeros(n)
+            for xk in opts.deflate:
+                diff = np.where(design, xp - xk, 0.0)
+                d2 = float(diff @ diff) / n_design
+                dk = max(d2, 1e-12) ** 0.5
+                a = opts.deflate_weight * dk ** -opts.deflate_power
+                g += (-opts.deflate_power * a / (a + 1.0)) * diff / (d2 * n_design)
+            dc = dc + ht @ (printed_grad(am_b, comp * g) * dproj / hs)
         dv = ht @ (printed_grad(am_b, design.astype(float)) * dproj / hs)
         dc = np.minimum(dc, 0.0)
         if robust:

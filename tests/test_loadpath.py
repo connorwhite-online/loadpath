@@ -118,6 +118,22 @@ def test_simp_keeps_volume_and_symmetry():
     assert grey < 0.1, grey
 
 
+def test_deflation_finds_another_layout_at_the_same_volume():
+    # A run deflated from a first design settles somewhere else, at the same
+    # volume and still a working part (compliance within a few times).
+    from dataclasses import replace
+    s = study_from_dict(LUG)
+    d = build_domain(s)
+    opts = SimpOptions(volume_fraction=0.35, filter_radius=filter_radius(d, None), max_iterations=60)
+    a = optimize(d, 0.39, opts)
+    b = optimize(d, 0.39, replace(opts, deflate=(a.xphys,), deflate_weight=0.05))
+    design = ~d.preserve
+    assert abs(b.xphys[design].mean() - 0.35) < 0.01, b.xphys[design].mean()
+    dist = np.sqrt(np.mean((a.xphys[design] - b.xphys[design]) ** 2))
+    assert dist > 0.15, dist
+    assert b.compliance < 3.0 * a.compliance, (a.compliance, b.compliance)
+
+
 def test_reconstruct_keeps_bores_exact_and_preserve_whole():
     s = study_from_dict(LUG)
     d = build_domain(s)

@@ -690,25 +690,33 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
                              "expansion": heat.alpha if heat.expands else 0.0,
                              "stressFree": heat.t_ref,
                              "heatIn": float(heat.bc.power)}
+        cyc = heat.cycle_result
+        if cyc is not None:
+            report["thermal"].update(
+                maxTemperature=float(cyc.node_max.max()), minTemperature=float(cyc.node_min.min()),
+                swing=float((cyc.node_max - cyc.node_min).max()), hotAt=cyc.t_hot, coldAt=cyc.t_cold,
+                meanHot=float(cyc.mean.max()), meanCold=float(cyc.mean.min()), periods=cyc.periods,
+                converged=cyc.converged, period=heat.cycle.period, on=heat.cycle.on)
     # A force of unknown direction is solved along each axis and judged in
     # the direction that stresses the part most (directions.py).
     from .directions import expand, worst_stress_direction
     spreads = bc.spreads or [None] * len(study.load_cases)
     rhs, layout = expand(bc.loads, spreads, fg)
     from .simp import _use_mg
-    if _use_mg(hm.n_elem):
-        # From simp.MG_MIN_CELLS up, matrix-free multigrid (as the optimizer
-        # uses): no assembled matrix, a fraction of the memory and time. It
-        # raises RuntimeError on non-convergence like Solver does. It also
-        # carries .mesh and .nu, which is all the stress recovery reads.
-        from .mg import GridElasticity
 
-        stiff = GridElasticity(hm, study.elastic(mat), fixed,
-                               springs=mat.E * bc.springs if bc.springs is not None else None,
-                               rtol=1e-6, maxiter=3000)
-        stiff.set_moduli(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
-        displacements = stiff.solve_many(rhs)
-    else:
+    def solve(moduli, rhs):
+        if _use_mg(hm.n_elem):
+            # From simp.MG_MIN_CELLS up, matrix-free multigrid (as the optimizer
+            # uses): no assembled matrix, a fraction of the memory and time. It
+            # raises RuntimeError on non-convergence like Solver does. It also
+            # carries .mesh and .nu, which is all the stress recovery reads.
+            from .mg import GridElasticity
+
+            stiff = GridElasticity(hm, study.elastic(mat), fixed,
+                                   springs=mat.E * bc.springs if bc.springs is not None else None,
+                                   rtol=1e-6, maxiter=3000)
+            stiff.set_moduli(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
+            return stiff, stiff.solve_many(rhs)
         stiff = Stiffness(hm, study.elastic(mat), fixed)
         k = stiff.assemble(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
         if bc.springs is not None:
@@ -717,7 +725,26 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         # more iterations. All cases share one multigrid hierarchy and run on
         # threads.
         solver = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
-        displacements = solver.solve_many(k, rhs)
+        return stiff, solver.solve_many(k, rhs)
+
+    stiff, displacements = solve(moduli, rhs)
+    cold = None
+    if study.thermal is not None and heat.cold is not None:
+        # The cycle's coldest moment, solved the same way: a part held at a
+        # hot stress-free temperature is stressed cold, and its swing is what
+        # thermal cycling fatigues (each case keeps its hot worst direction).
+        t_hot = heat.t_node
+        heat.use(heat.cold)
+        mod_c = mat.E * heat.g
+        eps_c = heat.eps if heat.expands else None
+        g_c = retention(heat.curve, heat.cold)[0] if heat.curve is not None else np.ones(hm.n_nodes)
+        fg_c = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else None
+        if heat.expands:
+            fth_c = heat.load(np.ones(hm.n_elem), mat.E)
+            fg_c = fth_c if fg_c is None else fg_c + fth_c
+        rhs_c = expand(bc.loads, spreads, fg_c)[0]
+        stiff_c, disp_c = solve(mod_c, rhs_c)
+        cold = (stiff_c, disp_c, mod_c, eps_c, g_c)
     from scipy.spatial import cKDTree
     cases = []
     worst_sf = np.inf
@@ -812,6 +839,34 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             k_in = 1.0 if g_node is None else float(g_node[ti])
             sf_inter = k_in * proc.interlayer * mat.strength / (inter * STRESS_ALLOWANCE) if inter > 0 else np.inf
             sf = min(sf, sf_inter)
+        cyc_row = {}
+        if cold is not None:
+            stiff_c, disp_c, mod_c, eps_c, g_c = cold
+            if len(idx) == 1:
+                u_c = disp_c[idx[0]]
+            else:
+                u_c = sum(direction[j] * disp_c[i] for j, i in enumerate(idx[1:]))
+                if idx[0] is not None:
+                    u_c = u_c + disp_c[idx[0]]
+            s_h = nodal_stress(stiff, u, moduli, eps) / np.maximum(g_node, 1e-3)[:, None]
+            s_c = nodal_stress(stiff_c, u_c, mod_c, eps_c) / np.maximum(g_c, 1e-3)[:, None]
+            util_c = von_mises(s_c)
+            pk_c = int(np.argmax(np.where(body, util_c, -1))) if body.any() else int(np.argmax(util_c))
+            sf_c = mat.strength / (util_c[pk_c] * STRESS_ALLOWANCE) if util_c[pk_c] > 0 else np.inf
+            sf = min(sf, sf_c)
+            # Thermal-cycling fatigue: durability's design curves read the
+            # cycle's maximum stress (which carries the mean-stress effect for
+            # R up to ~0.3); a stress that barely moves over the cycle is
+            # creep, not fatigue, so above that the swing counts: the
+            # equivalent is min(max, range / 0.7). Stresses over retention,
+            # so they read against room-temperature strength.
+            smax = np.maximum(von_mises(s_h), util_c)
+            rng = von_mises(s_h - s_c)
+            seq = np.where(body, np.minimum(smax, rng / 0.7), 0.0)
+            pc = int(np.argmax(seq))
+            cyc_row = {"coldSafetyFactor": sf_c, "coldPeakStress": float(util_c[pk_c] * g_c[pk_c]),
+                       "cycleStress": float(seq[pc]), "cycleStressRange": float(rng[pc]),
+                       "cycleAt": hm.node_xyz[pc].tolist()}
         worst_sf = min(worst_sf, sf)
         cases.append({
             "name": case.name,
@@ -822,8 +877,10 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             "p99Stress": float(np.percentile(vm[body] if body.any() else vm, 99)),
             "contactPeakStress": float(vm.max()),
             "safetyFactor": sf,
-            **({"peakTemperature": float(heat.t_node[pk]), "strengthRetention": keep}
+            **({"peakTemperature": float((t_hot if cold is not None else heat.t_node)[pk]),
+                "strengthRetention": keep}
                if g_node is not None else {}),
+            **cyc_row,
             "interlayerStress": inter,
             "deflection": defl,
             "maxDisplacement": float(np.linalg.norm(disp, axis=1).max()),

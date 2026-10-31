@@ -160,6 +160,15 @@ def make_solve(out):
     return solve
 
 
+def make_verify(arm):
+    def verify(link, cases):
+        goal = json.load(open(os.path.join(SDIR, f"{link}.json")))["goal"]["safetyFactor"]
+        rep = check(link, arm.parts[link][0][0], cases)
+        rep["passes"] = rep["sf"] >= goal and rep["bodies"] == 1
+        return rep
+    return verify
+
+
 def _restore(arm, state, out):
     """Put the parts a saved run grew back into the arm."""
     for link, rec in state.get("links", {}).items():
@@ -222,7 +231,7 @@ def main(argv=None):
             json.dump(s, open(tmp, "w"), indent=1)
             os.replace(tmp, path)
         state = co_optimize(arm, ORDER, make_derive(arm, args.samples), make_solve(args.out),
-                            passes=args.passes, tol=args.tol, state=state, save=save)
+                            verify=make_verify(arm), passes=args.passes, tol=args.tol, state=state, save=save)
         print(json.dumps(state["totals"], indent=1))
         return 0
     # report: both arms, each link verified under the loads its own arm puts on it

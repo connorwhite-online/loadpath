@@ -22,6 +22,7 @@ What the code reads:
   strengthZ                     across-layer strength -> process.interlayer
   EZ                            across-layer modulus -> process stiffnessAcrossLayers
   conductivity                  thermal.CONDUCTIVITY (heat paths, thermal TO)
+  specificHeat                  J/(kg K) -> thermal.SPECIFIC_HEAT (heat-up and cool-down)
   hdt                           heat deflection temperature at 0.45 MPa: the
                                 temperature checks warn above it (durability)
   cte                           thermal expansion, um/(m K) -> thermal.EXPANSION
@@ -144,6 +145,10 @@ SOURCES = {
     "handbook": Source(
         "typical wrought/cast handbook value for the alloy (ASM Handbook class data)", "",
         "used where the AM datasheet gives none; AM parts sit within a few percent"),
+    "polymer-handbook": Source(
+        "typical value for the polymer family (J. E. Mark, Physical Properties of Polymers Handbook, "
+        "2nd ed., Springer 2007)", "https://doi.org/10.1007/978-0-387-69002-5",
+        "unfilled bulk polymer; printing does not change the specific heat"),
     "estimate": Source(
         "loadpath estimate: no datasheet value", "",
         "typical of the polymer family; replace with a calibrated card where it matters"),
@@ -179,6 +184,7 @@ LIBRARY = {
               hdt=(55, "prusament-pla", "ISO 75, 0.45 MPa"),
               hdt18=(55, "prusament-pla", "ISO 75, 1.80 MPa"),
               conductivity=(0.19, "tychanicz-2025", "W/(m K)"),
+              specificHeat=(1800, "polymer-handbook", "J/(kg K) near 25 C; amorphous PLA 1.2-1.8 kJ/(kg K), DSC"),
               fatigue=("pla", "durability", "Ezeh & Susmel design curve"),
               cte=(68, "estimate", "um/(m K) near 23 C; typical printed PLA, in plane"),
               retention=([(23, 1.0), (45, 0.92), (55, 0.6), (60, 0.2), (65, 0.04)], "dma-estimate", _RET)),
@@ -192,6 +198,7 @@ LIBRARY = {
                hdt=(68, "prusament-petg", "ISO 75, 0.45 MPa"),
                hdt18=(68, "prusament-petg", "ISO 75, 1.80 MPa"),
                conductivity=(0.20, "tychanicz-2025", "W/(m K)"),
+               specificHeat=(1200, "polymer-handbook", "J/(kg K) near 25 C; PET copolyesters 1.1-1.3"),
                fatigue=("petg", "durability", "PLA curve scaled by strength (assumed)"),
                cte=(68, "estimate", "um/(m K) near 23 C; typical copolyester"),
                retention=([(23, 1.0), (40, 0.93), (55, 0.8), (65, 0.6), (75, 0.25), (85, 0.05)], "dma-estimate", _RET)),
@@ -207,6 +214,7 @@ LIBRARY = {
               hdt=(99.6, "polylite-abs", "ISO 75, 0.45 MPa"),
               hdt18=(98.2, "polylite-abs", "ISO 75, 1.8 MPa"),
               conductivity=(0.17, "estimate", "W/(m K), bulk ABS"),
+              specificHeat=(1400, "polymer-handbook", "J/(kg K) near 25 C; ABS 1.3-1.7"),
               fatigue=("abs", "durability", "PLA curve scaled by strength (assumed)"),
               cte=(90, "estimate", "um/(m K) near 23 C; typical ABS"),
               retention=([(23, 1.0), (60, 0.85), (80, 0.65), (95, 0.25), (105, 0.04)], "dma-estimate", _RET)),
@@ -222,6 +230,7 @@ LIBRARY = {
               hdt=(102.6, "polylite-asa", "ISO 75, 0.45 MPa"),
               hdt18=(100.2, "polylite-asa", "ISO 75, 1.8 MPa"),
               conductivity=(0.17, "estimate", "W/(m K), as ABS"),
+              specificHeat=(1300, "estimate", "J/(kg K), close to ABS"),
               fatigue=("asa", "durability", "PLA curve scaled by strength (assumed)"),
               cte=(95, "estimate", "um/(m K) near 23 C; typical ASA"),
               retention=([(23, 1.0), (60, 0.85), (80, 0.65), (95, 0.25), (105, 0.04)], "dma-estimate", _RET)),
@@ -237,6 +246,7 @@ LIBRARY = {
               elongation=(560, "ultimaker-tpu95a", "% at break XY (> 560)"),
               hdt=(50.3, "ultimaker-tpu95a", "ISO 75-2/B, 0.455 MPa"),
               conductivity=(0.20, "estimate", "W/(m K)"),
+              specificHeat=(1700, "estimate", "J/(kg K), polyether TPUs 1.5-1.9"),
               fatigue=("tpu", "durability", "rough estimate"),
               cte=(150, "estimate", "um/(m K) near 23 C; typical TPU 95A"),
               retention=([(23, 1.0), (40, 0.85), (60, 0.7), (80, 0.55), (100, 0.4)], "dma-estimate", _RET)),
@@ -251,6 +261,7 @@ LIBRARY = {
                 hdt=(194, "bambu-paht-cf", "ISO 75, 0.45 MPa"),
                 hdt18=(170, "bambu-paht-cf", "ISO 75, 1.8 MPa"),
                 conductivity=(0.40, "estimate", "W/(m K), fibre-filled, in plane"),
+                specificHeat=(1300, "estimate", "J/(kg K); PA6 ~1.6 lowered for ~15% carbon fibre"),
                 fatigue=("pa-cf", "durability", "rough estimate"),
                 cte=(30, "estimate", "um/(m K) along the laid fibres; across them several times more"),
                 retention=([(23, 1.0), (50, 0.8), (80, 0.55), (120, 0.35), (150, 0.2)], "dma-estimate", _RET)),
@@ -264,6 +275,7 @@ LIBRARY = {
                density=(1.01, "hp-5200-whitepaper", "ASTM D792"),
                elongation=(17, "hp-5200-whitepaper", "% at break XY (Z: 9)"),
                conductivity=(0.25, "estimate", "W/(m K), sintered PA12"),
+               specificHeat=(1650, "polymer-handbook", "J/(kg K) near 25 C; PA12 1.6-1.7"),
                fatigue=("pa12", "durability", "Van Hooreweder & Kruth 2014"),
                cte=(109, "estimate", "um/(m K) near 23 C; typical sintered PA12"),
                retention=([(23, 1.0), (45, 0.75), (80, 0.45), (120, 0.25), (160, 0.1)], "dma-estimate", _RET)),
@@ -276,6 +288,7 @@ LIBRARY = {
                density=(1.05, "hp-5200-whitepaper", "ASTM D792"),
                elongation=(40, "hp-5200-whitepaper", "% at break XY (Z: 25)"),
                conductivity=(0.25, "estimate", "W/(m K), as PA12"),
+               specificHeat=(1600, "estimate", "J/(kg K), as PA12"),
                fatigue=("pa11", "durability", "as PA12 (assumed)"),
                cte=(100, "estimate", "um/(m K) near 23 C; typical PA11"),
                retention=([(23, 1.0), (45, 0.75), (80, 0.45), (120, 0.25), (160, 0.1)], "dma-estimate", _RET)),
@@ -308,6 +321,7 @@ LIBRARY = {
                 hdt=(73, "formlabs-standard", "ASTM D648, 0.45 MPa"),
                 hdt18=(58, "formlabs-standard", "ASTM D648, 1.8 MPa"),
                 conductivity=(0.18, "estimate", "W/(m K)"),
+                specificHeat=(1400, "estimate", "J/(kg K), cured acrylates 1.2-1.6"),
                 fatigue=("resin", "durability", "rough estimate"),
                 cte=(79, "formlabs-standard", "um/(m K), 0-150 C, post-cured (ASTM E831)"),
                 retention=([(23, 1.0), (40, 0.8), (50, 0.5), (60, 0.2), (70, 0.05)], "dma-estimate", _RET)),
@@ -321,6 +335,7 @@ LIBRARY = {
                       hdt18=(53, "formlabs-tough2000", "ASTM D648, 1.8 MPa"),
                       cte=(91, "formlabs-tough2000", "um/(m K), 0-150 C, post-cured (ASTM E831)"),
                       conductivity=(0.18, "estimate", "W/(m K)"),
+                      specificHeat=(1400, "estimate", "J/(kg K), cured acrylates 1.2-1.6"),
                       fatigue=("resin-tough", "durability", "rough estimate"),
                       retention=([(23, 1.0), (40, 0.75), (50, 0.45), (60, 0.2), (70, 0.05)], "dma-estimate", _RET)),
     "resin-rigid": _c("glass-filled rigid resin (values from Formlabs Rigid 10K, UV cure): brittle", ("sla", "dlp"),
@@ -367,6 +382,7 @@ LIBRARY = {
                    density=(2.67, "addup-alsi10mg", "theoretical; parts 99.5% dense"),
                    elongation=(5, "addup-alsi10mg", "% at failure, XY and Z"),
                    conductivity=(125, "addup-alsi10mg", "W/(m K), low end of the sheet's 120-160 at 25 C"),
+                   specificHeat=(900, "handbook", "J/(kg K) near 25 C; Al-Si casting alloys 880-920"),
                    fatigue=("alsi10mg", "durability", "rough, as-built surface"),
                    cte=(21, "addup-alsi10mg", "um/(m K), 20-100 C"),
                    retention=([(23, 1.0), (150, 0.92), (200, 0.85), (300, 0.6)], "dma-estimate", _RET)),
@@ -379,6 +395,7 @@ LIBRARY = {
                density=(4.41, "eos-ti64", "part density"),
                elongation=(13.5, "eos-ti64", "% at break, heat treated"),
                conductivity=(6.7, "handbook", "W/(m K), Ti-6Al-4V"),
+               specificHeat=(526, "handbook", "J/(kg K), Ti-6Al-4V at 25 C"),
                fatigueStrength=(595, "eos-ti64-grade5", "MPa at 1e7 cycles, heat treated (Grade 5 sheet)"),
                fatigue=("ti64", "durability", "rough, as-built surface"),
                cte=(8.6, "handbook", "um/(m K), 20-100 C, Ti-6Al-4V"),
@@ -391,6 +408,7 @@ LIBRARY = {
                strengthZ=(632, "addup-316l", "yield strength Z, as built"),
                density=(8.0, "addup-316l", "theoretical; parts 99.9% dense"),
                conductivity=(15, "addup-316l", "W/(m K) at 20 C"),
+               specificHeat=(500, "handbook", "J/(kg K), 316L at 25 C"),
                fatigue=("316l", "durability", "rough, as-built surface"),
                cte=(17.2, "addup-316l", "um/(m K), RT-200 C (the sheet's literature value)"),
                retention=([(23, 1.0), (300, 0.9), (500, 0.82)], "dma-estimate", _RET)),
