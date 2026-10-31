@@ -340,12 +340,6 @@ def main(argv=None):
     cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
     cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
     cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
-    vr = sub.add_parser("verify", help="check any STL against a study: safety factor and deflection per load "
-                                       "case, keep-outs, preserves, pass/fail against the goal")
-    vr.add_argument("study")
-    vr.add_argument("part", help="STL, 3MF or OBJ in the study's frame, mm")
-    vr.add_argument("--cells", type=int, default=60_000, help="analysis cells")
-    vr.add_argument("--base-dir", help="where relative mesh paths in the study resolve (default: its folder)")
     sub.add_parser("guide", help="print the agent guide (SKILL.md: how to turn a request into a study)")
     im = sub.add_parser("import", help="a STEP/STL part as a draft study: bores, bolt patterns and mounting "
                                        "faces found, interfaces preserved, a support and load suggested")
@@ -432,12 +426,6 @@ def main(argv=None):
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKILL.md")) as fh:
             print(fh.read())
         return 0
-    if args.cmd == "verify":
-        from .tasks import verify_mesh
-        base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
-        rep = verify_mesh(_load(args.study), args.part, base, args.cells)
-        print(json.dumps(rep, indent=1))
-        return 0 if rep.get("ok") else 2
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
