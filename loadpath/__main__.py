@@ -580,6 +580,15 @@ def main(argv=None):
             summary.setdefault("warnings", []).append(f"viewer not written: {exc}")
     from .delivery import delivery
     summary["deliver"] = delivery(summary, raw)
+    dv = summary["deliver"]
+    if dv and dv.get("safetyFactorMethod") != "tet":
+        # say why the body-fitted cross-check did not confirm it
+        try:
+            from .crosscheck import unsupported
+            why = unsupported(study)
+        except Exception as exc:  # noqa: BLE001
+            why = f"{type(exc).__name__}: {exc}"
+        dv["tetCrossCheck"] = f"not run: {why}" if why else "not run: goal.confirm chose the voxel re-check"
     _write_report(args.out, summary)
     _status("done", report=os.path.join(os.path.abspath(args.out), "report.json"))
     if not os.environ.get("LOADPATH_NO_HINT"):

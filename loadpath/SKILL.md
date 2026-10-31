@@ -168,7 +168,10 @@ field. `check` reports every problem at once: fix them all, then check again.
    size), per-case numbers, and `warnings` gathered from every check (print,
    process, durability). Quote those numbers. To check any STL against a
    study later (an edited part, an older outcome):
-   `loadpath verify study.json part.stl`. Then:
+   `loadpath verify study.json part.stl` (its own grid, `--cells`, so it
+   reads a few percent off the run's fine re-check; quote `deliver` for a
+   delivered part). `deliver.tetCrossCheck` says why the body-fitted check
+   did not run when it did not. Then:
    - `safetyFactor` below target, or `passes: false` → raise the goal's
      volume fraction, the material, or check the loads are right;
    - `bodies` > 1 → something is not connected to a support;
