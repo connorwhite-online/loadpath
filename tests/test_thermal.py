@@ -478,6 +478,66 @@ def test_duty_cycle_gradient_and_verification():
     assert tc["cycles"] == 1e4 and abs(tc["damage"] - 1e4 / tc["life"]) < 1e-12
 
 
+def test_thermal_cycling_swing_gradient():
+    """thermal.cycle.fatigueWeight adds the hot-to-cold swing to the
+    objective: an expansion problem of its own (eps = alpha (T_hot -
+    T_cold), no mechanical load) measured by the p-norm of its von Mises
+    stress over retention. Its gradient, through density and through the
+    temperature (the cycle's hot and cold moments as shares of the steady
+    rise), against a direct finite difference of the swing alone."""
+    from scipy.sparse.linalg import spsolve
+
+    from loadpath.directions import _VM
+    from loadpath.fem import Stiffness, elastic_c, hex8_b_center
+    from loadpath.simp import E_MIN, PENALTY, _Analysis, _heat_state
+
+    th = {"heat": [{"region": "motor", "watts": 0.5}], "convection": 10,
+          "temperatures": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.5, 9, 9]}, "t": 25}],
+          "cycle": {"period": 600, "on": 200, "cycles": 1e4, "steps": 16, "fatigueWeight": 1.0}}
+    st = _hot_study(th)
+    d = build_domain(st)
+    mesh, heat = d.mesh, d.thermal
+    heat.REFRESH = 10 ** 9
+    heat.temperature()
+    heat.th.solver.rtol = 1e-13
+    nu = st.elastic(design=True)
+    fe = _Analysis(d, nu, 1e-12)
+    state = {"swing_scale": 1.0}       # the swing alone: the cases weigh 0
+
+    rho = np.random.default_rng(4).uniform(0.3, 1, d.n_elem)
+    fg, fth = _heat_state(heat, rho, None, reuse=True)
+    us = fe.solve((E_MIN + rho ** PENALTY * (1 - E_MIN)) * heat.g, rho, [None], rtol=1e-12,
+                  loads=[f + fg for f in d.loads])
+    j, _, grad, _ = heat.sensitivities(fe, rho, [f + fg for f in d.loads], us, fth, np.zeros(1), None, state)
+
+    stf = Stiffness(mesh, nu, d.fixed)
+    free = ~d.fixed
+    c0, b = elastic_c(1.0, nu), hex8_b_center() / mesh.pitch
+    m = np.array([1.0, 1, 1, 0, 0, 0])
+
+    def swing(x):
+        mat, f0 = heat.th.cond.assemble(heat.th.k * (T.K_MIN + x ** 3 * (1 - T.K_MIN)), x)
+        theta = spsolve(mat.tocsc(), f0)
+        g = T.retention(heat.curve, (heat.bc.ambient + heat.r * theta)[mesh.enode].mean(axis=1))[0]
+        eps = heat.alpha * ((heat.r - heat.r_cold) * theta)[mesh.enode].mean(axis=1)
+        p = x ** PENALTY * (1 - E_MIN)
+        f = np.bincount(mesh.edof.ravel(), weights=((p * g * eps * heat.E0)[:, None] * heat.vth).ravel(),
+                        minlength=mesh.n_dof)
+        f[d.fixed] = 0
+        k = stf.assemble((E_MIN + p) * g).tocsr()
+        u = np.zeros_like(f)
+        u[free] = spsolve(k[free][:, free], f[free])
+        sg = x[:, None] ** 0.5 * (u[mesh.edof] @ (c0 @ b).T - (heat.E0 * eps)[:, None] * (c0 @ m))
+        sg = sg * (~heat.near)[:, None]              # not by the supports and loads
+        vm = np.sqrt(np.einsum("ij,jk,ik->i", sg, _VM, sg))
+        return np.sum(vm ** 8) ** (1 / 8)
+
+    assert heat.near.any() and not heat.near.all()
+    assert abs(swing(rho) / j - 1) < 1e-8, (swing(rho), j)
+    # (rel 1e-3: PETG's retention curve is piecewise linear)
+    _fd_check(swing, grad, rho, [3, 171, 85, 33, 104], rel=1e-3)
+
+
 TESTS = [
     test_slab_with_generation_is_exact,
     test_convective_fin_matches_closed_form,
@@ -496,6 +556,7 @@ TESTS = [
     test_transient_bar_matches_series_solution,
     test_duty_cycle_of_a_lumped_block_matches_closed_form,
     test_duty_cycle_gradient_and_verification,
+    test_thermal_cycling_swing_gradient,
 ]
 
 

@@ -115,6 +115,12 @@ def delivery(summary: dict, study: dict) -> dict | None:
         **({"print": {k: v for k, v in o["print"].items() if k != "warnings"}} if o.get("print") else {}),
         "warnings": warn,
     }
+    cap = goal.get("maxMass")
+    if cap and d.get("mass") is not None and d["mass"] > cap:
+        d["passes"] = False
+        d["warnings"].insert(0, f"over the mass cap: {d['mass']:.1f} g against goal.maxMass {cap:g} g; this is "
+                                "already the lightest that meets the other limits, so use a lighter material, "
+                                "trim the preserves or lower the safety factor")
     dur = o.get("durability") or {}
     if d["passes"] and dur.get("safetyFactor") is not None and dur["safetyFactor"] < dur.get("target", 1.5):
         # a permanently loaded PLA bracket read static SF 2.6 and passes: true

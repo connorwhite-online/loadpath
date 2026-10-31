@@ -199,8 +199,61 @@ def test_simp_mg_matches_assembled():
     assert ((a.xphys > 0.5) != (b.xphys > 0.5)).mean() < 0.005
 
 
+def _bracket(pitch):
+    """The preview calibration's L-bracket (bench/preview_calibration.py):
+    a 10 mm wall held by its top 8 mm, an arm loaded at its tip, the corner
+    blended 3 mm, on fractional cells at `pitch`."""
+    from loadpath.directions import expand
+    from loadpath.domain import boundary_conditions
+    from loadpath.fields import FieldGraph
+    from loadpath.preview import _fill, _grid
+    from loadpath.spec import study_from_dict
+
+    doc = {"name": "bracket", "nodes": {
+        "wall": {"op": "shape", "shape": {"type": "box", "min": [0, -10, 0], "max": [10, 10, 60]}},
+        "arm": {"op": "shape", "shape": {"type": "box", "min": [0, -10, 0], "max": [60, 10, 10]}},
+        "part": {"op": "union", "inputs": ["wall", "arm"], "blend": 3.0}}, "output": "part", "material": "petg"}
+    study = study_from_dict({
+        "name": "bracket", "designSpace": [{"type": "box", "min": [0, -10, 0], "max": [60, 10, 60]}],
+        "preserve": [{"id": "top", "shape": {"type": "box", "min": [0, -10, 52], "max": [10, 10, 60]}},
+                     {"id": "tip", "shape": {"type": "box", "min": [52, -10, 0], "max": [60, 10, 10]}}],
+        "supports": [{"region": "top"}],
+        "loadCases": [{"name": "down", "loads": [{"region": "tip", "force": [0, 0, -40]}]}],
+        "material": "petg", "goal": {"safetyFactor": 2}})
+    g = FieldGraph(doc)
+    lo, hi = g.bounds()
+    o, dims = _grid(lo, hi, pitch)
+    fill = _fill(g, None, o, dims, pitch)
+    ijk = np.argwhere(fill >= 0.05)
+    mesh = HexMesh(ijk, pitch, o)
+    bc = boundary_conditions(study, mesh, check_loads=False, tol_floor=0.5 * pitch)
+    rhs, _ = expand(bc.loads, [None], None)
+    return mesh, study, bc.fixed, rhs[0], study.material.E * fill[tuple(ijk.T)]
+
+
+def test_thin_support_coarse_levels():
+    """A support band a cell or two from the part's edge left coarse dofs
+    interpolating onto the same few free fine dofs: the coarse factor was
+    exactly singular at pitch 0.9 and 1.12 and CG never converged at 1.127,
+    while 1.14 took 9 iterations. The strict hierarchy must take over there
+    and give the assembled answer, and leave 1.14 alone."""
+    for pitch, strict in ((1.14, False), (1.12, True), (1.1272652898754647, True), (0.9, True)):
+        mesh, study, fixed, f, e = _bracket(pitch)
+        nu = study.elastic(study.material)
+        for dev in DEVICES:
+            g = GridElasticity(mesh, nu, fixed, rtol=1e-8, maxiter=2000, device=dev)
+            g.set_moduli(e)
+            u = g.solve_many([f])[0]
+            assert g.strict == strict, (pitch, dev, g.strict)
+            assert g.last_iters < 200, (pitch, dev, g.last_iters)
+            ref = _reference(mesh, nu, fixed, e, f)
+            err = np.abs(u - ref).max() / np.abs(ref).max()
+            assert err < 1e-5, (pitch, dev, err)
+
+
 TESTS = [test_transfers_are_adjoint, test_matches_assembled_solver, test_layered_springs_and_removed_cells,
-         test_torch_backend_matches_numpy, test_fp32_only_solve, test_simp_mg_matches_assembled]
+         test_torch_backend_matches_numpy, test_fp32_only_solve, test_simp_mg_matches_assembled,
+         test_thin_support_coarse_levels]
 
 
 def main():

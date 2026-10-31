@@ -147,6 +147,9 @@ for real and shows the report.
 is as light as it can be while it still meets a study's safety factor and
 deflection, each candidate meshed and analyzed by FE: the arm link's web and blend
 went from 61.8 g to 54.9 g at its 0.5 mm stiffness limit in 25 analyses.
+Tuning the envelope together with a graded skin and a gyroid core
+(`examples/fields/arm-link-sandwich-tune.json`) gets a sandwich link to 44.5 g as meshed,
+0.40 mm on the resolved geometry: 19% under the solid web.
 
 ![tuning the arm link against its loads](docs/images/fields/editor-tune.png)
 
@@ -158,8 +161,8 @@ to 12 mm cells:
 Strut cells (octet, Kelvin, BCC, FCC, diamond, Voronoi foams) and conformal cells
 that lay their layers along the skin sit in the same graph, with field-driven strut
 diameter and node fillets. Swapped into the arm link at equal mass (49.9 g), the
-gyroid core still wins on strength (SF 16.3 against 9-13 for the strut cores; all
-deflect 0.66-0.74 mm, the skin does most of the work), so struts are for open,
+gyroid core still wins on strength (SF 16.3 against 12.7-14.9 for the strut cores;
+all deflect 0.65-0.70 mm, the skin does most of the work), so struts are for open,
 drainable or very light cores and FDM-printable cells
 (`python examples/fields/strut_lattices.py`):
 

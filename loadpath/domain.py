@@ -375,6 +375,17 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
                               case_wet, imbalance, spreads)
 
 
+def _near_cells(mesh: HexMesh, nodes: np.ndarray, layers: int = 2) -> np.ndarray:
+    """Cells within `layers` cells of the given nodes: the band round
+    supports and loads that verification leaves out of the peak stress."""
+    near = np.asarray(nodes, bool).copy()
+    cells = np.zeros(mesh.n_elem, bool)
+    for _ in range(layers):
+        cells = near[mesh.enode].any(axis=1)
+        near[mesh.enode[cells].ravel()] = True
+    return cells
+
+
 def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed: np.ndarray) -> np.ndarray:
     """Nodal self-weight for per-element solid fraction `density`."""
     per_node = (np.asarray(density, float) * mesh.pitch ** 3 / 8.0)[:, None] * gravity[None, :]
@@ -566,7 +577,8 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
                   springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads,
-                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed),
+                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
+                                     near=_near_cells(mesh, support_nodes | load_nodes)),
                   warp=_warp_term(study, mesh))
 
 

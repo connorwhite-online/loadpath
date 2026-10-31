@@ -382,6 +382,11 @@
               "type": "integer",
               "minimum": 8,
               "description": "time steps per period (default 48)"
+            },
+            "fatigueWeight": {
+              "type": "number",
+              "minimum": 0,
+              "description": "How much the optimizer also designs against the hot-to-cold swing (thermal-cycling fatigue): a p-norm of the swing's stress over strength retention, weighted against the hot moment's objective at the start. 0 (default): hot moment only. Experimental: on the motor mount 0.3 lifted the verified fatigue SF 2.48 -> 2.94 at 12k cells but lowered it 2.83 -> 2.25 at 45k, so verify the result. Adding material does not help thermal cycling (stiffer parts hold more expansion)."
             }
           },
           "required": [
@@ -1950,6 +1955,11 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "mm, at the loads"
+        },
+        "maxMass": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "g: a cap the delivered part is checked against (deliver.passes is false over it). The search already returns the lightest part that meets the other limits, so over the cap means a lighter material, smaller preserves or a lower safety factor."
         },
         "method": {
           "enum": [

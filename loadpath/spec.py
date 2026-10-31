@@ -433,7 +433,13 @@ def _thermal(t, base_dir) -> Thermal | None:
         steps = cy.get("steps", 48)
         if isinstance(steps, bool) or not isinstance(steps, int) or steps < 8:
             raise ValueError("thermal.cycle.steps is a whole number of time steps per period, at least 8")
-        out.cycle = Cycle(period, on, n, steps)
+        fw = cy.get("fatigueWeight", 0.0)
+        fw = num(fw, "thermal.cycle.fatigueWeight")
+        if fw < 0:
+            raise ValueError("thermal.cycle.fatigueWeight must be >= 0")
+        if fw > 0 and out.expansion is False:
+            raise ValueError("thermal.cycle.fatigueWeight needs expansion: without it the swing carries no stress")
+        out.cycle = Cycle(period, on, n, steps, fw)
     if not out.temperatures and not any(h > 0 for *_, h, _ in out.convection):
         raise ValueError("thermal needs a way for heat out: a fixed temperature (temperatures) or convection")
     if not out.temperatures and not out.heat and out.t_ref == out.ambient:

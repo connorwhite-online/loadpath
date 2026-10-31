@@ -507,8 +507,25 @@ def main(argv=None):
     if args.viewer != "none" and not os.environ.get("LOADPATH_NO_RENDER"):
         from .viewer import HistoryRecorder
         rec = HistoryRecorder(chain=_progress)
+    seen = {"stage": None, "outcomes": 0}
+
+    def _tracked(event, *rest):
+        # status.json carries the stage and outcomes so far: one file to poll
+        st = event.get("stage")
+        if st == "outcome":
+            seen["outcomes"] += 1
+        if st and st != seen["stage"] or st == "outcome":
+            seen["stage"] = st
+            try:
+                _status("running", started=started, stage=st, outcomes=seen["outcomes"],
+                        **({"volumeFraction": event["volumeFraction"]} if "volumeFraction" in event else {}))
+            except OSError:
+                pass
+        return (rec or _progress)(event, *rest)
+
+    started = time.time()
     try:
-        result = run_study(study, on_progress=rec or _progress)
+        result = run_study(study, on_progress=_tracked)
     except BaseException as exc:
         _status("failed", error=f"{type(exc).__name__}: {exc}",
                 partial=os.environ.get("LOADPATH_PARTIAL_DIR"))

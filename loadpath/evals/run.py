@@ -516,7 +516,10 @@ def _case_bytes(path: str) -> float:
 def _died(f, tier, exc) -> dict:
     """The row of a case whose worker process died (killed for memory, a
     crash in native code): a failure of that case, not of the run."""
-    name = os.path.splitext(os.path.basename(f))[0]
+    if isinstance(f, dict):
+        name = f.get("name", "case")
+    else:
+        name = os.path.splitext(os.path.basename(f))[0]
     return {"case": name, "tier": tier, "pass": False, "skipped": False, "checks": [], "seconds": 0.0,
             "error": f"worker process died ({type(exc).__name__}: {exc}); out of memory?"}
 
@@ -533,30 +536,31 @@ def _run_isolated(files: list, out: str, tier: str = "full", critic=None, jobs: 
     from concurrent.futures import ProcessPoolExecutor
     from concurrent.futures.process import BrokenProcessPool
 
+    # keyed by position: a generated corpus case is a dict, not a path
     rows = {}
-    todo = list(files)
+    todo = list(range(len(files)))
     while todo:
         ex = ProcessPoolExecutor(jobs, mp_context=mp.get_context("spawn"), max_tasks_per_child=1)
-        futs = {ex.submit(run_case, f, out, tier, critic): f for f in todo}
+        futs = {ex.submit(run_case, files[i], out, tier, critic): i for i in todo}
         broken = False
-        for fut, f in futs.items():
+        for fut, i in futs.items():
             try:
-                rows[f] = fut.result()
+                rows[i] = fut.result()
             except BrokenProcessPool as exc:
                 # one at a time, the case that died is the first without a
                 # result; with several running it could be any of them, so
                 # the ones cut off run again one at a time
                 if not broken and jobs == 1:
-                    rows[f] = _died(f, tier, exc)
-                    print(json.dumps({"stage": "caseDied", "case": rows[f]["case"]}), flush=True)
+                    rows[i] = _died(files[i], tier, exc)
+                    print(json.dumps({"stage": "caseDied", "case": rows[i]["case"]}), flush=True)
                 broken = True
             except Exception as exc:  # noqa: BLE001 - one case's failure is its own row
-                rows[f] = _died(f, tier, exc)
+                rows[i] = _died(files[i], tier, exc)
         ex.shutdown(wait=True, cancel_futures=True)
-        todo = [f for f in todo if f not in rows]
+        todo = [i for i in todo if i not in rows]
         if broken:
             jobs = 1
-    return [rows[f] for f in files]
+    return [rows[i] for i in range(len(files))]
 
 
 def _run_budgeted(files: list, out: str, tier: str = "full", critic=None) -> list:

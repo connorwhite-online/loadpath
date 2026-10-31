@@ -385,6 +385,7 @@ class GridElasticity:
         if springs is not None:
             self.springs = self._to_grid_sparse(sp.csr_matrix(springs))
         self.levels = []
+        self.strict = False
         self.last_iters = 0
         self._coarse = None
         self._lmax_vec = {}
@@ -428,8 +429,21 @@ class GridElasticity:
     # --- hierarchy ---------------------------------------------------------
 
     def set_moduli(self, e):
-        """Per-element moduli (mesh order). Rebuilds every level."""
+        """Per-element moduli (mesh order). Rebuilds every level.
+
+        Thin supports: masked prolongation (P' = D P) keeps a coarse dof whose
+        fine neighbours are held all but a thin skin, and a support face a
+        cell or two from the part's edge leaves several of them interpolating
+        onto the same few free fine dofs. Their columns are dependent and the
+        Galerkin operator is singular: an L-bracket held by its top 8 mm
+        factored "exactly singular" at pitch 0.9 and 1.12, and CG never
+        converged at 1.127, while 1.14 took 9 iterations. The strict
+        hierarchy (`self.strict`) holds and drops those coarse dofs and
+        converges on all of them in about 21, but takes 22 against 9 where
+        the plain one works, so it is the fallback: taken when the coarse
+        factor is singular or CG stalls (solve_many), and kept from then on."""
         e = np.asarray(e, float)
+        self._e = e
         dt = self.dtype
         l0 = _Level("scaled", self.cells, np.float64)
         l0.ke = self.ke.astype(np.float64)
@@ -451,18 +465,39 @@ class GridElasticity:
         fine = l0
         n_active = int((e > 0).sum())
         depth = 0
+        # Held dofs, carried down by injection, for the strict hierarchy.
+        held = alive & self.fixed_grid
         while n_active > self.coarse_cells and min(fine.dims) >= 2:
             coarse = self._coarsen(fine, first=(depth == 0))
             depth += 1
             d = coarse.diagonal()
             dmax = float(d.max()) if d.size else 0.0
             live = d > 1e-12 * max(dmax, 1e-300)
+            if self.strict:
+                # A coarse dof sitting on a held one is held too, and one that
+                # keeps less than an eighth of its interpolation on dofs the
+                # finer level solves for (8 inside the part) is dropped: it
+                # interpolates onto a sliver its neighbours cover too.
+                hc = np.zeros((3,) + coarse.node_shape[1:], bool)
+                inj = held[:, ::2, ::2, ::2]
+                hc[:, :inj.shape[1], :inj.shape[2], :inj.shape[3]] = inj[:, :hc.shape[1], :hc.shape[2], :hc.shape[3]]
+                held = hc
+                kept = np.zeros((3,) + coarse.node_shape[1:])
+                r = restrict(np.asarray(fine.mask, np.float64))
+                kept[:, :r.shape[1], :r.shape[2], :r.shape[3]] = r[:, :kept.shape[1], :kept.shape[2], :kept.shape[3]]
+                live &= ~held & (kept >= 1.0)
             coarse.mask = live.astype(dt)
             coarse.dinv = np.where(live, 1.0 / np.where(live, d, 1.0), 1.0).astype(dt)
             n_active = self._active_cells(coarse)
             self.levels.append(coarse)
             fine = coarse
-        self._build_coarse(self.levels[-1])
+        try:
+            self._build_coarse(self.levels[-1])
+        except RuntimeError:                     # "Factor is exactly singular"
+            if self.strict:
+                raise
+            self.strict = True
+            return self.set_moduli(e)
         if self._dev is not None:
             self._dev.load()
             return
@@ -526,6 +561,14 @@ class GridElasticity:
             for a in range(0, nx, step):
                 b = min(a + step, nx)
                 kf = fine.cell_matrices(a, b)            # (24, 24, m, ny, nz)
+                if self.strict and fine.mask is not None:
+                    # the fine level's own masked operator (D K D): a dof it
+                    # holds is not a direction the next level may use either
+                    fm = fine.mask
+                    dm = np.empty((24,) + kf.shape[2:])
+                    for q, (qx, qy, qz) in enumerate(_CORNER_OFF):
+                        dm[3 * q:3 * q + 3] = fm[:, a + qx:b + qx, qy:qy + ny, qz:qz + nz]
+                    kf = kf * dm[:, None] * dm[None, :]
                 for ch, (ox, oy, oz) in enumerate(_CORNER_OFF):
                     sub = kf[:, :, ox::2, oy::2, oz::2]
                     shp = sub.shape[2:]
@@ -682,8 +725,11 @@ class GridElasticity:
         rf = np.zeros((3,) + tuple(2 * n - 1 for n in cs[1:]), r.dtype)
         sx, sy, sz = lv.node_shape[1:]
         rf[:, :sx, :sy, :sz] = r * lv.mask
-        xc = self._vcycle(i + 1, restrict(rf).astype(self.dtype, copy=False))
-        x += prolong(xc)[:, :sx, :sy, :sz] * lv.mask
+        # the coarse level's masked dofs are identity rows: kept out of the
+        # residual it solves and of the correction it sends back
+        cm = self._op(i + 1).mask
+        xc = self._vcycle(i + 1, (restrict(rf) * cm).astype(self.dtype, copy=False))
+        x += prolong(xc * cm)[:, :sx, :sy, :sz] * lv.mask
         return self._smooth(lv, b, x)
 
     def precondition(self, r):
@@ -743,6 +789,10 @@ class GridElasticity:
         del m
         return x, self.maxiter, False
 
+    # CG iterations the plain hierarchy gets before solve_many falls back to
+    # the strict one (it takes 9-40 where it works; the strict one about 21)
+    STALL = 100
+
     def solve_many(self, fs, x0s=None):
         """Solve for each right-hand side (mesh dof numbering). Rows of dofs
         that carry no stiffness are returned as zero."""
@@ -753,7 +803,7 @@ class GridElasticity:
             b = self.to_grid(f)
             b *= self.levels[0].mask
             g0 = self.to_grid(x0) * self.levels[0].mask if x0 is not None else None
-            x, it, ok = self._dev.solve(b, g0) if self._dev is not None else self._pcg(b, g0)
+            x, it, ok = self._solve(b, g0)
             iters = max(iters, it)
             if not ok:
                 raise RuntimeError(f"linear solve did not converge ({it} iterations); "
@@ -761,6 +811,22 @@ class GridElasticity:
             out.append(self.from_grid(x * self.levels[0].mask))
         self.last_iters = iters
         return out
+
+    def _solve(self, b, g0):
+        if self.strict or len(self.levels) < 2:
+            return self._dev.solve(b, g0) if self._dev is not None else self._pcg(b, g0)
+        full = self.maxiter
+        self.maxiter = min(full, self.STALL)
+        try:
+            x, it, ok = self._dev.solve(b, g0) if self._dev is not None else self._pcg(b, g0)
+        finally:
+            self.maxiter = full
+        if ok:
+            return x, it, ok
+        self.strict = True
+        self.set_moduli(self._e)
+        x, it2, ok = self._dev.solve(b, g0) if self._dev is not None else self._pcg(b, g0)
+        return x, it + it2, ok
 
     def live_dofs(self):
         """Bool per mesh dof: carries stiffness in the current moduli."""
