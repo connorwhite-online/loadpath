@@ -1242,6 +1242,8 @@ class FieldGraph:
             if bounds is None:
                 raise ValueError(f"{name or self.output!r} is unbounded (a lattice with nothing to clip it): "
                                  "intersect it with a solid or give the graph 'bounds'")
+        from . import quick
+        pitch = quick.mesh_pitch(pitch, bounds)
         if sharp:
             from .sharp import has_exact, mesh_plan, plan
 

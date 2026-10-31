@@ -116,7 +116,8 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
                          "or {\"safetyFactor\": [2, 4]}")
     node = spec.get("node") or doc.get("output")
     pitch, cells = float(spec.get("pitch", 1.0)), int(spec.get("cells", 30_000))
-    budget = int(evaluations or spec.get("evaluations", 20))
+    from . import quick
+    budget = quick.tune_evaluations(int(evaluations or spec.get("evaluations", 20)))
 
     # a lattice's walls are finer than any analysis grid a search can
     # afford: a part with one is analyzed with the lattice homogenized

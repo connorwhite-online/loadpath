@@ -183,6 +183,8 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
     _emit(on_progress, stage="design", type=hx.kind, cell=hx.cell, wall=hx.wall, layout=hx.layout)
     sim_opts = spec.get("simulate")
     sim_opts = ({} if sim_opts is True else dict(sim_opts)) if sim_opts and duty is not None else None
+    from . import quick
+    sim_opts = quick.heatx(hx, sim_opts)
     mesh, report, spaces, grids = design_heat_exchanger(hx, fluid_meshes=True, grids=True)
     if sim_opts is None:
         del grids

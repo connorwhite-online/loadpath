@@ -105,7 +105,8 @@ def _assembly(args):
                 link = kids[0].child
         payload = Payload(args.payload, link, tuple(float(v) for v in args.payload_at.split(",")),
                           radius=args.payload_radius, min_kg=0.0)
-    sweep_kw = {"samples": args.samples, "ramp": args.ramp, "push": args.push, "contact_max": args.contact_max,
+    from . import quick
+    sweep_kw = {"samples": quick.assembly_samples(args.samples), "ramp": args.ramp, "push": args.push, "contact_max": args.contact_max,
                 "balanced": tuple(j for j in args.balanced.split(",") if j), "joint": args.joint}
     os.makedirs(args.out, exist_ok=True)
     derived, report = derive_study(robot, args.link, study, args.region, payload=payload, keep_cases=args.keep_cases,
@@ -262,7 +263,13 @@ def main(argv=None):
     asm.add_argument("--cycles", default="", help="life cycles by sample kind, for fatigue: "
                      "dynamic=1e6,pose=1e6,push=1e4,stall=1e3 (stall:j2=... for one joint)")
     asm.add_argument("--out", default="loadpath-out")
+    for sp in (r, lt, h, fg, tu, ed, asm):
+        sp.add_argument("--quick", action="store_true",
+                        help="coarse grid, fewer iterations: a first look in a minute or two (quick.py)")
     args = p.parse_args(argv)
+    if getattr(args, "quick", False):
+        from . import quick
+        quick.enable()
 
     if args.cmd == "mcp":
         from .mcp_server import serve
@@ -326,7 +333,7 @@ def main(argv=None):
     from .study import run_study
 
     rec = None
-    if args.viewer != "none":
+    if args.viewer != "none" and not os.environ.get("LOADPATH_NO_RENDER"):
         from .viewer import HistoryRecorder
         rec = HistoryRecorder(chain=_progress)
     result = run_study(study, on_progress=rec or _progress)
@@ -392,6 +399,8 @@ def main(argv=None):
 
 
 def _can_render():
+    if os.environ.get("LOADPATH_NO_RENDER"):
+        return False
     try:
         import matplotlib  # noqa: F401
         import shapely  # noqa: F401
@@ -418,11 +427,14 @@ def _heatx(args):
                                                  min_effectiveness=args.min_effectiveness, splits=splits), indent=2))
             return 0
         rep = heat_exchanger(spec, args.out, base, render=not args.no_render and _can_render(),
-                             on_progress=_progress, viewer=not args.no_viewer)
+                             on_progress=_progress, viewer=not args.no_viewer and not os.environ.get("LOADPATH_NO_RENDER"))
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
     _write_report(args.out, rep)
+    return 0
+
+
 def _field(args):
     from .fields import run_field
     from .schema import format_issues, lint

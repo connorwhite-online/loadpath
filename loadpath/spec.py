@@ -455,7 +455,9 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     """Validate and parse a study. Every error names the field to fix."""
     if not isinstance(d, dict):
         raise ValueError("study must be a JSON object")
+    from . import quick
     from .fasteners import expand_fasteners
+    d = quick.study(d)
     d = expand_fasteners(d)
     joints = d.pop("_joints", []) if isinstance(d.get("_joints"), list) else []
     ds = d.get("designSpace")
