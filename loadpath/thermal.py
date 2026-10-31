@@ -59,6 +59,15 @@ gradients (mechanical and thermal adjoints, as above) into the ordinary
 optimizer, and verify_part solves the delivered part's temperature, derates
 moduli and strength by it and takes the free expansion off the stress.
 
+Heat-up and cool-down (`transient`, `solve_cycle`): backward Euler on the
+same conduction system with a lumped capacity (density times the card's
+specific heat, SPECIFIC_HEAT). A duty cycle (Cycle: heat on for `on` s of
+every `period`) is solved to its repeating state from the steady state at
+the mean power, which takes a few periods rather than the part's warm-up.
+Checked against the Fourier series for a bar heated at one end (0.3% at 50
+steps, first order) and the closed form for a lumped block under a square
+wave (0.2%).
+
 Units: mm, W, K (or C) throughout; conductivity is given in W/(m K) and
 convection in W/(m^2 K) at the edges, as datasheets quote them, and
 converted here.
@@ -82,6 +91,7 @@ __all__ = [
     "Convection", "nodes_in", "cells_in", "thermal_bc", "solve_temperature", "ThermalResult",
     "ThermalOptions", "ThermalOptResult", "optimize_thermal", "optimize_thermomechanical",
     "EXPANSION", "expansion", "thermoelastic", "StudyHeat", "study_heat", "study_thermal_bc",
+    "SPECIFIC_HEAT", "specific_heat", "node_capacity", "transient", "Cycle", "CycleResult", "solve_cycle",
 ]
 
 # W/(m K), dense printed parts, in plane, from the material library's cards
@@ -106,7 +116,14 @@ MODULUS_RETENTION = {k: [tuple(p) for p in c["values"]["retention"][0]] for k, c
 # when the motor beside it warms up.
 EXPANSION = {k: float(c["values"]["cte"][0]) / 1e6 for k, c in _LIBRARY.items() if "cte" in c["values"]}
 
+# J/(kg K) near room temperature, from the cards' `specificHeat` (polymer
+# handbook values for the families, the alloy handbook for metals): with
+# density it sets how fast a part heats up and cools down.
+SPECIFIC_HEAT = {k: float(c["values"]["specificHeat"][0]) for k, c in _LIBRARY.items()
+                 if "specificHeat" in c["values"]}
+
 K_MIN = 1e-3          # void conductivity, relative to the material's
+C_MIN = 1e-3          # void heat capacity, relative to the material's
 PENALTY = 3.0
 _SMOOTH = 0.05        # smoothing of |rho_i - rho_j| on interface faces
 
@@ -132,6 +149,14 @@ def expansion(material) -> float:
     if key not in EXPANSION:
         raise ValueError(f"no expansion coefficient for {material!r}; known: {sorted(EXPANSION)} (or pass a number)")
     return EXPANSION[key]
+
+
+def specific_heat(material) -> float:
+    """J/(kg K) for a material name (or Material), from SPECIFIC_HEAT."""
+    key = _material_key(material)
+    if key not in SPECIFIC_HEAT:
+        raise ValueError(f"no specific heat for {material!r}; known: {sorted(SPECIFIC_HEAT)} (or pass one)")
+    return SPECIFIC_HEAT[key]
 
 
 def retention(material, t: np.ndarray):
@@ -625,6 +650,140 @@ def solve_temperature(mesh: HexMesh, k, bc: ThermalBC, density=None, solver: Sca
     q = bc.heat
     res = float((q @ theta) / q.sum() ** 2) if q.sum() > 0 else float("nan")
     return ThermalResult(t, t[mesh.enode].mean(axis=1), float(t.max()), float(q.sum()), out_fixed, out_conv, res)
+
+
+# ------------------------------------------------------------ transient
+
+
+def node_capacity(mesh: HexMesh, volumetric, density=None) -> np.ndarray:
+    """Lumped heat capacity per node, J/K: volumetric heat capacity
+    (J/(mm^3 K), rho c_p; scalar or per element) times each cell's volume,
+    a corner holding an eighth, linear in density down to C_MIN."""
+    rho = np.ones(mesh.n_elem) if density is None else np.asarray(density, float)
+    ce = np.broadcast_to(np.asarray(volumetric, float), (mesh.n_elem,)) * mesh.pitch ** 3 \
+        * (C_MIN + rho * (1 - C_MIN))
+    return np.bincount(mesh.enode.ravel(), weights=np.repeat(ce / 8.0, 8), minlength=mesh.n_nodes)
+
+
+class _Stepper:
+    """Backward Euler on the conduction system with a lumped capacity:
+    (K + C/dt) theta_n+1 = C/dt theta_n + f, with the heat inputs scaled
+    (switched on and off by a duty cycle). Temperatures relative to ambient;
+    fixed temperatures held. One CG solver per step size, warm-started from
+    the last step."""
+
+    def __init__(self, mesh, k, bc, capacity, density=None, conduction=None):
+        rho = np.ones(mesh.n_elem) if density is None else np.asarray(density, float)
+        kk = np.broadcast_to(np.asarray(k, float) * 1e-3, (mesh.n_elem,))
+        ke = kk * (K_MIN + rho ** PENALTY * (1 - K_MIN))
+        cond = conduction or Conduction(mesh, bc)
+        self.mat, self.f = cond.assemble(ke, rho)
+        self.free = ~bc.fixed
+        self.heat = np.where(bc.fixed, 0.0, bc.heat)
+        self.c = np.where(self.free, np.asarray(capacity, float), 0.0)
+        self.sink = cond.has_sink(rho)
+        self._sys = {}
+
+    def rhs(self, scale):
+        return self.f - (1.0 - scale) * self.heat
+
+    def steady(self, scale=1.0, x0=None):
+        if not self.sink:
+            raise ValueError("no heat path out: add a fixed temperature or convection")
+        if "steady" not in self._sys:
+            self._sys["steady"] = ScalarSolver(rtol=1e-9)
+        return self._sys["steady"].solve(self.mat, self.rhs(scale), x0)
+
+    def step(self, theta, dt, scale=1.0):
+        key = round(float(dt), 12)
+        if key not in self._sys:
+            self._sys[key] = (self.mat + sp.diags(self.c / dt)).tocsr(), ScalarSolver(rtol=1e-9)
+        a, solver = self._sys[key]
+        return solver.solve(a, self.rhs(scale) + self.c / dt * theta, theta)
+
+
+def transient(mesh: HexMesh, k, bc: ThermalBC, capacity, dts, theta0=None, scales=1.0, density=None):
+    """Temperatures (C per node) after each step of sizes `dts` (s), from
+    theta0 (C per node; default ambient, with fixed temperatures applied at
+    once), heat inputs scaled by `scales` (one per step, or one number).
+    `capacity` is per node (node_capacity). Backward Euler: first order in
+    time and unconditionally stable."""
+    st = _Stepper(mesh, k, bc, capacity, density)
+    theta = np.zeros(mesh.n_nodes) if theta0 is None else np.asarray(theta0, float) - bc.ambient
+    scales = np.broadcast_to(np.asarray(scales, float), (len(dts),))
+    out = []
+    for dt, sc in zip(dts, scales):
+        theta = st.step(theta, dt, sc)
+        out.append(theta + bc.ambient)
+    return out
+
+
+@dataclass
+class Cycle:
+    """A duty cycle: every `period` seconds the heat inputs are on for the
+    first `on` seconds and off for the rest (fixed temperatures and fluids
+    hold). `cycles`: how many the part sees over its life (thermal-cycling
+    fatigue), or None. `steps` per period."""
+    period: float
+    on: float
+    cycles: float | None = None
+    steps: int = 48
+
+
+@dataclass
+class CycleResult:
+    times: np.ndarray            # s, the steps of one period (0 = heat switching on)
+    hot: np.ndarray              # C per node at the hottest moment (highest mean over the part)
+    cold: np.ndarray             # C per node at the coldest moment
+    t_hot: float                 # s into the period
+    t_cold: float
+    node_max: np.ndarray         # C per node, highest over the period
+    node_min: np.ndarray
+    mean: np.ndarray             # C, mean over the part's nodes at each step
+    periods: int                 # periods simulated to reach the repeating cycle
+    converged: bool
+    change: float                # K: largest change over the last period
+
+
+def solve_cycle(mesh: HexMesh, k, bc: ThermalBC, capacity, cycle: Cycle, density=None, tol=0.05,
+                max_periods=60) -> CycleResult:
+    """The repeating (periodic steady) temperature cycle under a duty cycle.
+
+    Starts from the steady state at the mean power (duty times the heat):
+    modes much slower than a period sit at their mean there already, and
+    the faster ones settle within a few periods, so the cycle repeats to
+    `tol` K after a handful of periods instead of the part's full warm-up
+    (hours for a plastic bracket)."""
+    if not 0 < cycle.on < cycle.period:
+        raise ValueError("a duty cycle's heat is on for part of each period: 0 < on < period")
+    st = _Stepper(mesh, k, bc, capacity, density)
+    duty = cycle.on / cycle.period
+    theta = st.steady(duty)
+    n_on = int(np.clip(round(cycle.steps * duty), 2, cycle.steps - 2))
+    n_off = max(2, cycle.steps - n_on)
+    dts = [cycle.on / n_on] * n_on + [(cycle.period - cycle.on) / n_off] * n_off
+    sc = [1.0] * n_on + [0.0] * n_off
+    rho = np.ones(mesh.n_elem) if density is None else np.asarray(density, float)
+    part = np.zeros(mesh.n_nodes, bool)
+    part[mesh.enode[rho > 0.5].ravel()] = True
+    if not part.any():
+        part[:] = True
+    change, conv, p = np.inf, False, 0
+    for p in range(1, max_periods + 1):
+        hist = [theta]
+        for dt, s_ in zip(dts, sc):
+            theta = st.step(theta, dt, s_)
+            hist.append(theta)
+        change = float(np.abs(theta - hist[0]).max())
+        if change < tol:
+            conv = True
+            break
+    h = np.array(hist) + bc.ambient
+    mean = h[:, part].mean(axis=1)
+    times = np.concatenate([[0.0], np.cumsum(dts)])
+    ih, ic = int(np.argmax(mean)), int(np.argmin(mean))
+    return CycleResult(times, h[ih], h[ic], float(times[ih]), float(times[ic]), h.max(axis=0), h.min(axis=0),
+                       mean, p, conv, change)
 
 
 # --------------------------------------------------------- optimization
@@ -1138,7 +1297,22 @@ class StudyHeat:
     In the optimizer the objective with expansion is twice the elastic
     strain energy (see optimize_thermomechanical) and the gradient carries
     the mechanical adjoint and the thermal one, so material that conducts
-    heat into the structure is charged for softening and growing it."""
+    heat into the structure is charged for softening and growing it.
+
+    With a duty cycle (spec.Thermal.cycle) the temperature is the repeating
+    cycle's hottest moment (solve_cycle) and `cold` its coldest. A cycle is
+    dozens of solves, too many for every iteration, and holding its
+    temperature fixed between solves hid from the optimizer that cutting
+    the material round the heat makes the rest hotter (on the motor mount
+    that design ran 6 K hotter and lost 13% of its hot safety factor to the
+    one designed cold). So the hot moment is carried as a node-by-node
+    share r of the steady temperature rise at full power, hot = r * steady,
+    with r (in [0, 1]: a duty cycle never outruns full power) refreshed from
+    a cycle solve every REFRESH calls; the steady solve and its adjoint run
+    every iteration, so the gradient follows the heat path with r held.
+    Verification solves the cycle on the delivered part."""
+
+    REFRESH = 5
 
     def __init__(self, study, mesh: HexMesh, nu, fixed, modulus: float | None = None):
         th = study.thermal
@@ -1151,17 +1325,26 @@ class StudyHeat:
         self.alpha = (_card(expansion, mat, "expansion coefficient") if a is True else float(a)) if a else None
         self.E0 = float(mat.E if modulus is None else modulus)
         self.bc = study_thermal_bc(study, mesh)
+        self.cycle = th.cycle
+        if self.cycle is not None:
+            cp = th.specific_heat if th.specific_heat is not None else _card(specific_heat, mat, "specific heat")
+            self.rho_cp = mat.density * 1e-6 * cp          # J/(mm^3 K)
         self.vth = None
         self.th = None
         self.te = None
+        self.cold = None
+        self.cycle_result = None
+        self.r = None
+        self._calls = 0
 
     @property
     def expands(self):
         return self.alpha is not None and self.alpha > 0
 
-    def temperature(self, rho=None):
+    def temperature(self, rho=None, reuse=False):
         """Solve at densities rho (default solid): per-element C, and sets
-        g, dg, eps."""
+        g, dg, eps. With a duty cycle: the cycle's hottest moment (and
+        self.cold, its coldest), held over REFRESH calls when `reuse`."""
         rho = np.ones(self.mesh.n_elem) if rho is None else np.asarray(rho, float)
         if self.th is None:
             grid = ThermalGrid(self.mesh.pitch, self.mesh.origin, (0, 0, 0), self.mesh,
@@ -1173,7 +1356,20 @@ class StudyHeat:
             theta = self.bc.fixed_t - self.bc.ambient
         else:
             theta = self.th.solve(rho)
-        self.t_node = theta + self.bc.ambient
+        if self.cycle is not None:
+            self._calls += 1
+            if not (reuse and self.r is not None and (self._calls - 1) % self.REFRESH):
+                res = solve_cycle(self.mesh, self.k, self.bc, node_capacity(self.mesh, self.rho_cp, rho),
+                                  self.cycle, density=rho)
+                self.cycle_result, self.cold = res, res.cold
+                big = np.abs(theta) > 1e-9 * max(np.abs(theta).max(), 1e-300)
+                self.r = np.where(big, np.clip((res.hot - self.bc.ambient) / np.where(big, theta, 1.0), 0, 1), 1.0)
+            theta = self.r * theta
+        return self.use(theta + self.bc.ambient)
+
+    def use(self, t_node):
+        """Take a temperature field (C per node): sets te, g, dg, eps."""
+        self.t_node = np.asarray(t_node, float)
         self.te = self.t_node[self.mesh.enode].mean(axis=1)
         if self.curve is not None:
             self.g, self.dg = retention(self.curve, self.te)
@@ -1311,6 +1507,8 @@ class StudyHeat:
         # through temperature: a node holds 1/8 of each of its cells' T
         if np.any(dte) and not self.bc.fixed.all():
             r = np.bincount(mesh.enode.ravel(), weights=np.repeat(dte / 8.0, 8), minlength=mesh.n_nodes)
+            if self.r is not None:
+                r = r * self.r          # a duty cycle's hot moment is r * the steady rise
             self.th.lam = self.th.adjoint(r, self.th.lam)
             dx = dx + self.th.gradient(xe, self.th.lam)
         return j, case_j, dx, dirs

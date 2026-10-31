@@ -500,12 +500,12 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres):
     return xp, us
 
 
-def _heat_state(heat, x, fg):
+def _heat_state(heat, x, fg, reuse=False):
     """Solve the temperature at densities x and return (self-weight plus
     expansion load, expansion load or None), in the optimizer's units: forces
     in N against unit-modulus stiffness, so the expansion's E0 is in the
     load."""
-    heat.temperature(x)
+    heat.temperature(x, reuse=reuse)
     if not heat.expands:
         return fg, None
     fth = heat.load(np.where(x > ALIVE, x ** PENALTY * (1 - E_MIN), 0.0), heat.E0)
@@ -725,7 +725,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if heat is not None:
             # the design's own temperature, softening and expansion load
             # (thermal.StudyHeat)
-            fg, fth = _heat_state(heat, xe, fg)
+            fg, fth = _heat_state(heat, xe, fg, reuse=True)
             e = e * heat.g
         # A force of unknown direction is three solves, one per axis, and
         # each case is judged in its worst direction (directions.py).

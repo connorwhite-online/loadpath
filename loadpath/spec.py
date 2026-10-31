@@ -343,6 +343,8 @@ class Thermal:
     conductivity: float | None = None         # W/(m K); None: the material card's
     expansion: Any = True                     # True (card), 1/K, or False
     soften: bool = True
+    specific_heat: float | None = None        # J/(kg K); None: the material card's
+    cycle: Any = None                         # thermal.Cycle: heat switched on and off, or None (steady)
 
     @property
     def t_ref(self):
@@ -399,6 +401,28 @@ def _thermal(t, base_dir) -> Thermal | None:
             raise ValueError("thermal.expansion must be >= 0")
     out.expansion = e
     out.soften = bool(t.get("soften", True))
+    if t.get("specificHeat") is not None:
+        out.specific_heat = num(t["specificHeat"], "thermal.specificHeat (J/(kg K))", True)
+    cy = t.get("cycle")
+    if cy is not None:
+        from .thermal import Cycle
+
+        if not isinstance(cy, dict):
+            raise ValueError("thermal.cycle is {period, on, cycles}: seconds per cycle, seconds the heat is on")
+        period = num(cy.get("period"), "thermal.cycle.period (s)", True)
+        on = num(cy.get("on"), "thermal.cycle.on (s the heat is on each period)", True)
+        if on >= period:
+            raise ValueError("thermal.cycle.on must be shorter than the period (for heat on all the time, "
+                             "leave cycle out)")
+        if not out.heat:
+            raise ValueError("thermal.cycle switches the heat inputs on and off: give thermal.heat")
+        n = cy.get("cycles")
+        if n is not None:
+            n = num(n, "thermal.cycle.cycles (over the part's life)", True)
+        steps = cy.get("steps", 48)
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 8:
+            raise ValueError("thermal.cycle.steps is a whole number of time steps per period, at least 8")
+        out.cycle = Cycle(period, on, n, steps)
     if not out.temperatures and not any(h > 0 for *_, h, _ in out.convection):
         raise ValueError("thermal needs a way for heat out: a fixed temperature (temperatures) or convection")
     if not out.temperatures and not out.heat and out.t_ref == out.ambient:

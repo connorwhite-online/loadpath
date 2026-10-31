@@ -256,7 +256,11 @@ def test_study_thermal_block_parses_and_lints():
     for wrong, msg in [({"temperatures": [{"region": "motor"}]}, "t (C)"),
                        ({"heat": [{"region": "motor", "watts": 1}], "convection": 0}, "way for heat out"),
                        ({"heat": [{"region": "nope", "watts": 1}]}, None),
-                       ({"expansion": "yes", "temperatures": [{"region": "motor", "t": 50}]}, "expansion")]:
+                       ({"expansion": "yes", "temperatures": [{"region": "motor", "t": 50}]}, "expansion"),
+                       ({"temperatures": [{"region": "motor", "t": 50}], "cycle": {"period": 60, "on": 30}},
+                        "give thermal.heat"),
+                       ({"heat": [{"region": "motor", "watts": 1}], "cycle": {"period": 60, "on": 60}},
+                        "shorter than the period")]:
         try:
             st = _hot_study(wrong)
             build_domain(st)
@@ -386,6 +390,94 @@ def test_verify_thermal_with_unknown_direction():
         assert sf >= c["safetyFactor"] * (1 - 1e-6), (d, sf, c["safetyFactor"])
 
 
+def test_transient_bar_matches_series_solution():
+    """A PETG bar at 0 C whose end is held at 1 C from t = 0, insulated
+    elsewhere: the backward-Euler, lumped-capacity solve against the Fourier
+    series, first order in the step (0.3% at 50 steps, 0.07% at 200)."""
+    from loadpath.fem import HexMesh
+
+    n, L = 40, 40.0
+    m = HexMesh(np.stack([np.arange(n), np.zeros(n, int), np.zeros(n, int)], 1), 1.0, np.zeros(3))
+    x = m.node_xyz[:, 0]
+    bc = T.thermal_bc(m, ambient=0.0, temperatures=[(x < 1e-9, 1.0)])
+    k, rc = 0.2, 1.27e-6 * T.specific_heat("petg")
+    a = k * 1e-3 / rc
+    t = 0.3 * L * L / a
+    exact = 1 - sum(4 / ((2 * j + 1) * np.pi) * np.sin((2 * j + 1) * np.pi * x / (2 * L))
+                    * np.exp(-((2 * j + 1) * np.pi / (2 * L)) ** 2 * a * t) for j in range(200))
+    errs = [np.abs(T.transient(m, k, bc, T.node_capacity(m, rc), [t / s] * s)[-1] - exact).max() for s in (50, 200)]
+    assert errs[0] < 4e-3 and errs[1] < 1e-3 and 3 < errs[0] / errs[1] < 5, errs
+
+
+def test_duty_cycle_of_a_lumped_block_matches_closed_form():
+    """A block that conducts far better than it convects, heated by a square
+    wave: its repeating cycle swings between
+    T_max = P/(hA) (1 - e^(-t_on/tau)) / (1 - e^(-period/tau)) and
+    T_max e^(-t_off/tau), tau = C/(hA)."""
+    from loadpath.fem import HexMesh
+
+    n = 4
+    ii, jj, kk = np.meshgrid(*[np.arange(n)] * 3, indexing="ij")
+    m = HexMesh(np.stack([ii.ravel(), jj.ravel(), kk.ravel()], 1), 5.0, np.zeros(3))
+    bc = T.thermal_bc(m, ambient=25, heat=[(np.ones(m.n_elem, bool), 2.0, "volume")],
+                      convection=[T.Convection(10.0)])
+    cap = T.node_capacity(m, 1.27e-6 * 1200)
+    ha = 10e-6 * 6 * 20.0 ** 2
+    tau = cap.sum() / ha
+    cy = T.Cycle(period=0.5 * tau, on=0.15 * tau, steps=400)
+    r = T.solve_cycle(m, 1e4, bc, cap, cy)
+    tmax = 2.0 / ha * (1 - np.exp(-cy.on / tau)) / (1 - np.exp(-cy.period / tau))
+    tmin = tmax * np.exp(-(cy.period - cy.on) / tau)
+    assert r.converged and abs((r.node_max.max() - 25) / tmax - 1) < 5e-3, (r.node_max.max() - 25, tmax)
+    assert abs((r.node_min.min() - 25) / tmin - 1) < 5e-3, (r.node_min.min() - 25, tmin)
+    assert abs(r.t_hot - cy.on) < 1e-9 and abs(r.t_cold - cy.period) < 1e-9
+
+
+def test_duty_cycle_gradient_and_verification():
+    """A study with a duty cycle: its optimizer temperature is the steady
+    rise scaled node by node to the cycle's hot moment, and with that scale
+    held the gradient is exact; verification reports hot and cold safety
+    factors and thermal-cycling fatigue."""
+    import trimesh
+
+    from loadpath.simp import E_MIN, PENALTY, _Analysis, _heat_state
+    from loadpath.verify import verify_part
+
+    th = {"heat": [{"region": "motor", "watts": 0.5}], "convection": 10,
+          "temperatures": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.5, 9, 9]}, "t": 25}],
+          "cycle": {"period": 600, "on": 200, "cycles": 1e4, "steps": 16}}
+    st = _hot_study(th)
+    d = build_domain(st)
+    heat = d.thermal
+    heat.REFRESH = 10 ** 9
+    heat.temperature()
+    assert heat.r.min() >= 0 and heat.r.max() <= 1
+    assert np.allclose(heat.t_node, heat.cycle_result.hot)
+    heat.th.solver.rtol = 1e-13
+    fe = _Analysis(d, st.elastic(design=True), 1e-12)
+    w = np.asarray(d.case_weights, float)
+
+    def run(x):
+        fg, fth = _heat_state(heat, x, None, reuse=True)
+        loads = [f + fg for f in d.loads]
+        us = fe.solve((E_MIN + x ** PENALTY * (1 - E_MIN)) * heat.g, x, [None], rtol=1e-12, loads=loads)
+        return heat.sensitivities(fe, x, loads, us, fth, w, None, {})
+
+    rho = np.random.default_rng(4).uniform(0.3, 1, d.n_elem)
+    _fd_check(lambda r: run(r)[0], run(rho)[2], rho, [3, 171, 85, 33, 104], rel=1e-4)
+
+    m = trimesh.creation.box(extents=[24, 8, 8])
+    m.apply_translation([12, 4, 4])
+    rep = verify_part(st, m, max_cells=6000, refine=0)
+    t = rep["thermal"]
+    assert t["periods"] >= 1 and t["converged"] and t["maxTemperature"] > t["meanHot"] > t["meanCold"] >= 25 - 1e-9
+    c = rep["cases"][0]
+    assert c["safetyFactor"] <= c["coldSafetyFactor"] + 1e-12 or c["safetyFactor"] == c["coldSafetyFactor"]
+    assert c["cycleStress"] > 0
+    tc = rep["durability"]["thermalCycling"]
+    assert tc["cycles"] == 1e4 and abs(tc["damage"] - 1e4 / tc["life"]) < 1e-12
+
+
 TESTS = [
     test_slab_with_generation_is_exact,
     test_convective_fin_matches_closed_form,
@@ -401,6 +493,9 @@ TESTS = [
     test_study_thermal_with_unknown_direction,
     test_verify_thermal_stress_matches_a_held_bar,
     test_verify_thermal_with_unknown_direction,
+    test_transient_bar_matches_series_solution,
+    test_duty_cycle_of_a_lumped_block_matches_closed_form,
+    test_duty_cycle_gradient_and_verification,
 ]
 
 
