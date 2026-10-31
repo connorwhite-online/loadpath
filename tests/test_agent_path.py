@@ -94,6 +94,26 @@ def test_in_plane_direction_becomes_eight_cases():
     assert check_study(s)["ok"]
 
 
+def test_half_ring_and_gap_ring_shapes():
+    from loadpath.shapes import shape_from_spec
+
+    tube = {"type": "tube", "center": [0, 0, 0], "axis": "y", "length": 10, "r": 15.8, "rInner": 12.8}
+    half = shape_from_spec({"type": "intersect", "shapes": [tube, {"type": "box", "min": [-20, -6, 0],
+                                                                   "max": [20, 6, 20]}]})
+    gap = shape_from_spec({"type": "subtract", "shapes": [tube, {"type": "box", "min": [10, -6, -4],
+                                                                 "max": [20, 6, 4]}]})
+    pts = np.array([[0, 0, 14.3], [0, 0, -14.3], [14.3, 0, 0], [-14.3, 0, 0], [0, 0, 0]])
+    assert half.contains(pts).tolist() == [True, False, True, True, False]
+    assert gap.contains(pts).tolist() == [True, True, False, True, False]
+    m = half.to_manifold()
+    vol = np.pi * (15.8 ** 2 - 12.8 ** 2) * 10 / 2
+    assert abs(m.volume() - vol) < 0.02 * vol, (m.volume(), vol)
+    s = copy.deepcopy(LINK)
+    s["preserve"][0]["shape"] = {"type": "subtract", "shapes": [s["preserve"][0]["shape"],
+                                                                {"type": "box", "min": [5, -2, -6], "max": [8, 2, 6]}]}
+    assert check_study(s)["ok"]
+
+
 def test_lone_pin_is_refused():
     s = copy.deepcopy(LINK)
     s["supports"] = [{"region": "a", "fix": "pin"}]

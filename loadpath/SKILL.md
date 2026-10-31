@@ -29,7 +29,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    closed STL and use `{"type": "mesh", "path": "motor.stl"}`. An interface
    in several pieces (a servo's four screw bosses) is one region with
    `{"type": "union", "shapes": [...]}`, so one load or support acts on all of
-   them. Preserve only the interface itself, never a box round a component:
+   them. `intersect` and `subtract` (same `shapes` list; subtract cuts the
+   rest from the first) make partial shapes: a half ring is a tube
+   intersected with a box, a ring with a gap a tube minus a box. Preserve only the interface itself, never a box round a component:
    a preserved slab is a slab in the result, and the optimizer has nothing
    to design there.
    A bearing seat narrower than the part: the seat (its OD, its width) is a

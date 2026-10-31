@@ -282,6 +282,46 @@ class Union(Shape):
         return {"type": "union", "shapes": [s.to_spec() for s in self.shapes]}
 
 
+class Boolean(Shape):
+    """The overlap of shapes ({"type": "intersect", "shapes": [..]}) or the
+    first with the rest cut away ({"type": "subtract", "shapes": [..]}): a
+    half ring is a tube intersected with a box, a ring with a gap a tube
+    minus a box. Brief-eval agents built these as STLs by hand."""
+
+    def __init__(self, op, shapes):
+        if op not in ("intersect", "subtract"):
+            raise ValueError(f"unknown boolean {op!r}")
+        if len(shapes) < 2:
+            raise ValueError(f"{op} needs at least two shapes in 'shapes'")
+        self.kind = op
+        self.parts = list(shapes)
+
+    def sdf(self, p):
+        d = [s.sdf(p) for s in self.parts]
+        if self.kind == "intersect":
+            return np.max(d, axis=0)
+        return np.maximum(d[0], -np.min(d[1:], axis=0))
+
+    def bounds(self):
+        if self.kind == "subtract":
+            return self.parts[0].bounds()
+        b = [s.bounds() for s in self.parts]
+        lo, hi = np.max([x[0] for x in b], axis=0), np.min([x[1] for x in b], axis=0)
+        if np.any(hi <= lo):
+            raise ValueError("intersect: the shapes do not overlap")
+        return lo, hi
+
+    def to_manifold(self):
+        import manifold3d as m3d
+        mans = [s.to_manifold() for s in self.parts]
+        if self.kind == "intersect":
+            return m3d.Manifold.batch_boolean(mans, m3d.OpType.Intersect)
+        return mans[0] - m3d.Manifold.batch_boolean(mans[1:], m3d.OpType.Add)
+
+    def to_spec(self):
+        return {"type": self.kind, "shapes": [s.to_spec() for s in self.parts]}
+
+
 class Offset(Shape):
     """Another shape grown (offset > 0) or shrunk (offset < 0) by a distance:
     the level set sdf = offset. `open` lists bounding-box faces, as
@@ -457,6 +497,11 @@ def _shape(spec, base_dir):
         if not isinstance(parts, list) or not parts:
             raise ValueError("union needs a non-empty 'shapes' list")
         return Union([shape_from_spec(x, base_dir) for x in parts])
+    if kind in ("intersect", "subtract"):
+        parts = spec.get("shapes")
+        if not isinstance(parts, list) or len(parts) < 2:
+            raise ValueError(f"{kind} needs a 'shapes' list of at least two shapes")
+        return Boolean(kind, [shape_from_spec(x, base_dir) for x in parts])
     if kind == "mesh":
         import base64
         import io

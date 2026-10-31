@@ -82,13 +82,29 @@ _SHAPES = {
         "required": ["type", "shapes"],
         "additionalProperties": False,
     },
+    "intersect": {
+        "type": "object",
+        "description": "Where all the shapes overlap: a half ring is a tube intersected with a box.",
+        "properties": {"type": {"const": "intersect"},
+                       "shapes": {"type": "array", "items": {"$ref": "#/$defs/shape"}, "minItems": 2}},
+        "required": ["type", "shapes"],
+        "additionalProperties": False,
+    },
+    "subtract": {
+        "type": "object",
+        "description": "The first shape with the others cut away: a ring with a gap is a tube minus a box.",
+        "properties": {"type": {"const": "subtract"},
+                       "shapes": {"type": "array", "items": {"$ref": "#/$defs/shape"}, "minItems": 2}},
+        "required": ["type", "shapes"],
+        "additionalProperties": False,
+    },
 }
 _SHAPE_TYPES = {"box": "box", "cylinder": "cylinder", "tube": "cylinder", "sphere": "sphere",
-                "mesh": "mesh", "union": "union"}
+                "mesh": "mesh", "union": "union", "intersect": "intersect", "subtract": "subtract"}
 
 _SHAPE = {
-    "title": "a shape object (box, cylinder, tube, sphere, mesh, union)",
-    "description": "A shape: box, cylinder (tube), sphere, mesh or union. Units mm.",
+    "title": "a shape object (box, cylinder, tube, sphere, mesh, union, intersect, subtract)",
+    "description": "A shape: box, cylinder (tube), sphere, mesh, union, intersect or subtract. Units mm.",
     "oneOf": [{"$ref": f"#/$defs/{k}"} for k in _SHAPES],
     "x-discriminator": {"property": "type", "mapping": {k: f"#/$defs/{v}" for k, v in _SHAPE_TYPES.items()}},
 }
