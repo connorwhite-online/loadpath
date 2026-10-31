@@ -1,0 +1,37 @@
+{
+  "name": "link",
+  "description": "A short robot wrist link in PA12 SLS: an organic envelope round two 16 mm bearings, analyzed solid under wrist-link.study.json; its stress sets the skin and the gyroid wall, the cells grow away from the bearings, and drain holes are drilled where the part is calm so the powder gets out.",
+  "nodes": {
+    "shoulder": {"op": "shape", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 20, "r": 13}},
+    "wrist": {"op": "shape", "shape": {"type": "cylinder", "center": [80, 0, 0], "axis": "z", "length": 20, "r": 12}},
+    "web": {"op": "shape", "shape": {"type": "box", "min": [0, -9, -8], "max": [80, 9, 8]}},
+    "blob": {"op": "union", "inputs": ["shoulder", "wrist", "web"], "blend": 9, "description": "bosses and web smooth-unioned"},
+    "slab": {"op": "shape", "shape": {"type": "box", "min": [-16, -16, -10], "max": [96, 16, 10]}},
+    "envelope": {"op": "intersect", "inputs": ["blob", "slab"], "blend": 1.5, "description": "trim the blend's bulge flat, edges rounded 1.5 mm"},
+    "bores": {"op": "shape", "shape": {"type": "union", "shapes": [
+      {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 26, "r": 8},
+      {"type": "cylinder", "center": [80, 0, 0], "axis": "z", "length": 26, "r": 8}]}, "description": "the two 16 mm bearing seats"},
+    "solid": {"op": "subtract", "inputs": ["envelope", "bores"], "description": "the solid link: what gets analyzed, and the mass to beat"},
+    "stress": {"op": "result", "study": "wrist-link.study.json", "part": "solid", "pitch": 1.0, "scale": "peak",
+               "description": "von Mises of the solid link, worst load case, as a fraction of its peak"},
+    "nearBore": {"op": "distance", "input": "bores"},
+    "skinWall": {"op": "remap", "input": "stress", "from": [0.1, 0.8], "to": [0.9, 2.0], "curve": "smoothstep",
+                 "description": "skin 0.9 mm where calm, 2 mm where it is 80% of the peak"},
+    "skin": {"op": "shell", "input": "envelope", "thickness": "skinWall"},
+    "collars": {"op": "shell", "input": "bores", "side": "outside", "thickness": 2.5, "description": "solid rings round the bearings"},
+    "cell": {"op": "remap", "input": "nearBore", "from": [4, 25], "to": [5, 8], "description": "5 mm cells at the bearings, 8 mm mid-span"},
+    "wall": {"op": "remap", "input": "stress", "from": [0.05, 0.6], "to": [0.8, 1.5], "curve": "sqrt",
+             "description": "gyroid wall 0.8 mm (the SLS minimum) where calm, 1.5 mm where loaded"},
+    "core": {"op": "lattice", "type": "gyroid", "cell": "cell", "thickness": "wall"},
+    "fill": {"op": "intersect", "inputs": ["core", "envelope"]},
+    "fillet": {"op": "remap", "input": "nearBore", "from": [3, 15], "to": [1.6, 0.6]},
+    "joined": {"op": "union", "inputs": ["skin", "collars", "fill"], "blend": "fillet"},
+    "part": {"op": "subtract", "inputs": [{"op": "intersect", "inputs": ["joined", "envelope"]}, "bores"]}
+  },
+  "output": "part",
+  "mesh": {"pitch": 0.3},
+  "material": "pa12",
+  "process": "sls",
+  "minWall": 0.8,
+  "drains": {"diameter": 6, "count": 2, "maxPath": 60}
+}
