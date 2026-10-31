@@ -1,0 +1,25 @@
+{
+  "name": "forearm",
+  "description": "The desk arm's forearm, elbow (j3) to wrist (j4), 140 mm, drawn in robot.urdf's world at the home pose (mm). Clamped on the elbow shaft; the wrist pin carries the wrist. SLS PA12, SF 2. The load case is the hand-written one; loadpath assembly replaces it with cases swept from robot.urdf.",
+  "designSpace": [{"type": "box", "min": [-22, -24, 256], "max": [162, 24, 304]}],
+  "preserve": [
+    {"id": "elbow-hub", "shape": {"type": "cylinder", "center": [0, 0, 280], "axis": "y", "length": 34, "r": 16}},
+    {"id": "wrist-cheek-left", "shape": {"type": "cylinder", "p0": [140, 13, 280], "p1": [140, 22, 280], "r": 12}},
+    {"id": "wrist-cheek-right", "shape": {"type": "cylinder", "p0": [140, -22, 280], "p1": [140, -13, 280], "r": 12}}
+  ],
+  "keepOut": [
+    {"id": "elbow-shaft", "shape": {"type": "cylinder", "center": [0, 0, 280], "axis": "y", "length": 52, "r": 6}},
+    {"id": "wrist-pin", "shape": {"type": "cylinder", "center": [140, 0, 280], "axis": "y", "length": 52, "r": 4}},
+    {"id": "cable-channel", "shape": {"type": "cylinder", "p0": [26, 0, 280], "p1": [112, 0, 280], "r": 4.5}}
+  ],
+  "supports": [{"region": "elbow-shaft"}],
+  "loadCases": [
+    {"name": "reach-x2", "loads": [{"region": "wrist-pin", "force": [0, 0, -25.5], "moment": [0, 1864, 0]}]}
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {"safetyFactor": 2.0},
+  "minMember": 3.0,
+  "symmetry": ["y"],
+  "resolution": {"maxElements": 40000}
+}

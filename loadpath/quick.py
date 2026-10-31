@@ -7,9 +7,10 @@ tutorial's commands this way so the docs can't drift from the code.
 
 What it lowers: a study's cells, optimizer iterations and outcome-search runs
 (the evals' coarse tier, evals/run.py COARSE), a heat exchanger's grid and
-whole-exchanger simulation, a field graph's mesh pitch, `tune`'s analyses and
-`assembly`'s sampled poses. Numbers move (mass a few %, safety factor more on
-thin members): read a quick run for direction, run without it to print.
+whole-exchanger simulation, a field graph's mesh pitch, `tune`'s analyses,
+`assembly`'s sampled poses and `verify`'s grid. Numbers move (mass a few %,
+safety factor more on thin members): read a quick run for direction, run
+without it to print.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ FIELD_CELLS = 600_000  # mesh grid cells for a field graph without its own pitch
 FIELD_PITCH = 1.6      # x a field graph's own mesh pitch
 TUNE_EVALUATIONS = 6
 ASSEMBLY_SAMPLES = 150
+VERIFY_CELLS = 20_000  # `verify`'s analysis grid
 
 
 def on() -> bool:
@@ -86,3 +88,7 @@ def tune_evaluations(n):
 
 def assembly_samples(n: int) -> int:
     return min(int(n), ASSEMBLY_SAMPLES) if on() else n
+
+
+def verify_cells(n: int) -> int:
+    return min(int(n), VERIFY_CELLS) if on() else n
