@@ -735,8 +735,15 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             f, u = rhs[idx[0]], displacements[idx[0]]
         else:
             sp = spreads[ci]
-            s0 = nodal_stress(stiff, displacements[idx[0]], mat.E) if idx[0] is not None else None
-            sb = [nodal_stress(stiff, displacements[i], mat.E) for i in idx[1:]]
+            # the fixed part carries the expansion, the uncertain force none;
+            # stress over retention, so the worst direction is the one
+            # nearest failure where hot material is weak
+            s0 = nodal_stress(stiff, displacements[idx[0]], moduli, eps) if idx[0] is not None else None
+            sb = [nodal_stress(stiff, displacements[i], moduli) for i in idx[1:]]
+            if g_node is not None:
+                kn = 1.0 / np.maximum(g_node, 1e-3)[:, None]
+                s0 = s0 * kn if s0 is not None else None
+                sb = [b * kn for b in sb]
             direction, _ = worst_stress_direction(sp, s0, sb, body)
             f = sum(direction[j] * rhs[i] for j, i in enumerate(idx[1:]))
             u = sum(direction[j] * displacements[i] for j, i in enumerate(idx[1:]))

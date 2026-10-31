@@ -293,6 +293,38 @@ def test_study_thermal_gradient_matches_finite_differences():
     _fd_check(lambda r: run(r)[0], grad, rho, [3, 171, 85, 33, 104], rel=1e-4)
 
 
+def test_study_thermal_with_unknown_direction():
+    """Heat with a force of unknown direction (a cone): the worst direction
+    of twice the elastic strain energy is still a 3x3 problem, and with the
+    soft maximum sharpened to the plain maximum the gradient is the
+    derivative of the worst case."""
+    from loadpath.directions import expand
+    from loadpath.simp import E_MIN, PENALTY, _Analysis, _heat_state
+
+    st = _hot_study({"temperatures": [{"region": "motor", "t": 70}], "convection": 10},
+                    loads=[{"shape": {"type": "box", "min": [23, -1, -1], "max": [25, 9, 9]},
+                            "force": [0, 0, -20], "cone": 60}],
+                    supports=[{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.5, 9, 9]}},
+                              {"shape": {"type": "box", "min": [-1, -1, -1], "max": [25, 9, 0.5]}, "fix": "z"}])
+    d = build_domain(st)
+    heat = d.thermal
+    heat.temperature()
+    heat.th.solver.rtol = 1e-13
+    fe = _Analysis(d, st.elastic(design=True), 1e-12)
+    w = np.asarray(d.case_weights, float)
+
+    def run(x, smooth=1e6):
+        fg, fth = _heat_state(heat, x, None)
+        rhs, layout = expand(d.loads, d.spreads, fg)
+        us = fe.solve((E_MIN + x ** PENALTY * (1 - E_MIN)) * heat.g, x, [None] * len(rhs), rtol=1e-12, loads=rhs)
+        return heat.sensitivities(fe, x, rhs, us, fth, w, None, {}, layout, d.spreads, smooth=smooth)
+
+    rho = np.random.default_rng(3).uniform(0.3, 1, d.n_elem)
+    _, _, grad, dirs = run(rho)
+    assert dirs[0] is not None and dirs[0] @ np.array([0, 0, -1.0]) >= 0.5 - 1e-9
+    _fd_check(lambda r: run(r)[0], grad, rho, [3, 171, 85, 33, 104], rel=1e-4)
+
+
 def test_verify_thermal_stress_matches_a_held_bar():
     """Verification with a thermal block: a PETG bar at 45 C between two
     walls that stop it growing (rollers, free sideways) carries
@@ -325,6 +357,35 @@ def test_verify_thermal_stress_matches_a_held_bar():
     assert abs(c["safetyFactor"] * c["peakStress"] * r["stressAllowance"] - g * st.material.strength) < 1e-6
 
 
+def test_verify_thermal_with_unknown_direction():
+    """Verification of a hot part under a force of any direction: the worst
+    direction found from three unit solves (stress over strength retention,
+    the expansion in the fixed part) is at least as bad as every sampled
+    direction solved on its own."""
+    import trimesh
+
+    from loadpath.directions import fibonacci_sphere
+    from loadpath.verify import verify_part
+
+    L = 40
+
+    def study(load):
+        return study_from_dict({
+            "designSpace": {"type": "box", "min": [0, 0, 0], "max": [L, 10, 10]},
+            "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.3, 11, 11]}}],
+            "loads": [{"shape": {"type": "box", "min": [L - 0.3, -1, -1], "max": [L + 1, 11, 11]}, **load}],
+            "material": "petg",
+            "thermal": {"temperatures": [{"shape": {"type": "box", "min": [L - 3, -1, -1], "max": [L + 1, 11, 11]},
+                                          "t": 75}], "convection": 10}})
+
+    m = trimesh.creation.box(extents=[L, 10, 10])
+    m.apply_translation([L / 2, 5, 5])
+    c = verify_part(study({"force": [0, 0, -30], "direction": "any"}), m, max_cells=8000, refine=0)["cases"][0]
+    for d in list(fibonacci_sphere(12)) + [np.array(c["worstDirection"])]:
+        sf = verify_part(study({"force": list(30 * d)}), m, max_cells=8000, refine=0)["safetyFactor"]
+        assert sf >= c["safetyFactor"] * (1 - 1e-6), (d, sf, c["safetyFactor"])
+
+
 TESTS = [
     test_slab_with_generation_is_exact,
     test_convective_fin_matches_closed_form,
@@ -337,7 +398,9 @@ TESTS = [
     test_expansion_gradient_matches_finite_differences,
     test_study_thermal_block_parses_and_lints,
     test_study_thermal_gradient_matches_finite_differences,
+    test_study_thermal_with_unknown_direction,
     test_verify_thermal_stress_matches_a_held_bar,
+    test_verify_thermal_with_unknown_direction,
 ]
 
 

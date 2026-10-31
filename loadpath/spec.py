@@ -652,9 +652,6 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         if gravity.shape != (3,) or not np.all(np.isfinite(gravity)):
             raise ValueError("gravity must be an acceleration vector in m/s², e.g. [0, 0, -9.81]")
     thermal = _thermal(d.get("thermal"), base_dir)
-    if thermal is not None and any(ld.direction for c in cases for ld in c.loads):
-        raise ValueError("thermal does not go with a load of unknown direction (direction 'any' or a cone) yet; "
-                         "give that force a direction")
 
     g = d.get("goal") or {"volumeFraction": 0.3}
     goal = Goal(
