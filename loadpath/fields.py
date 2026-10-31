@@ -739,6 +739,11 @@ class FieldGraph:
             if not isinstance(s.get("expr"), str):
                 raise ValueError(f"node {nd.name!r}: expr needs an 'expr' string")
             used, fn = _compile_expr(s["expr"])
+            shadow = [k for k in (s.get("vars") or {}) if k in ("x", "y", "z") or k in _CONSTS or k in _FUNCS]
+            if shadow:
+                # the expr would read the constant or coordinate, never the var
+                raise ValueError(f"node {nd.name!r}: var name {shadow[0]!r} is reserved (x, y, z, pi, e and the "
+                                 f"expr functions); rename it")
             local = {k: self._ref(v, nd.name, f"vars.{k}") for k, v in (s.get("vars") or {}).items()}
             for u in used - set(local) - {"x", "y", "z"}:
                 if u not in self.nodes:
@@ -1726,6 +1731,25 @@ def node_doc(doc, node):
     return {**full, "output": node, "name": f"{doc.get('name', 'field')}-{node}"}
 
 
+def _write_graded(doc, rep, out_dir):
+    """With the impact block's `grade`: the graph again with its density node
+    replaced by the graded table (<name>-graded.json beside the STL), ready
+    to mesh and re-check with `loadpath field`. File paths in it resolve
+    against the graph's folder: pass --base-dir if it reads any."""
+    imp, spec = rep.get("impact") or {}, doc.get("impact") or {}
+    dens = spec.get("density")
+    if not imp.get("graded") or not isinstance(dens, str) or dens not in (doc.get("nodes") or {}):
+        return
+    gd = json.loads(json.dumps(doc))
+    gd["name"] = f"{rep['name']}-graded"
+    gd["nodes"][dens] = imp["graded"]["density"]
+    gd["impact"] = {**spec, "grade": False}
+    path = os.path.join(out_dir, f"{gd['name']}.json")
+    with open(path, "w") as fh:
+        json.dump(gd, fh, indent=2)
+    imp["gradedGraph"] = path
+
+
 def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progress=None, render=True,
               prebuilt=None, node=None):
     """Build a field graph, mesh its output and report on it: volume,
@@ -1829,6 +1853,7 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         path = os.path.join(out_dir, f"{rep['name']}.stl")
         mesh.export(path)
         rep["stl"] = path
+        _write_graded(doc, rep, out_dir)
         if doc.get("step"):
             from .step import DEFAULT_FACES, export_step
 

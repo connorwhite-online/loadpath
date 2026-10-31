@@ -189,6 +189,9 @@ def test_graph_errors_and_lint():
                                      "b": {"op": "offset", "input": "a", "distance": 1}}})
     assert "did you mean 'shell'" in err({"nodes": {"a": {"op": "shel"}}})
     assert "reads 'q'" in err({"nodes": {"a": {"op": "expr", "expr": "q + 1"}}})
+    # a var named like a constant would be silently read as the constant
+    assert "var name 'e' is reserved" in err({"nodes": {"s": SPHERE,
+                                                         "a": {"op": "expr", "expr": "e + 1", "vars": {"e": "s"}}}})
     issues = lint({"nodes": {"s": SPHERE, "w": {"op": "shell", "input": "s", "thicknes": 1}}}, "field")
     assert any("did you mean 'thickness'" in i["message"] for i in issues), issues
     issues = lint({"nodes": {"w": {"op": "shell", "input": "nope", "thickness": 1}}}, "field")

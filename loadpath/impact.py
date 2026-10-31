@@ -563,7 +563,8 @@ def impact_report(graph, spec: dict, material) -> dict:
         gm = float((g["rho"] * area).sum() * h * material.density / 1000.0)
         # the fair comparison: a uniform core of the same mass
         cu = crush_curve(law, area, g["meanRho"], h, sy, E)
-        out["uniformSameMass"] = {"density": round(g["meanRho"], 4), "response": impact_response(cu, energy, mass)}
+        out["uniformSameMass"] = {"density": round(g["meanRho"], 4), "response": impact_response(cu, energy, mass),
+                                  "curve": cu.to_dict()}
         out["graded"] = {"ok": g["ok"], "plateauForce": round(g["force"], 1), "coreMass": round(gm, 2),
                          "rhoMin": round(rho_min, 4),
                          "response": impact_response(g["curve"], energy, mass), "curve": g["curve"].to_dict(),
