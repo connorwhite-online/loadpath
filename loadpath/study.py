@@ -58,7 +58,7 @@ _CONFIRM_RUNS = 3
 # With goal.confirm "tet", at most this many picks are confirmed on the
 # tetrahedral mesh, and the search runs at most this many more fractions
 # after its first pick (the step down the calibration allows, and back).
-_TET_CONFIRMS = 4
+_TET_CONFIRMS = 6
 _TET_EXTRA_RUNS = 4
 # A tet-confirmed pick within this of its target is close enough.
 _TET_CLOSE = 1.08
@@ -997,6 +997,26 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 # toward the fraction the confirmed margin points at, unless
                 # it is already close, or a failing fraction sits within 10%
                 mt = o.report["margin"]
+                # The fraction just below that failed only on its scaled voxel
+                # reading is confirmed on tets directly before the search
+                # stops on it: the voxel reading can fall off a cliff the tet
+                # mesh does not see (the wall bracket: voxel SF 2.65 at 7.8%
+                # and 0.81 at 7.1%, tets 4.06 at 7.8%), and the ratio of one
+                # design says little about the next.
+                near = [i for i, q in enumerate(outcomes)
+                        if getattr(q, "tet_k", None) is None and not q.passes and q.voxel_sf
+                        and q.volume_fraction < o.volume_fraction and q.report.get("bodies", 1) <= 1
+                        and (tet_fail is None or q.volume_fraction > tet_fail)]
+                if mt >= _TET_CLOSE and near and confirms < _TET_CONFIRMS:
+                    q = outcomes[max(near, key=lambda i: outcomes[i].volume_fraction)]
+                    confirms += 1
+                    mq = tet_confirm(q)
+                    if mq is None or mq < 1.0:
+                        if mq is None:
+                            q.tet_k = 0.0   # do not try it again
+                            q.passes = False
+                        tet_fail = max(tet_fail or 0.0, q.volume_fraction)
+                    continue
                 lo = max((q.volume_fraction for q in outcomes
                           if not q.passes and q.volume_fraction < o.volume_fraction), default=None)
                 if mt < _TET_CLOSE or extra >= _TET_EXTRA_RUNS or \

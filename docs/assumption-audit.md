@@ -163,6 +163,15 @@ per case on average. What was learned:
   7.1%) with the tet reading still well over target: the next gains are
   confirming those neighbours on tets directly, and cut-cell boundary
   stiffness so the voxel reading is closer to begin with.
+- Follow-up (2026-10-31): the nearest lighter fraction that failed only on
+  its scaled voxel reading is now confirmed on tets before the search stops.
+  On current main it ran on the hook (7.1% failed voxel; tets 2.21 for 2.5)
+  and MBB (tets 1.29 for 1.5) and both were rightly rejected; the
+  wall bracket's 10.2% and 11.4% read 2.29 and 2.12 on tets, so its pick
+  stays at 12.6% (67.8 g, the same as voxel confirm on this main: the
+  search landscape moved since 1d500e0, where 7.8% held 4.06). Its designs
+  are not monotone in the fraction; that is a search problem, not a
+  confirmation one. Fastener bracket 29.6 g (tet 2.81), MBB 15.5 g (1.53).
 - The voxel reading also moves with the cell budget, and most on thin
   sections. Tuning the arm link's field graph (tune.py, 2026-10-30), the
   start part read 0.500 mm deflection on 30k cells and 0.487 mm on 60k, while
