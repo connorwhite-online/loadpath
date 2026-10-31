@@ -36,9 +36,12 @@ __all__ = ["surfaces", "label", "coarsen", "smooth_brep"]
 TOL = 0.005          # mm: a vertex this close to an exact surface lies on it
 PATCHES = 1500       # organic B-spline patches
 DEBUG = False
+CREASE = 40.0        # degrees: organic faces meeting sharper than this are separate smooth regions
+DEBUG_AT = None
 SEW = 0.01           # mm: sewing tolerance (exact faces' seams sit within TOL of the patches')
 SKIP_FAILED = False
 ASPECT = 0.1         # least 2*area / longest edge^2 of a patch (equilateral 0.87)
+MAX_EDGE = np.inf     # mm: longest organic patch edge
 LEAN = 0.5           # least cosine between a patch's plane and the surface normal at its corners
 TURN = 0.5           # least cosine between a coarsened face's normal and its old one
 
@@ -175,6 +178,25 @@ def label(mesh, surfs, tol=TOL):
     return lab
 
 
+def creases(mesh, lab, O, angle=CREASE):
+    """Organic faces (label 0) split into smooth regions at creases (faces
+    meeting at more than `angle` degrees), labelled O, O + 1, ...: a patch
+    must not round over a sharp edge of the field."""
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+
+    org = lab == 0
+    A = np.asarray(mesh.face_adjacency)
+    keep = org[A[:, 0]] & org[A[:, 1]] & (np.asarray(mesh.face_adjacency_angles) < np.radians(angle))
+    n = len(lab)
+    G = sp.coo_matrix((np.ones(keep.sum()), (A[keep, 0], A[keep, 1])), shape=(n, n))
+    _, comp = connected_components(G, directed=False)
+    out = lab.copy()
+    _, ids = np.unique(comp[org], return_inverse=True)
+    out[org] = O + ids
+    return out
+
+
 def _vertex_sets(F, lab, n):
     K = int(lab.max()) + 1 if len(lab) else 1
     pairs = np.unique(F.ravel().astype(np.int64) * K + np.repeat(lab, 3))
@@ -205,7 +227,7 @@ def _edge_faces(F):
     return E, key[i], f[i], f[j]
 
 
-def coarsen(mesh, lab, patches=PATCHES, progress=None):
+def coarsen(mesh, lab, patches=PATCHES, curved=None, surfs=None, O=None, progress=None):
     """The labelled mesh coarsened until about `patches` organic triangles
     remain and the exact regions are as coarse as their seams allow. Returns
     (vertex indices into the mesh, faces, labels)."""
@@ -216,9 +238,13 @@ def coarsen(mesh, lab, patches=PATCHES, progress=None):
     n = len(V)
     st = {}
     rng = np.random.default_rng(0)
+    if O is None:                   # labels from O up are organic (0 alone, by default)
+        O = 0
+    if curved is None:
+        curved = np.zeros(int(lab.max()) + 1, bool)
 
     def allow(E, Fc, lb):
-        K, pairs, nl, h, one = _vertex_sets(Fc, lb, n)
+        K, pairs, nl, h, one = _vertex_sets(Fc, lb, int(Fc.max()) + 1)
         a, b = E[:, 0], E[:, 1]
         a_in_b = (nl[a] == 1) & np.isin(b * K + one[a], pairs)
         b_in_a = (nl[b] == 1) & np.isin(a * K + one[b], pairs)
@@ -232,8 +258,8 @@ def coarsen(mesh, lab, patches=PATCHES, progress=None):
             seam = (key[pos] == kq) & (lb[f0[pos]] != lb[f1[pos]])
             ok |= both2 & seam
         # organic triangles: stop at the budget
-        org = (one[a] == 0) | (one[b] == 0)
-        n_org = int((lb == 0).sum())
+        org = (one[a] >= O) | (one[b] >= O)
+        n_org = int((lb >= O).sum())
         room = max(0, (n_org - int(patches)) // 2)
         oi = np.flatnonzero(ok & org)
         if len(oi) > 4 * room:               # near the budget: a spread-out few, not a cluster
@@ -267,14 +293,59 @@ def coarsen(mesh, lab, patches=PATCHES, progress=None):
         already that bad. Exact faces merge back whole: any shape will do."""
         q0, l0 = shape(Told)
         q1, l1 = shape(Tnew)
-        return (((q1 > ASPECT) | (q1 >= q0)) & ((l1 > LEAN) | (l1 >= l0))) | (lb > 0)
+        longest = np.sqrt(((Tnew - np.roll(Tnew, 1, axis=1)) ** 2).sum(axis=2).max(axis=1))
+        organic = ((q1 > ASPECT) | (q1 >= q0)) & ((l1 > LEAN) | (l1 >= l0)) & (longest <= MAX_EDGE)
+        bend = (l1 > LEAN) | (l1 >= l0)             # a bore's triangle: under ~60 degrees of arc
+        return np.where(lb >= O, organic, np.where(curved[np.minimum(lb, len(curved) - 1)], bend, True))
 
-    V2, F2, stats, _ = decimate(V, F, None, 0.0, 1.0, max_passes=400, min_gain=0.0, progress=progress,
-                                place=place, turn=TURN, labels=lab, allow=allow, max_reject=40, quality=quality)
-    # every coarse vertex sits where one of the mesh's vertices is: which one
-    d, vid = tree.query(V2)
-    assert d.max() < 1e-9, d.max()
-    return vid, F2, stats["labels"]
+    import trimesh
+
+    org = trimesh.Trimesh(V, F[lab >= O], process=False) if (lab >= O).any() else None
+    W, Fc, lb = V, F, np.asarray(lab)
+    for _ in range(60):
+        before = len(Fc)
+        W, Fc, stats, _ = decimate(W, Fc, None, 0.0, 1.0, max_passes=6, min_gain=0.0, progress=progress,
+                                   place=place, turn=TURN, labels=lb, allow=allow, max_reject=40, quality=quality)
+        lb = stats["labels"]
+        if (lb >= O).sum() <= patches or len(Fc) > 0.995 * before:
+            break
+        W = _relax(W, Fc, lb, org, surfs or {}, O)
+    # which coarse vertices still sit on one of the mesh's vertices (seams, corners)
+    d, vid = tree.query(W)
+    vid[d > 1e-9] = -1
+    return W, vid, Fc, lb
+
+
+def _relax(W, F, lb, org, surfs, O, rounds=2, step=0.5):
+    """Even out the patch layout: each vertex inside one region moves halfway
+    to its neighbours' average, back onto its surface (the organic mesh, or
+    its exact surface). Seam and corner vertices stay put."""
+    import trimesh
+
+    n = len(W)
+    K, pairs, nl, h, one = _vertex_sets(F, lb, n)
+    free = (nl == 1)
+    E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    W = W.copy()
+    for _ in range(rounds):
+        S = np.zeros_like(W)
+        c = np.zeros(n)
+        np.add.at(S, E[:, 0], W[E[:, 1]])
+        np.add.at(c, E[:, 0], 1)
+        A = S / np.maximum(c, 1)[:, None]
+        T = W + step * (A - W)
+        o = free & (one >= O)
+        if org is not None and o.any():
+            cp, _, tri = trimesh.proximity.closest_point(org, T[o])
+            vn = trimesh.Trimesh(W, F, process=False).vertex_normals[o]
+            ok = np.einsum("ij,ij->i", org.face_normals[tri], vn) > 0.5
+            idx = np.flatnonzero(o)
+            W[idx[ok]] = cp[ok]
+        for k, sf in surfs.items():
+            e = free & (one == k)
+            if e.any():
+                W[e] = _onto(sf, T[e])
+    return W
 
 
 def _graph(mesh, mask_v=None, mask_e=None):
@@ -350,9 +421,14 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
     for k, s in enumerate(surfs):
         lk = keys.setdefault(s.key(), k + 1)
         geo.setdefault(lk, s)
-    vid, F, flab = coarsen(mesh, lab, patches)
+    curved = np.zeros(int(lab.max()) + 1, bool)
+    for lk, sf in geo.items():
+        if lk < len(curved):
+            curved[lk] = sf.kind != "plane"
+    O = (max(geo) if geo else 0) + 1
+    lab = creases(mesh, lab, O)
+    CV, vid, F, flab = coarsen(mesh, lab, patches, curved, geo, O)
     V = np.asarray(mesh.vertices, float)
-    CV = V[vid]
     t1 = time.time()
 
     # fine-mesh graphs for the paths
@@ -360,7 +436,7 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
     Ef, keyf, f0, f1 = _edge_faces(np.asarray(mesh.faces, np.int64))
     seam_e = fl[f0] != fl[f1]
     org_v = np.zeros(len(V), bool)
-    org_v[np.asarray(mesh.faces)[fl == 0].ravel()] = True
+    org_v[np.asarray(mesh.faces)[fl >= O].ravel()] = True
     import scipy.sparse as sp
 
     def graph(mask):
@@ -372,7 +448,7 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
 
     CE, ckey, cf0, cf1 = _edge_faces(F)
     N = int(order) + 1                              # points per patch side
-    org_mesh = trimesh.Trimesh(V, np.asarray(mesh.faces)[fl == 0], process=False)
+    org_mesh = trimesh.Trimesh(V, np.asarray(mesh.faces)[fl >= O], process=False)
 
     def pull(P, nrm):
         """Points onto the organic surface, where its normal there agrees."""
@@ -384,22 +460,32 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
 
     # every coarse edge: a polyline over the surface, and its midpoint by length
     poly, split = {}, {}
-    for (a, b), la, lb in zip(CE, flab[cf0], flab[cf1]):
+    cfn = np.cross(CV[F[:, 1]] - CV[F[:, 0]], CV[F[:, 2]] - CV[F[:, 0]])
+    cfn /= np.maximum(np.linalg.norm(cfn, axis=1, keepdims=True), 1e-300)
+    for (a, b), la, lb, f0e, f1e in zip(CE, flab[cf0], flab[cf1], cf0, cf1):
         a, b = int(a), int(b)
         pa, pb = CV[a], CV[b]
         L = float(np.linalg.norm(pa - pb))
-        if la == lb and la > 0:
+        if la == lb and la < O:
             t = np.linspace(0, 1, 9)[:, None]
             P = _onto(geo[int(la)], pa * (1 - t) + pb * t)
             P[0], P[-1] = pa, pb
+        elif la == lb:
+            # inside the organic body: the chord pulled onto the surface (the
+            # shortest path over the mesh's edges is a staircase, and two
+            # from one corner can share their first half)
+            t = np.linspace(0, 1, 9)[:, None]
+            P = pa * (1 - t) + pb * t
+            nn = cfn[f0e] + cfn[f1e]
+            nn /= max(np.linalg.norm(nn), 1e-300)
+            P[1:-1] = pull(P[1:-1], np.repeat(nn[None], 7, axis=0))
         else:
-            G = Gseam if la != lb else Gorg
-            pth = _path(G, int(vid[a]), int(vid[b]), limit=4 * L + 1.0)
+            pth = _path(Gseam, int(vid[a]), int(vid[b]), limit=4 * L + 1.0)
             if pth is None:
                 raise RuntimeError("no surface path for a patch edge")
             P = V[pth]
         poly[(a, b)] = P
-        split[(a, b)] = la == 0 or lb == 0        # organic on a side: two half edges
+        split[(a, b)] = la >= O or lb >= O        # organic on a side: two half edges
 
     def resample(P, n):
         d = np.r_[0, np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))]
@@ -444,6 +530,8 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
         return BRepBuilderAPI_MakeFace(Geom_BezierSurface(arr), 1e-7).Face()
 
     edge_cache = {}
+    surf_geom = {}
+    sides = []
 
     def edge(key, P):
         if key not in edge_cache:
@@ -456,22 +544,19 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
     nq = 0
     for f, lf in zip(F, flab):
         f = [int(x) for x in f]
-        if lf > 0:
-            w = BRepBuilderAPI_MakeWire()
+        if lf < O:
+            loop = []                            # (edge, traversed reversed?)
             for k in range(3):
                 a, b = f[k], f[(k + 1) % 3]
                 e = (min(a, b), max(a, b))
                 if split[e]:
-                    for x, y in ((a, b), (b, a)):
-                        w.Add(edge(("h", x, e), half(x, y)))
+                    loop.append((edge(("h", a, e), half(a, b)), False))
+                    loop.append((edge(("h", b, e), half(b, a)), True))
                 else:
-                    w.Add(edge(("e", e), poly[e]))
-            mf = BRepBuilderAPI_MakeFace(geo[int(lf)].geom(), w.Wire(), True)
-            if not mf.IsDone():
-                raise RuntimeError("an exact face failed")
-            fx = ShapeFix_Face(mf.Face())
-            fx.Perform()
-            sew.Add(fx.Face())
+                    loop.append((edge(("e", e), poly[e]), a > b))
+            if int(lf) not in surf_geom:
+                surf_geom[int(lf)] = geo[int(lf)].geom()
+            sew.Add(_exact_face(geo[int(lf)], surf_geom[int(lf)], loop, CV[f].mean(axis=0)))
             continue
         T = CV[f]
         n = np.cross(T[1] - T[0], T[2] - T[0])
@@ -503,6 +588,9 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
             Q[1:-1, 1:-1] = pull(inner, np.repeat(n[None], len(inner), axis=0)).reshape(N - 2, N - 2, 3)
             sew.Add(bezier_face(Q))
             nq += 1
+            if DEBUG:
+                for side, tag in ((Q[:, 0], "bottom"), (Q[:, -1], "top"), (Q[0, :], "left"), (Q[-1, :], "right")):
+                    sides.append((side.copy(), tag, k, tuple(f)))
     sew.Perform()
     t3 = time.time()
     ex = TopExp_Explorer(sew.SewedShape(), TopAbs_SHELL)
@@ -512,6 +600,24 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
         ex.Next()
     if DEBUG:
         print("quads", nq, "shells", len(shells), "free", sew.NbFreeEdges(), "t", round(time.time() - t0, 1), flush=True)
+    if DEBUG and sides:
+        from collections import Counter
+        key = lambda P: tuple(np.round(np.sort(np.stack([P[0], P[-1], P[len(P) // 2]]), axis=0).ravel(), 4))
+        cnt = Counter(key(P) for P, *_ in sides)
+        odd = [(t, k, f, P[0].round(3), P[-1].round(3)) for P, t, k, f in sides if cnt[key(P)] == 1]
+        print("unmatched quad sides", len(odd), flush=True)
+        q = np.array(DEBUG_AT) if DEBUG_AT is not None else None
+        if q is not None:
+            for P, t, k, f in sides:
+                if min(np.linalg.norm(P[0] - q), np.linalg.norm(P[-1] - q)) < 1e-3:
+                    print("side at", t, k, f, P.round(3).tolist(), cnt[key(P)], flush=True)
+    if DEBUG and sew.NbFreeEdges():
+        from OCP.BRep import BRep_Tool as _T
+        from OCP.TopExp import TopExp as _X
+        for i in range(1, sew.NbFreeEdges() + 1):
+            e = sew.FreeEdge(i)
+            p0, p1 = _T.Pnt_s(_X.FirstVertex_s(e)), _T.Pnt_s(_X.LastVertex_s(e))
+            print("free edge", round(p0.X(), 3), round(p0.Y(), 3), round(p0.Z(), 3), "len", round(p0.Distance(p1), 4), flush=True)
     if len(shells) != 1 or sew.NbFreeEdges():
         raise RuntimeError(f"patches did not close ({len(shells)} shells, {sew.NbFreeEdges()} free edges)")
     fx = ShapeFix_Solid(BRepBuilderAPI_MakeSolid(shells[0]).Solid())
@@ -522,11 +628,83 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
     u = ShapeUpgrade_UnifySameDomain(solid, False, True, False)
     u.Build()
     solid = u.Shape()
-    rep = {"patches": nq, "triangles": int((flab == 0).sum()), "exactTriangles": int((flab > 0).sum()),
-           "exactSurfaces": int(len(set(int(x) for x in np.unique(lab) if x > 0))),
+    rep = {"patches": nq, "triangles": int((flab >= O).sum()), "exactTriangles": int((flab < O).sum()),
+           "exactSurfaces": int(len(set(int(x) for x in np.unique(lab) if x < O))),
+           "smoothRegions": int(len(set(int(x) for x in np.unique(lab) if x >= O))),
            "seconds": {"coarsen": round(t1 - t0, 1), "edges": round(t2 - t1, 1), "faces": round(t3 - t2, 1),
                        "solid": round(time.time() - t3, 1)}}
     return solid, rep
+
+
+def _uv(s, P, ref=None):
+    """(u, v) of points on exact surface `s` in OpenCascade's parameters for
+    s.geom(): planes and cylinders (angle unwrapped around `ref`)."""
+    if s.kind == "plane":
+        X, Y = _frame(s.n)
+        d = P - s.p
+        return np.stack([d @ X, d @ Y], axis=1)
+    X, Y = _frame(s.axis)
+    d = P - s.p0
+    u = np.arctan2(d @ Y, d @ X)
+    if ref is not None:
+        u = ref + (u - ref + np.pi) % (2 * np.pi) - np.pi
+    return np.stack([u, d @ s.axis], axis=1)
+
+
+def _frame(n):
+    """The X and Y directions OpenCascade gives gp_Ax3(origin, n)."""
+    from OCP.gp import gp_Ax3, gp_Dir, gp_Pnt
+
+    ax = gp_Ax3(gp_Pnt(0, 0, 0), gp_Dir(*map(float, n)))
+    x, y = ax.XDirection(), ax.YDirection()
+    return np.array([x.X(), x.Y(), x.Z()]), np.array([y.X(), y.Y(), y.Z()])
+
+
+def _exact_face(s, geom, loop, centre, tol=0.01):
+    """A face on exact surface `s` (its OpenCascade surface `geom`) bounded by
+    `loop`, [(edge, reversed)], with each edge's curve on the surface given
+    explicitly (sampled, mapped to (u, v), fitted), so a bore's face covers
+    the arc it should and not the rest of the cylinder."""
+    from OCP.BRep import BRep_Builder, BRep_Tool
+    from OCP.BRepLib import BRepLib
+    from OCP.gp import gp_Pnt2d
+    from OCP.Geom2dAPI import Geom2dAPI_PointsToBSpline
+    from OCP.GeomAbs import GeomAbs_C2
+    from OCP.OCP.collections import Array1_double, Array1_gp_Pnt2d
+    from OCP.TopAbs import TopAbs_REVERSED
+    from OCP.TopoDS import TopoDS_Face, TopoDS_Wire
+
+    if s.kind == "sphere":
+        raise RuntimeError("spherical exact faces are not built yet")
+    ref = None
+    if s.kind == "cylinder":
+        ref = float(_uv(s, centre[None])[0, 0])
+    bb = BRep_Builder()
+    face = TopoDS_Face()
+    bb.MakeFace(face, geom, 1e-7)
+    wire = TopoDS_Wire()
+    bb.MakeWire(wire)
+    ring = []
+    for e, rev in loop:
+        c = BRep_Tool.Curve_s(e, 0.0, 1.0)
+        t = np.linspace(c.FirstParameter(), c.LastParameter(), 12)
+        P = np.array([[p.X(), p.Y(), p.Z()] for p in (c.Value(x) for x in t)])
+        UV = _uv(s, P, ref)
+        pts, par = Array1_gp_Pnt2d(1, len(t)), Array1_double(1, len(t))
+        for j, (q, x) in enumerate(zip(UV, t)):
+            pts.SetValue(j + 1, gp_Pnt2d(float(q[0]), float(q[1])))
+            par.SetValue(j + 1, float(x))
+        pc = Geom2dAPI_PointsToBSpline(pts, par, 1, 3, GeomAbs_C2, 1e-7).Curve()
+        bb.UpdateEdge(e, pc, face, tol)
+        bb.Add(wire, e.Oriented(TopAbs_REVERSED) if rev else e)
+        ring.append(UV[::-1] if rev else UV)
+    R = np.vstack(ring)
+    area = 0.5 * np.sum(R[:, 0] * np.roll(R[:, 1], -1) - np.roll(R[:, 0], -1) * R[:, 1])
+    if area < 0:
+        wire.Reverse()
+    bb.Add(face, wire)
+    BRepLib.SameParameter_s(face, tol)
+    return face
 
 
 def _bernstein(d):
