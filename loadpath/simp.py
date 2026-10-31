@@ -500,6 +500,18 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres):
     return xp, us
 
 
+def _heat_state(heat, x, fg):
+    """Solve the temperature at densities x and return (self-weight plus
+    expansion load, expansion load or None), in the optimizer's units: forces
+    in N against unit-modulus stiffness, so the expansion's E0 is in the
+    load."""
+    heat.temperature(x)
+    if not heat.expands:
+        return fg, None
+    fth = heat.load(np.where(x > ALIVE, x ** PENALTY * (1 - E_MIN), 0.0), heat.E0)
+    return (fth if fg is None else fg + fth), fth
+
+
 def _pad(opts) -> bool:
     return opts.extrusion is None if opts.pad_filter is None else bool(opts.pad_filter)
 
@@ -640,6 +652,9 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     it = 0
     change = 1.0
 
+    heat = domain.thermal
+    heat_state = {}
+
     ijk = tuple(mesh.elem_ijk.T)
     if opts.build_direction is not None:
         from .am import AMFilter
@@ -706,6 +721,12 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if domain.gravity is not None:
             from .domain import gravity_force
             fg = gravity_force(mesh, xe, domain.gravity, domain.fixed)
+        fth = None
+        if heat is not None:
+            # the design's own temperature, softening and expansion load
+            # (thermal.StudyHeat); the spec keeps unknown directions out
+            fg, fth = _heat_state(heat, xe, fg)
+            e = e * heat.g
         # A force of unknown direction is three solves, one per axis, and
         # each case is judged in its worst direction (directions.py).
         rhs, layout = expand(domain.loads, spreads, fg)
@@ -717,7 +738,9 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         dc_xp = np.zeros(n)
         comp = 0.0
         case_c = []
-        for ci, wc in enumerate(collapse(rhs, layout, us, spreads)):
+        if heat is not None:
+            comp, case_c, dc_xp = heat.sensitivities(fe, xe, rhs, us, fth, weights, domain.gravity, heat_state)
+        for ci, wc in enumerate(collapse(rhs, layout, us, spreads) if heat is None else ()):
             # the worst direction's sensitivity is its own (envelope theorem),
             # softened over near-ties (directions.SMOOTH)
             cc = wc.compliance
@@ -863,6 +886,10 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     if domain.gravity is not None:
         from .domain import gravity_force
         fg = gravity_force(mesh, xp, domain.gravity, domain.fixed)
+    fth = None
+    if heat is not None:
+        fg, fth = _heat_state(heat, xp, fg)
+        e = e * heat.g
     loads, layout = expand(domain.loads, spreads, fg)
     us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
     if opts.prune:
@@ -876,10 +903,20 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     case_c, case_d, comp = [], [], 0.0
     energy = np.zeros(n)
     stiff = E_MIN + xp ** PENALTY * (1 - E_MIN)
+    if heat is not None:
+        if opts.prune:
+            # pruning moved the design: its temperature and load with it
+            fg = gravity_force(mesh, xp, domain.gravity, domain.fixed) if domain.gravity is not None else None
+            fg, fth = _heat_state(heat, xp, fg)
+            loads, layout = expand(domain.loads, spreads, fg)
+            us = fe.solve(stiff * heat.g, xp, us, rtol=1e-6, loads=loads)
+        comp, case_c, _ = heat.sensitivities(fe, xp, loads, us, fth, weights, domain.gravity, heat_state)
+        stiff = stiff * heat.g
     for ci, wc in enumerate(collapse(loads, layout, us, spreads)):
-        case_c.append(wc.compliance)
         case_d.append(None if wc.direction is None else [float(v) for v in wc.direction])
-        comp += weights[ci] * wc.compliance
+        if heat is None:
+            case_c.append(wc.compliance)
+            comp += weights[ci] * wc.compliance
         energy += weights[ci] * stiff * sum(m * fe.strain_energy(v) for m, v in wc.energy)
     return SimpResult(x=x, xphys=xp, compliance=comp, case_compliance=case_c,
                       volume_fraction=float(xp[design].mean()), iterations=it,

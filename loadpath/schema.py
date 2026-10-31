@@ -267,6 +267,61 @@ _DURABILITY = {
     "additionalProperties": False,
 }
 
+_THERMAL_REGION = {
+    "region": {"type": "string"},
+    "shape": {"$ref": "#/$defs/shape"},
+}
+
+_THERMAL = {
+    "type": "object",
+    "description": "Heat in the part, applied in every load case: the temperature is solved on the part itself "
+                   "(conduction through the material, convection off its surface), each cell softens by the "
+                   "material's modulus retention at its temperature, and expansion that the supports or the "
+                   "part's own cooler material stop becomes stress. The optimizer designs for it and "
+                   "verification checks it (stress with the free expansion taken off, strength derated as the "
+                   "modulus is). Needs a way for heat out: a fixed temperature or convection.",
+    "properties": {
+        "ambient": {"type": "number", "description": "C of the surroundings (default 25)."},
+        "stressFree": {"type": "number",
+                       "description": "C at which the part fits without stress, e.g. when bolted up (default "
+                                      "ambient)."},
+        "temperatures": {"type": "array", "description": "Surfaces held at a temperature: a motor face, a "
+                                                        "heated bed, a cold plate. " + _TARGET,
+                         "items": {"type": "object", "properties": {**_THERMAL_REGION, "t": {
+                             "type": "number", "description": "C"}},
+                                   "required": ["t"], "x-requireOne": [["region"], ["shape"]],
+                                   "additionalProperties": False}},
+        "heat": {"type": "array", "description": "Heat flowing in. " + _TARGET,
+                 "items": {"type": "object", "properties": {
+                     **_THERMAL_REGION,
+                     "watts": {**_POS, "description": "W into the region"},
+                     "spread": {"enum": ["surface", "volume"],
+                                "description": "'surface' (default): through the region's surface nodes; "
+                                               "'volume': generated in the region's cells (a coil, a "
+                                               "resistor potted in)."}},
+                     "required": ["watts"], "x-requireOne": [["region"], ["shape"]],
+                     "additionalProperties": False}},
+        "convection": {"anyOf": [
+            {"type": "number", "minimum": 0, "description": "W/(m² K) off every exposed surface"},
+            {"type": "array", "items": {"type": "object", "properties": {
+                **_THERMAL_REGION,
+                "h": {"type": "number", "minimum": 0,
+                      "description": "W/(m² K): ~5-10 still air, 20-50 a fan, 500+ water"},
+                "fluid": {"type": "number", "description": "C of the fluid (default ambient)"}},
+                "required": ["h"], "additionalProperties": False}}],
+            "description": "Heat carried off the surface the design exposes (default 8 W/(m² K), still air). "
+                           "An entry without region or shape covers every surface."},
+        "conductivity": {**_POS, "description": "W/(m K) override (default the material card's)."},
+        "expansion": {"anyOf": [{"type": "boolean"}, {"type": "number", "minimum": 0}],
+                      "description": "true (default): the material card's expansion coefficient; a number: 1/K "
+                                     "(e.g. 7e-5); false: temperature softens the part but does not grow it."},
+        "soften": {"type": "boolean",
+                   "description": "true (default): moduli and strength fall with temperature (the material "
+                                  "card's retention curve)."},
+    },
+    "additionalProperties": False,
+}
+
 _GRADE_LEVEL = {"anyOf": [
     {"type": "array", "prefixItems": [{"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 100},
                                       {"type": "integer", "minimum": 1}], "minItems": 2, "maxItems": 2,
@@ -426,6 +481,7 @@ STUDY_SCHEMA = {
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
         "gravity": {**_VEC3, "description": "m/s², the part's own weight in every load case"},
+        "thermal": _THERMAL,
         "printDirection": {"type": "string", "pattern": "^[+-]?[xyz]$",
                            "description": "The direction layers stack; turns on overhang control."},
         "extrusion": {"type": "string", "pattern": "^[+-]?[xyz]$",

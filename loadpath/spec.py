@@ -302,6 +302,82 @@ def _anisotropic(v):
 
 
 @dataclass
+class Thermal:
+    """A study's `thermal` block (see thermal.study_heat): temperatures in C,
+    heat in W, convection in W/(m^2 K); each target is (region id, shape)."""
+    ambient: float = 25.0
+    stress_free: float | None = None          # None: ambient
+    temperatures: list = field(default_factory=list)   # (region, shape, C)
+    heat: list = field(default_factory=list)           # (region, shape, W, "surface" | "volume")
+    convection: list = field(default_factory=list)     # (region, shape, h, fluid C | None)
+    conductivity: float | None = None         # W/(m K); None: the material card's
+    expansion: Any = True                     # True (card), 1/K, or False
+    soften: bool = True
+
+    @property
+    def t_ref(self):
+        return self.ambient if self.stress_free is None else self.stress_free
+
+
+STILL_AIR = 8.0     # W/(m^2 K): the convection a thermal block gets when it names none
+
+
+def _thermal(t, base_dir) -> Thermal | None:
+    if t is None:
+        return None
+    if not isinstance(t, dict):
+        raise ValueError("thermal must be an object: {ambient, temperatures, heat, convection, ...}")
+
+    def num(v, label, positive=False):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or (positive and v <= 0):
+            raise ValueError(f"{label} must be a {'positive ' if positive else ''}number")
+        return float(v)
+
+    out = Thermal(ambient=num(t.get("ambient", 25.0), "thermal.ambient"))
+    if t.get("stressFree") is not None:
+        out.stress_free = num(t["stressFree"], "thermal.stressFree")
+    for i, it in enumerate(t.get("temperatures") or []):
+        label = f"thermal.temperatures[{i}]"
+        region, shape = _target(it, label, base_dir)
+        out.temperatures.append((region, shape, num(it.get("t"), f"{label}.t (C)")))
+    for i, it in enumerate(t.get("heat") or []):
+        label = f"thermal.heat[{i}]"
+        region, shape = _target(it, label, base_dir)
+        spread = it.get("spread", "surface")
+        if spread not in ("surface", "volume"):
+            raise ValueError(f"{label}.spread must be 'surface' or 'volume'")
+        out.heat.append((region, shape, num(it.get("watts"), f"{label}.watts", True), spread))
+    conv = t.get("convection", STILL_AIR)
+    if isinstance(conv, (int, float)) and not isinstance(conv, bool):
+        conv = [{"h": conv}]
+    if not isinstance(conv, list):
+        raise ValueError("thermal.convection is a coefficient in W/(m² K) or a list of {h, region|shape, fluid}")
+    for i, it in enumerate(conv):
+        label = f"thermal.convection[{i}]"
+        h = num(it.get("h"), f"{label}.h (W/(m² K))")
+        if h < 0:
+            raise ValueError(f"{label}.h must be >= 0")
+        region, shape = _target(it, label, base_dir) if ("region" in it or "shape" in it) else (None, None)
+        fluid = num(it["fluid"], f"{label}.fluid (C)") if it.get("fluid") is not None else None
+        out.convection.append((region, shape, h, fluid))
+    if t.get("conductivity") is not None:
+        out.conductivity = num(t["conductivity"], "thermal.conductivity", True)
+    e = t.get("expansion", True)
+    if not isinstance(e, bool):
+        e = num(e, "thermal.expansion (1/K, or true/false)")
+        if e < 0:
+            raise ValueError("thermal.expansion must be >= 0")
+    out.expansion = e
+    out.soften = bool(t.get("soften", True))
+    if not out.temperatures and not any(h > 0 for *_, h, _ in out.convection):
+        raise ValueError("thermal needs a way for heat out: a fixed temperature (temperatures) or convection")
+    if not out.temperatures and not out.heat and out.t_ref == out.ambient:
+        raise ValueError("thermal has nothing to do: no heat input, no fixed temperature, and the stress-free "
+                         "temperature is the ambient")
+    return out
+
+
+@dataclass
 class Study:
     name: str
     design_space: list[Shape]
@@ -320,6 +396,8 @@ class Study:
     gravity: np.ndarray | None = None
     # Build direction for overhang control, as (axis, sign); see am.py.
     print_direction: Any = None
+    # Heat in the part (spec.Thermal), applied in every load case, or None.
+    thermal: Any = None
     # 2.5D manufacturing: the part is a profile extruded along this axis
     # (0, 1, 2), i.e. cut from plate by waterjet, laser or a 2.5-axis mill.
     extrusion: int | None = None
@@ -568,6 +646,10 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         gravity = np.asarray(gravity, float).reshape(-1)
         if gravity.shape != (3,) or not np.all(np.isfinite(gravity)):
             raise ValueError("gravity must be an acceleration vector in m/s², e.g. [0, 0, -9.81]")
+    thermal = _thermal(d.get("thermal"), base_dir)
+    if thermal is not None and any(ld.direction for c in cases for ld in c.loads):
+        raise ValueError("thermal does not go with a load of unknown direction (direction 'any' or a cone) yet; "
+                         "give that force a direction")
 
     g = d.get("goal") or {"volumeFraction": 0.3}
     goal = Goal(
@@ -696,6 +778,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         max_elements=max_el,
         max_iterations=int(d.get("maxIterations", 120)),
         gravity=gravity,
+        thermal=thermal,
         print_direction=print_direction,
         extrusion=_extrusion_axis(d.get("extrusion")),
         access=access,

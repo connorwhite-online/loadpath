@@ -228,6 +228,103 @@ def test_expansion_gradient_matches_finite_differences():
     _fd_check(lambda r: ev(r)[0], grad, rho, [183, 164, 75, 248, 300], rel=1e-3)
 
 
+def _hot_study(thermal, **extra):
+    d = {"designSpace": {"type": "box", "min": [0, 0, 0], "max": [24, 8, 8]},
+         "keepOut": [{"id": "motor", "shape": {"type": "box", "min": [20, 2, -1], "max": [25, 6, 9]},
+                      "bore": False}],
+         "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.5, 9, 9]}}],
+         "loads": [{"shape": {"type": "box", "min": [23, -1, -1], "max": [25, 9, 9]}, "force": [0, 0, -20]}],
+         "material": "petg", "resolution": {"pitch": 2.0}, "thermal": thermal, **extra}
+    return study_from_dict(d)
+
+
+def test_study_thermal_block_parses_and_lints():
+    """The study JSON's thermal block: schema and parser agree, defaults
+    fill in (still-air convection, stress-free at ambient, card values), and
+    the mistakes an agent makes get a message naming the field."""
+    from loadpath.schema import lint
+
+    th = {"ambient": 30, "temperatures": [{"region": "motor", "t": 70}],
+          "heat": [{"region": "motor", "watts": 2, "spread": "volume"}]}
+    st = _hot_study(th)
+    assert st.thermal.t_ref == 30 and st.thermal.convection == [(None, None, 8.0, None)]
+    assert st.thermal.heat[0][2:] == (2.0, "volume") and st.thermal.expansion is True
+    doc = {"designSpace": {"type": "box", "min": [0, 0, 0], "max": [1, 1, 1]}, "thermal": th}
+    assert not [i for i in lint(doc) if "thermal" in i["path"]]
+    bad = {**doc, "thermal": {**th, "convecton": 5}}
+    assert any("thermal" in i["path"] for i in lint(bad))
+    for wrong, msg in [({"temperatures": [{"region": "motor"}]}, "t (C)"),
+                       ({"heat": [{"region": "motor", "watts": 1}], "convection": 0}, "way for heat out"),
+                       ({"heat": [{"region": "nope", "watts": 1}]}, None),
+                       ({"expansion": "yes", "temperatures": [{"region": "motor", "t": 50}]}, "expansion")]:
+        try:
+            st = _hot_study(wrong)
+            build_domain(st)
+        except ValueError as e:
+            assert msg is None or msg in str(e), (wrong, e)
+        else:
+            raise AssertionError(f"accepted {wrong}")
+
+
+def test_study_thermal_gradient_matches_finite_differences():
+    """simp's objective with a thermal block (thermal.StudyHeat): softening,
+    expansion and self-weight together, each through density and through
+    the design's own temperature."""
+    from loadpath.domain import gravity_force
+    from loadpath.simp import E_MIN, PENALTY, _Analysis, _heat_state
+
+    st = _hot_study({"temperatures": [{"region": "motor", "t": 70}], "convection": 10}, gravity=[0, 0, -9.81e3])
+    d = build_domain(st)
+    heat = d.thermal
+    heat.temperature()
+    heat.th.solver.rtol = 1e-13
+    fe = _Analysis(d, st.elastic(design=True), 1e-12)
+    w = np.asarray(d.case_weights, float)
+
+    def run(x):
+        fg = gravity_force(d.mesh, x, d.gravity, d.fixed)
+        fg, fth = _heat_state(heat, x, fg)
+        loads = [f + fg for f in d.loads]
+        us = fe.solve((E_MIN + x ** PENALTY * (1 - E_MIN)) * heat.g, x, [None], rtol=1e-12, loads=loads)
+        return heat.sensitivities(fe, x, loads, us, fth, w, d.gravity, {})
+
+    rho = np.random.default_rng(1).uniform(0.3, 1, d.n_elem)
+    grad = run(rho)[2]
+    _fd_check(lambda r: run(r)[0], grad, rho, [3, 171, 85, 33, 104], rel=1e-4)
+
+
+def test_verify_thermal_stress_matches_a_held_bar():
+    """Verification with a thermal block: a PETG bar at 45 C between two
+    walls that stop it growing (rollers, free sideways) carries
+    sigma = -E g(45 C) alpha (45 - 25) exactly, and its safety factor is on
+    strength derated as the modulus is."""
+    import trimesh
+
+    from loadpath.verify import verify_part
+
+    L = 60
+    big = {"type": "box", "min": [-1, -1, -1], "max": [L + 1, 11, 11]}
+    st = study_from_dict({
+        "designSpace": {"type": "box", "min": [0, 0, 0], "max": [L, 10, 10]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.3, 11, 11]}, "fix": "x"},
+                     {"shape": {"type": "box", "min": [L - 0.3, -1, -1], "max": [L + 1, 11, 11]}, "fix": "x"},
+                     {"shape": {"type": "box", "min": [-1, 4.5, 4.5], "max": [0.3, 5.5, 5.5]}, "fix": "yz"}],
+        "loads": [{"shape": {"type": "box", "min": [L / 2 - 1, -1, 9.5], "max": [L / 2 + 1, 11, 11]},
+                   "force": [0, 0, -1e-3]}],
+        "material": "petg", "thermal": {"temperatures": [{"shape": big, "t": 45}], "convection": 0}})
+    m = trimesh.creation.box(extents=[L, 10, 10])
+    m.apply_translation([L / 2, 5, 5])
+    r = verify_part(st, m, max_cells=20000, refine=0, fields=True)
+    g = T.retention("petg", 45.0)[0]
+    exact = st.material.E * g * T.expansion("petg") * 20
+    x, vm = r["fields"]["nodes"], r["fields"]["cases"][0]["vonMises"]
+    mid = np.abs(x[:, 0] - 20) < 1
+    assert np.allclose(vm[mid], exact, rtol=1e-3), (vm[mid].min(), vm[mid].max(), exact)
+    c = r["cases"][0]
+    assert r["thermal"]["maxTemperature"] == 45 and abs(c["strengthRetention"] - g) < 1e-9
+    assert abs(c["safetyFactor"] * c["peakStress"] * r["stressAllowance"] - g * st.material.strength) < 1e-6
+
+
 TESTS = [
     test_slab_with_generation_is_exact,
     test_convective_fin_matches_closed_form,
@@ -238,6 +335,9 @@ TESTS = [
     test_heat_sink_beats_bare_plate_and_conserves_heat,
     test_thermal_expansion_matches_closed_forms,
     test_expansion_gradient_matches_finite_differences,
+    test_study_thermal_block_parses_and_lints,
+    test_study_thermal_gradient_matches_finite_differences,
+    test_verify_thermal_stress_matches_a_held_bar,
 ]
 
 

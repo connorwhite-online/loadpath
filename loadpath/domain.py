@@ -56,6 +56,8 @@ class Domain:
     gravity: np.ndarray | None = None
     # per case, directions.Spread or None (see BoundaryConditions)
     spreads: list = field(default_factory=list)
+    # The study's thermal block on this mesh (thermal.StudyHeat), or None.
+    thermal: object = None
 
     @property
     def n_elem(self):
@@ -490,7 +492,10 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
             warnings.append(f"symmetry '{axis}': {unmatched:.0%} of cells have no mirror; the design space, "
                             "preserve or keep-outs are not symmetric about that plane")
 
+    from .thermal import study_heat
+
     return Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
-                  springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads)
+                  springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads,
+                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed))

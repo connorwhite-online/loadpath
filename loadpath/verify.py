@@ -143,7 +143,7 @@ def surface_thickness(mesh, samples: int = 6000, seed: int = 0, study: Study | N
     return float(np.percentile(d, 1)), float(np.percentile(d, 5))
 
 
-def nodal_von_mises(stiff, u, modulus):
+def nodal_von_mises(stiff, u, modulus, thermal=None):
     """Von Mises at the nodes: each element's stress evaluated at its own
     corners, averaged over the elements sharing a node. Element-centre stress
     sits half a cell inside the surface, which is exactly where stress
@@ -152,31 +152,26 @@ def nodal_von_mises(stiff, u, modulus):
     nodal averages read 73 at 7 cells per hole radius and 81.7 from 9 cells
     up, converged. Averaging across elements is also what keeps a single
     voxel staircase corner from reading as a spike."""
-    from .fem import CORNERS, _b_matrix, elastic_c
-
-    mesh = stiff.mesh
-    c = elastic_c(1.0, stiff.nu) * modulus
-    ue = u[mesh.edof]
-    acc = np.zeros((mesh.n_nodes, 6))
-    for k, (a, b, cc) in enumerate(2.0 * CORNERS - 1.0):
-        sk = (ue @ (_b_matrix(a, b, cc) / mesh.pitch).T) @ c.T
-        np.add.at(acc, mesh.enode[:, k], sk)
-    cnt = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)
-    return von_mises(acc / cnt[:, None])
+    return von_mises(nodal_stress(stiff, u, modulus, thermal))
 
 
-def nodal_stress(stiff, u, modulus):
+def nodal_stress(stiff, u, modulus, thermal=None):
     """The nodal-averaged stress tensor (sx, sy, sz, txy, tyz, tzx), as
-    nodal_von_mises averages it."""
+    nodal_von_mises averages it. `modulus` is one number or one per element;
+    `thermal` (per element) is a free expansion strain, taken off the strain
+    before the stress is formed."""
     from .fem import CORNERS, _b_matrix, elastic_c
 
     mesh = stiff.mesh
-    c = elastic_c(1.0, stiff.nu) * modulus
+    c = elastic_c(1.0, stiff.nu)
+    mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,))[:, None]
     ue = u[mesh.edof]
     acc = np.zeros((mesh.n_nodes, 6))
     for k, (a, b, cc) in enumerate(2.0 * CORNERS - 1.0):
-        sk = (ue @ (_b_matrix(a, b, cc) / mesh.pitch).T) @ c.T
-        np.add.at(acc, mesh.enode[:, k], sk)
+        strain = ue @ (_b_matrix(a, b, cc) / mesh.pitch).T
+        if thermal is not None:
+            strain[:, :3] -= np.asarray(thermal, float)[:, None]
+        np.add.at(acc, mesh.enode[:, k], (strain @ c.T) * mod)
     cnt = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes)
     return acc / cnt[:, None]
 
@@ -639,12 +634,36 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     report["contactBand"] = band
     edges = _user_edges(study, band)
     on_edge = edges(hm.node_xyz) if edges is not None else None
-    fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else 0.0
+    fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else None
+    # Heat (the study's thermal block): the part's own temperature, solved on
+    # the part as delivered; each cell's modulus derated by it, the
+    # expansion its neighbours and the supports stop as a load in every
+    # case, and the stress formed from the strain less the free expansion.
+    # Strength falls with the modulus (the same retention curve). The
+    # submodels re-solve without heat, so they are skipped.
+    moduli, eps, g_node = mat.E, None, None
+    if study.thermal is not None:
+        from .thermal import StudyHeat, retention
+
+        heat = StudyHeat(study, hm, study.elastic(mat), fixed, modulus=mat.E)
+        heat.temperature()
+        moduli = mat.E * heat.g
+        if heat.expands:
+            eps = heat.eps
+            fth = heat.load(np.ones(hm.n_elem), mat.E)
+            fg = fth if fg is None else fg + fth
+        g_node = retention(heat.curve, heat.t_node)[0] if heat.curve is not None else np.ones(hm.n_nodes)
+        refine = 0
+        report["thermal"] = {"maxTemperature": float(heat.t_node.max()),
+                             "minRetention": float(heat.g.min()),
+                             "expansion": heat.alpha if heat.expands else 0.0,
+                             "stressFree": heat.t_ref,
+                             "heatIn": float(heat.bc.power)}
     # A force of unknown direction is solved along each axis and judged in
     # the direction that stresses the part most (directions.py).
     from .directions import expand, worst_stress_direction
     spreads = bc.spreads or [None] * len(study.load_cases)
-    rhs, layout = expand(bc.loads, spreads, fg if bc.gravity is not None else None)
+    rhs, layout = expand(bc.loads, spreads, fg)
     from .simp import _use_mg
     if _use_mg(hm.n_elem):
         # From simp.MG_MIN_CELLS up, matrix-free multigrid (as the optimizer
@@ -656,11 +675,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         stiff = GridElasticity(hm, study.elastic(mat), fixed,
                                springs=mat.E * bc.springs if bc.springs is not None else None,
                                rtol=1e-6, maxiter=3000)
-        stiff.set_moduli(np.full(hm.n_elem, mat.E))
+        stiff.set_moduli(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
         displacements = stiff.solve_many(rhs)
     else:
         stiff = Stiffness(hm, study.elastic(mat), fixed)
-        k = stiff.assemble(np.full(hm.n_elem, mat.E))
+        k = stiff.assemble(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
         if bc.springs is not None:
             k = (k + mat.E * bc.springs).tocsr()
         # 1e-6 is three-plus significant figures of stress; 1e-7 cost a third
@@ -692,11 +711,15 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             u = sum(direction[j] * displacements[i] for j, i in enumerate(idx[1:]))
             if idx[0] is not None:
                 f, u = f + rhs[idx[0]], u + displacements[idx[0]]
-        vm = nodal_von_mises(stiff, u, mat.E)
+        vm = nodal_von_mises(stiff, u, moduli, eps)
         if bc.case_pressure_nodes[ci].any():
             vm = _smooth_wetted(hm.node_xyz, vm, bc.case_pressure_nodes[ci], pitch)
-        peak = float(vm[body].max()) if body.any() else float(vm.max())
-        at = hm.node_xyz[np.argmax(np.where(body, vm, -1))].tolist()
+        # hot material is weaker: the peak is where stress / retention is
+        util = vm if g_node is None else vm / np.maximum(g_node, 1e-3)
+        pk = int(np.argmax(np.where(body, util, -1))) if body.any() else int(np.argmax(util))
+        peak = float(vm[pk])
+        at = hm.node_xyz[pk].tolist()
+        keep = 1.0 if g_node is None else float(g_node[pk])
         global_peak = peak
         refined = []
         if refine and body.any():
@@ -732,7 +755,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         # -12%..+13% of Peterson's Kt, depending on how the grid falls on the
         # hole. Under-reading stress is the unsafe direction, so the factor
         # is computed against peak * STRESS_ALLOWANCE.
-        sf = mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else np.inf
+        sf = keep * mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else np.inf
         inter = None
         proc = study.process
         if proc is not None and proc.build not in (None, "auto") and proc.interlayer < 1.0:
@@ -742,12 +765,14 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             from .am import build_vector
 
             nb = build_vector(proc.build)
-            sig = nodal_stress(stiff, u, mat.E)
+            sig = nodal_stress(stiff, u, moduli, eps)
             sn = sig[:, :3] @ (nb * nb) + 2.0 * (sig[:, 3] * nb[0] * nb[1] + sig[:, 4] * nb[1] * nb[2]
                                                + sig[:, 5] * nb[2] * nb[0])
             tens = np.where(body, np.maximum(sn, 0.0), 0.0)
-            inter = float(tens.max())
-            sf_inter = proc.interlayer * mat.strength / (inter * STRESS_ALLOWANCE) if inter > 0 else np.inf
+            ti = int(np.argmax(tens if g_node is None else tens / np.maximum(g_node, 1e-3)))
+            inter = float(tens[ti])
+            k_in = 1.0 if g_node is None else float(g_node[ti])
+            sf_inter = k_in * proc.interlayer * mat.strength / (inter * STRESS_ALLOWANCE) if inter > 0 else np.inf
             sf = min(sf, sf_inter)
         worst_sf = min(worst_sf, sf)
         cases.append({
@@ -759,6 +784,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             "p99Stress": float(np.percentile(vm[body] if body.any() else vm, 99)),
             "contactPeakStress": float(vm.max()),
             "safetyFactor": sf,
+            **({"peakTemperature": float(heat.t_node[pk]), "strengthRetention": keep}
+               if g_node is not None else {}),
             "interlayerStress": inter,
             "deflection": defl,
             "maxDisplacement": float(np.linalg.norm(disp, axis=1).max()),

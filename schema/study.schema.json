@@ -214,6 +214,149 @@
       "maxItems": 3,
       "description": "m/s\u00b2, the part's own weight in every load case"
     },
+    "thermal": {
+      "type": "object",
+      "description": "Heat in the part, applied in every load case: the temperature is solved on the part itself (conduction through the material, convection off its surface), each cell softens by the material's modulus retention at its temperature, and expansion that the supports or the part's own cooler material stop becomes stress. The optimizer designs for it and verification checks it (stress with the free expansion taken off, strength derated as the modulus is). Needs a way for heat out: a fixed temperature or convection.",
+      "properties": {
+        "ambient": {
+          "type": "number",
+          "description": "C of the surroundings (default 25)."
+        },
+        "stressFree": {
+          "type": "number",
+          "description": "C at which the part fits without stress, e.g. when bolted up (default ambient)."
+        },
+        "temperatures": {
+          "type": "array",
+          "description": "Surfaces held at a temperature: a motor face, a heated bed, a cold plate. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "string"
+              },
+              "shape": {
+                "$ref": "#/$defs/shape"
+              },
+              "t": {
+                "type": "number",
+                "description": "C"
+              }
+            },
+            "required": [
+              "t"
+            ],
+            "x-requireOne": [
+              [
+                "region"
+              ],
+              [
+                "shape"
+              ]
+            ],
+            "additionalProperties": false
+          }
+        },
+        "heat": {
+          "type": "array",
+          "description": "Heat flowing in. A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "string"
+              },
+              "shape": {
+                "$ref": "#/$defs/shape"
+              },
+              "watts": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "W into the region"
+              },
+              "spread": {
+                "enum": [
+                  "surface",
+                  "volume"
+                ],
+                "description": "'surface' (default): through the region's surface nodes; 'volume': generated in the region's cells (a coil, a resistor potted in)."
+              }
+            },
+            "required": [
+              "watts"
+            ],
+            "x-requireOne": [
+              [
+                "region"
+              ],
+              [
+                "shape"
+              ]
+            ],
+            "additionalProperties": false
+          }
+        },
+        "convection": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "description": "W/(m\u00b2 K) off every exposed surface"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "region": {
+                    "type": "string"
+                  },
+                  "shape": {
+                    "$ref": "#/$defs/shape"
+                  },
+                  "h": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "W/(m\u00b2 K): ~5-10 still air, 20-50 a fan, 500+ water"
+                  },
+                  "fluid": {
+                    "type": "number",
+                    "description": "C of the fluid (default ambient)"
+                  }
+                },
+                "required": [
+                  "h"
+                ],
+                "additionalProperties": false
+              }
+            }
+          ],
+          "description": "Heat carried off the surface the design exposes (default 8 W/(m\u00b2 K), still air). An entry without region or shape covers every surface."
+        },
+        "conductivity": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "W/(m K) override (default the material card's)."
+        },
+        "expansion": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ],
+          "description": "true (default): the material card's expansion coefficient; a number: 1/K (e.g. 7e-5); false: temperature softens the part but does not grow it."
+        },
+        "soften": {
+          "type": "boolean",
+          "description": "true (default): moduli and strength fall with temperature (the material card's retention curve)."
+        }
+      },
+      "additionalProperties": false
+    },
     "printDirection": {
       "type": "string",
       "pattern": "^[+-]?[xyz]$",
