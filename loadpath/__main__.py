@@ -191,6 +191,9 @@ def main(argv=None):
                    help="--size ranking: best effectiveness, or least metal meeting the limits")
     h.add_argument("--min-effectiveness", type=float, help="--size: drop candidates below this")
     h.add_argument("--splits", help="--size: first fluid's shares of the void to sweep, e.g. 0.5,0.6,0.66")
+    h.add_argument("--max-pressure-drop", metavar="FLUID=PA,...",
+                   help="--size: drop candidates over these pressure drops, e.g. coolant=2000,water=2000")
+    h.add_argument("--min-wall", type=float, default=0.8, help="--size: thinnest wall to try, mm (default 0.8)")
     h.add_argument("--no-render", action="store_true")
     h.add_argument("--no-viewer", action="store_true", help="skip the interactive HTML viewer")
     h.add_argument("--base-dir")
@@ -423,8 +426,21 @@ def _heatx(args):
     try:
         if args.size:
             splits = [float(x) for x in args.splits.split(",")] if args.splits else None
-            print(json.dumps(size_heat_exchanger(spec, base, objective=args.objective,
-                                                 min_effectiveness=args.min_effectiveness, splits=splits), indent=2))
+            max_dp = None
+            if args.max_pressure_drop:
+                try:
+                    pairs = (kv.split("=") for kv in args.max_pressure_drop.split(","))
+                    max_dp = {k.strip(): float(v) for k, v in pairs}
+                except ValueError:
+                    raise ValueError(f"--max-pressure-drop takes FLUID=PA pairs, e.g. water=2000,oil=5000; "
+                                     f"got {args.max_pressure_drop!r}") from None
+                fluids = list(spec.get("fluids") or ["A", "B"])
+                unknown = sorted(set(max_dp) - set(fluids))
+                if unknown:
+                    raise ValueError(f"--max-pressure-drop names {unknown}; the fluids are {fluids}")
+            print(json.dumps(size_heat_exchanger(spec, base, max_pressure_drop=max_dp, min_wall=args.min_wall,
+                                                 objective=args.objective, min_effectiveness=args.min_effectiveness,
+                                                 splits=splits), indent=2))
             return 0
         rep = heat_exchanger(spec, args.out, base, render=not args.no_render and _can_render(),
                              on_progress=_progress, viewer=not args.no_viewer and not os.environ.get("LOADPATH_NO_RENDER"))
