@@ -288,6 +288,36 @@ def test_robust_mechanism_has_no_corner_hinges():
     assert MechEvaluator(p).output((g > 0.5).astype(float)) > 0.5 * r.output_displacement
 
 
+def test_nonlinear_mechanism_gradient_matches_finite_differences():
+    # mechanism_nl's adjoint sensitivity of the output travel at a large
+    # stroke, on a random density field of a small inverter, including the
+    # solid/linear blend of the void cells
+    from loadpath.benchmarks.mechanisms import inverter, mech_domain
+    from loadpath.mechanism import _spring_diag
+    from loadpath.mechanism_nl import _Model, nonlinear_response, stroke_dofs
+    p = inverter(12, 6)
+    dom = mech_domain(p)
+    m = dom.mesh
+    pd, pv = stroke_dofs(m, dom.loads[0], dom.fixed, 2.0)
+    lo = dom.loads[1]
+    wts = np.abs(lo.reshape(-1, 3)).sum(axis=1) > 0
+    d = lo.reshape(-1, 3).sum(axis=0)
+    lv = (wts[:, None] * (d / np.linalg.norm(d))[None, :]).ravel() / wts.sum()
+    springs = _spring_diag(lo, 0.05, m.n_dof)
+    springs[dom.fixed] = 0.0
+    model = _Model(m, 0.3, dom.fixed, pd, pv, springs)
+    rng = np.random.default_rng(1)
+    xp = np.clip(0.5 + 0.35 * rng.standard_normal(m.n_elem), 0.05, 1.0)
+    j, dj, u = nonlinear_response(model, xp, 1.0, lv)
+    for e in (3, 20, 41, 60):
+        h = 1e-5  # 1e-6 sits inside the Newton tolerance on the tiny ones
+        xa, xb = xp.copy(), xp.copy()
+        xa[e] += h
+        xb[e] -= h
+        fd = (nonlinear_response(model, xa, 1.0, lv, u0=u)[0] - nonlinear_response(model, xb, 1.0, lv, u0=u)[0]) / (2 * h)
+        assert abs(dj[e] - fd) <= 1e-5 * max(abs(fd), 1e-3), (e, dj[e], fd)
+
+
 TESTS = [
     test_tangent_matches_finite_differences,
     test_small_load_matches_linear,
@@ -300,6 +330,7 @@ TESTS = [
     test_mechanism_optimizer_reports_nonlinear_check,
     test_stroke_mechanism_pushes_a_bar,
     test_robust_mechanism_has_no_corner_hinges,
+    test_nonlinear_mechanism_gradient_matches_finite_differences,
 ]
 
 
