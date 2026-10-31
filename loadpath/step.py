@@ -26,7 +26,7 @@ import numpy as np
 
 __all__ = ["available", "export_step", "read_step", "shape_to_trimesh", "attach_plan", "plan_of"]
 
-DEFAULT_FACES = 20_000      # organic facets in the B-rep: ~45 MB of STEP, ~20 s
+DEFAULT_FACES = 20_000      # organic facets in the B-rep: ~14 MB of STEP, ~20 s
 FUZZY = 1e-4                # boolean fuzz (mm): facets snapped onto exact faces
 DEFAULT_PATCHES = 1500      # smooth B-spline patches: ~8 kB of STEP each
 SMOOTH_SAMPLES = 8          # points per patch edge pulled onto the surface
@@ -167,82 +167,60 @@ def _closest(mesh, P, chunk=20_000):
     return out
 
 
-def _collapse(V, F, target, locked=None, max_turn=0.5):
-    """Quadric edge collapse of a closed mesh (V, F) to `target` faces that
-    keeps its topology: an edge collapses only when its ends share exactly
-    two neighbours (the link condition), so thin members and holes survive,
-    and only when no face around it turns by more than ~60 degrees. Slower
-    than fast_simplification, which at a few thousand faces tears a part's
-    thin members. Vertices flagged in `locked` never move. Returns the
-    vertices, faces and lock flags of the result."""
-    import heapq
-
-    V = np.array(V, float); F = np.array(F, np.int64)
-    locked = np.zeros(len(V), bool) if locked is None else np.asarray(locked, bool)
-    nf = len(F)
-    alive = np.ones(nf, bool)
-    vf = [set() for _ in range(len(V))]
-    for i, f in enumerate(F):
-        for v in f: vf[v].add(i)
+def _sharpness(V, F):
+    """Per vertex: 1 - the least cosine between its faces' normals and its
+    own normal (0 on a flat patch, ~1 on a right-angle crease)."""
     n = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
-    area = np.linalg.norm(n, axis=1); nn = n / np.maximum(area, 1e-30)[:, None]
-    d = -np.einsum("ij,ij->i", nn, V[F[:, 0]])
-    p = np.hstack([nn, d[:, None]])
-    K = np.einsum("i,ij,ik->ijk", area, p, p)
-    Q = np.zeros((len(V), 4, 4))
-    for c in range(3): np.add.at(Q, F[:, c], K)
-    ver = np.zeros(len(V), np.int64)
-    def nbrs(v):
-        s = set()
-        for f in vf[v]: s.update(F[f])
-        s.discard(v); return s
-    def cost(a, b):
-        q = Q[a] + Q[b]; best = None
-        for x in (V[a], V[b], 0.5 * (V[a] + V[b])):
-            h = np.append(x, 1.0); c = h @ q @ h
-            if best is None or c < best[0]: best = (c, x)
-        return best
-    heap = []
-    E = set()
-    for f in F:
-        for k in range(3):
-            a, b = int(f[k]), int(f[(k + 1) % 3]); E.add((min(a, b), max(a, b)))
-    for a, b in E:
-        c, _ = cost(a, b); heap.append((c, a, b, 0, 0))
-    heapq.heapify(heap)
-    live = nf
-    while live > target and heap:
-        c, a, b, va, vb = heapq.heappop(heap)
-        if ver[a] != va or ver[b] != vb or not vf[a] or not vf[b] or locked[a] or locked[b]: continue
-        shared = vf[a] & vf[b]
-        if len(shared) != 2: continue
-        if len(nbrs(a) & nbrs(b)) != 2: continue           # link condition
-        _, x = cost(a, b)
-        ok = True
-        for f in (vf[a] | vf[b]) - shared:
-            tri = F[f].copy(); P = V[tri].copy()
-            P[(tri == a) | (tri == b)] = x
-            m = np.cross(P[1] - P[0], P[2] - P[0]); L = np.linalg.norm(m)
-            o = np.cross(V[tri[1]] - V[tri[0]], V[tri[2]] - V[tri[0]]); Lo = np.linalg.norm(o)
-            if L < 1e-12 or (m @ o) / (L * Lo + 1e-30) < max_turn: ok = False; break
-        if not ok:
-            continue
-        for f in shared:
-            alive[f] = False
-            for v in F[f]: vf[v].discard(f)
-        live -= 2
-        for f in vf[b]:
-            F[f][F[f] == b] = a; vf[a].add(f)
-        vf[b] = set()
-        V[a] = x; Q[a] += Q[b]
-        ver[a] += 1; ver[b] += 1
-        for w in nbrs(a):
-            cc, _ = cost(a, w)
-            i, j = (a, w) if a < w else (w, a)
-            heapq.heappush(heap, (cc, i, j, ver[i], ver[j]))
-    keep = F[alive]
-    used, inv = np.unique(keep, return_inverse=True)
-    return V[used], inv.reshape(-1, 3), locked[used]
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-300)
+    vn = np.zeros_like(V)
+    for c in range(3):
+        np.add.at(vn, F[:, c], n)
+    vn /= np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-300)
+    k = np.zeros(len(V))
+    for c in range(3):
+        np.maximum.at(k, F[:, c], 1 - np.einsum("ij,ij->i", n, vn[F[:, c]]))
+    return k
+
+
+def _collapse(V, F, target, locked=None, turn=0.9):
+    """A closed mesh (V, F) coarsened to about `target` faces, shortest
+    edges first, keeping its topology: decimate.py's passes (the link
+    condition, no face turning by more than acos(`turn`)) with no field to
+    hold to. Each collapse keeps the sharper end where it is, so creases
+    and seams stay put and every vertex is one of the original ones.
+    Vertices flagged in `locked` never move. Returns the vertices, faces and
+    lock flags of the result."""
+    from .decimate import decimate
+
+    V = np.asarray(V, float)
+    F = np.asarray(F, np.int64)
+    k = _sharpness(V, F)
+
+    def place(W, a, b):
+        pick = k[a] >= k[b]
+        k[a] = np.maximum(k[a], k[b])
+        return np.where(pick[:, None], W[a], W[b])
+
+    lock = np.zeros(len(V), bool) if locked is None else np.asarray(locked, bool)
+    V2, F2, _, kept = decimate(V, F, None, 0.0, 1.0, locked=lock, max_passes=300, min_gain=0.002,
+                               target=int(target), place=place, turn=turn)
+    return V2, F2, lock[kept]
+
+
+def _fast(mesh, faces):
+    """fast_simplification's quadric decimation, without the zero-area
+    faces (a repeated vertex) it leaves behind, which make an otherwise
+    closed result read as torn."""
+    import trimesh
+
+    c = mesh.simplify_quadric_decimation(face_count=int(faces))
+    F = np.asarray(c.faces)
+    ok = (F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 0] != F[:, 2])
+    if ok.all():
+        return c
+    out = trimesh.Trimesh(c.vertices, F[ok], process=False)
+    out.remove_unreferenced_vertices()
+    return out
 
 
 def _layout(mesh, patches, near=None, facets=DEFAULT_FACES):
@@ -254,11 +232,11 @@ def _layout(mesh, patches, near=None, facets=DEFAULT_FACES):
     import trimesh
 
     start = mesh
-    for n in ((facets,) if near is not None else (8 * patches, 4 * patches)):
+    for n in ((facets,) if near is not None else (8 * patches, 4 * patches, 2 * patches, patches)):
         if n >= len(start.faces):
             continue
         try:
-            c = mesh.simplify_quadric_decimation(face_count=int(n))
+            c = _fast(mesh, n)
         except Exception:  # noqa: BLE001
             break
         if not (c.is_watertight and c.is_winding_consistent and c.euler_number == mesh.euler_number):
@@ -269,7 +247,7 @@ def _layout(mesh, patches, near=None, facets=DEFAULT_FACES):
         return start, (np.zeros(len(start.vertices), bool) if lock is None else lock)
     if lock is not None:        # the flat faces stay as they are: `patches` counts the rest
         patches += int(lock[np.asarray(start.faces)].any(axis=1).sum())
-    V, F, lock = _collapse(start.vertices, start.faces, int(patches), lock)
+    V, F, lock = _collapse(start.vertices, start.faces, int(patches), lock, turn=0.5)
     return trimesh.Trimesh(V, F, process=False), lock
 
 
@@ -407,11 +385,18 @@ def _decimate(mesh, faces):
     if len(mesh.faces) <= faces:
         return mesh
     try:
-        out = mesh.simplify_quadric_decimation(face_count=int(faces))
+        out = _fast(mesh, faces)
         if out.is_watertight and abs(out.volume) > 0.9 * abs(mesh.volume):
             return out
     except Exception:  # noqa: BLE001 - decimation is best-effort
         pass
+    import trimesh
+
+    if len(mesh.faces) <= 20 * faces and mesh.is_watertight and mesh.is_winding_consistent:   # tore: coarsen carefully
+        V, F, _ = _collapse(mesh.vertices, mesh.faces, int(faces))
+        out = trimesh.Trimesh(V, F, process=False)
+        if len(out.faces) <= 1.5 * faces and out.is_watertight:
+            return out
     if len(mesh.faces) > 4 * faces:
         raise ValueError(f"an organic region of {len(mesh.faces)} triangles does not decimate to {faces} and stay "
                          "closed (a lattice?): raise the STEP face budget, or hand over the STL for it")

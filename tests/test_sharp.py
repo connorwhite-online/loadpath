@@ -144,7 +144,7 @@ def test_collapse_keeps_holes():
     from loadpath.step import _collapse
 
     t = trimesh.creation.torus(20, 3, major_sections=96, minor_sections=48)
-    V, F, _ = _collapse(t.vertices, t.faces, 200)
+    V, F, _ = _collapse(t.vertices, t.faces, 200, turn=0.5)
     c = trimesh.Trimesh(V, F, process=False)
     assert len(c.faces) <= 210 and c.is_watertight and c.euler_number == 0, (len(c.faces), c.euler_number)
 

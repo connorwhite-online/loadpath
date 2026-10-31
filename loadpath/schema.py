@@ -1029,7 +1029,12 @@ FIELD_SCHEMA = {
                  "additionalProperties": False},
         "step": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
             "faces": {"type": "integer", "minimum": 100, "description": "organic facets in the B-rep "
-                                                                      "(default 20000, ~45 MB)"}},
+                                                                      "(default 20000, ~14 MB)"},
+            "surface": {"enum": ["facets", "smooth"],
+                        "description": "organic regions as flat facets (default) or smooth B-spline patches "
+                                       "(experimental: CAD-friendlier, not smaller; falls back to facets when "
+                                       "OpenCascade's booleans fail)"},
+            "patches": {"type": "integer", "minimum": 50, "description": "smooth patches (default 1500)"}},
             "additionalProperties": False}],
                  "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres "
                                 "where the graph's hard booleans use plain shapes, the rest faceted"},

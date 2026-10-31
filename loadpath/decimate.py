@@ -36,12 +36,19 @@ def _normals(T):
     return n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-300)
 
 
-def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01, progress=None):
+def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01, progress=None,
+             target=None, place=None, turn=0.5):
     """(V, F, stats, kept): the mesh with edges collapsed wherever it stays within
     `tol` mm of field = 0. `locked` vertices (a mask) never move or go:
     the streamed export's seams. Unused vertices are dropped (locked ones
     keep their order relative to each other); `kept` is the mask of the
-    input vertices that remain."""
+    input vertices that remain.
+
+    With `field` None there is no surface to hold to: a collapse of edges
+    (a, b) puts the new vertex at `place(V, a, b)` (the midpoints if not
+    given), and passes stop once the mesh is down to `target` faces.
+    Shortest edges first makes that an even coarsening. `turn` is the
+    least cosine between a reshaped face's normal and its old one."""
     from .fields import _project
     from .narrowband import peval
 
@@ -110,22 +117,29 @@ def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01,
         # the new vertex: midpoint, onto the surface
         P = np.zeros((len(W), 3))
         li = np.flatnonzero(link)
-        if len(li):
+        if len(li) and field is None:
+            P[li] = (place(V, W[li, 0], W[li, 1]) if place is not None
+                     else 0.5 * (V[W[li, 0]] + V[W[li, 1]]))
+        elif len(li):
             q = _project(field, 0.5 * (V[W[li, 0]] + V[W[li, 1]]), pitch)
             P[li] = _project(field, q, pitch)
         Told = V[tri]
         Tnew = Told.copy()
         hit = (tri == wa[:, None]) | (tri == wb[:, None])
         Tnew[hit] = np.repeat(P[pr[:, 0]], hit.sum(axis=1), axis=0)
-        good = (_normals(Told) * _normals(Tnew)).sum(axis=1) > 0.5
-        S = np.concatenate([Tnew.mean(axis=1), 0.5 * (Tnew[:, 0] + Tnew[:, 1]),
-                            0.5 * (Tnew[:, 1] + Tnew[:, 2]), 0.5 * (Tnew[:, 2] + Tnew[:, 0])])
-        dev = np.abs(peval(field, S)).reshape(4, -1).max(axis=0)
-        good &= dev <= tol
+        good = (_normals(Told) * _normals(Tnew)).sum(axis=1) > turn
+        if field is not None:
+            S = np.concatenate([Tnew.mean(axis=1), 0.5 * (Tnew[:, 0] + Tnew[:, 1]),
+                                0.5 * (Tnew[:, 1] + Tnew[:, 2]), 0.5 * (Tnew[:, 2] + Tnew[:, 0])])
+            dev = np.abs(peval(field, S)).reshape(4, -1).max(axis=0)
+            good &= dev <= tol
         bad = ~link
         np.logical_or.at(bad, pr[:, 0], ~good)
         acc = ~bad
         rej[W[bad & link].ravel()] += 1
+        if target is not None:              # each collapse takes two triangles: do not overshoot
+            room = max(0, (len(F) - int(target)) // 2)
+            acc[np.flatnonzero(acc)[room:]] = False
         if not acc.any():
             break
         Wa, Wb = W[acc, 0], W[acc, 1]
@@ -137,7 +151,7 @@ def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01,
         F = F[(F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 0] != F[:, 2])]
         if progress:
             progress({"stage": "decimate", "pass": passes, "faces": int(len(F))})
-        if nf - len(F) < min_gain * nf:
+        if nf - len(F) < min_gain * nf or (target is not None and len(F) <= target):
             break
     used = np.zeros(n, bool)
     used[F] = True

@@ -2552,12 +2552,14 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         rep["stl"] = path
         _write_graded(doc, rep, out_dir)
         if doc.get("step"):
-            from .step import DEFAULT_FACES, export_step
+            from .step import DEFAULT_FACES, DEFAULT_PATCHES, export_step
 
             opts = doc["step"] if isinstance(doc["step"], dict) else {}
             try:
                 st = export_step(mesh, os.path.join(out_dir, f"{rep['name']}.step"),
-                                 faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"])
+                                 faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"],
+                                 surface=opts.get("surface", "facets"),
+                                 patches=int(opts.get("patches", DEFAULT_PATCHES)))
                 st.pop("shape", None)
                 rep["step"] = st
             except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing
