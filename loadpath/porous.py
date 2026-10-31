@@ -539,6 +539,41 @@ def _core_entry(dom, f, flow):
     return q
 
 
+def _midplane(dom, f, flow, cell_mm):
+    """Flow sharing across the core's middle, as flow.py's coreFlow
+    measures it: the slab at the core's mid-plane normal to this fluid's
+    mean core flow, binned on cell-sized squares from the world origin;
+    bins under half the median cell count dropped. Returns cv, min and max
+    over the mean, and the bins (flow over mean, rows and columns along
+    the other two axes ascending)."""
+    m = dom.cells[f] & dom.core
+    U = flow["U"]
+    mean = [float((0.5 * (U[ax] + _shift(U[ax], -1, ax)))[m].sum()) for ax in range(3)]
+    ax = int(np.argmax(np.abs(mean)))
+    sgn = np.sign(mean[ax])
+    idx = np.argwhere(m)
+    k = int(round(0.5 * (idx[:, ax].min() + idx[:, ax].max())))
+    sl = [slice(None)] * 3
+    sl[ax] = k
+    sl = tuple(sl)
+    u = (sgn * 0.5 * (U[ax] + _shift(U[ax], -1, ax)))[sl]
+    mm = m[sl]
+    other = [a for a in range(3) if a != ax]
+    ij = np.argwhere(mm)
+    pos = dom.lo[other] + (ij + 0.5) * dom.h * 1e3
+    b = np.floor(pos / cell_mm).astype(int)
+    b -= b.min(axis=0)
+    shape = tuple(b.max(axis=0) + 1)
+    q = np.zeros(shape)
+    n = np.zeros(shape)
+    np.add.at(q, (b[:, 0], b[:, 1]), u[mm])
+    np.add.at(n, (b[:, 0], b[:, 1]), 1)
+    ok = n >= 0.5 * np.median(n[n > 0])
+    qm = q[ok].mean()
+    return {"axis": "xyz"[ax], "cv": float(q[ok].std() / qm), "minOverMean": float(q[ok].min() / qm),
+            "maxOverMean": float(q[ok].max() / qm), "bins": np.round(q / qm, 3).tolist()}
+
+
 def _uniformity(q):
     """Flow uniformity over the faces where the fluid enters the core
     (Weltens' index, 1 = perfectly even), its spread, and the share of
@@ -598,7 +633,8 @@ def summarize(dom, fluids, flows, heat, t_in):
                                 "p95": float(np.percentile(cs, 95))},
                "coreRe": float(fl.rho * cs.mean() / med.phi * med.dh / fl.mu),
                "deadShare": float((cs < 0.1 * cs.mean()).mean()),
-               "entry": _uniformity(_core_entry(dom, f, flow))}
+               "entry": _uniformity(_core_entry(dom, f, flow)),
+               "midplane": _midplane(dom, f, flow, dom.extra.get("cell", 8.0))}
         if heat is not None:
             row["tIn"] = t_in[f]
             row["tOut"] = _outlet_temperature(dom, f, flow, heat["T"][f])
@@ -711,7 +747,7 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
     phi_sheet = (report[hx.names[0]]["coreVolume"] + report[hx.names[1]]["coreVolume"]) / v
     return PorousDomain(h=h_mm * 1e-3, lo=lo, core=core, cells=cells, inlet=inlet, outlet=outlet, media=media,
                         names=tuple(hx.names), wall=hx.wall * 1e-3, phi_sheet=phi_sheet,
-                        extra={"coreFraction": frac, "phi": phi_loc if local_porosity else None})
+                        extra={"cell": hx.cell, "coreFraction": frac, "phi": phi_loc if local_porosity else None})
 
 
 def simulate_design(hx, report, grids, duty, voxel=None, closures="design", progress=None, fields=False):

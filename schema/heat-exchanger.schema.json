@@ -47,6 +47,15 @@
       "type": "number",
       "exclusiveMinimum": 0
     },
+    "phase": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "mm: shift the TPMS against the core's low corner, which moves where the core's faces cut the channels (a partial channel at an edge starves)"
+    },
     "portDiameter": {
       "anyOf": [
         {

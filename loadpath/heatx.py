@@ -124,6 +124,7 @@ class HeatExchangerSpec:
     closure: bool = True            # with build: channels close gently under surfaces that look up, and flare open over plenums below
     cleanouts: int = 0              # powder clean-out ports per fluid, at the points farthest from its ports (plugged after)
     cleanout_diameter: float = 4.2  # mm: an M5 tap drill
+    phase: tuple = (0.0, 0.0, 0.0)  # mm: shifts the TPMS against the core's low corner (where its faces cut the channels)
     step: float | None = None       # grid, mm (default wall / 3)
     max_points: int = 16_000_000
     names: tuple = ("A", "B")
@@ -191,6 +192,11 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
             hx.port_diameter = tuple(float(pd[n]) for n in names)
         else:
             hx.port_diameter = float(pd)
+    if "phase" in spec:
+        ph = spec["phase"]
+        if not (isinstance(ph, (list, tuple)) and len(ph) == 3):
+            raise ValueError("heatExchanger.phase is a shift of the TPMS in mm, [x, y, z]")
+        hx.phase = tuple(float(v) for v in ph)
     if "type" in spec:
         hx.kind = str(spec["type"])
     if "layout" in spec:
@@ -434,7 +440,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     d_far = ndimage.map_coordinates(far, coords, order=1, mode="nearest")
     d = np.where(np.abs(d_far) > 3.0 * pitch, d_far, d)
     del d_far
-    g = tpms(hx.kind, pts - clo, hx.cell)
+    g = tpms(hx.kind, pts - clo - np.asarray(hx.phase, float), hx.cell)
     sheet_c = 0.0
     if abs(hx.split - 0.5) > 1e-9:
         from .heatx_thermal import sheet_offset
@@ -634,7 +640,7 @@ def _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap, sheet_c=0.0):
     wet[ok] = masks[0][i[:, 0], i[:, 1], i[:, 2]] | masks[1][i[:, 0], i[:, 1], i[:, 2]]
     # the sheet as the TPMS shapes it (not where a closure has moved it)
     inside = hx.core.sdf(c) < -step
-    sheet = np.abs(np.abs(tpms(hx.kind, c - clo, hx.cell) - sheet_c) - 0.5 * hx.wall) < 1.5 * step
+    sheet = np.abs(np.abs(tpms(hx.kind, c - clo - np.asarray(hx.phase, float), hx.cell) - sheet_c) - 0.5 * hx.wall) < 1.5 * step
     wet &= ~(inside & sheet)
     down = -(n @ up)
     a = mesh.area_faces

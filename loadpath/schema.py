@@ -498,6 +498,9 @@ HEAT_EXCHANGER_SCHEMA = {
         "cell": {**_POS, "description": "mm per TPMS period (at least 3 x wall)"},
         "wall": {**_POS, "description": "mm, the sheet between the fluids"},
         "shell": _POS, "header": _POS, "cap": _POS, "portLength": _POS,
+        "phase": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                  "description": "mm: shift the TPMS against the core's low corner, which moves where the core's "
+                                 "faces cut the channels (a partial channel at an edge starves)"},
         "portDiameter": {"anyOf": [_POS, {"type": "object", "additionalProperties": _POS}],
                          "description": "mm, every port; or one per fluid name, e.g. {\"water\": 8, \"air\": 14} "
                                         "(a gas side's ports set most of its pressure drop)"},
