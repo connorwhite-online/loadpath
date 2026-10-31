@@ -142,10 +142,11 @@ def test_deliver_gathers_the_best_outcome_and_its_warnings():
          "print": {"warnings": ["needs a brim"]}, "durability": {"safetyFactor": 1.2, "target": 1.5},
          "warnings": []}]}
     d = delivery(summary, {"goal": {"safetyFactor": 2, "maxDeflection": 0.5}})
-    assert d["passes"] and d["stl"] == "out/x-30.stl" and d["safetyFactorMethod"] == "tet", d
+    assert d["stl"] == "out/x-30.stl" and d["safetyFactorMethod"] == "tet", d
     assert d["governedBy"] == "maxDeflection" and d["p5Member"] == 2.2, d
     assert "run-level" in d["warnings"] and "needs a brim" in d["warnings"], d
     assert any("durability" in w for w in d["warnings"]), d
+    assert d["passes"] is False and "fails on durability" in d["warnings"][0], d   # durability 1.2 < 1.5
     none = delivery({**summary, "best": None}, {"goal": {"safetyFactor": 2}})
     assert none["passes"] is False and "not a passing part" in none["warnings"][0], none
     capped = {"best": None, "warnings": [], "outcomes": [{"volumeFraction": 0.7, "safetyFactor": 1.5, "cases": []}]}

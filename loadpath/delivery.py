@@ -115,6 +115,19 @@ def delivery(summary: dict, study: dict) -> dict | None:
         **({"print": {k: v for k, v in o["print"].items() if k != "warnings"}} if o.get("print") else {}),
         "warnings": warn,
     }
+    dur = o.get("durability") or {}
+    if d["passes"] and dur.get("safetyFactor") is not None and dur["safetyFactor"] < dur.get("target", 1.5):
+        # a permanently loaded PLA bracket read static SF 2.6 and passes: true
+        # at creep SF 1.09; "passes" means the whole part, durability included
+        d["passes"] = False
+        d["warnings"].insert(0, f"fails on durability: fatigue/creep safety factor {dur['safetyFactor']:.2f} is "
+                                f"under {dur.get('target', 1.5):g} (the static goal passes); set "
+                                "durability.constrain: true to size the part for it")
+    proc = study.get("process")
+    kind = proc.get("type") if isinstance(proc, dict) else proc
+    if str(kind or "").lower() == "fdm" and "slicer" not in o:
+        d["slicer"] = "not run: no slicer found or none asked for (install PrusaSlicer or set LOADPATH_SLICER " \
+                      "for print time and filament)"
     if d["governedBy"] == "durability" and d.get("durabilitySafetyFactor") is not None:
         d["warnings"].insert(0, f"durability (fatigue/creep) sets this part: quote its safety factor "
                                 f"{d['durabilitySafetyFactor']:.2f}, not the static {d['safetyFactor']:.2f}")
