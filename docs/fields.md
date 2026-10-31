@@ -351,15 +351,62 @@ lightest lattice link that came near 0.5 mm was 58.2 g (0.498 mm coarse,
 0.511 mm on the fine grid), with the skin at the top of its range (6 mm),
 against 54.9 g for the tuned solid web. It is the same answer the moonshot
 experiments got: for a stiffness-bound part, a lattice costs mass per unit
-of stiffness. Lattices earn their keep on impact, damping, heat transfer
-and print time, not here.
+of stiffness, as long as the lattice has to live inside the solid link's
+envelope.
+
+### A sandwich arm link beats the solid web
+
+Let the envelope grow with the skin and the answer turns.
+examples/fields/arm-link-sandwich-tune.json tunes the web's width and
+height together with the skin's thinnest and thickest wall, the gyroid's
+wall (never under 0.8 mm) and its cell; the stress that grades the skin
+comes from the largest envelope the search can reach, so the study runs
+once. The search drives the core sparse (16 mm cells at the 0.8 mm
+minimum) and puts the mass in a taller, wider skin: a sandwich beam.
+examples/fields/arm-link-sandwich.json is the result:
+
+| arm link | mass | deflection | safety factor |
+|---|---|---|---|
+| tuned solid web (arm-link-tune.json) | 54.9 g | 0.490 mm | |
+| sandwich, 29.6 x 20 mm web, skin 0.84-2.35 mm, 16 mm gyroid | 41.4 g | 0.478 mm | 9.1 |
+| the same with a 2.15 mm thickest skin | 40.6 g | 0.501 mm | 9.2 |
+| the same skin with no core | 33.6 g | 0.594 mm | 7.1 |
+| a 21 mm web, 2.6 mm skin | 46.1 g | 0.384 mm | 8.9 |
+
+(homogenized on 1M analysis cells). Meshed at 0.3 mm the 41.4 g link
+weighs 44.5 g (the blends round the collars and the skin's inside, which
+the analysis grid reads short), and its resolved geometry, verified by FE
+on 1.2M cells at 0.33 mm, deflects 0.40 mm (0.27 mm in the second load
+case) at safety factor 13.5: the homogenized reading is the conservative
+one, and the real part is still 19% lighter than the solid web with 20%
+of stiffness to spare. The core earns its grams: without it the skins
+lose a sixth of their stiffness, because the gyroid ties the faces
+together in shear. The skin seals the core, so SLS and MJF need escape
+holes (`drains`; a 16 mm gyroid is open inside, so a few holes clear it);
+on FDM it prints like a coarse gyroid infill under a graded wall.
+
+![the sandwich arm link, whole and cut open at mid-height: graded skin, 16 mm gyroid core, cable channel](images/fields/arm-link-sandwich.png)
+
+Thin skins need a fine analysis grid. The search ran on 120k cells
+(0.95 mm, about one cell through the thinnest skin) and the same
+candidate read 0.554 mm there, 0.748 mm on 240k cells, 0.569 mm on 500k
+and 0.580 mm on 1M; the mass 38.0, 35.1, 38.5 and 37.9 g. The 240k grid
+happened to straddle the skin badly, so the search's two-grid check
+(twice the cells) is not enough here: check a thin-skinned result on a
+grid with three or more cells through its thinnest wall before trusting
+it.
 
 ### Strut and conformal lattices against the gyroid
 
 The strut cells' fits (lattice.STRUTS, from bench/strut_fits.py: unit-cell
-FEA at 48 voxels a cell, relative density 0.06-0.34) are the conservative
-isotropic reading of anisotropic cells: modulus the lesser of [100] and
-[111], stress factor the worst of a [100] pull, a [111] pull and a shear.
+FEA at 48 voxels a cell) are the conservative isotropic reading of
+anisotropic cells: modulus the lesser of [100] and [111], stress factor the
+worst of a [100] pull, a [111] pull and a shear. The power laws were fitted
+over relative density 0.06-0.34 and fall far short past it (the octet at
+rho 0.8: E*/E 0.27 from the fit, 0.56 solved; stress factor 8.8 against
+4.3), so the analysis reads lattice.STRUT_TABLES instead, the solves from
+rho 0.06 to 0.92 interpolated log-log up to the solid.
+
 Per gram at rho 0.15, against the gyroid sheet (E*/E 0.043):
 
 | cell | E*/E at rho 0.15 | behaviour |
@@ -386,22 +433,22 @@ homogenized, worst load case):
 
 | core | mass | safety factor | deflection | FDM: strut length bridging |
 |---|---|---|---|---|
-| gyroid (graded cell) | 49.9 g | 16.3 | 0.688 mm | |
-| gyroid, conformal | 50.4 g | 16.2 | 0.676 mm | |
-| Voronoi | 49.6 g | 13.1 | 0.661 mm | 70% |
-| BCC | 49.6 g | 11.4 | 0.733 mm | 100% |
-| FCC | 49.5 g | 11.4 | 0.722 mm | 60% |
-| Kelvin | 49.7 g | 10.6 | 0.673 mm | 60% |
-| octet | 50.2 g | 10.5 | 0.735 mm | 60% |
-| octet, conformal | 50.2 g | 9.0 | 0.730 mm | 70% |
+| gyroid (graded cell) | 50.0 g | 16.3 | 0.688 mm | |
+| gyroid, conformal | 50.5 g | 16.2 | 0.675 mm | |
+| Voronoi | 49.7 g | 14.9 | 0.651 mm | 70% |
+| FCC | 49.5 g | 14.8 | 0.676 mm | 60% |
+| BCC | 49.7 g | 13.9 | 0.696 mm | 100% |
+| Kelvin | 49.7 g | 13.5 | 0.667 mm | 60% |
+| octet, conformal | 50.2 g | 13.5 | 0.647 mm | 70% |
+| octet | 50.3 g | 12.7 | 0.670 mm | 60% |
 
-The skin carries most of the bending, so deflection barely moves (0.66 to
-0.74 mm; none reaches the study's 0.5 mm, which the 58.9 g solid TO part
-does). Strength does move: the gyroid's walls see the least stress
-concentration, a third more safety factor than the best strut core. At this
-mass the struts run dense (rho 0.2-0.95, past the 0.34 the fits were made
-at; the Voronoi points measured up to rho 0.8 sit above its fit, so the fit
-errs low there). Struts are for what sheets can't do: an open cell that
+The skin carries most of the bending, so deflection barely moves (0.65 to
+0.70 mm; none reaches the study's 0.5 mm at this mass). Read with the
+tables, the dense strut cores (rho 0.2-0.95 here) are stiffer than the
+power laws said: Voronoi and the conformal octet now deflect least, and
+every strut core gains 1.5-4.5 of safety factor. The gyroid's walls still
+see the least stress concentration, 10% more safety factor than the best
+strut core. Struts are for what sheets can't do: an open cell that
 drains powder and resin through any face, a part that is mostly air (rho
 under 0.1, where sheets get too thin to print), beam cells for impact and
 energy absorption, and a cell whose struts can be stretched (`aspect`) to
