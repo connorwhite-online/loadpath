@@ -495,6 +495,12 @@ class Solver:
         from concurrent.futures import ThreadPoolExecutor
 
         m = self._precond(k)
+        # pyamg factors the coarsest level (splu) lazily, on the first
+        # V-cycle: started from threads, every case factored it at once and
+        # the extra factors stayed allocated (the GRIP wrist yoke's coarsest
+        # level is a 60-125 MB LU; resident memory grew ~0.5 GB per design,
+        # 3 to 7 GB over a search). One cycle here factors it once.
+        m.matvec(np.zeros(k.shape[0]))
         maxiter = self._maxiter()
         counts = [0] * len(fs)
 
