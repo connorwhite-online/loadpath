@@ -1,0 +1,22 @@
+{
+  "name": "oil-cooler",
+  "core": {"type": "cylinder", "center": [0, 0, 35], "axis": "z", "length": 70, "r": 20},
+  "type": "gyroid",
+  "layout": "counter",
+  "axes": "zx",
+  "fluids": ["oil", "water"],
+  "cell": 5,
+  "wall": 1.0,
+  "split": 0.6,
+  "header": 5,
+  "portDiameter": 8,
+  "portLength": 6,
+  "build": "z",
+  "process": "lpbf",
+  "simulate": true,
+  "duty": {
+    "oil": {"fluid": "oil", "lPerMin": 2.0, "tIn": 90},
+    "water": {"fluid": "water", "lPerMin": 2.0, "tIn": 20},
+    "wall": "alsi10mg"
+  }
+}
