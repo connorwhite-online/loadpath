@@ -65,6 +65,12 @@ class MechanismOptions:
     extrusion: int | None = None
     tol: float = 0.005
     verify_nonlinear: bool = False    # large-deflection + buckling check of the result (first pair)
+    # Robust formulation (Wang, Lazarov & Sigmund 2011): also project the
+    # filtered field at 0.5 + robust (eroded) and 0.5 - robust (dilated) and
+    # maximize the worst of the three outputs. A one-node hinge disconnects
+    # in the eroded design, so the optimum keeps hinges at least about a
+    # filter radius wide: printable flexures instead of corner contacts.
+    robust: float | None = None
 
 
 @dataclass
@@ -79,10 +85,13 @@ class MechanismResult:
 
 
 def _spring_diag(f, k, n_dof):
+    """A grounded spring of k N/mm in all, shared evenly by the nodes the
+    vector f loads, on the dofs it loads (so an x push gets an x spring of
+    k, whatever the number of nodes)."""
     dofs = np.nonzero(np.abs(f) > 0)[0]
     d = np.zeros(n_dof)
     if len(dofs) and k > 0:
-        d[dofs] = k / len(dofs) * 3.0   # per node, three dofs share one spring
+        d[dofs] = k / len(np.unique(dofs // 3))
     return d
 
 
@@ -120,36 +129,49 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
     x[pres] = 1.0
     target = opts.volume_fraction * design.sum()
     beta, since = 1.0, 0
-    prev = None
+    prev = {}
     u0 = None
+    etas = [0.5] if not opts.robust else [0.5 + opts.robust, 0.5, 0.5 - opts.robust]
     from .mma import MMA
     mma = MMA(int(design.sum()), 1, xmin=0.0, xmax=1.0, move=opts.move)
     history = []
     it = 0
     for it in range(1, opts.max_iterations + 1):
         xt = _extrude((h @ x) / hs, columns, design)
-        xp = _project(xt, beta, 0.5)
-        xp[pres] = 1.0
-        e = opts.modulus * (E_MIN + xp ** PENALTY * (1 - E_MIN))
-        k = (stiff.assemble(e) + springs).tocsr()
-        sol = solver.solve_many(k, [domain.loads[i] for i in ins] + [ls[o] for o in outs], prev)
-        prev = sol
-        U = dict(zip(ins, sol[:len(ins)]))
-        LAM = dict(zip(outs, sol[len(ins):]))
-        dE = opts.modulus * PENALTY * xp ** (PENALTY - 1) * (1 - E_MIN)
-        raw = [float(ls[o] @ U[i]) for i, o in pairs]
+        dE_scale = opts.modulus * PENALTY * (1 - E_MIN)
+        real = []           # per realization: (raw outputs, d sum / d xt)
+        for eta in etas:
+            xp = _project(xt, beta, eta)
+            xp[pres] = 1.0
+            e = opts.modulus * (E_MIN + xp ** PENALTY * (1 - E_MIN))
+            k = (stiff.assemble(e) + springs).tocsr()
+            sol = solver.solve_many(k, [domain.loads[i] for i in ins] + [ls[o] for o in outs], prev.get(eta))
+            prev[eta] = sol
+            U = dict(zip(ins, sol[:len(ins)]))
+            LAM = dict(zip(outs, sol[len(ins):]))
+            raw = [float(ls[o] @ U[i]) for i, o in pairs]
+            # d(u_out)/d(xp_e) = -lambda_e . k_e u_e * dE/dxp   (K lambda = l, K symmetric)
+            g = np.zeros(n)
+            for i, o in pairs:
+                g -= np.einsum("ij,jk,ik->i", LAM[o][edof], ke, U[i][edof])
+            g = g * dE_scale * xp ** (PENALTY - 1) * _dproject(xt, beta, eta)
+            real.append((raw, g))
+        raw = real[len(etas) // 2][0]           # the blueprint (eta 0.5) is what is delivered
         # Sum the outputs in mm, with one overall scale for MMA. (Scaling each
         # pair by its own starting value let a pair that started near zero
         # dominate; the fin-ray finger traded one contact's wrap for another's.)
         if u0 is None:
             u0 = max(abs(sum(raw)), max(abs(r) for r in raw), 1e-12)
-        uout = sum(raw) / u0
-        # d(u_out)/d(xp_e) = -lambda_e . k_e u_e * dE/dxp   (K lambda = l, K symmetric)
-        g = np.zeros(n)
-        for i, o in pairs:
-            g -= np.einsum("ij,jk,ik->i", LAM[o][edof], ke, U[i][edof])
-        g = g * dE / u0
-        g = g * _dproject(xt, beta, 0.5)
+        vals = np.array([sum(r) / u0 for r, _ in real])
+        if len(etas) == 1:
+            uout, g = vals[0], real[0][1] / u0
+        else:
+            # smooth minimum (KS) of the realizations' outputs
+            q = 30.0
+            w = np.exp(-q * (vals - vals.min()))
+            uout = float(vals.min() - np.log(w.sum()) / q)
+            w /= w.sum()
+            g = sum(wk * gk for wk, (_, gk) in zip(w, real)) / u0
         g = _extrude(g, columns, design)
         g = ht @ (g / hs)
         dv = ht @ (_extrude(_dproject(xt, beta, 0.5), columns, design) / hs)
@@ -157,6 +179,8 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
         # which optimality criteria can only handle by clipping (the first
         # version did, and stalled on the fin-ray problem with half its
         # gradient thrown away)
+        xp = _project(xt, beta, 0.5)
+        xp[pres] = 1.0
         vol = float(xp[design].sum())
         xn = x.copy()
         xn[design] = mma.update(x[design], -uout * 10.0, (-g * 10.0)[design],
@@ -165,6 +189,8 @@ def optimize_mechanism(domain: Domain, nu: float, opts: MechanismOptions, on_ite
         x = xn
         rec = {"iteration": it, "outputDisplacement": raw[0], "objective": uout, "outputs": raw, "beta": beta, "change": change,
                "volume": float(xp[design].mean())}
+        if len(etas) > 1:
+            rec["robustOutputs"] = [float(v * u0) for v in vals]       # eroded, blueprint, dilated
         history.append(rec)
         if on_iter is not None:
             on_iter(rec, xp)

@@ -169,6 +169,18 @@ under an off-centre robot. They are tuned at TPU's dynamic stiffness, which is
 over 10 years, a vertical shake no longer rocks it, and it takes 23% more shock
 before a foot buckles (`examples/isolator/mount.py`).
 
+### Compliant mechanisms
+
+Grippers and flexures that are meant to bend (`mechanism.py`). On the
+textbook force inverter and gripper, loadpath matches a port of Sigmund's
+99-line mechanism code within 1-2% at equal volume, with crisp designs. A
+robust option rules out one-node hinges. Designs are then driven through a
+servo's stroke with large deflections (`stroke_mechanism`). A TPU gripper
+grips with 5.4 N at a 3 mm stroke with no corner hinges, and its grip
+relaxes to 3.8 N over a day as the TPU creeps. The textbook design with the
+same springs relies on 7 corner hinges and its large-deflection solve stops
+at a fifth of the stroke ([docs/MECHANISMS.md](docs/MECHANISMS.md)).
+
 ![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
 
 ## Install

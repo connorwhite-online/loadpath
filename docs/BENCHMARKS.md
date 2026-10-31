@@ -244,3 +244,14 @@ Open, as next work:
 3. **Compliance designs keep sharp re-entrant corners.** On the L-bracket
    loadpath's peak stress is above top88's at the same volume. The
    safety-factor search pays for that peak with material.
+
+## Compliant mechanisms
+
+`python -m loadpath.benchmarks.mechanisms` runs the force inverter (Bendsøe &
+Sigmund 2003, sec. 2.6) and a gripper (after Sigmund 1997) through a port of
+the 99-line code's mechanism version and through loadpath's `mechanism.py`.
+Every design is scored by one plane-stress evaluator with the same springs.
+At equal volume loadpath's output is within 1-2% of the reference's: +2.0% on
+the inverter and +0.9% on the gripper, black and white. The robust
+(eroded/dilated) option gives up 3-4% for designs with no one-node hinges.
+Full table and the TPU gripper in [MECHANISMS.md](MECHANISMS.md).
