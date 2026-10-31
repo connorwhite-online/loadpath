@@ -87,7 +87,9 @@ class _Model:
         # Poisson's ratio per element (two materials) or one for all
         nu_e = np.broadcast_to(np.asarray(nu, float), (mesh.n_elem,))
         self.groups = [(float(v), np.flatnonzero(nu_e == v)) for v in np.unique(nu_e)]
-        self.k0s = {v: hex8_ke(v) * mesh.pitch for v, _ in self.groups}
+        # plain hex8: the linear cells must match the nonlinear element's
+        # small-strain limit where the two meet
+        self.k0s = {v: hex8_ke(v, "plain") * mesh.pitch for v, _ in self.groups}
         nu = float(nu_e[0])
         cons = np.asarray(fixed, bool).copy()
         cons[pd] = True

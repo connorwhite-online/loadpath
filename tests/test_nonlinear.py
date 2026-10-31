@@ -72,7 +72,7 @@ def test_tangent_matches_finite_differences():
 def test_small_load_matches_linear():
     m, fixed, tip = bar()
     f = tip_vector(m, tip, 1, 1e-3 * E * I / L ** 2)
-    st = Stiffness(m, NU, fixed)
+    st = Stiffness(m, NU, fixed, element="plain")   # the nonlinear element's own linear limit
     from scipy.sparse.linalg import spsolve
     ul = spsolve(st.assemble(np.full(m.n_elem, E)).tocsc(), f)
     r = solve_nonlinear(m, NU, E, fixed, f, steps=1)
@@ -87,7 +87,7 @@ def test_cantilever_large_deflection_matches_elastica():
     w_u = tip_vector(m, tip, 0, 1.0)
     # linear FE at unit load: its ratio to beam theory is the element's
     # bending error (shear locking, ~4% at four cells through the thickness)
-    st = Stiffness(m, NU, fixed)
+    st = Stiffness(m, NU, fixed, element="plain")   # the nonlinear element's own linear limit
     from scipy.sparse.linalg import spsolve
     lin = spsolve(st.assemble(np.full(m.n_elem, E)).tocsc(), tip_vector(m, tip, 1, 1.0))[3 * tip + 1].mean()
     lock = lin / (L ** 3 / (3 * E * I))

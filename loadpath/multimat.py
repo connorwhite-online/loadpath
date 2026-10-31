@@ -21,7 +21,10 @@ the topology. The cell's Lame parameters are
 so every material keeps its own Poisson's ratio (TPU's 0.45 is not PETG's
 0.38, and a pad's indentation depends on it): fem.hex8_ke is linear in
 (lambda, mu), so the element matrix is lambda_e K_lambda + mu_e K_mu and
-one assembly carries a different material in every cell. The power on w
+one assembly carries a different material in every cell. (With the
+condensed bubble element fem.py uses, K is homogeneous in (lambda, mu)
+rather than linear: K_lambda and K_mu are then its derivatives at the cell's
+Lame ratio, tabulated and interpolated, LameStiffness.) The power on w
 makes a 50/50 blend cost the material of both and give the stiffness of
 neither, so the optimizer picks one. Mass is linear: rho_e = x sum w_i rho_i.
 
@@ -255,55 +258,157 @@ def lame(E, nu):
     return E * nu / ((1 + nu) * (1 - 2 * nu)), E / (2 * (1 + nu))
 
 
-def _ke_parts():
-    """Unit-cube hex8 stiffness split as K = lambda K_l + mu K_m."""
+def _ke_parts(q: float = 0.5, element: str | None = None):
+    """Unit-cube hex8 stiffness split as K = lambda K_l + mu K_m, at the
+    Lame ratio q = lambda / (lambda + mu).
+
+    For the plain trilinear hex8 K is linear in (lambda, mu) and the split
+    does not depend on q. The element fem.py uses (fem.hex8_element) has
+    its bubble modes condensed out, which divides by C, so K is only
+    homogeneous of degree one: K_l and K_m are its partial derivatives at
+    the cell's ratio (Euler: lambda dK/dlambda + mu dK/dmu = K exactly)."""
+    from .fem import _b_bubble, hex8_element
+
+    element = element or hex8_element()
     cl = np.zeros((6, 6))
     cl[:3, :3] = 1.0
     cm = np.diag([2.0, 2.0, 2.0, 1.0, 1.0, 1.0])
     g = 1.0 / np.sqrt(3.0)
-    kl, km = np.zeros((24, 24)), np.zeros((24, 24))
-    for xi in (-g, g):
-        for eta in (-g, g):
-            for zeta in (-g, g):
-                b = _b_matrix(xi, eta, zeta)
-                kl += b.T @ cl @ b * 0.125
-                km += b.T @ cm @ b * 0.125
+    parts = {}
+    for name, c in (("l", cl), ("m", cm)):
+        kuu, kua, kaa = np.zeros((24, 24)), np.zeros((24, 9)), np.zeros((9, 9))
+        for xi in (-g, g):
+            for eta in (-g, g):
+                for zeta in (-g, g):
+                    b = _b_matrix(xi, eta, zeta)
+                    ba = _b_bubble(xi, eta, zeta)
+                    kuu += b.T @ c @ b * 0.125
+                    kua += b.T @ c @ ba * 0.125
+                    kaa += ba.T @ c @ ba * 0.125
+        parts[name] = (kuu, kua, kaa)
+    if element == "plain":
+        kl, km = parts["l"][0], parts["m"][0]
+    else:
+        kua = q * parts["l"][1] + (1 - q) * parts["m"][1]
+        kaa = q * parts["l"][2] + (1 - q) * parts["m"][2]
+        r = -np.linalg.solve(kaa, kua.T)
+        # dK = dKuu + dKua R + R^T dKau + R^T dKaa R, R = -Kaa^-1 Kau
+        kl, km = ((p[0] + p[1] @ r + r.T @ p[1].T + r.T @ p[2] @ r) for p in (parts["l"], parts["m"]))
     return 0.5 * (kl + kl.T), 0.5 * (km + km.T)
 
 
-class LameStiffness:
-    """fem.Stiffness's CSR layout with a (lambda, mu) pair per element."""
+# Lame ratios at which the split is tabulated (q = lambda / (lambda + mu),
+# 0.41 at nu = 0.3, 0.9 at nu = 0.45); between them it is interpolated
+# linearly, and every material's own ratio is a node, so a crisp cell's
+# matrix is exact.
+_Q_GRID = np.linspace(0.0, 0.98, 50)
 
-    def __init__(self, mesh: HexMesh, fixed: np.ndarray):
+
+class LameStiffness:
+    """fem.Stiffness's CSR layout with a (lambda, mu) pair per element.
+    `ratios` are the Lame ratios lambda / (lambda + mu) of the materials (and
+    the void floor) the cells will mix, tabulated exactly."""
+
+    def __init__(self, mesh: HexMesh, fixed: np.ndarray, ratios=()):
+        from .fem import hex8_element
+
         self.mesh = mesh
         self.base = Stiffness(mesh, 0.3, fixed)
-        kl, km = _ke_parts()
-        self.kl, self.km = kl * mesh.pitch, km * mesh.pitch
+        self.element = hex8_element()
+        if self.element == "plain":
+            q = np.zeros(1)
+        else:
+            q = np.unique(np.concatenate([_Q_GRID, np.asarray(ratios, float).ravel()]))
+        self.q = q
+        self.kl, self.km = [], []
         self._blocks = []
-        for a in range(8):
-            for b in range(8):
-                self._blocks.append((self.kl[3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel(),
-                                     self.km[3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel()))
+        for qq in q:
+            kl, km = _ke_parts(qq, self.element)
+            self.kl.append(kl * mesh.pitch)
+            self.km.append(km * mesh.pitch)
+            self._blocks.append([(self.kl[-1][3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel(),
+                                  self.km[-1][3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel())
+                                 for a in range(8) for b in range(8)])
+        self._lm = None
+
+    def _bins(self, lam, mu):
+        lam = np.broadcast_to(np.asarray(lam, float), (self.mesh.n_elem,))
+        mu = np.broadcast_to(np.asarray(mu, float), (self.mesh.n_elem,))
+        s = lam + mu
+        if len(self.q) == 1:
+            z = np.zeros(len(lam), np.int64)
+            return lam, mu, s, z, np.zeros(len(lam)), np.ones(len(lam))
+        q = np.clip(lam / s, self.q[0], self.q[-1])
+        j = np.clip(np.searchsorted(self.q, q, side="right") - 1, 0, len(self.q) - 2)
+        dq = self.q[j + 1] - self.q[j]
+        return lam, mu, s, j, (q - self.q[j]) / dq, dq
+
+    def _nodes(self, j, w):
+        """(node, element indices, weight) for every tabulated ratio in use."""
+        out = []
+        for g in np.unique(np.concatenate([j, j + 1]) if len(self.q) > 1 else j):
+            lo, hi = np.nonzero(j == g)[0], np.nonzero(j + 1 == g)[0] if len(self.q) > 1 else np.zeros(0, int)
+            el = np.concatenate([lo, hi])
+            wt = np.concatenate([1.0 - w[lo], w[hi]])
+            keep = wt != 0.0
+            if keep.any():
+                out.append((int(g), el[keep], wt[keep]))
+        return out
 
     def assemble(self, lam, mu, springs=None):
         st = self.base
         data = np.zeros(st.nnz)
-        lam = np.asarray(lam, float)[:, None]
-        mu = np.asarray(mu, float)[:, None]
-        for (slots, _), (bl, bm) in zip(st._pairs, self._blocks):
-            data[slots] += lam * bl + mu * bm
+        lam, mu, _, j, w, _ = self._bins(lam, mu)
+        self._lm = (np.array(lam), np.array(mu))
+        for g, el, wt in self._nodes(j, w):
+            a, b = (wt * lam[el])[:, None], (wt * mu[el])[:, None]
+            for (slots, _), (bl, bm) in zip(st._pairs, self._blocks[g]):
+                data[slots[el]] += a * bl + b * bm
         k = st.finish(data)
         if springs is not None:
             k = (k + springs).tocsr()
         return k
 
-    def energies(self, u):
-        """Per element (u^T K_l u, u^T K_m u)."""
+    def apply(self, ue, lam=None, mu=None):
+        """Per element K_e u_e (ne, 24)."""
+        lam, mu = (lam, mu) if lam is not None else self._lm
+        lam, mu, _, j, w, _ = self._bins(lam, mu)
+        out = np.zeros_like(ue)
+        for g, el, wt in self._nodes(j, w):
+            out[el] += (wt * lam[el])[:, None] * (ue[el] @ self.kl[g]) + (wt * mu[el])[:, None] * (ue[el] @ self.km[g])
+        return out
+
+    def pair(self, x, y, lam=None, mu=None):
+        """Per element (x^T dK/dlambda y, x^T dK/dmu y), the derivatives of
+        the tabulated K (interpolation slope included), at the moduli last
+        assembled unless given."""
+        lam, mu = (lam, mu) if lam is not None else self._lm
+        lam, mu, s, j, w, dq = self._bins(lam, mu)
+        n = len(lam)
+        fl = np.zeros((2, n))
+        fm = np.zeros((2, n))
+        for g in np.unique(j):
+            el = np.nonzero(j == g)[0]
+            for side in (0, 1) if len(self.q) > 1 else (0,):
+                kl, km = self.kl[g + side], self.km[g + side]
+                fl[side, el] = np.einsum("ij,jk,ik->i", x[el], kl, y[el])
+                fm[side, el] = np.einsum("ij,jk,ik->i", x[el], km, y[el])
+        if len(self.q) == 1:
+            return fl[0], fm[0]
+        el_ = (1 - w) * fl[0] + w * fl[1]
+        em_ = (1 - w) * fm[0] + w * fm[1]
+        d = (lam * (fl[1] - fl[0]) + mu * (fm[1] - fm[0])) / dq       # x^T dK/dq y
+        return el_ + d * mu / s ** 2, em_ - d * lam / s ** 2
+
+    def energies(self, u, lam=None, mu=None):
+        """Per element (u^T dK/dlambda u, u^T dK/dmu u); lambda times the
+        first plus mu times the second is the element's u^T K u."""
         ue = u[self.mesh.edof]
-        return np.einsum("ij,jk,ik->i", ue, self.kl, ue), np.einsum("ij,jk,ik->i", ue, self.km, ue)
+        return self.pair(ue, ue, lam, mu)
 
     def stress(self, u, lam, mu):
-        """Element-centre stress (ne, 6), engineering shear strain."""
+        """Element-centre stress (ne, 6), engineering shear strain (the
+        bubbles have no strain at the centre)."""
         b = _b_matrix(0.0, 0.0, 0.0) / self.mesh.pitch
         eps = u[self.mesh.edof] @ b.T
         tr = eps[:, :3].sum(axis=1)
@@ -452,7 +557,8 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
     e_max = Es.max()
     lam_min, mu_min = lame(E_FLOOR * e_max, 0.3)
     springs = e_max * domain.springs if domain.springs is not None else None
-    stiff = LameStiffness(mesh, domain.fixed)
+    stiff = LameStiffness(mesh, domain.fixed, ratios=np.concatenate([lam_i / (lam_i + mu_i),
+                                                                     [lam_min / (lam_min + mu_min)]]))
     solver = Solver(mesh, rtol=1e-6, maxiter=2000)
     h, hs = density_filter(domain, radius)
     hs_y = np.asarray(h @ np.ones(n)).ravel()
@@ -763,7 +869,7 @@ def _energy_constraint(stiff, solver, k, f, u, comp, energy, lam_e, mu_e, xb, w,
     and R as x, so empty cells away from the load read near zero.
     Returns (g, dg/dxb, dg/dyb, max r over the solid)."""
     h3 = stiff.mesh.pitch ** 3
-    el, em = stiff.energies(u)
+    el, em = stiff.energies(u, lam_e, mu_e)
     sed = 0.5 * (lam_e * el + mu_e * em) / h3
     Rw = w.T @ resil
     R = np.maximum(xb * Rw, 1e-12)
@@ -776,15 +882,14 @@ def _energy_constraint(stiff, solver, k, f, u, comp, energy, lam_e, mu_e, xb, w,
     dP_dr = P ** (1.0 - q) * r ** (q - 1.0) / n_solid
     coef = dP_dr * a / R / h3
     ue = u[stiff.mesh.edof]
-    ke_u = (lam_e[:, None] * (ue @ stiff.kl) + mu_e[:, None] * (ue @ stiff.km))
+    ke_u = stiff.apply(ue, lam_e, mu_e)
     rhs = np.bincount(stiff.mesh.edof.ravel(), weights=(coef[:, None] * ke_u).ravel(),
                       minlength=stiff.mesh.n_dof)
     rhs -= float((dP_dr * r).sum()) / comp * f
     rhs[stiff.base.fixed] = 0.0
     psi = solver.solve_many(k, [rhs])[0]
     pe = psi[stiff.mesh.edof]
-    cl = np.einsum("ij,jk,ik->i", pe, stiff.kl, ue)
-    cm = np.einsum("ij,jk,ik->i", pe, stiff.km, ue)
+    cl, cm = stiff.pair(pe, ue, lam_e, mu_e)
     g_lam = dP_dr * a / R * 0.5 * el / h3 - cl
     g_mu = dP_dr * a / R * 0.5 * em / h3 - cm
     gx = g_lam * dlam_dx + g_mu * dmu_dx - dP_dr * r / R * Rw
@@ -933,7 +1038,7 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
     nus = np.array([m.nu for m in mm.materials])
     lam_i, mu_i = lame(Es, nus)
     lam_e, mu_e = lam_i[mat], mu_i[mat]
-    stiff = LameStiffness(hm, bc.fixed)
+    stiff = LameStiffness(hm, bc.fixed, ratios=lam_i / (lam_i + mu_i))
     springs = Es.max() * bc.springs if bc.springs is not None else None
     k = stiff.assemble(lam_e, mu_e, springs)
     solver = Solver(hm, rtol=1e-6, maxiter=4000, rebuild_after_iters=10_000)

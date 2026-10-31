@@ -161,10 +161,13 @@ def test_verify_bar_stress_matches_beam_theory():
     bar = trimesh.creation.box(extents=[100, 10, 10])
     bar.apply_translation([50, 5, 5])
     rep = verify_part(s, bar, max_cells=40_000)
-    # Root bending stress M c / I = (10 N * 100 mm) * 5 / (10^4 / 12) = 6 MPa;
-    # the cells next to the clamp are excluded, so expect slightly under.
+    # Root bending stress M c / I = (10 N * 100 mm) * 5 / (10^4 / 12) = 6 MPa.
+    # The peak is the hotspot submodel's, on the clamped edge just past the
+    # 0.94 mm band, where the fully held root (Poisson restrained, a corner
+    # singularity) concentrates it: 6.58 on the plain hex8, whose shear
+    # locking under-read bending, 7.00 on the bubble element.
     peak = rep["cases"][0]["peakStress"]
-    assert 4.5 < peak < 6.6, peak
+    assert 4.5 < peak < 7.5, peak
     assert abs(rep["cases"][0]["deflection"] - 2.0) < 0.15, rep["cases"][0]["deflection"]
     assert abs(rep["mass"] - 10.0) < 1e-6
     assert rep["bodies"] == 1 and rep["keepOutIntrusion"] == 0.0

@@ -39,9 +39,9 @@ def _study(**over):
 
 
 def test_lame_split_matches_hex8():
-    kl, km = M._ke_parts()
     for E, nu in ((1500.0, 0.38), (67.0, 0.45)):
         lam, mu = M.lame(E, nu)
+        kl, km = M._ke_parts(lam / (lam + mu))
         assert np.allclose(lam * kl + mu * km, E * hex8_ke(nu), rtol=1e-10, atol=1e-8)
 
 
@@ -49,7 +49,7 @@ def test_lame_assembly_matches_fem():
     st = _study()
     dom = build_domain(st)
     lam, mu = M.lame(1500.0, 0.38)
-    a = M.LameStiffness(dom.mesh, dom.fixed).assemble(np.full(dom.n_elem, lam), np.full(dom.n_elem, mu))
+    a = M.LameStiffness(dom.mesh, dom.fixed, ratios=[lam / (lam + mu)]).assemble(np.full(dom.n_elem, lam), np.full(dom.n_elem, mu))
     b = Stiffness(dom.mesh, 0.38, dom.fixed).assemble(np.full(dom.n_elem, 1500.0))
     assert abs(a - b).max() < 1e-6 * abs(b).max()
 

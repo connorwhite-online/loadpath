@@ -22,7 +22,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import cg
 
-__all__ = ["Layered", "amg_solver", "elastic_c", "hex8_ke", "hex8_b_center", "hex8_fth", "thermal_load", "HexMesh", "Stiffness", "Solver", "von_mises"]
+__all__ = ["Layered", "amg_solver", "elastic_c", "hex8_ke", "hex8_b", "hex8_element", "hex8_b_center", "hex8_fth", "thermal_load", "HexMesh", "Stiffness", "Solver", "von_mises"]
 
 # Local corner order: bit 0 = +x, bit 1 = +y, bit 2 = +z.
 CORNERS = np.array([[(c >> 0) & 1, (c >> 1) & 1, (c >> 2) & 1] for c in range(8)])
@@ -143,18 +143,96 @@ def _b_matrix(xi, eta, zeta):
     return b
 
 
-def hex8_ke(nu) -> np.ndarray:
-    """Stiffness (24x24) of a unit cube with E = 1, 2x2x2 Gauss. For side h
-    and modulus E the element matrix is E * h * this."""
+# The element: "im" (default) is the trilinear hex8 enriched with Wilson's
+# nine incompatible bubble modes (1 - xi^2, ... per displacement component),
+# condensed out element by element (Taylor's form: on a cube the bubbles'
+# strains integrate to zero, so the patch test holds). The plain hex8
+# shear-locks in bending: on a grid-aligned cantilever it read the root
+# stress 38/16/9/4% low and the tip deflection 37/14/8/3% low at 1/2/3/5
+# cells through the depth (moonshots/round2, unsafe on thin members); with
+# the bubbles both are exact to under 1%. Same 24 dofs, same sparsity, so
+# every solver path (assembled AMG, matrix-free multigrid, torch) takes it
+# unchanged. LOADPATH_HEX8=plain switches back for A/B comparisons.
+_ELEMENTS = ("im", "plain")
+_PARTS = {}
+
+
+def hex8_element() -> str:
+    """The element in force: LOADPATH_HEX8 ("im" or "plain"), default "im"."""
+    import os
+
+    e = os.environ.get("LOADPATH_HEX8", "im").strip().lower() or "im"
+    if e not in _ELEMENTS:
+        raise ValueError(f"LOADPATH_HEX8 must be one of {_ELEMENTS}, not {e!r}")
+    return e
+
+
+def _b_bubble(xi, eta, zeta):
+    """Strain (6x9) of the nine bubble modes of the unit cube at a natural
+    point; column 3*m + c is mode (1 - x_m^2) in component c."""
+    x = (xi, eta, zeta)
+    b = np.zeros((6, 9))
+    for m in range(3):
+        d = np.zeros(3)
+        d[m] = -4.0 * x[m]          # d/dx of (1 - xi^2) on the unit cube
+        dx, dy, dz = d
+        col = 3 * m
+        b[0, col] = dx
+        b[1, col + 1] = dy
+        b[2, col + 2] = dz
+        b[3, col], b[3, col + 1] = dy, dx
+        b[4, col + 1], b[4, col + 2] = dz, dy
+        b[5, col], b[5, col + 2] = dz, dx
+    return b
+
+
+def _hex8_parts(nu, element):
+    """(ke 24x24, R 9x24 or None) of the unit cube at E = 1: R maps the
+    element's nodal displacements to its condensed bubble amplitudes."""
+    key = (repr(nu), element)
+    if key in _PARTS:
+        return _PARTS[key]
     c = elastic_c(1.0, nu)
     g = 1.0 / np.sqrt(3.0)
-    ke = np.zeros((24, 24))
+    kuu = np.zeros((24, 24))
+    kua = np.zeros((24, 9))
+    kaa = np.zeros((9, 9))
     for xi in (-g, g):
         for eta in (-g, g):
             for zeta in (-g, g):
                 b = _b_matrix(xi, eta, zeta)
-                ke += b.T @ c @ b * 0.125  # det J of the unit cube map = 1/8
-    return 0.5 * (ke + ke.T)
+                ba = _b_bubble(xi, eta, zeta)
+                kuu += b.T @ c @ b * 0.125  # det J of the unit cube map = 1/8
+                kua += b.T @ c @ ba * 0.125
+                kaa += ba.T @ c @ ba * 0.125
+    if element == "plain":
+        out = (0.5 * (kuu + kuu.T), None)
+    else:
+        r = -np.linalg.solve(kaa, kua.T)
+        ke = kuu + kua @ r
+        out = (0.5 * (ke + ke.T), r)
+    _PARTS[key] = out
+    return out
+
+
+def hex8_ke(nu, element: str | None = None) -> np.ndarray:
+    """Stiffness (24x24) of a unit cube with E = 1, 2x2x2 Gauss, bubbles
+    condensed (see hex8_element). For side h and modulus E the element
+    matrix is E * h * this."""
+    return _hex8_parts(nu, element or hex8_element())[0].copy()
+
+
+def hex8_b(xi, eta, zeta, nu, element: str | None = None) -> np.ndarray:
+    """Strain-displacement matrix (6x24) of the unit cube at a natural point
+    for the element in force: the trilinear field plus the condensed
+    bubbles' strain (zero at the centre). For side h, divide by h. Corner
+    stress for nodal averaging must use this, not _b_matrix: in bending the
+    bending strain the element carries lives partly in the bubbles."""
+    b = _b_matrix(xi, eta, zeta)
+    r = _hex8_parts(nu, element or hex8_element())[1]
+    if r is not None:
+        b = b + _b_bubble(xi, eta, zeta) @ r
+    return b
 
 
 def hex8_fth(nu) -> np.ndarray:
@@ -265,9 +343,12 @@ class Stiffness:
     any density interpolation), with Dirichlet conditions applied as
     identity rows so the matrix keeps one fixed shape."""
 
-    def __init__(self, mesh: HexMesh, nu, fixed: np.ndarray):
+    def __init__(self, mesh: HexMesh, nu, fixed: np.ndarray, element: str | None = None):
         self.mesh = mesh
-        self.ke = hex8_ke(nu) * mesh.pitch        # E = 1, side h
+        # element=None takes hex8_element(); "plain" for the trilinear hex8
+        # the geometrically nonlinear element (nonlinear.py) is built on
+        self.element = element or hex8_element()
+        self.ke = hex8_ke(nu, self.element) * mesh.pitch        # E = 1, side h
         self.nu = nu
         nn = mesh.n_nodes
         enode = mesh.enode

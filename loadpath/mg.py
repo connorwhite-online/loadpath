@@ -45,7 +45,7 @@ import os
 import numpy as np
 import scipy.sparse as sp
 
-from .fem import CORNERS, hex8_ke, rigid_body_modes
+from .fem import CORNERS, hex8_element, hex8_ke, rigid_body_modes
 
 __all__ = ["GridElasticity", "prolong", "restrict"]
 
@@ -374,7 +374,8 @@ class GridElasticity:
         self.nn = int(np.prod(self.node_shape))
         self.node_flat = np.ravel_multi_index(tuple(mesh.node_ijk.T), self.node_shape)
         self.elem_ijk = mesh.elem_ijk
-        self.ke = hex8_ke(nu) * mesh.pitch
+        self.element = hex8_element()
+        self.ke = hex8_ke(nu, self.element) * mesh.pitch
         fixed = np.asarray(fixed, bool)
         fg = np.zeros((3, self.nn), bool)
         for i in range(3):

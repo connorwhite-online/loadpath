@@ -234,7 +234,7 @@ def homogenize(kind: str, wall_over_cell: float, n: int = 40, nu: float = 0.35, 
     import scipy.sparse as sp
     from scipy.sparse.linalg import cg
 
-    from .fem import CORNERS, _b_matrix, elastic_c, hex8_ke, von_mises
+    from .fem import CORNERS, _b_matrix, elastic_c, hex8_b, hex8_ke, von_mises
 
     h = 1.0 / n
     c = (np.arange(n) + 0.5) * h
@@ -278,7 +278,7 @@ def homogenize(kind: str, wall_over_cell: float, n: int = 40, nu: float = 0.35, 
         mean = ((ue @ bc.T) @ c0.T).sum(axis=0) / n ** 3
         acc = np.zeros((nn, 6))
         for kk, (a, b, cc) in enumerate(2.0 * CORNERS - 1.0):
-            np.add.at(acc, enode[:, kk], (ue @ (_b_matrix(a, b, cc) / h).T) @ c0.T)
+            np.add.at(acc, enode[:, kk], (ue @ (hex8_b(a, b, cc, nu) / h).T) @ c0.T)
         vm = von_mises(acc / np.bincount(enode.ravel(), minlength=nn)[:, None])
         return mean, vm
 
