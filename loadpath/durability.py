@@ -67,6 +67,18 @@ retention ~ r(T) / (1 + phi(t, T)). Below about half, the joint will need
 a compression limiter (a metal sleeve the screw clamps on), a heat-set
 insert clamping metal to metal, a spring washer, or retightening.
 
+Thermal cycling: a study whose thermal block has a duty cycle (thermal.
+Cycle, with `cycles`) heats up and cools down that many times. verify_part
+solves the cycle's hot and cold moments and, per node, takes the larger
+von Mises stress over strength retention (so it reads against room-
+temperature strength) as the cycle's maximum; where the stress barely moves
+over the cycle (R above ~0.3, where the max-stress reading stops holding
+and the load is closer to creep), the range over 0.7 counts instead. The
+worst load case's peak of that, times `cycles`, joins the in-plane Miner
+sum. An estimate on top of an estimate: no printed-polymer thermal-fatigue
+data were found, so it is the mechanical design curve at the thermal
+stress.
+
 Everything here is an estimate to compare designs and catch parts that will
 not last, not an allowable: printed fatigue scatters by a factor of 3 in
 life even within one study, creep data for printed parts is sparse, and
@@ -193,7 +205,6 @@ def durability_data(material, overrides: dict | None = None) -> DurabilityData:
         # a filled grade (pa12-gf, pa12-gb) without its own curve: the base
         # polymer's (fillers stiffen it and shift its fatigue a little either
         # way; far closer than the generic FDM curve)
-        import dataclasses
         root = key.split("-")[0]
         base = dataclasses.replace(DURABILITY[root], source=f"as {root} (no curve for the filled grade {key}): "
                                    + DURABILITY[root].source, quality="assumed")
@@ -244,8 +255,14 @@ def rupture_strength(data: DurabilityData, strength: float, hours: float) -> flo
     return float(strength * f)
 
 
+def _thermal_cycles(study):
+    th = getattr(study, "thermal", None)
+    return th.cycle.cycles if th is not None and th.cycle is not None and th.cycle.cycles else None
+
+
 def active(study) -> bool:
-    return study.durability is not None or any(c.cycles or c.hours for c in study.load_cases)
+    return study.durability is not None or any(c.cycles or c.hours for c in study.load_cases) \
+        or _thermal_cycles(study) is not None
 
 
 def _hdt(mat):
@@ -284,7 +301,10 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
         if not lc.cycles and not hours:
             continue
         t = lc.temperature if lc.temperature is not None else dur.temperature
-        r = ret(t)
+        # a study with heat has solved the temperature at the peak itself
+        r = c["strengthRetention"] if c.get("strengthRetention") is not None else ret(t)
+        if c.get("peakTemperature") is not None:
+            t = c["peakTemperature"]
         hdt = _hdt(mat)
         if hdt is not None and t >= hdt:
             msg = (f"{lc.name}: {t:g} C is at or above {mat.name}'s heat deflection temperature ({hdt:g} C at "
@@ -319,6 +339,20 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
                     "nonlinear and faster than the estimate")
         out["cases"].append(row)
 
+    n_th = _thermal_cycles(study)
+    if n_th is not None and any("cycleStress" in c for c in cases):
+        # heating up and cooling down (thermal.Cycle): the worst load case's
+        # equivalent cycle stress (verify_part, over strength retention, so
+        # read against room-temperature strength), n_th times
+        worst = max((c for c in cases if "cycleStress" in c), key=lambda c: c["cycleStress"])
+        sig = worst["cycleStress"] * allowance
+        life = cycles_to_failure(data, mat.strength, sig)
+        damage["inPlane"] += n_th / life
+        out["thermalCycling"] = {"cycles": n_th, "case": worst["name"], "stress": sig,
+                                 "stressRange": worst["cycleStressRange"] * allowance, "life": life,
+                                 "damage": n_th / life,
+                                 "fatigueStrength": fatigue_strength(data, mat.strength, n_th)}
+
     k = data.fatigue_slope
     fat_sf = np.inf
     for where, d in damage.items():
@@ -339,7 +373,7 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
         r = ret(t)
         phi = creep_ratio(data, dur.preload_hours, r)
         s_r = rupture_strength(data, mat.strength * r, dur.preload_hours)
-        joints = []
+        joints, relaxed = [], []
         for j in study.joints:
             bearing = j["preload"] / j["area"] if j["area"] > 0 else 0.0
             keep = r / (1.0 + phi)
@@ -348,13 +382,18 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
                    "hours": dur.preload_hours, "temperature": t}
             joints.append(row)
             if keep < 0.5 and data.creep_ratio > 0:
-                out["warnings"].append(
-                    f"fastener {j['id']}: about {keep:.0%} of its clamp load is left after {dur.preload_hours:g} h "
-                    f"at {t:g} C; clamp on a metal compression limiter or insert, or add a spring washer")
+                relaxed.append(j["id"])
             if bearing > 0 and s_r / bearing < 1.0:
                 out["warnings"].append(f"fastener {j['id']}: the head's bearing stress {bearing:.1f} MPa is above "
                                        f"the {dur.preload_hours:g} h creep strength {s_r:.1f} MPa; use a washer "
                                        "or lower the preload")
+        if relaxed:
+            # the same for every screw in one material: one line, not one per screw
+            keep = r / (1.0 + phi)
+            who = f"fastener {relaxed[0]}" if len(relaxed) == 1 else f"fasteners {', '.join(relaxed)}"
+            out["warnings"].append(
+                f"{who}: about {keep:.0%} of the clamp load is left after {dur.preload_hours:g} h "
+                f"at {t:g} C; clamp on a metal compression limiter or insert, or add a spring washer")
         out["joints"] = joints
 
     if data.quality in ("assumed", "rough"):
