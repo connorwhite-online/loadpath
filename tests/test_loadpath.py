@@ -156,6 +156,23 @@ def test_reconstruct_keeps_bores_exact_and_preserve_whole():
     assert rep["safetyFactor"] > 1 and rep["mass"] > 0
 
 
+def test_reconstruct_drops_zero_volume_slivers():
+    # Two coincident triangles facing apart on a cube's top face, on vertices
+    # of their own (as manifold3d leaves them): closed in memory, but welded
+    # into the cube by any STL reader they make non-manifold edges.
+    from loadpath.reconstruct import _drop_slivers
+    cube = trimesh.creation.box(extents=[10, 10, 10])
+    top = cube.vertices[cube.vertices[:, 2] > 4.9][:3]
+    n = len(cube.vertices)
+    m = trimesh.Trimesh(np.vstack([cube.vertices, top]),
+                        np.vstack([cube.faces, [[n, n + 1, n + 2], [n, n + 2, n + 1]]]), process=False)
+    m.merge_vertices()
+    assert not m.is_watertight
+    fixed = _drop_slivers(trimesh.Trimesh(m.vertices, m.faces, process=False))
+    assert fixed.is_watertight and len(fixed.faces) == 12 and abs(fixed.volume - 1000) < 1e-6
+    assert _drop_slivers(cube) is cube
+
+
 def test_verify_bar_stress_matches_beam_theory():
     s = study_from_dict(BEAM)
     bar = trimesh.creation.box(extents=[100, 10, 10])
@@ -833,6 +850,7 @@ TESTS = [
     test_fem_matches_beam_theory,
     test_simp_keeps_volume_and_symmetry,
     test_reconstruct_keeps_bores_exact_and_preserve_whole,
+    test_reconstruct_drops_zero_volume_slivers,
     test_verify_bar_stress_matches_beam_theory,
     test_verify_hole_stress_concentration,
     test_am_filter_gradient_and_behavior,

@@ -397,6 +397,33 @@ def _attach_plan(mesh, study, organic):
     attach_plan(mesh, p)
 
 
+def _drop_slivers(mesh):
+    """Drop zero-volume shells (a pair of coincident triangles facing apart)
+    that a boolean can leave on a flat face. manifold3d keeps them on vertices
+    of their own, so the mesh in memory is closed, but any STL reader welds
+    them into the part, where they read as non-manifold edges (the wrist link
+    in docs/tutorials/agent-mcp was not watertight once saved). Returns the
+    welded mesh without them, or `mesh` itself when there are none."""
+    import trimesh
+
+    m = mesh.copy()
+    m.merge_vertices()
+    if not len(m.faces):
+        return mesh
+    lab = trimesh.graph.connected_component_labels(m.face_adjacency, node_count=len(m.faces))
+    tri = m.vertices[m.faces]
+    vol = np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])) / 6.0
+    per = np.bincount(lab, weights=vol)
+    sliver = np.abs(per) < 1e-6 * max(abs(per.sum()), 1e-9)
+    if not sliver.any():
+        return mesh
+    # the welded copy: in manifold3d's own topology the part's faces either
+    # side of a sliver are joined through it, so dropping it unwelded opens holes
+    m.update_faces(~sliver[lab])
+    m.remove_unreferenced_vertices()
+    return m
+
+
 def _bodies(man):
     return sorted(man.decompose(), key=lambda b: -b.volume())
 
@@ -520,7 +547,7 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     info["bodies"] = len(kept)
     info["droppedFragmentVolume"] = float(dropped)
 
-    mesh = trimesh_from_manifold(part)
+    mesh = _drop_slivers(trimesh_from_manifold(part))
     _attach_plan(mesh, study, organic_raw)
     info["triangles"] = int(len(mesh.faces))
     info["volume"] = float(mesh.volume)
