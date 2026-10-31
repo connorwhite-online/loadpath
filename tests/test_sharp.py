@@ -138,9 +138,42 @@ def test_run_field_reports_edges_and_writes_step():
             assert rep["step"]["valid"] and os.path.exists(rep["step"]["path"]), rep["step"]
 
 
+def test_collapse_keeps_holes():
+    import trimesh
+
+    from loadpath.step import _collapse
+
+    t = trimesh.creation.torus(20, 3, major_sections=96, minor_sections=48)
+    V, F, _ = _collapse(t.vertices, t.faces, 200)
+    c = trimesh.Trimesh(V, F, process=False)
+    assert len(c.faces) <= 210 and c.is_watertight and c.euler_number == 0, (len(c.faces), c.euler_number)
+
+
+def test_step_smooth_patches():
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    import trimesh
+
+    b = trimesh.creation.icosphere(4, radius=15)
+    v = b.vertices
+    b.vertices = v * (1 + 0.15 * np.sin(v[:, 0] / 3) * np.cos(v[:, 1] / 4))[:, None]
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "blob.step")
+        rep = export_step(b, path, surface="smooth", patches=400)
+        assert rep["valid"] and rep["solids"] == 1, rep
+        assert rep["faces"].get("bspline", 0) >= 380 and not rep["faces"].get("facet"), rep["faces"]
+        assert abs(rep["volume"] / b.volume - 1) < 0.002, (rep["volume"], b.volume)
+        dev = rep["decimated"][0]["deviation"]
+        assert dev["p99"] < 0.05, dev
+        back = shape_to_trimesh(read_step(path), deflection=0.005, angle=0.05)
+        assert np.percentile(mesh_distance(b, back.sample(5000)), 99) < 0.05
+
+
 TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact_where_the_field_rounds_it,
          test_mesh_distance_matches_trimesh, test_step_keeps_the_bore_a_cylinder,
-         test_study_part_exports_exact_interfaces, test_run_field_reports_edges_and_writes_step]
+         test_study_part_exports_exact_interfaces, test_run_field_reports_edges_and_writes_step,
+         test_collapse_keeps_holes, test_step_smooth_patches]
 
 
 def main():

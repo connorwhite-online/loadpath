@@ -28,6 +28,9 @@ __all__ = ["available", "export_step", "read_step", "shape_to_trimesh", "attach_
 
 DEFAULT_FACES = 20_000      # organic facets in the B-rep: ~45 MB of STEP, ~20 s
 FUZZY = 1e-4                # boolean fuzz (mm): facets snapped onto exact faces
+DEFAULT_PATCHES = 1500      # smooth B-spline patches: ~8 kB of STEP each
+SMOOTH_SAMPLES = 8          # points per patch edge pulled onto the surface
+NEAR_EXACT = 0.5            # mm: organic surface this close to exact geometry stays faceted
 
 
 def available():
@@ -155,6 +158,248 @@ def _bool1(cls, args, tools, fuzzy=FUZZY):
     return op.Shape()
 
 
+def _closest(mesh, P, chunk=20_000):
+    import trimesh
+
+    out = np.empty_like(P)
+    for i in range(0, len(P), chunk):
+        out[i:i + chunk] = trimesh.proximity.closest_point(mesh, P[i:i + chunk])[0]
+    return out
+
+
+def _collapse(V, F, target, locked=None, max_turn=0.5):
+    """Quadric edge collapse of a closed mesh (V, F) to `target` faces that
+    keeps its topology: an edge collapses only when its ends share exactly
+    two neighbours (the link condition), so thin members and holes survive,
+    and only when no face around it turns by more than ~60 degrees. Slower
+    than fast_simplification, which at a few thousand faces tears a part's
+    thin members. Vertices flagged in `locked` never move. Returns the
+    vertices, faces and lock flags of the result."""
+    import heapq
+
+    V = np.array(V, float); F = np.array(F, np.int64)
+    locked = np.zeros(len(V), bool) if locked is None else np.asarray(locked, bool)
+    nf = len(F)
+    alive = np.ones(nf, bool)
+    vf = [set() for _ in range(len(V))]
+    for i, f in enumerate(F):
+        for v in f: vf[v].add(i)
+    n = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    area = np.linalg.norm(n, axis=1); nn = n / np.maximum(area, 1e-30)[:, None]
+    d = -np.einsum("ij,ij->i", nn, V[F[:, 0]])
+    p = np.hstack([nn, d[:, None]])
+    K = np.einsum("i,ij,ik->ijk", area, p, p)
+    Q = np.zeros((len(V), 4, 4))
+    for c in range(3): np.add.at(Q, F[:, c], K)
+    ver = np.zeros(len(V), np.int64)
+    def nbrs(v):
+        s = set()
+        for f in vf[v]: s.update(F[f])
+        s.discard(v); return s
+    def cost(a, b):
+        q = Q[a] + Q[b]; best = None
+        for x in (V[a], V[b], 0.5 * (V[a] + V[b])):
+            h = np.append(x, 1.0); c = h @ q @ h
+            if best is None or c < best[0]: best = (c, x)
+        return best
+    heap = []
+    E = set()
+    for f in F:
+        for k in range(3):
+            a, b = int(f[k]), int(f[(k + 1) % 3]); E.add((min(a, b), max(a, b)))
+    for a, b in E:
+        c, _ = cost(a, b); heap.append((c, a, b, 0, 0))
+    heapq.heapify(heap)
+    live = nf
+    while live > target and heap:
+        c, a, b, va, vb = heapq.heappop(heap)
+        if ver[a] != va or ver[b] != vb or not vf[a] or not vf[b] or locked[a] or locked[b]: continue
+        shared = vf[a] & vf[b]
+        if len(shared) != 2: continue
+        if len(nbrs(a) & nbrs(b)) != 2: continue           # link condition
+        _, x = cost(a, b)
+        ok = True
+        for f in (vf[a] | vf[b]) - shared:
+            tri = F[f].copy(); P = V[tri].copy()
+            P[(tri == a) | (tri == b)] = x
+            m = np.cross(P[1] - P[0], P[2] - P[0]); L = np.linalg.norm(m)
+            o = np.cross(V[tri[1]] - V[tri[0]], V[tri[2]] - V[tri[0]]); Lo = np.linalg.norm(o)
+            if L < 1e-12 or (m @ o) / (L * Lo + 1e-30) < max_turn: ok = False; break
+        if not ok:
+            continue
+        for f in shared:
+            alive[f] = False
+            for v in F[f]: vf[v].discard(f)
+        live -= 2
+        for f in vf[b]:
+            F[f][F[f] == b] = a; vf[a].add(f)
+        vf[b] = set()
+        V[a] = x; Q[a] += Q[b]
+        ver[a] += 1; ver[b] += 1
+        for w in nbrs(a):
+            cc, _ = cost(a, w)
+            i, j = (a, w) if a < w else (w, a)
+            heapq.heappush(heap, (cc, i, j, ver[i], ver[j]))
+    keep = F[alive]
+    used, inv = np.unique(keep, return_inverse=True)
+    return V[used], inv.reshape(-1, 3), locked[used]
+
+
+def _layout(mesh, patches, near=None, facets=DEFAULT_FACES):
+    """`mesh` decimated to `patches` triangles with its topology intact: the
+    fast decimator down to where it still keeps it, the careful one after.
+    `near(P)` flags points close to exact geometry: those vertices stay put
+    (and their faces stay flat facets, as fine as `facets` allows).
+    Returns (mesh, lock flags)."""
+    import trimesh
+
+    start = mesh
+    for n in ((facets,) if near is not None else (8 * patches, 4 * patches)):
+        if n >= len(start.faces):
+            continue
+        try:
+            c = mesh.simplify_quadric_decimation(face_count=int(n))
+        except Exception:  # noqa: BLE001
+            break
+        if not (c.is_watertight and c.is_winding_consistent and c.euler_number == mesh.euler_number):
+            break
+        start = c
+    lock = near(np.asarray(start.vertices)) if near is not None else None
+    if len(start.faces) <= patches:
+        return start, (np.zeros(len(start.vertices), bool) if lock is None else lock)
+    if lock is not None:        # the flat faces stay as they are: `patches` counts the rest
+        patches += int(lock[np.asarray(start.faces)].any(axis=1).sum())
+    V, F, lock = _collapse(start.vertices, start.faces, int(patches), lock)
+    return trimesh.Trimesh(V, F, process=False), lock
+
+
+def _smooth(mesh, patches, near=None, facets=DEFAULT_FACES, samples=SMOOTH_SAMPLES):
+    """A closed trimesh as an OpenCascade solid of smooth B-spline patches.
+
+    The mesh is decimated to `patches` triangles (keeping its holes), which
+    become the patch layout: each coarse edge is a B-spline curve through
+    points pulled onto the full surface, shared by the two patches beside
+    it, and each coarse triangle a B-spline surface (OpenCascade's plate
+    filling) bounded by its three curves and pulled through points of the
+    full surface inside it. Patches meet with matching edges (C0); a coarse
+    triangle is a few millimetres, so the kinks between them are fractions
+    of a degree on a smooth body.
+
+    Where the body runs along exact geometry (`near(P)` true: it hugs a
+    bearing seat, or the envelope trims it), the mesh stays fine and flat
+    facets: a B-spline lying almost on a cylinder defeats OpenCascade's
+    booleans, facets with fuzz do not. Raises if any step fails, so the
+    caller can fall back to facets. Returns (solid, layout, flat faces)."""
+    from OCP.BRepBuilderAPI import (BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace,
+                                    BRepBuilderAPI_MakeSolid, BRepBuilderAPI_MakeVertex,
+                                    BRepBuilderAPI_MakeWire, BRepBuilderAPI_Sewing)
+    from OCP.BRepOffsetAPI import BRepOffsetAPI_MakeFilling
+    from OCP.GeomAbs import GeomAbs_C0, GeomAbs_C2
+    from OCP.GeomAPI import GeomAPI_PointsToBSpline
+    from OCP.OCP.collections import Array1_gp_Pnt
+    from OCP.ShapeFix import ShapeFix_Solid
+    from OCP.TopAbs import TopAbs_SHELL
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    coarse, lock = _layout(mesh, patches, near, facets)
+    if not coarse.is_watertight or not coarse.is_winding_consistent:
+        raise ValueError("the patch layout (decimated mesh) is not closed")
+    n = samples
+    V = np.asarray(coarse.vertices, float).copy()
+    V[~lock] = _closest(mesh, V[~lock])
+    F = np.asarray(coarse.faces)
+    flat = lock[F].any(axis=1)
+    straight = {tuple(sorted((int(f[k]), int(f[(k + 1) % 3])))) for f in F[flat] for k in range(3)}
+    E = np.sort(np.asarray(coarse.edges_unique), axis=1)
+    curved = np.array([tuple(e) not in straight for e in E.tolist()], bool)
+    t = np.linspace(0, 1, n + 1)[1:-1, None, None]
+    Ec = E[curved]
+    mid = _closest(mesh, (V[Ec[:, 0]] * (1 - t) + V[Ec[:, 1]] * t).reshape(-1, 3)).reshape(n - 1, len(Ec), 3)
+    verts = [BRepBuilderAPI_MakeVertex(_pnt(p)).Vertex() for p in V]
+    edges = {}
+    for i, (a, b) in enumerate(Ec):
+        P = np.vstack([V[a], mid[:, i], V[b]])
+        arr = Array1_gp_Pnt(1, len(P))
+        for j, p in enumerate(P):
+            arr.SetValue(j + 1, _pnt(p))
+        crv = GeomAPI_PointsToBSpline(arr, 3, 3, GeomAbs_C2, 1e-3).Curve()
+        edges[(int(a), int(b))] = BRepBuilderAPI_MakeEdge(crv, verts[a], verts[b]).Edge()
+    for a, b in E[~curved]:
+        edges[(int(a), int(b))] = BRepBuilderAPI_MakeEdge(verts[a], verts[b]).Edge()
+    h = max(2, n // 2)
+    bc = np.array([(i, j, h - i - j) for i in range(1, h) for j in range(1, h) if h - i - j > 0], float) / h
+    S = F[~flat]
+    inner = _closest(mesh, np.einsum("kc,fcd->fkd", bc, V[S]).reshape(-1, 3)).reshape(len(S), len(bc), 3)
+    sew = BRepBuilderAPI_Sewing(1e-3)
+    for fi, f in enumerate(S):
+        # degree 3, 10 points per curve, 2 iterations, max degree 4 and 2 segments:
+        # ~40 poles a patch, 0.01-0.04 mm off a smooth body
+        mk = BRepOffsetAPI_MakeFilling(3, 10, 2, False, 1e-5, 1e-4, 0.01, 0.1, 4, 2)
+        for k in range(3):
+            a, b = int(f[k]), int(f[(k + 1) % 3])
+            mk.Add(edges[(min(a, b), max(a, b))], GeomAbs_C0)
+        for p in inner[fi]:
+            mk.Add(_pnt(p))
+        mk.Build()
+        if not mk.IsDone():
+            raise RuntimeError("a smooth patch failed")
+        sew.Add(mk.Shape())
+    for f in F[flat]:
+        w = BRepBuilderAPI_MakeWire()
+        for k in range(3):
+            a, b = int(f[k]), int(f[(k + 1) % 3])
+            w.Add(edges[(min(a, b), max(a, b))])
+        mf = BRepBuilderAPI_MakeFace(w.Wire(), True)
+        if not mf.IsDone():
+            raise RuntimeError("a flat facet failed")
+        sew.Add(mf.Face())
+    sew.Perform()
+    ex = TopExp_Explorer(sew.SewedShape(), TopAbs_SHELL)
+    shells = []
+    while ex.More():
+        shells.append(TopoDS.Shell(ex.Current()))
+        ex.Next()
+    if len(shells) != 1 or sew.NbFreeEdges():
+        raise RuntimeError(f"smooth patches did not close ({len(shells)} shells, {sew.NbFreeEdges()} free edges)")
+    fx = ShapeFix_Solid(BRepBuilderAPI_MakeSolid(shells[0]).Solid())
+    fx.Perform()
+    solid = fx.Solid()
+    if _volume(solid) < 0:
+        solid.Reverse()
+    return solid, coarse, int(flat.sum())
+
+
+def _near_exact(plan, r=NEAR_EXACT, spacing=0.2):
+    """P -> flags of points within about `r` of the plan's exact shapes'
+    surfaces (a k-d tree over points spread on them)."""
+    from scipy.spatial import cKDTree
+
+    from .sharp import Exact, _leaves, exact_manifold, surface_samples
+    from .shapes import trimesh_from_manifold
+
+    pts = []
+    for lf in _leaves(plan):
+        if not isinstance(lf, Exact):
+            continue
+        try:
+            P, _ = surface_samples(lf.shape, spacing)
+        except Exception:  # noqa: BLE001 - a shape surface_samples does not know
+            P = np.zeros((0, 3))
+        if not len(P):
+            m = trimesh_from_manifold(exact_manifold(lf.shape))
+            P = m.sample(max(1000, int(m.area / spacing ** 2)))
+        pts.append(np.asarray(P, float))
+    if not pts:
+        return None
+    tree = cKDTree(np.vstack(pts))
+
+    def near(P):
+        d, _ = tree.query(np.asarray(P, float), distance_upper_bound=r)
+        return np.isfinite(d)
+    return near
+
+
 def _decimate(mesh, faces):
     """`mesh` cut down to about `faces` triangles, still closed. A lattice
     does not decimate (its walls collapse first): past 4x the budget that is
@@ -198,7 +443,7 @@ def _pieces(shape, faces):
     return [_exact(shape, faces)]
 
 
-def _build(plan, budget, faces, notes):
+def _build(plan, budget, faces, notes, patches=0, near=None):
     """(OpenCascade solids, the same thing as a manifold3d Manifold). The
     manifold is the referee: each OpenCascade boolean is tried a few ways
     (fuzz, tools separate or fused) until it is valid and its volume agrees
@@ -212,12 +457,23 @@ def _build(plan, budget, faces, notes):
         return _pieces(plan.shape, faces), exact_manifold(plan.shape)
     if isinstance(plan, Organic):
         m = plan.mesh
+        if patches:
+            share = max(50, int(patches * budget.get(id(plan), faces) / max(faces, 1)))
+            try:
+                solid, coarse, nflat = _smooth(m, share, near, budget.get(id(plan), faces))
+                notes.append({"leaf": ",".join(plan.names) or "organic", "faces": int(len(m.faces)),
+                              "patches": int(len(coarse.faces) - nflat), "flatFacets": nflat,
+                              "deviation": _deviation(m, shape_to_trimesh(solid, deflection=0.005, angle=0.05))})
+                return [solid], manifold_from_trimesh(m)
+            except Exception as e:  # noqa: BLE001 - facets always work
+                notes.append({"leaf": ",".join(plan.names) or "organic",
+                              "warning": f"smooth patches failed ({e}); faceted instead"})
         d = _decimate(m, budget.get(id(plan), faces))
         if len(d.faces) < len(m.faces):
             notes.append({"leaf": ",".join(plan.names) or "organic", "faces": int(len(m.faces)),
                           "stepFaces": int(len(d.faces)), "deviation": _deviation(m, d)})
         return [_faceted(d)], manifold_from_trimesh(d)
-    kids = [_build(k, budget, faces, notes) for k in plan.kids]
+    kids = [_build(k, budget, faces, notes, patches, near) for k in plan.kids]
     kind = {"union": m3d.OpType.Add, "intersect": m3d.OpType.Intersect, "subtract": m3d.OpType.Subtract}[plan.op]
     want = m3d.Manifold.batch_boolean([k[1] for k in kids], kind)
     if plan.op == "union":
@@ -320,14 +576,14 @@ def _faces_report(shape, exact_planes):
     from OCP.BRep import BRep_Tool
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
-    from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane, GeomAbs_Sphere
+    from OCP.GeomAbs import GeomAbs_BSplineSurface, GeomAbs_Cylinder, GeomAbs_Plane, GeomAbs_Sphere
     from OCP.GProp import GProp_GProps
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopoDS import TopoDS
 
     kinds = {}
-    area = {"exact": 0.0, "faceted": 0.0}
+    area = {"exact": 0.0, "faceted": 0.0, "smooth": 0.0}
     ex = TopExp_Explorer(shape, TopAbs_FACE)
     while ex.More():
         f = TopoDS.Face(ex.Current())
@@ -348,14 +604,16 @@ def _faces_report(shape, exact_planes):
             key, exact = "cylinder", True
         elif t == GeomAbs_Sphere:
             key, exact = "sphere", True
+        elif t == GeomAbs_BSplineSurface:
+            key, exact = "bspline", None
         else:
             key, exact = "other", True
         kinds[key] = kinds.get(key, 0) + 1
-        area["exact" if exact else "faceted"] += a
+        area["smooth" if exact is None else "exact" if exact else "faceted"] += a
         ex.Next()
-    total = area["exact"] + area["faceted"] or 1.0
+    total = sum(area.values()) or 1.0
     return {"faces": kinds, "exactArea": round(area["exact"], 1), "facetedArea": round(area["faceted"], 1),
-            "exactAreaFraction": round(area["exact"] / total, 4)}
+            "smoothArea": round(area["smooth"], 1), "exactAreaFraction": round(area["exact"] / total, 4)}
 
 
 def _planes(shape, out):
@@ -378,7 +636,8 @@ def _planes(shape, out):
     return out
 
 
-def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=True):
+def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=True, surface="facets",
+                patches=DEFAULT_PATCHES):
     """Write `part` (a trimesh from a field graph or a study, or a CSG plan)
     to a STEP file at `path`. `faces` is the budget of organic facets; the
     exact shapes cost a handful of faces each. Returns a report: faces by
@@ -390,7 +649,7 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
 
     from OCP.BRepCheck import BRepCheck_Analyzer
     from OCP.Interface import Interface_Static
-    from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
+    from OCP.STEPControl import STEPControl_AsIs, STEPControl_Controller, STEPControl_Writer
 
     from .sharp import Exact, Op, Organic, _leaves
 
@@ -403,7 +662,23 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
         plan = Organic(None, ["mesh"], mesh=part)
     keep = getattr(plan, "keep_with", None)
     budget = _organic_budget(plan, faces)
-    shapes, _ = _build(plan, budget, faces, notes)
+    smooth = patches if surface == "smooth" else 0
+    shapes = None
+    if smooth:
+        from OCP.BRepCheck import BRepCheck_Analyzer as _Check
+
+        try:
+            shapes, want = _build(plan, budget, faces, notes, smooth, _near_exact(plan))
+            got = sum(_volume(x) for x in shapes)
+            if not all(_Check(x).IsValid() for x in shapes) or abs(got - want.volume()) > 2e-3 * abs(want.volume()):
+                raise RuntimeError(f"invalid or {abs(got / want.volume() - 1):.2%} off in volume")
+        except RuntimeError as e:
+            # smooth patches meeting exact faces at a grazing angle can defeat
+            # OpenCascade's booleans; facets with fuzz do not
+            notes[:] = [{"warning": f"smooth surfaces did not survive the booleans ({e}); faceted instead"}]
+            shapes = None
+    if shapes is None:
+        shapes, _ = _build(plan, budget, faces, notes, 0)
     shape = _fuse_all(shapes) if len(shapes) > 1 else shapes[0]
     dropped = 0
     if keep is not None:
@@ -429,8 +704,11 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
         if isinstance(lf, Exact):
             _planes(lf.shape, planes)
     rep = _faces_report(shape, planes)
+    STEPControl_Controller.Init_s()      # registers the write.* parameters before they are set
     Interface_Static.SetCVal_s("write.step.unit", "MM")
     Interface_Static.SetCVal_s("write.step.schema", "AP214IS")
+    # no 2-D curves on faces: readers rebuild them, and they were a quarter of the file
+    Interface_Static.SetIVal_s("write.surfacecurve.mode", 0)
     if name:
         Interface_Static.SetCVal_s("write.step.product.name", str(name))
     w = STEPControl_Writer()
