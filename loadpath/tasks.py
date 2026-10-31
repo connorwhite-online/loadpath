@@ -81,8 +81,16 @@ def check_study(raw, base_dir: str | None = None) -> dict:
         notes.append(f"pitch {d.pitch:.2f} mm is set by minMember {s.min_member:g} mm (two cells per filter "
                      f"radius; finer cells only cost time), so the grid has {d.n_elem} cells, fewer than "
                      f"resolution.maxElements {s.max_elements}")
+    from .study import _available_bytes, _confirm_cells, _run_bytes
+    g = s.goal
+    peak = max(d.n_elem, _confirm_cells(s) if (g.safety_factor or g.max_deflection) else 0)
+    mem = _run_bytes(peak) / 1e9
+    avail = _available_bytes()
+    if avail and mem * 1e9 > 0.8 * avail:
+        warnings.append(f"this run needs about {mem:.1f} GB at its peak and {avail / 1e9:.1f} GB is free: "
+                        "lower resolution.maxElements, or set LOADPATH_CONFIRM_CELLS for the confirm stage")
     return jsonable({
-        "ok": True, "name": s.name, "pitch": d.pitch, "cells": d.n_elem, "dims": list(d.dims),
+        "ok": True, "name": s.name, "pitch": d.pitch, "peakMemoryGB": round(mem, 1), "cells": d.n_elem, "dims": list(d.dims),
         "preservedCells": int(d.preserve.sum()), "filterRadius": filter_radius(d, s.length_scale, s.min_hole),
         "supportNodes": int(d.support_nodes.sum()), "loadNodes": int(d.load_nodes.sum()),
         "regions": [r.id for r in s.preserve] + [r.id for r in s.keep_out],
