@@ -616,20 +616,27 @@ def _mass_load(ld, f, m, region, shape, label, preserve, keep_out):
     except (ValueError, TypeError, KeyError):
         raise ValueError(f"{label}.gravity is the way the mass pulls: '-z', '+y', ... or [x, y, z]") from None
     w = 9.81 * float(mass) * float(dyn) * np.asarray(g, float) / np.linalg.norm(g)
-    f = f + w
-    if ld.get("at") is not None:
-        if ld.get("direction") is not None or ld.get("cone") is not None:
-            raise ValueError(f"{label}: a mass 'at' an offset makes a moment that would have to turn with an "
-                             "unknown direction; give each direction you need as a load case of its own")
-        if shape is None:
-            regs = {r.id: r.shape for r in list(preserve) + list(keep_out)}
-            shape = regs.get(region)
-        if shape is None:
-            raise ValueError(f"{label}: 'at' needs the region's shape to measure the lever from")
-        lo, hi = shape.bounds()
-        lever = _vec(ld["at"], name=f"{label}.at") - 0.5 * (np.asarray(lo) + np.asarray(hi))
-        m = m + np.cross(lever, w)
-    return f, m
+    return f + w, m
+
+
+def _at_moment(ld, f, m, region, shape, label, preserve, keep_out):
+    """A force (or carried mass) applied away from its region ('at'): the
+    moment of the whole force about the region's centre. A belt pulling on
+    a pulley in front of a motor face, a gripper's mass 80 mm out."""
+    from .shapes import _vec
+
+    if ld.get("direction") is not None or ld.get("cone") is not None:
+        raise ValueError(f"{label}: a force 'at' an offset makes a moment that would have to turn with an "
+                         "unknown direction; give each direction you need as a load case of its own (or use an "
+                         "in-plane direction such as \"xz\", which turns the force round 'at')")
+    if shape is None:
+        regs = {r.id: r.shape for r in list(preserve) + list(keep_out)}
+        shape = regs.get(region)
+    if shape is None:
+        raise ValueError(f"{label}: 'at' needs the region's shape to measure the lever from")
+    lo, hi = shape.bounds()
+    lever = _vec(ld["at"], name=f"{label}.at") - 0.5 * (np.asarray(lo) + np.asarray(hi))
+    return m + np.cross(lever, f)
 
 
 _PLANES = {"xy": (0, 1), "xz": (0, 2), "yz": (1, 2)}
@@ -756,6 +763,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
                 raise ValueError(f"{label}: force [fx, fy, fz] (N) and moment [mx, my, mz] (N·mm) must be 3 numbers")
             if ld.get("mass") is not None:
                 f, m = _mass_load(ld, f, m, region, shape, label, preserve, keep_out)
+            if ld.get("at") is not None:
+                m = _at_moment(ld, f, m, region, shape, label, preserve, keep_out)
             if not np.any(f) and not np.any(m):
                 raise ValueError(f"{label} needs a nonzero force (N), moment (N·mm), mass (kg) or pressure (MPa)")
             dist = str(ld.get("distribution", "uniform"))

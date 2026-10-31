@@ -53,8 +53,10 @@ field. `check` reports every problem at once: fix them all, then check again.
    interface that carries it. Let loadpath do that arithmetic:
    `{"region": "wrist", "mass": 0.6, "dynamic": 2, "gravity": "-y", "at": [160, 0, 0]}`
    is the force of 0.6 kg at 2 g along -y plus, because its centre sits at
-   `at` (mm), the moment of that force about the region. Moments written by
-   hand are N·mm (1 N·m = 1000), about the region's centre. A shaft in a
+   `at` (mm), the moment of that force about the region. `at` works on a
+   plain `force` too (a belt pulling on a pulley in front of a motor face);
+   `check` → `resolvedLoads` shows the force and moment each case comes to.
+   Moments written by hand are N·mm (1 N·m = 1000), about the region's centre. A shaft in a
    bore: add `"distribution": "bearing"` so a radial force presses on the
    half of the bore it pushes, as a real shaft does. Add a sideways or torsional case if the part
    can see one; a design optimized for one direction is weak in the others.

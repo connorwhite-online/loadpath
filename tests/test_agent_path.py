@@ -52,6 +52,15 @@ def test_mass_load_is_weight_and_lever():
     assert not r["ok"] and "turn with an" in r["error"], r
 
 
+def test_force_at_an_offset_and_resolved_loads():
+    s = copy.deepcopy(LINK)
+    s["loadCases"][0]["loads"] = [{"region": "b", "force": [0, -10, 0], "at": [100, 0, 12]}]
+    r = check_study(s)
+    assert r["ok"], r
+    ld = r["resolvedLoads"][0]["loads"][0]
+    assert np.allclose(ld["force"], [0, -10, 0]) and np.allclose(ld["moment"], [120, 0, 0]), ld
+
+
 def test_check_flags_keepout_eating_a_preserve_but_not_a_bore():
     assert not [w for w in check_study(LINK)["warnings"] if "removes" in w]   # bores through their bosses
     s = copy.deepcopy(LINK)

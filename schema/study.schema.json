@@ -1661,7 +1661,7 @@
           },
           "minItems": 3,
           "maxItems": 3,
-          "description": "mm: where the mass's centre sits (default: on the region). Its offset from the region's centre makes the moment."
+          "description": "mm: where the force acts or the mass's centre sits (default: on the region): a pulley in front of a motor face, a tool's centre of mass. Its offset from the region's centre adds the moment; `check` echoes the resulting force and moment per case."
         },
         "dynamic": {
           "type": "number",

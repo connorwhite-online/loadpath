@@ -103,6 +103,13 @@ def check_study(raw, base_dir: str | None = None) -> dict:
         "supportNodes": int(d.support_nodes.sum()), "loadNodes": int(d.load_nodes.sum()),
         "regions": [r.id for r in s.preserve] + [r.id for r in s.keep_out],
         "loadCases": [c.name for c in s.load_cases], "material": s.material.name,
+        # what each case resolves to (mass, 'at', fasteners and in-plane
+        # directions expanded): to check before a half-hour run
+        "resolvedLoads": [{"case": c.name, "loads": [
+            {"region": ld.region, "force": np.round(ld.force, 3).tolist(),
+             **({"moment": np.round(ld.moment, 1).tolist()} if np.any(ld.moment) else {}),
+             **({"direction": ld.direction} if ld.direction else {})}
+            for ld in c.loads if not ld.pressure]} for c in s.load_cases],
         "minMember": s.min_member, "warnings": warnings, **({"notes": notes} if notes else {}),
     })
 
