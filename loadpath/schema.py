@@ -378,7 +378,17 @@ _THERMAL = {
                       "cycles": {**_POS, "description": "cycles over the part's life, for fatigue (e.g. 3e4: "
                                                         "ten a day for ten years)"},
                       "steps": {"type": "integer", "minimum": 8,
-                                "description": "time steps per period (default 48)"}},
+                                "description": "time steps per period (default 48)"},
+                      "fatigueWeight": {"type": "number", "minimum": 0,
+                                        "description": "How much the optimizer also designs against the "
+                                                       "hot-to-cold swing (thermal-cycling fatigue): a p-norm of "
+                                                       "the swing's stress over strength retention, weighted "
+                                                       "against the hot moment's objective at the start. 0 "
+                                                       "(default): hot moment only. Experimental: on the motor "
+                                                       "mount 0.3 lifted the verified fatigue SF 2.48 -> 2.94 "
+                                                       "at 12k cells but lowered it 2.83 -> 2.25 at 45k, so "
+                                                       "verify the result. Adding material does not help "
+                                                       "thermal cycling (stiffer parts hold more expansion)."}},
                   "required": ["period", "on"], "additionalProperties": False},
     },
     "additionalProperties": False,

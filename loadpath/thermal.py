@@ -728,6 +728,10 @@ class Cycle:
     on: float
     cycles: float | None = None
     steps: int = 48
+    # weight of the hot-to-cold swing in the optimizer's objective, relative
+    # to the hot moment's at the start (StudyHeat.sensitivities); 0: design
+    # for the hot moment alone
+    fatigue_weight: float = 0.0
 
 
 @dataclass
@@ -1335,7 +1339,15 @@ class StudyHeat:
         self.cold = None
         self.cycle_result = None
         self.r = None
+        self.r_cold = None
+        # cells left out of the swing's stress p-norm: those by supports and
+        # loads, whose stress verification leaves out of the peak too (a
+        # bolted face restraining expansion is a singular corner)
+        self.near = None
         self._calls = 0
+        # weight of the thermal-cycling swing in the optimizer's objective
+        # (relative to the hot objective at the first iteration)
+        self.swing_weight = float(th.cycle.fatigue_weight) if th.cycle is not None else 0.0
 
     @property
     def expands(self):
@@ -1363,7 +1375,10 @@ class StudyHeat:
                                   self.cycle, density=rho)
                 self.cycle_result, self.cold = res, res.cold
                 big = np.abs(theta) > 1e-9 * max(np.abs(theta).max(), 1e-300)
-                self.r = np.where(big, np.clip((res.hot - self.bc.ambient) / np.where(big, theta, 1.0), 0, 1), 1.0)
+                den = np.where(big, theta, 1.0)
+                self.r = np.where(big, np.clip((res.hot - self.bc.ambient) / den, 0, 1), 1.0)
+                self.r_cold = np.where(big, np.clip((res.cold - self.bc.ambient) / den, 0, 1), 1.0)
+            self.theta_s = theta
             theta = self.r * theta
         return self.use(theta + self.bc.ambient)
 
@@ -1499,19 +1514,104 @@ class StudyHeat:
             j += weights[ci] * jc
         sw = float(np.sum(weights[:len(layout)]))
         dx = -dE * g * m_e + grav
-        dte = -estiff * dg * m_e
+        # temperature derivatives per cell, split by path: through the
+        # retention g (the hot moment's temperature) and through the
+        # expansion strain (whose nodal temperature may be another field)
+        dte_g = -estiff * dg * m_e
+        dte_e = np.zeros(mesh.n_elem)
+        r_e = self.r
         if self.expands:
             dx += self.E0 * dp * g * eps * q_e + sw * dp * g * self_e
-            dte += (self.E0 * pth * (dg * eps + g * self.alpha) * q_e
-                    + sw * self.E0 ** 2 * pth * cm * (dg * eps * eps + 2 * g * eps * self.alpha))
-        # through temperature: a node holds 1/8 of each of its cells' T
-        if np.any(dte) and not self.bc.fixed.all():
-            r = np.bincount(mesh.enode.ravel(), weights=np.repeat(dte / 8.0, 8), minlength=mesh.n_nodes)
-            if self.r is not None:
-                r = r * self.r          # a duty cycle's hot moment is r * the steady rise
-            self.th.lam = self.th.adjoint(r, self.th.lam)
+            dte_g += self.E0 * pth * dg * eps * q_e + sw * self.E0 ** 2 * pth * cm * dg * eps * eps
+            dte_e += self.E0 * pth * g * self.alpha * q_e + sw * self.E0 ** 2 * pth * cm * 2 * g * eps * self.alpha
+        if self.swing_weight > 0 and self.expands and self.r is not None:
+            # Thermal cycling: the swing from the cold moment to the hot one
+            # as an expansion problem of its own, eps_s = alpha (T_hot -
+            # T_cold) at the hot moduli with no mechanical load, measured by
+            # a p-norm of its von Mises stress over strength retention (what
+            # the fatigue check reads, durability.py). Twice its strain energy
+            # was tried first and made parts worse: the energy of a thermal
+            # load falls as material near the heat goes, which concentrates
+            # the stress fatigue cares about (motor mount, 12k cells: fatigue
+            # SF 2.48 -> 1.29 at weight 0.1). Weighted so that at the first
+            # iteration it is swing_weight times the hot objective.
+            j_s, dx_s, dte_gs, dte_s = self._swing_pnorm(fe, xe, state, pth, dp, estiff, dE, g, dg)
+            if "swing_scale" not in state:
+                state["swing_scale"] = self.swing_weight * abs(j) / max(abs(j_s), 1e-300)
+            k_s = state["swing_scale"]
+            state["swing"] = j_s
+            j += k_s * j_s
+            dx += k_s * dx_s
+            dte_g += k_s * dte_gs
+            dte_s = k_s * dte_s
+        else:
+            dte_s = None
+        # through temperature: a node holds 1/8 of each of its cells' T, and
+        # a duty cycle's hot moment is r * the steady rise (its cold one
+        # r_cold * it)
+        if (np.any(dte_g) or np.any(dte_e) or (dte_s is not None and np.any(dte_s))) and not self.bc.fixed.all():
+            def nodes(v):
+                return np.bincount(mesh.enode.ravel(), weights=np.repeat(v / 8.0, 8), minlength=mesh.n_nodes)
+            rhs_t = nodes(dte_g + dte_e)
+            if r_e is not None:
+                rhs_t = rhs_t * r_e
+            if dte_s is not None:
+                rhs_t = rhs_t + nodes(dte_s) * (self.r - self.r_cold)
+            self.th.lam = self.th.adjoint(rhs_t, self.th.lam)
             dx = dx + self.th.gradient(xe, self.th.lam)
         return j, case_j, dx, dirs
+
+    SWING_P = 8.0       # p of the swing's stress p-norm
+    SWING_Q = 0.5       # grey cells' stress relaxation, x^q (Bruggi's qp)
+
+    def _swing_pnorm(self, fe, xe, state, pth, dp, estiff, dE, g, dg):
+        """(P, dP/dx, dP/dT through g per cell, dP/deps_s-weighted per cell for
+        the swing's nodal temperature) of the p-norm of the thermal swing's
+        cell-centre von Mises stress over retention,
+        s_e = x^q C0 (B u_e - E0 eps_e m), K u = f_s (fe's units), with its
+        adjoint K mu = dP/du."""
+        from .directions import _VM
+        from .fem import elastic_c, hex8_b_center
+
+        mesh = self.mesh
+        p, q = self.SWING_P, self.SWING_Q
+        eps = self.alpha * ((self.r - self.r_cold) * self.theta_s)[mesh.enode].mean(axis=1)
+        w = pth * g * eps * self.E0
+        f = np.bincount(mesh.edof.ravel(), weights=(w[:, None] * self.vth[None, :]).ravel(), minlength=mesh.n_dof)
+        f[self.fixed] = 0.0
+        u = fe.resolve([f], state.get("u_swing"))[0]
+        state["u_swing"] = [u]
+        c0 = elastic_c(1.0, self.nu)
+        b = hex8_b_center() / mesh.pitch
+        m = np.array([1.0, 1, 1, 0, 0, 0])
+        eta = np.maximum(xe, 1e-9) ** q
+        sig = u[mesh.edof] @ (c0 @ b).T - (self.E0 * eps)[:, None] * (c0 @ m)[None, :]
+        s = eta[:, None] * sig
+        if self.near is not None:
+            s = s * (~self.near)[:, None]
+        vs = s @ _VM
+        vm = np.sqrt(np.maximum(np.einsum("ij,ij->i", s, vs), 1e-300))
+        big = vm.max()
+        r = vm / big                                   # scaled against overflow
+        sp = float(np.sum(r ** p))
+        P = big * sp ** (1.0 / p)
+        dpv = sp ** (1.0 / p - 1.0) * r ** (p - 1.0)    # dP/dvm_e
+        ds = (dpv / vm)[:, None] * vs                  # dP/ds_e
+        dsig = eta[:, None] * ds                       # dP/dsig_e
+        gu = np.bincount(mesh.edof.ravel(), weights=(dsig @ (c0 @ b)).ravel(), minlength=mesh.n_dof)
+        gu[self.fixed] = 0.0
+        mu = fe.resolve([gu], state.get("mu_swing"))[0]
+        state["mu_swing"] = [mu]
+        mk = 0.25 * (fe.strain_energy(mu + u) - fe.strain_energy(mu - u))     # mu_e^T K0 u_e
+        mv = mu[mesh.edof] @ self.vth                                          # mu_e . vth
+        # P(x, u(x)): explicit + mu^T (df/dx - dK/dx u)
+        dx = q * np.maximum(xe, 1e-9) ** (q - 1) * np.einsum("ij,ij->i", ds, sig) \
+            + self.E0 * dp * g * eps * mv - dE * g * mk
+        # through the swing strain: explicit, and mu . df/deps
+        de = -self.E0 * (dsig @ (c0 @ m)) + self.E0 * pth * g * mv
+        # through the hot moment's retention: K and f_s both carry g
+        dgv = dg * (self.E0 * pth * eps * mv - estiff * mk)
+        return P, dx, dgv, de * self.alpha
 
 
 def _card(get, material, what):
@@ -1522,6 +1622,12 @@ def _card(get, material, what):
                          "thermal block (conductivity, expansion) or set soften false") from None
 
 
-def study_heat(study, mesh: HexMesh, nu, fixed, modulus: float | None = None):
-    """StudyHeat for a study with a thermal block, else None."""
-    return StudyHeat(study, mesh, nu, fixed, modulus) if getattr(study, "thermal", None) is not None else None
+def study_heat(study, mesh: HexMesh, nu, fixed, modulus: float | None = None, near=None):
+    """StudyHeat for a study with a thermal block, else None. `near`: cells
+    by supports and loads, left out of the swing's stress (StudyHeat.near)."""
+    if getattr(study, "thermal", None) is None:
+        return None
+    heat = StudyHeat(study, mesh, nu, fixed, modulus)
+    if near is not None:
+        heat.near = np.asarray(near, bool)
+    return heat
