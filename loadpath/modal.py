@@ -138,13 +138,17 @@ def transmissibility(f_forcing, f_natural, eta: float):
     return np.sqrt((1 + eta ** 2) / ((1 - r2) ** 2 + eta ** 2))
 
 
-def base_transmissibility(res: ModalResult, dofs, axis: int, freqs, eta: float, fixed=None) -> np.ndarray:
+def base_transmissibility(res: ModalResult, dofs, axis: int, freqs, eta: float, fixed=None,
+                          stiffness_scale=None) -> np.ndarray:
     """|absolute motion / base motion| at the given dofs (averaged, as complex
     numbers) for a base shaken along `axis` (0, 1, 2) at each frequency, by
     modal superposition with structural damping eta. The base is the
     clamped dofs; `fixed` (bool per dof) leaves their mass out of the
     participation factors. Truncated to the computed modes, so it holds up
-    to well below the highest of them."""
+    to well below the highest of them. stiffness_scale (one per frequency)
+    multiplies every mode's stiffness at that frequency: a viscoelastic
+    mount that stiffens with frequency (viscoelastic.dynamic_factor over its
+    value where the modes were computed)."""
     m = res.mass_vector.copy()
     if fixed is not None:
         m[np.asarray(fixed, bool)] = 0.0
@@ -154,8 +158,11 @@ def base_transmissibility(res: ModalResult, dofs, axis: int, freqs, eta: float, 
     phi = res.modes[np.asarray(dofs, np.int64)].mean(axis=0)      # (k,)
     wr2 = (2 * np.pi * res.frequencies) ** 2
     w2 = (2 * np.pi * np.asarray(freqs, float))[:, None] ** 2
+    if stiffness_scale is not None:
+        wr2 = wr2[None, :] * np.asarray(stiffness_scale, float)[:, None]
     drive = 1.0 if np.all(np.asarray(dofs) % 3 == axis) else 0.0
-    rel = (phi * gam)[None, :] * w2 / (wr2[None, :] - w2 + 1j * eta * wr2[None, :])
+    wr2 = np.broadcast_to(wr2, (w2.shape[0], len(gam)))
+    rel = (phi * gam)[None, :] * w2 / (wr2 - w2 + 1j * eta * wr2)
     return np.abs(drive + rel.sum(axis=1))
 
 

@@ -49,7 +49,7 @@ import numpy as np
 
 from .materials import Material, material_from_spec
 
-__all__ = ["Coupon", "coupon_kit", "crush_coupons", "write_kit", "fit", "fit_crush", "measurement_template",
+__all__ = ["Coupon", "coupon_kit", "crush_coupons", "creep_coupons", "fit_creep", "write_kit", "fit", "fit_crush", "measurement_template",
            "part_prediction", "rigid_motion", "CALIBRATION_DIR", "load_card", "list_cards", "crush_factor"]
 
 G = 9.81                                  # N per kg
@@ -70,6 +70,9 @@ _LOADS_KG = (0.2, 0.5, 1.0)
 # process minimum
 _CRUSH = {"densities": (0.2, 0.3), "plan": 2, "tall": 2, "plate": 2.0, "kind": "gyroid", "lever": 15.0}
 _CRUSH_ELASTIC = {"densities": (0.25, 0.4), "plan": 2, "tall": 2, "plate": 1.5, "kind": "gyroid", "lever": 1.0}
+# elastomer creep block: the low-density crush block, 3 cells tall, held at
+# half its buckling load for a week (viscoelastic.py's creep law)
+_CREEP = {"rho": 0.25, "tall": 3, "loadShare": 0.5, "readMinutes": (1, 10, 60, 600, 1440, 4320, 10080)}
 
 
 @dataclass
@@ -331,6 +334,7 @@ def coupon_kit(material="petg", process="fdm", loads_kg=_LOADS_KG, interlayer=No
         | {"solidVolume": _lattice_solid_volume(lc), "coreVolume": lc["core"] * lc["width"] * lc["height"]}))
     if crush:
         kit.extend(crush_coupons(material, process))
+        kit.extend(creep_coupons(material, process))
     return kit
 
 
@@ -406,6 +410,81 @@ def crush_coupons(material="pa12", process="sls") -> list:
             geometry={"rho": rho, "cell": c["cell"], "side": c["side"], "core": c["core"], "plate": c["plate"],
                       "kind": c["kind"], "lever": lever}))
     return out
+
+
+def creep_coupons(material="tpu", process="fdm") -> list:
+    """For materials viscoelastic.py models (TPU): one gyroid block held at
+    half its buckling load for a week, its height read with calipers at
+    growing intervals. The log-time slope of the deflection is the creep
+    rate m that sets an isolator's long-term sag and its stiffening under
+    vibration and impact. Empty for other materials."""
+    from .impact import crush_law, plateau_stress
+    from .lattice import sheet_modulus
+    from .viscoelastic import creep_factor, creep_params
+
+    mat = material_from_spec(material)
+    if creep_params(mat) is None:
+        return []
+    c = dict(_crush_spec(mat, process))
+    k = _CREEP
+    c["tall"] = k["tall"]
+    c["core"] = k["tall"] * c["cell"]
+    rho = k["rho"]
+    law, ref = crush_law(c["kind"], mat, calibrated=False)
+    area = c["side"] ** 2
+    f = k["loadShare"] * float(plateau_stress(law, rho, ref)) * area
+    strain = f / area / (float(mat.E) * float(sheet_modulus(c["kind"], rho)))
+    pred = {f"{m} min": round(float(c["core"] * strain * creep_factor(mat, 60.0 * m)), 3) for m in k["readMinutes"]}
+    m = _crush_mesh(c, rho)
+    test = (f"Creep under a dead weight. Measure the coupon's height with calipers first (unloaded). Then stand "
+            f"it on a table, lay a small flat board on it and load it to {f / G:.2f} kg in all, board "
+            "included (water bottles weighed on a kitchen scale), gently, in one go; start a timer. Read the "
+            "height at the corners of the board (average two opposite corners) at about "
+            + ", ".join(f"{x} min" for x in k["readMinutes"][:4]) + ", 1 day, 3 days and a week. Keep it "
+            "somewhere the temperature stays steady (TPU creeps faster when warm) and note the room "
+            "temperature. Write each reading as [minutes since loading, height mm].")
+    return [Coupon(
+        f"K-{round(rho * 100):d}", f"{c['kind']} creep block, relative density {rho:.2f}", m, test=test,
+        measure={"massG": None, "heightUnloaded": None, "loadKg": round(f / G, 2), "temperatureC": None,
+                 "points": [[None, None]]},
+        predicted={"massG": round(float(m.volume) * mat.density / 1000, 2), "loadKg": round(f / G, 2),
+                   "deflectionMm": pred, "creepRate": creep_params(mat)[0]},
+        geometry={"rho": rho, "cell": c["cell"], "side": c["side"], "core": c["core"], "plate": c["plate"],
+                  "kind": c["kind"]})]
+
+
+def fit_creep(coupons: dict, mat, process: str = "fdm") -> dict | None:
+    """The creep block from a filled-in K-* coupon: deflection against the
+    log of time is a straight line d = a + b ln t (viscoelastic.py's law),
+    so m = b / (a + b ln t_ref): the creep rate per e-fold of time relative
+    to the deflection at the card's time scale. Also the modulus the
+    coupon shows at t_ref, over the card's."""
+    from .lattice import sheet_modulus
+    from .viscoelastic import creep_params
+
+    p = creep_params(mat)
+    t_ref = p[1] if p else 10.0
+    for cid, e in sorted(coupons.items()):
+        if not cid.startswith("K-") or not e.get("heightUnloaded"):
+            continue
+        pts = [(float(t), float(h)) for t, h in (e.get("points") or []) if t is not None and h is not None]
+        if len(pts) < 3:
+            continue
+        t = np.array([x for x, _ in pts]) * 60.0
+        d = float(e["heightUnloaded"]) - np.array([h for _, h in pts])
+        b, a = np.polyfit(np.log(t), d, 1)
+        d_ref = a + b * np.log(t_ref)
+        out = {"m": round(float(b / d_ref), 4), "tRef": t_ref,
+               "coupon": {"id": cid, "points": len(pts), "deflectionAtTRef": round(float(d_ref), 3),
+                          "temperatureC": e.get("temperatureC")}}
+        geo = _crush_spec(mat, process)
+        if e.get("loadKg") and d_ref > 0:
+            core = _CREEP["tall"] * geo["cell"]
+            e_meas = float(e["loadKg"]) * G / geo["side"] ** 2 / (d_ref / core)
+            out["coupon"]["modulusFactor"] = round(e_meas / (float(mat.E) * float(sheet_modulus(geo["kind"],
+                                                                                        _CREEP["rho"]))), 3)
+        return out
+    return None
 
 
 def _lattice_solid_volume(c=_LAT):
@@ -674,6 +753,9 @@ def fit(measurements: dict, predictions: dict | None = None, name: str | None = 
     else:
         kept.append(f"stiffnessAcrossLayers (no F-Z points; default {_LAYER_STIFFNESS.get(proc, (1.0,))[0]})")
     crush = fit_crush(co, mat, base, proc)
+    creep = fit_creep(co, base, proc)
+    if creep is None and any(k.startswith("K-") for k in co):
+        kept.append("creep rate (no K- readings)")
     if crush is None and any(k.startswith("X-") for k in co):
         kept.append("crush plateau (no X- crush points)")
     sf = [p["stiffnessFactor"] for p in parts.values() if "stiffnessFactor" in p]
@@ -687,6 +769,7 @@ def fit(measurements: dict, predictions: dict | None = None, name: str | None = 
                    "density": round(mat.density / base.density, 3)},
         "lattice": lat,
         "crush": crush,
+        "creep": creep,
         "parts": parts,
         # a part's measured stiffness over verify's, both at the calibrated
         # modulus: what the voxel model, bonded joints and slicer fill miss

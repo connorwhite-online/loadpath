@@ -827,7 +827,9 @@ FIELD_SCHEMA = {
             "rhoMax": {**_POS, "description": "highest relative density for grading (default 0.5)"},
             "cell": {**_POS, "description": "mm lattice cell: with minWall, raises rhoMin to the thinnest "
                                             "printable wall"},
-            "minWall": {**_POS, "description": "mm thinnest printable sheet (default 0.8)"}},
+            "minWall": {**_POS, "description": "mm thinnest printable sheet (default 0.8)"},
+            "rate": {"type": "boolean", "description": "elastomers (TPU): stiffen the crush law for the "
+                                                       "impact's crush time (viscoelastic.py; default true)"}},
                    "required": ["envelope"], "additionalProperties": False,
                    "description": "Crush and impact of a lattice core (impact.py): force-crush curve, where a "
                                   "mass at a speed stops, peak force and g, and with grade a density table that "

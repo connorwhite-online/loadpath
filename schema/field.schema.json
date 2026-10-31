@@ -418,6 +418,10 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "mm thinnest printable sheet (default 0.8)"
+        },
+        "rate": {
+          "type": "boolean",
+          "description": "elastomers (TPU): stiffen the crush law for the impact's crush time (viscoelastic.py; default true)"
         }
       },
       "required": [

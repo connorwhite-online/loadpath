@@ -26,6 +26,7 @@ python -m loadpath calibrate kit --material petg --out calibration/
 | T-Z | standing, two copies | the same | strength across layers (`interlayer`) |
 | L-GY | flat | cantilever with a gyroid core | how a printed lattice compares with `lattice.SHEETS` |
 | X-.. (with `--crush`) | either | crush under growing weight | the lattice crush plateau for impact.py (see below) |
+| K-25 (with `--crush`, TPU only) | upright | a dead weight for a week, read the height | TPU creep rate for viscoelastic.py (see below) |
 
 Every coupon's mass gives the as-printed density. The STLs sit on the bed in
 their print orientation and fit a 180 mm bed. Print them at 100% infill with
@@ -130,6 +131,36 @@ card:
 Save the card (`--save`) and use its name as a field graph's `material`.
 The `impact` block then scales its plateau by `factor`, so a bumper graded
 from that card is sized for your printer.
+
+### TPU creep block (K-25)
+
+TPU feet and pads are viscoelastic: they sag further over months under a
+steady load, and are stiffer than the card's E in a vibration or a knock.
+`viscoelastic.py` models both with one number, the creep rate m (deflection
+grows by m per e-fold of time: 1 + m ln(t / 10 s)). The default, 0.045,
+comes from a published 100-minute creep test on printed TPU; your
+filament, print settings and room may differ by a factor of two.
+
+K-25 is the low-density TPU crush block made 3 cells tall. The test needs
+calipers, a kitchen scale and a week:
+
+1. Measure the coupon's height unloaded (`heightUnloaded`).
+2. Stand it on a table, lay a small flat board on it, and load it to the
+   `loadKg` in `predictions.json` in all (about 1.5 kg, half the load that
+   buckles it), board included. Do it gently and in one go, and start a
+   timer.
+3. Read the height at two opposite corners of the board and average them,
+   at roughly 1, 10 and 60 minutes, 10 hours, 1 day, 3 days and a week.
+   Write each as `[minutes since loading, height mm]`. The predicted sag is
+   about 0.55 mm at 1 minute growing to 0.75 mm at a week, so read to
+   0.01 mm if your calipers can.
+4. Keep it out of the sun and away from heaters, and note `temperatureC`.
+   TPU creeps much faster when warm.
+
+`calibrate fit` adds a `creep` block to the card: `m`, the deflection the
+line gives at 10 s and the block's modulus at 10 s over the card's
+(`modulusFactor`). With the card saved, isolator tuning, creep sag and the
+impact-rate stiffening of the `impact` block all use your measured rate.
 
 ## Part tests: the GRIP wrist yoke
 

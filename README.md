@@ -156,11 +156,13 @@ graded gyroid (4.85 g) peaks at 5.4 kN. Grading per cell in 3D (4.39 g) brings
 that to 5.2 kN. A uniform core of the same mass peaks at 6.7 kN. Solid TO of the
 same envelope (8.25 g) holds only 0.8 J within the limit
 (`python examples/impact/end_stop.py`). TPU uses an elastic buckling law for
-small knocks: a forearm pad takes 0.75 J at 112 N against a 140 N limit
+small knocks: a forearm pad takes 0.75 J at 114 N against a 140 N limit, impact-rate stiffening included
 (`examples/impact/knock_pad.py`). Graded TPU lattice feet tune a vibration isolator
-under an off-centre robot: same 35 Hz bounce as four identical feet, but the payload
-sits level, a vertical shake no longer rocks it (0.004x vs 0.44x sideways), and it
-takes 17% more shock before a foot buckles (`examples/isolator/mount.py`).
+under an off-centre robot. They are tuned at TPU's dynamic stiffness, which is
+1.5x its static stiffness at 35 Hz and modelled with creep from sourced data
+(`viscoelastic.py`). The payload sits level and stays level as the feet creep
+over 10 years, a vertical shake no longer rocks it, and it takes 23% more shock
+before a foot buckles (`examples/isolator/mount.py`).
 
 ![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
 
