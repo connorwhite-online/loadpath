@@ -36,6 +36,7 @@ __all__ = ["surfaces", "label", "coarsen", "smooth_brep"]
 TOL = 0.005          # mm: a vertex this close to an exact surface lies on it
 PATCHES = 1500       # organic B-spline patches
 DEBUG = False
+RAY_MAX = 3.0        # mm: farthest a patch point is pulled along its normal onto the surface
 CREASE = 40.0        # degrees: organic faces meeting sharper than this are separate smooth regions
 DEBUG_AT = None
 SEW = 0.01           # mm: sewing tolerance (exact faces' seams sit within TOL of the patches')
@@ -450,13 +451,33 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
     N = int(order) + 1                              # points per patch side
     org_mesh = trimesh.Trimesh(V, np.asarray(mesh.faces)[fl >= O], process=False)
 
+    from trimesh.ray.ray_triangle import RayMeshIntersector
+
+    rays = RayMeshIntersector(org_mesh)
+
     def pull(P, nrm):
-        """Points onto the organic surface, where its normal there agrees."""
+        """Points onto the organic surface along the patch normal (the nearer
+        hit either way, where the surface faces the same way); else the
+        closest point, where its normal agrees; else left where they are."""
         if not len(P):
             return P
-        cp, _, tri = trimesh.proximity.closest_point(org_mesh, P)
-        ok = np.einsum("ij,ij->i", org_mesh.face_normals[tri], nrm) > 0.3
-        return np.where(ok[:, None], cp, P)
+        best = np.full(len(P), np.inf)
+        out = P.copy()
+        for sgn in (1.0, -1.0):
+            loc, ri, ti = rays.intersects_location(P, sgn * nrm, multiple_hits=False)
+            if not len(ri):
+                continue
+            d = np.linalg.norm(loc - P[ri], axis=1)
+            ok = (np.einsum("ij,ij->i", org_mesh.face_normals[ti], nrm[ri]) > 0.3) & (d < RAY_MAX) & (d < best[ri])
+            out[ri[ok]] = loc[ok]
+            best[ri[ok]] = d[ok]
+        miss = ~np.isfinite(best)
+        if miss.any():
+            cp, _, tri = trimesh.proximity.closest_point(org_mesh, P[miss])
+            ok = np.einsum("ij,ij->i", org_mesh.face_normals[tri], nrm[miss]) > 0.3
+            idx = np.flatnonzero(miss)
+            out[idx[ok]] = cp[ok]
+        return out
 
     # every coarse edge: a polyline over the surface, and its midpoint by length
     poly, split = {}, {}
