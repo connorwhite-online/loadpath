@@ -374,8 +374,9 @@ class TorchMG:
         rf = torch.zeros((3,) + tuple(2 * n - 1 for n in cs[1:]), dtype=r.dtype, device=self.dev)
         sx, sy, sz = lv.node_shape[1:]
         rf[:, :sx, :sy, :sz] = r * lv.mask
-        xc = self._vcycle(i + 1, _restrict(rf))
-        x += _prolong(xc)[:, :sx, :sy, :sz] * lv.mask
+        cm = self.levels[i + 1].mask
+        xc = self._vcycle(i + 1, _restrict(rf) * cm)
+        x += _prolong(xc * cm)[:, :sx, :sy, :sz] * lv.mask
         return self._smooth(lv, b, x)
 
     def _warm(self, A, b, x, norm, dot):
