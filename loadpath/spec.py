@@ -588,6 +588,39 @@ def _extrusion_axis(v):
     return "xyz".index(a)
 
 
+def _mass_load(ld, f, m, region, shape, label, preserve, keep_out):
+    """A carried mass as the force and moment it puts on its region: weight
+    x dynamic factor along gravity, and the moment of that force about the
+    region's centre when the mass sits elsewhere ('at')."""
+    from .am import build_vector
+    from .shapes import _vec
+
+    mass, dyn = ld["mass"], ld.get("dynamic", 1.0)
+    if not isinstance(mass, (int, float)) or mass <= 0:
+        raise ValueError(f"{label}.mass is the carried mass in kg (> 0)")
+    if not isinstance(dyn, (int, float)) or dyn < 1:
+        raise ValueError(f"{label}.dynamic multiplies the weight: 1 static, 2 a moving joint, 3 a crash")
+    try:
+        g = build_vector(parse_build_direction(ld.get("gravity", "-z")))
+    except (ValueError, TypeError, KeyError):
+        raise ValueError(f"{label}.gravity is the way the mass pulls: '-z', '+y', ... or [x, y, z]") from None
+    w = 9.81 * float(mass) * float(dyn) * np.asarray(g, float) / np.linalg.norm(g)
+    f = f + w
+    if ld.get("at") is not None:
+        if ld.get("direction") is not None or ld.get("cone") is not None:
+            raise ValueError(f"{label}: a mass 'at' an offset makes a moment that would have to turn with an "
+                             "unknown direction; give each direction you need as a load case of its own")
+        if shape is None:
+            regs = {r.id: r.shape for r in list(preserve) + list(keep_out)}
+            shape = regs.get(region)
+        if shape is None:
+            raise ValueError(f"{label}: 'at' needs the region's shape to measure the lever from")
+        lo, hi = shape.bounds()
+        lever = _vec(ld["at"], name=f"{label}.at") - 0.5 * (np.asarray(lo) + np.asarray(hi))
+        m = m + np.cross(lever, w)
+    return f, m
+
+
 def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     """Validate and parse a study. Every error names the field to fix."""
     if not isinstance(d, dict):
@@ -651,8 +684,10 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             m = np.asarray(ld.get("moment", ld.get("torque", [0, 0, 0])), float).reshape(-1)
             if f.shape != (3,) or m.shape != (3,) or not np.all(np.isfinite(f)) or not np.all(np.isfinite(m)):
                 raise ValueError(f"{label}: force [fx, fy, fz] (N) and moment [mx, my, mz] (N·mm) must be 3 numbers")
+            if ld.get("mass") is not None:
+                f, m = _mass_load(ld, f, m, region, shape, label, preserve, keep_out)
             if not np.any(f) and not np.any(m):
-                raise ValueError(f"{label} needs a nonzero force (N), moment (N·mm) or pressure (MPa)")
+                raise ValueError(f"{label} needs a nonzero force (N), moment (N·mm), mass (kg) or pressure (MPa)")
             dist = str(ld.get("distribution", "uniform"))
             if dist not in ("uniform", "bearing"):
                 raise ValueError(f"{label}.distribution must be 'uniform' or 'bearing'")

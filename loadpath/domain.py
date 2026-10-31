@@ -209,6 +209,10 @@ def _wetted(study: Study, mesh: HexMesh) -> dict:
 _IMBALANCE_MAX = 0.02
 
 
+class _HeldPreload(ValueError):
+    """The fasteners' preload case lands only on supported nodes."""
+
+
 def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor: float = 0.0) -> BoundaryConditions:
     """Supports, pins and loads on a mesh's nodes. Shared by the optimizer
     and the verification, so both analyze exactly the same problem."""
@@ -323,6 +327,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             f += fp
         else:
             imbalance.append(0.0)
+        applied = bool(np.any(f))
         f[fixed] = 0.0
         if spread is not None:
             from .directions import Spread
@@ -333,8 +338,16 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             f = spread.load(spread.nominal)
         spreads.append(spread)
         if check_loads and not np.any(f) and study.gravity is None:
+            if not applied and spread is None:
+                raise ValueError(f"load case {case.name!r} adds up to nothing at pitch {mesh.pitch:.3g} mm: its "
+                                 "forces cancel on the same grid nodes (a fastener's seat and face rings closer "
+                                 "than a cell, or equal and opposite loads on one region). Lengthen the grip, "
+                                 "use a finer pitch, or drop the case")
+            if case.name == "preload" and study.raw.get("fasteners"):
+                raise _HeldPreload(case.name)
             raise ValueError(f"load case {case.name!r} acts only on fixed nodes; "
-                             "a load applied where the part is held does nothing")
+                             "a load applied where the part is held does nothing: load a region the supports "
+                             "do not cover")
         loads.append(f)
         case_nodes.append(cn)
         case_wet.append(cw)
@@ -390,7 +403,10 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
                 f"{rid} is {t:g}mm thick, {t / pitch:.1f} cells: a wall under two cells thick is too stiff in "
                 f"bending on this grid (and under one is not there at all). Set resolution.pitch to {t / 2:.2g}mm "
                 "or less, or raise resolution.maxElements.")
-    if study.min_member is not None and study.min_member < 1.5 * pitch:
+    # Only for a minMember the study asked for: a process's own floor is what
+    # the printer can make, not a member the design needs, and at a first-look
+    # resolution it would warn on every powder or FDM study.
+    if study.min_member is not None and study.min_member < 1.5 * pitch and study.raw.get("minMember") is not None:
         warnings.append(
             f"minMember {study.min_member:g}mm is under 1.5 cells ({1.5 * pitch:.2f}mm); members that thin "
             "cannot be resolved. Raise resolution.maxElements or set resolution.pitch.")
@@ -434,7 +450,19 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
         mesh = HexMesh(ijk[active], pitch, origin)
 
     pres_el = preserve[active]
-    bc = boundary_conditions(study, mesh)
+    try:
+        bc = boundary_conditions(study, mesh)
+    except _HeldPreload:
+        # Supports that hold a fastener's rings along the screw (a bolt hole
+        # fixed in every direction, a bearing face under a thin flange) take
+        # the clamp force themselves, so the preload case would load nothing.
+        # Drop it and say how to keep it, rather than refuse a study `check`
+        # passed and the user never wrote that case for.
+        study.load_cases = [c for c in study.load_cases if c.name != "preload"]
+        warnings.append("the fasteners' preload case was dropped: the supports hold its seat and face rings along "
+                        "the screw, so it would load nothing. To design for the clamp, hold the bolt holes across "
+                        "the screw only (fix 'xy' for a screw along z) or support elsewhere")
+        bc = boundary_conditions(study, mesh)
     support_nodes, fixed, load_nodes = bc.support_nodes, bc.fixed, bc.load_nodes
     loads = bc.loads
     names = [c.name for c in study.load_cases]

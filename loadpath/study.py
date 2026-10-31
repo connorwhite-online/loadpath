@@ -77,14 +77,20 @@ def _making(study: Study) -> dict:
 _DILATE = 0.15
 
 
-def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should_stop) -> np.ndarray:
+def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should_stop) -> np.ndarray | None:
     """Find the layout on a grid twice as coarse (an eighth of the cells, so
     each iteration is roughly ten times cheaper), stopping while it is still
     soft (beta 4), then interpolate it onto the fine grid as the starting
     design. The fine run only has to sharpen and refine it."""
     from scipy import ndimage
 
-    coarse = build_domain(study, pitch=2.0 * domain.pitch)
+    try:
+        coarse = build_domain(study, pitch=2.0 * domain.pitch)
+    except ValueError:
+        # The coarse grid can lose what the fine one resolves (a fastener's
+        # seat and face rings landing on the same nodes, a thin load pad):
+        # then start cold on the fine grid, which `check` validated.
+        return None
     res = optimize(coarse, study.elastic(design=True),
                    SimpOptions(volume_fraction=vf, filter_radius=max(radius, 1.5 * coarse.pitch),
                                max_iterations=60, beta_max=_WARM_BETA, beta_every=12,
@@ -687,7 +693,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
 
         def cold():
             if big:
-                return attempt(vf, _coarse_start(study, domain, vf, radius, should_stop), _WARM_BETA)
+                x0 = _coarse_start(study, domain, vf, radius, should_stop)
+                return attempt(vf, x0, _WARM_BETA if x0 is not None else 1.0)
             return attempt(vf, None, 1.0)
 
         rp = memory.replay(vf) if memory is not None else None
@@ -922,7 +929,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         beta0 = _WARM_BETA if x0 is not None else 1.0
         if x0 is None and domain.n_elem >= _COARSE_MIN_CELLS:
             x0 = _coarse_start(study, domain, float(goal.volume_fraction or 0.3), radius, should_stop)
-            beta0 = _WARM_BETA
+            beta0 = _WARM_BETA if x0 is not None else 1.0
         res = optimize_constrained(
             domain, study.elastic(),
             SimpOptions(volume_fraction=float(goal.volume_fraction or 0.3), filter_radius=radius,

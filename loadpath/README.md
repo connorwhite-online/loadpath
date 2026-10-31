@@ -182,7 +182,9 @@ and `mesh` (a closed STL by `path`, relative to the study file, or inline as
 A load or support on a keep-out means "through the material lining it", which
 is how a shaft pushes on a bore or a bolt holds a hole. Loads take a `force`
 (N) and/or a `moment` (N·mm, about the region's centroid: a motor's torque);
-`"distribution": "bearing"` spreads a force over the half of a bore it pushes
+a carried `mass` (kg, with `dynamic`, `gravity` and optional `at`, its centre
+in mm) becomes its weight along gravity and that weight's moment about the
+region; `"distribution": "bearing"` spreads a force over the half of a bore it pushes
 on, as a shaft does. Supports take `"fix": "pin"` on a cylinder for a joint
 that turns: held radially and axially, free to rotate.
 

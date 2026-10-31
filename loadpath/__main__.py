@@ -29,6 +29,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from .tasks import jsonable as _jsonable
 
@@ -339,6 +340,13 @@ def main(argv=None):
     cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
     cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
     cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
+    vr = sub.add_parser("verify", help="check any STL against a study: safety factor and deflection per load "
+                                       "case, keep-outs, preserves, pass/fail against the goal")
+    vr.add_argument("study")
+    vr.add_argument("part", help="STL, 3MF or OBJ in the study's frame, mm")
+    vr.add_argument("--cells", type=int, default=60_000, help="analysis cells")
+    vr.add_argument("--base-dir", help="where relative mesh paths in the study resolve (default: its folder)")
+    sub.add_parser("guide", help="print the agent guide (SKILL.md: how to turn a request into a study)")
     im = sub.add_parser("import", help="a STEP/STL part as a draft study: bores, bolt patterns and mounting "
                                        "faces found, interfaces preserved, a support and load suggested")
     im.add_argument("part", help="STEP (.step/.stp, needs loadpath[step]), STL, 3MF or OBJ, in mm")
@@ -420,6 +428,16 @@ def main(argv=None):
         return _verify(args)
     if args.cmd == "import":
         return _import(args)
+    if args.cmd == "guide":
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKILL.md")) as fh:
+            print(fh.read())
+        return 0
+    if args.cmd == "verify":
+        from .tasks import verify_mesh
+        base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
+        rep = verify_mesh(_load(args.study), args.part, base, args.cells)
+        print(json.dumps(rep, indent=1))
+        return 0 if rep.get("ok") else 2
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
@@ -467,16 +485,37 @@ def main(argv=None):
         args.no_render = True
     from .study import run_study
 
+    # a run can take half an hour: say which process it is, so a caller polling
+    # from elsewhere can tell it apart from other runs and see it finish
+    os.makedirs(args.out, exist_ok=True)
+    status_path = os.path.join(args.out, "status.json")
+
+    def _status(state, **kw):
+        with open(status_path, "w") as fh:
+            json.dump({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study), **kw}, fh)
+
+    _status("running", started=time.time())
     rec = None
     if args.viewer != "none" and not os.environ.get("LOADPATH_NO_RENDER"):
         from .viewer import HistoryRecorder
         rec = HistoryRecorder(chain=_progress)
-    result = run_study(study, on_progress=rec or _progress)
+    try:
+        result = run_study(study, on_progress=rec or _progress)
+    except BaseException as exc:
+        _status("failed", error=f"{type(exc).__name__}: {exc}")
+        raise
     os.makedirs(args.out, exist_ok=True)
     summary = result.to_dict()
     stems = []
     for i, o in enumerate(result.outcomes):
         stem = f"{study.name}-{int(round(o.volume_fraction * 100)):02d}"
+        if stem in stems:
+            # two outcomes within half a percent (a search bisecting): one
+            # file each, or the second overwrites the first's STL
+            stem = f"{study.name}-{o.volume_fraction * 100:.1f}".replace(".", "p")
+            k = 2
+            while stem in stems:
+                stem, k = f"{study.name}-{int(round(o.volume_fraction * 100)):02d}-{k}", k + 1
         stems.append(stem)
         stl = os.path.join(args.out, stem + ".stl")
         o.mesh.export(stl)
@@ -536,7 +575,10 @@ def main(argv=None):
             summary["viewer"] = html
         except Exception as exc:  # noqa: BLE001 - the parts and report matter more than the page
             summary.setdefault("warnings", []).append(f"viewer not written: {exc}")
+    from .delivery import delivery
+    summary["deliver"] = delivery(summary, raw)
     _write_report(args.out, summary)
+    _status("done", report=os.path.join(os.path.abspath(args.out), "report.json"))
     if not os.environ.get("LOADPATH_NO_HINT"):
         print("Print or host this part: https://www.materialize.cc  (silence with LOADPATH_NO_HINT=1)",
               file=sys.stderr)

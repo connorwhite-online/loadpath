@@ -479,6 +479,10 @@ def _shape(spec, base_dir):
             if os.path.commonpath([root, full]) != root:
                 raise ValueError(f"mesh path {path!r} must stay inside the study's folder")
             path = full
+        if not os.path.isfile(path):
+            where = os.path.realpath(base_dir) if base_dir is not None else os.getcwd()
+            raise ValueError(f"mesh file {spec['path']!r} not found in {where}: relative paths resolve against "
+                             "the study file's folder (CLI) or base_dir (MCP tools)")
         if str(path).lower().endswith((".step", ".stp")):
             # CAD straight in: tessellated, healed if it was an open shell
             from .cadimport import load_part

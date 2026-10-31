@@ -69,14 +69,111 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         return {"ok": False, "error": str(exc) or type(exc).__name__, "issues": issues}
     warnings = [f"{i['path']}: {i['message']}" for i in issues] + list(d.warnings)
+    notes = []
+    warnings += _preserve_cut(s)
+    for ci, c in enumerate(s.load_cases):
+        for li, ld in enumerate(c.loads):
+            mm = float((ld.moment ** 2).sum() ** 0.5)
+            if 0 < mm < 50:
+                warnings.append(f"loadCases[{ci}].loads[{li}].moment: {mm:g} N·mm is tiny; moments are in N·mm, "
+                                f"so {mm:g} N·m is {mm * 1000:g}")
+    if not s.pitch and s.min_member and d.pitch >= 0.65 * s.min_member * 0.999:
+        notes.append(f"pitch {d.pitch:.2f} mm is set by minMember {s.min_member:g} mm (two cells per filter "
+                     f"radius; finer cells only cost time), so the grid has {d.n_elem} cells, fewer than "
+                     f"resolution.maxElements {s.max_elements}")
     return jsonable({
         "ok": True, "name": s.name, "pitch": d.pitch, "cells": d.n_elem, "dims": list(d.dims),
         "preservedCells": int(d.preserve.sum()), "filterRadius": filter_radius(d, s.length_scale, s.min_hole),
         "supportNodes": int(d.support_nodes.sum()), "loadNodes": int(d.load_nodes.sum()),
         "regions": [r.id for r in s.preserve] + [r.id for r in s.keep_out],
         "loadCases": [c.name for c in s.load_cases], "material": s.material.name,
-        "minMember": s.min_member, "warnings": warnings,
+        "minMember": s.min_member, "warnings": warnings, **({"notes": notes} if notes else {}),
     })
+
+
+def verify_mesh(raw, path: str, base_dir: str | None = None, max_cells: int = 60_000) -> dict:
+    """Check any mesh (an earlier outcome, a hand-edited STL, a part from
+    elsewhere) against a study: mass, safety factor and deflection per load
+    case, keep-out intrusion, preserve loss, bodies, and pass/fail against
+    the study's goal. The same analysis `run` gives its own outcomes, on the
+    voxel grid (no tet cross-check)."""
+    import trimesh
+
+    from .delivery import attention
+    from .spec import study_from_dict
+    from .study import _margin
+    from .verify import verify_part
+
+    checked = check_study(raw, base_dir)
+    if not checked["ok"]:
+        return checked
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    full = path if base_dir is None or os.path.isabs(path) else os.path.join(base_dir, path)
+    if not os.path.isfile(full):
+        return {"ok": False, "error": f"no mesh at {full}"}
+    study = study_from_dict(raw, base_dir=base_dir or os.getcwd())
+    rep = verify_part(study, trimesh.load(full, force="mesh"), max_cells=max_cells)
+    margin = _margin(study, rep)
+    out = {k: rep.get(k) for k in ("mass", "volume", "massReduction", "safetyFactor", "keepOutIntrusion",
+                                   "preserveMissing", "outsideDesignSpace", "bodies", "enclosedCavityVolume",
+                                   "minMember", "p5Member", "closedBores", "analysisCells")}
+    out["cases"] = [{k: c.get(k) for k in ("name", "safetyFactor", "peakStress", "peakAt", "deflection",
+                                           "worstDirection", "interlayerStress") if c.get(k) is not None}
+                    for c in rep["cases"]]
+    if rep.get("durability"):
+        out["durability"] = {k: rep["durability"].get(k) for k in ("safetyFactor", "target", "warnings")}
+    out["margin"] = margin
+    out["passes"] = bool(margin is not None and margin >= 1.0 and rep.get("bodies") == 1
+                         and (rep.get("keepOutIntrusion") or 0) <= 1.0 and (rep.get("preserveMissing") or 0) <= 1.0)
+    out["attention"] = attention({**rep, "passes": out["passes"]}, raw)
+    return jsonable({"ok": True, "stl": full, "safetyFactorMethod": "voxel", **out})
+
+
+def _leaves(shape):
+    return [x for c in shape.shapes for x in _leaves(c)] if hasattr(shape, "shapes") else [shape]
+
+
+def _bore_through(p, k) -> bool:
+    """A keep-out cylinder whose axis runs through the preserved piece: a
+    bore or bolt hole through its boss or plate, the idiom, not a mistake.
+    A driver path clipping the side of a boss has its axis outside it."""
+    import numpy as np
+
+    if getattr(k, "kind", None) != "cylinder":
+        return False
+    t = np.linspace(0.0, 1.0, 33)[:, None]
+    axis = k.p0 + t * (k.p1 - k.p0)
+    return bool((p.sdf(axis) < 0).any())
+
+
+def _preserve_cut(s) -> list[str]:
+    """Keep-outs win over preserves, silently: a fastener's driver path
+    through a preserved pad, or a clearance box over a boss, deletes what the
+    study asked to keep. Say so when one takes a real share of a preserved
+    piece (bores through their own bosses excepted)."""
+    from .verify import _union
+
+    out = []
+    try:
+        for r in s.preserve:
+            for p in _leaves(r.shape):
+                pm = _union([p])
+                vol = float(pm.volume())
+                for k in s.keep_out:
+                    cut = 0.0
+                    for kl in _leaves(k.shape):
+                        if not _bore_through(p, kl):
+                            cut += float((pm ^ _union([kl])).volume())
+                    if vol > 0 and cut > 1.0 and cut > 0.05 * vol:
+                        out.append(f"keepOut {k.id!r} removes {cut:.0f} mm^3 ({cut / vol:.0%}) of preserve {r.id!r}: "
+                                   "keep-outs win, so that material will not be there. Move or shrink one of "
+                                   "them (a fastener's head and driver path are keep-outs too: check its "
+                                   "direction and `driver` length)")
+                        break
+    except Exception:  # noqa: BLE001 - a lint, never a reason to refuse the study
+        return out
+    return list(dict.fromkeys(out))
 
 
 # --- lattice infill ---------------------------------------------------------

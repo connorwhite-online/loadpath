@@ -92,6 +92,35 @@ def _alive(job_id, meta) -> bool:
     return not cmd or job_id in cmd
 
 
+def _failure(tool: str, exc: BaseException) -> dict:
+    """What a tool returns instead of raising: the error an agent can act on,
+    never a bare stack trace or a dropped connection."""
+    msg = str(exc).strip() or type(exc).__name__
+    out = {"ok": False, "tool": tool, "error": msg}
+    if isinstance(exc, (FileNotFoundError, IsADirectoryError)):
+        out["hint"] = "paths resolve against base_dir (default: the server's working directory); pass an absolute path"
+    elif not isinstance(exc, (ValueError, KeyError, TypeError)):
+        out["hint"] = ("an internal error, not a problem with the input as far as loadpath can tell; "
+                       "loadpath_jobs and the job's log have more")
+        out["exception"] = type(exc).__name__
+    return out
+
+
+def guarded(fn):
+    """Wrap a tool body so any exception comes back as {"ok": false, ...}
+    (or a one-item list of it, for tools that return content lists)."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        try:
+            return fn(*a, **k)
+        except Exception as exc:  # noqa: BLE001 - the agent gets the error, the server stays up
+            f = _failure(fn.__name__, exc)
+            return [json.dumps(f)] if fn.__annotations__.get("return") in (list, "list") else f
+    return wrapper
+
+
 def guide() -> str:
     return _read(os.path.join(_HERE, "SKILL.md")) + "\n\n---\n\n" + _read(os.path.join(_HERE, "README.md"))
 
@@ -350,27 +379,8 @@ def check_component_fit(path: str, components: list, base_dir: str | None = None
 
 
 def _attention(o: dict, study: dict) -> list[str]:
-    """What SKILL.md tells an agent to look for, already looked for."""
-    out = []
-    if o.get("passes") is False:
-        out.append("does not meet the goal: raise the volume fraction or the material, or check the loads")
-    if (o.get("bodies") or 1) > 1:
-        out.append(f"{o['bodies']} separate bodies: something is not connected to a support")
-    if (o.get("keepOutIntrusion") or 0) > 1.0:
-        out.append(f"keepOutIntrusion {o['keepOutIntrusion']:.1f} mm³: material in a keep-out (report a bug)")
-    if (o.get("preserveMissing") or 0) > 1.0:
-        out.append(f"preserveMissing {o['preserveMissing']:.1f} mm³: preserved geometry lost (report a bug)")
-    mm = study.get("minMember")
-    if mm and o.get("p5Member") is not None and o["p5Member"] < 0.8 * mm:
-        out.append(f"p5Member {o['p5Member']:.2f} mm is under minMember {mm} mm: raise the resolution")
-    if o.get("closedBores"):
-        out.append(f"closed bores: {o['closedBores']}")
-    dur = o.get("durability") or {}
-    if dur.get("safetyFactor") is not None and dur["safetyFactor"] < dur.get("target", 1.5):
-        out.append(f"durability safety factor {dur['safetyFactor']:.2f} (fatigue/creep) is under "
-                   f"{dur.get('target', 1.5):g}: set durability.constrain to size for it")
-    out.extend(dur.get("warnings") or [])
-    return out
+    from .delivery import attention
+    return attention(o, study)
 
 
 def _png(d, path):
@@ -407,7 +417,12 @@ def _study_status(d, r):
         row["attention"] = _attention(o, study)
         outcomes.append({k: v for k, v in row.items() if v is not None})
     best = r.get("best")
-    info = {"status": "done", "kind": "study", "best": best, "outcomes": outcomes, "warnings": r.get("warnings"),
+    deliver = r.get("deliver")
+    if deliver:
+        deliver = {**deliver, **{k: os.path.join(d, "out", os.path.basename(deliver[k]))
+                                 for k in ("stl", "3mf", "render") if deliver.get(k)}}
+    info = {"status": "done", "kind": "study", "deliver": deliver, "best": best, "outcomes": outcomes,
+            "warnings": r.get("warnings"),
             "seconds": r.get("seconds"), "report": os.path.join(d, "out", "report.json")}
     if r.get("viewer"):
         info["viewer"] = os.path.join(d, "out", os.path.basename(r["viewer"]))
@@ -570,17 +585,20 @@ def serve():
             "check it directly."),
     )
 
+    def tool(fn):
+        return server.tool()(guarded(fn))
+
     def _reply(info, pngs):
         out = [json.dumps(info, indent=2)]
         out += [Image(data=p, format="png") for p in pngs]
         return out
 
-    @server.tool()
+    @tool
     def loadpath_guide() -> str:
         """How to write a study: the workflow, every field, a worked example. Read once per session."""
         return guide()
 
-    @server.tool()
+    @tool
     def loadpath_schema(kind: str = "study") -> dict:
         """The JSON Schema (2020-12) for a 'study', a 'heatExchanger' or 'lattice' options."""
         try:
@@ -588,7 +606,7 @@ def serve():
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-    @server.tool()
+    @tool
     def loadpath_examples(name: str | None = None) -> dict:
         """With no name: the example documents (studies and heat exchangers) with a line on each.
         With a name: that document, ready to adapt and pass to loadpath_check / loadpath_start."""
@@ -597,21 +615,21 @@ def serve():
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-    @server.tool()
-    def loadpath_check(study: dict, base_dir: str | None = None) -> dict:
+    @tool
+    def loadpath_check(study: dict | str, base_dir: str | None = None) -> dict:
         """Validate a study without solving: every schema problem at once (with 'did you mean'), then
         the voxel problem (cells, pitch, regions, warnings). base_dir resolves relative mesh paths
         (default: the server's working directory)."""
         return check(study, base_dir)
 
-    @server.tool()
-    def loadpath_start(study: dict, base_dir: str | None = None, lattice: dict | None = None) -> dict:
+    @tool
+    def loadpath_start(study: dict | str, base_dir: str | None = None, lattice: dict | None = None) -> dict:
         """Validate and start a study in the background; returns a jobId for loadpath_status.
         lattice: optional lattice options ({} for defaults) to also fill the best outcome with a
         stress-graded TPMS lattice."""
         return start(study, base_dir, lattice)
 
-    @server.tool()
+    @tool
     def loadpath_status(job_id: str) -> list:
         """A job's progress, or when done: its results and renders. For a study: every outcome (mass,
         safety factor and deflection per load case, pass/fail, keep-out and preserve checks, an
@@ -621,7 +639,7 @@ def serve():
         except ValueError as exc:
             return [json.dumps({"ok": False, "error": str(exc)})]
 
-    @server.tool()
+    @tool
     def loadpath_lattice(job_id: str, outcome: int | None = None, options: dict | None = None) -> dict:
         """Fill an outcome of a finished study job (default: the best) with a TPMS sheet lattice whose
         wall follows the part's stress, keeping a solid skin and solid material where it works hard.
@@ -632,15 +650,15 @@ def serve():
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-    @server.tool()
-    def loadpath_heat_exchanger(spec: dict, base_dir: str | None = None) -> dict:
+    @tool
+    def loadpath_heat_exchanger(spec: dict | str, base_dir: str | None = None) -> dict:
         """Design a two-fluid heat exchanger from a sheet TPMS in any core shape, with self-supporting
         headers and ports, check the fluids are isolated and connected, and rate it if spec.duty is given.
         See loadpath_schema('heatExchanger') and loadpath_examples. Starts a job; poll loadpath_status."""
         return heat_exchanger(spec, base_dir)
 
-    @server.tool()
-    def loadpath_field(graph: dict, base_dir: str | None = None) -> dict:
+    @tool
+    def loadpath_field(graph: dict | str, base_dir: str | None = None) -> dict:
         """Mesh an implicit part described as a graph of fields (nTop style): shapes and meshes as signed
         distances, simulation results and imported scalar fields, remap/expr math, and field-driven
         operations (variable shell walls, variable fillets, TPMS lattices with graded cell size and wall).
@@ -650,7 +668,7 @@ def serve():
         Starts a job; poll loadpath_status."""
         return field(graph, base_dir)
 
-    @server.tool()
+    @tool
     def loadpath_size_heat_exchanger(spec: dict, max_pressure_drop: dict | None = None,
                                      min_wall: float = 0.8, base_dir: str | None = None,
                                      objective: str = "effectiveness", min_effectiveness: float | None = None,
@@ -662,7 +680,7 @@ def serve():
         solidVolume (mm^3) and mass (g). Seconds."""
         return size_heat_exchanger(spec, base_dir, max_pressure_drop, min_wall, objective, min_effectiveness, splits)
 
-    @server.tool()
+    @tool
     def loadpath_check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 45.0,
                                     build: str | list | None = None, pitch: float | None = None,
                                     slicer: bool = False, process: str = "fdm",
@@ -682,7 +700,7 @@ def serve():
         return check_printability(path, min_wall, overhang_deg, build, pitch, slicer, process, base_dir, material,
                                   slice)
 
-    @server.tool()
+    @tool
     def loadpath_check_isolation(path: str, ports: list, plugs: list | None = None,
                                  min_feature: float | None = None, pitch: float | None = None,
                                  base_dir: str | None = None) -> dict:
@@ -694,7 +712,7 @@ def serve():
         found, and minWallMm +/- minWallToleranceMm between circuits."""
         return check_isolation(path, ports, plugs, min_feature, pitch, base_dir)
 
-    @server.tool()
+    @tool
     def loadpath_check_fit(path: str, components: list, base_dir: str | None = None) -> dict:
         """Check that components fit an enclosure mesh. components: [{id, boardMm: [L, W, T],
         clearanceMm, aboveMm, belowMm, holes: {positions: [[x, y]], diaMm} | null, ports: [{id, edge:
@@ -703,7 +721,7 @@ def serve():
         reports cavity, bosses and each port cutout as ok / not / null (could not check)."""
         return check_component_fit(path, components, base_dir)
 
-    @server.tool()
+    @tool
     def loadpath_import_cad(path: str, out_dir: str | None = None, base_dir: str | None = None,
                             space: str = "part", material: str = "petg", force: float = 100.0,
                             grow: float = 0.0, process: str | None = None, support: str | None = None,
@@ -723,12 +741,20 @@ def serve():
         base_dir = the returned baseDir. Seconds."""
         return import_cad(path, out_dir, base_dir, space, material, force, grow, process, support, loads)
 
-    @server.tool()
+    @tool
+    def loadpath_verify(study: dict | str, path: str, base_dir: str | None = None, max_cells: int = 60000) -> dict:
+        """Check any mesh (an earlier outcome, an edited STL, a part from elsewhere) against a study:
+        mass, safety factor, peak stress and deflection per load case, keep-out intrusion, preserve
+        loss, bodies, and passes against the study's goal. A minute or less; no job needed."""
+        from .tasks import verify_mesh
+        return verify_mesh(study, path, base_dir, max_cells)
+
+    @tool
     def loadpath_jobs(limit: int = 20) -> dict:
         """Recent jobs (studies, lattices, heat exchangers), newest first, with their status."""
         return {"jobs": jobs(limit)}
 
-    @server.tool()
+    @tool
     def loadpath_cancel(job_id: str) -> dict:
         """Stop a running job."""
         return cancel(job_id)

@@ -158,6 +158,15 @@ _LOAD = {
         "cone": {"type": "number", "exclusiveMinimum": 0, "maximum": 180,
                  "description": "Degrees: the force may tilt up to this far from its written direction, and the "
                                 "worst tilt is designed for (180 is the same as direction 'any')."},
+        "mass": {**_POS, "description": "kg carried through this region (a payload, the next link, a camera): "
+                                        "adds mass x 9.81 x dynamic N along 'gravity', and with 'at' the moment "
+                                        "of that force about the region (N·mm), so you never convert by hand."},
+        "at": {**_VEC3, "description": "mm: where the mass's centre sits (default: on the region). Its offset "
+                                       "from the region's centre makes the moment."},
+        "dynamic": {"type": "number", "minimum": 1,
+                    "description": "Multiplier on the mass's weight: 1 static, 2 a moving robot joint, "
+                                   "3 anything that can be dropped or crash (default 1)."},
+        "gravity": {**_SIGNED_AXIS, "description": "Which way the mass pulls: '-z' (default), or a vector."},
     },
     "x-requireOne": [["region"], ["shape"]],
     "additionalProperties": False,

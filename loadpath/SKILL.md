@@ -32,6 +32,11 @@ field. `check` reports every problem at once: fix them all, then check again.
    them. Preserve only the interface itself, never a box round a component:
    a preserved slab is a slab in the result, and the optimizer has nothing
    to design there.
+   A bearing seat narrower than the part: the seat (its OD, its width) is a
+   keep-out and the region the load or support acts on, a narrower keep-out
+   runs through for the shaft or inner race, and the preserved ring covers
+   the seat's width. Keep-outs win over preserves: `check` warns when one
+   eats into a preserved piece (a fastener's driver path clipping a boss).
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and
@@ -43,7 +48,13 @@ field. `check` reports every problem at once: fix them all, then check again.
 3. **Write the loads as engineering, not vibes.** For each way the part is
    used, a load case: payload mass × 9.81 × a dynamic factor (2 for a
    moving robot joint, 3 for anything that can be dropped or crashed), at the
-   interface that carries it. Add a sideways or torsional case if the part
+   interface that carries it. Let loadpath do that arithmetic:
+   `{"region": "wrist", "mass": 0.6, "dynamic": 2, "gravity": "-y", "at": [160, 0, 0]}`
+   is the force of 0.6 kg at 2 g along -y plus, because its centre sits at
+   `at` (mm), the moment of that force about the region. Moments written by
+   hand are N·mm (1 N·m = 1000), about the region's centre. A shaft in a
+   bore: add `"distribution": "bearing"` so a radial force presses on the
+   half of the bore it pushes, as a real shaft does. Add a sideways or torsional case if the part
    can see one; a design optimized for one direction is weak in the others.
    When the direction is genuinely unknown (contact, bumps, handling, a
    push at the tool "from anywhere"), say so instead of guessing:
@@ -123,10 +134,24 @@ field. `check` reports every problem at once: fix them all, then check again.
    exists and flagged `assumed` or `rough` where it does not: treat it as
    an estimate, and test the part that matters.
 7. `python -m loadpath check study.json`: validates and reports cells, pitch
-   and warnings. Fix every warning before running.
-8. `python -m loadpath run study.json --out out/`: minutes, not seconds.
-   Progress is JSON lines on stderr.
-9. **Read `out/report.json` and look at the renders** before trusting it:
+   and warnings. Fix every warning before running; `notes` are information
+   (for example that `minMember` set the pitch, so there are fewer cells
+   than `maxElements`).
+8. `python -m loadpath run study.json --out out/`: run it in the background
+   (`nohup ... &`, or the MCP `loadpath_start` job) and poll, never in a
+   foreground call with a time limit: a killed run writes nothing.
+   `out/status.json` says `running` (with its `pid`), `done` or `failed`.
+   Progress is JSON lines on stderr. A `safetyFactor` goal runs several
+   optimizations plus a fine re-check of the pick: at 20k cells on one core
+   expect 10-30 minutes (a fixed `volumeFraction` is a few minutes).
+9. **Read `out/report.json` → `deliver`, and look at the render** before
+   trusting it. `deliver` is the part to hand over: `stl`, `passes`, `mass`,
+   `safetyFactor` and `safetyFactorMethod` (which analysis it comes from:
+   `tet`, `voxel-fine`, or `voxel`), `governedBy` (the limit that set its
+   size), per-case numbers, and `warnings` gathered from every check (print,
+   process, durability). Quote those numbers. To check any STL against a
+   study later (an edited part, an older outcome):
+   `loadpath verify study.json part.stl`. Then:
    - `safetyFactor` below target, or `passes: false` → raise the goal's
      volume fraction, the material, or check the loads are right;
    - `bodies` > 1 → something is not connected to a support;
@@ -213,8 +238,9 @@ coordinates). The optimizer then only builds what can be printed at 45°;
 
 ## Resolution
 
-`resolution.maxElements` trades detail for time: 20k for a first look
-(about a minute), 40-60k for a part you will print. Members thinner than
+`resolution.maxElements` trades detail for time: 20k for a first look,
+40-60k for a part you will print (each optimization scales a little worse
+than linearly with cells; a safety-factor search runs several). Members thinner than
 about two cells cannot form; `check` warns when `minMember` is too fine for
 the grid.
 

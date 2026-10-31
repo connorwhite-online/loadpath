@@ -30,8 +30,9 @@ syntax). `loadpath_guide` returns the same text.
 | `loadpath_schema(kind)` | JSON Schema for `study`, `heatExchanger` or `lattice`. | instant |
 | `loadpath_examples(name?)` | The example list, or one example document to adapt. | instant |
 | `loadpath_check(study, base_dir?)` | Every schema problem at once (with "did you mean"), then the voxel problem: cells, pitch, region ids, warnings. | ~1 s |
-| `loadpath_start(study, base_dir?, lattice?)` | Validate and run a study as a job. `lattice` also fills the best outcome with a lattice. | minutes |
-| `loadpath_status(job_id)` | Progress while running; when done, every outcome (mass, safety factor and deflection per case, pass/fail, keep-out and preserve checks, an `attention` list), renders as images, and `viewer`: an interactive 3D page for the user. | instant |
+| `loadpath_start(study, base_dir?, lattice?)` | Validate and run a study as a job. `lattice` also fills the best outcome with a lattice. | a few minutes (fixed volume fraction) to 10-30 (safety-factor search, 20k cells, one core) |
+| `loadpath_verify(study, path, base_dir?, max_cells?)` | Any STL against a study: safety factor, peak stress and deflection per load case, keep-outs, preserves, bodies, pass/fail against the goal. | under a minute |
+| `loadpath_status(job_id)` | Progress while running; when done, `deliver` (the part to hand over: STL, pass, mass, safety factor and which analysis it is from, what set its size, every warning), every outcome (mass, safety factor and deflection per case, pass/fail, keep-out and preserve checks, an `attention` list), renders as images, and `viewer`: an interactive 3D page for the user. | instant |
 | `loadpath_lattice(job_id, outcome?, options?)` | Fill a finished outcome with a stress-graded TPMS lattice, as a new job. | a minute or two |
 | `loadpath_heat_exchanger(spec, base_dir?)` | Design, check and rate a two-fluid TPMS heat exchanger, as a job. | a minute or more |
 | `loadpath_size_heat_exchanger(spec, max_pressure_drop?, min_wall?)` | Sweep cell and wall for a duty before designing. | seconds |
@@ -109,7 +110,7 @@ and never place an order without the user's go-ahead.
 ## Errors
 
 Every tool returns `{"ok": false, "error": "...", "issues": [...]}` instead of
-raising, where `issues` holds `{level, path, message}` entries with JSONPath
+raising (an unexpected internal error too, with `exception` and a `hint`), where `issues` holds `{level, path, message}` entries with JSONPath
 locations like `$.loadCases[0].loads[1].force`. A failed job's
 `loadpath_status` gives the exception's last line as `error` and the log
 tail as `log`.
