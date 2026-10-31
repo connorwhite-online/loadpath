@@ -210,7 +210,9 @@ def _blind_bores(s) -> tuple[list[str], list[str]]:
             return "closed"
 
         for k in s.keep_out:
-            if not getattr(k, "bore", True):
+            # a fastener's head and driver path: `driver` sizes it, and its
+            # far end against material is the user's call (a side tool)
+            if not getattr(k, "bore", True) or str(k.id).endswith("-head"):
                 continue
             for c in _leaves(k.shape):
                 if getattr(c, "kind", None) != "cylinder" or c.r_inner > 0:
