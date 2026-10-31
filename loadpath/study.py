@@ -10,7 +10,8 @@ Two kinds of goal:
   strength and deflects at most that much at its loads. Neither is something
   compliance optimization controls directly, so this searches over volume
   fractions, verifying the delivered mesh at each step, and returns the
-  lightest outcome that passes. Each step warm-starts from the last.
+  lightest outcome that passes. Each step warm-starts from the nearest
+  fraction above it already run.
   With `durability.constrain` the search also holds the fatigue and creep
   safety factor to `durability.safetyFactor` (and a held load's crept
   deflection to `maxDeflection`); see durability.py.
@@ -574,7 +575,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
     info = _domain_info(domain, radius)
     emit({"stage": "domain", **info, "warnings": domain.warnings})
     outcomes: list[Outcome] = []
-    last_x = None
+    started = False
     # what earlier runs on this domain found (recall.py), when turned on
     from .recall import Recall
     memory = Recall.open(study, domain, radius, _making(study))
@@ -637,7 +638,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         return o
 
     def run_one(vf: float) -> Outcome:
-        nonlocal last_x
+        nonlocal started
         emit({"stage": "optimize", "volumeFraction": vf})
         big = domain.n_elem >= _COARSE_MIN_CELLS
 
@@ -647,7 +648,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             return attempt(vf, None, 1.0)
 
         rp = memory.replay(vf) if memory is not None else None
-        w = memory.warm_start(vf) if memory is not None and rp is None and last_x is None else None
+        w = memory.warm_start(vf) if memory is not None and rp is None and not started else None
         if rp is not None:
             o = attempt(vf, None, None, replay=rp)
             o.report["start"] = f"recalled {vf:.3f}"
@@ -658,16 +659,28 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             except RuntimeError:
                 o = cold()
                 o.report["start"] = "cold (the recalled start did not solve)"
-        elif last_x is None:
+        elif not any(q.x is not None for q in outcomes):
             o = cold()
             o.report["start"] = "cold"
         else:
-            # Each fraction warm-starts from the last design, which is what
-            # lets a stiffness-bound part follow its layout down (GRIP's upper
-            # arm: 7.0% passed warm at margin 1.06 and failed cold at 0.68).
+            # Each fraction warm-starts from a design already found, which is
+            # what lets a stiffness-bound part follow its layout down (GRIP's
+            # upper arm: 7.0% passed warm at margin 1.06 and failed cold at
+            # 0.68). From the nearest fraction above, never the last one run:
+            # the wall bracket chained 0.150 -> 0.104 -> 0.127 -> 0.115 (up,
+            # then down again) read SF 1.69 at 0.115 and 2.34 at 0.110 carried
+            # straight down from 0.150, so its mass swung with the order the
+            # fractions came in (57-68 g). Carried down, the verified SF rises
+            # smoothly with the fraction (0.88, 2.00, 2.34, 2.83, 3.11, 3.36
+            # at 9-14%). Not always from the first design either: the turret
+            # carried 0.120 -> 0.029 in one jump read SF 1.56, and 2.54 at
+            # 0.025 stepped down through 0.068 and 0.042.
+            above = [q for q in outcomes if q.x is not None and q.volume_fraction > vf]
+            src = (min(above, key=lambda q: q.volume_fraction) if above else
+                   max((q for q in outcomes if q.x is not None), key=lambda q: q.volume_fraction))
             try:
-                o = attempt(vf, last_x, _WARM_BETA)
-                o.report["start"] = f"warm from {outcomes[-1].volume_fraction:.3f}" if outcomes else "warm"
+                o = attempt(vf, src.x, _WARM_BETA)
+                o.report["start"] = f"warm from {src.volume_fraction:.3f}"
             except RuntimeError:
                 # A carried layout can leave a support hanging on void
                 # (GRIP's wrist link: a pin-held idler with its material
@@ -682,15 +695,15 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 # be one the new fraction no longer suits: the wall bracket
                 # read SF 1.0-1.5 at 8-14% chained down from 15%, and 3.2 at
                 # 10% started fresh. So the first step down is also run from
-                # its own coarse layout, and the better margin kept (and
-                # chained on); one extra run per search.
+                # its own coarse layout, and the better margin kept; one
+                # extra run per search.
                 c = cold()
                 c.report["start"] = "cold"
                 if (c.report.get("margin") or 0.0) > (o.report.get("margin") or 0.0):
                     o, c = c, o
                 o.report["alternative"] = {k: c.report.get(k) for k in
                                            ("start", "mass", "safetyFactor", "margin")} | {"passes": c.passes}
-        last_x = o.x
+        started = True
         emit({"stage": "outcome", **o.summary()})
         return o
 

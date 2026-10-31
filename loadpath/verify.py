@@ -387,7 +387,28 @@ def _rigid_free(xyz, u):
     return u - b @ coef
 
 
-def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None):
+def _user_edges(study: Study, band: float):
+    """Where a keep-out's surface meets a preserved body's (a screw-head
+    counterbore's floor corner on a boss face, a bore's rim): a sharp edge
+    the user drew, which the optimizer cannot round. Its linear-elastic stress
+    grows without bound as the grid gets finer, like a clamped edge's, so it
+    is left out of the peak over the same band. (The wall bracket's 150k-cell
+    confirm check peaked there and read SF 1.6, 2.6, 2.5, 1.9, 3.7 at 11.5-15%
+    of the space, out of order, against 2.7-3.8 on the 60k check.) Returns a
+    function of points -> bool, or None when the study has no such edges."""
+    keep = [r.shape for r in study.keep_out]
+    pres = [r.shape for r in study.preserve]
+    if not keep or not pres:
+        return None
+
+    def near(xyz):
+        dk = np.min([np.abs(sh.sdf(xyz)) for sh in keep], axis=0)
+        dp = np.min([np.abs(sh.sdf(xyz)) for sh in pres], axis=0)
+        return (dk < band) & (dp < band)
+    return near
+
+
+def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None, edges=None):
     """Re-solve a small box around a global hotspot at a finer pitch, driven by
     the global displacement field on the box's cut faces (classic FE
     submodeling). Voxel stress converges only with about 8 cells across a
@@ -453,6 +474,8 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     # Trust the inside of the box only: two global cells from the cut faces.
     margin = 2.0 * hm.pitch
     inner = np.all((sm.node_xyz > blo + margin) & (sm.node_xyz < bhi - margin), axis=1) & ~near_contact
+    if edges is not None:
+        inner &= ~edges(sm.node_xyz)
     if not inner.any():
         return None
     i = int(np.argmax(np.where(inner, vm, -1.0)))
@@ -614,6 +637,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
 
     band = max(1.5 * pitch, contact_band or 0.0)
     report["contactBand"] = band
+    edges = _user_edges(study, band)
+    on_edge = edges(hm.node_xyz) if edges is not None else None
     fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else 0.0
     # A force of unknown direction is solved along each axis and judged in
     # the direction that stresses the part most (directions.py).
@@ -651,6 +676,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         # Exclude nodes within the contact band of an applied load or support.
         contact = support_nodes | load_nodes
         near = cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1, distance_upper_bound=band)[0] < np.inf
+        if on_edge is not None:
+            near |= on_edge
         body = ~near
         idx = layout[ci]
         direction = None
@@ -676,7 +703,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             half = max(8.0 * pitch, 6.0)
             for c in _hotspots(hm.node_xyz, vm, body, peak, half, count=refine):
                 r = _submodel_peak(study, mesh, hm, u, c, half, pitch / 2.5, mat,
-                                   hm.node_xyz[contact], band, case)
+                                   hm.node_xyz[contact], band, case, edges=edges)
                 if r is None:
                     continue
                 refined.append({"at": r[1], "peakStress": r[0]})
