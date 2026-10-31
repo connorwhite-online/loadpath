@@ -74,10 +74,17 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     w, n = _blind_bores(s)
     warnings += w
     notes += n
+    # only moments the study wrote: one loadpath derived (mass or force 'at'
+    # an offset) is in N·mm by construction
+    typed = set()
+    for rc in (raw.get("loadCases") or []) if isinstance(raw, dict) else []:
+        for li, rl in enumerate((rc.get("loads") or []) if isinstance(rc, dict) else []):
+            if isinstance(rl, dict) and ("moment" in rl or "torque" in rl):
+                typed.add((str(rc.get("name")), li))
     for ci, c in enumerate(s.load_cases):
         for li, ld in enumerate(c.loads):
             mm = float((ld.moment ** 2).sum() ** 0.5)
-            if 0 < mm < 50:
+            if 0 < mm < 50 and (str(c.name).split("@")[0], li) in typed:
                 warnings.append(f"loadCases[{ci}].loads[{li}].moment: {mm:g} N·mm is tiny; moments are in N·mm, "
                                 f"so {mm:g} N·m is {mm * 1000:g}")
     dur = raw.get("durability") if isinstance(raw, dict) else None
@@ -101,6 +108,9 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     peak = max(d.n_elem, _confirm_cells(s) if (g.safety_factor or g.max_deflection) else 0)
     mem = _run_bytes(peak) / 1e9
     avail = _available_bytes()
+    if mem > 4 and (g.safety_factor or g.max_deflection) and not os.environ.get("LOADPATH_CONFIRM_CELLS"):
+        notes.append(f"the fine re-check sets the peak ({mem:.1f} GB); on a shared machine cap it with "
+                     "LOADPATH_CONFIRM_CELLS (e.g. 50000 for about a third of the memory)")
     if avail and mem * 1e9 > 0.8 * avail:
         warnings.append(f"this run needs about {mem:.1f} GB at its peak and {avail / 1e9:.1f} GB is free: "
                         "lower resolution.maxElements, or set LOADPATH_CONFIRM_CELLS for the confirm stage")

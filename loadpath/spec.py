@@ -643,7 +643,7 @@ def _at_moment(ld, f, m, region, shape, label, preserve, keep_out):
     if ld.get("direction") is not None or ld.get("cone") is not None:
         raise ValueError(f"{label}: a force 'at' an offset makes a moment that would have to turn with an "
                          "unknown direction; give each direction you need as a load case of its own (or use an "
-                         "in-plane direction such as \"xz\", which turns the force round 'at')")
+                         "in-plane direction such as \"xz\", which turns the force round 'at'; it takes a plain force, so write a mass as kg x 9.81 x the dynamic factor in N)")
     if shape is None:
         regs = {r.id: r.shape for r in list(preserve) + list(keep_out)}
         shape = regs.get(region)
