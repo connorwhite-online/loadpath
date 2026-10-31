@@ -77,6 +77,14 @@ def check_study(raw, base_dir: str | None = None) -> dict:
             if 0 < mm < 50:
                 warnings.append(f"loadCases[{ci}].loads[{li}].moment: {mm:g} N·mm is tiny; moments are in N·mm, "
                                 f"so {mm:g} N·m is {mm * 1000:g}")
+    dur = raw.get("durability") if isinstance(raw, dict) else None
+    if isinstance(dur, dict) and not dur.get("constrain"):
+        notes.append("durability is checked on the delivered part, not designed for: the search picks the "
+                     "lightest static pass, whose fatigue/creep safety factor can be under target. Set "
+                     "durability.constrain: true to size the part for it"
+                     + ("" if "safetyFactor" in dur else
+                        f" (durability.safetyFactor defaults to 1.5, not the goal's {s.goal.safety_factor:g})"
+                        if s.goal.safety_factor else ""))
     if not s.pitch and s.min_member and d.pitch >= 0.65 * s.min_member * 0.999:
         notes.append(f"pitch {d.pitch:.2f} mm is set by minMember {s.min_member:g} mm (two cells per filter "
                      f"radius; finer cells only cost time), so the grid has {d.n_elem} cells, fewer than "
