@@ -85,7 +85,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
                      + ("" if "safetyFactor" in dur else
                         f" (durability.safetyFactor defaults to 1.5, not the goal's {s.goal.safety_factor:g})"
                         if s.goal.safety_factor else ""))
-    if not s.pitch and s.min_member and d.pitch >= 0.65 * s.min_member * 0.999:
+    if not s.pitch and s.min_member and abs(d.pitch - 0.65 * s.min_member) <= 1e-3 * d.pitch:
         notes.append(f"pitch {d.pitch:.2f} mm is set by minMember {s.min_member:g} mm (two cells per filter "
                      f"radius; finer cells only cost time), so the grid has {d.n_elem} cells, fewer than "
                      f"resolution.maxElements {s.max_elements}")

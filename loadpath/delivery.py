@@ -12,6 +12,7 @@ factor where the report had replaced it with a finer one.
 from __future__ import annotations
 
 _VF_CEILING = 0.7   # study._VF_MAX: the search never goes past it
+_VF_FLOOR = 0.02    # study._VF_MIN
 
 
 def attention(o: dict, study: dict) -> list[str]:
@@ -112,6 +113,11 @@ def delivery(summary: dict, study: dict) -> dict | None:
         **({"print": {k: v for k, v in o["print"].items() if k != "warnings"}} if o.get("print") else {}),
         "warnings": warn,
     }
+    if summary.get("best") is not None and (o.get("volumeFraction") or 1.0) <= _VF_FLOOR + 1e-6:
+        d["governedBy"] = "volumeFraction floor"
+        d["warnings"].insert(0, f"the search stopped at its smallest volume fraction ({_VF_FLOOR:.0%}) with the "
+                                "safety factor still over target: the preserved interfaces, not the loads, set "
+                                "the mass; trim the preserves or the design space to go lighter")
     if summary.get("best") is None:
         d["warnings"].insert(0, "no outcome meets the goal: this is the strongest one tried, not a passing part")
         sat = _saturated(outs)
