@@ -684,7 +684,8 @@ def _expand_planar(d: dict) -> dict:
         ld = loads[li]
         if ld.get("cone") is not None or ld.get("mass") is not None or ld.get("pressure") is not None:
             raise ValueError(f"loadCases[{ci}].loads[{li}]: an in-plane direction goes with a force, not a cone, "
-                             "mass or pressure")
+                             "mass or pressure. For a swinging payload, write the force out: mass (kg) x 9.81 x the dynamic "
+                             "factor, in N, e.g. 0.6 kg at 2 g is \"force\": [11.8, 0, 0]")
         a, b = _PLANES[ld["direction"]]
         f = np.asarray(ld.get("force") or [0, 0, 0], float)
         size = float(np.linalg.norm(f))
@@ -696,8 +697,16 @@ def _expand_planar(d: dict) -> dict:
         normal[3 - a - b] = 1.0 if (a, b) != (0, 2) else -1.0   # right-handed: a x b
         m0 = np.asarray(ld.get("moment") or [0, 0, 0], float)
         name = c.get("name") or f"case{ci}"
-        for k in range(_PLANAR_STEPS):
-            t = np.pi * k / _PLANAR_STEPS
+        # Half a circle covers it only when the stress under -F is the stress
+        # under F: the case's one load, spread evenly, with no moment and an
+        # isotropic, tension-blind check. A bearing load presses on one side
+        # of the bore, other loads add, a moment does not turn round, and a
+        # layered process fails on interlayer tension: the full circle then.
+        full = (len(loads) > 1 or ld.get("distribution") == "bearing" or ld.get("moment") is not None
+                or d.get("process") is not None or d.get("printDirection") is not None)
+        steps, span = (2 * _PLANAR_STEPS, 2 * np.pi) if full else (_PLANAR_STEPS, np.pi)
+        for k in range(steps):
+            t = span * k / steps
             fk = np.zeros(3)
             fk[a], fk[b] = size * np.cos(start + t), size * np.sin(start + t)
             # the moment turns with the force about the plane's normal

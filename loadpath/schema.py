@@ -172,8 +172,10 @@ _LOAD = {
                                      "exactly from three unit-force solves. At most one per load case; a bearing "
                                      "load's uncertain force is spread evenly over the region. 'xy', 'xz' or "
                                      "'yz': any direction in that plane (a shaft's radial load, a swinging "
-                                     "strap, a sideways crash): the case becomes eight cases 22.5 degrees "
-                                     "apart (within 2% of the worst), named case@angle; a moment on the same "
+                                     "strap, a sideways crash): the case becomes cases 22.5 degrees "
+                                     "apart (within 2% of the worst), named case@angle: eight over half "
+                                     "the plane, or sixteen over all of it when -F is not the mirror of F "
+                                     "(bearing distribution, other loads, a moment, a layered process); a moment on the same "
                                      "load turns with the force (right when its lever arm is along the "
                                      "plane's normal)."},
         "cone": {"type": "number", "exclusiveMinimum": 0, "maximum": 180,
@@ -200,7 +202,7 @@ _LOAD_CASE = {
     "properties": {"name": {"type": "string"},
                    "loads": {"type": "array", "items": {"$ref": "#/$defs/load"}, "minItems": 1},
                    "weight": {"type": "number", "minimum": 0},
-                   "cycles": {**_POS, "description": "Times this load is applied over the part's life: adds a "
+                   "cycles": {**_POS, "description": "Times this whole case is applied over the part's life (set on the case, not a load): adds a "
                                                      "fatigue check (e.g. 1e6 for a servo-driven arm)."},
                    "hours": {**_POS, "description": "Hours this load is held over the part's life: adds creep "
                                                     "rupture and crept deflection."},
@@ -1367,7 +1369,10 @@ def _check(v, node, root, path, out):
             elif node.get("additionalProperties") is False:
                 near = [p for p in _ALIASES.get(k, []) if p in props] or \
                     [p for p in props if p.lower() == k.lower()] or difflib.get_close_matches(k, list(props), 1, 0.6)
-                if near:
+                if k in ("cycles", "hours", "temperature") and ".loads[" in path:
+                    out.append(("error", f"{path}.{k}", f"{k} goes on the load case, not on a load "
+                                "(it applies to the whole case)"))
+                elif near:
                     out.append(("error", f"{path}.{k}", f"unknown key; did you mean '{near[0]}'?"))
                 else:
                     out.append(("warning", f"{path}.{k}", "unknown key, ignored (known: "

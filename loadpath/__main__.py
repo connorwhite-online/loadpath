@@ -47,6 +47,17 @@ def _progress(event, _field=None):
     if event.get("stage") == "optimize" and "iteration" in event and event["iteration"] % 5:
         return
     ev = {k: v for k, v in event.items() if k not in ("cases", "optimizer", "reconstruction")}
+    cases = event.get("cases") or []
+    if event.get("stage") == "outcome" and cases:
+        # the governing case and the worst deflection, so a failed step says why
+        sf = [c for c in cases if c.get("safetyFactor") is not None]
+        if sf:
+            g = min(sf, key=lambda c: c["safetyFactor"])
+            ev["governingCase"] = {"name": g.get("name"), "safetyFactor": g["safetyFactor"]}
+        dfl = [c for c in cases if c.get("deflection") is not None]
+        if dfl:
+            w = max(dfl, key=lambda c: c["deflection"])
+            ev["maxDeflection"] = {"name": w.get("name"), "deflection": w["deflection"]}
     print(json.dumps(_jsonable(ev)), file=sys.stderr, flush=True)
 
 

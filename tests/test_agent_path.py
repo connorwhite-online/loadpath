@@ -91,7 +91,8 @@ def test_in_plane_direction_becomes_eight_cases():
     s = copy.deepcopy(LINK)
     s["loadCases"][0]["loads"][0].update(direction="xy", moment=[0, 0, 100])
     st = study_from_dict(s)
-    assert len(st.load_cases) == 8 and st.load_cases[2].name == "p@45", [c.name for c in st.load_cases]
+    # a moment does not turn round with the force: the full circle, 16 cases
+    assert len(st.load_cases) == 16 and st.load_cases[2].name == "p@45", [c.name for c in st.load_cases]
     for c in st.load_cases:
         ld = c.loads[0]
         assert abs(ld.force[2]) < 1e-9 and abs(np.linalg.norm(ld.force) - 20) < 1e-9, ld.force
@@ -101,6 +102,12 @@ def test_in_plane_direction_becomes_eight_cases():
     m = study_from_dict(s).load_cases[4].loads[0]
     assert np.allclose(m.force, [0, 0, 20], atol=1e-9) and np.allclose(m.moment, [-100, 0, 0], atol=1e-9), m
     assert check_study(s)["ok"]
+    plain = copy.deepcopy(LINK)
+    plain["loadCases"][0]["loads"][0].update(direction="xy")
+    assert len(study_from_dict(plain).load_cases) == 8          # symmetric: half a circle
+    plain["loadCases"][0]["loads"][0]["distribution"] = "bearing"
+    names = [c.name for c in study_from_dict(plain).load_cases]
+    assert len(names) == 16 and names[-1] == "p@337.5", names    # one side of the bore: all of it
 
 
 def test_half_ring_and_gap_ring_shapes():

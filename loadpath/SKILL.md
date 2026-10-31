@@ -76,7 +76,12 @@ field. `check` reports every problem at once: fix them all, then check again.
    one that would swing on a pin rather than resist sideways) cannot carry.
    For an in-plane uncertainty (a shaft's radial load, a swinging strap, a
    sideways crash) use `"direction": "xz"` (or `"xy"`, `"yz"`): the case
-   becomes eight cases round that plane, named `case@0` ... `case@157.5`.
+   becomes eight cases round half that plane, named `case@0` ... `case@157.5`,
+   or sixteen round all of it (to `case@337.5`) when -F is not the mirror of
+   F: a bearing distribution, other loads in the case, a moment, or a
+   layered process. Each is a solve per step, so the run takes that many
+   times longer; the mass form cannot take a plane, so write the force
+   (kg x 9.81 x the dynamic factor).
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.

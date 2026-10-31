@@ -92,6 +92,10 @@ def check_study(raw, base_dir: str | None = None) -> dict:
         notes.append(f"pitch {d.pitch:.2f} mm is set by minMember {s.min_member:g} mm (two cells per filter "
                      f"radius; finer cells only cost time), so the grid has {d.n_elem} cells, fewer than "
                      f"resolution.maxElements {s.max_elements}")
+    planar = [c.name for c in s.load_cases if "@" in c.name]
+    if planar:
+        notes.append(f"{len(s.load_cases)} load cases ({len(planar)} from in-plane directions, 8 each): every "
+                     "optimizer step solves each one, so the run takes about that many times as long as one case")
     from .study import _available_bytes, _confirm_cells, _run_bytes
     g = s.goal
     peak = max(d.n_elem, _confirm_cells(s) if (g.safety_factor or g.max_deflection) else 0)

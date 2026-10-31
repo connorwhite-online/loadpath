@@ -447,8 +447,9 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     # resolution it would warn on every powder or FDM study.
     if study.min_member is not None and study.min_member < 1.5 * pitch and study.raw.get("minMember") is not None:
         warnings.append(
-            f"minMember {study.min_member:g}mm is under 1.5 cells ({1.5 * pitch:.2f}mm); members that thin "
-            "cannot be resolved. Raise resolution.maxElements or set resolution.pitch.")
+            f"minMember {study.min_member:g}mm is under 1.5 cells of this {pitch:.2f}mm grid ({1.5 * pitch:.2f}mm); "
+            "members that thin cannot be resolved. Raise resolution.maxElements or set resolution.pitch "
+            "(raising minMember coarsens the default pitch, which follows it).")
 
     if study.max_member is not None and study.max_member < 3.0 * pitch:
         warnings.append(
