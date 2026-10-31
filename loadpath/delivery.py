@@ -107,6 +107,9 @@ def delivery(summary: dict, study: dict) -> dict | None:
         "cases": cases,
         "p5Member": _p5(o),
         **({"durabilitySafetyFactor": o["durability"].get("safetyFactor")} if o.get("durability") else {}),
+        **{k: o[k] for k in ("bodies", "keepOutIntrusion", "preserveMissing") if o.get(k) is not None},
+        **({"process": o["process"]} if o.get("process") else {}),
+        **({"print": {k: v for k, v in o["print"].items() if k != "warnings"}} if o.get("print") else {}),
         "warnings": warn,
     }
     if summary.get("best") is None:
