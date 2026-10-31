@@ -8,7 +8,7 @@ counterbored M3 screws, and an 8 mm upright carrying the shoulder shaft's
 printer. `loadpath import` reads the STEP, finds the screws, the bearing
 seat and the face the bracket bolts down on, and drafts a study round them;
 you put in the real loads, run it, and get the optimized bracket back as
-STEP for your CAD. About 35 minutes on 4 cores, 4 with `--quick`.
+STEP for your CAD. About 32 minutes on 4 cores, 3 with `--quick`.
 
 ![the bracket as drawn and as optimized](images/elbow.png)
 
@@ -111,20 +111,20 @@ Full grid, as the commands above run:
 | features found | 4 bolts (counterbored), 1 bore, 1 bolted face |
 | draft | hull design space, 2 preserved interfaces, support on the 4 screws |
 | grid | 47 236 cells at 1.04 mm |
-| best outcome | volume fraction 0.144, the lightest of three that pass |
-| mass (PA12) | **10.6 g**, from the drawn part's 21.8 g |
-| safety factor (worst case) | **2.20** (swing-right; swing-left 2.59, hang 3.95), goal 2 |
+| best outcome | volume fraction 0.138, the lightest of three that pass (a fourth, 0.116 at 8.4 g, reads SF 1.87) |
+| mass (PA12) | **9.5 g**, from the drawn part's 21.8 g |
+| safety factor (worst case) | **2.06** (swing-right; swing-left 2.09, hang 3.84), goal 2 |
 | one body / keep-out intrusion | yes / ~0 mm³ |
-| STEP (`out/elbow-14.step`) | one valid solid: 9 exact cylinders and 6 planes (15% of the area), the rest 16 877 facets; 42 MB |
+| STEP (`out/elbow-14.step`) | one valid solid: 11 exact cylinders and 6 planes (16% of the area), the rest 16 772 facets; 42 MB |
 
-Half the drawn part's mass, at the safety factor asked for, and still
+Under half the drawn part's mass, at the safety factor asked for, and still
 bolting on with the same four screws and carrying the same bearing. The
 swing cases set it: the 400 N straight down is the biggest load, but the
 sideways 200 N levered 36 mm up the upright is the hardest one.
 
 ## Quick mode
 
-`--quick` runs the study on 6000 cells and 30 iterations, in about 5
+`--quick` runs the study on 6000 cells and 30 iterations, in about 3
 minutes (a minute of it the STEP export). Its search is
 shorter too (three runs), so it stops at a heavier outcome: 12.6 g at SF
 5.3 (volume fraction 0.225), with the next lighter one it tries (0.15)

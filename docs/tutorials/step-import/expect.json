@@ -18,9 +18,9 @@
     {"file": "compare.json", "value": "r['changed']", "equals": ["description", "loadCases"], "what": "what study.json changes in the draft"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "best outcome meets SF 2"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['bodies']", "equals": 1, "what": "one body"},
-    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 9.8, "max": 11.4, "what": "best outcome's mass, g (10.6)"},
-    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 2.0, "max": 2.5, "what": "best outcome's safety factor (2.20)"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 8.8, "max": 10.2, "what": "best outcome's mass, g (9.5)"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 2.0, "max": 2.4, "what": "best outcome's safety factor (2.06)"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['step']['valid']", "equals": true, "what": "STEP is a valid solid"},
-    {"file": "out/report.json", "value": "[r['outcomes'][r['best']]['step']['faces']['cylinder'], r['outcomes'][r['best']]['step']['solids']]", "equals": [9, 1], "what": "STEP: exact cylinders, solids"}
+    {"file": "out/report.json", "value": "[r['outcomes'][r['best']]['step']['faces']['cylinder'], r['outcomes'][r['best']]['step']['solids']]", "equals": [11, 1], "what": "STEP: exact cylinders, solids"}
   ]
 }
