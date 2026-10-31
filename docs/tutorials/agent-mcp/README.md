@@ -12,7 +12,7 @@ horn by four M3 screws at one end, carrying the next joint's 22 mm bearing
 Every call and result on this page comes from
 [`transcript.py`](transcript.py), which makes the same calls through a real
 MCP client session against `python -m loadpath mcp` and records them. About
-25 minutes on 4 cores, 6 with `LOADPATH_QUICK=1`.
+22 minutes on 4 cores, 6 with `LOADPATH_QUICK=1`.
 
 ![the wrist link](images/wrist-link.png)
 
@@ -36,7 +36,7 @@ shell's `PATH`. An MCP client starts the server with a bare environment, so
 anything loadpath should read goes in `env`: `LOADPATH_RECALL=1` lets a
 rerun reuse the designs earlier runs found (calls 9-11 below),
 `LOADPATH_QUICK=1` makes every job a coarse first look (the server then
-says so in every answer), `LOADPATH_HOME` moves the job folders (default
+says so in its check, start and status answers), `LOADPATH_HOME` moves the job folders (default
 `~/.loadpath/jobs`). The server runs on the agent's machine; nothing leaves
 it. Also give the agent the skill,
 [`loadpath/SKILL.md`](../../../loadpath/SKILL.md) (or let it call
