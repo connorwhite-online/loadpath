@@ -1577,7 +1577,7 @@ class FieldGraph:
         flat faces and keep-outs keep their edges; false meshes the whole
         field, every crease rounded over about one pitch.
 
-        `creases` (default the graph's mesh.creases, else false): hard
+        `creases` (default the graph's mesh.creases, else true): hard
         booleans between field surfaces (a lattice clipped by a body, two
         bodies unioned without a blend, a shell's rim) get their creases back
         on the meshed field (crease.py)."""
@@ -1585,7 +1585,7 @@ class FieldGraph:
         pitch = pitch or m.get("pitch")
         project = m.get("project", 3) if project is None else project
         sharp = m.get("sharp", True) if sharp is None else sharp
-        creases = m.get("creases", False) if creases is None else creases
+        creases = m.get("creases", True) if creases is None else creases
         if bounds is None and "bounds" in self.doc:
             bounds = (self.doc["bounds"]["min"], self.doc["bounds"]["max"])
         if bounds is None:

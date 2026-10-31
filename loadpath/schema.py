@@ -1070,7 +1070,7 @@ FIELD_SCHEMA = {
                                                           "by a body, two bodies unioned with no blend, a shell's "
                                                           "rim) keep sharp creases: edges that cross from one "
                                                           "surface to the other are split on the true intersection "
-                                                          "curve (default false; not with stream)"},
+                                                          "curve (default true; not with stream)"},
             "decimate": {**_POS, "description": "mm: thin the triangles wherever the mesh stays this close to "
                                                 "the surface (flat and gently curved regions lose most of "
                                                 "theirs; creases and small features keep them), e.g. 0.01-0.05"},

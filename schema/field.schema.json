@@ -111,7 +111,7 @@
         },
         "creases": {
           "type": "boolean",
-          "description": "hard booleans between field surfaces (a lattice clipped by a body, two bodies unioned with no blend, a shell's rim) keep sharp creases: edges that cross from one surface to the other are split on the true intersection curve (default false; not with stream)"
+          "description": "hard booleans between field surfaces (a lattice clipped by a body, two bodies unioned with no blend, a shell's rim) keep sharp creases: edges that cross from one surface to the other are split on the true intersection curve (default true; not with stream)"
         },
         "decimate": {
           "type": "number",

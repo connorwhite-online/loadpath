@@ -39,7 +39,7 @@ describe the mesh: two leaves meeting at under `tangent` degrees (a skin's
 outside lying on the body it was shelled from), within a few rings of a hole
 the mesher left (a thin wall; the boolean step repairs it), and where
 `tree.ignore` says so (sharp.py: near an exact cut, where the mesh is the
-extended field). 
+extended field). Creases are on by default (mesh.creases).
 
 Where lattice walls meet a body at under ~45 degrees the material (or the
 gap) between them is thinner than one pitch for a pitch or more back from
