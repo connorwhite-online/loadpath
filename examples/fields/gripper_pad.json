@@ -1,0 +1,104 @@
+{
+ "name": "gripper-pad",
+ "description": "a gripper finger (70 x 16 x 12 mm, rounded, pin bore at the base) in PETG with a 2.5 mm TPU contact pad on its gripping face (+y): the pad is wherever the distance to the gripping face is under 2.5 mm, from 24 mm out to the tip; the rest is the core",
+ "nodes": {
+  "beam": {
+   "op": "shape",
+   "shape": {
+    "type": "box",
+    "min": [
+     3,
+     -5,
+     -3
+    ],
+    "max": [
+     67,
+     5,
+     3
+    ]
+   }
+  },
+  "envelope": {
+   "op": "offset",
+   "input": "beam",
+   "distance": 3
+  },
+  "pin": {
+   "op": "shape",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     9,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 16,
+    "r": 2.6
+   }
+  },
+  "part": {
+   "op": "subtract",
+   "inputs": [
+    "envelope",
+    "pin"
+   ]
+  },
+  "faceDistance": {
+   "op": "distance",
+   "plane": {
+    "point": [
+     0,
+     8,
+     0
+    ],
+    "normal": [
+     0,
+     1,
+     0
+    ]
+   }
+  },
+  "padZone": {
+   "op": "shape",
+   "shape": {
+    "type": "box",
+    "min": [
+     24,
+     -9,
+     -7
+    ],
+    "max": [
+     71,
+     9,
+     7
+    ]
+   }
+  }
+ },
+ "output": "part",
+ "materials": [
+  {
+   "name": "pad",
+   "material": "tpu",
+   "solid": "padZone",
+   "where": "faceDistance",
+   "below": 2.5,
+   "color": "#303030"
+  },
+  {
+   "name": "core",
+   "material": "petg",
+   "color": "#e0e0e0"
+  }
+ ],
+ "mesh": {
+  "pitch": 0.35
+ },
+ "process": "fdm",
+ "build": [
+  0,
+  0,
+  1
+ ]
+}

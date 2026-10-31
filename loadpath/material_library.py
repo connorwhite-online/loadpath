@@ -101,6 +101,15 @@ SOURCES = {
         "Formlabs Rigid 10K Resin technical data sheet, Rev 01 (06-09-2020)",
         "https://core-electronics.com.au/attachments/rigid10k-TDS-ENUS-0.pdf",
         "ASTM D638-14, UV post-cure column (60 min at 70 C)"),
+    "stratasys-vero": Source(
+        "Stratasys PolyJet Vero (Rigid Opaque) material data sheet (VeroWhitePlus, VeroBlackPlus, VeroGray, "
+        "Vero PureWhite, VeroVivid...), hosted by GoEngineer",
+        "https://cdn.goengineer.com/stratasys_polyjet_vero-material-data-sheet.pdf",
+        "ASTM D638 / D790 / D648 ranges for the family; printed, as built"),
+    "stratasys-agilus30": Source(
+        "Stratasys PolyJet Agilus30 material data sheet (Black / Translucent / White), hosted by GoEngineer",
+        "https://cdn.goengineer.com/stratasys-polyjet-agilus30-material-data-sheet.pdf",
+        "ASTM D412 tensile, D2240 hardness, D792 density; ranges per colour"),
     "addup-alsi10mg": Source(
         "AddUp AlSi10Mg material data sheet, version US-10252023-0129 (FormUp 350, 50 um layers)",
         "https://addupsolutions.com/wp-content/uploads/2023/10/AlSi10Mg-Material-Data-Sheet.pdf",
@@ -311,6 +320,33 @@ LIBRARY = {
                       density=(1.65, "estimate", "the TDS gives none; glass-filled acrylates 1.6-1.7"),
                       elongation=(1, "formlabs-rigid10k", "% at break, UV post-cure"),
                       cte=(47, "formlabs-rigid10k", "um/(m K), 0-150 C, UV post-cure (ASTM E831)")),
+    # ---------------------------------------------------------- jetting
+    # PolyJet (material jetting): rigid and rubber-like photopolymers jetted
+    # and UV-cured in the same layers; interface_library.py has their bond.
+    # The datasheets give ranges; the cards take the low end.
+    "vero": _c("rigid PolyJet photopolymer (values from Stratasys Vero / Rigid Opaque, low end of the "
+               "family's ranges)", ("jetting",),
+               E=(2000, "stratasys-vero", "modulus of elasticity, ASTM D638 (range 2000-3000)"),
+               nu=(0.38, "estimate", "acrylate photopolymer, as resin"),
+               strength=(50, "stratasys-vero", "tensile strength, ASTM D638 (range 50-65)"),
+               density=(1.17, "stratasys-vero", "polymerized density (range 1.17-1.18)"),
+               elongation=(10, "stratasys-vero", "% at break, ASTM D638 (range 10-25)"),
+               tg=(52, "stratasys-vero", "DMA (range 52-54)"),
+               hdt=(45, "stratasys-vero", "ASTM D648, 0.45 MPa (range 45-50)"),
+               hdt18=(45, "stratasys-vero", "ASTM D648, 1.82 MPa (range 45-50)"),
+               conductivity=(0.18, "estimate", "W/(m K), as other cured acrylates")),
+    "agilus30": _c("rubber-like PolyJet photopolymer, Shore 30A (values from Stratasys Agilus30): a linear "
+                   "analysis is a rough estimate past a few percent strain; run verify_nonlinear", ("jetting",),
+                   E=(1.1, "estimate", "the TDS gives none; Gent's Shore A relation at 30A gives ~1.1 MPa "
+                      "(initial tangent modulus)"),
+                   nu=(0.45, "estimate", "elastomers are nearly incompressible; 0.45 keeps the linear solve "
+                       "well conditioned"),
+                   strength=(2.4, "stratasys-agilus30", "tensile strength, ASTM D412, Black/Translucent "
+                             "(range 2.4-3.1; White 2.1-2.6)"),
+                   density=(1.14, "stratasys-agilus30", "polymerized density, ASTM D792 (range 1.14-1.15)"),
+                   elongation=(220, "stratasys-agilus30", "% at break, ASTM D412, Black/Translucent "
+                               "(range 220-270; White 185-230)"),
+                   hardness=(30, "stratasys-agilus30", "Shore A, ASTM D2240 (range 30-35)")),
     # ------------------------------------------------------------- LPBF
     "alsi10mg": _c("LPBF AlSi10Mg, as built (values from AddUp)", ("lpbf",),
                    E=(72000, "addup-alsi10mg", "modulus XY, as built (Z 71 GPa)"),

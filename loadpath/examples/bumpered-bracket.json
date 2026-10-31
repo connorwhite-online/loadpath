@@ -1,0 +1,33 @@
+{
+  "name": "bumpered-bracket",
+  "description": "The PETG shelf bracket with a bumper: two M5 screws into the wall, 10 kg of shelf load with a factor of 3, and a knock on the bracket's nose (0.2 J, a 1 kg tool swung at 0.63 m/s) that must stop under 150 N. Printed on a two-material FDM printer (Bambu AMS) in PETG and TPU 95A: the optimizer chooses where each goes. Shows multiMaterial, a knock requirement and interface strength.",
+  "designSpace": [{"type": "box", "min": [0, 0, -15], "max": [100, 80, 15]}],
+  "fasteners": [
+    {"id": "upper", "size": "M5", "seat": [6, 65, 0], "direction": "-x", "grip": 6, "end": "face"},
+    {"id": "lower", "size": "M5", "seat": [6, 15, 0], "direction": "-x", "grip": 6, "end": "face"}
+  ],
+  "preserve": [
+    {"id": "shelf-pad", "shape": {"type": "box", "min": [60, 76, -15], "max": [96, 80, 15]}},
+    {"id": "nose", "shape": {"type": "box", "min": [97, 40, -15], "max": [100, 80, 15]}}
+  ],
+  "supports": [
+    {"region": "upper-bore", "fix": "yz"},
+    {"region": "lower-bore", "fix": "yz"},
+    {"shape": {"type": "box", "min": [0, 0, -15], "max": [1, 80, 15]}, "fix": "x"}
+  ],
+  "loadCases": [
+    {"name": "shelf", "loads": [{"region": "shelf-pad", "force": [0, -100, 0]}]},
+    {"name": "pull", "loads": [{"region": "shelf-pad", "force": [0, -40, 15]}]},
+    {"name": "knock", "loads": [{"region": "nose", "force": [-100, 0, 0]}]}
+  ],
+  "process": {"type": "fdm", "buildDirection": "+z"},
+  "multiMaterial": {
+    "materials": ["petg", "tpu"],
+    "assign": [{"region": "shelf-pad", "material": "petg"}],
+    "requirements": [{"case": "knock", "knock": {"energy": 0.2, "maxForce": 150}}],
+    "export": {"slicer": "all"}
+  },
+  "goal": {"volumeFraction": 0.2, "safetyFactor": 3.0},
+  "minMember": 4.0,
+  "resolution": {"maxElements": 20000}
+}

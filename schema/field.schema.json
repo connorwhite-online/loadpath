@@ -144,7 +144,7 @@
       "anyOf": [
         {
           "type": "string",
-          "description": "A name: 316l, abs, alsi10mg, asa, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
+          "description": "A name: 316l, abs, agilus30, alsi10mg, asa, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
         },
         {
           "type": "object",
@@ -202,6 +202,289 @@
         }
       ],
       "description": "Reports the mass."
+    },
+    "materials": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "material"
+        ],
+        "additionalProperties": false,
+        "description": "One material body of a field graph (fields.material_bodies): the part's points inside `solid` (default the whole part) where the `where` field is above `above` and below `below`, less what earlier bodies took.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Names the body's STL (<name>-<body>.stl) and its 3MF part."
+          },
+          "material": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "A name: 316l, abs, agilus30, alsi10mg, asa, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
+                  },
+                  {
+                    "type": "object",
+                    "description": "A custom material: E (MPa), nu, strength (MPa), density (g/cm\u00b3); or \"base\": a library name and only the values that differ. EZ and strengthZ are across-layer values, used when the study's process is the one named in \"measured\".",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "base": {
+                        "type": "string"
+                      },
+                      "E": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "nu": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 0.4999
+                      },
+                      "strength": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "density": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "EZ": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "strengthZ": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "measured": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "x-requireOne": [
+                      [
+                        "E",
+                        "strength",
+                        "density"
+                      ],
+                      [
+                        "base"
+                      ]
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "A name: 316l, abs, agilus30, alsi10mg, asa, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
+                    },
+                    {
+                      "type": "object",
+                      "description": "A custom material: E (MPa), nu, strength (MPa), density (g/cm\u00b3); or \"base\": a library name and only the values that differ. EZ and strengthZ are across-layer values, used when the study's process is the one named in \"measured\".",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "base": {
+                          "type": "string"
+                        },
+                        "E": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "nu": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 0.4999
+                        },
+                        "strength": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "density": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "EZ": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "strengthZ": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "measured": {
+                          "type": "string"
+                        },
+                        "note": {
+                          "type": "string"
+                        }
+                      },
+                      "x-requireOne": [
+                        [
+                          "E",
+                          "strength",
+                          "density"
+                        ],
+                        [
+                          "base"
+                        ]
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            ],
+            "description": "The body's material, or with `mix` the pair [A, B] it blends."
+          },
+          "solid": {
+            "title": "a number, a node name or a node object",
+            "description": "solid node the body is cut from (default the output)",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "description": "a node name"
+              },
+              {
+                "$ref": "#/$defs/node"
+              }
+            ]
+          },
+          "where": {
+            "title": "a number, a node name or a node object",
+            "description": "scalar field that picks the body's points inside `solid` (a remapped distance, a `result` stress)",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "description": "a node name"
+              },
+              {
+                "$ref": "#/$defs/node"
+              }
+            ]
+          },
+          "above": {
+            "title": "a number, a node name or a node object",
+            "description": "the body is where `where` > this (a number or a field)",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "description": "a node name"
+              },
+              {
+                "$ref": "#/$defs/node"
+              }
+            ]
+          },
+          "below": {
+            "title": "a number, a node name or a node object",
+            "description": "the body is where `where` < this (a number or a field)",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "description": "a node name"
+              },
+              {
+                "$ref": "#/$defs/node"
+              }
+            ]
+          },
+          "mix": {
+            "title": "a number, a node name or a node object",
+            "description": "0..1, the fraction of material B (material[1]) against A at each point: a graded blend for multi-material jetting, no hard partition. Writes a voxel print job (voxelprint.py) and weighs the body by the blend.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "description": "a node name"
+              },
+              {
+                "$ref": "#/$defs/node"
+              }
+            ]
+          },
+          "voxel": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "a mix body's voxel job",
+            "properties": {
+              "pitch": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "mm, the fraction grid (default the mesh pitch)"
+              },
+              "printer": {
+                "type": "string",
+                "description": "voxelprint printer (default j850)"
+              },
+              "materials": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array"
+                    },
+                    {
+                      "type": "object"
+                    }
+                  ]
+                },
+                "description": "printer resins for A and B (default from the cards: vero -> VeroCyan, agilus30 -> Agilus30Blk)"
+              },
+              "maxLayers": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "write only this many layers (previews)"
+              }
+            }
+          },
+          "extruder": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "FDM tool for the 3MF (default: one per distinct material, in order)"
+          },
+          "color": {
+            "type": "string",
+            "description": "#RRGGBB in the 3MF (default by material)"
+          }
+        }
+      },
+      "description": "Multi-material: split the output into material bodies, in precedence order (an earlier body wins where regions overlap, so bodies never overlap and together they are the part). Each body is a solid node's share of the part, a field threshold's (where/above/below: TPU where a distance or a stress says), or both; a body with neither takes what is left. Writes <name>-<body>.stl per body (sharing their interfaces exactly) and a multi-material <name>.3mf; the report gives each body's volume and mass and each interface's area."
     },
     "minWall": {
       "type": "number",
@@ -527,6 +810,7 @@
             "sla",
             "dlp",
             "volumetric",
+            "jetting",
             "lpbf"
           ]
         },
@@ -541,6 +825,7 @@
                 "sla",
                 "dlp",
                 "volumetric",
+                "jetting",
                 "lpbf"
               ]
             },

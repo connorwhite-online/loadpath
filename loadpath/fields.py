@@ -532,6 +532,9 @@ def _smin(a, b, k):
 
 # ---- groups: reusable sub-graphs ---------------------------------------------------
 
+# a material body's field keys (FieldGraph._material_bodies)
+_BODY_KEYS = ("solid", "where", "above", "below", "mix")
+
 _REF_KEYS = ("input", "value", "thickness", "distance", "blend", "cell", "density", "offset")
 
 
@@ -664,9 +667,11 @@ class FieldGraph:
         self.output = doc.get("output") or list(doc["nodes"])[-1]
         if self.output not in self.nodes:
             raise ValueError(f"output {self.output!r} is not a node (have {', '.join(doc['nodes'])})")
+        self.part_node = self.output     # the output as written (drains move `output` on)
         self._built = {}
         self.plan = None             # the sharp CSG plan of the last mesh(), when it had one
         self.analyses = {}          # verify reports behind `result` nodes that ran a study
+        self.bodies = self._material_bodies(doc.get("materials"))
         self._check_refs()
 
     # -- construction --
@@ -724,6 +729,48 @@ class FieldGraph:
             visit(n, [])
 
     _FIELD_KEYS = ("input", "value", "thickness", "distance", "blend", "cell", "density", "offset")
+
+    def _material_bodies(self, spec):
+        """The graph's `materials`: [{name, material, solid, where, above,
+        below, mix, extruder, color}], each field key resolved to a node name
+        or a number (inline nodes get names materials.<body>.<key>#n), in
+        precedence order (see material_bodies)."""
+        if spec is None:
+            return []
+        if not isinstance(spec, list) or not spec:
+            raise ValueError("materials must be a non-empty list of bodies")
+        out, seen = [], set()
+        for i, b in enumerate(spec):
+            if not isinstance(b, dict):
+                raise ValueError(f"materials[{i}] must be an object")
+            name = b.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"materials[{i}] needs a 'name'")
+            if name in seen:
+                raise ValueError(f"materials: two bodies are called {name!r}")
+            seen.add(name)
+            mat = b.get("material")
+            if "mix" in b:
+                if not (isinstance(mat, list) and len(mat) == 2):
+                    raise ValueError(f"material body {name!r}: a mix body's material is a pair [A, B] "
+                                     "(mix 0 is all A, 1 all B)")
+            elif mat is None or isinstance(mat, list):
+                raise ValueError(f"material body {name!r}: needs one 'material' (a pair only with 'mix')")
+            if "where" in b and "above" not in b and "below" not in b:
+                raise ValueError(f"material body {name!r}: 'where' needs 'above' and/or 'below'")
+            if ("above" in b or "below" in b) and "where" not in b:
+                raise ValueError(f"material body {name!r}: 'above'/'below' threshold the 'where' field; "
+                                 "give one")
+            owner = f"materials.{name}"
+            body = {"name": name, "material": mat, "index": i}
+            for key in _BODY_KEYS:
+                if key in b:
+                    body[key] = self._ref(b[key], owner, key)
+            for key in ("extruder", "color", "voxel"):
+                if key in b:
+                    body[key] = b[key]
+            out.append(body)
+        return out
 
     def _deps(self, nd):
         s = nd.spec
@@ -1711,6 +1758,287 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
     return V
 
 
+# ---- material bodies -------------------------------------------------------------
+
+class _Cutter:
+    """A material body's partition region (its solid, if it is not the
+    part, and its where/above/below thresholds, intersected), carried on
+    outside the part so its surface never runs along the part's own: inside
+    the part within `eps` of its surface, and outside it, the region reads
+    its value at the point `eps` deep along the part's normal (as sharp.py's
+    extended field), and from 3 * eps outside it is solid. Only where the
+    region's own surface crosses the part's interior does it draw one, and
+    that is the interface. Clipped to `box` so it is closed."""
+
+    def __init__(self, g, terms, part, eps, box):
+        self.g, self.terms, self.part = g, terms, part
+        self.eps = float(eps)
+        self.lo, self.hi = (np.asarray(b, float) for b in box)
+
+    def raw(self, P):
+        vals = []
+        for kind, a, b in self.terms:
+            if kind == "solid":
+                vals.append(self.g.evaluate(P, a))
+            else:
+                w = self.g.evaluate(P, a)
+                t = b if isinstance(b, float) else self.g.evaluate(P, b)
+                vals.append(t - w if kind == "above" else w - t)
+        return np.max(vals, axis=0)
+
+    def __call__(self, P):
+        P = np.asarray(P, float).reshape(-1, 3)
+        u = self.part(P)
+        e, far = self.eps, 3 * self.eps
+        # far outside: solid from `far` out, so the crease where the region's
+        # surface meets that (rounded over a pitch by the mesher) stays clear of the part
+        out = far - u
+        near = u > -e
+        mid = near & (u < far + e)
+        inner = ~near
+        if inner.any():
+            out[inner] = self.raw(P[inner])
+        if mid.any():
+            Pn = P[mid]
+            h = 1e-3
+            grad = np.stack([(self.part(Pn + h * e) - self.part(Pn - h * e)) / (2 * h) for e in np.eye(3)], axis=1)
+            nrm = grad / np.maximum(np.linalg.norm(grad, axis=1, keepdims=True), 1e-12)
+            Q = Pn - (u[mid] + self.eps)[:, None] * nrm
+            v = np.maximum(self.raw(Q), -e)
+            out[mid] = np.minimum(v, far - u[mid])
+        if inner.any():
+            out[inner] = np.maximum(out[inner], -self.eps)
+        box = np.max(np.concatenate([self.lo - P, P - self.hi], axis=1), axis=1)
+        return np.maximum(out, box)
+
+
+def _manifold(mesh):
+    from .shapes import manifold_from_trimesh
+
+    try:
+        return manifold_from_trimesh(mesh)
+    except ValueError:
+        import trimesh
+
+        m = mesh.copy()
+        trimesh.repair.fix_winding(m)
+        trimesh.repair.fill_holes(m)
+        return manifold_from_trimesh(m)
+
+
+def _body_terms(g, b):
+    """[(kind, a, b)] that bound body `b` inside the part, or [] when it
+    takes all that the bodies before it left."""
+    terms = []
+    sol = b.get("solid")
+    if isinstance(sol, float):
+        raise ValueError(f"material body {b['name']!r}: solid must be a solid node, not a number")
+    if sol is not None and sol not in (g.output, g.part_node):
+        terms.append(("solid", sol, None))
+    for key in ("above", "below"):
+        if key in b:
+            terms.append((key, b["where"], b[key]))
+    if terms and isinstance(terms[0][1], float):
+        raise ValueError(f"material body {b['name']!r}: where must be a field, not a number")
+    return terms
+
+
+def material_bodies(g, part, progress=None):
+    """Split the meshed part into the graph's material bodies (g.bodies),
+    earlier bodies first: body i is what of the part is inside its region
+    and not in an earlier body's, so bodies never overlap and together they
+    are the part (less `rest`, what no body claimed).
+
+    The part is meshed once (it keeps its sharp edges); each region is
+    meshed from its field (_Cutter: carried on outside the part, so its
+    surface is only the interface) and manifold3d splits what is left of
+    the part by it: one exact boolean gives both sides, so the two bodies
+    on an interface share that surface exactly, and each is watertight.
+    Returns ([(body, trimesh or None)], rest manifold, stats)."""
+    import manifold3d as m3d
+
+    from .shapes import trimesh_from_manifold
+
+    pitch = float(part.metadata.get("pitch") or (np.prod(part.extents) / 4e6) ** (1 / 3))
+    lo, hi = np.asarray(part.bounds[0], float), np.asarray(part.bounds[1], float)
+    box = (lo - 3 * pitch, hi + 3 * pitch)
+    rest = _manifold(part)
+    pf = g.field()
+    out, stats = [], {"pitch": pitch, "regions": 0}
+    for b in g.bodies:
+        terms = _body_terms(g, b)
+        if rest.is_empty():
+            out.append((b, None))
+            continue
+        if not terms:
+            piece, rest = rest, m3d.Manifold()
+        else:
+            cut = _Cutter(g, terms, pf, pitch, box)
+            dims = np.ceil((box[1] - box[0]) / pitch + 5)
+            # thresholds of an arbitrary field (a stress) have no Lipschitz
+            # bound for the narrow band to lean on: sample densely while it fits
+            sparse = float(np.prod(dims)) > 16e6
+            cm = field_mesh(cut, box[0] - pitch, box[1] + pitch, pitch=pitch, project=3, sparse=sparse,
+                            progress=progress)
+            stats["regions"] += 1
+            piece, rest = rest.split(_manifold(cm))
+        out.append((b, None if piece.is_empty() else trimesh_from_manifold(piece)))
+    return out, rest, stats
+
+
+def _mix_job(g, b, mesh, mats, out_dir, stem, opts):
+    """A `mix` body as a voxel jetting job: the fraction of material B on a
+    voxel grid of the body (voxelprint.export_voxel_slices) and the mass it
+    gives. Returns (mix report, mean density g/cm^3)."""
+    from .voxels import mesh_solid
+
+    pitch = float(opts.get("pitch") or mesh.metadata.get("pitch") or 0.25)
+    occ, origin, _ = mesh_solid(mesh, pitch, pad=0)
+    dims = occ.shape
+    idx = np.argwhere(occ)
+    frac = np.zeros(dims, np.float32)
+    if len(idx):
+        P = origin + idx * pitch
+        mix = b["mix"]
+        f = np.full(len(P), mix) if isinstance(mix, float) else g.evaluate(P, mix)
+        frac[tuple(idx.T)] = np.clip(f, 0.0, 1.0)
+    rho = np.array([m.density for m in mats])
+    mean_f = float(frac[occ].mean()) if occ.any() else 0.0
+    rep = {"materials": [m.name for m in mats], "voxelPitch": pitch, "voxels": int(occ.sum()),
+           "meanFraction": mean_f, "fractionRange": [float(frac[occ].min()), float(frac[occ].max())]
+           if occ.any() else [0.0, 0.0]}
+    if out_dir:
+        try:
+            from .voxelprint import export_voxel_slices
+        except ImportError as exc:
+            rep["voxelJob"] = {"skipped": f"loadpath.voxelprint.export_voxel_slices is not available ({exc})"}
+        else:
+            try:
+                job = export_voxel_slices(os.path.join(out_dir, f"{stem}-voxels"), frac, origin - pitch / 2, pitch,
+                                          _jetting_names(mats, opts), printer=opts.get("printer", "j850"),
+                                          solid=occ, max_layers=opts.get("maxLayers"))
+                if isinstance(job, dict):
+                    files = job.get("files") or []
+                    job = {**{k: v for k, v in job.items() if k != "files"}, "fileCount": len(files)}
+                rep["voxelJob"] = {"dir": os.path.join(out_dir, f"{stem}-voxels"),
+                                   **(job if isinstance(job, dict) else {"result": str(job)})}
+            except Exception as exc:  # noqa: BLE001 - the meshes are the deliverable
+                rep["voxelJob"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return rep, float(rho[0] * (1 - mean_f) + rho[1] * mean_f)
+
+
+# loadpath's jetting cards as GrabCAD Voxel Print resins; other materials get a colour each
+_JETTING = {"vero": "VeroCyan", "agilus30": "Agilus30Blk", "resin": "VeroPureWht"}
+_PALETTE = ("#005a9e", "#f0f0f0", "#a62162", "#c8bd03", "#284d6c", "#1a1a1d")
+
+
+def _jetting_names(mats, opts):
+    if opts.get("materials"):
+        return list(opts["materials"])
+    from .voxelprint import STRATASYS_COLORS
+
+    out = []
+    for i, m in enumerate(mats):
+        name = _JETTING.get(m.name, m.name)
+        out.append(name if name.lower() in STRATASYS_COLORS else (name, _PALETTE[i % len(_PALETTE)]))
+    return out
+
+
+def _safe(name):
+    import re
+
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-") or "body"
+
+
+def _material_report(g, doc, part, out_dir, stem, progress):
+    """run_field's `materials`: each body's mesh, volume and mass, the
+    interface area between each pair, the checks that they tile the part,
+    one STL per body and a multi-material 3MF."""
+    from .materials import material_from_spec
+    from .narrowband import signed_volume, watertight
+
+    pieces, rest, stats = material_bodies(g, part, progress=progress)
+    V0 = signed_volume(np.asarray(part.vertices), np.asarray(part.faces))
+    bodies, mans, extruders = [], [], {}
+    for b, mesh in pieces:
+        mix = "mix" in b
+        mats = [material_from_spec(m) for m in (b["material"] if mix else [b["material"]])]
+        key = "+".join(m.name for m in mats)
+        ext = b.get("extruder") or extruders.setdefault(key, len(extruders) + 1)
+        r = {"name": b["name"], "material": key if not mix else [m.name for m in mats], "extruder": ext}
+        if mesh is None:
+            r.update(volume=0.0, mass=0.0, empty=True)
+            bodies.append((b, r, None, mats))
+            mans.append(None)
+            continue
+        Vb, Fb = np.asarray(mesh.vertices), np.asarray(mesh.faces)
+        r.update(volume=signed_volume(Vb, Fb), area=float(mesh.area), faces=int(len(Fb)),
+                 watertight=watertight(Fb, len(Vb)))
+        r["share"] = r["volume"] / V0 if V0 > 0 else 0.0
+        rho = mats[0].density
+        if mix:
+            r["mix"], rho = _mix_job(g, b, mesh, mats, out_dir, f"{stem}-{_safe(b['name'])}", b.get("voxel") or {})
+        r["density"] = rho
+        r["mass"] = r["volume"] * rho / 1000.0
+        bodies.append((b, r, mesh, mats))
+        mans.append(_manifold(mesh))
+    inter, overlap = [], 0.0
+    for i in range(len(mans)):
+        for j in range(i + 1, len(mans)):
+            if mans[i] is None or mans[j] is None:
+                continue
+            both = mans[i] + mans[j]
+            area = 0.5 * (mans[i].surface_area() + mans[j].surface_area() - both.surface_area())
+            ov = (mans[i] ^ mans[j]).volume()
+            overlap = max(overlap, ov)
+            if area > 1e-6:
+                inter.append({"bodies": [bodies[i][1]["name"], bodies[j][1]["name"]], "area": float(area)})
+    total = sum(r["volume"] for _, r, _, _ in bodies)
+    left = 0.0 if rest.is_empty() else float(rest.volume())
+    rep = {"bodies": [r for _, r, _, _ in bodies], "interfaces": inter,
+           "check": {"partVolume": V0, "bodyVolume": total, "unassignedVolume": left,
+                     "volumeError": (total + left - V0) / V0 if V0 else 0.0, "maxOverlap": float(overlap),
+                     "watertight": all(r.get("watertight", True) for _, r, _, _ in bodies)},
+           "regionsMeshed": stats["regions"], "mass": sum(r["mass"] for _, r, _, _ in bodies)}
+    warn = []
+    if left > 1e-4 * max(V0, 1e-9):
+        warn.append(f"{left:.1f} mm^3 of the part is in no material body: end with a body that has no "
+                    "solid or where, to take the rest")
+    warn += [f"material body {r['name']!r} is empty (earlier bodies took all of its region)"
+             for _, r, _, _ in bodies if r.get("empty")]
+    if warn:
+        rep["warnings"] = warn
+    if out_dir:
+        for _, r, mesh, _ in bodies:
+            if mesh is not None:
+                path = os.path.join(out_dir, f"{stem}-{_safe(r['name'])}.stl")
+                mesh.export(path)
+                r["stl"] = path
+        try:
+            from .threemf import write_multimaterial_3mf
+        except ImportError as exc:
+            rep["3mf"] = {"skipped": f"loadpath.threemf.write_multimaterial_3mf is not available ({exc})"}
+        else:
+            spec = []
+            for b, r, mesh, mats in bodies:
+                if mesh is None:
+                    continue
+                d = {"name": r["name"], "mesh": mesh, "material": mats[0].name, "extruder": r["extruder"]}
+                if "color" in b:
+                    d["color"] = b["color"]
+                spec.append(d)
+            path = os.path.join(out_dir, f"{stem}.3mf")
+            try:
+                res = write_multimaterial_3mf(path, spec, direction=doc.get("build"), name=stem,
+                                              process=doc.get("process"))
+                rep["3mf"] = path
+                if isinstance(res, dict):
+                    rep["3mfReport"] = res
+            except Exception as exc:  # noqa: BLE001 - the STLs are written; say why the 3MF is not
+                rep["3mf"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return rep
+
+
 # ---- the job ---------------------------------------------------------------------
 
 def node_doc(doc, node):
@@ -1821,6 +2149,11 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
             rep["printability"] = d
         except Exception as exc:  # noqa: BLE001 - a check never fails the job
             rep["printability"] = {"error": str(exc)}
+    if g.bodies and node is None:
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        rep["materials"] = _material_report(g, doc, mesh, out_dir, rep["name"], progress)
+        rep["mass"] = rep["materials"]["mass"]     # the bodies' own materials, not `material`
     rep["seconds"] = round(time.time() - t0, 1)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)

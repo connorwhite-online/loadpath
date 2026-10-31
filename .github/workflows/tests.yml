@@ -28,4 +28,4 @@ jobs:
       - run: python tests/test_durability.py
       - run: python tests/test_calibration.py
       - run: python tests/test_impact.py
-      - run: pip install pytest && python -m pytest -q tests/test_materials.py
+      - run: pip install pytest && python -m pytest -q tests/test_materials.py tests/test_interfaces.py tests/test_multimat.py tests/test_threemf_multi.py tests/test_voxelprint.py tests/test_field_materials.py

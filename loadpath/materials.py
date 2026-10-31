@@ -80,6 +80,7 @@ _ALIASES = {
     "pa 11": "pa11", "pa-11": "pa11", "pa12gb": "pa12-gb", "glass nylon": "pa12-gb",
     "tpu 88a": "tpu88a", "tpu-88a": "tpu88a", "sla": "resin", "standard resin": "resin", "tough resin": "resin-tough",
     "rigid resin": "resin-rigid",
+    "verowhite": "vero", "vero white": "vero", "agilus": "agilus30", "agilus 30": "agilus30",
 }
 
 
