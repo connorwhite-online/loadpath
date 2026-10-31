@@ -46,6 +46,7 @@ SKIP_FAILED = False
 ASPECT = 0.1         # least 2*area / longest edge^2 of a patch (equilateral 0.87)
 MAX_EDGE = np.inf     # mm: longest organic patch edge
 LEAN = 0.5           # least cosine between a patch's plane and the surface normal at its corners
+ISLAND = 1.0         # mm^2: label regions smaller than this, inside one other region, join it
 TURN = 0.5           # least cosine between a coarsened face's normal and its old one
 
 
@@ -198,6 +199,57 @@ def creases(mesh, lab, O, angle=CREASE):
     _, ids = np.unique(comp[org], return_inverse=True)
     out[org] = O + ids
     return out
+
+
+def islands(mesh, lab, area=ISLAND, surfs=None, tol=0.02):
+    """Small label regions (under `area` mm^2) wholly surrounded by one other
+    label take that label: a sliver of organic faces inside a flat face (its
+    normals too noisy for label()) would cut a slit into the plane."""
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+
+    A = np.asarray(mesh.face_adjacency)
+    fa = np.asarray(mesh.area_faces)
+    n = len(lab)
+    for _ in range(3):
+        same = lab[A[:, 0]] == lab[A[:, 1]]
+        G = sp.coo_matrix((np.ones(same.sum()), (A[same, 0], A[same, 1])), shape=(n, n))
+        nc, comp = connected_components(G, directed=False)
+        ca = np.bincount(comp, fa, minlength=nc)
+        small = ca < area
+        if not small.any():
+            break
+        d = ~same
+        a, b = A[d, 0], A[d, 1]
+        # neighbour labels of each small component
+        cs = np.r_[comp[a], comp[b]]
+        nb = np.r_[lab[b], lab[a]]
+        m = small[cs]
+        cs, nb = cs[m], nb[m]
+        if not len(cs):
+            break
+        K = int(lab.max()) + 1
+        u = np.unique(cs.astype(np.int64) * K + nb)
+        uc, ul = u // K, u % K
+        cnt = np.bincount(uc, minlength=nc)
+        one = np.full(nc, -1)
+        one[uc[cnt[uc] == 1]] = ul[cnt[uc] == 1]
+        flip = small & (one >= 0)
+        if surfs:                    # onto an exact surface only if the island lies on it
+            V = np.asarray(mesh.vertices, float)
+            F = np.asarray(mesh.faces)
+            for c in np.flatnonzero(flip):
+                t = int(one[c])
+                if t in surfs:
+                    P = V[F[comp == c].ravel()]
+                    if surfs[t].dist(P).max() > tol:
+                        flip[c] = False
+        if not flip.any():
+            break
+        f = flip[comp]
+        lab = lab.copy()
+        lab[f] = one[comp[f]]
+    return lab
 
 
 def _vertex_sets(F, lab, n):
@@ -429,8 +481,11 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
         if lk < len(curved):
             curved[lk] = sf.kind != "plane"
     O = (max(geo) if geo else 0) + 1
-    lab = creases(mesh, lab, O)
+    lab = islands(mesh, creases(mesh, lab, O))
     CV, vid, F, flab = coarsen(mesh, lab, patches, curved, geo, O)
+    # a coarse patch can end up an island inside another face (a sliver of the
+    # body on a flat face): it joins that face
+    flab = islands(trimesh.Trimesh(CV, F, process=False), flab, ISLAND, geo)
     V = np.asarray(mesh.vertices, float)
     t1 = time.time()
 
@@ -504,7 +559,7 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
         return P
 
     # every coarse edge: a polyline over the surface, and its midpoint by length
-    poly, split = {}, {}
+    poly, split, fl_edge = {}, {}, {}
     cfn = np.cross(CV[F[:, 1]] - CV[F[:, 0]], CV[F[:, 2]] - CV[F[:, 0]])
     cfn /= np.maximum(np.linalg.norm(cfn, axis=1, keepdims=True), 1e-300)
     for (a, b), la, lb, f0e, f1e in zip(CE, flab[cf0], flab[cf1], cf0, cf1):
@@ -529,37 +584,89 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
                 raise RuntimeError("no surface path for a patch edge")
             P = V[pth]
         poly[(a, b)] = P
-        split[(a, b)] = la >= O or lb >= O        # organic on a side: two half edges
+        split[(a, b)] = False                     # set below: next to a three-quad triangle, two half edges
+        fl_edge[(a, b)] = la >= O or lb >= O      # organic on a side: a Bezier edge
+
+    D = N - 1                                       # patch and edge degree
+    Bm = _bernstein(D)                              # Bm[i, j]: j-th Bernstein at i / D
+    Bi = np.linalg.inv(Bm)                          # points at even parameters -> poles
+    Bint = np.linalg.inv(Bm[1:-1, 1:-1])
+
+    # organic triangles pair up into quads (one patch for two triangles);
+    # the rest split into three quads each
+    pair = _pairs(CV, F, flab, O)
+    single = np.ones(len(F), bool)
+    single[[i for i, j in pair]] = False
+    single[[j for i, j in pair]] = False
+    single &= flab >= O
+    for i in np.flatnonzero(single):
+        for k in range(3):
+            a, b = int(F[i, k]), int(F[i, (k + 1) % 3])
+            split[(min(a, b), max(a, b))] = True
+
+    poles = {}
+
+    def curve(a, b):
+        """Poles of coarse edge (a, b), from a to b."""
+        e = (min(a, b), max(a, b))
+        if e not in poles:
+            poles[e] = Bi @ resample(poly[e], N)
+        return poles[e] if a < b else poles[e][::-1]
+
+    def casteljau(C):
+        """Poles of the two halves (t <= 1/2, t >= 1/2) of a Bezier curve."""
+        L, R = [C[0]], [C[-1]]
+        W = C.copy()
+        for _ in range(D):
+            W = 0.5 * (W[:-1] + W[1:])
+            L.append(W[0])
+            R.append(W[-1])
+        return np.array(L), np.array(R[::-1])
 
     def half(a, b):
-        """Points from corner a to the midpoint of edge (a, b)."""
-        P = poly[(min(a, b), max(a, b))]
-        if a > b:
-            P = P[::-1]
-        d = np.r_[0, np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))]
-        m = 0.5 * d[-1]
-        i = int(np.searchsorted(d, m))
-        w = (m - d[i - 1]) / max(d[i] - d[i - 1], 1e-300)
-        M = P[i - 1] * (1 - w) + P[i] * w
-        return resample(np.vstack([P[:i], M]), N)
+        """Poles from corner a to the midpoint of edge (a, b)."""
+        return casteljau(curve(a, b))[0]
 
-    Bi = np.linalg.inv(_bernstein(N - 1))           # points at even parameters -> Bezier poles
+    def value(C, t):
+        from math import comb
 
-    def bezier_curve(P):
+        t = np.atleast_1d(t)
+        B = np.array([[comb(D, j) * x ** j * (1 - x) ** (D - j) for j in range(D + 1)] for x in t])
+        return B @ C
+
+    def make_curve(C):
         from OCP.Geom import Geom_BezierCurve
         from OCP.OCP.collections import Array1_gp_Pnt
 
-        C = Bi @ P
         arr = Array1_gp_Pnt(1, len(C))
         for j, c in enumerate(C):
             arr.SetValue(j + 1, _pnt(c))
         return Geom_BezierCurve(arr)
 
-    def bezier_face(Q):
+    def patch(bottom, top, left, right, nrm):
+        """A Bezier patch from its four sides' poles (bottom, top along u;
+        left, right along v; corners shared), its inside through the surface:
+        a Coons blend of the sides pulled onto the mesh, interpolated."""
         from OCP.Geom import Geom_BezierSurface
         from OCP.OCP.collections import Array2_gp_Pnt
 
-        C = np.einsum("ui,ijk,vj->uvk", Bi, Q, Bi)
+        C = np.zeros((N, N, 3))
+        C[:, 0], C[:, -1], C[0, :], C[-1, :] = bottom, top, left, right
+        sb, st_, sl, sr = (Bm @ x for x in (bottom, top, left, right))
+        U, W = np.meshgrid(u, u, indexing="ij")
+        X = ((1 - W)[..., None] * sb[:, None] + W[..., None] * st_[:, None]
+             + (1 - U)[..., None] * sl[None] + U[..., None] * sr[None]
+             - ((1 - U) * (1 - W))[..., None] * sb[0] - (U * (1 - W))[..., None] * sb[-1]
+             - ((1 - U) * W)[..., None] * st_[0] - (U * W)[..., None] * st_[-1])
+        inner = X[1:-1, 1:-1].reshape(-1, 3)
+        X[1:-1, 1:-1] = pull(inner, np.repeat(nrm[None], len(inner), axis=0)).reshape(N - 2, N - 2, 3)
+        # interior poles so the patch passes through those points
+        Cb = C.copy()
+        Cb[1:-1, 1:-1] = 0.0
+        R = X[1:-1, 1:-1] - np.einsum("ia,abk,jb->ijk", Bm[1:-1], Cb, Bm[1:-1])
+        C[1:-1, 1:-1] = np.einsum("ia,abk,jb->ijk", Bint, R, Bint)
+        if DEBUG_Q is not None:
+            DEBUG_Q.append(np.einsum("ia,abk,jb->ijk", Bm, C, Bm))
         arr = Array2_gp_Pnt(1, N, 1, N)
         for i in range(N):
             for j in range(N):
@@ -570,9 +677,9 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
     surf_geom = {}
     sides = []
 
-    def edge(key, P):
+    def edge(key, C=None, P=None):
         if key not in edge_cache:
-            edge_cache[key] = BRepBuilderAPI_MakeEdge(bezier_curve(P) if len(P) == N else _fit(P, 1e-5)).Edge()
+            edge_cache[key] = BRepBuilderAPI_MakeEdge(make_curve(C) if C is not None else _fit(P, 1e-5)).Edge()
         return edge_cache[key]
 
     t2 = time.time()
@@ -589,74 +696,41 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
                 if split[e]:
                     loop.append((edge(("h", a, e), half(a, b)), False))
                     loop.append((edge(("h", b, e), half(b, a)), True))
+                elif fl_edge[e]:
+                    loop.append((edge(("e", e), curve(e[0], e[1])), a > b))
                 else:
-                    loop.append((edge(("e", e), poly[e]), a > b))
+                    loop.append((edge(("p", e), P=poly[e]), a > b))
             if int(lf) not in surf_geom:
                 surf_geom[int(lf)] = geo[int(lf)].geom()
-            xf = _exact_face(geo[int(lf)], surf_geom[int(lf)], loop, CV[f].mean(axis=0))
-            if DEBUG:
-                from OCP.BRepCheck import BRepCheck_Analyzer
-                from OCP.BRepGProp import BRepGProp
-                from OCP.GProp import GProp_GProps
-                gp = GProp_GProps()
-                BRepGProp.SurfaceProperties_s(xf, gp)
-                ta = 0.5 * np.linalg.norm(np.cross(CV[f[1]] - CV[f[0]], CV[f[2]] - CV[f[0]]))
-                if not BRepCheck_Analyzer(xf).IsValid() or abs(gp.Mass() - ta) > 0.2 * ta + 0.1:
-                    from OCP.ShapeAnalysis import ShapeAnalysis_Edge
-                    from OCP.ShapeFix import ShapeFix_Face as _SFF
-                    from OCP.TopExp import TopExp_Explorer as _TE
-                    from OCP.TopAbs import TopAbs_EDGE as _TAE
-                    from OCP.BRep import BRep_Tool as _BT
-                    sae = ShapeAnalysis_Edge(); ee = _TE(xf, _TAE); info = []
-                    while ee.More():
-                        e_ = TopoDS.Edge(ee.Current())
-                        mx = 0.0
-                        try:
-                            ok_, mx = sae.CheckSameParameter(e_, 0.0, 10)
-                        except Exception as ex_:
-                            ok_ = str(ex_)[:30]
-                        info.append((sae.HasPCurve(e_, xf), sae.CheckVerticesWithPCurve(e_, xf), round(_BT.Tolerance_s(e_), 4)))
-                        ee.Next()
-                    ff = _SFF(xf); ff.Perform()
-                    print("  edges", info, "fixed valid", BRepCheck_Analyzer(ff.Face()).IsValid())
-                    print("exact face", geo[int(lf)].kind, "valid", BRepCheck_Analyzer(xf).IsValid(), "area", round(gp.Mass(), 2),
-                          "tri", round(ta, 2), CV[f].round(2).tolist(), flush=True)
-            sew.Add(xf)
-            continue
-        T = CV[f]
-        n = np.cross(T[1] - T[0], T[2] - T[0])
+            sew.Add(_exact_face(geo[int(lf)], surf_geom[int(lf)], loop, CV[f].mean(axis=0)))
+    # pairs: one patch over the quad a, c, b, d (shared edge a-b, c and d the far corners)
+    for i, j in pair:
+        fi, fj = [int(x) for x in F[i]], [int(x) for x in F[j]]
+        a, b = sorted(set(fi) & set(fj))
+        c = (set(fi) - {a, b}).pop()
+        d = (set(fj) - {a, b}).pop()
+        n = cfn[i] + cfn[j]
         n /= max(np.linalg.norm(n), 1e-300)
+        # corners 00 = a, 10 = c, 01 = d, 11 = b
+        sew.Add(patch(curve(a, c), curve(d, b), curve(a, d), curve(c, b), n))
+        nq += 1
+    for i in np.flatnonzero(single):
+        f = [int(x) for x in F[i]]
+        T = CV[f]
+        n = cfn[i]
         H = {(x, y): half(x, y) for x in f for y in f if x != y}
         Mid = {(min(x, y), max(x, y)): H[(x, y)][-1] for (x, y) in H}
         Gc = pull(np.mean([*T, *Mid.values()], axis=0)[None], n[None])[0]
         spoke = {}
         for e, M in Mid.items():                 # centroid -> edge midpoint
             t = np.linspace(0, 1, 13)[:, None]
-            spoke[e] = resample(drape(Gc * (1 - t) + M * t, n), N)
+            spoke[e] = Bi @ resample(drape(Gc * (1 - t) + M * t, n), N)
         for k in range(3):
-            c, j, i = f[k], f[(k + 1) % 3], f[(k + 2) % 3]
-            e1, e2 = (min(c, j), max(c, j)), (min(c, i), max(c, i))
-            bottom = H[(c, j)]                   # c -> M(c, j)
-            left = H[(c, i)]                     # c -> M(c, i)
-            right = spoke[e1][::-1]              # M(c, j) -> G
-            top = spoke[e2][::-1]                # M(c, i) -> G
-            Q = np.zeros((N, N, 3))
-            Q[:, 0], Q[:, -1], Q[0, :], Q[-1, :] = bottom, top, left, right
-            # Coons blend of the four sides, then onto the surface
-            U, W = np.meshgrid(u, u, indexing="ij")
-            C = ((1 - W)[..., None] * bottom[:, None] + W[..., None] * top[:, None]
-                 + (1 - U)[..., None] * left[None] + U[..., None] * right[None]
-                 - ((1 - U) * (1 - W))[..., None] * Q[0, 0] - (U * (1 - W))[..., None] * Q[-1, 0]
-                 - ((1 - U) * W)[..., None] * Q[0, -1] - (U * W)[..., None] * Q[-1, -1])
-            inner = C[1:-1, 1:-1].reshape(-1, 3)
-            Q[1:-1, 1:-1] = pull(inner, np.repeat(n[None], len(inner), axis=0)).reshape(N - 2, N - 2, 3)
-            sew.Add(bezier_face(Q))
-            if DEBUG_Q is not None:
-                DEBUG_Q.append(Q.copy())
+            c, j, i2 = f[k], f[(k + 1) % 3], f[(k + 2) % 3]
+            e1, e2 = (min(c, j), max(c, j)), (min(c, i2), max(c, i2))
+            # corners 00 = c, 10 = M(c, j), 01 = M(c, i), 11 = G
+            sew.Add(patch(H[(c, j)], spoke[e2][::-1], H[(c, i2)], spoke[e1][::-1], n))
             nq += 1
-            if DEBUG:
-                for side, tag in ((Q[:, 0], "bottom"), (Q[:, -1], "top"), (Q[0, :], "left"), (Q[-1, :], "right")):
-                    sides.append((side.copy(), tag, k, tuple(f)))
     sew.Perform()
     t3 = time.time()
     ex = TopExp_Explorer(sew.SewedShape(), TopAbs_SHELL)
@@ -701,6 +775,18 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
     from OCP.BRepCheck import BRepCheck_Analyzer
 
     u = ShapeUpgrade_UnifySameDomain(solid, False, True, False)
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_BezierSurface
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+
+    fe = TopExp_Explorer(solid, TopAbs_FACE)          # patches stay patches: only exact faces merge
+    while fe.More():
+        if BRepAdaptor_Surface(TopoDS.Face(fe.Current())).GetType() == GeomAbs_BezierSurface:
+            ee = TopExp_Explorer(fe.Current(), TopAbs_EDGE)
+            while ee.More():
+                u.KeepShape(ee.Current())
+                ee.Next()
+        fe.Next()
     u.Build()
     merged = u.Shape()
     if not BRepCheck_Analyzer(merged).IsValid():
@@ -719,6 +805,38 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
            "seconds": {"coarsen": round(t1 - t0, 1), "edges": round(t2 - t1, 1), "faces": round(t3 - t2, 1),
                        "solid": round(time.time() - t3, 1)}}
     return solid, rep
+
+
+def _pairs(V, F, lab, O, cos_min=0.5, angle_max=160.0):
+    """Organic triangles matched in pairs across an edge inside one region,
+    best-shaped quads first: [(i, j)]. A pair must be convex, with corner
+    angles under `angle_max` degrees and the two normals within ~60 degrees."""
+    E, key, f0, f1 = _edge_faces(F)
+    ok = (lab[f0] == lab[f1]) & (lab[f0] >= O)
+    E, f0, f1 = E[ok], f0[ok], f1[ok]
+    n = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-300)
+    a, b = E[:, 0], E[:, 1]
+    c = F[f0].sum(axis=1) - a - b
+    d = F[f1].sum(axis=1) - a - b
+    Q = np.stack([V[a], V[c], V[b], V[d]], axis=1)          # around the quad
+    p = np.roll(Q, 1, axis=1) - Q
+    q = np.roll(Q, -1, axis=1) - Q
+    cosang = np.einsum("ikj,ikj->ik", p, q) / np.maximum(np.linalg.norm(p, axis=2) * np.linalg.norm(q, axis=2), 1e-300)
+    ang = np.degrees(np.arccos(np.clip(cosang, -1, 1)))
+    nn = n[f0] + n[f1]
+    turn = np.einsum("ikj,ij->ik", np.cross(q, p), nn)       # convex: every corner turns the same way
+    good = ((np.einsum("ij,ij->i", n[f0], n[f1]) > cos_min) & (ang.max(axis=1) < angle_max)
+            & ((turn > 0).all(axis=1) | (turn < 0).all(axis=1)))
+    score = np.abs(ang - 90.0).max(axis=1)
+    used = np.zeros(len(F), bool)
+    out = []
+    for k in np.flatnonzero(good)[np.argsort(score[good], kind="stable")]:
+        i, j = int(f0[k]), int(f1[k])
+        if not used[i] and not used[j]:
+            used[i] = used[j] = True
+            out.append((i, j))
+    return out
 
 
 def _uv(s, P, ref=None):
