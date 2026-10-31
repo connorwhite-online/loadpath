@@ -9,7 +9,7 @@ What it lowers: a study's cells, optimizer iterations and outcome-search runs
 (the evals' coarse tier, evals/run.py COARSE), a heat exchanger's grid and
 whole-exchanger simulation, a field graph's mesh pitch (and its drain search's)
 and the analysis behind its `result` nodes, `tune`'s analyses, `assembly`'s
-sampled poses, `verify`'s grid, `buildsim`'s voxels and a STEP export's facets. Numbers move (mass a few %, safety factor
+sampled poses, `verify`'s grid, and `buildsim`'s voxels. Numbers move (mass a few %, safety factor
 more on thin members): read a quick run for direction, run without it to print.
 """
 from __future__ import annotations
@@ -28,7 +28,6 @@ TUNE_EVALUATIONS = 6
 ASSEMBLY_SAMPLES = 150
 VERIFY_CELLS = 20_000  # `verify`'s analysis grid
 BUILDSIM_CELLS = 1_500  # `buildsim`'s part cells (default 60k; the plate adds as many again)
-STEP_FACES = 4_000     # organic facets in a STEP export (default 20k)
 
 
 def on() -> bool:
@@ -100,11 +99,6 @@ def assembly_samples(n: int) -> int:
 
 def verify_cells(n: int) -> int:
     return min(int(n), VERIFY_CELLS) if on() else n
-
-
-def step_faces(n: int) -> int:
-    """Organic facets in a STEP export (step.py)."""
-    return min(int(n), STEP_FACES) if on() else n
 
 
 def buildsim_cells(n: int) -> int:
