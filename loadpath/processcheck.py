@@ -136,7 +136,9 @@ def _walls(solid, pitch, origin, min_wall):
            "thinSpots": w.get("thinSpots", []), "toleranceMm": pitch,
            # judged on the 1st percentile with the half-cell estimator error,
            # as check_dfm does: one sliver does not condemn a part
-           "ok": p1 is None or p1 + 0.5 * pitch >= min_wall}
+           "ok": p1 is None or p1 + 0.5 * pitch >= min_wall,
+           "basis": "ok is judged on p1WallMm (1st percentile, +/- half a cell); minWallMm is the single "
+                    "thinnest spot, which can sit under the minimum on a passing part (a sliver at an edge)"}
     return out
 
 

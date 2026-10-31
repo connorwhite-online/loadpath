@@ -43,12 +43,12 @@ critic = ["anthropic", "matplotlib>=3.8", "shapely>=2.0"]
 step = ["cadquery-ocp>=7.7"]
 
 [project.scripts]
-loadpath = "loadpath.__main__:main"
+loadpath = "loadpath.__main__:_main"
 
 [tool.setuptools.packages.find]
 include = ["loadpath*"]
 
 [tool.setuptools.package-data]
 "loadpath" = ["SKILL.md", "README.md", "viewer.html", "editor.html", "examples/*.json", "calibrations/*.json"]
-"loadpath.evals" = ["cases/*.json", "cases/*.stl", "baselines/*.json"]
+"loadpath.evals" = ["cases/*.json", "cases/*.stl", "baselines/*.json", "briefs/*.json", "briefs/assets/*"]
 "loadpath.benchmarks" = ["cases/*.json", "reference/*.npz"]

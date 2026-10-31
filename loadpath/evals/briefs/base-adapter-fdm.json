@@ -1,0 +1,492 @@
+{
+ "id": "base-adapter-fdm",
+ "brief": "An adapter that bolts my robot arm's base to a workbench. PETG, FDM, printed bottom down\n(layers along +Z). Four M5 screws go down into the bench along Z at (+/-40, +/-40); the bottom\n5 mm of the part (z = 0 to 5) must be solid in a 7 mm radius round each, with an M5 clearance\nhole, and I need a 10 mm diameter column clear straight above each screw for the socket. On top (z = 25 to 30)\nthere's a 90 mm OD / 60 mm ID ring that the arm's base bolts to with six M4 screws coming down\nfrom above on a 75 mm circle (first at +X, every 60 degrees) into heat-set inserts (6 mm hole,\n8 mm deep from the top). The centre (radius 30 mm) stays empty all the way through for cables.\nThe part fits in x and y of +/-48 and z = 0 to 30. The arm reaching out puts up to 6 N\u00b7m of\ntipping moment on the top ring, about any horizontal axis, plus 30 N of weight. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "fdm",
+  "moment",
+  "inserts"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -48.0,
+     -48.0,
+     0.0
+    ],
+    "max": [
+     48.0,
+     48.0,
+     30.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "feet",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        40.0,
+        40.0,
+        0.0
+       ],
+       "p1": [
+        40.0,
+        40.0,
+        5.0
+       ],
+       "r": 7.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -40.0,
+        40.0,
+        0.0
+       ],
+       "p1": [
+        -40.0,
+        40.0,
+        5.0
+       ],
+       "r": 7.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        40.0,
+        -40.0,
+        0.0
+       ],
+       "p1": [
+        40.0,
+        -40.0,
+        5.0
+       ],
+       "r": 7.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -40.0,
+        -40.0,
+        0.0
+       ],
+       "p1": [
+        -40.0,
+        -40.0,
+        5.0
+       ],
+       "r": 7.0
+      }
+     ]
+    }
+   },
+   {
+    "id": "top-ring",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      25.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      30.0
+     ],
+     "r": 45.0,
+     "rInner": 30.0
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m5",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        40.0,
+        40.0,
+        -1.0
+       ],
+       "p1": [
+        40.0,
+        40.0,
+        6.0
+       ],
+       "r": 2.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -40.0,
+        40.0,
+        -1.0
+       ],
+       "p1": [
+        -40.0,
+        40.0,
+        6.0
+       ],
+       "r": 2.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        40.0,
+        -40.0,
+        -1.0
+       ],
+       "p1": [
+        40.0,
+        -40.0,
+        6.0
+       ],
+       "r": 2.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -40.0,
+        -40.0,
+        -1.0
+       ],
+       "p1": [
+        -40.0,
+        -40.0,
+        6.0
+       ],
+       "r": 2.75
+      }
+     ]
+    }
+   },
+   {
+    "id": "sockets",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        40.0,
+        40.0,
+        5.0
+       ],
+       "p1": [
+        40.0,
+        40.0,
+        31.0
+       ],
+       "r": 5.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -40.0,
+        40.0,
+        5.0
+       ],
+       "p1": [
+        -40.0,
+        40.0,
+        31.0
+       ],
+       "r": 5.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        40.0,
+        -40.0,
+        5.0
+       ],
+       "p1": [
+        40.0,
+        -40.0,
+        31.0
+       ],
+       "r": 5.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -40.0,
+        -40.0,
+        5.0
+       ],
+       "p1": [
+        -40.0,
+        -40.0,
+        31.0
+       ],
+       "r": 5.0
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "inserts",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        37.5,
+        0.0,
+        22.0
+       ],
+       "p1": [
+        37.5,
+        0.0,
+        31.0
+       ],
+       "r": 3.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        18.750000000000004,
+        32.47595264191645,
+        22.0
+       ],
+       "p1": [
+        18.750000000000004,
+        32.47595264191645,
+        31.0
+       ],
+       "r": 3.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -18.749999999999993,
+        32.47595264191645,
+        22.0
+       ],
+       "p1": [
+        -18.749999999999993,
+        32.47595264191645,
+        31.0
+       ],
+       "r": 3.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -37.5,
+        4.592425496802574e-15,
+        22.0
+       ],
+       "p1": [
+        -37.5,
+        4.592425496802574e-15,
+        31.0
+       ],
+       "r": 3.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -18.750000000000018,
+        -32.475952641916436,
+        22.0
+       ],
+       "p1": [
+        -18.750000000000018,
+        -32.475952641916436,
+        31.0
+       ],
+       "r": 3.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        18.750000000000004,
+        -32.47595264191645,
+        22.0
+       ],
+       "p1": [
+        18.750000000000004,
+        -32.47595264191645,
+        31.0
+       ],
+       "r": 3.0
+      }
+     ]
+    }
+   },
+   {
+    "id": "cable",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -1.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      31.0
+     ],
+     "r": 30.0
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "region": "m5"
+   },
+   {
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        40.0,
+        40.0,
+        -0.5
+       ],
+       "p1": [
+        40.0,
+        40.0,
+        0.3
+       ],
+       "r": 7.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -40.0,
+        40.0,
+        -0.5
+       ],
+       "p1": [
+        -40.0,
+        40.0,
+        0.3
+       ],
+       "r": 7.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        40.0,
+        -40.0,
+        -0.5
+       ],
+       "p1": [
+        40.0,
+        -40.0,
+        0.3
+       ],
+       "r": 7.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -40.0,
+        -40.0,
+        -0.5
+       ],
+       "p1": [
+        -40.0,
+        -40.0,
+        0.3
+       ],
+       "r": 7.0
+      }
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "tip-x",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       0,
+       0,
+       -30
+      ],
+      "moment": [
+       0,
+       6000,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "tip-y",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       0,
+       0,
+       -30
+      ],
+      "moment": [
+       6000,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "tip-diag",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       0,
+       0,
+       -30
+      ],
+      "moment": [
+       4243,
+       4243,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "base-adapter-fdm",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

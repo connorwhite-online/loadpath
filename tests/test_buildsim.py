@@ -75,6 +75,19 @@ def test_hot_bed_and_chamber_cut_fdm_warp():
     assert hot.report["peel"]["meanPeelStress"] < cold.report["peel"]["meanPeelStress"]
 
 
+def test_weak_bed_bond_lets_the_ends_lift():
+    """FDM: with a bond weaker than the peel tension the bar's ends let go
+    of the bed during the build (the report says how much area) and lift
+    higher, as built, than on a bond that holds."""
+    solid = np.ones((80, 2, 6), bool)
+    kw = dict(process="fdm", material="abs", bed=60.0, chamber=25.0, bed_stiffness=10.0, release="none")
+    held = B.simulate_build(solid, 0.5, (0, 0, 0), B.BuildSetup(**kw))
+    weak = B.simulate_build(solid, 0.5, (0, 0, 0), B.BuildSetup(bed_adhesion=0.3, **kw))
+    assert held.report["detachedArea"] == 0 and 0 < weak.report["detachedArea"] < 40 * 1.0
+    end = held.mesh.node_ijk[:, 0] == 0
+    assert weak.u_built[end, 2].max() > 1.5 * held.u_built[end, 2].max()
+
+
 def test_compensation_cuts_the_printed_error():
     """An LPBF overhang bracket: printing the pre-distorted mesh lands at
     least 50% closer to the design than printing the design, after one
@@ -131,14 +144,74 @@ def test_study_key_parses():
         pass
 
 
+def test_warp_term_gradient_along_any_grid_axis():
+    """The study optimizer's warp term (layers stacking along -y here)
+    against finite differences."""
+    mesh = HexMesh(np.argwhere(np.ones((5, 6, 3), bool)), 1.0, np.zeros(3))
+    w = B.WarpTerm(mesh, B.BuildSetup(material="ti64"), build=(1, -1), layer=2.0, nu=0.34)
+    rng = np.random.default_rng(1)
+    x = rng.uniform(0.3, 0.9, mesh.n_elem)
+
+    def e(v):
+        return 1e-9 + v ** 3 * (1 - 1e-9)
+
+    _, g = w.evaluate(e(x), 3 * x ** 2 * (1 - 1e-9))
+    for i in rng.choice(mesh.n_elem, 4, replace=False):
+        h = 1e-6
+        xp, xm = x.copy(), x.copy()
+        xp[i] += h
+        xm[i] -= h
+        fd = (w.evaluate(e(xp))[0] - w.evaluate(e(xm))[0]) / (2 * h)
+        assert abs(g[i] - fd) < 1e-5 * abs(fd) + 1e-15, (i, g[i], fd)
+
+
+def _shelf(w):
+    return {"name": f"shelf-w{w:g}", "material": "ti64", "process": {"type": "lpbf", "buildDirection": "+z"},
+            "designSpace": [{"type": "box", "min": [0, 0, 0], "max": [24, 4, 14]}],
+            "preserve": [{"id": "flange", "shape": {"type": "box", "min": [0, 0, 0], "max": [2, 4, 14]}},
+                         {"id": "pad", "shape": {"type": "box", "min": [21, 0, 11], "max": [24, 4, 14]}}],
+            "supports": [{"region": "flange"}], "loads": [{"region": "pad", "force": [0, 0, -400]}],
+            "goal": {"volumeFraction": 0.3}, "resolution": {"pitch": 1.0}, "extrusion": "y",
+            "maxIterations": 40, "buildSim": {"warpWeight": w}}
+
+
+def test_study_warp_weight_cuts_as_built_distortion():
+    """buildSim.warpWeight through the study optimizer: the same shelf at
+    the same volume comes out with less as-built distortion than the
+    compliance-only design."""
+    from loadpath.domain import build_domain
+    from loadpath.simp import SimpOptions, optimize
+    from loadpath.spec import study_from_dict
+
+    dist = {}
+    for w in (0.0, 1.0):
+        st = study_from_dict(_shelf(w))
+        dom = build_domain(st)
+        assert (dom.warp is not None) == (w > 0)
+        r = optimize(dom, 0.34, SimpOptions(volume_fraction=0.3, filter_radius=1.5, max_iterations=40))
+        term = B.WarpTerm(dom.mesh, st.build_sim["setup"], build=(2, 1), nu=0.34)
+        dist[w] = term.evaluate(1e-9 + (r.xphys > 0.5) * (1 - 1e-9))[0]
+    assert dist[1.0] < 0.7 * dist[0.0], dist
+    try:
+        d = _shelf(1.0)
+        d["process"]["buildDirection"] = "auto"
+        study_from_dict(d)
+        raise AssertionError("warpWeight with an auto build direction should be refused")
+    except ValueError:
+        pass
+
+
 TESTS = [
     test_layers_match_progressive_beam,
     test_uniform_shrink_of_free_part_is_stress_free,
     test_cut_parts_spring_up,
     test_hot_bed_and_chamber_cut_fdm_warp,
+    test_weak_bed_bond_lets_the_ends_lift,
     test_compensation_cuts_the_printed_error,
     test_warp_gradient_matches_finite_differences,
     test_study_key_parses,
+    test_warp_term_gradient_along_any_grid_axis,
+    test_study_warp_weight_cuts_as_built_distortion,
 ]
 
 

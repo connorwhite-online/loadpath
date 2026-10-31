@@ -199,7 +199,16 @@ def _key(material) -> str:
 def durability_data(material, overrides: dict | None = None) -> DurabilityData:
     import dataclasses
 
-    base = DURABILITY.get(_key(material), _GENERIC)
+    key = _key(material)
+    base = DURABILITY.get(key)
+    if base is None and key.split("-")[0] in DURABILITY:
+        # a filled grade (pa12-gf, pa12-gb) without its own curve: the base
+        # polymer's (fillers stiffen it and shift its fatigue a little either
+        # way; far closer than the generic FDM curve)
+        root = key.split("-")[0]
+        base = dataclasses.replace(DURABILITY[root], source=f"as {root} (no curve for the filled grade {key}): "
+                                   + DURABILITY[root].source, quality="assumed")
+    base = base or _GENERIC
     if overrides:
         base = dataclasses.replace(base, **overrides, source=base.source + " (overridden in the study)",
                                    quality="study")
@@ -364,7 +373,7 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
         r = ret(t)
         phi = creep_ratio(data, dur.preload_hours, r)
         s_r = rupture_strength(data, mat.strength * r, dur.preload_hours)
-        joints = []
+        joints, relaxed = [], []
         for j in study.joints:
             bearing = j["preload"] / j["area"] if j["area"] > 0 else 0.0
             keep = r / (1.0 + phi)
@@ -373,13 +382,18 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
                    "hours": dur.preload_hours, "temperature": t}
             joints.append(row)
             if keep < 0.5 and data.creep_ratio > 0:
-                out["warnings"].append(
-                    f"fastener {j['id']}: about {keep:.0%} of its clamp load is left after {dur.preload_hours:g} h "
-                    f"at {t:g} C; clamp on a metal compression limiter or insert, or add a spring washer")
+                relaxed.append(j["id"])
             if bearing > 0 and s_r / bearing < 1.0:
                 out["warnings"].append(f"fastener {j['id']}: the head's bearing stress {bearing:.1f} MPa is above "
                                        f"the {dur.preload_hours:g} h creep strength {s_r:.1f} MPa; use a washer "
                                        "or lower the preload")
+        if relaxed:
+            # the same for every screw in one material: one line, not one per screw
+            keep = r / (1.0 + phi)
+            who = f"fastener {relaxed[0]}" if len(relaxed) == 1 else f"fasteners {', '.join(relaxed)}"
+            out["warnings"].append(
+                f"{who}: about {keep:.0%} of the clamp load is left after {dur.preload_hours:g} h "
+                f"at {t:g} C; clamp on a metal compression limiter or insert, or add a spring washer")
         out["joints"] = joints
 
     if data.quality in ("assumed", "rough"):

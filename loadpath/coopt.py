@@ -267,25 +267,30 @@ def load_change(old_cases: list, new_cases: list, region: str | None = None) -> 
     return max(abs(f1 - f0) / max(f0, 1e-9), abs(m1 - m0) / max(m0, 1e-9))
 
 
-def co_optimize(arm: ArmModel, order: list, derive, solve, *, passes: int = 3, tol: float = 0.02,
+def co_optimize(arm: ArmModel, order: list, derive, solve, *, verify=None, passes: int = 3, tol: float = 0.02,
                 state: dict | None = None, save=None, log=print) -> dict:
     """Regrow `order` (links, tip of the chain first) until their loads stop
     moving.
 
     derive(link) -> (load cases, info): the link's governing cases for the
     arm's current masses (arm.robot). solve(link, cases) -> (parts for
-    ArmModel.set_parts, report dict) or None when nothing meets the goal (the
-    part is kept). A link is regrown when it has not been, or when its
-    derived loads moved by more than `tol` (load_change) since the loads it
-    was grown for. state: a previous return value, to resume; save(state)
-    is called after every step. Returns {"history": [...], "links": {link:
-    {cases, report, pass}}, "converged": bool}."""
+    ArmModel.set_parts, report dict with "g") or None when nothing meets the
+    goal. verify(link, cases) -> report dict with "g" and "passes": the
+    link's current part checked under the new cases. A link is regrown when
+    its derived loads moved by more than `tol` (load_change) since the loads
+    its part was grown or checked for, or when its part no longer passes.
+    The regrown part replaces the current one only when it is lighter or the
+    current one fails: an optimizer's outcome moves by a few percent from
+    run to run, more than a few percent of load moves the optimum, so a
+    passing part is not traded for a heavier one. state: a previous return
+    value, to resume; save(state) is called after every step. Returns
+    {"history": [...], "links": {link: {cases, report, pass}}, "converged"}."""
     state = state or {"history": [], "links": {}, "converged": False}
     for p in range(passes):
         if state.get("pass", -1) > p:
             continue
         state["pass"] = p
-        regrown = 0
+        changed = state.setdefault("changed", {}).setdefault(str(p), 0)
         for link in order:
             done = state.get("done", {}).get(str(p), [])
             if link in done:
@@ -296,28 +301,39 @@ def co_optimize(arm: ArmModel, order: list, derive, solve, *, passes: int = 3, t
             change = None if prev is None else load_change(prev["cases"], cases, info.get("region"))
             row = {"pass": p, "link": link, "loadChange": None if change is None else round(change, 4),
                    "deriveSeconds": round(time.time() - t, 1), "massesBefore": arm.masses()}
-            if prev is None or change > tol:
+            cur = verify(link, cases) if (verify and prev is not None) else None
+            if cur is not None:
+                row["current"] = cur
+            ok = cur is None or cur.get("passes", True)
+            if prev is not None and change <= tol and ok:
+                row["result"] = "loads within tolerance; kept"
+            else:
                 t = time.time()
                 res = solve(link, cases)
                 row["solveSeconds"] = round(time.time() - t, 1)
+                if res is not None:
+                    row["report"] = res[1]
                 if res is None:
                     row["result"] = "no outcome met the goal; part kept"
+                elif cur is not None and ok and cur["g"] <= res[1]["g"]:
+                    # the part it has carries the new loads and is lighter
+                    state["links"][link] = {**prev, "cases": cases, "report": {**prev["report"], **cur}, "info": info}
+                    row["result"] = f"regrown at {res[1]['g']} g, heavier than the current part; kept"
                 else:
-                    parts, report = res
-                    arm.set_parts(link, parts)
-                    state["links"][link] = {"cases": cases, "report": report, "pass": p, "info": info}
+                    arm.set_parts(link, res[0])
+                    state["links"][link] = {"cases": cases, "report": res[1], "pass": p, "info": info}
                     row["result"] = "regrown"
-                    row["report"] = report
-                    regrown += 1
-            else:
-                row["result"] = "loads within tolerance; kept"
+                    changed += 1
+                    state["changed"][str(p)] = changed
             row["printedKg"] = round(arm.printed_kg(link), 4)
             state["history"].append(row)
             state.setdefault("done", {}).setdefault(str(p), []).append(link)
-            log(json.dumps({k: v for k, v in row.items() if k not in ("massesBefore", "report")}))
+            log(json.dumps({k: v for k, v in row.items() if k not in ("massesBefore", "report", "current")}
+                           | {"g": (row.get("report") or {}).get("g"), "currentG": (cur or {}).get("g"),
+                              "currentSf": (cur or {}).get("sf")}))
             if save:
                 save(state)
-        if regrown == 0:
+        if changed == 0:
             state["converged"] = True
             state["pass"] = passes
             if save:

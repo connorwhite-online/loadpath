@@ -83,8 +83,10 @@ model submissions predicted the free-end rise between -45% and +47% of the
 measured value, and none met NIST's criterion (Levine et al. 2020, IMMI 9:1).
 
 `bench/buildsim_validate.py` builds the bridge from NIST's drawing (legs, 45°
-window overhangs, ridges) at 0.5 mm voxels on the full 12.7 mm plate. It
-lays it in 0.5 mm analysis layers, cuts the legs off along x = 0-56 mm, and
+window overhangs, ridges) at 0.5 mm voxels on the 12.7 mm plate, modelled
+as two voxel layers whose modulus is scaled so they are as compliant through
+the thickness as the whole plate (`plateCells`, the default). It lays the
+bridge in 0.5 mm analysis layers, cuts the legs off along x = 0-56 mm, and
 reads the ridges.
 
 ![AM-Bench bridge: measured vs loadpath](images/buildsim/ambench-bridge.png)
@@ -92,9 +94,9 @@ reads the ridges.
 | | free-end rise | all 11 ridges |
 |---|---|---|
 | IN625 measured | 1.276 mm | |
-| IN625 loadpath, k = 0.909 fitted on this data | 1.274 mm | rms error 0.009 mm |
+| IN625 loadpath, k = 0.839 fitted on this data | 1.275 mm | rms error 0.007 mm |
 | 15-5 PH measured | 1.168 mm | |
-| 15-5 PH loadpath with IN625's k (a prediction) | 1.865 mm (+60%) | rms error 0.32 mm |
+| 15-5 PH loadpath with IN625's k (a prediction) | 1.882 mm (+61%) | rms error 0.33 mm |
 | 2018 blind submissions | 0.70-1.88 mm | |
 
 What this shows, and what it does not:
@@ -102,13 +104,14 @@ What this shows, and what it does not:
 - **The IN625 match is a fit, not a prediction.** One number, `k`, sets the
   magnitude. The shape is not fitted: one scalar cannot bend the curve. The
   model reproduces the whole profile (the near-parabola from the free end,
-  the root near x = 56-60 mm, and the flat attached end) to 9 µm rms, 0.7% of
+  the root near x = 56-60 mm, and the flat attached end) to 7 µm rms, 0.6% of
   the tip rise.
 - **The transfer to another alloy failed.** The yield-strain law
-  `eps = -k * yield / E` carried from IN625 to 15-5 PH over-predicts by 60%.
+  `eps = -k * yield / E` carried from IN625 to 15-5 PH over-predicts by 61%.
   15-5 PH turns martensitic as it cools, and the transformation expands,
   undoing part of the shrink, which the law cannot know about. So 15-5 PH has
-  its own fitted `k = 0.569`, which leaves it with no independent check.
+  its own fitted `k = 0.522` (7 µm rms), which leaves it with no independent
+  check.
 - **Other alloys are uncalibrated.** Ti64, 316L and AlSi10Mg use IN625's `k`,
   and `report.buildSim.strain.kSource` says so. For Ti64 that gives
   -0.0083 in-plane. Published elastic calibrations on twin cantilevers put
@@ -117,20 +120,37 @@ What this shows, and what it does not:
   cut it, and set `buildSim.scale`, the same calibration the commercial
   inherent-strain codes ask for.
 - **Residual stress on the plate**, along leg L7, compared with the contour
-  method: about -200 MPa near the plate in both, and +636 to +780 MPa in the
+  method: about -200 MPa near the plate in both, and +580 to +720 MPa in the
   top 1 mm against a measured ~600. Through the solid section (z 7-10 mm) the
-  model reads +250 to +370 MPa, while the contour cut crosses zero near z = 8
+  model reads +170 to +320 MPa, while the contour cut crosses zero near z = 8
   and reaches only about +100 MPa. That gap is a linear model with no
-  yielding: the reported peak (3500 MPa at the sharp leg roots) is a
+  yielding: the reported peak (2800 MPa at the sharp leg roots) is a
   singularity, not a stress. The report flags anything above yield.
 
 ![Longitudinal stress, leg L7](images/buildsim/ambench-stress.png)
 
-**Pitch study.** The same `k` at 1 mm voxels gives an IN625 free-end rise of
-1.066 mm, 16% low. A run takes 30 s at 1 mm and 12 min at 0.5 mm (about 100k
-cells with the plate) on the 4-core cloud box. `simulate_part` sizes the grid
-to about 60k cells by default, so on large parts the voxels coarsen and the
-prediction reads low by about that much.
+**Pitch study and speed** (IN625 at the fitted k, the 4-core cloud box):
+
+| voxels | plate | cells | free-end rise | time |
+|---|---|---|---|---|
+| 0.5 mm | 2 layers, scaled (default) | 35k | 1.275 mm | 65 s |
+| 0.5 mm | whole 12.7 mm plate | 85k | 1.178 mm | 181 s |
+| 1 mm | 2 layers, scaled | 5k | 1.025 mm (-20%) | 7 s |
+| 1 mm | whole plate | 11k | 0.984 mm | 36 s |
+
+The first version took 12 min at 0.5 mm on the whole plate. Two changes
+cut that to 65 s: the reduced plate (most of the cells were plate), and
+mg.py's matrix-free multigrid for big layer solves (cells not yet printed
+get modulus 0), since the AMG setup per layer had been 60% of the time.
+The reduced plate is not free: the bridge rises 8% more on it than on the
+whole plate (the scaled layers match the plate's give through its
+thickness, not how it spreads load sideways), so
+`k` was refitted with it, 0.839 against 0.909 on the whole plate; set
+`plateCells` high to model the whole plate, then use `scale` 1.08. Only a
+plate bolted along its underside is reduced; a free one bends, which the
+scaling cannot match. At 1 mm voxels the rise reads 20% low, and
+`simulate_part` sizes the grid to about 60k cells by default, so on large
+parts the voxels coarsen and the prediction reads low by about that much.
 
 ## FDM: warp against Armillotta et al. 2018 (ABS)
 
@@ -141,25 +161,28 @@ removal (Robotics and CIM 50:140-152, 2018). `bench/buildsim_fdm.py` runs
 their nine 20 mm-wide bars as strips at 0.254 mm voxels, one voxel per
 printed layer, so nothing is lumped (their tests showed width has no
 effect). Two numbers were fitted: the share of the sub-Tg shrink the part
-keeps (`relax`, least squares) and the raft's hold (`bed_stiffness`,
-chosen from 1, 3, 10 and 30 N/mm³). The best pair is 0.83 and 3 N/mm³,
-which are now the defaults:
+keeps (`relax`, least squares) and the raft's hold (`bed_stiffness`, swept
+over 1.5-100 N/mm³ at 0.508 mm and checked at 3 and 4 at 0.254 mm). The bed
+is an elastic foundation in all three directions, pinned only against
+in-plane drift at its centre: an earlier version also held three corner
+nodes down in z, which stopped exactly the corners that lift. The best pair
+is 0.895 and 4 N/mm³, which are now the defaults:
 
 | bar (length x height, mm) | measured warp | loadpath |
 |---|---|---|
-| 60 x 1.5 | 0.38 | 0.57 |
-| 60 x 3.5 | 0.45 | 0.39 |
-| 60 x 5.5 | 0.42 | 0.29 |
+| 60 x 1.5 | 0.38 | 0.62 |
+| 60 x 3.5 | 0.45 | 0.40 |
+| 60 x 5.5 | 0.42 | 0.28 |
 | 100 x 1.5 | 0.58 | 0.85 |
-| 100 x 3.5 | 0.67 | 0.70 |
-| 100 x 5.5 | 0.68 | 0.57 |
-| 140 x 1.5 | 0.93 | 0.96 |
-| 140 x 3.5 | 1.05 | 0.90 |
-| 140 x 5.5 | 0.97 | 0.79 |
+| 100 x 3.5 | 0.67 | 0.71 |
+| 100 x 5.5 | 0.68 | 0.58 |
+| 140 x 1.5 | 0.93 | 0.91 |
+| 140 x 3.5 | 1.05 | 0.89 |
+| 140 x 5.5 | 0.97 | 0.78 |
 
-The rms error is 0.15 mm and the mean error 22%. Two things hold up: the
+The rms error is 0.16 mm and the mean error 24%. Two things hold up: the
 magnitude, and the growth with length (the measured warp grows 2.5x from
-60 to 140 mm; the model grows 1.7-2.8x). One thing does not: the measured
+60 to 140 mm; the model grows 1.5-2.8x). One thing does not: the measured
 warp peaks at 2-4 mm of height, while the model falls steadily with height.
 Armillotta's own analytic model misses that peak too; they put it down to
 reheating of the layers below above Tg, and to plasticity near Tg, and this
@@ -167,6 +190,33 @@ model has neither. With a rigid (glued) bed, the same bars barely warp
 (0.02 mm at full shrink), because a part held flat while every layer goes
 down holds a nearly uniform stress, and a uniform stress releases without
 bending. The bed's give is what lets the warp build up during the print.
+
+**The peak, tried and not fixed.** Two physical mechanisms were tested
+against it, and neither reproduces it, so neither is on by default:
+
+- *Bed-bond failure* (`buildSim.bedAdhesion`, MPa). Each bed node whose bond
+  tension `kb * u_z` passes the adhesion lets go, and the part re-balances,
+  layer by layer and again on cool-down; the report gives `detachedArea` and
+  `bedFailed` (the whole footprint let go). Swept over bed 3-100 N/mm³ and
+  adhesion 0.03-3 MPa (with relax refitted, which scales the adhesion too),
+  the best fit with any letting go was rms 0.18 mm against 0.13 without, at
+  0.508 mm voxels. Letting go flattens the tall bars (they curl free while
+  printing, and later layers go down level on the curled ones) and leaves
+  the thin ones, the opposite of the measured trend. It gives a peak at
+  3.5 mm only on the 100 and 140 mm bars at bed 10-30 N/mm³ and 0.3 MPa,
+  with the 60 mm bars falling. It stays as an option, because a bond that
+  lets go is how prints fail, and `bedFailed` is a useful warning.
+- *Reheating of the layers below* (an anneal of the strain already locked in
+  when a hot layer goes down on it) moved the trend the wrong way and was
+  dropped.
+- The corner-pin fix gave a peak on the 140 mm bars at 0.508 mm voxels
+  (0.87, 0.96, 0.84 against 0.93, 1.05, 0.97), but it went away at the
+  printed 0.254 mm layers, so it was voxel lumping, not physics.
+
+The thin bars are the miss: the model over-predicts the 1.5 mm bars by up
+to 65% on the short lengths. The likely cause is something this model does
+not have, thin bars cooling through Tg layer by layer in a few seconds
+while their layers below are still soft.
 
 The report also gives the bed's pull on the part (`peel`: the mean over the
 area in tension, its maximum, and the net lift force). The maximum sits at an
@@ -239,17 +289,55 @@ the plate (most of which the cut releases). The weight `w` sets that trade.
 Both the trade and the recoater gain come from the optimizer's view of the
 build, which no compliance-only optimizer has.
 
-This is a Python API for now. The study JSON optimizer does not take a warp
-term yet; `buildSim` in a study verifies and compensates the delivered part.
+### In a study
+
+The same term is in the study optimizer. Set a weight under `buildSim`:
+
+```json
+"process": {"type": "lpbf", "buildDirection": "+z"},
+"buildSim": {"warpWeight": 1}
+```
+
+The optimizer then minimizes `compliance * (1 + w * D / D0)`, with `D` the
+mean squared as-built displacement of the part on its plate and `c0`, `D0`
+from the first iteration, and the stress and volume goals still apply as
+they do without it. `warpWeight` 0 (the default) leaves the optimizer alone,
+and `buildSim` then only verifies and compensates the delivered part. Around
+1 is a big trade, as in the table above. The term needs a build direction
+along a grid axis (`+z`, `-y`, ...), so a tilted or `auto` build is refused,
+and it needs `lpbf` or `fdm`. Layers are lumped to `warpLayer` mm, by default
+4 cells. Each iteration costs two sparse solves per lumped layer on top of
+the service solve, so a 30-layer part runs several times slower than
+compliance alone (7x in the demo below).
+
+**Demo through a study** (`bench/buildsim_study_warp.py`): the Ti64 shelf
+bracket of the table above, 40 x 6 x 24 mm, at a fixed 35% volume, run
+through `run_study` with `warpWeight` 0 and 1. The study's own `buildSim`
+pass checks each delivered part (about 8000 cells, 5 mm plate, as built on
+the plate):
+
+| | warpWeight 0 | warpWeight 1 |
+|---|---|---|
+| mass | 10.0 g | 9.9 g |
+| safety factor | 2.07 | 0.96 |
+| max as-built distortion | 0.51 mm | 0.17 mm (-66%) |
+| rms as-built distortion | 0.13 mm | 0.038 mm (-72%) |
+| recoater lift | 0.20 mm | 0.054 mm (-73%) |
+| residual von Mises p95 | 933 MPa | 992 MPa |
+| study time (cloud box) | 2.5 min | 17 min |
+
+The trade is the same as with the Python API: the build gets much flatter
+and the part loses half its strength at the same mass, so at w = 1 a
+safety-factor goal that the plain design meets fails. Use a smaller weight
+(untested here), or a volume that leaves room, when strength must hold; the
+study reports both numbers. The run is about 7x slower.
 
 ## Limits
 
-- Speed. Each analysis layer is one sparse solve over the part plus its
-  plate. A small 40 mm Ti64 bracket (8k part cells, 0.6 mm voxels, a 10 mm
-  plate) takes 3 min on the 4-core cloud box, and `compensate` runs the
-  simulation iterations + 2 times. A thinner `plate` is faster, but it
-  changes the answer: on AM-Bench at 1 mm voxels, a 3 mm plate gives 0.89
-  mm of rise where the full 12.7 mm plate gives 1.07 mm.
+- Speed. Each analysis layer is one solve over the part plus two layers
+  of plate. AM-Bench at 0.5 mm (35k cells, 25 layers) takes 65 s on the
+  4-core cloud box, and `compensate` runs the simulation iterations + 2
+  times. The warp term in the optimizer is the slow part (see above).
 
 - Linear elastic throughout. There is no plasticity, so peaks at sharp roots
   exceed yield (flagged in the report), and there is no creep or stress
@@ -265,5 +353,5 @@ term yet; `buildSim` in a study verifies and compensates the delivered part.
   holds at 0.5 mm voxels and 0.5 mm analysis layers.
 - FDM is fitted to one machine family (an enclosed Stratasys printer, ABS
   on a support raft) and misses the measured warp peak at 2-4 mm of
-  height. ASA, PETG and PLA are unvalidated, and an open-frame printer on
+  height (bed-bond failure and reheating were tried and do not explain it). ASA, PETG and PLA are unvalidated, and an open-frame printer on
   a PEI sheet holds the part differently (`bedStiffness`).

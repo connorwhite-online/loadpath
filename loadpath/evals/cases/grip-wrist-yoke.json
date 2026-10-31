@@ -805,14 +805,7 @@
    ]
   }
  ],
- "material": {
-  "name": "pa12-gf",
-  "E": 3200,
-  "nu": 0.37,
-  "strength": 48,
-  "density": 1.22,
-  "note": "SLS glass-filled PA12 (EOS PA 3200 GF datasheet)"
- },
+ "material": "pa12-gf",
  "goal": {
   "safetyFactor": 2.0,
   "volumeFraction": 0.12

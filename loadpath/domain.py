@@ -58,6 +58,8 @@ class Domain:
     spreads: list = field(default_factory=list)
     # The study's thermal block on this mesh (thermal.StudyHeat), or None.
     thermal: object = None
+    # buildSim.warpWeight: (buildsim.WarpTerm, weight), or None.
+    warp: object = None
 
     @property
     def n_elem(self):
@@ -209,6 +211,10 @@ def _wetted(study: Study, mesh: HexMesh) -> dict:
 _IMBALANCE_MAX = 0.02
 
 
+class _HeldPreload(ValueError):
+    """The fasteners' preload case lands only on supported nodes."""
+
+
 def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor: float = 0.0) -> BoundaryConditions:
     """Supports, pins and loads on a mesh's nodes. Shared by the optimizer
     and the verification, so both analyze exactly the same problem."""
@@ -241,6 +247,18 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
             blocks = rad[:, :, None] * rad[:, None, :] + np.outer(ax, ax)[None]
             spring_blocks.append((idx, blocks * _PIN_STIFFNESS * mesh.pitch))
+    if study.supports and all(s.pin for s in study.supports) and not study.self_equilibrated:
+        lines = [_cylinder_of(study, s.region, s.shape, f"supports[{i}]") for i, s in enumerate(study.supports)]
+        p0, ax = lines[0]
+        coaxial = all(abs(abs(float(a @ ax)) - 1) < 1e-3 and
+                      np.linalg.norm((q - p0) - ((q - p0) @ ax) * ax) < mesh.pitch for q, a in lines[1:])
+        if coaxial:
+            # a brief-eval bell crank pinned at its pivot alone read SF 0.0004:
+            # nothing holds it from turning, so the solve is singular
+            raise ValueError("every support is a pin on one axis, so nothing stops the part turning about it and "
+                             "the stiffness is singular (safety factors come out near zero). Hold what really "
+                             "stops it turning: fix the link, arm or stop that reacts the load (\"fix\": \"all\" "
+                             "on that bore), or fix the pivot itself with \"fix\": \"all\"")
     springs = None
     if spring_blocks:
         import scipy.sparse as sp
@@ -323,6 +341,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             f += fp
         else:
             imbalance.append(0.0)
+        applied = bool(np.any(f))
         f[fixed] = 0.0
         if spread is not None:
             from .directions import Spread
@@ -333,8 +352,16 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             f = spread.load(spread.nominal)
         spreads.append(spread)
         if check_loads and not np.any(f) and study.gravity is None:
+            if not applied and spread is None:
+                raise ValueError(f"load case {case.name!r} adds up to nothing at pitch {mesh.pitch:.3g} mm: its "
+                                 "forces cancel on the same grid nodes (a fastener's seat and face rings closer "
+                                 "than a cell, or equal and opposite loads on one region). Lengthen the grip, "
+                                 "use a finer pitch, or drop the case")
+            if case.name == "preload" and study.raw.get("fasteners"):
+                raise _HeldPreload(case.name)
             raise ValueError(f"load case {case.name!r} acts only on fixed nodes; "
-                             "a load applied where the part is held does nothing")
+                             "a load applied where the part is held does nothing: load a region the supports "
+                             "do not cover")
         loads.append(f)
         case_nodes.append(cn)
         case_wet.append(cw)
@@ -360,7 +387,21 @@ def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed
 
 
 def build_domain(study: Study, pitch: float | None = None) -> Domain:
-    pitch = float(pitch) if pitch else choose_pitch(study)
+    if pitch or study.pitch:
+        return _build_domain(study, float(pitch) if pitch else float(study.pitch))
+    # maxElements is a cap: the pitch is estimated from a coarse occupancy
+    # sample, which came out 2-5% over in the brief evals (20988 cells for
+    # 20000); grow the cells until the grid fits
+    p = choose_pitch(study)
+    for _ in range(4):
+        d = _build_domain(study, p)
+        if d.n_elem <= study.max_elements:
+            return d
+        p *= (d.n_elem / study.max_elements) ** (1.0 / 3.0) * 1.003
+    return d
+
+
+def _build_domain(study: Study, pitch: float) -> Domain:
     lo, hi = study.bounds()
     center = 0.5 * (lo + hi)
     dims = np.maximum(np.ceil((hi - lo) / pitch - 1e-9).astype(int), 1)
@@ -390,7 +431,10 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
                 f"{rid} is {t:g}mm thick, {t / pitch:.1f} cells: a wall under two cells thick is too stiff in "
                 f"bending on this grid (and under one is not there at all). Set resolution.pitch to {t / 2:.2g}mm "
                 "or less, or raise resolution.maxElements.")
-    if study.min_member is not None and study.min_member < 1.5 * pitch:
+    # Only for a minMember the study asked for: a process's own floor is what
+    # the printer can make, not a member the design needs, and at a first-look
+    # resolution it would warn on every powder or FDM study.
+    if study.min_member is not None and study.min_member < 1.5 * pitch and study.raw.get("minMember") is not None:
         warnings.append(
             f"minMember {study.min_member:g}mm is under 1.5 cells ({1.5 * pitch:.2f}mm); members that thin "
             "cannot be resolved. Raise resolution.maxElements or set resolution.pitch.")
@@ -434,7 +478,19 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
         mesh = HexMesh(ijk[active], pitch, origin)
 
     pres_el = preserve[active]
-    bc = boundary_conditions(study, mesh)
+    try:
+        bc = boundary_conditions(study, mesh)
+    except _HeldPreload:
+        # Supports that hold a fastener's rings along the screw (a bolt hole
+        # fixed in every direction, a bearing face under a thin flange) take
+        # the clamp force themselves, so the preload case would load nothing.
+        # Drop it and say how to keep it, rather than refuse a study `check`
+        # passed and the user never wrote that case for.
+        study.load_cases = [c for c in study.load_cases if c.name != "preload"]
+        warnings.append("the fasteners' preload case was dropped: the supports hold its seat and face rings along "
+                        "the screw, so it would load nothing. To design for the clamp, hold the bolt holes across "
+                        "the screw only (fix 'xy' for a screw along z) or support elsewhere")
+        bc = boundary_conditions(study, mesh)
     support_nodes, fixed, load_nodes = bc.support_nodes, bc.fixed, bc.load_nodes
     loads = bc.loads
     names = [c.name for c in study.load_cases]
@@ -510,4 +566,17 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
                   springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads,
-                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed))
+                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed),
+                  warp=_warp_term(study, mesh))
+
+
+def _warp_term(study, mesh):
+    """buildSim.warpWeight > 0: the as-built distortion term the optimizer
+    adds (buildsim.WarpTerm), with its weight."""
+    bs = getattr(study, "build_sim", None)
+    if not bs or not bs.get("warpWeight"):
+        return None
+    from .buildsim import WarpTerm
+    nu = study.elastic(design=True)
+    return WarpTerm(mesh, bs["setup"], build=study.process.build, layer=bs.get("warpLayer"),
+                    nu=float(nu)), float(bs["warpWeight"])

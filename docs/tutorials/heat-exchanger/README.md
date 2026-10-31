@@ -8,7 +8,10 @@ and out through the side. The oil pump has little head to spare, so each
 fluid gets a 5 kPa (0.05 bar) pressure-drop budget. You'll size the gyroid
 for the most heat inside that budget, design the whole part (core, headers,
 ports) and check that the two fluids never meet, then simulate the whole
-exchanger and compare it with the rating. About 4 minutes on 4 cores.
+exchanger and compare it with the rating. The first design runs over the oil
+budget, as first designs do; step 3 finds out why and fixes it, and the final
+cooler meets every budget in the whole-exchanger simulation. About 8 minutes
+on 4 cores.
 
 ![the oil cooler, cut open, and its two fluid spaces](images/oil-cooler.png)
 
@@ -124,9 +127,7 @@ How to read it:
   headers (about 1 kPa a side), and flow that doesn't spread evenly: water
   enters through one side port, and 14% of the core's water entry face is
   starved (`simulation.fluids.water.entry`). The oil is at 8.6 kPa, 70%
-  over the 5 kPa budget. To fix it: rerun step 1 with
-  `--max-pressure-drop oil=2500` to leave the headers their share, or take
-  the 7 mm cell at split 0.5, which gives up 7% of the heat.
+  over the 5 kPa budget. Step 3 fixes it.
 - **The oil runs at Re 6**, below the heat-transfer fits (Re 10-2500); the
   rating says so in `rating.fluids.oil.flags` and its effectiveness range
   (0.23-0.50) is wide for that reason. Treat 0.5 as the optimistic end until
@@ -137,9 +138,54 @@ How to read it:
   spaces drain to a port everywhere (`report.powder`: no unreached space).
   Add `"cleanouts": 1` for a tapped powder clean-out per fluid.
 
+## 3. Bring the oil back inside its budget
+
+Step 2 says how far off the sizing was on this part: its oil drop came out
+1.9x the correlations' (8.6 kPa simulated against 4.6 sized). So size again
+with half the budget for the oil, leaving the rest for the built core and
+its headers:
+
+```bash
+loadpath heatx spec.json --size --min-wall 1.0 --splits 0.5,0.6,0.66 --max-pressure-drop oil=2500,water=5000 > sizing-2.json
+```
+
+The pick moves from a 5 mm cell to **6 mm** (wall 1.0 mm, split 0.6):
+bigger channels, a sized effectiveness of 0.41. [`spec-final.json`](spec-final.json)
+takes it, and one more change: `"cap": 1.5`. The cap is how deep each
+plenum seals off the other fluid's channels at the core's ends (wall + 1 mm
+by default, so 2 mm here); at 1.5 mm, 1 mm of every channel end that was
+sealed is open to flow, and fewer dead pockets are left where the seals meet.
+
+```bash
+loadpath heatx spec-final.json --out hx-final/
+```
+
+| | first design (step 2) | 6 mm cell | **6 mm cell, 1.5 mm cap (final)** |
+|---|---|---|---|
+| oil pressure drop, simulated | 8.56 kPa | 4.75 kPa | **3.86 kPa** (3.01 core + 0.84 headers) |
+| water pressure drop, simulated | 3.98 kPa | 2.44 kPa | **2.02 kPa** |
+| effectiveness, simulated (rated) | 0.480 (0.499) | 0.393 (0.407) | **0.404** (0.409) |
+| heat duty, simulated | 1.85 kW | 1.51 kW | **1.56 kW**: oil 90 → 61.7 °C, water 20 → 31.2 °C |
+| trapped pockets | 5.0 mm³ | 6.0 mm³ | **4.1 mm³** |
+| internal flat ceiling | 115 mm² | 130 mm² | **115 mm²** |
+| thinnest wall between the fluids | 0.94 mm | 0.94 mm | **0.95 mm** |
+| part mass (AlSi10Mg) | 206 g | | **190 g** |
+| fluids isolated, connected, watertight | yes | yes | **yes** |
+
+Both fluids are now inside 5 kPa with room to spare (oil 23%, water 60%),
+the metal checks are inside their bars, and the part is 16 g lighter.
+(Trapped pockets are 15-20 slivers of a voxel or two each, so their total
+moves by a few mm³ with the grid: 7.1 mm³ on the quick grid.)
+
+![the final cooler, simulated](images/oil-cooler-final-simulation.png) The
+price is heat: 1.56 kW instead of 1.85. That is the trade the budget sets:
+a cooler that moves more heat at 5 kPa of oil needs a longer or wider core,
+not a finer gyroid. (The middle column is the 6 mm cell with the default
+cap, for comparison; it isn't one of the commands.)
+
 ## Quick mode
 
-The same commands with `--quick` take about 3.5 minutes, as long as the full
+The same commands with `--quick` take about 7 minutes, as long as the full
 run: quick mode coarsens a heat exchanger's grid, but this one is already on
 the coarsest grid its
 1 mm walls allow (the design grid holds at most 16 M points, so a part this

@@ -1,0 +1,245 @@
+{
+ "id": "wrist-yoke-mjf",
+ "brief": "Wrist yoke for a robot arm, MJF PA12. It sits on a 25 mm diameter servo horn: the horn's top\nface is at z = 0, its axis is Z through the origin, and the yoke is screwed to it with four\nM2.5 screws on a 16 mm bolt circle (holes at (8,0), (-8,0), (0,8), (0,-8)). Give the yoke a\nsolid 4 mm thick disc over the horn (z = 0 to 4, 25 mm diameter) with those holes through it.\nTwo cheeks rise from the base and carry the gripper's pivot: an 8 mm shaft along X at z = 45,\nthrough 8.2 mm holes in both cheeks, with at least 3 mm of wall round each hole. The wrist servo\nsits between the cheeks, so x = -15 to 15, y = -12 to 12, z = 10 to 60 has to stay empty, and\nthe cheeks can't go past x = +/-24. Overall the part fits in x = -24 to 24, y = -14 to 14,\nz = 0 to 56. The gripper hanging off the pivot is 800 g on a fast arm, and the wrist servo\ntwists it with up to 1.5 N\u00b7m about Z. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "mjf",
+  "moment"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -24.0,
+     -14.0,
+     0.0
+    ],
+    "max": [
+     24.0,
+     14.0,
+     56.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "horn-disc",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      4.0
+     ],
+     "r": 12.5
+    }
+   },
+   {
+    "id": "bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        18.0,
+        0.0,
+        45.0
+       ],
+       "p1": [
+        21.0,
+        0.0,
+        45.0
+       ],
+       "r": 7.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -21.0,
+        0.0,
+        45.0
+       ],
+       "p1": [
+        -18.0,
+        0.0,
+        45.0
+       ],
+       "r": 7.1
+      }
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "horn-screws",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        8.0,
+        0.0,
+        -1.0
+       ],
+       "p1": [
+        8.0,
+        0.0,
+        6.0
+       ],
+       "r": 1.4
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -8.0,
+        0.0,
+        -1.0
+       ],
+       "p1": [
+        -8.0,
+        0.0,
+        6.0
+       ],
+       "r": 1.4
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0.0,
+        8.0,
+        -1.0
+       ],
+       "p1": [
+        0.0,
+        8.0,
+        6.0
+       ],
+       "r": 1.4
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0.0,
+        -8.0,
+        -1.0
+       ],
+       "p1": [
+        0.0,
+        -8.0,
+        6.0
+       ],
+       "r": 1.4
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "pivot",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      -30.0,
+      0.0,
+      45.0
+     ],
+     "p1": [
+      30.0,
+      0.0,
+      45.0
+     ],
+     "r": 4.1
+    }
+   },
+   {
+    "id": "servo",
+    "shape": {
+     "type": "box",
+     "min": [
+      -15.0,
+      -12.0,
+      10.0
+     ],
+     "max": [
+      15.0,
+      12.0,
+      60.0
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "region": "horn-screws"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -0.5
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      0.3
+     ],
+     "r": 12.5
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "hang",
+    "loads": [
+     {
+      "region": "pivot",
+      "force": [
+       0,
+       0,
+       -11.772000000000002
+      ]
+     }
+    ]
+   },
+   {
+    "name": "twist",
+    "loads": [
+     {
+      "region": "pivot",
+      "moment": [
+       0,
+       0,
+       1500
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "mjf",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "wrist-yoke-mjf",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

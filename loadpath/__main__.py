@@ -29,6 +29,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from .tasks import jsonable as _jsonable
 
@@ -95,17 +96,17 @@ def _import(args):
             r = import_part(args.part, tolerance=args.tolerance)
             print(json.dumps({**r["summary"], "suggested": r["features"]["suggested"]}, indent=1))
             return 0
-        loads = {}
+        loads = []
         for item in args.load:
             k, _, v = item.partition("=")
             f = [float(x) for x in v.split(",")]
             if len(f) != 3:
                 raise ValueError(f"--load {item!r}: write ID=FX,FY,FZ in N")
-            loads[k] = f
+            loads.append((k, f))
         out = import_part(args.part, args.out, tolerance=args.tolerance, space=args.space, grow=args.grow,
                           material=args.material or "petg", force=args.force, pad=args.pad,
                           safety_factor=args.safety_factor, process=args.process, support=args.support,
-                          loads=loads or None)
+                          loads=loads or None, ring=args.ring)
     except (ValueError, RuntimeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
@@ -113,12 +114,18 @@ def _import(args):
     stem = out["study"]["name"]
     given = bool(loads)
     todo = [] if given else [f"replace the placeholder load ({f['suggested'].get('note', 'none suggested')}): "
-                             "--load ID=FX,FY,FZ with an interface id below"]
+                             "--load ID=FX,FY,FZ with an interface id below, one load case per --load"]
     if not args.material:
         todo.append("material is the default (petg, FDM): pass --material/--process for anything else")
+    if args.space == "part" and not args.grow:
+        todo.append("the design space is the part as drawn, so the optimizer can only remove material from it: "
+                    "to lighten within the same envelope, or let it find a new shape, use --space box (or hull)")
+    setup = {"setup": {"support": args.support or f["suggested"].get("support"),
+                       "loads": [{"interface": k, "force": v} for k, v in loads]}} if given else \
+        {"suggested": f["suggested"]}
     print(json.dumps({"ok": True, "study": os.path.join(args.out, f"{stem}.study.json"),
                       "features": os.path.join(args.out, f"{stem}.features.json"),
-                      **out["summary"], "suggested": f["suggested"], "material": args.material or "petg",
+                      **out["summary"], **setup, "material": args.material or "petg",
                       "todo": todo, **({"healed": f["healed"]} if "healed" in f else {})}, indent=1))
     return 0
 
@@ -149,7 +156,7 @@ def _assembly(args):
     derived, report = derive_study(robot, args.link, study, args.region, payload=payload, keep_cases=args.keep_cases,
                                    sweep_space=not args.no_space, k=args.cases, method=args.method,
                                    sweep_kw=sweep_kw, space_kw={"clearance": args.clearance}, out_dir=args.out,
-                                   base_dir=base, cycles={k: float(v) for k, v in
+                                   base_dir=base, frame=args.frame, cycles={k: float(v) for k, v in
                                                           (kv.split("=") for kv in args.cycles.split(",") if kv)})
     # the study's own mesh paths are relative to its folder: make them absolute
     for key in ("designSpace", "preserve", "keepOut"):
@@ -209,8 +216,14 @@ def _verify(args):
     summary = {"ok": True, "part": part, "study": args.study, "mass": rep["mass"],
                "safetyFactor": rep.get("safetyFactor"), "margin": m,
                "passes": None if m is None else bool(m >= 1.0 and rep.get("bodies", 1) <= 1),
-               "keepOutIntrusion": rep.get("keepOutIntrusion"), "bodies": rep.get("bodies"),
-               "cases": {c["name"]: {"safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection")}
+               "safetyFactorMethod": "voxel", "analysisPitch": rep.get("analysisPitch"),
+               "keepOutIntrusion": rep.get("keepOutIntrusion"), "preserveMissing": rep.get("preserveMissing"),
+               "bodies": rep.get("bodies"),
+               **({"durabilitySafetyFactor": rep["durability"].get("safetyFactor")}
+                  if isinstance(rep.get("durability"), dict) else {}),
+               "warnings": list(rep.get("warnings") or []),
+               "cases": {c["name"]: {"safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection"),
+                                     "peakStress": c.get("peakStress")}
                          for c in rep.get("cases", [])},
                "report": rep}
     if args.out:
@@ -339,6 +352,7 @@ def main(argv=None):
     cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
     cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
     cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
+    sub.add_parser("guide", help="print the agent guide (SKILL.md: how to turn a request into a study)")
     im = sub.add_parser("import", help="a STEP/STL part as a draft study: bores, bolt patterns and mounting "
                                        "faces found, interfaces preserved, a support and load suggested")
     im.add_argument("part", help="STEP (.step/.stp, needs loadpath[step]), STL, 3MF or OBJ, in mm")
@@ -350,7 +364,10 @@ def main(argv=None):
     im.add_argument("--process", help="fdm, sls, mjf, sla, dlp, lpbf, volumetric")
     im.add_argument("--support", help="interface id that holds the part (default: the suggested one)")
     im.add_argument("--load", action="append", default=[], metavar="ID=FX,FY,FZ",
-                    help="N on an interface, e.g. bore-0=0,0,-250 (repeatable); replaces the placeholder")
+                    help="N on an interface, e.g. bore-0=0,0,-250; repeat it for more load cases, one per --load; "
+                    "replaces the placeholder")
+    im.add_argument("--ring", type=float, help="mm of wall kept round every bore, as exact tubes in the study "
+                    "(default: 2 mm + a tenth of the radius, cut to the part)")
     im.add_argument("--force", type=float, default=100.0, help="N: the suggested (placeholder) load")
     im.add_argument("--pad", type=float, default=2.0, help="mm of material kept under each bolted face")
     im.add_argument("--safety-factor", type=float, default=2.0)
@@ -362,13 +379,16 @@ def main(argv=None):
     asm.add_argument("--study", required=True, help="the part's study: interfaces, material, goal, design space")
     asm.add_argument("--region", required=True, help="the study region the far joint loads (a socket, a mount)")
     asm.add_argument("--joint", help="the far joint, if the link has more than one moving child joint")
+    asm.add_argument("--frame", choices=["world", "link"], default="world",
+                     help="the study's frame: world (the URDF's world at the home pose, mm) or link (the "
+                     "designed link's own frame, mm, origin at its joint)")
     asm.add_argument("--payload", type=float, default=0.0, help="kg at the end of the chain")
     asm.add_argument("--payload-link", help="link that carries the payload (default: the chain's last link)")
     asm.add_argument("--payload-at", default="0,0,0", help="payload position in that link's frame, m: x,y,z")
     asm.add_argument("--payload-radius", type=float, default=0.0, help="m: payload position scatters this far")
     asm.add_argument("--samples", type=int, default=1500, help="random poses (on top of the limit corners)")
     asm.add_argument("--ramp", type=float, default=0.2, help="s to full speed (before the effort limit)")
-    asm.add_argument("--push", type=float, default=20.0, help="N: contact at the payload, any direction")
+    asm.add_argument("--push", type=float, default=20.0, help="N: contact at the payload, any direction (default 20; often sizes the part, 0 if nothing pushes)")
     asm.add_argument("--contact-max", type=float, help="N: hardest an obstacle pushes back on a stalled joint "
                      "(default: --push)")
     asm.add_argument("--balanced", default="", help="joints a counterbalance holds against gravity: j2,...")
@@ -420,6 +440,10 @@ def main(argv=None):
         return _verify(args)
     if args.cmd == "import":
         return _import(args)
+    if args.cmd == "guide":
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKILL.md")) as fh:
+            print(fh.read())
+        return 0
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
@@ -449,20 +473,58 @@ def main(argv=None):
         _write_report(args.out, rep)
         return 0
 
+    if study.multi_material is not None:
+        # several materials placed by the optimizer (multimat.py): bodies,
+        # an STL per material, a multi-material 3MF and report.json
+        from .multimat import run_multimaterial
+
+        mres = run_multimaterial(study, on_progress=lambda ev, *_: _progress(ev, None))
+        files = mres.write(args.out)
+        print(json.dumps(_jsonable({"ok": True, "mass": mres.report.get("mass"),
+                          "materialMass": mres.report.get("materialMass"),
+                          "safetyFactor": mres.report.get("safetyFactor"),
+                          "interfaceSafetyFactor": mres.report.get("interfaceSafetyFactor"),
+                          "requirementsMet": mres.report.get("requirementsMet"), "files": files}),
+                         indent=2, default=str))
+        return 0
     if not args.no_render and not _can_render():
         args.no_render = True
     from .study import run_study
 
+    # a run can take half an hour: say which process it is, so a caller polling
+    # from elsewhere can tell it apart from other runs and see it finish
+    os.makedirs(args.out, exist_ok=True)
+    status_path = os.path.join(args.out, "status.json")
+
+    def _status(state, **kw):
+        with open(status_path, "w") as fh:
+            json.dump({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study), **kw}, fh)
+
+    _status("running", started=time.time())
+    # each outcome as the search finds it, kept if a later stage dies
+    os.environ.setdefault("LOADPATH_PARTIAL_DIR", os.path.join(args.out, "partial"))
     rec = None
     if args.viewer != "none" and not os.environ.get("LOADPATH_NO_RENDER"):
         from .viewer import HistoryRecorder
         rec = HistoryRecorder(chain=_progress)
-    result = run_study(study, on_progress=rec or _progress)
+    try:
+        result = run_study(study, on_progress=rec or _progress)
+    except BaseException as exc:
+        _status("failed", error=f"{type(exc).__name__}: {exc}",
+                partial=os.environ.get("LOADPATH_PARTIAL_DIR"))
+        raise
     os.makedirs(args.out, exist_ok=True)
     summary = result.to_dict()
     stems = []
     for i, o in enumerate(result.outcomes):
         stem = f"{study.name}-{int(round(o.volume_fraction * 100)):02d}"
+        if stem in stems:
+            # two outcomes within half a percent (a search bisecting): one
+            # file each, or the second overwrites the first's STL
+            stem = f"{study.name}-{o.volume_fraction * 100:.1f}".replace(".", "p")
+            k = 2
+            while stem in stems:
+                stem, k = f"{study.name}-{int(round(o.volume_fraction * 100)):02d}-{k}", k + 1
         stems.append(stem)
         stl = os.path.join(args.out, stem + ".stl")
         o.mesh.export(stl)
@@ -522,7 +584,19 @@ def main(argv=None):
             summary["viewer"] = html
         except Exception as exc:  # noqa: BLE001 - the parts and report matter more than the page
             summary.setdefault("warnings", []).append(f"viewer not written: {exc}")
+    from .delivery import delivery
+    summary["deliver"] = delivery(summary, raw)
+    dv = summary["deliver"]
+    if dv and dv.get("safetyFactorMethod") != "tet":
+        # say why the body-fitted cross-check did not confirm it
+        try:
+            from .crosscheck import unsupported
+            why = unsupported(study)
+        except Exception as exc:  # noqa: BLE001
+            why = f"{type(exc).__name__}: {exc}"
+        dv["tetCrossCheck"] = f"not run: {why}" if why else "not run: goal.confirm chose the voxel re-check"
     _write_report(args.out, summary)
+    _status("done", report=os.path.join(os.path.abspath(args.out), "report.json"))
     if not os.environ.get("LOADPATH_NO_HINT"):
         print("Print or host this part: https://www.materialize.cc  (silence with LOADPATH_NO_HINT=1)",
               file=sys.stderr)
@@ -680,5 +754,15 @@ def _orient(args):
     return 0
 
 
+def _main():
+    # `loadpath check study.json | head` closes the pipe early: exit quietly
+    try:
+        return main()
+    except BrokenPipeError:
+        import os
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main())

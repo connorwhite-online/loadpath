@@ -104,21 +104,27 @@ BUILD = {
 }
 
 # LPBF strain factor k (eps = -k * yield / E), fitted to the NIST AM-Bench
-# 2018 bridges at 0.5 mm voxels, one analysis layer per voxel, a 12.7 mm
-# plate (bench/buildsim_validate.py; docs/BUILDSIM.md). The yield-strain
+# 2018 bridges at 0.5 mm voxels, one analysis layer per voxel, the 12.7 mm
+# plate reduced to 2 voxel layers (plate_cells; on the whole plate the fit
+# was 0.909) (bench/buildsim_validate.py; docs/BUILDSIM.md). The yield-strain
 # scaling does not carry across alloy classes: with IN625's k, 15-5 PH
 # came out 60% high (its martensite forms on cooling and expands, which
 # undoes part of the shrink), so 15-5 PH has its own fit. Alloys without a
 # fit use IN625's and the report says so.
-LPBF_K = 0.909
-LPBF_K_FIT = {"in625": 0.909, "15-5ph": 0.569}
+LPBF_K = 0.839
+LPBF_K_FIT = {"in625": 0.839, "15-5ph": 0.522}
 # FDM retained share of the sub-Tg shrink, and the bed's hold (N/mm^3 of
 # elastic foundation): fitted together on the nine 20 mm-wide ABS bars of
-# Armillotta et al. 2018 (bench/buildsim_fdm.py; rms 0.15 mm, mean 22%).
-# The decay length (mm) of the bed's heat up the part is an estimate.
-FDM_RELAX = 0.83
-FDM_BED = 3.0
+# Armillotta et al. 2018 (bench/buildsim_fdm.py; rms 0.16 mm, mean 24%;
+# the bed pinned only in plane, so corners can lift). The decay length
+# (mm) of the bed's heat up the part is an estimate. FDM_ADHESION: MPa of
+# bond tension before the first layer lets go; off by default, since
+# letting go made the Armillotta fit worse (it flattens the tall bars and
+# leaves the thin ones), see docs/BUILDSIM.md.
+FDM_RELAX = 0.895
+FDM_BED = 4.0
 FDM_DECAY = 6.0
+FDM_ADHESION = float("inf")
 ROOM = 23.0
 
 
@@ -133,6 +139,12 @@ class BuildSetup:
     plate: float = 10.0                 # mm of build plate under the part (lpbf); 0 = rigid plate
     plate_margin: float = 2.0           # mm the plate extends past the part's footprint
     plate_fixed: bool = True            # plate bolted down along its underside; False: free (3-2-1)
+    # at most this many cells of plate; a thinner model plate is made as
+    # compliant as the real one through the thickness (modulus scaled by
+    # the thickness ratio), for a plate held along its underside only.
+    # None = model the whole plate. On AM-Bench at 0.5 mm voxels, 2 cells
+    # ran in 65 s against 181 s and rose 8% more; LPBF_K is fitted with 2.
+    plate_cells: int | None = 2
     strain: tuple | None = None         # inherent strain override (exx, eyy, ezz), build frame
     scale: float = 1.0                  # multiplies the inherent strain (a calibration)
     k: float | None = None              # lpbf: share of the yield strain kept (default LPBF_K)
@@ -154,6 +166,10 @@ class BuildSetup:
     # area of an elastic foundation in z and in plane); None = FDM_BED
     # (fitted), inf = rigid (glued), 0 = not at all (curls freely)
     bed_stiffness: float | None = None
+    # fdm: peel strength of the bed bond, MPa: where the bed's pull on the
+    # first layer passes it, that spot lets go for good (corner lift).
+    # None = FDM_ADHESION, inf = never
+    bed_adhesion: float | None = None
     recoater_gap: float = 0.05          # mm: lift at the build plane that can touch the recoater
 
 
@@ -315,7 +331,10 @@ class _Kernel:
         return ((ue @ self.bc.T - eps) @ self.c1.T) * e[:, None]
 
 
-def _solve(k, f, xyz, d=None, direct=90_000, rtol=1e-7):
+_DIRECT = 90_000      # dofs: a direct factorization up to here
+
+
+def _solve(k, f, xyz, d=None, direct=_DIRECT, rtol=1e-7):
     """Sparse SPD solve: a direct factorization for small systems, CG on
     smoothed-aggregation AMG (rigid-body near null space of the nodes
     `xyz`, restricted to the dofs `d` the system keeps) beyond."""
@@ -360,6 +379,22 @@ def _three_two_one(mesh, nodes):
     return fixed
 
 
+def _in_plane_pins(mesh, nodes):
+    """Pins for a part on an elastic bed: the springs carry z, so only the
+    in-plane drift is held, at the node nearest the footprint's centre
+    (x, y) and one far from it along x (y). Pinning z at corners, as a
+    3-2-1 does, would hold down the corners that lift."""
+    idx = np.flatnonzero(nodes)
+    xyz = mesh.node_xyz[idx]
+    a = idx[np.argmin(np.linalg.norm(xyz[:, :2] - xyz[:, :2].mean(axis=0), axis=1))]
+    pa = mesh.node_xyz[a]
+    b = idx[np.argmax(np.abs(xyz[:, 0] - pa[0]) - 1e-3 * np.abs(xyz[:, 1] - pa[1]))]
+    fixed = np.zeros(mesh.n_dof, bool)
+    fixed[3 * a:3 * a + 2] = True
+    fixed[3 * b + 1] = True
+    return fixed
+
+
 def _remove_rigid(xyz, u):
     """u minus its least-squares rigid motion (a best-fit alignment)."""
     b = rigid_body_modes(xyz)
@@ -382,6 +417,10 @@ def _grid_mesh(solid, pitch, origin, setup):
     plate_cells = 0
     if setup.process.lower() == "lpbf" and setup.plate > 0:
         plate_cells = max(1, int(round(setup.plate / pitch)))
+        if setup.plate_cells is not None and setup.plate_fixed:
+            # the scaled modulus keeps a held plate's through-thickness
+            # compliance (E / h); a free plate bends (E h^3), so it stays whole
+            plate_cells = min(plate_cells, max(1, int(setup.plate_cells)))
     margin = int(round(setup.plate_margin / pitch)) if plate_cells else 0
     shift = np.array([margin, margin, plate_cells - k0])
     part_ijk = ijk + shift
@@ -414,7 +453,7 @@ def _grid_mesh(solid, pitch, origin, setup):
     if not plate_cells and kb is not None and np.isfinite(kb):
         # an elastic bed: springs on the underside's nodes (a quarter cell
         # of area per touching cell), 3-2-1 against rigid motion
-        fixed = _three_two_one(mesh, bottom)
+        fixed = _in_plane_pins(mesh, bottom)
         area = np.zeros(mesh.n_nodes)
         under = mesh.elem_ijk[:, 2] == 0
         for c in range(4):
@@ -442,6 +481,8 @@ def simulate_build(solid, pitch, origin=(0.0, 0.0, 0.0), setup: BuildSetup | Non
     ne = mesh.n_elem
     kern = _Kernel(mesh, nu, fixed, springs)
     e = np.full(ne, e0)
+    if plate_cells and plate_cells * pitch < setup.plate - 1e-9:
+        e[~part] *= plate_cells * pitch / setup.plate
     depth = None
     if proc in ("sls", "mjf"):
         from scipy import ndimage
@@ -462,20 +503,42 @@ def simulate_build(solid, pitch, origin=(0.0, 0.0, 0.0), setup: BuildSetup | Non
         node_on = np.zeros(mesh.n_nodes, bool)
         if active.any():
             node_on[mesh.enode[active].ravel()] = True
+        # Big parts solve on mg.py's matrix-free multigrid (cells not yet
+        # printed get modulus 0, which drops them; its setup per layer is a
+        # reshape, where pyamg's was 60% of the time on AM-Bench); small
+        # ones factor each layer exactly.
+        big = mesh.n_dof > _DIRECT
+        detached = 0
+        solver = None
+        if big:
+            from .mg import GridElasticity
+            solver = GridElasticity(mesh, nu, fixed, springs=sp.diags(springs) if np.any(springs) else None,
+                                    rtol=1e-7, maxiter=3000, device="cpu")
         for li in range(n_layers):
             new = part & (layer_of == li)
             if not new.any():
                 continue
             active = active | new
             node_on[mesh.enode[new].ravel()] = True
-            k = kern.k(e * active)
-            d = _dofs(node_on, fixed)
             f = kern.load(e, eps[new], np.flatnonzero(new))
             du = np.zeros(mesh.n_dof)
-            du[d] = _solve(k[d][:, d], f[d], xyz, d)
+            if big:
+                f[fixed] = 0.0
+                solver.set_moduli(e * active)
+                du = solver.solve_many([f])[0]
+                du[~np.repeat(node_on, 3)] = 0.0      # unprinted nodes go down at nominal
+            else:
+                k = kern.k(e * active)
+                d = _dofs(node_on, fixed)
+                du[d] = _solve(k[d][:, d], f[d], xyz, d)
             u += du
             act = np.flatnonzero(active)
             ue[act] += du[mesh.edof[act]]
+            lost = _detach(kern, setup, u, ue, act, lambda g: _resolve(kern, e * active, node_on, fixed, xyz, g))
+            if lost and big:
+                solver = GridElasticity(mesh, nu, fixed, springs=sp.diags(kern.springs), rtol=1e-7, maxiter=3000,
+                                        device="cpu")
+            detached += lost
             # lift at the build plane (the top of the cells just laid)
             top_z = mesh.elem_ijk[new, 2].max() + 1
             top = node_on & (mesh.node_ijk[:, 2] == top_z)
@@ -506,7 +569,10 @@ def simulate_build(solid, pitch, origin=(0.0, 0.0, 0.0), setup: BuildSetup | Non
         du[d] = _solve(k[d][:, d], f[d], xyz, d)
         u += du
         ue += du[mesh.edof]
+        detached += _detach(kern, setup, u, ue, np.arange(ne), lambda g: _resolve(kern, e, node_on, fixed, xyz, g))
         eps = eps + eps2
+        report["detachedArea"] = float(detached)
+        report["bedFailed"] = bool(getattr(kern, "bed_failed", False))
         report["peelCooled"] = _bed_peel(mesh, kern, e, ue, eps, part, fixed, u)
 
     u_built = u.reshape(-1, 3).copy()
@@ -606,6 +672,63 @@ def _components(mesh, cells):
         on[mesh.enode[idx[el == i]].ravel()] = True
         out.append(on)
     return out
+
+
+def _detach(kern, setup, u, ue, act, solve):
+    """FDM bed bond failure: every bonded bed node whose bond pulls harder
+    than the adhesion (tension kb * u_z, MPa) lets go, its springs removed,
+    and the part re-balances; repeat until none fails. `solve(load)` solves
+    the current stiffness (it sees the springs as they are now). Updates u
+    and ue in place; returns the bed area let go (mm^2)."""
+    if kern.springs is None or setup.process.lower() != "fdm":
+        return 0
+    adh = FDM_ADHESION if setup.bed_adhesion is None else float(setup.bed_adhesion)
+    if not np.isfinite(adh):
+        return 0
+    kb = float(setup.bed_stiffness if setup.bed_stiffness is not None else FDM_BED)
+    mesh = kern.mesh
+    bed = np.flatnonzero(mesh.node_ijk[:, 2] == 0)
+    lost = 0.0
+    for _ in range(60):
+        bonded = kern.springs[3 * bed + 2] > 0
+        fail = bed[bonded & (kb * u[3 * bed + 2] > adh)]
+        if len(fail) == 0:
+            break
+        if bonded.sum() - len(fail) < max(4, 0.02 * len(bed)):
+            # the whole footprint lets go: the part pops off the bed (a
+            # failed print); keep the last bonds so the solve stays posed
+            kern.bed_failed = True
+            break
+        lost += float(kern.springs[3 * fail + 2].sum()) / kb      # their bed area, mm^2
+        dof = (3 * fail[:, None] + np.arange(3)).ravel()
+        load = np.zeros(mesh.n_dof)
+        load[dof] = kern.springs[dof] * u[dof]      # what the bond held, now let go
+        kern.springs[dof] = 0.0
+        du = solve(load)
+        u += du
+        ue[act] += du[mesh.edof[act]]
+    return lost
+
+
+def _resolve(kern, scale, node_on, fixed, xyz, load):
+    """One solve of the current stiffness (springs as they stand) on the
+    printed nodes: direct when small, multigrid when big."""
+    mesh = kern.mesh
+    du = np.zeros(mesh.n_dof)
+    if mesh.n_dof > _DIRECT:
+        from .mg import GridElasticity
+        sv = GridElasticity(mesh, kern.nu, fixed, springs=sp.diags(kern.springs) if kern.springs is not None else None,
+                            rtol=1e-7, maxiter=3000, device="cpu")
+        sv.set_moduli(scale)
+        g = load.copy()
+        g[fixed] = 0.0
+        du = sv.solve_many([g])[0]
+        du[~np.repeat(node_on, 3)] = 0.0
+        return du
+    k = kern.k(scale)
+    d = _dofs(node_on, fixed)
+    du[d] = _solve(k[d][:, d], load[d], xyz, d)
+    return du
 
 
 def _assemble_free(kern, scale):
@@ -865,7 +988,6 @@ def _warp_problem(grid, supports, force, opts: WarpOptions):
     """evaluate(xe) -> (objective, gradient, record) of optimize_warp, on
     the eroded density xe."""
     from .simp import E_MIN
-    from scipy.sparse.linalg import splu
 
     mesh = grid.mesh
     setup = opts.process
@@ -873,22 +995,9 @@ def _warp_problem(grid, supports, force, opts: WarpOptions):
     e0 = float(setup.E or mat.E)
     nu = float(setup.nu if setup.nu is not None else mat.nu)
     p = 3.0
-    ne = mesh.n_elem
-    z_lo = mesh.elem_ijk[:, 2].min()
-    plate_fixed = np.repeat(mesh.node_ijk[:, 2] == z_lo, 3)
-    kern_b = _Kernel(mesh, nu, plate_fixed)
+    warp = WarpTerm(mesh, setup, build=(2, 1), layer=opts.layer, target=opts.target, nu=nu)
     st_s = Stiffness(mesh, nu, np.asarray(supports, bool))
-    z_above = (mesh.elem_ijk[:, 2] - z_lo + 0.5) * mesh.pitch
-    eps, _ = inherent_strain(setup, z=z_above if setup.process == "fdm" else None)
-    eps = np.broadcast_to(eps, (ne, 6)).copy()
-    lump = max(1, int(round((opts.layer or 4 * mesh.pitch) / mesh.pitch)))
-    layer_of = (mesh.elem_ijk[:, 2] - z_lo) // lump
-    n_layers = int(layer_of.max()) + 1
-    target = np.ones(mesh.n_nodes, bool) if opts.target is None else np.asarray(opts.target, bool)
-    wdof = np.repeat(target, 3).astype(float) / max(target.sum(), 1)
     f_s = np.asarray(force, float)
-    ke = kern_b.st.ke
-    g = kern_b.g
     ref = {}
 
     def evaluate(xe):
@@ -898,36 +1007,7 @@ def _warp_problem(grid, supports, force, opts: WarpOptions):
         us = _solve(st_s.assemble(e), f_s, mesh.node_xyz)
         comp = float(f_s @ us)
         dc = -de * st_s.strain_energy(us)
-        # build: forward pass, keeping each layer's factorization
-        u = np.zeros(mesh.n_dof)
-        steps = []
-        node_on = np.zeros(mesh.n_nodes, bool)
-        active = np.zeros(ne, bool)
-        for li in range(n_layers):
-            new = layer_of == li
-            active |= new
-            node_on[mesh.enode[new].ravel()] = True
-            d = _dofs(node_on, plate_fixed)
-            lu = splu(kern_b.st.assemble(e * active)[d][:, d].tocsc(), permc_spec="MMD_AT_PLUS_A")
-            el = np.flatnonzero(new)
-            f = kern_b.load(e, eps[el], el)
-            du = np.zeros(mesh.n_dof)
-            du[d] = lu.solve(f[d])
-            u += du
-            steps.append((d, lu, el, du, active.copy()))
-        dist = float((wdof * u * u).sum())
-        # adjoint: J = u^T W u with u the sum of the layer increments, so
-        # dJ/d du_k = 2 W u on step k's dofs; K_k lam_k = that, and
-        # dJ/de = sum_k lam_k^T (df_k/de - dK_k/de du_k)
-        gu = 2.0 * wdof * u
-        dd = np.zeros(ne)
-        for d, lu, el, du, act in steps:
-            lam = np.zeros(mesh.n_dof)
-            lam[d] = lu.solve(gu[d])
-            dd[el] += np.einsum("ij,ij->i", lam[mesh.edof[el]], eps[el] @ g.T)
-            ia = np.flatnonzero(act)
-            dd[ia] -= np.einsum("ij,jk,ik->i", lam[mesh.edof[ia]], ke, du[mesh.edof[ia]])
-        dd *= de
+        dist, dd = warp.evaluate(e, de)
         if not ref:
             ref["c"], ref["d"] = comp, max(dist, 1e-30)
         obj = comp / ref["c"] + opts.warp_weight * dist / ref["d"]
@@ -962,3 +1042,100 @@ def optimize_warp(grid, supports, force, opts: WarpOptions, on_iter=None, should
                       distortion=float(last.get("distortion", np.nan)),
                       volume_fraction=float(xp[~pres].mean()), iterations=it, converged=conv, seconds=secs,
                       history=hist)
+
+
+# --------------------------------------------------------- the warp term
+
+
+class WarpTerm:
+    """The as-built distortion of a density design and its gradient: the
+    layer-by-layer build of buildsim on a fixed voxel mesh, every cell
+    present at modulus e (SIMP), the lowest layer's underside held by the
+    plate. D = mean over the target nodes of |u|^2, u the displacement at
+    the end of the build (still on the plate). Shared by optimize_warp and
+    the study optimizer (simp, buildSim.warpWeight).
+
+    build: (axis, sign), the direction layers stack (a grid axis; a tilted
+    build has no layers on this grid); layer: mm per analysis layer
+    (default 4 cells)."""
+
+    DIRECT = 90_000          # dofs: factor each layer once for the forward and adjoint solves
+
+    def __init__(self, mesh: HexMesh, setup: BuildSetup, build=(2, 1), layer=None, target=None, nu=None):
+        if build is None or len(build) != 2:
+            raise ValueError("the warp term needs a build direction along a grid axis ('+z', '-y', ...); "
+                             "a tilted build direction has no layers on the voxel grid")
+        axis, sign = int(build[0]), int(build[1])
+        self.mesh = mesh
+        self.axis = axis
+        mat = _material(setup.material)
+        nu = float(nu if nu is not None else (setup.nu if setup.nu is not None else mat.nu))
+        hgt = sign * mesh.elem_ijk[:, axis]
+        hgt = hgt - hgt.min()
+        hn = sign * mesh.node_ijk[:, axis]
+        self.fixed = np.repeat(hn == hn.min(), 3)
+        self.kern = _Kernel(mesh, nu, self.fixed)
+        eps, self.info = inherent_strain(setup, z=(hgt + 0.5) * mesh.pitch if setup.process == "fdm" else None)
+        eps = np.broadcast_to(eps, (mesh.n_elem, 6))
+        # build frame (in plane, in plane, along the build) -> grid axes
+        inplane = [a for a in range(3) if a != axis]
+        world = np.zeros((mesh.n_elem, 6))
+        world[:, inplane[0]] = eps[:, 0]
+        world[:, inplane[1]] = eps[:, 1]
+        world[:, axis] = eps[:, 2]
+        self.eps = world
+        lump = max(1, int(round((layer or 4 * mesh.pitch) / mesh.pitch)))
+        self.layer_of = hgt // lump
+        self.n_layers = int(self.layer_of.max()) + 1
+        target = np.ones(mesh.n_nodes, bool) if target is None else np.asarray(target, bool)
+        self.wdof = np.repeat(target, 3).astype(float) / max(int(target.sum()), 1)
+        self.last_u = None
+
+    def evaluate(self, e, de=None):
+        """(D, dD/dx) for moduli e (per cell) and their derivative de with
+        respect to the design density (None: D only)."""
+        from scipy.sparse.linalg import splu
+        mesh, kern = self.mesh, self.kern
+        ne = mesh.n_elem
+        u = np.zeros(mesh.n_dof)
+        steps = []
+        node_on = np.zeros(mesh.n_nodes, bool)
+        active = np.zeros(ne, bool)
+        for li in range(self.n_layers):
+            new = self.layer_of == li
+            if not new.any():
+                continue
+            active |= new
+            node_on[mesh.enode[new].ravel()] = True
+            d = _dofs(node_on, self.fixed)
+            k = kern.st.assemble(e * active)[d][:, d]
+            el = np.flatnonzero(new)
+            f = kern.load(e, self.eps[el], el)
+            du = np.zeros(mesh.n_dof)
+            if len(d) <= self.DIRECT:
+                lu = splu(k.tocsc(), permc_spec="MMD_AT_PLUS_A")
+                du[d] = lu.solve(f[d])
+                solve = lu.solve
+            else:
+                du[d] = _solve(k, f[d], mesh.node_xyz, d)
+                solve = (lambda kk, dd: (lambda r: _solve(kk, r, mesh.node_xyz, dd)))(k, d)
+            u += du
+            if de is not None:
+                steps.append((d, solve, el, du, np.flatnonzero(active)))
+        self.last_u = u
+        dist = float((self.wdof * u * u).sum())
+        if de is None:
+            return dist, None
+        # adjoint: D = u^T W u, u the sum of the layer increments, so
+        # dD/d du_k = 2 W u on step k's dofs; K_k lam_k = that, and
+        # dD/de = sum_k lam_k^T (df_k/de - dK_k/de du_k)
+        gu = 2.0 * self.wdof * u
+        dd = np.zeros(ne)
+        ke, g = kern.st.ke, kern.g
+        for d, solve, el, du, ia in steps:
+            lam = np.zeros(mesh.n_dof)
+            lam[d] = solve(gu[d])
+            dd[el] += np.einsum("ij,ij->i", lam[mesh.edof[el]], self.eps[el] @ g.T)
+            dd[ia] -= np.einsum("ij,jk,ik->i", lam[mesh.edof[ia]], ke, du[mesh.edof[ia]])
+        return dist, dd * de
+

@@ -152,7 +152,7 @@ underneath, for anything else (`add_part` with fields, `add_overlay`,
 | `designSpace` | Shapes material may occupy (their union). |
 | `preserve` | Geometry kept exactly: bosses, mounting faces, tabs. Pinned solid in the optimization and unioned back exactly. |
 | `keepOut` | Volume that must stay empty: bores, bolt access, cable runs, mating parts, a fluid's volume. Cut exactly at the end. `wall: 1.5` keeps 1.5 mm of material round it, pinned solid (a duct's or plenum's skin; see pressure below). |
-| `fasteners` | Optional bolted joints as interfaces: `{id, size: "M5", seat, direction, grip, end: "face"\|"thread"\|"none", headOn: "this"\|"mating"}`. A screw driven from the mating part into this one is `headOn: "mating", end: "thread"`. Adds a seat ring and a face ring or thread sleeve (preserve), the bore and the head and driver path (keep-outs, `<id>-bore`, `<id>-head`), and a self-balanced `preload` case, so the optimizer grows the clamp path instead of keeping a solid boss. See `fasteners.py`. |
+| `fasteners` | Optional bolted joints as interfaces: `{id, size: "M5", seat, direction, grip, end: "face"\|"thread"\|"none", headOn: "this"\|"mating"}`. A screw driven from the mating part into this one is `headOn: "mating", end: "thread"`. Adds a seat ring and a face ring or thread sleeve (preserve), the bore and the head and driver path (keep-outs, `<id>-bore`, `<id>-head`), and a self-balanced `preload` case, so the optimizer grows the clamp path instead of keeping a solid boss. Sizes: `hole`, `head`, `wall` (seat ring beyond the head), `ring` (ring thickness), `driver` (head path length, default 60 mm), `threadLength`, `insert`, `sleeveWall`, `preload` (N); `loadpath schema study` describes each. See `fasteners.py`. |
 | `supports` | Where the part is held: a region id or an inline shape, with `fix` = `"all"` (default), axes like `"xz"`, or three booleans. Optional when every load is a pressure on a sealed cavity. |
 | `skin` | Optional skin-and-rib: `1.2` or `{thickness: 1.2, open: ["-z"]}` keeps that many mm of the design space's outer surface as a solid wall (except on the `open` faces) and designs only what is behind it, so the optimizer grows ribs under a skin instead of a free-form part. |
 | `loadCases` | Each a list of forces (N) on regions. The optimizer stiffens for all cases together; verification reports each. Optional `cycles` (times applied over the part's life: fatigue), `hours` (time held: creep) and `temperature` (C). |
@@ -182,7 +182,9 @@ and `mesh` (a closed STL by `path`, relative to the study file, or inline as
 A load or support on a keep-out means "through the material lining it", which
 is how a shaft pushes on a bore or a bolt holds a hole. Loads take a `force`
 (N) and/or a `moment` (N·mm, about the region's centroid: a motor's torque);
-`"distribution": "bearing"` spreads a force over the half of a bore it pushes
+a carried `mass` (kg, with `dynamic`, `gravity` and optional `at`, its centre
+in mm) becomes its weight along gravity and that weight's moment about the
+region; `"distribution": "bearing"` spreads a force over the half of a bore it pushes
 on, as a shaft does. Supports take `"fix": "pin"` on a cylinder for a joint
 that turns: held radially and axially, free to rotate.
 

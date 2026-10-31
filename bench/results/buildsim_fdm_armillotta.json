@@ -1,314 +1,190 @@
 {
  "fits": [
   {
-   "bedStiffness": 1.0,
-   "relax": 0.4548664210617954,
-   "rows": [
-    {
-     "length": 60,
-     "height": 1.5,
-     "measured": 0.375,
-     "predicted": 0.471
-    },
-    {
-     "length": 60,
-     "height": 3.5,
-     "measured": 0.445,
-     "predicted": 0.276
-    },
-    {
-     "length": 60,
-     "height": 5.5,
-     "measured": 0.415,
-     "predicted": 0.183
-    },
-    {
-     "length": 100,
-     "height": 1.5,
-     "measured": 0.58,
-     "predicted": 0.868
-    },
-    {
-     "length": 100,
-     "height": 3.5,
-     "measured": 0.67,
-     "predicted": 0.59
-    },
-    {
-     "length": 100,
-     "height": 5.5,
-     "measured": 0.675,
-     "predicted": 0.442
-    },
-    {
-     "length": 140,
-     "height": 1.5,
-     "measured": 0.925,
-     "predicted": 1.161
-    },
-    {
-     "length": 140,
-     "height": 3.5,
-     "measured": 1.045,
-     "predicted": 0.882
-    },
-    {
-     "length": 140,
-     "height": 5.5,
-     "measured": 0.965,
-     "predicted": 0.7
-    }
-   ],
-   "rmsError": 0.2074336028875572,
-   "meanAbsRelError": 0.3155462940933391
-  },
-  {
    "bedStiffness": 3.0,
-   "relax": 0.8287060663678197,
+   "relax": 0.7327822843859086,
    "rows": [
     {
      "length": 60,
      "height": 1.5,
      "measured": 0.375,
-     "predicted": 0.572
+     "predicted": 0.589
     },
     {
      "length": 60,
      "height": 3.5,
      "measured": 0.445,
-     "predicted": 0.39
+     "predicted": 0.361
     },
     {
      "length": 60,
      "height": 5.5,
      "measured": 0.415,
-     "predicted": 0.285
+     "predicted": 0.238
     },
     {
      "length": 100,
      "height": 1.5,
      "measured": 0.58,
-     "predicted": 0.845
+     "predicted": 0.875
     },
     {
      "length": 100,
      "height": 3.5,
      "measured": 0.67,
-     "predicted": 0.695
-    },
-    {
-     "length": 100,
-     "height": 5.5,
-     "measured": 0.675,
-     "predicted": 0.57
-    },
-    {
-     "length": 140,
-     "height": 1.5,
-     "measured": 0.925,
-     "predicted": 0.956
-    },
-    {
-     "length": 140,
-     "height": 3.5,
-     "measured": 1.045,
-     "predicted": 0.904
-    },
-    {
-     "length": 140,
-     "height": 5.5,
-     "measured": 0.965,
-     "predicted": 0.792
-    }
-   ],
-   "rmsError": 0.14582790199334597,
-   "meanAbsRelError": 0.21784514474929506
-  },
-  {
-   "bedStiffness": 10.0,
-   "relax": 1.9302081868568206,
-   "rows": [
-    {
-     "length": 60,
-     "height": 1.5,
-     "measured": 0.375,
-     "predicted": 0.65
-    },
-    {
-     "length": 60,
-     "height": 3.5,
-     "measured": 0.445,
-     "predicted": 0.554
-    },
-    {
-     "length": 60,
-     "height": 5.5,
-     "measured": 0.415,
-     "predicted": 0.455
-    },
-    {
-     "length": 100,
-     "height": 1.5,
-     "measured": 0.58,
-     "predicted": 0.713
-    },
-    {
-     "length": 100,
-     "height": 3.5,
-     "measured": 0.67,
-     "predicted": 0.767
-    },
-    {
-     "length": 100,
-     "height": 5.5,
-     "measured": 0.675,
-     "predicted": 0.71
-    },
-    {
-     "length": 140,
-     "height": 1.5,
-     "measured": 0.925,
-     "predicted": 0.667
-    },
-    {
-     "length": 140,
-     "height": 3.5,
-     "measured": 1.045,
-     "predicted": 0.842
-    },
-    {
-     "length": 140,
-     "height": 5.5,
-     "measured": 0.965,
-     "predicted": 0.835
-    }
-   ],
-   "rmsError": 0.16379452627342847,
-   "meanAbsRelError": 0.23407084233448894
-  },
-  {
-   "bedStiffness": 30.0,
-   "relax": 4.743060466147505,
-   "rows": [
-    {
-     "length": 60,
-     "height": 1.5,
-     "measured": 0.375,
-     "predicted": 0.613
-    },
-    {
-     "length": 60,
-     "height": 3.5,
-     "measured": 0.445,
      "predicted": 0.68
     },
     {
-     "length": 60,
-     "height": 5.5,
-     "measured": 0.415,
-     "predicted": 0.637
-    },
-    {
-     "length": 100,
-     "height": 1.5,
-     "measured": 0.58,
-     "predicted": 0.53
-    },
-    {
-     "length": 100,
-     "height": 3.5,
-     "measured": 0.67,
-     "predicted": 0.751
-    },
-    {
      "length": 100,
      "height": 5.5,
      "measured": 0.675,
-     "predicted": 0.786
+     "predicted": 0.532
     },
     {
      "length": 140,
      "height": 1.5,
      "measured": 0.925,
-     "predicted": 0.452
+     "predicted": 0.976
     },
     {
      "length": 140,
      "height": 3.5,
      "measured": 1.045,
-     "predicted": 0.728
+     "predicted": 0.891
     },
     {
      "length": 140,
      "height": 5.5,
      "measured": 0.965,
-     "predicted": 0.813
+     "predicted": 0.759
     }
    ],
-   "rmsError": 0.2426618754353985,
-   "meanAbsRelError": 0.3379195299453785
+   "rmsError": 0.17020501903369278,
+   "meanAbsRelError": 0.25989956582642637
+  },
+  {
+   "bedStiffness": 4.0,
+   "relax": 0.894985553699296,
+   "rows": [
+    {
+     "length": 60,
+     "height": 1.5,
+     "measured": 0.375,
+     "predicted": 0.62
+    },
+    {
+     "length": 60,
+     "height": 3.5,
+     "measured": 0.445,
+     "predicted": 0.404
+    },
+    {
+     "length": 60,
+     "height": 5.5,
+     "measured": 0.415,
+     "predicted": 0.278
+    },
+    {
+     "length": 100,
+     "height": 1.5,
+     "measured": 0.58,
+     "predicted": 0.853
+    },
+    {
+     "length": 100,
+     "height": 3.5,
+     "measured": 0.67,
+     "predicted": 0.709
+    },
+    {
+     "length": 100,
+     "height": 5.5,
+     "measured": 0.675,
+     "predicted": 0.575
+    },
+    {
+     "length": 140,
+     "height": 1.5,
+     "measured": 0.925,
+     "predicted": 0.905
+    },
+    {
+     "length": 140,
+     "height": 3.5,
+     "measured": 1.045,
+     "predicted": 0.888
+    },
+    {
+     "length": 140,
+     "height": 5.5,
+     "measured": 0.965,
+     "predicted": 0.782
+    }
+   ],
+   "rmsError": 0.15826165062273667,
+   "meanAbsRelError": 0.2353306870756654
   }
  ],
  "best": {
-  "bedStiffness": 3.0,
-  "relax": 0.8287060663678197,
+  "bedStiffness": 4.0,
+  "relax": 0.894985553699296,
   "rows": [
    {
     "length": 60,
     "height": 1.5,
     "measured": 0.375,
-    "predicted": 0.572
+    "predicted": 0.62
    },
    {
     "length": 60,
     "height": 3.5,
     "measured": 0.445,
-    "predicted": 0.39
+    "predicted": 0.404
    },
    {
     "length": 60,
     "height": 5.5,
     "measured": 0.415,
-    "predicted": 0.285
+    "predicted": 0.278
    },
    {
     "length": 100,
     "height": 1.5,
     "measured": 0.58,
-    "predicted": 0.845
+    "predicted": 0.853
    },
    {
     "length": 100,
     "height": 3.5,
     "measured": 0.67,
-    "predicted": 0.695
+    "predicted": 0.709
    },
    {
     "length": 100,
     "height": 5.5,
     "measured": 0.675,
-    "predicted": 0.57
+    "predicted": 0.575
    },
    {
     "length": 140,
     "height": 1.5,
     "measured": 0.925,
-    "predicted": 0.956
+    "predicted": 0.905
    },
    {
     "length": 140,
     "height": 3.5,
     "measured": 1.045,
-    "predicted": 0.904
+    "predicted": 0.888
    },
    {
     "length": 140,
     "height": 5.5,
     "measured": 0.965,
-    "predicted": 0.792
+    "predicted": 0.782
    }
   ],
-  "rmsError": 0.14582790199334597,
-  "meanAbsRelError": 0.21784514474929506
+  "rmsError": 0.15826165062273667,
+  "meanAbsRelError": 0.2353306870756654
  }
 }

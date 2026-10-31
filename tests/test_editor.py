@@ -444,6 +444,21 @@ const [page_, threeDir] = process.argv.slice(2);
     return { spec: E.doc().tune, rows: document.querySelectorAll("#tune-params li").length, can: !document.querySelector("#tune").disabled,
              dots: dots.length, applied: E.doc().nodes.sa.thickness };
   });
+  out.material = await page.evaluate(() => {
+    const E = window.lpEditor, pick = document.querySelector("#material-pick");
+    const choose = (v) => { pick.value = v; pick.dispatchEvent(new Event("change")); };
+    choose("petg");
+    E.setCheck(4, 0.5);                                         // as if a run on PETG read SF 4, 0.5 mm
+    const a = { check: document.querySelector("#check-est").textContent, mass: document.querySelector("#mass-est").textContent,
+                card: document.querySelector("#material-card").textContent };
+    choose("pa12");
+    const b = { check: document.querySelector("#check-est").textContent, mass: document.querySelector("#mass-est").textContent,
+                doc: E.doc().material, options: pick.querySelectorAll("option").length };
+    choose("custom");
+    const inp = document.querySelector("#material");
+    inp.value = '{"base": "petg", "strength": 40}'; inp.dispatchEvent(new Event("change"));
+    return { a, b, custom: E.doc().material, check: document.querySelector("#check-est").textContent };
+  });
   out._errors = errors;
   console.log(JSON.stringify(out));
   await browser.close();
@@ -498,6 +513,16 @@ def test_overlays_paste_and_sweep():
     assert gr["g"] == "shellGroup" and set(gr["def"]["nodes"]) == {"sb", "b"} and gr["inst"] == {"op": "group", "group": "shellGroup"}, gr
     assert np.allclose(gr["before"], gr["mid"], atol=1e-5) and np.allclose(gr["before"], gr["after"], atol=1e-5), gr
     assert set(gr["back"]) == {"sb", "sb__b"}, gr["back"]
+    # the material picker: library cards with their sources, live mass, and the last check rescaled
+    from loadpath.materials import material_from_spec
+    mt, petg, pa12 = out["material"], material_from_spec("petg"), material_from_spec("pa12")
+    assert "SF 4" in mt["a"]["check"] and "last check" in mt["a"]["check"] and "Prusament" in mt["a"]["card"], mt["a"]
+    assert mt["b"]["doc"] == "pa12" and mt["b"]["options"] > 15, mt["b"]
+    sf = 4 * pa12.strength / petg.strength
+    assert f"SF ≈ {sf:.2f}" in mt["b"]["check"] and f"deflection ≈ {0.5 * petg.E / pa12.E:.3f}" in mt["b"]["check"], mt["b"]
+    g_petg, g_pa12 = (float(x["mass"].split("≈ ")[1].split(" g")[0]) for x in (mt["a"], mt["b"]))
+    assert abs(g_pa12 / g_petg - pa12.density / petg.density) < 0.01, (g_petg, g_pa12)
+    assert mt["custom"] == {"base": "petg", "strength": 40} and f"SF ≈ {4 * 40 / petg.strength:.2f}" in mt["check"], mt
     # a sweep: the 10 mm sphere's shell from 0 to 6 mm thick gains volume all the way, and the value is put back
     sw = out["sweep"]
     vols = [v for _, v in sw["pts"]]

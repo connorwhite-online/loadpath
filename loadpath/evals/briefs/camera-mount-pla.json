@@ -1,0 +1,203 @@
+{
+ "id": "camera-mount-pla",
+ "brief": "A camera mount for the end of my robot arm, PLA on an FDM printer, printed standing up so the\nlayers stack along Z. It bolts to the arm with two M3 screws going down along Z at (-10, 0) and\n(10, 0), through a base that is 6 mm thick (z = 0 to 6; give each screw at least 3 mm of wall).\nThe camera screws on with a 1/4\"-20 screw coming up through a 6.5 mm hole along Z at (0, 0, 60);\nthe camera's flat bottom sits on the top face of a 30 x 30 mm, 5 mm thick platform\n(z = 55 to 60, centred on that hole). Keep everything within x and y of +/-20 mm and between\nz = 0 and 60. The camera is 350 g and the arm moves fast and occasionally crashes, so assume\n3 g in any direction. Safety factor 2.",
+ "attachments": [],
+ "tags": [
+  "fdm",
+  "any-direction"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -20.0,
+     -20.0,
+     0.0
+    ],
+    "max": [
+     20.0,
+     20.0,
+     60.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "base-bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        -10.0,
+        0.0,
+        3.0
+       ],
+       "axis": "z",
+       "length": 6.0,
+       "r": 4.7
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        10.0,
+        0.0,
+        3.0
+       ],
+       "axis": "z",
+       "length": 6.0,
+       "r": 4.7
+      }
+     ]
+    }
+   },
+   {
+    "id": "platform",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "box",
+       "min": [
+        -15.0,
+        -15.0,
+        55.0
+       ],
+       "max": [
+        15.0,
+        -5.0,
+        60.0
+       ]
+      },
+      {
+       "type": "box",
+       "min": [
+        -15.0,
+        5.0,
+        55.0
+       ],
+       "max": [
+        15.0,
+        15.0,
+        60.0
+       ]
+      },
+      {
+       "type": "box",
+       "min": [
+        -5.0,
+        -5.0,
+        55.0
+       ],
+       "max": [
+        5.0,
+        5.0,
+        60.0
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m3",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        -10.0,
+        0.0,
+        3.0
+       ],
+       "axis": "z",
+       "length": 14.0,
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        10.0,
+        0.0,
+        3.0
+       ],
+       "axis": "z",
+       "length": 14.0,
+       "r": 1.7
+      }
+     ]
+    }
+   },
+   {
+    "id": "camera-screw",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      57.5
+     ],
+     "axis": "z",
+     "length": 10.0,
+     "r": 3.25
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m3"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -15.0,
+      -6.0,
+      -0.5
+     ],
+     "max": [
+      15.0,
+      6.0,
+      0.3
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "crash",
+    "loads": [
+     {
+      "region": "platform",
+      "force": [
+       0,
+       0,
+       -10.3005
+      ],
+      "direction": "any"
+     }
+    ]
+   }
+  ],
+  "material": "pla",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "camera-mount-pla",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

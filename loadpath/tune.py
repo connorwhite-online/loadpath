@@ -64,19 +64,13 @@ def set_at(doc, path, value):
     v[keys[-1]] = -float(value) if neg else float(value)
 
 
-def _study(spec, base_dir):
-    from .spec import study_from_dict
+def _study(spec, base_dir, material=None):
+    from .fields import load_study
 
     s = spec.get("study")
     if not isinstance(s, str):
         raise ValueError("tune needs a 'study' (a study JSON path or example:<name>) to load the part with")
-    if s.startswith("example:"):
-        from .tasks import example
-
-        return study_from_dict(example(s.split(":", 1)[1]), base_dir=base_dir)
-    sp = s if os.path.isabs(s) else os.path.join(base_dir or ".", s)
-    with open(sp) as fh:
-        return study_from_dict(json.load(fh), base_dir=os.path.dirname(sp))
+    return load_study(s, base_dir, material)
 
 
 def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None):
@@ -103,7 +97,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
             raise ValueError(f"tune: param {p.get('path')!r} needs min < max")
         for q in [p["path"], *p.get("also", [])]:
             get_at(doc, q)
-    study = _study(spec, base_dir)
+    study = _study(spec, base_dir, doc.get("material"))
     goal = study.goal
     lim = {"safetyFactor": spec.get("safetyFactor", goal.safety_factor),
            "maxDeflection": spec.get("maxDeflection", goal.max_deflection)}
@@ -185,7 +179,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
             if homogenized:
                 rep = homogenized_check(dd, study, base_dir=base_dir, cells=n_cells, graph=g)
             else:
-                rep = verify_part(study, g.mesh(pitch=pitch, project=1), max_cells=n_cells, refine=0)
+                rep = verify_part(study, g.mesh(pitch=pitch, project=1), max_cells=n_cells, refine=0, fractional=True)
             resources.keep(g, dd)
             rec.update(mass=rep["mass"], safetyFactor=rep["safetyFactor"],
                        deflection=max((c.get("deflection") or 0.0) for c in rep["cases"]),

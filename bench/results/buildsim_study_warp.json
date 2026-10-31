@@ -1,0 +1,28 @@
+{
+ "w0": {
+  "warpWeight": 0.0,
+  "mass": 10.005486694925684,
+  "safetyFactor": 2.0677552575430593,
+  "compliance": null,
+  "passes": null,
+  "volumeFraction": 0.35,
+  "studySeconds": 147,
+  "distortionMax": 0.5081379349358116,
+  "distortionRms": 0.13353262989763012,
+  "recoaterLift": 0.19637938736570887,
+  "vmP95": 933.2649981294094
+ },
+ "w1": {
+  "warpWeight": 1.0,
+  "mass": 9.863730864061855,
+  "safetyFactor": 0.9572317401725479,
+  "compliance": null,
+  "passes": null,
+  "volumeFraction": 0.35,
+  "studySeconds": 1003,
+  "distortionMax": 0.17430059307228407,
+  "distortionRms": 0.03777525961300287,
+  "recoaterLift": 0.05392764171242103,
+  "vmP95": 991.714570230343
+ }
+}

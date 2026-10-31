@@ -19,7 +19,8 @@ import numpy as np  # noqa: E402
 import trimesh  # noqa: E402
 
 from loadpath.assembly import (  # noqa: E402
-    LoadSweep, Payload, Robot, _greedy_cover, governing_cases, intrusion, swept_keepouts, sweep_loads,
+    LoadSweep, Payload, Robot, _greedy_cover, derive_study, governing_cases, intrusion, swept_keepouts,
+    sweep_loads,
 )
 
 URDF = """<?xml version="1.0"?>
@@ -153,9 +154,68 @@ def test_swept_volume_of_a_swinging_bar():
     assert intrusion(e, clear)["sweep-link2"] == 0
 
 
+TURNED = URDF.replace('<origin xyz="0 0 0.1"/><axis xyz="0 0 1"/>', '<origin xyz="0 0 0.1" rpy="0 0 1.5708"/><axis xyz="0 0 1"/>')
+
+
+def test_link_frame_matches_world_frame():
+    # j1's frame turned 90 degrees about z, so the link's axes are not the world's
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "turned.urdf")
+    with open(path, "w") as fh:
+        fh.write(TURNED.replace('<collision><geometry><mesh filename="package://two/meshes/link2.stl" '
+                                'scale="0.001 0.001 0.001"/></geometry></collision>', ""))
+    r = Robot.from_urdf(path)
+    T0 = r.fk({})["link1"]
+    kw = {"samples": 20, "push": 10.0, "seed": 3}
+    pw = np.array([5.0, 180.0, 110.0])                       # mm, world at home
+    pl = (np.linalg.inv(T0) @ np.append(pw / 1000.0, 1.0))[:3] * 1000.0
+    sw = sweep_loads(r, "link1", point=pw, **kw)
+    sl = sweep_loads(r, "link1", point=pl, frame="link", **kw)
+    R = T0[:3, :3]
+    assert np.allclose(sl.wrenches[:, :3], sw.wrenches[:, :3] @ R, atol=1e-6)
+    assert np.allclose(sl.wrenches[:, 3:], sw.wrenches[:, 3:] @ R, atol=1e-4)
+    # by hand at home, link frame: j2 200 mm along the link's x, 0.5 kg 100 mm past it
+    st = sweep_loads(r, "link1", samples=1, speed=0, stall=False, push=0, frame="link")
+    i = next(k for k, s in enumerate(st.states) if abs(s["q"]["j1"]) < 1e-9 and abs(s["q"]["j2"]) < 1e-9)
+    assert np.allclose(st.point, [200.0, 0.0, 0.0], atol=1e-6), st.point
+    assert np.allclose(st.wrenches[i], [0, 0, -0.5 * 9.81, 0, 0.5 * 9.81 * 100.0, 0], atol=1e-3)
+    # the keep-outs follow: link1's frame is world at home moved up 100 mm (the unturned arm)
+    r2 = _robot()
+    box_w = ((150.0, -20.0, -100.0), (400.0, 20.0, 300.0))
+    box_l = ((150.0, -20.0, -200.0), (400.0, 20.0, 200.0))
+    ew = swept_keepouts(r2, "link1", box=box_w, pitch=4.0, clearance=0.0)[0]
+    el = swept_keepouts(r2, "link1", box=box_l, pitch=4.0, clearance=0.0, frame="link")[0]
+    assert abs(ew["volume"] - el["volume"]) < 0.02 * ew["volume"]
+    assert np.allclose(el["mesh"].bounds, ew["mesh"].bounds - [0, 0, 100.0], atol=4.0)
+
+
+BAR = {
+    "name": "bar", "designSpace": [{"type": "box", "min": [150, -10, 90], "max": [210, 10, 110]}],
+    "preserve": [{"id": "tip", "shape": {"type": "box", "min": [196, -10, 90], "max": [200, 10, 110]}}],
+    "supports": [{"shape": {"type": "box", "min": [150, -10, 90], "max": [151, 10, 110]}}],
+    "material": "pla",
+}
+
+
+def test_derive_with_fasteners_and_no_load_cases():
+    r = _robot()
+    # no loadCases at all: the derived cases are the study's only ones
+    s, rep = derive_study(r, "link1", BAR, "tip", k=2, method="hull", sweep_space=False,
+                          sweep_kw={"samples": 20})
+    assert s["loadCases"] and all(c["name"].startswith("sweep") for c in s["loadCases"]), s["loadCases"]
+    # fasteners: expanded for the unit solves, without their preload as a 7th
+    fs = dict(BAR, fasteners=[{"size": "M3", "seat": [160, 0, 110], "direction": [0, 0, -1], "grip": 20}])
+    s, rep = derive_study(r, "link1", fs, "tip", k=2, sweep_space=False, sweep_kw={"samples": 20})
+    assert rep["method"] == "stress" and s["fasteners"] == fs["fasteners"]
+    from loadpath.spec import study_from_dict
+    names = [c.name for c in study_from_dict(s).load_cases]
+    assert "preload" in names and len(names) == len(s["loadCases"]) + 1, names
+
+
 TESTS = [test_kinematics_match_finite_differences, test_static_wrench_by_hand,
          test_dynamics_and_contacts_respect_effort, test_greedy_cover_picks_the_dominant_rows,
-         test_stress_pick_on_a_cantilever, test_swept_volume_of_a_swinging_bar]
+         test_stress_pick_on_a_cantilever, test_swept_volume_of_a_swinging_bar,
+         test_link_frame_matches_world_frame, test_derive_with_fasteners_and_no_load_cases]
 
 
 def main():

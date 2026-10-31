@@ -1,0 +1,278 @@
+{
+ "id": "wrist-link-mjf",
+ "brief": "A wrist link that joins two servos with perpendicular axes, MJF PA12. Servo A's horn is at the\norigin with its axis along Z: the link bolts to it with a 20 mm diameter, 3 mm thick disc\n(z = 0 to 3) and four M2 screws on a 14 mm circle (at (7,0), (-7,0), (0,7), (0,-7)). Servo B's\nhorn is 60 mm away along X with its axis along Y: a 20 mm diameter, 3 mm thick disc at x = 60,\nz = 20, from y = 12 to 15, with four M2 screws on a 14 mm circle in that disc's plane. Servo B's\nbody (x = 45 to 75, y = -12 to 12, z = 5 to 35) must stay clear. The part fits in x = -12 to 72,\ny = -12 to 15, z = 0 to 34. Servo A holds it. The gripper beyond servo B is 1 kg on a moving arm\nwith its centre of mass 100 mm further out along +X, and servo B can stall at 2 N\u00b7m about Y.\nSafety factor 2.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "mjf",
+  "moment"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -12.0,
+     -12.0,
+     0.0
+    ],
+    "max": [
+     72.0,
+     15.0,
+     34.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "disc-a",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      3.0
+     ],
+     "r": 10.0
+    }
+   },
+   {
+    "id": "disc-b",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      60.0,
+      12.0,
+      20.0
+     ],
+     "p1": [
+      60.0,
+      15.0,
+      20.0
+     ],
+     "r": 10.0
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "screws-a",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        7.0,
+        0.0,
+        -1.0
+       ],
+       "p1": [
+        7.0,
+        0.0,
+        5.0
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -7.0,
+        0.0,
+        -1.0
+       ],
+       "p1": [
+        -7.0,
+        0.0,
+        5.0
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0.0,
+        7.0,
+        -1.0
+       ],
+       "p1": [
+        0.0,
+        7.0,
+        5.0
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0.0,
+        -7.0,
+        -1.0
+       ],
+       "p1": [
+        0.0,
+        -7.0,
+        5.0
+       ],
+       "r": 1.1
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "screws-b",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        67.0,
+        10.0,
+        20.0
+       ],
+       "p1": [
+        67.0,
+        17.0,
+        20.0
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        53.0,
+        10.0,
+        20.0
+       ],
+       "p1": [
+        53.0,
+        17.0,
+        20.0
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        60.0,
+        10.0,
+        27.0
+       ],
+       "p1": [
+        60.0,
+        17.0,
+        27.0
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        60.0,
+        10.0,
+        13.0
+       ],
+       "p1": [
+        60.0,
+        17.0,
+        13.0
+       ],
+       "r": 1.1
+      }
+     ]
+    }
+   },
+   {
+    "id": "servo-b",
+    "shape": {
+     "type": "box",
+     "min": [
+      45.0,
+      -12.0,
+      5.0
+     ],
+     "max": [
+      75.0,
+      12.0,
+      35.0
+     ]
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "region": "screws-a"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -0.5
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      0.3
+     ],
+     "r": 10.0
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "payload",
+    "loads": [
+     {
+      "region": "screws-b",
+      "force": [
+       0,
+       0,
+       -14.715
+      ],
+      "moment": [
+       0,
+       1471.5,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "stall",
+    "loads": [
+     {
+      "region": "screws-b",
+      "moment": [
+       0,
+       2000,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "mjf",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "wrist-link-mjf",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}

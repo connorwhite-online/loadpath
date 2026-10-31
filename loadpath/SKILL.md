@@ -29,9 +29,16 @@ field. `check` reports every problem at once: fix them all, then check again.
    closed STL and use `{"type": "mesh", "path": "motor.stl"}`. An interface
    in several pieces (a servo's four screw bosses) is one region with
    `{"type": "union", "shapes": [...]}`, so one load or support acts on all of
-   them. Preserve only the interface itself, never a box round a component:
+   them. `intersect` and `subtract` (same `shapes` list; subtract cuts the
+   rest from the first) make partial shapes: a half ring is a tube
+   intersected with a box, a ring with a gap a tube minus a box. Preserve only the interface itself, never a box round a component:
    a preserved slab is a slab in the result, and the optimizer has nothing
    to design there.
+   A bearing seat narrower than the part: the seat (its OD, its width) is a
+   keep-out and the region the load or support acts on, a narrower keep-out
+   runs through for the shaft or inner race, and the preserved ring covers
+   the seat's width. Keep-outs win over preserves: `check` warns when one
+   eats into a preserved piece (a fastener's driver path clipping a boss).
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and
@@ -43,7 +50,15 @@ field. `check` reports every problem at once: fix them all, then check again.
 3. **Write the loads as engineering, not vibes.** For each way the part is
    used, a load case: payload mass × 9.81 × a dynamic factor (2 for a
    moving robot joint, 3 for anything that can be dropped or crashed), at the
-   interface that carries it. Add a sideways or torsional case if the part
+   interface that carries it. Let loadpath do that arithmetic:
+   `{"region": "wrist", "mass": 0.6, "dynamic": 2, "gravity": "-y", "at": [160, 0, 0]}`
+   is the force of 0.6 kg at 2 g along -y plus, because its centre sits at
+   `at` (mm), the moment of that force about the region. `at` works on a
+   plain `force` too (a belt pulling on a pulley in front of a motor face);
+   `check` → `resolvedLoads` shows the force and moment each case comes to.
+   Moments written by hand are N·mm (1 N·m = 1000), about the region's centre. A shaft in a
+   bore: add `"distribution": "bearing"` so a radial force presses on the
+   half of the bore it pushes, as a real shaft does. Add a sideways or torsional case if the part
    can see one; a design optimized for one direction is weak in the others.
    When the direction is genuinely unknown (contact, bumps, handling, a
    push at the tool "from anywhere"), say so instead of guessing:
@@ -53,7 +68,12 @@ field. `check` reports every problem at once: fix them all, then check again.
    exact (three solves, a 3x3 eigenproblem), and `report.json` gives each
    case's `worstDirection`. It costs stiffness in the nominal direction (the
    arm link: about half again more compliant under its payload), so use it
-   for the uncertain load and keep known loads as plain vectors.
+   for the uncertain load and keep known loads as plain vectors. A cone is
+   3D: it tilts the force out of plane too, which a thin plate-like part (or
+   one that would swing on a pin rather than resist sideways) cannot carry.
+   For an in-plane uncertainty (a shaft's radial load, a swinging strap, a
+   sideways crash) use `"direction": "xz"` (or `"xy"`, `"yz"`): the case
+   becomes eight cases round that plane, named `case@0` ... `case@157.5`.
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.
@@ -92,7 +112,7 @@ field. `check` reports every problem at once: fix them all, then check again.
    `slicer.profile` takes your printer's PrusaSlicer .ini for real times.
    Powder nylon (`"sls"`, `"mjf"`: `pa12`, `pa11`, `pa12-gb`, `tpu88a`) and
    resin (`"sla"`, `"dlp"`: `resin`, `resin-tough`, `resin-rigid`) parts get
-   `report.json` → `process` on the delivered outcome: walls against the
+   `report.json` → `deliver` → `process`: walls against the
    process minimum, powder or resin trapped in a cavity or behind an exit
    under the escape-hole size (SLS 4, MJF 5, resin 3.5 mm; override with
    `"escapeHole"`), thin flat panels that warp (powder), and for resin the
@@ -106,7 +126,13 @@ field. `check` reports every problem at once: fix them all, then check again.
    pre-distorted to print to shape. Read `strain.kSource`: only IN625 and
    15-5 PH are calibrated (NIST AM-Bench); for other alloys the size of the
    distortion is a rough guide (could be off 2x), though comparing designs
-   is still sound. docs/BUILDSIM.md has the validation.
+   is still sound. `"warpWeight": 1` (lpbf/fdm, grid-axis buildDirection)
+   designs against build distortion too: in the demo it cut as-built warp
+   66% and recoater lift 73% but halved the safety factor at the same mass
+   and ran 7x slower, so use it when warp or recoater crashes are the
+   problem, and check the safety factor. FDM: `bedAdhesion` (MPa) lets
+   the first layer let go; `bedFailed` in the report means the part
+   popped off. docs/BUILDSIM.md has the validation.
 6. **Say how long it has to last.** A load that repeats (a servo lifting,
    an arm swinging) gets `"cycles"` in its load case: how many times over
    the part's life (a hobby arm: 1e5-1e6). A load that is held (a part
@@ -123,10 +149,29 @@ field. `check` reports every problem at once: fix them all, then check again.
    exists and flagged `assumed` or `rough` where it does not: treat it as
    an estimate, and test the part that matters.
 7. `python -m loadpath check study.json`: validates and reports cells, pitch
-   and warnings. Fix every warning before running.
-8. `python -m loadpath run study.json --out out/`: minutes, not seconds.
-   Progress is JSON lines on stderr.
-9. **Read `out/report.json` and look at the renders** before trusting it:
+   and warnings. Fix every warning before running; `notes` are information
+   (for example that `minMember` set the pitch, so there are fewer cells
+   than `maxElements`).
+8. `python -m loadpath run study.json --out out/`: run it in the background
+   (`nohup ... &`, or the MCP `loadpath_start` job) and poll, never in a
+   foreground call with a time limit. `out/status.json` says `running`
+   (with its `pid`), `done` or `failed`; each outcome is written to
+   `out/partial/` (STL plus a line in `outcomes.jsonl`) as the search finds
+   it, so a run killed late still leaves its verified parts.
+   Progress is JSON lines on stderr. A `safetyFactor` goal runs several
+   optimizations plus a fine re-check of the pick: at 20k cells on one core
+   expect 10-30 minutes (a fixed `volumeFraction` is a few minutes).
+9. **Read `out/report.json` → `deliver`, and look at the render** before
+   trusting it. `deliver` is the part to hand over: `stl`, `passes`, `mass`,
+   `safetyFactor` and `safetyFactorMethod` (which analysis it comes from:
+   `tet`, `voxel-fine`, or `voxel`), `governedBy` (the limit that set its
+   size), per-case numbers, and `warnings` gathered from every check (print,
+   process, durability). Quote those numbers. To check any STL against a
+   study later (an edited part, an older outcome):
+   `loadpath verify study.json part.stl` (its own grid, `--cells`, so it
+   reads a few percent off the run's fine re-check; quote `deliver` for a
+   delivered part). `deliver.tetCrossCheck` says why the body-fitted check
+   did not run when it did not. Then:
    - `safetyFactor` below target, or `passes: false` → raise the goal's
      volume fraction, the material, or check the loads are right;
    - `bodies` > 1 → something is not connected to a support;
@@ -197,6 +242,16 @@ field. `check` reports every problem at once: fix them all, then check again.
   1 mm wall) opens the starved edge channels; plenum depth hardly matters.
   Together: water 745 -> 267 Pa, air 8.5 -> 1.9 kPa, effectiveness +8%
   (example heat-exchanger-crossflow-tuned).
+  Only an envelope, not a core? Give `"envelope": [x, y, z]` (the whole
+  part, ports included) and `"sizing": {"process": "lpbf", "maxPressureDrop":
+  {...}, "minEffectiveness": 0.7, "objective": "mass"}` instead of `core`,
+  and `loadpath_size_heat_exchanger` picks the core's size, cell, wall,
+  split, layout, plenum depth and each fluid's port within the process's
+  wall and channel limits (sizing.py), returning ranked specs to design.
+  For gas sides at high flow the plenum depth matters (a 6 mm plenum behind
+  a 47 mm charge-air port cost more than the core). `sizing.verify` then
+  simulates a candidate whole; big cross cores skip the design and use
+  `porous.simulate_box` (minutes; its header dp is an upper bound).
 - Holding a mesh from somewhere else (your own field model, a CAD export)?
   `loadpath_check_printability`, `loadpath_check_isolation` and
   `loadpath_check_fit` check it directly. From Python, `check_dfm` and
@@ -206,17 +261,25 @@ field. `check` reports every problem at once: fix them all, then check again.
 
 ## Printing direction
 
-If the part will be printed without supports (FDM, metal powder bed), set
+A `process` of `fdm` or `lpbf` already designs self-supporting along its
+`buildDirection` (the optimizer only builds what prints at 45°); setting
+`printDirection` as well changes nothing. Without a process, set
 `"printDirection": "+z"` (the direction layers stack, in the study's
-coordinates). The optimizer then only builds what can be printed at 45°;
-`report.json` gives `designOverhangFraction`.
+coordinates). Preserved geometry is kept as drawn, so a preserved overhang
+(a platform, a ring's underside) still needs support: chamfer it in the
+preserve or accept the supports `deliver` → `print` reports.
 
 ## Resolution
 
-`resolution.maxElements` trades detail for time: 20k for a first look
-(about a minute), 40-60k for a part you will print. Members thinner than
+`resolution.maxElements` trades detail for time: 20k for a first look,
+40-60k for a part you will print (each optimization scales a little worse
+than linearly with cells; a safety-factor search runs several). Members thinner than
 about two cells cannot form; `check` warns when `minMember` is too fine for
-the grid.
+the grid. `maxElements` is a target the pitch is estimated from, so the grid
+can come out a few percent over; set `resolution.pitch` for an exact grid.
+A safety-factor search re-checks its pick on a finer grid (up to 150k
+cells, about 55 kB a cell): that stage is capped to the memory free at the
+time, and `LOADPATH_CONFIRM_CELLS` sets it outright on a shared machine.
 
 ## Length scales and sealed voids
 
@@ -286,8 +349,14 @@ few samples that set the peak stress everywhere in the solid design space
 child links, swept through their joints' ranges, become `bore: false` mesh
 keep-outs with the study's preserved interfaces cut out. Inputs worth
 setting: `--ramp` (seconds to full speed, what the controller allows),
-`--push` (N, the hardest contact at the tool; a stalled joint pushes up to it) and `--balanced`
-for joints a spring counterbalances. Python: `loadpath.assembly`
+`--push` (N, the hardest contact at the tool in any direction, default 20: often the case that sizes the part, so set it from the job, 0 if nothing pushes) and `--balanced`
+for joints a spring counterbalances. Write the study in the URDF's world
+frame at the home pose (mm), or pass `--frame link` if it is in the link's own
+frame (origin at its joint): a mismatch silently gives wrong moment arms. The
+study needs no load cases (they are replaced; `fasteners` and their preload are
+kept), though `loadpath check` on it alone wants one: check the derived study.
+`sweptKeepOuts` is empty when the URDF has no collision or visual geometry.
+The derived loads are the sweep's own accelerations: no extra dynamic factor. Python: `loadpath.assembly`
 (`Robot.from_urdf`, `sweep_loads`, `governing_cases`, `swept_keepouts`,
 `derive_study`).
 

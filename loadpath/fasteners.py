@@ -102,6 +102,9 @@ def expand_fasteners(d: dict) -> dict:
         seat = np.asarray(f["seat"], float)
         a = _direction(f["direction"], label)
         grip = float(f["grip"])
+        if grip < 0 or (grip == 0 and str(f.get("end", "face")) != "thread"):
+            raise ValueError(f"{label}.grip is mm from the seat to the far end: > 0, or 0 for a thread or "
+                             "insert that starts right at the seat")
         end_kind = str(f.get("end", "face"))
         if end_kind not in ("face", "thread", "none"):
             raise ValueError(f"{label}.end must be 'face', 'thread' or 'none'")
@@ -143,6 +146,11 @@ def expand_fasteners(d: dict) -> dict:
                 # sustained bearing stress
                 area = 0.25 * np.pi * (head ** 2 - hole ** 2)
                 p = 0.25 * mat.strength * area
+                # ...and no more than a class 8.8 screw is tightened to (about
+                # 60% of its proof load on the stress area): a titanium seat
+                # read 10 kN for an M4, three times what the screw carries
+                screw = 0.6 * 600.0 * 0.25 * np.pi * (0.83 * nominal) ** 2
+                p = min(p, screw)
             if p > 0:
                 joints.append({"id": fid, "preload": p, "area": 0.25 * np.pi * (head ** 2 - hole ** 2)})
                 preload_loads.append({"region": f"{fid}-seat", "force": (a * p).tolist()})

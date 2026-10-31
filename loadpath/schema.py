@@ -82,13 +82,29 @@ _SHAPES = {
         "required": ["type", "shapes"],
         "additionalProperties": False,
     },
+    "intersect": {
+        "type": "object",
+        "description": "Where all the shapes overlap: a half ring is a tube intersected with a box.",
+        "properties": {"type": {"const": "intersect"},
+                       "shapes": {"type": "array", "items": {"$ref": "#/$defs/shape"}, "minItems": 2}},
+        "required": ["type", "shapes"],
+        "additionalProperties": False,
+    },
+    "subtract": {
+        "type": "object",
+        "description": "The first shape with the others cut away: a ring with a gap is a tube minus a box.",
+        "properties": {"type": {"const": "subtract"},
+                       "shapes": {"type": "array", "items": {"$ref": "#/$defs/shape"}, "minItems": 2}},
+        "required": ["type", "shapes"],
+        "additionalProperties": False,
+    },
 }
 _SHAPE_TYPES = {"box": "box", "cylinder": "cylinder", "tube": "cylinder", "sphere": "sphere",
-                "mesh": "mesh", "union": "union"}
+                "mesh": "mesh", "union": "union", "intersect": "intersect", "subtract": "subtract"}
 
 _SHAPE = {
-    "title": "a shape object (box, cylinder, tube, sphere, mesh, union)",
-    "description": "A shape: box, cylinder (tube), sphere, mesh or union. Units mm.",
+    "title": "a shape object (box, cylinder, tube, sphere, mesh, union, intersect, subtract)",
+    "description": "A shape: box, cylinder (tube), sphere, mesh, union, intersect or subtract. Units mm.",
     "oneOf": [{"$ref": f"#/$defs/{k}"} for k in _SHAPES],
     "x-discriminator": {"property": "type", "mapping": {k: f"#/$defs/{v}" for k, v in _SHAPE_TYPES.items()}},
 }
@@ -150,14 +166,30 @@ _LOAD = {
                                     "volume), on every wall lining it; negative is a vacuum. A study whose only "
                                     "loads are pressures on sealed cavities needs no supports."},
 
-        "direction": {"enum": ["any"],
+        "direction": {"enum": ["any", "xy", "xz", "yz"],
                       "description": "'any': the force's size may point in any direction (contact, bumps, "
                                      "handling); the part is designed and checked for the worst one, found "
                                      "exactly from three unit-force solves. At most one per load case; a bearing "
-                                     "load's uncertain force is spread evenly over the region."},
+                                     "load's uncertain force is spread evenly over the region. 'xy', 'xz' or "
+                                     "'yz': any direction in that plane (a shaft's radial load, a swinging "
+                                     "strap, a sideways crash): the case becomes eight cases 22.5 degrees "
+                                     "apart (within 2% of the worst), named case@angle; a moment on the same "
+                                     "load turns with the force (right when its lever arm is along the "
+                                     "plane's normal)."},
         "cone": {"type": "number", "exclusiveMinimum": 0, "maximum": 180,
                  "description": "Degrees: the force may tilt up to this far from its written direction, and the "
                                 "worst tilt is designed for (180 is the same as direction 'any')."},
+        "mass": {**_POS, "description": "kg carried through this region (a payload, the next link, a camera): "
+                                        "adds mass x 9.81 x dynamic N along 'gravity', and with 'at' the moment "
+                                        "of that force about the region (N·mm), so you never convert by hand."},
+        "at": {**_VEC3, "description": "mm: where the force acts or the mass's centre sits (default: on the "
+                                       "region): a pulley in front of a motor face, a tool's centre of mass. "
+                                       "Its offset from the region's centre adds the moment; `check` echoes "
+                                       "the resulting force and moment per case."},
+        "dynamic": {"type": "number", "minimum": 1,
+                    "description": "Multiplier on the mass's weight: 1 static, 2 a moving robot joint, "
+                                   "3 anything that can be dropped or crash (default 1)."},
+        "gravity": {**_SIGNED_AXIS, "description": "Which way the mass pulls: '-z' (default), or a vector."},
     },
     "x-requireOne": [["region"], ["shape"]],
     "additionalProperties": False,
@@ -208,12 +240,27 @@ _FASTENER = {
         "size": {"enum": ["M2", "M2.5", "M3", "M4", "M5", "M6", "M8", "M10"]},
         "seat": {**_VEC3, "description": "Centre of the face the head (or the mating part) bears on."},
         "direction": {**_SIGNED_AXIS, "description": "From the seat into the part, the way the screw goes."},
-        "grip": {**_POS, "description": "mm from the seat to the far end."},
+        "grip": {"type": "number", "minimum": 0, "description": "mm from the seat to the far end (0 for a thread or insert starting right at the seat)."},
         "end": {"enum": ["face", "thread", "none"]},
         "headOn": {"enum": ["this", "mating"]},
-        "threadLength": _POS, "insert": _POS, "preload": {"type": "number", "minimum": 0},
-        "hole": _POS, "head": _POS, "diameter": _POS, "wall": _POS, "ring": _POS, "sleeveWall": _POS,
-        "driver": {"type": "number", "minimum": 0},
+        "threadLength": {**_POS, "description": "end 'thread': engagement length past the grip (default 2x the "
+                                                "screw's diameter)."},
+        "insert": {**_POS, "description": "Heat-set insert or nut outer diameter, mm; else a tapped hole."},
+        "preload": {"type": "number", "minimum": 0,
+                    "description": "N. Default: a quarter of what the seat can bear in this material, at most "
+                                   "what a class 8.8 screw is tightened to."},
+        "hole": {**_POS, "description": "Clearance hole diameter, mm (default from size)."},
+        "head": {**_POS, "description": "Head (or washer) diameter, mm (default from size)."},
+        "diameter": {**_POS, "description": "The screw's nominal diameter, mm, when not given as size."},
+        "wall": {**_POS, "description": "mm of seat ring beyond the head's radius (default 15% of the "
+                                        "diameter, at least 1). The head and driver keep-out is as wide as "
+                                        "that ring, at least the head's radius + 0.5 mm."},
+        "ring": {**_POS, "description": "Seat and face ring thickness along the screw, mm (default 40% of the "
+                                        "diameter, at least 2). Bosses a brief asks for go in preserve."},
+        "sleeveWall": {**_POS, "description": "end 'thread': wall of the sleeve round the tap, mm."},
+        "driver": {"type": "number", "minimum": 0,
+                   "description": "Length of the head and driver keep-out back from the seat, mm (default 60). "
+                                  "Shorten it where it would cut through another interface."},
     },
     "required": ["seat", "direction", "grip"],
     "x-requireOne": [["size"], ["diameter", "head"], ["hole", "head"]],
@@ -398,12 +445,26 @@ _BUILD_SIM = {"anyOf": [
                                         "to Armillotta 2018; omit for that)"},
         "relax": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
                   "description": "fdm: share of the shrink below Tg kept as stress"},
+        "bedAdhesion": {"type": "number", "exclusiveMinimum": 0,
+                        "description": "fdm: MPa of bond tension the first layer holds before it lets go of the "
+                                       "bed (corners lift and the part re-balances; default: the value fitted to "
+                                       "Armillotta 2018)"},
+        "plateCells": {"type": "integer", "minimum": 1,
+                       "description": "lpbf: voxel layers modelling the build plate, its stiffness scaled to the "
+                                      "full plate (default 2; the default k is fitted with it)"},
         "recoaterGap": {**_POS, "description": "lpbf: mm of lift at the build plane that counts as recoater "
                                                "contact risk (default 0.05)"},
         "compensate": {"type": "boolean", "description": "also write <name>-compensated.stl, pre-distorted so "
                                                          "the print lands on the design"},
         "iterations": {"type": "integer", "minimum": 1, "description": "compensation rounds (default 2)"},
-        "cells": {"type": "integer", "minimum": 1000, "description": "voxels in the simulated part (default 60000)"}},
+        "cells": {"type": "integer", "minimum": 1000, "description": "voxels in the simulated part (default 60000)"},
+        "warpWeight": {"type": "number", "minimum": 0,
+                       "description": "lpbf/fdm: design against build distortion too. The optimizer minimizes "
+                                      "compliance * (1 + warpWeight * D / D0), D the mean squared as-built "
+                                      "displacement of the layer-by-layer build on the plate (D0 at the start); "
+                                      "0 (default) only verifies. Needs a grid-axis buildDirection. About 1 trades "
+                                      "stiffness for a large cut in distortion and recoater lift"},
+        "warpLayer": {**_POS, "description": "mm per analysis layer of the warp term (default 4 cells)"}},
      "additionalProperties": False}],
     "description": "Simulate the build of the delivered part (report 'buildSim'): layer-by-layer inherent-strain "
                    "residual stress and distortion for lpbf (validated on NIST AM-Bench 2018), fdm warp and bed "
@@ -657,7 +718,11 @@ HEAT_EXCHANGER_SCHEMA = {
         "type": {"enum": ["gyroid", "diamond", "schwarz-p"]},
         "cell": {**_POS, "description": "mm per TPMS period (at least 3 x wall)"},
         "wall": {**_POS, "description": "mm, the sheet between the fluids"},
-        "shell": _POS, "header": _POS, "cap": _POS, "portLength": _POS,
+        "shell": _POS, "header": _POS,
+        "cap": {**_POS, "description": "mm: how deep each plenum seals off the other fluid's channels at the "
+                                       "core's ends (default wall + 1); thinner leaves more core open to flow "
+                                       "and fewer dead pockets"},
+        "portLength": _POS,
         "phase": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
                   "description": "mm: shift the TPMS against the core's low corner, which moves where the core's "
                                  "faces cut the channels (a partial channel at an edge starves)"},
@@ -1005,7 +1070,7 @@ FIELD_SCHEMA = {
                                                           "by a body, two bodies unioned with no blend, a shell's "
                                                           "rim) keep sharp creases: edges that cross from one "
                                                           "surface to the other are split on the true intersection "
-                                                          "curve (default false; not with stream)"},
+                                                          "curve (default true; not with stream)"},
             "decimate": {**_POS, "description": "mm: thin the triangles wherever the mesh stays this close to "
                                                 "the surface (flat and gently curved regions lose most of "
                                                 "theirs; creases and small features keep them), e.g. 0.01-0.05"},
@@ -1016,7 +1081,12 @@ FIELD_SCHEMA = {
                  "additionalProperties": False},
         "step": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
             "faces": {"type": "integer", "minimum": 100, "description": "organic facets in the B-rep "
-                                                                      "(default 20000, ~45 MB)"}},
+                                                                      "(default 20000, ~14 MB)"},
+            "surface": {"enum": ["facets", "smooth"],
+                        "description": "organic regions as flat facets (default) or smooth B-spline patches "
+                                       "(experimental: CAD-friendlier, not smaller; falls back to facets when "
+                                       "OpenCascade's booleans fail)"},
+            "patches": {"type": "integer", "minimum": 50, "description": "smooth patches (default 1500)"}},
             "additionalProperties": False}],
                  "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres "
                                 "where the graph's hard booleans use plain shapes, the rest faceted"},

@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
 from loadpath.schema import lint  # noqa: E402
@@ -44,7 +45,7 @@ def _dir():
 
 
 def test_tune_finds_a_lighter_bar_that_still_holds():
-    """The bar starts over-strong (SF ~6.6 against 4): the tuner thins it,
+    """The bar starts over-strong (SF ~5.5 against 4): the tuner thins it,
     stays inside the knob's range, keeps the box symmetric (`also`) and
     returns the lightest candidate that met the limit."""
     d = _dir()
@@ -189,13 +190,14 @@ def test_sweep_traces_the_trade_off():
     candidate on the front is beaten by none on mass, deflection and SF."""
     d = _dir()
     g = json.loads(json.dumps(GRAPH))
-    g["tune"].update(evaluations=6, sweep={"safetyFactor": [3, 5.5]})
+    # the thickest bar the knob allows reads SF ~5.4, so 5 is the top
+    g["tune"].update(evaluations=6, sweep={"safetyFactor": [3, 5]})
     assert not lint(g, "field")
     out = tune_field(g, d)
     (lo_sf, hi_sf) = out["sweep"]
-    assert lo_sf["safetyFactor"] == 3 and hi_sf["safetyFactor"] == 5.5
+    assert lo_sf["safetyFactor"] == 3 and hi_sf["safetyFactor"] == 5
     assert lo_sf["best"]["mass"] < out["best"]["mass"] < hi_sf["best"]["mass"], out["sweep"]
-    assert hi_sf["best"]["safetyFactor"] >= 5.5 and lo_sf["best"]["safetyFactor"] >= 3
+    assert hi_sf["best"]["safetyFactor"] >= 5 and lo_sf["best"]["safetyFactor"] >= 3
     front = out["front"]
     assert len(front) >= 3 and [r["mass"] for r in front] == sorted(r["mass"] for r in front)
     for r in front:
@@ -204,3 +206,21 @@ def test_sweep_traces_the_trade_off():
     bad = json.loads(json.dumps(g))
     bad["tune"]["sweep"] = {"mass": [1]}
     assert lint(bad, "field")
+
+
+def test_fractional_cells_read_smoothly():
+    """Whole voxels read a bar's height in whole-cell steps, so the safety
+    factor jumped about as the tuner thinned it (and the sweep found a
+    thinner bar 'stronger'); filled shares move it with the height."""
+    from loadpath.fields import FieldGraph
+    from loadpath.spec import study_from_dict
+    from loadpath.verify import verify_part
+
+    study = study_from_dict(STUDY)
+    sf = []
+    for h in np.linspace(3.2, 4.4, 7):
+        g = json.loads(json.dumps(GRAPH))
+        g["nodes"]["bar"]["shape"].update(min=[0, -5, -h], max=[60, 5, h])
+        mesh = FieldGraph(g).mesh(pitch=0.8, project=1)
+        sf.append(verify_part(study, mesh, max_cells=6000, refine=0, fractional=True)["safetyFactor"])
+    assert all(b > a for a, b in zip(sf, sf[1:])), sf

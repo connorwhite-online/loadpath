@@ -278,7 +278,8 @@ def _calibrated_process(process, mat_in, spec):
 
 _BUILD_SIM_KEYS = {"layer": "layer", "plate": "plate", "scale": "scale", "release": "release",
                    "bedTemperature": "bed", "chamberTemperature": "chamber", "bedStiffness": "bed_stiffness",
-                   "relax": "relax", "recoaterGap": "recoater_gap"}
+                   "relax": "relax", "recoaterGap": "recoater_gap", "plateCells": "plate_cells",
+                   "bedAdhesion": "bed_adhesion"}
 
 
 def _build_sim(spec, process, material):
@@ -299,8 +300,18 @@ def _build_sim(spec, process, material):
         raise ValueError("buildSim.release is 'full' (off the plate) or 'none' (as built, on it)")
     mat = material if isinstance(material, str) else "pla"
     setup = BuildSetup(process="sls" if kind == "mjf" else kind, material=mat, **kw)
+    warp = float(spec.get("warpWeight", 0.0))
+    if warp < 0:
+        raise ValueError("buildSim.warpWeight is a weight >= 0 (0: verify only)")
+    if warp > 0:
+        if kind not in ("lpbf", "fdm"):
+            raise ValueError("buildSim.warpWeight designs against a layer-by-layer build: process lpbf or fdm")
+        if process.build == "auto" or process.build is None or len(process.build) != 2:
+            raise ValueError("buildSim.warpWeight needs process.buildDirection along a grid axis "
+                             "('+z', '-y', ...), not 'auto' or a tilted vector")
     return {"setup": setup, "compensate": bool(spec.get("compensate", False)),
-            "cells": int(spec.get("cells", 60_000)), "iterations": int(spec.get("iterations", 2))}
+            "cells": int(spec.get("cells", 60_000)), "iterations": int(spec.get("iterations", 2)),
+            "warpWeight": warp, "warpLayer": float(spec["warpLayer"]) if spec.get("warpLayer") else None}
 
 
 def _slicer(spec, process, base_dir, goal):
@@ -588,6 +599,104 @@ def _extrusion_axis(v):
     return "xyz".index(a)
 
 
+def _mass_load(ld, f, m, region, shape, label, preserve, keep_out):
+    """A carried mass as the force and moment it puts on its region: weight
+    x dynamic factor along gravity, and the moment of that force about the
+    region's centre when the mass sits elsewhere ('at')."""
+    from .am import build_vector
+    from .shapes import _vec
+
+    mass, dyn = ld["mass"], ld.get("dynamic", 1.0)
+    if not isinstance(mass, (int, float)) or mass <= 0:
+        raise ValueError(f"{label}.mass is the carried mass in kg (> 0)")
+    if not isinstance(dyn, (int, float)) or dyn < 1:
+        raise ValueError(f"{label}.dynamic multiplies the weight: 1 static, 2 a moving joint, 3 a crash")
+    try:
+        g = build_vector(parse_build_direction(ld.get("gravity", "-z")))
+    except (ValueError, TypeError, KeyError):
+        raise ValueError(f"{label}.gravity is the way the mass pulls: '-z', '+y', ... or [x, y, z]") from None
+    w = 9.81 * float(mass) * float(dyn) * np.asarray(g, float) / np.linalg.norm(g)
+    return f + w, m
+
+
+def _at_moment(ld, f, m, region, shape, label, preserve, keep_out):
+    """A force (or carried mass) applied away from its region ('at'): the
+    moment of the whole force about the region's centre. A belt pulling on
+    a pulley in front of a motor face, a gripper's mass 80 mm out."""
+    from .shapes import _vec
+
+    if ld.get("direction") is not None or ld.get("cone") is not None:
+        raise ValueError(f"{label}: a force 'at' an offset makes a moment that would have to turn with an "
+                         "unknown direction; give each direction you need as a load case of its own (or use an "
+                         "in-plane direction such as \"xz\", which turns the force round 'at')")
+    if shape is None:
+        regs = {r.id: r.shape for r in list(preserve) + list(keep_out)}
+        shape = regs.get(region)
+    if shape is None:
+        raise ValueError(f"{label}: 'at' needs the region's shape to measure the lever from")
+    lo, hi = shape.bounds()
+    lever = _vec(ld["at"], name=f"{label}.at") - 0.5 * (np.asarray(lo) + np.asarray(hi))
+    return m + np.cross(lever, f)
+
+
+_PLANES = {"xy": (0, 1), "xz": (0, 2), "yz": (1, 2)}
+_PLANAR_STEPS = 8          # 22.5 degrees apart: the worst direction is within cos(11.25) = 98%
+
+
+def _expand_planar(d: dict) -> dict:
+    """A load whose direction is any in a plane ("direction": "xz") becomes
+    eight plain cases round that plane. Von Mises stress does not care about
+    the force's sign, so half a turn covers it. Brief-eval agents wrote these
+    cases by hand (a pillow block's radial load, a hook's swinging strap): a
+    3D 'any' or a cone also pushes out of plane, which a thin part cannot
+    carry and need not."""
+    cases = d.get("loadCases")
+    if not isinstance(cases, list) or not any(
+            isinstance(ld, dict) and ld.get("direction") in _PLANES
+            for c in cases if isinstance(c, dict) for ld in (c.get("loads") or [])):
+        return d
+    out = []
+    for ci, c in enumerate(cases):
+        loads = c.get("loads") or [] if isinstance(c, dict) else []
+        planar = [i for i, ld in enumerate(loads) if isinstance(ld, dict) and ld.get("direction") in _PLANES]
+        if not planar:
+            out.append(c)
+            continue
+        if len(planar) > 1:
+            raise ValueError(f"loadCases[{ci}]: at most one load per case may have an in-plane direction; "
+                             "put another in a load case of its own")
+        li = planar[0]
+        ld = loads[li]
+        if ld.get("cone") is not None or ld.get("mass") is not None or ld.get("pressure") is not None:
+            raise ValueError(f"loadCases[{ci}].loads[{li}]: an in-plane direction goes with a force, not a cone, "
+                             "mass or pressure")
+        a, b = _PLANES[ld["direction"]]
+        f = np.asarray(ld.get("force") or [0, 0, 0], float)
+        size = float(np.linalg.norm(f))
+        if size <= 0:
+            raise ValueError(f"loadCases[{ci}].loads[{li}]: direction {ld['direction']!r} needs a force "
+                             "(its size, and the first direction to try)")
+        start = float(np.arctan2(f[b], f[a])) if abs(f[a]) + abs(f[b]) > 1e-9 * size else 0.0
+        normal = np.zeros(3)
+        normal[3 - a - b] = 1.0 if (a, b) != (0, 2) else -1.0   # right-handed: a x b
+        m0 = np.asarray(ld.get("moment") or [0, 0, 0], float)
+        name = c.get("name") or f"case{ci}"
+        for k in range(_PLANAR_STEPS):
+            t = np.pi * k / _PLANAR_STEPS
+            fk = np.zeros(3)
+            fk[a], fk[b] = size * np.cos(start + t), size * np.sin(start + t)
+            # the moment turns with the force about the plane's normal
+            cth, sth = np.cos(t), np.sin(t)
+            mk = m0 * cth + np.cross(normal, m0) * sth + normal * (normal @ m0) * (1 - cth)
+            new = {k2: v for k2, v in ld.items() if k2 != "direction"}
+            new["force"] = fk.round(9).tolist()
+            if ld.get("moment") is not None:
+                new["moment"] = mk.round(9).tolist()
+            out.append({**c, "name": f"{name}@{180.0 * k / _PLANAR_STEPS:g}",
+                        "loads": [new if i == li else x for i, x in enumerate(loads)]})
+    return {**d, "loadCases": out}
+
+
 def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     """Validate and parse a study. Every error names the field to fix."""
     if not isinstance(d, dict):
@@ -596,6 +705,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     from .fasteners import expand_fasteners
     d = quick.study(d)
     d = expand_fasteners(d)
+    d = _expand_planar(d)
     joints = d.pop("_joints", []) if isinstance(d.get("_joints"), list) else []
     ds = d.get("designSpace")
     if isinstance(ds, dict):
@@ -651,8 +761,12 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             m = np.asarray(ld.get("moment", ld.get("torque", [0, 0, 0])), float).reshape(-1)
             if f.shape != (3,) or m.shape != (3,) or not np.all(np.isfinite(f)) or not np.all(np.isfinite(m)):
                 raise ValueError(f"{label}: force [fx, fy, fz] (N) and moment [mx, my, mz] (N·mm) must be 3 numbers")
+            if ld.get("mass") is not None:
+                f, m = _mass_load(ld, f, m, region, shape, label, preserve, keep_out)
+            if ld.get("at") is not None:
+                m = _at_moment(ld, f, m, region, shape, label, preserve, keep_out)
             if not np.any(f) and not np.any(m):
-                raise ValueError(f"{label} needs a nonzero force (N), moment (N·mm) or pressure (MPa)")
+                raise ValueError(f"{label} needs a nonzero force (N), moment (N·mm), mass (kg) or pressure (MPa)")
             dist = str(ld.get("distribution", "uniform"))
             if dist not in ("uniform", "bearing"):
                 raise ValueError(f"{label}.distribution must be 'uniform' or 'bearing'")
@@ -661,7 +775,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             spread, cone = None, None
             if ld.get("direction") is not None:
                 if ld["direction"] != "any":
-                    raise ValueError(f"{label}.direction must be 'any' (the force's size, in every direction)")
+                    raise ValueError(f"{label}.direction must be 'any' (the force's size, in every direction) "
+                                     "or a plane, 'xy', 'xz' or 'yz' (any direction in it)")
                 spread = "any"
             if ld.get("cone") is not None:
                 cone = ld["cone"]

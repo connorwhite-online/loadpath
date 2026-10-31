@@ -1,0 +1,180 @@
+{
+ "id": "bell-crank-lpbf",
+ "brief": "A bell crank for a linkage, printed in AlSi10Mg on a metal powder-bed printer, built along +Z.\nIt pivots on an 8 mm pin along Z at the origin (8 mm hole, 3 mm of wall), 10 mm thick\n(z = -5 to 5). Two arms, each 40 mm long: one ends at (40, 0), the other at (0, 40), each with a\n5 mm hole along Z (a 5 mm rod-end bolt) and 3 mm of wall. Keep it within x = -10 to 48 and\ny = -10 to 48. Pushrods on both arms push and pull along the arms' perpendicular: 400 N in Y\nat (40, 0) balanced by 400 N in X at (0, 40) (the pin reacts), and both directions reverse.\nSafety factor 2, as light as possible, under 30 g.",
+ "attachments": [],
+ "tags": [
+  "metal",
+  "lpbf",
+  "mass"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -10.0,
+     -10.0,
+     -5.0
+    ],
+    "max": [
+     48.0,
+     48.0,
+     5.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "pivot-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 10.0,
+     "r": 7.0
+    }
+   },
+   {
+    "id": "a-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      40.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 10.0,
+     "r": 5.5
+    }
+   },
+   {
+    "id": "b-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      40.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 10.0,
+     "r": 5.5
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "pivot",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 14.0,
+     "r": 4.0
+    }
+   },
+   {
+    "id": "a",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      40.0,
+      0.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 14.0,
+     "r": 2.5
+    }
+   },
+   {
+    "id": "b",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      40.0,
+      0.0
+     ],
+     "axis": "z",
+     "length": 14.0,
+     "r": 2.5
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "pivot"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "push",
+    "loads": [
+     {
+      "region": "a",
+      "force": [
+       0,
+       400,
+       0
+      ]
+     },
+     {
+      "region": "b",
+      "force": [
+       400,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "pull",
+    "loads": [
+     {
+      "region": "a",
+      "force": [
+       0,
+       -400,
+       0
+      ]
+     },
+     {
+      "region": "b",
+      "force": [
+       -400,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "alsi10mg",
+  "process": {
+   "type": "lpbf",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "bell-crank-lpbf",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxMass": 30
+ }
+}

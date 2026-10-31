@@ -1276,20 +1276,13 @@ class FieldGraph:
         1 mm), so a graph can grade itself from its own solid's stress."""
         import trimesh
 
-        from .spec import study_from_dict
         from .verify import verify_part
 
         s = nd.spec
         if "part" not in s:
             raise ValueError(f"node {nd.name!r}: a result from a study needs the 'part' it analyzes")
-        if s["study"].startswith("example:"):
-            from .tasks import example
-
-            study = study_from_dict(example(s["study"].split(":", 1)[1]), base_dir=self.base_dir)
-        else:
-            sp = self._path(s["study"])
-            with open(sp) as fh:
-                study = study_from_dict(json.load(fh), base_dir=os.path.dirname(sp))
+        ref = s["study"] if s["study"].startswith("example:") else self._path(s["study"])
+        study = load_study(ref, self.base_dir, self.doc.get("material"))
         if s["part"] in self.nodes:
             mesh = self.mesh(pitch=float(s.get("pitch", 1.0)), name=s["part"], project=1)
         else:
@@ -1584,7 +1577,7 @@ class FieldGraph:
         flat faces and keep-outs keep their edges; false meshes the whole
         field, every crease rounded over about one pitch.
 
-        `creases` (default the graph's mesh.creases, else false): hard
+        `creases` (default the graph's mesh.creases, else true): hard
         booleans between field surfaces (a lattice clipped by a body, two
         bodies unioned without a blend, a shell's rim) get their creases back
         on the meshed field (crease.py)."""
@@ -1592,7 +1585,7 @@ class FieldGraph:
         pitch = pitch or m.get("pitch")
         project = m.get("project", 3) if project is None else project
         sharp = m.get("sharp", True) if sharp is None else sharp
-        creases = m.get("creases", False) if creases is None else creases
+        creases = m.get("creases", True) if creases is None else creases
         if bounds is None and "bounds" in self.doc:
             bounds = (self.doc["bounds"]["min"], self.doc["bounds"]["max"])
         if bounds is None:
@@ -2374,6 +2367,27 @@ def _material_report(g, doc, part, out_dir, stem, progress):
 
 # ---- the job ---------------------------------------------------------------------
 
+def load_study(ref, base_dir=None, material=None):
+    """The study a graph analyzes its part under: a JSON path (relative to
+    base_dir) or "example:<name>". The graph's own `material`, when it has
+    one, replaces the study's, so the part is checked in what it will be
+    printed in (and its process takes that card's across-layer values)."""
+    from .spec import study_from_dict
+
+    if ref.startswith("example:"):
+        from .tasks import example
+
+        d, sdir = example(ref.split(":", 1)[1]), base_dir
+    else:
+        sp = ref if os.path.isabs(ref) else os.path.join(base_dir or ".", ref)
+        with open(sp) as fh:
+            d = json.load(fh)
+        sdir = os.path.dirname(sp)
+    if material is not None:
+        d = {**d, "material": material}
+    return study_from_dict(d, base_dir=sdir)
+
+
 def node_doc(doc, node):
     """The graph made to mesh one of its nodes instead of its output: groups
     expanded (so a node inside a copy is named <copy>__<node>), `output`
@@ -2538,12 +2552,14 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         rep["stl"] = path
         _write_graded(doc, rep, out_dir)
         if doc.get("step"):
-            from .step import DEFAULT_FACES, export_step
+            from .step import DEFAULT_FACES, DEFAULT_PATCHES, export_step
 
             opts = doc["step"] if isinstance(doc["step"], dict) else {}
             try:
                 st = export_step(mesh, os.path.join(out_dir, f"{rep['name']}.step"),
-                                 faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"])
+                                 faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"],
+                                 surface=opts.get("surface", "facets"),
+                                 patches=int(opts.get("patches", DEFAULT_PATCHES)))
                 st.pop("shape", None)
                 rep["step"] = st
             except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing

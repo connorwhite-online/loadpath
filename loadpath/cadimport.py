@@ -610,6 +610,25 @@ def _tube(seg, wall, extend=0.0):
     return Cylinder(p0 - extend * a, p1 + extend * a, seg["r"] + wall, 0.0)
 
 
+def _load_pairs(loads):
+    """[(interface id, force)] from a list of pairs or {id, force} dicts, or
+    a dict {id: force}."""
+    if not loads:
+        return []
+    if isinstance(loads, dict):
+        return [(k, v) for k, v in loads.items()]
+    out = []
+    for x in loads:
+        if isinstance(x, dict):
+            out.append((x.get("interface") or x.get("region") or x.get("id"), x["force"]))
+        else:
+            out.append((x[0], x[1]))
+    for k, f in out:
+        if len(f) != 3:
+            raise ValueError(f"load on {k!r}: force is [fx, fy, fz] in N")
+    return out
+
+
 def washer_r(r):
     """mm: the radius a bolt's head or washer bears on, for a clearance
     hole of radius r (ISO metric, fasteners.METRIC; about 1.9 r between)."""
@@ -650,12 +669,14 @@ def _write_stl(mesh, path):
 def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = None, space: str = "part",
                 material: str = "petg", force: float = 100.0, pad: float = 2.0, grow: float = 0.0,
                 safety_factor: float = 2.0, process: str | None = None, support: str | None = None,
-                loads: dict | None = None) -> dict:
+                loads=None, ring: float | None = None) -> dict:
     """Write a study for the part into `out_dir` (design space, preserved
     interfaces and clearance slabs as STL beside it) and return it.
-    `support` (an interface id) and `loads` ({interface id: [fx, fy, fz] N})
-    replace the suggested setup; the suggestion stands for whichever is
-    not given."""
+    `support` (an interface id) and `loads` ([(interface id, [fx, fy, fz] N)],
+    or a dict of them; each its own load case) replace the suggested setup;
+    the suggestion stands for whichever is not given. `ring` (mm): every bore
+    keeps an exact tube of that wall (a cylinder in the study, not cut to the
+    part) instead of the default ring."""
     import trimesh
 
     from .shapes import Cylinder, manifold_from_trimesh, trimesh_from_manifold
@@ -702,13 +723,16 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
     grown = space != "part" or grow > 0
     setup = suggest_setup(feats, force)
     ids = {it["id"] for it in feats["interfaces"]}
-    for k in [support] + list(loads or {}):
+    pairs = _load_pairs(loads)
+    for k in [support] + [p[0] for p in pairs]:
         if k is not None and k not in ids:
             raise ValueError(f"no interface {k!r}; this part has {sorted(ids)} (see features.json)")
-    used = {support or setup.get("support")} | (set(loads) if loads else {setup.get("load")})
+    used = {support or setup.get("support")} | ({p[0] for p in pairs} if pairs else {setup.get("load")})
     for it in feats["interfaces"]:
         bores = [by_id[h] for h in it["bores"]]
-        cyls = [c for b in bores for c in bore_cyls(b, grown and b["kind"] == "bolt")]
+        # grown past the part, a through bore runs out of it: the bolt goes in,
+        # the shaft goes on through
+        cyls = [c for b in bores for c in bore_cyls(b, grown)]
         keep_out.append({"id": f"{it['id']}-hole" if it["kind"] == "bolted-face" or len(bores) > 1
                          else it["id"],
                          "shape": cyls[0] if len(cyls) == 1 else {"type": "union", "shapes": cyls}})
@@ -735,6 +759,14 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
                     keep_out.append({"id": f"{b['id']}-driver", "bore": False, "shape": {
                         "type": "cylinder", "p0": (head - reach * a).round(4).tolist(),
                         "p1": head.round(4).tolist(), "r": round(max(r_head, rw), 4)}})
+                continue
+            if ring:
+                for s in b["segments"]:
+                    p0, p1 = np.asarray(s["p0"]), np.asarray(s["p1"])
+                    preserve.append({"id": f"{b['id']}-ring" + (f"-{len(preserve)}" if len(b["segments"]) > 1 else ""),
+                                     "shape": {"type": "cylinder", "p0": p0.round(4).tolist(),
+                                               "p1": p1.round(4).tolist(), "r": round(s["r"] + ring, 4),
+                                               "rInner": s["r"]}})
                 continue
             w = ring_wall(b["r"])
             for s in b["segments"]:
@@ -781,16 +813,18 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
     hold = support or setup.get("support")
     if hold:
         study["supports"] = [{"region": ko_of[hold]}]
-    pairs = list(loads.items()) if loads else ([(setup["load"], setup["force"])] if setup.get("load") else [])
-    if pairs:
-        lds = []
-        for iid, fv in pairs:
-            it = next(i for i in feats["interfaces"] if i["id"] == iid)
-            ld = {"region": ko_of[iid], "force": [float(x) for x in fv]}
-            if it["kind"] == "bore" and len(by_id[it["bores"][0]]["segments"]) == 1:
-                ld["distribution"] = "bearing"
-            lds.append(ld)
-        study["loadCases"] = [{"name": "given" if loads else "suggested", "loads": lds}]
+    given = bool(pairs)
+    if not pairs and setup.get("load"):
+        pairs = [(setup["load"], setup["force"])]
+    cases = []
+    for k, (iid, fv) in enumerate(pairs):
+        it = next(i for i in feats["interfaces"] if i["id"] == iid)
+        ld = {"region": ko_of[iid], "force": [float(x) for x in fv]}
+        if it["kind"] == "bore" and len(by_id[it["bores"][0]]["segments"]) == 1:
+            ld["distribution"] = "bearing"
+        cases.append({"name": f"load-{k + 1}" if given else "suggested", "loads": [ld]})
+    if cases:
+        study["loadCases"] = cases
     feats_out = {k: v for k, v in feats.items() if k != "faces"}
     feats_out["faces"] = [{k: v for k, v in f.items() if not k.startswith("_")} for f in feats["faces"]]
     feats_out["suggested"] = setup

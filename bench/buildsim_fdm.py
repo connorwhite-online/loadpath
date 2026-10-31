@@ -11,7 +11,7 @@ Two numbers are fitted on the nine 20 mm-wide bars of their Table 2: the
 retained share `relax` of the sub-Tg shrink (least squares; the model is
 linear in it) and the bed's stiffness (the parts sat on a soluble-support
 raft, neither glued rigid nor free), picked from --beds by the fit.
-Run: python bench/buildsim_fdm.py [--beds 1 3 10 30] [--out results.json]
+Run: python bench/buildsim_fdm.py [--beds 3 4] [--adhesion MPa] [--layer 0.254] [--out results.json]
 """
 from __future__ import annotations
 
@@ -43,19 +43,22 @@ def flatness(r):
     return float(d.max() - d.min())
 
 
-def run(length, height, relax=1.0, bed=None):
-    nx, ny, nz = int(round(length / LAYER)), 4, int(round(height / LAYER))
+def run(length, height, relax=1.0, bed=None, adhesion=None, layer=LAYER):
+    nx, ny, nz = int(round(length / layer)), max(2, int(round(1.0 / layer))), int(round(height / layer))
     solid = np.ones((nx, ny, nz), bool)
     setup = BuildSetup(process="fdm", material="abs", relax=relax, bed=75.0, chamber=75.0,
-                        bed_stiffness=bed)
+                        bed_stiffness=bed, bed_adhesion=adhesion, layer=layer)
     t0 = time.time()
-    r = simulate_build(solid, LAYER, (0, 0, 0), setup)
+    r = simulate_build(solid, layer, (0, 0, 0), setup)
     return flatness(r), r, time.time() - t0
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--beds", type=float, nargs="+", default=[1.0, 3.0, 10.0, 30.0])
+    ap.add_argument("--adhesion", type=float, default=None,
+                    help="MPa bed bond (unit relax; the fitted relax scales it); default never lets go")
+    ap.add_argument("--layer", type=float, default=LAYER, help="voxel / analysis layer mm (0.508 lumps two)")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
     keys = sorted(MEASURED)
@@ -64,7 +67,7 @@ def main():
     for bed in a.beds:
         sims = {}
         for k in keys:
-            f, r, s = run(*k, bed=bed)
+            f, r, s = run(*k, bed=bed, adhesion=a.adhesion, layer=a.layer)
             sims[k] = f
             print(bed, k, f"unit-relax flatness {f:.3f} mm, mean peel {r.report['peel']['meanPeelStress']:.3f} MPa, "
                           f"{s:.0f} s", flush=True)

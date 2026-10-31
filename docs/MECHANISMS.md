@@ -158,13 +158,17 @@ pulling through the whole stroke, with no corner hinge.
 ## Not yet
 
 - **Far-curling fingers:** the large-deflection optimizer works on the
-  inverter, but a slender TPU finger meant to curl tens of degrees does not
-  converge yet. At 80 x 20 cells both the linear (24 corner hinges) and the
-  large-deflection design (8) were hinge-ridden and neither survived a
-  stroke check; at 40 x 10 cells the Newton solve of the grey early designs
-  fails just short of the full stroke even after backtracking. A
-  continuation on the stroke (start short, lengthen it as the design
-  firms up) is the likely fix.
+  inverter but not yet on a slender TPU finger (40 x 10 cells, 5 mm pull at
+  the base, soft workpiece at the tip). It finds a big tip travel (11-25 mm)
+  only through grey material: the design stays 55% grey, because every
+  sharper projection it tries cannot be driven through the stroke, and
+  thresholded at 0.5 its tip falls off. The optimizer now keeps the last
+  design that reached the stroke instead of failing, and `stroke_mechanism`
+  now reports a tip held only by the plate's symmetry plane as detached
+  (it used to read 0 mm of travel). The linear robust design is crisp (9%
+  grey) but moves the tip only 0.7 mm before its solve stops. Next: grade
+  the void threshold with the projection sharpness, or score the
+  thresholded design, so grey cells cannot carry the stroke.
 - **Tendon input:** `mechanism_nl` takes a prescribed stroke; a tendon
   (`nonlinear.Tendon`) as the input is not wired in yet.
 - **No contact:** the workpiece is a spring on the jaw, not a body the jaw

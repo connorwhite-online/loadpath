@@ -77,14 +77,20 @@ def _making(study: Study) -> dict:
 _DILATE = 0.15
 
 
-def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should_stop) -> np.ndarray:
+def _coarse_start(study: Study, domain: Domain, vf: float, radius: float, should_stop) -> np.ndarray | None:
     """Find the layout on a grid twice as coarse (an eighth of the cells, so
     each iteration is roughly ten times cheaper), stopping while it is still
     soft (beta 4), then interpolate it onto the fine grid as the starting
     design. The fine run only has to sharpen and refine it."""
     from scipy import ndimage
 
-    coarse = build_domain(study, pitch=2.0 * domain.pitch)
+    try:
+        coarse = build_domain(study, pitch=2.0 * domain.pitch)
+    except ValueError:
+        # The coarse grid can lose what the fine one resolves (a fastener's
+        # seat and face rings landing on the same nodes, a thin load pad):
+        # then start cold on the fine grid, which `check` validated.
+        return None
     res = optimize(coarse, study.elastic(design=True),
                    SimpOptions(volume_fraction=vf, filter_radius=max(radius, 1.5 * coarse.pitch),
                                max_iterations=60, beta_max=_WARM_BETA, beta_every=12,
@@ -315,12 +321,51 @@ def _cgroup_limit() -> float | None:
     return None
 
 
+def _cgroup_free() -> float | None:
+    """The container's limit less what it holds now (reclaimable page cache
+    not counted): the limit alone let eight brief-eval agents' runs each
+    count the whole 14 GB as theirs, and the kernel killed them."""
+    lim = _cgroup_limit()
+    if not lim:
+        return None
+    paths = []
+    try:
+        with open("/proc/self/cgroup") as f:
+            for line in f:
+                _, ctrl, rel = line.strip().split(":", 2)
+                if ctrl == "":
+                    paths.append((f"/sys/fs/cgroup{rel}/memory.current", f"/sys/fs/cgroup{rel}/memory.stat",
+                                  "inactive_file"))
+                elif "memory" in ctrl.split(","):
+                    paths.append((f"/sys/fs/cgroup/memory{rel}/memory.usage_in_bytes",
+                                  f"/sys/fs/cgroup/memory{rel}/memory.stat", "total_inactive_file"))
+    except (OSError, ValueError):
+        return lim
+    for used_p, stat_p, key in paths:
+        try:
+            with open(used_p) as f:
+                used = float(f.read().strip())
+        except (OSError, ValueError):
+            continue
+        cache = 0.0
+        try:
+            with open(stat_p) as f:
+                for line in f:
+                    k, _, v = line.partition(" ")
+                    if k == key:
+                        cache = float(v)
+        except (OSError, ValueError):
+            pass
+        return max(0.0, lim - (used - cache))
+    return lim
+
+
 def _available_bytes() -> float | None:
     avail = _meminfo_available()
-    cap = _cgroup_limit()
+    cap = _cgroup_free()
     if avail is None:
         return cap
-    return min(avail, cap) if cap else avail
+    return min(avail, cap) if cap is not None else avail
 
 
 def _meminfo_available() -> float | None:
@@ -359,6 +404,43 @@ def _workers(n: int, cells: int | None = None) -> int:
     if avail:
         w = min(w, max(1, int(0.8 * avail // _run_bytes(cells))))
     return w
+
+
+def _save_partial(o) -> None:
+    """With LOADPATH_PARTIAL_DIR set (`loadpath run` sets it to out/partial),
+    write each outcome's STL and summary as the search finds it: four
+    brief-eval runs were killed in their last stage and kept nothing of
+    half an hour of verified outcomes."""
+    d = os.environ.get("LOADPATH_PARTIAL_DIR")
+    if not d or o.mesh is None:
+        return
+    try:
+        import json
+
+        os.makedirs(d, exist_ok=True)
+        stem = f"vf{o.volume_fraction:.4f}".replace(".", "p")
+        o.mesh.export(os.path.join(d, stem + ".stl"))
+        with open(os.path.join(d, "outcomes.jsonl"), "a") as fh:
+            fh.write(json.dumps({"stl": stem + ".stl", **o.summary()}, default=str) + "\n")
+    except Exception:  # noqa: BLE001  (a convenience: never fail the run for it)
+        pass
+
+
+def _confirm_cells(st: Study | None = None) -> int:
+    """Cells for the confirming re-analysis: LOADPATH_CONFIRM_CELLS, else
+    150k, but no more than fit in the memory free right now. A brief-eval
+    agent's search on a shared 15 GB box was OOM-killed at this stage after
+    35 minutes, losing every verified outcome; a coarser confirm (never
+    under the design grid) is better than none."""
+    env = os.environ.get("LOADPATH_CONFIRM_CELLS")
+    if env:
+        return max(1000, int(env))
+    floor = max(st.max_elements if st is not None else 0, 20_000)
+    avail = _available_bytes()
+    if not avail:
+        return _CONFIRM_CELLS
+    fit = int((0.6 * avail - _RUN_BASE_BYTES) // _RUN_CELL_BYTES)
+    return int(max(floor, min(_CONFIRM_CELLS, fit)))
 
 
 def _solve_alone(study: Study) -> StudyResult:
@@ -687,7 +769,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
 
         def cold():
             if big:
-                return attempt(vf, _coarse_start(study, domain, vf, radius, should_stop), _WARM_BETA)
+                x0 = _coarse_start(study, domain, vf, radius, should_stop)
+                return attempt(vf, x0, _WARM_BETA if x0 is not None else 1.0)
             return attempt(vf, None, 1.0)
 
         rp = memory.replay(vf) if memory is not None else None
@@ -748,6 +831,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                                            ("start", "mass", "safetyFactor", "margin")} | {"passes": c.passes}
         started = True
         emit({"stage": "outcome", **o.summary()})
+        _save_partial(o)
         return o
 
     def _confirm(o: Outcome) -> float:
@@ -756,7 +840,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         recalled = rep is not None
         if rep is None:
             try:
-                rep = verify_part(study, o.mesh, max_cells=_CONFIRM_CELLS, min_pitch=0.3 * domain.pitch,
+                cc = _confirm_cells(study)
+                rep = verify_part(study, o.mesh, max_cells=cc, min_pitch=0.3 * domain.pitch,
                                   contact_band=domain.pitch)
             except RuntimeError as exc:
                 o.report.setdefault("warnings", []).append(f"confirmation failed: {exc}")
@@ -767,6 +852,9 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         mc = _margin(study, rep)
         o.report["confirm"] = {"safetyFactor": rep["safetyFactor"], "margin": mc,
                                "analysisPitch": rep["analysisPitch"], "analysisCells": rep["analysisCells"],
+                               **({"cellsCapped": "by free memory (LOADPATH_CONFIRM_CELLS sets it)"}
+                                  if not recalled and cc < _CONFIRM_CELLS and not os.environ.get("LOADPATH_CONFIRM_CELLS")
+                                  else {}),
                                "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
                                          for c in rep["cases"]]}
         # recorded, not adopted: the finer grid also resolves small features
@@ -922,12 +1010,13 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         beta0 = _WARM_BETA if x0 is not None else 1.0
         if x0 is None and domain.n_elem >= _COARSE_MIN_CELLS:
             x0 = _coarse_start(study, domain, float(goal.volume_fraction or 0.3), radius, should_stop)
-            beta0 = _WARM_BETA
+            beta0 = _WARM_BETA if x0 is not None else 1.0
         res = optimize_constrained(
             domain, study.elastic(),
             SimpOptions(volume_fraction=float(goal.volume_fraction or 0.3), filter_radius=radius,
                         max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
-                        extrusion=study.extrusion, pattern=study.pattern),
+                        extrusion=study.extrusion, pattern=study.pattern,
+                        build_direction=study.print_direction),
             limits, on_iter=on_iter, should_stop=should_stop)
         mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
         report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
@@ -935,6 +1024,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                "achievedVolumeFraction": res.volume_fraction, "method": "constrained",
                "limits": {"stress": limits.stress, "deflection": limits.deflection}}
         o = Outcome(res.volume_fraction, mesh, report, opt, rinfo)
+        o.voxel_sf = report.get("safetyFactor")
         m = _margin(study, report)
         report["margin"] = m
         o.passes = bool(m >= 1.0)
@@ -944,7 +1034,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
 
     goal = study.goal
     if goal.method == "constrained" and (goal.safety_factor is not None or goal.max_deflection is not None) \
-            and study.print_direction is None and study.gravity is None and not _durability_drives(study) \
+            and study.gravity is None and not _durability_drives(study) \
             and study.access is None and study.max_member is None \
             and not any(ld.direction for c in study.load_cases for ld in c.loads):
         from .constrained import Limits
@@ -962,6 +1052,10 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         # with the target nudged by 2%. Once one run passes and one fails,
         # bisect t between them (geometrically), and warm-start only from a
         # passing design, never from a collapsed one.
+        # With the tet cross-check (goal.confirm), each run is read on tets
+        # and t is steered by that reading: the voxel one left the wall
+        # brackets at SF 2.7-2.8 on voxels and 3.6 on tets for 2.5.
+        tets = goal.safety_factor is not None and _confirm_on_tets(study, outcomes)
         t, t_pass, t_fail, x_pass = 1.0, None, None, None
         for _ in range(_MAX_CONSTRAINED_RUNS):
             if should_stop is not None and should_stop():
@@ -970,6 +1064,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                             goal.max_deflection * t if goal.max_deflection is not None else None, mat.E)
             o = run_constrained(limits, x_pass)
             outcomes.append(o)
+            if tets and o.voxel_sf and o.report.get("bodies", 1) <= 1 and tet_confirm(o) is None:
+                tets = False   # the mesher failed: voxels from here on
             r = o.report
             rs = r["safetyFactor"] / goal.safety_factor if goal.safety_factor else None
             rd = goal.max_deflection / max(c["deflection"] for c in r["cases"]) if goal.max_deflection else None

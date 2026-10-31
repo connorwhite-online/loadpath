@@ -17,7 +17,8 @@ loop in study.py closes the remaining gap against the verified mesh.
 - Deflection: compliance over the load's magnitude is the displacement at
   the load along its direction; self-adjoint, no extra solve.
 - Everything else (filter, robust erosion, projection continuation,
-  symmetry, extrusion, the reduced solve) is shared with simp.optimize.
+  symmetry, extrusion, the AM overhang filter for a build direction, the
+  reduced solve) is shared with simp.optimize.
 """
 from __future__ import annotations
 
@@ -88,6 +89,30 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     b0 = hex8_b_center() / mesh.pitch
     cb = elastic_c(1.0, nu) @ b0                      # (6, 24): stress per unit-E displacement
 
+    # Printed without supports along build_direction: the AM filter (am.py)
+    # after each projection, as simp.optimize applies it.
+    if opts.build_direction is not None:
+        from .am import AMFilter
+
+        pinned = domain.full_grid(pres.astype(float)) > 0.5
+        am_b = AMFilter(domain.dims, opts.build_direction, pinned)   # blueprint
+        am_e = AMFilter(domain.dims, opts.build_direction, pinned)   # eroded
+        ijk = tuple(mesh.elem_ijk.T)
+
+        def printed(am, v):
+            return am.forward(domain.full_grid(v))[ijk]
+
+        def printed_grad(am, g):
+            return am.backward(domain.full_grid(g))[ijk]
+    else:
+        am_b = am_e = None
+
+        def printed(am, v):
+            return v
+
+        def printed_grad(am, g):
+            return g
+
     free = np.flatnonzero(design)
     x = np.full(n, opts.volume_fraction)
     if opts.x0 is not None:
@@ -111,8 +136,10 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
         xt = (h @ x) / hs
         xp = _project(xt, beta, opts.eta)
         xp[pres] = 1.0
+        xp = printed(am_b, xp)
         xe = _project(xt, beta, eta_e)
         xe[pres] = 1.0
+        xe = printed(am_e, xe)
         dpb = _dproject(xt, beta, opts.eta)
         dpb[pres] = 0.0
         dpe = _dproject(xt, beta, eta_e)
@@ -123,7 +150,7 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
         us = fe.solve(e, xe, us, loads=domain.loads)
 
         def to_x(g_xe):
-            return ht @ (g_xe * dpe / hs)
+            return ht @ (printed_grad(am_e, g_xe) * dpe / hs)
 
         cons, grads, record = [], [], {}
         for c in defl_cases:
@@ -168,7 +195,7 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                 record[f"stress.{domain.case_names[c]}"] = smax * limits.stress
 
         f0 = 10.0 * float(xp[design].mean())
-        df0 = ht @ (10.0 * design / design.sum() * dpb / hs)
+        df0 = ht @ (printed_grad(am_b, 10.0 * design / design.sum()) * dpb / hs)
         if domain.mirror:
             df0 = _symmetrize(df0, domain.mirror)
             grads = [_symmetrize(g, domain.mirror) for g in grads]
@@ -233,6 +260,7 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     # the blueprint reads within about 10% of it, at the same volume.
     xp = _project((h @ x) / hs, beta, opts.eta)
     xp[pres] = 1.0
+    xp = printed(am_b, xp)
     return SimpResult(x=x, xphys=xp, compliance=float("nan"), case_compliance=[],
                       volume_fraction=float(xp[design].mean()), iterations=it,
                       converged=converged, seconds=time.time() - t0, history=history)

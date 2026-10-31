@@ -63,9 +63,53 @@ wire, an expression) recompiles, in milliseconds.
 - **Mass** is live: the page weighs the output on the GPU as you edit
   (its volume on a grid of samples at two spacings, extrapolated; within
   about 1% of the meshed part) and multiplies by the material's density.
+  The **material picker** lists the library with each card's datasheet, and
+  rescales the last run's or tune's safety factor and deflection as you
+  switch ([materials.md](materials.md#in-the-editor)). The graph's material
+  is also the one its studies check the part in.
   **Fit mass** finds the value of any one number (a wall, a blend, a remap
   end) that gives a target mass, in a second or two; **Sweep** charts the
   mass across that number's range, and clicking a point uses that value.
+- **Colour → stress (live preview)** solves the part under the graph's
+  study (its tune block's, else a result node's) on a coarse grid and
+  paints the stress on it, scaled to its peak, deep red past the goal's
+  safety factor. It updates as you drag: the server samples the field at
+  cell centres (no mesh), gives each surface cell its filled share of the
+  stiffness so the reading moves smoothly with a slider, and solves with
+  the matrix-free multigrid (on a GPU when torch has one). On the arm link
+  that is 16-19k cells and 1.2-1.9 s per slider value on the 4-core cloud
+  box. The legend says it is a preview.
+
+  Its safety factor is made to read under the full check (verify on the
+  meshed part, 35-80 s), never over it. The coarse solve alone reads
+  high where stress concentrates (the arm link's web edge at the boss, a
+  sharp inner corner): up to 1.45x the check. So the two highest spots
+  per load case are re-solved in a small box at 2.5x finer cells, from
+  the field, driven by the coarse displacements on the box faces (+0.3 s;
+  the check's own submodelling, without a mesh), and the peak is then
+  multiplied by 1.3 (`preview.HOTSPOT_FACTOR`), set from
+  `bench/preview_calibration.py` over eight parts:
+
+  | part | coarse | refined | preview | check | preview / check |
+  |---|---|---|---|---|---|
+  | arm link, web 9 mm | 23.65 | 20.56 | 15.81 | 17.84 | 0.89 |
+  | arm link, web 6.5 mm | 17.92 | 15.48 | 11.90 | 12.66 | 0.94 |
+  | arm link, narrow web | 9.23 | 8.02 | 6.17 | 6.69 | 0.92 |
+  | arm link, blend 3 | 21.46 | 21.46 | 16.50 | 17.68 | 0.93 |
+  | cantilever bar | 3.46 | 3.40 | 2.61 | 3.22 | 0.81 |
+  | L-bracket, fillet 3 | 3.60 | 3.60 | 2.77 | 3.84 | 0.72 |
+  | L-bracket, fillet 1 | 4.64 | 3.92 | 3.02 | 3.19 | 0.95 |
+  | plate with hole | 2.87 | 2.63 | 2.02 | 2.66 | 0.76 |
+
+  The refined preview over the check spans 0.94-1.23, so 1.3 leaves 5%
+  on the worst part and costs up to 28% on the mildest. That is a
+  calibration on eight parts, not a bound: a sharper raiser than these
+  could still read over, so Run before trusting a margin. Mass agrees
+  with the check to 0.2% and deflection to within 13% (the bar reads 12% more,
+  the arm link 1-7% less).
+
+  ![stress preview on the arm link](images/fields/editor-stress-preview.png)
+
 - **Tune** goes past mass to strength: name a study (its loads, supports
   and limits), add knobs with **+ knob**, and the server meshes and
   analyzes candidates until the part is as light as it can be while it
@@ -224,6 +268,13 @@ reading is scaled by that ratio before it meets the limits;
 at the end the lightest few that passed are analyzed again on the fine
 grid and the first that still passes is the answer (if none does, the
 lightest is returned marked `unconfirmed`).
+
+The coarse grid also gives each surface cell its filled share of the
+stiffness (`verify_part(fractional=True)`). With whole cells a 7.4 mm bar
+read as 8.1 mm at one height and 7.2 mm at the next, so its safety factor
+jumped about as the search thinned it (a thinner bar read stronger, 4.29
+against 4.05). With filled shares the reading rises steadily with the
+height. The fine check that confirms the answer stays on whole cells.
 
 ```json
 "tune": {"study": "example:arm-link",
@@ -494,7 +545,8 @@ meshing time on a lattice, a fraction of it on a solid. Not with `stream`.
 shapes stay exact: bores are cylinders, box faces planes, so a CAD user can
 mate and dimension against them. Organic regions are faceted, one planar
 face per triangle, decimated first to `"step": {"faces": 20000}` (about
-45 MB; coplanar facets merge). The report gives the faces by type, the
+14 MB; coplanar facets merge; the file carries no 2-D curves on faces,
+which readers rebuild and which were over half of it). The report gives the faces by type, the
 share of the area on exact geometry, the volume against the STL's, and what
 decimating cost (`decimated[].deviation`, mm). A lattice does not decimate
 and is refused: ship lattice parts as STL or 3MF.
@@ -509,9 +561,23 @@ the STL. Measured (bench/sharp_edges.py, coarse eval tier):
 | part | STEP faces | exact area | volume vs STL | size, time |
 | --- | --- | --- | --- | --- |
 | arm-link example | 13 cylinders, 6 planes, 13.2k facets | 22% | -0.02% | 33 MB, 24 s |
-| GRIP turret | 24 cylinders, 26 planes, 12.6k facets | 49% | -0.01% | 33 MB, 39 s |
+| GRIP turret | 24 cylinders, 26 planes, 12.6k facets | 49% | -0.01% | 33 MB, 39 s (14 MB since 1568466) |
 | GRIP wrist yoke | 42 cylinders, 29 planes, 16.3k facets | 28% | -0.002% | 42 MB, 34 s |
-| arm link field graph (solid) | 3 cylinders, 2 planes, 11.2k facets | 29% | -0.02% | 28 MB, 16 s |
+| arm link field graph (solid) | 3 cylinders, 2 planes, 11.4k facets | 29% | -0.02% | 28 MB, 16 s (12.7 MB, 20 s since 8b54f5d) |
+
+`"step": {"surface": "smooth"}` (`export_step(..., surface="smooth")`) is
+experimental: organic regions become smooth B-spline patches instead of
+facets. The organic mesh is coarsened to `"patches"` triangles (default
+1500) without tearing thin members, each coarse edge becomes a B-spline
+curve on the surface and each coarse triangle a plate-filled B-spline
+surface through points of the full surface; strips within 0.5 mm of exact
+geometry stay flat facets, since patches grazing a bearing seat defeat
+OpenCascade's booleans. On a smooth blob, 400 patches stay within 0.03 mm
+(p99) and the solid is valid. It is not smaller (about 8 kB a patch, so
+1500 patches weigh more than 20k facets), and on real parts it is not
+there yet: the GRIP turret's union with its preserved bosses failed every
+retry, so it fell back to facets, and the arm link field graph took over
+50 minutes. Any invalid or volume-off result falls back to facets.
 
 The study STLs' circles are now 0.002 mm true as well (they were 96-gons:
 the turret's 48 mm J2 sleeve was 0.026 mm off, and only 59% of its keep-out

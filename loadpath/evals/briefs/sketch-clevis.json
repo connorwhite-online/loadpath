@@ -1,0 +1,229 @@
+{
+ "id": "sketch-clevis",
+ "brief": "Can you make the part in my sketch (sketch.png, attached)? Everything you need is on it.\nAs light as you can while still meeting it.",
+ "attachments": [
+  "assets/sketch.png"
+ ],
+ "tags": [
+  "image",
+  "fdm"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -35.0,
+     -7.0,
+     0.0
+    ],
+    "max": [
+     35.0,
+     7.0,
+     8.0
+    ]
+   },
+   {
+    "type": "box",
+    "min": [
+     -20.0,
+     -7.0,
+     8.0
+    ],
+    "max": [
+     20.0,
+     7.0,
+     55.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "pads",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        25.0,
+        0.0,
+        0.0
+       ],
+       "p1": [
+        25.0,
+        0.0,
+        8.0
+       ],
+       "r": 5.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -25.0,
+        0.0,
+        0.0
+       ],
+       "p1": [
+        -25.0,
+        0.0,
+        8.0
+       ],
+       "r": 5.0
+      }
+     ]
+    }
+   },
+   {
+    "id": "eye",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      42.0
+     ],
+     "axis": "y",
+     "length": 14.0,
+     "r": 7.0
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m4",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        25.0,
+        0.0,
+        -1.0
+       ],
+       "p1": [
+        25.0,
+        0.0,
+        9.0
+       ],
+       "r": 2.25
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -25.0,
+        0.0,
+        -1.0
+       ],
+       "p1": [
+        -25.0,
+        0.0,
+        9.0
+       ],
+       "r": 2.25
+      }
+     ]
+    }
+   },
+   {
+    "id": "pin",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      0.0,
+      0.0,
+      42.0
+     ],
+     "axis": "y",
+     "length": 20.0,
+     "r": 4.0
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m4"
+   },
+   {
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        25.0,
+        0.0,
+        -0.5
+       ],
+       "p1": [
+        25.0,
+        0.0,
+        0.3
+       ],
+       "r": 5.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -25.0,
+        0.0,
+        -0.5
+       ],
+       "p1": [
+        -25.0,
+        0.0,
+        0.3
+       ],
+       "r": 5.0
+      }
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "down",
+    "loads": [
+     {
+      "region": "pin",
+      "force": [
+       0,
+       0,
+       -120
+      ]
+     }
+    ]
+   },
+   {
+    "name": "side",
+    "loads": [
+     {
+      "region": "pin",
+      "force": [
+       -40,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "sketch-clevis",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2
+ }
+}
