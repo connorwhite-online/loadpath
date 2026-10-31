@@ -18,6 +18,8 @@ Command line: run a study file and write the parts, a report and renders.
     python -m loadpath calibrate fit measurements.json [--predictions predictions.json] [--name petg-a1mini --save]
     python -m loadpath assembly robot.urdf --link forearm --study forearm.json --region j4-mount --payload 1
                                                # loads + neighbour keep-outs derived from the mechanism
+    python -m loadpath buildsim part.stl --material ti64 [--compensate 2] --out sim/
+                                               # simulate the print: warp, residual stress, recoater lift
 
 Progress goes to stderr as one JSON object per line, so an agent can tail it.
 Results go to stdout as one JSON document, and to report.json in --out.
@@ -358,7 +360,24 @@ def main(argv=None):
     im.add_argument("--safety-factor", type=float, default=2.0)
     im.add_argument("--tolerance", type=float, default=0.05, help="mm chord error tessellating a STEP")
     im.add_argument("--features-only", action="store_true", help="print the features, write no study")
-    asm = sub.add_parser("assembly", help="derive a part's load cases and neighbour keep-outs from a URDF")
+    bs = sub.add_parser("buildsim", help="simulate printing a part (lpbf, fdm, sls): distortion, residual stress, "
+                                         "recoater lift; --compensate writes the pre-distorted part to print")
+    bs.add_argument("part", help="STL, 3MF or OBJ, in mm, in its build position")
+    bs.add_argument("--material", default="ti64", help="material card (`loadpath materials`)")
+    bs.add_argument("--process", choices=["lpbf", "fdm", "sls"], default="lpbf")
+    bs.add_argument("--build", default="+z", help="build direction in the part's frame (default +z)")
+    bs.add_argument("--plate", type=float, default=10.0, help="mm of build plate under the part (lpbf)")
+    bs.add_argument("--pitch", type=float, help="mm voxel (default: about --cells cells; the LPBF strain is "
+                    "calibrated at 0.5 mm)")
+    bs.add_argument("--cells", type=int, default=60_000, help="part cells when --pitch is not given")
+    bs.add_argument("--scale", type=float, default=1.0, help="multiplies the inherent strain (a calibration)")
+    bs.add_argument("--recoater-gap", type=float, default=0.05, help="mm of build-plane lift that is a risk")
+    bs.add_argument("--compensate", type=int, default=0, metavar="N",
+                    help="also write <part>-compensated.stl, pre-distorted over N rounds")
+    bs.add_argument("--nominal", help="the design the printed shape is compared with (default: the part itself; "
+                    "give the design when simulating a compensated part)")
+    bs.add_argument("--out", default="loadpath-buildsim")
+    asm = sub.add_parser("assembly",help="derive a part's load cases and neighbour keep-outs from a URDF")
     asm.add_argument("urdf")
     asm.add_argument("--link", required=True, help="the URDF link the study designs")
     asm.add_argument("--study", required=True, help="the part's study: interfaces, material, goal, design space")
@@ -385,7 +404,7 @@ def main(argv=None):
     asm.add_argument("--cycles", default="", help="life cycles by sample kind, for fatigue: "
                      "dynamic=1e6,pose=1e6,push=1e4,stall=1e3 (stall:j2=... for one joint)")
     asm.add_argument("--out", default="loadpath-out")
-    for sp in (r, lt, h, fg, tu, ed, asm, v):
+    for sp in (r, lt, h, fg, tu, ed, asm, v, bs):
         sp.add_argument("--quick", action="store_true",
                         help="coarse grid, fewer iterations: a first look in a minute or two (quick.py)")
     args = p.parse_args(argv)
@@ -425,6 +444,8 @@ def main(argv=None):
         return _verify(args)
     if args.cmd == "import":
         return _import(args)
+    if args.cmd == "buildsim":
+        return _buildsim(args)
     if args.cmd == "guide":
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKILL.md")) as fh:
             print(fh.read())
@@ -700,6 +721,46 @@ def _edit(args):
 
     serve_editor(args.graph, host=args.host, port=args.port, out_dir=args.out, base_dir=base,
                  open_browser=not args.no_open)
+    return 0
+
+
+def _buildsim(args):
+    """Simulate printing a mesh (buildsim.py): distortion, residual stress,
+    recoater lift; with --compensate, the pre-distorted mesh to print."""
+    import trimesh
+
+    from . import quick
+    from .buildsim import BuildSetup, compensate_mesh, deviation, printed_shape, refine_mesh, simulate_part
+
+    try:
+        setup = BuildSetup(process=args.process, material=args.material, plate=args.plate,
+                           recoater_gap=args.recoater_gap, scale=args.scale)
+        mesh = trimesh.load(args.part, force="mesh")
+        nominal = trimesh.load(args.nominal, force="mesh") if args.nominal else mesh
+        cells = quick.buildsim_cells(args.cells)
+        pitch = args.pitch
+        if pitch is None or quick.on():
+            pitch = max(pitch or 0.0, float((abs(mesh.volume) / cells) ** (1 / 3)))
+        stem = os.path.splitext(os.path.basename(args.part))[0]
+        os.makedirs(args.out, exist_ok=True)
+        res = simulate_part(mesh, setup, pitch=pitch, build=args.build)
+        fine = refine_mesh(mesh, pitch)
+        printed = printed_shape(fine, res, args.build)
+        dev, aligned = deviation(printed, nominal)
+        aligned.export(os.path.join(args.out, f"{stem}-printed.stl"))
+        rep = {k: v for k, v in res.report.items() if k != "rotation"}
+        summary = {"ok": True, "part": args.part, "nominal": args.nominal or args.part, "build": args.build,
+                   **rep, "deviation": dev, "printed": os.path.join(args.out, f"{stem}-printed.stl")}
+        if args.compensate:
+            comp, crep = compensate_mesh(mesh, setup, pitch=pitch, build=args.build, iterations=args.compensate,
+                                         first=res)
+            path = os.path.join(args.out, f"{stem}-compensated.stl")
+            comp.export(path)
+            summary["compensation"] = {**crep, "stl": path}
+    except (ValueError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    _write_report(args.out, summary)
     return 0
 
 

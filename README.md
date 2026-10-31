@@ -240,7 +240,9 @@ Also: `loadpath lattice` (fill a part with a stress-graded TPMS lattice),
 `loadpath heatx` (two-fluid TPMS heat exchangers), `loadpath field` (a part as a
 graph of fields, [docs/fields.md](docs/fields.md)), `loadpath edit` (edit a field
 graph in the browser with a live preview), `loadpath import` (a STEP or STL part as a
-draft study, [docs/IMPORT.md](docs/IMPORT.md)), `loadpath tune` (tune a graph's numbers
+draft study, [docs/IMPORT.md](docs/IMPORT.md)), `loadpath buildsim` (simulate a print's
+warp and recoater lift, and write the pre-deformed part that prints true,
+[docs/BUILDSIM.md](docs/BUILDSIM.md)), `loadpath tune` (tune a graph's numbers
 against a study's limits), `loadpath schema` (JSON Schemas, also
 in [`schema/`](schema/)).
 

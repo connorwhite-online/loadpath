@@ -388,6 +388,8 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     _need()
     import time
 
+    from . import quick
+    faces = quick.step_faces(faces)
     from OCP.BRepCheck import BRepCheck_Analyzer
     from OCP.Interface import Interface_Static
     from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer

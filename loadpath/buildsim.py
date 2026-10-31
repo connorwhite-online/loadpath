@@ -457,6 +457,7 @@ def simulate_build(solid, pitch, origin=(0.0, 0.0, 0.0), setup: BuildSetup | Non
     xyz = mesh.node_xyz
     layered = proc in ("lpbf", "fdm")
     if layered:
+        layer_of = _joined_layers(mesh, part, layer_of)
         n_layers = int(layer_of.max()) + 1
         active = ~part
         node_on = np.zeros(mesh.n_nodes, bool)
@@ -575,6 +576,29 @@ def simulate_build(solid, pitch, origin=(0.0, 0.0, 0.0), setup: BuildSetup | Non
     res = BuildResult(mesh=mesh, part=part, layer_of=layer_of, u_built=u_built, u=u_rel,
                       stress_built=stress_built, stress=stress, strain=eps, report=report, node_active=node_act)
     return res
+
+
+def _joined_layers(mesh, part, layer_of):
+    """The analysis layer at which each part cell joins the plate or bed
+    through faces. A cell laid in mid-air (the low tip of a drooping,
+    pre-deformed arm; anything printed on supports) has nothing to hold it
+    in the solve until the layer that bonds it to the part: it goes in then,
+    stress-free in its place, as if its supports had held it."""
+    from scipy import ndimage
+    ijk = mesh.elem_ijk
+    g = np.full(tuple(ijk.max(axis=0) + 1), np.iinfo(np.int64).max, np.int64)
+    g[tuple(ijk.T)] = layer_of                       # the plate is -1
+    out = layer_of.copy()
+    pending = part.copy()
+    for li in range(int(layer_of.max()) + 1):
+        lbl, _ = ndimage.label(g <= li)
+        roots = np.unique(lbl[:, :, 0])
+        on = np.isin(lbl[tuple(ijk.T)], roots[roots > 0])
+        out[pending & on] = li
+        pending &= ~on
+        if not pending.any():
+            break
+    return out
 
 
 def _grounded(solid, proc):
@@ -759,24 +783,67 @@ def compensate(points, sample, factor=1.0):
     return y
 
 
-def compensate_mesh(mesh, setup: BuildSetup, pitch=None, build="+z", iterations=2, cells=60_000, factor=1.0):
+def refine_mesh(mesh, size):
+    """The mesh with every edge longer than `size` mm split, so a
+    displacement sampled at its vertices can bend it (a CAD export's long
+    triangles move only at their corners)."""
+    import trimesh
+    v, f = trimesh.remesh.subdivide_to_size(mesh.vertices, mesh.faces, max_edge=float(size), max_iter=20)
+    return trimesh.Trimesh(v, f, process=True)
+
+
+def printed_shape(mesh, res: BuildResult, build="+z"):
+    """The mesh as printed: every vertex moved by the simulated
+    displacement (released), in the mesh's own frame."""
+    import trimesh
+    r = np.asarray(res.report.get("rotation", np.eye(3)), float)
+    v = np.asarray(mesh.vertices, float) @ r.T
+    return trimesh.Trimesh((v + res.displacement_at(v)) @ r, mesh.faces, process=False)
+
+
+def deviation(printed, nominal):
+    """How far a printed shape is from the design, as a scan comparison
+    reads it: `printed` best-fit onto `nominal` (rigid ICP on the
+    surface), then the distance between the two surfaces both ways.
+    Returns ({"max", "rms", "p95"} mm, the aligned printed mesh)."""
+    import trimesh
+    m, _, _ = trimesh.registration.icp(np.asarray(printed.vertices), nominal, max_iterations=40, scale=False)
+    aligned = printed.copy()
+    aligned.apply_transform(m)
+    _, d1, _ = trimesh.proximity.closest_point(nominal, aligned.vertices)
+    _, d2, _ = trimesh.proximity.closest_point(aligned, nominal.vertices)
+    d = np.concatenate([d1, d2])
+    return {"max": float(d.max()), "rms": float(np.sqrt((d ** 2).mean())),
+            "p95": float(np.percentile(d, 95))}, aligned
+
+
+def compensate_mesh(mesh, setup: BuildSetup, pitch=None, build="+z", iterations=2, cells=60_000, factor=1.0,
+                    refine=True, first: BuildResult | None = None):
     """Iterative pre-distortion of a triangle mesh: simulate, move every
     vertex against its predicted displacement, simulate the compensated
     shape, correct by what is left, and so on. Returns (compensated
     trimesh, report with the residual distortion after each round; round 0
-    is the uncompensated part)."""
+    is the uncompensated part). `refine` first splits edges longer than
+    the voxel pitch, so long flat triangles can take the shape's curl.
+    `first`: simulate_part's result for this mesh at this pitch and build,
+    if already run (round 0 reuses it)."""
     import trimesh
+    if pitch is None:
+        pitch = float((abs(mesh.volume) / cells) ** (1 / 3))
+    if refine:
+        mesh = refine_mesh(mesh, pitch)
     r, v_nom = to_build_frame(mesh.vertices, build)
     nominal = trimesh.Trimesh(v_nom, mesh.faces, process=False)
-    if pitch is None:
-        pitch = float((abs(nominal.volume) / cells) ** (1 / 3))
     from .voxels import mesh_solid
     cur = v_nom.copy()
     rounds = []
     for it in range(iterations + 1):
-        m = trimesh.Trimesh(cur, mesh.faces, process=False)
-        solid, origin, _ = mesh_solid(m, pitch, pad=1)
-        res = simulate_build(solid, pitch, origin, setup)
+        if it == 0 and first is not None:
+            res = first
+        else:
+            m = trimesh.Trimesh(cur, mesh.faces, process=False)
+            solid, origin, _ = mesh_solid(m, pitch, pad=1)
+            res = simulate_build(solid, pitch, origin, setup)
         printed = cur + res.displacement_at(cur)
         if res.report["release"] == "full":
             printed = _align(printed, v_nom)
