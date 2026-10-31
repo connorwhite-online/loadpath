@@ -110,7 +110,7 @@ field. `check` reports every problem at once: fix them all, then check again.
    `slicer.profile` takes your printer's PrusaSlicer .ini for real times.
    Powder nylon (`"sls"`, `"mjf"`: `pa12`, `pa11`, `pa12-gb`, `tpu88a`) and
    resin (`"sla"`, `"dlp"`: `resin`, `resin-tough`, `resin-rigid`) parts get
-   `report.json` → `process` on the delivered outcome: walls against the
+   `report.json` → `deliver` → `process`: walls against the
    process minimum, powder or resin trapped in a cavity or behind an exit
    under the escape-hole size (SLS 4, MJF 5, resin 3.5 mm; override with
    `"escapeHole"`), thin flat panels that warp (powder), and for resin the

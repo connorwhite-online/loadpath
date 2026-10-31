@@ -241,9 +241,24 @@ _FASTENER = {
         "grip": {**_POS, "description": "mm from the seat to the far end."},
         "end": {"enum": ["face", "thread", "none"]},
         "headOn": {"enum": ["this", "mating"]},
-        "threadLength": _POS, "insert": _POS, "preload": {"type": "number", "minimum": 0},
-        "hole": _POS, "head": _POS, "diameter": _POS, "wall": _POS, "ring": _POS, "sleeveWall": _POS,
-        "driver": {"type": "number", "minimum": 0},
+        "threadLength": {**_POS, "description": "end 'thread': engagement length past the grip (default 2x the "
+                                                "screw's diameter)."},
+        "insert": {**_POS, "description": "Heat-set insert or nut outer diameter, mm; else a tapped hole."},
+        "preload": {"type": "number", "minimum": 0,
+                    "description": "N. Default: a quarter of what the seat can bear in this material, at most "
+                                   "what a class 8.8 screw is tightened to."},
+        "hole": {**_POS, "description": "Clearance hole diameter, mm (default from size)."},
+        "head": {**_POS, "description": "Head (or washer) diameter, mm (default from size)."},
+        "diameter": {**_POS, "description": "The screw's nominal diameter, mm, when not given as size."},
+        "wall": {**_POS, "description": "mm of seat ring beyond the head's radius (default 15% of the "
+                                        "diameter, at least 1). The head and driver keep-out is as wide as "
+                                        "that ring, at least the head's radius + 0.5 mm."},
+        "ring": {**_POS, "description": "Seat and face ring thickness along the screw, mm (default 40% of the "
+                                        "diameter, at least 2). Bosses a brief asks for go in preserve."},
+        "sleeveWall": {**_POS, "description": "end 'thread': wall of the sleeve round the tap, mm."},
+        "driver": {"type": "number", "minimum": 0,
+                   "description": "Length of the head and driver keep-out back from the seat, mm (default 60). "
+                                  "Shorten it where it would cut through another interface."},
     },
     "required": ["seat", "direction", "grip"],
     "x-requireOne": [["size"], ["diameter", "head"], ["hole", "head"]],
