@@ -201,6 +201,10 @@ field. `check` reports every problem at once: fix them all, then check again.
   reading beside it), and the search steps down to where that meets the
   target, typically 0-45% lighter. A warning that the cross-check reads the
   pick below target names the spot the voxel grid cannot resolve: look there.
+  It is isotropic, so it never runs for a `process` (FDM layers, SLS, resin)
+  or gravity or pressure loads: those are confirmed on a finer voxel grid,
+  `deliver.tetCrossCheck` says why. That fine re-check is the memory peak
+  `check` reports (`peakMemoryGB`); `LOADPATH_CONFIRM_CELLS=60000` lowers it.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
 
