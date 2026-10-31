@@ -24,7 +24,8 @@ field. `check` reports every problem at once: fix them all, then check again.
    empty). If the part already exists as CAD, start from it:
    `loadpath import part.step --out draft/` (MCP `loadpath_import_cad`) finds the
    bores, bolt patterns and mounting faces and writes a draft study with them
-   preserved and kept out, and a placeholder support and load you replace. Primitive shapes cover most of it; for anything else export a
+   preserved and kept out; pass `--material`, `--support` and `--load ID=FX,FY,FZ`
+   (interface ids from `--features-only`) so it carries the real setup. Primitive shapes cover most of it; for anything else export a
    closed STL and use `{"type": "mesh", "path": "motor.stl"}`. An interface
    in several pieces (a servo's four screw bosses) is one region with
    `{"type": "union", "shapes": [...]}`, so one load or support acts on all of

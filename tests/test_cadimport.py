@@ -164,12 +164,51 @@ def test_step_as_mesh_shape_and_cli():
                               "--out", os.path.join(d, "o")], capture_output=True, text=True, cwd=ROOT)
         assert out.returncode == 0, out.stderr
         rep = json.loads(out.stdout)
-        assert rep["ok"] and rep["bores"] == 5
+        assert rep["ok"] and rep["bolts"] == 4 and rep["bores"] == 1
         drafted = json.load(open(rep["study"]))
         assert check_study(drafted, os.path.join(d, "o"))["ok"]
 
 
-TESTS = [test_heal_closes_a_cracked_mesh, test_mesh_features_and_draft_study, test_grown_space_clears_mating_faces,
+def _l_bracket_mesh():
+    """A solid L: a 40 x 30 x 5 foot with two M4 clearance holes down into
+    the bench, a 40 x 5 x 40 upright with an 8 mm shaft hole near its top."""
+    foot = Box([0, 0, 0], [40, 30, 5]).to_manifold()
+    up = Box([0, 25, 0], [40, 30, 40]).to_manifold()
+    body = foot + up
+    for x in (10.0, 30.0):
+        body = body - Cylinder([x, 10, -1], [x, 10, 6], 2.25).to_manifold()
+    body = body - Cylinder([20, 24, 32], [20, 31, 32], 4.0).to_manifold()
+    return trimesh_from_manifold(body)
+
+
+def test_l_bracket_given_setup_seats_not_slabs():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "bracket.stl")
+        m = _l_bracket_mesh()
+        m.export(path)
+        r = import_part(path)
+        s = r["summary"]
+        assert s["bolts"] == 2 and s["bores"] == 1, s
+        assert s["mountingFaces"] <= 6, s                  # not every chamfer and step
+        mount = next(i["id"] for i in s["interfaces"] if i["kind"] == "bolted-face")
+        shaft = next(i["id"] for i in s["interfaces"] if i["kind"] == "bore")
+        out = subprocess.run([sys.executable, "-m", "loadpath", "import", path, "--out", os.path.join(d, "o"),
+                              "--material", "pa12", "--process", "sls", "--support", mount,
+                              "--load", f"{shaft}=0,0,-250"], capture_output=True, text=True, cwd=ROOT)
+        assert out.returncode == 0, out.stderr
+        rep = json.loads(out.stdout)
+        assert rep["todo"] == [], rep["todo"]
+        st = json.load(open(rep["study"]))
+        assert st["material"] == "pa12" and st["process"] == "sls"
+        assert st["loadCases"][0]["loads"][0]["force"] == [0, 0, -250]
+        assert check_study(st, os.path.join(d, "o"))["ok"]
+        # the bolts keep washer seats, not a plate: well under the foot's volume
+        keep = [trimesh.load(os.path.join(d, "o", p["shape"]["path"]), force="mesh") for p in st["preserve"]
+                if p["id"].startswith(mount)]
+        assert keep and sum(k.volume for k in keep) < 0.25 * 40 * 30 * 5
+
+
+TESTS = [test_l_bracket_given_setup_seats_not_slabs, test_heal_closes_a_cracked_mesh, test_mesh_features_and_draft_study, test_grown_space_clears_mating_faces,
          test_step_features_are_exact, test_step_as_mesh_shape_and_cli]
 
 if __name__ == "__main__":
