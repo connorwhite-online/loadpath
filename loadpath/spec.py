@@ -303,15 +303,24 @@ def _build_sim(spec, process, material):
     warp = float(spec.get("warpWeight", 0.0))
     if warp < 0:
         raise ValueError("buildSim.warpWeight is a weight >= 0 (0: verify only)")
-    if warp > 0:
+    lim_d = float(spec["maxDistortion"]) if spec.get("maxDistortion") is not None else None
+    lim_l = float(spec["maxRecoaterLift"]) if spec.get("maxRecoaterLift") is not None else None
+    for name, v in (("maxDistortion", lim_d), ("maxRecoaterLift", lim_l)):
+        if v is not None and v <= 0:
+            raise ValueError(f"buildSim.{name} is a limit in mm > 0")
+    if warp > 0 or lim_d is not None or lim_l is not None:
+        what = "warpWeight" if warp > 0 else "maxDistortion / maxRecoaterLift"
         if kind not in ("lpbf", "fdm"):
-            raise ValueError("buildSim.warpWeight designs against a layer-by-layer build: process lpbf or fdm")
+            raise ValueError(f"buildSim.{what} designs against a layer-by-layer build: process lpbf or fdm")
         if process.build == "auto" or process.build is None or len(process.build) != 2:
-            raise ValueError("buildSim.warpWeight needs process.buildDirection along a grid axis "
+            raise ValueError(f"buildSim.{what} needs process.buildDirection along a grid axis "
                              "('+z', '-y', ...), not 'auto' or a tilted vector")
+    coarsen = spec.get("warpCoarsen")
     return {"setup": setup, "compensate": bool(spec.get("compensate", False)),
             "cells": int(spec.get("cells", 60_000)), "iterations": int(spec.get("iterations", 2)),
-            "warpWeight": warp, "warpLayer": float(spec["warpLayer"]) if spec.get("warpLayer") else None}
+            "warpWeight": warp, "warpLayer": float(spec["warpLayer"]) if spec.get("warpLayer") else None,
+            "maxDistortion": lim_d, "maxRecoaterLift": lim_l,
+            "warpCoarsen": int(coarsen) if coarsen is not None else None}
 
 
 def _slicer(spec, process, base_dir, goal):

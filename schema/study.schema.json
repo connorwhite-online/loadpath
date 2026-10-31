@@ -846,6 +846,21 @@
               "type": "number",
               "exclusiveMinimum": 0,
               "description": "mm per analysis layer of the warp term (default 4 cells)"
+            },
+            "maxDistortion": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "lpbf/fdm: a limit, mm, on the largest as-built displacement (on the plate, end of the build). The optimizer holds it as a constraint and the search only passes designs that meet it and the safety factor; report 'warp'. Needs a grid-axis buildDirection"
+            },
+            "maxRecoaterLift": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "lpbf: a limit, mm, on how far the part rises at the build plane as each layer goes down (the recoater's clearance, ~0.05 mm); held like maxDistortion"
+            },
+            "warpCoarsen": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "the build model in the optimizer runs on a grid this many times coarser (default 2 on grids of 4000 cells or more, else 1)"
             }
           },
           "additionalProperties": false

@@ -478,7 +478,18 @@ _BUILD_SIM = {"anyOf": [
                                       "displacement of the layer-by-layer build on the plate (D0 at the start); "
                                       "0 (default) only verifies. Needs a grid-axis buildDirection. About 1 trades "
                                       "stiffness for a large cut in distortion and recoater lift"},
-        "warpLayer": {**_POS, "description": "mm per analysis layer of the warp term (default 4 cells)"}},
+        "warpLayer": {**_POS, "description": "mm per analysis layer of the warp term (default 4 cells)"},
+        "maxDistortion": {**_POS, "description": "lpbf/fdm: a limit, mm, on the largest as-built displacement "
+                                                 "(on the plate, end of the build). The optimizer holds it as a "
+                                                 "constraint and the search only passes designs that meet it and "
+                                                 "the safety factor; report 'warp'. Needs a grid-axis "
+                                                 "buildDirection"},
+        "maxRecoaterLift": {**_POS, "description": "lpbf: a limit, mm, on how far the part rises at the build "
+                                                   "plane as each layer goes down (the recoater's clearance, "
+                                                   "~0.05 mm); held like maxDistortion"},
+        "warpCoarsen": {"type": "integer", "minimum": 1,
+                        "description": "the build model in the optimizer runs on a grid this many times "
+                                       "coarser (default 2 on grids of 4000 cells or more, else 1)"}},
      "additionalProperties": False}],
     "description": "Simulate the build of the delivered part (report 'buildSim'): layer-by-layer inherent-strain "
                    "residual stress and distortion for lpbf (validated on NIST AM-Bench 2018), fdm warp and bed "

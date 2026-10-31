@@ -58,7 +58,7 @@ class Domain:
     spreads: list = field(default_factory=list)
     # The study's thermal block on this mesh (thermal.StudyHeat), or None.
     thermal: object = None
-    # buildSim.warpWeight: (buildsim.WarpTerm, weight), or None.
+    # buildSim warp design (WarpSpec: warpWeight and/or limits), or None.
     warp: object = None
 
     @property
@@ -583,12 +583,29 @@ def _build_domain(study: Study, pitch: float) -> Domain:
 
 
 def _warp_term(study, mesh):
-    """buildSim.warpWeight > 0: the as-built distortion term the optimizer
-    adds (buildsim.WarpTerm), with its weight."""
+    """buildSim.warpWeight > 0 or a warp limit (maxDistortion,
+    maxRecoaterLift): the as-built build model the optimizer carries
+    (buildsim.WarpTerm, on a coarser grid when the mesh is big) and what it
+    does with it (WarpSpec)."""
     bs = getattr(study, "build_sim", None)
-    if not bs or not bs.get("warpWeight"):
+    if not bs or not (bs.get("warpWeight") or bs.get("maxDistortion") or bs.get("maxRecoaterLift")):
         return None
-    from .buildsim import WarpTerm
-    nu = study.elastic(design=True)
-    return WarpTerm(mesh, bs["setup"], build=study.process.build, layer=bs.get("warpLayer"),
-                    nu=float(nu)), float(bs["warpWeight"])
+    from .buildsim import CoarseWarp, WarpTerm
+    nu = float(study.elastic(design=True))
+    f = bs.get("warpCoarsen") or (2 if mesh.n_elem >= 4000 else 1)
+    layer = bs.get("warpLayer")
+    if f > 1:
+        term = CoarseWarp(mesh, bs["setup"], f, build=study.process.build, layer=layer, nu=nu)
+    else:
+        term = WarpTerm(mesh, bs["setup"], build=study.process.build, layer=layer, nu=nu)
+    return WarpSpec(term, float(bs.get("warpWeight") or 0.0), bs.get("maxDistortion"), bs.get("maxRecoaterLift"),
+                    f)
+
+
+@dataclass
+class WarpSpec:
+    term: object                  # buildsim.WarpTerm or CoarseWarp: measures(e, de, weights)
+    weight: float                 # buildSim.warpWeight
+    max_distortion: float | None  # mm limits, held as constraints
+    max_lift: float | None
+    coarsen: int = 1

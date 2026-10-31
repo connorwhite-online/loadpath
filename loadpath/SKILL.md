@@ -127,10 +127,13 @@ field. `check` reports every problem at once: fix them all, then check again.
    15-5 PH are calibrated (NIST AM-Bench); for other alloys the size of the
    distortion is a rough guide (could be off 2x), though comparing designs
    is still sound. `"warpWeight": 1` (lpbf/fdm, grid-axis buildDirection)
-   designs against build distortion too: in the demo it cut as-built warp
-   66% and recoater lift 73% but halved the safety factor at the same mass
-   and ran 7x slower, so use it when warp or recoater crashes are the
-   problem, and check the safety factor. FDM: `bedAdhesion` (MPa) lets
+   designs against build distortion too, but at a fixed mass it halved the
+   safety factor in the demo. Prefer a limit with the safety-factor goal:
+   `"maxDistortion": 0.2` (mm, as built on the plate) makes the search
+   deliver the lightest part meeting both (report `warp`; on the demo
+   bracket a 40% cut cost no measurable mass, 65% was infeasible at SF 2).
+   `maxRecoaterLift` exists but the optimizer's lumped layers misjudge
+   lift: check `buildSim.recoater` on the result. FDM: `bedAdhesion` (MPa) lets
    the first layer let go; `bedFailed` in the report means the part
    popped off. docs/BUILDSIM.md has the validation.
 6. **Say how long it has to last.** A load that repeats (a servo lifting,
