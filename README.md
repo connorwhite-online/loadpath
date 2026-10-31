@@ -174,6 +174,21 @@ against 13.4 undrilled, 10% softer.
 ![drain holes in the arm link](docs/images/fields/arm-link-drains-top.png)
 ![drain holes in the arm link, underside](docs/images/fields/arm-link-drains.png)
 
+### Multi-material: the optimizer picks the material too
+
+For two-material FDM (Bambu AMS, Prusa MMU, IDEX) and jetting, a study's
+`multiMaterial` block lets the optimizer place each material as well as the
+topology, with each material's own stiffness, Poisson's ratio and strength, sourced
+bond strengths between them, and softness requirements: a knock that must stop
+under a force, or a patch that must give ([docs/MULTIMATERIAL.md](docs/MULTIMATERIAL.md)).
+On a PETG shelf bracket it put a TPU spring where the nose meets the arm, so a
+0.2 J knock stops at 140 N under a 150 N limit. Field graphs place materials by
+field (a TPU pad within 2.5 mm of a gripping face). Every design comes out as
+one body per material with shared interfaces, an STL each and a multi-material 3MF
+(sliced in PrusaSlicer on two tools), or a GrabCAD Voxel Print job for PolyJet.
+
+![bumpered bracket, PETG and TPU](docs/images/multimaterial-bracket.png)
+
 ### Impact: where lattices beat solid TO
 
 A stiff part is the wrong way to stop a falling mass: it stores energy as a spring

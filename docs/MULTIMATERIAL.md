@@ -95,6 +95,38 @@ staircase's re-entrant corners, which the smooth delivered interface does
 not have), interface area per pair, mass per material, and what each knock
 (peak force, stop distance) and indentation reads.
 
+## Results (2026-10-31, one fraction each, cloud box)
+
+**Bumpered bracket** (`bumpered-bracket.json`, 12k cells, 20% fraction,
+12 min). The optimizer put 10% of the part in TPU: patches on the nose and a
+TPU spring where the nose meets the arm, so the knock (0.2 J) stops at
+**140 N** against the 150 N limit, over 2.9 mm. All-PETG it has to be met by
+geometry alone. 49.7 g. Verified: PETG safety factor 2.4 under the shelf load
+and 1.65 at the knock's peak (goal 3, so a search would add mass); the bond
+under the knock reads **0.26**: the PETG/TPU bond (1.5 MPa sourced, flat
+butt joint) would let go first. That is the honest answer for a flat bond:
+interlock the bumper or use a tougher pair (ASA/TPU 6.4 MPa).
+
+![bumpered bracket](images/multimaterial-bracket.png)
+
+**Gripper finger** (`gripper-finger-mm.json`, 26k cells at 0.8 mm, 7 min).
+The 2.5 mm TPU pad is placed by distance from the gripping face; the
+optimizer designs the PETG core behind it. 7.1 g, 23% TPU. PETG safety factor
+14.6, tip deflection 0.48 mm under the 20 N squeeze; the bond reads 1.70
+under the squeeze and 2.30 with 10 N of friction pulling along the face
+(goal 2).
+
+![gripper finger core](images/multimaterial-finger.png)
+
+**Indentation is experimental.** Asking the pad to give (`indentation`)
+works in the optimizer (0.11 mm, met) but the delivered part read far less:
+the optimizer made the face soft by leaving the pad over grey or empty core,
+and the crisp delivered part does not keep that. Judging softness on the
+Voigt bound (grey as stiff as it can be, `VOIGT_SOFTNESS`) closed that
+loophole but on the bracket met the knock by geometry and left a bolt boss
+floating, so it is off. Use an assigned pad (as the finger does) until this
+is fixed.
+
 ## Bond strengths
 
 `interface_library.py` (sources and test geometry in the module). MPa,
@@ -148,4 +180,7 @@ graph's `mix` body writes one.
 * The knock model is a spring: no rate stiffening (viscoelastic.py has it
   for TPU) and no rebound losses.
 * The optimizer solves the full grid each iteration (no reduced systems,
-  no multigrid yet), so keep `maxElements` near 10-20k.
+  no multigrid yet): ~7 s an iteration at 12k cells with three cases and a
+  knock, so keep `maxElements` near 10-25k.
+* `run_study` and the MCP study job do not route multi-material studies yet;
+  `loadpath run` and `multimat.run_multimaterial` do.
