@@ -128,7 +128,9 @@ def unsupported(study: Study) -> str | None:
     if not _has_tetwild():
         try:
             import gmsh  # noqa: F401  (availability check)
-        except ImportError:
+        except (ImportError, OSError):
+            # OSError: the wheel is there but its shared libraries are not
+            # (libGLU on a headless box), which failed every SF study
             return "no tetrahedral mesher (pip install loadpath[crosscheck])"
     return None
 
