@@ -229,3 +229,17 @@ def test_check_warns_on_bore_with_no_way_in():
     blind = dict(base, keepOut=[{"id": "shaft", "shape": {"type": "cylinder", "p0": [30, -1, 10], "p1": [30, 12, 10], "r": 3}}])
     r = check_study(blind)
     assert any("blind pocket" in n for n in r["notes"])
+
+
+def test_check_notes_a_whole_hole_support():
+    from loadpath.tasks import check_study
+
+    s = {"name": "hook", "material": "PLA",
+         "designSpace": [{"type": "box", "min": [-25, -5, -60], "max": [25, 5, 20]}],
+         "keepOut": [{"id": "rod", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "y", "length": 14, "r": 12.8}},
+                     {"id": "bar", "shape": {"type": "cylinder", "center": [0, 0, -50], "axis": "y", "length": 14, "r": 5}}],
+         "supports": [{"region": "rod"}],
+         "loadCases": [{"name": "bag", "loads": [{"region": "bar", "force": [0, 0, -100]}]}],
+         "goal": {"volumeFraction": 0.3}, "resolution": {"maxElements": 4000}}
+    r = check_study(s)
+    assert any("held all round" in n for n in r["notes"]), r["notes"]
