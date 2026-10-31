@@ -47,10 +47,12 @@ def test_preview_follows_the_part_and_agrees_with_the_check():
     r = rows[-1]
     assert abs(r["mass"] / chk["mass"] - 1) < 0.02, (r["mass"], chk["mass"])
     assert abs(r["deflection"] / max(c["deflection"] for c in chk["cases"]) - 1) < 0.1
-    assert 0.8 < r["safetyFactor"] / chk["safetyFactor"] < 1.5, (r["safetyFactor"], chk["safetyFactor"])
-    # the map: stress over allowed on the node grid, its peak 1 / SF away from the contact bands
+    # never above the check (bench/preview_calibration.py sets the factor that keeps it so)
+    assert 0.5 < r["safetyFactor"] / chk["safetyFactor"] <= 1.0, (r["safetyFactor"], chk["safetyFactor"])
+    assert r["safetyFactor"] <= r["refinedSafetyFactor"] <= r["rawSafetyFactor"]
+    # the map: the coarse stress over allowed on the node grid, its peak 1 / the coarse SF
     grid = np.frombuffer(base64.b64decode(r["data"]), np.float16)
-    assert grid.size == np.prod(r["dims"]) and abs(r["peak"] - 1 / r["safetyFactor"]) < 1e-9
+    assert grid.size == np.prod(r["dims"]) and abs(r["peak"] - 1 / r["rawSafetyFactor"]) < 1e-9
     assert grid.max() >= r["peak"] * 0.99 and r["goal"]["safetyFactor"] == 4
 
 

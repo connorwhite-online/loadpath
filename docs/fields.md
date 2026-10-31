@@ -77,13 +77,36 @@ wire, an expression) recompiles, in milliseconds.
   cell centres (no mesh), gives each surface cell its filled share of the
   stiffness so the reading moves smoothly with a slider, and solves with
   the matrix-free multigrid (on a GPU when torch has one). On the arm link
-  that is 16-19k cells and 0.9-1.3 s per slider value on the 4-core cloud
-  box. The legend says it is a preview. Against the full check of the
-  same envelope (verify on the meshed part, about 50 s), mass agrees to
-  0.2% and deflection to 0-6%, but the safety factor reads about 1.35x
-  high (24 against 18, 18 against 13): the preview has no hot-spot
-  submodels, so a fillet or notch reads low. Use it to see where the part
-  works and which way a knob moves it, and Run or Tune for the number.
+  that is 16-19k cells and 1.2-1.9 s per slider value on the 4-core cloud
+  box. The legend says it is a preview.
+
+  Its safety factor is made to read under the full check (verify on the
+  meshed part, 35-80 s), never over it. The coarse solve alone reads
+  high where stress concentrates (the arm link's web edge at the boss, a
+  sharp inner corner): up to 1.45x the check. So the two highest spots
+  per load case are re-solved in a small box at 2.5x finer cells, from
+  the field, driven by the coarse displacements on the box faces (+0.3 s;
+  the check's own submodelling, without a mesh), and the peak is then
+  multiplied by 1.3 (`preview.HOTSPOT_FACTOR`), set from
+  `bench/preview_calibration.py` over eight parts:
+
+  | part | coarse | refined | preview | check | preview / check |
+  |---|---|---|---|---|---|
+  | arm link, web 9 mm | 23.65 | 20.56 | 15.81 | 17.84 | 0.89 |
+  | arm link, web 6.5 mm | 17.92 | 15.48 | 11.90 | 12.66 | 0.94 |
+  | arm link, narrow web | 9.23 | 8.02 | 6.17 | 6.69 | 0.92 |
+  | arm link, blend 3 | 21.46 | 21.46 | 16.50 | 17.68 | 0.93 |
+  | cantilever bar | 3.46 | 3.40 | 2.61 | 3.22 | 0.81 |
+  | L-bracket, fillet 3 | 3.60 | 3.60 | 2.77 | 3.84 | 0.72 |
+  | L-bracket, fillet 1 | 4.64 | 3.92 | 3.02 | 3.19 | 0.95 |
+  | plate with hole | 2.87 | 2.63 | 2.02 | 2.66 | 0.76 |
+
+  The refined preview over the check spans 0.94-1.23, so 1.3 leaves 5%
+  on the worst part and costs up to 28% on the mildest. That is a
+  calibration on eight parts, not a bound: a sharper raiser than these
+  could still read over, so Run before trusting a margin. Mass agrees
+  with the check to 0.2% and deflection to within 13% (the bar reads 12% more,
+  the arm link 1-7% less).
 
   ![stress preview on the arm link](images/fields/editor-stress-preview.png)
 

@@ -2710,7 +2710,7 @@ function legend() {
     const d = r.goal && r.goal.maxDeflection;
     $("#lg-note").textContent = `SF ≈ ${fmt(r.safetyFactor)}${goal > 1 ? ` (goal ${fmt(goal)}, darker red past it)` : ""} · deflection ≈ ${fmt(r.deflection)} mm${d ? ` (limit ${fmt(d)})` : ""} · ` +
       `${(r.cells / 1000).toFixed(1)}k cells in ${((S.sp.ms != null ? S.sp.ms : 1000 * r.seconds) / 1000).toFixed(1)} s` +
-      `${S.sp.busy ? " · updating…" : ""}. A coarse preview with no hot-spot refinement, so its SF reads high near fillets and notches: Run checks the part.`;
+      `${S.sp.busy ? " · updating…" : ""}. A coarse preview, its SF corrected to read under the full check (5-28% under on the calibration parts): Run checks the part.`;
     return;
   }
   if (S.over && S.mode === "preview") {
