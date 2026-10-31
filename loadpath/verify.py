@@ -202,15 +202,16 @@ def nodal_stress(stiff, u, modulus, thermal=None):
     nodal_von_mises averages it. `modulus` is one number or one per element;
     `thermal` (per element) is a free expansion strain, taken off the strain
     before the stress is formed."""
-    from .fem import CORNERS, _b_matrix, elastic_c
+    from .fem import CORNERS, elastic_c, hex8_b
 
     mesh = stiff.mesh
     c = elastic_c(1.0, stiff.nu)
+    element = getattr(stiff, "element", None)
     mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,))[:, None]
     ue = u[mesh.edof]
     acc = np.zeros((mesh.n_nodes, 6))
     for k, (a, b, cc) in enumerate(2.0 * CORNERS - 1.0):
-        strain = ue @ (_b_matrix(a, b, cc) / mesh.pitch).T
+        strain = ue @ (hex8_b(a, b, cc, stiff.nu, element) / mesh.pitch).T
         if thermal is not None:
             strain[:, :3] -= np.asarray(thermal, float)[:, None]
         np.add.at(acc, mesh.enode[:, k], (strain @ c.T) * mod)

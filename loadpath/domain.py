@@ -58,7 +58,7 @@ class Domain:
     spreads: list = field(default_factory=list)
     # The study's thermal block on this mesh (thermal.StudyHeat), or None.
     thermal: object = None
-    # buildSim.warpWeight: (buildsim.WarpTerm, weight), or None.
+    # buildSim warp design (WarpSpec: warpWeight and/or limits), or None.
     warp: object = None
 
     @property
@@ -375,6 +375,17 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
                               case_wet, imbalance, spreads)
 
 
+def _near_cells(mesh: HexMesh, nodes: np.ndarray, layers: int = 2) -> np.ndarray:
+    """Cells within `layers` cells of the given nodes: the band round
+    supports and loads that verification leaves out of the peak stress."""
+    near = np.asarray(nodes, bool).copy()
+    cells = np.zeros(mesh.n_elem, bool)
+    for _ in range(layers):
+        cells = near[mesh.enode].any(axis=1)
+        near[mesh.enode[cells].ravel()] = True
+    return cells
+
+
 def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed: np.ndarray) -> np.ndarray:
     """Nodal self-weight for per-element solid fraction `density`."""
     per_node = (np.asarray(density, float) * mesh.pitch ** 3 / 8.0)[:, None] * gravity[None, :]
@@ -387,7 +398,21 @@ def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed
 
 
 def build_domain(study: Study, pitch: float | None = None) -> Domain:
-    pitch = float(pitch) if pitch else choose_pitch(study)
+    if pitch or study.pitch:
+        return _build_domain(study, float(pitch) if pitch else float(study.pitch))
+    # maxElements is a cap: the pitch is estimated from a coarse occupancy
+    # sample, which came out 2-5% over in the brief evals (20988 cells for
+    # 20000); grow the cells until the grid fits
+    p = choose_pitch(study)
+    for _ in range(4):
+        d = _build_domain(study, p)
+        if d.n_elem <= study.max_elements:
+            return d
+        p *= (d.n_elem / study.max_elements) ** (1.0 / 3.0) * 1.003
+    return d
+
+
+def _build_domain(study: Study, pitch: float) -> Domain:
     lo, hi = study.bounds()
     center = 0.5 * (lo + hi)
     dims = np.maximum(np.ceil((hi - lo) / pitch - 1e-9).astype(int), 1)
@@ -422,8 +447,9 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     # resolution it would warn on every powder or FDM study.
     if study.min_member is not None and study.min_member < 1.5 * pitch and study.raw.get("minMember") is not None:
         warnings.append(
-            f"minMember {study.min_member:g}mm is under 1.5 cells ({1.5 * pitch:.2f}mm); members that thin "
-            "cannot be resolved. Raise resolution.maxElements or set resolution.pitch.")
+            f"minMember {study.min_member:g}mm is under 1.5 cells of this {pitch:.2f}mm grid ({1.5 * pitch:.2f}mm); "
+            "members that thin cannot be resolved. Raise resolution.maxElements or set resolution.pitch "
+            "(raising minMember coarsens the default pitch, which follows it).")
 
     if study.max_member is not None and study.max_member < 3.0 * pitch:
         warnings.append(
@@ -552,17 +578,35 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
                   springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads,
-                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed),
+                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
+                                     near=_near_cells(mesh, support_nodes | load_nodes)),
                   warp=_warp_term(study, mesh))
 
 
 def _warp_term(study, mesh):
-    """buildSim.warpWeight > 0: the as-built distortion term the optimizer
-    adds (buildsim.WarpTerm), with its weight."""
+    """buildSim.warpWeight > 0 or a warp limit (maxDistortion,
+    maxRecoaterLift): the as-built build model the optimizer carries
+    (buildsim.WarpTerm, on a coarser grid when the mesh is big) and what it
+    does with it (WarpSpec)."""
     bs = getattr(study, "build_sim", None)
-    if not bs or not bs.get("warpWeight"):
+    if not bs or not (bs.get("warpWeight") or bs.get("maxDistortion") or bs.get("maxRecoaterLift")):
         return None
-    from .buildsim import WarpTerm
-    nu = study.elastic(design=True)
-    return WarpTerm(mesh, bs["setup"], build=study.process.build, layer=bs.get("warpLayer"),
-                    nu=float(nu)), float(bs["warpWeight"])
+    from .buildsim import CoarseWarp, WarpTerm
+    nu = float(study.elastic(design=True))
+    f = bs.get("warpCoarsen") or (2 if mesh.n_elem >= 4000 else 1)
+    layer = bs.get("warpLayer")
+    if f > 1:
+        term = CoarseWarp(mesh, bs["setup"], f, build=study.process.build, layer=layer, nu=nu)
+    else:
+        term = WarpTerm(mesh, bs["setup"], build=study.process.build, layer=layer, nu=nu)
+    return WarpSpec(term, float(bs.get("warpWeight") or 0.0), bs.get("maxDistortion"), bs.get("maxRecoaterLift"),
+                    f)
+
+
+@dataclass
+class WarpSpec:
+    term: object                  # buildsim.WarpTerm or CoarseWarp: measures(e, de, weights)
+    weight: float                 # buildSim.warpWeight
+    max_distortion: float | None  # mm limits, held as constraints
+    max_lift: float | None
+    coarsen: int = 1

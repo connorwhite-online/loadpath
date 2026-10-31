@@ -39,9 +39,9 @@ def _study(**over):
 
 
 def test_lame_split_matches_hex8():
-    kl, km = M._ke_parts()
     for E, nu in ((1500.0, 0.38), (67.0, 0.45)):
         lam, mu = M.lame(E, nu)
+        kl, km = M._ke_parts(lam / (lam + mu))
         assert np.allclose(lam * kl + mu * km, E * hex8_ke(nu), rtol=1e-10, atol=1e-8)
 
 
@@ -49,7 +49,7 @@ def test_lame_assembly_matches_fem():
     st = _study()
     dom = build_domain(st)
     lam, mu = M.lame(1500.0, 0.38)
-    a = M.LameStiffness(dom.mesh, dom.fixed).assemble(np.full(dom.n_elem, lam), np.full(dom.n_elem, mu))
+    a = M.LameStiffness(dom.mesh, dom.fixed, ratios=[lam / (lam + mu)]).assemble(np.full(dom.n_elem, lam), np.full(dom.n_elem, mu))
     b = Stiffness(dom.mesh, 0.38, dom.fixed).assemble(np.full(dom.n_elem, 1500.0))
     assert abs(a - b).max() < 1e-6 * abs(b).max()
 
@@ -81,6 +81,7 @@ def test_energy_constraint_gradient():
     solver = Solver(dom.mesh, rtol=1e-12, maxiter=5000)
     lmin, mmin = M.lame(1e-6 * Es.max(), 0.3)
     f = dom.loads[1]
+    mask = (rng.uniform(size=n) > 0.2).astype(float)    # the contact band the limit skips
 
     def g_of(xb, yb):
         w, dw = M._weights(yb[None])
@@ -90,7 +91,7 @@ def test_energy_constraint_gradient():
         u = solver.solve_many(k, [f])[0]
         return M._energy_constraint(stiff, solver, k, f, u, float(f @ u), 50.0, lam, mu, xb, w,
                                     3 * xb ** 2 * (wp.T @ lam_i), 3 * xb ** 2 * (wp.T @ mu_i), xpp, 3 * w ** 2,
-                                    dw, lam_i, mu_i, resil, 4.0, 0.4 * n)
+                                    dw, lam_i, mu_i, resil, 4.0, 0.4 * n, mask)
 
     xb, yb = rng.uniform(0.3, 1, n), rng.uniform(0.1, 0.9, n)
     g, gx, gy, _ = g_of(xb, yb)

@@ -124,6 +124,31 @@ def test_warp_gradient_matches_finite_differences():
         assert abs(g[i] - fd) < 1e-5 * abs(fd) + 1e-12, (i, g[i], fd)
 
 
+def test_warp_limit_gradients_match_finite_differences():
+    """The max-distortion and recoater-lift measures the warp limits hold:
+    the gradient is the 16-norm's, rescaled to the true maximum, along +z
+    and along -x."""
+    solid = np.ones((8, 2, 8), bool)
+    solid[2:, :, :5] = False          # an overhang, so the build plane lifts
+    mesh = HexMesh(np.argwhere(solid), 1.0, np.zeros(3))
+    rng = np.random.default_rng(1)
+    x = rng.uniform(0.3, 1, mesh.n_elem)
+    for build in ((2, 1), (0, -1)):
+        t = B.WarpTerm(mesh, B.BuildSetup(material="ti64"), build=build, layer=1.0)
+        v0, _ = t.measures(x ** 3)
+        assert v0["max"] > 0.05 and v0["lift"] > 0.02, v0
+        for key, pk in (("max", "_maxP"), ("lift", "_liftP")):
+            c = v0[key] / v0[pk]
+            _, g = t.measures(x ** 3, 3 * x ** 2, {key: 1.0})
+            for i in rng.choice(mesh.n_elem, 3, replace=False):
+                h = 1e-6
+                xp, xm = x.copy(), x.copy()
+                xp[i] += h
+                xm[i] -= h
+                fd = c * (t.measures(xp ** 3)[0][pk] - t.measures(xm ** 3)[0][pk]) / (2 * h)
+                assert abs(g[i] - fd) < 1e-5 * abs(fd) + 1e-9, (build, key, i, g[i], fd)
+
+
 def test_study_key_parses():
     from loadpath.schema import lint
     from loadpath.spec import study_from_dict
@@ -136,6 +161,18 @@ def test_study_key_parses():
     assert not lint(d), lint(d)
     s = study_from_dict(d)
     assert s.build_sim["compensate"] and s.build_sim["setup"].scale == 0.8
+    d["buildSim"] = {"maxDistortion": 0.2, "maxRecoaterLift": 0.05}
+    d["process"]["buildDirection"] = "+z"
+    assert not lint(d), lint(d)
+    assert study_from_dict(d).build_sim["maxRecoaterLift"] == 0.05
+    d["process"]["buildDirection"] = "auto"
+    try:
+        study_from_dict(d)
+        raise AssertionError("a warp limit needs a grid-axis build direction")
+    except ValueError:
+        pass
+    d["process"] = {"type": "lpbf"}
+    d["buildSim"] = {"compensate": True}
     d["process"] = {"type": "sla"}
     try:
         study_from_dict(d)
@@ -209,6 +246,7 @@ TESTS = [
     test_weak_bed_bond_lets_the_ends_lift,
     test_compensation_cuts_the_printed_error,
     test_warp_gradient_matches_finite_differences,
+    test_warp_limit_gradients_match_finite_differences,
     test_study_key_parses,
     test_warp_term_gradient_along_any_grid_axis,
     test_study_warp_weight_cuts_as_built_distortion,

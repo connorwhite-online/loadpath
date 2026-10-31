@@ -47,6 +47,17 @@ def _progress(event, _field=None):
     if event.get("stage") == "optimize" and "iteration" in event and event["iteration"] % 5:
         return
     ev = {k: v for k, v in event.items() if k not in ("cases", "optimizer", "reconstruction")}
+    cases = event.get("cases") or []
+    if event.get("stage") == "outcome" and cases:
+        # the governing case and the worst deflection, so a failed step says why
+        sf = [c for c in cases if c.get("safetyFactor") is not None]
+        if sf:
+            g = min(sf, key=lambda c: c["safetyFactor"])
+            ev["governingCase"] = {"name": g.get("name"), "safetyFactor": g["safetyFactor"]}
+        dfl = [c for c in cases if c.get("deflection") is not None]
+        if dfl:
+            w = max(dfl, key=lambda c: c["deflection"])
+            ev["maxDeflection"] = {"name": w.get("name"), "deflection": w["deflection"]}
     print(json.dumps(_jsonable(ev)), file=sys.stderr, flush=True)
 
 
@@ -216,8 +227,14 @@ def _verify(args):
     summary = {"ok": True, "part": part, "study": args.study, "mass": rep["mass"],
                "safetyFactor": rep.get("safetyFactor"), "margin": m,
                "passes": None if m is None else bool(m >= 1.0 and rep.get("bodies", 1) <= 1),
-               "keepOutIntrusion": rep.get("keepOutIntrusion"), "bodies": rep.get("bodies"),
-               "cases": {c["name"]: {"safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection")}
+               "safetyFactorMethod": "voxel", "analysisPitch": rep.get("analysisPitch"),
+               "keepOutIntrusion": rep.get("keepOutIntrusion"), "preserveMissing": rep.get("preserveMissing"),
+               "bodies": rep.get("bodies"),
+               **({"durabilitySafetyFactor": rep["durability"].get("safetyFactor")}
+                  if isinstance(rep.get("durability"), dict) else {}),
+               "warnings": list(rep.get("warnings") or []),
+               "cases": {c["name"]: {"safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection"),
+                                     "peakStress": c.get("peakStress")}
                          for c in rep.get("cases", [])},
                "report": rep}
     if args.out:
@@ -382,7 +399,7 @@ def main(argv=None):
     asm.add_argument("--payload-radius", type=float, default=0.0, help="m: payload position scatters this far")
     asm.add_argument("--samples", type=int, default=1500, help="random poses (on top of the limit corners)")
     asm.add_argument("--ramp", type=float, default=0.2, help="s to full speed (before the effort limit)")
-    asm.add_argument("--push", type=float, default=20.0, help="N: contact at the payload, any direction")
+    asm.add_argument("--push", type=float, default=20.0, help="N: contact at the payload, any direction (default 20; often sizes the part, 0 if nothing pushes)")
     asm.add_argument("--contact-max", type=float, help="N: hardest an obstacle pushes back on a stalled joint "
                      "(default: --push)")
     asm.add_argument("--balanced", default="", help="joints a counterbalance holds against gravity: j2,...")
@@ -501,8 +518,25 @@ def main(argv=None):
     if args.viewer != "none" and not os.environ.get("LOADPATH_NO_RENDER"):
         from .viewer import HistoryRecorder
         rec = HistoryRecorder(chain=_progress)
+    seen = {"stage": None, "outcomes": 0}
+
+    def _tracked(event, *rest):
+        # status.json carries the stage and outcomes so far: one file to poll
+        st = event.get("stage")
+        if st == "outcome":
+            seen["outcomes"] += 1
+        if st and st != seen["stage"] or st == "outcome":
+            seen["stage"] = st
+            try:
+                _status("running", started=started, stage=st, outcomes=seen["outcomes"],
+                        **({"volumeFraction": event["volumeFraction"]} if "volumeFraction" in event else {}))
+            except OSError:
+                pass
+        return (rec or _progress)(event, *rest)
+
+    started = time.time()
     try:
-        result = run_study(study, on_progress=rec or _progress)
+        result = run_study(study, on_progress=_tracked)
     except BaseException as exc:
         _status("failed", error=f"{type(exc).__name__}: {exc}",
                 partial=os.environ.get("LOADPATH_PARTIAL_DIR"))
@@ -580,6 +614,15 @@ def main(argv=None):
             summary.setdefault("warnings", []).append(f"viewer not written: {exc}")
     from .delivery import delivery
     summary["deliver"] = delivery(summary, raw)
+    dv = summary["deliver"]
+    if dv and dv.get("safetyFactorMethod") != "tet":
+        # say why the body-fitted cross-check did not confirm it
+        try:
+            from .crosscheck import unsupported
+            why = unsupported(study)
+        except Exception as exc:  # noqa: BLE001
+            why = f"{type(exc).__name__}: {exc}"
+        dv["tetCrossCheck"] = f"not run: {why}" if why else "not run: goal.confirm chose the voxel re-check"
     _write_report(args.out, summary)
     _status("done", report=os.path.join(os.path.abspath(args.out), "report.json"))
     if not os.environ.get("LOADPATH_NO_HINT"):

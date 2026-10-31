@@ -28,7 +28,9 @@ force, and the output's travel compared with what the linear model
 promised.
 
 Linear hexahedra are stiff in bending (shear locking), and more so with few
-cells across a member: about 3-4 cells across a flexure keeps the error to
+cells across a member (fem.py's linear analysis condenses incompatible
+bubble modes to remove it; this total-Lagrangian element is still the plain
+trilinear one, and its linear comparisons here use the plain element too): about 3-4 cells across a flexure keeps the error to
 a few percent of beam theory; one or two cells overestimate its stiffness
 badly. Validation against the elastica and Euler's column is in
 tests/test_nonlinear.py.
@@ -331,7 +333,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     pd, pv = (np.zeros(0, np.int64), np.zeros(0)) if prescribed is None else \
         (np.asarray(prescribed[0], np.int64), np.asarray(prescribed[1], float))
     cons[pd] = True
-    stiff = Stiffness(mesh, nu, cons)
+    stiff = Stiffness(mesh, nu, cons, element="plain")
     lin = _Linear(mesh)
     probes = probes or {}
     pnodes = np.unique(pd // 3)
@@ -515,7 +517,9 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     upper bound for real parts with imperfections; take a margin of 2-3 on
     printed slender members). Below 1, the load as given buckles it."""
     mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,)).copy()
-    stiff = Stiffness(mesh, nu, fixed)
+    # the plain hex8, as solve_nonlinear's element, so the load factor and
+    # the post-buckling path it seeds are one model's
+    stiff = Stiffness(mesh, nu, fixed, element="plain")
     k = stiff.assemble(mod)
     if springs is not None:
         k = (k + sp.diags(np.where(fixed, 0.0, springs))).tocsr()
@@ -606,7 +610,8 @@ def verify_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, input
                                                                     / max(np.linalg.norm(fin.reshape(-1, 3).sum(axis=0)), 1e-30))}
     sd = _spring_diag(f, k_in, sub.n_dof) + _spring_diag(lo, k_out, sub.n_dof)
     sd[fx] = 0.0
-    stiff = Stiffness(sub, nu, fx)
+    # the linear answer on the nonlinear element's own small-strain limit
+    stiff = Stiffness(sub, nu, fx, element="plain")
     k = (stiff.assemble(np.full(sub.n_elem, modulus)) + sp.diags(sd)).tocsr()
     ul = _Linear(sub).solve(k, np.where(fx, 0.0, f))
     report["linearOutput"] = float(lw @ ul)
@@ -673,8 +678,8 @@ def stroke_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, strok
     # linear answer on the same mesh: K u = 0 with the input moved
     cons = fx.copy()
     cons[pd] = True
-    stiff = Stiffness(sub, nu, cons)
-    k_free = Stiffness(sub, nu, np.zeros(sub.n_dof, bool)).assemble(np.full(sub.n_elem, modulus))
+    stiff = Stiffness(sub, nu, cons, element="plain")
+    k_free = Stiffness(sub, nu, np.zeros(sub.n_dof, bool), element="plain").assemble(np.full(sub.n_elem, modulus))
     kc = (stiff.assemble(np.full(sub.n_elem, modulus)) + sp.diags(np.where(cons, 0.0, sd))).tocsr()
     up = np.zeros(sub.n_dof)
     up[pd] = pv

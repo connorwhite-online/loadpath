@@ -223,7 +223,11 @@ class _Extended:
         gv = self.g(P)
         near = gv < self.eps
         if not near.any():
-            return self.field(P)
+            # the same clamp as below: a point must read the same whatever
+            # batch it comes in (narrowband merges block seams bit for bit;
+            # unclamped here, seams away from the cuts left holes)
+            out = np.asarray(self.field(P), float)
+            return np.minimum(np.maximum(out, -self.core), gv + self.core)
         Q = P.copy()
         Pn = P[near]
         h = 1e-3

@@ -96,7 +96,9 @@ def delivery(summary: dict, study: dict) -> dict | None:
               + list((o.get("process") or {}).get("warnings") or []) + attention(o, study)):
         if w not in warn:
             warn.append(w)
+    peaks = {c.get("name"): c.get("peakStress") for c in (o.get("confirm") or {}).get("cases") or []}
     cases = [{"name": c.get("name"), "safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection"),
+              "peakStress": c.get("peakStress") if c.get("peakStress") is not None else peaks.get(c.get("name")),
               **({"worstDirection": c["worstDirection"]} if c.get("worstDirection") else {})}
              for c in o.get("cases") or []]
     d = {
@@ -124,6 +126,31 @@ def delivery(summary: dict, study: dict) -> dict | None:
         **({"print": {k: v for k, v in o["print"].items() if k != "warnings"}} if o.get("print") else {}),
         "warnings": warn,
     }
+    cap = goal.get("maxMass")
+    if cap and d.get("mass") is not None and d["mass"] > cap:
+        d["passes"] = False
+        d["warnings"].insert(0, f"over the mass cap: {d['mass']:.1f} g against goal.maxMass {cap:g} g; this is "
+                                "already the lightest that meets the other limits, so use a lighter material, "
+                                "trim the preserves or lower the safety factor")
+    dur = o.get("durability") or {}
+    if d["passes"] and dur.get("safetyFactor") is not None and dur["safetyFactor"] < dur.get("target", 1.5):
+        # a permanently loaded PLA bracket read static SF 2.6 and passes: true
+        # at creep SF 1.09; "passes" means the whole part, durability included
+        d["passes"] = False
+        d["warnings"].insert(0, f"fails on durability: fatigue/creep safety factor {dur['safetyFactor']:.2f} is "
+                                f"under {dur.get('target', 1.5):g} (the static goal passes); set "
+                                "durability.constrain: true to size the part for it")
+    proc = study.get("process")
+    kind = proc.get("type") if isinstance(proc, dict) else proc
+    if str(kind or "").lower() == "fdm" and "slicer" not in o:
+        d["slicer"] = "not run: no slicer found or none asked for (install PrusaSlicer or set LOADPATH_SLICER " \
+                      "for print time and filament)"
+    # the one number to quote: the factor of whichever limit sets the part
+    d["governingSafetyFactor"] = d.get("durabilitySafetyFactor") if d["governedBy"] == "durability" \
+        else d.get("safetyFactor")
+    if d["governedBy"] == "durability" and d.get("durabilitySafetyFactor") is not None:
+        d["warnings"].insert(0, f"durability (fatigue/creep) sets this part: quote its safety factor "
+                                f"{d['durabilitySafetyFactor']:.2f}, not the static {d['safetyFactor']:.2f}")
     if summary.get("best") is not None and (o.get("volumeFraction") or 1.0) <= _VF_FLOOR + 1e-6:
         d["governedBy"] = "volumeFraction floor"
         d["warnings"].insert(0, f"the search stopped at its smallest volume fraction ({_VF_FLOOR:.0%}) with the "

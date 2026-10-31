@@ -56,7 +56,7 @@ from scipy import ndimage
 
 from .spec import Study
 
-__all__ = ["LatticeOptions", "tpms", "lattice_infill", "TPMS", "SHEETS", "STRUTS", "lattice_fit", "homogenize",
+__all__ = ["LatticeOptions", "tpms", "lattice_infill", "TPMS", "SHEETS", "STRUTS", "STRUT_TABLES", "lattice_fit", "homogenize",
            "relative_density", "wall_for_density", "envelope_mesh"]
 
 
@@ -117,6 +117,8 @@ SHEETS = {
 # and [111] moduli, the stress factor the largest of a [100] pull, a [111]
 # pull and a shear. BCCz and FCCz are stiff along z and the octet along its
 # struts; the fits do not count on it. The thickness is the strut diameter.
+# sheet_modulus and sheet_stress_factor read STRUT_TABLES below instead,
+# which run to rho 0.92; these power laws are the summary over 0.06-0.34.
 STRUTS = {
     "cubic": {"C": 0.739, "n": 2.38, "A": 3.09, "m": 1.84},
     "bcc": {"C": 0.61, "n": 2.49, "A": 4.63, "m": 1.64},
@@ -130,6 +132,71 @@ STRUTS = {
     "voronoi": {"C": 0.841, "n": 1.93, "A": 2.87, "m": 1.57},
     "diamond-strut": {"C": 0.695, "n": 2.1, "A": 2.63, "m": 1.77},
 }
+
+
+# The power laws above were fitted over rho 0.06-0.34 and miss badly past
+# it: at rho 0.8 the octet fit reads E*/E 0.27 against a solved 0.56 and a
+# stress factor 8.8 against 4.3, so a dense strut core looked far weaker than
+# it is. The same unit-cell solves from rho 0.06 to 0.92 (bench/strut_fits.py,
+# n=48), tabulated as (rho, E*/E, stress factor), the conservative isotropic
+# reading as above. Between rows the readings are interpolated log-log, up to
+# the solid (1, 1, 1); under the first row the power law runs on with the
+# slope of the first two rows.
+STRUT_TABLES = {
+    "cubic": [
+        (0.061, 0.001, 525.18), (0.099, 0.003, 225.22), (0.159, 0.0092, 85.85), (0.237, 0.0237, 46.11), (0.343, 0.0605, 21.63),
+        (0.478, 0.1399, 10.45), (0.647, 0.3106, 5.63), (0.785, 0.5317, 3.59),
+    ],
+    "bcc": [
+        (0.058, 0.0005, 472.41), (0.093, 0.0016, 229.56), (0.158, 0.0058, 104.25), (0.232, 0.0158, 56.67), (0.327, 0.0404, 25.59),
+        (0.49, 0.1298, 10.7), (0.658, 0.3127, 5.89), (0.799, 0.551, 3.85), (0.921, 0.8148, 2.26),
+    ],
+    "bccz": [
+        (0.055, 0.0004, 3174.74), (0.104, 0.0017, 748.84), (0.158, 0.0046, 290.12), (0.235, 0.0125, 116.99), (0.348, 0.0373, 45.0),
+        (0.483, 0.0997, 18.63), (0.648, 0.258, 7.29), (0.799, 0.5184, 3.47), (0.921, 0.8014, 2.25),
+    ],
+    "fcc": [
+        (0.056, 0.0083, 94.57), (0.095, 0.0155, 58.45), (0.163, 0.0317, 35.92), (0.246, 0.0613, 24.25), (0.334, 0.1026, 16.2),
+        (0.487, 0.2017, 9.34), (0.655, 0.3516, 5.35), (0.798, 0.5517, 3.6), (0.919, 0.8046, 2.16),
+    ],
+    "fccz": [
+        (0.062, 0.0085, 134.39), (0.105, 0.0161, 79.55), (0.163, 0.0291, 47.25), (0.238, 0.0534, 30.62), (0.335, 0.0989, 17.6),
+        (0.481, 0.1808, 9.3), (0.644, 0.3172, 5.76), (0.805, 0.5462, 3.66), (0.92, 0.8037, 2.16),
+    ],
+    "octet": [
+        (0.073, 0.0108, 74.07), (0.107, 0.0173, 57.65), (0.178, 0.033, 36.12), (0.243, 0.0515, 27.9), (0.322, 0.0827, 18.73),
+        (0.48, 0.1702, 11.09), (0.652, 0.3379, 6.48), (0.79, 0.5612, 4.27), (0.922, 0.8359, 2.2),
+    ],
+    "kelvin": [
+        (0.056, 0.0023, 344.9), (0.094, 0.0071, 155.37), (0.16, 0.0213, 69.09), (0.239, 0.0482, 32.62), (0.331, 0.0945, 19.28),
+        (0.478, 0.207, 10.72), (0.646, 0.4007, 5.47), (0.803, 0.6402, 3.33), (0.922, 0.8481, 1.95),
+    ],
+    "diamond-strut": [
+        (0.058, 0.0018, 378.68), (0.093, 0.0047, 192.93), (0.157, 0.0144, 70.05), (0.232, 0.0321, 33.78), (0.34, 0.0721, 17.59),
+        (0.489, 0.1596, 9.47), (0.657, 0.3211, 5.96), (0.797, 0.5353, 4.3), (0.92, 0.8046, 2.91),
+    ],
+    "voronoi": [
+        (0.06, 0.0036, 236.04), (0.1, 0.0098, 106.78), (0.16, 0.0244, 52.1), (0.24, 0.0531, 26.99), (0.34, 0.104, 15.49),
+        (0.481, 0.2074, 8.75), (0.65, 0.3885, 5.01), (0.8, 0.6086, 3.21), (0.92, 0.8274, 2.16),
+    ],
+}
+
+
+def _table_reading(kind: str, rho, col: int):
+    """Log-log interpolation of a strut table column (1 = E*/E, 2 = stress
+    factor) at rho, None for a kind with no table."""
+    from .struts import canonical
+
+    k = kind if kind in SHEETS else canonical(kind)
+    rows = STRUT_TABLES.get(k)
+    if rows is None:
+        return None
+    t = np.array(rows + [(1.0, 1.0, 1.0)], float)
+    x, y = np.log(t[:, 0]), np.log(t[:, col])
+    lr = np.log(np.clip(np.asarray(rho, float), 1e-3, 1.0))
+    slope = (y[1] - y[0]) / (x[1] - x[0])
+    out = np.where(lr < x[0], y[0] + slope * (lr - x[0]), np.interp(lr, x, y))
+    return np.exp(out)
 
 
 def lattice_fit(kind: str) -> dict:
@@ -207,6 +274,9 @@ def sheet_modulus(kind: str, rho):
     """E*/E of a sheet or strut cell at relative density rho."""
     s = lattice_fit(kind)
     rho = np.asarray(rho, float)
+    t = _table_reading(kind, rho, 1)
+    if t is not None:
+        return np.where(rho >= 1.0, 1.0, t)
     return np.where(rho >= 1.0, 1.0, s["C"] * np.clip(rho, 1e-3, 1.0) ** s["n"])
 
 
@@ -214,6 +284,9 @@ def sheet_stress_factor(kind: str, rho):
     """Peak wall stress over the macro stress the lattice carries."""
     s = lattice_fit(kind)
     rho = np.asarray(rho, float)
+    t = _table_reading(kind, rho, 2)
+    if t is not None:
+        return np.where(rho >= 1.0, 1.0, t)
     return np.where(rho >= 1.0, 1.0, s["A"] * np.clip(rho, 1e-3, 1.0) ** -s["m"])
 
 
@@ -234,7 +307,7 @@ def homogenize(kind: str, wall_over_cell: float, n: int = 40, nu: float = 0.35, 
     import scipy.sparse as sp
     from scipy.sparse.linalg import cg
 
-    from .fem import CORNERS, _b_matrix, elastic_c, hex8_ke, von_mises
+    from .fem import CORNERS, _b_matrix, elastic_c, hex8_b, hex8_ke, von_mises
 
     h = 1.0 / n
     c = (np.arange(n) + 0.5) * h
@@ -278,7 +351,7 @@ def homogenize(kind: str, wall_over_cell: float, n: int = 40, nu: float = 0.35, 
         mean = ((ue @ bc.T) @ c0.T).sum(axis=0) / n ** 3
         acc = np.zeros((nn, 6))
         for kk, (a, b, cc) in enumerate(2.0 * CORNERS - 1.0):
-            np.add.at(acc, enode[:, kk], (ue @ (_b_matrix(a, b, cc) / h).T) @ c0.T)
+            np.add.at(acc, enode[:, kk], (ue @ (hex8_b(a, b, cc, nu) / h).T) @ c0.T)
         vm = von_mises(acc / np.bincount(enode.ravel(), minlength=nn)[:, None])
         return mean, vm
 

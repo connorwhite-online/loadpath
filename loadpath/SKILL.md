@@ -39,6 +39,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    runs through for the shaft or inner race, and the preserved ring covers
    the seat's width. Keep-outs win over preserves: `check` warns when one
    eats into a preserved piece (a fastener's driver path clipping a boss).
+   Anything inserted (a shaft, pin, bearing, cable) needs its keep-out to
+   run past the design space on the side it goes in from, or the part may
+   close over it; `check` warns about a bore with no open end.
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and
@@ -73,10 +76,19 @@ field. `check` reports every problem at once: fix them all, then check again.
    one that would swing on a pin rather than resist sideways) cannot carry.
    For an in-plane uncertainty (a shaft's radial load, a swinging strap, a
    sideways crash) use `"direction": "xz"` (or `"xy"`, `"yz"`): the case
-   becomes eight cases round that plane, named `case@0` ... `case@157.5`.
+   becomes eight cases round half that plane, named `case@0` ... `case@157.5`,
+   or sixteen round all of it (to `case@337.5`) when -F is not the mirror of
+   F: a bearing distribution, other loads in the case, a moment, or a
+   layered process. Each is a solve per step, so the run takes that many
+   times longer; the mass form cannot take a plane, so write the force
+   (kg x 9.81 x the dynamic factor).
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.
+   A part that hangs on a rod, hook or peg bears only where it touches:
+   support the strip of the hole that carries the weight (`fix` on a
+   narrow box over its top), not the whole hole, or the model hides the
+   bending at the hook's mouth.
    A housing that holds a fluid (a boost plenum, a coolant jacket): make
    the fluid's volume a keep-out with a `wall` (mm), and load it with
    `{"region": "<id>", "pressure": MPa}`. The wall stays as given and the
@@ -127,10 +139,13 @@ field. `check` reports every problem at once: fix them all, then check again.
    15-5 PH are calibrated (NIST AM-Bench); for other alloys the size of the
    distortion is a rough guide (could be off 2x), though comparing designs
    is still sound. `"warpWeight": 1` (lpbf/fdm, grid-axis buildDirection)
-   designs against build distortion too: in the demo it cut as-built warp
-   66% and recoater lift 73% but halved the safety factor at the same mass
-   and ran 7x slower, so use it when warp or recoater crashes are the
-   problem, and check the safety factor. FDM: `bedAdhesion` (MPa) lets
+   designs against build distortion too, but at a fixed mass it halved the
+   safety factor in the demo. Prefer a limit with the safety-factor goal:
+   `"maxDistortion": 0.2` (mm, as built on the plate) makes the search
+   deliver the lightest part meeting both (report `warp`; on the demo
+   bracket a 40% cut cost no measurable mass, 65% was infeasible at SF 2).
+   `maxRecoaterLift` exists but the optimizer's lumped layers misjudge
+   lift: check `buildSim.recoater` on the result. FDM: `bedAdhesion` (MPa) lets
    the first layer let go; `bedFailed` in the report means the part
    popped off. docs/BUILDSIM.md has the validation.
 6. **Say how long it has to last.** A load that repeats (a servo lifting,
@@ -168,7 +183,10 @@ field. `check` reports every problem at once: fix them all, then check again.
    size), per-case numbers, and `warnings` gathered from every check (print,
    process, durability). Quote those numbers. To check any STL against a
    study later (an edited part, an older outcome):
-   `loadpath verify study.json part.stl`. Then:
+   `loadpath verify study.json part.stl` (its own grid, `--cells`, so it
+   reads a few percent off the run's fine re-check; quote `deliver` for a
+   delivered part). `deliver.tetCrossCheck` says why the body-fitted check
+   did not run when it did not. Then:
    - `safetyFactor` below target, or `passes: false` → raise the goal's
      volume fraction, the material, or check the loads are right;
    - `bodies` > 1 → something is not connected to a support;
@@ -198,6 +216,10 @@ field. `check` reports every problem at once: fix them all, then check again.
   reading beside it), and the search steps down to where that meets the
   target, typically 0-45% lighter. A warning that the cross-check reads the
   pick below target names the spot the voxel grid cannot resolve: look there.
+  It is isotropic, so it never runs for a `process` (FDM layers, SLS, resin)
+  or gravity or pressure loads: those are confirmed on a finer voxel grid,
+  `deliver.tetCrossCheck` says why. That fine re-check is the memory peak
+  `check` reports (`peakMemoryGB`); `LOADPATH_CONFIRM_CELLS=60000` lowers it.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
 
@@ -258,10 +280,13 @@ field. `check` reports every problem at once: fix them all, then check again.
 
 ## Printing direction
 
-If the part will be printed without supports (FDM, metal powder bed), set
+A `process` of `fdm` or `lpbf` already designs self-supporting along its
+`buildDirection` (the optimizer only builds what prints at 45°); setting
+`printDirection` as well changes nothing. Without a process, set
 `"printDirection": "+z"` (the direction layers stack, in the study's
-coordinates). The optimizer then only builds what can be printed at 45°;
-`report.json` gives `designOverhangFraction`.
+coordinates). Preserved geometry is kept as drawn, so a preserved overhang
+(a platform, a ring's underside) still needs support: chamfer it in the
+preserve or accept the supports `deliver` → `print` reports.
 
 ## Resolution
 
@@ -343,12 +368,14 @@ few samples that set the peak stress everywhere in the solid design space
 child links, swept through their joints' ranges, become `bore: false` mesh
 keep-outs with the study's preserved interfaces cut out. Inputs worth
 setting: `--ramp` (seconds to full speed, what the controller allows),
-`--push` (N, the hardest contact at the tool; a stalled joint pushes up to it) and `--balanced`
+`--push` (N, the hardest contact at the tool in any direction, default 20: often the case that sizes the part, so set it from the job, 0 if nothing pushes) and `--balanced`
 for joints a spring counterbalances. Write the study in the URDF's world
 frame at the home pose (mm), or pass `--frame link` if it is in the link's own
 frame (origin at its joint): a mismatch silently gives wrong moment arms. The
 study needs no load cases (they are replaced; `fasteners` and their preload are
-kept). Python: `loadpath.assembly`
+kept), though `loadpath check` on it alone wants one: check the derived study.
+`sweptKeepOuts` is empty when the URDF has no collision or visual geometry.
+The derived loads are the sweep's own accelerations: no extra dynamic factor. Python: `loadpath.assembly`
 (`Robot.from_urdf`, `sweep_loads`, `governing_cases`, `swept_keepouts`,
 `derive_study`).
 

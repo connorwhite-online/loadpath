@@ -111,7 +111,7 @@ def test_a_graph_option_and_the_default():
     m = FieldGraph(doc).mesh(pitch=0.6)
     assert "creases" in m.metadata
     doc, _ = _lens()
-    assert "creases" not in FieldGraph(doc).mesh(pitch=0.6).metadata      # off by default
+    assert "creases" in FieldGraph(doc).mesh(pitch=0.6).metadata      # on by default
     doc, _ = _lens(creases=False)
     assert "creases" not in FieldGraph(doc).mesh(pitch=0.6).metadata
 

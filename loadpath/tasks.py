@@ -71,6 +71,9 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     warnings = [f"{i['path']}: {i['message']}" for i in issues] + list(d.warnings)
     notes = []
     warnings += _preserve_cut(s)
+    w, n = _blind_bores(s)
+    warnings += w
+    notes += n
     for ci, c in enumerate(s.load_cases):
         for li, ld in enumerate(c.loads):
             mm = float((ld.moment ** 2).sum() ** 0.5)
@@ -89,6 +92,10 @@ def check_study(raw, base_dir: str | None = None) -> dict:
         notes.append(f"pitch {d.pitch:.2f} mm is set by minMember {s.min_member:g} mm (two cells per filter "
                      f"radius; finer cells only cost time), so the grid has {d.n_elem} cells, fewer than "
                      f"resolution.maxElements {s.max_elements}")
+    planar = [c.name for c in s.load_cases if "@" in c.name]
+    if planar:
+        notes.append(f"{len(s.load_cases)} load cases ({len(planar)} from in-plane directions, 8 each): every "
+                     "optimizer step solves each one, so the run takes about that many times as long as one case")
     from .study import _available_bytes, _confirm_cells, _run_bytes
     g = s.goal
     peak = max(d.n_elem, _confirm_cells(s) if (g.safety_factor or g.max_deflection) else 0)
@@ -108,9 +115,10 @@ def check_study(raw, base_dir: str | None = None) -> dict:
         "resolvedLoads": [{"case": c.name, "loads": [
             {"region": ld.region, "force": np.round(ld.force, 3).tolist(),
              **({"moment": np.round(ld.moment, 1).tolist()} if np.any(ld.moment) else {}),
-             **({"direction": ld.direction} if ld.direction else {})}
+             **({"direction": ld.direction} if ld.direction else {}),
+             **({"distribution": ld.distribution} if ld.distribution != "uniform" else {})}
             for ld in c.loads if not ld.pressure]} for c in s.load_cases],
-        "minMember": s.min_member, "warnings": warnings, **({"notes": notes} if notes else {}),
+        "minMember": s.min_member, "warnings": warnings, "notes": notes,
     })
 
 
@@ -170,6 +178,54 @@ def _bore_through(p, k) -> bool:
     return bool((p.sdf(axis) < 0).any())
 
 
+def _blind_bores(s) -> tuple[list[str], list[str]]:
+    """A bore keep-out (a shaft, pin or bearing seat) that ends inside the
+    design space: the optimizer may close material over its end, and then the
+    shaft cannot go in. Sealed at both ends is almost always a mistake; at
+    one end it is a blind pocket, which is right only if nothing passes
+    through."""
+    import numpy as np
+
+    warn, note = [], []
+    try:
+        ds = list(s.design_space)
+        others = [k for k in s.keep_out]
+
+        def end(pt, own):
+            pt = np.asarray(pt, float)[None, :]
+            if min(float(d.sdf(pt)[0]) for d in ds) >= 0:
+                return "open"       # outside the design space
+            if any(float(k.shape.sdf(pt)[0]) < 0 for k in others if k is not own):
+                return "pocket"     # into another keep-out
+            return "closed"
+
+        for k in s.keep_out:
+            if not getattr(k, "bore", True):
+                continue
+            for c in _leaves(k.shape):
+                if getattr(c, "kind", None) != "cylinder" or c.r_inner > 0:
+                    continue
+                e = max(1.0, 0.5 * c.r)
+                ends = [end(c.p0 - e * c.axis, k), end(c.p1 + e * c.axis, k)]
+                ax = "[" + ", ".join(f"{v:g}" for v in np.round(c.axis, 3)) + "]"
+                if "closed" not in ends:
+                    continue
+                if "open" not in ends:
+                    how = "at both ends" if ends == ["closed", "closed"] else "at one end and into another keep-out at the other"
+                    warn.append(f"keepOut {k.id!r}: the cylinder along {ax} ends inside the design space {how}, "
+                                "so the part can close over it and a shaft or pin may have no way in. Extend "
+                                "it past the design space on the side it is inserted from (or set "
+                                "\"bore\": false if that is on purpose)")
+                elif c.r >= 2.5:    # a blind tapped or insert hole is normal; a blind shaft seat is worth a look
+                    note.append(f"keepOut {k.id!r}: the cylinder along {ax} ends inside the design space at "
+                                "one end, a blind pocket. If a shaft, pin or bearing passes through, extend "
+                                "it past the design space")
+                break
+    except Exception:  # noqa: BLE001 - a lint
+        pass
+    return list(dict.fromkeys(warn)), list(dict.fromkeys(note))
+
+
 def _preserve_cut(s) -> list[str]:
     """Keep-outs win over preserves, silently: a fastener's driver path
     through a preserved pad, or a clearance box over a boss, deletes what the
@@ -184,9 +240,14 @@ def _preserve_cut(s) -> list[str]:
                 pm = _union([p])
                 vol = float(pm.volume())
                 for k in s.keep_out:
+                    kid, rid = str(k.id), str(r.id)
+                    if "-" in kid and "-" in rid and kid.rsplit("-", 1)[0] == rid.rsplit("-", 1)[0]:
+                        continue    # one fastener's own tap through its own seat or sleeve
+                    # a head and driver path is not a bore: it cuts what it passes through
+                    head = kid.endswith("-head")
                     cut = 0.0
                     for kl in _leaves(k.shape):
-                        if not _bore_through(p, kl):
+                        if head or not _bore_through(p, kl):
                             cut += float((pm ^ _union([kl])).volume())
                     if vol > 0 and cut > 1.0 and cut > 0.05 * vol:
                         out.append(f"keepOut {k.id!r} removes {cut:.0f} mm^3 ({cut / vol:.0%}) of preserve {r.id!r}: "

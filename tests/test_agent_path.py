@@ -91,7 +91,8 @@ def test_in_plane_direction_becomes_eight_cases():
     s = copy.deepcopy(LINK)
     s["loadCases"][0]["loads"][0].update(direction="xy", moment=[0, 0, 100])
     st = study_from_dict(s)
-    assert len(st.load_cases) == 8 and st.load_cases[2].name == "p@45", [c.name for c in st.load_cases]
+    # a moment does not turn round with the force: the full circle, 16 cases
+    assert len(st.load_cases) == 16 and st.load_cases[2].name == "p@45", [c.name for c in st.load_cases]
     for c in st.load_cases:
         ld = c.loads[0]
         assert abs(ld.force[2]) < 1e-9 and abs(np.linalg.norm(ld.force) - 20) < 1e-9, ld.force
@@ -101,6 +102,12 @@ def test_in_plane_direction_becomes_eight_cases():
     m = study_from_dict(s).load_cases[4].loads[0]
     assert np.allclose(m.force, [0, 0, 20], atol=1e-9) and np.allclose(m.moment, [-100, 0, 0], atol=1e-9), m
     assert check_study(s)["ok"]
+    plain = copy.deepcopy(LINK)
+    plain["loadCases"][0]["loads"][0].update(direction="xy")
+    assert len(study_from_dict(plain).load_cases) == 8          # symmetric: half a circle
+    plain["loadCases"][0]["loads"][0]["distribution"] = "bearing"
+    names = [c.name for c in study_from_dict(plain).load_cases]
+    assert len(names) == 16 and names[-1] == "p@337.5", names    # one side of the bore: all of it
 
 
 def test_half_ring_and_gap_ring_shapes():
@@ -142,10 +149,11 @@ def test_deliver_gathers_the_best_outcome_and_its_warnings():
          "print": {"warnings": ["needs a brim"]}, "durability": {"safetyFactor": 1.2, "target": 1.5},
          "warnings": []}]}
     d = delivery(summary, {"goal": {"safetyFactor": 2, "maxDeflection": 0.5}})
-    assert d["passes"] and d["stl"] == "out/x-30.stl" and d["safetyFactorMethod"] == "tet", d
+    assert d["stl"] == "out/x-30.stl" and d["safetyFactorMethod"] == "tet", d
     assert d["governedBy"] == "maxDeflection" and d["p5Member"] == 2.2, d
     assert "run-level" in d["warnings"] and "needs a brim" in d["warnings"], d
     assert any("durability" in w for w in d["warnings"]), d
+    assert d["passes"] is False and "fails on durability" in d["warnings"][0], d   # durability 1.2 < 1.5
     none = delivery({**summary, "best": None}, {"goal": {"safetyFactor": 2}})
     assert none["passes"] is False and "not a passing part" in none["warnings"][0], none
     capped = {"best": None, "warnings": [], "outcomes": [{"volumeFraction": 0.7, "safetyFactor": 1.5, "cases": []}]}
@@ -201,3 +209,23 @@ if __name__ == "__main__":
                 print("FAIL", name)
                 traceback.print_exc()
     sys.exit(failed)
+
+
+def test_check_warns_on_bore_with_no_way_in():
+    from loadpath.tasks import check_study
+
+    base = {"name": "b", "material": "PLA",
+            "designSpace": [{"type": "box", "min": [0, 0, 0], "max": [40, 20, 20]}],
+            "preserve": [{"id": "pad", "shape": {"type": "box", "min": [0, 0, 0], "max": [4, 20, 20]}}],
+            "supports": [{"region": "pad"}],
+            "loadCases": [{"name": "c", "loads": [{"region": "shaft", "force": [0, 0, -50]}]}],
+            "goal": {"safetyFactor": 2}, "resolution": {"maxElements": 4000}}
+    sealed = dict(base, keepOut=[{"id": "shaft", "shape": {"type": "cylinder", "p0": [30, 5, 10], "p1": [30, 15, 10], "r": 3}}])
+    r = check_study(sealed)
+    assert r["ok"] and any("shaft" in w and "both ends" in w for w in r["warnings"])
+    through = dict(base, keepOut=[{"id": "shaft", "shape": {"type": "cylinder", "p0": [30, -1, 10], "p1": [30, 21, 10], "r": 3}}])
+    r = check_study(through)
+    assert not any("design space at" in w for w in r["warnings"] + r["notes"])
+    blind = dict(base, keepOut=[{"id": "shaft", "shape": {"type": "cylinder", "p0": [30, -1, 10], "p1": [30, 12, 10], "r": 3}}])
+    r = check_study(blind)
+    assert any("blind pocket" in n for n in r["notes"])

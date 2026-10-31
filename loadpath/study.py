@@ -193,6 +193,12 @@ def _margin(study: Study, report: dict) -> float | None:
         ms.append(g.max_deflection / worst if worst > 0 else float("inf"))
     if dur and dur.get("safetyFactor") is not None:
         ms.append(dur["safetyFactor"] / dur["target"])
+    warp = report.get("warp")
+    if warp:
+        # buildSim warp limits: the as-built build of the delivered field
+        for key, lim in (("maxDistortion", "maxDistortion"), ("recoaterLift", "maxRecoaterLift")):
+            if warp["limits"].get(lim):
+                ms.append(warp["limits"][lim] / max(warp[key], 1e-12))
     return min(ms) if ms else None
 
 
@@ -241,6 +247,8 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     making = manufacturing_report(study, domain, mesh)
     if making:
         report["manufacturing"] = making
+    if res.warp:
+        report["warp"] = res.warp
     o.report = report
     o.voxel_sf = report.get("safetyFactor")
     m = _margin(study, report)
@@ -716,6 +724,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                                        **_making(study)),
                            on_iter=on_iter, should_stop=should_stop)
             x, xphys = res.x, res.xphys
+            warp = res.warp
             opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                    "compliance": res.compliance, "caseCompliance": res.case_compliance,
                    **({"caseDirection": res.case_direction} if any(d is not None for d in res.case_direction) else {}),
@@ -724,6 +733,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         else:
             # a stored design for this very problem: mesh and verify it, no optimizing
             x, xphys = replay[0], replay[1]
+            warp = None
             opt = {"iterations": 0, "converged": True, "seconds": 0.0, "recalled": True,
                    "achievedVolumeFraction": float(xphys.mean())}
         emit({"stage": "mesh", "volumeFraction": vf})
@@ -742,6 +752,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         making = manufacturing_report(study, domain, mesh)
         if making:
             report["manufacturing"] = making
+        if warp:
+            report["warp"] = warp
         o = Outcome(vf, mesh, report, opt, rinfo)
         o.xphys = xphys
         o.x = x

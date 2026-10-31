@@ -21,7 +21,10 @@ the topology. The cell's Lame parameters are
 so every material keeps its own Poisson's ratio (TPU's 0.45 is not PETG's
 0.38, and a pad's indentation depends on it): fem.hex8_ke is linear in
 (lambda, mu), so the element matrix is lambda_e K_lambda + mu_e K_mu and
-one assembly carries a different material in every cell. The power on w
+one assembly carries a different material in every cell. (With the
+condensed bubble element fem.py uses, K is homogeneous in (lambda, mu)
+rather than linear: K_lambda and K_mu are then its derivatives at the cell's
+Lame ratio, tabulated and interpolated, LameStiffness.) The power on w
 makes a 50/50 blend cost the material of both and give the stiffness of
 neither, so the optimizer picks one. Mass is linear: rho_e = x sum w_i rho_i.
 
@@ -45,11 +48,12 @@ What a design can be asked for (MMA, mma.py, carries the constraints):
   either (interface_library.py sources it per pair: PETG/TPU bonds,
   PLA/PETG barely does). The traction across each interface (normal pull
   and shear, on the interface's own normal, from the material field's
-  gradient) is checked against the pair's strength, and a penalty on
-  interface area weighted by that utilization, its weights lagged from the
-  last solve and raised until the interface meets its safety factor, moves
-  the interface out of the stress. Verification then reads the bond on the
-  delivered voxel model face by face.
+  gradient) is checked against the pair's strength. Once the layout has
+  converged, a bond stage freezes the topology and moves only the materials
+  to take stress off the bond. Verification then reads the bond on the
+  delivered voxel model face by face. With `interlock`, the materials
+  interpenetrate in a beam lattice where they meet (interlock.py) and the
+  bond is credited with the measured gain of an interlocked joint.
 
 Delivery: the solid is meshed by reconstruct.py as any study is, then cut
 into one body per material with exact booleans (manifold3d) against a
@@ -112,6 +116,7 @@ class MultiMaterial:
     interface_penalty: bool = True
     extruders: dict = field(default_factory=dict)    # material name -> extruder (1-based)
     slicer: str = "all"
+    interlock: object = None                         # interlock.Interlock, or None: flat bonds
 
     @property
     def names(self):
@@ -203,9 +208,18 @@ def parse_multimaterial(d, study=None, base_dir=None) -> MultiMaterial | None:
         if len(names) != 2:
             raise ValueError(f"multiMaterial.interfaces key {pair!r} is 'a+b'")
         a, b = sorted(mm.materials[mm.index(n)].name for n in names)
-        mm.interfaces[f"{a}+{b}"] = {"tensile": float(v["tensile"]),
-                                     "shear": float(v.get("shear", v["tensile"])), "source": "study"}
+        c = {"tensile": float(v["tensile"]), "shear": float(v.get("shear", v["tensile"])), "source": "study"}
+        for k_ in ("tensileZ", "shearZ"):
+            if k_ in v:
+                c[k_] = float(v[k_])
+        mm.interfaces[f"{a}+{b}"] = c
     mm.interface_penalty = bool(d.get("interfacePenalty", True))
+    if d.get("interlock") not in (None, False):
+        from .interlock import parse_interlock
+        mm.interlock = parse_interlock(d["interlock"], getattr(study, "process", None))
+        for p in mm.interlock.pairs or []:
+            for n_ in p.split("+"):
+                mm.index(n_)
     ex = d.get("export") or {}
     for name, e in (ex.get("extruders") or {}).items():
         mm.extruders[mats[mm.index(name)].name] = int(e)
@@ -225,9 +239,20 @@ def parse_multimaterial(d, study=None, base_dir=None) -> MultiMaterial | None:
 
 # ------------------------------------------------------------ interfaces
 
-def interface_card(mm: MultiMaterial, i: int, j: int, process=None) -> dict:
+def interface_card(mm: MultiMaterial, i: int, j: int, process=None, interlock: bool = True) -> dict:
     """Bond strength (MPa) between materials i and j: the study's override,
-    else interface_library's sourced or conservative card."""
+    else interface_library's sourced or conservative card; with the
+    study's interlock credited (interlock.interlocked_card) unless
+    `interlock` is False."""
+    card = _flat_card(mm, i, j, process)
+    il = mm.interlock
+    if interlock and il is not None and il.applies(mm.materials[i].name, mm.materials[j].name):
+        from .interlock import interlocked_card
+        return interlocked_card(card, mm.materials[i], mm.materials[j], il)
+    return card
+
+
+def _flat_card(mm, i, j, process=None) -> dict:
     a, b = sorted((mm.materials[i].name, mm.materials[j].name))
     if f"{a}+{b}" in mm.interfaces:
         c = dict(mm.interfaces[f"{a}+{b}"])
@@ -255,55 +280,157 @@ def lame(E, nu):
     return E * nu / ((1 + nu) * (1 - 2 * nu)), E / (2 * (1 + nu))
 
 
-def _ke_parts():
-    """Unit-cube hex8 stiffness split as K = lambda K_l + mu K_m."""
+def _ke_parts(q: float = 0.5, element: str | None = None):
+    """Unit-cube hex8 stiffness split as K = lambda K_l + mu K_m, at the
+    Lame ratio q = lambda / (lambda + mu).
+
+    For the plain trilinear hex8 K is linear in (lambda, mu) and the split
+    does not depend on q. The element fem.py uses (fem.hex8_element) has
+    its bubble modes condensed out, which divides by C, so K is only
+    homogeneous of degree one: K_l and K_m are its partial derivatives at
+    the cell's ratio (Euler: lambda dK/dlambda + mu dK/dmu = K exactly)."""
+    from .fem import _b_bubble, hex8_element
+
+    element = element or hex8_element()
     cl = np.zeros((6, 6))
     cl[:3, :3] = 1.0
     cm = np.diag([2.0, 2.0, 2.0, 1.0, 1.0, 1.0])
     g = 1.0 / np.sqrt(3.0)
-    kl, km = np.zeros((24, 24)), np.zeros((24, 24))
-    for xi in (-g, g):
-        for eta in (-g, g):
-            for zeta in (-g, g):
-                b = _b_matrix(xi, eta, zeta)
-                kl += b.T @ cl @ b * 0.125
-                km += b.T @ cm @ b * 0.125
+    parts = {}
+    for name, c in (("l", cl), ("m", cm)):
+        kuu, kua, kaa = np.zeros((24, 24)), np.zeros((24, 9)), np.zeros((9, 9))
+        for xi in (-g, g):
+            for eta in (-g, g):
+                for zeta in (-g, g):
+                    b = _b_matrix(xi, eta, zeta)
+                    ba = _b_bubble(xi, eta, zeta)
+                    kuu += b.T @ c @ b * 0.125
+                    kua += b.T @ c @ ba * 0.125
+                    kaa += ba.T @ c @ ba * 0.125
+        parts[name] = (kuu, kua, kaa)
+    if element == "plain":
+        kl, km = parts["l"][0], parts["m"][0]
+    else:
+        kua = q * parts["l"][1] + (1 - q) * parts["m"][1]
+        kaa = q * parts["l"][2] + (1 - q) * parts["m"][2]
+        r = -np.linalg.solve(kaa, kua.T)
+        # dK = dKuu + dKua R + R^T dKau + R^T dKaa R, R = -Kaa^-1 Kau
+        kl, km = ((p[0] + p[1] @ r + r.T @ p[1].T + r.T @ p[2] @ r) for p in (parts["l"], parts["m"]))
     return 0.5 * (kl + kl.T), 0.5 * (km + km.T)
 
 
-class LameStiffness:
-    """fem.Stiffness's CSR layout with a (lambda, mu) pair per element."""
+# Lame ratios at which the split is tabulated (q = lambda / (lambda + mu),
+# 0.41 at nu = 0.3, 0.9 at nu = 0.45); between them it is interpolated
+# linearly, and every material's own ratio is a node, so a crisp cell's
+# matrix is exact.
+_Q_GRID = np.linspace(0.0, 0.98, 50)
 
-    def __init__(self, mesh: HexMesh, fixed: np.ndarray):
+
+class LameStiffness:
+    """fem.Stiffness's CSR layout with a (lambda, mu) pair per element.
+    `ratios` are the Lame ratios lambda / (lambda + mu) of the materials (and
+    the void floor) the cells will mix, tabulated exactly."""
+
+    def __init__(self, mesh: HexMesh, fixed: np.ndarray, ratios=()):
+        from .fem import hex8_element
+
         self.mesh = mesh
         self.base = Stiffness(mesh, 0.3, fixed)
-        kl, km = _ke_parts()
-        self.kl, self.km = kl * mesh.pitch, km * mesh.pitch
+        self.element = hex8_element()
+        if self.element == "plain":
+            q = np.zeros(1)
+        else:
+            q = np.unique(np.concatenate([_Q_GRID, np.asarray(ratios, float).ravel()]))
+        self.q = q
+        self.kl, self.km = [], []
         self._blocks = []
-        for a in range(8):
-            for b in range(8):
-                self._blocks.append((self.kl[3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel(),
-                                     self.km[3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel()))
+        for qq in q:
+            kl, km = _ke_parts(qq, self.element)
+            self.kl.append(kl * mesh.pitch)
+            self.km.append(km * mesh.pitch)
+            self._blocks.append([(self.kl[-1][3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel(),
+                                  self.km[-1][3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel())
+                                 for a in range(8) for b in range(8)])
+        self._lm = None
+
+    def _bins(self, lam, mu):
+        lam = np.broadcast_to(np.asarray(lam, float), (self.mesh.n_elem,))
+        mu = np.broadcast_to(np.asarray(mu, float), (self.mesh.n_elem,))
+        s = lam + mu
+        if len(self.q) == 1:
+            z = np.zeros(len(lam), np.int64)
+            return lam, mu, s, z, np.zeros(len(lam)), np.ones(len(lam))
+        q = np.clip(lam / s, self.q[0], self.q[-1])
+        j = np.clip(np.searchsorted(self.q, q, side="right") - 1, 0, len(self.q) - 2)
+        dq = self.q[j + 1] - self.q[j]
+        return lam, mu, s, j, (q - self.q[j]) / dq, dq
+
+    def _nodes(self, j, w):
+        """(node, element indices, weight) for every tabulated ratio in use."""
+        out = []
+        for g in np.unique(np.concatenate([j, j + 1]) if len(self.q) > 1 else j):
+            lo, hi = np.nonzero(j == g)[0], np.nonzero(j + 1 == g)[0] if len(self.q) > 1 else np.zeros(0, int)
+            el = np.concatenate([lo, hi])
+            wt = np.concatenate([1.0 - w[lo], w[hi]])
+            keep = wt != 0.0
+            if keep.any():
+                out.append((int(g), el[keep], wt[keep]))
+        return out
 
     def assemble(self, lam, mu, springs=None):
         st = self.base
         data = np.zeros(st.nnz)
-        lam = np.asarray(lam, float)[:, None]
-        mu = np.asarray(mu, float)[:, None]
-        for (slots, _), (bl, bm) in zip(st._pairs, self._blocks):
-            data[slots] += lam * bl + mu * bm
+        lam, mu, _, j, w, _ = self._bins(lam, mu)
+        self._lm = (np.array(lam), np.array(mu))
+        for g, el, wt in self._nodes(j, w):
+            a, b = (wt * lam[el])[:, None], (wt * mu[el])[:, None]
+            for (slots, _), (bl, bm) in zip(st._pairs, self._blocks[g]):
+                data[slots[el]] += a * bl + b * bm
         k = st.finish(data)
         if springs is not None:
             k = (k + springs).tocsr()
         return k
 
-    def energies(self, u):
-        """Per element (u^T K_l u, u^T K_m u)."""
+    def apply(self, ue, lam=None, mu=None):
+        """Per element K_e u_e (ne, 24)."""
+        lam, mu = (lam, mu) if lam is not None else self._lm
+        lam, mu, _, j, w, _ = self._bins(lam, mu)
+        out = np.zeros_like(ue)
+        for g, el, wt in self._nodes(j, w):
+            out[el] += (wt * lam[el])[:, None] * (ue[el] @ self.kl[g]) + (wt * mu[el])[:, None] * (ue[el] @ self.km[g])
+        return out
+
+    def pair(self, x, y, lam=None, mu=None):
+        """Per element (x^T dK/dlambda y, x^T dK/dmu y), the derivatives of
+        the tabulated K (interpolation slope included), at the moduli last
+        assembled unless given."""
+        lam, mu = (lam, mu) if lam is not None else self._lm
+        lam, mu, s, j, w, dq = self._bins(lam, mu)
+        n = len(lam)
+        fl = np.zeros((2, n))
+        fm = np.zeros((2, n))
+        for g in np.unique(j):
+            el = np.nonzero(j == g)[0]
+            for side in (0, 1) if len(self.q) > 1 else (0,):
+                kl, km = self.kl[g + side], self.km[g + side]
+                fl[side, el] = np.einsum("ij,jk,ik->i", x[el], kl, y[el])
+                fm[side, el] = np.einsum("ij,jk,ik->i", x[el], km, y[el])
+        if len(self.q) == 1:
+            return fl[0], fm[0]
+        el_ = (1 - w) * fl[0] + w * fl[1]
+        em_ = (1 - w) * fm[0] + w * fm[1]
+        d = (lam * (fl[1] - fl[0]) + mu * (fm[1] - fm[0])) / dq       # x^T dK/dq y
+        return el_ + d * mu / s ** 2, em_ - d * lam / s ** 2
+
+    def energies(self, u, lam=None, mu=None):
+        """Per element (u^T dK/dlambda u, u^T dK/dmu u); lambda times the
+        first plus mu times the second is the element's u^T K u."""
         ue = u[self.mesh.edof]
-        return np.einsum("ij,jk,ik->i", ue, self.kl, ue), np.einsum("ij,jk,ik->i", ue, self.km, ue)
+        return self.pair(ue, ue, lam, mu)
 
     def stress(self, u, lam, mu):
-        """Element-centre stress (ne, 6), engineering shear strain."""
+        """Element-centre stress (ne, 6), engineering shear strain (the
+        bubbles have no strain at the centre)."""
         b = _b_matrix(0.0, 0.0, 0.0) / self.mesh.pitch
         eps = u[self.mesh.edof] @ b.T
         tr = eps[:, :3].sum(axis=1)
@@ -452,7 +579,8 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
     e_max = Es.max()
     lam_min, mu_min = lame(E_FLOOR * e_max, 0.3)
     springs = e_max * domain.springs if domain.springs is not None else None
-    stiff = LameStiffness(mesh, domain.fixed)
+    stiff = LameStiffness(mesh, domain.fixed, ratios=np.concatenate([lam_i / (lam_i + mu_i),
+                                                                     [lam_min / (lam_min + mu_min)]]))
     solver = Solver(mesh, rtol=1e-6, maxiter=2000)
     h, hs = density_filter(domain, radius)
     hs_y = np.asarray(h @ np.ones(n)).ravel()
@@ -473,7 +601,14 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
     build_axis = _build_axis(study)
     pairs = [(i, j) for i in range(N) for j in range(i + 1, N)]
     cards = {p: interface_card(mm, *p, study.process) for p in pairs}
+    flat_cards = {p: interface_card(mm, *p, study.process, interlock=False) for p in pairs}
     sf_int = mm.interface_safety_factor or (study.goal.safety_factor if study.goal.safety_factor else 2.0)
+    # a knock with its own safetyFactor is judged at it (an accidental
+    # load, at its peak), every other case at the interface's
+    case_sf = [sf_int] * len(domain.loads)
+    for r in mm.requirements:
+        if r.kind == "knock" and r.safety_factor:
+            case_sf[list(domain.case_names).index(r.case)] = r.safety_factor
     mirror = domain.mirror or {}
 
     # the y a fixed cell holds
@@ -518,6 +653,18 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
                      {names.index(r.relative_to) for r in mm.requirements if r.relative_to})
     solver_v = Solver(mesh, rtol=1e-6, maxiter=2000)
     uv = {}
+    # The stored-energy limit skips the cells that touch the knock's loaded
+    # nodes or a support: a load spread over a face's nodes concentrates
+    # there as no real contact does (verification leaves the same band out).
+    # Without this the limit could never be met under a face load, and MMA,
+    # chasing it at full projection, emptied the bracket.
+    away = {}
+    for r in mm.requirements:
+        if r.kind == "knock":
+            ci = names.index(r.case)
+            nodes = np.abs(loads[ci].reshape(-1, 3)).sum(axis=1) > 0
+            nodes |= domain.support_nodes
+            away[ci] = (~nodes[mesh.enode].any(axis=1)).astype(float)
     frozen = False
     f0_frozen = None
     beta_max_at = 0 if beta >= beta_max else None
@@ -554,7 +701,7 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
         dlam_dx = PENALTY * xb ** (PENALTY - 1) * (wp.T @ lam_i)
         dmu_dx = PENALTY * xb ** (PENALTY - 1) * (wp.T @ mu_i)
         dwp = PENALTY * w ** (PENALTY - 1)                     # (N, n)
-        energies = [stiff.energies(u) for u in us]
+        energies = [stiff.energies(u, lam_e, mu_e) for u in us]
 
         def grad_c(ci):
             """dC_ci / d(xb) and / d(yb) (m_y, n)."""
@@ -584,11 +731,21 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
             gnum_x, gden_x = np.zeros(n), np.zeros(n)
             gnum_w, gden_w = np.zeros((N, n)), np.zeros((N, n))
             worst = 0.0
+            # the interlock's lattice stays off the outer surface: there the
+            # bond is flat, as verification judges it
+            shallow = None
+            if mm.interlock is not None:
+                sg = domain.full_grid((xb > 0.5).astype(float)) > 0.5
+                dep = (ndimage.distance_transform_edt(np.pad(sg, 1))[1:-1, 1:-1, 1:-1] - 0.5) * domain.pitch
+                shallow = dep[tuple(mesh.elem_ijk.T)] < (mm.interlock.avoid or mm.interlock.beam_width)
             for p in pairs:
                 util = np.zeros(n)
-                for s_ in stress:
-                    util = np.maximum(util, _traction_util(s_, normals[p], cards[p], build_axis))
-                uq = (util * sf_int) ** PNORM
+                for s_, sfc in zip(stress, case_sf):
+                    u_ = _traction_util(s_, normals[p], cards[p], build_axis)
+                    if shallow is not None and "interlock" in cards[p] and shallow.any():
+                        u_[shallow] = _traction_util(s_[shallow], normals[p][shallow], flat_cards[p], build_axis)
+                    util = np.maximum(util, sfc * u_)
+                uq = util ** PNORM
                 i, j = p
                 band = 4.0 * w[i] * w[j]
                 num += float((xb * band * uq).sum())
@@ -654,8 +811,7 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
             def grad_v(ca, cb):
                 """d(f_ca . u_cb) on the Voigt model = -u_ca^T dK u_cb."""
                 ua, ub = uv[ca][mesh.edof], uv[cb][mesh.edof]
-                el = np.einsum("ij,jk,ik->i", ua, stiff.kl, ub)
-                em = np.einsum("ij,jk,ik->i", ua, stiff.km, ub)
+                el, em = stiff.pair(ua, ub, lam_v, mu_v)
                 gx = -(el * dlv_dx + em * dmv_dx)
                 gw = -wfac * (el[None, :] * lam_i[:, None] + em[None, :] * mu_i[:, None])
                 return gx, np.einsum("in,ijn->jn", gw, dw)
@@ -711,7 +867,7 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
             gv, gxx, gyy, peak_r = _energy_constraint(
                 stiff, sol_v, kv, loads[ci], uv[ci], float(loads[ci] @ uv[ci]), r.energy * 1000.0, lam_v, mu_v,
                 xb, w, dlv_dx, dmv_dx, *((xb, np.ones_like(w)) if VOIGT_SOFTNESS else (xpp, dwp)), dw, lam_i, mu_i, resil,
-                (r.safety_factor or sf_int) ** 2, max(volume_fraction * n, 1.0))
+                (r.safety_factor or sf_int) ** 2, max(volume_fraction * n, 1.0), away[ci])
             req_vals[r.case]["energyUtilization"] = peak_r
             # as ln P, for the same reason as the interface
             pv = max(gv + 1.0, 1e-12)
@@ -799,7 +955,7 @@ VOIGT_SOFTNESS = False
 
 
 def _energy_constraint(stiff, solver, k, f, u, comp, energy, lam_e, mu_e, xb, w, dlam_dx, dmu_dx, xpp, dwp,
-                       dw, lam_i, mu_i, resil, sf2, n_solid):
+                       dw, lam_i, mu_i, resil, sf2, n_solid, mask=None):
     """A knock stops when the part has stored its energy E: at peak force
     the strain energy density in a cell is sed_e * 2E / C (the case's
     field scaled to the peak). Each cell can store R_e = x_e sum_i w_i
@@ -812,30 +968,30 @@ def _energy_constraint(stiff, solver, k, f, u, comp, energy, lam_e, mu_e, xb, w,
     and R as x, so empty cells away from the load read near zero.
     Returns (g, dg/dxb, dg/dyb, max r over the solid)."""
     h3 = stiff.mesh.pitch ** 3
-    el, em = stiff.energies(u)
+    el, em = stiff.energies(u, lam_e, mu_e)
     sed = 0.5 * (lam_e * el + mu_e * em) / h3
     Rw = w.T @ resil
     R = np.maximum(xb * Rw, 1e-12)
     a = sf2 * 2.0 * energy / comp
-    r = a * sed / R
+    m = np.ones_like(R) if mask is None else mask
+    r = a * sed / R * m
     q = PNORM
     S = float((r ** q).sum()) / n_solid
     P = S ** (1.0 / q)
     g = P - 1.0
     dP_dr = P ** (1.0 - q) * r ** (q - 1.0) / n_solid
-    coef = dP_dr * a / R / h3
+    coef = dP_dr * a / R / h3 * m
     ue = u[stiff.mesh.edof]
-    ke_u = (lam_e[:, None] * (ue @ stiff.kl) + mu_e[:, None] * (ue @ stiff.km))
+    ke_u = stiff.apply(ue, lam_e, mu_e)
     rhs = np.bincount(stiff.mesh.edof.ravel(), weights=(coef[:, None] * ke_u).ravel(),
                       minlength=stiff.mesh.n_dof)
     rhs -= float((dP_dr * r).sum()) / comp * f
     rhs[stiff.base.fixed] = 0.0
     psi = solver.solve_many(k, [rhs])[0]
     pe = psi[stiff.mesh.edof]
-    cl = np.einsum("ij,jk,ik->i", pe, stiff.kl, ue)
-    cm = np.einsum("ij,jk,ik->i", pe, stiff.km, ue)
-    g_lam = dP_dr * a / R * 0.5 * el / h3 - cl
-    g_mu = dP_dr * a / R * 0.5 * em / h3 - cm
+    cl, cm = stiff.pair(pe, ue, lam_e, mu_e)
+    g_lam = dP_dr * a / R * m * 0.5 * el / h3 - cl
+    g_mu = dP_dr * a / R * m * 0.5 * em / h3 - cm
     gx = g_lam * dlam_dx + g_mu * dmu_dx - dP_dr * r / R * Rw
     gw = (xpp * dwp) * (g_lam[None, :] * lam_i[:, None] + g_mu[None, :] * mu_i[:, None])
     gw -= (dP_dr * r / R * xb)[None, :] * resil[:, None]
@@ -914,9 +1070,71 @@ def _region_mesh(domain, labels, k, upsample=3):
     return m
 
 
-def split_bodies(domain, labels, solid_mesh, names) -> list:
+def _region_mesh_interlocked(domain, labels, k, il, build_axis=2, phase=None, names=None):
+    """As _region_mesh, with the interlock's beam lattice (interlock.py) in
+    a band round material k's boundary, on a grid fine enough for its
+    beams (half a beam wide in plane, half a beam layer along the build
+    axis)."""
+    import trimesh
+    from skimage.measure import marching_cubes
+
+    from .interlock import interlocked_indicator
+
+    g = domain.full_grid(labels.astype(float), fill=-1)
+    have = g >= 0
+    _, idx = ndimage.distance_transform_edt(~have, return_indices=True)
+    g = g[tuple(idx)].astype(np.int64)
+    pad = 2
+    gp = np.pad(g, pad, mode="edge")
+    ind = ndimage.gaussian_filter((gp == k).astype(float), 0.6)
+    solid = ndimage.gaussian_filter(np.pad(have, pad).astype(float), 0.6)
+    # the material on the other side of k's boundary, for il.pairs
+    other = np.where(gp != k, gp, -1)
+    _, oidx = ndimage.distance_transform_edt(other < 0, return_indices=True)
+    near_other = other[tuple(oidx)]
+    spacing = np.full(3, 0.5 * il.beam_width)
+    spacing[build_axis] = 0.5 * il.layer_height
+    lo = domain.origin - pad * domain.pitch
+    hi = lo + np.array(gp.shape) * domain.pitch
+    n = np.maximum(np.ceil((hi - lo) / spacing).astype(int), 2)
+    axes = [lo[a] + (np.arange(n[a]) + 0.5) * spacing[a] for a in range(3)]
+    # coarse index (fractional) of each fine point: coarse cell c's centre is lo + (c + 0.5) pitch
+    ci = [(ax - lo[a]) / domain.pitch - 0.5 for a, ax in enumerate(axes)]
+    grid = np.meshgrid(*ci, indexing="ij")
+    fine = ndimage.map_coordinates(ind, grid, order=1, mode="nearest") > 0.5
+    # boundary avoidance (as Cura's): no beams within a beam (and half a
+    # cell, the coarse solid's error) of the part's surface, where the band
+    # would leave slivers; the bond there stays flat
+    fsolid = ndimage.map_coordinates(solid, grid, order=1, mode="constant") > 0.5
+    avoid = il.avoid if il.avoid is not None else il.beam_width + 0.5 * domain.pitch
+    mask = ndimage.distance_transform_edt(fsolid, sampling=spacing) >= avoid
+    del fsolid
+    if names is not None and il.pairs:
+        ok = np.array([j >= 0 and j != k and il.applies(names[k], names[j]) for j in range(len(names))] + [False])
+        nn = ndimage.map_coordinates(near_other.astype(float), grid, order=0, mode="nearest").astype(np.int64)
+        mask &= ok[np.where(nn >= 0, nn, len(names))]
+    del grid
+    origin = np.array([ax[0] for ax in axes])
+    if phase is None:
+        phase = domain.origin
+    fine = interlocked_indicator(fine, spacing, origin, il, build_axis, phase, mask)
+    if not fine.any():
+        return None
+    f = ndimage.gaussian_filter(fine.astype(np.float32), 0.35)
+    f = np.pad(f, 1, constant_values=0.0)
+    verts, faces, _, _ = marching_cubes(f, 0.5, spacing=tuple(spacing))
+    verts = verts - spacing + origin
+    m = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
+    if m.volume < 0:
+        m.invert()
+    return m
+
+
+def split_bodies(domain, labels, solid_mesh, names, interlock=None, build_axis=2) -> list:
     """Cut the delivered solid into one body per material with exact
-    booleans: [(material index, trimesh)], bodies sharing their interfaces."""
+    booleans: [(material index, trimesh)], bodies sharing their interfaces.
+    With an interlock (interlock.Interlock), the bodies interpenetrate in
+    its beam lattice where they meet."""
     from .shapes import manifold_from_trimesh, trimesh_from_manifold
 
     whole = manifold_from_trimesh(solid_mesh)
@@ -925,8 +1143,12 @@ def split_bodies(domain, labels, solid_mesh, names) -> list:
         return [(present[0] if present else 0, solid_mesh)]
     rest = whole
     out = []
+    phase = np.asarray(solid_mesh.bounds[0], float)
     for k in present[:-1]:
-        reg = _region_mesh(domain, labels, k)
+        if interlock is not None:
+            reg = _region_mesh_interlocked(domain, labels, k, interlock, build_axis, phase, names)
+        else:
+            reg = _region_mesh(domain, labels, k)
         if reg is None:
             continue
         body = rest ^ manifold_from_trimesh(reg)
@@ -982,7 +1204,7 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
     nus = np.array([m.nu for m in mm.materials])
     lam_i, mu_i = lame(Es, nus)
     lam_e, mu_e = lam_i[mat], mu_i[mat]
-    stiff = LameStiffness(hm, bc.fixed)
+    stiff = LameStiffness(hm, bc.fixed, ratios=lam_i / (lam_i + mu_i))
     springs = Es.max() * bc.springs if bc.springs is not None else None
     k = stiff.assemble(lam_e, mu_e, springs)
     solver = Solver(hm, rtol=1e-6, maxiter=4000, rebuild_after_iters=10_000)
@@ -994,7 +1216,13 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
     N = len(mm.materials)
     pairs = [(i, j) for i in range(N) for j in range(i + 1, N)]
     cards = {p: interface_card(mm, *p, study.process) for p in pairs}
+    flat = {p: interface_card(mm, *p, study.process, interlock=False) for p in pairs}
     req = {r.case: r for r in mm.requirements}
+    # interlocked bond only where the lattice is: avoid (mm) inside the surface
+    il = mm.interlock
+    depth = (ndimage.distance_transform_edt(np.pad(label >= 0, 1))[1:-1, 1:-1, 1:-1] - 0.5) * pitch
+    depth_c = depth[tuple(ijk.T)]
+    il_avoid = (il.avoid if il.avoid is not None else il.beam_width) if il is not None else np.inf
 
     # interface faces: neighbours along each axis with different materials
     lut = np.full(label.shape, -1, np.int64)
@@ -1011,6 +1239,7 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
         a = np.nonzero(hit)[0]
         faces.append((a, j[a], ax))
     face_area = sum(len(a) for a, _, _ in faces) * pitch ** 2
+    deep_area = sum(int((np.minimum(depth_c[a], depth_c[b]) >= il_avoid).sum()) for a, b, _ in faces) * pitch ** 2
     pair_area = {}
     for a, b, _ in faces:
         for p in pairs:
@@ -1071,7 +1300,11 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
                 sm = 0.5 * (s[a[sel]] + s[b[sel]])
                 nrm = np.zeros((int(sel.sum()), 3))
                 nrm[:, ax] = 1.0
-                utils.append(_traction_util(sm, nrm, cards[p], build_axis))
+                ut_ = _traction_util(sm, nrm, cards[p], build_axis)
+                shallow = np.minimum(depth_c[a[sel]], depth_c[b[sel]]) < il_avoid
+                if shallow.any() and cards[p] is not flat[p] and "interlock" in cards[p]:
+                    ut_[shallow] = _traction_util(sm[shallow], nrm[shallow], flat[p], build_axis)
+                utils.append(ut_)
                 where.append(0.5 * (centres[a[sel]] + centres[b[sel]]))
             if not utils:
                 continue
@@ -1119,6 +1352,8 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
         "requirementsMet": all(c.get("knock", c.get("indentation", {"meets": True}))["meets"] for c in cases),
     }
     rep["voxelInterfaceArea"] = face_area
+    if il is not None:
+        rep["interlockedFraction"] = deep_area / face_area if face_area > 0 else 0.0
     return rep
 
 
@@ -1158,6 +1393,11 @@ class MultiMaterialResult:
                                                    process=self.study.process, slicer=self.mm.slicer)
         except ImportError:
             pass
+        if self.optimum is not None:
+            # the design fields, so the bodies can be re-split without re-optimizing
+            np.savez_compressed(out / "optimum.npz", x=self.optimum.x, y=self.optimum.y,
+                                xphys=self.optimum.xphys, w=self.optimum.w)
+            files["optimum"] = str(out / "optimum.npz")
         rep = dict(self.report)
         rep["files"] = files
         rep["outcomes"] = self.outcomes
@@ -1184,13 +1424,28 @@ def _jsonable(o):
 
 
 def _margin(study, mm, rep):
+    """The design's margin on its goals (>= 1 passes): per case, the
+    materials against the goal's safety factor and the bonds against the
+    interface's, except a knock with its own safetyFactor, judged at it."""
     g = study.goal
     ms = []
-    if g.safety_factor:
-        ms.append(rep["safetyFactor"] / g.safety_factor)
     sfi = mm.interface_safety_factor or g.safety_factor
-    if sfi and rep["interfaceSafetyFactor"] < np.inf:
-        ms.append(rep["interfaceSafetyFactor"] / sfi)
+    own = {r.case: r.safety_factor for r in mm.requirements if r.kind == "knock" and r.safety_factor}
+    if rep.get("cases"):
+        for c in rep["cases"]:
+            sm, si = own.get(c["name"], g.safety_factor), own.get(c["name"], sfi)
+            if sm:
+                for v in c.get("materials", {}).values():
+                    ms.append(v["safetyFactor"] / sm)
+            if si:
+                for v in c.get("interfaces", {}).values():
+                    if v["safetyFactor"] < np.inf:
+                        ms.append(v["safetyFactor"] / si)
+    else:
+        if g.safety_factor:
+            ms.append(rep["safetyFactor"] / g.safety_factor)
+        if sfi and rep["interfaceSafetyFactor"] < np.inf:
+            ms.append(rep["interfaceSafetyFactor"] / sfi)
     if g.max_deflection:
         ms.append(g.max_deflection / max(rep["maxDisplacement"], 1e-12))
     return min(ms) if ms else None
@@ -1210,6 +1465,8 @@ def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int =
     if study.gravity is not None:
         emit({"stage": "warning", "message": "multiMaterial leaves self-weight out of the optimization"})
     domain = build_domain(study)
+    if mm.interlock is not None and mm.interlock.avoid is None:
+        mm.interlock.avoid = mm.interlock.beam_width + 0.5 * domain.pitch
     radius = filter_radius(domain, study.length_scale, study.min_hole)
     emit({"stage": "domain", "cells": domain.n_elem, "pitch": domain.pitch, "warnings": domain.warnings})
     tried = {}
@@ -1280,9 +1537,25 @@ def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int =
         pick = max(tried, key=lambda v: (tried[v][2]["margin"] or 0.0))
     res, bodies, rep = tried[pick]
     rep = dict(rep)
+    if mm.interlock is not None and len(bodies) > 1:
+        # verification judged the smooth interface against the interlocked
+        # card; the delivered bodies carry the lattice
+        emit({"stage": "interlock", "volumeFraction": pick})
+        solid, _ = reconstruct(study, domain, res.xphys, ReconstructOptions())
+        labels = material_labels(domain, res.xphys, res.w)
+        try:
+            locked = split_bodies(domain, labels, solid, mm.names, interlock=mm.interlock,
+                                  build_axis=_build_axis(study) or 2)
+            rep["interlock"] = {**mm.interlock.to_dict(), "verifiedOn": "smooth interface, interlocked card",
+                                "bodies": [{"material": mm.materials[k_].name, "volume": float(m_.volume),
+                                            "watertight": bool(m_.is_watertight)} for k_, m_ in locked]}
+            bodies = locked
+        except Exception as exc:   # noqa: BLE001 - a failed lattice leaves the smooth bodies
+            rep.setdefault("warnings", []).append(f"interlock not built ({exc}); bodies have flat interfaces")
     rep["multiMaterial"] = {"materials": [m.to_dict() for m in mm.materials],
                             "requirements": [r.to_dict() for r in mm.requirements],
-                            "interfaceSafetyFactor": mm.interface_safety_factor}
+                            "interfaceSafetyFactor": mm.interface_safety_factor,
+                            "interlock": mm.interlock.to_dict() if mm.interlock is not None else None}
     summary = [{"volumeFraction": v, "mass": t[2]["mass"], "safetyFactor": t[2]["safetyFactor"],
                 "interfaceSafetyFactor": t[2]["interfaceSafetyFactor"], "margin": t[2]["margin"],
                 "passes": t[2]["passes"], "materialFraction": t[2]["materialFraction"]}

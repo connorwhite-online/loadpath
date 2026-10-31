@@ -1577,7 +1577,7 @@ class FieldGraph:
         flat faces and keep-outs keep their edges; false meshes the whole
         field, every crease rounded over about one pitch.
 
-        `creases` (default the graph's mesh.creases, else false): hard
+        `creases` (default the graph's mesh.creases, else true): hard
         booleans between field surfaces (a lattice clipped by a body, two
         bodies unioned without a blend, a shell's rim) get their creases back
         on the meshed field (crease.py)."""
@@ -1585,7 +1585,7 @@ class FieldGraph:
         pitch = pitch or m.get("pitch")
         project = m.get("project", 3) if project is None else project
         sharp = m.get("sharp", True) if sharp is None else sharp
-        creases = m.get("creases", False) if creases is None else creases
+        creases = m.get("creases", True) if creases is None else creases
         if bounds is None and "bounds" in self.doc:
             bounds = (self.doc["bounds"]["min"], self.doc["bounds"]["max"])
         if bounds is None:
@@ -1595,16 +1595,27 @@ class FieldGraph:
                                  "intersect it with a solid or give the graph 'bounds'")
         from . import quick
         pitch = quick.mesh_pitch(pitch, bounds)
+        fallback = None
         if sharp:
             from .sharp import has_exact, mesh_plan, plan
 
             p = plan(self, name)
             if has_exact(p):
                 # set after meshing: a result node meshes another node on the way
-                mesh = mesh_plan(p, bounds[0], bounds[1], pitch=pitch, project=project, progress=progress,
-                                 decimate=m.get("decimate"), creases=self if creases else None)
-                self.plan = p
-                return mesh
+                try:
+                    mesh = mesh_plan(p, bounds[0], bounds[1], pitch=pitch, project=project, progress=progress,
+                                     decimate=m.get("decimate"), creases=self if creases else None)
+                except ValueError as exc:
+                    # a field leaf whose mesh the exact booleans can't take
+                    # (a fine lattice's mesh that isn't a valid manifold even
+                    # after repair): mesh the whole field instead, the hard
+                    # edges rounded over a pitch, rather than fail the part
+                    if "not a valid manifold" not in str(exc):
+                        raise
+                    fallback = str(exc)
+                else:
+                    self.plan = p
+                    return mesh
         tree = None
         if creases:
             from .crease import CreaseTree
@@ -1612,6 +1623,8 @@ class FieldGraph:
             tree = CreaseTree.from_graph(self, name)
         mesh = field_mesh(self.field(name), bounds[0], bounds[1], pitch=pitch, project=project, progress=progress,
                           decimate=m.get("decimate"), creases=tree)
+        if fallback:
+            mesh.metadata["sharpFallback"] = fallback
         self.plan = None
         return mesh
 

@@ -303,15 +303,24 @@ def _build_sim(spec, process, material):
     warp = float(spec.get("warpWeight", 0.0))
     if warp < 0:
         raise ValueError("buildSim.warpWeight is a weight >= 0 (0: verify only)")
-    if warp > 0:
+    lim_d = float(spec["maxDistortion"]) if spec.get("maxDistortion") is not None else None
+    lim_l = float(spec["maxRecoaterLift"]) if spec.get("maxRecoaterLift") is not None else None
+    for name, v in (("maxDistortion", lim_d), ("maxRecoaterLift", lim_l)):
+        if v is not None and v <= 0:
+            raise ValueError(f"buildSim.{name} is a limit in mm > 0")
+    if warp > 0 or lim_d is not None or lim_l is not None:
+        what = "warpWeight" if warp > 0 else "maxDistortion / maxRecoaterLift"
         if kind not in ("lpbf", "fdm"):
-            raise ValueError("buildSim.warpWeight designs against a layer-by-layer build: process lpbf or fdm")
+            raise ValueError(f"buildSim.{what} designs against a layer-by-layer build: process lpbf or fdm")
         if process.build == "auto" or process.build is None or len(process.build) != 2:
-            raise ValueError("buildSim.warpWeight needs process.buildDirection along a grid axis "
+            raise ValueError(f"buildSim.{what} needs process.buildDirection along a grid axis "
                              "('+z', '-y', ...), not 'auto' or a tilted vector")
+    coarsen = spec.get("warpCoarsen")
     return {"setup": setup, "compensate": bool(spec.get("compensate", False)),
             "cells": int(spec.get("cells", 60_000)), "iterations": int(spec.get("iterations", 2)),
-            "warpWeight": warp, "warpLayer": float(spec["warpLayer"]) if spec.get("warpLayer") else None}
+            "warpWeight": warp, "warpLayer": float(spec["warpLayer"]) if spec.get("warpLayer") else None,
+            "maxDistortion": lim_d, "maxRecoaterLift": lim_l,
+            "warpCoarsen": int(coarsen) if coarsen is not None else None}
 
 
 def _slicer(spec, process, base_dir, goal):
@@ -433,7 +442,13 @@ def _thermal(t, base_dir) -> Thermal | None:
         steps = cy.get("steps", 48)
         if isinstance(steps, bool) or not isinstance(steps, int) or steps < 8:
             raise ValueError("thermal.cycle.steps is a whole number of time steps per period, at least 8")
-        out.cycle = Cycle(period, on, n, steps)
+        fw = cy.get("fatigueWeight", 0.0)
+        fw = num(fw, "thermal.cycle.fatigueWeight")
+        if fw < 0:
+            raise ValueError("thermal.cycle.fatigueWeight must be >= 0")
+        if fw > 0 and out.expansion is False:
+            raise ValueError("thermal.cycle.fatigueWeight needs expansion: without it the swing carries no stress")
+        out.cycle = Cycle(period, on, n, steps, fw)
     if not out.temperatures and not any(h > 0 for *_, h, _ in out.convection):
         raise ValueError("thermal needs a way for heat out: a fixed temperature (temperatures) or convection")
     if not out.temperatures and not out.heat and out.t_ref == out.ambient:
@@ -669,7 +684,8 @@ def _expand_planar(d: dict) -> dict:
         ld = loads[li]
         if ld.get("cone") is not None or ld.get("mass") is not None or ld.get("pressure") is not None:
             raise ValueError(f"loadCases[{ci}].loads[{li}]: an in-plane direction goes with a force, not a cone, "
-                             "mass or pressure")
+                             "mass or pressure. For a swinging payload, write the force out: mass (kg) x 9.81 x the dynamic "
+                             "factor, in N, e.g. 0.6 kg at 2 g is \"force\": [11.8, 0, 0]")
         a, b = _PLANES[ld["direction"]]
         f = np.asarray(ld.get("force") or [0, 0, 0], float)
         size = float(np.linalg.norm(f))
@@ -681,8 +697,16 @@ def _expand_planar(d: dict) -> dict:
         normal[3 - a - b] = 1.0 if (a, b) != (0, 2) else -1.0   # right-handed: a x b
         m0 = np.asarray(ld.get("moment") or [0, 0, 0], float)
         name = c.get("name") or f"case{ci}"
-        for k in range(_PLANAR_STEPS):
-            t = np.pi * k / _PLANAR_STEPS
+        # Half a circle covers it only when the stress under -F is the stress
+        # under F: the case's one load, spread evenly, with no moment and an
+        # isotropic, tension-blind check. A bearing load presses on one side
+        # of the bore, other loads add, a moment does not turn round, and a
+        # layered process fails on interlayer tension: the full circle then.
+        full = (len(loads) > 1 or ld.get("distribution") == "bearing" or ld.get("moment") is not None
+                or d.get("process") is not None or d.get("printDirection") is not None)
+        steps, span = (2 * _PLANAR_STEPS, 2 * np.pi) if full else (_PLANAR_STEPS, np.pi)
+        for k in range(steps):
+            t = span * k / steps
             fk = np.zeros(3)
             fk[a], fk[b] = size * np.cos(start + t), size * np.sin(start + t)
             # the moment turns with the force about the plane's normal
