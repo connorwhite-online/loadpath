@@ -18,13 +18,14 @@
   "loadCases": [
     {"name": "shelf", "loads": [{"region": "shelf-pad", "force": [0, -100, 0]}]},
     {"name": "pull", "loads": [{"region": "shelf-pad", "force": [0, -40, 15]}]},
-    {"name": "knock", "loads": [{"region": "nose", "force": [-100, 0, 0]}]}
+    {"name": "knock", "loads": [{"shape": {"type": "box", "min": [99.5, 40, -15], "max": [100, 80, 15]}, "force": [-100, 0, 0]}]}
   ],
   "process": {"type": "fdm", "buildDirection": "+z"},
   "multiMaterial": {
     "materials": ["petg", "tpu"],
     "assign": [{"region": "shelf-pad", "material": "petg"}],
     "requirements": [{"case": "knock", "knock": {"energy": 0.2, "maxForce": 150}}],
+    "interlock": true,
     "export": {"slicer": "all"}
   },
   "goal": {"volumeFraction": 0.2, "safetyFactor": 3.0},

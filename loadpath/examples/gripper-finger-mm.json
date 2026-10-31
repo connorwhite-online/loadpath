@@ -171,7 +171,8 @@
         },
         "material": "tpu"
       }
-    ]
+    ],
+    "interlock": true
   },
   "goal": {
     "volumeFraction": 0.4,
