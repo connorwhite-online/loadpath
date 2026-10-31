@@ -2026,9 +2026,10 @@ def _gradient(field, V, h):
     return f0, g
 
 
-def _project(field, V, pitch, f0=None, g=None):
+def _project(field, V, pitch, f0=None, g=None, backtrack=0):
     """One Newton step of every vertex onto field = 0, step capped at
-    pitch / 2 and kept only where |f| drops."""
+    pitch / 2 and kept only where |f| drops (halved up to `backtrack`
+    times where it does not)."""
     from .narrowband import peval
 
     if f0 is None:
@@ -2040,6 +2041,72 @@ def _project(field, V, pitch, f0=None, g=None):
     cand = V + step
     f1 = peval(field, cand)
     ok = np.abs(f1) < np.abs(f0)
+    out = np.where(ok[:, None], cand, V)
+    for _ in range(backtrack):
+        bad = np.flatnonzero(~ok)
+        if not len(bad):
+            break
+        step[bad] *= 0.5
+        c = V[bad] + step[bad]
+        f1 = peval(field, c)
+        good = np.abs(f1) < np.abs(f0[bad])
+        out[bad[good]] = c[good]
+        ok[bad[good]] = True
+    return out
+
+
+_RELAX_LINE = True
+_CLOSING = 6          # closing passes: two, then up to four more on a small tail
+_CLOSING_TAIL = 5000
+_SHARP_COS = float(np.cos(np.radians(25.0)))
+
+
+class _Normals:
+    """Area-weighted unit vertex normals of a mesh whose faces stay put
+    while its vertices move (the incidence is built once), and a mask of
+    the vertices where some face round them leans further than `sharp` (a
+    cosine) from the normal: edges and corners, where a mesh normal is
+    not the field's gradient."""
+
+    def __init__(self, F, n):
+        import scipy.sparse as sp
+
+        self.F, self.n = F, n
+        nf = len(F)
+        vi = F.T.ravel()                  # corner k of every face, k = 0, 1, 2
+        self.M = sp.csr_matrix((np.ones(3 * nf), (vi, np.tile(np.arange(nf), 3))), shape=(n, nf))
+        self.o = np.argsort(vi, kind="stable")
+        vs = vi[self.o]
+        self.start = np.flatnonzero(np.r_[True, vs[1:] != vs[:-1]])
+        self.vs = vs[self.start]
+
+    def __call__(self, V, sharp):
+        F = self.F
+        fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+        N = self.M @ fn
+        N /= np.maximum(np.sqrt(np.einsum("ij,ij->i", N, N))[:, None], 1e-300)
+        fn /= np.maximum(np.sqrt(np.einsum("ij,ij->i", fn, fn))[:, None], 1e-300)
+        c = np.concatenate([np.einsum("ij,ij->i", fn, N[F[:, k]]) for k in range(3)])
+        lo = np.ones(self.n)
+        lo[self.vs] = np.minimum.reduceat(c[self.o], self.start)
+        return N, lo < sharp
+
+
+def _line_newton(field, V, N, pitch, h):
+    """One Newton step of each vertex along its line V + t N onto field = 0
+    (central differences: three evaluations), step capped at pitch / 2 and
+    kept only where |f| drops (a fourth)."""
+    from .narrowband import peval
+
+    n = len(V)
+    f = peval(field, np.concatenate([V, V + h * N, V - h * N]))
+    f0, fp, fm = f[:n], f[n:2 * n], f[2 * n:]
+    df = (fp - fm) / (2 * h)
+    ok = np.abs(df) > 1e-6
+    t = np.where(ok, -f0 / np.where(ok, df, 1.0), 0.0)
+    t = np.clip(t, -0.5 * pitch, 0.5 * pitch)
+    cand = V + t[:, None] * N
+    ok = np.abs(peval(field, cand)) < np.abs(f0)
     return np.where(ok[:, None], cand, V)
 
 
@@ -2077,23 +2144,53 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
     deg = np.maximum(np.diff(A.indptr), 1)
     move = np.ones(n, bool) if pinned is None else ~np.asarray(pinned, bool)
     h = 0.05 * pitch
+    line = getattr(field, "relax_line", _RELAX_LINE)
+    normals = _Normals(F, n) if line else None
+
+    def newton(idx):
+        """One Newton step of the vertices idx onto the zero level; the
+        unit normals it used (rows idx; the rest zero)."""
+        if not line:
+            f0, g = _gradient(field, V[idx], h)
+            V[idx] = _project(field, V[idx], pitch, f0, g)
+            nrm = np.zeros((n, 3))
+            nrm[idx] = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+            return nrm
+        # the mesh's own vertex normals stand in for the field's gradient
+        # direction (the mesh lies on the surface to a fraction of a
+        # pitch), and Newton runs along that line: four evaluations a
+        # vertex instead of seven. Edges and corners (a face round the
+        # vertex 25 degrees off its normal) take the true gradient: there
+        # the mesh normal bisects the faces, and smoothing in its plane
+        # rounds the edge.
+        nrm, edge = normals(V, _SHARP_COS)
+        ln, ed = idx[~edge[idx]], idx[edge[idx]]
+        V[ln] = _line_newton(field, V[ln], nrm[ln], pitch, h)
+        if len(ed):
+            f0, g = _gradient(field, V[ed], h)
+            V[ed] = _project(field, V[ed], pitch, f0, g)
+            nrm[ed] = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+        return nrm
+
     for _ in range(rounds):
-        idx = np.flatnonzero(move)
-        f0, g = _gradient(field, V[idx], h)
-        V[idx] = _project(field, V[idx], pitch, f0, g)
-        nrm = np.zeros((n, 3))
-        nrm[idx] = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+        nrm = newton(np.flatnonzero(move))
         d = (A @ V) / deg[:, None] - V
         d -= (d * nrm).sum(axis=1, keepdims=True) * nrm
         V[move] += 0.5 * d[move]
+    # closing passes: the vertices off the zero level by more than 1e-6
+    # pitch, first as the rounds did, then by the true gradient (step
+    # halved where it does not help) while few are left
     tol = 1e-6 * pitch
-    for _ in range(2):
-        idx = np.flatnonzero(move)
+    idx = np.flatnonzero(move)
+    for k in range(_CLOSING):
         f0 = peval(field, V[idx])
-        far = np.abs(f0) > tol
-        idx = idx[far]
-        if len(idx):
-            V[idx] = _project(field, V[idx], pitch)
+        idx = idx[np.abs(f0) > tol]
+        if not len(idx) or (k >= 2 and len(idx) > _CLOSING_TAIL):
+            break
+        if k == 0 and line:
+            newton(idx)
+        else:
+            V[idx] = _project(field, V[idx], pitch, backtrack=4 if k >= 2 else 0)
     return V
 
 
@@ -2108,6 +2205,10 @@ class _Cutter:
     extended field), and from 3 * eps outside it is solid. Only where the
     region's own surface crosses the part's interior does it draw one, and
     that is the interface. Clipped to `box` so it is closed."""
+
+    # its plane meets the part's faces in manifold's split: projected by the
+    # true gradient it lands on the plane exactly, as the interface needs
+    relax_line = False
 
     def __init__(self, g, terms, part, eps, box):
         self.g, self.terms, self.part = g, terms, part

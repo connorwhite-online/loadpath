@@ -77,7 +77,7 @@ def test_meet_finds_the_intersection_curve():
 
 def test_creases_are_sharp_where_the_field_rounds_them():
     """Meshed plainly, the 90 degree rim of two organic spheres is rounded
-    (about 0.65 pitch off at the rim); with mesh.creases the true circle is
+    (about 0.4-0.65 pitch off at the rim); with mesh.creases the true circle is
     within the chord sag of the mesh, and the mesh stays closed and clean."""
     for op in ("intersect", "union"):
         doc, d = _lens(op)
@@ -87,7 +87,7 @@ def test_creases_are_sharp_where_the_field_rounds_them():
         after = g.mesh(pitch=0.4, creases=True)
         e0 = mesh_distance(before, C).max()
         e1 = mesh_distance(after, C).max()
-        assert e0 > 0.2, (op, e0)
+        assert e0 > 0.12, (op, e0)
         assert e1 < 0.01, (op, e1)
         assert _closed(after) and len(after.split(only_watertight=False)) == 1
         assert after.metadata["creases"]["split"] > 50, after.metadata["creases"]
