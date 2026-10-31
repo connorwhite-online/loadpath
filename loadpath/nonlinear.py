@@ -560,8 +560,11 @@ def solid_submesh(mesh: HexMesh, keep: np.ndarray, fixed: np.ndarray, vectors: l
     ne = sub.n_elem
     inc = sp.csr_matrix((np.ones(ne * 8), (np.repeat(np.arange(ne), 8), sub.enode.ravel())), shape=(ne, sub.n_nodes))
     _, lab = connected_components(inc @ inc.T, directed=False)
-    anchored = np.unique(lab[np.any(fx[sub.enode].any(axis=2), axis=1)])
-    hold = np.isin(lab, anchored)
+    # a piece is held only if its supports restrain all three directions: a
+    # plate's symmetry plane (one direction) does not stop it floating
+    held = np.zeros((lab.max() + 1, 3), bool)
+    np.logical_or.at(held, lab, fx[sub.enode].any(axis=1))
+    hold = held[lab].all(axis=1)
     if not hold.all():
         el = el[hold]
         sub = HexMesh(mesh.elem_ijk[el], mesh.pitch, mesh.origin)

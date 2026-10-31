@@ -231,27 +231,39 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     from .mma import MMA
     mma = MMA(int(design.sum()), 1, xmin=0.0, xmax=1.0, move=opts.move)
     history, u_prev, j0 = [], {}, None
-    x_ok, backtracks = None, 0
+    x_ok, beta_ok, backtracks, beta_cap, stopped = None, beta, 0, opts.beta_max, None
     it = 0
     for it in range(1, opts.max_iterations + 1):
-        for tries in range(6):
+        real = None
+        for tries in range(8):
             xt = _extrude((h @ x) / hs, columns, design)
-            real = []
             try:
+                real, up = [], {}
                 for eta in etas:
                     xp = _project(xt, beta, eta)
                     xp[pres] = 1.0
                     j, dj, u = nonlinear_response(model, xp, opts.modulus, lvec, u_prev.get(eta), steps,
                                                   void_threshold)
-                    u_prev[eta] = u
+                    up[eta] = u
                     real.append((j, dj * _dproject(xt, beta, eta)))
+                u_prev.update(up)
                 break
             except RuntimeError:
-                if x_ok is None or tries == 5:
+                real = None
+                if x_ok is None:
                     raise
-                x = 0.5 * (x + x_ok)          # backtrack toward the last design that converged
                 backtracks += 1
-        x_ok = x.copy()
+                if beta > beta_ok:
+                    # the sharper projection is what broke it: keep the last
+                    # beta and stop sharpening
+                    beta, beta_cap = beta_ok, beta_ok
+                else:
+                    x = 0.5 * (x + x_ok)      # backtrack toward the last design that converged
+        if real is None:
+            # no nearby design reaches the full stroke: keep the last one that did
+            x, beta, stopped = x_ok, beta_ok, "the stroke could not be reached from the last design"
+            break
+        x_ok, beta_ok = x.copy(), beta
         jb = real[len(etas) // 2][0]
         if j0 is None:
             j0 = max(abs(jb), 1e-9)
@@ -282,16 +294,19 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
         if on_iter is not None:
             on_iter(rec, xp)
         since += 1
-        if beta < opts.beta_max and (since >= opts.beta_every or change < opts.tol * 2):
-            beta, since = min(beta * 2, opts.beta_max), 0
-            u_prev = {}           # the projection jumped: start the next solves from rest
-        elif beta >= opts.beta_max:
+        if beta < beta_cap and (since >= opts.beta_every or change < opts.tol * 2):
+            beta, since = min(beta * 2, beta_cap), 0
+        elif beta >= beta_cap:
             if change < opts.tol:
                 break
             if since >= 10 and len(history) > 10:
                 old = history[-11]["objective"]
                 if abs(obj - old) <= 2e-3 * abs(old):
                     break
+    if stopped:
+        history[-1]["stopped"] = stopped
+    if beta_cap < opts.beta_max:
+        history[-1]["betaCap"] = beta_cap
     xt = _extrude((h @ x) / hs, columns, design)
     xp = _project(xt, beta, 0.5)
     xp[pres] = 1.0
