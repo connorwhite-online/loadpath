@@ -34,6 +34,8 @@ gpu = ["torch>=2.2"]
 # independent cross-check on a tetrahedral mesh (crosscheck.py): fTetWild
 # (pytetwild, MPL-2.0; its package imports pyvista) meshes, gmsh (GPL, run as
 # a tool, not part of loadpath's own code) is the fallback mesher
+# lattice-Boltzmann flow and heat transfer (flow.py)
+flow = ["numba>=0.59"]
 crosscheck = ["gmsh>=4.11", "pytetwild>=0.4", "pyvista>=0.44"]
 # vision critic over interface close-ups (critic.py, evals --critic anthropic)
 critic = ["anthropic", "matplotlib>=3.8", "shapely>=2.0"]
@@ -47,6 +49,6 @@ loadpath = "loadpath.__main__:main"
 include = ["loadpath*"]
 
 [tool.setuptools.package-data]
-"loadpath" = ["SKILL.md", "README.md", "viewer.html", "examples/*.json"]
+"loadpath" = ["SKILL.md", "README.md", "viewer.html", "editor.html", "examples/*.json", "calibrations/*.json"]
 "loadpath.evals" = ["cases/*.json", "cases/*.stl", "baselines/*.json"]
 "loadpath.benchmarks" = ["cases/*.json", "reference/*.npz"]

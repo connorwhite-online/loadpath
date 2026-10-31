@@ -119,7 +119,61 @@
     "minMember": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "Thinnest member, mm."
+      "description": "Thinnest member, mm (default: 2 x the process's minFeature, else 1.4 for the filter)."
+    },
+    "minHole": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Narrowest hole or gap, mm (default: the process's minHole, else none). The optimizer pays for the material a hole this narrow would close up with, and the delivered part has it closed."
+    },
+    "drains": {
+      "anyOf": [
+        {
+          "enum": [
+            "auto"
+          ]
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "diameter": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm (default SLS 6, MJF 7.5, SLA/DLP 5.5, volumetric 5, LPBF 6.8, else 6)"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "holes per sealed void (default 2)"
+            },
+            "maxPath": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "mm: more holes while any powder is farther than this from one, through the void (default 60; null: off)"
+            },
+            "iterations": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "optimizer iterations after drilling, so the design carries load round the holes (default 20)"
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "Escape holes into voids the optimizer sealed: 'auto' (default) for powder and resin processes and LPBF, true, false, or options. The holes are drilled where the wall is thin and the strain energy low, then the design re-converges round them."
     },
     "symmetry": {
       "type": "array",
@@ -349,6 +403,11 @@
             },
             "overhangs": {
               "type": "boolean"
+            },
+            "minHole": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm: narrowest hole or gap the optimizer may leave (default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"
             },
             "escapeHole": {
               "type": "number",
@@ -1035,6 +1094,18 @@
         "pressure": {
           "type": "number",
           "description": "MPa gauge (1 bar = 0.1 MPa) inside the keepOut named by 'region' (the fluid's volume), on every wall lining it; negative is a vacuum. A study whose only loads are pressures on sealed cavities needs no supports."
+        },
+        "direction": {
+          "enum": [
+            "any"
+          ],
+          "description": "'any': the force's size may point in any direction (contact, bumps, handling); the part is designed and checked for the worst one, found exactly from three unit-force solves. At most one per load case; a bearing load's uncertain force is spread evenly over the region."
+        },
+        "cone": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 180,
+          "description": "Degrees: the force may tilt up to this far from its written direction, and the worst tilt is designed for (180 is the same as direction 'any')."
         }
       },
       "x-requireOne": [
@@ -1088,7 +1159,7 @@
       "anyOf": [
         {
           "type": "string",
-          "description": "A name: pla, petg, abs, asa, tpu, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work)."
+          "description": "A name: pla, petg, abs, asa, tpu, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py)."
         },
         {
           "type": "object",
@@ -1276,6 +1347,14 @@
             "search",
             "constrained"
           ]
+        },
+        "confirm": {
+          "enum": [
+            "auto",
+            "voxel",
+            "tet"
+          ],
+          "description": "How the lightest passing part is confirmed: voxel (a finer voxel grid), tet (a body-fitted tetrahedral mesh, which also calibrates the search's voxel stress so it steps down to the real target), or auto (tet when installed and applicable)."
         },
         "outcomes": {
           "type": "array",

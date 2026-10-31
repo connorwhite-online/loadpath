@@ -14,6 +14,90 @@ loadpath schema field                        # the JSON Schema
 From Python: `FieldGraph(doc).mesh()` or `run_field(doc, out_dir)` in
 `loadpath.fields`; agents can call `loadpath_field` over MCP.
 
+## Editing in the browser
+
+```
+loadpath edit part.json                      # opens http://127.0.0.1:8765: edit, preview, Save, Run
+loadpath edit part.json --html editor.html   # one self-contained page, no server
+```
+
+![the field editor on the arm link](images/fields/editor.png)
+
+The editor shows the graph as nodes and wires, an inspector for the
+selected node, and a live preview of the part above them. Drag from a node's
+output dot onto another node's port to wire a field into a parameter; pick
+"number" in the inspector to unwire it. Every number has a slider. The
+preview redraws as a slider moves: the page compiles the graph to a GLSL
+signed-distance function and raymarches it on the GPU, and every number in
+the graph is a shader uniform, so only a change of structure (an op, a
+wire, an expression) recompiles, in milliseconds.
+
+- **Solid** shows the output or the selected node; **Colour** paints any
+  scalar node on it (the stress, a wall ramp, a distance); a **section**
+  cuts it open and paints the cut face the same way, which is how you see
+  a graded lattice inside its skin. Hover reads the position and the
+  colour field's value.
+- What the GPU cannot evaluate is baked on the server and sent as a 3D
+  texture: a `mesh` node's distance, a `result` node's stress (its study
+  runs on load: about a minute for the arm link), a `grid`, and the cell
+  warp of a graded lattice (the same map the mesher solves, so the
+  preview's walls sit where the part's will; it re-bakes in under a
+  second as a cell slider moves). A bake that a later edit made stale
+  stays on screen until its replacement arrives; an analysis re-runs only
+  when asked, and later bakes and Run reuse it while its part is unchanged.
+- **Colour → wall thickness** paints every wall by its thickness, traced
+  in along the surface normal: red under the process's smallest feature
+  (`minFeature`: FDM and SLS 0.8 mm, SLA 0.5, LPBF 0.4, ...), amber under
+  twice it. Hover reads the thickness. On the arm link it shows the skin
+  over the gyroid's voids at 1 to 1.6 mm, thicker where a lattice wall
+  backs it.
+
+  ![wall thickness on the arm link](images/fields/editor-walls.png)
+
+  **Colour → overhangs** paints faces that point down past 45 degrees
+  from vertical along the build direction (the graph's `build`, else +z)
+  red, and those within 10 degrees of it amber; the face on the plate is
+  left alone. `minWall` in the graph overrides the process's wall.
+
+- **Mass** is live: the page weighs the output on the GPU as you edit
+  (its volume on a grid of samples at two spacings, extrapolated; within
+  about 1% of the meshed part) and multiplies by the material's density.
+  **Fit mass** finds the value of any one number (a wall, a blend, a remap
+  end) that gives a target mass, in a second or two; **Sweep** charts the
+  mass across that number's range, and clicking a point uses that value.
+- **Tune** goes past mass to strength: name a study (its loads, supports
+  and limits), add knobs with **+ knob**, and the server meshes and
+  analyzes candidates until the part is as light as it can be while it
+  still meets the study's safety factor and deflection (see Tuning). The
+  chart fills in as each analysis lands; the best values go into the
+  graph, and Undo takes them back.
+- **Run** meshes the graph with `run_field`, exactly as `loadpath field`
+  does, at the graph's pitch, then shows the mesh, the report (mass,
+  watertightness, sealed voids, drains, printability) and links to the
+  STL, report.json and the full viewer. Runs go to `loadpath-edit/` beside
+  the graph (`--out`).
+- **mesh** in a solid node's inspector meshes just that node the same way
+  (a boss, the lattice before it's clipped, one copy of a group), to its
+  own `<name>-<node>.stl`; on the command line, `loadpath field graph.json
+  --node <node>` (a copy's nodes are `<copy>__<node>`).
+- **Save** writes the graph back to its file. Inline nodes get names
+  (`owner-key`) when the graph is opened, which is the same graph;
+  node positions go under `editor`, which nothing else reads. The JSON tab
+  edits the text directly; Ctrl+Z undoes. Ctrl+D duplicates the selected
+  node; Ctrl+C and Ctrl+V copy it between graphs, and pasting node JSON
+  (`{"nodes": {...}}` or one node) adds it, renaming what clashes and
+  keeping the pasted nodes wired to each other.
+- The standalone page (`--html`) carries its bakes, so it opens anywhere,
+  offline once three.js is cached. It cannot re-bake or run: Run
+  downloads the JSON and gives the `loadpath field` command.
+
+The preview is checked against the mesher: `tests/test_editor.py`
+evaluates every op on the GPU at 4000 points and compares them with
+`FieldGraph.evaluate` (to 1e-6 mm for shapes, booleans, shells, distances,
+remaps, expressions and lattices; to the bake's grid for meshes). The
+server listens on 127.0.0.1 unless `--host` says otherwise: it reads and
+writes files in the graph's folder.
+
 ## The graph
 
 ```json
@@ -50,17 +134,172 @@ back at once with suggestions.
 | `distance` | unsigned distance to a solid (`input`), points, a segment, a plane or a shape | `input` |
 | `result` | von Mises or displacement of a part under a study (run on demand, also on one of the graph's own nodes), or a saved `.npz` | |
 | `grid` | an imported scalar field on a regular grid (`.npz`: origin, pitch, values) | |
-| `remap` | `from` [a, b] to `to` [c, d], linear / smoothstep / smootherstep / sqrt / square, clamped | `input` |
+| `remap` | `from` [a, b] to `to` [c, d], linear / smoothstep / smootherstep / sqrt / square or a drawn curve (`[[u, v], ...]` over the unit square; the editor has a curve editor), clamped | `input` |
 | `expr` | arithmetic over node names and x, y, z: `"0.8 + 1.2 * smoothstep(5, 30, stress)"` | `vars` |
 | `union`, `intersect`, `subtract` | booleans; `blend` is the fillet radius | `inputs`, `blend` |
 | `shell` | a wall inside, outside or centred on a surface | `input`, `thickness` |
 | `offset` | grow or shrink | `input`, `distance` |
 | `lattice` | gyroid, diamond or Schwarz P; sheet or network; cartesian or cylindrical frame | `cell`, `thickness` or `density`, `offset` |
 | `transform` | translate, rotate, scale an input | `input` |
+| `image` | a picture (PNG/JPG) laid on a plane as a 0..1 field: brightness or one channel, optional invert (see Images) | `path`, `size` |
+| `group` | a copy of a sub-graph from `groups` with its own `params` and `inputs` (see Groups) | |
 
 `expr` knows `abs sqrt exp log sin cos tan floor ceil sign min max clamp
 lerp smoothstep step where`, comparisons and `a if c else b`; nothing else
 (no attributes, no imports).
+
+## Groups
+
+A group is a sub-graph you use more than once, like nTop's custom blocks: a
+boss, a rib, a lattice infill recipe. Define it once under `groups`, with
+the knobs it takes (`params`, with defaults) and the nodes it needs from
+the graph (`inputs`); then each `group` node is a copy with its own
+values:
+
+```json
+"groups": {
+  "boss": {"params": {"r": 2, "t": 1.5}, "inputs": ["body"],
+           "nodes": {"ring": {"op": "shape", "shape": {"type": "tube", "center": [0, 0, 0], "axis": "z",
+                                                       "length": 10, "r": 8, "rInner": 4}},
+                     "wall": {"op": "shell", "input": "ring", "thickness": "t"},
+                     "out":  {"op": "union", "inputs": ["body", "wall"], "blend": "r"}},
+           "output": "out"}},
+"nodes": {
+  "plate": {"op": "shape", "shape": {"type": "box", "min": [-20, -20, -2], "max": [20, 20, 2]}},
+  "b1": {"op": "group", "group": "boss", "params": {"t": 1.0}, "inputs": {"body": "plate"}}
+}
+```
+
+Inside the group, params and inputs are referred to by name like any
+node. A copy stands for the group's output, so other nodes use `b1` as
+usual; its nodes come in as `b1__ring`, `b1__wall` (what `report.json` and
+errors call them). Groups can use groups. In the editor, **make group** on
+a node turns it and everything only it uses into a group (its constants
+become knobs, what it shares with the rest of the graph its inputs), and
+**ungroup** puts a copy's nodes back. A copy's knobs are sliders that move
+the preview without recompiling.
+
+## Images
+
+An `image` node lays a picture on a plane, like nTop's image-to-field: a
+logo to emboss, a texture map, a hand-painted density. `plane` is `xy`,
+`xz` or `yz`; `origin` is where the picture's lower-left corner sits (mm,
+in that plane) and `size` its width and height; the value is the pixel's
+brightness (or `channel` r, g, b, a) from 0 to 1, `invert` flips it. It
+runs through the picture along the third axis and holds its edge pixels
+beyond the picture. Pictures are resized to at most 1024 px. Use it in an
+`expr` like any field, for example raised lettering limited to a band:
+
+```json
+"logo":    {"op": "image", "path": "logo.png", "plane": "xy", "origin": [-40, -12], "size": [80, 24]},
+"band":    {"op": "shape", "shape": {"type": "box", "min": [-41, -13, -1], "max": [41, 13, 1.2]}},
+"letters": {"op": "expr", "expr": "max(band, (0.5 - logo) * 0.3)",
+            "bounds": {"min": [-41, -13, -1], "max": [41, 13, 1.2]}}
+```
+
+![name plate from a picture](images/fields/image-nameplate.png)
+
+The whole graph is examples/fields/nameplate.json. The editor bakes the
+picture into a texture once; moving the picture (origin, size) re-bakes,
+while the nodes around it stay live sliders.
+
+## Tuning against a simulation
+
+nTop's sliders move the geometry; whether the part still holds is a
+separate trip to a solver. `loadpath tune` closes that loop: it turns the
+numbers you name until the part is as light as it can be while every
+load case of a study keeps its safety factor and deflection. Each
+candidate is meshed (`tune.pitch`, default 1 mm) and analyzed by the same
+FE check a study's outcome gets (`verify_part`, `tune.cells` cells), and
+the search (COBYQA, derivative-free and inside each knob's range) spends
+`evaluations` analyses. What comes back is the lightest candidate that met
+every limit and was one body, not wherever the search stopped.
+
+The search analyzes on a coarse grid, and a voxel reading moves as the
+part slides across its grid: on the arm link the start deflects 0.500 mm
+on 30k cells and 0.487 mm on 60k, while one thinner candidate read 0.485
+coarse and 0.623 fine. So the start is analyzed on both and every coarse
+reading is scaled by that ratio before it meets the limits;
+at the end the lightest few that passed are analyzed again on the fine
+grid and the first that still passes is the answer (if none does, the
+lightest is returned marked `unconfirmed`).
+
+```json
+"tune": {"study": "example:arm-link",
+         "params": [{"path": "nodes/web/shape/max/2", "also": ["-nodes/web/shape/min/2"], "min": 6, "max": 11},
+                    {"path": "nodes/web/shape/max/1", "also": ["-nodes/web/shape/min/1"], "min": 6.5, "max": 14},
+                    {"path": "nodes/blob/blend", "min": 3, "max": 14}],
+         "evaluations": 24}
+```
+
+`path` is where the number sits in the graph, the same key the editor's
+sliders use; `also` are numbers that move with it (`-` first for the
+other way, so a box stays centred). The limits default to the study's
+`goal`; `safetyFactor` and `maxDeflection` here override them.
+`loadpath tune graph.json --out tune/` writes `tuned.json` (the graph with
+the best values) and `tune.json` (every candidate). An analysis takes
+about 12 s on the arm link, so 24 of them are about five minutes.
+examples/fields/arm-link-tune.json is that example: its stiffness limit
+(0.5 mm at the wrist bearing) is what binds. 25 analyses took it from
+61.8 g to 54.9 g (a lower, slightly wider web and a smaller blend),
+0.490 mm on the fine grid.
+
+![tuning the arm link in the editor](images/fields/editor-tune.png)
+
+### The trade-off
+
+One limit is rarely fixed in stone: 0.5 mm of deflection might be worth
+relaxing for a few grams, or tightening for a stiffer arm. `tune.sweep`
+runs the search again held to each value of one limit, each warm-started
+from the lightest candidate that already meets it and sharing every
+analysis so far:
+
+```json
+"tune": {"study": "example:arm-link", "params": [...], "sweep": {"maxDeflection": [0.4, 0.6, 0.8]}}
+```
+
+Each value's lightest confirmed part is in `tune.json` under `sweep`, and
+`front` lists every candidate no other beats on mass, deflection and safety
+factor at once. In the editor (Trade-off: `defl 0.4 0.6 0.8` or `SF 2 4 6`)
+the chart becomes mass against deflection when the run ends, with the
+sweep's picks ringed; click any point to put its values in the graph.
+
+On the arm link (three knobs, 14 analyses per limit, 56 in all, about 20
+minutes) the lightest confirmed link is 61.2 g at 0.4 mm, 55.9 g at 0.5,
+51.3 g at 0.6 and 45.0 g at 0.8: every tenth of a millimetre of deflection
+the arm can live with is worth 4-6 g of web.
+
+![the arm link's mass against deflection](images/fields/editor-tradeoff.png)
+
+### Lattices are tuned homogenized
+
+A lattice's walls are a fraction of a millimetre, so analyzing the real
+geometry takes cells a few tenths of a millimetre across and around a
+million of them per candidate. A part with a lattice in it is analyzed with
+the lattice homogenized instead (homogenized.py, `tune.analysis` `auto`):
+the graph is evaluated with the lattice node filled solid and with it empty,
+so each analysis cell knows its share of solid skin and of lattice; the
+lattice's own wall (or density) and cell fields give the lattice's relative
+density there, and lattice.py's unit-cell fits give its modulus
+(E C rho^n) and its peak wall stress (A rho^-m times the stress it carries
+on average). A `result` node behind the wall field runs its study once for
+the whole search. Sheet lattices only.
+
+Checked against the resolved geometry: a 60 mm skin-and-gyroid bar (1 mm
+skin, 0.8 mm walls in 6 mm cells) under a tip load deflects 0.99-1.04 mm
+homogenized (8k-50k cells, 3-12 s) and 0.95-1.00 mm meshed at 0.12 mm and
+verified on 150k-900k voxels; the homogenized mass reads about 6% heavy
+(7.3 g against 6.86 g), the safety factor 2.7-2.9 against 2.1-2.9.
+
+Tuning the graded-lattice arm link (examples/fields/arm-link-lattice-tune.json:
+the skin's thinnest and thickest wall and the gyroid's thickest wall, same
+study and limits as the solid one above) does not beat the solid: the
+lightest lattice link that came near 0.5 mm was 58.2 g (0.498 mm coarse,
+0.511 mm on the fine grid), with the skin at the top of its range (6 mm),
+against 54.9 g for the tuned solid web. It is the same answer the moonshot
+experiments got: for a stiffness-bound part, a lattice costs mass per unit
+of stiffness. Lattices earn their keep on impact, damping, heat transfer
+and print time, not here.
 
 ## What the field-driven operations mean
 
@@ -160,6 +399,49 @@ the turret's 48 mm J2 sleeve was 0.026 mm off, and only 59% of its keep-out
 surface was within 0.01 mm; now 100%).
 
 Pick the pitch from the thinnest wall: a third of it or finer.
+
+### Fewer triangles: decimation
+
+`"mesh": {"decimate": 0.02}` (or `--decimate 0.02`) collapses edges
+wherever the mesh stays within 0.02 mm of the true surface, checked
+against the field itself at every reshaped triangle. Flat and gently
+curved regions lose most of their triangles, creases and small fillets
+keep theirs, the mesh stays watertight and every vertex stays on the
+surface. A solid link at 0.15 mm pitch drops from 781k to 49k triangles;
+a gyroid lattice, curved everywhere, to about a quarter. It also works
+with `stream`.
+
+### Very large parts
+
+A fine lattice through a big part is tens of millions of triangles, more
+than fits in memory as one mesh. `"mesh": {"stream": true}` (or
+`loadpath field --stream`) writes the STL slab by slab instead: memory is
+one slab of blocks 32 cells thick whatever the part, there is no cell
+budget, and the report still has the volume, area, mass and a watertight
+check (each slab's open edges are matched against its neighbours'). The
+checks that need the whole mesh (printability, bodies, the render) are
+skipped. Field evaluation runs on every core (`LOADPATH_THREADS` caps it).
+
+### Evaluating on the GPU
+
+Once meshing is narrow-band, evaluating the graph is most of the time
+(marching cubes is ~4%). With the `gpu` extra installed (PyTorch), graphs
+evaluate with torch (`loadpath/fieldtorch.py`): on an NVIDIA or Apple
+Silicon GPU by default, or on the CPU with `LOADPATH_FIELD_DEVICE=torch`.
+`LOADPATH_FIELD_DEVICE=numpy` turns it off, and `LOADPATH_FIELD_DTYPE`
+picks float32 (GPU default) or float64 (CPU default). Every op runs in
+torch except meshes, point clouds, scattered samples, strut lattices and a
+few rarer options, which run on numpy for that node only and are copied
+over. Answers match numpy to ~1e-7 mm in float64
+and ~5e-4 mm in float32 (the arm link meshes to the same 822,842 faces).
+
+Measured on the 4-core cloud box, graded arm link at 0.4 mm pitch: numpy
+17.3 s, torch on the CPU 10.5 s (float32) or 12.3 s (float64); raw
+evaluation of 1M points goes 2.1 s to 0.3 s. **The GPU speedup is
+unmeasured** (no GPU in the cloud). On the CPU, evaluation is still ~7 of
+those 10 s; a GPU should take most of that away, leaving marching cubes
+and the vertex bookkeeping (~2-3 s) as the floor. Graphs with numpy-only
+nodes gain less.
 
 ## Drain holes
 

@@ -194,7 +194,7 @@ def _candidate(args):
 
     st, x0, beta0, iters, cells, refine = args
     domain = build_domain(st)
-    o = design_at(st, domain, filter_radius(domain, st.min_member), float(st.goal.volume_fraction),
+    o = design_at(st, domain, filter_radius(domain, st.length_scale, st.min_hole), float(st.goal.volume_fraction),
                   x0=x0, beta0=beta0, max_iterations=iters, verify_cells=cells, refine=refine)
     o.xphys = None   # not needed back; keep the pickle small
     return o
@@ -278,7 +278,7 @@ def choose_build_direction(study, candidates=None, max_elements: int = _COMPARE_
 
         st0 = variant(cands[0])
         domain = build_domain(st0)
-        radius = filter_radius(domain, st0.min_member)
+        radius = filter_radius(domain, st0.length_scale, st0.min_hole)
         big = domain.n_elem >= _COARSE_MIN_CELLS
         x0 = _coarse_start(st0, domain, vf, radius, None) if big else None
         shared = design_at(st0, domain, radius, vf, x0=x0, beta0=_WARM_BETA if big else 1.0, verify=False)

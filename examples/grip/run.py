@@ -27,6 +27,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LINKS = ["turret", "upper_arm", "forearm", "wrist_yoke", "wrist_link"]
+# the rest of the arm (GRIP generative/v3_rest.py): --links base,palm
 
 # What GRIP recorded for v0.3 (generative/README.md and v3/out/summary.json at
 # 3689f8d): mass in g and the study's own safety factor at delivery.
@@ -36,10 +37,23 @@ RECORDED = {
 }
 
 
+CYCLES = {"dynamic": 1e5, "pose": 1e5, "push": 1e4, "stall": 1e3}
+
+
 def _study(link):
     from loadpath.spec import study_from_dict
     d = os.path.join(HERE, "studies")
-    return study_from_dict(json.load(open(os.path.join(d, f"{link}.json"))), base_dir=d)
+    st = json.load(open(os.path.join(d, f"{link}.json")))
+    derived = os.path.join(HERE, "derived", f"{link}.derived.json")
+    if os.environ.get("GRIP_LOADS") == "derived" and os.path.exists(derived):
+        # derive.py's loads from the mechanism, on this study's own space
+        st["loadCases"] = json.load(open(derived))["loadCases"]
+        for c in st["loadCases"]:
+            # lifetime counts by the sample's kind (its name says which):
+            # every move, the odd bump, a jam now and then
+            kind = c["name"].split("-")[2]
+            c.setdefault("cycles", CYCLES.get(kind, 1e5))
+    return study_from_dict(st, base_dir=d)
 
 
 def _solve(link):
@@ -48,7 +62,13 @@ def _solve(link):
     t = time.time()
     r = run_study(_study(link))
     if r.best is None:
-        return link, None, time.time() - t
+        # why each volume fraction failed, so the study can be fixed
+        why = [{"vf": round(o.volume_fraction, 3), "g": round(o.report["mass"], 1),
+                "sf": round(o.report["safetyFactor"], 2), "margin": o.report.get("margin"),
+                "durabilitySf": (o.report.get("durability") or {}).get("safetyFactor"),
+                "worst": {c["name"]: round(c["peakStress"], 1) for c in o.report["cases"]},
+                "warnings": o.report.get("warnings", [])[:4]} for o in r.outcomes]
+        return link, why, time.time() - t
     return link, r.outcomes[r.best].mesh, time.time() - t
 
 
@@ -82,12 +102,15 @@ def main(argv=None):
     ap.add_argument("--links", default=",".join(LINKS))
     ap.add_argument("--out", default="grip-out")
     ap.add_argument("--jobs", type=int, default=2)
+    ap.add_argument("--loads", choices=["studies", "derived"], default="studies",
+                    help="derived: derive.py's cases (derived/<link>.derived.json) on the studies' space")
     ap.add_argument("--verify-only", metavar="DIR", help="check <DIR>/<link>.stl instead of regrowing")
     args = ap.parse_args(argv)
+    os.environ["GRIP_LOADS"] = args.loads      # spawned workers inherit it
     links = args.links.split(",")
     os.makedirs(args.out, exist_ok=True)
     import trimesh
-    meshes, secs = {}, {}
+    meshes, secs, failed = {}, {}, {}
     if args.verify_only:
         for l in links:
             meshes[l] = trimesh.load(os.path.join(args.verify_only, f"{l}.stl"))
@@ -97,7 +120,9 @@ def main(argv=None):
         with ProcessPoolExecutor(args.jobs, mp_context=mp.get_context("spawn")) as ex:
             for l, mesh, s in ex.map(_solve, links):
                 secs[l] = round(s)
-                if mesh is not None:
+                if isinstance(mesh, list):
+                    failed[l] = mesh
+                elif mesh is not None:
                     # check the file that ships: the export drops degenerate
                     # faces the in-memory mesh can still carry
                     mesh.export(os.path.join(args.out, f"{l}.stl"))
@@ -105,7 +130,7 @@ def main(argv=None):
     card = {}
     for l in links:
         if l not in meshes:
-            card[l] = {"error": "no outcome met the goal"}
+            card[l] = {"error": "no outcome met the goal", "outcomes": failed.get(l, [])}
         else:
             card[l] = check(l, meshes[l], args.out)
         if l in secs:
@@ -113,7 +138,7 @@ def main(argv=None):
         json.dump(card, open(os.path.join(args.out, "scorecard.json"), "w"), indent=1)
     print(f"{'link':<11} {'recorded':>15} {'now':>15} {'p5 ray':>7} {'crease':>7} {'cut':>7}")
     for l in links:
-        c, (g0, sf0) = card[l], RECORDED[l]
+        c, (g0, sf0) = card[l], RECORDED.get(l, (float("nan"), float("nan")))
         if "error" in c:
             print(f"{l:<11} {g0:>7.1f} g {sf0:>5.2f}   {c['error']}")
             continue

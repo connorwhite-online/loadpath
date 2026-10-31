@@ -56,7 +56,7 @@ from scipy import ndimage
 __all__ = ["FieldGraph", "MeshField", "field_mesh", "save_result_field", "result_samples", "OPS"]
 
 # the operations and what they take (the schema says the same, with docs)
-OPS = ("constant", "coordinate", "distance", "shape", "mesh", "result", "grid", "remap", "expr",
+OPS = ("constant", "coordinate", "distance", "shape", "mesh", "result", "grid", "image", "remap", "expr",
        "union", "intersect", "subtract", "shell", "offset", "lattice", "transform")
 
 _CELL_BUDGET = 60_000_000
@@ -96,10 +96,16 @@ _BINOPS = {ast.Add: np.add, ast.Sub: np.subtract, ast.Mult: np.multiply, ast.Div
 _CMPOPS = {ast.Lt: np.less, ast.LtE: np.less_equal, ast.Gt: np.greater, ast.GtE: np.greater_equal}
 
 
-def _compile_expr(text: str):
+def _compile_expr(text: str, lib=None):
     """(names it reads, fn(env) -> value) for an arithmetic expression over
     node names, x, y, z, pi, e and the functions in _FUNCS. A whitelist over
-    Python's AST: no attributes, no subscripts, no calls but those."""
+    Python's AST: no attributes, no subscripts, no calls but those. `lib`
+    swaps the array functions (funcs, binops, cmpops, where, float) for
+    another array library's (fieldtorch.py)."""
+    lib = lib or {}
+    funcs, binops, cmpops = lib.get("funcs", _FUNCS), lib.get("binops", _BINOPS), lib.get("cmpops", _CMPOPS)
+    where = lib.get("where", lambda c, a, b: np.where(np.asarray(c) > 0, a, b))
+    as_float = lib.get("float", lambda a: a.astype(float))
     try:
         tree = ast.parse(text, mode="eval")
     except SyntaxError as exc:
@@ -119,20 +125,20 @@ def _compile_expr(text: str):
             names.add(n.id)
             k = n.id
             return lambda env: env[k]
-        if isinstance(n, ast.BinOp) and type(n.op) in _BINOPS:
-            f, a, b = _BINOPS[type(n.op)], build(n.left), build(n.right)
+        if isinstance(n, ast.BinOp) and type(n.op) in binops:
+            f, a, b = binops[type(n.op)], build(n.left), build(n.right)
             return lambda env: f(a(env), b(env))
         if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
             a = build(n.operand)
             return (lambda env: -a(env)) if isinstance(n.op, ast.USub) else a
-        if isinstance(n, ast.Compare) and len(n.ops) == 1 and type(n.ops[0]) in _CMPOPS:
-            f, a, b = _CMPOPS[type(n.ops[0])], build(n.left), build(n.comparators[0])
-            return lambda env: f(a(env), b(env)).astype(float)
+        if isinstance(n, ast.Compare) and len(n.ops) == 1 and type(n.ops[0]) in cmpops:
+            f, a, b = cmpops[type(n.ops[0])], build(n.left), build(n.comparators[0])
+            return lambda env: as_float(f(a(env), b(env)))
         if isinstance(n, ast.IfExp):
             c, a, b = build(n.test), build(n.body), build(n.orelse)
-            return lambda env: np.where(np.asarray(c(env)) > 0, a(env), b(env))
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _FUNCS and not n.keywords:
-            f, args = _FUNCS[n.func.id], [build(a) for a in n.args]
+            return lambda env: where(c(env), a(env), b(env))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in funcs and not n.keywords:
+            f, args = funcs[n.func.id], [build(a) for a in n.args]
             return lambda env: f(*(a(env) for a in args))
         bad = ast.unparse(n) if hasattr(ast, "unparse") else type(n).__name__
         raise ValueError(f"expr {text!r}: {bad!r} is not allowed (arithmetic, comparisons, "
@@ -226,10 +232,12 @@ class MeshField:
     def _coarse(self, P):
         idx = ((P - self._origin) / self.pitch).T
         n = np.asarray(self._grid.shape)[:, None] - 1
-        inside = np.all((idx >= 0) & (idx <= n), axis=0)
-        out = ndimage.map_coordinates(self._grid, idx, order=1, mode="nearest").astype(float)
-        q = np.maximum(np.maximum(self.lo - P, P - self.hi), 0.0)
-        return np.where(inside, out, np.maximum(np.linalg.norm(q, axis=1), 4 * self.pitch))
+        cl = np.clip(idx, 0, n)
+        out = ndimage.map_coordinates(self._grid, cl, order=1, mode="nearest").astype(float)
+        # past the grid: the distance at its nearest point plus the way there (continuous at the grid's
+        # face, never short of the true distance by more than the grid's error), so an offset of the mesh
+        # by more than the grid's padding stays the mesh's shape, not its box
+        return out + np.linalg.norm(idx - cl, axis=0) * self.pitch
 
     def _exact(self, P):
         k = min(self.k, len(self._tri))
@@ -437,7 +445,7 @@ def _tpms_distance(kind, P, cell, frame=None):
 class _CellWarp:
     """Lattice coordinates u(x) for a cell size that varies in space: the
     least-squares map whose gradient is I / cell(x) (a Poisson solve on a
-    grid over the lattice's domain, smoothed-aggregation AMG), so one period
+    grid over the lattice's domain, direct by DCT), so one period
     of u is one local cell. In 1D that is exactly u = integral of dx / cell;
     in 3D, where a cell field has curl the map cannot follow everywhere, the
     misfit spreads out smoothly instead of tearing. Every wall stays
@@ -445,9 +453,43 @@ class _CellWarp:
     periods, which leaves crumbs where they disagree."""
 
     def __init__(self, cell_fn, lo, hi, max_cells=400_000):
-        import pyamg
-        import scipy.sparse as sp
+        from scipy import fft
 
+        lo, h, dims = self.grid(cell_fn, lo, hi, max_cells)
+        axes = [lo[i] + np.arange(dims[i]) * h for i in range(3)]
+        G = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+        c = np.asarray(cell_fn(G), float)
+        if np.any(c <= 0):
+            raise ValueError("lattice cell must be positive everywhere")
+        g = (1.0 / c).reshape(tuple(dims))
+        n = int(np.prod(dims))
+        # D^T D is the grid graph's Laplacian with free (Neumann) ends, which
+        # the DCT-II diagonalizes exactly: a direct solve in O(n log n)
+        lam = sum((2 - 2 * np.cos(np.pi * np.arange(dims[a]) / dims[a])).reshape([-1 if i == a else 1
+                                                                                  for i in range(3)])
+                  for a in range(3))
+        lam[0, 0, 0] = 1.0
+        self.u = []
+        for comp in range(3):
+            sl0 = [slice(None)] * 3
+            sl1 = [slice(None)] * 3
+            sl0[comp] = slice(0, -1)
+            sl1[comp] = slice(1, None)
+            te = 0.5 * (g[tuple(sl0)] + g[tuple(sl1)]) * h     # target step along each edge
+            b = np.zeros(tuple(dims))
+            b[tuple(sl0)] -= te
+            b[tuple(sl1)] += te                                 # D^T t
+            B = fft.dctn(b, type=2, norm="ortho") / lam
+            B[0, 0, 0] = 0.0
+            u = fft.idctn(B, type=2, norm="ortho").ravel()
+            # anchor: u = x / cell at the domain's centre point, so a constant
+            # cell gives back the plain lattice
+            self.u.append((u - u[n // 2]).reshape(tuple(dims)) + G[n // 2, comp] * g.ravel()[n // 2])
+        self.lo, self.h, self.dims = lo, h, dims
+
+    @staticmethod
+    def grid(cell_fn, lo, hi, max_cells):
+        """(lo, h, dims) of the grid the map is solved on."""
         lo = np.asarray(lo, float)
         hi = np.asarray(hi, float)
         ext = np.maximum(hi - lo, 1e-6)
@@ -459,44 +501,13 @@ class _CellWarp:
         h = min(max(h, float(np.min(cell_fn(probe))) / 6.0), max(h, 1e-3))
         lo = lo - 2 * h
         dims = np.ceil((hi + 2 * h - lo) / h).astype(int) + 1
-        axes = [lo[i] + np.arange(dims[i]) * h for i in range(3)]
-        G = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
-        c = np.asarray(cell_fn(G), float)
-        if np.any(c <= 0):
-            raise ValueError("lattice cell must be positive everywhere")
-        g = (1.0 / c).reshape(tuple(dims))
-        n = int(np.prod(dims))
-        idx = np.arange(n).reshape(tuple(dims))
-        rows, a_, b_, targets = [], [], [], []
-        k = 0
-        for ax in range(3):
-            sl0 = [slice(None)] * 3
-            sl1 = [slice(None)] * 3
-            sl0[ax] = slice(0, -1)
-            sl1[ax] = slice(1, None)
-            i0, i1 = idx[tuple(sl0)].ravel(), idx[tuple(sl1)].ravel()
-            ge = 0.5 * (g[tuple(sl0)] + g[tuple(sl1)]).ravel()
-            a_.append(i0)
-            b_.append(i1)
-            targets.append((ax, ge * h, k, len(i0)))
-            k += len(i0)
-        i0, i1 = np.concatenate(a_), np.concatenate(b_)
-        m = len(i0)
-        D = sp.csr_matrix((np.r_[-np.ones(m), np.ones(m)], (np.r_[np.arange(m), np.arange(m)], np.r_[i0, i1])),
-                          shape=(m, n))
-        A = (D.T @ D + 1e-8 * sp.identity(n)).tocsr()
-        ml = pyamg.smoothed_aggregation_solver(A, max_coarse=500)
-        self.u = []
-        for comp in range(3):
-            t = np.zeros(m)
-            for ax, te, start, cnt in targets:
-                if ax == comp:
-                    t[start:start + cnt] = te
-            u = ml.solve(D.T @ t, tol=1e-8, maxiter=200, accel="cg")
-            # anchor: u = x / cell at the domain's centre point, so a constant
-            # cell gives back the plain lattice
-            self.u.append((u - u[n // 2]).reshape(tuple(dims)) + G[n // 2, comp] * g.ravel()[n // 2])
-        self.lo, self.h, self.dims = lo, h, dims
+        return lo, h, dims
+
+    def anchor(self):
+        """The point where u = x / cell: the grid's centre node."""
+        n = int(np.prod(self.dims))
+        ijk = np.asarray(np.unravel_index(n // 2, tuple(self.dims)))
+        return self.lo + ijk * self.h
 
     def __call__(self, P, cell):
         idx = ((P - self.lo) / self.h).T
@@ -517,6 +528,100 @@ def _smin(a, b, k):
     h = np.clip(0.5 + 0.5 * (b - a) / kk, 0.0, 1.0)
     s = b * (1 - h) + a * h - kk * h * (1 - h)
     return np.where(hard, np.minimum(a, b), s)
+
+
+# ---- groups: reusable sub-graphs ---------------------------------------------------
+
+_REF_KEYS = ("input", "value", "thickness", "distance", "blend", "cell", "density", "offset")
+
+
+def _rename_spec(spec, names):
+    """A copy of a node spec with every reference in `names` (old -> new)
+    renamed: field parameters, inputs, vars, an analyzed part, expr text,
+    and inline nodes inside them."""
+    import re
+
+    s = json.loads(json.dumps(spec))
+
+    def ref(v):
+        if isinstance(v, str):
+            return names.get(v, v)
+        if isinstance(v, dict) and "op" in v:
+            return _rename_spec(v, names)
+        return v
+
+    for k in _REF_KEYS:
+        if k in s and not (s.get("op") == "constant" and k == "value"):
+            s[k] = ref(s[k])
+    if isinstance(s.get("inputs"), list):
+        s["inputs"] = [ref(v) for v in s["inputs"]]
+    elif s.get("op") == "group" and isinstance(s.get("inputs"), dict):
+        s["inputs"] = {k: ref(v) for k, v in s["inputs"].items()}
+    if isinstance(s.get("vars"), dict):
+        s["vars"] = {k: ref(v) for k, v in s["vars"].items()}
+    if s.get("op") == "result" and isinstance(s.get("part"), str):
+        s["part"] = names.get(s["part"], s["part"])
+    if s.get("op") == "expr" and isinstance(s.get("expr"), str):
+        # names the expr reads directly (not through vars) follow too, as vars so any name works
+        used = {m for m in re.findall(r"[A-Za-z_]\w*", s["expr"]) if m in names}
+        for m in used:
+            s.setdefault("vars", {})
+            if m not in s["vars"]:
+                s["vars"][m] = names[m]
+    return s
+
+
+def expand_groups(doc, _depth=0):
+    """The graph with every `group` node replaced by a copy of its
+    definition from `groups`: the group's nodes come in as
+    <instance>__<node>, its params as constant nodes <instance>__<param>
+    (the instance's own values over the definition's defaults), its inputs
+    are the instance's nodes, and the group's output takes the instance's
+    name, so the rest of the graph refers to it as before. Groups may use
+    groups (eight deep)."""
+    nodes = doc.get("nodes")
+    if not isinstance(nodes, dict) or not any(isinstance(v, dict) and v.get("op") == "group" for v in nodes.values()):
+        return doc
+    if _depth > 8:
+        raise ValueError("groups nest more than eight deep (does a group use itself?)")
+    groups = doc.get("groups") or {}
+    out = {}
+    for name, spec in nodes.items():
+        if not (isinstance(spec, dict) and spec.get("op") == "group"):
+            out[name] = spec
+            continue
+        gname = spec.get("group")
+        if gname not in groups:
+            raise ValueError(f"node {name!r}: no group {gname!r} (have {', '.join(groups) or 'none'})")
+        g = groups[gname]
+        gnodes = g.get("nodes") or {}
+        if not gnodes:
+            raise ValueError(f"group {gname!r} has no nodes")
+        gout = g.get("output") or list(gnodes)[-1]
+        if gout not in gnodes:
+            raise ValueError(f"group {gname!r}: output {gout!r} is not one of its nodes")
+        params = {**(g.get("params") or {}), **(spec.get("params") or {})}
+        unknown = set(spec.get("params") or {}) - set(g.get("params") or {})
+        if unknown:
+            raise ValueError(f"node {name!r}: group {gname!r} has no param {sorted(unknown)[0]!r} "
+                             f"(has {', '.join(g.get('params') or {}) or 'none'})")
+        given = spec.get("inputs") or {}
+        missing = [i for i in g.get("inputs") or [] if i not in given]
+        if missing:
+            raise ValueError(f"node {name!r}: group {gname!r} needs input {missing[0]!r}")
+        extra = set(given) - set(g.get("inputs") or [])
+        if extra:
+            raise ValueError(f"node {name!r}: group {gname!r} has no input {sorted(extra)[0]!r}")
+        names = {n: (name if n == gout else f"{name}__{n}") for n in gnodes}
+        names.update({p: f"{name}__{p}" for p in params})
+        names.update({i: given[i] for i in g.get("inputs") or []})
+        for p, v in params.items():
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ValueError(f"node {name!r}: param {p!r} must be a number")
+            out[f"{name}__{p}"] = {"op": "constant", "value": float(v)}
+        for n, ns in gnodes.items():
+            out[names[n]] = _rename_spec(ns, names)
+    return expand_groups({**doc, "nodes": out}, _depth + 1)
 
 
 # ---- the graph -----------------------------------------------------------------
@@ -545,6 +650,7 @@ class FieldGraph:
             doc = json.loads(doc)
         if not isinstance(doc, dict) or not isinstance(doc.get("nodes"), dict) or not doc["nodes"]:
             raise ValueError("a field graph needs a non-empty 'nodes' object")
+        doc = expand_groups(doc)
         self.doc = doc
         self.base_dir = base_dir
         self.sources = dict(sources or {})
@@ -654,12 +760,30 @@ class FieldGraph:
 
     def field(self, name=None):
         name = name or self.output
-        return lambda P: self.evaluate(P, name)
+
+        def f(P):
+            return self.evaluate(P, name)
+        if self._torch_field() is not None and self._tf.batch:
+            f.batch = self._tf.batch
+        return f
 
     def evaluate(self, P, name=None):
+        tf = self._torch_field()
+        if tf is not None:
+            return tf(P, name)
         P = np.asarray(P, float).reshape(-1, 3)
         memo = {}
         return np.broadcast_to(self._eval(name or self.output, P, memo), (len(P),)).astype(float)
+
+    def _torch_field(self):
+        """fieldtorch.TorchField on the device LOADPATH_FIELD_DEVICE picks
+        (a GPU by default when there is one), or None for numpy."""
+        if not hasattr(self, "_tf"):
+            from .fieldtorch import TorchField, field_device
+
+            dev = field_device()
+            self._tf = TorchField(self, dev) if dev is not None else None
+        return self._tf
 
     def _val(self, r, P, memo):
         if isinstance(r, float):
@@ -673,6 +797,18 @@ class FieldGraph:
         out = self._compute(self.nodes[name], P, memo)
         memo[key] = (P, out)          # keep P alive so its id stays unique
         return out
+
+    def seed(self, prebuilt):
+        """Use resources built by another graph of the same nodes (an
+        analysis, a meshed field, a loaded grid): {name: (resource,
+        analysis or None)}. The caller vouches that each node and what it
+        depends on are unchanged; the editor keys them by the node's closure."""
+        for name, (res, analysis) in (prebuilt or {}).items():
+            if name in self.nodes:
+                self._built[name] = res
+                if analysis is not None:
+                    self.analyses[name] = analysis
+        return self
 
     def _resource(self, nd, make):
         if nd.name not in self._built:
@@ -712,7 +848,7 @@ class FieldGraph:
         if op == "mesh":
             mf = self._resource(nd, lambda: self._mesh_field(nd))
             return mf(P)
-        if op in ("result", "grid"):
+        if op in ("result", "grid", "image"):
             smp = self._resource(nd, lambda: self._samples(nd))
             return smp(P)
         if op == "remap":
@@ -801,8 +937,60 @@ class FieldGraph:
             mesh = trimesh.load(self._path(s["path"]), force="mesh")
         return MeshField(mesh, pitch=s.get("pitch"), band=s.get("band"))
 
+    _PLANES = {"xy": (0, 1, 2), "xz": (0, 2, 1), "yz": (1, 2, 0)}
+
+    def _image(self, nd):
+        """A picture as a scalar field: `path` (PNG, JPEG, ...) laid on
+        `plane` (xy, xz or yz) with its lower-left corner at `origin` and
+        `size` [w, h] mm, and carried straight through along the third axis.
+        Values are the `channel` (luma, r, g, b or a) from 0 to 1, `invert`
+        flips them; bilinear between pixels, the edge pixel carries on past
+        the picture. Pictures over 1024 pixels a side are resized to it."""
+        from PIL import Image
+
+        s = nd.spec
+        if "path" not in s or "size" not in s:
+            raise ValueError(f"node {nd.name!r}: an image needs a 'path' and a 'size' [w, h] in mm")
+        plane = s.get("plane", "xy")
+        if plane not in self._PLANES:
+            raise ValueError(f"node {nd.name!r}: plane must be xy, xz or yz")
+        im = Image.open(self._path(s["path"]))
+        im.load()
+        im = im.convert("RGBA")
+        if max(im.size) > 1024:
+            k = 1024 / max(im.size)
+            im = im.resize((max(2, round(im.size[0] * k)), max(2, round(im.size[1] * k))), Image.BOX)
+        a = np.asarray(im, float) / 255.0                            # rows top to bottom
+        ch = s.get("channel", "luma")
+        if ch == "luma":
+            v = a[..., 0] * 0.2126 + a[..., 1] * 0.7152 + a[..., 2] * 0.0722
+        elif ch in ("r", "g", "b", "a"):
+            v = a[..., "rgba".index(ch)]
+        else:
+            raise ValueError(f"node {nd.name!r}: channel must be luma, r, g, b or a")
+        if s.get("invert"):
+            v = 1.0 - v
+        v = v[::-1].T                                                 # [u, v]: u right, v up
+        H, W = v.shape[1], v.shape[0]
+        w, h = (float(x) for x in s["size"])
+        if w <= 0 or h <= 0:
+            raise ValueError(f"node {nd.name!r}: size must be positive")
+        u0, v0 = (float(x) for x in s.get("origin", (0.0, 0.0)))
+        iu, iv, ia = self._PLANES[plane]
+        # a regular grid in world axes, two samples deep along the projection axis (the same everywhere)
+        grid = np.repeat(v[:, :, None], 2, axis=2)
+        order = np.argsort([iu, iv, ia])
+        grid = np.transpose(grid, order)
+        origin, pitch = np.zeros(3), np.zeros(3)
+        origin[iu], pitch[iu] = u0 + 0.5 * w / W, w / W
+        origin[iv], pitch[iv] = v0 + 0.5 * h / H, h / H
+        origin[ia], pitch[ia] = -5e5, 1e6
+        return _Samples(grid=grid, origin=origin, pitch=pitch)
+
     def _samples(self, nd):
         s = nd.spec
+        if nd.op == "image":
+            return self._image(nd)
         if "source" in s:
             if s["source"] not in self.sources:
                 raise ValueError(f"node {nd.name!r}: no in-memory source named {s['source']!r}")
@@ -909,9 +1097,15 @@ class FieldGraph:
             return d - 0.5 * t
         raise ValueError(f"node {nd.name!r}: lattice form must be 'sheet' or 'network'")
 
-    def _warp(self, nd):
+    def _warp(self, nd, max_cells=400_000):
         """The cell-grading map over the lattice's domain: its own bounds,
         else the graph's, else the output solid's box."""
+        cell_fn, lo, hi = self._warp_domain(nd)
+        return _CellWarp(cell_fn, lo, hi, max_cells=max_cells)
+
+    def _warp_domain(self, nd):
+        """(cell field, lo, hi) the warp is solved over, in the lattice's own
+        coordinates (less its origin)."""
         if "bounds" in nd.spec:
             lo, hi = nd.spec["bounds"]["min"], nd.spec["bounds"]["max"]
         elif "bounds" in self.doc:
@@ -924,7 +1118,7 @@ class FieldGraph:
             lo, hi = b
         off = np.asarray(nd.spec.get("origin", (0, 0, 0)), float)
         cell_ref = nd.refs["cell"]
-        return _CellWarp(lambda G: self.evaluate(G + off, cell_ref), np.asarray(lo) - off, np.asarray(hi) - off)
+        return lambda G: self.evaluate(G + off, cell_ref), np.asarray(lo, float) - off, np.asarray(hi, float) - off
 
     def _transform(self, nd, P, memo):
         s = nd.spec
@@ -1054,17 +1248,65 @@ class FieldGraph:
             p = plan(self, name)
             if has_exact(p):
                 # set after meshing: a result node meshes another node on the way
-                mesh = mesh_plan(p, bounds[0], bounds[1], pitch=pitch, project=project, progress=progress)
+                mesh = mesh_plan(p, bounds[0], bounds[1], pitch=pitch, project=project, progress=progress,
+                                 decimate=m.get("decimate"))
                 self.plan = p
                 return mesh
-        mesh = field_mesh(self.field(name), bounds[0], bounds[1], pitch=pitch, project=project, progress=progress)
+        mesh = field_mesh(self.field(name), bounds[0], bounds[1], pitch=pitch, project=project, progress=progress,
+                          decimate=m.get("decimate"))
         self.plan = None
         return mesh
 
 
+def _run_streamed(doc, g, out_dir, drains, process, progress, t0):
+    """run_field with mesh.stream: the STL goes to disk slab by slab
+    (field_stl) and is never held, so the checks that need the whole mesh
+    (printability, drains' mesh escape, bodies, the render) are skipped."""
+    import time
+
+    if not out_dir:
+        raise ValueError("mesh.stream writes the STL as it goes: give an output folder")
+    m = doc.get("mesh") or {}
+    bounds = (doc["bounds"]["min"], doc["bounds"]["max"]) if "bounds" in doc else g.bounds()
+    if bounds is None:
+        raise ValueError(f"{g.output!r} is unbounded (a lattice with nothing to clip it): "
+                         "intersect it with a solid or give the graph 'bounds'")
+    os.makedirs(out_dir, exist_ok=True)
+    name = doc.get("name", "field")
+    path = os.path.join(out_dir, f"{name}.stl")
+    st = field_stl(g.field(), bounds[0], bounds[1], path, pitch=m.get("pitch"), project=m.get("project", 3),
+                   progress=progress, decimate=m.get("decimate"))
+    rep = {"name": name, "output": g.output, "nodes": len(g.nodes), "streamed": True,
+           **{k: st[k] for k in ("pitch", "faces", "watertight", "volume", "area", "slabs", "maxSlabFaces",
+                                 "droppedShells", "sampling")}, "stl": path}
+    if m.get("decimate"):
+        rep["decimation"] = {"tolerance": float(m["decimate"]), "facesBefore": st["facesBeforeDecimation"]}
+    if process is not None:
+        rep["process"] = process.kind
+    if drains is not None:
+        rep["drains"] = drains
+    if "material" in doc:
+        from .materials import material_from_spec
+
+        mat = material_from_spec(doc["material"])
+        rep["mass"] = rep["volume"] * mat.density / 1000.0
+        rep["material"] = mat.name
+    rep["skipped"] = ["printability", "bodies", "render"]
+    rep["seconds"] = round(time.time() - t0, 1)
+    return rep
+
+
 def _remap(x, s, name):
-    """`from` [a, b] -> `to` [c, d] through `curve`; clamped unless
-    clamp: false."""
+    """`from` [a, b] -> `to` [c, d] through `curve` (a name, or points
+    [[u, v], ...] over the unit square drawn in the editor); clamped unless
+    clamp: false. With more than two points, `from` (ascending) and `to`
+    are a piecewise-linear table (always clamped at its ends), e.g. a
+    density per layer from impact.grade_for_impact."""
+    if len(s.get("from", ())) > 2 or len(s.get("to", ())) > 2:
+        xs, ys = np.asarray(s["from"], float), np.asarray(s["to"], float)
+        if len(xs) != len(ys) or np.any(np.diff(xs) <= 0):
+            raise ValueError(f"node {name!r}: a remap table needs equal-length 'from' (ascending) and 'to'")
+        return np.interp(np.asarray(x, float), xs, ys)
     a, b = (float(u) for u in s.get("from", (0.0, 1.0)))
     c, d = (float(u) for u in s.get("to", (0.0, 1.0)))
     if a == b:
@@ -1073,6 +1315,12 @@ def _remap(x, s, name):
     if s.get("clamp", True):
         u = np.clip(u, 0.0, 1.0)
     curve = s.get("curve", "linear")
+    if isinstance(curve, (list, tuple)):
+        # a drawn curve: points (u, v) over the unit square, u ascending from 0 to 1, straight between them
+        pts = np.asarray(curve, float)
+        if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) < 2 or np.any(np.diff(pts[:, 0]) <= 0):
+            raise ValueError(f"node {name!r}: a remap curve as points needs [[u, v], ...] with u ascending")
+        return c + (d - c) * np.interp(np.clip(u, pts[0, 0], pts[-1, 0]), pts[:, 0], pts[:, 1])
     if curve == "smoothstep":
         uc = np.clip(u, 0.0, 1.0)
         u = uc * uc * (3 - 2 * uc)
@@ -1090,7 +1338,7 @@ def _remap(x, s, name):
 
 # ---- meshing ---------------------------------------------------------------------
 
-def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, sparse=True):
+def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, sparse=True, decimate=None):
     """Smooth, watertight trimesh of field(P) < 0 over [lo, hi] (mm).
 
     Marching cubes on a grid at `pitch` (default: the box over 4M cells,
@@ -1104,7 +1352,11 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
     `sparse` (default) samples the field only in blocks near its zero
     level (narrowband.py): the same marching-cubes mesh as the dense grid,
     with far fewer field evaluations and memory for one batch of blocks,
-    so the cell budget applies to the sampled cells, not the box."""
+    so the cell budget applies to the sampled cells, not the box.
+
+    `decimate` (mm) thins the triangles wherever the mesh stays that close
+    to the surface (decimate.py): flat and gently curved regions lose most
+    of theirs, creases and small features keep them."""
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -1118,19 +1370,17 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
     dims = np.ceil((hi + pad * pitch - lo) / pitch).astype(int) + 1
     cells = int(np.prod(dims))
     if sparse:
-        from .narrowband import narrowband_mc
+        from .narrowband import narrowband_mc, watertight
 
         verts, faces, stats = narrowband_mc(field, lo, dims, pitch, budget=_CELL_BUDGET, progress=progress)
         if not len(faces):
             raise ValueError("the field has no inside over these bounds (nothing is below zero)")
-        mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
-        if not mesh.is_watertight:
+        if not watertight(faces, len(verts)):
             # the Lipschitz bound let a crossing through: sample every block
             verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=np.inf, budget=_CELL_BUDGET,
                                                 progress=progress)
             stats["fallback"] = True
-            mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
-        return _finish(mesh, field, pitch, project, stats)
+        return _finish(verts, faces[:, ::-1], field, pitch, project, stats, decimate)
     if cells > _CELL_BUDGET:
         p = float((np.prod(ext + 2 * pad * pitch) / _CELL_BUDGET) ** (1 / 3))
         raise ValueError(f"grid {dims[0]}x{dims[1]}x{dims[2]} = {cells / 1e6:.1f}M cells exceeds the "
@@ -1153,42 +1403,237 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
         raise ValueError("the field has no inside over these bounds (nothing is below zero)")
     verts, faces, _, _ = marching_cubes(F, 0.0, spacing=(pitch,) * 3)
     del F
-    verts = verts + lo
-    return _finish(trimesh.Trimesh(verts, faces[:, ::-1], process=True), field, pitch, project)
+    m = trimesh.Trimesh(verts + lo, faces[:, ::-1], process=True)
+    return _finish(np.asarray(m.vertices), np.asarray(m.faces), field, pitch, project, None, decimate)
 
 
-def _finish(mesh, field, pitch, project, stats=None):
-    """Relax and project the marching-cubes mesh, orient it, drop debris."""
+def field_stl(field, lo, hi, path, pitch=None, project=3, pad=2, progress=None, block=32, lipschitz=None,
+              decimate=None):
+    """field(P) < 0 straight to a binary STL at `path`, one x slab of
+    narrow-band blocks at a time, for parts whose mesh does not fit in
+    memory (lattices at fine pitch: tens of millions of triangles). Memory
+    is one slab (`block` cells thick), whatever the part; there is no cell
+    budget. Returns the report: faces, volume, area, watertight, sampling.
+
+    The same marching cubes, relaxation and projection as field_mesh, slab
+    by slab. A vertex on the plane two slabs share is relaxed along the
+    seam only and projected by the first slab, and reused, bit for bit, by the second, so the STL
+    closes across the seam; the open edges each slab leaves on its two
+    planes are matched against its neighbours', which checks the whole
+    file is watertight without ever holding it. Small closed shells inside
+    one slab, under (2 pitch)^3, are dropped as field_mesh drops debris. A
+    crossing the Lipschitz skip missed shows as an unmatched edge, and the
+    export starts over with every block sampled. `decimate` (mm) thins each
+    slab as field_mesh does, its seam vertices left where they are."""
+    lo, dims, pitch = _grid(lo, hi, pitch, pad)
+    try:
+        return _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschitz, decimate)
+    except _Unmatched:
+        rep = _stream_stl(field, lo, dims, pitch, path, project, progress, block, np.inf, decimate)
+        rep["sampling"]["fallback"] = True
+        return rep
+
+
+class _Unmatched(Exception):
+    pass
+
+
+_STL_DTYPE = np.dtype([("n", "<f4", (3,)), ("v", "<f4", (3, 3)), ("a", "<u2")])
+
+
+def _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschitz, decimate=None):
+    import time
+
+    from .narrowband import march_blocks, merge_blocks, shell_volumes
+
+    t0 = time.time()
+    stats = {}
+    rep = {"faces": 0, "volume": 0.0, "area": 0.0, "slabs": 0, "maxSlabFaces": 0, "droppedShells": 0,
+           "facesBeforeDecimation": 0}
+    carry, carry_edges, carry_x = {}, set(), None
+    tol = (2.0 * pitch) ** 3
+
+    def keys(V):
+        return [r.tobytes() for r in np.ascontiguousarray(V)]
+
+    def slab(blocks, fh):
+        nonlocal carry, carry_edges, carry_x
+        x0 = int(blocks[0][0][0])
+        x1 = x0 + int(blocks[0][1][0]) - 1
+        if carry_x != x0 and carry_edges:
+            raise _Unmatched()              # the last slab left edges open and nothing meets them
+        nv, Vs, Fs = 0, [], []
+        for _, _, v, fa in blocks:
+            Vs.append(v)
+            Fs.append(fa + nv)
+            nv += len(v)
+        V, F = merge_blocks(np.concatenate(Vs), np.concatenate(Fs), block)
+        del Vs, Fs
+        F = F[:, ::-1]
+        start = V[:, 0] == x0
+        end = V[:, 0] == x1
+        # open edges: allowed only on the two planes, and matched across them
+        n = len(V)
+        a, b = F.ravel(), np.roll(F, -1, axis=1).ravel()
+        e = np.minimum(a, b) * n + np.maximum(a, b)
+        u, cnt = np.unique(e, return_counts=True)
+        if (cnt > 2).any():
+            raise _Unmatched()
+        op = u[cnt == 1]
+        ea, eb = op // n, op % n
+        at_start = start[ea] & start[eb]
+        at_end = end[ea] & end[eb]
+        if not (at_start | at_end).all():
+            raise _Unmatched()
+        kv = {}
+
+        def key(i):
+            if i not in kv:
+                kv[i] = V[i].tobytes()
+            return kv[i]
+
+        mine = {frozenset((key(i), key(j))) for i, j in zip(ea[at_start], eb[at_start])}
+        if mine != (carry_edges if carry_x == x0 else set()):
+            raise _Unmatched()
+        carry_edges = {frozenset((key(i), key(j))) for i, j in zip(ea[at_end], eb[at_end])}
+        # debris: a small shell that touches neither plane is whole and here
+        lab, vol = shell_volumes(V, F)
+        seam = np.zeros(len(vol), bool)
+        seam[np.unique(lab[np.flatnonzero((start | end)[F].any(axis=1))])] = True
+        drop = ~seam & (np.abs(vol) * pitch ** 3 <= tol)
+        if drop.any():
+            rep["droppedShells"] += int(drop.sum())
+            F = F[~drop[lab]]
+        Vmm = lo + V * pitch
+        si = np.flatnonzero(start)
+        if len(si):
+            got = [carry.get(k) for k in keys(V[si])]
+            if any(g is None for g in got):
+                raise _Unmatched()
+            Vmm[si] = np.array(got)
+        end_keys = keys(V[end])
+        if project:
+            Vmm = _relax(Vmm, F, field, pitch, int(project), pinned=start, seam=end)
+        carry = dict(zip(end_keys, Vmm[end]))
+        if decimate:
+            from .decimate import decimate as thin
+
+            Vmm, F, dst, _ = thin(Vmm, F, field, float(decimate), pitch, locked=start | end)
+            rep["facesBeforeDecimation"] += dst["facesBefore"]
+        carry_x = x1
+        # write
+        tri = Vmm[F]
+        nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        ln = np.linalg.norm(nrm, axis=1)
+        rep["area"] += float(ln.sum() / 2)
+        rep["volume"] += float(np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])).sum() / 6)
+        out = np.zeros(len(F), _STL_DTYPE)
+        out["n"] = nrm / np.maximum(ln, 1e-300)[:, None]
+        out["v"] = tri
+        fh.write(out.tobytes())
+        rep["faces"] += len(F)
+        rep["slabs"] += 1
+        rep["maxSlabFaces"] = max(rep["maxSlabFaces"], len(F))
+
+    with open(path, "wb") as fh:
+        fh.write(b"loadpath field_stl".ljust(80, b" ") + b"\0\0\0\0")
+        cur = []
+        for blk in march_blocks(field, lo, dims, pitch, block=block, lipschitz=lipschitz, progress=progress,
+                                stats=stats):
+            if cur and blk[0][0] != cur[0][0][0]:
+                slab(cur, fh)
+                cur = []
+            cur.append(blk)
+        if cur:
+            slab(cur, fh)
+        if carry_edges:
+            raise _Unmatched()
+        if not rep["faces"]:
+            raise ValueError("the field has no inside over these bounds (nothing is below zero)")
+        fh.seek(80)
+        fh.write(np.uint32(rep["faces"]).tobytes())
+    if rep["volume"] < 0:
+        # wound inside out: flip every triangle in place
+        mm = np.memmap(path, dtype=_STL_DTYPE, mode="r+", offset=84, shape=(rep["faces"],))
+        for i in range(0, len(mm), 1_000_000):
+            c = mm[i:i + 1_000_000]
+            c["v"] = c["v"][:, ::-1]
+            c["n"] = -c["n"]
+        mm.flush()
+        del mm
+        rep["volume"] = -rep["volume"]
+    rep.update({"watertight": True, "pitch": pitch, "sampling": stats, "path": path,
+                "seconds": round(time.time() - t0, 1)})
+    return rep
+
+
+def _grid(lo, hi, pitch, pad):
+    """field_mesh's sampling grid: (lo, dims, pitch), off-grid by a hair."""
+    lo = np.asarray(lo, float)
+    hi = np.asarray(hi, float)
+    if pitch is None:
+        pitch = float((np.prod(hi - lo) / 4e6) ** (1 / 3))
+    pitch = float(pitch)
+    lo = lo - pad * pitch - pitch * 0.013717        # off-grid, as sdf_kit.to_mesh
+    dims = np.ceil((hi + pad * pitch - lo) / pitch).astype(int) + 1
+    return lo, dims, pitch
+
+
+def _finish(V, F, field, pitch, project, stats=None, decimate=None):
+    """Relax and project the marching-cubes mesh, orient it, drop debris
+    (shells under (2 pitch)^3), as a trimesh. The bookkeeping is numpy on
+    the arrays: trimesh's own (process, split, volume) took longer than
+    the meshing on a lattice of a few million faces."""
     import trimesh
 
+    from .narrowband import shell_volumes, signed_volume
+
+    V = np.asarray(V, float)
+    F = np.asarray(F, np.int64)
     if project:
-        mesh.vertices = _relax(mesh, field, pitch, int(project))
-    if mesh.volume < 0:
-        mesh.invert()
+        V = _relax(V, F, field, pitch, int(project))
+    dec = None
+    if decimate:
+        from .decimate import decimate as thin
+
+        V, F, dec, _ = thin(V, F, field, float(decimate), pitch)
     try:
-        bodies = mesh.split(only_watertight=False)
-        if len(bodies) > 1:
-            tol = (2.0 * pitch) ** 3
-            kept = [b for b in bodies if abs(float(b.volume)) > tol]
-            if kept and len(kept) < len(bodies):
-                mesh = trimesh.util.concatenate(kept) if len(kept) > 1 else kept[0]
+        lab, vol = shell_volumes(V, F)
+        tol = (2.0 * pitch) ** 3
+        if vol.sum() < 0:
+            F, vol = F[:, ::-1].copy(), -vol
+        small = np.abs(vol) <= tol
+        if len(vol) > 1 and small.any() and not small.all():
+            F = F[~small[lab]]
+            used = np.zeros(len(V), bool)
+            used[F] = True
+            new = np.cumsum(used) - 1
+            V, F = V[used], new[F]
     except Exception:  # noqa: BLE001 - debris filtering is best-effort
         pass
+    if signed_volume(V, F) < 0:
+        F = F[:, ::-1].copy()
+    mesh = trimesh.Trimesh(V, F, process=False)
     mesh.metadata["pitch"] = pitch
     if stats:
         mesh.metadata["sampling"] = stats
+    if dec:
+        mesh.metadata["decimation"] = dec
     return mesh
 
 
-def _gradient(field, V, h, chunk=400_000):
+def _gradient(field, V, h):
     """(f, grad f) at V from a tetrahedral stencil (five evaluations)."""
+    from .narrowband import peval
+
     tet = np.array([[1, -1, -1], [-1, -1, 1], [-1, 1, -1], [1, 1, 1]], float) * h
     f0 = np.empty(len(V))
     g = np.empty((len(V), 3))
+    chunk = 400_000
     for i in range(0, len(V), chunk):
         v = V[i:i + chunk]
         n = len(v)
-        f = np.asarray(field(np.concatenate([v] + [v + t for t in tet])), float)
+        f = peval(field, np.concatenate([v] + [v + t for t in tet]))
         ft = f[n:].reshape(4, n)
         f0[i:i + chunk] = f[:n]
         g[i:i + chunk] = (tet[:, :, None] * ft[:, None, :]).sum(axis=0).T / (4 * h * h)
@@ -1198,6 +1643,8 @@ def _gradient(field, V, h, chunk=400_000):
 def _project(field, V, pitch, f0=None, g=None):
     """One Newton step of every vertex onto field = 0, step capped at
     pitch / 2 and kept only where |f| drops."""
+    from .narrowband import peval
+
     if f0 is None:
         f0, g = _gradient(field, V, 0.05 * pitch)
     gg = np.maximum((g * g).sum(axis=1), 1e-12)
@@ -1205,52 +1652,94 @@ def _project(field, V, pitch, f0=None, g=None):
     ln = np.linalg.norm(step, axis=1)
     step *= np.minimum(1.0, 0.5 * pitch / np.maximum(ln, 1e-300))[:, None]
     cand = V + step
-    f1 = np.asarray(field(cand), float)
+    f1 = peval(field, cand)
     ok = np.abs(f1) < np.abs(f0)
     return np.where(ok[:, None], cand, V)
 
 
-def _relax(mesh, field, pitch, rounds):
+def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
     """Even out the marching-cubes vertices on the surface: each round moves
     every vertex halfway to its neighbours' centroid, within the tangent
     plane of the field (so the surface does not shrink), then projects it
     back onto the zero level. Marching cubes leaves a sawtooth along every
     crease (a vertex lands on one face or the other at random); relaxed and
     projected, a crease comes out as a clean edge rounded over about one
-    pitch. Exact sharp features are mesh booleans' job (sdf_kit.mesh_subtract)."""
+    pitch. Exact sharp features are mesh booleans' job (sdf_kit.mesh_subtract).
+
+    Two closing Newton passes take every vertex the rest of the way; a
+    vertex already within 1e-6 pitch of the zero level is left alone
+    there, so those passes cost about one evaluation per vertex instead of
+    six. `pinned` vertices do not move at all, and `seam` ones slide only
+    along the seam they form (toward their seam neighbours' centroid): the
+    streamed export's planes between slabs, which the next slab reuses
+    as they are, so they must not lean on one side's vertices."""
     import scipy.sparse as sp
 
-    e = mesh.edges_unique
-    n = len(mesh.vertices)
-    A = sp.coo_matrix((np.ones(2 * len(e)), (np.r_[e[:, 0], e[:, 1]], np.r_[e[:, 1], e[:, 0]])),
-                      shape=(n, n)).tocsr()
-    deg = np.maximum(np.asarray(A.sum(axis=1)).ravel(), 1)
-    V = np.asarray(mesh.vertices, float)
+    from .narrowband import peval
+
+    V = np.array(V, float)
+    n = len(V)
+    a = np.r_[F[:, 0], F[:, 1], F[:, 2]]
+    b = np.r_[F[:, 1], F[:, 2], F[:, 0]]
+    r, c = np.r_[a, b], np.r_[b, a]
+    if seam is not None:
+        seam = np.asarray(seam, bool)
+        k = ~seam[r] | seam[c]
+        r, c = r[k], c[k]
+    A = sp.coo_matrix((np.ones(len(r), np.float32), (r, c)), shape=(n, n)).tocsr()
+    A.data[:] = 1.0                       # an edge counts once, from either face
+    deg = np.maximum(np.diff(A.indptr), 1)
+    move = np.ones(n, bool) if pinned is None else ~np.asarray(pinned, bool)
     h = 0.05 * pitch
     for _ in range(rounds):
-        f0, g = _gradient(field, V, h)
-        V = _project(field, V, pitch, f0, g)
-        nrm = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+        idx = np.flatnonzero(move)
+        f0, g = _gradient(field, V[idx], h)
+        V[idx] = _project(field, V[idx], pitch, f0, g)
+        nrm = np.zeros((n, 3))
+        nrm[idx] = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
         d = (A @ V) / deg[:, None] - V
         d -= (d * nrm).sum(axis=1, keepdims=True) * nrm
-        V = V + 0.5 * d
-    V = _project(field, V, pitch)
-    return _project(field, V, pitch)
+        V[move] += 0.5 * d[move]
+    tol = 1e-6 * pitch
+    for _ in range(2):
+        idx = np.flatnonzero(move)
+        f0 = peval(field, V[idx])
+        far = np.abs(f0) > tol
+        idx = idx[far]
+        if len(idx):
+            V[idx] = _project(field, V[idx], pitch)
+    return V
 
 
 # ---- the job ---------------------------------------------------------------------
 
-def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progress=None, render=True):
+def node_doc(doc, node):
+    """The graph made to mesh one of its nodes instead of its output: groups
+    expanded (so a node inside a copy is named <copy>__<node>), `output`
+    set to `node` and the name suffixed with it, so its files don't
+    overwrite the whole part's."""
+    full = expand_groups(doc)
+    if node not in (full.get("nodes") or {}):
+        raise ValueError(f"no node {node!r} to mesh (have {', '.join(full.get('nodes') or {})})")
+    return {**full, "output": node, "name": f"{doc.get('name', 'field')}-{node}"}
+
+
+def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progress=None, render=True,
+              prebuilt=None, node=None):
     """Build a field graph, mesh its output and report on it: volume,
     area, mass (with `material`), watertightness, bodies, and the printability
     check on the field itself (walls, overhangs, trapped voids) unless
     `check` is false. Writes <name>.stl (and <name>.step with `step`) to
     `out_dir`; with sharp booleans, `sharpEdges` says how exactly the mesh
-    keeps the plain shapes' surfaces (sharp.edge_accuracy)."""
+    keeps the plain shapes' surfaces (sharp.edge_accuracy).
+    `prebuilt` reuses resources another graph built (FieldGraph.seed);
+    `node` meshes that node instead of the output (node_doc)."""
     import time
 
     t0 = time.time()
-    g = FieldGraph(doc, base_dir=base_dir, sources=sources, meshes=meshes)
+    if node is not None:
+        doc = node_doc(doc, node)
+    g = FieldGraph(doc, base_dir=base_dir, sources=sources, meshes=meshes).seed(prebuilt)
     process = None
     if doc.get("process") is not None:
         from .spec import _process
@@ -1263,13 +1752,20 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         opts = DrainOptions.from_spec(doc.get("drains"))
         drains = drain_graph(g, process, opts, build=doc.get("build"), min_wall=doc.get("minWall"),
                              pitch=(doc.get("mesh") or {}).get("pitch"), progress=progress)
+    if (doc.get("mesh") or {}).get("stream"):
+        return None, _run_streamed(doc, g, out_dir, drains, process, progress, t0)
     mesh = g.mesh(progress=progress)
+    from .narrowband import shell_volumes, signed_volume, watertight
+
+    V, F = np.asarray(mesh.vertices), np.asarray(mesh.faces)
     rep = {"name": doc.get("name", "field"), "output": g.output, "nodes": len(g.nodes),
-           "pitch": mesh.metadata.get("pitch"), "faces": int(len(mesh.faces)), "watertight": bool(mesh.is_watertight),
-           "volume": float(mesh.volume), "area": float(mesh.area),
+           "pitch": mesh.metadata.get("pitch"), "faces": int(len(mesh.faces)), "watertight": watertight(F, len(V)),
+           "volume": signed_volume(V, F), "area": float(mesh.area),
            "bounds": [mesh.bounds[0].tolist(), mesh.bounds[1].tolist()]}
+    if "decimation" in mesh.metadata:
+        rep["decimation"] = mesh.metadata["decimation"]
     # shells: a body's outside, or the wall of a void sealed inside it (normals in)
-    shells = [float(b.volume) for b in mesh.split(only_watertight=False)]
+    shells = shell_volumes(V, F)[1].tolist()
     rep["bodies"] = sum(v > 0 for v in shells)
     rep["enclosedVoids"] = sum(v < 0 for v in shells)
     rep["enclosedVoidVolume"] = -sum(v for v in shells if v < 0)
@@ -1299,12 +1795,20 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         mat = material_from_spec(doc["material"])
         rep["mass"] = rep["volume"] * mat.density / 1000.0
         rep["material"] = mat.name
+    for key, mod, fn in (("impact", "impact", "impact_report"), ("vibration", "modal", "vibration_report")):
+        if doc.get(key) is not None:
+            if "material" not in doc:
+                raise ValueError(f"field graph: '{key}' needs a material")
+            import importlib
+
+            run = getattr(importlib.import_module(f".{mod}", __package__), fn)
+            rep[key] = run(g, doc[key], mat)
     if g.plan is not None:
         from .sharp import edge_accuracy, plan_refs
 
-        F = g.field()
+        Fg = g.field()
         try:
-            rep["sharpEdges"] = edge_accuracy(mesh, plan_refs(g.plan), boundary=lambda P: np.abs(F(P)) < 1e-6)
+            rep["sharpEdges"] = edge_accuracy(mesh, plan_refs(g.plan), boundary=lambda P: np.abs(Fg(P)) < 1e-6)
         except Exception as exc:  # noqa: BLE001 - a measurement never fails the job
             rep["sharpEdges"] = {"error": str(exc)}
     if doc.get("check", True):

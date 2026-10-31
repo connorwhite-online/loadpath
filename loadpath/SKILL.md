@@ -41,6 +41,15 @@ field. `check` reports every problem at once: fix them all, then check again.
    moving robot joint, 3 for anything that can be dropped or crashed), at the
    interface that carries it. Add a sideways or torsional case if the part
    can see one; a design optimized for one direction is weak in the others.
+   When the direction is genuinely unknown (contact, bumps, handling, a
+   push at the tool "from anywhere"), say so instead of guessing:
+   `{"region": "tool", "force": [0, 0, -20], "direction": "any"}` designs
+   and checks for the force's size in its worst direction, and `"cone": 30`
+   for anything within 30 degrees of the written one. The worst case is
+   exact (three solves, a 3x3 eigenproblem), and `report.json` gives each
+   case's `worstDirection`. It costs stiffness in the nominal direction (the
+   arm link: about half again more compliant under its payload), so use it
+   for the uncertain load and keep known loads as plain vectors.
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.
@@ -128,6 +137,12 @@ field. `check` reports every problem at once: fix them all, then check again.
   (either alone works too). Mechanisms like robot arms are usually limited by
   deflection, not strength. It runs several optimizations, so it is the slowest and the one
   to use when you know the loads.
+  With `pip install loadpath[crosscheck]` the pick is confirmed on a
+  body-fitted tetrahedral mesh (`goal.confirm`, default `auto`): the report's
+  `safetyFactor` is then the tet reading (`confirm.method: "tet"`, voxel
+  reading beside it), and the search steps down to where that meets the
+  target, typically 0-45% lighter. A warning that the cross-check reads the
+  pick below target names the spot the voxel grid cannot resolve: look there.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
 
@@ -137,12 +152,25 @@ field. `check` reports every problem at once: fix them all, then check again.
   TPMS sheet lattice graded by its own stress: `"lattice": {"type":
   "gyroid", "cell": 10, "skin": 1.2}` in the study, or `loadpath_lattice`
   on a finished job. `skin: 0` for SLS, MJF and resin so they drain.
+- Don't use a lattice to make a part stiffer per gram: solid topology
+  optimization wins that. Use one to stop an impact (a bumper, a hard stop, a
+  drop pad): give a field graph an `impact` block (envelope, density node,
+  mass and velocity or energy, forceLimit, `"grade": true`, cell and minWall).
+  It returns the peak force and crush, and a density table that crushes every
+  layer at the same force. A `vibration` block gives natural frequencies with
+  point masses. See docs/IMPACT.md in the repo.
 - A two-fluid heat exchanger is its own document (`loadpath_schema
   "heatExchanger"`): a core shape, a layout (`cross` or `counter`), cell and
   wall, and an optional duty to rate it. Size it first
   (`loadpath_size_heat_exchanger`, seconds), then design it
   (`loadpath_heat_exchanger`): the report says whether each fluid reaches
-  its ports and only its own.
+  its ports and only its own. With a duty, `"simulate": true` also
+  simulates the whole exchanger (porous core, open headers, both fluids and
+  the wall; porous.py, about a minute): how evenly each fluid shares out
+  over the core (`entry.uniformity`, 1 = even), core vs header pressure
+  drop, outlet temperatures and the hottest wall point. Use it to compare
+  header depths and port sizes (`porous.sweep`); the rating alone assumes
+  even flow.
 - Holding a mesh from somewhere else (your own field model, a CAD export)?
   `loadpath_check_printability`, `loadpath_check_isolation` and
   `loadpath_check_fit` check it directly. From Python, `check_dfm` and
@@ -163,6 +191,24 @@ coordinates). The optimizer then only builds what can be printed at 45°;
 (about a minute), 40-60k for a part you will print. Members thinner than
 about two cells cannot form; `check` warns when `minMember` is too fine for
 the grid.
+
+## Length scales and sealed voids
+
+`minMember` (mm) is the thinnest member, `minHole` the narrowest hole or
+gap. A `process` sets both if the study does not (2 x its minFeature for
+members: SLS/MJF/FDM 1.6; holes FDM/SLS/MJF 2, SLA/DLP/LPBF 1). With
+neither, the filter still holds members to 1.4 mm, so a fine grid cannot
+grow sub-millimetre skins. A hole narrower than `minHole` comes out filled.
+
+Stiffness likes closed sections, so a fine grid can seal a void (a skin
+over a cable channel). For powder and resin processes and LPBF
+(`"drains": "auto"`, the default) the optimizer then drills escape holes
+(SLS 6 mm, MJF 7.5, SLA/DLP 5.5, LPBF 6.8; at least 2 per void, more until
+no powder is over 60 mm from one) through thin, low-stress wall, and runs on
+so the part carries its load round them. `"drains": true` forces it for
+any process, `false` turns it off, or give `{"diameter", "count",
+"maxPath", "iterations"}`. `report.json`'s `optimizer.escape` lists the
+holes; `enclosedCavityVolume` should read 0.
 
 ## A robot arm link, end to end
 
@@ -195,5 +241,28 @@ the grid.
 1 kg at the wrist × 9.81 × 2 (dynamic) ≈ 20 N. The side case keeps the link
 from being a flat plate that folds sideways. `symmetry: ["z"]` makes it
 printable flat in either orientation.
+
+For a link in a mechanism with a URDF, don't write those loads by hand:
+derive them, and the neighbours' swept space, from the arm itself.
+
+```bash
+loadpath assembly robot.urdf --link forearm --study forearm.json --region j4-mount \
+    --payload 1.0 --payload-at 0,0,0.07 --payload-radius 0.03 --out derived/
+loadpath run derived/forearm.derived.json
+```
+
+It sweeps poses over the joint limits, speeds and accelerations (scaled to
+what each joint's rated effort can deliver), a scattered payload, a push at
+the tool and each joint upstream stalled against an obstacle, does
+Newton-Euler for the wrench the part carries at its far joint, and keeps the
+few samples that set the peak stress everywhere in the solid design space
+(`assembly.json` says how close they come: `envelopeRatio`). The parent and
+child links, swept through their joints' ranges, become `bore: false` mesh
+keep-outs with the study's preserved interfaces cut out. Inputs worth
+setting: `--ramp` (seconds to full speed, what the controller allows),
+`--push` (N, the hardest contact at the tool; a stalled joint pushes up to it) and `--balanced`
+for joints a spring counterbalances. Python: `loadpath.assembly`
+(`Robot.from_urdf`, `sweep_loads`, `governing_cases`, `swept_keepouts`,
+`derive_study`).
 
 The full field reference is in README.md next to this file.

@@ -432,6 +432,25 @@ def test_crosscheck_cantilever():
     assert abs(c["peakStress"] - 5.1) < 0.4, c["peakStress"]
 
 
+def test_search_confirms_on_tets():
+    # goal.confirm "tet": the delivered pick is the tet mesh's reading, at
+    # or above the target, and the rest of the search is read through it
+    from loadpath.crosscheck import unsupported
+    assert "gravity" in unsupported(study_from_dict({**LUG, "gravity": [0, 0, -9.81]}))
+    if unsupported(study_from_dict(LUG)):
+        print("  (skipped: pip install loadpath[crosscheck])")
+        return
+    s = study_from_dict({**LUG, "goal": {"safetyFactor": 4.0, "volumeFraction": 0.3, "confirm": "tet"},
+                         "maxIterations": 40})
+    result = run_study(s)
+    best = result.outcomes[result.best]
+    c = best.report["confirm"]
+    assert c["method"] == "tet" and best.report["safetyFactor"] == c["safetyFactor"] >= 4.0, c
+    assert best.report["voxelSafetyFactor"] > 0
+    others = [o for o in result.outcomes if o is not best and "confirm" not in o.report]
+    assert all("calibration" in o.report for o in others) or not others
+
+
 def test_crosscheck_calculix_agrees():
     # CalculiX on the same quadratic mesh and boundary conditions: the two
     # solvers' deflection and peak stress agree; a support sliding in x and y
@@ -813,6 +832,7 @@ TESTS = [
     test_union_region_and_dead_material_pruning,
     test_compliant_inverter,
     test_crosscheck_cantilever,
+    test_search_confirms_on_tets,
     test_crosscheck_calculix_agrees,
     test_process_layers_weaken_across_build_direction,
     test_crease_metric_finds_unfilleted_junctions,

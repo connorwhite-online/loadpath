@@ -44,6 +44,13 @@ from .shapes import Shape, shape_from_spec
 __all__ = ["Region", "Load", "LoadCase", "Support", "Goal", "Study", "study_from_dict"]
 
 DEFAULT_MAX_ELEMENTS = 60_000
+# mm: the member size the filter holds a study to when it names neither a
+# minMember nor a process: about three FDM perimeters, and under FDM's own
+# floor (2 x its 0.8 mm minimum feature) on purpose. At 1.6 the filter grew
+# on grids coarser than a millimetre too (the mbb-beam eval, 1.29 mm cells,
+# went from passing at SF 1.52 to a search that stalled at 1.49); at 1.4 it
+# only acts below ~1.2 mm cells, where the sub-millimetre skins come from.
+DEFAULT_MIN_MEMBER = 1.4
 # Hard ceiling regardless of what a study asks for. From 100k cells the
 # optimizer is matrix-free multigrid (mg.py), ~1.5 KB per cell: an 845k-cell
 # study ran end to end in 20 min and 1.6 GB on a 4-core box. Past a few
@@ -77,6 +84,11 @@ class Load:
     # MPa gauge in the keep-out `region` names, on the material lining it
     # (pressure.py); 0 = no pressure. Negative is a vacuum.
     pressure: float = 0.0
+    # The force's direction is not known: None (as written), "any" (its size
+    # in every direction) or "cone" (within `cone` degrees of it). The
+    # optimizer and verification design for the worst one (directions.py).
+    direction: str | None = None
+    cone: float | None = None
 
 
 @dataclass
@@ -115,6 +127,12 @@ class Goal:
     # one passes; "constrained": minimize mass with the limits as MMA
     # constraints, corrected against the verified mesh (constrained.py).
     method: str = "search"
+    # How the search's pick is confirmed before delivery: "voxel" re-verifies
+    # it on a finer voxel grid; "tet" on a body-fitted tetrahedral mesh
+    # (crosscheck.py), whose reading also calibrates the search's voxel
+    # stress so it can step down to the real target; "auto" is "tet" when
+    # the cross-check is installed and covers the study, else "voxel".
+    confirm: str = "auto"
     # Extra fixed fractions to return alongside, for a trade-off gallery.
     outcomes: list[float] = field(default_factory=list)
     # Which passing outcome is delivered: the lightest ("mass"), or for FDM
@@ -126,22 +144,24 @@ class Goal:
 # How the part will be made. Each process sets what the design must respect:
 # whether layers make it weaker across them (FDM bonds layer to layer at a
 # fraction of the in-plane strength), whether overhangs need control, and
-# the smallest feature it holds. Values are typical published ranges, chosen
-# conservative; override any of them in the study.
+# the smallest feature it holds, and the smallest hole that stays open (unfused
+# powder sinters shut in a narrow SLS/MJF hole, resin cures shut in a narrow
+# SLA one, a nozzle bridges over a narrow FDM one). Values are typical
+# published ranges, chosen conservative; override any of them in the study.
 PROCESSES = {
-    "fdm": {"interlayer": 0.6, "minFeature": 0.8, "overhangs": True,
+    "fdm": {"interlayer": 0.6, "minFeature": 0.8, "minHole": 2.0, "overhangs": True,
             "note": "filament: layer bonds ~50-70% of in-plane strength; self-supporting at 45 degrees"},
-    "sls": {"interlayer": 0.9, "minFeature": 0.8, "overhangs": False,
+    "sls": {"interlayer": 0.9, "minFeature": 0.8, "minHole": 2.0, "overhangs": False,
             "note": "powder bed (PA12, PA11): nearly isotropic, no supports; leave powder escape holes in closed cavities"},
-    "mjf": {"interlayer": 0.95, "minFeature": 0.8, "overhangs": False,
+    "mjf": {"interlayer": 0.95, "minFeature": 0.8, "minHole": 2.0, "overhangs": False,
             "note": "HP Multi Jet Fusion: as SLS, slightly more isotropic"},
-    "sla": {"interlayer": 1.0, "minFeature": 0.5, "overhangs": False,
+    "sla": {"interlayer": 1.0, "minFeature": 0.5, "minHole": 1.0, "overhangs": False,
             "note": "resin vat: isotropic once cured; supports are added by the slicer"},
-    "dlp": {"interlayer": 1.0, "minFeature": 0.5, "overhangs": False,
+    "dlp": {"interlayer": 1.0, "minFeature": 0.5, "minHole": 1.0, "overhangs": False,
             "note": "resin vat, whole-layer exposure (DLP/LCD): as SLA; large cross-sections peel hard"},
-    "volumetric": {"interlayer": 1.0, "minFeature": 0.3, "overhangs": False,
+    "volumetric": {"interlayer": 1.0, "minFeature": 0.3, "minHole": 0.6, "overhangs": False,
                    "note": "volumetric / tomographic resin printing: no layers, no supports"},
-    "lpbf": {"interlayer": 0.85, "minFeature": 0.4, "overhangs": True,
+    "lpbf": {"interlayer": 0.85, "minFeature": 0.4, "minHole": 1.0, "overhangs": True,
              "note": "laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L): strength across layers ~85-90% "
                      "as built; overhangs past 45 degrees need supports, which cannot come out of closed "
                      "channels; bridges only ~2 mm; enclosed powder must drain"},
@@ -170,6 +190,7 @@ class Process:
     # mm: the smallest powder escape or resin drain hole the part's cavities
     # may rely on (processcheck.RULES default)
     escape_hole: float | None = None
+    min_hole: float | None = None      # mm
 
 
 def _process(spec) -> Process | None:
@@ -201,7 +222,40 @@ def _process(spec) -> Process | None:
     return Process(kind, build, inter, float(spec.get("minFeature", base["minFeature"])),
                    bool(spec.get("overhangs", base["overhangs"])),
                    anisotropic=_anisotropic(spec.get("anisotropic", False)),
-                   escape_hole=float(esc) if esc is not None else None, **stiff)
+                   escape_hole=float(esc) if esc is not None else None,
+                   min_hole=float(spec.get("minHole", base["minHole"])), **stiff)
+
+
+def _drains(spec, process):
+    """`drains`: "auto" (default; powder and resin processes and LPBF), true,
+    false, or an object of escape.EscapeOptions keys. Resolved to an
+    EscapeOptions, or None when off."""
+    from .drains import drains_wanted
+    from .escape import EscapeOptions
+
+    if spec in ("auto", None):
+        return EscapeOptions.for_process(process) if drains_wanted("auto", process) else None
+    if not drains_wanted(spec, process):
+        return None
+    return EscapeOptions.from_spec(spec if isinstance(spec, dict) else {}, process)
+
+
+def _calibrated_process(process, mat_in, spec):
+    """A calibrated card (calibration.py) measured its printer's across-layer
+    strength and stiffness: use them unless the study sets its own."""
+    if process is None or not isinstance(mat_in, str):
+        return process
+    from .calibration import load_card
+    card = load_card(mat_in)
+    cp = (card or {}).get("process") or {}
+    if cp.get("type") != process.kind:
+        return process
+    spec = spec or {}
+    if "interlayer" not in spec and cp.get("interlayer"):
+        process.interlayer = float(cp["interlayer"])
+    if "stiffnessAcrossLayers" not in spec and cp.get("stiffnessAcrossLayers"):
+        process.ez = float(cp["stiffnessAcrossLayers"])
+    return process
 
 
 def _slicer(spec, process, base_dir, goal):
@@ -272,7 +326,20 @@ class Study:
     # FDM: slicer.SlicerOptions (print time, filament, support per outcome;
     # graded infill); None for other processes
     slicer: Any = None
+    # Smallest hole (mm) the optimizer may leave, or None: see simp.SimpOptions.dilate.
+    min_hole: float | None = None
+    # Escape holes into sealed voids: "auto" (powder and resin processes),
+    # True, False, or an escape.EscapeOptions; see escape.py.
+    drains: Any = "auto"
     raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def length_scale(self) -> float:
+        """The member size the density filter enforces (mm): minMember, else
+        DEFAULT_MIN_MEMBER. A grid fine enough to resolve a sub-millimetre
+        sheet would otherwise build one (the 845k-cell arm link with no
+        minMember came out a 1 mm skin sealed round its cable channel)."""
+        return float(self.min_member) if self.min_member else DEFAULT_MIN_MEMBER
 
     @property
     def self_equilibrated(self) -> bool:
@@ -437,9 +504,26 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
                 raise ValueError(f"{label}.distribution must be 'uniform' or 'bearing'")
             if dist == "bearing" and not np.any(f):
                 raise ValueError(f"{label}: a bearing load needs a force")
-            loads.append(Load(region, shape, f, m, dist))
+            spread, cone = None, None
+            if ld.get("direction") is not None:
+                if ld["direction"] != "any":
+                    raise ValueError(f"{label}.direction must be 'any' (the force's size, in every direction)")
+                spread = "any"
+            if ld.get("cone") is not None:
+                cone = ld["cone"]
+                if spread or not isinstance(cone, (int, float)) or not 0 < cone <= 180:
+                    raise ValueError(f"{label}.cone is a half-angle in degrees (0-180] round the force's "
+                                     "direction, and cannot go with direction 'any'")
+                spread, cone = ("any", None) if cone >= 180 else ("cone", float(cone))
+            if spread and not np.any(f):
+                raise ValueError(f"{label}: direction 'any' or a cone needs a force (its size and, for a cone, "
+                                 "its axis)")
+            loads.append(Load(region, shape, f, m, dist, direction=spread, cone=cone))
         if not loads:
             raise ValueError(f"loadCases[{ci}] has no loads")
+        if sum(ld.direction is not None for ld in loads) > 1:
+            raise ValueError(f"loadCases[{ci}]: at most one load per case may have an unknown direction "
+                             "(direction 'any' or a cone); put another in a load case of its own")
         life = {}
         for key in ("cycles", "hours"):
             if c.get(key) is not None:
@@ -476,6 +560,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         safety_factor=g.get("safetyFactor"),
         max_deflection=g.get("maxDeflection"),
         method=str(g.get("method", "search")),
+        confirm=str(g.get("confirm", "auto")),
         outcomes=[float(v) for v in g.get("outcomes") or []],
         minimize=str(g.get("minimize", "mass")),
     )
@@ -485,6 +570,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError("goal needs volumeFraction (0..1), safetyFactor (>1) and/or maxDeflection (mm)")
     if goal.method not in ("search", "constrained"):
         raise ValueError("goal.method must be 'search' or 'constrained'")
+    if goal.confirm not in ("auto", "voxel", "tet"):
+        raise ValueError("goal.confirm must be 'auto', 'voxel' or 'tet'")
     if goal.max_deflection is not None and goal.max_deflection <= 0:
         raise ValueError("goal.maxDeflection must be a positive distance in mm")
     if goal.volume_fraction is not None and not (0.02 <= goal.volume_fraction <= 0.95):
@@ -514,6 +601,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
 
     min_member = d.get("minMember")
     process = _process(d.get("process"))
+    process = _calibrated_process(process, mat_in, d.get("process"))
     print_direction = parse_build_direction(d.get("printDirection"))
     if process is not None:
         # the process sets what a study left open: overhang control along the
@@ -522,6 +610,11 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             print_direction = process.build
         floor = 2.0 * process.min_feature
         min_member = max(float(min_member), floor) if min_member is not None else floor
+    min_hole = d.get("minHole")
+    if min_hole is not None and not (isinstance(min_hole, (int, float)) and min_hole > 0):
+        raise ValueError("minHole is the narrowest hole or gap allowed, in mm (> 0)")
+    if min_hole is None and process is not None:
+        min_hole = process.min_hole
     # Walls round keep-outs and the design space's skin are preserved
     # material: fixed, pinned solid, with only what is behind them designed
     # (skin-and-rib). Every pressurized keep-out has one: the pressure needs
@@ -597,5 +690,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         durability=durability,
         joints=joints,
         slicer=_slicer(d.get("slicer"), process, base_dir, goal),
+        min_hole=float(min_hole) if min_hole is not None else None,
+        drains=_drains(d.get("drains", "auto"), process),
         raw=d,
     )

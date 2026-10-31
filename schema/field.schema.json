@@ -23,6 +23,46 @@
       "type": "string",
       "description": "The node to mesh (default the last)."
     },
+    "groups": {
+      "type": "object",
+      "description": "name -> a reusable sub-graph that `group` nodes copy",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodes"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "param -> default; the group's nodes refer to it by name"
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "names the group's nodes use for nodes the instance gives"
+          },
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/node"
+            }
+          },
+          "output": {
+            "type": "string",
+            "description": "the node the group stands for (default the last)"
+          }
+        }
+      }
+    },
     "bounds": {
       "type": "object",
       "description": "Meshing box (default: worked out from the output).",
@@ -68,6 +108,15 @@
         "sharp": {
           "type": "boolean",
           "description": "hard booleans (no blend) with plain shapes and meshes are done exactly, so bores, bolt faces and keep-outs keep sharp edges (default true; false meshes the whole field, every crease rounded over about one pitch)"
+        },
+        "decimate": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm: thin the triangles wherever the mesh stays this close to the surface (flat and gently curved regions lose most of theirs; creases and small features keep them), e.g. 0.01-0.05"
+        },
+        "stream": {
+          "type": "boolean",
+          "description": "write the STL slab by slab without holding the mesh, in bounded memory and with no cell budget: for parts of tens of millions of triangles (fine lattices). Skips the printability check, bodies and the render."
         }
       },
       "additionalProperties": false
@@ -95,7 +144,7 @@
       "anyOf": [
         {
           "type": "string",
-          "description": "A name: pla, petg, abs, asa, tpu, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work)."
+          "description": "A name: pla, petg, abs, asa, tpu, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py)."
         },
         {
           "type": "object",
@@ -152,6 +201,298 @@
     "check": {
       "type": "boolean",
       "description": "run the printability check (default true)"
+    },
+    "editor": {
+      "type": "object",
+      "description": "What `loadpath edit` keeps with the graph (node positions in 'layout'); nothing else reads it."
+    },
+    "tune": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "study",
+        "params"
+      ],
+      "description": "`loadpath tune`: turn these numbers for the lightest part that still meets the study's limits, each candidate meshed and analyzed (tune.py)",
+      "properties": {
+        "study": {
+          "type": "string",
+          "description": "study JSON path or example:<name>: loads, supports, material, goal"
+        },
+        "node": {
+          "type": "string",
+          "description": "the node analyzed (default the output)"
+        },
+        "params": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "min",
+              "max"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "where the number is, '/'-separated: nodes/web/shape/max/2"
+              },
+              "also": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "numbers that move with it ('-' first: the other way)"
+              },
+              "min": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "safetyFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "least safety factor (default the study's goal)"
+        },
+        "maxDeflection": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm at the loads (default the study's goal)"
+        },
+        "evaluations": {
+          "type": "integer",
+          "minimum": 2,
+          "description": "analyses to spend (default 20)"
+        },
+        "sweep": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "description": "the trade-off: tune again held to each of these values of one limit, e.g. {\"maxDeflection\": [0.4, 0.6, 0.8]}",
+          "properties": {
+            "safetyFactor": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "maxDeflection": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "analysis": {
+          "enum": [
+            "auto",
+            "solid",
+            "homogenized"
+          ],
+          "description": "auto (default): a part with a lattice is analyzed with the lattice homogenized (unit-cell stiffness and wall stress), else meshed and verified as a solid"
+        },
+        "pitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm mesh for each candidate (default 1)"
+        },
+        "cells": {
+          "type": "integer",
+          "minimum": 1000,
+          "description": "analysis cells (default 30000)"
+        }
+      }
+    },
+    "impact": {
+      "type": "object",
+      "properties": {
+        "envelope": {
+          "type": "string",
+          "description": "solid node the lattice core fills (the crush pad)"
+        },
+        "density": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          ],
+          "description": "relative density: a scalar node (the one the lattice node uses) or a number (default 1 = solid)"
+        },
+        "lattice": {
+          "enum": [
+            "gyroid",
+            "diamond",
+            "schwarz-p"
+          ],
+          "description": "sheet type (default gyroid)"
+        },
+        "axis": {
+          "enum": [
+            "x",
+            "y",
+            "z"
+          ],
+          "description": "crush direction (default z)"
+        },
+        "mass": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "kg, the moving mass"
+        },
+        "velocity": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "m/s at contact"
+        },
+        "energy": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "J, instead of mass and velocity"
+        },
+        "forceLimit": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "N, the most the part behind may feel"
+        },
+        "pitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm sampling grid (default 0.5)"
+        },
+        "grade": {
+          "type": "boolean",
+          "description": "also work out the flattest graded core for this envelope and give it as a density remap table"
+        },
+        "rhoMin": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "lowest printable relative density for grading (default 0.12)"
+        },
+        "rhoMax": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "highest relative density for grading (default 0.5)"
+        },
+        "cell": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm lattice cell: with minWall, raises rhoMin to the thinnest printable wall"
+        },
+        "minWall": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm thinnest printable sheet (default 0.8)"
+        }
+      },
+      "required": [
+        "envelope"
+      ],
+      "additionalProperties": false,
+      "description": "Crush and impact of a lattice core (impact.py): force-crush curve, where a mass at a speed stops, peak force and g, and with grade a density table that crushes every layer at the same force. Needs material."
+    },
+    "vibration": {
+      "type": "object",
+      "properties": {
+        "envelope": {
+          "type": "string",
+          "description": "solid node analysed (homogenized lattice inside)"
+        },
+        "density": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          ],
+          "description": "relative density node or number (default 1 = solid)"
+        },
+        "lattice": {
+          "enum": [
+            "gyroid",
+            "diamond",
+            "schwarz-p"
+          ]
+        },
+        "fixed": {
+          "type": "string",
+          "description": "solid node: nodes inside it are clamped"
+        },
+        "pointMasses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "string",
+                "description": "solid node the mass attaches over"
+              },
+              "mass": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "kg"
+              }
+            },
+            "required": [
+              "region",
+              "mass"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "modes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "how many (default 6)"
+        },
+        "pitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm analysis grid (default 1)"
+        },
+        "minFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Hz the first mode must clear"
+        },
+        "excitation": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Hz of a known shake: reports the worst transmissibility"
+        },
+        "lossFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "material loss factor (default from modal.LOSS_FACTOR)"
+        }
+      },
+      "required": [
+        "envelope",
+        "fixed"
+      ],
+      "additionalProperties": false,
+      "description": "Natural frequencies, effective masses and damping (modal.py). Needs material."
     },
     "process": {
       "anyOf": [
@@ -230,6 +571,11 @@
             },
             "overhangs": {
               "type": "boolean"
+            },
+            "minHole": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm: narrowest hole or gap the optimizer may leave (default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"
             },
             "escapeHole": {
               "type": "number",
@@ -595,7 +941,7 @@
     },
     "node": {
       "title": "a node object with an 'op'",
-      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, remap, expr, union, intersect, subtract, shell, offset, lattice, transform.",
+      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, image, remap, expr, union, intersect, subtract, shell, offset, lattice, transform, group.",
       "oneOf": [
         {
           "$ref": "#/$defs/op-constant"
@@ -617,6 +963,9 @@
         },
         {
           "$ref": "#/$defs/op-grid"
+        },
+        {
+          "$ref": "#/$defs/op-image"
         },
         {
           "$ref": "#/$defs/op-remap"
@@ -644,6 +993,9 @@
         },
         {
           "$ref": "#/$defs/op-transform"
+        },
+        {
+          "$ref": "#/$defs/op-group"
         }
       ],
       "x-discriminator": {
@@ -656,6 +1008,7 @@
           "mesh": "#/$defs/op-mesh",
           "result": "#/$defs/op-result",
           "grid": "#/$defs/op-grid",
+          "image": "#/$defs/op-image",
           "remap": "#/$defs/op-remap",
           "expr": "#/$defs/op-expr",
           "union": "#/$defs/op-union",
@@ -664,7 +1017,8 @@
           "shell": "#/$defs/op-shell",
           "offset": "#/$defs/op-offset",
           "lattice": "#/$defs/op-lattice",
-          "transform": "#/$defs/op-transform"
+          "transform": "#/$defs/op-transform",
+          "group": "#/$defs/op-group"
         }
       }
     },
@@ -1225,9 +1579,101 @@
         ]
       ]
     },
+    "op-image": {
+      "type": "object",
+      "description": "A picture as a scalar field from 0 to 1, laid on a plane and carried straight through along the third axis: a logo to emboss, a texture to drive a wall, a hand-painted density.",
+      "properties": {
+        "op": {
+          "const": "image"
+        },
+        "path": {
+          "type": "string",
+          "description": "PNG, JPEG, ... in the graph's folder"
+        },
+        "plane": {
+          "enum": [
+            "xy",
+            "xz",
+            "yz"
+          ],
+          "description": "the plane it lies in (default xy)"
+        },
+        "origin": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "lower-left corner in the plane, mm (default [0, 0])"
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[width, height] mm"
+        },
+        "channel": {
+          "enum": [
+            "luma",
+            "r",
+            "g",
+            "b",
+            "a"
+          ],
+          "description": "default luma"
+        },
+        "invert": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "size"
+      ],
+      "additionalProperties": false
+    },
     "op-remap": {
       "type": "object",
-      "description": "Map `input` from [a, b] to [c, d] through a curve (clamped unless clamp is false).",
+      "description": "Map `input` from [a, b] to [c, d] through a curve (clamped unless clamp is false). Longer from/to lists are a piecewise-linear table (from ascending), e.g. a density per height for an impact core.",
       "properties": {
         "op": {
           "const": "remap"
@@ -1253,24 +1699,39 @@
           "items": {
             "type": "number"
           },
-          "minItems": 2,
-          "maxItems": 2
+          "minItems": 2
         },
         "to": {
           "type": "array",
           "items": {
             "type": "number"
           },
-          "minItems": 2,
-          "maxItems": 2
+          "minItems": 2
         },
         "curve": {
-          "enum": [
-            "linear",
-            "smoothstep",
-            "smootherstep",
-            "sqrt",
-            "square"
+          "anyOf": [
+            {
+              "enum": [
+                "linear",
+                "smoothstep",
+                "smootherstep",
+                "sqrt",
+                "square"
+              ]
+            },
+            {
+              "type": "array",
+              "minItems": 2,
+              "description": "points [u, v] over the unit square, u ascending from 0 to 1: a drawn curve",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
           ]
         },
         "clamp": {
@@ -2113,6 +2574,71 @@
       "required": [
         "op",
         "input"
+      ],
+      "additionalProperties": false
+    },
+    "op-group": {
+      "type": "object",
+      "description": "A copy of a sub-graph from the graph's `groups`, with its own param values and inputs; it stands for the group's output.",
+      "properties": {
+        "op": {
+          "const": "group"
+        },
+        "group": {
+          "type": "string",
+          "description": "the name of a group in `groups`"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "param -> value (the group's defaults otherwise)"
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "the group's input name -> a node of this graph"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "group"
       ],
       "additionalProperties": false
     }

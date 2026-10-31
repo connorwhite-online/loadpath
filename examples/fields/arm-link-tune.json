@@ -1,0 +1,27 @@
+{
+  "name": "arm-link-tune",
+  "description": "The arm link's solid envelope (bosses and a web, smooth-unioned, bores and cable channel cut) with its web height, web width and blend left to `loadpath tune`: the lightest link that keeps the arm-link study's safety factor and deflection.",
+  "nodes": {
+    "shoulder": {"op": "shape", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 24, "r": 16}},
+    "wrist": {"op": "shape", "shape": {"type": "cylinder", "center": [140, 0, 0], "axis": "z", "length": 24, "r": 15}},
+    "web": {"op": "shape", "shape": {"type": "box", "min": [0, -11, -9], "max": [140, 11, 9]}},
+    "blob": {"op": "union", "inputs": ["shoulder", "wrist", "web"], "blend": 12},
+    "slab": {"op": "shape", "shape": {"type": "box", "min": [-20, -20, -12], "max": [160, 20, 12]}},
+    "envelope": {"op": "intersect", "inputs": ["blob", "slab"], "blend": 1.5},
+    "bores": {"op": "shape", "shape": {"type": "union", "shapes": [{"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 30, "r": 11}, {"type": "cylinder", "center": [140, 0, 0], "axis": "z", "length": 30, "r": 11}]}},
+    "channel": {"op": "shape", "shape": {"type": "cylinder", "p0": [30, 0, 0], "p1": [110, 0, 0], "r": 5}},
+    "part": {"op": "subtract", "inputs": ["envelope", "bores", "channel"]}
+  },
+  "output": "part",
+  "mesh": {"pitch": 0.5},
+  "material": "pa12",
+  "tune": {
+    "study": "example:arm-link",
+    "params": [
+      {"path": "nodes/web/shape/max/2", "also": ["-nodes/web/shape/min/2"], "min": 6, "max": 11},
+      {"path": "nodes/web/shape/max/1", "also": ["-nodes/web/shape/min/1"], "min": 6.5, "max": 14},
+      {"path": "nodes/blob/blend", "min": 3, "max": 14}
+    ],
+    "evaluations": 24
+  }
+}

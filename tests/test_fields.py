@@ -16,10 +16,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import numpy as np  # noqa: E402
+import numpy as np
+import pytest  # noqa: E402
 import trimesh  # noqa: E402
 
-from loadpath.fields import FieldGraph, MeshField, _Samples, _compile_expr  # noqa: E402
+from loadpath.fields import FieldGraph, MeshField, _Samples, _compile_expr, node_doc  # noqa: E402
 from loadpath.schema import lint  # noqa: E402
 
 SPHERE = {"op": "shape", "shape": {"type": "sphere", "center": [0, 0, 0], "r": 10}}
@@ -341,9 +342,89 @@ def test_drains_keep_clear():
     assert all(h["at"][2] < 5 or abs(h["axis"][2]) < 0.5 for h in d["holes"]), d["holes"]
 
 
+def test_mesh_field_far_from_its_grid():
+    """Past the mesh field's voxel grid the distance keeps growing with the
+    way out: a mesh sphere offset by 5 mm (well past the grid's padding) is
+    a 15 mm sphere, not the sphere's box."""
+    m = trimesh.creation.icosphere(subdivisions=4, radius=10.0)
+    f = MeshField(m)
+    P = np.array([[0, 0, 15.0], [14.0, 14.0, 14.0], [0, 0, 40.0]])
+    d = f(P)
+    exact = np.linalg.norm(P, axis=1) - 10.0
+    assert np.all(np.abs(d - exact) < 0.15), (d, exact)
+    g = FieldGraph({"nodes": {"ball": {"op": "mesh", "source": "ball"},
+                              "big": {"op": "offset", "input": "ball", "distance": 5.0}}}, meshes={"ball": m})
+    v = g.mesh(pitch=0.5).volume
+    assert abs(v - 4 / 3 * np.pi * 15 ** 3) < 0.02 * 4 / 3 * np.pi * 15 ** 3, v
+
+
+def test_groups_are_copied_with_their_own_knobs():
+    """A group is a sub-graph copied per instance: its params are the
+    instance's (else the defaults), its inputs the instance's nodes, its
+    output answers to the instance's name; groups can use groups; mistakes
+    are named."""
+    rib = {"params": {"w": 1.0}, "inputs": ["base"],
+           "nodes": {"bar": {"op": "shape", "shape": {"type": "box", "min": [-5, -1, 4], "max": [5, 1, 6]}},
+                     "grown": {"op": "offset", "input": "bar", "distance": "w"},
+                     "out": {"op": "union", "inputs": ["base", "grown"]}}}
+    twice = {"inputs": ["base"], "nodes": {"one": {"op": "group", "group": "rib", "inputs": {"base": "base"}},
+                                           "two": {"op": "group", "group": "rib", "params": {"w": 2.0},
+                                                   "inputs": {"base": "one"}}}}
+    doc = {"groups": {"rib": rib, "twice": twice},
+           "nodes": {"ball": {"op": "shape", "shape": {"type": "sphere", "center": [0, 0, -30], "r": 2}},
+                     "a": {"op": "group", "group": "rib", "params": {"w": 0.5}, "inputs": {"base": "ball"}},
+                     "b": {"op": "group", "group": "twice", "inputs": {"base": "ball"}}}, "output": "b"}
+    g = FieldGraph(doc)
+    P = np.array([[0.0, 1.4, 5.0], [0.0, 2.6, 5.0], [0.0, 3.4, 5.0]])
+    # the bar's side is at y = 1: grown by 0.5 (a), by 2 (b's outer copy)
+    assert np.allclose(g.evaluate(P, "a")[:1], -0.1, atol=1e-6) and g.evaluate(P, "a")[1] > 0
+    assert np.allclose(g.evaluate(P, "b"), [-1.6, -0.4, 0.4], atol=1e-6)
+    assert {"a__bar", "a__w", "b__one", "b__one__bar", "b__bar"} <= set(g.nodes)
+    assert not lint(doc, "field")
+    for bad, msg in ((({"p": 1}, None), "has no param 'p'"), ((None, {}), "needs input 'base'")):
+        d = json.loads(json.dumps(doc))
+        if bad[0] is not None:
+            d["nodes"]["a"]["params"] = bad[0]
+        if bad[1] is not None:
+            d["nodes"]["a"]["inputs"] = bad[1]
+        assert any(msg in i["message"] for i in lint(d, "field")), lint(d, "field")
+    d = json.loads(json.dumps(doc))
+    d["groups"]["rib"]["nodes"]["out"] = {"op": "group", "group": "rib", "inputs": {"base": "base"}}
+    assert any("eight deep" in i["message"] for i in lint(d, "field"))
+    # one node of the part, a copy's inner node by its expanded name
+    one = node_doc(doc, "b__one__bar")
+    assert one["output"] == "b__one__bar" and one["name"] == "field-b__one__bar"
+    assert np.allclose(FieldGraph(one).evaluate(P), g.evaluate(P, "b__one__bar"))
+    with pytest.raises(ValueError, match="no node 'bar'"):
+        node_doc(doc, "bar")
+
+
+def test_image_is_a_field_on_a_plane():
+    """A picture laid on a plane: each pixel's centre reads its value (luma
+    from 0 to 1, top row at the top), the same all the way through along the
+    third axis; invert and channels work."""
+    from PIL import Image
+
+    d = tempfile.mkdtemp()
+    a = np.zeros((2, 4, 3), np.uint8)
+    a[0] = np.array([0, 85, 170, 255])[:, None]
+    a[1] = 255
+    a[1, :, 2] = 0                                   # the bottom row is yellow: no blue
+    Image.fromarray(a).save(os.path.join(d, "t.png"))
+    node = {"op": "image", "path": "t.png", "plane": "xz", "origin": [10, 0], "size": [8, 4]}
+    g = FieldGraph({"nodes": {"im": node, "inv": {**node, "invert": True}, "blue": {**node, "channel": "b"}}},
+                   base_dir=d)
+    P = np.array([[11.0, -50, 3], [17.0, 80, 3], [11.0, 0, 1], [13.0, 0, 3]])
+    assert np.allclose(g.evaluate(P, "im"), [0, 1, 1 - 0.0722, 85 / 255], atol=1e-6)
+    assert np.allclose(g.evaluate(P, "inv"), 1 - g.evaluate(P, "im"), atol=1e-9)
+    assert np.allclose(g.evaluate(P, "blue"), [0, 1, 0, 85 / 255], atol=1e-6)
+    assert not lint({"nodes": {"im": node}}, "field")
+
+
 TESTS = [test_shell_volume_and_projection, test_variable_shell_follows_its_field,
          test_variable_blend_is_a_bigger_fillet_where_asked, test_graded_lattice_stays_one_body, test_cell_warp_period_follows_the_field,
-         test_mesh_field_is_exact_near_the_surface, test_samples_on_a_grid_interpolate_exactly,
+         test_mesh_field_is_exact_near_the_surface, test_mesh_field_far_from_its_grid, test_groups_are_copied_with_their_own_knobs, test_image_is_a_field_on_a_plane,
+         test_samples_on_a_grid_interpolate_exactly,
          test_result_node_from_verify_fields, test_expressions_are_whitelisted, test_graph_errors_and_lint,
          test_unbounded_lattice_asks_for_bounds, test_cli_writes_part_and_report, test_mcp_field_job,
          test_drains_open_every_sealed_void, test_drains_go_where_it_is_calm,

@@ -28,6 +28,7 @@ import scipy.sparse as sp
 
 from scipy import ndimage
 
+from .directions import collapse, expand
 from .domain import Domain
 from .fem import HexMesh, Solver, Stiffness, hex8_ke
 from .manufacture import AccessFilter, MaxMember, machinable, tie_groups
@@ -268,6 +269,22 @@ class SimpOptions:
     # formulation (Wang, Lazarov & Sigmund 2011), at no extra solve per
     # iteration. Round 2 of the evals still grew 0.8mm skins without it.
     erode: float = 0.15
+    # The other half, for holes: the delivered part is CLOSED (dilated at
+    # eta - this, eroded back) with the same filter, so a hole or gap
+    # narrower than ~0.94 R comes out filled. 0 = off (holes of any size);
+    # minHole turns it on (see filter_radius). Counting the volume on the
+    # dilated design inside the loop instead (the textbook robust
+    # formulation, target rescaled to the blueprint) left a sealed-tube test
+    # with a quarter of its blueprint in members thinner than the erosion:
+    # 0.185 delivered for 0.25 asked and 2.7x the compliance (2026-10-30).
+    # Closing at delivery adds a little mass the verification then weighs.
+    dilate: float = 0.0
+    # bool per element pinned void (escape holes drilled into a sealed void),
+    # or None; see escape.py
+    void: np.ndarray | None = None
+    # escape.EscapeOptions: drill escape holes into the voids the design
+    # seals, then re-converge round them; or None
+    escape: object = None
     x0: np.ndarray | None = None      # warm start (design densities)
     # (axis, sign) layers stack along, or None: see am.py. Every density the
     # optimizer sees is then the printable one.
@@ -302,9 +319,17 @@ class SimpResult:
     converged: bool
     seconds: float
     history: list = field(default_factory=list)
+    # per case: the worst direction of a force of unknown direction
+    # (directions.py), or None
+    case_direction: list = field(default_factory=list)
+    # per element: strain energy density of the delivered design (weighted
+    # over cases), for siting escape holes where the part is calm
+    energy: np.ndarray | None = None
+    # escape holes drilled (escape.drill's report), or None
+    escape: dict | None = None
 
 
-def filter_radius(domain: Domain, min_member: float | None) -> float:
+def filter_radius(domain: Domain, min_member: float | None, min_hole: float | None = None) -> float:
     """Filter radius in mm, never below 1.5 cells (or the checkerboard comes
     back).
 
@@ -313,10 +338,15 @@ def filter_radius(domain: Domain, min_member: float | None) -> float:
     a filtered density of 0.65 (the eroded threshold, eta + erode), so
     R = 1.3 t puts the cut at 0.94 t. The earlier R = t/2 + pitch/2 let
     2-cell sheets through and they meshed thinner still (eval round 4:
-    a 0.9mm web in the bell crank against a 2.5mm minimum)."""
+    a 0.9mm web in the bell crank against a 2.5mm minimum).
+
+    The dilated design (eta - dilate, minHole) mirrors it: a gap narrower
+    than 0.94 R closes, so R = 1.3 x the larger of the two."""
     r = 1.5 * domain.pitch
     if min_member:
         r = max(r, 1.3 * float(min_member))
+    if min_hole:
+        r = max(r, 1.3 * float(min_hole))
     return r
 
 
@@ -510,6 +540,54 @@ def _symmetrize(v, mirror):
 
 
 def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_stop=None) -> SimpResult:
+    """Optimize, then (opts.escape) open every void the design sealed: drill
+    escape holes into it (escape.drill), pin them void, and run on from the
+    design for a few more iterations so the part carries its load round
+    them. Up to three rounds, as the re-converged design can seal a new one."""
+    if opts.escape is None or opts.extrusion is not None or opts.access is not None:
+        # a profile cut from plate or a milled or cast part has no sealed
+        # voids to drain (machining fills them)
+        return _optimize(domain, nu, opts, on_iter, should_stop)
+    from dataclasses import replace
+
+    from .escape import drill
+
+    t0 = time.time()
+    res = _optimize(domain, nu, replace(opts, escape=None), on_iter, should_stop)
+    void = None if opts.void is None else opts.void.copy()
+    log = {"holes": [], "filled": 0.0, "rounds": 0, "left": None}
+    for _ in range(3):
+        rep = drill(domain, res.xphys, res.energy, opts.escape, void)
+        log.setdefault("sealed", rep["sealed"])      # what the optimizer sealed
+        log["left"] = rep["sealed"] if not rep["holes"] and not rep["fill"].any() else None
+        log["unopened"] = rep.get("unopened", 0)
+        if rep.get("maxPath") is not None:
+            log["maxPath"] = rep["maxPath"]
+        if not rep["holes"] and not rep["fill"].any():
+            break
+        log["rounds"] += 1
+        log["holes"] += rep["holes"]
+        log["filled"] += rep["filledVolume"]
+        void = rep["void"] if void is None else (void | rep["void"])
+        x0 = res.x.copy()
+        x0[rep["fill"]] = 1.0
+        x0[void] = 0.0
+        if should_stop is not None and should_stop():
+            break
+        hist = res.history
+        res = _optimize(domain, nu, replace(opts, escape=None, void=void, x0=x0,
+                                            beta_start=float(opts.beta_max),
+                                            max_iterations=opts.escape.iterations), on_iter, should_stop)
+        res.history = hist + res.history
+    if log["left"] is None:
+        # the last round drilled: check what it delivered
+        log["left"] = drill(domain, res.xphys, None, opts.escape, void)["sealed"]
+    res.escape = log
+    res.seconds = time.time() - t0
+    return res
+
+
+def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_stop=None) -> SimpResult:
     t0 = time.time()
     mesh = domain.mesh
     n = mesh.n_elem
@@ -530,11 +608,17 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
     if opts.x0 is not None:
         x = np.clip(np.asarray(opts.x0, float), 0.0, 1.0)
     x[pres] = 1.0
+    void = opts.void if opts.void is not None and opts.void.any() else None
+    if void is not None:
+        x[void] = 0.0
     target = vf * n_design
 
     beta = float(opts.beta_start)
     since_beta = 0
-    us = [None] * len(domain.loads)
+    spreads = domain.spreads or [None] * len(domain.loads)
+    us = [None] * len(expand(domain.loads, spreads)[0])
+    robust = any(s is not None for s in spreads)
+    dc_prev = None
     weights = np.asarray(domain.case_weights, float)
     history = []
     c0 = None
@@ -577,10 +661,14 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         def printed_grad(am, g):
             return g
 
-    def physical(xv, b, am=None):
+    eta_d = opts.eta - opts.dilate
+
+    def physical(xv, b, am=None, eta=opts.eta):
         xt = (h @ xv) / hs
-        xp = _project(xt, b, opts.eta)
+        xp = _project(xt, b, eta)
         xp[pres] = 1.0
+        if void is not None:
+            xp[void] = 0.0
         return xt, printed(am if am is not None else am_v, xp)
 
     eta_e = opts.eta + opts.erode
@@ -590,6 +678,8 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
     def eroded(xt, b):
         xe = _project(xt, b, eta_e)
         xe[pres] = 1.0
+        if void is not None:
+            xe[void] = 0.0
         return printed(am_e, xe)
 
     for it in range(1, opts.max_iterations + 1):
@@ -598,28 +688,32 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         xt, xp = physical(x, beta, am_b)
         xe = eroded(xt, beta)
         e = E_MIN + xe ** PENALTY * (1 - E_MIN)
-        loads = domain.loads
+        fg = None
         if domain.gravity is not None:
             from .domain import gravity_force
             fg = gravity_force(mesh, xe, domain.gravity, domain.fixed)
-            loads = [f + fg for f in domain.loads]
+        # A force of unknown direction is three solves, one per axis, and
+        # each case is judged in its worst direction (directions.py).
+        rhs, layout = expand(domain.loads, spreads, fg)
         # Sensitivities only need to point the right way while the design is
         # still soft; tighten the solve as the projection sharpens.
         rtol = opts.solve_rtol * (10.0 if beta <= 2 else 3.0 if beta <= 8 else 1.0) if opts.adaptive_rtol \
             else opts.solve_rtol
-        us = fe.solve(e, xe, us, rtol=rtol, loads=loads)
+        us = fe.solve(e, xe, us, rtol=rtol, loads=rhs)
         dc_xp = np.zeros(n)
         comp = 0.0
         case_c = []
-        for ci, f in enumerate(loads):
-            ce = fe.strain_energy(us[ci])
-            cc = float(f @ us[ci])
+        for ci, wc in enumerate(collapse(rhs, layout, us, spreads)):
+            # the worst direction's sensitivity is its own (envelope theorem),
+            # softened over near-ties (directions.SMOOTH)
+            cc = wc.compliance
+            ce = sum(m * fe.strain_energy(v) for m, v in wc.energy)
             case_c.append(cc)
             comp += weights[ci] * cc
             dc_xp -= weights[ci] * PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN) * ce
             if domain.gravity is not None:
                 # d(f.u)/dx with design-dependent weight: + 2 u . df/dx.
-                ue = us[ci].reshape(-1, 3)[mesh.enode].sum(axis=1)
+                ue = wc.u_mean.reshape(-1, 3)[mesh.enode].sum(axis=1)
                 dc_xp += weights[ci] * 2.0 * (ue @ domain.gravity) * mesh.pitch ** 3 / 8.0
         if c0 is None:
             c0 = comp
@@ -627,9 +721,24 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         dproj_e[pres] = 0.0
         dproj = _dproject(xt, beta, opts.eta)
         dproj[pres] = 0.0
+        if void is not None:
+            dproj[void] = 0.0
+            dproj_e[void] = 0.0
         dc = ht @ (printed_grad(am_e, dc_xp) * dproj_e / hs)
         dv = ht @ (printed_grad(am_b, design.astype(float)) * dproj / hs)
         dc = np.minimum(dc, 0.0)
+        if robust:
+            # A worst case over directions swings: stiffening the weakest
+            # direction makes another the weakest, and the full step of the
+            # optimality criteria overshoots into it every iteration (a
+            # square cantilever's webs flipped diagonal to diagonal and its
+            # worst case came out 4.6 times its tuned-for-down twin's). The
+            # mean of this iteration's and the last one's sensitivities
+            # damps the swing: 5 times stiffer in its worst direction than
+            # the twin, where undamped it was barely better.
+            if dc_prev is not None:
+                dc = 0.5 * (dc + dc_prev)
+            dc_prev = dc
         dv = np.maximum(dv, 1e-12)
         excess = None
         if thick is not None:
@@ -664,9 +773,13 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
             lm = np.sqrt(l1 * l2)
             x_new = np.clip(x * ratio / np.sqrt(lm), lo_x, hi_x)
             x_new[pres] = 1.0
+            if void is not None:
+                x_new[void] = 0.0
             if domain.mirror:
                 x_new = _symmetrize(x_new, domain.mirror)
             x_new = _extrude(x_new, columns, design)
+            if void is not None:
+                x_new[void] = 0.0
             vol = float(physical(x_new, beta)[1][design].sum())
             if vol > target:
                 l1 = lm
@@ -714,15 +827,29 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
         xp = _project((h @ xe) / hs, beta, opts.eta - opts.erode)
         xp[pres] = 1.0
         xp = printed(am_v, xp)
+    if opts.dilate > 0:
+        # ...then CLOSE it: dilate, erode back. A hole or gap narrower than
+        # the dilation comes out filled. Only ever adds: with this filter a
+        # member near R wide erodes by more than it dilated (a sealed-tube
+        # test lost 6% of its volume and tripled its compliance), so the
+        # closing is the union with what it closed.
+        xd = _project((h @ xp) / hs, beta, eta_d)
+        xd[pres] = 1.0
+        xp = np.maximum(xp, _project((h @ xd) / hs, beta, opts.eta + opts.dilate))
+        xp[pres] = 1.0
+        xp = printed(am_v, xp)
+    if void is not None:
+        xp = xp.copy()
+        xp[void] = 0.0
     if opts.access is not None:
         xp = _machined(domain, xp, opts.access)
     # Final analysis on the delivered field (it moved since the last solve).
     e = E_MIN + xp ** PENALTY * (1 - E_MIN)
-    loads = domain.loads
+    fg = None
     if domain.gravity is not None:
         from .domain import gravity_force
         fg = gravity_force(mesh, xp, domain.gravity, domain.fixed)
-        loads = [f + fg for f in domain.loads]
+    loads, layout = expand(domain.loads, spreads, fg)
     us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
     if opts.prune:
         xp, us = _prune_dead(fe, domain, xp, us, loads, design, pres)
@@ -732,11 +859,15 @@ def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_
             if (xq != xp).any():
                 xp = xq
                 us = fe.solve(E_MIN + xp ** PENALTY * (1 - E_MIN), xp, us, rtol=1e-6, loads=loads)
-    case_c, comp = [], 0.0
-    for ci, f in enumerate(loads):
-        cc = float(f @ us[ci])
-        case_c.append(cc)
-        comp += weights[ci] * cc
+    case_c, case_d, comp = [], [], 0.0
+    energy = np.zeros(n)
+    stiff = E_MIN + xp ** PENALTY * (1 - E_MIN)
+    for ci, wc in enumerate(collapse(loads, layout, us, spreads)):
+        case_c.append(wc.compliance)
+        case_d.append(None if wc.direction is None else [float(v) for v in wc.direction])
+        comp += weights[ci] * wc.compliance
+        energy += weights[ci] * stiff * sum(m * fe.strain_energy(v) for m, v in wc.energy)
     return SimpResult(x=x, xphys=xp, compliance=comp, case_compliance=case_c,
                       volume_fraction=float(xp[design].mean()), iterations=it,
-                      converged=converged, seconds=time.time() - t0, history=history)
+                      converged=converged, seconds=time.time() - t0, history=history,
+                      case_direction=case_d, energy=energy / mesh.pitch ** 3)

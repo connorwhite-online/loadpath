@@ -52,14 +52,14 @@ existing workstream that already owns it.
 
 | # | Stage | Assumption | 10x alternative | Payoff | Effort | Covered |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Verification, search | Safety factor is read from voxel stress, which the tet cross-check measured 24-49% conservative | Make the pick on accurate stress: tet/CalculiX confirm of the final pick, or a per-part voxel-to-tet correction, or body-fitted stress recovery at hotspots | H: 15-30% less mass at the same real SF on every part | M | new |
+| 1 | Verification, search | Safety factor is read from voxel stress, which the tet cross-check measured 24-49% conservative | Make the pick on accurate stress: tet/CalculiX confirm of the final pick, or a per-part voxel-to-tet correction, or body-fitted stress recovery at hotspots | H: 15-30% less mass at the same real SF on every part | M | done: `goal.confirm` tet (see stage notes) |
 | 2 | Objective | Mass is the cost | Print time, filament and support from a real slicer (Orca/Prusa CLI) as the cost the search minimizes and reports | H for FDM users: time, not grams, is what they pay | M | done: slicer.py, `goal.minimize` ([slicer.md](slicer.md)) |
 | 3 | Export, lattices | Infill and grading are geometry we mesh | FDM: emit 3MF with per-region slicer modifiers (infill density, walls) driven by the stress field, so the slicer grades it; meshed TPMS only where it pays | H: graded FDM parts with no million-triangle meshes, slicer-native | M | done: infill.py, `slicer.grade` ([slicer.md](slicer.md)) |
 | 4 | Ground truth | Material cards are datasheet numbers; no part has been tested | Calibration loop: coupon generator + a tiny measurement format; printed GRIP yoke stiffness and break load feed material cards and the conservatism factor | H for trust; sets #1's correction | M (needs prints) | partly (Connor printing the yoke) |
 | 5 | Human QA | Defects are found by Connor zooming into renders | A vision-model critic on `render_interfaces` close-ups that files findings as eval metrics (creases, sawn faces, material over seats) | M-H: catches the class of bug numbers missed | S-M | done: loadpath/critic.py, `--critic` |
 | 6 | Evals | One ~2 h suite on 14 GRIP-like cases, pass/fail | Tiered: 5-min coarse smoke on every push, full suite nightly; Pareto (mass vs SF) score not pass/fail; a procedurally generated case corpus to stop tuning to GRIP | M-H: 20x faster feedback, less overfitting | M | done: `--tier coarse` (~7 min), pareto.py, corpus.py |
-| 7 | Inputs (loads) | Loads are exact vectors the agent writes by hand | Loads derived from the mechanism (URDF / joint torques / pose sweep, as GRIP's chain.py does ad hoc) and robust to direction and magnitude scatter (worst case over a cone) | H for robot parts: real loads are a pose envelope, not one vector | M | new |
-| 8 | Inputs (design space) | The user draws the design space and keep-outs | Derive them: assembly envelope minus neighbours' swept volumes over the joint's range of motion, fastener access paths | M-H: removes the hardest manual step for agents | M | new |
+| 7 | Inputs (loads) | Loads are exact vectors the agent writes by hand | Loads derived from the mechanism (URDF / joint torques / pose sweep, as GRIP's chain.py does ad hoc) and robust to direction and magnitude scatter (worst case over a cone) | H for robot parts: real loads are a pose envelope, not one vector | M | yes: assembly.py (`loadpath assembly`); GRIP's committed links drop from SF 2.7-4.2 to 0.6-2.1 under swept loads (examples/grip/README.md) |
+| 8 | Inputs (design space) | The user draws the design space and keep-outs | Derive them: assembly envelope minus neighbours' swept volumes over the joint's range of motion, fastener access paths | M-H: removes the hardest manual step for agents | M | partly: assembly.swept_keepouts (neighbours' swept volumes); envelope and fastener access still by hand |
 | 9 | Optimizer | Gradient descent from a uniform start gives one topology | Several distinct topologies (multi-start, diversity penalty, different filter radii) for the agent to choose from, as Fusion does | M | S-M | partly (warm-start thread) |
 | 10 | Solver tolerance | Every inner solve converges to the same rtol | Inexact solves early (tolerance tied to the projection beta and the design change), tight only at the end | M: 1.5-3x optimizer time | S | fold into GPU / scale threads |
 | 11 | Hardware | CPU, float64 assembled AMG, 4 cores | GPU matrix-free, mixed precision | H | M-L | yes: GPU offload, scale to millions |
@@ -136,6 +136,43 @@ the artefact is paid for in mass on every part (#1). The cross-check runs in
 ~1-2 minutes on 4 cores, cheap enough to confirm the final pick, and the
 GPU thread will make it cheaper.
 
+Done (2026-10-30): with the cross-check installed the search's pick is
+confirmed on tets, every voxel safety factor is scaled by that pick's
+tet/voxel ratio, and the search steps down until the tet reading meets the
+target (study.py, `goal.confirm`). On 7 strength-bound evals, against main
+on the same cloud box: MBB 26.4 -> 13.8 g (tet SF 1.70 for 1.5), wrist yoke
+25.3 -> 19.8 g (2.43 for 2), wall bracket 57.2 -> 45.8 g (4.06 for 2.5),
+fastener bracket 47.3 -> 38.8 g (4.92 for 2.5), bell crank 24.8 -> 24.3 g,
+hook 31.3 g both, turret 148.8 g both: 361 -> 323 g in total (-11%), -16%
+per case on average. What was learned:
+
+- Voxel is not uniformly conservative. The tet/voxel ratio was 1.03 (yoke)
+  to 2.1 (fastener bracket), and the turret went the other way: SF 1.21 on
+  tets against 2.54, its peak on the wall of a J1 bolt's driver access 1.3
+  mm from the held bore. Three steps up to 0.24 left that wall, and the
+  mass, unchanged, so a pick that fails on tets is confirmed on voxels and
+  the tet reading goes out as a warning instead of a step up.
+- The tet peak needs a contact band of two elements (and no less than the
+  voxel one). At the 1.3 mm voxel band the MBB beam's peak was the edge of
+  its rigid support and read SF 1.62-2.07 on three meshes of one part
+  (fTetWild is not deterministic, even single-threaded); at 3 mm, 3.00-3.05.
+  A mesh twice as fine moved the peak under 8%, inside the 1.15 allowance.
+- The ratio moves with the design (1.39-1.81 across MBB fractions), so
+  every step down is confirmed on tets, not trusted to the ratio. Several
+  cases stop at a voxel cliff (wall bracket: voxel SF 2.65 at 7.8%, 0.8 at
+  7.1%) with the tet reading still well over target: the next gains are
+  confirming those neighbours on tets directly, and cut-cell boundary
+  stiffness so the voxel reading is closer to begin with.
+- The voxel reading also moves with the cell budget, and most on thin
+  sections. Tuning the arm link's field graph (tune.py, 2026-10-30), the
+  start part read 0.500 mm deflection on 30k cells and 0.487 mm on 60k, while
+  a thinner web candidate read 0.485 and 0.623 (+28%); safety factors moved
+  5-20% the same way. A search on the coarse grid alone walks into the
+  sections the coarse grid flatters. tune.py now scales coarse readings by
+  the start's coarse/fine ratio and re-checks its winners on twice the cells;
+  the same drift is likely in any study outcome that sits on a limit with
+  members only two or three cells thick.
+
 ### Thermal and flow (thermal.py, heatx_thermal.py)
 
 Correlations for the exchanger, conduction-only topology optimization.
@@ -189,3 +226,5 @@ Not covered by any running thread, in order:
 5. **Physical calibration loop** (#4). Coupon generator, measurement
    format, ingest into material cards and #1's correction. Needs Connor's
    printer, so it should start with the yoke he is already printing.
+   Built (calibration.py, docs/CALIBRATION.md, examples/grip/yoke_test.py);
+   waiting on the prints and measurements.

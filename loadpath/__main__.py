@@ -8,9 +8,15 @@ Command line: run a study file and write the parts, a report and renders.
     python -m loadpath lattice study.json part.stl --out out/ [--options lattice.json]
     python -m loadpath heatx exchanger.json --out out/ [--size]
     python -m loadpath field part.json --out out/ [--pitch 0.3]   # a field graph (nTop-style implicit part)
+    python -m loadpath tune part.json --out out/ [--evaluations 20]   # its `tune` knobs vs an FE check
+    python -m loadpath edit part.json [--html editor.html]   # edit a field graph in the browser, live preview
     python -m loadpath mcp                     # local MCP server for agents (needs loadpath[mcp])
     python -m loadpath orient part.stl [--study study.json] [--3mf part.3mf]
                                                # rank build orientations, write the best as 3MF
+    python -m loadpath calibrate kit --material petg --out calibration/   # coupons to print + predictions
+    python -m loadpath calibrate fit measurements.json [--predictions predictions.json] [--name petg-a1mini --save]
+    python -m loadpath assembly robot.urdf --link forearm --study forearm.json --region j4-mount --payload 1
+                                               # loads + neighbour keep-outs derived from the mechanism
 
 Progress goes to stderr as one JSON object per line, so an agent can tail it.
 Results go to stdout as one JSON document, and to report.json in --out.
@@ -47,6 +53,80 @@ def _write_report(out_dir, summary):
     with open(os.path.join(out_dir, "report.json"), "w") as fh:
         json.dump(_jsonable(summary), fh, indent=2)
     print(json.dumps(_jsonable(summary), indent=2))
+
+
+def _calibrate(args):
+    from . import calibration as cal
+    if args.action == "kit":
+        kit = cal.coupon_kit(args.material, args.process, crush=args.crush)
+        paths = cal.write_kit(kit, args.out, args.material, args.process)
+        print(json.dumps({"ok": True, "files": paths,
+                          "coupons": {c.id: {"title": c.title, "test": c.test, "predicted": c.predicted}
+                                      for c in kit}}, indent=2, default=float))
+        return 0
+    if not args.measurements:
+        print(json.dumps({"ok": False, "error": "calibrate fit needs the measurements.json"}))
+        return 2
+    meas = _load(args.measurements)
+    pred = _load(args.predictions) if args.predictions else None
+    try:
+        card = cal.fit(meas, pred, args.name)
+    except (ValueError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    os.makedirs(args.out, exist_ok=True)
+    path = os.path.join(args.out, f"{card['name']}.json")
+    with open(path, "w") as fh:
+        json.dump(card, fh, indent=2)
+    if args.save:
+        os.makedirs(cal.CALIBRATION_DIR, exist_ok=True)
+        with open(os.path.join(cal.CALIBRATION_DIR, f"{card['name']}.json"), "w") as fh:
+            json.dump(card, fh, indent=2)
+    print(json.dumps(card, indent=2))
+    return 0
+
+
+def _assembly(args):
+    from .assembly import Payload, Robot, derive_study
+
+    robot = Robot.from_urdf(args.urdf)
+    study = _load(args.study)
+    base = os.path.dirname(os.path.abspath(args.study))
+    payload = None
+    if args.payload > 0:
+        link = args.payload_link
+        if link is None:
+            # down the chain of revolute joints from the part to its end (the tool)
+            link = robot.joints[args.joint or robot.far_joint(args.link)].child
+            while True:
+                kids = [j for j in robot.order if j.parent == link and j.type in ("revolute", "continuous")]
+                if len(kids) != 1:
+                    break
+                link = kids[0].child
+        payload = Payload(args.payload, link, tuple(float(v) for v in args.payload_at.split(",")),
+                          radius=args.payload_radius, min_kg=0.0)
+    sweep_kw = {"samples": args.samples, "ramp": args.ramp, "push": args.push, "contact_max": args.contact_max,
+                "balanced": tuple(j for j in args.balanced.split(",") if j), "joint": args.joint}
+    os.makedirs(args.out, exist_ok=True)
+    derived, report = derive_study(robot, args.link, study, args.region, payload=payload, keep_cases=args.keep_cases,
+                                   sweep_space=not args.no_space, k=args.cases, method=args.method,
+                                   sweep_kw=sweep_kw, space_kw={"clearance": args.clearance}, out_dir=args.out,
+                                   base_dir=base, cycles={k: float(v) for k, v in
+                                                          (kv.split("=") for kv in args.cycles.split(",") if kv)})
+    # the study's own mesh paths are relative to its folder: make them absolute
+    for key in ("designSpace", "preserve", "keepOut"):
+        for item in derived.get(key, []):
+            sh = item.get("shape", item)
+            if sh.get("type") == "mesh" and sh.get("path") and not os.path.isabs(sh["path"]) \
+                    and not os.path.exists(os.path.join(args.out, sh["path"])):
+                sh["path"] = os.path.join(base, sh["path"])
+    name = os.path.splitext(os.path.basename(args.study))[0]
+    with open(os.path.join(args.out, f"{name}.derived.json"), "w") as fh:
+        json.dump(derived, fh, indent=1)
+    with open(os.path.join(args.out, "assembly.json"), "w") as fh:
+        json.dump(_jsonable(report), fh, indent=1)
+    print(json.dumps(_jsonable({k: v for k, v in report.items() if k != "states"}), indent=1))
+    return 0
 
 
 def main(argv=None):
@@ -94,16 +174,69 @@ def main(argv=None):
     fg.add_argument("graph")
     fg.add_argument("--out", default="loadpath-out")
     fg.add_argument("--pitch", type=float, help="mesh grid, mm (overrides the graph's mesh.pitch)")
+    fg.add_argument("--node", help="mesh this node instead of the graph's output (a copy's nodes: <copy>__<node>)")
+    fg.add_argument("--decimate", type=float, metavar="MM", help="thin the triangles where the mesh stays within "
+                                                                 "MM of the surface (e.g. 0.02)")
+    fg.add_argument("--stream", action="store_true", help="write the STL slab by slab in bounded memory "
+                                                          "(huge lattices; skips the checks that need the mesh)")
     fg.add_argument("--no-render", action="store_true")
     fg.add_argument("--step", action="store_true", help="also write a STEP file (exact planes and cylinders; "
                                                          "needs loadpath[step])")
     fg.add_argument("--base-dir")
+    tu = sub.add_parser("tune", help="tune a field graph's numbers (its `tune` block) for the lightest part "
+                                     "that still meets a study's safety factor and deflection")
+    tu.add_argument("graph")
+    tu.add_argument("--out", default="loadpath-tune")
+    tu.add_argument("--evaluations", type=int, help="analyses to spend (overrides tune.evaluations)")
+    tu.add_argument("--base-dir")
+    ed = sub.add_parser("edit", help="edit a field graph in the browser: node graph, sliders, live GPU preview, run")
+    ed.add_argument("graph")
+    ed.add_argument("--html", help="write one self-contained editor page (every bake inside) instead of serving")
+    ed.add_argument("--port", type=int, default=8765)
+    ed.add_argument("--host", default="127.0.0.1", help="interface to listen on (default: this machine only)")
+    ed.add_argument("--out", help="where runs go (default: loadpath-edit/ beside the graph)")
+    ed.add_argument("--no-open", action="store_true", help="don't open a browser")
+    ed.add_argument("--base-dir")
     sub.add_parser("mcp", help="run a local MCP server (stdio) for agents")
     o = sub.add_parser("orient", help="rank build orientations of a mesh (support, bed, layer bond)")
     o.add_argument("mesh")
     o.add_argument("--study", help="the part's study: adds the interlayer reading under its loads")
     o.add_argument("--3mf", dest="threemf", help="write the best orientation as a slicer-ready 3MF")
     o.add_argument("--process", default="fdm")
+    cal = sub.add_parser("calibrate", help="coupons to print, and a material card fitted from their measurements")
+    cal.add_argument("action", choices=["kit", "fit"])
+    cal.add_argument("measurements", nargs="?", help="fit: the filled-in measurements.json")
+    cal.add_argument("--material", default="petg", help="kit: the starting card")
+    cal.add_argument("--process", default="fdm")
+    cal.add_argument("--crush", action="store_true", help="kit: add gyroid crush blocks (impact.py's crush law)")
+    cal.add_argument("--out", default="calibration", help="kit: folder for the STLs; fit: folder for the card")
+    cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
+    cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
+    cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
+    asm = sub.add_parser("assembly", help="derive a part's load cases and neighbour keep-outs from a URDF")
+    asm.add_argument("urdf")
+    asm.add_argument("--link", required=True, help="the URDF link the study designs")
+    asm.add_argument("--study", required=True, help="the part's study: interfaces, material, goal, design space")
+    asm.add_argument("--region", required=True, help="the study region the far joint loads (a socket, a mount)")
+    asm.add_argument("--joint", help="the far joint, if the link has more than one moving child joint")
+    asm.add_argument("--payload", type=float, default=0.0, help="kg at the end of the chain")
+    asm.add_argument("--payload-link", help="link that carries the payload (default: the chain's last link)")
+    asm.add_argument("--payload-at", default="0,0,0", help="payload position in that link's frame, m: x,y,z")
+    asm.add_argument("--payload-radius", type=float, default=0.0, help="m: payload position scatters this far")
+    asm.add_argument("--samples", type=int, default=1500, help="random poses (on top of the limit corners)")
+    asm.add_argument("--ramp", type=float, default=0.2, help="s to full speed (before the effort limit)")
+    asm.add_argument("--push", type=float, default=20.0, help="N: contact at the payload, any direction")
+    asm.add_argument("--contact-max", type=float, help="N: hardest an obstacle pushes back on a stalled joint "
+                     "(default: --push)")
+    asm.add_argument("--balanced", default="", help="joints a counterbalance holds against gravity: j2,...")
+    asm.add_argument("--cases", type=int, default=8, help="most governing cases to keep")
+    asm.add_argument("--method", choices=["stress", "hull"], default="stress")
+    asm.add_argument("--keep-cases", action="store_true", help="keep the study's own load cases too")
+    asm.add_argument("--no-space", action="store_true", help="loads only: no swept keep-outs")
+    asm.add_argument("--clearance", type=float, default=1.0, help="mm round each swept neighbour")
+    asm.add_argument("--cycles", default="", help="life cycles by sample kind, for fatigue: "
+                     "dynamic=1e6,pose=1e6,push=1e4,stall=1e3 (stall:j2=... for one joint)")
+    asm.add_argument("--out", default="loadpath-out")
     args = p.parse_args(argv)
 
     if args.cmd == "mcp":
@@ -122,8 +255,16 @@ def main(argv=None):
         return _heatx(args)
     if args.cmd == "field":
         return _field(args)
+    if args.cmd == "edit":
+        return _edit(args)
+    if args.cmd == "tune":
+        return _tune(args)
     if args.cmd == "orient":
         return _orient(args)
+    if args.cmd == "calibrate":
+        return _calibrate(args)
+    if args.cmd == "assembly":
+        return _assembly(args)
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
@@ -268,13 +409,64 @@ def _field(args):
         doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "pitch": args.pitch}}
     if args.step and not doc.get("step"):
         doc = {**doc, "step": True}
+    if args.stream:
+        doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "stream": True}}
+    if args.decimate:
+        doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "decimate": args.decimate}}
     base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
     try:
-        _, rep = run_field(doc, args.out, base, progress=_progress, render=not args.no_render and _can_render())
+        _, rep = run_field(doc, args.out, base, progress=_progress, render=not args.no_render and _can_render(),
+                           node=args.node)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
     _write_report(args.out, {"ok": True, **rep, **({"warnings": issues} if issues else {})})
+    return 0
+
+
+def _tune(args):
+    from .schema import format_issues, lint
+    from .tune import tune_field
+
+    doc = _load(args.graph)
+    issues = lint(doc, "field")
+    if any(i["level"] == "error" for i in issues):
+        print(json.dumps({"ok": False, "issues": issues, "error": format_issues(issues)}, indent=2))
+        return 2
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
+    try:
+        out = tune_field(doc, base, args.out, progress=_progress, evaluations=args.evaluations)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    summary = {"ok": out["best"] is not None, "best": out["best"], "start": out["start"],
+               "limits": out["limits"], "evaluations": len(out["history"]),
+               "tuned": os.path.join(args.out, "tuned.json")}
+    if out["best"] is None:
+        summary["error"] = "no candidate met the limits: widen the params' ranges or ease the limits"
+    _write_report(args.out, summary)
+    return 0 if out["best"] is not None else 1
+
+
+def _edit(args):
+    from .schema import lint
+
+    doc = _load(args.graph)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
+    if args.html:
+        from .editor import field_editor
+
+        issues = lint(doc, "field")
+        if any(i["level"] == "error" for i in issues):
+            print(json.dumps({"ok": False, "issues": issues}, indent=2))
+            return 2
+        field_editor(doc, args.html, base, progress=_progress)
+        print(json.dumps({"ok": True, "html": args.html}))
+        return 0
+    from .editor import serve_editor
+
+    serve_editor(args.graph, host=args.host, port=args.port, out_dir=args.out, base_dir=base,
+                 open_browser=not args.no_open)
     return 0
 
 

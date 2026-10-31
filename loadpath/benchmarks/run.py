@@ -150,9 +150,9 @@ def run_loadpath(p: Problem, variant: str, log=print):
 def run_constrained(p: Problem, limit: float, log=print):
     q = p.full or p
     dom, _ = domain_for(q)
-    # Started from (nearly) solid, a feasible design, as Le et al. 2010 do:
-    # from the reference's volume fraction the L-bracket run diverged (MMA
-    # emptied the part while the stress limit was violated a thousand-fold).
+    # Started from (nearly) solid, a feasible design, as Le et al. 2010 do.
+    # Since the fixes in constrained.py (q = 1, a guarded MMA step, the
+    # blueprint delivered) it also converges from the reference's volume.
     opts = SimpOptions(volume_fraction=0.95, filter_radius=q.rmin,
                        extrusion=1 if q.plane else None, max_iterations=200)
     t0 = time.time()

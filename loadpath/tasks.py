@@ -71,7 +71,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     warnings = [f"{i['path']}: {i['message']}" for i in issues] + list(d.warnings)
     return jsonable({
         "ok": True, "name": s.name, "pitch": d.pitch, "cells": d.n_elem, "dims": list(d.dims),
-        "preservedCells": int(d.preserve.sum()), "filterRadius": filter_radius(d, s.min_member),
+        "preservedCells": int(d.preserve.sum()), "filterRadius": filter_radius(d, s.length_scale, s.min_hole),
         "supportNodes": int(d.support_nodes.sum()), "loadNodes": int(d.load_nodes.sum()),
         "regions": [r.id for r in s.preserve] + [r.id for r in s.keep_out],
         "loadCases": [c.name for c in s.load_cases], "material": s.material.name,
@@ -171,8 +171,8 @@ def _duty(spec, hx):
 
 def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render: bool = True,
                    on_progress=None, viewer: bool = True) -> dict:
-    """Design a heat exchanger, check it, rate it if `duty` is given, and
-    write <name>.stl, <name>.png, the fluid spaces (<name>-<fluid>.stl) and
+    """Design a heat exchanger, check it, rate it if `duty` is given (and
+    simulate it whole with "simulate": true; porous.py), and write <name>.stl, <name>.png, the fluid spaces (<name>-<fluid>.stl) and
     an interactive viewer (<name>.html)."""
     from .heatx import design_heat_exchanger
     from .heatx_thermal import rate_design
@@ -181,7 +181,11 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
     duty = _duty(spec, hx)
     name = str(spec.get("name") or "heat-exchanger")
     _emit(on_progress, stage="design", type=hx.kind, cell=hx.cell, wall=hx.wall, layout=hx.layout)
-    mesh, report, spaces = design_heat_exchanger(hx, fluid_meshes=True)
+    sim_opts = spec.get("simulate")
+    sim_opts = ({} if sim_opts is True else dict(sim_opts)) if sim_opts and duty is not None else None
+    mesh, report, spaces, grids = design_heat_exchanger(hx, fluid_meshes=True, grids=True)
+    if sim_opts is None:
+        del grids
     os.makedirs(out_dir, exist_ok=True)
     stl = os.path.join(out_dir, name + ".stl")
     mesh.export(stl)
@@ -198,6 +202,22 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
             out["rating"] = rate_design(hx, report, duty)
         except ValueError as exc:
             out["ratingError"] = str(exc)
+    if sim_opts is not None:
+        _emit(on_progress, stage="simulate")
+        from .porous import plot_fields, simulate_design
+        try:
+            sim = simulate_design(hx, report, grids, duty, sim_opts.get("voxel"), sim_opts.get("closures", "design"),
+                                  fields=render)
+            f = sim.pop("_fields", None)
+            if f is not None:
+                png = os.path.join(out_dir, name + "-simulation.png")
+                plot_fields(f, png, axis=hx.build if isinstance(hx.build, int) else 2,
+                            title=f"{name}: whole-exchanger simulation, middle of the core")
+                sim["render"] = png
+            out["simulation"] = sim
+        except ValueError as exc:
+            out["simulationError"] = str(exc)
+        del grids
     if render:
         _emit(on_progress, stage="render")
         from .render import render_heat_exchanger

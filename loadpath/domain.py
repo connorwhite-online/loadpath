@@ -54,6 +54,8 @@ class Domain:
     springs: object = None
     # Self-weight: N per mm^3 of solid, or None (see BoundaryConditions).
     gravity: np.ndarray | None = None
+    # per case, directions.Spread or None (see BoundaryConditions)
+    spreads: list = field(default_factory=list)
 
     @property
     def n_elem(self):
@@ -163,6 +165,9 @@ class BoundaryConditions:
     case_pressure_nodes: list = field(default_factory=list)
     # per case, |net force| / sum |nodal force| of its pressures (0 when sealed)
     pressure_imbalance: list = field(default_factory=list)
+    # per case, directions.Spread for a force of unknown direction, or None;
+    # `loads` then holds the force as written
+    spreads: list = field(default_factory=list)
 
 
 def _cylinder_of(study: Study, region, shape, label):
@@ -237,9 +242,10 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         springs = sp.csr_matrix((vals[keep], (rows[keep], cols[keep])), shape=(mesh.n_dof, mesh.n_dof))
 
     load_nodes = np.zeros(mesh.n_nodes, bool)
-    loads, case_nodes, case_wet, imbalance = [], [], [], []
+    loads, case_nodes, case_wet, imbalance, spreads = [], [], [], [], []
     for ci, case in enumerate(study.load_cases):
         f = np.zeros(mesh.n_dof)
+        spread = None
         cn = np.zeros(mesh.n_nodes, bool)
         cw = np.zeros(mesh.n_nodes, bool)
         fp = np.zeros(mesh.n_dof)
@@ -256,7 +262,18 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             cn[idx] = True
             pts = xyz[idx]
             force = ld.force
-            if ld.distribution == "bearing":
+            if ld.direction is not None:
+                # the uncertain force, spread evenly, one vector per axis
+                size = float(np.linalg.norm(force))
+                basis = []
+                for a in range(3):
+                    b = np.zeros(mesh.n_dof)
+                    b.reshape(-1, 3)[idx, a] = size / len(idx)
+                    basis.append(b)
+                cos_half = -1.0 if ld.direction == "any" else float(np.cos(np.radians(ld.cone)))
+                spread = (basis, force / size, cos_half)
+                force = np.zeros(3)
+            if ld.distribution == "bearing" and np.any(force):
                 # A shaft pushes on the half of the bore that faces the force,
                 # most at the centre of that half: a cosine over it.
                 p0, ax = _cylinder_of(study, ld.region, ld.shape, label)
@@ -293,6 +310,14 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         else:
             imbalance.append(0.0)
         f[fixed] = 0.0
+        if spread is not None:
+            from .directions import Spread
+
+            for b in spread[0]:
+                b[fixed] = 0.0
+            spread = Spread(f.copy(), spread[0], spread[1], spread[2])
+            f = spread.load(spread.nominal)
+        spreads.append(spread)
         if check_loads and not np.any(f) and study.gravity is None:
             raise ValueError(f"load case {case.name!r} acts only on fixed nodes; "
                              "a load applied where the part is held does nothing")
@@ -306,7 +331,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         # g/cm^3 -> kg/mm^3 is 1e-6; times m/s^2 gives N per mm^3.
         gravity = study.material.density * 1e-6 * study.gravity
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
-                              case_wet, imbalance)
+                              case_wet, imbalance, spreads)
 
 
 def gravity_force(mesh: HexMesh, density: np.ndarray, gravity: np.ndarray, fixed: np.ndarray) -> np.ndarray:
@@ -468,4 +493,4 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     return Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
-                  springs=bc.springs, gravity=bc.gravity)
+                  springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads)

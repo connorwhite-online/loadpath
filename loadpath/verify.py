@@ -460,6 +460,38 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
 
 
 
+def _inside(mesh, pts, rng):
+    """Point-in-solid by ray-crossing parity (odd = inside): a ray along +x,
+    tilted a little at random so edge and vertex grazes are measure-zero,
+    tested exactly (Moller-Trumbore) against the triangles whose y-z box it
+    can pass through. trimesh's own test (no embree) took 80 s of a 90 s
+    verify on the arm link."""
+    tri = np.asarray(mesh.triangles, float)
+    v0, e1, e2 = tri[:, 0], tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+    lo, hi = tri.min(axis=1), tri.max(axis=1)
+    span = float(np.ptp(tri[..., 0])) + 1.0
+    out = np.zeros(len(pts), bool)
+    for i, o in enumerate(np.asarray(pts, float)):
+        tilt = rng.uniform(-1e-3, 1e-3, 2)
+        d = np.array([1.0, *tilt]) / np.sqrt(1.0 + tilt @ tilt)
+        g = np.abs(tilt) * span + 1e-9
+        c = np.flatnonzero((hi[:, 0] >= o[0]) & (lo[:, 1] <= o[1] + g[0]) & (hi[:, 1] >= o[1] - g[0])
+                           & (lo[:, 2] <= o[2] + g[1]) & (hi[:, 2] >= o[2] - g[1]))
+        if not len(c):
+            continue
+        p = np.cross(d, e2[c])
+        det = np.einsum("ij,ij->i", e1[c], p)
+        ok = np.abs(det) > 1e-12
+        inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
+        tv = o - v0[c]
+        u = np.einsum("ij,ij->i", tv, p) * inv
+        q = np.cross(tv, e1[c])
+        v = (q @ d) * inv
+        t = np.einsum("ij,ij->i", q, e2[c]) * inv
+        out[i] = int((ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 1e-9)).sum()) % 2 == 1
+    return out
+
+
 def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
     """Volume of preserved geometry the part lacks (mm^3). The boolean finds
     candidate pieces; each is then confirmed by sampling points inside it and
@@ -468,25 +500,28 @@ def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
     wall), manifold3d can report slivers of the preserved shape missing from
     a part that, point by point, has them: the grip upper arm's elbow socket
     read 300 mm^3 short with every sampled point inside."""
-    import trimesh
-
     from .shapes import trimesh_from_manifold
 
+    rng = np.random.default_rng(0)
     total = 0.0
     for b in (pres_eff - part).decompose():
         v = b.volume()
         if v <= 1e-3:
             continue
         tb = trimesh_from_manifold(b)
-        pts = trimesh.sample.volume_mesh(tb, samples)
-        if len(pts) < 10:
-            pts = trimesh.sample.volume_mesh(tb, 20 * samples)
+        lo, hi = tb.bounds
+        pts = np.empty((0, 3))
+        for n in (samples, 20 * samples):     # rejection sampling in the piece's box
+            cand = lo + rng.random((n, 3)) * (hi - lo)
+            pts = cand[_inside(tb, cand, rng)][:samples]
+            if len(pts) >= 10:
+                break
         if len(pts) < 10:
             # too thin a sliver for sampling to land in: missing only if it
             # is thicker than a print resolves (thickness ~ 2 V / A)
             total += v if 2.0 * v / max(b.surface_area(), 1e-9) > 0.1 else 0.0
             continue
-        total += v * float((~mesh.contains(pts)).mean())
+        total += v * float((~_inside(mesh, pts, rng)).mean())
     return total
 
 
@@ -580,7 +615,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     band = max(1.5 * pitch, contact_band or 0.0)
     report["contactBand"] = band
     fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else 0.0
-    rhs = [bc.loads[ci] + fg for ci in range(len(study.load_cases))]
+    # A force of unknown direction is solved along each axis and judged in
+    # the direction that stresses the part most (directions.py).
+    from .directions import expand, worst_stress_direction
+    spreads = bc.spreads or [None] * len(study.load_cases)
+    rhs, layout = expand(bc.loads, spreads, fg if bc.gravity is not None else None)
     from .simp import _use_mg
     if _use_mg(hm.n_elem):
         # From simp.MG_MIN_CELLS up, matrix-free multigrid (as the optimizer
@@ -608,16 +647,27 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     cases = []
     worst_sf = np.inf
     for ci, case in enumerate(study.load_cases):
-        f = bc.loads[ci] + fg
         load_nodes = bc.case_load_nodes[ci]
-        u = displacements[ci]
-        vm = nodal_von_mises(stiff, u, mat.E)
-        if bc.case_pressure_nodes[ci].any():
-            vm = _smooth_wetted(hm.node_xyz, vm, bc.case_pressure_nodes[ci], pitch)
         # Exclude nodes within the contact band of an applied load or support.
         contact = support_nodes | load_nodes
         near = cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1, distance_upper_bound=band)[0] < np.inf
         body = ~near
+        idx = layout[ci]
+        direction = None
+        if len(idx) == 1:
+            f, u = rhs[idx[0]], displacements[idx[0]]
+        else:
+            sp = spreads[ci]
+            s0 = nodal_stress(stiff, displacements[idx[0]], mat.E) if idx[0] is not None else None
+            sb = [nodal_stress(stiff, displacements[i], mat.E) for i in idx[1:]]
+            direction, _ = worst_stress_direction(sp, s0, sb, body)
+            f = sum(direction[j] * rhs[i] for j, i in enumerate(idx[1:]))
+            u = sum(direction[j] * displacements[i] for j, i in enumerate(idx[1:]))
+            if idx[0] is not None:
+                f, u = f + rhs[idx[0]], u + displacements[idx[0]]
+        vm = nodal_von_mises(stiff, u, mat.E)
+        if bc.case_pressure_nodes[ci].any():
+            vm = _smooth_wetted(hm.node_xyz, vm, bc.case_pressure_nodes[ci], pitch)
         peak = float(vm[body].max()) if body.any() else float(vm.max())
         at = hm.node_xyz[np.argmax(np.where(body, vm, -1))].tolist()
         global_peak = peak
@@ -687,6 +737,9 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             "maxDisplacement": float(np.linalg.norm(disp, axis=1).max()),
             "compliance": float(f @ u),
             **({"pressureImbalance": bc.pressure_imbalance[ci]} if wet.any() else {}),
+            # the uncertain force's most stressful direction, which the
+            # numbers above are for (unit vector)
+            **({"worstDirection": [float(v) for v in direction]} if direction is not None else {}),
         })
     report["cases"] = cases
     report["safetyFactor"] = worst_sf

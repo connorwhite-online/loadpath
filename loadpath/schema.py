@@ -146,6 +146,15 @@ _LOAD = {
                      "description": "MPa gauge (1 bar = 0.1 MPa) inside the keepOut named by 'region' (the fluid's "
                                     "volume), on every wall lining it; negative is a vacuum. A study whose only "
                                     "loads are pressures on sealed cavities needs no supports."},
+
+        "direction": {"enum": ["any"],
+                      "description": "'any': the force's size may point in any direction (contact, bumps, "
+                                     "handling); the part is designed and checked for the worst one, found "
+                                     "exactly from three unit-force solves. At most one per load case; a bearing "
+                                     "load's uncertain force is spread evenly over the region."},
+        "cone": {"type": "number", "exclusiveMinimum": 0, "maximum": 180,
+                 "description": "Degrees: the force may tilt up to this far from its written direction, and the "
+                                "worst tilt is designed for (180 is the same as direction 'any')."},
     },
     "x-requireOne": [["region"], ["shape"]],
     "additionalProperties": False,
@@ -177,7 +186,8 @@ _CUSTOM_MATERIAL = {
     "additionalProperties": False,
 }
 _ONE_MATERIAL = {"anyOf": [{"type": "string", "description": "A name: " + ", ".join(_MATERIAL_NAMES)
-                            + " (aliases such as 'nylon', 'aluminium', 'steel' work)."},
+                            + " (aliases such as 'nylon', 'aluminium', 'steel' work), or a calibrated card "
+                            "measured on a printer (loadpath/calibrations/, calibration.py)."},
                            _CUSTOM_MATERIAL]}
 
 _FASTENER = {
@@ -211,6 +221,11 @@ _GOAL = {
         "safetyFactor": _POS,
         "maxDeflection": {**_POS, "description": "mm, at the loads"},
         "method": {"enum": ["search", "constrained"]},
+        "confirm": {"enum": ["auto", "voxel", "tet"],
+                    "description": "How the lightest passing part is confirmed: voxel (a finer voxel grid), tet "
+                                   "(a body-fitted tetrahedral mesh, which also calibrates the search's voxel "
+                                   "stress so it steps down to the real target), or auto (tet when installed and "
+                                   "applicable)."},
         "outcomes": {"type": "array", "items": {"type": "number", "minimum": 0.02, "maximum": 0.95},
                      "description": "Extra fixed volume fractions for a trade-off gallery."},
         "minimize": {"enum": ["mass", "printTime", "filament"],
@@ -300,6 +315,8 @@ _PROCESS = {"anyOf": [
                     "anisotropic": {"anyOf": [{"type": "boolean"}, {"const": "bond"}]},
                     "interlayer": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
                     "minFeature": _POS, "overhangs": {"type": "boolean"},
+                    "minHole": {**_POS, "description": "mm: narrowest hole or gap the optimizer may leave "
+                                                       "(default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"},
                     "escapeHole": {**_POS, "description": "mm: smallest powder escape / resin drain hole "
                                                           "(default SLS 4, MJF 5, SLA/DLP 3.5)"}},
      "required": ["type"], "additionalProperties": False},
@@ -371,7 +388,28 @@ STUDY_SCHEMA = {
                                {"type": "array", "items": {"$ref": "#/$defs/material"}, "minItems": 1}],
                      "description": "A list solves the goal in each and pools the outcomes."},
         "goal": {"$ref": "#/$defs/goal"},
-        "minMember": {**_POS, "description": "Thinnest member, mm."},
+        "minMember": {**_POS, "description": "Thinnest member, mm (default: 2 x the process's minFeature, "
+                                             "else 1.4 for the filter)."},
+        "minHole": {**_POS, "description": "Narrowest hole or gap, mm (default: the process's minHole, else "
+                                           "none). The optimizer pays for the material a hole this narrow "
+                                           "would close up with, and the delivered part has it closed."},
+        "drains": {"anyOf": [
+            {"enum": ["auto"]}, {"type": "boolean"},
+            {"type": "object", "properties": {
+                "enabled": {"type": "boolean"},
+                "diameter": {**_POS, "description": "mm (default SLS 6, MJF 7.5, SLA/DLP 5.5, volumetric 5, "
+                                                    "LPBF 6.8, else 6)"},
+                "count": {"type": "integer", "minimum": 1, "description": "holes per sealed void (default 2)"},
+                "maxPath": {"anyOf": [_POS, {"type": "null"}],
+                            "description": "mm: more holes while any powder is farther than this from one, "
+                                           "through the void (default 60; null: off)"},
+                "iterations": {"type": "integer", "minimum": 0,
+                               "description": "optimizer iterations after drilling, so the design carries "
+                                              "load round the holes (default 20)"}},
+             "additionalProperties": False}],
+            "description": "Escape holes into voids the optimizer sealed: 'auto' (default) for powder and resin "
+                           "processes and LPBF, true, false, or options. The holes are drilled where the "
+                           "wall is thin and the strain energy low, then the design re-converges round them."},
         "symmetry": {"type": "array", "items": {"enum": ["x", "y", "z"]},
                      "description": "Planes through the design-space centre, by normal axis."},
         "resolution": {"type": "object",
@@ -490,6 +528,17 @@ HEAT_EXCHANGER_SCHEMA = {
             "required": ["fluid", "end", "direction"], "additionalProperties": False}},
         "step": {**_POS, "description": "grid, mm (default wall / 3); coarser is faster for a first look"},
         "expect": {"type": "object", "description": "Eval-only pass criteria (loadpath.evals)."},
+        "simulate": {"anyOf": [{"type": "boolean"}, {
+            "type": "object",
+            "properties": {"voxel": {**_POS, "description": "mm (default min(cell/2, port/4, header/3))"},
+                           "closures": {"enum": ["design", "lbm"],
+                                        "description": "design: the rating's laws (Savoldi pressure drop, "
+                                                       "Reynolds 2023 Nu); lbm: both refitted to LBM gyroid "
+                                                       "cells (better for thick walls, phi under 0.3)"}},
+            "additionalProperties": False}],
+            "description": "With duty: simulate the whole exchanger (porous core, open headers, both fluids "
+                           "and the wall): flow uniformity, pressure field, temperatures and hot spots, "
+                           "beside the epsilon-NTU rating. Seconds to a few minutes."},
         "duty": {"type": "object", "description": "Optional: rate it. One entry per fluid name, plus 'wall' "
                                                   "(a material name or W/m·K).",
                  "properties": {"wall": {"anyOf": [{"type": "string"}, _POS]}},
@@ -581,11 +630,27 @@ _FIELD_OPS = {
                 {"path": {"type": "string"}, "source": {"type": "string"},
                  "quantity": {"type": "string", "description": "array name (default values)"}},
                 require_one=[["path"], ["source"]]),
-    "remap": _op("remap", "Map `input` from [a, b] to [c, d] through a curve (clamped unless clamp is false).",
+    "image": _op("image", "A picture as a scalar field from 0 to 1, laid on a plane and carried straight through "
+                          "along the third axis: a logo to emboss, a texture to drive a wall, a hand-painted density.",
+                 {"path": {"type": "string", "description": "PNG, JPEG, ... in the graph's folder"},
+                  "plane": {"enum": ["xy", "xz", "yz"], "description": "the plane it lies in (default xy)"},
+                  "origin": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
+                             "description": "lower-left corner in the plane, mm (default [0, 0])"},
+                  "size": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2,
+                           "maxItems": 2, "description": "[width, height] mm"},
+                  "channel": {"enum": ["luma", "r", "g", "b", "a"], "description": "default luma"},
+                  "invert": {"type": "boolean"}}, ["path", "size"]),
+    "remap": _op("remap", "Map `input` from [a, b] to [c, d] through a curve (clamped unless clamp is false). "
+                          "Longer from/to lists are a piecewise-linear table (from ascending), e.g. a density "
+                          "per height for an impact core.",
                  {"input": _FIELD,
-                  "from": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
-                  "to": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
-                  "curve": {"enum": ["linear", "smoothstep", "smootherstep", "sqrt", "square"]},
+                  "from": {"type": "array", "items": {"type": "number"}, "minItems": 2},
+                  "to": {"type": "array", "items": {"type": "number"}, "minItems": 2},
+                  "curve": {"anyOf": [
+                      {"enum": ["linear", "smoothstep", "smootherstep", "sqrt", "square"]},
+                      {"type": "array", "minItems": 2, "description": "points [u, v] over the unit square, u "
+                                                                       "ascending from 0 to 1: a drawn curve",
+                       "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}}]},
                   "clamp": {"type": "boolean"}}, ["input", "from", "to"]),
     "expr": _op("expr", "Arithmetic over node names, x, y, z, pi, e and abs sqrt exp log sin cos tan floor ceil "
                         "sign min max clamp lerp smoothstep step where, e.g. '0.8 + 1.2 * smoothstep(5, 30, "
@@ -632,6 +697,13 @@ _FIELD_OPS = {
                                                                   "center": _VEC3},
                                  "required": ["degrees"], "additionalProperties": False},
                       "scale": _POS}, ["input"]),
+    "group": _op("group", "A copy of a sub-graph from the graph's `groups`, with its own param values and "
+                          "inputs; it stands for the group's output.",
+                 {"group": {"type": "string", "description": "the name of a group in `groups`"},
+                  "params": {"type": "object", "additionalProperties": {"type": "number"},
+                             "description": "param -> value (the group's defaults otherwise)"},
+                  "inputs": {"type": "object", "additionalProperties": {"type": "string"},
+                             "description": "the group's input name -> a node of this graph"}}, ["group"]),
 }
 
 _NODE = {
@@ -654,6 +726,18 @@ FIELD_SCHEMA = {
         "nodes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/node"},
                   "description": "name -> node. Names are what other nodes and expr refer to."},
         "output": {"type": "string", "description": "The node to mesh (default the last)."},
+        "groups": {"type": "object", "description": "name -> a reusable sub-graph that `group` nodes copy",
+                   "additionalProperties": {
+                       "type": "object", "additionalProperties": False, "required": ["nodes"],
+                       "properties": {
+                           "description": {"type": "string"},
+                           "params": {"type": "object", "additionalProperties": {"type": "number"},
+                                      "description": "param -> default; the group's nodes refer to it by name"},
+                           "inputs": {"type": "array", "items": {"type": "string"},
+                                      "description": "names the group's nodes use for nodes the instance gives"},
+                           "nodes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/node"}},
+                           "output": {"type": "string", "description": "the node the group stands for "
+                                                                       "(default the last)"}}}},
         "bounds": {**_BOX, "description": "Meshing box (default: worked out from the output)."},
         "mesh": {"type": "object", "properties": {
             "pitch": {**_POS, "description": "mm grid (default: the box over 4M cells); a third of the "
@@ -663,7 +747,14 @@ FIELD_SCHEMA = {
             "sharp": {"type": "boolean", "description": "hard booleans (no blend) with plain shapes and meshes are "
                                                         "done exactly, so bores, bolt faces and keep-outs keep "
                                                         "sharp edges (default true; false meshes the whole field, "
-                                                        "every crease rounded over about one pitch)"}},
+                                                        "every crease rounded over about one pitch)"},
+            "decimate": {**_POS, "description": "mm: thin the triangles wherever the mesh stays this close to "
+                                                "the surface (flat and gently curved regions lose most of "
+                                                "theirs; creases and small features keep them), e.g. 0.01-0.05"},
+            "stream": {"type": "boolean", "description": "write the STL slab by slab without holding the mesh, "
+                                                         "in bounded memory and with no cell budget: for parts "
+                                                         "of tens of millions of triangles (fine lattices). "
+                                                         "Skips the printability check, bodies and the render."}},
                  "additionalProperties": False},
         "step": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
             "faces": {"type": "integer", "minimum": 100, "description": "organic facets in the B-rep "
@@ -675,6 +766,80 @@ FIELD_SCHEMA = {
         "minWall": {**_POS, "description": "mm, the printability check's minimum wall (default 0.8)"},
         "build": {**_VEC3, "description": "build direction for the overhang check (default +z)"},
         "check": {"type": "boolean", "description": "run the printability check (default true)"},
+        "editor": {"type": "object", "description": "What `loadpath edit` keeps with the graph (node positions in "
+                                                    "'layout'); nothing else reads it."},
+        "tune": {"type": "object", "additionalProperties": False, "required": ["study", "params"],
+                 "description": "`loadpath tune`: turn these numbers for the lightest part that still meets the "
+                                "study's limits, each candidate meshed and analyzed (tune.py)",
+                 "properties": {
+                     "study": {"type": "string", "description": "study JSON path or example:<name>: loads, "
+                                                                "supports, material, goal"},
+                     "node": {"type": "string", "description": "the node analyzed (default the output)"},
+                     "params": {"type": "array", "minItems": 1, "items": {
+                         "type": "object", "additionalProperties": False, "required": ["path", "min", "max"],
+                         "properties": {
+                             "path": {"type": "string", "description": "where the number is, '/'-separated: "
+                                                                       "nodes/web/shape/max/2"},
+                             "also": {"type": "array", "items": {"type": "string"},
+                                      "description": "numbers that move with it ('-' first: the other way)"},
+                             "min": {"type": "number"}, "max": {"type": "number"}}}},
+                     "safetyFactor": {**_POS, "description": "least safety factor (default the study's goal)"},
+                     "maxDeflection": {**_POS, "description": "mm at the loads (default the study's goal)"},
+                     "evaluations": {"type": "integer", "minimum": 2, "description": "analyses to spend "
+                                                                                       "(default 20)"},
+                     "sweep": {"type": "object", "minProperties": 1, "maxProperties": 1,
+                               "description": "the trade-off: tune again held to each of these values of one "
+                                              "limit, e.g. {\"maxDeflection\": [0.4, 0.6, 0.8]}",
+                               "properties": {k: {"type": "array", "minItems": 1, "items": _POS}
+                                              for k in ("safetyFactor", "maxDeflection")},
+                               "additionalProperties": False},
+                     "analysis": {"enum": ["auto", "solid", "homogenized"],
+                                  "description": "auto (default): a part with a lattice is analyzed with the "
+                                                 "lattice homogenized (unit-cell stiffness and wall stress), "
+                                                 "else meshed and verified as a solid"},
+                     "pitch": {**_POS, "description": "mm mesh for each candidate (default 1)"},
+                     "cells": {"type": "integer", "minimum": 1000, "description": "analysis cells (default 30000)"}}},
+        "impact": {"type": "object", "properties": {
+            "envelope": {"type": "string", "description": "solid node the lattice core fills (the crush pad)"},
+            "density": {"anyOf": [{"type": "string"}, {"type": "number", "exclusiveMinimum": 0, "maximum": 1}],
+                        "description": "relative density: a scalar node (the one the lattice node uses) or a "
+                                       "number (default 1 = solid)"},
+            "lattice": {"enum": ["gyroid", "diamond", "schwarz-p"], "description": "sheet type (default gyroid)"},
+            "axis": {"enum": ["x", "y", "z"], "description": "crush direction (default z)"},
+            "mass": {**_POS, "description": "kg, the moving mass"},
+            "velocity": {**_POS, "description": "m/s at contact"},
+            "energy": {**_POS, "description": "J, instead of mass and velocity"},
+            "forceLimit": {**_POS, "description": "N, the most the part behind may feel"},
+            "pitch": {**_POS, "description": "mm sampling grid (default 0.5)"},
+            "grade": {"type": "boolean", "description": "also work out the flattest graded core for this "
+                                                         "envelope and give it as a density remap table"},
+            "rhoMin": {**_POS, "description": "lowest printable relative density for grading (default 0.12)"},
+            "rhoMax": {**_POS, "description": "highest relative density for grading (default 0.5)"},
+            "cell": {**_POS, "description": "mm lattice cell: with minWall, raises rhoMin to the thinnest "
+                                            "printable wall"},
+            "minWall": {**_POS, "description": "mm thinnest printable sheet (default 0.8)"}},
+                   "required": ["envelope"], "additionalProperties": False,
+                   "description": "Crush and impact of a lattice core (impact.py): force-crush curve, where a "
+                                  "mass at a speed stops, peak force and g, and with grade a density table that "
+                                  "crushes every layer at the same force. Needs material."},
+        "vibration": {"type": "object", "properties": {
+            "envelope": {"type": "string", "description": "solid node analysed (homogenized lattice inside)"},
+            "density": {"anyOf": [{"type": "string"}, {"type": "number", "exclusiveMinimum": 0, "maximum": 1}],
+                        "description": "relative density node or number (default 1 = solid)"},
+            "lattice": {"enum": ["gyroid", "diamond", "schwarz-p"]},
+            "fixed": {"type": "string", "description": "solid node: nodes inside it are clamped"},
+            "pointMasses": {"type": "array", "items": {"type": "object", "properties": {
+                "region": {"type": "string", "description": "solid node the mass attaches over"},
+                "mass": {**_POS, "description": "kg"}}, "required": ["region", "mass"],
+                "additionalProperties": False}},
+            "modes": {"type": "integer", "minimum": 1, "maximum": 50, "description": "how many (default 6)"},
+            "pitch": {**_POS, "description": "mm analysis grid (default 1)"},
+            "minFrequency": {**_POS, "description": "Hz the first mode must clear"},
+            "excitation": {**_POS, "description": "Hz of a known shake: reports the worst transmissibility"},
+            "lossFactor": {**_POS, "description": "material loss factor (default from modal.LOSS_FACTOR)"}},
+                      "required": ["envelope", "fixed"], "additionalProperties": False,
+                      "description": "Natural frequencies, effective masses and damping (modal.py). Needs "
+                                     "material."},
         "process": {**_PROCESS, "description": "How it is made: sets the minimum wall, the build direction and "
                                                "the drain holes (sls, mjf, sla, dlp, volumetric, lpbf drain "
                                                "sealed voids by default)."},

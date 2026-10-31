@@ -274,7 +274,7 @@ def exact_manifold(shape, tol=CHORD_TOL):
     return shape.to_manifold()
 
 
-def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL):
+def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, decimate=None):
     """Mesh a plan: organic leaves by fields.field_mesh over [lo, hi] (from
     their extended fields), exact leaves exactly, booleans by manifold3d.
     Returns a trimesh; each Organic leaf keeps its mesh in `.mesh`."""
@@ -294,7 +294,7 @@ def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL):
         if regions:
             fld = _Extended(leaf.field, regions, eps=pitch, core=pitch)
             leaf.extended = True
-        leaf.mesh = field_mesh(fld, lo, hi, pitch=pitch, project=project, progress=progress)
+        leaf.mesh = field_mesh(fld, lo, hi, pitch=pitch, project=project, progress=progress, decimate=decimate)
         if leaf.mesh.metadata.get("sampling"):
             stats = leaf.mesh.metadata["sampling"]
 
@@ -322,7 +322,7 @@ def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL):
     if man.is_empty():
         raise ValueError("the part is empty after its exact booleans")
     mesh = trimesh_from_manifold(man)
-    mesh = _finish(mesh, None, pitch, 0, stats or None)
+    mesh = _finish(mesh.vertices, mesh.faces, None, pitch, 0, stats or None)
     mesh.metadata["sharp"] = True
     from .step import attach_plan
 

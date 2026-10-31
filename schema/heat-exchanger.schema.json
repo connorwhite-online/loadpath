@@ -216,6 +216,32 @@
       "type": "object",
       "description": "Eval-only pass criteria (loadpath.evals)."
     },
+    "simulate": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "voxel": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm (default min(cell/2, port/4, header/3))"
+            },
+            "closures": {
+              "enum": [
+                "design",
+                "lbm"
+              ],
+              "description": "design: the rating's laws (Savoldi pressure drop, Reynolds 2023 Nu); lbm: both refitted to LBM gyroid cells (better for thick walls, phi under 0.3)"
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "With duty: simulate the whole exchanger (porous core, open headers, both fluids and the wall): flow uniformity, pressure field, temperatures and hot spots, beside the epsilon-NTU rating. Seconds to a few minutes."
+    },
     "duty": {
       "type": "object",
       "description": "Optional: rate it. One entry per fluid name, plus 'wall' (a material name or W/m\u00b7K).",

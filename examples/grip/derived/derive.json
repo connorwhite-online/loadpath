@@ -1,0 +1,989 @@
+{
+ "turret": {
+  "region": "j2-sleeve",
+  "samples": 10038,
+  "sweepSeconds": 39.3,
+  "envelope": {
+   "dynamic": {
+    "n": 3687,
+    "maxForceN": 57.1,
+    "maxMomentNmm": 22333.0
+   },
+   "pose": {
+    "n": 3687,
+    "maxForceN": 28.4,
+    "maxMomentNmm": 9769.0
+   },
+   "push": {
+    "n": 1844,
+    "maxForceN": 47.5,
+    "maxMomentNmm": 17545.0
+   },
+   "stall": {
+    "n": 820,
+    "maxForceN": 47.9,
+    "maxMomentNmm": 17456.0
+   }
+  },
+  "handWritten": {
+   "maxForceN": 42.6,
+   "maxMomentNmm": 17028.0
+  },
+  "method": "stress",
+  "cells": 13630,
+  "pitch": 4.521759887576996,
+  "chosen": [
+   5685,
+   9222,
+   8265
+  ],
+  "coverage": [
+   0.8328,
+   0.9513,
+   0.9843
+  ],
+  "envelopeRatio": {
+   "min": 0.557,
+   "p5": 0.763,
+   "p5Top20": 0.802
+  },
+  "kinds": [
+   "dynamic",
+   "dynamic",
+   "dynamic"
+  ],
+  "peakUnitVonMises": 1.4894,
+  "cases": [
+   {
+    "name": "sweep-0-dynamic",
+    "force": [
+     30.72,
+     16.97,
+     -31.06
+    ],
+    "moment": [
+     -3202.2,
+     18904.0,
+     8647.6
+    ],
+    "state": {
+     "q": {
+      "j1": 2.9671,
+      "j2": 1.0472,
+      "j3": 0.0,
+      "j4": 2.9671,
+      "j5": 0.0,
+      "j6": -2.9671,
+      "jaw_a": 0.0
+     },
+     "payloadKg": 0.993,
+     "qd": {
+      "j1": -1.763,
+      "j2": 1.487,
+      "j3": 2.358,
+      "j4": -2.224,
+      "j5": -3.524,
+      "j6": -2.878,
+      "jaw_a": 0.041
+     },
+     "qdd": {
+      "j1": -6.902,
+      "j2": -5.798,
+      "j3": -6.902,
+      "j4": 11.596,
+      "j5": 11.596,
+      "j6": 11.596,
+      "jaw_a": -0.138
+     },
+     "accelScale": 0.552
+    }
+   },
+   {
+    "name": "sweep-1-dynamic",
+    "force": [
+     -13.97,
+     -20.37,
+     -45.78
+    ],
+    "moment": [
+     4067.6,
+     -19784.0,
+     9528.9
+    ],
+    "state": {
+     "q": {
+      "j1": 0.4242,
+      "j2": -0.8609,
+      "j3": -0.7241,
+      "j4": -0.8264,
+      "j5": -0.0316,
+      "j6": -1.0614,
+      "jaw_a": 0.0173
+     },
+     "payloadKg": 0.972,
+     "qd": {
+      "j1": -2.037,
+      "j2": 1.166,
+      "j3": 1.517,
+      "j4": 3.528,
+      "j5": 3.62,
+      "j6": -3.671,
+      "jaw_a": -0.027
+     },
+     "qdd": {
+      "j1": -12.5,
+      "j2": 10.5,
+      "j3": 12.5,
+      "j4": -21.0,
+      "j5": -21.0,
+      "j6": -21.0,
+      "jaw_a": 0.25
+     },
+     "accelScale": 1.0
+    }
+   },
+   {
+    "name": "sweep-2-dynamic",
+    "force": [
+     -22.95,
+     21.38,
+     -15.91
+    ],
+    "moment": [
+     -9596.7,
+     -11733.6,
+     -1573.8
+    ],
+    "state": {
+     "q": {
+      "j1": 2.8337,
+      "j2": -0.4247,
+      "j3": 0.3231,
+      "j4": 1.5871,
+      "j5": 0.4188,
+      "j6": 0.479,
+      "jaw_a": 0.0164
+     },
+     "payloadKg": 0.56,
+     "qd": {
+      "j1": 2.415,
+      "j2": -1.937,
+      "j3": -2.356,
+      "j4": 2.319,
+      "j5": -3.499,
+      "j6": 3.449,
+      "jaw_a": -0.03
+     },
+     "qdd": {
+      "j1": 12.5,
+      "j2": 10.5,
+      "j3": 12.5,
+      "j4": -21.0,
+      "j5": -21.0,
+      "j6": -21.0,
+      "jaw_a": 0.25
+     },
+     "accelScale": 1.0
+    }
+   }
+  ],
+  "committedPart": {
+   "massG": 236.3,
+   "sfOld": 2.67,
+   "governingOld": "old:reach",
+   "sfNew": 2.13,
+   "governingNew": "new:sweep-1-dynamic",
+   "cases": {
+    "old:reach": {
+     "sf": 2.67,
+     "deflectionMm": 0.615
+    },
+    "old:j2-rated-torque": {
+     "sf": 8.28,
+     "deflectionMm": 0.216
+    },
+    "old:lateral": {
+     "sf": 38.34,
+     "deflectionMm": 0.051
+    },
+    "new:sweep-0-dynamic": {
+     "sf": 4.49,
+     "deflectionMm": 0.214
+    },
+    "new:sweep-1-dynamic": {
+     "sf": 2.13,
+     "deflectionMm": 0.653
+    },
+    "new:sweep-2-dynamic": {
+     "sf": 2.64,
+     "deflectionMm": 0.667
+    }
+   }
+  }
+ },
+ "upper_arm": {
+  "region": "j3-sleeve",
+  "samples": 10448,
+  "sweepSeconds": 37.9,
+  "envelope": {
+   "dynamic": {
+    "n": 3687,
+    "maxForceN": 46.1,
+    "maxMomentNmm": 13941.0
+   },
+   "pose": {
+    "n": 3687,
+    "maxForceN": 18.0,
+    "maxMomentNmm": 5912.0
+   },
+   "push": {
+    "n": 1844,
+    "maxForceN": 37.3,
+    "maxMomentNmm": 12345.0
+   },
+   "stall": {
+    "n": 1230,
+    "maxForceN": 37.5,
+    "maxMomentNmm": 13114.0
+   }
+  },
+  "handWritten": {
+   "maxForceN": 27.0,
+   "maxMomentNmm": 13000.0
+  },
+  "method": "stress",
+  "cells": 15978,
+  "pitch": 5.08024813530288,
+  "chosen": [
+   9600,
+   3875,
+   2478
+  ],
+  "coverage": [
+   0.8404,
+   0.9618,
+   0.981
+  ],
+  "envelopeRatio": {
+   "min": 0.366,
+   "p5": 0.758,
+   "p5Top20": 0.863
+  },
+  "kinds": [
+   "dynamic",
+   "dynamic",
+   "dynamic"
+  ],
+  "peakUnitVonMises": 0.847,
+  "cases": [
+   {
+    "name": "sweep-0-dynamic",
+    "force": [
+     -34.52,
+     -18.91,
+     -12.32
+    ],
+    "moment": [
+     4889.9,
+     -11757.0,
+     5676.8
+    ],
+    "state": {
+     "q": {
+      "j1": 0.4242,
+      "j2": -0.8609,
+      "j3": -0.7241,
+      "j4": -0.8264,
+      "j5": -0.0316,
+      "j6": -1.0614,
+      "jaw_a": 0.0173
+     },
+     "payloadKg": 0.972,
+     "qd": {
+      "j1": -2.037,
+      "j2": 1.166,
+      "j3": 1.517,
+      "j4": 3.528,
+      "j5": 3.62,
+      "j6": -3.671,
+      "jaw_a": -0.027
+     },
+     "qdd": {
+      "j1": -12.5,
+      "j2": 10.5,
+      "j3": 12.5,
+      "j4": -21.0,
+      "j5": -21.0,
+      "j6": -21.0,
+      "jaw_a": 0.25
+     },
+     "accelScale": 1.0
+    }
+   },
+   {
+    "name": "sweep-1-dynamic",
+    "force": [
+     19.47,
+     -21.18,
+     -0.85
+    ],
+    "moment": [
+     7475.5,
+     6681.4,
+     -593.0
+    ],
+    "state": {
+     "q": {
+      "j1": 0.0,
+      "j2": 1.0472,
+      "j3": 0.0,
+      "j4": 2.9671,
+      "j5": 0.0,
+      "j6": 2.9671,
+      "jaw_a": 0.04
+     },
+     "payloadKg": 0.91,
+     "qd": {
+      "j1": -2.382,
+      "j2": -1.862,
+      "j3": -1.761,
+      "j4": 3.434,
+      "j5": -2.728,
+      "j6": 3.715,
+      "jaw_a": -0.03
+     },
+     "qdd": {
+      "j1": 12.5,
+      "j2": 10.5,
+      "j3": -12.5,
+      "j4": -21.0,
+      "j5": 21.0,
+      "j6": 21.0,
+      "jaw_a": -0.25
+     },
+     "accelScale": 1.0
+    }
+   },
+   {
+    "name": "sweep-2-dynamic",
+    "force": [
+     -21.15,
+     -23.81,
+     16.08
+    ],
+    "moment": [
+     8731.8,
+     -7050.8,
+     750.9
+    ],
+    "state": {
+     "q": {
+      "j1": 0.0,
+      "j2": -1.0472,
+      "j3": 0.0,
+      "j4": 2.9671,
+      "j5": 0.0,
+      "j6": -2.9671,
+      "jaw_a": 0.0
+     },
+     "payloadKg": 0.898,
+     "qd": {
+      "j1": -2.206,
+      "j2": -1.789,
+      "j3": -2.217,
+      "j4": -3.502,
+      "j5": 3.704,
+      "j6": -3.536,
+      "jaw_a": 0.037
+     },
+     "qdd": {
+      "j1": -12.5,
+      "j2": -10.5,
+      "j3": 12.5,
+      "j4": -21.0,
+      "j5": -21.0,
+      "j6": 21.0,
+      "jaw_a": 0.25
+     },
+     "accelScale": 1.0
+    }
+   }
+  ],
+  "committedPart": {
+   "massG": 178.6,
+   "sfOld": 2.81,
+   "governingOld": "old:j3-rated-torque",
+   "sfNew": 0.93,
+   "governingNew": "new:sweep-0-dynamic",
+   "cases": {
+    "old:reach": {
+     "sf": 3.2,
+     "deflectionMm": 0.344
+    },
+    "old:j3-rated-torque": {
+     "sf": 2.81,
+     "deflectionMm": 0.434
+    },
+    "old:lateral": {
+     "sf": 5.75,
+     "deflectionMm": 1.29
+    },
+    "new:sweep-0-dynamic": {
+     "sf": 0.93,
+     "deflectionMm": 3.905
+    },
+    "new:sweep-1-dynamic": {
+     "sf": 1.12,
+     "deflectionMm": 5.333
+    },
+    "new:sweep-2-dynamic": {
+     "sf": 1.01,
+     "deflectionMm": 6.077
+    }
+   }
+  }
+ },
+ "forearm": {
+  "region": "j4-mount",
+  "samples": 10858,
+  "sweepSeconds": 36.4,
+  "envelope": {
+   "dynamic": {
+    "n": 3687,
+    "maxForceN": 44.4,
+    "maxMomentNmm": 8942.0
+   },
+   "pose": {
+    "n": 3687,
+    "maxForceN": 16.3,
+    "maxMomentNmm": 3817.0
+   },
+   "push": {
+    "n": 1844,
+    "maxForceN": 35.6,
+    "maxMomentNmm": 8164.0
+   },
+   "stall": {
+    "n": 1640,
+    "maxForceN": 35.8,
+    "maxMomentNmm": 8787.0
+   }
+  },
+  "handWritten": {
+   "maxForceN": 24.5,
+   "maxMomentNmm": 5704.0
+  },
+  "method": "stress",
+  "cells": 17359,
+  "pitch": 3.581662295791473,
+  "chosen": [
+   9978,
+   7078
+  ],
+  "coverage": [
+   0.7976,
+   0.9808
+  ],
+  "envelopeRatio": {
+   "min": 0.331,
+   "p5": 0.78,
+   "p5Top20": 0.836
+  },
+  "kinds": [
+   "dynamic",
+   "dynamic"
+  ],
+  "peakUnitVonMises": 0.9224,
+  "cases": [
+   {
+    "name": "sweep-0-dynamic",
+    "force": [
+     -31.7,
+     -18.47,
+     13.13
+    ],
+    "moment": [
+     4490.5,
+     -7708.2,
+     -622.8
+    ],
+    "state": {
+     "q": {
+      "j1": 0.4242,
+      "j2": -0.8609,
+      "j3": -0.7241,
+      "j4": -0.8264,
+      "j5": -0.0316,
+      "j6": -1.0614,
+      "jaw_a": 0.0173
+     },
+     "payloadKg": 0.972,
+     "qd": {
+      "j1": -2.037,
+      "j2": 1.166,
+      "j3": 1.517,
+      "j4": 3.528,
+      "j5": 3.62,
+      "j6": -3.671,
+      "jaw_a": -0.027
+     },
+     "qdd": {
+      "j1": -12.5,
+      "j2": 10.5,
+      "j3": 12.5,
+      "j4": -21.0,
+      "j5": -21.0,
+      "j6": -21.0,
+      "jaw_a": 0.25
+     },
+     "accelScale": 1.0
+    }
+   },
+   {
+    "name": "sweep-1-dynamic",
+    "force": [
+     -34.73,
+     13.21,
+     0.44
+    ],
+    "moment": [
+     -3214.4,
+     -8200.2,
+     1347.4
+    ],
+    "state": {
+     "q": {
+      "j1": 0.434,
+      "j2": 0.602,
+      "j3": -1.8001,
+      "j4": -1.0723,
+      "j5": -0.4217,
+      "j6": 2.3703,
+      "jaw_a": 0.0259
+     },
+     "payloadKg": 0.953,
+     "qd": {
+      "j1": 2.292,
+      "j2": -1.567,
+      "j3": -2.241,
+      "j4": -3.74,
+      "j5": -2.8,
+      "j6": 2.815,
+      "jaw_a": 0.036
+     },
+     "qdd": {
+      "j1": 12.429,
+      "j2": 10.441,
+      "j3": 12.429,
+      "j4": 20.881,
+      "j5": 20.881,
+      "j6": -20.881,
+      "jaw_a": -0.249
+     },
+     "accelScale": 0.994
+    }
+   }
+  ],
+  "committedPart": {
+   "massG": 77.6,
+   "sfOld": 4.2,
+   "governingOld": "old:j4-rated-torque",
+   "sfNew": 0.69,
+   "governingNew": "new:sweep-0-dynamic",
+   "cases": {
+    "old:reach": {
+     "sf": 7.8,
+     "deflectionMm": 0.275
+    },
+    "old:j4-rated-torque": {
+     "sf": 4.2,
+     "deflectionMm": 0.101
+    },
+    "old:lateral": {
+     "sf": 9.97,
+     "deflectionMm": 0.13
+    },
+    "new:sweep-0-dynamic": {
+     "sf": 0.69,
+     "deflectionMm": 2.339
+    },
+    "new:sweep-1-dynamic": {
+     "sf": 0.92,
+     "deflectionMm": 1.652
+    }
+   }
+  }
+ },
+ "wrist_yoke": {
+  "region": "j5-mount",
+  "samples": 11268,
+  "sweepSeconds": 38.0,
+  "envelope": {
+   "dynamic": {
+    "n": 3687,
+    "maxForceN": 42.4,
+    "maxMomentNmm": 6980.0
+   },
+   "pose": {
+    "n": 3687,
+    "maxForceN": 14.7,
+    "maxMomentNmm": 2977.0
+   },
+   "push": {
+    "n": 1844,
+    "maxForceN": 34.0,
+    "maxMomentNmm": 6637.0
+   },
+   "stall": {
+    "n": 2050,
+    "maxForceN": 34.2,
+    "maxMomentNmm": 6979.0
+   }
+  },
+  "handWritten": {
+   "maxForceN": 22.1,
+   "maxMomentNmm": 4900.0
+  },
+  "method": "stress",
+  "cells": 12988,
+  "pitch": 2.4702242361728124,
+  "chosen": [
+   6937,
+   10733,
+   10356
+  ],
+  "coverage": [
+   0.8713,
+   0.9548,
+   0.9886
+  ],
+  "envelopeRatio": {
+   "min": 0.528,
+   "p5": 0.852,
+   "p5Top20": 0.879
+  },
+  "kinds": [
+   "stall:j3",
+   "stall:j3",
+   "dynamic"
+  ],
+  "peakUnitVonMises": 2.6497,
+  "cases": [
+   {
+    "name": "sweep-0-stall-j3",
+    "force": [
+     -23.72,
+     -21.84,
+     -3.47
+    ],
+    "moment": [
+     4706.2,
+     -5149.1,
+     218.2
+    ],
+    "state": {
+     "q": {
+      "j1": -1.9836,
+      "j2": 0.6433,
+      "j3": -1.9997,
+      "j4": -0.7441,
+      "j5": -0.0935,
+      "j6": -1.6822,
+      "jaw_a": 0.0142
+     },
+     "payloadKg": 0.839,
+     "contactN": 19.43
+    }
+   },
+   {
+    "name": "sweep-1-stall-j3",
+    "force": [
+     -15.84,
+     18.59,
+     -15.79
+    ],
+    "moment": [
+     -3039.6,
+     -4830.2,
+     -2777.5
+    ],
+    "state": {
+     "q": {
+      "j1": 2.3345,
+      "j2": -0.71,
+      "j3": 1.1927,
+      "j4": -2.2763,
+      "j5": -0.7807,
+      "j6": -1.2255,
+      "jaw_a": 0.0067
+     },
+     "payloadKg": 0.657,
+     "contactN": 20.0
+    }
+   },
+   {
+    "name": "sweep-2-dynamic",
+    "force": [
+     -6.55,
+     -33.66,
+     12.4
+    ],
+    "moment": [
+     6812.3,
+     -1371.4,
+     -318.1
+    ],
+    "state": {
+     "q": {
+      "j1": 0.4242,
+      "j2": -0.8609,
+      "j3": -0.7241,
+      "j4": -0.8264,
+      "j5": -0.0316,
+      "j6": -1.0614,
+      "jaw_a": 0.0173
+     },
+     "payloadKg": 0.972,
+     "qd": {
+      "j1": -2.037,
+      "j2": 1.166,
+      "j3": 1.517,
+      "j4": 3.528,
+      "j5": 3.62,
+      "j6": -3.671,
+      "jaw_a": -0.027
+     },
+     "qdd": {
+      "j1": -12.5,
+      "j2": 10.5,
+      "j3": 12.5,
+      "j4": -21.0,
+      "j5": -21.0,
+      "j6": -21.0,
+      "jaw_a": 0.25
+     },
+     "accelScale": 1.0
+    }
+   }
+  ],
+  "committedPart": {
+   "massG": 24.3,
+   "sfOld": 2.89,
+   "governingOld": "old:reach",
+   "sfNew": 0.61,
+   "governingNew": "new:sweep-2-dynamic",
+   "cases": {
+    "old:reach": {
+     "sf": 2.89,
+     "deflectionMm": 0.109
+    },
+    "old:j5-rated-torque": {
+     "sf": 3.18,
+     "deflectionMm": 0.099
+    },
+    "old:lateral": {
+     "sf": 9.72,
+     "deflectionMm": 0.033
+    },
+    "new:sweep-0-stall-j3": {
+     "sf": 0.77,
+     "deflectionMm": 0.316
+    },
+    "new:sweep-1-stall-j3": {
+     "sf": 1.01,
+     "deflectionMm": 0.255
+    },
+    "new:sweep-2-dynamic": {
+     "sf": 0.61,
+     "deflectionMm": 0.428
+    }
+   }
+  }
+ },
+ "wrist_link": {
+  "region": "j6-mount",
+  "samples": 11678,
+  "sweepSeconds": 36.4,
+  "envelope": {
+   "dynamic": {
+    "n": 3687,
+    "maxForceN": 39.3,
+    "maxMomentNmm": 3050.0
+   },
+   "pose": {
+    "n": 3687,
+    "maxForceN": 13.3,
+    "maxMomentNmm": 1386.0
+   },
+   "push": {
+    "n": 1844,
+    "maxForceN": 32.6,
+    "maxMomentNmm": 2976.0
+   },
+   "stall": {
+    "n": 2460,
+    "maxForceN": 32.8,
+    "maxMomentNmm": 3247.0
+   }
+  },
+  "handWritten": {
+   "maxForceN": 20.0,
+   "maxMomentNmm": 2900.0
+  },
+  "method": "stress",
+  "cells": 17550,
+  "pitch": 3.525550372625381,
+  "chosen": [
+   7189,
+   11123,
+   10734
+  ],
+  "coverage": [
+   0.8384,
+   0.9797,
+   0.9938
+  ],
+  "envelopeRatio": {
+   "min": 0.626,
+   "p5": 0.882,
+   "p5Top20": 0.908
+  },
+  "kinds": [
+   "stall:j3",
+   "stall:j3",
+   "dynamic"
+  ],
+  "peakUnitVonMises": 0.3728,
+  "cases": [
+   {
+    "name": "sweep-0-stall-j3",
+    "force": [
+     -22.89,
+     -20.89,
+     -1.03
+    ],
+    "moment": [
+     2168.0,
+     -2360.8,
+     -364.9
+    ],
+    "state": {
+     "q": {
+      "j1": -1.9836,
+      "j2": 0.6433,
+      "j3": -1.9997,
+      "j4": -0.7441,
+      "j5": -0.0935,
+      "j6": -1.6822,
+      "jaw_a": 0.0142
+     },
+     "payloadKg": 0.839,
+     "contactN": 19.43
+    }
+   },
+   {
+    "name": "sweep-1-stall-j3",
+    "force": [
+     -21.16,
+     18.09,
+     0.53
+    ],
+    "moment": [
+     -2003.3,
+     -2296.4,
+     -141.2
+    ],
+    "state": {
+     "q": {
+      "j1": 2.3345,
+      "j2": -0.71,
+      "j3": 1.1927,
+      "j4": -2.2763,
+      "j5": -0.7807,
+      "j6": -1.2255,
+      "jaw_a": 0.0067
+     },
+     "payloadKg": 0.657,
+     "contactN": 20.0
+    }
+   },
+   {
+    "name": "sweep-2-dynamic",
+    "force": [
+     -5.23,
+     -31.0,
+     11.67
+    ],
+    "moment": [
+     2797.5,
+     -666.6,
+     -562.3
+    ],
+    "state": {
+     "q": {
+      "j1": 0.4242,
+      "j2": -0.8609,
+      "j3": -0.7241,
+      "j4": -0.8264,
+      "j5": -0.0316,
+      "j6": -1.0614,
+      "jaw_a": 0.0173
+     },
+     "payloadKg": 0.972,
+     "qd": {
+      "j1": -2.037,
+      "j2": 1.166,
+      "j3": 1.517,
+      "j4": 3.528,
+      "j5": 3.62,
+      "j6": -3.671,
+      "jaw_a": -0.027
+     },
+     "qdd": {
+      "j1": -12.5,
+      "j2": 10.5,
+      "j3": 12.5,
+      "j4": -21.0,
+      "j5": -21.0,
+      "j6": -21.0,
+      "jaw_a": 0.25
+     },
+     "accelScale": 1.0
+    }
+   }
+  ],
+  "committedPart": {
+   "massG": 67.2,
+   "sfOld": 4.23,
+   "governingOld": "old:j6-rated-torque",
+   "sfNew": 1.72,
+   "governingNew": "new:sweep-2-dynamic",
+   "cases": {
+    "old:reach": {
+     "sf": 7.2,
+     "deflectionMm": 0.127
+    },
+    "old:j6-rated-torque": {
+     "sf": 4.23,
+     "deflectionMm": 0.091
+    },
+    "old:lateral": {
+     "sf": 9.72,
+     "deflectionMm": 0.085
+    },
+    "new:sweep-0-stall-j3": {
+     "sf": 2.31,
+     "deflectionMm": 0.568
+    },
+    "new:sweep-1-stall-j3": {
+     "sf": 2.58,
+     "deflectionMm": 0.518
+    },
+    "new:sweep-2-dynamic": {
+     "sf": 1.72,
+     "deflectionMm": 0.802
+    }
+   }
+  }
+ }
+}

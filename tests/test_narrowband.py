@@ -1,7 +1,7 @@
 """
 Tests for narrowband.py (field meshing that samples only near the
 surface) and the exact-TPMS lattice surface it enables. Run:
-`python3 tests/test_narrowband.py` (about a minute).
+`python3 tests/test_narrowband.py` (about two minutes).
 """
 import sys
 import time
@@ -128,8 +128,130 @@ def test_lattice_walls_are_exact():
     assert out[True][1] < 0.95 * out[False][1] and out[True][2], out
 
 
+GRADED = {"nodes": {
+    "box": {"op": "shape", "shape": {"type": "box", "min": [0, 0, 0], "max": [24, 12, 12]}},
+    "cell": {"op": "remap", "input": {"op": "coordinate", "axis": "x"}, "from": [0, 24], "to": [5, 8]},
+    "lat": {"op": "lattice", "type": "gyroid", "cell": "cell", "density": 0.3},
+    "part": {"op": "intersect", "inputs": ["lat", "box"]}}, "output": "part"}
+
+
+def _stl_arrays(path):
+    """Faces and vertices of a binary STL, vertices merged by exact float32
+    position, as any slicer reads it."""
+    raw = np.fromfile(path, dtype=np.dtype([("n", "<f4", (3,)), ("v", "<f4", (3, 3)), ("a", "<u2")]), offset=84)
+    V, inv = np.unique(raw["v"].reshape(-1, 3), axis=0, return_inverse=True)
+    return V.astype(float), inv.reshape(-1, 3)
+
+
+def test_streamed_stl_matches_the_mesh():
+    """field_stl writes the same part as field_mesh, slab by slab: the same
+    triangle count, the same volume, and an STL that is watertight when a
+    slicer merges its vertices, seams between slabs included."""
+    import tempfile
+
+    from loadpath.fields import field_stl
+    from loadpath.narrowband import signed_volume, watertight
+
+    g = FieldGraph(GRADED)
+    f = g.field()
+    m = field_mesh(f, *g.bounds(), pitch=0.25)
+    with tempfile.TemporaryDirectory() as d:
+        path = f"{d}/part.stl"
+        rep = field_stl(f, *g.bounds(), path, pitch=0.25, block=16)
+        V, F = _stl_arrays(path)
+    assert rep["slabs"] >= 6 and rep["watertight"], rep
+    assert rep["faces"] == len(F) and abs(rep["faces"] - len(m.faces)) <= 8, (rep["faces"], len(m.faces))
+    assert watertight(F, len(V))
+    assert abs(signed_volume(V, F) / m.volume - 1) < 1e-4 and abs(rep["volume"] / m.volume - 1) < 1e-4
+    assert np.abs(f(V)).max() < 0.05 and np.percentile(np.abs(f(V)), 99) < 1e-5
+
+
+def test_streamed_stl_recovers_from_a_low_lipschitz_bound():
+    """A Lipschitz bound far too low skips blocks the surface crosses: the
+    open edges that leaves do not match across the slabs, and the export
+    starts over with every block sampled."""
+    import tempfile
+
+    from loadpath.fields import field_stl
+    from loadpath.narrowband import watertight
+
+    g = FieldGraph(GRADED)
+    with tempfile.TemporaryDirectory() as d:
+        rep = field_stl(g.field(), *g.bounds(), f"{d}/p.stl", pitch=0.4, block=16, lipschitz=0.01)
+        V, F = _stl_arrays(f"{d}/p.stl")
+    assert rep["sampling"].get("fallback") and watertight(F, len(V)), rep["sampling"]
+
+
+def test_bookkeeping_matches_trimesh():
+    """watertight, signed_volume and shell_volumes agree with trimesh, and
+    the threaded field evaluation with the serial one, bit for bit."""
+    import os
+
+    from loadpath.narrowband import peval, shell_volumes, signed_volume, watertight
+
+    a = trimesh.creation.icosphere(3, radius=5.0)
+    b = trimesh.creation.icosphere(2, radius=1.0)
+    b.invert()                                   # a void inside the ball
+    c = trimesh.creation.box(extents=(2, 2, 2))
+    c.apply_translation((20, 0, 0))
+    m = trimesh.util.concatenate([a, b, c])
+    V, F = np.asarray(m.vertices), np.asarray(m.faces)
+    assert watertight(F) and not watertight(F[1:])
+    assert abs(signed_volume(V, F) - m.volume) < 1e-9
+    _, vol = shell_volumes(V, F)
+    assert np.allclose(sorted(vol), sorted(x.volume for x in m.split(only_watertight=False)))
+    f = FieldGraph(GRADED).field()
+    P = np.random.default_rng(0).uniform(-2, 26, (1_100_000, 3))
+    old = os.environ.get("LOADPATH_THREADS")
+    try:
+        os.environ["LOADPATH_THREADS"] = "1"
+        serial = peval(f, P)
+        os.environ["LOADPATH_THREADS"] = "4"
+        assert np.array_equal(serial, peval(f, P))
+    finally:
+        if old is None:
+            os.environ.pop("LOADPATH_THREADS", None)
+        else:
+            os.environ["LOADPATH_THREADS"] = old
+
+
+def test_decimation_stays_within_tolerance():
+    """decimate thins the mesh where it stays within tol of the surface:
+    a solid link loses most of its triangles, no triangle that was within
+    tol leaves it, the mesh stays watertight with every vertex on the
+    surface, and the streamed export decimates each slab without opening
+    its seams."""
+    import tempfile
+
+    from loadpath.decimate import decimate
+    from loadpath.fields import field_stl
+    from loadpath.narrowband import peval, signed_volume, watertight
+
+    def over(f, V, F, tol):
+        T = V[F]
+        S = np.concatenate([T.mean(1), (T[:, 0] + T[:, 1]) / 2, (T[:, 1] + T[:, 2]) / 2, (T[:, 2] + T[:, 0]) / 2])
+        return int((np.abs(peval(f, S)).reshape(4, -1).max(0) > tol).sum())
+
+    f = FieldGraph(LINK).field()
+    g = FieldGraph(LINK)
+    m = field_mesh(f, *g.bounds(), pitch=0.3)
+    V0, F0 = np.asarray(m.vertices), np.asarray(m.faces)
+    V, F, st, _ = decimate(V0, F0, f, 0.02, 0.3)
+    assert len(F) < 0.25 * len(F0), (len(F), len(F0))
+    assert watertight(F, len(V)) and np.abs(f(V)).max() < 0.005
+    assert over(f, V, F, 0.02) <= over(f, V0, F0, 0.02)
+    assert abs(signed_volume(V, F) / signed_volume(V0, F0) - 1) < 2e-3
+    gl = FieldGraph(GRADED)
+    with tempfile.TemporaryDirectory() as d:
+        rep = field_stl(gl.field(), *gl.bounds(), f"{d}/p.stl", pitch=0.25, block=16, decimate=0.02)
+        Vs, Fs = _stl_arrays(f"{d}/p.stl")
+    assert rep["faces"] < 0.7 * rep["facesBeforeDecimation"] and watertight(Fs, len(Vs)), rep
+
+
 TESTS = [test_same_mesh_as_dense_with_fewer_samples, test_finer_than_the_dense_budget,
-         test_steep_lattice_field_matches_dense, test_lattice_walls_are_exact]
+         test_steep_lattice_field_matches_dense, test_lattice_walls_are_exact, test_streamed_stl_matches_the_mesh,
+         test_streamed_stl_recovers_from_a_low_lipschitz_bound, test_bookkeeping_matches_trimesh,
+         test_decimation_stays_within_tolerance]
 
 
 def main():

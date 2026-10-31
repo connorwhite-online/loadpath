@@ -46,6 +46,14 @@ class MMA:
         self.upp = None
         self.iter = 0
 
+    def tighten(self, factor):
+        """Pull the asymptotes toward the last design by `factor`: a more
+        curved, more conservative model for the next step (what GCMMA's
+        inner loop does, without its extra function evaluations)."""
+        if self.xold1 is not None and self.low is not None:
+            self.low = self.xold1 - factor * (self.xold1 - self.low)
+            self.upp = self.xold1 + factor * (self.upp - self.xold1)
+
     def update(self, x, f0, df0, f, df):
         """One MMA step from design x with objective value/gradient (f0, df0)
         and constraint values/gradients (f: (m,), df: (m, n)). Returns the new

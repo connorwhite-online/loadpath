@@ -14,8 +14,9 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
 - **Model with fields.** A part can be a graph of implicit fields, nTop style: the
   skin thickens where the stress is, the lattice cell grows away from the bolts, the
   fillet is larger where the load comes in, and the mesh comes out smooth
-  ([docs/fields.md](docs/fields.md)). Bores, bolt faces and keep-outs cut with a plain
-  shape keep exact, sharp edges.
+  ([docs/fields.md](docs/fields.md)). `loadpath edit` opens the graph in a browser
+  editor with sliders and a live GPU preview. Bores, bolt faces and keep-outs cut with a
+  plain shape keep exact, sharp edges.
 - **STEP out.** `--step` writes the part as a B-rep for CAD: keep-outs, preserved
   shapes and the design space as true planes and cylinders, the organic body faceted
   (`loadpath[step]`, OpenCascade).
@@ -51,31 +52,35 @@ for the method, the study format, goals and limits.
 
 ## Examples
 
-The eval cases (11/11 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
+The eval cases (14/14 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
 
 <table>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>58.9 g · 53% lighter · SF 13.19 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>71.4 g · 43% lighter · SF 16.07 · pass</sub></td>
 <td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>46.2 g · 63% lighter · SF 7.98 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>25.2 g · 83% lighter · SF 3.44 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>58.9 g · 53% lighter · SF 14.78 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>172.8 g · 90% lighter · SF 2.33 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>207.9 g · 88% lighter · SF 7.18 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>17.7 g · 92% lighter · SF 3.10 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>24.8 g · 84% lighter · SF 3.50 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>148.8 g · 91% lighter · SF 2.54 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>207.7 g · 88% lighter · SF 7.71 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>26.4 g · 60% lighter · SF 1.56 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.5 g · 69% lighter · SF 2.73 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>43.4 g · 94% lighter · SF 4.29 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>25.3 g · 90% lighter · SF 3.10 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>23.8 g · 64% lighter · SF 1.63 · pass</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.5 g · 69% lighter · SF 3.35 · pass</sub></td>
 <td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>31.3 g · 79% lighter · SF 2.95 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>48.4 g · 89% lighter · SF 3.71 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>61.3 g · 85% lighter · SF 4.37 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>47.3 g · 89% lighter · SF 3.59 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>68.1 g · 84% lighter · SF 2.75 · pass</sub></td>
 </tr>
 </table>
 
-Where the load goes: von Mises stress on the part bent by its worst load case:
+Where the load goes: von Mises stress, blue (none) to red (the part's 98th percentile), on the part bent by its worst load case:
 
 <table>
 <tr>
@@ -97,7 +102,7 @@ Made another way: the same arm link printed, cast (no undercuts along z), 3-axis
 
 ![manufacturing constraints](docs/images/manufacturing/arm-link.png)
 
-<sub>Rendered 2026-10-29 from `f5b3a9d` by `python docs/gallery.py`.</sub>
+<sub>Rendered 2026-10-30 from `b031cbe` by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->
 
@@ -109,6 +114,21 @@ away from the bearings. At the same 52 g as a uniform lattice it has SF 14.8 and
 0.65 mm deflection, against SF 11.8 and 0.74 mm (`python examples/fields/arm_link.py`).
 
 ![graded vs uniform arm link](docs/images/fields/arm-link-graded-vs-uniform.png)
+
+`loadpath edit` opens a graph in the browser: nodes and wires below, an inspector
+with a slider for every number, and the part above, raymarched on the GPU from the
+graph itself, so it redraws as a slider moves. Here the arm link is cut open and
+painted with its stress, showing the graded gyroid inside the skin. Run meshes it
+for real and shows the report.
+
+![the field editor](docs/images/fields/editor.png)
+
+`loadpath tune` (or Tune in the editor) turns the numbers you pick until the part
+is as light as it can be while it still meets a study's safety factor and
+deflection, each candidate meshed and analyzed by FE: the arm link's web and blend
+went from 61.8 g to 54.9 g at its 0.5 mm stiffness limit in 25 analyses.
+
+![tuning the arm link against its loads](docs/images/fields/editor-tune.png)
 
 A graded cell bends the lattice's coordinates, so walls run continuously from 4 mm
 to 12 mm cells:
@@ -125,6 +145,25 @@ against 13.4 undrilled, 10% softer.
 ![drain holes in the arm link](docs/images/fields/arm-link-drains-top.png)
 ![drain holes in the arm link, underside](docs/images/fields/arm-link-drains.png)
 
+### Impact: where lattices beat solid TO
+
+A stiff part is the wrong way to stop a falling mass: it stores energy as a spring
+and pushes back hard. A graph's `impact` block crushes a TPMS core layer by layer,
+using plateau strengths from unit-cell plastic collapse, and grades its density so
+every layer crushes at the same force ([docs/IMPACT.md](docs/IMPACT.md)). Test case:
+a corner bumper stopping a 5 kg robot falling 0.9 m (44 J) under a 6 kN limit. The
+graded gyroid (4.85 g) peaks at 5.4 kN. Grading per cell in 3D (4.39 g) brings
+that to 5.2 kN. A uniform core of the same mass peaks at 6.7 kN. Solid TO of the
+same envelope (8.25 g) holds only 0.8 J within the limit
+(`python examples/impact/end_stop.py`). TPU uses an elastic buckling law for
+small knocks: a forearm pad takes 0.75 J at 112 N against a 140 N limit
+(`examples/impact/knock_pad.py`). Graded TPU lattice feet tune a vibration isolator
+under an off-centre robot: same 35 Hz bounce as four identical feet, but the payload
+sits level, a vertical shake no longer rocks it (0.004x vs 0.44x sideways), and it
+takes 17% more shock before a foot buckles (`examples/isolator/mount.py`).
+
+![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
+
 ## Install
 
 ```
@@ -138,12 +177,16 @@ loadpath mcp                           # stdio MCP server for agents
 
 Also: `loadpath lattice` (fill a part with a stress-graded TPMS lattice),
 `loadpath heatx` (two-fluid TPMS heat exchangers), `loadpath field` (a part as a
-graph of fields, [docs/fields.md](docs/fields.md)), `loadpath schema` (JSON
-Schemas, also in [`schema/`](schema/)).
+graph of fields, [docs/fields.md](docs/fields.md)), `loadpath edit` (edit a field
+graph in the browser with a live preview), `loadpath tune` (tune a graph's numbers
+against a study's limits), `loadpath schema` (JSON Schemas, also
+in [`schema/`](schema/)).
 
 Large studies (100k+ cells) solve with matrix-free multigrid; install the `gpu`
 extra (`loadpath[mcp,gpu]`, PyTorch) to run it on an NVIDIA GPU, an Apple
-Silicon GPU, or torch's threaded CPU kernels. Without it everything runs on
+Silicon GPU, or torch's threaded CPU kernels. The same extra evaluates field
+graphs on the GPU when meshing (`LOADPATH_FIELD_DEVICE=torch` uses torch on the
+CPU, 1.7x faster than numpy on the arm link). Without it everything runs on
 numpy as before.
 
 - [Quickstart](docs/quickstart.md): install to a verified part in ten minutes.
@@ -152,6 +195,8 @@ numpy as before.
 - [Reference](loadpath/README.md): the method, every study field, the report, limits.
 - [Benchmarks](docs/BENCHMARKS.md): loadpath against top88 and top3d on the textbook
   problems (MBB beam, L-bracket, 3D cantilever, 3D bridge) and the GE bracket challenge.
+- [Calibration](docs/CALIBRATION.md): coupons to print and test at home, and a fit
+  that turns the measurements into a material card for your printer.
 - [Examples](loadpath/examples/): a fastened bracket, a robot arm link, a
   lattice-filled pedal, two heat exchangers.
 
@@ -165,7 +210,10 @@ python3 tests/test_pressure.py
 python3 tests/test_process.py
 python3 tests/test_fields.py
 python3 tests/test_sharp.py
+python3 tests/test_editor.py      # the GPU part needs node and Playwright
+python3 tests/test_impact.py
 python3 tests/test_recall.py
+python3 tests/test_assembly.py
 python3 tests/test_evals.py
 python3 -m loadpath.evals.run --tier coarse --corpus 6 --out evals-coarse/   # minutes: every push
 python3 -m loadpath.evals.run --out evals-out/                               # full suite

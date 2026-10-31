@@ -1,0 +1,21 @@
+{
+  "name": "end-stop",
+  "description": "A tapered corner bumper for a GRIP-like robot base: the 5 kg robot falling 0.9 m off a bench (4.2 m/s, 44 J) must not put more than 6 kN into the PA12 base. The envelope narrows from 40 mm to 22 mm square over 20 mm, so a uniform core's force climbs as the crush front reaches the wide layers; the gyroid here is graded along z (the 'density' table is the impact block's grade output) so every layer crushes at the same force. 12 mm cells keep the thinnest wall at the SLS minimum of 0.8 mm.",
+  "nodes": {
+    "envelope": {"op": "expr", "expr": "max(max(abs(x) - w, abs(y) - w), max(-z, z - 20)) * 0.995",
+                 "vars": {"w": {"op": "remap", "input": {"op": "coordinate", "axis": "z"},
+                                "from": [0, 20], "to": [20, 11]}},
+                 "bounds": {"min": [-20, -20, 0], "max": [20, 20, 20]}},
+    "density": {"op": "constant", "value": 0.24},
+    "core": {"op": "lattice", "type": "gyroid", "cell": 12, "density": "density"},
+    "part": {"op": "intersect", "inputs": ["core", "envelope"]}
+  },
+  "output": "part",
+  "material": "pa12",
+  "process": "sls",
+  "drains": false,
+  "mesh": {"pitch": 0.25},
+  "impact": {"envelope": "envelope", "density": "density", "lattice": "gyroid", "axis": "z",
+             "mass": 5.0, "velocity": 4.2, "forceLimit": 6000, "pitch": 0.25, "grade": true,
+             "cell": 12, "minWall": 0.8}
+}
