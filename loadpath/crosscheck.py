@@ -86,23 +86,13 @@ _BYTES_PER_TET = 20_500
 
 def memory_budget() -> float:
     """Bytes a tet solve may use: LOADPATH_TET_MEMORY (GB), else 40% of
-    the memory available now, at most 8 GB."""
+    the memory free now (in a container, its limit less its use), at most 8 GB."""
     env = os.environ.get("LOADPATH_TET_MEMORY")
     if env:
         return float(env) * 1e9
-    avail = None
-    try:
-        with open("/proc/meminfo") as fh:
-            for line in fh:
-                if line.startswith("MemAvailable:"):
-                    avail = float(line.split()[1]) * 1e3
-    except OSError:
-        pass
-    if avail is None:
-        try:
-            avail = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_AVPHYS_PAGES")
-        except (ValueError, OSError, AttributeError):
-            avail = 8e9
+    from .study import _available_bytes   # MemAvailable, and the container's free share
+
+    avail = _available_bytes() or 8e9
     return min(8e9, 0.4 * avail)
 
 

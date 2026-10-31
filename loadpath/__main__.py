@@ -486,6 +486,8 @@ def main(argv=None):
             json.dump({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study), **kw}, fh)
 
     _status("running", started=time.time())
+    # each outcome as the search finds it, kept if a later stage dies
+    os.environ.setdefault("LOADPATH_PARTIAL_DIR", os.path.join(args.out, "partial"))
     rec = None
     if args.viewer != "none" and not os.environ.get("LOADPATH_NO_RENDER"):
         from .viewer import HistoryRecorder
@@ -493,7 +495,8 @@ def main(argv=None):
     try:
         result = run_study(study, on_progress=rec or _progress)
     except BaseException as exc:
-        _status("failed", error=f"{type(exc).__name__}: {exc}")
+        _status("failed", error=f"{type(exc).__name__}: {exc}",
+                partial=os.environ.get("LOADPATH_PARTIAL_DIR"))
         raise
     os.makedirs(args.out, exist_ok=True)
     summary = result.to_dict()

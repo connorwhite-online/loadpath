@@ -321,12 +321,51 @@ def _cgroup_limit() -> float | None:
     return None
 
 
+def _cgroup_free() -> float | None:
+    """The container's limit less what it holds now (reclaimable page cache
+    not counted): the limit alone let eight brief-eval agents' runs each
+    count the whole 14 GB as theirs, and the kernel killed them."""
+    lim = _cgroup_limit()
+    if not lim:
+        return None
+    paths = []
+    try:
+        with open("/proc/self/cgroup") as f:
+            for line in f:
+                _, ctrl, rel = line.strip().split(":", 2)
+                if ctrl == "":
+                    paths.append((f"/sys/fs/cgroup{rel}/memory.current", f"/sys/fs/cgroup{rel}/memory.stat",
+                                  "inactive_file"))
+                elif "memory" in ctrl.split(","):
+                    paths.append((f"/sys/fs/cgroup/memory{rel}/memory.usage_in_bytes",
+                                  f"/sys/fs/cgroup/memory{rel}/memory.stat", "total_inactive_file"))
+    except (OSError, ValueError):
+        return lim
+    for used_p, stat_p, key in paths:
+        try:
+            with open(used_p) as f:
+                used = float(f.read().strip())
+        except (OSError, ValueError):
+            continue
+        cache = 0.0
+        try:
+            with open(stat_p) as f:
+                for line in f:
+                    k, _, v = line.partition(" ")
+                    if k == key:
+                        cache = float(v)
+        except (OSError, ValueError):
+            pass
+        return max(0.0, lim - (used - cache))
+    return lim
+
+
 def _available_bytes() -> float | None:
     avail = _meminfo_available()
-    cap = _cgroup_limit()
+    cap = _cgroup_free()
     if avail is None:
         return cap
-    return min(avail, cap) if cap else avail
+    return min(avail, cap) if cap is not None else avail
 
 
 def _meminfo_available() -> float | None:
@@ -365,6 +404,26 @@ def _workers(n: int, cells: int | None = None) -> int:
     if avail:
         w = min(w, max(1, int(0.8 * avail // _run_bytes(cells))))
     return w
+
+
+def _save_partial(o) -> None:
+    """With LOADPATH_PARTIAL_DIR set (`loadpath run` sets it to out/partial),
+    write each outcome's STL and summary as the search finds it: four
+    brief-eval runs were killed in their last stage and kept nothing of
+    half an hour of verified outcomes."""
+    d = os.environ.get("LOADPATH_PARTIAL_DIR")
+    if not d or o.mesh is None:
+        return
+    try:
+        import json
+
+        os.makedirs(d, exist_ok=True)
+        stem = f"vf{o.volume_fraction:.4f}".replace(".", "p")
+        o.mesh.export(os.path.join(d, stem + ".stl"))
+        with open(os.path.join(d, "outcomes.jsonl"), "a") as fh:
+            fh.write(json.dumps({"stl": stem + ".stl", **o.summary()}, default=str) + "\n")
+    except Exception:  # noqa: BLE001  (a convenience: never fail the run for it)
+        pass
 
 
 def _confirm_cells(st: Study | None = None) -> int:
@@ -772,6 +831,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                                            ("start", "mass", "safetyFactor", "margin")} | {"passes": c.passes}
         started = True
         emit({"stage": "outcome", **o.summary()})
+        _save_partial(o)
         return o
 
     def _confirm(o: Outcome) -> float:

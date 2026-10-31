@@ -143,8 +143,10 @@ field. `check` reports every problem at once: fix them all, then check again.
    than `maxElements`).
 8. `python -m loadpath run study.json --out out/`: run it in the background
    (`nohup ... &`, or the MCP `loadpath_start` job) and poll, never in a
-   foreground call with a time limit: a killed run writes nothing.
-   `out/status.json` says `running` (with its `pid`), `done` or `failed`.
+   foreground call with a time limit. `out/status.json` says `running`
+   (with its `pid`), `done` or `failed`; each outcome is written to
+   `out/partial/` (STL plus a line in `outcomes.jsonl`) as the search finds
+   it, so a run killed late still leaves its verified parts.
    Progress is JSON lines on stderr. A `safetyFactor` goal runs several
    optimizations plus a fine re-check of the pick: at 20k cells on one core
    expect 10-30 minutes (a fixed `volumeFraction` is a few minutes).
