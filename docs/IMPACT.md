@@ -132,20 +132,65 @@ coupon is crushed. The report adds the energy that comes back as rebound
 `examples/impact/knock-pad.json` and `knock_pad.py`: a TPU bumper on a
 GRIP-like forearm. 1.5 kg of arm swings into a hand or a fixture at 1 m/s
 (0.75 J) under a 140 N limit, which is about the ISO/TS 15066 quasi-static
-contact limit for a hand. Taper 40 mm to 24 mm over 14 mm, 6 mm cells, 0.5 mm
+contact limit for a hand. Taper 40 mm to 24 mm over 14 mm, 7 mm cells, 0.5 mm
 thinnest wall (one FDM line).
 
-| design | mass | peak force | crush | efficiency |
+TPU is stiffer in a knock than in the tensile test its card's E comes from
+(see "TPU over time and rate" below). The pad crushes for about 15 ms, which
+makes it 1.41x stiffer, and its plateau force rises by the same factor. The
+`impact` block includes this for elastomers (`"rate": false` turns it off).
+With 6 mm cells the graded pad was 112 N without the factor and exactly the
+140 N limit with it, because its softest layers already sat at the printable
+minimum density. 7 mm cells let the soft end go to rho 0.22:
+
+| design (rate stiffening included) | mass | peak force | crush | efficiency |
 |---|---|---|---|---|
-| graded TPU gyroid | 5.0 g | **112 N** (passes) | 7.1 mm | 0.94 |
-| uniform TPU gyroid, same mass | 5.0 g | 147 N (fails) | 7.7 mm | 0.66 |
-| solid TPU pad, same mass and footprint (2.6 mm thick) | 5.0 g | 4.9 kN | 0.3 mm | n/a |
+| graded TPU gyroid | 4.17 g | **114 N** (passes, 19% margin) | 7.5 mm | 0.87 |
+| uniform TPU gyroid, same mass | 4.16 g | 135 N (passes, 4% margin) | 8.1 mm | 0.69 |
+| solid TPU pad, same mass and footprint (2.2 mm thick) | 4.17 g | 5.4 kN (static modulus, so more in fact) | 0.3 mm | n/a |
 
 ![TPU knock pad](images/impact/knock-pad.png)
 
 The graded pad returns about 0.5 J of the 0.75 J as rebound. Rebound is
 what a reusable bumper does; a crash element that keeps the energy has to
 be sacrificial (the PA12 bumper above).
+
+## TPU over time and rate (`viscoelastic.py`)
+
+A TPU part's stiffness depends on how long the load has been on. The card's
+E comes from a test lasting seconds; a foot under a payload for a year is
+softer, and a mount vibrating at 35 Hz or a pad hit for 15 ms is stiffer.
+`viscoelastic.py` uses a log-time creep law with one rate m:
+J(t) / J(10 s) = 1 + m ln(t / 10 s), the form isolator makers give for
+polyurethane ("the increase in deformation is proportional to the time
+logarithm", Getzner).
+
+- **m = 0.045**, from a generalized Maxwell fit to 100-minute compression
+  creep of extrusion-printed TPU (CMC 86(3), 2025): E(10 s) / E(100 min) =
+  1.29.
+- **Check:** this gives a 35 Hz to static stiffness ratio of 1.53. Isolator
+  makers quote 1.3-1.6 for polyurethane (GERB NOVODAMP data sheet).
+- **Ten years:** 1.78x the 10 s sag. Getzner quote under 1.5x after 10
+  years in their recommended load range, so this is cautious.
+
+| time scale | factor on the card's modulus |
+|---|---|
+| 10 ms impact | 1.45 |
+| 35 Hz vibration | 1.53 |
+| 10 s (the card) | 1 |
+| 1 day | 0.71 |
+| 10 years | 0.56 |
+
+`creep_factor`, `dynamic_factor` and `event_factor` give these. A card
+calibrated with the K-25 creep coupon replaces m (CALIBRATION.md).
+
+Not modelled yet:
+
+- **Temperature:** TPU softens fast above about 40 C.
+- **Large strains:** the law is linear viscoelastic.
+- **Frequency-dependent damping:** the log law implies a loss factor of
+  about 0.07, but the 0.12 in `LOSS_FACTOR` is a 10 Hz DMA value, kept as
+  is.
 
 ## Vibration (`modal.py`)
 
@@ -186,39 +231,52 @@ closest to equal feet, within the printable density range), and
 `density_for_stiffness` turns it into densities.
 
 `examples/isolator/mount.py`: a 3.9 kg GRIP-like robot base (aluminium plate
-and a column, CG 11 mm forward, 4 mm to the side, 75 mm up) on four
-24 x 24 x 30 mm TPU gyroid feet with 8 mm cells, tuned for a 35 Hz bounce.
-Both designs are checked by voxel FE of the whole mount (homogenized feet,
-plate, column, robot mass; ~5 min on 4 cores):
+and a column, CG 11 mm forward, 4 mm to the side, 77 mm up) on four
+20 x 20 x 40 mm TPU gyroid feet with 6.7 mm cells, tuned for a 35 Hz bounce
+at TPU's dynamic stiffness (1.53x the card's E at 35 Hz; see "TPU over time
+and rate" above). Every design is checked by voxel FE of the whole mount
+(homogenized feet, plate, column, robot mass; ~5 min on 4 cores). Modes are
+at the dynamic modulus, which rises with frequency across the sweep. Sag
+and tilt are at the card's modulus, grown by creep.
 
-| | uniform feet (rho 0.261) | graded feet (rho 0.32 / 0.28 / 0.24 / 0.20) |
-|---|---|---|
-| bounce frequency (FE / rigid-body model) | 35.0 / 34.1 Hz | 35.8 / 35.0 Hz |
-| bounce mode's vertical mass fraction | 0.988 | **0.998** |
-| static tilt under gravity | 1.1 mrad (0.13 mm sag spread) | **0.0** (all feet sag 0.193 mm) |
-| vertical shake: peak sideways motion of the robot | 0.44 x base | **0.004 x base** |
-| shock before the first foot buckles | 3.0 g | **3.5 g** (+17%) |
-| vertical isolation starts at | 50 Hz | 51 Hz |
-| at 100 Hz, vertical | 0.14 | 0.15 |
-| feet mass | 21.8 g | 21.7 g |
+| | uniform feet (rho 0.31) | graded feet (rho 0.37 / 0.33 / 0.29 / 0.23) | graded, tuned at the card's E |
+|---|---|---|---|
+| bounce frequency (FE / rigid-body model) | 34.6 / 34.0 Hz | 35.5 / 35.0 Hz | 42.9 / 42.4 Hz |
+| vertical isolation starts at | 50 Hz | 51 Hz | 62 Hz |
+| worst vertical transmissibility, 50-400 Hz | 0.93 | 1.03 (at 50 Hz) | 2.6 |
+| bounce mode's vertical mass fraction | 0.989 | **0.998** | 0.997 |
+| tilt under gravity, 1 day / 10 years | 2.4 / 3.1 mrad | **0 / 0** | 0.5 / 0.7 mrad |
+| sag spread between feet, 10 years | 0.35 mm | **0** | 0.07 mm |
+| vertical shake: peak sideways motion of the robot | 0.29 x base | **0.0 x base** | 0.05 x base |
+| 10 ms shock before the first foot buckles, day 1 / 10 years | 3.4 / 2.9 g | **4.2 / 3.6 g** | 9.8 / 9.3 g |
+| feet mass | 23.7 g | 23.5 g | 30.6 g |
 
 ![transmissibility](images/impact/isolator-transmissibility.png)
+![graded isolator feet](images/impact/isolator-feet.png)
 
-Grading does not move the isolation band (that is set by the total
-stiffness, the same in both). What it buys is a level payload, a vertical
-shake that stays vertical (no rocking of a tall payload, which is what
-blurs a camera or a printer nozzle), and 17% more shock before buckling,
-because each foot carries load in proportion to its stiffness. The
-rigid-body model (`mount_modes`) that does the tuning agrees with the FE to
-1-3% on the bounce, and one tuning pass was already level in the FE; the
-example refines against FE sag anyway.
+- **Tuning at the dynamic modulus is what puts the bounce where you asked.**
+  Tuned at the card's E, the mount bounces at 43 Hz rather than 35. It only
+  starts isolating at 62 Hz, so it amplifies 2.6x at the bottom of a
+  50-400 Hz band it was meant to cut. Its feet were also clipped at the top
+  density limit.
+- **Grading does not move the isolation band**, which the total stiffness
+  sets. What it buys is a level payload for life: creep grows every foot's
+  sag by the same factor, so a mount that starts level stays level. The
+  uniform mount's tilt grows from 1.7 mrad at 10 s to 3.1 mrad at
+  10 years, about 0.25 mm across a 80 mm column. A vertical shake also
+  stays vertical (no rocking of a tall payload, which is what blurs a
+  camera or a printer nozzle). And the shock margin before buckling is 23%
+  larger, because each foot carries load in proportion to its stiffness.
+- **Creep eats the shock margin.** Thin walls buckle at a strain, and creep
+  spends strain: 10 years under the payload costs 0.6 g of the graded
+  mount's 4.2 g.
+- The rigid-body model that does the tuning agrees with the FE to 1-2% on
+  the bounce.
 
-Not yet: TPU stiffness is frequency and amplitude dependent (the dynamic
-modulus at 50-400 Hz is typically 1.2-2x the static one, which raises the
-mounted frequency by 10-40%), creep under a steady load is unmodelled, and
-the loss factor is a single number. A crushed coupon and a tap test on the
-printed mount would calibrate both. The graded feet STL (with 1 mm end
-plates) is written by the example.
+Not yet: the loss factor is one number, temperature is ignored, and the
+creep rate is a published value for printed TPU until a K-25 coupon is
+measured (CALIBRATION.md). The example writes the graded feet as an STL
+with 1 mm end plates.
 
 ## Field graph blocks
 

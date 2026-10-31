@@ -45,7 +45,7 @@ from scipy.sparse.linalg import LinearOperator, eigsh, splu
 
 from .fem import CORNERS, HexMesh, Solver, Stiffness, von_mises
 
-__all__ = ["NonlinearResult", "BucklingResult", "Tendon", "nodes_near", "solve_nonlinear", "linear_buckling",
+__all__ = ["NonlinearResult", "BucklingResult", "Tendon", "nodes_near", "solve_nonlinear", "linear_buckling", "stroke_mechanism",
            "solid_submesh", "verify_mechanism"]
 
 # Above this many dofs the Newton steps use CG + AMG instead of a direct
@@ -624,3 +624,75 @@ def verify_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, input
     report["u"] = r.u
     report["elementIndex"] = el
     return report
+
+
+def stroke_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, stroke: float, input_case: int = 0,
+                     output_case: int = 1, k_out: float = 0.0, threshold: float = 0.5, steps: int = 10,
+                     material: str = "neo-hookean") -> dict:
+    """Drive a compliant mechanism the way a servo or a lead screw does: move
+    the input region `stroke` mm along the input force's direction
+    (prescribed, so a snap-through cannot run away) and follow the output
+    with large deflections. k_out (N/mm): the workpiece, a grounded spring
+    on the output; 0 for the free stroke.
+
+    Returns the output's travel along its direction (nonlinear and linear),
+    the actuator force it took (N, along the stroke), the grip force on the
+    workpiece (k_out x travel), the geometric advantage (output travel /
+    stroke) and mechanical advantage (grip force / actuator force), the
+    peak stress and strain, and the per-step history."""
+    from .mechanism import _spring_diag
+    mesh = domain.mesh
+    keep = np.asarray(xphys) > threshold
+    sub, el, fx, (f, lo) = solid_submesh(mesh, keep, domain.fixed, [domain.loads[input_case],
+                                                                    domain.loads[output_case]])
+    fv = f.reshape(-1, 3)
+    loaded = np.flatnonzero(np.abs(fv).sum(axis=1) > 0)
+    if len(loaded) == 0:
+        raise ValueError("the input region has no solid cells under it")
+    din = fv.sum(axis=0)
+    din /= np.linalg.norm(din)
+    pd, pv = [], []
+    for c in range(3):
+        if abs(din[c]) > 1e-9:
+            dofs = 3 * loaded + c
+            dofs = dofs[~fx[dofs]]
+            pd.append(dofs)
+            pv.append(np.full(len(dofs), stroke * din[c]))
+    pd, pv = np.concatenate(pd), np.concatenate(pv)
+    dirn = lo.reshape(-1, 3).sum(axis=0)
+    nrm = np.linalg.norm(dirn)
+    if nrm == 0:
+        raise ValueError("the output region has no solid cells under it")
+    wts = np.abs(lo.reshape(-1, 3)).sum(axis=1) > 0
+    lw = (wts[:, None] * (dirn / nrm)[None, :]).ravel() / max(wts.sum(), 1)
+    sd = _spring_diag(lo, k_out, sub.n_dof)
+    sd[fx] = 0.0
+    # linear answer on the same mesh: K u = 0 with the input moved
+    cons = fx.copy()
+    cons[pd] = True
+    stiff = Stiffness(sub, nu, cons)
+    k_free = Stiffness(sub, nu, np.zeros(sub.n_dof, bool)).assemble(np.full(sub.n_elem, modulus))
+    kc = (stiff.assemble(np.full(sub.n_elem, modulus)) + sp.diags(np.where(cons, 0.0, sd))).tocsr()
+    up = np.zeros(sub.n_dof)
+    up[pd] = pv
+    rhs = np.where(cons, up, -(k_free @ up))
+    ul = _Linear(sub).solve(kc, rhs)
+    lin_force = float(((k_free @ ul).reshape(-1, 3)[np.unique(pd // 3)].sum(axis=0)) @ din)
+    r = solve_nonlinear(sub, nu, modulus, fx, None, prescribed=(pd, pv), material=material, steps=steps,
+                        springs=sd, probes={"output": lw})
+    out_nl = float(lw @ r.u)
+    force = float(np.asarray(r.history[-1]["reaction"]) @ din) if r.history else float("nan")
+    rep = {"elements": int(sub.n_elem), "stroke": stroke, "kOut": k_out, "converged": r.converged,
+           "strokeReached": r.load_factor * stroke,
+           "linearOutput": float(lw @ ul), "output": out_nl, "linearActuatorForce": lin_force,
+           "actuatorForce": force, "geometricAdvantage": out_nl / (r.load_factor * stroke) if r.load_factor else 0.0,
+           "maxStress": float(r.stress.max()), "maxStrain": float(r.strain.max()),
+           "history": [{"stroke": h["loadFactor"] * stroke, "output": h.get("output"),
+                        "actuatorForce": float(np.asarray(h["reaction"]) @ din) if "reaction" in h else None,
+                        **({"branchSwitch": True} if h.get("branchSwitch") else {})} for h in r.history]}
+    if k_out > 0:
+        rep["gripForce"] = k_out * out_nl
+        rep["mechanicalAdvantage"] = rep["gripForce"] / force if force else None
+    if r.message:
+        rep["message"] = r.message
+    return rep

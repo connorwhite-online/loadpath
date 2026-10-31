@@ -220,22 +220,21 @@ Fixed in this round:
 
 Open, as next work:
 
-1. **Constrained studies in 3D wander less, but still by about 15%.** The
-   first constrained run of the wall bracket reads 17 MPa in the optimizer
-   and 377 MPa verified. Its stress measure is not the cause: the optimized
-   voxels deflect 0.23 mm, but the meshed part deflects 13.7 mm and comes
-   apart in two pieces. About half of the design's cells are members one cell
-   thick, and meshing loses them. Checking stress at cell corners instead of
-   centres changed nothing. The study now searches the limit by bisection
-   between a passing and a failing run, takes at most 4x a step, and
-   warm-starts only from a passing design (`study.py`). Across target safety
-   factors 2.45, 2.5, 2.55 and 2.6 the wall bracket lands at 56.5, 74.6, 58.6
-   and 61.1 g, where it was 72-95 g before and 43-174 g before that. The
-   default search lands at 68-79 g on the same four, so it has similar noise:
-   the verified safety factor of one design depends on its junction details
-   (58.6 g passed at SF 2.74 in one run and failed at 1.55 in another). What
-   remains is meshing fidelity for one-cell members, shared with the
-   tet-confirm work (1d500e0).
+1. **Constrained studies need a finer grid than the search, and pay for it.**
+   The first constrained run of the wall bracket read 17 MPa in the
+   optimizer and 377 MPa verified: its 4 mm members sat on a 2.6 mm grid, 1.5
+   cells across, and the meshed part deflected 13.7 mm where the voxels
+   deflected 0.23 mm. Two near-identical 58 g designs verified at SF 1.58 and
+   2.72, the peak sitting on a junction a cell or two wide. Constrained
+   studies now pick the grid so the minimum member is 2.5 cells across, up to
+   4x `maxElements` cells (`domain.choose_pitch`). Across target safety
+   factors 2.45, 2.5, 2.55 and 2.6 the wall bracket lands at 29.2, 29.9, 30.1
+   and 29.3 g, where it was 55.5-74.6 g on the coarser grid and 68-79 g with
+   the default search, in about 2-4x the time. Two cells across is not
+   enough (35 g, first runs at SF 0.3). The arm link is the cost: 59.6 g
+   against 55.6 g on its old grid, and its constrained runs at an in-between
+   grid wandered up to 85 g, so constrained arm-link results are still noisy.
+   The default search and the evals keep their grids.
 2. **Spread loads on regions that are not faces.** A load over a region too
    small or too chunky to count as a face is still not pinned, and on a
    coarse grid its nodes can end on void (a 24x6x8 bridge does this). The
@@ -244,3 +243,14 @@ Open, as next work:
 3. **Compliance designs keep sharp re-entrant corners.** On the L-bracket
    loadpath's peak stress is above top88's at the same volume. The
    safety-factor search pays for that peak with material.
+
+## Compliant mechanisms
+
+`python -m loadpath.benchmarks.mechanisms` runs the force inverter (Bendsøe &
+Sigmund 2003, sec. 2.6) and a gripper (after Sigmund 1997) through a port of
+the 99-line code's mechanism version and through loadpath's `mechanism.py`.
+Every design is scored by one plane-stress evaluator with the same springs.
+At equal volume loadpath's output is within 1-2% of the reference's: +2.0% on
+the inverter and +0.9% on the gripper, black and white. The robust
+(eroded/dilated) option gives up 3-4% for designs with no one-node hinges.
+Full table and the TPU gripper in [MECHANISMS.md](MECHANISMS.md).

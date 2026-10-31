@@ -291,7 +291,6 @@ def rate(kind, cell, wall, core_volume, lengths, duty, arrangement="cross", port
     if len(names) != 2:
         raise ValueError("duty names two fluids, e.g. {\"A\": {...}, \"B\": {...}}")
     base = tpms_geometry(kind, cell, wall, split)
-    port_area = np.pi * (0.5 * port_diameter * 1e-3) ** 2
     sides, caps, areas = {}, [], []
     for i, n in enumerate(names):
         geo = dict(base["sides"][i])
@@ -300,6 +299,8 @@ def rate(kind, cell, wall, core_volume, lengths, duty, arrangement="cross", port
         fl = _fluid(duty[n].get("fluid", "water"))
         m = _flow(duty[n], fl)
         frontal = core_volume / lengths[i] * 1e-6        # m^2
+        pd = port_diameter[i] if isinstance(port_diameter, (tuple, list)) else port_diameter
+        port_area = np.pi * (0.5 * pd * 1e-3) ** 2
         s = _side(kind, fl, m, geo["phi"], geo.get("phiSheet", 2 * geo["phi"]), geo["dh"], cell, lengths[i],
                   frontal, port_area, mouth_radius)
         s["massFlow"] = m

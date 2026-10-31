@@ -56,6 +56,8 @@ class Domain:
     gravity: np.ndarray | None = None
     # per case, directions.Spread or None (see BoundaryConditions)
     spreads: list = field(default_factory=list)
+    # The study's thermal block on this mesh (thermal.StudyHeat), or None.
+    thermal: object = None
 
     @property
     def n_elem(self):
@@ -95,6 +97,7 @@ def choose_pitch(study: Study) -> float:
         inside |= s.contains(pts)
     frac = max(float(inside.mean()), 0.05)
     pitch = (vol * frac / study.max_elements) ** (1.0 / 3.0)
+    budget = pitch
     if study.min_member:
         # No finer than two cells per filter radius (1.3 x minMember, see
         # simp.filter_radius): the filter sets the feature scale, so finer
@@ -103,6 +106,17 @@ def choose_pitch(study: Study) -> float:
         # stiffer (0.58mm vs 1.06mm deflection at the same 30% volume): the
         # finer grid had settled in a worse local optimum.
         pitch = max(pitch, 1.3 * float(study.min_member) / 2.0)
+        if study.goal.method == "constrained":
+            # The stress-constrained method sits its members right at the
+            # minimum, and at two cells per filter radius that is 1.5 cells:
+            # the wall bracket's 4 mm members on a 2.6 mm grid meshed three
+            # times floppier than their voxels, its first run verified at SF
+            # 0.1 with the optimizer reading the limit, and four targets
+            # 2.45-2.6 ended at 55-75 g. With the member 2.5 cells across
+            # (1.6 mm) the optimizer's reading holds on the mesh (first run
+            # SF 1.7) and the four land at 29.2-30.1 g, in about 4x the time.
+            # Up to 4x maxElements cells for it, no more.
+            pitch = min(pitch, max(float(study.min_member) / 2.5, budget / 4.0 ** (1.0 / 3.0)))
     return pitch
 
 
@@ -490,7 +504,10 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
             warnings.append(f"symmetry '{axis}': {unmatched:.0%} of cells have no mirror; the design space, "
                             "preserve or keep-outs are not symmetric about that plane")
 
+    from .thermal import study_heat
+
     return Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
-                  springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads)
+                  springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads,
+                  thermal=study_heat(study, mesh, study.elastic(design=True), fixed))

@@ -534,11 +534,29 @@ def impact_report(graph, spec: dict, material) -> dict:
     flim = spec.get("forceLimit")
     cv = crush_curve(law, area, mean, h, sy, E, layer_force=lf)
     resp = impact_response(cv, energy, mass)
+    rate = None
+    if law.endswith(":elastic") and mass and spec.get("rate", True):
+        # an elastomer is stiffer in a fast knock than in the card's test: the
+        # crush time (constant-force estimate 2 d / v) sets the factor
+        from .viscoelastic import creep_params, event_factor
+
+        if creep_params(material) is not None:
+            v = np.sqrt(2.0 * energy * 1e-3 / float(mass))                     # m/s
+            fac = 1.0
+            for _ in range(4):
+                t = 2.0 * float(resp["crush"]) * 1e-3 / v
+                fac = float(event_factor(material, t))
+                cv = crush_curve(law, area, mean, h, sy * fac, E * fac, layer_force=lf * fac)
+                resp = impact_response(cv, energy, mass)
+            sy, E = sy * fac, E * fac
+            rate = {"eventSeconds": round(t, 4), "stiffening": round(fac, 3)}
     core_mass = float((rho * inside).sum() * h ** 3 * material.density / 1000.0)
     out = {"lattice": kind, "law": "elastic buckling" if law.endswith(":elastic") else "plastic collapse",
            "axis": "xyz"[axis], "energy": round(energy, 1), "coreMass": round(core_mass, 2),
            "meanDensity": round(float((rho * inside).sum() / max(inside.sum(), 1)), 3),
            "response": resp, "curve": cv.to_dict()}
+    if rate:
+        out["rate"] = rate
     if law.endswith(":elastic"):
         # an elastomer core springs back: only its hysteresis is dissipated
         hy = HYSTERESIS.get(material.name, 0.3)

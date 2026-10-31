@@ -52,6 +52,13 @@ besides the thermal one. Checked against a bar held between rollers
 (sigma = -E alpha dT exactly) and Timoshenko's bimetal strip (within 2.5%
 at 4 cells per layer); bench/thermal_expansion.py runs the motor mount.
 
+A study's `thermal` block (spec.Thermal) comes in through StudyHeat:
+build_domain hangs one on the Domain, simp's loop re-solves the design's
+temperature every iteration and folds softening, expansion and their
+gradients (mechanical and thermal adjoints, as above) into the ordinary
+optimizer, and verify_part solves the delivered part's temperature, derates
+moduli and strength by it and takes the free expansion off the stress.
+
 Units: mm, W, K (or C) throughout; conductivity is given in W/(m K) and
 convection in W/(m^2 K) at the edges, as datasheets quote them, and
 converted here.
@@ -74,7 +81,7 @@ __all__ = [
     "thermal_grid", "grid_from_domain", "Faces", "Conduction", "ScalarSolver", "ThermalBC",
     "Convection", "nodes_in", "cells_in", "thermal_bc", "solve_temperature", "ThermalResult",
     "ThermalOptions", "ThermalOptResult", "optimize_thermal", "optimize_thermomechanical",
-    "EXPANSION", "expansion", "thermoelastic",
+    "EXPANSION", "expansion", "thermoelastic", "StudyHeat", "study_heat", "study_thermal_bc",
 ]
 
 # W/(m K), dense printed parts, in plane, from the material library's cards
@@ -1097,3 +1104,169 @@ def _thermomech_evaluator(domain, nu, bc, opts, material, thermal_weight, rtol=1
         return obj, g_xe, rec
 
     return evaluate, fe, th
+
+
+# ------------------------------------------------- a study's thermal block
+
+
+def study_thermal_bc(study, mesh: HexMesh) -> ThermalBC:
+    """ThermalBC on `mesh` from a study's `thermal` block (spec.Thermal):
+    region ids resolve to the study's preserve / keepOut shapes."""
+    th = study.thermal
+
+    def shape(region, sh):
+        return sh if sh is not None else study.region_shape(region)[0]
+
+    temps = [(shape(r, s), t) for r, s, t in th.temperatures]
+    heat = [(shape(r, s), w, "volume") if spread == "volume" else (shape(r, s), w)
+            for r, s, w, spread in th.heat]
+    conv = [Convection(h, fluid, None if r is None and s is None else shape(r, s))
+            for r, s, h, fluid in th.convection if h > 0]
+    if heat:
+        for (r, s, w, spread), (sh, *_) in zip(th.heat, heat):
+            if spread == "volume" and not cells_in(mesh, sh).any():
+                raise ValueError(f"thermal heat into {r or 'a shape'}: no cell of the grid is inside it")
+    return thermal_bc(mesh, ambient=th.ambient, temperatures=temps, heat=heat, convection=conv)
+
+
+class StudyHeat:
+    """A study's thermal block on a mechanical mesh, for the optimizer
+    (simp) and for verification: solve the temperature at a density, then
+    each cell's retention g(T), expansion strain eps = alpha (T - t_ref)
+    and expansion load.
+
+    In the optimizer the objective with expansion is twice the elastic
+    strain energy (see optimize_thermomechanical) and the gradient carries
+    the mechanical adjoint and the thermal one, so material that conducts
+    heat into the structure is charged for softening and growing it."""
+
+    def __init__(self, study, mesh: HexMesh, nu, fixed, modulus: float | None = None):
+        th = study.thermal
+        mat = study.material
+        self.mesh, self.nu, self.fixed = mesh, nu, fixed
+        self.t_ref = float(th.t_ref)
+        self.k = th.conductivity if th.conductivity is not None else _card(conductivity, mat, "conductivity")
+        self.curve = _card(lambda m: MODULUS_RETENTION[_material_key(m)], mat, "retention") if th.soften else None
+        a = th.expansion
+        self.alpha = (_card(expansion, mat, "expansion coefficient") if a is True else float(a)) if a else None
+        self.E0 = float(mat.E if modulus is None else modulus)
+        self.bc = study_thermal_bc(study, mesh)
+        self.vth = None
+        self.th = None
+        self.te = None
+
+    @property
+    def expands(self):
+        return self.alpha is not None and self.alpha > 0
+
+    def temperature(self, rho=None):
+        """Solve at densities rho (default solid): per-element C, and sets
+        g, dg, eps."""
+        rho = np.ones(self.mesh.n_elem) if rho is None else np.asarray(rho, float)
+        if self.th is None:
+            grid = ThermalGrid(self.mesh.pitch, self.mesh.origin, (0, 0, 0), self.mesh,
+                               np.zeros(self.mesh.n_elem, bool))
+            target = None if self.bc.power > 0 else np.ones(self.mesh.n_nodes, bool)
+            self.th = _Thermal(grid, self.bc, self.k, target)
+        if self.bc.fixed.all():
+            # every node held: nothing to solve, and nothing depends on rho
+            theta = self.bc.fixed_t - self.bc.ambient
+        else:
+            theta = self.th.solve(rho)
+        self.t_node = theta + self.bc.ambient
+        self.te = self.t_node[self.mesh.enode].mean(axis=1)
+        if self.curve is not None:
+            self.g, self.dg = retention(self.curve, self.te)
+        else:
+            self.g, self.dg = np.ones(self.mesh.n_elem), np.zeros(self.mesh.n_elem)
+        self.eps = self.alpha * (self.te - self.t_ref) if self.expands else np.zeros(self.mesh.n_elem)
+        return self.te
+
+    def load(self, p, scale=1.0):
+        """Expansion load at stiffness interpolation p per cell (no void
+        floor), times scale (the modulus: E0 in the optimizer's units)."""
+        from .fem import hex8_fth
+
+        if not self.expands:
+            return np.zeros(self.mesh.n_dof)
+        if self.vth is None:
+            self.vth = hex8_fth(self.nu) * self.mesh.pitch ** 2
+        w = scale * p * self.g * self.eps
+        f = np.bincount(self.mesh.edof.ravel(), weights=(w[:, None] * self.vth[None, :]).ravel(),
+                        minlength=self.mesh.n_dof)
+        f[self.fixed] = 0.0
+        return f
+
+    def sensitivities(self, fe, xe, loads, us, fth, weights, gravity=None, state=None):
+        """(objective, per-case objective, gradient w.r.t. xe) of the weighted
+        cases at the last temperature(xe), in fe's units (forces in N, u
+        scaled by E0). `loads` already carry fth (and self-weight). Without
+        expansion the objective is the compliance; with it, twice the
+        elastic strain energy: J = u.(f - 2 fth) + E0^2 sum p g eps^2 cm V,
+        adjoint K lam = f - 2 fth. Self-weight (gravity, N/mm^3 linear in
+        xe) adds (lam + u) . df/dx."""
+        from .fem import elastic_c
+        from .simp import ALIVE, E_MIN, PENALTY
+
+        mesh = self.mesh
+        state = state if state is not None else {}
+        g, dg, eps = self.g, self.dg, self.eps
+        live = xe > ALIVE
+        pth = np.where(live, xe ** PENALTY * (1 - E_MIN), 0.0)
+        dp = np.where(live, PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN), 0.0)
+        estiff = E_MIN + xe ** PENALTY * (1 - E_MIN)
+        dE = PENALTY * xe ** (PENALTY - 1) * (1 - E_MIN)
+        if self.expands:
+            lams = fe.resolve([f - 2 * fth for f in loads], state.get("lams"))
+            state["lams"] = lams
+            cm = float(np.array([1, 1, 1, 0, 0, 0]) @ elastic_c(1.0, self.nu)
+                       @ np.array([1, 1, 1, 0, 0, 0])) * mesh.pitch ** 3
+            self_e = self.E0 ** 2 * eps * eps * cm
+            if self.vth is None:
+                self.load(pth)
+        else:
+            lams = us
+        case_j, j = [], 0.0
+        m_e = np.zeros(mesh.n_elem)           # sum_c w_c lam_e^T K0 u_e
+        q_e = np.zeros(mesh.n_elem)           # sum_c w_c (lam_e - u_e) . vth
+        grav = np.zeros(mesh.n_elem)
+        for ci, f in enumerate(loads):
+            u, lam = us[ci], lams[ci]
+            if self.expands:
+                jc = float(u @ (f - 2 * fth)) + float(np.sum(pth * g * self_e))
+                m_e += weights[ci] * 0.25 * (fe.strain_energy(lam + u) - fe.strain_energy(lam - u))
+                q_e += weights[ci] * ((lam - u)[mesh.edof] @ self.vth)
+            else:
+                jc = float(f @ u)
+                m_e += weights[ci] * fe.strain_energy(u)
+            if gravity is not None:
+                s = (lam + u).reshape(-1, 3)[mesh.enode].sum(axis=1)
+                grav += weights[ci] * (s @ gravity) * mesh.pitch ** 3 / 8.0
+            case_j.append(jc)
+            j += weights[ci] * jc
+        sw = float(np.sum(weights[:len(loads)]))
+        dx = -dE * g * m_e + grav
+        dte = -estiff * dg * m_e
+        if self.expands:
+            dx += self.E0 * dp * g * eps * q_e + sw * dp * g * self_e
+            dte += (self.E0 * pth * (dg * eps + g * self.alpha) * q_e
+                    + sw * self.E0 ** 2 * pth * cm * (dg * eps * eps + 2 * g * eps * self.alpha))
+        # through temperature: a node holds 1/8 of each of its cells' T
+        if np.any(dte) and not self.bc.fixed.all():
+            rhs = np.bincount(mesh.enode.ravel(), weights=np.repeat(dte / 8.0, 8), minlength=mesh.n_nodes)
+            self.th.lam = self.th.adjoint(rhs, self.th.lam)
+            dx = dx + self.th.gradient(xe, self.th.lam)
+        return j, case_j, dx
+
+
+def _card(get, material, what):
+    try:
+        return get(material)
+    except (KeyError, ValueError):
+        raise ValueError(f"thermal: no {what} for {getattr(material, 'name', material)!r}; give it in the "
+                         "thermal block (conductivity, expansion) or set soften false") from None
+
+
+def study_heat(study, mesh: HexMesh, nu, fixed, modulus: float | None = None):
+    """StudyHeat for a study with a thermal block, else None."""
+    return StudyHeat(study, mesh, nu, fixed, modulus) if getattr(study, "thermal", None) is not None else None

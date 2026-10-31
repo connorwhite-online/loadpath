@@ -38,6 +38,7 @@ syntax). `loadpath_guide` returns the same text.
 | `loadpath_check_printability(path, min_wall?, overhang_deg?, build?, pitch?, slicer?)` | Any STL/3MF/OBJ: wall thickness in mm with its ± (the voxel pitch) and the thinnest spots, overhang area for a build direction, trapped voids. `slicer` adds bridges, islands, support volume and bed contact. `minWallOk: null` means too coarse to judge. | seconds; under a minute at 5M triangles |
 | `loadpath_check_isolation(path, ports, plugs?, min_feature?, pitch?)` | Two-fluid isolation of a mesh: each circuit's ports (`a_in`, `a_out`…) in one void, no void shared, thinnest wall between circuits in mm ±. Plug the port openings or the outside air joins the circuits. | seconds |
 | `loadpath_check_fit(path, components)` | Does a board (with clearance, mounting holes, port cutouts) fit an enclosure's cavity. | seconds |
+| `loadpath_import_cad(path, out_dir?, space?, material?, force?, grow?)` | A STEP or STL part in: its bores (radius, counterbore steps, through or blind, bolt or bore), flat mounting faces with their bolts, and interfaces; healed if it was an open shell. With `out_dir`, a draft study there (part, hull or box as design space, interfaces preserved, bores kept out, a suggested support and placeholder load): replace the load, then `loadpath_check` / `loadpath_start` with `base_dir` = the returned `baseDir`. | seconds |
 | `loadpath_jobs(limit?)` | Recent jobs and their status. | instant |
 | `loadpath_cancel(job_id)` | Stop a job. | instant |
 

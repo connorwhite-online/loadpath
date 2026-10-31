@@ -1,0 +1,450 @@
+{
+  "name": "motor-mount-hot",
+  "description": "The NEMA 17 bracket of the motor-mount eval case with the motor running hot: its face (and so the pads and pilot ring against it) at 75 C, as a loaded stepper's case gets, over an aluminium frame at 25 C, still-ish air elsewhere. PETG near the motor keeps about a quarter of its stiffness and strength there and wants to grow 0.34%, which the M4 bolts and the base stop, so the bracket is designed for the belt loads plus its own expansion.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [
+        -25,
+        0,
+        0
+      ],
+      "max": [
+        25,
+        50,
+        62
+      ]
+    }
+  ],
+  "preserve": [
+    {
+      "id": "pad-a",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          15.5,
+          0,
+          50.5
+        ],
+        "p1": [
+          15.5,
+          5,
+          50.5
+        ],
+        "r": 4.5
+      }
+    },
+    {
+      "id": "pad-b",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          -15.5,
+          0,
+          50.5
+        ],
+        "p1": [
+          -15.5,
+          5,
+          50.5
+        ],
+        "r": 4.5
+      }
+    },
+    {
+      "id": "pad-c",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          15.5,
+          0,
+          19.5
+        ],
+        "p1": [
+          15.5,
+          5,
+          19.5
+        ],
+        "r": 4.5
+      }
+    },
+    {
+      "id": "pad-d",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          -15.5,
+          0,
+          19.5
+        ],
+        "p1": [
+          -15.5,
+          5,
+          19.5
+        ],
+        "r": 4.5
+      }
+    },
+    {
+      "id": "pilot-ring",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          0,
+          0,
+          35
+        ],
+        "p1": [
+          0,
+          5,
+          35
+        ],
+        "r": 14.5,
+        "rInner": 11.5
+      }
+    },
+    {
+      "id": "boss-a",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          15,
+          35,
+          0
+        ],
+        "p1": [
+          15,
+          35,
+          5
+        ],
+        "r": 6
+      }
+    },
+    {
+      "id": "boss-b",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          -15,
+          35,
+          0
+        ],
+        "p1": [
+          -15,
+          35,
+          5
+        ],
+        "r": 6
+      }
+    }
+  ],
+  "keepOut": [
+    {
+      "id": "pilot",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          0,
+          2.5,
+          35
+        ],
+        "axis": "y",
+        "length": 20,
+        "r": 11.5
+      }
+    },
+    {
+      "id": "m3-a",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          15.5,
+          2.5,
+          50.5
+        ],
+        "axis": "y",
+        "length": 20,
+        "r": 1.7
+      }
+    },
+    {
+      "id": "m3-b",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          -15.5,
+          2.5,
+          50.5
+        ],
+        "axis": "y",
+        "length": 20,
+        "r": 1.7
+      }
+    },
+    {
+      "id": "m3-c",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          15.5,
+          2.5,
+          19.5
+        ],
+        "axis": "y",
+        "length": 20,
+        "r": 1.7
+      }
+    },
+    {
+      "id": "m3-d",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          -15.5,
+          2.5,
+          19.5
+        ],
+        "axis": "y",
+        "length": 20,
+        "r": 1.7
+      }
+    },
+    {
+      "id": "m4-a",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          15,
+          35,
+          2.5
+        ],
+        "axis": "z",
+        "length": 20,
+        "r": 2.2
+      }
+    },
+    {
+      "id": "m4-b",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          -15,
+          35,
+          2.5
+        ],
+        "axis": "z",
+        "length": 20,
+        "r": 2.2
+      }
+    },
+    {
+      "id": "motor-body",
+      "shape": {
+        "type": "mesh",
+        "path": "motor-body.stl"
+      }
+    },
+    {
+      "id": "access-a",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          15,
+          35,
+          5
+        ],
+        "p1": [
+          15,
+          35,
+          62
+        ],
+        "r": 4.5
+      }
+    },
+    {
+      "id": "access-b",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          -15,
+          35,
+          5
+        ],
+        "p1": [
+          -15,
+          35,
+          62
+        ],
+        "r": 4.5
+      }
+    }
+  ],
+  "supports": [
+    {
+      "region": "m4-a"
+    },
+    {
+      "region": "m4-b"
+    },
+    {
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          15,
+          35,
+          -1
+        ],
+        "p1": [
+          15,
+          35,
+          0.3
+        ],
+        "r": 6
+      },
+      "fix": "z"
+    },
+    {
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          -15,
+          35,
+          -1
+        ],
+        "p1": [
+          -15,
+          35,
+          0.3
+        ],
+        "r": 6
+      },
+      "fix": "z"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "belt-side",
+      "loads": [
+        {
+          "region": "m3-a",
+          "force": [
+            25,
+            0,
+            0
+          ]
+        },
+        {
+          "region": "m3-b",
+          "force": [
+            25,
+            0,
+            0
+          ]
+        },
+        {
+          "region": "m3-c",
+          "force": [
+            25,
+            0,
+            0
+          ]
+        },
+        {
+          "region": "m3-d",
+          "force": [
+            25,
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "belt-up",
+      "loads": [
+        {
+          "region": "m3-a",
+          "force": [
+            0,
+            0,
+            25
+          ]
+        },
+        {
+          "region": "m3-b",
+          "force": [
+            0,
+            0,
+            25
+          ]
+        },
+        {
+          "region": "m3-c",
+          "force": [
+            0,
+            0,
+            25
+          ]
+        },
+        {
+          "region": "m3-d",
+          "force": [
+            0,
+            0,
+            25
+          ]
+        }
+      ]
+    }
+  ],
+  "material": "petg",
+  "goal": {
+    "volumeFraction": 0.3
+  },
+  "minMember": 3.0,
+  "symmetry": [
+    "x"
+  ],
+  "resolution": {
+    "maxElements": 45000
+  },
+  "thermal": {
+    "ambient": 25,
+    "temperatures": [
+      {
+        "shape": {
+          "type": "cylinder",
+          "p0": [
+            0,
+            -1,
+            35
+          ],
+          "p1": [
+            0,
+            1,
+            35
+          ],
+          "r": 21
+        },
+        "t": 75
+      },
+      {
+        "shape": {
+          "type": "box",
+          "min": [
+            -25,
+            -1,
+            -1
+          ],
+          "max": [
+            25,
+            51,
+            0.6
+          ]
+        },
+        "t": 25
+      }
+    ],
+    "convection": 10
+  }
+}

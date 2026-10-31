@@ -223,10 +223,32 @@ def _load_mesh(path: str, base_dir: str | None = None):
     full = path if os.path.isabs(path) else os.path.join(base_dir or os.getcwd(), path)
     if not os.path.exists(full):
         raise ValueError(f"no mesh at {full}")
+    if full.lower().endswith((".step", ".stp")):
+        from .cadimport import load_part
+        return load_part(full).mesh
     mesh = trimesh.load(full, force="mesh")
     if not len(getattr(mesh, "faces", [])):
         raise ValueError(f"{full} has no triangles")
     return mesh
+
+
+def import_cad(path: str, out_dir: str | None = None, base_dir: str | None = None, space: str = "part",
+               material: str = "petg", force: float = 100.0, grow: float = 0.0) -> dict:
+    """A STEP/STL part's bores, bolt patterns, mounting faces and
+    interfaces, and with out_dir a draft study written there (cadimport.py)."""
+    from .cadimport import import_part
+
+    full = path if os.path.isabs(path) else os.path.join(base_dir or os.getcwd(), path)
+    if not os.path.exists(full):
+        return {"ok": False, "error": f"no part at {full}"}
+    try:
+        if out_dir is None:
+            return {"ok": True, **import_part(full)}
+        out = os.path.abspath(out_dir if os.path.isabs(out_dir) else os.path.join(base_dir or os.getcwd(), out_dir))
+        r = import_part(full, out, space=space, material=material, force=force, grow=grow)
+    except (ValueError, RuntimeError) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "baseDir": out, **r}
 
 
 _AXES = {"+x": (1, 0, 0), "-x": (-1, 0, 0), "+y": (0, 1, 0), "-y": (0, -1, 0), "+z": (0, 0, 1), "-z": (0, 0, -1)}
@@ -678,6 +700,22 @@ def serve():
         component's frame (origin at board centre, z up). Solves the placement in the cavity and
         reports cavity, bosses and each port cutout as ok / not / null (could not check)."""
         return check_component_fit(path, components, base_dir)
+
+    @server.tool()
+    def loadpath_import_cad(path: str, out_dir: str | None = None, base_dir: str | None = None,
+                            space: str = "part", material: str = "petg", force: float = 100.0,
+                            grow: float = 0.0) -> dict:
+        """Bring a CAD part in: a STEP (.step/.stp) or STL/3MF/OBJ file in mm. Finds its bores (axis,
+        radius, counterbore steps, through or blind; 'bolt' up to M6 clearance, else 'bore'), the flat
+        exposed faces it mounts by with the bolts opening onto each, and its interfaces (a bolted face,
+        a bolt pattern, a bore), and heals open shells. With out_dir it also writes a draft study there:
+        the part (space 'part'), its convex hull ('hull') or box ('box'), grown by grow mm, as design
+        space; each interface preserved (rings round bores, a pad under bolted faces, cut to the part);
+        bores as keep-outs; mating faces cleared when the space grows; and a suggested support (the
+        main bolted interface) and load (force N, a placeholder, across the lever to the farthest
+        large interface). Replace the load with the real ones, then loadpath_check and loadpath_start
+        it with base_dir = the returned baseDir. Seconds."""
+        return import_cad(path, out_dir, base_dir, space, material, force, grow)
 
     @server.tool()
     def loadpath_jobs(limit: int = 20) -> dict:

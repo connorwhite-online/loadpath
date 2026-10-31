@@ -21,7 +21,10 @@ field. `check` reports every problem at once: fix them all, then check again.
 1. **Model the interfaces exactly** (in build123d, CadQuery, or by hand):
    bearing seats, bolt patterns, shafts, mating faces. These become
    `preserve` (material that must exist) and `keepOut` (space that must stay
-   empty). Primitive shapes cover most of it; for anything else export a
+   empty). If the part already exists as CAD, start from it:
+   `loadpath import part.step --out draft/` (MCP `loadpath_import_cad`) finds the
+   bores, bolt patterns and mounting faces and writes a draft study with them
+   preserved and kept out, and a placeholder support and load you replace. Primitive shapes cover most of it; for anything else export a
    closed STL and use `{"type": "mesh", "path": "motor.stl"}`. An interface
    in several pieces (a servo's four screw bosses) is one region with
    `{"type": "union", "shapes": [...]}`, so one load or support acts on all of
@@ -170,7 +173,12 @@ field. `check` reports every problem at once: fix them all, then check again.
   over the core (`entry.uniformity`, 1 = even), core vs header pressure
   drop, outlet temperatures and the hottest wall point. Use it to compare
   header depths and port sizes (`porous.sweep`); the rating alone assumes
-  even flow.
+  even flow. What it found on the 30 mm crossflow cube: size ports per
+  fluid (`"portDiameter": {"water": 10, "air": 18}`; a gas side's ports
+  set most of its pressure drop), and a thinner seal band (`cap` 1.5 for a
+  1 mm wall) opens the starved edge channels; plenum depth hardly matters.
+  Together: water 745 -> 267 Pa, air 8.5 -> 1.9 kPa, effectiveness +8%
+  (example heat-exchanger-crossflow-tuned).
 - Holding a mesh from somewhere else (your own field model, a CAD export)?
   `loadpath_check_printability`, `loadpath_check_isolation` and
   `loadpath_check_fit` check it directly. From Python, `check_dfm` and

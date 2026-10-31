@@ -252,6 +252,42 @@ def test_mechanism_optimizer_reports_nonlinear_check():
     assert nl["bucklingFactor"] > 1, nl["bucklingFactor"]
 
 
+def test_stroke_mechanism_pushes_a_bar():
+    # A straight bar pushed axially at its tip by a small stroke: the output
+    # (the same tip, same direction) moves by the stroke, and the force is
+    # E A / L x stroke. A workpiece spring there carries k x stroke (on the
+    # driven dofs themselves, so the actuator does not feel it here).
+    from types import SimpleNamespace
+    from loadpath.nonlinear import stroke_mechanism
+    m, fixed, tip = bar()
+    dom = SimpleNamespace(mesh=m, fixed=fixed, loads=[tip_vector(m, tip, 0, -1.0), tip_vector(m, tip, 0, -1.0)])
+    s = 0.02
+    r = stroke_mechanism(dom, np.ones(m.n_elem), 26.0, NU, s, steps=2)
+    assert r["converged"] and abs(r["geometricAdvantage"] - 1) < 1e-6
+    ea_l = 26.0 * T * B / L
+    assert abs(r["actuatorForce"] / (ea_l * s) - 1) < 0.05, r["actuatorForce"] / (ea_l * s)
+    assert abs(r["linearActuatorForce"] / r["actuatorForce"] - 1) < 0.02
+    r = stroke_mechanism(dom, np.ones(m.n_elem), 26.0, NU, s, k_out=5.0, steps=2)
+    assert abs(r["gripForce"] - 5.0 * s) < 1e-6
+
+
+def test_robust_mechanism_has_no_corner_hinges():
+    # the benchmark inverter, small: the robust (eroded / dilated) formulation
+    # keeps a positive output and leaves no one-node hinges
+    from loadpath.benchmarks.mechanisms import MechEvaluator, hinges, inverter, mech_domain
+    from loadpath.mechanism import MechanismOptions, optimize_mechanism
+    p = inverter(30, 15)
+    dom = mech_domain(p)
+    r = optimize_mechanism(dom, 0.3, MechanismOptions(volume_fraction=0.3, filter_radius=2.0, k_in=p.k_in,
+                                                      k_out=p.k_out, extrusion=1, robust=0.15, max_iterations=80))
+    g = np.zeros(dom.dims)
+    g[tuple(dom.mesh.elem_ijk.T)] = r.xphys
+    rob = r.history[-1]["robustOutputs"]
+    assert rob[0] <= rob[1] + 1e-9 and r.output_displacement > 0
+    assert hinges((g > 0.5).astype(float)) == 0
+    assert MechEvaluator(p).output((g > 0.5).astype(float)) > 0.5 * r.output_displacement
+
+
 TESTS = [
     test_tangent_matches_finite_differences,
     test_small_load_matches_linear,
@@ -262,6 +298,8 @@ TESTS = [
     test_tendon_curls_a_cantilever_into_an_arc,
     test_verify_mechanism_reports_a_finger,
     test_mechanism_optimizer_reports_nonlinear_check,
+    test_stroke_mechanism_pushes_a_bar,
+    test_robust_mechanism_has_no_corner_hinges,
 ]
 
 

@@ -134,11 +134,16 @@ def tune_mount(cg_xy, feet_xy, k_total: float, k_min=None, k_max=None):
     return k, float(np.hypot(*(centre - np.asarray(cg_xy, float)[:2])))
 
 
-def shock_margin(kind: str, rho, E: float, width: float, load):
+def shock_margin(kind: str, rho, E: float, width: float, load, creep: float = 1.0, rate: float = 1.0):
     """Acceleration (in g, on top of the 1 g static load) at which the most
-    loaded foot reaches its elastic buckling stress (0.05 E rho^2, the
-    elastic crush law in impact.py). load: static force per foot (N)."""
+    loaded foot buckles. load: static force per foot (N). Buckling of thin
+    elastic walls is set by strain, so the margin is a strain budget: the
+    buckling strain (0.05 E rho^2 / E_foot, the elastic crush law in
+    impact.py) less the static strain, which grows by `creep`
+    (viscoelastic.creep_factor) over the years under load, with the shock's
+    extra strain taken at the stiffer modulus of a fast event (`rate`,
+    viscoelastic.event_factor of the pulse length)."""
     from .impact import plateau_stress
 
     fb = plateau_stress(f"{kind}:elastic", np.asarray(rho, float), E) * width * width
-    return float((fb / np.asarray(load, float)).min() - 1.0)
+    return float(((fb / np.asarray(load, float)) - creep).min() * rate)

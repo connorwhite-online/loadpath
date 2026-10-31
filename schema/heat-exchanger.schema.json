@@ -43,13 +43,34 @@
       "type": "number",
       "exclusiveMinimum": 0
     },
-    "portDiameter": {
-      "type": "number",
-      "exclusiveMinimum": 0
-    },
     "portLength": {
       "type": "number",
       "exclusiveMinimum": 0
+    },
+    "phase": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "mm: shift the TPMS against the core's low corner, which moves where the core's faces cut the channels (a partial channel at an edge starves)"
+    },
+    "portDiameter": {
+      "anyOf": [
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      ],
+      "description": "mm, every port; or one per fluid name, e.g. {\"water\": 8, \"air\": 14} (a gas side's ports set most of its pressure drop)"
     },
     "layout": {
       "enum": [
@@ -444,7 +465,7 @@
     },
     "mesh": {
       "type": "object",
-      "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder, or inline stlBase64.",
+      "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder (or a STEP file, .step/.stp, tessellated and healed; needs loadpath[step]), or inline stlBase64.",
       "properties": {
         "type": {
           "const": "mesh"

@@ -48,3 +48,16 @@ def test_size_core_least_metal_meets_the_limits():
     assert c and all(x["effectiveness"] >= 0.6 and x["pressureDrop"]["air"] <= 12000 for x in c)
     assert [x["solidVolume"] for x in c] == sorted(x["solidVolume"] for x in c)
     assert c[0]["mass"] == c[0]["solidVolume"] * 2.67 / 1000
+
+
+def test_ports_can_differ_per_fluid():
+    from loadpath.heatx import heat_exchanger_from_spec, port_diameter
+
+    hx = heat_exchanger_from_spec({"core": {"type": "box", "min": [0, 0, 0], "max": [30, 30, 30]},
+                                   "fluids": ["water", "air"], "portDiameter": {"water": 8, "air": 18}})
+    assert (port_diameter(hx, 0), port_diameter(hx, 1)) == (8.0, 18.0)
+    duty = {"water": {"fluid": "water", "lPerMin": 1}, "air": {"fluid": "air", "kgPerS": 0.002}}
+    one = rate("gyroid", 8.0, 1.0, 27e3, [30, 30], duty, port_diameter=8.0)
+    two = rate("gyroid", 8.0, 1.0, 27e3, [30, 30], duty, port_diameter=(8.0, 18.0))
+    assert two["fluids"]["water"]["pressureDropPorts"] == one["fluids"]["water"]["pressureDropPorts"]
+    assert two["fluids"]["air"]["pressureDropPorts"] < 0.05 * one["fluids"]["air"]["pressureDropPorts"]

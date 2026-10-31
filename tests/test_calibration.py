@@ -238,6 +238,37 @@ def test_crush_card_scales_impact():
             calibration.CALIBRATION_DIR = old
 
 
+def test_creep_fit_recovers_the_rate_and_the_card_uses_it():
+    import tempfile
+
+    from loadpath import calibration
+    from loadpath.calibration import creep_coupons, fit
+    from loadpath.materials import material_from_spec
+    from loadpath.viscoelastic import creep_factor, creep_params
+
+    tpu = material_from_spec("tpu")
+    c = creep_coupons("tpu", "fdm")[0]
+    assert c.id == "K-25" and creep_coupons("pa12", "sls") == []
+    # synthetic week: twice the default creep rate, deflection 0.5 mm at 10 s
+    m_true, d10, h0 = 0.09, 0.5, 31.8
+    pts = [[mins, round(h0 - d10 * (1 + m_true * np.log(60.0 * mins / 10.0)), 3)]
+           for mins in (1, 10, 60, 600, 1440, 4320, 10080)]
+    with tempfile.TemporaryDirectory() as d:
+        old = calibration.CALIBRATION_DIR
+        calibration.CALIBRATION_DIR = d
+        try:
+            card = fit({"material": "tpu", "process": "fdm",
+                        "coupons": {"K-25": {"heightUnloaded": h0, "loadKg": c.measure["loadKg"], "points": pts}}},
+                       name="tpu-test")
+            assert abs(card["creep"]["m"] - m_true) < 0.03 * m_true, card["creep"]
+            json.dump(card, open(os.path.join(d, "tpu-test.json"), "w"))
+            mat = material_from_spec({**card["material"], "name": "tpu-test"})
+            assert abs(creep_params(mat)[0] - card["creep"]["m"]) < 1e-9
+            assert float(creep_factor(mat, 3600.0)) > float(creep_factor(tpu, 3600.0))
+        finally:
+            calibration.CALIBRATION_DIR = old
+
+
 def test_rigid_motion_fit():
     rng = np.random.default_rng(0)
     x = rng.uniform(0, 20, (60, 3))

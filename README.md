@@ -17,6 +17,11 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
   ([docs/fields.md](docs/fields.md)). `loadpath edit` opens the graph in a browser
   editor with sliders and a live GPU preview. Bores, bolt faces and keep-outs cut with a
   plain shape keep exact, sharp edges.
+- **CAD in.** `loadpath import part.step` reads a STEP (or STL) part, heals open
+  shells, finds its bores, counterbores, bolt patterns and flat mounting faces, and
+  drafts a study: the part as design space, every interface preserved, every bore a
+  keep-out, and a suggested support and load to replace with the real ones
+  ([docs/IMPORT.md](docs/IMPORT.md)).
 - **STEP out.** `--step` writes the part as a B-rep for CAD: keep-outs, preserved
   shapes and the design space as true planes and cylinders, the organic body faceted
   (`loadpath[step]`, OpenCascade).
@@ -56,27 +61,27 @@ The eval cases (14/14 passing): GRIP robot-arm style parts, each optimized and t
 
 <table>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>71.4 g · 43% lighter · SF 16.07 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>46.2 g · 63% lighter · SF 7.98 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>58.9 g · 53% lighter · SF 14.78 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>59.6 g · 52% lighter · SF 14.06 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>71.3 g · 43% lighter · SF 19.39 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>47.3 g · 62% lighter · SF 11.25 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>24.8 g · 84% lighter · SF 3.50 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>148.8 g · 91% lighter · SF 2.54 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>207.7 g · 88% lighter · SF 7.71 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>24.3 g · 84% lighter · SF 3.34 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>149.1 g · 91% lighter · SF 2.32 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>209.5 g · 88% lighter · SF 5.14 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>43.4 g · 94% lighter · SF 4.29 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>25.3 g · 90% lighter · SF 3.10 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>23.8 g · 64% lighter · SF 1.63 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>37.1 g · 95% lighter · SF 3.08 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>23.7 g · 90% lighter · SF 2.39 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>22.5 g · 66% lighter · SF 1.52 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.5 g · 69% lighter · SF 3.35 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>31.3 g · 79% lighter · SF 2.95 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>48.4 g · 89% lighter · SF 3.71 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.5 g · 69% lighter · SF 3.87 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>31.0 g · 80% lighter · SF 2.95 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>64.6 g · 85% lighter · SF 2.57 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>68.1 g · 84% lighter · SF 2.75 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>45.7 g · 89% lighter · SF 2.51 · pass</sub></td>
 </tr>
 </table>
 
@@ -102,7 +107,7 @@ Made another way: the same arm link printed, cast (no undercuts along z), 3-axis
 
 ![manufacturing constraints](docs/images/manufacturing/arm-link.png)
 
-<sub>Rendered 2026-10-30 from `b031cbe` by `python docs/gallery.py`.</sub>
+<sub>Rendered 2026-10-31 from `25376bc` by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->
 
@@ -156,11 +161,25 @@ graded gyroid (4.85 g) peaks at 5.4 kN. Grading per cell in 3D (4.39 g) brings
 that to 5.2 kN. A uniform core of the same mass peaks at 6.7 kN. Solid TO of the
 same envelope (8.25 g) holds only 0.8 J within the limit
 (`python examples/impact/end_stop.py`). TPU uses an elastic buckling law for
-small knocks: a forearm pad takes 0.75 J at 112 N against a 140 N limit
+small knocks: a forearm pad takes 0.75 J at 114 N against a 140 N limit, impact-rate stiffening included
 (`examples/impact/knock_pad.py`). Graded TPU lattice feet tune a vibration isolator
-under an off-centre robot: same 35 Hz bounce as four identical feet, but the payload
-sits level, a vertical shake no longer rocks it (0.004x vs 0.44x sideways), and it
-takes 17% more shock before a foot buckles (`examples/isolator/mount.py`).
+under an off-centre robot. They are tuned at TPU's dynamic stiffness, which is
+1.5x its static stiffness at 35 Hz and modelled with creep from sourced data
+(`viscoelastic.py`). The payload sits level and stays level as the feet creep
+over 10 years, a vertical shake no longer rocks it, and it takes 23% more shock
+before a foot buckles (`examples/isolator/mount.py`).
+
+### Compliant mechanisms
+
+Grippers and flexures that are meant to bend (`mechanism.py`). On the
+textbook force inverter and gripper, loadpath matches a port of Sigmund's
+99-line mechanism code within 1-2% at equal volume, with crisp designs. A
+robust option rules out one-node hinges. Designs are then driven through a
+servo's stroke with large deflections (`stroke_mechanism`). A TPU gripper
+grips with 5.4 N at a 3 mm stroke with no corner hinges, and its grip
+relaxes to 3.8 N over a day as the TPU creeps. The textbook design with the
+same springs relies on 7 corner hinges and its large-deflection solve stops
+at a fifth of the stroke ([docs/MECHANISMS.md](docs/MECHANISMS.md)).
 
 ![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
 
@@ -178,7 +197,8 @@ loadpath mcp                           # stdio MCP server for agents
 Also: `loadpath lattice` (fill a part with a stress-graded TPMS lattice),
 `loadpath heatx` (two-fluid TPMS heat exchangers), `loadpath field` (a part as a
 graph of fields, [docs/fields.md](docs/fields.md)), `loadpath edit` (edit a field
-graph in the browser with a live preview), `loadpath tune` (tune a graph's numbers
+graph in the browser with a live preview), `loadpath import` (a STEP or STL part as a
+draft study, [docs/IMPORT.md](docs/IMPORT.md)), `loadpath tune` (tune a graph's numbers
 against a study's limits), `loadpath schema` (JSON Schemas, also
 in [`schema/`](schema/)).
 
@@ -216,6 +236,7 @@ python3 tests/test_editor.py      # the GPU part needs node and Playwright
 python3 tests/test_impact.py
 python3 tests/test_recall.py
 python3 tests/test_assembly.py
+python3 tests/test_cadimport.py
 python3 tests/test_evals.py
 python3 -m loadpath.evals.run --tier coarse --corpus 6 --out evals-coarse/   # minutes: every push
 python3 -m loadpath.evals.run --out evals-out/                               # full suite

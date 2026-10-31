@@ -87,6 +87,29 @@ def _calibrate(args):
     return 0
 
 
+def _import(args):
+    from .cadimport import import_part
+
+    try:
+        if args.features_only:
+            print(json.dumps(import_part(args.part, tolerance=args.tolerance)["features"], indent=1))
+            return 0
+        out = import_part(args.part, args.out, tolerance=args.tolerance, space=args.space, grow=args.grow,
+                          material=args.material, force=args.force, pad=args.pad,
+                          safety_factor=args.safety_factor)
+    except (ValueError, RuntimeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    f = out["features"]
+    stem = out["study"]["name"]
+    print(json.dumps({"ok": True, "study": os.path.join(args.out, f"{stem}.study.json"),
+                      "features": os.path.join(args.out, f"{stem}.features.json"),
+                      "bores": len(f["bores"]), "mountingFaces": len(f["faces"]),
+                      "interfaces": [i["id"] for i in f["interfaces"]], "suggested": f["suggested"],
+                      **({"healed": f["healed"]} if "healed" in f else {})}, indent=1))
+    return 0
+
+
 def _assembly(args):
     from .assembly import Payload, Robot, derive_study
 
@@ -303,6 +326,19 @@ def main(argv=None):
     cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
     cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
     cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
+    im = sub.add_parser("import", help="a STEP/STL part as a draft study: bores, bolt patterns and mounting "
+                                       "faces found, interfaces preserved, a support and load suggested")
+    im.add_argument("part", help="STEP (.step/.stp, needs loadpath[step]), STL, 3MF or OBJ, in mm")
+    im.add_argument("--out", default="loadpath-import", help="folder for the study, its STLs and features.json")
+    im.add_argument("--space", choices=["part", "hull", "box"], default="part",
+                    help="design space: the part as drawn, its convex hull, or its bounding box")
+    im.add_argument("--grow", type=float, default=0.0, help="mm to grow the design space by")
+    im.add_argument("--material", default="petg")
+    im.add_argument("--force", type=float, default=100.0, help="N: the suggested (placeholder) load")
+    im.add_argument("--pad", type=float, default=2.0, help="mm of material kept under each bolted face")
+    im.add_argument("--safety-factor", type=float, default=2.0)
+    im.add_argument("--tolerance", type=float, default=0.05, help="mm chord error tessellating a STEP")
+    im.add_argument("--features-only", action="store_true", help="print the features, write no study")
     asm = sub.add_parser("assembly", help="derive a part's load cases and neighbour keep-outs from a URDF")
     asm.add_argument("urdf")
     asm.add_argument("--link", required=True, help="the URDF link the study designs")
@@ -365,6 +401,8 @@ def main(argv=None):
         return _assembly(args)
     if args.cmd == "verify":
         return _verify(args)
+    if args.cmd == "import":
+        return _import(args)
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))

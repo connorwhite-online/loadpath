@@ -112,6 +112,10 @@ def lbm_medium(phi, area_density, dh, cell):
                   0.0569 * phi ** -2.283, 2.257, -2.283)
 
 
+# local porosity: averaging window (cells) and a percolation-like threshold below
+# which a band of partial channels stops carrying flow
+_PERC = {"window": 0.5, "rc": 0.0}
+
 # closures: (pressure-drop law, Nu law)
 _CLOSURES = {"design": (savoldi_medium, "design"), "lbm": (lbm_medium, "lbm")}
 
@@ -184,8 +188,10 @@ def _local(dom, f):
     loc = (dom.extra.get("phi") or [None, None])[f]
     r = np.where(core, 1.0 if loc is None else np.maximum(loc / med.phi, 0.05), 1.0)
     phi = np.where(core, med.phi * r, 1.0)
-    K = med.K * r ** med.nK
-    CF = med.CF * r ** med.nC
+    rc = _PERC["rc"]
+    rk = np.maximum((r - rc) / (1.0 - rc), 0.02) if rc > 0 else r
+    K = med.K * rk ** med.nK
+    CF = med.CF * rk ** med.nC
     return phi, K, CF, r
 
 
@@ -348,6 +354,12 @@ def solve_flow(dom: PorousDomain, f: int, fluid, mass_flow: float, max_steps: in
             U[ax] = un
         p = p + dp
         rel = change / u_ref
+        if not np.isfinite(rel) or rel > 50.0:
+            # the explicit header momentum outran its local step: start again, more carefully
+            if local_dt <= 1.0 and cfl < 0.1:
+                raise ValueError(f"fluid {dom.names[f]}'s flow solve diverged")
+            return solve_flow(dom, f, fluid, mass_flow, max_steps, tol, cfl * (0.7 if local_dt <= 1.0 else 1.0),
+                              max(1.0, local_dt / 4.0), progress)
         hist.append(rel)
         if progress is not None and step % 100 == 0:
             progress(step=step, change=rel)
@@ -527,6 +539,41 @@ def _core_entry(dom, f, flow):
     return q
 
 
+def _midplane(dom, f, flow, cell_mm):
+    """Flow sharing across the core's middle, as flow.py's coreFlow
+    measures it: the slab at the core's mid-plane normal to this fluid's
+    mean core flow, binned on cell-sized squares from the world origin;
+    bins under half the median cell count dropped. Returns cv, min and max
+    over the mean, and the bins (flow over mean, rows and columns along
+    the other two axes ascending)."""
+    m = dom.cells[f] & dom.core
+    U = flow["U"]
+    mean = [float((0.5 * (U[ax] + _shift(U[ax], -1, ax)))[m].sum()) for ax in range(3)]
+    ax = int(np.argmax(np.abs(mean)))
+    sgn = np.sign(mean[ax])
+    idx = np.argwhere(m)
+    k = int(round(0.5 * (idx[:, ax].min() + idx[:, ax].max())))
+    sl = [slice(None)] * 3
+    sl[ax] = k
+    sl = tuple(sl)
+    u = (sgn * 0.5 * (U[ax] + _shift(U[ax], -1, ax)))[sl]
+    mm = m[sl]
+    other = [a for a in range(3) if a != ax]
+    ij = np.argwhere(mm)
+    pos = dom.lo[other] + (ij + 0.5) * dom.h * 1e3
+    b = np.floor(pos / cell_mm).astype(int)
+    b -= b.min(axis=0)
+    shape = tuple(b.max(axis=0) + 1)
+    q = np.zeros(shape)
+    n = np.zeros(shape)
+    np.add.at(q, (b[:, 0], b[:, 1]), u[mm])
+    np.add.at(n, (b[:, 0], b[:, 1]), 1)
+    ok = n >= 0.5 * np.median(n[n > 0])
+    qm = q[ok].mean()
+    return {"axis": "xyz"[ax], "cv": float(q[ok].std() / qm), "minOverMean": float(q[ok].min() / qm),
+            "maxOverMean": float(q[ok].max() / qm), "bins": np.round(q / qm, 3).tolist()}
+
+
 def _uniformity(q):
     """Flow uniformity over the faces where the fluid enters the core
     (Weltens' index, 1 = perfectly even), its spread, and the share of
@@ -586,7 +633,8 @@ def summarize(dom, fluids, flows, heat, t_in):
                                 "p95": float(np.percentile(cs, 95))},
                "coreRe": float(fl.rho * cs.mean() / med.phi * med.dh / fl.mu),
                "deadShare": float((cs < 0.1 * cs.mean()).mean()),
-               "entry": _uniformity(_core_entry(dom, f, flow))}
+               "entry": _uniformity(_core_entry(dom, f, flow)),
+               "midplane": _midplane(dom, f, flow, dom.extra.get("cell", 8.0))}
         if heat is not None:
             row["tIn"] = t_in[f]
             row["tOut"] = _outlet_temperature(dom, f, flow, heat["T"][f])
@@ -624,7 +672,8 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
     at the ports' ends."""
     step = float(grids["step"])
     if voxel is None:
-        voxel = min(hx.cell / 2.0, hx.port_diameter / 4.0, hx.header / 3.0)
+        from .heatx import port_diameter
+        voxel = min(hx.cell / 2.0, min(port_diameter(hx, 0), port_diameter(hx, 1)) / 4.0, hx.header / 3.0)
     r = max(1, int(round(voxel / step)))
     h_mm = r * step
     fr = [_block_mean(m.reshape(grids["dims"]), r) for m in grids["masks"]]
@@ -647,7 +696,7 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
     # seals it off the surface (outside its zones) or closes its channels (closure);
     # measured on cells wholly inside the core, spread to the rest
     inner = (frac > 0.95).astype(np.float32)
-    win = max(3, int(round(hx.cell / h_mm)) | 1)
+    win = max(3, int(round(_PERC["window"] * hx.cell / h_mm)) | 1)
     wsum = ndimage.uniform_filter(inner, win, mode="constant")
     phi_loc = []
     for f in (0, 1):
@@ -678,7 +727,7 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
             t = rel @ ax
             rad = np.linalg.norm(rel - np.outer(t, ax), axis=1)
             sel = ((t <= 0) & (t >= -max(0.5 * hx.port_length, 1.5 * h_mm)) &
-                   (rad <= 0.5 * hx.port_diameter + 0.5 * h_mm)).reshape(dims) & opn[f]
+                   (rad <= 0.5 * z.get("portDiameter", hx.port_diameter) + 0.5 * h_mm)).reshape(dims) & opn[f]
             if not sel.any():
                 d = np.linalg.norm(rel, axis=1).reshape(dims)
                 d[~opn[f]] = np.inf
@@ -698,7 +747,7 @@ def exchanger_domain(hx, report, grids, voxel=None, open_fraction=0.3, closures=
     phi_sheet = (report[hx.names[0]]["coreVolume"] + report[hx.names[1]]["coreVolume"]) / v
     return PorousDomain(h=h_mm * 1e-3, lo=lo, core=core, cells=cells, inlet=inlet, outlet=outlet, media=media,
                         names=tuple(hx.names), wall=hx.wall * 1e-3, phi_sheet=phi_sheet,
-                        extra={"coreFraction": frac, "phi": phi_loc if local_porosity else None})
+                        extra={"cell": hx.cell, "coreFraction": frac, "phi": phi_loc if local_porosity else None})
 
 
 def simulate_design(hx, report, grids, duty, voxel=None, closures="design", progress=None, fields=False):

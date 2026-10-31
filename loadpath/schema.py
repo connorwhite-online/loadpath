@@ -67,7 +67,8 @@ _SHAPES = {
     },
     "mesh": {
         "type": "object",
-        "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder, or inline stlBase64.",
+        "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder (or a STEP file, "
+                       ".step/.stp, tessellated and healed; needs loadpath[step]), or inline stlBase64.",
         "properties": {"type": {"const": "mesh"}, "path": {"type": "string"}, "stlBase64": {"type": "string"}},
         "required": ["type"],
         "x-requireOne": [["path"], ["stlBase64"]],
@@ -266,6 +267,61 @@ _DURABILITY = {
     "additionalProperties": False,
 }
 
+_THERMAL_REGION = {
+    "region": {"type": "string"},
+    "shape": {"$ref": "#/$defs/shape"},
+}
+
+_THERMAL = {
+    "type": "object",
+    "description": "Heat in the part, applied in every load case: the temperature is solved on the part itself "
+                   "(conduction through the material, convection off its surface), each cell softens by the "
+                   "material's modulus retention at its temperature, and expansion that the supports or the "
+                   "part's own cooler material stop becomes stress. The optimizer designs for it and "
+                   "verification checks it (stress with the free expansion taken off, strength derated as the "
+                   "modulus is). Needs a way for heat out: a fixed temperature or convection.",
+    "properties": {
+        "ambient": {"type": "number", "description": "C of the surroundings (default 25)."},
+        "stressFree": {"type": "number",
+                       "description": "C at which the part fits without stress, e.g. when bolted up (default "
+                                      "ambient)."},
+        "temperatures": {"type": "array", "description": "Surfaces held at a temperature: a motor face, a "
+                                                        "heated bed, a cold plate. " + _TARGET,
+                         "items": {"type": "object", "properties": {**_THERMAL_REGION, "t": {
+                             "type": "number", "description": "C"}},
+                                   "required": ["t"], "x-requireOne": [["region"], ["shape"]],
+                                   "additionalProperties": False}},
+        "heat": {"type": "array", "description": "Heat flowing in. " + _TARGET,
+                 "items": {"type": "object", "properties": {
+                     **_THERMAL_REGION,
+                     "watts": {**_POS, "description": "W into the region"},
+                     "spread": {"enum": ["surface", "volume"],
+                                "description": "'surface' (default): through the region's surface nodes; "
+                                               "'volume': generated in the region's cells (a coil, a "
+                                               "resistor potted in)."}},
+                     "required": ["watts"], "x-requireOne": [["region"], ["shape"]],
+                     "additionalProperties": False}},
+        "convection": {"anyOf": [
+            {"type": "number", "minimum": 0, "description": "W/(m² K) off every exposed surface"},
+            {"type": "array", "items": {"type": "object", "properties": {
+                **_THERMAL_REGION,
+                "h": {"type": "number", "minimum": 0,
+                      "description": "W/(m² K): ~5-10 still air, 20-50 a fan, 500+ water"},
+                "fluid": {"type": "number", "description": "C of the fluid (default ambient)"}},
+                "required": ["h"], "additionalProperties": False}}],
+            "description": "Heat carried off the surface the design exposes (default 8 W/(m² K), still air). "
+                           "An entry without region or shape covers every surface."},
+        "conductivity": {**_POS, "description": "W/(m K) override (default the material card's)."},
+        "expansion": {"anyOf": [{"type": "boolean"}, {"type": "number", "minimum": 0}],
+                      "description": "true (default): the material card's expansion coefficient; a number: 1/K "
+                                     "(e.g. 7e-5); false: temperature softens the part but does not grow it."},
+        "soften": {"type": "boolean",
+                   "description": "true (default): moduli and strength fall with temperature (the material "
+                                  "card's retention curve)."},
+    },
+    "additionalProperties": False,
+}
+
 _GRADE_LEVEL = {"anyOf": [
     {"type": "array", "prefixItems": [{"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 100},
                                       {"type": "integer", "minimum": 1}], "minItems": 2, "maxItems": 2,
@@ -425,6 +481,7 @@ STUDY_SCHEMA = {
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
         "gravity": {**_VEC3, "description": "m/s², the part's own weight in every load case"},
+        "thermal": _THERMAL,
         "printDirection": {"type": "string", "pattern": "^[+-]?[xyz]$",
                            "description": "The direction layers stack; turns on overhang control."},
         "extrusion": {"type": "string", "pattern": "^[+-]?[xyz]$",
@@ -496,7 +553,13 @@ HEAT_EXCHANGER_SCHEMA = {
         "type": {"enum": ["gyroid", "diamond", "schwarz-p"]},
         "cell": {**_POS, "description": "mm per TPMS period (at least 3 x wall)"},
         "wall": {**_POS, "description": "mm, the sheet between the fluids"},
-        "shell": _POS, "header": _POS, "cap": _POS, "portDiameter": _POS, "portLength": _POS,
+        "shell": _POS, "header": _POS, "cap": _POS, "portLength": _POS,
+        "phase": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                  "description": "mm: shift the TPMS against the core's low corner, which moves where the core's "
+                                 "faces cut the channels (a partial channel at an edge starves)"},
+        "portDiameter": {"anyOf": [_POS, {"type": "object", "additionalProperties": _POS}],
+                         "description": "mm, every port; or one per fluid name, e.g. {\"water\": 8, \"air\": 14} "
+                                        "(a gas side's ports set most of its pressure drop)"},
         "layout": {"enum": ["cross", "counter"]},
         "axes": {"type": "string", "pattern": "^[xyz]{2}$",
                  "description": "cross: A along axes[0], B along axes[1]; counter: A through the ends along "
@@ -824,7 +887,9 @@ FIELD_SCHEMA = {
             "rhoMax": {**_POS, "description": "highest relative density for grading (default 0.5)"},
             "cell": {**_POS, "description": "mm lattice cell: with minWall, raises rhoMin to the thinnest "
                                             "printable wall"},
-            "minWall": {**_POS, "description": "mm thinnest printable sheet (default 0.8)"}},
+            "minWall": {**_POS, "description": "mm thinnest printable sheet (default 0.8)"},
+            "rate": {"type": "boolean", "description": "elastomers (TPU): stiffen the crush law for the "
+                                                       "impact's crush time (viscoelastic.py; default true)"}},
                    "required": ["envelope"], "additionalProperties": False,
                    "description": "Crush and impact of a lattice core (impact.py): force-crush curve, where a "
                                   "mass at a speed stops, peak force and g, and with grade a density table that "

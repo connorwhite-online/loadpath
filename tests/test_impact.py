@@ -292,6 +292,23 @@ def test_base_transmissibility_of_a_mass_on_a_soft_post():
     assert approx(float(t[2]), float(transmissibility(3 * fz, fz, eta)), rel=0.1)
 
 
+def test_viscoelastic_factors():
+    from loadpath.isolator import shock_margin
+    from loadpath.materials import material_from_spec
+    from loadpath.viscoelastic import YEAR, creep_factor, dynamic_factor, event_factor
+
+    tpu, pa12 = material_from_spec("tpu"), material_from_spec("pa12")
+    assert approx(float(creep_factor(tpu, 10.0)), 1.0)
+    # inside the 1.3-1.6 dynamic/static band quoted for PU isolators
+    assert 1.3 < float(dynamic_factor(tpu, 35.0)) < 1.6
+    assert 1.5 < float(creep_factor(tpu, 10 * YEAR)) < 2.0
+    assert float(event_factor(tpu, 0.01)) > 1.3 and float(dynamic_factor(pa12, 35.0)) == 1.0
+    # creep eats the strain budget for shock; a fast pulse adds some back
+    base = shock_margin("gyroid", [0.25, 0.3], 26.0, 24.0, [10.0, 10.0])
+    assert shock_margin("gyroid", [0.25, 0.3], 26.0, 24.0, [10.0, 10.0], creep=1.7) < base - 0.69
+    assert approx(shock_margin("gyroid", [0.25, 0.3], 26.0, 24.0, [10.0, 10.0], rate=1.4), 1.4 * base)
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 

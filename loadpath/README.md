@@ -78,7 +78,7 @@ Tools: `loadpath_guide` (the study format), `loadpath_schema`,
 (outcomes, STL paths and renders), `loadpath_lattice`,
 `loadpath_heat_exchanger`, `loadpath_size_heat_exchanger`, `loadpath_jobs`,
 `loadpath_cancel`, and checks on any mesh file: `loadpath_check_printability`,
-`loadpath_check_isolation`, `loadpath_check_fit`. Everything runs on the agent's own machine; jobs live in
+`loadpath_check_isolation`, `loadpath_check_fit`, and `loadpath_import_cad` (a STEP/STL part as a draft study). Everything runs on the agent's own machine; jobs live in
 `~/.loadpath/jobs` (`LOADPATH_HOME`). See [docs/agents.md](../docs/agents.md).
 
 From Python:
@@ -161,6 +161,7 @@ underneath, for anything else (`add_part` with fields, `add_overlay`,
 | `goal` | `{"volumeFraction": 0.25}` keeps that share of the design space. `{"safetyFactor": 3}` and/or `{"maxDeflection": 0.5}` (mm, at the loads) search for the lightest part that meets them in every case. `outcomes: [0.2, 0.4]` adds a trade-off gallery. `"method": "constrained"` (experimental) minimizes mass with the limits as MMA constraints instead of searching over volume fractions. |
 | `extrusion` | Optional axis (`x`, `y`, `z`): the part is a profile extruded along it, cuttable from plate (waterjet, laser, 2.5-axis milling). |
 | `gravity` | Optional `[gx, gy, gz]` in m/s²: the part's own weight in every load case. |
+| `thermal` | Optional heat in the part, in every load case: `{ambient, stressFree, temperatures: [{region\|shape, t}], heat: [{region\|shape, watts, spread}], convection: h or [{h, region\|shape, fluid}], conductivity, expansion, soften}` (C, W, W/(m² K)). The part's own temperature softens it (the card's retention curve) and its expansion, where supports or cooler material stop it, is a load; the optimizer designs for both and verification checks stress with the free expansion taken off and strength derated. Example: `examples/thermal/motor-mount-hot.json`. |
 | `process` | Optional: `"fdm"`, `"sls"`, `"mjf"`, `"sla"`, `"dlp"`, `"volumetric"`, `"lpbf"` (powder-bed metal), or `{type, buildDirection, interlayer, stiffnessAcrossLayers, shearAcrossLayers, anisotropic (false \| true \| "bond"), minFeature, overhangs, escapeHole}`. `buildDirection` is `+x` … `-z`, a vector `[x, y, z]`, or `"auto"`. Sets a minimum member, overhang control (FDM), layered stiffness and the layer-bond check. SLS, MJF, SLA and DLP parts also get `report.process` (processcheck.py): walls, trapped powder or resin, warp-prone panels, resin supports, peel area and suction cups. |
 | `printDirection` | Optional, `+x` … `-z` or a vector `[x, y, z]`: the direction layers stack. Turns on overhang control (Langelaar's AM filter), so the optimizer's own surfaces are self-supporting at 45°. |
 | `minMember` | Thinnest member in mm (sets the filter radius). |

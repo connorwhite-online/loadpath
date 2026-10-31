@@ -6,24 +6,29 @@ base whose centre of gravity is off the middle of the footprint.
 
 The payload is a 10 mm aluminium plate (140 x 100 mm) carrying a 3.5 kg
 robot whose CG sits 12 mm forward, 4 mm to the side and 80 mm up (a
-column with the robot's mass at its top). It stands on four 24 x 24 x
-30 mm TPU gyroid feet (8 mm cells: 0.5 mm FDM walls allow down to
-rho 0.19) at (+-50, +-30) mm, tuned for a 35 Hz bounce so that motor and
+column with the robot's mass at its top). It stands on four 20 x 20 x
+40 mm TPU gyroid feet (6.7 mm cells, three across: 0.5 mm FDM walls allow
+down to rho 0.22) at (+-50, +-30) mm, tuned for a 35 Hz bounce at TPU's
+dynamic stiffness (viscoelastic.py: 1.5x the card's E at 35 Hz) so that motor and
 fan vibration from about 50 Hz up is isolated.
 
-Two designs at the same total stiffness (the same bounce frequency on
+Three designs, the first two at the same total stiffness (the same bounce frequency on
 paper):
 
 - uniform: four identical feet;
 - graded: per-foot density from isolator.tune_mount (elastic centre under
-  the CG), refined twice against the FE model so every foot squashes the
-  same under gravity.
+  the CG), refined once against the FE model so every foot squashes the
+  same under gravity;
+- graded the same way but tuned with the card's (static) modulus, as the
+  previous version of this example did: it lands well above 35 Hz.
 
-Both are checked by voxel FE of the whole mount (homogenized feet, plate,
-column, robot mass): natural frequencies, static tilt under gravity,
-foot loads, shock margin before the first foot buckles, and base-to-robot
-transmissibility for a vertical and a sideways shake (modal superposition,
-TPU loss factor). Writes summary.json and the graded feet as STL.
+All are checked by voxel FE of the whole mount (homogenized feet, plate,
+column, robot mass): natural frequencies at the dynamic modulus, tilt and
+sag under gravity growing by creep over 1 day, 1 year and 10 years, foot
+loads, shock margin before the first foot buckles (a strain budget, eaten
+by creep), and base-to-robot transmissibility for a vertical and a
+sideways shake (modal superposition, stiffness rising with frequency, TPU
+loss factor). Writes summary.json and the graded feet as STL.
 """
 import argparse
 import json
@@ -44,15 +49,17 @@ from loadpath.isolator import (G, density_for_stiffness, foot_stiffness, mount_m
 from loadpath.lattice import relative_density, sheet_modulus  # noqa: E402
 from loadpath.materials import material_from_spec  # noqa: E402
 from loadpath.modal import base_transmissibility, loss_factor, modal_analysis  # noqa: E402
+from loadpath.viscoelastic import YEAR, DAY, creep_factor, dynamic_factor, event_factor  # noqa: E402
 
 KIND = "gyroid"
 FEET = np.array([[50.0, 30.0], [50.0, -30.0], [-50.0, 30.0], [-50.0, -30.0]])
-WIDTH, HEIGHT, CELL, MIN_WALL = 24.0, 30.0, 8.0, 0.5
+WIDTH, HEIGHT, CELL, MIN_WALL = 20.0, 40.0, 20.0 / 3, 0.5
 PLATE = (140.0, 100.0, 10.0)
 ROBOT = {"mass": 3.5, "at": (12.0, 4.0), "height": 80.0}     # kg; column top, mm
 AL = {"E": 70_000.0, "density": 2.7}
 F_TARGET = 35.0
 BAND = (50.0, 400.0)
+SHOCK_PULSE = 0.01      # s, a 10 ms bump (a dropped tool, a door slam)
 
 
 def build(pitch):
@@ -101,19 +108,30 @@ class Mount:
         self.st = Stiffness(m, 0.3, self.fixed)
         self.st_free = Stiffness(m, 0.3, np.zeros(m.n_dof, bool))
 
-    def props(self, rho):
+    def props(self, rho, factor=1.0):
         rho = np.asarray(rho, float)
         e = np.full(self.mesh.n_elem, AL["E"])
         d = np.full(self.mesh.n_elem, AL["density"])
         for i in range(4):
             sel = self.group == i
-            e[sel] = self.mat.E * sheet_modulus(KIND, rho[i])
+            e[sel] = factor * self.mat.E * sheet_modulus(KIND, rho[i])
             d[sel] = self.mat.density * rho[i]
         return e, d
 
     def analyse(self, rho, eta, modes=14):
+        """Modes and transmissibility at TPU's dynamic modulus (at the bounce,
+        scaled with frequency across the sweep); sag and foot loads under
+        gravity at the card's modulus, then grown by creep."""
+        mat = self.mat
         e, d = self.props(rho)
-        res = modal_analysis(self.mesh, e, d, 0.3, self.fixed, modes, [(self.robot, ROBOT["mass"])])
+        dyn = float(dynamic_factor(mat, F_TARGET))
+        for _ in range(2):          # the factor at the bounce the dynamic modulus gives
+            ed, _ = self.props(rho, dyn)
+            res = modal_analysis(self.mesh, ed, d, 0.3, self.fixed, modes, [(self.robot, ROBOT["mass"])])
+            fb = float(res.frequencies[int(np.argmax(res.participation[:, 2]))])
+            if abs(float(dynamic_factor(mat, fb)) / dyn - 1) < 0.01:
+                break
+            dyn = float(dynamic_factor(mat, fb))
         # static: gravity on everything
         f = np.zeros(self.mesh.n_dof)
         f[2::3] = -res.mass_vector[2::3] * G
@@ -129,11 +147,12 @@ class Mount:
         tilt = float(np.hypot(coef[1], coef[2]) * 1e3)                        # mrad
         # transmissibility to the robot
         fr = np.linspace(1.0, BAND[1], 800)
+        scale = dynamic_factor(mat, fr) / dyn
         rz_dofs, rx_dofs = 3 * self.robot + 2, 3 * self.robot
-        t_zz = base_transmissibility(res, rz_dofs, 2, fr, eta, self.fixed)
-        t_zx = base_transmissibility(res, rx_dofs, 2, fr, eta, self.fixed)      # vertical shake -> sideways
-        t_xx = base_transmissibility(res, rx_dofs, 0, fr, eta, self.fixed)
-        t_xz = base_transmissibility(res, rz_dofs, 0, fr, eta, self.fixed)      # sideways shake -> vertical
+        t_zz = base_transmissibility(res, rz_dofs, 2, fr, eta, self.fixed, scale)
+        t_zx = base_transmissibility(res, rx_dofs, 2, fr, eta, self.fixed, scale)      # vertical shake -> sideways
+        t_xx = base_transmissibility(res, rx_dofs, 0, fr, eta, self.fixed, scale)
+        t_xz = base_transmissibility(res, rz_dofs, 0, fr, eta, self.fixed, scale)      # sideways shake -> vertical
         band = fr >= BAND[0]
 
         def start(t):
@@ -141,16 +160,23 @@ class Mount:
             return round(float(fr[over[-1] + 1]), 1) if len(over) else 1.0
 
         zf = res.participation[:, 2]
+        creep = {k: float(creep_factor(mat, t)) for k, t in (("1 day", DAY), ("1 year", YEAR), ("10 years", 10 * YEAR))}
+        rate = float(event_factor(mat, SHOCK_PULSE))
         out = {
             "density": [round(float(r), 3) for r in rho],
             "frequencies": [round(float(x), 1) for x in res.frequencies[:6]],
             "bounce_Hz": round(float(res.frequencies[int(np.argmax(zf))]), 1),
             "bounceMassFraction": round(float(zf.max()), 3),
+            "dynamicStiffening": round(dyn, 3),
             "footLoad_N": [round(float(x), 2) for x in loads],
             "footSag_mm": [round(float(x), 3) for x in sag],
             "sagSpread_mm": round(float(np.ptp(sag)), 3),
             "tilt_mrad": round(tilt, 2),
-            "shockMargin_g": round(shock_margin(KIND, rho, self.mat.E, WIDTH, loads), 2),
+            "creep": {k: {"meanSag_mm": round(float(sag.mean() * c), 3), "sagSpread_mm": round(float(np.ptp(sag) * c), 3),
+                          "tilt_mrad": round(tilt * c, 2),
+                          "shockMargin_g": round(shock_margin(KIND, rho, mat.E, WIDTH, loads, c, rate), 2)}
+                      for k, c in creep.items()},
+            "shockMargin_g": round(shock_margin(KIND, rho, mat.E, WIDTH, loads, 1.0, rate), 2),
             "isolationFrom_Hz": {"z": start(t_zz), "x": start(t_xx)},
             "worstInBand": {"zz": round(float(t_zz[band].max()), 3), "xx": round(float(t_xx[band].max()), 3),
                             "zx": round(float(t_zx[band].max()), 3), "xz": round(float(t_xz[band].max()), 3)},
@@ -165,7 +191,7 @@ class Mount:
         return out, curves, sag
 
 
-def feet_stl(rho, path):
+def feet_stl(rho, path, pitch=0.35):
     import trimesh
 
     from loadpath.fields import FieldGraph
@@ -183,7 +209,7 @@ def feet_stl(rho, path):
                                                        "max": [WIDTH / 2, WIDTH / 2, HEIGHT]}}]},
                          "part": {"op": "intersect", "inputs": [{"op": "union", "inputs": ["core", "plates"]}, "env"]}},
                "output": "part"}
-        mesh = FieldGraph(doc).mesh(pitch=0.25)
+        mesh = FieldGraph(doc).mesh(pitch=pitch)
         mesh.apply_translation([fx, fy, 0])
         parts.append(mesh)
     trimesh.util.concatenate(parts).export(path)
@@ -204,34 +230,40 @@ def main():
     rho_max = 0.45
     k_total = mt.mass * (2 * np.pi * F_TARGET) ** 2 / 1e3                  # N/mm
     print(f"payload {mt.mass:.3f} kg, CG {np.round(mt.cg, 1)}, K {k_total:.1f} N/mm, rho >= {rho_min:.3f}", flush=True)
-    kmin, kmax = (foot_stiffness(KIND, r, mat.E, WIDTH, HEIGHT)[0] for r in (rho_min, rho_max))
+    # tune at the modulus the mount sees at its bounce, not the card's
+    e_dyn = mat.E * float(dynamic_factor(mat, F_TARGET))
+    kmin, kmax = (foot_stiffness(KIND, r, e_dyn, WIDTH, HEIGHT)[0] for r in (rho_min, rho_max))
     feet3 = np.c_[FEET, np.full(4, HEIGHT)]
 
     rows, curves = {}, {}
     # uniform
     ku = np.full(4, k_total / 4)
-    rho_u = density_for_stiffness(KIND, ku, mat.E, WIDTH, HEIGHT)
+    rho_u = density_for_stiffness(KIND, ku, e_dyn, WIDTH, HEIGHT)
     # graded: elastic centre under the CG
     kg, resid = tune_mount(mt.cg[:2], FEET, k_total, kmin, kmax)
     designs = {"uniform feet": rho_u}
-    rho_g = density_for_stiffness(KIND, kg, mat.E, WIDTH, HEIGHT)
-    for it in range(3):
-        name = "graded feet" if it == 2 else f"graded feet (pass {it})"
+    rho_g = density_for_stiffness(KIND, kg, e_dyn, WIDTH, HEIGHT)
+    for it in range(2):
         out, cv, sag = mt.analyse(rho_g, eta)
-        if it < 2:
-            print(name, "sag spread", out["sagSpread_mm"], "mm", flush=True)
+        if it == 0:
+            print("graded feet (pass 0) sag spread", out["sagSpread_mm"], "mm", flush=True)
             # refine against the FE: a foot that sags more than the mean gets stiffer
-            kz = foot_stiffness(KIND, rho_g, mat.E, WIDTH, HEIGHT)[0] * sag / sag.mean()
-            kz *= k_total / kz.sum() if it == 0 else 1.0
-            rho_g = np.clip(density_for_stiffness(KIND, kz, mat.E, WIDTH, HEIGHT), rho_min, rho_max)
-        else:
-            rows[name], curves[name] = out, cv
+            kz = foot_stiffness(KIND, rho_g, e_dyn, WIDTH, HEIGHT)[0] * sag / sag.mean()
+            kz *= k_total / kz.sum()
+            rho_g = np.clip(density_for_stiffness(KIND, kz, e_dyn, WIDTH, HEIGHT), rho_min, rho_max)
+    rows["graded feet"], curves["graded feet"] = out, cv
     designs["graded feet"] = rho_g
     out, cv, _ = mt.analyse(rho_u, eta)
     rows["uniform feet"], curves["uniform feet"] = out, cv
+    # what tuning with the card's (static) modulus gives: graded the same way
+    kg0, _ = tune_mount(mt.cg[:2], FEET, k_total)
+    rho_s = np.clip(density_for_stiffness(KIND, kg0, mat.E, WIDTH, HEIGHT), rho_min, rho_max)
+    out, cv, _ = mt.analyse(rho_s, eta)
+    rows["graded feet, tuned with the static modulus"], curves["graded feet, tuned with the static modulus"] = out, cv
+    designs["graded feet, tuned with the static modulus"] = rho_s
     # the rigid-body model for the same feet, against the FE
     for name, rho in designs.items():
-        kz, ks = foot_stiffness(KIND, rho, mat.E, WIDTH, HEIGHT)
+        kz, ks = foot_stiffness(KIND, rho, mat.E * rows[name]["dynamicStiffening"], WIDTH, HEIGHT)
         fr, _, mf = mount_modes(mt.mass, mt.cg, mt.inertia, feet3, kz, ks)
         rows[name]["rigidModel_Hz"] = [round(float(x), 1) for x in fr]
         rows[name]["rigidBounce_Hz"] = round(float(fr[int(np.argmax(mf[:, 2]))]), 1)
@@ -240,6 +272,7 @@ def main():
     if not a.no_stl:
         feet_stl(rho_g, os.path.join(a.out, "isolator-feet-graded.stl"))
     summary = {"payload_kg": round(mt.mass, 3), "cg_mm": [round(float(x), 1) for x in mt.cg],
+               "shockPulse_s": SHOCK_PULSE, "shockStiffening": round(float(event_factor(mat, SHOCK_PULSE)), 3),
                "targetBounce_Hz": F_TARGET, "lossFactor": eta, "rhoMin": round(rho_min, 3),
                "tuneResidual_mm": round(resid, 3), "band_Hz": BAND, "rows": rows, "curves": curves,
                "seconds": round(time.time() - t0)}

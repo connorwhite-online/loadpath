@@ -1,0 +1,48 @@
+{
+  "name": "crossflow-cube-tuned",
+  "description": "The crossflow cube tuned with the whole-exchanger simulation (porous.py): a 1.5 mm seal band instead of 2 mm, and ports sized per fluid (water 10 mm, air 18 mm). Simulated against the original: water pressure drop 745 -> 267 Pa, air 8.5 -> 1.9 kPa, effectiveness 0.348 -> 0.377, 5% more plastic.",
+  "core": {
+    "type": "box",
+    "min": [
+      0,
+      0,
+      0
+    ],
+    "max": [
+      30,
+      30,
+      30
+    ]
+  },
+  "type": "gyroid",
+  "layout": "cross",
+  "axes": "xy",
+  "fluids": [
+    "water",
+    "air"
+  ],
+  "cell": 8,
+  "wall": 1.0,
+  "header": 4,
+  "cap": 1.5,
+  "portDiameter": {
+    "water": 10,
+    "air": 18
+  },
+  "portLength": 4,
+  "step": 0.45,
+  "simulate": true,
+  "duty": {
+    "water": {
+      "fluid": "water",
+      "lPerMin": 1.0,
+      "tIn": 60
+    },
+    "air": {
+      "fluid": "air",
+      "kgPerS": 0.002,
+      "tIn": 20
+    },
+    "wall": "petg"
+  }
+}
