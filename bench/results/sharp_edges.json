@@ -1,0 +1,481 @@
+{
+ "arm-link-solid": {
+  "kind": "field",
+  "node": "solid",
+  "pitch": 0.4,
+  "before": {
+   "seconds": 9.1,
+   "faces": 296928,
+   "watertight": true,
+   "volume": 61316.3,
+   "edgeAccuracy": {
+    "points": 95674,
+    "mean": 0.0026,
+    "p99": 0.0695,
+    "max": 0.2172,
+    "exactFraction": 0.9811,
+    "edges": {
+     "points": 2224,
+     "mean": 0.0419,
+     "p99": 0.1733,
+     "max": 0.2172,
+     "exactFraction": 0.4209
+    },
+    "tol": 0.01,
+    "byRole": {
+     "cut": {
+      "points": 95674,
+      "mean": 0.0026,
+      "p99": 0.0695,
+      "max": 0.2172,
+      "exactFraction": 0.9811
+     }
+    }
+   }
+  },
+  "sharp": {
+   "seconds": 9.1,
+   "faces": 205764,
+   "watertight": true,
+   "volume": 61321.9,
+   "edgeAccuracy": {
+    "points": 95674,
+    "mean": 0.0013,
+    "p99": 0.002,
+    "max": 0.0118,
+    "exactFraction": 1.0,
+    "edges": {
+     "points": 2224,
+     "mean": 0.0013,
+     "p99": 0.002,
+     "max": 0.0118,
+     "exactFraction": 0.9991
+    },
+    "tol": 0.01,
+    "byRole": {
+     "cut": {
+      "points": 95674,
+      "mean": 0.0013,
+      "p99": 0.002,
+      "max": 0.0118,
+      "exactFraction": 1.0
+     }
+    }
+   }
+  },
+  "step": {
+   "faces": {
+    "facet": 11170,
+    "cylinder": 3,
+    "plane": 2
+   },
+   "exactArea": 5957.8,
+   "facetedArea": 14426.2,
+   "exactAreaFraction": 0.2923,
+   "path": "/tmp/claude-0/sharp/arm-link-solid.step",
+   "bytes": 28024628,
+   "solids": 1,
+   "valid": true,
+   "volume": 61308.94,
+   "seconds": 16.4,
+   "meshVolume": 61321.9,
+   "decimated": [
+    {
+     "leaf": "envelope",
+     "faces": 225172,
+     "stepFaces": 20000,
+     "deviation": {
+      "mean": 0.001,
+      "p99": 0.0081
+     }
+    }
+   ],
+   "edgeAccuracy": {
+    "points": 95674,
+    "mean": 0.0003,
+    "p99": 0.0007,
+    "max": 0.0119,
+    "exactFraction": 1.0,
+    "edges": {
+     "points": 2224,
+     "mean": 0.0003,
+     "p99": 0.0008,
+     "max": 0.0119,
+     "exactFraction": 0.9996
+    },
+    "tol": 0.01,
+    "byRole": {
+     "cut": {
+      "points": 95674,
+      "mean": 0.0003,
+      "p99": 0.0007,
+      "max": 0.0119,
+      "exactFraction": 1.0
+     }
+    }
+   }
+  }
+ },
+ "arm-link-graded": {
+  "kind": "field",
+  "node": "part",
+  "pitch": 0.3,
+  "before": {
+   "seconds": 137.7,
+   "faces": 1473312,
+   "watertight": true,
+   "volume": 51267.8,
+   "edgeAccuracy": {
+    "points": 95674,
+    "mean": 0.0017,
+    "p99": 0.0462,
+    "max": 0.1965,
+    "exactFraction": 0.9855,
+    "edges": {
+     "points": 2224,
+     "mean": 0.0368,
+     "p99": 0.1742,
+     "max": 0.1965,
+     "exactFraction": 0.5378
+    },
+    "tol": 0.01,
+    "byRole": {
+     "cut": {
+      "points": 95674,
+      "mean": 0.0017,
+      "p99": 0.0462,
+      "max": 0.1965,
+      "exactFraction": 0.9855
+     }
+    }
+   }
+  },
+  "sharp": {
+   "seconds": 100.3,
+   "faces": 1308604,
+   "watertight": true,
+   "volume": 51276.0,
+   "edgeAccuracy": {
+    "points": 95674,
+    "mean": 0.0013,
+    "p99": 0.002,
+    "max": 0.0066,
+    "exactFraction": 1.0,
+    "edges": {
+     "points": 2224,
+     "mean": 0.0013,
+     "p99": 0.002,
+     "max": 0.0066,
+     "exactFraction": 1.0
+    },
+    "tol": 0.01,
+    "byRole": {
+     "cut": {
+      "points": 95674,
+      "mean": 0.0013,
+      "p99": 0.002,
+      "max": 0.0066,
+      "exactFraction": 1.0
+     }
+    }
+   }
+  },
+  "step": {
+   "error": "ValueError: an organic region of 1344332 triangles does not decimate to 20000 and stay closed (a lattice?): raise the STEP face budget, or hand over the STL for it"
+  }
+ },
+ "arm-link": {
+  "kind": "study",
+  "seconds": 113.3,
+  "mass": 65.4,
+  "safetyFactor": 35.25,
+  "faces": 65894,
+  "edgeAccuracy": {
+   "points": 122435,
+   "mean": 0.0013,
+   "p99": 0.0336,
+   "max": 0.05,
+   "exactFraction": 0.9789,
+   "edges": {
+    "points": 2753,
+    "mean": 0.0144,
+    "p99": 0.0497,
+    "max": 0.05,
+    "exactFraction": 0.6015
+   },
+   "tol": 0.01,
+   "byRole": {
+    "cut": {
+     "points": 53184,
+     "mean": 0.0013,
+     "p99": 0.002,
+     "max": 0.002,
+     "exactFraction": 1.0
+    },
+    "add": {
+     "points": 30036,
+     "mean": 0.0012,
+     "p99": 0.039,
+     "max": 0.0484,
+     "exactFraction": 0.9635
+    },
+    "clip": {
+     "points": 39215,
+     "mean": 0.0013,
+     "p99": 0.0436,
+     "max": 0.05,
+     "exactFraction": 0.962
+    }
+   }
+  },
+  "step": {
+   "faces": {
+    "plane": 6,
+    "cylinder": 13,
+    "facet": 13203
+   },
+   "exactArea": 5936.6,
+   "facetedArea": 21275.5,
+   "exactAreaFraction": 0.2182,
+   "path": "/tmp/claude-0/sharp/arm-link.step",
+   "bytes": 32951386,
+   "solids": 1,
+   "valid": true,
+   "volume": 64754.84,
+   "seconds": 24.1,
+   "meshVolume": 64770.13,
+   "decimated": [
+    {
+     "leaf": "organic",
+     "faces": 76868,
+     "stepFaces": 20000,
+     "deviation": {
+      "mean": 0.0045,
+      "p99": 0.0197
+     }
+    }
+   ],
+   "edgeAccuracy": {
+    "points": 122267,
+    "mean": 0.0009,
+    "p99": 0.0283,
+    "max": 0.05,
+    "exactFraction": 0.9803,
+    "edges": {
+     "points": 2779,
+     "mean": 0.013,
+     "p99": 0.0496,
+     "max": 0.05,
+     "exactFraction": 0.6182
+    },
+    "tol": 0.01,
+    "byRole": {
+     "cut": {
+      "points": 53184,
+      "mean": 0.0006,
+      "p99": 0.0009,
+      "max": 0.0009,
+      "exactFraction": 1.0
+     },
+     "add": {
+      "points": 30076,
+      "mean": 0.0011,
+      "p99": 0.039,
+      "max": 0.0484,
+      "exactFraction": 0.9639
+     },
+     "clip": {
+      "points": 39007,
+      "mean": 0.0011,
+      "p99": 0.0399,
+      "max": 0.05,
+      "exactFraction": 0.9661
+     }
+    }
+   }
+  }
+ },
+ "grip-turret": {
+  "kind": "study",
+  "seconds": 50.1,
+  "mass": 181.2,
+  "safetyFactor": 2.02,
+  "faces": 29334,
+  "edgeAccuracy": {
+   "points": 453007,
+   "mean": 0.001,
+   "p99": 0.002,
+   "max": 0.3851,
+   "exactFraction": 0.995,
+   "edges": {
+    "points": 11986,
+    "mean": 0.0058,
+    "p99": 0.0462,
+    "max": 0.3851,
+    "exactFraction": 0.8357
+   },
+   "tol": 0.01,
+   "byRole": {
+    "cut": {
+     "points": 183158,
+     "mean": 0.001,
+     "p99": 0.002,
+     "max": 0.3851,
+     "exactFraction": 0.9991
+    },
+    "add": {
+     "points": 269849,
+     "mean": 0.001,
+     "p99": 0.002,
+     "max": 0.0497,
+     "exactFraction": 0.9922
+    }
+   }
+  },
+  "step": {
+   "faces": {
+    "cylinder": 24,
+    "facet": 12640,
+    "plane": 26
+   },
+   "exactArea": 19200.0,
+   "facetedArea": 19892.9,
+   "exactAreaFraction": 0.4911,
+   "path": "/tmp/claude-0/sharp/grip-turret.step",
+   "bytes": 33071899,
+   "solids": 1,
+   "valid": true,
+   "volume": 148525.45,
+   "seconds": 39.2,
+   "meshVolume": 148537.03,
+   "decimated": [
+    {
+     "leaf": "organic",
+     "faces": 21256,
+     "stepFaces": 20000,
+     "deviation": {
+      "mean": 0.0005,
+      "p99": 0.0075
+     }
+    }
+   ],
+   "edgeAccuracy": {
+    "points": 453026,
+    "mean": 0.0005,
+    "p99": 0.001,
+    "max": 0.4864,
+    "exactFraction": 0.995,
+    "edges": {
+     "points": 11999,
+     "mean": 0.0055,
+     "p99": 0.0464,
+     "max": 0.4864,
+     "exactFraction": 0.8353
+    },
+    "tol": 0.01,
+    "byRole": {
+     "cut": {
+      "points": 183168,
+      "mean": 0.0004,
+      "p99": 0.001,
+      "max": 0.4864,
+      "exactFraction": 0.9991
+     },
+     "add": {
+      "points": 269858,
+      "mean": 0.0006,
+      "p99": 0.0021,
+      "max": 0.0498,
+      "exactFraction": 0.9922
+     }
+    }
+   }
+  }
+ },
+ "grip-wrist-yoke": {
+  "kind": "study",
+  "seconds": 65.2,
+  "mass": 23.5,
+  "safetyFactor": 2.47,
+  "faces": 28088,
+  "edgeAccuracy": {
+   "points": 57374,
+   "mean": 0.0006,
+   "p99": 0.011,
+   "max": 0.0493,
+   "exactFraction": 0.9895,
+   "edges": {
+    "points": 3481,
+    "mean": 0.0053,
+    "p99": 0.045,
+    "max": 0.0493,
+    "exactFraction": 0.8331
+   },
+   "tol": 0.01,
+   "byRole": {
+    "cut": {
+     "points": 41486,
+     "mean": 0.0006,
+     "p99": 0.0133,
+     "max": 0.0493,
+     "exactFraction": 0.989
+    },
+    "add": {
+     "points": 15888,
+     "mean": 0.0006,
+     "p99": 0.0069,
+     "max": 0.0477,
+     "exactFraction": 0.9909
+    }
+   }
+  },
+  "step": {
+   "faces": {
+    "cylinder": 42,
+    "plane": 29,
+    "facet": 16328
+   },
+   "exactArea": 2820.1,
+   "facetedArea": 7379.6,
+   "exactAreaFraction": 0.2765,
+   "path": "/tmp/claude-0/sharp/grip-wrist-yoke.step",
+   "bytes": 41594783,
+   "solids": 1,
+   "valid": true,
+   "volume": 19253.23,
+   "seconds": 34.3,
+   "meshVolume": 19253.65,
+   "edgeAccuracy": {
+    "points": 57376,
+    "mean": 0.0003,
+    "p99": 0.0111,
+    "max": 0.3671,
+    "exactFraction": 0.9895,
+    "edges": {
+     "points": 3485,
+     "mean": 0.0049,
+     "p99": 0.0448,
+     "max": 0.0493,
+     "exactFraction": 0.8333
+    },
+    "tol": 0.01,
+    "byRole": {
+     "cut": {
+      "points": 41485,
+      "mean": 0.0004,
+      "p99": 0.0134,
+      "max": 0.3671,
+      "exactFraction": 0.989
+     },
+     "add": {
+      "points": 15891,
+      "mean": 0.0003,
+      "p99": 0.0069,
+      "max": 0.0477,
+      "exactFraction": 0.9909
+     }
+    }
+   }
+  }
+ }
+}

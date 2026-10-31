@@ -118,7 +118,16 @@ p99, max, `exactFraction` within 0.01 mm, and the same for the samples
 within 1 mm of a crease, `edges`). On the arm link (bench/sharp_edges.py),
 the bearing bores and cable channel:
 
-SHARP_TABLE
+| arm link, 0.3-0.4 mm pitch | edge samples off by (max / p99) | within 0.01 mm at the edges |
+| --- | --- | --- |
+| solid envelope, field only (before) | 0.217 / 0.173 mm | 42% |
+| solid envelope, sharp | 0.012 / 0.002 mm | 100% |
+| graded lattice part, field only (before) | 0.197 / 0.174 mm | 54% |
+| graded lattice part, sharp | 0.007 / 0.002 mm | 100% |
+
+Sharp meshing costs nothing extra (9 s either way on the solid; 100 s
+against 138 s on the lattice part, since the organic field no longer has to
+draw the bores).
 
 ## STEP
 
@@ -131,6 +140,24 @@ face per triangle, decimated first to `"step": {"faces": 20000}` (about
 share of the area on exact geometry, the volume against the STL's, and what
 decimating cost (`decimated[].deviation`, mm). A lattice does not decimate
 and is refused: ship lattice parts as STL or 3MF.
+
+Study parts carry their plan too (`loadpath run study.json --step`): the
+keep-outs, preserved shapes and design space are exact, the organic body
+faceted. Each OpenCascade boolean is checked against manifold3d's result
+for the same solids and retried (fuzz, tools apart or fused) until it is
+valid and its volume agrees, so a STEP file does not quietly differ from
+the STL. Measured (bench/sharp_edges.py, coarse eval tier):
+
+| part | STEP faces | exact area | volume vs STL | size, time |
+| --- | --- | --- | --- | --- |
+| arm-link example | 13 cylinders, 6 planes, 13.2k facets | 22% | -0.02% | 33 MB, 24 s |
+| GRIP turret | 24 cylinders, 26 planes, 12.6k facets | 49% | -0.01% | 33 MB, 39 s |
+| GRIP wrist yoke | 42 cylinders, 29 planes, 16.3k facets | 28% | -0.002% | 42 MB, 34 s |
+| arm link field graph (solid) | 3 cylinders, 2 planes, 11.2k facets | 29% | -0.02% | 28 MB, 16 s |
+
+The study STLs' circles are now 0.002 mm true as well (they were 96-gons:
+the turret's 48 mm J2 sleeve was 0.026 mm off, and only 59% of its keep-out
+surface was within 0.01 mm; now 100%).
 
 Pick the pitch from the thinnest wall: a third of it or finer.
 
