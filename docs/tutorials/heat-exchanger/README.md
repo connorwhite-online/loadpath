@@ -92,12 +92,12 @@ Full grid, as the commands above run:
 
 |  | sizing (step 1) | rating (as designed) | whole-exchanger simulation |
 |---|---|---|---|
-| effectiveness | 0.515 | **0.499** | **0.479** |
+| effectiveness | 0.515 | **0.499** | **0.480** |
 | heat duty | 1.99 kW | **1.92 kW** | **1.85 kW** |
-| oil out | | 55.1 °C | 56.5 °C |
+| oil out | | 55.1 °C | 56.4 °C |
 | water out | | 33.9 °C | 33.3 °C |
-| oil pressure drop | 4.6 kPa | **6.97 kPa** | **9.60 kPa** (8.69 core + 0.91 headers) |
-| water pressure drop | 2.3 kPa | **2.42 kPa** | **4.59 kPa** (3.65 core + 0.94 headers) |
+| oil pressure drop | 4.6 kPa | **6.97 kPa** | **8.56 kPa** (7.53 core + 1.03 headers) |
+| water pressure drop | 2.3 kPa | **2.42 kPa** | **3.98 kPa** (3.05 core + 0.93 headers) |
 
 ![whole-exchanger simulation, a section through the axis](images/oil-cooler-simulation.png)
 
@@ -106,7 +106,7 @@ hot at the bottom and leaves at the top; water comes in at the top left and
 leaves at the bottom right, so the two run against each other. The water
 takes the diagonal: the bottom-left corner, under the oil's hot inlet, barely
 moves, and the water there heats to about 57 °C and stays, carrying little
-heat away. The wall is hottest there too (59 °C), coolest by the water inlet.
+heat away. The wall is hottest there too (about 58 °C), coolest by the water inlet.
 
 How to read it:
 
@@ -121,10 +121,10 @@ How to read it:
   rating measures the built one (porosity, wetted area and channel size on
   the grid, with the plenums' blended mouths), and its oil side comes out
   50% harder to push through. The simulation adds what neither sees: the
-  headers (0.9 kPa a side), and flow that doesn't spread evenly: water
-  enters through one side port, and 21% of the core's water entry face is
-  starved (`simulation.fluids.water.entry`). The oil is at 9.6 kPa, nearly
-  twice the 5 kPa budget. To fix it: rerun step 1 with
+  headers (about 1 kPa a side), and flow that doesn't spread evenly: water
+  enters through one side port, and 14% of the core's water entry face is
+  starved (`simulation.fluids.water.entry`). The oil is at 8.6 kPa, 70%
+  over the 5 kPa budget. To fix it: rerun step 1 with
   `--max-pressure-drop oil=2500` to leave the headers their share, or take
   the 7 mm cell at split 0.5, which gives up 7% of the heat.
 - **The oil runs at Re 6**, below the heat-transfer fits (Re 10-2500); the
