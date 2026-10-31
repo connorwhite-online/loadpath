@@ -109,4 +109,28 @@ def delivery(summary: dict, study: dict) -> dict | None:
     }
     if summary.get("best") is None:
         d["warnings"].insert(0, "no outcome meets the goal: this is the strongest one tried, not a passing part")
+        sat = _saturated(outs)
+        if sat:
+            d["warnings"].insert(1, sat)
     return d
+
+
+def _saturated(outs: list) -> str | None:
+    """When more material hardly helps, the shape is not the problem: a notch
+    (a keep-out's corner, a thin interface) caps the safety factor."""
+    pts = sorted((o["volumeFraction"], o["safetyFactor"], o) for o in outs
+                 if o.get("volumeFraction") and o.get("safetyFactor"))
+    import math
+
+    # a sound layout's safety factor grows at least as fast as material
+    # (roughly vf^1 to vf^2); under vf^0.6 the material is not where it fails
+    if len(pts) < 2 or pts[-1][0] < 1.3 * pts[0][0] or pts[-1][1] <= 0 or pts[0][1] <= 0 or \
+            math.log(pts[-1][1] / pts[0][1]) > 0.6 * math.log(pts[-1][0] / pts[0][0]):
+        return None
+    worst = min(pts[-1][2].get("cases") or [{}], key=lambda c: c.get("safetyFactor") or float("inf"))
+    at = worst.get("peakAt")
+    where = f" at {[round(v, 1) for v in at]} (case {worst.get('name')!r})" if at else ""
+    return (f"the safety factor barely rises with material ({pts[0][1]:.2f} at {pts[0][0]:.0%} of the design "
+            f"space, {pts[-1][1]:.2f} at {pts[-1][0]:.0%}): a local hot spot{where} sets it, so look at the "
+            "geometry there (a keep-out notching an interface, a thin preserved ring, a fastener's head path) "
+            "rather than adding material")
