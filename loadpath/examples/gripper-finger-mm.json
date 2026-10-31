@@ -1,27 +1,184 @@
 {
   "name": "gripper-finger",
-  "description": "A GRIP-like gripper finger, 70 x 16 x 12 mm, pinned at its base, printed in PETG and TPU 95A on a two-material FDM printer. Grip: 20 N spread over the 40 mm contact face, the finger must stay stiff. Poke: the same 20 N on a 4 mm patch (an object's edge) must sink at least 0.3 mm deeper than the spread grip does, so the face conforms. The optimizer decides where the stiff core and the soft pad go. Shows multiMaterial with an indentation requirement.",
-  "designSpace": [{"type": "box", "min": [0, -8, -6], "max": [70, 8, 6]}],
+  "description": "A GRIP-like gripper finger, 70 x 16 x 12 mm, pinned at its base, printed in PETG and TPU 95A on a two-material FDM printer. The 2.5 mm TPU contact pad is placed by a distance field from the gripping face; the optimizer designs the stiff core behind it and chooses the material of everything else. Grip: 20 N squeeze over the 40 mm face. Pull: the squeeze plus 10 N of friction along the face, the load that peels a pad off its core. Shows multiMaterial with an assigned pad and a shear-loaded bond.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [
+        0,
+        -8,
+        -6
+      ],
+      "max": [
+        70,
+        8,
+        6
+      ]
+    }
+  ],
   "preserve": [
-    {"id": "base-boss", "shape": {"type": "cylinder", "center": [6, 0, 0], "axis": "z", "length": 12, "r": 5.5}},
-    {"id": "contact-face", "shape": {"type": "box", "min": [30, 7, -6], "max": [70, 8, 6]}}
+    {
+      "id": "base-boss",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          6,
+          0,
+          0
+        ],
+        "axis": "z",
+        "length": 12,
+        "r": 5.5
+      }
+    },
+    {
+      "id": "pad",
+      "shape": {
+        "type": "box",
+        "min": [
+          30,
+          5.5,
+          -6
+        ],
+        "max": [
+          70,
+          8,
+          6
+        ]
+      }
+    }
   ],
   "keepOut": [
-    {"id": "pin", "shape": {"type": "cylinder", "center": [6, 0, 0], "axis": "z", "length": 14, "r": 2.6}}
+    {
+      "id": "pin",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          6,
+          0,
+          0
+        ],
+        "axis": "z",
+        "length": 14,
+        "r": 2.6
+      }
+    }
   ],
-  "supports": [{"region": "pin"}, {"shape": {"type": "box", "min": [0, -8, -6], "max": [1, 8, 6]}, "fix": "y"}],
+  "supports": [
+    {
+      "region": "pin"
+    },
+    {
+      "shape": {
+        "type": "box",
+        "min": [
+          0,
+          -8,
+          -6
+        ],
+        "max": [
+          1,
+          8,
+          6
+        ]
+      },
+      "fix": "y"
+    }
+  ],
   "loadCases": [
-    {"name": "grip", "loads": [{"region": "contact-face", "force": [0, -20, 0]}]},
-    {"name": "poke", "loads": [{"shape": {"type": "box", "min": [53, 7, -2], "max": [57, 8, 2]}, "force": [0, -20, 0]}],
-     "weight": 0}
+    {
+      "name": "grip",
+      "loads": [
+        {
+          "shape": {
+            "type": "box",
+            "min": [
+              30,
+              7.9,
+              -6
+            ],
+            "max": [
+              70,
+              8,
+              6
+            ]
+          },
+          "force": [
+            0,
+            -20,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pull",
+      "loads": [
+        {
+          "shape": {
+            "type": "box",
+            "min": [
+              30,
+              7.9,
+              -6
+            ],
+            "max": [
+              70,
+              8,
+              6
+            ]
+          },
+          "force": [
+            -10,
+            -20,
+            0
+          ]
+        }
+      ],
+      "weight": 0.5
+    }
   ],
-  "process": {"type": "fdm", "buildDirection": "+z"},
-  "multiMaterial": {
-    "materials": ["petg", "tpu"],
-    "assign": [{"region": "base-boss", "material": "petg"}],
-    "requirements": [{"case": "poke", "indentation": {"relativeTo": "grip", "atLeast": 0.3}}]
+  "process": {
+    "type": "fdm",
+    "buildDirection": "+z"
   },
-  "goal": {"volumeFraction": 0.4, "safetyFactor": 2.0},
+  "multiMaterial": {
+    "materials": [
+      "petg",
+      "tpu"
+    ],
+    "assign": [
+      {
+        "region": "base-boss",
+        "material": "petg"
+      },
+      {
+        "near": {
+          "shape": {
+            "type": "box",
+            "min": [
+              30,
+              8,
+              -6
+            ],
+            "max": [
+              70,
+              9,
+              6
+            ]
+          },
+          "distance": 2.5
+        },
+        "material": "tpu"
+      }
+    ]
+  },
+  "goal": {
+    "volumeFraction": 0.4,
+    "safetyFactor": 2.0
+  },
   "minMember": 2.0,
-  "resolution": {"maxElements": 20000}
+  "resolution": {
+    "pitch": 0.8
+  }
 }

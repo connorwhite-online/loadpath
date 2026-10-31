@@ -449,6 +449,20 @@ def main(argv=None):
         _write_report(args.out, rep)
         return 0
 
+    if study.multi_material is not None:
+        # several materials placed by the optimizer (multimat.py): bodies,
+        # an STL per material, a multi-material 3MF and report.json
+        from .multimat import run_multimaterial
+
+        mres = run_multimaterial(study, on_progress=lambda ev, *_: _progress(ev, None))
+        files = mres.write(args.out)
+        print(json.dumps(_jsonable({"ok": True, "mass": mres.report.get("mass"),
+                          "materialMass": mres.report.get("materialMass"),
+                          "safetyFactor": mres.report.get("safetyFactor"),
+                          "interfaceSafetyFactor": mres.report.get("interfaceSafetyFactor"),
+                          "requirementsMet": mres.report.get("requirementsMet"), "files": files}),
+                         indent=2, default=str))
+        return 0
     if not args.no_render and not _can_render():
         args.no_render = True
     from .study import run_study
