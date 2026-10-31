@@ -37,11 +37,15 @@ __all__ = ["voxelize", "verify_part"]
 STRESS_ALLOWANCE = 1.15
 
 
-def voxelize(mesh, pitch: float, box=None):
+def voxelize(mesh, pitch: float, box=None, fractional=False):
     """Solid cells of a closed mesh by ray parity along +z through each
     column of cell centers. Returns (bool grid, origin = min corner of cell
     (0,0,0)). `box` = (lo, hi) voxelizes only that region (the rays still
-    start below the whole mesh, so parity is right)."""
+    start below the whole mesh, so parity is right). `fractional` returns
+    each cell's filled share instead (float grid): the z overlap is exact
+    from the ray's crossings, averaged over 3 x 3 sub-columns per cell."""
+    if fractional:
+        return _voxel_fractions(mesh, pitch, box)
     mlo = np.asarray(mesh.bounds, float)[0]
     lo, hi = (np.asarray(b, float) for b in box) if box is not None else np.asarray(mesh.bounds, float)
     dims = np.maximum(np.ceil((hi - lo) / pitch).astype(int), 1)
@@ -85,6 +89,44 @@ def voxelize(mesh, pitch: float, box=None):
         i, j = np.unravel_index(r, (dims[0], dims[1]))
         solid[i, j] = inside
     return solid, origin
+
+
+def _voxel_fractions(mesh, pitch, box=None, sub=3):
+    lo, hi = (np.asarray(b, float) for b in box) if box is not None else np.asarray(mesh.bounds, float)
+    dims = np.maximum(np.ceil((hi - lo) / pitch).astype(int), 1)
+    origin = lo - 0.5 * (dims * pitch - (hi - lo))
+    # the sub-columns are one bool grid at pitch/sub in x and y; each z
+    # interval's overlap with each cell is added exactly
+    mlo = np.asarray(mesh.bounds, float)[0]
+    fine = np.array([dims[0] * sub, dims[1] * sub])
+    xs = origin[0] + (np.arange(fine[0]) + 0.5) * pitch / sub
+    ys = origin[1] + (np.arange(fine[1]) + 0.5) * pitch / sub
+    gx, gy = np.meshgrid(xs, ys, indexing="ij")
+    jit = pitch * 1e-4
+    ray_o = np.stack([gx.ravel() + 0.37 * jit, gy.ravel() + 0.61 * jit,
+                      np.full(gx.size, mlo[2] - pitch)], axis=1)
+    locs, ray_idx, _ = mesh.ray.intersects_location(ray_o, np.tile([0.0, 0.0, 1.0], (len(ray_o), 1)),
+                                                    multiple_hits=True)
+    locs = np.asarray(locs, float).reshape(-1, 3)
+    ray_idx = np.asarray(ray_idx, int).reshape(-1)
+    order = np.lexsort((locs[:, 2], ray_idx))
+    ray_idx, zs = ray_idx[order], locs[order, 2]
+    starts = np.searchsorted(ray_idx, np.arange(len(ray_o)))
+    ends = np.searchsorted(ray_idx, np.arange(len(ray_o)), side="right")
+    z0 = origin[2] + np.arange(dims[2]) * pitch
+    frac = np.zeros(dims, float)
+    for r in np.nonzero(ends > starts)[0]:
+        z = zs[starts[r]:ends[r]]
+        if len(z) > 1:
+            z = z[np.concatenate([[True], np.diff(z) > 1e-7])]
+        if len(z) % 2:
+            z = z[:-1]
+        cover = np.zeros(dims[2])
+        for a, b in z.reshape(-1, 2):
+            cover += np.clip(np.minimum(b, z0 + pitch) - np.maximum(a, z0), 0.0, pitch)
+        i, j = np.unravel_index(r, (fine[0], fine[1]))
+        frac[i // sub, j // sub] += cover
+    return np.clip(frac / (pitch * sub * sub), 0.0, 1.0), origin
 
 
 def _thickness(solid, pitch):
@@ -575,7 +617,8 @@ def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
 
 
 def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
-                contact_band: float | None = None, refine: int = 3, fields: bool = False) -> dict:
+                contact_band: float | None = None, refine: int = 3, fields: bool = False,
+                fractional: bool = False) -> dict:
     """Analyze a finished part (trimesh) against the study. Returns a JSON-able
     report. `contact_band` (mm) is how far from applied loads and supports
     stress is left out of the peak; it defaults to 1.5 analysis cells, and the
@@ -585,7 +628,12 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     hotspots per load case get a 3x finer submodel (see _submodel_peak).
     `fields` adds report["fields"]: the analysis nodes and, per load case,
     nodal von Mises stress and displacement (numpy arrays, not JSON) for
-    stress maps (render.render_stress)."""
+    stress maps (render.render_stress). `fractional` analyzes the part's
+    surface cells at their filled share of the modulus (the stress formed at
+    the full modulus), so the readings move smoothly with the geometry
+    rather than in whole-cell steps: for searches and live previews, whose
+    neighbouring candidates must compare fairly; the delivered check is
+    whole cells."""
     from .shapes import manifold_from_trimesh
 
     t0 = time.time()
@@ -640,9 +688,15 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         # skin, within a cell budget.
         thin = min(t for _, t in study.shells)
         pitch = min(pitch, max(thin / _SHELL_CELLS, (vol / _SHELL_MAX_CELLS) ** (1.0 / 3.0)))
-    solid, origin = voxelize(mesh, pitch)
+    share = None
+    if fractional:
+        share, origin = voxelize(mesh, pitch, fractional=True)
+        # a sliver under a twentieth of a cell adds nothing but conditioning
+        solid = share >= 0.05
+    else:
+        solid, origin = voxelize(mesh, pitch)
     report["analysisPitch"] = pitch
-    report["minMember"], report["p5Member"] = _thickness(solid, pitch)
+    report["minMember"], report["p5Member"] = _thickness(solid if share is None else share >= 0.5, pitch)
 
     # Face connectivity: cells that meet only at an edge or a corner share
     # two nodes or one, a hinge the stiffness matrix cannot hold, and CG
@@ -660,12 +714,14 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         hm = HexMesh(elem_ijk[keep_el], pitch, origin)
         bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
     support_nodes, fixed = bc.support_nodes, bc.fixed
+    kept_ijk = elem_ijk if keep_el.all() else elem_ijk[keep_el]
+    fill = None if share is None else share[tuple(kept_ijk.T)]
 
     band = max(1.5 * pitch, contact_band or 0.0)
     report["contactBand"] = band
     edges = _user_edges(study, band)
     on_edge = edges(hm.node_xyz) if edges is not None else None
-    fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else None
+    fg = gravity_force(hm, np.ones(hm.n_elem) if fill is None else fill, bc.gravity, fixed) if bc.gravity is not None else None
     # Heat (the study's thermal block): the part's own temperature, solved on
     # the part as delivered; each cell's modulus derated by it, the
     # expansion its neighbours and the supports stop as a load in every
@@ -705,6 +761,10 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     from .simp import _use_mg
 
     def solve(moduli, rhs):
+        if fill is not None:
+            # a part-filled cell is that share as stiff; its stress stays
+            # the material's (nodal_stress at the full modulus)
+            moduli = np.broadcast_to(moduli, (hm.n_elem,)) * fill
         if _use_mg(hm.n_elem):
             # From simp.MG_MIN_CELLS up, matrix-free multigrid (as the optimizer
             # uses): no assembled matrix, a fraction of the memory and time. It
@@ -738,7 +798,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         mod_c = mat.E * heat.g
         eps_c = heat.eps if heat.expands else None
         g_c = retention(heat.curve, heat.cold)[0] if heat.curve is not None else np.ones(hm.n_nodes)
-        fg_c = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, fixed) if bc.gravity is not None else None
+        fg_c = gravity_force(hm, np.ones(hm.n_elem) if fill is None else fill, bc.gravity, fixed) if bc.gravity is not None else None
         if heat.expands:
             fth_c = heat.load(np.ones(hm.n_elem), mat.E)
             fg_c = fth_c if fg_c is None else fg_c + fth_c

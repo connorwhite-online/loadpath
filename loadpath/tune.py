@@ -179,7 +179,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
             if homogenized:
                 rep = homogenized_check(dd, study, base_dir=base_dir, cells=n_cells, graph=g)
             else:
-                rep = verify_part(study, g.mesh(pitch=pitch, project=1), max_cells=n_cells, refine=0)
+                rep = verify_part(study, g.mesh(pitch=pitch, project=1), max_cells=n_cells, refine=0, fractional=True)
             resources.keep(g, dd)
             rec.update(mass=rep["mass"], safetyFactor=rep["safetyFactor"],
                        deflection=max((c.get("deflection") or 0.0) for c in rep["cases"]),
