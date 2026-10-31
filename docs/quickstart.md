@@ -94,9 +94,10 @@ loadpath heatx cooler.json --out hx/       # design, check isolation, rate, rend
 
 ## Tutorials
 
-[tutorials/](tutorials/) has six workflows end to end (FDM bracket, graded SLS
-lattice with drains, heat exchanger with simulation, impact bumper, field
-editor, arm link from a URDF), each with the numbers you should get.
+[tutorials/](tutorials/) has eleven workflows end to end (FDM bracket, graded
+SLS lattice with drains, heat exchanger with simulation, impact bumper, field
+editor, arm link from a URDF, STEP import, LPBF build simulation, thermal duty
+cycle, strut lattice, an agent over MCP), each with the numbers you should get.
 
 ## For agents
 

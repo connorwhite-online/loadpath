@@ -206,8 +206,10 @@ def test_l_bracket_given_setup_seats_not_slabs():
         assert [c["loads"][0]["force"] for c in st["loadCases"]] == [[0, 0, -250], [80, 0, 0]]
         # grown past the part, bolts get a head and driver path and the shaft bore runs through
         assert sum(k["id"].endswith("-driver") for k in st["keepOut"]) == 2
-        shaft_ko = next(k for k in st["keepOut"] if k["id"] == shaft)["shape"]
-        assert abs(shaft_ko["p1"][1] - shaft_ko["p0"][1]) > 40
+        # (the hole's own keep-out, and its path on out of the space)
+        ko = next(k for k in st["keepOut"] if k["id"] == f"{shaft}-path")["shape"]
+        ys = [c[k][1] for c in (ko.get("shapes") or [ko]) for k in ("p0", "p1")]
+        assert max(ys) - min(ys) > 40
         assert check_study(st, os.path.join(d, "o"))["ok"]
         # the bolts keep washer seats, not a plate: well under the foot's volume
         keep = [trimesh.load(os.path.join(d, "o", p["shape"]["path"]), force="mesh") for p in st["preserve"]
