@@ -1,0 +1,122 @@
+{
+ "name": "wrist-link",
+ "description": "A short robot wrist link between two 16 mm bearings, 80 mm apart: 3 kg at the wrist bearing with a dynamic factor of 2 (60 N) plus a 20 N side load, shoulder bearing held. PA12, SLS.",
+ "designSpace": [
+  {
+   "type": "box",
+   "min": [
+    -14,
+    -14,
+    -10
+   ],
+   "max": [
+    94,
+    14,
+    10
+   ]
+  }
+ ],
+ "preserve": [
+  {
+   "id": "shoulder-boss",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 20,
+    "r": 13
+   }
+  },
+  {
+   "id": "wrist-boss",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     80,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 20,
+    "r": 12
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "shoulder-bearing",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 26,
+    "r": 8
+   }
+  },
+  {
+   "id": "wrist-bearing",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     80,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 26,
+    "r": 8
+   }
+  }
+ ],
+ "supports": [
+  {
+   "region": "shoulder-bearing"
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "payload",
+   "loads": [
+    {
+     "region": "wrist-bearing",
+     "force": [
+      0,
+      -60,
+      0
+     ],
+     "distribution": "bearing"
+    }
+   ]
+  },
+  {
+   "name": "side",
+   "loads": [
+    {
+     "region": "wrist-bearing",
+     "force": [
+      0,
+      0,
+      20
+     ]
+    }
+   ]
+  }
+ ],
+ "material": "pa12",
+ "process": "sls",
+ "goal": {
+  "safetyFactor": 3.0,
+  "maxDeflection": 0.8
+ },
+ "resolution": {
+  "maxElements": 40000
+ }
+}

@@ -310,7 +310,12 @@ def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, de
                 m = m.copy()
                 trimesh.repair.fix_winding(m)
                 trimesh.repair.fill_holes(m)
-                return manifold_from_trimesh(m)
+                try:
+                    return manifold_from_trimesh(m)
+                except ValueError:
+                    # fill_holes leaves loops over four edges: a few slivers a
+                    # thin lattice wall left open at a coarse pitch
+                    return manifold_from_trimesh(_close_loops(m))
         kids = [build(k) for k in q.kids]
         if q.op == "union":
             return m3d.Manifold.batch_boolean(kids, m3d.OpType.Add)
@@ -327,6 +332,35 @@ def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, de
     from .step import attach_plan
 
     return attach_plan(mesh, p)
+
+
+def _close_loops(m, max_len=64):
+    """Close each open boundary loop of up to `max_len` edges with a fan
+    from its centroid, wound against the faces beside it."""
+    import trimesh
+
+    F = np.asarray(m.faces)
+    d = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    key = np.sort(d, axis=1)
+    _, inv, cnt = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+    nxt = {int(a): int(b) for a, b in d[cnt[inv.ravel()] == 1]}
+    V = [np.asarray(m.vertices, float)]
+    new = []
+    n = len(V[0])
+    while nxt:
+        a0, a = nxt.popitem()
+        loop = [a0]
+        while a is not None and a != a0:
+            loop.append(a)
+            a = nxt.pop(a, None)
+        if a is None or len(loop) < 3 or len(loop) > max_len:
+            continue
+        V.append(V[0][loop].mean(axis=0)[None])
+        new += [[loop[(i + 1) % len(loop)], loop[i], n] for i in range(len(loop))]
+        n += 1
+    if not new:
+        return m
+    return trimesh.Trimesh(np.vstack(V), np.vstack([F, np.asarray(new)]), process=False)
 
 
 # ---- measuring -------------------------------------------------------------------

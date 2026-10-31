@@ -1,0 +1,29 @@
+{
+  "files": ["out/link.stl", "solid/link-solid.stl"],
+  "quick": [
+    {"file": "solid/report.json", "value": "r['mass']", "min": 26, "max": 35, "what": "solid link's mass, g"},
+    {"file": "solid/report.json", "value": "r['analyses']['stress']['safetyFactor']", "min": 5.0, "max": 8.5, "what": "solid link's safety factor"},
+    {"file": "out/report.json", "value": "r['mass']", "min": 19, "max": 27, "what": "graded link's mass, g"},
+    {"file": "out/report.json", "value": "r['bodies']", "equals": 1, "what": "one body"},
+    {"file": "out/report.json", "value": "r['watertight']", "equals": true, "what": "watertight mesh"},
+    {"file": "out/report.json", "value": "r['enclosedVoids']", "equals": 0, "what": "sealed voids left in the mesh"},
+    {"file": "out/report.json", "value": "r['drains']['ok']", "equals": true, "what": "drains verified"},
+    {"file": "out/report.json", "value": "r['drains']['sealedAfter']", "equals": 0, "what": "sealed voids after drilling"},
+    {"file": "out/report.json", "value": "len([v for v in r['drains']['voids'] if v['holes']])", "equals": 2, "what": "drained voids (the gyroid's two labyrinths)"},
+    {"file": "out/report.json", "value": "len(r['drains']['holes'])", "min": 4, "max": 8, "what": "drain holes"},
+    {"file": "out/report.json", "value": "max(h['stressRatio'] for h in r['drains']['holes'])", "max": 0.35, "what": "highest stress at a hole, fraction of peak"},
+    {"file": "out/report.json", "value": "r['printability']['ok']", "equals": true, "what": "printability check passes"}
+  ],
+  "full": [
+    {"file": "solid/report.json", "value": "r['mass']", "min": 29.5, "max": 32, "what": "solid link's mass, g (30.8)"},
+    {"file": "solid/report.json", "value": "r['analyses']['stress']['safetyFactor']", "min": 6.5, "max": 7.7, "what": "solid link's safety factor (7.1)"},
+    {"file": "solid/report.json", "value": "r['analyses']['stress']['deflection']", "min": 0.45, "max": 0.55, "what": "solid link's deflection, mm (0.50)"},
+    {"file": "out/report.json", "value": "r['mass']", "min": 22.5, "max": 25, "what": "graded link's mass, g (23.8)"},
+    {"file": "out/report.json", "value": "r['bodies']", "equals": 1, "what": "one body"},
+    {"file": "out/report.json", "value": "r['enclosedVoids']", "equals": 0, "what": "sealed voids left in the mesh"},
+    {"file": "out/report.json", "value": "r['drains']['ok']", "equals": true, "what": "drains verified"},
+    {"file": "out/report.json", "value": "len(r['drains']['holes'])", "equals": 4, "what": "drain holes (4)"},
+    {"file": "out/report.json", "value": "r['drains']['sealedBefore']", "min": 30, "max": 45, "what": "sealed voids before drilling (37)"},
+    {"file": "out/report.json", "value": "r['printability']['ok']", "equals": true, "what": "printability check passes"}
+  ]
+}

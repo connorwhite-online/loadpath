@@ -827,6 +827,9 @@ class FieldGraph:
         full = os.path.realpath(os.path.join(root, path))
         if os.path.commonpath([root, full]) != root:
             raise ValueError(f"path {path!r} must stay inside the graph's folder")
+        if not os.path.exists(full):
+            raise ValueError(f"no file {path!r} in {root} (paths resolve from the graph's folder; "
+                             "--base-dir picks another)")
         return full
 
     def _compute(self, nd, P, memo):
@@ -1062,7 +1065,9 @@ class FieldGraph:
             mesh = self.mesh(pitch=float(s.get("pitch", 1.0)), name=s["part"], project=1)
         else:
             mesh = trimesh.load(self._path(s["part"]), force="mesh")
-        rep = verify_part(study, mesh, max_cells=int(s.get("cells", 120_000)), fields=True)
+        from . import quick
+
+        rep = verify_part(study, mesh, max_cells=quick.result_cells(int(s.get("cells", 120_000))), fields=True)
         self.analyses[nd.name] = {k: v for k, v in rep.items() if k != "fields"}
         return rep["fields"]
 
@@ -1776,8 +1781,11 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
 
     if drains_wanted(doc.get("drains", "auto"), process):
         opts = DrainOptions.from_spec(doc.get("drains"))
+        from . import quick
+
+        pitch = (doc.get("mesh") or {}).get("pitch")
         drains = drain_graph(g, process, opts, build=doc.get("build"), min_wall=doc.get("minWall"),
-                             pitch=(doc.get("mesh") or {}).get("pitch"), progress=progress)
+                             pitch=pitch and quick.mesh_pitch(pitch, None), progress=progress)
     if (doc.get("mesh") or {}).get("stream"):
         return None, _run_streamed(doc, g, out_dir, drains, process, progress, t0)
     mesh = g.mesh(progress=progress)
@@ -1829,6 +1837,12 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
 
             run = getattr(importlib.import_module(f".{mod}", __package__), fn)
             rep[key] = run(g, doc[key], mat)
+    if g.analyses:
+        # what each `result` node's study said of the part it analyzed
+        rep["analyses"] = {k: {"part": g.nodes[k].spec.get("part"), "safetyFactor": a.get("safetyFactor"),
+                               "deflection": max((c["deflection"] for c in a.get("cases") or []), default=None),
+                               "cells": a.get("analysisCells")}
+                           for k, a in g.analyses.items() if k in g.nodes}
     if g.plan is not None:
         from .sharp import edge_accuracy, plan_refs
 

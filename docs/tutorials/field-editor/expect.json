@@ -1,0 +1,28 @@
+{
+  "files": ["editor.html", "out/link.stl", "tune/tuned.json", "tune/tune.json", "tuned/link.stl"],
+  "quick": [
+    {"file": "out/report.json", "value": "r['mass']", "min": 24, "max": 33, "what": "the link as drawn, g"},
+    {"file": "out/report.json", "value": "r['bodies']", "equals": 1, "what": "one body"},
+    {"file": "out/report.json", "value": "r['watertight']", "equals": true, "what": "watertight mesh"},
+    {"file": "out/report.json", "value": "r['printability']['ok']", "equals": true, "what": "printability check passes"},
+    {"file": "tune/report.json", "value": "r['ok']", "equals": true, "what": "tune found a part that meets the limits"},
+    {"file": "tune/report.json", "value": "r['limits']", "equals": {"safetyFactor": 3.0, "maxDeflection": 0.8}, "what": "limits from the study's goal"},
+    {"file": "tune/report.json", "value": "r['best']['mass'] < r['start']['mass']", "equals": true, "what": "tuned lighter than drawn"},
+    {"file": "tune/report.json", "value": "r['best']['mass']", "min": 21, "max": 30, "what": "tuned mass, g"},
+    {"file": "tune/report.json", "value": "r['best']['deflection']", "max": 0.8, "what": "tuned deflection, mm"},
+    {"file": "tune/report.json", "value": "r['best']['safetyFactor']", "min": 3.0, "what": "tuned safety factor"},
+    {"file": "tuned/report.json", "value": "r['mass']", "min": 21, "max": 30, "what": "tuned link meshed, g"},
+    {"file": "tuned/report.json", "value": "r['bodies']", "equals": 1, "what": "tuned link is one body"}
+  ],
+  "full": [
+    {"file": "out/report.json", "value": "r['mass']", "min": 27.5, "max": 29.5, "what": "the link as drawn, g (28.5)"},
+    {"file": "out/report.json", "value": "r['analyses']['stress']['safetyFactor']", "min": 5.0, "max": 6.4, "what": "drawn link's safety factor, result node (5.7)"},
+    {"file": "tune/report.json", "value": "r['start']['mass']", "min": 27.5, "max": 29.5, "what": "tune's start, g (28.4)"},
+    {"file": "tune/report.json", "value": "r['best']['mass']", "min": 24.3, "max": 26.3, "what": "tuned mass, g (25.3)"},
+    {"file": "tune/report.json", "value": "r['best']['check']['deflection']", "min": 0.65, "max": 0.8, "what": "tuned deflection on the fine grid, mm (0.785)"},
+    {"file": "tune/report.json", "value": "r['best']['check']['safetyFactor']", "min": 4.0, "max": 6.5, "what": "tuned safety factor on the fine grid (5.1)"},
+    {"file": "tune/report.json", "value": "r['evaluations']", "equals": 20, "what": "analyses spent"},
+    {"file": "tuned/report.json", "value": "r['mass']", "min": 24.4, "max": 26.4, "what": "tuned link meshed, g (25.4)"},
+    {"file": "tuned/report.json", "value": "r['bodies']", "equals": 1, "what": "tuned link is one body"}
+  ]
+}
