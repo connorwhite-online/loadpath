@@ -62,16 +62,25 @@ PROCESS_LIMITS = {
 from .porous import _BAND_CELLS  # noqa: E402  (the dead band under a sealed face, in cells, beyond the seal)
 
 
+# port speed to aim for (m/s) when the face has room: whole-exchanger sims put 3-5
+# velocity heads in the headers, so a port sized only to the budget leaves a
+# liquid side over it (intercooler coolant: 11.5 mm port, 18 kPa of headers; 22 mm, 1.8)
+_PORT_SPEED = {"liquid": 1.0, "gas": 25.0}
+
+
 def _port(m, fl, dp_budget, share, d_max, d_min=4.0):
-    """The smallest port (mm, 0.5 mm steps) whose 1.5 velocity heads stay
-    under `share` of the budget, capped by the face."""
+    """The port (mm, 0.5 mm steps): wide enough that its 1.5 velocity heads
+    stay under `share` of the budget and its speed under _PORT_SPEED, as the
+    face allows. Returns (d, whether the face capped it below the budget's)."""
+    v_aim = _PORT_SPEED["liquid" if fl.rho > 100 else "gas"]
     if dp_budget is None or not np.isfinite(dp_budget):
-        v = 3.0 if fl.rho > 100 else 30.0
+        v = v_aim
     else:
         v = np.sqrt(share * dp_budget / (0.75 * fl.rho))
-    d = 2e3 * np.sqrt(m / (fl.rho * np.pi * v))
+    d_need = 2e3 * np.sqrt(m / (fl.rho * np.pi * v))
+    d = max(d_need, min(2e3 * np.sqrt(m / (fl.rho * np.pi * v_aim)), d_max))
     d = max(d_min, np.ceil(d * 2.0) / 2.0)
-    return float(min(d, d_max)), d > d_max
+    return float(min(d, d_max)), d_need > d_max
 
 
 def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_drop: dict | None = None,
