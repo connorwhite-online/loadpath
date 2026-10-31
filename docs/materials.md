@@ -128,4 +128,7 @@ datasheet values changed the following:
 The coarse eval tier still passes every case on these values. Its baseline
 (`loadpath/evals/baselines/coarse.json`) was re-saved: the biggest changes were
 mbb-beam at -7% massAtTarget and generated link 3 at +6%. The full tier has
-not been re-run yet.
+been re-run too (`--jobs 1`; the GRIP wrist link needs `LOADPATH_WORKERS=1` to fit
+in 15 GB), and all 14 cases pass. Its baseline is `loadpath/evals/baselines/full.json`.
+On the library PA12 card, arm-link went from 59.6 g at SF 14.1 to 55.4 g at SF 14.6,
+and grip-wrist-link-mjf stayed at 43.7 g, with SF 4.39 to 4.59.
