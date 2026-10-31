@@ -378,6 +378,11 @@ def main(argv=None):
             summary["outcomes"][bi]["step"] = st
         except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing
             summary.setdefault("warnings", []).append(f"STEP not written: {type(exc).__name__}: {exc}")
+    if result.best is not None:
+        # a fixed name for the best outcome, for the next command in a script
+        best_stl = os.path.join(args.out, "best.stl")
+        result.outcomes[result.best].mesh.export(best_stl)
+        summary["bestStl"] = best_stl
     if raw.get("lattice") is not None and result.best is not None:
         best = result.outcomes[result.best]
         summary["lattice"] = _lattice(study, best.mesh, raw["lattice"], args.out, stems[result.best],

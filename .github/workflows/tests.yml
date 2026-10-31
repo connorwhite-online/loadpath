@@ -29,3 +29,26 @@ jobs:
       - run: python tests/test_calibration.py
       - run: python tests/test_impact.py
       - run: pip install pytest && python -m pytest -q tests/test_materials.py
+
+  # docs/tutorials/: each tutorial's commands, run in quick mode (coarse grid)
+  # and held to its expect.json, so the docs can't drift from the code
+  tutorials:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        tutorial: [fdm-bracket, sls-lattice-drains, heat-exchanger, impact-bumper, field-editor, urdf-arm-link]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e ".[render,flow]"
+      # the field editor's page is checked in headless Chromium
+      - run: npm install -g playwright && npx playwright install --with-deps chromium
+      - run: python tests/test_tutorials.py ${{ matrix.tutorial }}

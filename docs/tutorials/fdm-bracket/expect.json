@@ -1,0 +1,18 @@
+{
+  "files": ["out/best.stl", "out/*.3mf", "bracket.3mf"],
+  "quick": [
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "best outcome meets SF 3"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 40, "max": 60, "what": "best outcome's mass, g"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 3.0, "what": "best outcome's safety factor"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['bodies']", "equals": 1, "what": "one connected body"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['keepOutIntrusion']", "max": 1.0, "what": "screw keep-out intrusion, mm^3"},
+    {"file": "orient.json", "value": "r['best']", "equals": "+z", "what": "best build direction"}
+  ],
+  "full": [
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "best outcome meets SF 3"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 44, "max": 53, "what": "best outcome's mass, g (48.6)"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 4.5, "max": 6.5, "what": "best outcome's safety factor (5.43)"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['bodies']", "equals": 1, "what": "one connected body"},
+    {"file": "orient.json", "value": "r['best']", "equals": "+z", "what": "best build direction"}
+  ]
+}
