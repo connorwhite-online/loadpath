@@ -245,6 +245,18 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
             blocks = rad[:, :, None] * rad[:, None, :] + np.outer(ax, ax)[None]
             spring_blocks.append((idx, blocks * _PIN_STIFFNESS * mesh.pitch))
+    if study.supports and all(s.pin for s in study.supports) and not study.self_equilibrated:
+        lines = [_cylinder_of(study, s.region, s.shape, f"supports[{i}]") for i, s in enumerate(study.supports)]
+        p0, ax = lines[0]
+        coaxial = all(abs(abs(float(a @ ax)) - 1) < 1e-3 and
+                      np.linalg.norm((q - p0) - ((q - p0) @ ax) * ax) < mesh.pitch for q, a in lines[1:])
+        if coaxial:
+            # a brief-eval bell crank pinned at its pivot alone read SF 0.0004:
+            # nothing holds it from turning, so the solve is singular
+            raise ValueError("every support is a pin on one axis, so nothing stops the part turning about it and "
+                             "the stiffness is singular (safety factors come out near zero). Hold what really "
+                             "stops it turning: fix the link, arm or stop that reacts the load (\"fix\": \"all\" "
+                             "on that bore), or fix the pivot itself with \"fix\": \"all\"")
     springs = None
     if spring_blocks:
         import scipy.sparse as sp
