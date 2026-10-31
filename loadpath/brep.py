@@ -686,23 +686,66 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
     sew = BRepBuilderAPI_Sewing(SEW)
     u = np.linspace(0, 1, N)
     nq = 0
-    for f, lf in zip(F, flab):
-        f = [int(x) for x in f]
-        if lf < O:
-            loop = []                            # (edge, traversed reversed?)
+    def side(a, b):
+        """[(edge, reversed?)] along coarse edge a -> b."""
+        e = (min(a, b), max(a, b))
+        if split[e]:
+            return [(edge(("h", a, e), half(a, b)), False), (edge(("h", b, e), half(b, a)), True)]
+        if fl_edge[e]:
+            return [(edge(("e", e), curve(e[0], e[1])), a > b)]
+        return [(edge(("p", e), P=poly[e]), a > b)]
+
+    # each connected exact region is one face, bounded by its seams
+    import scipy.sparse as sp2
+    from scipy.sparse.csgraph import connected_components as _cc
+
+    n_region = n_fallback = 0
+    exact = flab < O
+    same = exact[cf0] & (flab[cf0] == flab[cf1])
+    G = sp2.coo_matrix((np.ones(same.sum()), (cf0[same], cf1[same])), shape=(len(F), len(F)))
+    _, comp = _cc(G, directed=False)
+    comp = np.where(exact, comp, -1)
+    for c in np.unique(comp[exact]):
+        tris = np.flatnonzero(comp == c)
+        lf = int(flab[tris[0]])
+        if lf not in surf_geom:
+            surf_geom[lf] = geo[lf].geom()
+        inside = set(int(t) for t in tris)
+        out_edges = {}
+        for t in tris:
+            f = [int(x) for x in F[t]]
             for k in range(3):
                 a, b = f[k], f[(k + 1) % 3]
                 e = (min(a, b), max(a, b))
-                if split[e]:
-                    loop.append((edge(("h", a, e), half(a, b)), False))
-                    loop.append((edge(("h", b, e), half(b, a)), True))
-                elif fl_edge[e]:
-                    loop.append((edge(("e", e), curve(e[0], e[1])), a > b))
-                else:
-                    loop.append((edge(("p", e), P=poly[e]), a > b))
-            if int(lf) not in surf_geom:
-                surf_geom[int(lf)] = geo[int(lf)].geom()
-            sew.Add(_exact_face(geo[int(lf)], surf_geom[int(lf)], loop, CV[f].mean(axis=0)))
+                pos = int(np.searchsorted(ckey, e[0] * (int(F.max()) + 1) + e[1]))
+                other = int(cf1[pos]) if int(cf0[pos]) == t else int(cf0[pos])
+                if other not in inside:
+                    out_edges.setdefault(a, []).append(b)
+        loops = []
+        while out_edges:
+            a0 = next(iter(out_edges))
+            loop, a = [], a0
+            while True:
+                b = out_edges[a].pop()
+                if not out_edges[a]:
+                    del out_edges[a]
+                loop += side(a, b)
+                a = b
+                if a == a0 or a not in out_edges:
+                    break
+            loops.append(loop)
+        T = CV[F[tris]]
+        tn = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+        flip = float(np.einsum("ij,ij->", tn, geo[lf].normal(T.mean(axis=1)))) < 0
+        try:
+            sew.Add(_region_face(geo[lf], surf_geom[lf], loops, flip))
+            n_region += 1
+        except Exception:
+            n_fallback += 1
+            for t in tris:                       # one face per triangle, merged later
+                f = [int(x) for x in F[t]]
+                loop = side(f[0], f[1]) + side(f[1], f[2]) + side(f[2], f[0])
+                sew.Add(_exact_face(geo[lf], surf_geom[lf], loop, CV[f].mean(axis=0)))
     # pairs: one patch over the quad a, c, b, d (shared edge a-b, c and d the far corners)
     for i, j in pair:
         fi, fj = [int(x) for x in F[i]], [int(x) for x in F[j]]
@@ -799,7 +842,7 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
         solid = merged                           # else keep the faces unmerged: valid beats tidy
     if DEBUG:
         print("after unify: valid", BRepCheck_Analyzer(solid).IsValid(), "vol", _volume(solid), flush=True)
-    rep = {"patches": nq, "triangles": int((flab >= O).sum()), "exactTriangles": int((flab < O).sum()),
+    rep = {"patches": nq, "exactFaces": n_region, "exactFallbacks": n_fallback, "triangles": int((flab >= O).sum()), "exactTriangles": int((flab < O).sum()),
            "exactSurfaces": int(len(set(int(x) for x in np.unique(lab) if x < O))),
            "smoothRegions": int(len(set(int(x) for x in np.unique(lab) if x >= O))),
            "seconds": {"coarsen": round(t1 - t0, 1), "edges": round(t2 - t1, 1), "faces": round(t3 - t2, 1),
@@ -912,6 +955,63 @@ def _exact_face(s, geom, loop, centre, tol=0.01):
     fx = ShapeFix_Face(face)                     # the wire's own checks (uv gaps at the corners)
     fx.Perform()
     return fx.Face()
+
+
+def _region_face(s, geom, loops, flip, tol=0.01):
+    """One face on exact surface `s` bounded by `loops` ([(edge, reversed)]
+    each, counterclockwise about the part's outward normal; `flip` when that
+    is against the surface's own normal). Each edge gets its curve on the
+    surface, the angle around a cylinder unwrapped along the loop, so a ring
+    round a bore closes in 3D but not in (u, v): ShapeFix adds the seam."""
+    from OCP.BRep import BRep_Builder, BRep_Tool
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.BRepLib import BRepLib
+    from OCP.Geom2dAPI import Geom2dAPI_PointsToBSpline
+    from OCP.GeomAbs import GeomAbs_C2
+    from OCP.gp import gp_Pnt2d
+    from OCP.OCP.collections import Array1_double, Array1_gp_Pnt2d
+    from OCP.ShapeFix import ShapeFix_Face
+    from OCP.TopAbs import TopAbs_REVERSED
+    from OCP.TopoDS import TopoDS_Face, TopoDS_Wire
+
+    if s.kind == "sphere":
+        raise RuntimeError("spherical exact faces are not built yet")
+    bb = BRep_Builder()
+    face = TopoDS_Face()
+    bb.MakeFace(face, geom, 1e-7)
+    for loop in loops:
+        if flip:
+            loop = [(e, not r) for e, r in reversed(loop)]
+        parts = []
+        for e, rev in loop:
+            c = BRep_Tool.Curve_s(e, 0.0, 1.0)
+            t = np.linspace(c.FirstParameter(), c.LastParameter(), 12)
+            P = np.array([[p.X(), p.Y(), p.Z()] for p in (c.Value(x) for x in t)])
+            parts.append((t, P[::-1] if rev else P))
+        UV = _uv(s, np.vstack([P for _, P in parts]))
+        if s.kind == "cylinder":
+            UV[:, 0] = np.unwrap(UV[:, 0])
+        wire = TopoDS_Wire()
+        bb.MakeWire(wire)
+        for k, ((e, rev), (t, _)) in enumerate(zip(loop, parts)):
+            uv = UV[12 * k:12 * (k + 1)]
+            if rev:
+                uv = uv[::-1]
+            pts, par = Array1_gp_Pnt2d(1, len(t)), Array1_double(1, len(t))
+            for j, (q, x) in enumerate(zip(uv, t)):
+                pts.SetValue(j + 1, gp_Pnt2d(float(q[0]), float(q[1])))
+                par.SetValue(j + 1, float(x))
+            pc = Geom2dAPI_PointsToBSpline(pts, par, 1, 3, GeomAbs_C2, 1e-7).Curve()
+            bb.UpdateEdge(e, pc, face, tol)
+            bb.Add(wire, e.Oriented(TopAbs_REVERSED) if rev else e)
+        bb.Add(face, wire)
+    BRepLib.SameParameter_s(face, tol)
+    fx = ShapeFix_Face(face)
+    fx.Perform()
+    out = fx.Face()
+    if not BRepCheck_Analyzer(out).IsValid():
+        raise RuntimeError("exact region face is not valid")
+    return out
 
 
 def _bernstein(d):
