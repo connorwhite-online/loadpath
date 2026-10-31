@@ -3,6 +3,7 @@ Command line: run a study file and write the parts, a report and renders.
 
     python -m loadpath run study.json --out out/
     python -m loadpath check study.json        # validate + show the voxel problem, no solve
+    python -m loadpath verify study.json part.stl   # check a finished part (or a run's folder) against a study
     python -m loadpath schema [study|heatExchanger|lattice]   # JSON Schema
     python -m loadpath examples [name]         # list the packaged examples, or print one
     python -m loadpath lattice study.json part.stl --out out/ [--options lattice.json]
@@ -130,6 +131,60 @@ def _assembly(args):
     return 0
 
 
+def _verify(args):
+    """A finished part (an STL, or a run's folder: its best outcome) checked
+    against a study: the same check `run` gives its outcomes."""
+    import trimesh
+
+    from . import quick
+    from .domain import choose_pitch
+    from .spec import study_from_dict
+    from .study import _margin
+    from .tasks import check_study
+    from .verify import verify_part
+
+    raw = _load(args.study)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
+    checked = check_study(raw, base)
+    if not checked["ok"]:
+        print(json.dumps(checked, indent=2))
+        return 2
+    part = args.part
+    if os.path.isdir(part):
+        rep = os.path.join(part, "report.json")
+        if not os.path.exists(rep):
+            print(json.dumps({"ok": False, "error": f"{part} is a folder with no report.json: name the STL"}))
+            return 2
+        r = _load(rep)
+        if r.get("best") is None:
+            print(json.dumps({"ok": False, "error": f"{rep} has no best outcome: name the STL"}))
+            return 2
+        # report.json names it as seen from where `run` ran: look beside the report
+        part = os.path.join(part, os.path.basename(r["outcomes"][r["best"]]["stl"]))
+    if not os.path.exists(part):
+        print(json.dumps({"ok": False, "error": f"no such part: {part}"}))
+        return 2
+    study = study_from_dict(raw, base_dir=base)
+    mesh = trimesh.load(part, force="mesh")
+    pitch = choose_pitch(study)
+    rep = verify_part(study, mesh, max_cells=quick.verify_cells(args.cells), min_pitch=0.5 * pitch,
+                      contact_band=pitch)
+    m = _margin(study, rep)
+    summary = {"ok": True, "part": part, "study": args.study, "mass": rep["mass"],
+               "safetyFactor": rep.get("safetyFactor"), "margin": m,
+               "passes": None if m is None else bool(m >= 1.0 and rep.get("bodies", 1) <= 1),
+               "keepOutIntrusion": rep.get("keepOutIntrusion"), "bodies": rep.get("bodies"),
+               "cases": {c["name"]: {"safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection")}
+                         for c in rep.get("cases", [])},
+               "report": rep}
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "verify.json"), "w") as fh:
+            json.dump(_jsonable(summary), fh, indent=2)
+    print(json.dumps(_jsonable({k: v for k, v in summary.items() if k != "report"}), indent=2))
+    return 0
+
+
 def _materials(args):
     from .calibration import list_cards
     from .material_library import card_names, describe
@@ -169,6 +224,12 @@ def main(argv=None):
     r.add_argument("--recall", action="store_true",
                    help="start from what earlier runs on the same design space found (recall.py; "
                         "or set LOADPATH_RECALL=1)")
+    v = sub.add_parser("verify", help="check a finished part against a study: mass, SF per load case, keep-outs")
+    v.add_argument("study")
+    v.add_argument("part", help="the part's STL, or a `run` output folder (its best outcome)")
+    v.add_argument("--out", help="also write verify.json (with the full report) here")
+    v.add_argument("--cells", type=int, default=60_000, help="analysis grid cells (default 60000)")
+    v.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
     c = sub.add_parser("check", help="validate a study and report the voxel problem")
     c.add_argument("study")
     c.add_argument("--base-dir")
@@ -263,7 +324,7 @@ def main(argv=None):
     asm.add_argument("--cycles", default="", help="life cycles by sample kind, for fatigue: "
                      "dynamic=1e6,pose=1e6,push=1e4,stall=1e3 (stall:j2=... for one joint)")
     asm.add_argument("--out", default="loadpath-out")
-    for sp in (r, lt, h, fg, tu, ed, asm):
+    for sp in (r, lt, h, fg, tu, ed, asm, v):
         sp.add_argument("--quick", action="store_true",
                         help="coarse grid, fewer iterations: a first look in a minute or two (quick.py)")
     args = p.parse_args(argv)
@@ -299,6 +360,8 @@ def main(argv=None):
         return _calibrate(args)
     if args.cmd == "assembly":
         return _assembly(args)
+    if args.cmd == "verify":
+        return _verify(args)
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
