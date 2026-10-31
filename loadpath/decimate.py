@@ -37,7 +37,7 @@ def _normals(T):
 
 
 def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01, progress=None,
-             target=None, place=None, turn=0.5):
+             target=None, place=None, turn=0.5, labels=None, allow=None, max_reject=3, quality=None):
     """(V, F, stats, kept): the mesh with edges collapsed wherever it stays within
     `tol` mm of field = 0. `locked` vertices (a mask) never move or go:
     the streamed export's seams. Unused vertices are dropped (locked ones
@@ -48,7 +48,13 @@ def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01,
     (a, b) puts the new vertex at `place(V, a, b)` (the midpoints if not
     given), and passes stop once the mesh is down to `target` faces.
     Shortest edges first makes that an even coarsening. `turn` is the
-    least cosine between a reshaped face's normal and its old one."""
+    least cosine between a reshaped face's normal and its old one.
+    `labels` (one per face) ride along with the faces and come back in
+    stats["labels"]; `allow(E, F, labels)` filters each pass's candidate
+    edges (a mask), say to keep region seams in place. A vertex whose
+    collapses failed `max_reject` times is left alone. `quality(Told, Tnew,
+    labels)` (the reshaped triangles' corners before and after, (k, 3, 3),
+    and their labels) can veto collapses too."""
     from .fields import _project
     from .narrowband import peval
 
@@ -59,6 +65,7 @@ def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01,
     alive = np.ones(n, bool)
     rej = np.zeros(n, np.int64)
     f0 = len(F)
+    lab = None if labels is None else np.asarray(labels).copy()
     rng = np.random.default_rng(0)
     passes = 0
     for passes in range(1, max_passes + 1):
@@ -71,8 +78,10 @@ def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01,
         E = np.stack([a[h], b[h]], axis=1)
         # an edge that failed before yields to its neighbours, or it would
         # block them pass after pass; a vertex that failed three times is done
-        frozen = lock | (rej >= 3)
+        frozen = lock | (rej >= max_reject)
         E = E[~(frozen[E[:, 0]] | frozen[E[:, 1]])]
+        if allow is not None and len(E):
+            E = E[allow(E, F, lab)]
         if not len(E):
             break
         d = V[E[:, 0]] - V[E[:, 1]]
@@ -128,6 +137,8 @@ def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01,
         hit = (tri == wa[:, None]) | (tri == wb[:, None])
         Tnew[hit] = np.repeat(P[pr[:, 0]], hit.sum(axis=1), axis=0)
         good = (_normals(Told) * _normals(Tnew)).sum(axis=1) > turn
+        if quality is not None and len(Tnew):
+            good &= quality(Told, Tnew, None if lab is None else lab[pr[:, 1]])
         if field is not None:
             S = np.concatenate([Tnew.mean(axis=1), 0.5 * (Tnew[:, 0] + Tnew[:, 1]),
                                 0.5 * (Tnew[:, 1] + Tnew[:, 2]), 0.5 * (Tnew[:, 2] + Tnew[:, 0])])
@@ -148,7 +159,10 @@ def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01,
         remap[Wb] = Wa
         alive[Wb] = False
         F = remap[F]
-        F = F[(F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 0] != F[:, 2])]
+        keepf = (F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 0] != F[:, 2])
+        F = F[keepf]
+        if lab is not None:
+            lab = lab[keepf]
         if progress:
             progress({"stage": "decimate", "pass": passes, "faces": int(len(F))})
         if nf - len(F) < min_gain * nf or (target is not None and len(F) <= target):
@@ -158,4 +172,6 @@ def decimate(V, F, field, tol, pitch, locked=None, max_passes=80, min_gain=0.01,
     used |= lock & alive
     new = np.cumsum(used) - 1
     stats = {"tolerance": float(tol), "facesBefore": int(f0), "faces": int(len(F)), "passes": int(passes)}
+    if lab is not None:
+        stats["labels"] = lab
     return V[used], new[F], stats, used
