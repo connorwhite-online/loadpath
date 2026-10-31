@@ -119,11 +119,54 @@ about 4 min in all):
   A quick close takes about 20% more servo force than a slow one, because
   TPU is stiffer at speed.
 
+## Large strokes: optimizing on the large-deflection response
+
+`loadpath/mechanism_nl.py` designs on the response the part will actually
+have (Pedersen, Buhl & Sigmund 2001). The input is driven through a
+prescribed stroke, the full grid is solved with large deflections (Newton,
+total Lagrangian hex8, neo-Hookean), and an adjoint gives the gradient of
+the output's travel at the end of the stroke. Void cells use the
+Wang, Lazarov & Sigmund (2014) interpolation, so near-empty cells fall back
+to a linear response and do not invert. A failed Newton solve backs the
+design halfway toward the last good one. The modulus and Poisson's ratio
+can be per element, for multi-material parts.
+
+```python
+from loadpath.mechanism_nl import optimize_mechanism_nonlinear
+r = optimize_mechanism_nonlinear(domain, nu, MechanismOptions(
+    volume_fraction=0.3, filter_radius=1.5, k_out=0.02), stroke=12.0)
+```
+
+`python examples/mechanism/large_stroke.py` (about 5 min) compares it with
+the linear design on the textbook inverter driven 12 cells (30% of its
+length), both judged by `stroke_mechanism`:
+
+| | linear design | large-deflection design |
+|---|---|---|
+| output travel at the full stroke | 2.98 | **3.53** (+18%) |
+| what linear theory promised the linear design | 5.39 | |
+| one-node hinges | 1 | **0** |
+| peak strain | 17.6% | 16.2% |
+
+![large-stroke inverter](images/mechanism/large-stroke-inverter.png)
+
+The linear model over-promises the linear design by 81%. Its output peaks
+near 10 cells of stroke and then stalls as its members swing past their
+leverage. The design optimized on the large-deflection response keeps
+pulling through the whole stroke, with no corner hinge.
+
 ## Not yet
 
-- **Linear optimization:** the large-deflection check comes after the
-  design. Optimizing on the nonlinear response (Pedersen, Buhl & Sigmund
-  2001) is the next step for fingers that curl tens of degrees.
+- **Far-curling fingers:** the large-deflection optimizer works on the
+  inverter, but a slender TPU finger meant to curl tens of degrees does not
+  converge yet. At 80 x 20 cells both the linear (24 corner hinges) and the
+  large-deflection design (8) were hinge-ridden and neither survived a
+  stroke check; at 40 x 10 cells the Newton solve of the grey early designs
+  fails just short of the full stroke even after backtracking. A
+  continuation on the stroke (start short, lengthen it as the design
+  firms up) is the likely fix.
+- **Tendon input:** `mechanism_nl` takes a prescribed stroke; a tendon
+  (`nonlinear.Tendon`) as the input is not wired in yet.
 - **No contact:** the workpiece is a spring on the jaw, not a body the jaw
   wraps around.
 - **2.5D plates only** for the gripper above. The optimizer itself is 3D;

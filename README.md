@@ -186,7 +186,10 @@ servo's stroke with large deflections (`stroke_mechanism`). A TPU gripper
 grips with 5.4 N at a 3 mm stroke with no corner hinges, and its grip
 relaxes to 3.8 N over a day as the TPU creeps. The textbook design with the
 same springs relies on 7 corner hinges and its large-deflection solve stops
-at a fifth of the stroke ([docs/MECHANISMS.md](docs/MECHANISMS.md)).
+at a fifth of the stroke. For long strokes, `mechanism_nl.py` optimizes on
+the large-deflection response itself: on the inverter driven through 30%
+of its length it moves the output 18% further than the linear design, with
+no corner hinge ([docs/MECHANISMS.md](docs/MECHANISMS.md)).
 
 ![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
 

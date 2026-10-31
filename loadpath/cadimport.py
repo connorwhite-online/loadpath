@@ -48,6 +48,10 @@ STEP_EXT = (".step", ".stp")
 DEFAULT_TOLERANCE = 0.05
 # mm: through radius up to an M6 clearance hole (3.2) counts as a bolt
 BOLT_MAX_R = 3.6
+# mm: a plain bore narrower than this (a cable pass, a pilot hole) is kept
+# open but not ringed with preserved material unless it is loaded or holds:
+# a ring there forces a strut out to it (GRIP's yoke grew one to a 4 mm pass)
+SEAT_MIN_R = 5.0
 # rad: a cylinder whose faces together cover less than this is a fillet or a
 # slot end, not a hole
 FULL_SPAN = 1.8 * math.pi
@@ -663,12 +667,15 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
         return out
 
     grown = space != "part" or grow > 0
+    setup = suggest_setup(feats, force)
     for it in feats["interfaces"]:
         bores = [by_id[h] for h in it["bores"]]
         cyls = [c for b in bores for c in bore_cyls(b, grown and b["kind"] == "bolt")]
         keep_out.append({"id": f"{it['id']}-hole" if it["kind"] == "bolted-face" or len(bores) > 1
                          else it["id"],
                          "shape": cyls[0] if len(cyls) == 1 else {"type": "union", "shapes": cyls}})
+        if it["kind"] == "bore" and bores[0]["r"] < SEAT_MIN_R and it["id"] not in setup.values():
+            continue                  # a cable pass or a pilot hole: kept open, not kept solid
         # preserved: rings round the bores, a pad under a bolted face, cut to the part
         keep = []
         for b in bores:
@@ -716,7 +723,6 @@ def draft_study(part: Part, feats: dict, out_dir: str, *, name: str | None = Non
             keep_out.append({"id": b["id"], "shape": cyls[0] if len(cyls) == 1 else
                              {"type": "union", "shapes": cyls}})
 
-    setup = suggest_setup(feats, force)
     study = {"name": stem,
              "description": f"Drafted by `loadpath import` from {os.path.basename(part.path or 'a mesh')}: "
                             f"{len(feats['bores'])} bores, {len(feats['faces'])} mounting faces, "

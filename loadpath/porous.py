@@ -34,11 +34,15 @@ what the one-number epsilon-NTU rating cannot:
 The core is not uniform: outside its own zones each fluid is sealed off
 within `cap` of the surface, and with a build axis its channels close under
 surfaces that look up. exchanger_domain measures each fluid's local share
-of the core from the design's own grid (averaged over about a cell) and
-scales K, C_F and the wetted area to it. On the 30 mm crossflow cube this
-is what sends the flow away from the +z edge, as the full LBM shows, and
-doubles the core's pressure drop (144 -> 252 Pa; LBM about 250 after its
-LES correction, the rating 127).
+of the core from the design's own grid (averaged over half a cell); where
+it is under half the bulk's, those partial channels carry nothing (_PERC).
+Against the full LBM of the 30 mm crossflow cube (flow.py) this reproduces
+the starved edges: mid-plane cv 0.52 vs 0.56, worst bin 0.05 vs 0.08; on
+the tuned cube 0.47 vs 0.52 and 0.24 vs 0.24. The core's pressure drop then
+reads 169 Pa on the tuned cube against the LBM's 159 raw (about 110 after
+its LES correction); on the original cube 225 against 364 raw (250): its
+6 mm ports jet into a 4 mm plenum and lose more at the core face than a
+porous medium can show. Size ports so they don't jet (sizing.py does).
 
 Flow, one fluid at a time (they only meet through heat): pseudo-transient
 pressure correction on a staggered (MAC) grid. Open cells (plenums,
@@ -75,7 +79,7 @@ from scipy import ndimage, sparse
 
 from .heatx_thermal import WALL_CONDUCTIVITY, _flow, _fluid
 
-__all__ = ["PorousDomain", "Medium", "exchanger_domain", "solve_flow", "solve_heat", "simulate_exchanger",
+__all__ = ["PorousDomain", "Medium", "exchanger_domain", "box_domain", "simulate_domain", "simulate_box", "solve_flow", "solve_heat", "simulate_exchanger",
            "simulate_design", "sweep", "savoldi_medium", "lbm_medium", "summarize", "plot_fields"]
 
 
@@ -112,9 +116,18 @@ def lbm_medium(phi, area_density, dh, cell):
                   0.0569 * phi ** -2.283, 2.257, -2.283)
 
 
-# local porosity: averaging window (cells) and a percolation-like threshold below
-# which a band of partial channels stops carrying flow
-_PERC = {"window": 0.5, "rc": 0.0}
+# dead edge band beyond the seal, in cells (box_domain, sizing.py): where the
+# calibrated local porosity puts the dead partial channels on designed cores
+_BAND_CELLS = 0.25
+
+# local porosity: averaging window (cells), and a threshold (share of the bulk's
+# open space) below which a band of partial channels carries nothing while the
+# rest flows as bulk core ("step"). Fitted to the flow thread's LBM of the 30 mm
+# crossflow cube, original and tuned: mid-plane cv 0.52 / 0.47 (LBM 0.56 / 0.52),
+# worst bin 0.05 / 0.24 (LBM 0.08 / 0.24). Scaling K and C_F continuously with
+# the local share ("step": False, exponent x "band") cannot match both: it
+# either evens the flow or adds resistance the LBM doesn't see.
+_PERC = {"window": 0.5, "rc": 0.5, "step": True, "band": 1.0}
 
 # closures: (pressure-drop law, Nu law)
 _CLOSURES = {"design": (savoldi_medium, "design"), "lbm": (lbm_medium, "lbm")}
@@ -189,9 +202,15 @@ def _local(dom, f):
     r = np.where(core, 1.0 if loc is None else np.maximum(loc / med.phi, 0.05), 1.0)
     phi = np.where(core, med.phi * r, 1.0)
     rc = _PERC["rc"]
-    rk = np.maximum((r - rc) / (1.0 - rc), 0.02) if rc > 0 else r
-    K = med.K * rk ** med.nK
-    CF = med.CF * rk ** med.nC
+    if _PERC.get("step"):
+        # partial channels below the threshold carry nothing; the rest flow as the bulk core
+        rk = np.where(r >= rc, 1.0, 0.02)
+        K = med.K * rk ** 2
+        CF = med.CF * rk ** -1
+    else:
+        rk = np.maximum((r - rc) / (1.0 - rc), 0.02) if rc > 0 else r
+        K = med.K * rk ** (med.nK * _PERC["band"])
+        CF = med.CF * rk ** (med.nC * _PERC["band"])
     return phi, K, CF, r
 
 
@@ -760,6 +779,17 @@ def simulate_design(hx, report, grids, duty, voxel=None, closures="design", prog
     if closures not in _CLOSURES:
         raise ValueError(f"closures is one of {sorted(_CLOSURES)}")
     dom = exchanger_domain(hx, report, grids, voxel, closures=closures)
+    return simulate_domain(dom, duty, closures, progress, fields, t0)
+
+
+def simulate_domain(dom, duty, closures="design", progress=None, fields=False, t0=None):
+    """Flow of both fluids, then heat, on a built domain."""
+    import time
+
+    t0 = t0 if t0 is not None else time.time()
+
+    class hx:                                         # noqa: N801 (names only)
+        names = dom.names
     kw = duty.get("wall", "petg")
     k_wall = float(WALL_CONDUCTIVITY[kw] if isinstance(kw, str) else kw)
     fluids = [_fluid(duty[n].get("fluid", "water")) for n in hx.names]
@@ -861,3 +891,80 @@ def plot_fields(sim_fields, path, axis=2, at=None, title=None):
     fig.savefig(path)
     plt.close(fig)
     return path
+
+
+def box_domain(hx, voxel=None, closures="design"):
+    """The porous grid of a box-cored crossflow exchanger built straight
+    from its spec, without designing it: for cores too big to design on a
+    wall-resolving grid (an intercooler at 0.5 mm walls is hundreds of
+    millions of points). Plenums are slabs `header` deep over each zone
+    face, inset `cap` from its edges; ports are round, on the face's
+    centre, `port_length` long; each fluid's core is dead within the edge
+    band (cap + a quarter cell) of every face it is sealed under, as the
+    calibrated local porosity finds on designed cores. The medium is the
+    analytic sheet geometry (tpms_geometry). Ignores print shaping (roofs,
+    closure), which the band stands in for."""
+    from .heatx import port_diameter, zones_for
+    from .heatx_thermal import tpms_geometry
+
+    if hx.layout != "cross" or hx.zones is not None:
+        raise ValueError("box_domain builds the cross layout; design other layouts with heatx")
+    clo, chi = (np.asarray(b, float) for b in hx.core.bounds())
+    ext = chi - clo
+    a0, a1 = (int(a) if not isinstance(a, str) else "xyz".index(a) for a in hx.axes)
+    a2 = 3 - a0 - a1
+    cap = hx.cap if hx.cap is not None else hx.wall + 1.0
+    pd = [port_diameter(hx, 0), port_diameter(hx, 1)]
+    if voxel is None:
+        voxel = min(hx.cell / 2.0, min(pd) / 4.0, hx.header / 3.0, float(ext.min()) / 12.0)
+    h_mm = float(voxel)
+    reach = hx.header + hx.port_length + 2 * h_mm
+    lo = clo - reach
+    dims = tuple(int(np.ceil((ext[i] + 2 * reach) / h_mm)) + 2 for i in range(3))
+    lo = lo - h_mm
+    pts = lo + (np.indices(dims).reshape(3, -1).T + 0.5) * h_mm
+    inside = np.all((pts >= clo) & (pts <= chi), axis=1)
+    core = inside.reshape(dims)
+    geo = tpms_geometry(hx.kind, hx.cell, hx.wall, hx.split)
+    law = _CLOSURES[closures][0]
+    band = cap + _BAND_CELLS * hx.cell
+    cells, inlet, outlet, media, phi_loc = [], [], [], [], []
+    for f, ax in ((0, a0), (1, a1)):
+        side = geo["sides"][f]
+        med = law(side["phi"], side["areaDensity"] * 1e3, side["dh"] * 1e-3, hx.cell * 1e-3)
+        others = [o for o in range(3) if o != ax]
+        # dead within the band of every face this fluid is sealed under
+        d_edge = np.min([np.minimum(pts[:, o] - clo[o], chi[o] - pts[:, o]) for o in others], axis=0)
+        live = (inside & (d_edge >= band)).reshape(dims)
+        pl = np.where(live, side["phi"], 0.0)
+        opn = np.zeros(int(np.prod(dims)), bool)
+        ends = []
+        for sgn, face in ((-1, clo[ax]), (1, chi[ax])):
+            out = sgn * (pts[:, ax] - face)                    # distance out of the face
+            lat = np.all([(pts[:, o] >= clo[o] + cap) & (pts[:, o] <= chi[o] - cap) for o in others], axis=0)
+            plen = (out > 0) & (out <= hx.header) & lat
+            c = 0.5 * (clo + chi)
+            rad = np.linalg.norm((pts - c)[:, others], axis=1)
+            port = (out > hx.header - h_mm) & (out <= hx.header + hx.port_length) & (rad <= 0.5 * pd[f])
+            opn |= plen | port
+            ends.append((port & (out > hx.header + hx.port_length - max(1.5 * h_mm, 0.5 * hx.port_length)))
+                        .reshape(dims))
+        m = core | opn.reshape(dims)
+        cells.append(m)
+        inlet.append(ends[0] & m)
+        outlet.append(ends[1] & m)
+        media.append(med)
+        phi_loc.append(pl)
+    return PorousDomain(h=h_mm * 1e-3, lo=lo, core=core, cells=cells, inlet=inlet, outlet=outlet, media=media,
+                        names=tuple(hx.names), wall=hx.wall * 1e-3, phi_sheet=geo["phiSheet"],
+                        extra={"cell": hx.cell, "coreFraction": core.astype(float), "phi": phi_loc})
+
+
+def simulate_box(hx, duty, voxel=None, closures="design", progress=None, fields=False):
+    """box_domain + simulate_domain: a whole crossflow box exchanger in
+    seconds to minutes, without designing it."""
+    import time
+
+    t0 = time.time()
+    dom = box_domain(hx, voxel, closures)
+    return simulate_domain(dom, duty, closures, progress, fields, t0)
