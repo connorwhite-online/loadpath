@@ -67,8 +67,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    for the uncertain load and keep known loads as plain vectors. A cone is
    3D: it tilts the force out of plane too, which a thin plate-like part (or
    one that would swing on a pin rather than resist sideways) cannot carry.
-   For an in-plane uncertainty write two or three plain load cases at the
-   tilted directions instead.
+   For an in-plane uncertainty (a shaft's radial load, a swinging strap, a
+   sideways crash) use `"direction": "xz"` (or `"xy"`, `"yz"`): the case
+   becomes eight cases round that plane, named `case@0` ... `case@157.5`.
 4. **Hold it where it is really held.** A bolted face: support on the bolt
    holes (keep-outs), plus `"fix": "x"` on the face it bears against if it
    only pushes. A shaft in a bearing: support on the bore.

@@ -78,6 +78,22 @@ def test_cancelling_load_names_its_cause():
         raise AssertionError("a load case that cancels itself should not build")
 
 
+def test_in_plane_direction_becomes_eight_cases():
+    s = copy.deepcopy(LINK)
+    s["loadCases"][0]["loads"][0].update(direction="xy", moment=[0, 0, 100])
+    st = study_from_dict(s)
+    assert len(st.load_cases) == 8 and st.load_cases[2].name == "p@45", [c.name for c in st.load_cases]
+    for c in st.load_cases:
+        ld = c.loads[0]
+        assert abs(ld.force[2]) < 1e-9 and abs(np.linalg.norm(ld.force) - 20) < 1e-9, ld.force
+        assert np.allclose(ld.moment, [0, 0, 100]), ld.moment      # along the normal: unchanged
+    assert np.allclose(st.load_cases[4].loads[0].force, [20, 0, 0], atol=1e-9)   # -y turned 90 degrees
+    s["loadCases"][0]["loads"][0].update(direction="xz", moment=[0, 0, 100], force=[20, 0, 0])
+    m = study_from_dict(s).load_cases[4].loads[0]
+    assert np.allclose(m.force, [0, 0, 20], atol=1e-9) and np.allclose(m.moment, [-100, 0, 0], atol=1e-9), m
+    assert check_study(s)["ok"]
+
+
 def test_lone_pin_is_refused():
     s = copy.deepcopy(LINK)
     s["supports"] = [{"region": "a", "fix": "pin"}]

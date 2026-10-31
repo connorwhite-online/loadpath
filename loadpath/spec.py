@@ -621,6 +621,64 @@ def _mass_load(ld, f, m, region, shape, label, preserve, keep_out):
     return f, m
 
 
+_PLANES = {"xy": (0, 1), "xz": (0, 2), "yz": (1, 2)}
+_PLANAR_STEPS = 8          # 22.5 degrees apart: the worst direction is within cos(11.25) = 98%
+
+
+def _expand_planar(d: dict) -> dict:
+    """A load whose direction is any in a plane ("direction": "xz") becomes
+    eight plain cases round that plane. Von Mises stress does not care about
+    the force's sign, so half a turn covers it. Brief-eval agents wrote these
+    cases by hand (a pillow block's radial load, a hook's swinging strap): a
+    3D 'any' or a cone also pushes out of plane, which a thin part cannot
+    carry and need not."""
+    cases = d.get("loadCases")
+    if not isinstance(cases, list) or not any(
+            isinstance(ld, dict) and ld.get("direction") in _PLANES
+            for c in cases if isinstance(c, dict) for ld in (c.get("loads") or [])):
+        return d
+    out = []
+    for ci, c in enumerate(cases):
+        loads = c.get("loads") or [] if isinstance(c, dict) else []
+        planar = [i for i, ld in enumerate(loads) if isinstance(ld, dict) and ld.get("direction") in _PLANES]
+        if not planar:
+            out.append(c)
+            continue
+        if len(planar) > 1:
+            raise ValueError(f"loadCases[{ci}]: at most one load per case may have an in-plane direction; "
+                             "put another in a load case of its own")
+        li = planar[0]
+        ld = loads[li]
+        if ld.get("cone") is not None or ld.get("mass") is not None or ld.get("pressure") is not None:
+            raise ValueError(f"loadCases[{ci}].loads[{li}]: an in-plane direction goes with a force, not a cone, "
+                             "mass or pressure")
+        a, b = _PLANES[ld["direction"]]
+        f = np.asarray(ld.get("force") or [0, 0, 0], float)
+        size = float(np.linalg.norm(f))
+        if size <= 0:
+            raise ValueError(f"loadCases[{ci}].loads[{li}]: direction {ld['direction']!r} needs a force "
+                             "(its size, and the first direction to try)")
+        start = float(np.arctan2(f[b], f[a])) if abs(f[a]) + abs(f[b]) > 1e-9 * size else 0.0
+        normal = np.zeros(3)
+        normal[3 - a - b] = 1.0 if (a, b) != (0, 2) else -1.0   # right-handed: a x b
+        m0 = np.asarray(ld.get("moment") or [0, 0, 0], float)
+        name = c.get("name") or f"case{ci}"
+        for k in range(_PLANAR_STEPS):
+            t = np.pi * k / _PLANAR_STEPS
+            fk = np.zeros(3)
+            fk[a], fk[b] = size * np.cos(start + t), size * np.sin(start + t)
+            # the moment turns with the force about the plane's normal
+            cth, sth = np.cos(t), np.sin(t)
+            mk = m0 * cth + np.cross(normal, m0) * sth + normal * (normal @ m0) * (1 - cth)
+            new = {k2: v for k2, v in ld.items() if k2 != "direction"}
+            new["force"] = fk.round(9).tolist()
+            if ld.get("moment") is not None:
+                new["moment"] = mk.round(9).tolist()
+            out.append({**c, "name": f"{name}@{180.0 * k / _PLANAR_STEPS:g}",
+                        "loads": [new if i == li else x for i, x in enumerate(loads)]})
+    return {**d, "loadCases": out}
+
+
 def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     """Validate and parse a study. Every error names the field to fix."""
     if not isinstance(d, dict):
@@ -629,6 +687,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     from .fasteners import expand_fasteners
     d = quick.study(d)
     d = expand_fasteners(d)
+    d = _expand_planar(d)
     joints = d.pop("_joints", []) if isinstance(d.get("_joints"), list) else []
     ds = d.get("designSpace")
     if isinstance(ds, dict):
@@ -696,7 +755,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             spread, cone = None, None
             if ld.get("direction") is not None:
                 if ld["direction"] != "any":
-                    raise ValueError(f"{label}.direction must be 'any' (the force's size, in every direction)")
+                    raise ValueError(f"{label}.direction must be 'any' (the force's size, in every direction) "
+                                     "or a plane, 'xy', 'xz' or 'yz' (any direction in it)")
                 spread = "any"
             if ld.get("cone") is not None:
                 cone = ld["cone"]
