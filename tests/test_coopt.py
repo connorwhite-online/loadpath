@@ -112,6 +112,29 @@ def test_loop_goes_tip_first_and_stops_when_loads_settle():
     assert len(solved) == n
 
 
+def test_a_passing_part_is_not_traded_for_a_heavier_one():
+    r = _robot()
+    arm = ArmModel(r, {})
+    load = {"f": 10.0}
+
+    def derive(link):
+        return [{"loads": [{"region": "r", "force": [load["f"], 0, 0], "moment": [0, 0, 0]}]}], {"region": "r"}
+
+    def solve(link, cases):
+        return [(_box((10.0, 10.0, 10.0), (0, 0, 0)), 1.0, None)], {"g": 5.0}
+
+    def verify(link, cases):
+        return {"g": 1.0, "passes": True}
+
+    state = co_optimize(arm, ["link2"], derive, solve, verify=verify, passes=1, log=lambda s: None)
+    load["f"] = 8.0                                         # lighter loads: regrown, but the old part is lighter
+    state = co_optimize(arm, ["link2"], derive, solve, verify=verify, passes=2, state={**state, "pass": 0,
+                        "done": {}, "converged": False, "changed": {}}, log=lambda s: None)
+    assert "heavier than the current part; kept" in state["history"][-2]["result"] or \
+        "heavier than the current part; kept" in state["history"][-1]["result"]
+    assert state["links"]["link2"]["cases"][0]["loads"][0]["force"][0] == 8.0
+
+
 if __name__ == "__main__":
     tests = [(k, v) for k, v in dict(globals()).items() if k.startswith("test_") and callable(v)]
     failed = 0
