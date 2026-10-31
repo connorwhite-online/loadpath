@@ -220,14 +220,22 @@ Fixed in this round:
 
 Open, as next work:
 
-1. **Constrained studies in 3D still wander.** The 2D fix holds, but a
-   constrained wall bracket runs anywhere from 43 g to 174 g depending on
-   small changes, because a member one or two cells thick reads low stress
-   at the cell centres the optimizer checks and high on the verified mesh;
-   the study's correction loop then swings the limit. A stress measure that
-   sees bending in thin members (more points per cell, or a minimum member
-   size tied to the stress check) is the next step. No eval uses the
-   constrained method; the default safety-factor search is unaffected.
+1. **Constrained studies in 3D wander less, but still by about 15%.** The
+   first constrained run of the wall bracket reads 17 MPa in the optimizer
+   and 377 MPa verified. Its stress measure is not the cause: the optimized
+   voxels deflect 0.23 mm, but the meshed part deflects 13.7 mm and comes
+   apart in two pieces. About half of the design's cells are members one cell
+   thick, and meshing loses them. Checking stress at cell corners instead of
+   centres changed nothing. The study now searches the limit by bisection
+   between a passing and a failing run, takes at most 4x a step, and
+   warm-starts only from a passing design (`study.py`). Across target safety
+   factors 2.45, 2.5, 2.55 and 2.6 the wall bracket lands at 56.5, 74.6, 58.6
+   and 61.1 g, where it was 72-95 g before and 43-174 g before that. The
+   default search lands at 68-79 g on the same four, so it has similar noise:
+   the verified safety factor of one design depends on its junction details
+   (58.6 g passed at SF 2.74 in one run and failed at 1.55 in another). What
+   remains is meshing fidelity for one-cell members, shared with the
+   tet-confirm work (1d500e0).
 2. **Spread loads on regions that are not faces.** A load over a region too
    small or too chunky to count as a face is still not pinned, and on a
    coarse grid its nodes can end on void (a 24x6x8 bridge does this). The
