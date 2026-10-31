@@ -77,6 +77,42 @@ def element_size(study: Study) -> float:
     return max(0.75, 0.5 * (study.min_member or 3.0))
 
 
+# Memory of a native P2 solve, measured on GRIP's upper arm (213 cm3):
+# about 10 V / h^3 tetrahedra at edge h, and 20 kB each (263k tets at
+# 2 mm: 5.3 GB; at the default 1.5 mm, 13 GB, past a 15 GB box).
+_TETS_PER_VOLUME = 10.0
+_BYTES_PER_TET = 20_500
+
+
+def memory_budget() -> float:
+    """Bytes a tet solve may use: LOADPATH_TET_MEMORY (GB), else 40% of
+    the memory available now, at most 8 GB."""
+    env = os.environ.get("LOADPATH_TET_MEMORY")
+    if env:
+        return float(env) * 1e9
+    avail = None
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    avail = float(line.split()[1]) * 1e3
+    except OSError:
+        pass
+    if avail is None:
+        try:
+            avail = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_AVPHYS_PAGES")
+        except (ValueError, OSError, AttributeError):
+            avail = 8e9
+    return min(8e9, 0.4 * avail)
+
+
+def fit_size(volume: float, size: float, budget: float | None = None) -> float:
+    """`size`, coarsened just enough that the solve fits `budget` bytes."""
+    budget = memory_budget() if budget is None else budget
+    need = (_TETS_PER_VOLUME * abs(volume) * _BYTES_PER_TET / max(budget, 1e8)) ** (1.0 / 3.0)
+    return max(size, need)
+
+
 def unsupported(study: Study) -> str | None:
     """Why the cross-check cannot stand in for verify.py on this study, or
     None when it can: it solves isotropic linear elasticity under the
@@ -496,7 +532,9 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     mesher: "tetwild" (default when pytetwild is installed) or "gmsh"."""
     t0 = time.time()
     mat = study.material
-    size = size or element_size(study)
+    asked = size or element_size(study)
+    # an explicit size is the caller's; the default is coarsened to fit memory
+    size = asked if size else fit_size(float(mesh.volume), asked)
     band = contact_band if contact_band is not None else 2.0 * size
     if adaptive:
         # (Off by default: the volume mesh grows from the STL's own surface
@@ -596,6 +634,7 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                                for a, b in zip(out["native"]["cases"], out["ccx"]["cases"])]
     return result | {"timings": timings, "backend": backend, "nodes": int(len(pts)), "elements": int(len(tets)),
                      "elementSize": size, "contactBand": band, "adaptive": bool(adaptive),
+                     **({"coarsenedFrom": asked} if size > asked else {}),
                      "mesher": mesher or ("tetwild" if _has_tetwild() and not adaptive else "gmsh"),
                      "seconds": time.time() - t0}
 
