@@ -39,8 +39,8 @@ no cylinder claimed. On GRIP's wrist yoke the two agree bore for bore.
 
 ## Healing
 
-Real exports are often not solids. Five of GRIP's eleven link and gripper
-STEPs (forearm, upper arm, turret, wrist link, wrist yoke, gripper palm) are
+Real exports are often not solids. Six of GRIP's 31 exported STEPs
+(forearm, upper arm, turret, wrist link, wrist yoke, gripper palm) are
 open shells: unsewn edges, or a face the exporter dropped. Sewing at 1e-3 mm
 runs first; whatever is still open is closed by fanning each boundary loop
 from its centroid. Cracks close with no change worth measuring (the yoke:
@@ -53,7 +53,9 @@ designer drew.
 - **Design space** (`--space`): `part`, the part as drawn (default; the
   optimizer only takes material away), `hull`, its convex hull, or `box`, its
   bounding box, grown by `--grow` mm.
-- **Preserved**: per interface, a ring round each bore (2 mm plus a tenth of
+- **Preserved**: per interface (except plain bores under 5 mm radius that
+  neither hold nor carry the suggested load: cable passes, pilot holes stay
+  open but are not ringed, or the optimizer grows a strut out to them), a ring round each bore (2 mm plus a tenth of
   the radius, at most 5) and, under a bolted face, a `--pad` (2 mm) layer under
   the bolt pattern only, both cut to the part, as one STL each. A preserved
   plate would be a plate in the result, so the whole face is not kept.
@@ -84,3 +86,16 @@ horn bolts; two cable passes; two blind pilot holes; two angled screws), 6
 mounting faces, 7 interfaces. The suggestion holds the part by the four horn
 bolts and loads the J5 socket: the same support and load region the
 hand-written study uses.
+
+![the imported yoke: preserved interfaces blue, support bolts green, loaded socket orange](images/import/yoke-features.png)
+
+Run in the cloud (23k cells at the hand-written study's 3 mm minimum member,
+PA12-GF card, SF 2 target, 35 min): the lightest passing outcome is
+**55.9 g at SF 2.11**, from the original CAD part's 203 g in the same
+material. Most of what is left is the socket's preserved 5 mm ring over its
+full 29.6 mm depth (about 36 g), which matches the hand-written sleeve's wall;
+a shorter ring is the next lever. The first run, which still ringed every
+bore, grew a strut out to a 4 mm cable pass and came in at 69 g: that is why
+small unloaded bores are no longer preserved.
+
+![original CAD part (grey) and the optimized import (blue)](images/import/yoke-result.png)
