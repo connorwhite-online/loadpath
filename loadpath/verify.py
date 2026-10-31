@@ -396,17 +396,41 @@ def _user_edges(study: Study, band: float):
     grows without bound as the grid gets finer, like a clamped edge's, so it
     is left out of the peak over the same band. (The wall bracket's 150k-cell
     confirm check peaked there and read SF 1.6, 2.6, 2.5, 1.9, 3.7 at 11.5-15%
-    of the space, out of order, against 2.7-3.8 on the 60k check.) Returns a
+    of the space, out of order, against 2.7-3.8 on the 60k check.)
+
+    Being near both surfaces is not enough: a pressure vessel's wall, or a
+    ring whose bore is the keep-out's, lines the keep-out, and the two
+    surfaces coincide over the whole cavity (a thick sphere's bore, Lame's
+    peak, was left out entirely). An edge is where the surfaces cross
+    (their normals not opposed) or where the keep-out's own surface turns
+    within the band (a tunnel's rim on the face it ends on). Returns a
     function of points -> bool, or None when the study has no such edges."""
     keep = [r.shape for r in study.keep_out]
     pres = [r.shape for r in study.preserve]
     if not keep or not pres:
         return None
+    h = 0.05 * band
+    axes = np.eye(3)
+
+    def sdf(shapes, xyz):
+        return np.min([sh.sdf(xyz) for sh in shapes], axis=0)
+
+    def normal(shapes, xyz):
+        g = np.stack([sdf(shapes, xyz + h * a) - sdf(shapes, xyz - h * a) for a in axes], axis=1)
+        return g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
 
     def near(xyz):
-        dk = np.min([np.abs(sh.sdf(xyz)) for sh in keep], axis=0)
-        dp = np.min([np.abs(sh.sdf(xyz)) for sh in pres], axis=0)
-        return (dk < band) & (dp < band)
+        xyz = np.asarray(xyz, float)
+        out = (np.abs(sdf(keep, xyz)) < band) & (np.abs(sdf(pres, xyz)) < band)
+        if not out.any():
+            return out
+        x = xyz[out]
+        nk = normal(keep, x)
+        edge = np.einsum("ij,ij->i", nk, normal(pres, x)) > -0.9
+        for o in np.concatenate([axes, -axes]) * band:
+            edge |= np.einsum("ij,ij->i", nk, normal(keep, x + o)) < 0.9
+        out[out] = edge
+        return out
     return near
 
 
