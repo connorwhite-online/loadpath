@@ -216,8 +216,14 @@ def _verify(args):
     summary = {"ok": True, "part": part, "study": args.study, "mass": rep["mass"],
                "safetyFactor": rep.get("safetyFactor"), "margin": m,
                "passes": None if m is None else bool(m >= 1.0 and rep.get("bodies", 1) <= 1),
-               "keepOutIntrusion": rep.get("keepOutIntrusion"), "bodies": rep.get("bodies"),
-               "cases": {c["name"]: {"safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection")}
+               "safetyFactorMethod": "voxel", "analysisPitch": rep.get("analysisPitch"),
+               "keepOutIntrusion": rep.get("keepOutIntrusion"), "preserveMissing": rep.get("preserveMissing"),
+               "bodies": rep.get("bodies"),
+               **({"durabilitySafetyFactor": rep["durability"].get("safetyFactor")}
+                  if isinstance(rep.get("durability"), dict) else {}),
+               "warnings": list(rep.get("warnings") or []),
+               "cases": {c["name"]: {"safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection"),
+                                     "peakStress": c.get("peakStress")}
                          for c in rep.get("cases", [])},
                "report": rep}
     if args.out:
