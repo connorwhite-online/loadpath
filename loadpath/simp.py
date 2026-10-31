@@ -250,6 +250,13 @@ class SimpOptions:
     max_iterations: int = 120
     beta_max: float = 32.0
     beta_every: int = 10              # iterations per beta doubling at most (15 cost 20% more iterations for the same design on the arm link)
+    # Iterations per doubling by projection level (beta 1->2, 2->4, ...),
+    # then beta_every past its end; None uses beta_every throughout. (20, 20)
+    # is stiffer on every benchmark (docs/BENCHMARKS.md: MBB -2.5%, bridge
+    # -11%, 1.4x the iterations) but not lighter at a safety factor: on the
+    # evals it was 2-14% heavier at the target SF on the small parts, so it
+    # is not the default.
+    beta_schedule: tuple | None = None
     move: float = 0.2
     tol: float = 0.01
     # Sensitivities only need a loose solve; the final analysis is tight.
@@ -495,6 +502,13 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres):
 
 def _pad(opts) -> bool:
     return opts.extrusion is None if opts.pad_filter is None else bool(opts.pad_filter)
+
+
+def _beta_hold(opts, beta):
+    """Most iterations to spend at projection sharpness beta."""
+    s = opts.beta_schedule
+    k = int(round(np.log2(max(beta, 1.0))))
+    return s[k] if s is not None and k < len(s) else opts.beta_every
 
 
 def _project(xt, beta, eta):
@@ -802,7 +816,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if on_iter is not None:
             on_iter(rec, xp)
 
-        if beta < opts.beta_max and (change < opts.tol * 2 or since_beta >= opts.beta_every):
+        if beta < opts.beta_max and (change < opts.tol * 2 or since_beta >= _beta_hold(opts, beta)):
             beta = min(beta * 2, opts.beta_max)
             since_beta = 0
         elif beta >= opts.beta_max and it >= 3:
