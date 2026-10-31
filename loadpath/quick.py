@@ -8,7 +8,7 @@ tutorial's commands this way so the docs can't drift from the code.
 What it lowers: a study's cells, optimizer iterations and outcome-search runs
 (the evals' coarse tier, evals/run.py COARSE), a heat exchanger's grid and
 whole-exchanger simulation, a field graph's mesh pitch (and its drain search's)
-and the analysis behind its `result` nodes, `tune`'s analyses, `assembly`'s
+and the analysis behind its `result` nodes (no hotspot submodels), `tune`'s analyses, `assembly`'s
 sampled poses and `verify`'s grid. Numbers move (mass a few %, safety factor
 more on thin members): read a quick run for direction, run without it to print.
 """
@@ -86,6 +86,13 @@ def mesh_pitch(pitch, bounds):
 def result_cells(n):
     """Analysis cells behind a field graph's `result` node."""
     return min(int(n), RESULT_CELLS) if on() else n
+
+
+def result_refine(n):
+    """Hotspot submodels behind a `result` node (verify_part's refine): none
+    in quick mode. They sharpen the reported peak, not the field the graph
+    reads, and cost most of the analysis."""
+    return 0 if on() else n
 
 
 def tune_evaluations(n):

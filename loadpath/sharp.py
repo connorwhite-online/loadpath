@@ -319,12 +319,16 @@ def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, de
                 m = m.copy()
                 trimesh.repair.fix_winding(m)
                 trimesh.repair.fill_holes(m)
-                try:
-                    return manifold_from_trimesh(m)
-                except ValueError:
-                    # fill_holes leaves loops over four edges: a few slivers a
-                    # thin lattice wall left open at a coarse pitch
-                    return manifold_from_trimesh(_close_loops(m))
+                # fill_holes leaves loops over four edges: a few slivers a
+                # thin lattice wall left open at a coarse pitch. A loop that
+                # touches another at a vertex closes on the next pass.
+                for last in (False, False, True):
+                    try:
+                        return manifold_from_trimesh(m)
+                    except ValueError:
+                        if last:
+                            raise
+                        m = _close_loops(m)
         kids = [build(k) for k in q.kids]
         if q.op == "union":
             return m3d.Manifold.batch_boolean(kids, m3d.OpType.Add)

@@ -1,0 +1,32 @@
+{
+  "files": ["solid/forearm-solid.stl", "tune/tuned.json", "out/forearm.stl"],
+  "quick": [
+    {"file": "solid/report.json", "value": "r['mass']", "min": 42, "max": 52, "what": "solid link's mass, g"},
+    {"file": "solid/report.json", "value": "r['analyses']['stress']['safetyFactor']", "min": 7.5, "max": 12, "what": "solid link's safety factor"},
+    {"file": "tune/tune.json", "value": "r['best'] is not None and r['best']['check']['ok']", "equals": true,
+     "what": "tune found a lattice that holds SF 2 on the fine grid"},
+    {"file": "tune/tune.json", "value": "r['best']['check']['safetyFactor']", "min": 2.0, "max": 2.7, "what": "tuned lattice: safety factor (fine grid)"},
+    {"file": "tune/tune.json", "value": "r['best']['mass']", "min": 27, "max": 40, "what": "tuned lattice: homogenized mass, g"},
+    {"file": "out/report.json", "value": "r['mass']", "min": 28, "max": 41, "what": "meshed lattice part: mass, g"},
+    {"file": "out/report.json", "value": "r['bodies']", "equals": 1, "what": "one body"},
+    {"file": "out/report.json", "value": "r['watertight']", "equals": true, "what": "watertight mesh"},
+    {"file": "out/report.json", "value": "r['enclosedVoids']", "equals": 0, "what": "sealed voids left in the mesh"},
+    {"file": "out/report.json", "value": "r['printability']['ok']", "equals": true, "what": "printability check passes"},
+    {"file": "out/report.json", "value": "r['drains']['ok'] and r['drains']['sealedAfter'] == 0", "equals": true, "what": "powder drains"},
+    {"file": "out/report.json", "value": "r['lattices']['core']['unsupportedFraction']", "min": 0.3, "max": 0.37,
+     "what": "octet strut length that would bridge on FDM"}
+  ],
+  "full": [
+    {"file": "solid/report.json", "value": "r['mass']", "min": 45.5, "max": 48.5, "what": "solid link's mass (47.0), g"},
+    {"file": "solid/report.json", "value": "r['analyses']['stress']['safetyFactor']", "min": 8.5, "max": 10, "what": "solid link's safety factor (9.2)"},
+    {"file": "tune/tune.json", "value": "r['best']['check']['ok']", "equals": true, "what": "tuned lattice holds SF 2 on the fine grid"},
+    {"file": "tune/tune.json", "value": "r['best']['check']['safetyFactor']", "min": 2.0, "max": 2.6, "what": "tuned lattice: safety factor, fine grid (2.32)"},
+    {"file": "tune/tune.json", "value": "r['best']['mass']", "min": 29.5, "max": 32.5, "what": "tuned lattice: homogenized mass (31.0), g"},
+    {"file": "tune/tune.json", "value": "r['best']['check']['deflection']", "min": 1.0, "max": 1.25, "what": "tuned lattice: wrist deflection (1.12), mm"},
+    {"file": "out/report.json", "value": "r['mass']", "min": 31, "max": 34.2, "what": "meshed lattice part: mass (32.6), g"},
+    {"file": "out/report.json", "value": "r['bodies']", "equals": 1, "what": "one body"},
+    {"file": "out/report.json", "value": "r['printability']['ok']", "equals": true, "what": "printability check passes"},
+    {"file": "out/report.json", "value": "r['drains']['ok'] and r['drains']['sealedAfter'] == 0", "equals": true, "what": "powder drains"},
+    {"file": "out/report.json", "value": "len(r['drains']['holes'])", "min": 1, "max": 4, "what": "drain holes (2)"}
+  ]
+}
