@@ -140,6 +140,16 @@ to 12 mm cells:
 
 ![graded gyroid](docs/images/fields/graded-cell.png)
 
+Strut cells (octet, Kelvin, BCC, FCC, diamond, Voronoi foams) and conformal cells
+that lay their layers along the skin sit in the same graph, with field-driven strut
+diameter and node fillets. Swapped into the arm link at equal mass (49.9 g), the
+gyroid core still wins on strength (SF 16.3 against 9-13 for the strut cores; all
+deflect 0.66-0.74 mm, the skin does most of the work), so struts are for open,
+drainable or very light cores and FDM-printable cells
+(`python examples/fields/strut_lattices.py`):
+
+![strut and conformal cores in the arm link](docs/images/fields/arm-link-strut-cores.png)
+
 A skin over a lattice traps powder or resin. Give the graph a `"process"` and it
 drills its own drain holes, sized well over the process minimum (6 mm for SLS) and
 added until no powder is more than 60 mm from one, on bosses, at the calmest flat

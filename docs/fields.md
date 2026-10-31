@@ -140,7 +140,7 @@ back at once with suggestions.
 | `union`, `intersect`, `subtract` | booleans; `blend` is the fillet radius | `inputs`, `blend` |
 | `shell` | a wall inside, outside or centred on a surface | `input`, `thickness` |
 | `offset` | grow or shrink | `input`, `distance` |
-| `lattice` | gyroid, diamond or Schwarz P; sheet or network; cartesian or cylindrical frame | `cell`, `thickness` or `density`, `offset` |
+| `lattice` | TPMS sheets (gyroid, diamond, Schwarz P; sheet or network), strut cells (cubic, BCC, BCCz, FCC, FCCz, octet, Kelvin, diamond-strut) or a Voronoi foam; cartesian, cylindrical, spherical or conformal frame; `aspect` stretches the cell | `cell`, `thickness` or `density`, `blend` (node fillets), `offset` |
 | `transform` | translate, rotate, scale an input | `input` |
 | `image` | a picture (PNG/JPG) laid on a plane as a 0..1 field: brightness or one channel, optional invert (see Images) | `path`, `size` |
 | `group` | a copy of a sub-graph from `groups` with its own `params` and `inputs` (see Groups) | |
@@ -284,7 +284,8 @@ lattice's own wall (or density) and cell fields give the lattice's relative
 density there, and lattice.py's unit-cell fits give its modulus
 (E C rho^n) and its peak wall stress (A rho^-m times the stress it carries
 on average). A `result` node behind the wall field runs its study once for
-the whole search. Sheet lattices only.
+the whole search. Sheet and strut lattices (lattice.SHEETS, lattice.STRUTS);
+a stretched `aspect` cell has no fit and is refused.
 
 Checked against the resolved geometry: a 60 mm skin-and-gyroid bar (1 mm
 skin, 0.8 mm walls in 6 mm cells) under a tip load deflects 0.99-1.04 mm
@@ -301,6 +302,63 @@ against 54.9 g for the tuned solid web. It is the same answer the moonshot
 experiments got: for a stiffness-bound part, a lattice costs mass per unit
 of stiffness. Lattices earn their keep on impact, damping, heat transfer
 and print time, not here.
+
+### Strut and conformal lattices against the gyroid
+
+The strut cells' fits (lattice.STRUTS, from bench/strut_fits.py: unit-cell
+FEA at 48 voxels a cell, relative density 0.06-0.34) are the conservative
+isotropic reading of anisotropic cells: modulus the lesser of [100] and
+[111], stress factor the worst of a [100] pull, a [111] pull and a shear.
+Per gram at rho 0.15, against the gyroid sheet (E*/E 0.043):
+
+| cell | E*/E at rho 0.15 | behaviour |
+|---|---|---|
+| octet | 0.028 | stretch dominated (n 1.36) |
+| FCC, FCCz | 0.031, 0.028 | stretch dominated along the face diagonals |
+| Kelvin | 0.019 | bending (n 2.07) |
+| diamond-strut | 0.013 | bending |
+| Voronoi foam | 0.022 | bending, near isotropic |
+| BCC, BCCz, cubic | 0.004-0.008 | bending; cubic is stiff on its axes, near zero on [111] |
+
+Checked against the resolved geometry: a 60 mm bar of 1 mm octet struts
+in 6 mm cells (no skin, so the lattice carries everything) deflects 11.9 mm
+homogenized and 11.1 mm meshed at 0.12 mm and verified on 400k voxels
+(7% conservative); mass 4.41 g against 4.19 g. The same bar in a 0.8 mm
+gyroid reads 5.0 mm homogenized against 7.6 mm resolved at 400k voxels:
+sheets cut by the bar's sides lose more than struts do, so for a lattice
+with no skin the gyroid's homogenized stiffness is optimistic.
+
+The arm link at equal mass (examples/fields/strut_lattices.py: the graded
+arm-link graph with its core swapped, each core's stress-graded thickness
+scaled until the part weighs what the graded gyroid does, 49.9 g;
+homogenized, worst load case):
+
+| core | mass | safety factor | deflection | FDM: strut length bridging |
+|---|---|---|---|---|
+| gyroid (graded cell) | 49.9 g | 16.3 | 0.688 mm | |
+| gyroid, conformal | 50.4 g | 16.2 | 0.676 mm | |
+| Voronoi | 49.6 g | 13.1 | 0.661 mm | 70% |
+| BCC | 49.6 g | 11.4 | 0.733 mm | 100% |
+| FCC | 49.5 g | 11.4 | 0.722 mm | 60% |
+| Kelvin | 49.7 g | 10.6 | 0.673 mm | 60% |
+| octet | 50.2 g | 10.5 | 0.735 mm | 60% |
+| octet, conformal | 50.2 g | 9.0 | 0.730 mm | 70% |
+
+The skin carries most of the bending, so deflection barely moves (0.66 to
+0.74 mm; none reaches the study's 0.5 mm, which the 58.9 g solid TO part
+does). Strength does move: the gyroid's walls see the least stress
+concentration, a third more safety factor than the best strut core. At this
+mass the struts run dense (rho 0.2-0.95, past the 0.34 the fits were made
+at; the Voronoi points measured up to rho 0.8 sit above its fit, so the fit
+errs low there). Struts are for what sheets can't do: an open cell that
+drains powder and resin through any face, a part that is mostly air (rho
+under 0.1, where sheets get too thin to print), beam cells for impact and
+energy absorption, and a cell whose struts can be stretched (`aspect`) to
+print on FDM without support.
+
+![octet, Kelvin and Voronoi cores, conformal octet and gyroid round a tube, a graded BCC](images/fields/strut-cells.png)
+
+![the arm link's core as gyroid, conformal octet, Kelvin and Voronoi at equal mass](images/fields/arm-link-strut-cores.png)
 
 ## What the field-driven operations mean
 
@@ -324,7 +382,39 @@ and print time, not here.
   turn a relative density into a wall.
 - **Cylindrical lattice** (`"frame": {"type": "cylindrical", "axis": "z",
   "radius": 20}`): cells wrapped round an axis, with a whole number of cells
-  round the circumference, for tubes and rings.
+  round the circumference, for tubes and rings. `"spherical"` wraps them
+  round a centre (whole cells round the equator and pole to pole).
+- **Strut lattice** (`"type": "octet"`, `"bcc"`, `"kelvin"`, ...): beams
+  between the cell's nodes; `thickness` is the strut diameter (a field
+  thickens struts where it says), `blend` fillets the nodes, `density`
+  picks the diameter from the cell's density table. The field is the exact
+  distance to the nearest strut (struts.py folds each point into the cell's
+  fundamental region, found from its symmetry, and tests only the few
+  struts that can be nearest), so meshes and the narrow band behave as with
+  any exact solid. `"voronoi"` is a stochastic foam: seeds `cell` mm apart
+  on average (a field makes them denser), relaxed so cells are even, `seed`
+  picks the draw.
+- **Conformal lattice** (`"frame": {"type": "conformal", "surface":
+  "envelope"}`): cells laid along a solid's surface. The layer coordinate
+  is the surface's signed distance over the cell, exact, so cell layers run
+  parallel to the skin and the first layer of nodes sits on it: no cell is
+  cut by the skin. The two in-plane coordinates follow the surface's
+  tangents (`axis` picks the direction cells line up with). Round a closed
+  section (a tube, a boss, the arm link's cross-section) no coordinate can
+  follow the tangent, so they are phases: a stripe pattern (Knoeppel et al.
+  2015), the lowest eigenvector of a connection Laplacian on a coarse grid,
+  weighted towards the skin. A whole number of cells fits round at the skin
+  (10 cells of 6 mm round a 20 mm tube); where fewer fit deeper in, the
+  pattern puts a defect in the middle rather than shearing every cell.
+  `normalCell` sets the cell through the thickness.
+- **Strut overhangs (FDM)**: a strut flatter than 45 degrees prints as a
+  bridge. The field report's `lattices` block measures it on the part, the
+  cell mapped through its real coordinates (graded, stretched, conformal):
+  unsupported strut length, flattest strut, longest bridge. Axis-aligned
+  BCC is all bridges (struts rise 35.3 degrees); octet, FCC and Kelvin
+  have a third of their length flat; `"aspect": [1, 1, 1.5]` lifts BCC's
+  struts to 46.7 degrees and it prints unsupported. `struts.best_orientation`
+  searches cell rotations for the least bridging.
 
 ## Meshes come out smooth
 

@@ -155,6 +155,14 @@ field. `check` reports every problem at once: fix them all, then check again.
   TPMS sheet lattice graded by its own stress: `"lattice": {"type":
   "gyroid", "cell": 10, "skin": 1.2}` in the study, or `loadpath_lattice`
   on a finished job. `skin: 0` for SLS, MJF and resin so they drain.
+- Field graphs take strut lattices too (`"type": "octet"`, `kelvin`, `bcc`,
+  `fcc`, `voronoi`, ...; `thickness` is the strut diameter, `blend` fillets
+  the nodes) and conformal cells (`"frame": {"type": "conformal",
+  "surface": "envelope"}`: layers parallel to the skin, no cell cut by it).
+  For strength per gram a gyroid sheet beats every strut cell (arm link at
+  equal mass: SF 16 vs 9-13); pick struts for open, drainable cells, very
+  low density, or FDM (`"aspect": [1, 1, 1.5]` BCC prints unsupported; the
+  field report's `lattices` block gives the bridging strut length).
 - Don't use a lattice to make a part stiffer per gram: solid topology
   optimization wins that. Use one to stop an impact (a bumper, a hard stop, a
   drop pad): give a field graph an `impact` block (envelope, density node,

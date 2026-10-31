@@ -813,25 +813,55 @@ _FIELD_OPS = {
                  ["input", "thickness"]),
     "offset": _op("offset", "Grow (positive) or shrink a solid by `distance` (mm, or a field).",
                   {"input": _FIELD, "distance": _FIELD}, ["input", "distance"]),
-    "lattice": _op("lattice", "A TPMS lattice filling all of space (intersect it with a solid). Cell size, "
-                              "wall thickness or relative density can each be a field.",
-                   {"type": {"enum": ["gyroid", "diamond", "schwarz-p"]},
-                    "cell": {**_FIELD, "description": "mm per period (default 8); a field grades it"},
-                    "thickness": {**_FIELD, "description": "wall, mm (default 1)"},
-                    "density": {**_FIELD, "description": "relative density 0.05-0.95 instead of thickness "
-                                                         "(lattice.py's homogenized tables set the wall)"},
-                    "form": {"enum": ["sheet", "network"], "description": "sheet (default): a wall on the "
-                                                                          "surface; network: one side solid"},
+    "lattice": _op("lattice", "A lattice filling all of space (intersect it with a solid): a TPMS sheet "
+                              "(gyroid, diamond, schwarz-p) or a strut cell (cubic, bcc, bccz, fcc, fccz, octet, "
+                              "kelvin, diamond-strut) or a stochastic voronoi foam. Cell size, wall or strut "
+                              "thickness, relative density and node blend can each be a field; a conformal frame "
+                              "lays the cells along a surface.",
+                   {"type": {"enum": ["gyroid", "diamond", "schwarz-p", "cubic", "bcc", "bccz", "fcc", "fccz",
+                                      "octet", "kelvin", "diamond-strut", "voronoi"],
+                             "description": "TPMS sheets are stiffer and stronger per gram (lattice.SHEETS vs "
+                                            "STRUTS); struts are open, easy to clear of powder, and print on FDM "
+                                            "when the cell is oriented (lattice report's overhangs)"},
+                    "cell": {**_FIELD, "description": "mm per period (default 8); a field grades it (voronoi: "
+                                                      "mean seed spacing)"},
+                    "thickness": {**_FIELD, "description": "sheet wall or strut diameter, mm (default 1)"},
+                    "density": {**_FIELD, "description": "relative density instead of thickness (sheets "
+                                                         "0.05-0.95, struts 0.02-0.95; the unit-cell tables "
+                                                         "set the wall or diameter)"},
+                    "blend": {**_FIELD, "description": "strut cells: mm smooth-union radius at the nodes "
+                                                       "(node fillets; default 0)"},
+                    "form": {"enum": ["sheet", "network", "beam"],
+                             "description": "sheet (TPMS default): a wall on the surface; network: one side "
+                                            "solid; beam: strut cells (their only form)"},
                     "grading": {"enum": ["warp", "blend"],
                                 "description": "how a field cell grades: warp (default) bends the lattice's "
                                                "coordinates so one period is one local cell, continuous "
                                                "everywhere; blend cross-fades fixed periods (cylindrical frame)"},
+                    "aspect": {"type": "array", "items": _POS, "minItems": 3, "maxItems": 3,
+                               "description": "stretch the cell per axis, e.g. [1, 1, 1.5]: a tall BCC cell's "
+                                              "struts rise above 45 degrees and print on FDM unsupported"},
+                    "seed": {"type": "integer", "description": "voronoi: random seed (default 0)"},
                     "offset": {**_FIELD, "description": "mm, moves the level surface (network form)"},
                     "origin": _VEC3,
-                    "frame": {"type": "object", "description": "cylindrical wraps the cells round an axis",
-                              "properties": {"type": {"enum": ["cartesian", "cylindrical"]}, "axis": _AXIS,
-                                             "center": _VEC3, "radius": {**_POS, "description":
-                                                                         "mm where cells are square"}},
+                    "frame": {"type": "object",
+                              "description": "cylindrical wraps the cells round an axis, spherical round a "
+                                             "centre; conformal lays them along a solid's surface (layers "
+                                             "parallel to the skin, the first on it; in-plane cells follow the "
+                                             "surface as a stripe pattern)",
+                              "properties": {"type": {"enum": ["cartesian", "cylindrical", "spherical",
+                                                               "conformal"]},
+                                             "axis": {**_AXIS, "description": "cylindrical: the axis; conformal: "
+                                                                              "the direction cells line up with "
+                                                                              "along the surface (default the "
+                                                                              "longest extent)"},
+                                             "center": _VEC3,
+                                             "radius": {**_POS, "description": "mm where cells are square"},
+                                             "surface": {**_FIELD, "description": "conformal: the solid whose "
+                                                                                  "surface the cells follow"},
+                                             "normalCell": {**_POS, "description": "conformal: mm cell through "
+                                                                                   "the thickness (default the "
+                                                                                   "cell)"}},
                               "required": ["type"], "additionalProperties": False}},
                    require_one=None),
     "transform": _op("transform", "Move, rotate or scale a field's input (translate, then rotate, then scale).",

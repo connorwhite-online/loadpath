@@ -2580,7 +2580,7 @@
     },
     "op-lattice": {
       "type": "object",
-      "description": "A TPMS lattice filling all of space (intersect it with a solid). Cell size, wall thickness or relative density can each be a field.",
+      "description": "A lattice filling all of space (intersect it with a solid): a TPMS sheet (gyroid, diamond, schwarz-p) or a strut cell (cubic, bcc, bccz, fcc, fccz, octet, kelvin, diamond-strut) or a stochastic voronoi foam. Cell size, wall or strut thickness, relative density and node blend can each be a field; a conformal frame lays the cells along a surface.",
       "properties": {
         "op": {
           "const": "lattice"
@@ -2589,12 +2589,22 @@
           "enum": [
             "gyroid",
             "diamond",
-            "schwarz-p"
-          ]
+            "schwarz-p",
+            "cubic",
+            "bcc",
+            "bccz",
+            "fcc",
+            "fccz",
+            "octet",
+            "kelvin",
+            "diamond-strut",
+            "voronoi"
+          ],
+          "description": "TPMS sheets are stiffer and stronger per gram (lattice.SHEETS vs STRUTS); struts are open, easy to clear of powder, and print on FDM when the cell is oriented (lattice report's overhangs)"
         },
         "cell": {
           "title": "a number, a node name or a node object",
-          "description": "mm per period (default 8); a field grades it",
+          "description": "mm per period (default 8); a field grades it (voronoi: mean seed spacing)",
           "anyOf": [
             {
               "type": "number"
@@ -2610,7 +2620,7 @@
         },
         "thickness": {
           "title": "a number, a node name or a node object",
-          "description": "wall, mm (default 1)",
+          "description": "sheet wall or strut diameter, mm (default 1)",
           "anyOf": [
             {
               "type": "number"
@@ -2626,7 +2636,23 @@
         },
         "density": {
           "title": "a number, a node name or a node object",
-          "description": "relative density 0.05-0.95 instead of thickness (lattice.py's homogenized tables set the wall)",
+          "description": "relative density instead of thickness (sheets 0.05-0.95, struts 0.02-0.95; the unit-cell tables set the wall or diameter)",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "blend": {
+          "title": "a number, a node name or a node object",
+          "description": "strut cells: mm smooth-union radius at the nodes (node fillets; default 0)",
           "anyOf": [
             {
               "type": "number"
@@ -2643,9 +2669,10 @@
         "form": {
           "enum": [
             "sheet",
-            "network"
+            "network",
+            "beam"
           ],
-          "description": "sheet (default): a wall on the surface; network: one side solid"
+          "description": "sheet (TPMS default): a wall on the surface; network: one side solid; beam: strut cells (their only form)"
         },
         "grading": {
           "enum": [
@@ -2653,6 +2680,20 @@
             "blend"
           ],
           "description": "how a field cell grades: warp (default) bends the lattice's coordinates so one period is one local cell, continuous everywhere; blend cross-fades fixed periods (cylindrical frame)"
+        },
+        "aspect": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "stretch the cell per axis, e.g. [1, 1, 1.5]: a tall BCC cell's struts rise above 45 degrees and print on FDM unsupported"
+        },
+        "seed": {
+          "type": "integer",
+          "description": "voronoi: random seed (default 0)"
         },
         "offset": {
           "title": "a number, a node name or a node object",
@@ -2681,12 +2722,14 @@
         },
         "frame": {
           "type": "object",
-          "description": "cylindrical wraps the cells round an axis",
+          "description": "cylindrical wraps the cells round an axis, spherical round a centre; conformal lays them along a solid's surface (layers parallel to the skin, the first on it; in-plane cells follow the surface as a stripe pattern)",
           "properties": {
             "type": {
               "enum": [
                 "cartesian",
-                "cylindrical"
+                "cylindrical",
+                "spherical",
+                "conformal"
               ]
             },
             "axis": {
@@ -2709,7 +2752,7 @@
                   "description": "[x, y, z]"
                 }
               ],
-              "description": "'x', 'y', 'z' or a direction vector"
+              "description": "cylindrical: the axis; conformal: the direction cells line up with along the surface (default the longest extent)"
             },
             "center": {
               "type": "array",
@@ -2724,6 +2767,27 @@
               "type": "number",
               "exclusiveMinimum": 0,
               "description": "mm where cells are square"
+            },
+            "surface": {
+              "title": "a number, a node name or a node object",
+              "description": "conformal: the solid whose surface the cells follow",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string",
+                  "description": "a node name"
+                },
+                {
+                  "$ref": "#/$defs/node"
+                }
+              ]
+            },
+            "normalCell": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "conformal: mm cell through the thickness (default the cell)"
             }
           },
           "required": [

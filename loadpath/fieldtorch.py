@@ -357,7 +357,7 @@ class TorchField:
         torch = self.torch
         s, r = nd.spec, nd.refs
         kind = _TPMS_KIND.get(s.get("type", "gyroid"))
-        if kind is None or s.get("frame"):
+        if kind is None or s.get("frame") or "aspect" in s:
             raise _NumpyOnly
         cell = self._val(r["cell"], P, memo) if "cell" in r else 8.0
         Q = P - self._t(s["origin"]) if "origin" in s else P
