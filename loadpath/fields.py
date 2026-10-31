@@ -1752,8 +1752,11 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
 
     if drains_wanted(doc.get("drains", "auto"), process):
         opts = DrainOptions.from_spec(doc.get("drains"))
+        from . import quick
+
+        pitch = (doc.get("mesh") or {}).get("pitch")
         drains = drain_graph(g, process, opts, build=doc.get("build"), min_wall=doc.get("minWall"),
-                             pitch=(doc.get("mesh") or {}).get("pitch"), progress=progress)
+                             pitch=pitch and quick.mesh_pitch(pitch, None), progress=progress)
     if (doc.get("mesh") or {}).get("stream"):
         return None, _run_streamed(doc, g, out_dir, drains, process, progress, t0)
     mesh = g.mesh(progress=progress)
@@ -1805,6 +1808,12 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
 
             run = getattr(importlib.import_module(f".{mod}", __package__), fn)
             rep[key] = run(g, doc[key], mat)
+    if g.analyses:
+        # what each `result` node's study said of the part it analyzed
+        rep["analyses"] = {k: {"part": g.nodes[k].spec.get("part"), "safetyFactor": a.get("safetyFactor"),
+                               "deflection": max((c["deflection"] for c in a.get("cases") or []), default=None),
+                               "cells": a.get("analysisCells")}
+                           for k, a in g.analyses.items() if k in g.nodes}
     if g.plan is not None:
         from .sharp import edge_accuracy, plan_refs
 
