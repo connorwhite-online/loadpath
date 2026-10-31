@@ -585,7 +585,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     hotspots per load case get a 3x finer submodel (see _submodel_peak).
     `fields` adds report["fields"]: the analysis nodes and, per load case,
     nodal von Mises stress and displacement (numpy arrays, not JSON) for
-    stress maps (render.render_stress)."""
+    stress maps (render.render_stress); with a thermal block, also the
+    temperature per node at the hot moment."""
     from .shapes import manifold_from_trimesh
 
     t0 = time.time()
@@ -799,6 +800,10 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
                     peak, at = r
         disp = u.reshape(-1, 3)
         if fields:
+            if "fields" not in report and study.thermal is not None:
+                # C per node at the hot moment (the cycle's hottest, or the steady state)
+                report["fields"] = {"nodes": hm.node_xyz, "cases": [],
+                                    "temperature": t_hot if cold is not None else heat.t_node}
             report.setdefault("fields", {"nodes": hm.node_xyz, "cases": []})["cases"].append(
                 {"name": case.name, "vonMises": vm, "displacement": disp, "wetted": bc.case_pressure_nodes[ci]})
         wet = bc.case_pressure_nodes[ci]
