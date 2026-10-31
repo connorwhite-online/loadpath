@@ -121,13 +121,16 @@
       "anyOf": [
         {
           "type": "string",
-          "description": "A name: pla, petg, abs, asa, tpu, pa-cf, pa12, pa11, resin, resin-tough, alsi10mg, ti64, 316l (aliases such as 'nylon', 'aluminium', 'steel' work), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py)."
+          "description": "A name: 316l, abs, alsi10mg, asa, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
         },
         {
           "type": "object",
-          "description": "A custom material: E (MPa), nu, strength (MPa), density (g/cm\u00b3).",
+          "description": "A custom material: E (MPa), nu, strength (MPa), density (g/cm\u00b3); or \"base\": a library name and only the values that differ. EZ and strengthZ are across-layer values, used when the study's process is the one named in \"measured\".",
           "properties": {
             "name": {
+              "type": "string"
+            },
+            "base": {
               "type": "string"
             },
             "E": {
@@ -147,14 +150,30 @@
               "type": "number",
               "exclusiveMinimum": 0
             },
+            "EZ": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "strengthZ": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "measured": {
+              "type": "string"
+            },
             "note": {
               "type": "string"
             }
           },
-          "required": [
-            "E",
-            "strength",
-            "density"
+          "x-requireOne": [
+            [
+              "E",
+              "strength",
+              "density"
+            ],
+            [
+              "base"
+            ]
           ],
           "additionalProperties": false
         }

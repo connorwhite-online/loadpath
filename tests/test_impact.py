@@ -128,10 +128,10 @@ def test_elastomers_use_the_buckling_law():
     from loadpath.materials import material_from_spec
 
     law, ref = crush_law("gyroid", material_from_spec("tpu"))
-    assert law == "gyroid:elastic" and ref == 26.0
+    assert law == "gyroid:elastic" and ref == material_from_spec("tpu").E
     # Gibson & Ashby elastic collapse: 0.05 E rho^2
-    assert approx(float(plateau_stress(law, 0.3, ref)), 0.05 * 26.0 * 0.09, rel=1e-9)
-    assert crush_law("gyroid", material_from_spec("pa12")) == ("gyroid", 48.0)
+    assert approx(float(plateau_stress(law, 0.3, ref)), 0.05 * ref * 0.09, rel=1e-9)
+    assert crush_law("gyroid", material_from_spec("pa12")) == ("gyroid", material_from_spec("pa12").strength)
 
 
 def test_grade_3d_moves_load_off_the_idle_rim():

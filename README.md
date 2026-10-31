@@ -191,6 +191,8 @@ numpy as before.
 - [Reference](loadpath/README.md): the method, every study field, the report, limits.
 - [Benchmarks](docs/BENCHMARKS.md): loadpath against top88 and top3d on the textbook
   problems (MBB beam, L-bracket, 3D cantilever, 3D bridge) and the GE bracket challenge.
+- [Materials](docs/materials.md): the material library, every value cited to its
+  datasheet (`loadpath materials`), across-layer values, overrides.
 - [Calibration](docs/CALIBRATION.md): coupons to print and test at home, and a fit
   that turns the measurements into a material card for your printer.
 - [Examples](loadpath/examples/): a fastened bracket, a robot arm link, a

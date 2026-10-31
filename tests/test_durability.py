@@ -91,7 +91,8 @@ def test_miner_sum_and_safety_factor():
     cases = [{"peakStress": 10.0, "deflection": 0.1}, {"peakStress": 15.0, "deflection": 0.15}]
     r = assess(s, cases)
     d = durability_data("petg")
-    expect = 1e6 / cycles_to_failure(d, 45.0, 10.0) + 1e5 / cycles_to_failure(d, 45.0, 15.0)
+    uts = s.material.strength
+    expect = 1e6 / cycles_to_failure(d, uts, 10.0) + 1e5 / cycles_to_failure(d, uts, 15.0)
     assert abs(r["fatigueDamage"] - expect) / expect < 1e-9
     assert abs(r["fatigueSafetyFactor"] - expect ** (-1 / 5.5)) < 1e-9
     scaled = assess(s, [{"peakStress": c["peakStress"] * r["fatigueSafetyFactor"], "deflection": 0}

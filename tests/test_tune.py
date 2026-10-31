@@ -123,7 +123,8 @@ def test_editor_server_tunes_and_hands_back_the_values():
 
 # a skin-and-gyroid bar under the same kind of cantilever load, for the
 # homogenized check: fully resolved (meshed at 0.12 mm, verified on 150k,
-# 400k and 0.9M voxels) it deflects 0.95-1.00 mm and weighs 6.86 g
+# 400k and 0.9M voxels) it deflects 0.95-1.00 mm and weighs 6.86 g at the
+# old PETG card's E = 2000 MPa (linear: deflection scales with 1/E)
 LATTICE_STUDY = {**STUDY, "preserve": [{"id": "root", "shape": {"type": "box", "min": [0, -6, -6], "max": [4, 6, 6]}},
                                        {"id": "tip", "shape": {"type": "box", "min": [56, -6, -6], "max": [60, 6, 6]}}],
                  "designSpace": [{"type": "box", "min": [0, -6, -6], "max": [60, 6, 6]}],
@@ -149,7 +150,8 @@ def test_homogenized_lattice_matches_the_resolved_one():
     st = study_from_dict(LATTICE_STUDY)
     r = homogenized_check(LATTICE_BAR, st, cells=8000)
     d = r["cases"][0]["deflection"]
-    assert abs(d / 0.975 - 1) < 0.1 and abs(r["mass"] / 6.86 - 1) < 0.1, r
+    ref = 0.975 * 2000 / st.material.E
+    assert abs(d / ref - 1) < 0.1 and abs(r["mass"] / 6.86 - 1) < 0.1, r
     assert r["lattice"] == "core" and r["bodies"] == 1 and r["cases"][0]["inLattice"] in (True, False)
     thick = json.loads(json.dumps(LATTICE_BAR))
     thick["nodes"]["core"]["thickness"] = 1.6

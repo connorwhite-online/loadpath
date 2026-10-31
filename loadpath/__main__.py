@@ -129,6 +129,29 @@ def _assembly(args):
     return 0
 
 
+def _materials(args):
+    from .calibration import list_cards
+    from .material_library import card_names, describe
+    from .materials import MATERIALS, _ALIASES
+
+    if args.name:
+        key = args.name.strip().lower()
+        out = describe(_ALIASES.get(key, key))
+        if key in list_cards():
+            out = {"calibrated": key, "note": "a calibrated card of this name overrides the library one",
+                   "library": out}
+        if out is None:
+            print(f"unknown material {args.name!r}; known: {', '.join(card_names())}", file=sys.stderr)
+            return 1
+        print(json.dumps(out, indent=1))
+        return 0
+    rows = [{"name": k, "title": MATERIALS[k].note, "E": MATERIALS[k].E, "strength": MATERIALS[k].strength,
+             "strengthZ": MATERIALS[k].strength_z, "density": MATERIALS[k].density,
+             "processes": list(MATERIALS[k].processes)} for k in card_names()]
+    print(json.dumps({"library": rows, "calibrated": list_cards()}, indent=1))
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="loadpath", description="Generative design for printed parts.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -193,6 +216,8 @@ def main(argv=None):
     ed.add_argument("--no-open", action="store_true", help="don't open a browser")
     ed.add_argument("--base-dir")
     sub.add_parser("mcp", help="run a local MCP server (stdio) for agents")
+    mt = sub.add_parser("materials", help="list the material library, or print one card with its sources")
+    mt.add_argument("name", nargs="?")
     o = sub.add_parser("orient", help="rank build orientations of a mesh (support, bed, layer bond)")
     o.add_argument("mesh")
     o.add_argument("--study", help="the part's study: adds the interlayer reading under its loads")
@@ -246,6 +271,8 @@ def main(argv=None):
         from .tasks import example, examples
         print(json.dumps(example(args.name) if args.name else examples(), indent=2))
         return 0
+    if args.cmd == "materials":
+        return _materials(args)
     if args.cmd == "heatx":
         return _heatx(args)
     if args.cmd == "field":

@@ -66,6 +66,7 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import cg
 
 from .fem import CORNERS, HexMesh
+from .material_library import LIBRARY as _LIBRARY
 from .mma import MMA
 
 __all__ = [
@@ -76,13 +77,12 @@ __all__ = [
     "EXPANSION", "expansion", "thermoelastic",
 ]
 
-# W/(m K), dense printed parts, in plane. The polymer values match
-# heatx_thermal.WALL_CONDUCTIVITY (Tychanicz-Kwiecien et al. 2025 for PLA and
-# PETG; datasheets otherwise). FDM conducts 10-30% worse across layers.
-CONDUCTIVITY = {
-    "pla": 0.19, "petg": 0.20, "abs": 0.17, "asa": 0.17, "tpu": 0.20, "pa-cf": 0.40, "pa12": 0.25, "pa11": 0.25,
-    "resin": 0.18, "resin-tough": 0.18, "alsi10mg": 125.0, "ti64": 6.7, "316l": 13.0,
-}
+# W/(m K), dense printed parts, in plane, from the material library's cards
+# (material_library.py cites each: Tychanicz-Kwiecien et al. 2025 for PLA
+# and PETG, the AddUp sheets for AlSi10Mg and 316L, estimates otherwise).
+# FDM conducts 10-30% worse across layers.
+CONDUCTIVITY = {k: float(c["values"]["conductivity"][0]) for k, c in _LIBRARY.items()
+                if "conductivity" in c["values"]}
 
 # Fraction of room-temperature modulus kept at temperature (C), piecewise
 # linear. Read off typical DMA storage-modulus curves and heat deflection
