@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from loadpath import critic
 from loadpath.evals import corpus, pareto
@@ -113,6 +114,26 @@ def test_critic_score_and_agent_round_trip():
         assert rows[0]["critic"]["criticScore"] == 3
 
 
+def test_each_case_in_its_own_process():
+    """Cases run in fresh processes (in one, a finished case's peak stays
+    and the next sits on top of it), and a case whose worker is killed
+    fails alone: the run goes on and the others pass, at one job or two."""
+    import _eval_worker
+
+    real = ev.run_case
+    ev.run_case = _eval_worker.run_case
+    try:
+        for jobs in (1, 2):
+            rows = ev._run_isolated(["a.json", "dies-b.json", "c.json", "d.json"], "unused", "coarse", None, jobs)
+            assert [r["case"] for r in rows] == ["a", "dies-b", "c", "d"]
+            assert [r["pass"] for r in rows] == [True, False, True, True], rows
+            assert "died" in rows[1]["error"]
+            pids = [r["pid"] for r in rows if "pid" in r]
+            assert len(set(pids)) == 3 and os.getpid() not in pids
+    finally:
+        ev.run_case = real
+
+
 TESTS = [
     test_pareto_front_and_mass_at_target,
     test_coarse_tier_caps_resolution,
@@ -120,6 +141,7 @@ TESTS = [
     test_corpus_is_deterministic_and_valid,
     test_critic_score_and_agent_round_trip,
     test_corpus_case_runs,
+    test_each_case_in_its_own_process,
 ]
 
 

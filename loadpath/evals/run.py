@@ -46,7 +46,8 @@ Writes scorecard.json, scorecard.md and a render per case. Exit code is the
 number of failing cases, so it can gate a change to the solver.
 
 Tiers (--tier):
-    full     the suite as written (~2 h on the 4-core cloud box at --jobs 1).
+    full     the suite as written (~2 h on the 4-core cloud box at --jobs 1; every
+             case in its own fresh process).
     coarse   every case at <= COARSE["maxElements"] cells, fewer iterations,
              a shorter search and no fine-grid confirm: a smoke run for every
              push (minutes, not hours). Its numbers are not the full tier's;
@@ -512,6 +513,52 @@ def _case_bytes(path: str) -> float:
         return _run_bytes(60_000)
 
 
+def _died(f, tier, exc) -> dict:
+    """The row of a case whose worker process died (killed for memory, a
+    crash in native code): a failure of that case, not of the run."""
+    name = os.path.splitext(os.path.basename(f))[0]
+    return {"case": name, "tier": tier, "pass": False, "skipped": False, "checks": [], "seconds": 0.0,
+            "error": f"worker process died ({type(exc).__name__}: {exc}); out of memory?"}
+
+
+def _run_isolated(files: list, out: str, tier: str = "full", critic=None, jobs: int = 1) -> list:
+    """Run each case in a fresh spawned process, `jobs` at a time. In one
+    long process the cases add up: a finished case leaves its peak behind
+    (glibc keeps freed arenas and Python's allocator keeps its pools), the
+    next case sits on top, and a full --jobs 1 run on the 15 GB cloud box
+    was killed at ~14 GB on its seventh case although every case fits
+    alone. A worker that dies (out of memory) costs its own case: the pool
+    is rebuilt for the rest."""
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures.process import BrokenProcessPool
+
+    rows = {}
+    todo = list(files)
+    while todo:
+        ex = ProcessPoolExecutor(jobs, mp_context=mp.get_context("spawn"), max_tasks_per_child=1)
+        futs = {ex.submit(run_case, f, out, tier, critic): f for f in todo}
+        broken = False
+        for fut, f in futs.items():
+            try:
+                rows[f] = fut.result()
+            except BrokenProcessPool as exc:
+                # one at a time, the case that died is the first without a
+                # result; with several running it could be any of them, so
+                # the ones cut off run again one at a time
+                if not broken and jobs == 1:
+                    rows[f] = _died(f, tier, exc)
+                    print(json.dumps({"stage": "caseDied", "case": rows[f]["case"]}), flush=True)
+                broken = True
+            except Exception as exc:  # noqa: BLE001 - one case's failure is its own row
+                rows[f] = _died(f, tier, exc)
+        ex.shutdown(wait=True, cancel_futures=True)
+        todo = [f for f in todo if f not in rows]
+        if broken:
+            jobs = 1
+    return [rows[f] for f in files]
+
+
 def _run_budgeted(files: list, out: str, tier: str = "full", critic=None) -> list:
     """Run cases in processes, largest first, starting each only while the
     expected peaks of everything running fit in 80% of the memory available (the
@@ -545,7 +592,11 @@ def _run_budgeted(files: list, out: str, tier: str = "full", critic=None) -> lis
                     queue.remove(f)
             done, _ = wait(running, return_when=FIRST_COMPLETED)
             for fut in done:
-                rows[running.pop(fut)] = fut.result()
+                f = running.pop(fut)
+                try:
+                    rows[f] = fut.result()
+                except Exception as exc:  # noqa: BLE001 - a dead worker fails its case, not the run
+                    rows[f] = _died(f, tier, exc)
     return [rows[f] for f in files]
 
 
@@ -580,24 +631,22 @@ def main(argv=None):
         from .corpus import generate, seeds
         files += [generate(s) for s in seeds(args.corpus)]
     os.makedirs(args.out, exist_ok=True)
-    n = len(files)
     if args.jobs is None:
         args.jobs = (os.cpu_count() or 1) if args.tier == "coarse" else 1
     if args.jobs == "auto":
         rows = _run_budgeted(files, args.out, args.tier, args.critic)
-    elif int(args.jobs) > 1:
-        import multiprocessing as mp
-        from concurrent.futures import ProcessPoolExecutor
-        # One process per case; outcomes inside a case stay in that process.
-        os.environ.setdefault("LOADPATH_WORKERS", "1")
-        # and one BLAS / OpenMP thread each: four cases each spinning up a
-        # core's worth of BLAS threads ran 3-10x slower than one at a time
-        for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
-            os.environ.setdefault(v, "1")
-        with ProcessPoolExecutor(int(args.jobs), mp_context=mp.get_context("spawn")) as ex:
-            rows = list(ex.map(run_case, files, [args.out] * n, [args.tier] * n, [args.critic] * n))
-    else:
+    elif os.environ.get("LOADPATH_EVAL_INPROCESS") == "1":
+        # debugging: every case in this process (it accumulates; see _run_isolated)
         rows = [run_case(f, args.out, args.tier, args.critic) for f in files]
+    else:
+        if int(args.jobs) > 1:
+            # One process per case; outcomes inside a case stay in that process.
+            os.environ.setdefault("LOADPATH_WORKERS", "1")
+            # and one BLAS / OpenMP thread each: four cases each spinning up a
+            # core's worth of BLAS threads ran 3-10x slower than one at a time
+            for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+                os.environ.setdefault(v, "1")
+        rows = _run_isolated(files, args.out, args.tier, args.critic, int(args.jobs))
     md = _md(rows)
     regress = []
     if args.baseline:
