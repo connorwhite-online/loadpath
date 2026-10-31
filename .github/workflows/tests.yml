@@ -45,10 +45,23 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - run: pip install -e ".[render,flow]"
+      - run: python tests/test_tutorials.py ${{ matrix.tutorial }}
+
+  # the field editor: its server, and its GPU preview against fields.py in
+  # headless Chromium (SwiftShader)
+  editor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pip install -e ".[render,flow]"
-      # the field editor's page is checked in headless Chromium
+      - run: pip install -e ".[render]"
       - run: npm install -g playwright && npx playwright install --with-deps chromium
-      - run: python tests/test_tutorials.py ${{ matrix.tutorial }}
+      - run: NODE_PATH="$(npm root -g)" python tests/test_editor.py

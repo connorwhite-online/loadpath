@@ -332,6 +332,8 @@ def mesh_plan(p, lo, hi, pitch=None, project=3, progress=None, tol=CHORD_TOL, de
             return m3d.Manifold.batch_boolean(kids, m3d.OpType.Intersect)
         return m3d.Manifold.batch_boolean(kids, m3d.OpType.Subtract)
 
+    if progress is not None:
+        progress({"stage": "booleans", "exact": True})
     man = build(p)
     if man.is_empty():
         raise ValueError("the part is empty after its exact booleans")
