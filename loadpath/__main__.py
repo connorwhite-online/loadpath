@@ -377,6 +377,11 @@ def main(argv=None):
         stl = os.path.join(args.out, stem + ".stl")
         o.mesh.export(stl)
         summary["outcomes"][i]["stl"] = stl
+        if getattr(o, "compensated", None) is not None:
+            # pre-distorted against the simulated build: print this one
+            cstl = os.path.join(args.out, stem + "-compensated.stl")
+            o.compensated.export(cstl)
+            summary["outcomes"][i]["compensatedStl"] = cstl
         rs = result.study      # with an "auto" build direction resolved
         build = rs.print_direction if rs.print_direction is not None else \
             (rs.process.build if rs.process is not None and rs.process.build != "auto" else None)

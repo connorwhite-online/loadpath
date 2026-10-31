@@ -1,0 +1,269 @@
+# Build-process simulation: warp, residual stress, compensation
+
+`loadpath.buildsim` predicts what printing does to a part: the residual stress
+it is left with, how far it moves when it comes off the plate or bed, whether
+the build plane lifts into the recoater, and how hard an FDM part pulls on the
+bed. It then feeds that back into design two ways: a pre-distorted mesh that
+prints to the nominal shape, and a topology optimizer that weighs build
+distortion against stiffness.
+
+```json
+"process": {"type": "lpbf"},
+"buildSim": {"compensate": true}
+```
+
+adds `report.buildSim` to the delivered outcome (distortion, residual stress,
+recoater lift, warnings) and writes `<name>-compensated.stl` next to the part.
+From Python:
+
+```python
+from loadpath.buildsim import BuildSetup, simulate_part, compensate_mesh
+r = simulate_part(mesh, BuildSetup(process="lpbf", material="in625"), build="+z")
+r.report["distortion"], r.report["residualStress"], r.report["recoater"]
+fixed, rep = compensate_mesh(mesh, BuildSetup(process="lpbf", material="ti64"), iterations=2)
+```
+
+## How it works
+
+Every process here leaves stress the same way: a layer goes down hot and
+stress-free, bonds to the part below, then shrinks as it cools, and what it is
+bonded to stops part of the shrink. The solver adds the part one analysis
+layer at a time on the same voxel hex mesh as the rest of loadpath. Each new
+layer is stress-free in the shape it is laid into (bottom on the distorted
+part below, top on the nominal plane the recoater or nozzle levels) and gets
+an *inherent strain*: the shrink it would take if free. Each layer is one
+linear solve over the cells printed so far, and every cell's stress is
+carried forward. Then the part is released, cut off the plate or peeled off
+the bed, and springs back. A full release frees each separate piece with a
+statically determinate (3-2-1) hold and removes its best-fit rigid motion, as
+a CMM would.
+
+| process | inherent strain | held by |
+|---|---|---|
+| lpbf | `-k * yield / E`, isotropic in the layer plane for rotating scans; `k` fitted on AM-Bench | the build plate, modelled as plate cells bolted at the underside (`plate` mm, default 10) |
+| fdm | `-relax * alpha * (Tg - T(z))`, where `T(z)` runs from the bed temperature down to the chamber's; after printing, the whole part cools on the bed to room temperature | the bed, as an elastic foundation (`bed_stiffness`, N/mm³) or rigid |
+| sls / mjf | `-ds * min(depth / depth_sat, 1)`: thick sections crystallize more and shrink more than thin walls; the bulk 3-4% shrink is assumed taken out by the printer's scale factor | nothing: the part cools free in the cake |
+
+Layers are lumped: one analysis layer is `layer` mm, one voxel by default.
+Lumping changes the answer, because a thick slab laid in one go bends a
+compliant part less than thin layers do. The test beam below shows how much.
+For that reason the LPBF factor is fitted at the voxel size the benchmark
+runs at, and the pitch study further down gives the sensitivity.
+
+## Verification: the progressive-deposition beam
+
+Take a strip laid layer by layer on a free substrate, each layer shrinking
+along its length once laid. Beam theory gives its curvature exactly for any
+layer schedule (Tsui & Clyne 1997, progressive deposition;
+`buildsim.progressive_beam` integrates it). The 3D solver matches it:
+
+| lumping | FE curvature | beam theory | ratio |
+|---|---|---|---|
+| 0.5 mm layers | 2.840e-3 /mm | 2.884e-3 /mm | 0.985 |
+| 1.0 mm layers | 2.089e-3 /mm | 2.113e-3 /mm | 0.988 |
+
+For the same strip, beam theory gives 4.0e-3 /mm with 0.01 mm layers, so
+0.5 mm lumps capture 72% of the thin-layer curvature on this compliant strip.
+On a part held by a thick plate the gap is smaller (see the pitch study).
+
+`tests/test_buildsim.py` covers this case, plus four more:
+- a uniform shrink of a free part leaves it stress-free;
+- a part cut off a plate springs up;
+- a hot chamber warps less than a cold one;
+- the warp optimizer's adjoint gradient matches finite differences to 1e-8.
+
+## Validation: NIST AM-Bench 2018 bridge (LPBF)
+
+AMB2018-01 is a 75 × 5 × 12 mm bridge on twelve legs. It was printed in IN625
+and in 15-5 PH on an EOS M270 at 20 µm layers, on a 12.7 mm plate of the same
+alloy. NIST then cut the legs off the plate by wire EDM, leaving the base
+block attached, and measured the rise of 11 ridges on top by CMM (Phan et al.
+2019, IMMI 8:318; NIST AMB2018-01 pages). In the 2018 blind challenge, six
+model submissions predicted the free-end rise between -45% and +47% of the
+measured value, and none met NIST's criterion (Levine et al. 2020, IMMI 9:1).
+
+`bench/buildsim_validate.py` builds the bridge from NIST's drawing (legs, 45°
+window overhangs, ridges) at 0.5 mm voxels on the full 12.7 mm plate. It
+lays it in 0.5 mm analysis layers, cuts the legs off along x = 0-56 mm, and
+reads the ridges.
+
+![AM-Bench bridge: measured vs loadpath](images/buildsim/ambench-bridge.png)
+
+| | free-end rise | all 11 ridges |
+|---|---|---|
+| IN625 measured | 1.276 mm | |
+| IN625 loadpath, k = 0.909 fitted on this data | 1.274 mm | rms error 0.009 mm |
+| 15-5 PH measured | 1.168 mm | |
+| 15-5 PH loadpath with IN625's k (a prediction) | 1.865 mm (+60%) | rms error 0.32 mm |
+| 2018 blind submissions | 0.70-1.88 mm | |
+
+What this shows, and what it does not:
+
+- **The IN625 match is a fit, not a prediction.** One number, `k`, sets the
+  magnitude. The shape is not fitted: one scalar cannot bend the curve. The
+  model reproduces the whole profile (the near-parabola from the free end,
+  the root near x = 56-60 mm, and the flat attached end) to 9 µm rms, 0.7% of
+  the tip rise.
+- **The transfer to another alloy failed.** The yield-strain law
+  `eps = -k * yield / E` carried from IN625 to 15-5 PH over-predicts by 60%.
+  15-5 PH turns martensitic as it cools, and the transformation expands,
+  undoing part of the shrink, which the law cannot know about. So 15-5 PH has
+  its own fitted `k = 0.569`, which leaves it with no independent check.
+- **Other alloys are uncalibrated.** Ti64, 316L and AlSi10Mg use IN625's `k`,
+  and `report.buildSim.strain.kSource` says so. For Ti64 that gives
+  -0.0083 in-plane. Published elastic calibrations on twin cantilevers put
+  Ti64 at -0.0047 / -0.0020 (Simufact, Ninpetch et al. 2022, quoted from a
+  search summary, not read). For anything that matters, print a cantilever,
+  cut it, and set `buildSim.scale`, the same calibration the commercial
+  inherent-strain codes ask for.
+- **Residual stress on the plate**, along leg L7, compared with the contour
+  method: about -200 MPa near the plate in both, and +636 to +780 MPa in the
+  top 1 mm against a measured ~600. Through the solid section (z 7-10 mm) the
+  model reads +250 to +370 MPa, while the contour cut crosses zero near z = 8
+  and reaches only about +100 MPa. That gap is a linear model with no
+  yielding: the reported peak (3500 MPa at the sharp leg roots) is a
+  singularity, not a stress. The report flags anything above yield.
+
+![Longitudinal stress, leg L7](images/buildsim/ambench-stress.png)
+
+**Pitch study.** The same `k` at 1 mm voxels gives an IN625 free-end rise of
+1.066 mm, 16% low. A run takes 30 s at 1 mm and 12 min at 0.5 mm (about 100k
+cells with the plate) on the 4-core cloud box. `simulate_part` sizes the grid
+to about 60k cells by default, so on large parts the voxels coarsen and the
+prediction reads low by about that much.
+
+## FDM: warp against Armillotta et al. 2018 (ABS)
+
+Armillotta, Bellotti and Cavallaro measured how flat the top face of ABS
+bars came out of a Stratasys Dimension Elite: closed chamber at 75 °C,
+0.254 mm layers, a soluble-support raft, flatness taken by 3D scan after
+removal (Robotics and CIM 50:140-152, 2018). `bench/buildsim_fdm.py` runs
+their nine 20 mm-wide bars as strips at 0.254 mm voxels, one voxel per
+printed layer, so nothing is lumped (their tests showed width has no
+effect). Two numbers were fitted: the share of the sub-Tg shrink the part
+keeps (`relax`, least squares) and the raft's hold (`bed_stiffness`,
+chosen from 1, 3, 10 and 30 N/mm³). The best pair is 0.83 and 3 N/mm³,
+which are now the defaults:
+
+| bar (length x height, mm) | measured warp | loadpath |
+|---|---|---|
+| 60 x 1.5 | 0.38 | 0.57 |
+| 60 x 3.5 | 0.45 | 0.39 |
+| 60 x 5.5 | 0.42 | 0.29 |
+| 100 x 1.5 | 0.58 | 0.85 |
+| 100 x 3.5 | 0.67 | 0.70 |
+| 100 x 5.5 | 0.68 | 0.57 |
+| 140 x 1.5 | 0.93 | 0.96 |
+| 140 x 3.5 | 1.05 | 0.90 |
+| 140 x 5.5 | 0.97 | 0.79 |
+
+The rms error is 0.15 mm and the mean error 22%. Two things hold up: the
+magnitude, and the growth with length (the measured warp grows 2.5x from
+60 to 140 mm; the model grows 1.7-2.8x). One thing does not: the measured
+warp peaks at 2-4 mm of height, while the model falls steadily with height.
+Armillotta's own analytic model misses that peak too; they put it down to
+reheating of the layers below above Tg, and to plasticity near Tg, and this
+model has neither. With a rigid (glued) bed, the same bars barely warp
+(0.02 mm at full shrink), because a part held flat while every layer goes
+down holds a nearly uniform stress, and a uniform stress releases without
+bending. The bed's give is what lets the warp build up during the print.
+
+The report also gives the bed's pull on the part (`peel`: the mean over the
+area in tension, its maximum, and the net lift force). The maximum sits at an
+edge, where a bonded joint's peel stress is singular and grows as the voxels
+shrink, so the warning goes on the mean. ASA, PETG and PLA use the same two
+fitted numbers with their own Tg and CTE, and none of them is validated.
+
+## SLS / MJF
+
+The differential-shrink model (`ds` = 0.3% between a thin wall and a section
+4 mm deep or more) is a heuristic sized to the 0.2-0.5% differential shrink
+the nylon sintering literature reports. It is not fitted to a measured part,
+and the report labels it as a heuristic. Use it to compare designs (a thick
+boss on a thin panel bows the panel), not to predict millimetres.
+
+## Pre-distortion compensation
+
+`compensate_mesh` simulates the part, moves every vertex against its
+predicted displacement, simulates the moved shape, corrects by whatever error
+is left, and repeats. On a Ti64 overhang bracket (a 30 mm arm on a 6 mm post,
+0.5 mm voxels, full release):
+
+| round | max deviation from design | rms |
+|---|---|---|
+| print the design | 1.52 mm | 0.76 mm |
+| compensated once | 0.20 mm | 0.12 mm |
+| compensated twice | 0.11 mm | 0.05 mm |
+
+What remains is about one voxel's worth of resolution. The study writes
+`<name>-compensated.stl` when `buildSim.compensate` is true.
+
+## Warp-aware topology optimization
+
+`optimize_warp(grid, supports, force, WarpOptions(...))` minimizes
+`c / c0 + w * D / D0`, where `c` is service compliance and `D` is the mean
+squared as-built displacement from the layer-by-layer build on the plate.
+The gradient of the layer-by-layer solve comes from the adjoint: two solves
+per analysis layer, sharing one factorization. It matches finite differences
+to 1e-8.
+
+`bench/buildsim_optimize.py` runs a Ti64 shelf bracket, 40 x 4 x 24 mm
+(2.5D, 1 mm voxels), built standing on the plate. It is bolted along x = 0,
+and its top corner is loaded. Two designs at the same volume target, both
+re-simulated afterwards with the full build model (5 mm plate, then cut off):
+
+| | compliance only (w = 0) | compliance + distortion (w = 1) |
+|---|---|---|
+| volume fraction | 0.315 | 0.298 |
+| service compliance | 1.76 N mm | 3.61 N mm (2.0x) |
+| max distortion on the plate | 0.51 mm | 0.088 mm (-83%) |
+| max distortion after cut-off | 0.39 mm | 0.18 mm (-54%) |
+| lift at the build plane (recoater) | 0.31 mm | 0.056 mm |
+| residual von Mises p95 on the plate | 523 MPa | 927 MPa |
+
+| compliance only | warp-aware |
+|---|---|
+| ![](images/buildsim/bracket-w0.png) | ![](images/buildsim/bracket-w1.png) |
+
+(Colour is the as-built displacement, from 0 in dark purple to 0.8 mm.)
+
+The compliance-only design is a classic truss whose top chord runs
+straight out from the flange at the very top, so it is printed last as a
+30 mm horizontal span, which curls up as it goes down: 0.31 mm of lift at
+the build plane, six times a typical 0.05 mm recoater clearance. The
+warp-aware design builds nothing flat and high. A post stands on the plate
+under the load pad, a strut runs along the plate back to the flange, and a
+tie climbs from that post to the top of the flange at about 30°. The price is
+real: twice the service compliance at w = 1, and more stress locked in on
+the plate (most of which the cut releases). The weight `w` sets that trade.
+Both the trade and the recoater gain come from the optimizer's view of the
+build, which no compliance-only optimizer has.
+
+This is a Python API for now. The study JSON optimizer does not take a warp
+term yet; `buildSim` in a study verifies and compensates the delivered part.
+
+## Limits
+
+- Speed. Each analysis layer is one sparse solve over the part plus its
+  plate. A small 40 mm Ti64 bracket (8k part cells, 0.6 mm voxels, a 10 mm
+  plate) takes 3 min on the 4-core cloud box, and `compensate` runs the
+  simulation iterations + 2 times. A thinner `plate` is faster, but it
+  changes the answer: on AM-Bench at 1 mm voxels, a 3 mm plate gives 0.89
+  mm of rise where the full 12.7 mm plate gives 1.07 mm.
+
+- Linear elastic throughout. There is no plasticity, so peaks at sharp roots
+  exceed yield (flagged in the report), and there is no creep or stress
+  relief. Stress-relief heat treatment before cut-off would remove most of
+  the LPBF distortion this predicts.
+- One inherent strain per alloy and process, isotropic in plane, which suits
+  rotating scans. Stripe or island patterns that do not rotate are
+  anisotropic: give `strain` explicitly.
+- No thermal history and no preheat. For AlSi10Mg on a plate preheated to
+  150-250 °C, the measured distortion falls toward zero (Buchbinder 2014);
+  scale it down.
+- Voxel and lumping dependence, as quantified above. The LPBF calibration
+  holds at 0.5 mm voxels and 0.5 mm analysis layers.
+- FDM is fitted to one machine family (an enclosed Stratasys printer, ABS
+  on a support raft) and misses the measured warp peak at 2-4 mm of
+  height. ASA, PETG and PLA are unvalidated, and an open-frame printer on
+  a PEI sheet holds the part differently (`bedStiffness`).

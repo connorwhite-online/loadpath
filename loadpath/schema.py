@@ -365,6 +365,35 @@ _SLICER = {"anyOf": [
     "description": "FDM: slice each outcome headless (PrusaSlicer) for print time, filament and support "
                    "(report 'slicer'); optionally grade infill by stress (report 'graded', <name>-graded.3mf)."}
 
+_BUILD_SIM = {"anyOf": [
+    {"type": "boolean"},
+    {"type": "object", "properties": {
+        "layer": {**_POS, "description": "mm per analysis layer (lumped real layers; default one voxel)"},
+        "plate": {"type": "number", "minimum": 0, "description": "lpbf: mm of build plate modelled under the part "
+                                                                   "(default 10; 0 = rigid)"},
+        "scale": {**_POS, "description": "multiplies the inherent strain (a calibration for your machine)"},
+        "strain": {**_VEC3, "description": "inherent strain (exx, eyy, ezz) in the build frame, overriding "
+                                           "the material model (negative = shrink)"},
+        "release": {"enum": ["full", "none"],
+                    "description": "full: cut off the plate / peeled off the bed and free (default); none: as built"},
+        "bedTemperature": {"type": "number", "description": "fdm: C (default per material)"},
+        "chamberTemperature": {"type": "number", "description": "fdm: C, air round the part while printing"},
+        "bedStiffness": {"type": "number", "minimum": 0,
+                         "description": "fdm: N/mm^3 the bed holds the first layer with (default: the value fitted "
+                                        "to Armillotta 2018; omit for that)"},
+        "relax": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
+                  "description": "fdm: share of the shrink below Tg kept as stress"},
+        "recoaterGap": {**_POS, "description": "lpbf: mm of lift at the build plane that counts as recoater "
+                                               "contact risk (default 0.05)"},
+        "compensate": {"type": "boolean", "description": "also write <name>-compensated.stl, pre-distorted so "
+                                                         "the print lands on the design"},
+        "iterations": {"type": "integer", "minimum": 1, "description": "compensation rounds (default 2)"},
+        "cells": {"type": "integer", "minimum": 1000, "description": "voxels in the simulated part (default 60000)"}},
+     "additionalProperties": False}],
+    "description": "Simulate the build of the delivered part (report 'buildSim'): layer-by-layer inherent-strain "
+                   "residual stress and distortion for lpbf (validated on NIST AM-Bench 2018), fdm warp and bed "
+                   "peel (ABS/ASA/PETG...), sls/mjf differential shrink; optionally a pre-distorted STL."}
+
 _PROCESS_KINDS = ["fdm", "sls", "mjf", "sla", "dlp", "volumetric", "jetting", "lpbf"]
 _PROCESS = {"anyOf": [
     {"enum": _PROCESS_KINDS},
@@ -576,6 +605,7 @@ STUDY_SCHEMA = {
                     "description": "Circular pattern: count identical sectors round the axis."},
         "process": _PROCESS,
         "slicer": _SLICER,
+        "buildSim": _BUILD_SIM,
         "durability": _DURABILITY,
         "lattice": {"type": "object", "properties": _LATTICE_PROPS, "additionalProperties": False,
                     "description": "Optional: fill the delivered part with a stress-graded TPMS lattice."},

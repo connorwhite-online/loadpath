@@ -29,6 +29,13 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
   nylon (SLS, MJF: trapped powder, escape holes, warp-prone panels), resin (SLA, DLP:
   supports, peel area, suction cups, trapped resin) and powder-bed metal (internal
   ceilings, powder clean-outs), each with material cards.
+- **Warp and residual stress (LPBF, FDM, SLS).** `"buildSim": true` lays the part
+  down layer by layer with inherent strain and reports its distortion off the plate,
+  residual stress, recoater lift and bed peel; `"compensate": true` writes a
+  pre-distorted STL that prints to shape. The LPBF model was fitted to the NIST AM-Bench
+  2018 bridge: one factor, then all 11 measured ridges within 9 µm rms. The same factor
+  on a second alloy (15-5 PH) reads 60% high, and the docs say so
+  ([docs/BUILDSIM.md](docs/BUILDSIM.md)).
 - **Sliced, not guessed (FDM).** With PrusaSlicer installed, every outcome is sliced
   headless for print time, filament and support; `"goal": {"minimize": "printTime"}`
   delivers the fastest passing part, and `"slicer": {"grade": true}` sizes infill
@@ -230,6 +237,8 @@ numpy as before.
   problems (MBB beam, L-bracket, 3D cantilever, 3D bridge) and the GE bracket challenge.
 - [Materials](docs/materials.md): the material library, every value cited to its
   datasheet (`loadpath materials`), across-layer values, overrides.
+- [Build simulation](docs/BUILDSIM.md): warp and residual stress layer by layer,
+  validated on NIST AM-Bench; compensation; warp-aware topology optimization.
 - [Calibration](docs/CALIBRATION.md): coupons to print and test at home, and a fit
   that turns the measurements into a material card for your printer.
 - [Examples](loadpath/examples/): a fastened bracket, a robot arm link, a
@@ -248,6 +257,7 @@ python3 tests/test_sharp.py
 python3 tests/test_crease.py
 python3 tests/test_editor.py      # the GPU part needs node and Playwright
 python3 tests/test_impact.py
+python3 tests/test_buildsim.py
 python3 tests/test_recall.py
 python3 tests/test_assembly.py
 python3 tests/test_cadimport.py

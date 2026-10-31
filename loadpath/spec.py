@@ -276,6 +276,33 @@ def _calibrated_process(process, mat_in, spec):
     return process
 
 
+_BUILD_SIM_KEYS = {"layer": "layer", "plate": "plate", "scale": "scale", "release": "release",
+                   "bedTemperature": "bed", "chamberTemperature": "chamber", "bedStiffness": "bed_stiffness",
+                   "relax": "relax", "recoaterGap": "recoater_gap"}
+
+
+def _build_sim(spec, process, material):
+    """`buildSim`: true or options -> {"setup": buildsim.BuildSetup,
+    "compensate": bool, "cells": int}; None when absent or false."""
+    if spec is None or spec is False:
+        return None
+    if spec is True:
+        spec = {}
+    kind = process.kind if process is not None else None
+    if kind not in ("lpbf", "fdm", "sls", "mjf"):
+        raise ValueError("buildSim simulates lpbf, fdm, sls or mjf builds: give process.type")
+    from .buildsim import BuildSetup
+    kw = {v: spec[k] for k, v in _BUILD_SIM_KEYS.items() if k in spec}
+    if "strain" in spec:
+        kw["strain"] = tuple(float(x) for x in spec["strain"])
+    if kw.get("release", "full") not in ("full", "none"):
+        raise ValueError("buildSim.release is 'full' (off the plate) or 'none' (as built, on it)")
+    mat = material if isinstance(material, str) else "pla"
+    setup = BuildSetup(process="sls" if kind == "mjf" else kind, material=mat, **kw)
+    return {"setup": setup, "compensate": bool(spec.get("compensate", False)),
+            "cells": int(spec.get("cells", 60_000)), "iterations": int(spec.get("iterations", 2))}
+
+
 def _slicer(spec, process, base_dir, goal):
     """slicer.SlicerOptions for FDM studies (None otherwise)."""
     from .slicer import SlicerOptions
@@ -429,6 +456,9 @@ class Study:
     drains: Any = "auto"
     # multimat.MultiMaterial: the optimizer places several materials
     multi_material: Any = None
+    # Build-process simulation of the delivered part (buildsim.py): a
+    # buildsim.BuildSetup plus {"compensate": bool, "cells": int}, or None
+    build_sim: Any = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -793,6 +823,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         slicer=_slicer(d.get("slicer"), process, base_dir, goal),
         min_hole=float(min_hole) if min_hole is not None else None,
         drains=_drains(d.get("drains", "auto"), process),
+        build_sim=_build_sim(d.get("buildSim"), process, d.get("material")),
         raw=d,
     )
     if d.get("multiMaterial") is not None:

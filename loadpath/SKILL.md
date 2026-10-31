@@ -97,6 +97,15 @@ field. `check` reports every problem at once: fix them all, then check again.
    `"escapeHole"`), thin flat panels that warp (powder), and for resin the
    supports, the largest layer (peel) and suction cups. Its warnings are the
    outcome's. Fix each before ordering the print.
+   `"buildSim": true` (lpbf, fdm, sls, mjf) simulates the build of the
+   delivered part: `report.json` → `buildSim` gives `distortion` (mm, off the
+   plate or bed), `residualStress` (MPa vs yield), `recoater.maxLift` (LPBF:
+   above ~0.05 mm the recoater can hit it) and `peel` (FDM: mean pull on the
+   bed, MPa). Add `"compensate": true` for `<stem>-compensated.stl`,
+   pre-distorted to print to shape. Read `strain.kSource`: only IN625 and
+   15-5 PH are calibrated (NIST AM-Bench); for other alloys the size of the
+   distortion is a rough guide (could be off 2x), though comparing designs
+   is still sound. docs/BUILDSIM.md has the validation.
 6. **Say how long it has to last.** A load that repeats (a servo lifting,
    an arm swinging) gets `"cycles"` in its load case: how many times over
    the part's life (a hobby arm: 1e5-1e6). A load that is held (a part

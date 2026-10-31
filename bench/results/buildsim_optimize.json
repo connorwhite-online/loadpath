@@ -1,0 +1,42 @@
+{
+ "w0": {
+  "warpWeight": 0.0,
+  "volume": 0.3151041666666667,
+  "serviceCompliance": 1.7634641539065603,
+  "optimizerDistortionMs": 0.03668145629258237,
+  "iterations": 57,
+  "seconds": 229.6024136543274,
+  "build_none": {
+   "distortionMax": 0.5121883474488593,
+   "distortionRms": 0.13709297180779773,
+   "vmP95": 522.538167061094,
+   "recoaterLift": 0.30768870254235575
+  },
+  "build_full": {
+   "distortionMax": 0.38798600917749515,
+   "distortionRms": 0.1037703604880458,
+   "vmP95": 425.91751903490285,
+   "recoaterLift": 0.30768870254235575
+  }
+ },
+ "w1": {
+  "warpWeight": 1.0,
+  "volume": 0.2984375,
+  "serviceCompliance": 3.609488250188741,
+  "optimizerDistortionMs": 0.0008716761806087366,
+  "iterations": 73,
+  "seconds": 299.45846343040466,
+  "build_none": {
+   "distortionMax": 0.08789606359580247,
+   "distortionRms": 0.02175943149303553,
+   "vmP95": 926.842420100814,
+   "recoaterLift": 0.05583259083749498
+  },
+  "build_full": {
+   "distortionMax": 0.17683945145372812,
+   "distortionRms": 0.08407487164043398,
+   "vmP95": 432.60941822210583,
+   "recoaterLift": 0.05583259083749498
+  }
+ }
+}
