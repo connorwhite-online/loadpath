@@ -150,7 +150,7 @@ def _assembly(args):
     derived, report = derive_study(robot, args.link, study, args.region, payload=payload, keep_cases=args.keep_cases,
                                    sweep_space=not args.no_space, k=args.cases, method=args.method,
                                    sweep_kw=sweep_kw, space_kw={"clearance": args.clearance}, out_dir=args.out,
-                                   base_dir=base, cycles={k: float(v) for k, v in
+                                   base_dir=base, frame=args.frame, cycles={k: float(v) for k, v in
                                                           (kv.split("=") for kv in args.cycles.split(",") if kv)})
     # the study's own mesh paths are relative to its folder: make them absolute
     for key in ("designSpace", "preserve", "keepOut"):
@@ -364,6 +364,9 @@ def main(argv=None):
     asm.add_argument("--study", required=True, help="the part's study: interfaces, material, goal, design space")
     asm.add_argument("--region", required=True, help="the study region the far joint loads (a socket, a mount)")
     asm.add_argument("--joint", help="the far joint, if the link has more than one moving child joint")
+    asm.add_argument("--frame", choices=["world", "link"], default="world",
+                     help="the study's frame: world (the URDF's world at the home pose, mm) or link (the "
+                     "designed link's own frame, mm, origin at its joint)")
     asm.add_argument("--payload", type=float, default=0.0, help="kg at the end of the chain")
     asm.add_argument("--payload-link", help="link that carries the payload (default: the chain's last link)")
     asm.add_argument("--payload-at", default="0,0,0", help="payload position in that link's frame, m: x,y,z")

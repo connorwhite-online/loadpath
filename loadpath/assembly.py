@@ -45,7 +45,8 @@ sweep.
 
 URDF units are metres, kg and N·m; the study's are mm, N and N·mm. `frame`
 maps the URDF's world at the home pose to the study's frame (default: the
-same axes, metres to mm).
+same axes, metres to mm), or is "link": the study is in the designed link's
+own frame, mm (origin at its proximal joint, as a part is usually drawn).
 """
 from __future__ import annotations
 
@@ -362,11 +363,16 @@ class LoadSweep:
         return out
 
 
-def _frame(frame):
-    if frame is None:
+def _frame(frame, robot=None, link=None):
+    if frame is None or (isinstance(frame, str) and frame in ("world", "link")):
         f = np.eye(4)
         f[:3, :3] *= 1000.0
+        if frame == "link":
+            # world at home -> the link's own frame, then metres to mm
+            f = f @ np.linalg.inv(robot.fk({})[link])
         return f
+    if isinstance(frame, str):
+        raise ValueError(f"unknown frame {frame!r}: world, link or a 4x4 matrix")
     return np.asarray(frame, float)
 
 
@@ -478,7 +484,7 @@ def sweep_loads(robot: Robot, link: str, *, joint: str | None = None, payload: P
             robot.bodies[n].mass = float(kg)
     joint = joint or robot.far_joint(link)
     carried = robot.subtree(joint)
-    frame = _frame(frame)
+    frame = _frame(frame, robot, link)
     jt = robot.joints
     names = robot.movable
     lim = {n: (jt[n].lower, jt[n].upper) for n in names}
@@ -650,10 +656,14 @@ def _unit_stress(study_dict, region, max_elements=20000, band=2.0, base_dir=None
     from scipy.spatial import cKDTree
 
     from .domain import build_domain
+    from .fasteners import expand_fasteners
     from .fem import Solver, Stiffness
     from .spec import study_from_dict
 
-    s = copy.deepcopy(study_dict)
+    # the fasteners' regions are needed (the load region may be one), their
+    # preload case is not: it is not a unit wrench
+    s = expand_fasteners(copy.deepcopy(study_dict))
+    s.pop("loads", None)
     s["loadCases"] = []
     for k in range(6):
         e = [0.0] * 6
@@ -755,7 +765,7 @@ def swept_keepouts(robot: Robot, link: str, *, box, pitch: float = 1.0, clearanc
 
     from .verify import voxelize
 
-    frame = _frame(frame)
+    frame = _frame(frame, robot, link)
     lo, hi = (np.asarray(v, float) for v in box)
     lo, hi = lo - clearance - pitch, hi + clearance + pitch
     dims = np.maximum(np.ceil((hi - lo) / pitch).astype(int), 1)
@@ -918,31 +928,43 @@ def region_centroid(study_dict: dict, region: str, samples: int = 20000, seed: i
 def derive_study(robot: Robot, link: str, study: dict, region: str, *, payload: Payload | None = None,
                  keep_cases: bool = False, sweep_space: bool = True, k: int = 8, method: str | None = None,
                  sweep_kw: dict | None = None, space_kw: dict | None = None, out_dir: str | None = None,
-                 base_dir: str | None = None, cycles: dict | None = None):
+                 base_dir: str | None = None, cycles: dict | None = None, frame=None):
     """A study with its loads (and, with sweep_space, its neighbour keep-outs)
     derived from the mechanism. `study` supplies the interfaces: supports,
     preserve, keep-outs for hardware, material, goal and a design space
     (its bounds are where the sweep is resolved). The swept keep-outs are
     written to out_dir as STLs the returned study names by file name, so
-    save the study there too (without out_dir they are inlined). Returns
+    save the study there too (without out_dir they are inlined). `frame`
+    (see the module notes; "link" for a study drawn in the link's own
+    frame) goes to both the load sweep and the swept keep-outs. The study's
+    own load cases are replaced (it needs none) unless keep_cases. Returns
     (study, report)."""
     import copy
 
     from .spec import study_from_dict
 
     s = copy.deepcopy(study)
-    point = region_centroid(s, region, base_dir=base_dir)
-    sweep = sweep_loads(robot, link, payload=payload, point=point, region=region, **(sweep_kw or {}))
-    picked = governing_cases(sweep, s, k=k, method=method, base_dir=base_dir, cycles=cycles)
+    # parsing wants a load case; the derived ones replace it
+    probe = s if s.get("loadCases") or s.get("loads") else \
+        {**s, "loadCases": [{"name": "placeholder", "loads": [{"region": region, "force": [0, 0, -1]}]}]}
+    point = region_centroid(probe, region, base_dir=base_dir)
+    sweep = sweep_loads(robot, link, payload=payload, point=point, region=region,
+                        **{"frame": frame, **(sweep_kw or {})})
+    picked = governing_cases(sweep, probe, k=k, method=method, base_dir=base_dir, cycles=cycles)
     report = {"link": link, "joint": sweep.joint, "region": region,
               "pointMm": [round(float(v), 2) for v in point], **{kk: v for kk, v in picked.items() if kk != "cases"}}
+    kinds = [kk.split(":")[0] for kk in picked["kinds"]]
+    if kinds and all(kk == "push" for kk in kinds):
+        report["note"] = (f"all {len(kinds)} governing cases are the push: its size (push, the CLI's --push) "
+                          "sets this part's size")
     s["loadCases"] = (s.get("loadCases", []) if keep_cases else []) + picked["cases"]
     if sweep_space:
         st = study_from_dict(s, base_dir=base_dir)
         lo, hi = st.bounds()
         protect = [r.shape for r in st.preserve] + [sp.shape for sp in st.supports if sp.shape is not None]
         protect += [st.region_shape(sp.region)[0] for sp in st.supports if sp.region]
-        entries = swept_keepouts(robot, link, box=(lo, hi), protect=protect, out_dir=out_dir, **(space_kw or {}))
+        entries = swept_keepouts(robot, link, box=(lo, hi), protect=protect, out_dir=out_dir,
+                                 **{"frame": frame, **(space_kw or {})})
         s["keepOut"] = s.get("keepOut", []) + [e["keepOut"] for e in entries if e["keepOut"]]
         report["sweptKeepOuts"] = {e["id"]: {"joints": e["joints"], "mm3": round(e["volume"], 1)} for e in entries}
     return s, report

@@ -317,7 +317,11 @@ child links, swept through their joints' ranges, become `bore: false` mesh
 keep-outs with the study's preserved interfaces cut out. Inputs worth
 setting: `--ramp` (seconds to full speed, what the controller allows),
 `--push` (N, the hardest contact at the tool; a stalled joint pushes up to it) and `--balanced`
-for joints a spring counterbalances. Python: `loadpath.assembly`
+for joints a spring counterbalances. Write the study in the URDF's world
+frame at the home pose (mm), or pass `--frame link` if it is in the link's own
+frame (origin at its joint): a mismatch silently gives wrong moment arms. The
+study needs no load cases (they are replaced; `fasteners` and their preload are
+kept). Python: `loadpath.assembly`
 (`Robot.from_urdf`, `sweep_loads`, `governing_cases`, `swept_keepouts`,
 `derive_study`).
 
