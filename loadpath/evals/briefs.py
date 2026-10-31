@@ -316,7 +316,9 @@ def main(argv=None):
             f = os.path.join(d, "score.json")
             old = json.load(open(f)) if os.path.exists(f) else None
             row = old
-            if old is None or a.rescore:
+            stl = os.path.join(d, "part.stl")
+            stale = old is not None and os.path.exists(stl) and os.path.getmtime(stl) > os.path.getmtime(f)
+            if old is None or a.rescore or stale:
                 row = score(load(os.path.basename(d)), os.path.join(d, "part.stl"))
                 row["studyWritten"] = os.path.exists(os.path.join(d, "study.json"))
                 if old:
