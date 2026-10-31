@@ -1956,6 +1956,11 @@
           "exclusiveMinimum": 0,
           "description": "mm, at the loads"
         },
+        "maxMass": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "g: a cap the delivered part is checked against (deliver.passes is false over it). The search already returns the lightest part that meets the other limits, so over the cap means a lighter material, smaller preserves or a lower safety factor."
+        },
         "method": {
           "enum": [
             "search",

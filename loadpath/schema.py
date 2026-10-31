@@ -275,6 +275,10 @@ _GOAL = {
         "volumeFraction": {"type": "number", "minimum": 0.02, "maximum": 0.95},
         "safetyFactor": _POS,
         "maxDeflection": {**_POS, "description": "mm, at the loads"},
+        "maxMass": {**_POS, "description": "g: a cap the delivered part is checked against (deliver.passes is "
+                                           "false over it). The search already returns the lightest part that "
+                                           "meets the other limits, so over the cap means a lighter material, "
+                                           "smaller preserves or a lower safety factor."},
         "method": {"enum": ["search", "constrained"]},
         "confirm": {"enum": ["auto", "voxel", "tet"],
                     "description": "How the lightest passing part is confirmed: voxel (a finer voxel grid), tet "
