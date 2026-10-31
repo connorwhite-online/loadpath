@@ -1,0 +1,141 @@
+{
+ "name": "arm-link-vf22",
+ "description": "arm-link example at a fixed 22% fraction, isotropic (no process), for the cut-cell benchmark",
+ "designSpace": [
+  {
+   "type": "box",
+   "min": [
+    -16,
+    -18,
+    -12
+   ],
+   "max": [
+    156,
+    18,
+    12
+   ]
+  }
+ ],
+ "preserve": [
+  {
+   "id": "shoulder-boss",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 24,
+    "r": 16
+   }
+  },
+  {
+   "id": "wrist-boss",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     140,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 24,
+    "r": 15
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "shoulder-bearing",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 30,
+    "r": 11
+   }
+  },
+  {
+   "id": "wrist-bearing",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     140,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 30,
+    "r": 11
+   }
+  },
+  {
+   "id": "cable-channel",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     30,
+     0,
+     0
+    ],
+    "p1": [
+     110,
+     0,
+     0
+    ],
+    "r": 5
+   }
+  }
+ ],
+ "supports": [
+  {
+   "region": "shoulder-bearing"
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "payload",
+   "loads": [
+    {
+     "region": "wrist-bearing",
+     "force": [
+      0,
+      -20,
+      0
+     ],
+     "distribution": "bearing"
+    }
+   ]
+  },
+  {
+   "name": "side",
+   "loads": [
+    {
+     "region": "wrist-bearing",
+     "force": [
+      0,
+      0,
+      8
+     ]
+    }
+   ]
+  }
+ ],
+ "material": "pa12",
+ "goal": {
+  "volumeFraction": 0.22
+ },
+ "minMember": 3.0,
+ "symmetry": [
+  "z"
+ ],
+ "resolution": {
+  "maxElements": 30000
+ }
+}

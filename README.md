@@ -242,6 +242,7 @@ python3 tests/test_pressure.py
 python3 tests/test_process.py
 python3 tests/test_fields.py
 python3 tests/test_sharp.py
+python3 tests/test_crease.py
 python3 tests/test_editor.py      # the GPU part needs node and Playwright
 python3 tests/test_impact.py
 python3 tests/test_recall.py

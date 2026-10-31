@@ -66,7 +66,7 @@ def _port(m, fl, dp_budget, share, d_max, d_min=4.0):
 
 
 def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_drop: dict | None = None,
-                   layout: str = "auto", kind: str = "gyroid", cells=None, walls=None, splits=(0.5,),
+                   layout: str = "auto", kind: str = "gyroid", cells=None, walls=None, splits=(0.4, 0.5, 0.6, 0.66),
                    min_effectiveness: float | None = None, target_duty: float | None = None,
                    objective: str = "mass", header: float = 6.0, shell: float | None = None,
                    port_length: float = 8.0, cap: float | None = None, port_share: float = 0.25,

@@ -365,7 +365,7 @@ _SLICER = {"anyOf": [
     "description": "FDM: slice each outcome headless (PrusaSlicer) for print time, filament and support "
                    "(report 'slicer'); optionally grade infill by stress (report 'graded', <name>-graded.3mf)."}
 
-_PROCESS_KINDS = ["fdm", "sls", "mjf", "sla", "dlp", "volumetric", "lpbf"]
+_PROCESS_KINDS = ["fdm", "sls", "mjf", "sla", "dlp", "volumetric", "jetting", "lpbf"]
 _PROCESS = {"anyOf": [
     {"enum": _PROCESS_KINDS},
     {"type": "object",
@@ -415,6 +415,64 @@ _LATTICE_PROPS = {
     "fillPockets": {"type": "number", "minimum": 0,
                     "description": "mm^3: enclosed voids smaller than this are filled solid (default cell^3 / 8)"},
     "step": {**_POS, "description": "field sampling, mm (default minWall / 2.5)"},
+}
+
+_FRACTIONS = {"type": "object", "additionalProperties": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+              "description": "material name -> fraction of the part's volume"}
+_MULTI_MATERIAL = {
+    "type": "object",
+    "description": "Multi-material topology optimization (multimat.py): the optimizer places each material as "
+                   "well as the topology, for multi-material FDM (Bambu AMS, Prusa MMU/XL, IDEX) or jetting. "
+                   "Delivers one body per material with shared interfaces, an STL each and a multi-material 3MF.",
+    "properties": {
+        "materials": {"type": "array", "items": {"$ref": "#/$defs/material"}, "minItems": 2, "maxItems": 4,
+                      "description": "The materials to place (library names or custom objects)."},
+        "assign": {"type": "array", "items": {"type": "object", "properties": {
+                       "material": {"type": "string"},
+                       "region": {"type": "string", "description": "a preserve or keepOut id"},
+                       "shape": {"$ref": "#/$defs/shape"},
+                       "near": {"type": "object", "properties": {
+                           "region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"},
+                           "distance": {**_POS, "description": "mm from the region's surface"}},
+                           "required": ["distance"], "additionalProperties": False},
+                       "within": {"type": "string", "description": "near only: limit to inside this region"}},
+                   "required": ["material"], "additionalProperties": False},
+                   "description": "Cells the study fixes to one material (a pad, a bearing seat); the "
+                                  "optimizer places the rest. Earlier entries win."},
+        "maxFraction": _FRACTIONS,
+        "minFraction": _FRACTIONS,
+        "requirements": {"type": "array", "items": {"type": "object", "properties": {
+            "case": {"type": "string", "description": "the load case it reads"},
+            "knock": {"type": "object", "properties": {
+                "energy": {**_POS, "description": "J the knock brings"},
+                "maxForce": {**_POS, "description": "N: the peak force it may stop with"},
+                "safetyFactor": {**_POS, "description": "on the stored energy's stress (default "
+                                                        "interfaceSafetyFactor or the goal's)"}},
+                "required": ["energy", "maxForce"], "additionalProperties": False},
+            "indentation": {"type": "object", "properties": {
+                "relativeTo": {"type": "string", "description": "the same force spread out (a case)"},
+                "atLeast": {**_POS, "description": "mm the case's load sinks in beyond relativeTo's"}},
+                "required": ["relativeTo", "atLeast"], "additionalProperties": False}},
+            "required": ["case"], "additionalProperties": False},
+            "description": "Where the part must be soft: a knock that must stop under a force (a bumper), or "
+                           "a patch that must give (a grip pad). These cases are not in the stiffness "
+                           "objective."},
+        "interfaceSafetyFactor": {**_POS, "description": "for the bond between materials (default: the "
+                                                        "goal's safetyFactor, else 2)"},
+        "interfaces": {"type": "object", "additionalProperties": {"type": "object", "properties": {
+                           "tensile": _POS, "shear": _POS, "tensileZ": _POS, "shearZ": _POS},
+                           "required": ["tensile"], "additionalProperties": False},
+                       "description": "'a+b' -> bond strength (MPa), overriding interface_library.py's "
+                                      "sourced card (measure your printer's: it varies a lot)"},
+        "interfacePenalty": {"type": "boolean", "description": "constrain the bond in the optimizer "
+                                                              "(default true); verification always checks it"},
+        "export": {"type": "object", "properties": {
+            "slicer": {"enum": ["all", "generic", "prusa", "bambu"]},
+            "extruders": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1},
+                          "description": "material name -> extruder / AMS slot (1-based)"}},
+            "additionalProperties": False}},
+    "required": ["materials"],
+    "additionalProperties": False,
 }
 
 STUDY_SCHEMA = {
@@ -521,6 +579,7 @@ STUDY_SCHEMA = {
         "durability": _DURABILITY,
         "lattice": {"type": "object", "properties": _LATTICE_PROPS, "additionalProperties": False,
                     "description": "Optional: fill the delivered part with a stress-graded TPMS lattice."},
+        "multiMaterial": _MULTI_MATERIAL,
         "expect": {"type": "object", "description": "Eval-only pass criteria (loadpath.evals)."},
     },
     "required": ["designSpace"],
@@ -598,6 +657,20 @@ HEAT_EXCHANGER_SCHEMA = {
             "required": ["fluid", "end", "direction"], "additionalProperties": False}},
         "step": {**_POS, "description": "grid, mm (default wall / 3); coarser is faster for a first look"},
         "expect": {"type": "object", "description": "Eval-only pass criteria (loadpath.evals)."},
+        "envelope": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 3,
+                     "maxItems": 3,
+                     "description": "Instead of a core: the box (mm, x y z) the whole part must fit, ports and "
+                                    "headers included. `loadpath heatx --size` then picks the core's size, cell, "
+                                    "wall, split, layout and each fluid's port for the duty (sizing.py)."},
+        "sizing": {"type": "object", "properties": {
+            "process": {"enum": ["fdm", "lpbf", "sls", "mjf", "sla", "dlp"]},
+            "maxPressureDrop": {"type": "object", "additionalProperties": _POS,
+                                "description": "Pa per fluid name"},
+            "minEffectiveness": {"type": "number", "minimum": 0, "maximum": 1},
+            "targetDuty": {**_POS, "description": "W"},
+            "objective": {"enum": ["mass", "effectiveness", "pressure"]}},
+            "additionalProperties": False,
+            "description": "With envelope: what the sized exchanger must meet, and what to rank by."},
         "simulate": {"anyOf": [{"type": "boolean"}, {
             "type": "object",
             "properties": {"voxel": {**_POS, "description": "mm (default min(cell/2, port/4, header/3))"},
@@ -614,7 +687,7 @@ HEAT_EXCHANGER_SCHEMA = {
                  "properties": {"wall": {"anyOf": [{"type": "string"}, _POS]}},
                  "additionalProperties": {"$ref": "#/$defs/dutySide"}},
     },
-    "required": ["core"],
+    "x-requireOne": [["core"], ["envelope"]],
     "additionalProperties": False,
     "$defs": {**_SHAPES, "shape": _SHAPE, "dutySide": _DUTY_SIDE},
 }
@@ -783,6 +856,41 @@ _NODE = {
     "x-discriminator": {"property": "op", "mapping": {k: f"#/$defs/op-{k}" for k in _FIELD_OPS}},
 }
 
+_MATERIAL_BODY = {
+    "type": "object", "required": ["name", "material"], "additionalProperties": False,
+    "description": "One material body of a field graph (fields.material_bodies): the part's points inside "
+                   "`solid` (default the whole part) where the `where` field is above `above` and below "
+                   "`below`, less what earlier bodies took.",
+    "properties": {
+        "name": {"type": "string", "description": "Names the body's STL (<name>-<body>.stl) and its 3MF part."},
+        "material": {"anyOf": [_ONE_MATERIAL, {"type": "array", "items": _ONE_MATERIAL, "minItems": 2,
+                                               "maxItems": 2}],
+                     "description": "The body's material, or with `mix` the pair [A, B] it blends."},
+        "solid": {**_FIELD, "description": "solid node the body is cut from (default the output)"},
+        "where": {**_FIELD, "description": "scalar field that picks the body's points inside `solid` "
+                                           "(a remapped distance, a `result` stress)"},
+        "above": {**_FIELD, "description": "the body is where `where` > this (a number or a field)"},
+        "below": {**_FIELD, "description": "the body is where `where` < this (a number or a field)"},
+        "mix": {**_FIELD, "description": "0..1, the fraction of material B (material[1]) against A at each "
+                                         "point: a graded blend for multi-material jetting, no hard "
+                                         "partition. Writes a voxel print job (voxelprint.py) and weighs the "
+                                         "body by the blend."},
+        "voxel": {"type": "object", "additionalProperties": False,
+                  "description": "a mix body's voxel job",
+                  "properties": {
+                      "pitch": {**_POS, "description": "mm, the fraction grid (default the mesh pitch)"},
+                      "printer": {"type": "string", "description": "voxelprint printer (default j850)"},
+                      "materials": {"type": "array", "minItems": 2, "maxItems": 2,
+                                    "items": {"anyOf": [{"type": "string"}, {"type": "array"}, {"type": "object"}]},
+                                    "description": "printer resins for A and B (default from the cards: "
+                                                   "vero -> VeroCyan, agilus30 -> Agilus30Blk)"},
+                      "maxLayers": {"type": "integer", "minimum": 1, "description": "write only this many "
+                                                                                    "layers (previews)"}}},
+        "extruder": {"type": "integer", "minimum": 1,
+                     "description": "FDM tool for the 3MF (default: one per distinct material, in order)"},
+        "color": {"type": "string", "description": "#RRGGBB in the 3MF (default by material)"}},
+}
+
 FIELD_SCHEMA = {
     "$schema": _DIALECT,
     "$id": "https://github.com/connorwhite-online/loadpath/schema/field.schema.json",
@@ -818,6 +926,11 @@ FIELD_SCHEMA = {
                                                         "done exactly, so bores, bolt faces and keep-outs keep "
                                                         "sharp edges (default true; false meshes the whole field, "
                                                         "every crease rounded over about one pitch)"},
+            "creases": {"type": "boolean", "description": "hard booleans between field surfaces (a lattice clipped "
+                                                          "by a body, two bodies unioned with no blend, a shell's "
+                                                          "rim) keep sharp creases: edges that cross from one "
+                                                          "surface to the other are split on the true intersection "
+                                                          "curve (default false; not with stream)"},
             "decimate": {**_POS, "description": "mm: thin the triangles wherever the mesh stays this close to "
                                                 "the surface (flat and gently curved regions lose most of "
                                                 "theirs; creases and small features keep them), e.g. 0.01-0.05"},
@@ -833,6 +946,15 @@ FIELD_SCHEMA = {
                  "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres "
                                 "where the graph's hard booleans use plain shapes, the rest faceted"},
         "material": {**_ONE_MATERIAL, "description": "Reports the mass."},
+        "materials": {"type": "array", "minItems": 1, "items": _MATERIAL_BODY,
+                      "description": "Multi-material: split the output into material bodies, in precedence "
+                                     "order (an earlier body wins where regions overlap, so bodies never "
+                                     "overlap and together they are the part). Each body is a solid node's "
+                                     "share of the part, a field threshold's (where/above/below: TPU where a "
+                                     "distance or a stress says), or both; a body with neither takes what is "
+                                     "left. Writes <name>-<body>.stl per body (sharing their interfaces "
+                                     "exactly) and a multi-material <name>.3mf; the report gives each body's "
+                                     "volume and mass and each interface's area."},
         "minWall": {**_POS, "description": "mm, the printability check's minimum wall (default 0.8)"},
         "build": {**_VEC3, "description": "build direction for the overhang check (default +z)"},
         "check": {"type": "boolean", "description": "run the printability check (default true)"},
@@ -1088,7 +1210,9 @@ _ALIASES = {"radius": ["r"], "diameter": ["r"], "innerRadius": ["rInner"], "bolt
             "forces": ["loads"], "torque": ["moment"], "domain": ["designSpace"], "bounds": ["designSpace"],
             # shape types
             "cube": ["box"], "cuboid": ["box"], "rect": ["box"], "cyl": ["cylinder"], "rod": ["cylinder"],
-            "pipe": ["tube"], "ball": ["sphere"], "stl": ["mesh"], "group": ["union"]}
+            "pipe": ["tube"], "ball": ["sphere"], "stl": ["mesh"], "group": ["union"],
+            # material bodies
+            "within": ["solid"], "inside": ["solid"], "threshold": ["below", "above"]}
 
 
 def _type_ok(v, node):

@@ -161,6 +161,9 @@ PROCESSES = {
             "note": "resin vat, whole-layer exposure (DLP/LCD): as SLA; large cross-sections peel hard"},
     "volumetric": {"interlayer": 1.0, "minFeature": 0.3, "minHole": 0.6, "overhangs": False,
                    "note": "volumetric / tomographic resin printing: no layers, no supports"},
+    "jetting": {"interlayer": 0.95, "minFeature": 0.4, "minHole": 1.0, "overhangs": False,
+                "note": "material jetting (PolyJet): photopolymer droplets cured layer by layer, several materials "
+                        "mixed voxel by voxel; gel support everywhere, so no overhang limit; nearly isotropic"},
     "lpbf": {"interlayer": 0.85, "minFeature": 0.4, "minHole": 1.0, "overhangs": True,
              "note": "laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L): strength across layers ~85-90% "
                      "as built; overhangs past 45 degrees need supports, which cannot come out of closed "
@@ -424,6 +427,8 @@ class Study:
     # Escape holes into sealed voids: "auto" (powder and resin processes),
     # True, False, or an escape.EscapeOptions; see escape.py.
     drains: Any = "auto"
+    # multimat.MultiMaterial: the optimizer places several materials
+    multi_material: Any = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -764,7 +769,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         if min_member is not None and max_member < 2.0 * float(min_member):
             raise ValueError(f"maxMember ({max_member:g}mm) must be at least twice minMember "
                              f"({float(min_member):g}mm) to leave the optimizer room")
-    return Study(
+    st = Study(
         name=str(d.get("name") or "study"),
         design_space=design_space,
         preserve=preserve,
@@ -795,3 +800,10 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         drains=_drains(d.get("drains", "auto"), process),
         raw=d,
     )
+    if d.get("multiMaterial") is not None:
+        from .multimat import parse_multimaterial
+
+        st.multi_material = parse_multimaterial(d["multiMaterial"], st, base_dir)
+        if "material" not in d:
+            st.material = st.materials[0] = st.multi_material.materials[0]
+    return st

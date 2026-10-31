@@ -479,6 +479,7 @@
             "sla",
             "dlp",
             "volumetric",
+            "jetting",
             "lpbf"
           ]
         },
@@ -493,6 +494,7 @@
                 "sla",
                 "dlp",
                 "volumetric",
+                "jetting",
                 "lpbf"
               ]
             },
@@ -837,6 +839,211 @@
       },
       "additionalProperties": false,
       "description": "Optional: fill the delivered part with a stress-graded TPMS lattice."
+    },
+    "multiMaterial": {
+      "type": "object",
+      "description": "Multi-material topology optimization (multimat.py): the optimizer places each material as well as the topology, for multi-material FDM (Bambu AMS, Prusa MMU/XL, IDEX) or jetting. Delivers one body per material with shared interfaces, an STL each and a multi-material 3MF.",
+      "properties": {
+        "materials": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/material"
+          },
+          "minItems": 2,
+          "maxItems": 4,
+          "description": "The materials to place (library names or custom objects)."
+        },
+        "assign": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "material": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string",
+                "description": "a preserve or keepOut id"
+              },
+              "shape": {
+                "$ref": "#/$defs/shape"
+              },
+              "near": {
+                "type": "object",
+                "properties": {
+                  "region": {
+                    "type": "string"
+                  },
+                  "shape": {
+                    "$ref": "#/$defs/shape"
+                  },
+                  "distance": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "mm from the region's surface"
+                  }
+                },
+                "required": [
+                  "distance"
+                ],
+                "additionalProperties": false
+              },
+              "within": {
+                "type": "string",
+                "description": "near only: limit to inside this region"
+              }
+            },
+            "required": [
+              "material"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Cells the study fixes to one material (a pad, a bearing seat); the optimizer places the rest. Earlier entries win."
+        },
+        "maxFraction": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1
+          },
+          "description": "material name -> fraction of the part's volume"
+        },
+        "minFraction": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1
+          },
+          "description": "material name -> fraction of the part's volume"
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "case": {
+                "type": "string",
+                "description": "the load case it reads"
+              },
+              "knock": {
+                "type": "object",
+                "properties": {
+                  "energy": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "J the knock brings"
+                  },
+                  "maxForce": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "N: the peak force it may stop with"
+                  },
+                  "safetyFactor": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "on the stored energy's stress (default interfaceSafetyFactor or the goal's)"
+                  }
+                },
+                "required": [
+                  "energy",
+                  "maxForce"
+                ],
+                "additionalProperties": false
+              },
+              "indentation": {
+                "type": "object",
+                "properties": {
+                  "relativeTo": {
+                    "type": "string",
+                    "description": "the same force spread out (a case)"
+                  },
+                  "atLeast": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "mm the case's load sinks in beyond relativeTo's"
+                  }
+                },
+                "required": [
+                  "relativeTo",
+                  "atLeast"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "case"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Where the part must be soft: a knock that must stop under a force (a bumper), or a patch that must give (a grip pad). These cases are not in the stiffness objective."
+        },
+        "interfaceSafetyFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "for the bond between materials (default: the goal's safetyFactor, else 2)"
+        },
+        "interfaces": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "tensile": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "shear": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "tensileZ": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "shearZ": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "tensile"
+            ],
+            "additionalProperties": false
+          },
+          "description": "'a+b' -> bond strength (MPa), overriding interface_library.py's sourced card (measure your printer's: it varies a lot)"
+        },
+        "interfacePenalty": {
+          "type": "boolean",
+          "description": "constrain the bond in the optimizer (default true); verification always checks it"
+        },
+        "export": {
+          "type": "object",
+          "properties": {
+            "slicer": {
+              "enum": [
+                "all",
+                "generic",
+                "prusa",
+                "bambu"
+              ]
+            },
+            "extruders": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "description": "material name -> extruder / AMS slot (1-based)"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "materials"
+      ],
+      "additionalProperties": false
     },
     "expect": {
       "type": "object",
@@ -1302,7 +1509,7 @@
       "anyOf": [
         {
           "type": "string",
-          "description": "A name: 316l, abs, alsi10mg, asa, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
+          "description": "A name: 316l, abs, agilus30, alsi10mg, asa, pa-cf, pa11, pa12, pa12-gb, petg, pla, resin, resin-rigid, resin-tough, ti64, tpu, tpu88a, vero (aliases such as 'nylon', 'aluminium', 'steel' work; every value is cited in material_library.py, `loadpath materials`), or a calibrated card measured on a printer (loadpath/calibrations/, calibration.py), which replaces a library card of the same name."
         },
         {
           "type": "object",

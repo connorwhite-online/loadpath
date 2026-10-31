@@ -62,6 +62,8 @@ _TET_CONFIRMS = 6
 _TET_EXTRA_RUNS = 4
 # A tet-confirmed pick within this of its target is close enough.
 _TET_CLOSE = 1.08
+# Optimizations the layout search below a confirmed pick may spend.
+_LAYOUT_RUNS = 3
 
 
 def _making(study: Study) -> dict:
@@ -792,6 +794,67 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             f"({', '.join(f'{v:.1f}' for v in worst['peakAt'])}): a stress the voxel grid does not resolve. "
             "Check it there (a fillet, a thicker wall, or how the part is really held).")
 
+    def layout_search(k: float):
+        """Other layouts below a tet-confirmed pick with margin to spare.
+
+        The fraction chain follows one layout down, warm-starting each step
+        from the last, and a part whose strength is not monotone in the
+        fraction stops on it: the wall bracket passed at 12.6% (tets 4.95
+        for 2.5) with 10.2% and 11.4% failing (2.29, 2.12), all three
+        descendants of the 15% design. So a few differently started designs
+        are tried between the lightest confirmed design and the fraction
+        its margin points at: warm from it, then a fresh coarse layout.
+        Each that passes on its scaled voxel reading, or misses by under
+        15%, is confirmed on tets; one that confirms becomes the design the
+        next try starts below. (The bell crank went 24.3 -> 22.4 g this
+        way, warm from its pick. A 1.5x wider filter, fresh or warm, came
+        apart at these fractions, SF 0 on four parts, so it is not tried;
+        fresh layouts confirmed nowhere either, but are the one start not
+        descended from the chain.)"""
+        confirmed = [i for i, q in enumerate(outcomes) if getattr(q, "tet_k", None) and q.passes]
+        if not confirmed:
+            return
+        o = outcomes[min(confirmed, key=lambda i: outcomes[i].report["mass"])]
+        mt = o.report["margin"]
+        if mt < _TET_CLOSE:
+            return
+        floor = max(o.volume_fraction * 1.03 / mt, 0.5 * o.volume_fraction, _VF_MIN)
+        big = domain.n_elem >= _COARSE_MIN_CELLS
+        starts = [("warm from the pick", lambda vf, o: attempt(vf, o.x, _WARM_BETA)),
+                  ("cold", lambda vf, o: attempt(vf, _coarse_start(study, domain, vf, radius, should_stop)
+                                                 if big else None, _WARM_BETA if big else 1.0))]
+        runs = 0
+        for name, start in starts:
+            while runs < _LAYOUT_RUNS and not (should_stop is not None and should_stop()):
+                top = o.volume_fraction
+                if o.report["margin"] < _TET_CLOSE:
+                    return
+                vf = 0.5 * (floor + top)
+                if top - vf < max(0.005, 0.05 * top):
+                    break
+                if name.startswith("warm") and any(abs(q.volume_fraction - vf) < 0.003 for q in outcomes):
+                    break   # the chain already ran warm there
+                emit({"stage": "optimize", "volumeFraction": vf, "start": name})
+                try:
+                    q = start(vf, o)
+                except RuntimeError:
+                    break
+                runs += 1
+                q.report["start"] = f"layout search: {name}"
+                outcomes.append(q)
+                calibrate(q, k)
+                emit({"stage": "outcome", **q.summary()})
+                if q.report.get("bodies", 1) > 1 or (q.report.get("margin") or 0.0) < 0.85:
+                    break
+                mq = tet_confirm(q)
+                if mq is None or mq < 1.0:
+                    if mq is None:
+                        q.tet_k, q.passes = 0.0, False
+                    break
+                o = q   # it held: try once more, below it
+            if runs >= _LAYOUT_RUNS:
+                break
+
     def calibrate(o: Outcome, k: float):
         """Read `o`'s voxel safety factor through the tet calibration k (1
         restores the voxel reading). A tet-confirmed outcome keeps its own."""
@@ -1031,6 +1094,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 outcomes.append(run_one(nxt))
                 calibrate(outcomes[-1], k)
                 extra += 1
+            if not voxel_confirm and not (should_stop is not None and should_stop()):
+                layout_search(k)
             confirmed_ok = [i for i, q in enumerate(outcomes) if getattr(q, "tet_k", None) is not None and q.passes]
             if not voxel_confirm:
                 # deliver only what the tet mesh confirmed; the rest keep

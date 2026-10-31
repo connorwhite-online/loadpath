@@ -1,0 +1,1793 @@
+[
+ {
+  "case": "lens90",
+  "reference": {
+   "points": 1604,
+   "refPitch": 0.13333333333333333,
+   "seconds": 0.5,
+   "sphereResidual": 9.744489659624378e-10
+  },
+  "rows": [
+   {
+    "case": "lens90",
+    "pitch": 0.8,
+    "meshSeconds": 0.01,
+    "sharpenSeconds": 0.01,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 136,
+     "snapped": 19,
+     "split": 84,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 0,
+     "untangled": 0,
+     "creaseVertices": 103
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 1628,
+     "verts": 816,
+     "creaseToMesh": {
+      "max": 0.5003382453766008,
+      "rms": 0.34388836779006243,
+      "p95": 0.45242284148962814,
+      "maxPitch": 0.6254228067207509,
+      "rmsPitch": 0.429860459737578
+     },
+     "vertexToCrease": {
+      "n": 136,
+      "max": 0.8815802200974674,
+      "rms": 0.5401730451683217,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724225997692,
+      "median": 52.35156126585561,
+      "p10": 46.77310380482791,
+      "medAbsErr": 37.68568099176634
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 552,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 19.647089526007107,
+      "slivers5": 0,
+      "slivers10": 0,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 1796,
+     "verts": 900,
+     "creaseToMesh": {
+      "max": 0.012704644877759423,
+      "rms": 0.003954373231580753,
+      "p95": 0.008399638210329413,
+      "maxPitch": 0.015880806097199277,
+      "rmsPitch": 0.0049429665394759405
+     },
+     "vertexToCrease": {
+      "n": 103,
+      "max": 0.0,
+      "rms": 0.0,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724225997692,
+      "median": 93.53311540035014,
+      "p10": 92.97645396967935,
+      "medAbsErr": 3.4958731403009153
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 720,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 19.69704885463543,
+      "slivers5": 0,
+      "slivers10": 0,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "lens90",
+    "pitch": 0.4,
+    "meshSeconds": 0.03,
+    "sharpenSeconds": 0.03,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 295,
+     "snapped": 69,
+     "split": 128,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 2,
+     "untangled": 0,
+     "creaseVertices": 195
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 6708,
+     "verts": 3356,
+     "creaseToMesh": {
+      "max": 0.2579542776727132,
+      "rms": 0.1489748203940274,
+      "p95": 0.20644077703727745,
+      "maxPitch": 0.6448856941817829,
+      "rmsPitch": 0.37243705098506846
+     },
+     "vertexToCrease": {
+      "n": 295,
+      "max": 0.5658971313294239,
+      "rms": 0.2676718837987038,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724225997692,
+      "median": 64.8083308239265,
+      "p10": 48.68146498898703,
+      "medAbsErr": 25.228911434901754
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 1268,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 12.24701543461584,
+      "slivers5": 0,
+      "slivers10": 0,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 6960,
+     "verts": 3482,
+     "creaseToMesh": {
+      "max": 0.003856602709427941,
+      "rms": 0.0011135168118986717,
+      "p95": 0.0022969165023436554,
+      "maxPitch": 0.009641506773569852,
+      "rmsPitch": 0.0027837920297466793
+     },
+     "vertexToCrease": {
+      "n": 195,
+      "max": 4.441192082560241e-08,
+      "rms": 1.630065315767e-08,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724225997692,
+      "median": 91.81618437526811,
+      "p10": 91.35723595658568,
+      "medAbsErr": 1.778942115868979
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 1520,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 12.384880861711434,
+      "slivers5": 0,
+      "slivers10": 0,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "lens90",
+    "pitch": 0.2,
+    "meshSeconds": 0.08,
+    "sharpenSeconds": 0.07,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 599,
+     "snapped": 137,
+     "split": 265,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 16,
+     "untangled": 0,
+     "creaseVertices": 389
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 26868,
+     "verts": 13436,
+     "creaseToMesh": {
+      "max": 0.1247365521981406,
+      "rms": 0.07475416174600058,
+      "p95": 0.10588356801763099,
+      "maxPitch": 0.623682760990703,
+      "rmsPitch": 0.3737708087300029
+     },
+     "vertexToCrease": {
+      "n": 599,
+      "max": 0.25930893598903454,
+      "rms": 0.13683745056147892,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724225997692,
+      "median": 64.42700377881242,
+      "p10": 47.83920360971793,
+      "medAbsErr": 25.61023848494945
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 2587,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 9.864778777781842,
+      "slivers5": 0,
+      "slivers10": 1,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 27366,
+     "verts": 13685,
+     "creaseToMesh": {
+      "max": 0.0010464617007471587,
+      "rms": 0.0003072191591204727,
+      "p95": 0.0006722208157585108,
+      "maxPitch": 0.005232308503735793,
+      "rmsPitch": 0.0015360957956023636
+     },
+     "vertexToCrease": {
+      "n": 389,
+      "max": 1.9226667230449597e-08,
+      "rms": 5.725293761794607e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724225997692,
+      "median": 90.96091950521564,
+      "p10": 90.73493193186098,
+      "medAbsErr": 0.9236772423928414
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 3085,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 8.234049878582457,
+      "slivers5": 0,
+      "slivers10": 7,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   }
+  ]
+ },
+ {
+  "case": "lens30",
+  "reference": {
+   "points": 571,
+   "refPitch": 0.13333333333333333,
+   "seconds": 0.0,
+   "sphereResidual": 9.486100793765218e-10
+  },
+  "rows": [
+   {
+    "case": "lens30",
+    "pitch": 0.8,
+    "meshSeconds": 0.01,
+    "sharpenSeconds": 0.01,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 26,
+     "snapped": 0,
+     "split": 26,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 13,
+     "untangled": 0,
+     "creaseVertices": 26
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 116,
+     "verts": 60,
+     "creaseToMesh": {
+      "max": 1.2105149876488226,
+      "rms": 0.9484384267681364,
+      "p95": 1.1844937853987814,
+      "maxPitch": 1.5131437345610281,
+      "rmsPitch": 1.1855480334601705
+     },
+     "vertexToCrease": {
+      "n": 26,
+      "max": 1.9135599495357976,
+      "rms": 1.2035177587145705,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 150.07456857874203,
+      "median": 0.0,
+      "p10": 0.0,
+      "medAbsErr": 150.0745685776298
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 34,
+      "regionFaces": 92,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 30,
+      "minAngle": 11.529961894378614,
+      "slivers5": 0,
+      "slivers10": 0,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 142,
+     "verts": 73,
+     "creaseToMesh": {
+      "max": 0.052532179994183484,
+      "rms": 0.019290462398825883,
+      "p95": 0.039378513017677697,
+      "maxPitch": 0.06566522499272935,
+      "rmsPitch": 0.024113077998532354
+     },
+     "vertexToCrease": {
+      "n": 26,
+      "max": 2.9627886748537515e-07,
+      "rms": 7.465627103469022e-08,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 150.07456857874203,
+      "median": 157.77346643753424,
+      "p10": 155.84854442663163,
+      "medAbsErr": 7.698897852261922
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 120,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 8.814014420773821,
+      "slivers5": 0,
+      "slivers10": 2,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "lens30",
+    "pitch": 0.4,
+    "meshSeconds": 0.02,
+    "sharpenSeconds": 0.03,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 67,
+     "snapped": 0,
+     "split": 67,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 26,
+     "untangled": 0,
+     "creaseVertices": 64
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 448,
+     "verts": 226,
+     "creaseToMesh": {
+      "max": 0.9562515198250321,
+      "rms": 0.7487185191970356,
+      "p95": 0.9425678775208837,
+      "maxPitch": 2.39062879956258,
+      "rmsPitch": 1.8717962979925888
+     },
+     "vertexToCrease": {
+      "n": 67,
+      "max": 1.1877493470851286,
+      "rms": 0.8662497553476083,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 150.07456857874203,
+      "median": 0.0,
+      "p10": 0.0,
+      "medAbsErr": 150.07456857874203
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 46,
+      "regionFaces": 93,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 45,
+      "minAngle": 0.715546564725127,
+      "slivers5": 8,
+      "slivers10": 18,
+      "slivers5Region": 4,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 530,
+     "verts": 267,
+     "creaseToMesh": {
+      "max": 0.007471840796004369,
+      "rms": 0.003045476593276099,
+      "p95": 0.005963122869980702,
+      "maxPitch": 0.01867960199001092,
+      "rmsPitch": 0.007613691483190247
+     },
+     "vertexToCrease": {
+      "n": 64,
+      "max": 1.0174431486791259e-07,
+      "rms": 1.9404318431234577e-08,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 150.07456857874203,
+      "median": 155.21919351092689,
+      "p10": 154.4456579425735,
+      "medAbsErr": 5.144624929505397
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 229,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 8.488626559388111,
+      "slivers5": 0,
+      "slivers10": 10,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "lens30",
+    "pitch": 0.2,
+    "meshSeconds": 0.02,
+    "sharpenSeconds": 0.06,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 167,
+     "snapped": 9,
+     "split": 154,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 43,
+     "untangled": 0,
+     "creaseVertices": 158
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 2216,
+     "verts": 1110,
+     "creaseToMesh": {
+      "max": 0.45500309847868287,
+      "rms": 0.3150402937025614,
+      "p95": 0.4309990887326832,
+      "maxPitch": 2.2750154923934143,
+      "rmsPitch": 1.575201468512807
+     },
+     "vertexToCrease": {
+      "n": 167,
+      "max": 0.4937048478994663,
+      "rms": 0.3587337853877092,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 150.07456857874203,
+      "median": 0.0,
+      "p10": 0.0,
+      "medAbsErr": 150.07456857518054
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 105,
+      "regionFaces": 345,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 91,
+      "minAngle": 1.4631149330991002,
+      "slivers5": 12,
+      "slivers10": 29,
+      "slivers5Region": 12,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 2438,
+     "verts": 1221,
+     "creaseToMesh": {
+      "max": 0.002016220967317369,
+      "rms": 0.0005118193702094078,
+      "p95": 0.0010515783404149775,
+      "maxPitch": 0.010081104836586844,
+      "rmsPitch": 0.0025590968510470387
+     },
+     "vertexToCrease": {
+      "n": 158,
+      "max": 6.246686280047736e-08,
+      "rms": 1.5088423384498535e-08,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 150.07456857874203,
+      "median": 152.39858084040927,
+      "p10": 151.56680667237785,
+      "medAbsErr": 2.324012255348464
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 638,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 8.112297559524949,
+      "slivers5": 0,
+      "slivers10": 26,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   }
+  ]
+ },
+ {
+  "case": "union90",
+  "reference": {
+   "points": 1628,
+   "refPitch": 0.13333333333333333,
+   "seconds": 1.2,
+   "sphereResidual": 9.93205517829665e-10
+  },
+  "rows": [
+   {
+    "case": "union90",
+    "pitch": 0.8,
+    "meshSeconds": 0.03,
+    "sharpenSeconds": 0.03,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 161,
+     "snapped": 32,
+     "split": 78,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 1,
+     "untangled": 0,
+     "creaseVertices": 109
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 10016,
+     "verts": 5010,
+     "creaseToMesh": {
+      "max": 0.4591368143160969,
+      "rms": 0.29990994261236803,
+      "p95": 0.4212367058134979,
+      "maxPitch": 0.5739210178951211,
+      "rmsPitch": 0.37488742826546
+     },
+     "vertexToCrease": {
+      "n": 161,
+      "max": 1.0085187050726043,
+      "rms": 0.5700269993479883,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724226000563,
+      "median": 60.52035428516146,
+      "p10": 45.812541585905926,
+      "medAbsErr": 29.51688797195211
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 713,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 20.126367220898118,
+      "slivers5": 0,
+      "slivers10": 0,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 10170,
+     "verts": 5087,
+     "creaseToMesh": {
+      "max": 0.009853913929485937,
+      "rms": 0.002736013017514155,
+      "p95": 0.005708756997208436,
+      "maxPitch": 0.01231739241185742,
+      "rmsPitch": 0.0034200162718926934
+     },
+     "vertexToCrease": {
+      "n": 109,
+      "max": 5.828040781387159e-08,
+      "rms": 7.120038593175173e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724226000563,
+      "median": 87.43813938136245,
+      "p10": 86.68942259914549,
+      "medAbsErr": 2.599102876637282
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 867,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 14.540666622319891,
+      "slivers5": 0,
+      "slivers10": 0,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "union90",
+    "pitch": 0.4,
+    "meshSeconds": 0.1,
+    "sharpenSeconds": 0.06,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 307,
+     "snapped": 69,
+     "split": 127,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 7,
+     "untangled": 0,
+     "creaseVertices": 190
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 40272,
+     "verts": 20138,
+     "creaseToMesh": {
+      "max": 0.24067076063795653,
+      "rms": 0.14211852702440897,
+      "p95": 0.21305436219962423,
+      "maxPitch": 0.6016769015948913,
+      "rmsPitch": 0.3552963175610224
+     },
+     "vertexToCrease": {
+      "n": 307,
+      "max": 0.5809279854780828,
+      "rms": 0.2829749544552115,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724226000563,
+      "median": 62.097218289219384,
+      "p10": 45.73555394776405,
+      "medAbsErr": 27.940023974386733
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 1365,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 10.168057610586626,
+      "slivers5": 0,
+      "slivers10": 0,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 40512,
+     "verts": 20258,
+     "creaseToMesh": {
+      "max": 0.0037197723260166213,
+      "rms": 0.0009584443666389444,
+      "p95": 0.002010942215276836,
+      "maxPitch": 0.009299430815041553,
+      "rmsPitch": 0.002396110916597361
+     },
+     "vertexToCrease": {
+      "n": 190,
+      "max": 4.2568916376403325e-08,
+      "rms": 1.6262130030207626e-08,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724226000563,
+      "median": 88.78829089953243,
+      "p10": 88.21147707409385,
+      "medAbsErr": 1.2489513600226445
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 1605,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 8.343491807504344,
+      "slivers5": 0,
+      "slivers10": 4,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "union90",
+    "pitch": 0.2,
+    "meshSeconds": 0.47,
+    "sharpenSeconds": 0.24,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 587,
+     "snapped": 114,
+     "split": 289,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 9,
+     "untangled": 0,
+     "creaseVertices": 396
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 161020,
+     "verts": 80512,
+     "creaseToMesh": {
+      "max": 0.12124709070280852,
+      "rms": 0.07190106970363518,
+      "p95": 0.10475347980374417,
+      "maxPitch": 0.6062354535140426,
+      "rmsPitch": 0.35950534851817584
+     },
+     "vertexToCrease": {
+      "n": 587,
+      "max": 0.2970760163438557,
+      "rms": 0.13686441031850002,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724226000563,
+      "median": 59.544911338712424,
+      "p10": 45.95452835422373,
+      "medAbsErr": 30.492330920218475
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 2692,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 10.009860045832742,
+      "slivers5": 0,
+      "slivers10": 0,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 161580,
+     "verts": 80792,
+     "creaseToMesh": {
+      "max": 0.0007228918844755973,
+      "rms": 0.00021254252395115525,
+      "p95": 0.0004587438919199117,
+      "maxPitch": 0.0036144594223779863,
+      "rmsPitch": 0.0010627126197557762
+     },
+     "vertexToCrease": {
+      "n": 396,
+      "max": 1.7466241476803058e-08,
+      "rms": 5.358376238786436e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 90.03724226000563,
+      "median": 89.41373638543976,
+      "p10": 89.20475016001271,
+      "medAbsErr": 0.6235058752617064
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 0,
+      "regionFaces": 3252,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 8.307434893273006,
+      "slivers5": 0,
+      "slivers10": 3,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   }
+  ]
+ },
+ {
+  "case": "gyroid_clip",
+  "reference": {
+   "points": 32395,
+   "refPitch": 0.09999999999999999,
+   "seconds": 7.2
+  },
+  "rows": [
+   {
+    "case": "gyroid_clip",
+    "pitch": 0.4,
+    "meshSeconds": 0.26,
+    "sharpenSeconds": 2.95,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 4814,
+     "snapped": 695,
+     "split": 2875,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 705,
+     "untangled": 128,
+     "creaseVertices": 2998
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 48050,
+     "verts": 23849,
+     "creaseToMesh": {
+      "max": 0.8441775938953107,
+      "rms": 0.2088786050539528,
+      "p95": 0.4302415681446055,
+      "maxPitch": 2.1104439847382763,
+      "rmsPitch": 0.522196512634882
+     },
+     "vertexToCrease": {
+      "n": 4793,
+      "max": 1.199013925986051,
+      "rms": 0.375098098708415,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 88.98534421995959,
+      "median": 53.60774239003375,
+      "p10": 21.343785809632237,
+      "medAbsErr": 26.190602967023047
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 236,
+      "regionFaces": 16796,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 113,
+      "minAngle": 0.20822797401101667,
+      "slivers5": 53,
+      "slivers10": 122,
+      "slivers5Region": 53,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 52390,
+     "verts": 26019,
+     "creaseToMesh": {
+      "max": 0.5735225797655379,
+      "rms": 0.04235246522708753,
+      "p95": 0.008589363259770487,
+      "maxPitch": 1.4338064494138447,
+      "rmsPitch": 0.10588116306771882
+     },
+     "vertexToCrease": {
+      "n": 2998,
+      "max": 1.373050575979389e-07,
+      "rms": 8.709069287132002e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 88.98534421995959,
+      "median": 95.63650013004538,
+      "p10": 50.31133214206723,
+      "medAbsErr": 6.949968639037564
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 122,
+      "regionFaces": 21208,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 86,
+      "minAngle": 0.048675162977648075,
+      "slivers5": 53,
+      "slivers10": 224,
+      "slivers5Region": 50,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "gyroid_clip",
+    "pitch": 0.25,
+    "meshSeconds": 0.73,
+    "sharpenSeconds": 4.32,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 7552,
+     "snapped": 1118,
+     "split": 4415,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 1024,
+     "untangled": 147,
+     "creaseVertices": 4763
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 121126,
+     "verts": 60373,
+     "creaseToMesh": {
+      "max": 0.6339590465937087,
+      "rms": 0.13406254147116264,
+      "p95": 0.27820300683341703,
+      "maxPitch": 2.535836186374835,
+      "rmsPitch": 0.5362501658846506
+     },
+     "vertexToCrease": {
+      "n": 7535,
+      "max": 0.8709316195131976,
+      "rms": 0.23786431601464655,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 88.98534421995959,
+      "median": 54.456966705700985,
+      "p10": 19.61501917191781,
+      "medAbsErr": 26.292129678229223
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 385,
+      "regionFaces": 29852,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 233,
+      "minAngle": 0.0756978163618371,
+      "slivers5": 94,
+      "slivers10": 227,
+      "slivers5Region": 89,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 127908,
+     "verts": 63764,
+     "creaseToMesh": {
+      "max": 0.44517423024302605,
+      "rms": 0.026342394199592577,
+      "p95": 0.0029739030780401555,
+      "maxPitch": 1.7806969209721042,
+      "rmsPitch": 0.1053695767983703
+     },
+     "vertexToCrease": {
+      "n": 4763,
+      "max": 5.7615446238611345e-08,
+      "rms": 4.387950664351839e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 88.98534421995959,
+      "median": 93.01230785483114,
+      "p10": 48.447318240332926,
+      "medAbsErr": 4.531273173099521
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 148,
+      "regionFaces": 36770,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 98,
+      "minAngle": 0.06025787307493702,
+      "slivers5": 87,
+      "slivers10": 363,
+      "slivers5Region": 71,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "gyroid_clip",
+    "pitch": 0.15,
+    "meshSeconds": 2.28,
+    "sharpenSeconds": 7.9,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 12613,
+     "snapped": 1849,
+     "split": 7410,
+     "splitFallback": 17,
+     "corners": 0,
+     "collapsed": 1536,
+     "untangled": 132,
+     "creaseVertices": 8185
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 346942,
+     "verts": 173277,
+     "creaseToMesh": {
+      "max": 0.44635671700389723,
+      "rms": 0.08283765507169959,
+      "p95": 0.17237576416543943,
+      "maxPitch": 2.975711446692648,
+      "rmsPitch": 0.5522510338113306
+     },
+     "vertexToCrease": {
+      "n": 12590,
+      "max": 0.7477590489997614,
+      "rms": 0.14997757031624667,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 88.98534421995959,
+      "median": 53.515742567025946,
+      "p10": 19.21991334327959,
+      "medAbsErr": 26.81008836157696
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 476,
+      "regionFaces": 49100,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 225,
+      "minAngle": 0.04777647071003079,
+      "slivers5": 138,
+      "slivers10": 336,
+      "slivers5Region": 118,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 358690,
+     "verts": 179151,
+     "creaseToMesh": {
+      "max": 0.18629139691895016,
+      "rms": 0.009072266335997748,
+      "p95": 0.0007858369239757287,
+      "maxPitch": 1.2419426461263345,
+      "rmsPitch": 0.06048177557331832
+     },
+     "vertexToCrease": {
+      "n": 8185,
+      "max": 5.678129060244539e-08,
+      "rms": 2.7887606393920034e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 88.98534421995959,
+      "median": 91.57045375209012,
+      "p10": 47.33958007745996,
+      "medAbsErr": 2.815811400108018
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 112,
+      "regionFaces": 61185,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 76,
+      "minAngle": 0.14036742863876808,
+      "slivers5": 90,
+      "slivers10": 560,
+      "slivers5Region": 42,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   }
+  ]
+ },
+ {
+  "case": "skin_core",
+  "reference": {
+   "points": 21405,
+   "refPitch": 0.09999999999999999,
+   "seconds": 6.2
+  },
+  "rows": [
+   {
+    "case": "skin_core",
+    "pitch": 0.4,
+    "meshSeconds": 0.25,
+    "sharpenSeconds": 1.36,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 2749,
+     "snapped": 426,
+     "split": 1557,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 258,
+     "untangled": 69,
+     "creaseVertices": 1771
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 39872,
+     "verts": 19902,
+     "creaseToMesh": {
+      "max": 1.0786809058498048,
+      "rms": 0.2647649705593445,
+      "p95": 0.5334904082387013,
+      "maxPitch": 2.696702264624512,
+      "rmsPitch": 0.6619124263983612
+     },
+     "vertexToCrease": {
+      "n": 2731,
+      "max": 1.5240459480735333,
+      "rms": 0.36371113224275264,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 89.71234024788593,
+      "median": 56.31328479343211,
+      "p10": 0.0,
+      "medAbsErr": 26.018830276316308
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 149,
+      "regionFaces": 10264,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 55,
+      "minAngle": 0.4929263657067966,
+      "slivers5": 24,
+      "slivers10": 61,
+      "slivers5Region": 24,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 42470,
+     "verts": 21201,
+     "creaseToMesh": {
+      "max": 0.903949784102831,
+      "rms": 0.07993507927599186,
+      "p95": 0.08332319586072533,
+      "maxPitch": 2.2598744602570773,
+      "rmsPitch": 0.19983769818997965
+     },
+     "vertexToCrease": {
+      "n": 1771,
+      "max": 9.599269963469191e-08,
+      "rms": 7.764775117893051e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 89.71234024788593,
+      "median": 98.86968238708545,
+      "p10": 57.81604480286883,
+      "medAbsErr": 9.890531178444391
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 112,
+      "regionFaces": 12860,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 86,
+      "minAngle": 0.26269161602517943,
+      "slivers5": 16,
+      "slivers10": 85,
+      "slivers5Region": 16,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "skin_core",
+    "pitch": 0.25,
+    "meshSeconds": 0.69,
+    "sharpenSeconds": 2.35,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 4418,
+     "snapped": 640,
+     "split": 2652,
+     "splitFallback": 2,
+     "corners": 0,
+     "collapsed": 296,
+     "untangled": 82,
+     "creaseVertices": 3046
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 101668,
+     "verts": 50800,
+     "creaseToMesh": {
+      "max": 0.9452223665979582,
+      "rms": 0.17421690267690101,
+      "p95": 0.3623690724033825,
+      "maxPitch": 3.780889466391833,
+      "rmsPitch": 0.6968676107076041
+     },
+     "vertexToCrease": {
+      "n": 4402,
+      "max": 1.3095168523360319,
+      "rms": 0.2282486577447306,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 89.71234024788593,
+      "median": 54.76461736588907,
+      "p10": 0.0,
+      "medAbsErr": 27.94042560791673
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 235,
+      "regionFaces": 17192,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 103,
+      "minAngle": 0.10857062226734221,
+      "slivers5": 43,
+      "slivers10": 97,
+      "slivers5Region": 43,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 106380,
+     "verts": 53156,
+     "creaseToMesh": {
+      "max": 0.8037726828433106,
+      "rms": 0.05297174497802266,
+      "p95": 0.012370329386667094,
+      "maxPitch": 3.2150907313732424,
+      "rmsPitch": 0.21188697991209063
+     },
+     "vertexToCrease": {
+      "n": 3046,
+      "max": 8.489789032966274e-08,
+      "rms": 4.679606210733209e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 89.71234024788593,
+      "median": 96.24576835839319,
+      "p10": 54.19132178319525,
+      "medAbsErr": 6.635626357830489
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 82,
+      "regionFaces": 21917,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 63,
+      "minAngle": 0.4868811425976754,
+      "slivers5": 24,
+      "slivers10": 134,
+      "slivers5Region": 24,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "skin_core",
+    "pitch": 0.15,
+    "meshSeconds": 2.09,
+    "sharpenSeconds": 4.8,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 7943,
+     "snapped": 1202,
+     "split": 4561,
+     "splitFallback": 3,
+     "corners": 0,
+     "collapsed": 721,
+     "untangled": 125,
+     "creaseVertices": 5210
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 288804,
+     "verts": 144354,
+     "creaseToMesh": {
+      "max": 0.6606126061749068,
+      "rms": 0.09671890908759788,
+      "p95": 0.1882399088396913,
+      "maxPitch": 4.404084041166046,
+      "rmsPitch": 0.6447927272506525
+     },
+     "vertexToCrease": {
+      "n": 7916,
+      "max": 0.8217397584140901,
+      "rms": 0.1399620188635569,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 89.71234024788593,
+      "median": 56.38519176386696,
+      "p10": 10.25337167936863,
+      "medAbsErr": 26.47682402813858
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 358,
+      "regionFaces": 30366,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 170,
+      "minAngle": 0.01814227867569763,
+      "slivers5": 55,
+      "slivers10": 160,
+      "slivers5Region": 54,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 296484,
+     "verts": 148194,
+     "creaseToMesh": {
+      "max": 0.509009253832075,
+      "rms": 0.024673944481308725,
+      "p95": 0.0026733506604317593,
+      "maxPitch": 3.3933950255471665,
+      "rmsPitch": 0.16449296320872484
+     },
+     "vertexToCrease": {
+      "n": 5210,
+      "max": 4.4600929610473775e-08,
+      "rms": 2.9074666663309187e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 89.71234024788593,
+      "median": 93.40019048120531,
+      "p10": 52.3331018659401,
+      "medAbsErr": 4.1332258418321715
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 124,
+      "regionFaces": 38160,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 150,
+      "minAngle": 0.16709482429553074,
+      "slivers5": 26,
+      "slivers10": 297,
+      "slivers5Region": 20,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   }
+  ]
+ },
+ {
+  "case": "minus",
+  "reference": {
+   "points": 2348,
+   "refPitch": 0.13333333333333333,
+   "seconds": 0.8
+  },
+  "rows": [
+   {
+    "case": "minus",
+    "pitch": 0.8,
+    "meshSeconds": 0.03,
+    "sharpenSeconds": 0.09,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 223,
+     "snapped": 26,
+     "split": 159,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 33,
+     "untangled": 2,
+     "creaseVertices": 159
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 5410,
+     "verts": 2703,
+     "creaseToMesh": {
+      "max": 1.6531882621048648,
+      "rms": 0.7282363754016808,
+      "p95": 1.1933200367838694,
+      "maxPitch": 2.066485327631081,
+      "rmsPitch": 0.910295469252101
+     },
+     "vertexToCrease": {
+      "n": 223,
+      "max": 2.044455371185529,
+      "rms": 0.9867871925677473,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 132.53552521537245,
+      "median": 60.83249447833524,
+      "p10": 0.0,
+      "medAbsErr": 56.93980091559571
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 18,
+      "regionFaces": 797,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 4,
+      "minAngle": 0.2770560400825839,
+      "slivers5": 6,
+      "slivers10": 16,
+      "slivers5Region": 6,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 5662,
+     "verts": 2829,
+     "creaseToMesh": {
+      "max": 0.43974307624400316,
+      "rms": 0.029775008675179408,
+      "p95": 0.008633582443246511,
+      "maxPitch": 0.5496788453050039,
+      "rmsPitch": 0.037218760843974255
+     },
+     "vertexToCrease": {
+      "n": 159,
+      "max": 1.1402821658906099e-07,
+      "rms": 2.460913251943177e-08,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 132.53552521537245,
+      "median": 133.42826615178706,
+      "p10": 112.46019965230634,
+      "medAbsErr": 3.2678952609698158
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 1,
+      "regionFaces": 1061,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 5.711840361162705,
+      "slivers5": 0,
+      "slivers10": 12,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "minus",
+    "pitch": 0.4,
+    "meshSeconds": 0.08,
+    "sharpenSeconds": 0.31,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 475,
+     "snapped": 54,
+     "split": 340,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 97,
+     "untangled": 3,
+     "creaseVertices": 331
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 22018,
+     "verts": 11007,
+     "creaseToMesh": {
+      "max": 0.8050144964080151,
+      "rms": 0.3610362519093333,
+      "p95": 0.5915986804974418,
+      "maxPitch": 2.0125362410200376,
+      "rmsPitch": 0.9025906297733333
+     },
+     "vertexToCrease": {
+      "n": 474,
+      "max": 1.0406128734445426,
+      "rms": 0.47888850618841133,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 132.53552521537245,
+      "median": 64.22392490155198,
+      "p10": 0.0,
+      "medAbsErr": 54.73214419008801
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 54,
+      "regionFaces": 1549,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 34,
+      "minAngle": 0.5342802009583216,
+      "slivers5": 17,
+      "slivers10": 28,
+      "slivers5Region": 17,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 22504,
+     "verts": 11250,
+     "creaseToMesh": {
+      "max": 0.2554208065053785,
+      "rms": 0.014446499689044313,
+      "p95": 0.0018950986776692658,
+      "maxPitch": 0.6385520162634463,
+      "rmsPitch": 0.03611624922261078
+     },
+     "vertexToCrease": {
+      "n": 331,
+      "max": 1.3258445196917516e-07,
+      "rms": 1.284718197885277e-08,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 132.53552521537245,
+      "median": 132.92112093748415,
+      "p10": 107.73157221587655,
+      "medAbsErr": 1.6016199600704297
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 1,
+      "regionFaces": 2056,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 0,
+      "minAngle": 5.695009922006066,
+      "slivers5": 0,
+      "slivers10": 45,
+      "slivers5Region": 0,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   },
+   {
+    "case": "minus",
+    "pitch": 0.2,
+    "meshSeconds": 0.33,
+    "sharpenSeconds": 0.92,
+    "rawMcSeconds": 0.0,
+    "awareSeconds": 0.0,
+    "stats": {
+     "crossingEdges": 997,
+     "snapped": 86,
+     "split": 783,
+     "splitFallback": 0,
+     "corners": 0,
+     "collapsed": 273,
+     "untangled": 36,
+     "creaseVertices": 669
+    },
+    "statsAware": {},
+    "before": {
+     "faces": 89370,
+     "verts": 44681,
+     "creaseToMesh": {
+      "max": 0.3939250354422732,
+      "rms": 0.1798270671853399,
+      "p95": 0.28405776336574773,
+      "maxPitch": 1.969625177211366,
+      "rmsPitch": 0.8991353359266994
+     },
+     "vertexToCrease": {
+      "n": 988,
+      "max": 0.5721574813896346,
+      "rms": 0.24174165424671648,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 132.53552521537245,
+      "median": 62.06606185510552,
+      "p10": 0.0,
+      "medAbsErr": 57.051601984974326
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 113,
+      "regionFaces": 3084,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 57,
+      "minAngle": 0.14057973647324068,
+      "slivers5": 30,
+      "slivers10": 62,
+      "slivers5Region": 30,
+      "degenerate": 0
+     }
+    },
+    "after": {
+     "faces": 90390,
+     "verts": 45191,
+     "creaseToMesh": {
+      "max": 0.22665020232662955,
+      "rms": 0.023620579758856078,
+      "p95": 0.0007745419789612145,
+      "maxPitch": 1.1332510116331478,
+      "rmsPitch": 0.11810289879428039
+     },
+     "vertexToCrease": {
+      "n": 669,
+      "max": 5.497533132160916e-08,
+      "rms": 6.153510083717522e-09,
+      "unconverged": 0
+     },
+     "dihedral": {
+      "true": 132.53552521537245,
+      "median": 132.3113203582296,
+      "p10": 106.9023833470835,
+      "medAbsErr": 0.8122233705549533
+     },
+     "validity": {
+      "watertight": true,
+      "winding": true,
+      "manifold3d": "NoError",
+      "badEdges": 0,
+      "folds": 32,
+      "regionFaces": 4138,
+      "nonmanifoldVerts": 0,
+      "selfIntersections": 13,
+      "minAngle": 0.1342861311134865,
+      "slivers5": 16,
+      "slivers10": 101,
+      "slivers5Region": 16,
+      "degenerate": 0
+     }
+    },
+    "aware": null
+   }
+  ]
+ }
+]

@@ -172,6 +172,17 @@ per case on average. What was learned:
   search landscape moved since 1d500e0, where 7.8% held 4.06). Its designs
   are not monotone in the fraction; that is a search problem, not a
   confirmation one. Fastener bracket 29.6 g (tet 2.81), MBB 15.5 g (1.53).
+- Layout search (2026-10-31): below a tet-confirmed pick with margin to
+  spare, a warm restart from the pick and a fresh coarse layout are tried
+  (3 optimizations at most). Bell crank 24.3 -> 22.4 g (tet 3.72 for 3);
+  MBB 12.5 g, fastener bracket 35.5 g, wall bracket 68.7 g and hook 27.2 g
+  found nothing lighter: their next fractions down read 2.29-2.42 on tets
+  for 2.5 whatever the start, and a 1.5x wider filter broke the part (SF 0)
+  on four of five. The non-monotone cases need a different idea than
+  restarts: a stress-aware objective (constrained.py) or members sized at
+  the hotspot. The hook's 0.176 pick now fails its eval's overhang check
+  (4.3% for 4%): a lighter part than the search used to deliver, not a
+  restart.
 - The voxel reading also moves with the cell budget, and most on thin
   sections. Tuning the arm link's field graph (tune.py, 2026-10-30), the
   start part read 0.500 mm deflection on 30k cells and 0.487 mm on 60k, while

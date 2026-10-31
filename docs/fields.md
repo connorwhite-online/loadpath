@@ -8,6 +8,7 @@ bolts, the fillet is larger where the load comes in.
 
 ```
 loadpath field part.json --out out/          # mesh it, check it, write part.stl + report.json
+                                             # (with `materials`: one STL per body and part.3mf too)
 loadpath schema field                        # the JSON Schema
 ```
 
@@ -368,6 +369,34 @@ Sharp meshing costs nothing extra (9 s either way on the solid; 100 s
 against 138 s on the lattice part, since the organic field no longer has to
 draw the bores).
 
+### Creases between field surfaces (opt-in)
+
+A hard boolean between two fields (a lattice clipped by a body, two bodies
+unioned with no blend, a body minus another, a shell's rim) has no exact
+shape to hand to manifold3d. `"mesh": {"creases": true}` puts those creases
+back on the meshed field instead (crease.py). The graph says which input is
+active on each side, so every edge whose ends lie on different inputs'
+surfaces is split on the true intersection curve (Gauss-Newton on both
+inputs' zero levels), slivers and turned-over triangles near the crease are
+collapsed, and any crease vertex that would make the mesh cross itself goes
+back to where the plain mesh had it. Measured in
+`moonshots/round2/crease_bench.py` against the true curve, distance from the
+curve to the mesh (max / RMS, mm):
+
+| part | pitch | plain | creases |
+| --- | --- | --- | --- |
+| two organic spheres, 90 degree rim | 0.4 | 0.258 / 0.149 | 0.004 / 0.001 |
+| the same, 30 degree wedge | 0.4 | 0.956 / 0.749 | 0.008 / 0.003 |
+| organic body minus a torus | 0.4 | 0.805 / 0.361 | 0.255 / 0.014 |
+| gyroid clipped by an organic body | 0.25 | 0.634 / 0.134 | 0.445 / 0.026 |
+
+On smooth bodies the rim comes out at its true dihedral angle with no
+slivers or folds. On lattices the RMS error drops five to ten times, but
+the plain lattice mesh already has folds and self-intersections where its
+walls meet the body, and wherever a crease would touch those it is left
+rounded, so the worst point barely moves. The pass costs 2 to 4 times the
+meshing time on a lattice, a fraction of it on a solid. Not with `stream`.
+
 ## STEP
 
 `"step": true` (or `loadpath field graph.json --step`) also writes
@@ -502,6 +531,84 @@ stress, the added ones at 17 to 30%. Under the arm-link study
 13.5 and 0.647 mm, 0.9 g lighter. The holes cost about 10% of stiffness,
 not strength.
 
+
+## Multi-material bodies
+
+A graph can say which material goes where. `materials` lists the part's
+bodies, each with a `name` and a `material`, in precedence order:
+
+```json
+"materials": [
+  {"name": "pad",  "material": "tpu",  "solid": "padZone", "where": "faceDistance", "below": 2.5},
+  {"name": "skin", "material": "tpu",  "where": "stress", "above": 0.6},
+  {"name": "core", "material": "petg"}
+]
+```
+
+- `solid` takes the body from a solid node (a boss, a shell, a box that
+  marks a zone); without it the body is drawn from the whole part.
+- `where` with `above` and/or `below` takes the points of that solid where a
+  scalar field is past a threshold: TPU within 2.5 mm of the gripping face
+  (a `distance`), wherever a `result` stress is over 60% of its peak
+  (`"scale": "peak"`), wherever a remapped ramp says. The thresholds are
+  fields like any number in the graph (`"below": {"op": "expr", "expr":
+  "0.2 * x"}` tilts the interface).
+- Earlier bodies win: each body is its region of the part less what the
+  bodies before it took, so bodies never overlap and together they are the
+  part. A body with neither `solid` nor `where` takes whatever is left; end
+  with one (the report warns about part volume no body claims, and a body
+  that came out empty). Bodies are clipped to the graph's output.
+- `mix` (a field from 0 to 1) with a material pair `[A, B]` makes a graded
+  blend instead of a hard partition, for multi-material jetting: 0 is all
+  A, 1 all B. The body is still a body (its region is chosen as above);
+  inside it the fraction is written as a voxel print job
+  (`voxelprint.export_voxel_slices`: `voxel` sets `pitch`, `printer`,
+  default j850, and the resins, by default `vero` -> VeroCyan and
+  `agilus30` -> Agilus30Blk) and the body is weighed by the blend.
+- `extruder` and `color` go into the 3MF (default: one extruder per
+  distinct material, in order).
+
+**Coincident interfaces.** The part is meshed once, exactly as without
+materials (sharp edges and all). Each body's region is then meshed from its
+own field and manifold3d splits what is left of the part by it: one exact
+boolean gives both sides of the cut, so two bodies share their interface
+surface exactly (the same triangles' vertices, no gap, no overlap) and
+each is watertight, as a slicer wants for a multi-material object. The
+region's field is carried on outside the part (as sharp.py's extended
+field: it reads its value a pitch inside along the part's normal, and is
+solid from three pitches out), so its surface only exists where it cuts
+through the part; a body whose solid is a shell of the part (its outer
+wall exactly on the part's surface) splits without slivers. A threshold on
+a field that is not a distance (a stress) has no slope bound for the
+narrow band, so regions are sampled densely while the grid fits (16M
+cells). The interface is where the region's field crosses zero, to the
+mesher's usual accuracy; a crease inside a region (a box's corner) comes
+out rounded over a pitch, as anywhere in a field.
+
+`run_field` then writes `<name>-<body>.stl` for each body (the union is
+still `<name>.stl`) and `<name>.3mf` with one part per body and its
+extruder (`threemf.write_multimaterial_3mf`; PrusaSlicer and Bambu/Orca
+read it as one object). The report's `materials` gives each body's volume
+(mm^3), mass (g, from its material's density), share of the part, faces and
+watertightness; `interfaces`, the area (mm^2) between each pair of bodies
+that touch; and `check`: the bodies' volume against the part's
+(`volumeError`), what no body claimed and the largest pairwise overlap
+(mm^3). The graph's `mass` is the bodies' total.
+
+[`examples/fields/gripper_pad.json`](../examples/fields/gripper_pad.json) is
+a gripper finger, 70 x 16 x 12 mm (a rounded box with a 5.2 mm pin bore at
+the base), in PETG with a TPU contact pad 2.5 mm thick on its gripping face
+from 24 mm out to the tip: the pad is where the distance to the face plane
+is under 2.5 mm. At 0.35 mm pitch it runs in 6 s on the 4-core box: pad
+1176.6 mm^3 (1.42 g of TPU), core 11283.7 mm^3 (14.33 g of PETG), 15.75 g in
+all; the interface is 559.7 mm^2 (the 46 mm long face and the pad's end);
+the bodies sum to the part's 12460.3 mm^3 to 1e-10, overlap by 1e-8 mm^3,
+and both are watertight.
+
+`tests/test_field_materials.py` checks the bodies against volumes and
+areas worked out by hand: a slab above a plane, overlapping solids taken
+in order, a tilted field threshold, a threshold on a non-distance field,
+a skin that is a shell of a sphere, and a mix body's mass.
 
 ## Pitfalls
 
