@@ -1,0 +1,93 @@
+{
+ "id": "kart-charge-cooler-lpbf",
+ "kind": "heatx",
+ "brief": "A water-to-air charge cooler for the turbo kit on my 250 cc kart engine, printed in AlSi10Mg on a\nmetal powder-bed machine, built along +Z. All I have is the space: a 110 x 80 x 60 mm box (x along the\n110, y across the 80, z up, origin at a bottom corner), and the cooler and its fittings must fit in it.\nThe boost air comes in through the x = 0 end and leaves through the x = 110 end; put the coolant\nconnections wherever suits. At full boost it's about 0.015 kg/s of air at 130 C off the compressor and I\nwant it out at 70 C or cooler. The coolant is 50/50 glycol, 3 L/min at 40 C. No more than 0.1 bar lost on\nthe air side (it eats boost), 0.2 bar on the coolant side, and keep it under 300 g.",
+ "attachments": [],
+ "tags": [
+  "heatx",
+  "metal",
+  "lpbf",
+  "gas",
+  "sizing",
+  "envelope"
+ ],
+ "gold": {
+  "name": "kart-charge-cooler",
+  "core": {
+   "type": "box",
+   "min": [
+    30,
+    18.6,
+    5
+   ],
+   "max": [
+    80,
+    61.4,
+    55
+   ]
+  },
+  "type": "gyroid",
+  "layout": "counter",
+  "axes": "xy",
+  "fluids": [
+   "air",
+   "coolant"
+  ],
+  "cell": 6,
+  "wall": 0.8,
+  "split": 0.66,
+  "cap": 1.8,
+  "header": 9,
+  "shell": 1.6,
+  "portLength": 8,
+  "portDiameter": {
+   "air": 25.5,
+   "coolant": 8
+  },
+  "build": "z",
+  "process": "lpbf",
+  "duty": {
+   "air": {
+    "fluid": "air",
+    "kgPerS": 0.015,
+    "tIn": 130
+   },
+   "coolant": {
+    "fluid": "glycol50",
+    "lPerMin": 3,
+    "tIn": 40
+   },
+   "wall": "alsi10mg"
+  }
+ },
+ "pass": {
+  "envelope": {
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    110,
+    80,
+    60
+   ]
+  },
+  "ports": {
+   "air-in": {
+    "direction": "-x"
+   },
+   "air-out": {
+    "direction": "+x"
+   }
+  },
+  "minEffectiveness": 0.667,
+  "maxPressureDrop": {
+   "air": 10000,
+   "coolant": 20000
+  },
+  "maxMass": 300,
+  "maxTrappedVolume": 20,
+  "maxInternalFlatArea": 300
+ }
+}
