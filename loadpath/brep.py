@@ -39,6 +39,8 @@ DEBUG = False
 RAY_MAX = 3.0        # mm: farthest a patch point is pulled along its normal onto the surface
 CREASE = 40.0        # degrees: organic faces meeting sharper than this are separate smooth regions
 DEBUG_AT = None
+DEBUG_MISS = []
+DEBUG_Q = None       # a list collects every organic patch's points
 SEW = 0.01           # mm: sewing tolerance (exact faces' seams sit within TOL of the patches')
 SKIP_FAILED = False
 ASPECT = 0.1         # least 2*area / longest edge^2 of a patch (equilateral 0.87)
@@ -477,7 +479,29 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
             ok = np.einsum("ij,ij->i", org_mesh.face_normals[tri], nrm[miss]) > 0.3
             idx = np.flatnonzero(miss)
             out[idx[ok]] = cp[ok]
+            if DEBUG_Q is not None:
+                DEBUG_MISS.extend(P[idx[~ok]].tolist())
+                DEBUG_MISS.extend(("ray", ) for _ in range(int(ok.sum())))
         return out
+
+    def resample(P, n):
+        d = np.r_[0, np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))]
+        if d[-1] <= 0:
+            return np.repeat(P[:1], n, axis=0)
+        t = np.linspace(0, d[-1], n)
+        return np.stack([np.interp(t, d, P[:, k]) for k in range(3)], axis=1)
+
+    def drape(P, nrm, rounds=4):
+        """A polyline between two surface points onto the surface, evenly
+        spaced: pulling a chord along one direction bunches its points up at
+        a bend, and the gaps between them cut the corner."""
+        P = P.copy()
+        R = np.repeat(nrm[None], len(P) - 2, axis=0)
+        for _ in range(rounds):
+            P[1:-1] = pull(P[1:-1], R)
+            P = resample(P, len(P))
+        P[1:-1] = pull(P[1:-1], R)
+        return P
 
     # every coarse edge: a polyline over the surface, and its midpoint by length
     poly, split = {}, {}
@@ -495,11 +519,10 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
             # inside the organic body: the chord pulled onto the surface (the
             # shortest path over the mesh's edges is a staircase, and two
             # from one corner can share their first half)
-            t = np.linspace(0, 1, 9)[:, None]
-            P = pa * (1 - t) + pb * t
+            t = np.linspace(0, 1, 17)[:, None]
             nn = cfn[f0e] + cfn[f1e]
             nn /= max(np.linalg.norm(nn), 1e-300)
-            P[1:-1] = pull(P[1:-1], np.repeat(nn[None], 7, axis=0))
+            P = drape(pa * (1 - t) + pb * t, nn)
         else:
             pth = _path(Gseam, int(vid[a]), int(vid[b]), limit=4 * L + 1.0)
             if pth is None:
@@ -507,13 +530,6 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
             P = V[pth]
         poly[(a, b)] = P
         split[(a, b)] = la >= O or lb >= O        # organic on a side: two half edges
-
-    def resample(P, n):
-        d = np.r_[0, np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))]
-        if d[-1] <= 0:
-            return np.repeat(P[:1], n, axis=0)
-        t = np.linspace(0, d[-1], n)
-        return np.stack([np.interp(t, d, P[:, k]) for k in range(3)], axis=1)
 
     def half(a, b):
         """Points from corner a to the midpoint of edge (a, b)."""
@@ -577,7 +593,35 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
                     loop.append((edge(("e", e), poly[e]), a > b))
             if int(lf) not in surf_geom:
                 surf_geom[int(lf)] = geo[int(lf)].geom()
-            sew.Add(_exact_face(geo[int(lf)], surf_geom[int(lf)], loop, CV[f].mean(axis=0)))
+            xf = _exact_face(geo[int(lf)], surf_geom[int(lf)], loop, CV[f].mean(axis=0))
+            if DEBUG:
+                from OCP.BRepCheck import BRepCheck_Analyzer
+                from OCP.BRepGProp import BRepGProp
+                from OCP.GProp import GProp_GProps
+                gp = GProp_GProps()
+                BRepGProp.SurfaceProperties_s(xf, gp)
+                ta = 0.5 * np.linalg.norm(np.cross(CV[f[1]] - CV[f[0]], CV[f[2]] - CV[f[0]]))
+                if not BRepCheck_Analyzer(xf).IsValid() or abs(gp.Mass() - ta) > 0.2 * ta + 0.1:
+                    from OCP.ShapeAnalysis import ShapeAnalysis_Edge
+                    from OCP.ShapeFix import ShapeFix_Face as _SFF
+                    from OCP.TopExp import TopExp_Explorer as _TE
+                    from OCP.TopAbs import TopAbs_EDGE as _TAE
+                    from OCP.BRep import BRep_Tool as _BT
+                    sae = ShapeAnalysis_Edge(); ee = _TE(xf, _TAE); info = []
+                    while ee.More():
+                        e_ = TopoDS.Edge(ee.Current())
+                        mx = 0.0
+                        try:
+                            ok_, mx = sae.CheckSameParameter(e_, 0.0, 10)
+                        except Exception as ex_:
+                            ok_ = str(ex_)[:30]
+                        info.append((sae.HasPCurve(e_, xf), sae.CheckVerticesWithPCurve(e_, xf), round(_BT.Tolerance_s(e_), 4)))
+                        ee.Next()
+                    ff = _SFF(xf); ff.Perform()
+                    print("  edges", info, "fixed valid", BRepCheck_Analyzer(ff.Face()).IsValid())
+                    print("exact face", geo[int(lf)].kind, "valid", BRepCheck_Analyzer(xf).IsValid(), "area", round(gp.Mass(), 2),
+                          "tri", round(ta, 2), CV[f].round(2).tolist(), flush=True)
+            sew.Add(xf)
             continue
         T = CV[f]
         n = np.cross(T[1] - T[0], T[2] - T[0])
@@ -587,9 +631,8 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
         Gc = pull(np.mean([*T, *Mid.values()], axis=0)[None], n[None])[0]
         spoke = {}
         for e, M in Mid.items():                 # centroid -> edge midpoint
-            P = Gc * (1 - u[:, None]) + M * u[:, None]
-            P[1:-1] = pull(P[1:-1], np.repeat(n[None], N - 2, axis=0))
-            spoke[e] = P
+            t = np.linspace(0, 1, 13)[:, None]
+            spoke[e] = resample(drape(Gc * (1 - t) + M * t, n), N)
         for k in range(3):
             c, j, i = f[k], f[(k + 1) % 3], f[(k + 2) % 3]
             e1, e2 = (min(c, j), max(c, j)), (min(c, i), max(c, i))
@@ -608,6 +651,8 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
             inner = C[1:-1, 1:-1].reshape(-1, 3)
             Q[1:-1, 1:-1] = pull(inner, np.repeat(n[None], len(inner), axis=0)).reshape(N - 2, N - 2, 3)
             sew.Add(bezier_face(Q))
+            if DEBUG_Q is not None:
+                DEBUG_Q.append(Q.copy())
             nq += 1
             if DEBUG:
                 for side, tag in ((Q[:, 0], "bottom"), (Q[:, -1], "top"), (Q[0, :], "left"), (Q[-1, :], "right")):
@@ -641,14 +686,33 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
             print("free edge", round(p0.X(), 3), round(p0.Y(), 3), round(p0.Z(), 3), "len", round(p0.Distance(p1), 4), flush=True)
     if len(shells) != 1 or sew.NbFreeEdges():
         raise RuntimeError(f"patches did not close ({len(shells)} shells, {sew.NbFreeEdges()} free edges)")
+    if DEBUG:
+        from OCP.BRepCheck import BRepCheck_Analyzer
+        raw = BRepBuilderAPI_MakeSolid(shells[0]).Solid()
+        print("raw shell: valid", BRepCheck_Analyzer(shells[0]).IsValid(), "solid vol", _volume(raw), flush=True)
     fx = ShapeFix_Solid(BRepBuilderAPI_MakeSolid(shells[0]).Solid())
     fx.Perform()
     solid = fx.Solid()
     if _volume(solid) < 0:
         solid.Reverse()
+    if DEBUG:
+        from OCP.BRepCheck import BRepCheck_Analyzer
+        print("before unify: valid", BRepCheck_Analyzer(solid).IsValid(), "vol", _volume(solid), flush=True)
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
     u = ShapeUpgrade_UnifySameDomain(solid, False, True, False)
     u.Build()
-    solid = u.Shape()
+    merged = u.Shape()
+    if not BRepCheck_Analyzer(merged).IsValid():
+        from OCP.ShapeFix import ShapeFix_Shape
+
+        sf = ShapeFix_Shape(merged)
+        sf.Perform()
+        merged = sf.Shape()
+    if BRepCheck_Analyzer(merged).IsValid() or not BRepCheck_Analyzer(solid).IsValid():
+        solid = merged                           # else keep the faces unmerged: valid beats tidy
+    if DEBUG:
+        print("after unify: valid", BRepCheck_Analyzer(solid).IsValid(), "vol", _volume(solid), flush=True)
     rep = {"patches": nq, "triangles": int((flab >= O).sum()), "exactTriangles": int((flab < O).sum()),
            "exactSurfaces": int(len(set(int(x) for x in np.unique(lab) if x < O))),
            "smoothRegions": int(len(set(int(x) for x in np.unique(lab) if x >= O))),
@@ -725,7 +789,11 @@ def _exact_face(s, geom, loop, centre, tol=0.01):
         wire.Reverse()
     bb.Add(face, wire)
     BRepLib.SameParameter_s(face, tol)
-    return face
+    from OCP.ShapeFix import ShapeFix_Face
+
+    fx = ShapeFix_Face(face)                     # the wire's own checks (uv gaps at the corners)
+    fx.Perform()
+    return fx.Face()
 
 
 def _bernstein(d):
