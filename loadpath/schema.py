@@ -67,7 +67,8 @@ _SHAPES = {
     },
     "mesh": {
         "type": "object",
-        "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder, or inline stlBase64.",
+        "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder (or a STEP file, "
+                       ".step/.stp, tessellated and healed; needs loadpath[step]), or inline stlBase64.",
         "properties": {"type": {"const": "mesh"}, "path": {"type": "string"}, "stlBase64": {"type": "string"}},
         "required": ["type"],
         "x-requireOne": [["path"], ["stlBase64"]],

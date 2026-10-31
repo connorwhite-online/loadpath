@@ -470,7 +470,7 @@ def _shape(spec, base_dir):
             return MeshShape(mesh)
         path = spec.get("path")
         if not path:
-            raise ValueError("mesh shape needs 'path' (STL/3MF/OBJ) or 'stlBase64'")
+            raise ValueError("mesh shape needs 'path' (STL/3MF/OBJ/STEP) or 'stlBase64'")
         if base_dir is not None:
             # Paths resolve inside the study's own folder and never escape it,
             # so a study file cannot read arbitrary files off the host.
@@ -479,6 +479,10 @@ def _shape(spec, base_dir):
             if os.path.commonpath([root, full]) != root:
                 raise ValueError(f"mesh path {path!r} must stay inside the study's folder")
             path = full
+        if str(path).lower().endswith((".step", ".stp")):
+            # CAD straight in: tessellated, healed if it was an open shell
+            from .cadimport import load_part
+            return MeshShape(load_part(path).mesh, spec["path"])
         mesh = trimesh.load(path, force="mesh")
         return MeshShape(mesh, spec["path"])
     raise ValueError(f"unknown shape type {kind!r} (box, cylinder, tube, sphere, mesh, union)")

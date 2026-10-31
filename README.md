@@ -17,6 +17,11 @@ don't tell you whether a part is strong enough, thick enough or will fit. loadpa
   ([docs/fields.md](docs/fields.md)). `loadpath edit` opens the graph in a browser
   editor with sliders and a live GPU preview. Bores, bolt faces and keep-outs cut with a
   plain shape keep exact, sharp edges.
+- **CAD in.** `loadpath import part.step` reads a STEP (or STL) part, heals open
+  shells, finds its bores, counterbores, bolt patterns and flat mounting faces, and
+  drafts a study: the part as design space, every interface preserved, every bore a
+  keep-out, and a suggested support and load to replace with the real ones
+  ([docs/IMPORT.md](docs/IMPORT.md)).
 - **STEP out.** `--step` writes the part as a B-rep for CAD: keep-outs, preserved
   shapes and the design space as true planes and cylinders, the organic body faceted
   (`loadpath[step]`, OpenCascade).
@@ -180,7 +185,8 @@ loadpath mcp                           # stdio MCP server for agents
 Also: `loadpath lattice` (fill a part with a stress-graded TPMS lattice),
 `loadpath heatx` (two-fluid TPMS heat exchangers), `loadpath field` (a part as a
 graph of fields, [docs/fields.md](docs/fields.md)), `loadpath edit` (edit a field
-graph in the browser with a live preview), `loadpath tune` (tune a graph's numbers
+graph in the browser with a live preview), `loadpath import` (a STEP or STL part as a
+draft study, [docs/IMPORT.md](docs/IMPORT.md)), `loadpath tune` (tune a graph's numbers
 against a study's limits), `loadpath schema` (JSON Schemas, also
 in [`schema/`](schema/)).
 
@@ -218,6 +224,7 @@ python3 tests/test_editor.py      # the GPU part needs node and Playwright
 python3 tests/test_impact.py
 python3 tests/test_recall.py
 python3 tests/test_assembly.py
+python3 tests/test_cadimport.py
 python3 tests/test_evals.py
 python3 -m loadpath.evals.run --tier coarse --corpus 6 --out evals-coarse/   # minutes: every push
 python3 -m loadpath.evals.run --out evals-out/                               # full suite
