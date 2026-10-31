@@ -176,11 +176,18 @@ def nodal_stress(stiff, u, modulus, thermal=None):
     return acc / cnt[:, None]
 
 
+# mm above the lowest point that still counts as standing on the build plate
+_PLATE_BAND = 1.0
+
+
 def _overhang(mesh, direction, study=None, max_angle_deg=45.0, tolerance_deg=5.0):
     """Down-facing surface that needs support: faces whose normal is within
     (max_angle - tolerance) of straight down, i.e. ceilings and slopes
     shallower than the self-supporting limit, excluding the face on the build
-    plate. The tolerance keeps marching-cubes facets on a true 45-degree
+    plate and the rounded bottom edge within 1 mm of it (a few layers, which
+    print without support; marching cubes rounds every edge on the plate, and
+    on the printed hook the 0.5-1 mm band alone was a point of its 4.3%). The
+    tolerance keeps marching-cubes facets on a true 45-degree
     slope from counting. `overhangArea` is everything; `designOverhangArea`
     leaves out faces on preserved or keep-out geometry, which the user drew
     (a horizontal bore's ceiling is theirs, not the optimizer's)."""
@@ -190,7 +197,7 @@ def _overhang(mesh, direction, study=None, max_angle_deg=45.0, tolerance_deg=5.0
     down = -(mesh.face_normals @ up)
     centers = mesh.triangles_center
     height = centers @ up
-    bad = (down > np.cos(np.radians(max_angle_deg - tolerance_deg))) & (height > height.min() + 0.5)
+    bad = (down > np.cos(np.radians(max_angle_deg - tolerance_deg))) & (height > height.min() + _PLATE_BAND)
     area = float(mesh.area_faces[bad].sum())
     out = {"overhangArea": area, "overhangFraction": area / float(mesh.area)}
     if study is not None:
