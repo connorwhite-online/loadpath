@@ -156,6 +156,19 @@ def test_margin_includes_durability_only_when_constrained():
     assert _margin(on, report) == 0.5
 
 
+def test_filled_grade_reads_its_base_polymer_curve():
+    # GRIP's links are "pa12-gf": they used to fall through to the generic
+    # FDM (PLA) curve, a third of PA12's fatigue strength
+    from loadpath.durability import DURABILITY, durability_data
+
+    class M:
+        name = "pa12-gf"
+    d = durability_data(M())
+    assert d.fatigue_ratio == DURABILITY["pa12"].fatigue_ratio and d.quality == "assumed"
+    M.name = "no-such-plastic"
+    assert d.fatigue_ratio != durability_data(M()).fatigue_ratio
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 
