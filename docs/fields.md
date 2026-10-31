@@ -522,7 +522,8 @@ meshing time on a lattice, a fraction of it on a solid. Not with `stream`.
 shapes stay exact: bores are cylinders, box faces planes, so a CAD user can
 mate and dimension against them. Organic regions are faceted, one planar
 face per triangle, decimated first to `"step": {"faces": 20000}` (about
-45 MB; coplanar facets merge). The report gives the faces by type, the
+14 MB; coplanar facets merge; the file carries no 2-D curves on faces,
+which readers rebuild and which were over half of it). The report gives the faces by type, the
 share of the area on exact geometry, the volume against the STL's, and what
 decimating cost (`decimated[].deviation`, mm). A lattice does not decimate
 and is refused: ship lattice parts as STL or 3MF.
@@ -537,9 +538,23 @@ the STL. Measured (bench/sharp_edges.py, coarse eval tier):
 | part | STEP faces | exact area | volume vs STL | size, time |
 | --- | --- | --- | --- | --- |
 | arm-link example | 13 cylinders, 6 planes, 13.2k facets | 22% | -0.02% | 33 MB, 24 s |
-| GRIP turret | 24 cylinders, 26 planes, 12.6k facets | 49% | -0.01% | 33 MB, 39 s |
+| GRIP turret | 24 cylinders, 26 planes, 12.6k facets | 49% | -0.01% | 33 MB, 39 s (14 MB since 1568466) |
 | GRIP wrist yoke | 42 cylinders, 29 planes, 16.3k facets | 28% | -0.002% | 42 MB, 34 s |
-| arm link field graph (solid) | 3 cylinders, 2 planes, 11.2k facets | 29% | -0.02% | 28 MB, 16 s |
+| arm link field graph (solid) | 3 cylinders, 2 planes, 11.4k facets | 29% | -0.02% | 28 MB, 16 s (12.7 MB, 20 s since 8b54f5d) |
+
+`"step": {"surface": "smooth"}` (`export_step(..., surface="smooth")`) is
+experimental: organic regions become smooth B-spline patches instead of
+facets. The organic mesh is coarsened to `"patches"` triangles (default
+1500) without tearing thin members, each coarse edge becomes a B-spline
+curve on the surface and each coarse triangle a plate-filled B-spline
+surface through points of the full surface; strips within 0.5 mm of exact
+geometry stay flat facets, since patches grazing a bearing seat defeat
+OpenCascade's booleans. On a smooth blob, 400 patches stay within 0.03 mm
+(p99) and the solid is valid. It is not smaller (about 8 kB a patch, so
+1500 patches weigh more than 20k facets), and on real parts it is not
+there yet: the GRIP turret's union with its preserved bosses failed every
+retry, so it fell back to facets, and the arm link field graph took over
+50 minutes. Any invalid or volume-off result falls back to facets.
 
 The study STLs' circles are now 0.002 mm true as well (they were 96-gons:
 the turret's 48 mm J2 sleeve was 0.026 mm off, and only 59% of its keep-out
