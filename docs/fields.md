@@ -619,6 +619,37 @@ walls meet the body, and wherever a crease would touch those it is left
 rounded, so the worst point barely moves. The pass costs 2 to 4 times the
 meshing time on a lattice, a fraction of it on a solid. Not with `stream`.
 
+## Lattices as lattices: 3MF
+
+`"lattice3mf": true` (or `loadpath field graph.json --lattice-3mf`; needs
+`pip install "loadpath[3mf]"`, lib3mf) also writes `<name>-lattice.3mf`
+with the lattice kept as a lattice instead of its triangles
+(loadpath/lattice3mf.py):
+
+- a TPMS (gyroid, diamond, Schwarz P; sheet or network) is a level set of
+  the 3MF Volumetric & Implicit extension: the TPMS formula loadpath meshes,
+  written as an implicit function (about 50 nodes), so the surface is the
+  same field to rounding. A wall a field grades is sampled into a 3D image
+  (a 16-bit PNG stack, `grid` mm, default the smaller of cell / 6 and 1 mm)
+  the function reads;
+- a strut cell (cubic, BCC, octet, Kelvin, ...) is a beam lattice of the
+  Beam Lattice extension, each strut a beam with its radius at each end
+  from the thickness field.
+
+The lattice is clipped by the part's envelope (the part with its lattice
+solid, as in the STEP) and the rest of the part, skin, bosses and bores, is
+an ordinary mesh beside it, both decimated to `decimate` mm (default
+0.02); a printer or slicer unions the two. The file is read back with
+lib3mf as a check (`lattice3mf.readBack`). The arm link sandwich: 1.6 MB
+against a 37.7 MB STL, 2 minutes with the part. On graphs without blends
+the two objects are the part exactly (Monte Carlo, 400k points); where a
+graph blends the lattice into the body, those fillets come out sharp.
+Refused, with the reason in the report: more than one lattice node, a
+graded cell, a non-cartesian frame, an offset, a stretched TPMS cell,
+Voronoi foams (ship the STL). Readers: lib3mf reads both extensions; beam
+lattices are widely supported by AM build-prep tools, the implicit
+extension (2023-24) by few yet.
+
 ## STEP
 
 `"step": true` (or `loadpath field graph.json --step`) also writes
@@ -637,7 +668,10 @@ interference, while the STL carries the lattice. `step.lattice` in the
 report says so, with the envelope's and the part's volumes (use the part's
 for mass) and `trueSurface`, the share of the STEP's outside that is the
 printed part's own surface: 1.0 under a closed skin, less where a lattice
-is open to the outside. Drain holes are not in it. The arm link sandwich
+is open to the outside. Drain holes are in it, their bores true
+cylinders through the skin (blind, since the voids they drain are solid
+here); on the sandwich printed in MJF, 8 drain bores, 11.8 MB, patches
+within 0.087 mm, `trueSurface` 0.97. The arm link sandwich
 (`examples/fields/arm-link-sandwich.json`, pitch 0.4, `"surface": "smooth"`):
 4374 patches, 3 cylinders, 2 planes, 7.5 MB, patches within 0.023 mm p99 /
 0.079 mm max, `trueSurface` 1.0, 5 minutes with the part.

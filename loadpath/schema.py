@@ -1162,7 +1162,17 @@ FIELD_SCHEMA = {
             "patches": {"type": "integer", "minimum": 50, "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch, refined where it misses (default 2000)"}},
             "additionalProperties": False}],
                  "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres "
-                                "where the graph's hard booleans use plain shapes, the rest faceted"},
+                                "where the graph's hard booleans use plain shapes, the rest faceted or smooth; "
+                                "with lattice nodes, the part with its lattices solid (drain bores included)"},
+        "lattice3mf": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
+            "decimate": {"type": "number", "exclusiveMinimum": 0,
+                         "description": "body and envelope meshes within this many mm of the surface (default 0.02)"},
+            "grid": {"type": "number", "exclusiveMinimum": 0,
+                     "description": "voxel size, mm, of a graded TPMS wall's 3D image (default min(cell / 6, 1))"}},
+            "additionalProperties": False}],
+            "description": "also write <name>-lattice.3mf (needs loadpath[3mf]): the one lattice node as a lattice, "
+                           "TPMS as an implicit level set (3MF Volumetric & Implicit), strut cells as a beam lattice, "
+                           "clipped by the part's envelope, beside the rest of the part as a mesh"},
         "material": {**_ONE_MATERIAL, "description": "Reports the mass."},
         "materials": {"type": "array", "minItems": 1, "items": _MATERIAL_BODY,
                       "description": "Multi-material: split the output into material bodies, in precedence "

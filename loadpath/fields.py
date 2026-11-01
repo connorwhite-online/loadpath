@@ -2665,6 +2665,50 @@ def node_doc(doc, node):
 
 
 
+
+def _lattice_variant(doc, g, lattices, solid, base_dir, sources, meshes, progress, mesh_opts=None):
+    """The part as meshed (drain holes and all: drain_graph added them to
+    g) with every lattice solid (`solid`) or gone: the envelope a STEP or a
+    lattice clip uses, or the body beside a lattice. A drain bore is an
+    exact cylinder through the skin, blind where its void is solid."""
+    full = expand_groups(doc)
+    fill = ({"op": "shape", "shape": {"type": "box", "min": [-1e4] * 3, "max": [1e4] * 3}} if solid
+            else {"op": "constant", "value": 1e3})
+    env = {**full, "nodes": {k: (dict(fill) if k in lattices else nd.spec) for k, nd in g.nodes.items()},
+           "output": g.output}
+    env.pop("drains", None)
+    if mesh_opts:
+        env["mesh"] = {**(env.get("mesh") or {}), **mesh_opts}
+    pre = {k: (g._built[k], g.analyses.get(k)) for k, nd in g.nodes.items()
+           if nd.op == "result" and k in g._built}
+    ge = FieldGraph(env, base_dir=base_dir, sources={**(sources or {}), **g.sources}, meshes=meshes).seed(pre)
+    return ge.mesh(progress=progress)
+
+
+def _lattice_3mf(doc, g, lattices, out_dir, name, opts, base_dir, sources, meshes, progress):
+    """<name>-lattice.3mf: the part's lattices as lattices (lattice3mf.py),
+    clipped by its envelope, beside the rest of it as a mesh. Both meshes
+    are decimated to `decimate` mm (default 0.02) of the true surface."""
+    from .lattice3mf import lattice_from_graph, write_lattice_3mf
+
+    if len(lattices) > 1:
+        raise ValueError(f"lattice 3MF takes one lattice node (this graph has {', '.join(lattices)}): "
+                         "each would be clipped by the whole envelope")
+    mo = {"decimate": float(opts.get("decimate", 0.02))}
+    env = _lattice_variant(doc, g, lattices, True, base_dir, sources, meshes, progress, mo)
+    body = _lattice_variant(doc, g, lattices, False, base_dir, sources, meshes, progress, mo)
+    lo, hi = env.bounds
+    lat = [lattice_from_graph(g, k, lo, hi, opts.get("grid")) for k in lattices]
+    path = os.path.join(out_dir, f"{name}-lattice.3mf")
+    rep = write_lattice_3mf(path, body if len(body.faces) else None, env, lat, name=name)
+    rep["note"] = ("lattice as a lattice (implicit level set or beam lattice), clipped by the envelope; "
+                   "the body is a mesh; lattice-to-body fillets come out sharp")
+    for x, l_ in zip(rep["lattices"], lat):
+        for k in ("cell", "thickness"):
+            if k in l_:
+                x[k] = l_[k]
+    return rep
+
 def _envelope_step(doc, g, mesh, lattices, out_dir, name, opts, base_dir, sources, meshes, progress):
     """STEP for a part with lattices: the part with every lattice solid (a
     sandwich's skin, bosses and bores exactly as printed; the lattice is in
@@ -2675,14 +2719,7 @@ def _envelope_step(doc, g, mesh, lattices, out_dir, name, opts, base_dir, source
     from .sharp import mesh_distance
     from .step import DEFAULT_FACES, DEFAULT_PATCHES, export_step
 
-    full = expand_groups(doc)
-    solid = {"op": "shape", "shape": {"type": "box", "min": [-1e4] * 3, "max": [1e4] * 3}}
-    env = {**full, "nodes": {k: (dict(solid) if k in lattices else v) for k, v in full["nodes"].items()}}
-    env.pop("drains", None)
-    pre = {k: (g._built[k], g.analyses.get(k)) for k, nd in g.nodes.items()
-           if nd.op == "result" and k in g._built}
-    ge = FieldGraph(env, base_dir=base_dir, sources=sources, meshes=meshes).seed(pre)
-    em = ge.mesh(progress=progress)
+    em = _lattice_variant(doc, g, lattices, True, base_dir, sources, meshes, progress)
     st = export_step(em, os.path.join(out_dir, f"{name}.step"), faces=int(opts.get("faces", DEFAULT_FACES)),
                      name=name, surface=opts.get("surface", "facets"),
                      patches=int(opts.get("patches", DEFAULT_PATCHES)))
@@ -2694,7 +2731,8 @@ def _envelope_step(doc, g, mesh, lattices, out_dir, name, opts, base_dir, source
                      "envelopeVolume": round(float(em.volume), 1), "partVolume": round(float(mesh.volume), 1),
                      "note": "lattices solid in the STEP (outside, bores and faces as printed); "
                              "the printed part, lattice and all, is the STL"
-                             + ("; drain holes are not in the STEP" if doc.get("drains") not in (None, False, "off") else "")}
+                             + ("; drain bores are blind there (their voids are solid)"
+                                if any(k.startswith("drain-bore-") for k in g.nodes) else "")}
     return st
 
 def _write_graded(doc, rep, out_dir):
@@ -2866,6 +2904,14 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
                 rep["step"] = st
             except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing
                 rep["step"] = {"error": f"{type(exc).__name__}: {exc}"}
+        lat = [k for k, nd in g.nodes.items() if nd.op == "lattice"]
+        if doc.get("lattice3mf") and lat:
+            opts = doc["lattice3mf"] if isinstance(doc["lattice3mf"], dict) else {}
+            try:
+                rep["lattice3mf"] = _lattice_3mf(doc, g, lat, out_dir, rep["name"], opts, base_dir, sources,
+                                                 meshes, progress)
+            except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why this is missing
+                rep["lattice3mf"] = {"error": f"{type(exc).__name__}: {exc}"}
         if render:
             try:
                 from .render import render_views

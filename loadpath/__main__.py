@@ -353,6 +353,9 @@ def main(argv=None):
     fg.add_argument("--no-render", action="store_true")
     fg.add_argument("--step", action="store_true", help="also write a STEP file (exact planes and cylinders; "
                                                          "needs loadpath[step])")
+    fg.add_argument("--lattice-3mf", action="store_true",
+                    help="also write <name>-lattice.3mf with the lattice as a lattice (implicit TPMS level set or "
+                         "beam lattice; needs loadpath[3mf])")
     fg.add_argument("--base-dir")
     tu = sub.add_parser("tune", help="tune a field graph's numbers (its `tune` block) for the lightest part "
                                      "that still meets a study's safety factor and deflection")
@@ -821,6 +824,8 @@ def _field(args):
         doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "pitch": args.pitch}}
     if args.step and not doc.get("step"):
         doc = {**doc, "step": True}
+    if getattr(args, "lattice_3mf", False) and not doc.get("lattice3mf"):
+        doc = {**doc, "lattice3mf": True}
     if args.stream:
         doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "stream": True}}
     if args.decimate:
