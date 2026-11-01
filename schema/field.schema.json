@@ -148,7 +148,7 @@
             "patches": {
               "type": "integer",
               "minimum": 50,
-              "description": "smooth patches (default 1500)"
+              "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch (default 2000)"
             }
           },
           "additionalProperties": false

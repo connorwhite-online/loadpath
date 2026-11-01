@@ -1070,7 +1070,7 @@ FIELD_SCHEMA = {
                         "description": "organic regions as flat facets (default) or smooth B-spline patches "
                                        "(experimental: CAD-friendlier, not smaller; falls back to facets when "
                                        "OpenCascade's booleans fail)"},
-            "patches": {"type": "integer", "minimum": 50, "description": "smooth patches (default 1500)"}},
+            "patches": {"type": "integer", "minimum": 50, "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch (default 2000)"}},
             "additionalProperties": False}],
                  "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres "
                                 "where the graph's hard booleans use plain shapes, the rest faceted"},
