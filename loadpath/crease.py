@@ -197,13 +197,31 @@ class CreaseTree:
 
     # -- evaluation --
 
-    def values(self, P):
-        """(n_leaves, n) signed leaf values, in chunks."""
+    def values(self, P, only=None):
+        """(n_leaves, n) signed leaf values, in chunks over threads (as
+        narrowband.peval); with `only` (leaf
+        indices), just those rows (the rest are left zero): a lattice leaf
+        costs many times a body's, so a stencil about one leaf's surface
+        need not pay for the others."""
+        from .narrowband import pblock
+
         P = np.asarray(P, float).reshape(-1, 3)
-        out = np.empty((len(self.leaves), len(P)))
-        for i in range(0, len(P), 200_000):
-            out[:, i:i + 200_000] = self._evaluator(P[i:i + 200_000])
-        return out
+        L = len(self.leaves)
+        if only is not None:
+            only = [int(i) for i in np.unique(only)]
+            if len(only) == L:
+                only = None
+        if only is None:
+            return pblock(self._evaluator, P, L)
+
+        def some(Q):
+            out = np.zeros((L, len(Q)))
+            memo = {}
+            for j in only:
+                lf = self.leaves[j]
+                out[j] = lf.sign * lf.fn(Q, memo)
+            return out
+        return pblock(some, P, L)
 
     def combine(self, vals):
         """(field value, active leaf index) from leaf values."""
@@ -224,19 +242,21 @@ class CreaseTree:
 
 # ---- Gauss-Newton onto the meeting of several leaf surfaces ------------------------
 
-def _leaf_grad(tree, P, which, h):
+def _leaf_grad(tree, P, which, h, center=True):
     """Values and central-difference gradients of the leaves `which`
-    (n, k) at P (n, 3): (n, k) and (n, k, 3)."""
+    (n, k) at P (n, 3): (n, k) and (n, k, 3); without `center` the values
+    are None (four evaluations a point, not five)."""
     # a tetrahedral stencil (as fields._gradient): second-order like central
     # differences, five evaluations a point instead of seven
     n = len(P)
     tet = np.array([[1, -1, -1], [-1, -1, 1], [-1, 1, -1], [1, 1, 1]], float) * h
-    vals = tree.values(np.concatenate([P] + [P + t for t in tet]))      # (L, 5n)
+    c = 1 if center else 0
+    vals = tree.values(np.concatenate(([P] if center else []) + [P + t for t in tet]), only=which)
     rows = np.arange(n)[:, None]
-    v0 = vals[:, :n].T[rows, which]                   # (n, k)
+    v0 = vals[:, :n].T[rows, which] if center else None      # (n, k)
     g = np.zeros(which.shape + (3,))
     for i in range(4):
-        vi = vals[:, (1 + i) * n:(2 + i) * n].T[rows, which]
+        vi = vals[:, (c + i) * n:(c + 1 + i) * n].T[rows, which]
         g += vi[:, :, None] * tet[i]
     return v0, g / (4 * h * h)
 
@@ -309,6 +329,15 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
         def field(P):
             return tree.evaluate(P)[0]
     st = stats if stats is not None else {}
+    import time
+
+    secs = st.setdefault("seconds", {})
+    clock = [time.time()]
+
+    def tick(name):
+        t = time.time()
+        secs[name] = round(secs.get(name, 0.0) + t - clock[0], 2)
+        clock[0] = t
     nl = len(tree)
     if nl > 62:
         return V, F, np.zeros(len(V), bool)
@@ -317,7 +346,29 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
     if mask is None:
         mask = (np.int64(1) << lab.astype(np.int64))
     mask = np.array(mask, np.int64)
-    E, fe = _edges(F)
+    tick("labels")
+    # the edge table only round the faces with a crossing edge (ends with
+    # no leaf in common): elsewhere nothing is split. Five rings out, so
+    # a hole within three of a crossing edge (below) is seen whole: an edge
+    # counts as a hole only between vertices whose faces are all in the
+    # patch (else it is just the patch's border)
+    F = np.asarray(F, np.int64)
+    mixed = np.zeros(len(F), bool)
+    for j in range(3):
+        mixed |= (mask[F[:, j]] & mask[F[:, (j + 1) % 3]]) == 0
+    if not mixed.any():
+        st["crossingEdges"] = 0
+        return V, F, (mask & (mask - 1)) != 0
+    near5 = np.zeros(len(V), bool)
+    near5[F[mixed].ravel()] = True
+    for _r in range(4):
+        near5[F[near5[F].any(axis=1)].ravel()] = True
+    interior = near5.copy()
+    near5[F[near5[F].any(axis=1)].ravel()] = True
+    region = np.flatnonzero(near5[F].any(axis=1))
+    Fr = F[region]
+    E, fe = _edges(Fr)
+    tick("edges")
     cross = (mask[E[:, 0]] & mask[E[:, 1]]) == 0
     # edges that are no crease: an end the tree does not describe (tree.ignore),
     # or two leaves that meet tangentially (a skin's outside lying on the body
@@ -330,11 +381,12 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
     # and near a hole (a thin wall the mesher left open, which the boolean
     # step repairs): leave the mesh round it as it was, so the repair holds
     ecount = np.bincount(fe.ravel(), minlength=len(E))
-    if (ecount != 2).any():
+    hole = (ecount != 2) & interior[E[:, 0]] & interior[E[:, 1]]
+    if hole.any():
         near = np.zeros(len(V), bool)
-        near[E[ecount != 2].ravel()] = True
+        near[E[hole].ravel()] = True
         for _r in range(3):
-            near[F[near[F].any(axis=1)].ravel()] = True
+            near[Fr[near[Fr].any(axis=1)].ravel()] = True
         ign |= near
         st["nearHoles"] = int(near.sum())
     skip |= ign[E[:, 0]] | ign[E[:, 1]]
@@ -362,6 +414,7 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
         c = (gr[:, 0] * gr[:, 1]).sum(1).reshape(3, len(ci)).max(axis=0)
         skip[ci[c > np.cos(np.radians(tangent))]] = True
     st["tangentOrIgnored"] = int((cross & skip).sum())
+    tick("skip")
     cross &= ~skip
     st["crossingEdges"] = int(cross.sum())
     crease = (mask & (mask - 1)) != 0          # more than one label: on a crease already
@@ -446,6 +499,7 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
                 snapped = len(uv)
     st["snapped"] = int(snapped)
 
+    tick("snap")
     # 2. split the edges that still cross
     cross = ((mask[E[:, 0]] & mask[E[:, 1]]) == 0) & ~skip
     ci = np.flatnonzero(cross)
@@ -477,8 +531,10 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
     newc[nv:] = ok
     crease = newc
 
+    tick("split")
     # 3. re-cut every face by its split edges
-    M = epos[fe]                                    # (nf, 3) new vertex on edge j, or -1
+    M = np.full(F.shape, -1, np.int64)              # (nf, 3) new vertex on edge j, or -1
+    M[region] = epos[fe]
     c = (M >= 0).sum(axis=1)
     out = [F[c == 0]]
     # one split edge: (a, m, c), (m, b, c) with a->b the split edge
@@ -544,6 +600,7 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
         out += [np.stack(t, 1) for t in ((v0, m01, k), (m01, v1, k), (v1, m12, k),
                                           (m12, v2, k), (v2, m20, k), (m20, v0, k))]
     F2 = np.concatenate(out).astype(np.int64)
+    tick("recut")
     if clean:
         # masks only within three rings of the creases (clean-up looks at
         # faces within two): the whole mesh's took seconds on a lattice
@@ -552,9 +609,12 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
             ring[F2[ring[F2].any(axis=1)].ravel()] = True
         masks = np.zeros(len(V), np.int64)
         masks[ring] = label_masks(tree, V[ring], pitch)
+        tick("masks")
         V, F2, _, crease, used = cleanup(V, F2, tree, masks, crease, pitch, stats=st)
         home = home[used]
+        tick("cleanup")
         V, crease = untangle(V, F2, tree, crease, home, pitch, stats=st)
+        tick("untangle")
     st["creaseVertices"] = int(crease.sum())
     return V, F2, crease
 
@@ -599,28 +659,93 @@ def side_normals(tree, V, F, mask):
     cen = V[F].mean(1)
     out = np.zeros((len(F), 3))
     if has.any():
-        _, g = _leaf_grad(tree, cen[has], leaf[has][:, None], 1e-5)
+        _, g = _leaf_grad(tree, cen[has], leaf[has][:, None], 1e-5, center=False)
         g = g[:, 0]
         out[has] = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-300)
     return out, has
 
 
+def _edge_order(el, ea, eb):
+    """Per row, the order of a face's three edges by (length, a, b), as
+    sorting the tuples would."""
+    o = np.argsort(el, axis=1, kind="stable")
+    # ties in length are rare; settle them exactly where they occur
+    sl = np.take_along_axis(el, o, 1)
+    tie = np.flatnonzero((sl[:, 1:] == sl[:, :-1]).any(axis=1))
+    for r in tie:
+        o[r] = sorted(range(3), key=lambda k: (el[r, k], ea[r, k], eb[r, k]))
+    return o
+
+
+_SIN_DEGENERATE = float(np.sin(np.radians(1e-3)))
+
+
+def _turns_or_degenerates(V, old, new):
+    """Whether moving faces `old` to `new` (rows of vertex ids) turns one
+    over (normals under 0.2 in cosine, as unit vectors) or leaves one
+    with an angle under 1e-3 degrees: one fused pass for the clean-up's
+    few faces at a time."""
+    a0, b0, c0 = V[old[:, 0]], V[old[:, 1]], V[old[:, 2]]
+    a1, b1, c1 = V[new[:, 0]], V[new[:, 1]], V[new[:, 2]]
+    n0 = np.cross(b0 - a0, c0 - a0)
+    e1, e2 = b1 - a1, c1 - a1
+    n1 = np.cross(e1, e2)
+    s0, s1 = (n0 * n0).sum(1), (n1 * n1).sum(1)
+    if ((n0 * n1).sum(1) < 0.2 * np.sqrt(s0 * s1)).any() or (s0 == 0).any() or (s1 == 0).any():
+        return True
+    e3 = e2 - e1
+    l2 = np.sort(np.stack([(e1 * e1).sum(1), (e2 * e2).sum(1), (e3 * e3).sum(1)], 1), axis=1)
+    # the smallest angle faces the shortest edge: sin = |n| / (two longer edges)
+    return bool((np.sqrt(s1 / (l2[:, 1] * l2[:, 2])) < _SIN_DEGENERATE).any())
+
+
 def cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None):
+    """Collapse slivers and turned-over triangles near the creases (see
+    _cleanup), on the patch of faces within four rings of a crease vertex:
+    the passes look two rings out, and a vertex on the patch's border (it
+    has faces outside) is never collapsed, so the rest of the mesh is
+    untouched and never visited. Returns (V, F, mask, crease, used)."""
+    F = np.asarray(F, np.int64)
+    crease = np.asarray(crease, bool)
+    near = crease.copy()
+    for _r in range(4):
+        near[F[near[F].any(axis=1)].ravel()] = True
+    sub = near[F].any(axis=1)
+    inside = np.zeros(len(V), bool)
+    inside[F[sub].ravel()] = True
+    frozen = np.zeros(len(V), bool)
+    frozen[F[~sub].ravel()] = True
+    frozen &= inside
+    Fs = _cleanup(V, F[sub], tree, mask, crease, pitch, min_angle, passes, stats, frozen)
+    F = np.concatenate([F[~sub], Fs])
+    # drop the vertices nothing uses
+    used = np.zeros(len(V), bool)
+    used[F] = True
+    new = np.cumsum(used) - 1
+    return np.asarray(V, float)[used], new[F], np.asarray(mask)[used], crease[used], used
+
+
+def _cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None, frozen=None):
     """Collapse, near the creases, every triangle that is turned over against
     its surface's true normal or thinner than `min_angle`: its shortest
     collapsible edge goes, the crease end kept (two crease ends only on the
     same curve), and only where the two ends share exactly the two opposite
     vertices (so the mesh stays a closed manifold) and no remaining triangle
-    turns over. Returns (V, F, mask, crease)."""
+    turns over; never an edge with a `frozen` end. Returns the faces."""
     st = stats if stats is not None else {}
     V = np.asarray(V, float)
     F = np.asarray(F, np.int64).copy()
     mask = np.asarray(mask, np.int64).copy()
     crease = np.asarray(crease, bool).copy()
     done = 0
-    nv = np.int64(len(V))
-    cache_k = cache_n = cache_h = None
-    use_cache = len(V) < 2_000_000          # the key (a, b, c) packs into an int64
+    # V and mask do not change here, so a face's true normal, own normal and
+    # smallest angle are functions of its three vertices: kept per face
+    # (rows follow F), recomputed only for faces a collapse rewrote
+    face_n = np.zeros((len(F), 3))         # the leaf's normal
+    face_h = np.zeros(len(F), bool)         # (whether there is one)
+    face_a = np.zeros(len(F))               # smallest angle
+    face_m = np.zeros((len(F), 3))          # the face's own normal
+    known_f = np.zeros(len(F), bool)
     for _ in range(passes):
         # the neighbourhood of the creases: faces with a vertex within two rings
         near = crease.copy()
@@ -630,23 +755,14 @@ def cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None
         region = np.flatnonzero(near[F].any(axis=1))
         if not len(region):
             break
-        T = V[F[region]]
-        ma = _min_angle(T)
-        nrm = _face_normals(V, F[region])
-        # V and mask do not change here, so a face's true normal is a function
-        # of its three vertices: keep the last pass's, evaluate only new faces
-        key = (F[region, 0] * nv + F[region, 1]) * nv + F[region, 2]
-        sn = np.zeros((len(region), 3))
-        has = np.zeros(len(region), bool)
-        known = np.zeros(len(region), bool)
-        if use_cache and cache_k is not None and len(cache_k):
-            j = np.minimum(np.searchsorted(cache_k, key), len(cache_k) - 1)
-            known = cache_k[j] == key
-            sn[known], has[known] = cache_n[j[known]], cache_h[j[known]]
-        if (~known).any():
-            sn[~known], has[~known] = side_normals(tree, V, F[region[~known]], mask)
-        o = np.argsort(key)
-        cache_k, cache_n, cache_h = key[o], sn[o], has[o]
+        new_f = region[~known_f[region]]
+        if len(new_f):
+            face_n[new_f], face_h[new_f] = side_normals(tree, V, F[new_f], mask)
+            face_a[new_f] = _min_angle(V[F[new_f]])
+            face_m[new_f] = _face_normals(V, F[new_f])
+            known_f[new_f] = True
+        sn, has = face_n[region], face_h[region]
+        ma, nrm = face_a[region], face_m[region]
         flipped = has & ((nrm * sn).sum(1) < 0)
         bad = region[(ma < min_angle) | flipped]
         if not len(bad):
@@ -664,14 +780,22 @@ def cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None
         touched = set()
         changed = 0
         order = bad[np.argsort(ma[np.searchsorted(region, bad)])]
-        for fi in order:
+        # each face's edges, shortest first (a face is only collapsed while
+        # untouched, so its vertices are still these)
+        Fo = F[order]
+        ea, eb = Fo, np.roll(Fo, -1, axis=1)
+        el = np.einsum("nka,nka->nk", V[eb] - V[ea], V[eb] - V[ea])
+        eo = _edge_order(el, ea, eb)
+        ea = np.take_along_axis(ea, eo, 1).tolist()
+        eb = np.take_along_axis(eb, eo, 1).tolist()
+        for oi, fi in enumerate(order.tolist()):
             if not alive[fi] or fi in touched:
                 continue
-            f = F[fi]
-            edges = sorted(((np.linalg.norm(V[f[i]] - V[f[(i + 1) % 3]]), f[i], f[(i + 1) % 3]) for i in range(3)))
-            for _len, a, b in edges:
+            for a, b in zip(ea[oi], eb[oi]):
                 # keep: the crease end; both on a crease only with the same labels
                 if crease[a] and crease[b] and mask[a] != mask[b]:
+                    continue
+                if frozen is not None and (frozen[a] or frozen[b]):
                     continue
                 keep, gone = (a, b) if (crease[a] or not crease[b]) else (b, a)
                 if keep not in inv or gone not in inv:
@@ -693,11 +817,10 @@ def cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None
                 if len(moved):
                     old = F[moved]
                     new = np.where(old == gone, keep, old)
-                    n0 = _face_normals(V, old)
-                    n1 = _face_normals(V, new)
-                    if ((n0 * n1).sum(1) < 0.2).any() or (_min_angle(V[new]) < 1e-3).any():
+                    if _turns_or_degenerates(V, old, new):
                         continue
                     F[moved] = new
+                    known_f[moved] = False
                 for x in shared:
                     alive[x] = False
                 for x in moved:
@@ -706,15 +829,13 @@ def cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None
                 changed += 1
                 break
         F = F[alive]
+        face_n, face_h, known_f = face_n[alive], face_h[alive], known_f[alive]
+        face_a, face_m = face_a[alive], face_m[alive]
         done += changed
         if not changed:
             break
-    # drop the vertices nothing uses
-    used = np.zeros(len(V), bool)
-    used[F] = True
-    new = np.cumsum(used) - 1
     st["collapsed"] = int(done)
-    return V[used], new[F], mask[used], crease[used], used
+    return F
 
 
 def _seg_tri(p, q, T, eps=1e-9):
@@ -734,59 +855,96 @@ def _seg_tri(p, q, T, eps=1e-9):
     return ok & (u > eps) & (v > eps) & (u + v < 1 - eps) & (t > eps) & (t < 1 - eps)
 
 
+def _cent_rad(V, F, chunk=262144):
+    """Face centroids and circumradii (about the centroid), in chunks: the
+    whole (n, 3, 3) gather at once is memory-bound and ~4x slower."""
+    n = len(F)
+    C = np.empty((n, 3))
+    R = np.empty(n)
+    for i in range(0, n, chunk):
+        f = F[i:i + chunk]
+        a, b, c = V[f[:, 0]], V[f[:, 1]], V[f[:, 2]]
+        m = (a + b + c) / 3
+        C[i:i + chunk] = m
+        R[i:i + chunk] = np.sqrt(np.maximum(np.maximum(((a - m) ** 2).sum(1), ((b - m) ** 2).sum(1)),
+                                            ((c - m) ** 2).sum(1)))
+    return C, R
+
+
 class _Centroids:
     """Face centroids, circumradii and a k-d tree over them, kept across
     untangle's rounds: a round moves a few vertices back, so only their
-    faces are refreshed, and the tree (built once) is queried with the
-    largest distance a centroid has moved since as slack."""
+    faces are refreshed. The tree (built once) still holds those faces
+    where they were: they are marked dirty, left out of its answers, and
+    searched in a small tree of their own instead."""
 
-    def __init__(self, V, F):
+    def __init__(self, V, F, p99=None):
         from scipy.spatial import cKDTree
 
-        self.C = V[F].mean(1)
-        self.rad = np.linalg.norm(V[F] - self.C[:, None], axis=2).max(axis=1)
-        self.p99 = float(np.percentile(self.rad, 99))
-        self.tree = cKDTree(self.C)
-        self.C0 = self.C.copy()
-        self.slack = 0.0
+        self.C, self.rad = _cent_rad(V, F)
+        self.p99 = float(np.percentile(self.rad, 99)) if p99 is None else float(p99)
+        # built once and queried a few times: the unbalanced build is ~2x faster
+        self.tree = cKDTree(self.C, balanced_tree=False, compact_nodes=False)
+        self.dirty = np.zeros(len(F), bool)
 
     def update(self, V, F, faces):
-        T = V[F[faces]]
-        self.C[faces] = T.mean(1)
-        self.rad[faces] = np.linalg.norm(T - self.C[faces][:, None], axis=2).max(axis=1)
-        if len(faces):
-            self.slack = max(self.slack, float(np.linalg.norm(self.C[faces] - self.C0[faces], axis=1).max()))
+        self.C[faces], self.rad[faces] = _cent_rad(V, F[faces])
+        self.dirty[faces] = True
+
+
+def _within(ctree, Q, r, ids=None):
+    """Pairs (query row, point) with the point within r[row] of Q[row]: the
+    nearest 40, then 160, then 640 where that many were all within reach
+    (as arrays: ball queries build python lists), and a ball query for
+    what is left. `ids` maps the tree's points to face numbers."""
+    rows = np.arange(len(Q))
+    A, B = [], []
+    n = ctree.n
+    for k in (40, 160, 640):
+        if not len(rows):
+            break
+        k = min(k, n)
+        d, j = ctree.query(Q[rows], k=k, distance_upper_bound=float(r[rows].max()))
+        d, j = d.reshape(len(rows), k), j.reshape(len(rows), k)
+        ok = d <= r[rows][:, None]
+        full = ok[:, -1].copy() if k < n else np.zeros(len(rows), bool)
+        ok[full] = False
+        A.append(np.broadcast_to(rows[:, None], j.shape)[ok])
+        B.append(j[ok].astype(np.int64))
+        rows = rows[full]
+    if len(rows):
+        lst = ctree.query_ball_point(Q[rows], r[rows])
+        A.append(np.repeat(rows, [len(x) for x in lst]))
+        B.append(np.concatenate([np.asarray(x, np.int64) for x in lst]))
+    A, B = np.concatenate(A), np.concatenate(B)
+    return A, (B if ids is None else ids[B])
 
 
 def crossing_faces(V, F, faces, cache=None):
     """Faces among `faces` that cross another face of the mesh (sharing no
     vertex with it): a self-intersection. `cache` (a _Centroids of this
     V, F) saves rebuilding the centroids and their tree."""
+    from scipy.spatial import cKDTree
+
     faces = np.asarray(faces, np.int64)
     if not len(faces):
         return faces
     if cache is None:
         cache = _Centroids(V, F)
-    C, rad, ctree = cache.C, cache.rad, cache.tree
+    C, rad = cache.C, cache.rad
     # a face's reach: its own circumradius plus a typical neighbour's
     # (the 99th percentile: the long faces are the crease's own, and those
     # are tested from their side)
-    # the nearest 64 centroids within reach (as arrays: ball queries build
-    # python lists, the slow part on a lattice), a ball query where 64 is not all
-    # the tree holds the centroids as they were built: search 2 x slack wider
-    r = rad[faces] + cache.p99 + 2 * cache.slack + 1e-12
-    k = min(64, len(F))
-    d, B = ctree.query(C[faces], k=k, distance_upper_bound=float(r.max()))
-    d, B = d.reshape(len(faces), k), B.reshape(len(faces), k)
-    ok = d <= r[:, None]
-    full = ok[:, -1].copy()             # k found within reach: there may be more
-    ok[full] = False
-    A = np.broadcast_to(faces[:, None], B.shape)[ok]
-    B = B[ok].astype(np.int64)
-    if full.any():
-        lst = ctree.query_ball_point(C[faces[full]], r[full])
-        A = np.r_[A, np.repeat(faces[full], [len(x) for x in lst])]
-        B = np.r_[B, np.concatenate([np.asarray(x, np.int64) for x in lst])]
+    r = rad[faces] + cache.p99 + 1e-12
+    i, B = _within(cache.tree, C[faces], r)
+    A = faces[i]
+    dirty = np.flatnonzero(cache.dirty)
+    if len(dirty):
+        # the tree has these where they were: drop them, search them as they are
+        keep = ~cache.dirty[B]
+        A, B = A[keep], B[keep]
+        i2, B2 = _within(cKDTree(C[dirty]), C[faces], r, ids=dirty)
+        A, B = np.r_[A, faces[i2]], np.r_[B, B2]
     # only faces whose bounding spheres overlap can cross
     keep = (A != B) & (np.linalg.norm(C[A] - C[B], axis=1) < rad[A] + rad[B] + 1e-12)
     A, B = A[keep], B[keep]
@@ -824,15 +982,27 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
     crease = np.array(crease, bool)
     back = 0
     near = None
+    F = np.asarray(F, np.int64)
     cache = _Centroids(V, F)
+    # every round looks at faces with a moved crease vertex (a set that only
+    # shrinks) and the rings round what it sent back: the patch of faces
+    # within three rings of the first round's, not the whole mesh
+    moved = crease & (np.linalg.norm(V - home, axis=1) > _MOVED * pitch)
+    pv = np.zeros(len(V), bool)
+    pv[F[moved[F].any(axis=1)].ravel()] = True
+    for _r in range(3):
+        pv[F[pv[F].any(axis=1)].ravel()] = True
+    loc = np.flatnonzero(pv[F].any(axis=1))
+    FL = F[loc]
     for _ in range(rounds):
         # only where a crease vertex moved: elsewhere the mesh is as it was;
         # after the first round, only around what the last round sent back
-        moved = crease & (np.linalg.norm(V - home, axis=1) > _MOVED * pitch)
-        sel = moved[F].any(axis=1)
+        if _:
+            moved = crease & (np.linalg.norm(V - home, axis=1) > _MOVED * pitch)
+        sel = moved[FL].any(axis=1)
         if near is not None:
-            sel &= near[F].any(axis=1)
-        cf = np.flatnonzero(sel)
+            sel &= near[FL].any(axis=1)
+        cf = loc[sel]
         if not len(cf):
             break
         bad = crossing_faces(V, F, cf, cache)
@@ -851,12 +1021,12 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
         back += len(verts)
         vm = np.zeros(len(V), bool)
         vm[verts] = True
-        cache.update(V, F, np.flatnonzero(vm[F].any(axis=1)))
+        cache.update(V, F, loc[vm[FL].any(axis=1)])
         # the faces that could cross now: within a few rings of those moved back
         near = np.zeros(len(V), bool)
         near[verts] = True
         for _r in range(3):
-            near[F[near[F].any(axis=1)].ravel()] = True
+            near[FL[near[FL].any(axis=1)].ravel()] = True
     if stats is not None:
         stats["untangled"] = int(back)
     return V, crease

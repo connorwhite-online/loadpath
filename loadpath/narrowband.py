@@ -86,6 +86,30 @@ def peval(field, P, chunk=_CHUNK):
     return out
 
 
+def pblock(fn, P, rows, chunk=_CHUNK):
+    """fn(P) for a function giving (rows, len(P)) blocks (a crease tree's
+    leaf values), in chunks spread over threads as peval does: the first
+    chunk alone, then the rest on the pool."""
+    global _POOL
+    n = len(P)
+    out = np.empty((rows, n))
+    nt = _threads()
+    if nt == 1 or n <= 2 * chunk:
+        for i in range(0, n, chunk):
+            out[:, i:i + chunk] = fn(P[i:i + chunk])
+        return out
+    out[:, :chunk] = fn(P[:chunk])
+    if _POOL is None or _POOL._max_workers != nt:
+        _POOL = ThreadPoolExecutor(nt, thread_name_prefix="loadpath-field")
+
+    def one(i):
+        out[:, i:i + chunk] = fn(P[i:i + chunk])
+
+    for _ in _POOL.map(one, range(chunk, n, chunk)):
+        pass
+    return out
+
+
 def _grid_points(lo, pitch, i0, n):
     """Points of the sub-grid starting at index i0 (3,) with n (3,) samples."""
     ax = [lo[k] + (i0[k] + np.arange(n[k])) * pitch for k in range(3)]
