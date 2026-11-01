@@ -314,8 +314,19 @@ Open, as next work:
    the default search, in about 2-4x the time. Two cells across is not
    enough (35 g, first runs at SF 0.3). The arm link is the cost: 59.6 g
    against 55.6 g on its old grid, and its constrained runs at an in-between
-   grid wandered up to 85 g, so constrained arm-link results are still noisy.
-   The default search and the evals keep their grids.
+   grid wandered up to 85 g. On its own grid, deflection limits of 0.48, 0.5
+   and 0.52 mm land at 62.2, 59.6 and 63.3 g, the same with the tet
+   cross-check steering (b65a548). The optimizer holds its deflection limit
+   exactly, but the verified part reads 0.73 to 1.03 of it depending on the
+   layout, so the result jumps between layouts. Stopping the limit search on
+   an 8% bracket instead of 15% did not help (58.7, 59.6, 65.0 g): one near
+   miss read SF 1.61 next to 4.96 at about the same mass, and the next limit
+   built a solid part. For a deflection-bound part like this one the default
+   search is lighter (55.4 g). The finer grid does not help the default
+   search either: the wall bracket drops to 35.7 g (from 68.7 g) at 4.5x the
+   time, but the arm link gets heavier (60.5 g), the GRIP wrist yoke's solve
+   fails at 1.2 mm, and the wrist link did not finish in 90 minutes. So the
+   default search and the evals keep their grids.
 2. **Spread loads on regions that are not faces.** A load over a region too
    small or too chunky to count as a face is still not pinned, and on a
    coarse grid its nodes can end on void (a 24x6x8 bridge does this). The

@@ -77,7 +77,9 @@ def test_interlocked_split():
     # the lattice moves material between bodies, never adds or loses any
     total = sum(m.volume for m in bodies.values())
     assert sum(m.volume for _, m in flat) == pytest.approx(total, rel=0.01)
-    assert bodies["tpu"].area > 1.3 * tpu_flat.area
+    # (1.26 at this grid; 1.3 held only while _region_mesh shrank the flat
+    # body by stretching boundaries off the grid corner)
+    assert bodies["tpu"].area > 1.2 * tpu_flat.area
 
 
 if __name__ == "__main__":

@@ -14,8 +14,8 @@ import os
 
 import numpy as np
 
-__all__ = ["jsonable", "check_study", "lattice_part", "heat_exchanger", "size_heat_exchanger",
-           "examples", "example"]
+__all__ = ["jsonable", "check_study", "check_document", "check_heat_exchanger", "lattice_part", "heat_exchanger",
+           "size_heat_exchanger", "examples", "example"]
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _EXAMPLES = os.path.join(_HERE, "examples")
@@ -42,6 +42,116 @@ def jsonable(o):
 def _emit(on_progress, **ev):
     if on_progress is not None:
         on_progress(ev)
+
+
+_HX_KEYS = ("core", "envelope", "portDiameter", "fluids", "layout", "zones", "cleanouts")
+_LATTICE_KEYS = ("minWall", "maxWall", "solidAbove", "collar", "fillPockets", "drainDiameter")
+
+
+def document_kind(raw) -> str:
+    """Which kind of document this is: "study", "heatExchanger", "lattice"
+    (lattice options) or "field" (a field graph), from its keys."""
+    if not isinstance(raw, dict):
+        return "study"
+    if "designSpace" in raw or "loadCases" in raw or "loads" in raw:
+        return "study"
+    if "nodes" in raw:
+        return "field"
+    if any(k in raw for k in _HX_KEYS) or isinstance(raw.get("duty"), dict):
+        return "heatExchanger"
+    if any(k in raw for k in _LATTICE_KEYS) or raw.get("sizing") in ("homogenized", "solid-stress"):
+        return "lattice"
+    return "study"
+
+
+def check_document(raw, base_dir: str | None = None) -> dict:
+    """`loadpath check` on any document: a study (check_study), a heat
+    exchanger (check_heat_exchanger), lattice options or a field graph
+    (schema lint)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            return {"ok": False, "error": f"not valid JSON: {exc}"}
+    kind = document_kind(raw)
+    if kind == "heatExchanger":
+        return check_heat_exchanger(raw, base_dir)
+    if kind in ("lattice", "field"):
+        from .schema import format_issues, lint
+        issues = lint(raw, kind)
+        errors = [i for i in issues if i["level"] == "error"]
+        out = {"ok": not errors, "kind": kind, "issues": issues, "schema": f"loadpath schema {kind}"}
+        if errors:
+            out["error"] = format_issues(errors)
+        return out
+    return {"kind": "study", **check_study(raw, base_dir)}
+
+
+def check_heat_exchanger(spec: dict, base_dir: str | None = None) -> dict:
+    """Lint and build a heat exchanger spec without designing it
+    (milliseconds): the design grid's step, point count and estimated peak
+    memory against what is free, the zones, and what the process allows.
+    An envelope spec is checked for sizing (loadpath heatx --size)."""
+    from .heatx import grid_plan, zones_for
+    from .schema import format_issues, lint
+    from .sizing import PROCESS_LIMITS
+    from .study import _available_bytes
+
+    issues = lint(spec, "heatExchanger")
+    errors = [i for i in issues if i["level"] == "error"]
+    if errors:
+        return {"ok": False, "kind": "heatExchanger", "error": format_issues(errors), "issues": issues,
+                "schema": "loadpath schema heatExchanger"}
+    warnings = [f"{i['path']}: {i['message']}" for i in issues]
+    notes = []
+    names = list(spec.get("fluids") or ["A", "B"])
+    duty = spec.get("duty")
+    if "envelope" in spec and "core" not in spec:
+        if not duty or any(n not in duty for n in names):
+            return {"ok": False, "kind": "heatExchanger", "error": f"an envelope spec is sized for its duty: "
+                    f"\"duty\" needs an entry for each fluid {names}", "issues": issues}
+        sz = spec.get("sizing") or {}
+        proc = sz.get("process", spec.get("process", "fdm"))
+        return jsonable({"ok": True, "kind": "heatExchanger", "mode": "envelope", "envelope": spec["envelope"],
+                         "fluids": names, "process": proc, "processLimits": PROCESS_LIMITS.get(proc),
+                         "warnings": warnings,
+                         "next": "loadpath heatx SPEC --size --out DIR: ranks cores that fit the envelope (each "
+                                 "candidate's spec designs with loadpath heatx)"})
+    try:
+        hx = _hx_spec(spec, base_dir)
+        duty = _duty(spec, hx)
+        zones = zones_for(hx)
+    except (ValueError, KeyError, TypeError, IndexError) as exc:
+        return {"ok": False, "kind": "heatExchanger", "error": str(exc) or type(exc).__name__, "issues": issues}
+    from . import quick
+    quick.heatx(hx, None)
+    plan = grid_plan(hx)
+    lim = PROCESS_LIMITS.get(hx.process, PROCESS_LIMITS["fdm"])
+    if hx.wall < lim["minWall"]:
+        warnings.append(f"wall {hx.wall:g} mm is under {hx.process}'s {lim['minWall']:g} mm minimum")
+    if hx.shell < lim["minWall"]:
+        warnings.append(f"shell {hx.shell:g} mm is under {hx.process}'s {lim['minWall']:g} mm minimum")
+    avail = _available_bytes()
+    if avail and plan["fits"] and plan["peakMemoryGB"] * 1e9 > 0.9 * avail:
+        warnings.append(f"the design needs about {plan['peakMemoryGB']:.1f} GB at its peak and "
+                        f"{avail / 1e9:.1f} GB is free: loadpath heatx refuses it (--force runs anyway); set a "
+                        f"coarser step (at most wall / 2 = {0.5 * hx.wall:.2f} mm) or --max-points")
+    if duty is None:
+        notes.append("no duty: the design is not rated (add one entry per fluid and \"wall\")")
+    elif not isinstance(duty.get("wall"), str) or _wall_density(duty.get("wall")) is None:
+        notes.append("duty.wall is not a known material name: the report carries no mass")
+    lo, hi = (np.asarray(b, float) for b in hx.core.bounds())
+    out = {"ok": bool(plan["fits"]), "kind": "heatExchanger", "name": spec.get("name"),
+           "type": hx.kind, "layout": hx.layout, "fluids": list(hx.names), "cell": hx.cell, "wall": hx.wall,
+           "process": hx.process, "core": {"min": lo.round(3).tolist(), "max": hi.round(3).tolist()},
+           "zones": [f"{hx.names[z.fluid]}-{z.end}" for z in zones],
+           "gridStep": plan["step"], "gridPoints": plan["points"], "maxPoints": plan["maxPoints"],
+           "peakMemoryGB": plan["peakMemoryGB"], "availableGB": round(avail / 1e9, 2) if avail else None,
+           "processLimits": lim, "warnings": warnings, "notes": notes}
+    if not plan["fits"]:
+        out["error"] = plan["error"]
+        out["maxPointsNeeded"] = plan["maxPointsNeeded"]
+    return jsonable(out)
 
 
 def check_study(raw, base_dir: str | None = None) -> dict:
@@ -395,23 +505,71 @@ def _duty(spec, hx):
     return duty
 
 
+def _wall_density(wall):
+    """g/cm^3 of the duty's wall material (a name), or None."""
+    from .heatx_thermal import WALL_DENSITY
+
+    if not isinstance(wall, str):
+        return None
+    if wall in WALL_DENSITY:
+        return WALL_DENSITY[wall]
+    try:
+        from .materials import material_from_spec
+        return float(material_from_spec(wall).density)
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _hx_memory(hx, force=False) -> dict:
+    """The design grid's plan (heatx.grid_plan), refused up front when the
+    point cap leaves too coarse a grid for the wall, or its peak memory is
+    over what this machine has free (unless `force`)."""
+    from .heatx import grid_plan
+    from .study import _available_bytes
+
+    plan = grid_plan(hx)
+    if not plan["fits"]:
+        raise ValueError(plan["error"])
+    avail = _available_bytes()
+    if avail:
+        plan["availableGB"] = round(avail / 1e9, 2)
+        if plan["peakMemoryGB"] * 1e9 > 0.9 * avail and not force:
+            raise ValueError(f"the design grid is {plan['points'] / 1e6:.1f}M points at {plan['step']:.3f} mm, about "
+                             f"{plan['peakMemoryGB']:.1f} GB at its peak, and {avail / 1e9:.1f} GB is free: set a "
+                             f"coarser \"step\" (at most wall / 2 = {0.5 * hx.wall:.2f} mm), a lower --max-points, "
+                             "or a smaller core; or --force to run anyway")
+    return plan
+
+
 def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render: bool = True,
-                   on_progress=None, viewer: bool = True) -> dict:
+                   on_progress=None, viewer: bool = True, max_points: int | None = None,
+                   force: bool = False) -> dict:
     """Design a heat exchanger, check it, rate it if `duty` is given (and
     simulate it whole with "simulate": true; porous.py), and write <name>.stl, <name>.png, the fluid spaces (<name>-<fluid>.stl) and
-    an interactive viewer (<name>.html)."""
+    an interactive viewer (<name>.html). `max_points` caps the design grid
+    (default 16M; about 400 bytes a point at the peak); a design whose
+    estimated peak is over the free memory is refused unless `force`."""
     from .heatx import design_heat_exchanger
     from .heatx_thermal import rate_design
 
     hx = _hx_spec(spec, base_dir)
+    if max_points:
+        hx.max_points = int(max_points)
     duty = _duty(spec, hx)
     name = str(spec.get("name") or "heat-exchanger")
-    _emit(on_progress, stage="design", type=hx.kind, cell=hx.cell, wall=hx.wall, layout=hx.layout)
     sim_opts = spec.get("simulate")
     sim_opts = ({} if sim_opts is True else dict(sim_opts)) if sim_opts and duty is not None else None
     from . import quick
     sim_opts = quick.heatx(hx, sim_opts)
+    plan = _hx_memory(hx, force)
+    _emit(on_progress, stage="design", type=hx.kind, cell=hx.cell, wall=hx.wall, layout=hx.layout,
+          gridStep=plan["step"], gridPoints=plan["points"], peakMemoryGB=plan["peakMemoryGB"])
     mesh, report, spaces, grids = design_heat_exchanger(hx, fluid_meshes=True, grids=True)
+    rho = _wall_density((duty or {}).get("wall"))
+    if rho is not None:
+        # the whole part (core, shell, plenums, ports), as printed dense
+        report["mass"] = float(report["solidVolume"]) * rho / 1000.0
+        report["massMaterial"] = {"name": duty["wall"], "density": rho}
     if sim_opts is None:
         del grids
     os.makedirs(out_dir, exist_ok=True)
@@ -462,7 +620,8 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
     return jsonable(out)
 
 
-def _size_in_envelope(spec, max_pressure_drop, objective, min_effectiveness):
+def _size_in_envelope(spec, max_pressure_drop, objective, min_effectiveness, min_wall=None, splits=None,
+                      axes=None, max_points=None):
     """Size core, cell, wall, split, layout and ports to fit `envelope` (sizing.py)."""
     from .schema import format_issues, lint
     from .sizing import size_exchanger
@@ -475,13 +634,18 @@ def _size_in_envelope(spec, max_pressure_drop, objective, min_effectiveness):
     if not duty or any(n not in duty for n in names):
         raise ValueError(f"sizing needs a duty with an entry for each fluid {names}")
     sz = spec.get("sizing") or {}
-    obj = sz.get("objective") or ("mass" if objective == "metal" else objective)
+    # what the caller passes wins over the spec's sizing block
+    obj = objective or sz.get("objective") or "effectiveness"
+    kw = {"splits": tuple(float(x) for x in splits)} if splits is not None else {}
     res = size_exchanger({**{n: duty[n] for n in names}, **({"wall": duty["wall"]} if "wall" in duty else {})},
                          spec["envelope"], process=sz.get("process", spec.get("process", "fdm")),
-                         max_pressure_drop=sz.get("maxPressureDrop", max_pressure_drop),
-                         min_effectiveness=sz.get("minEffectiveness", min_effectiveness),
+                         max_pressure_drop=max_pressure_drop if max_pressure_drop is not None
+                         else sz.get("maxPressureDrop"),
+                         min_effectiveness=min_effectiveness if min_effectiveness is not None
+                         else sz.get("minEffectiveness"),
                          target_duty=sz.get("targetDuty"), objective=obj, kind=spec.get("type", "gyroid"),
-                         layout=spec.get("layout", "auto"))
+                         layout=spec.get("layout", "auto"), min_wall=min_wall, axes=axes or spec.get("axes"),
+                         max_points=max_points, **kw)
     for c in res["candidates"]:
         c["spec"]["name"] = f"{spec.get('name', 'sized')}-{c['layout']}-{c['cell']:g}-{c['wall']:g}"
     res["next"] = ("Design the best one: write its \"spec\" to a file and run loadpath heatx on it (add "
@@ -490,21 +654,66 @@ def _size_in_envelope(spec, max_pressure_drop, objective, min_effectiveness):
 
 
 def size_heat_exchanger(spec: dict, base_dir: str | None = None, max_pressure_drop: dict | None = None,
-                        min_wall: float = 0.8, objective: str = "effectiveness",
-                        min_effectiveness: float | None = None, splits=None) -> dict:
+                        min_wall: float | None = None, objective: str | None = None,
+                        min_effectiveness: float | None = None, splits=None, axes: str | None = None,
+                        max_points: int | None = None, out_dir: str | None = None) -> dict:
     """Sweep cell and wall for the core and duty in `spec` before designing
     it (seconds, not minutes): the candidates that meet the pressure-drop
-    limits ({fluid: Pa}) and `min_effectiveness`, best effectiveness first,
-    or least metal first with objective "metal". `splits` (the first
-    fluid's share of the void) sweeps the sheet's offset too; default the
-    spec's split. Flow lengths are the core's extent along each fluid's
-    axis."""
-    from .heatx_thermal import size_core
+    limits ({fluid: Pa}) and `min_effectiveness`, ranked by `objective`:
+    "effectiveness" (default; best first), "mass" (least metal first;
+    "metal" is the same) or "pressure" (least of the worst fluid's share of
+    its limit). `splits` (the first fluid's share of the void) sweeps the
+    sheet's offset too; default the spec's split. `min_wall` floors the
+    walls (default the process's minimum). Flow lengths are the core's
+    extent along each fluid's axis. With an `envelope` instead of a core,
+    sizing.py sizes the core too (`axes` pins which way the first fluid
+    runs). Only walls the design step can mesh within `max_points` are
+    kept. With `out_dir`, writes sizing.json (the ranked result) and
+    best.json (the best candidate's spec, ready for loadpath heatx)."""
     from .shapes import manifold_from_trimesh  # noqa: F401  (manifold3d present)
 
     if "envelope" in spec:
-        return jsonable(_size_in_envelope(spec, max_pressure_drop, objective, min_effectiveness))
+        res = jsonable(_size_in_envelope(spec, max_pressure_drop, objective, min_effectiveness, min_wall, splits,
+                                         axes, max_points))
+        return _write_sizing(res, out_dir, (res.get("best") or {}).get("spec"))
+    res = _size_core_spec(spec, base_dir, max_pressure_drop, min_wall, objective, min_effectiveness, splits,
+                          max_points)
+    best = None
+    if res.get("best"):
+        b = res["best"]
+        best = {k: v for k, v in spec.items() if k not in ("expect",)}
+        best.update(cell=b["cell"], wall=b["wall"], split=b["split"])
+        if "step" in best:
+            best["step"] = min(float(best["step"]), 0.5 * b["wall"])
+    return _write_sizing(res, out_dir, best)
+
+
+def _write_sizing(res, out_dir, best_spec):
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, "sizing.json")
+        res["files"] = {"sizing": path}
+        if best_spec is not None:
+            bp = os.path.join(out_dir, "best.json")
+            with open(bp, "w") as fh:
+                json.dump(best_spec, fh, indent=2)
+            res["files"]["best"] = bp
+        with open(path, "w") as fh:
+            json.dump(res, fh, indent=2)
+    return res
+
+
+def _size_core_spec(spec, base_dir, max_pressure_drop, min_wall, objective, min_effectiveness, splits, max_points):
+    from .heatx import grid_plan
+    from .heatx_thermal import size_core
+    from .sizing import PROCESS_LIMITS
+
     hx = _hx_spec(spec, base_dir)
+    if max_points:
+        hx.max_points = int(max_points)
+    if min_wall is None:
+        min_wall = PROCESS_LIMITS.get(hx.process, PROCESS_LIMITS["fdm"])["minWall"]
+    objective = objective or (spec.get("sizing") or {}).get("objective") or "effectiveness"
     duty = _duty(spec, hx)
     if duty is None:
         raise ValueError("sizing needs a duty: {\"A\": {\"fluid\": \"water\", \"lPerMin\": 2, \"tIn\": 80}, "
@@ -519,6 +728,28 @@ def size_heat_exchanger(spec: dict, base_dir: str | None = None, max_pressure_dr
                     hx.port_diameter, min_wall=min_wall, max_pressure_drop=max_pressure_drop,
                     split=splits if splits is not None else hx.split, objective=objective,
                     min_effectiveness=min_effectiveness)
+    # only walls the design step can mesh within its point cap (a grid of at most wall / 2)
+    keep, dropped, nearest = [], 0, None
+    step0 = hx.step
+    for c in res["candidates"]:
+        hx.wall = c["wall"]
+        # a spec's own step, but never past what the candidate's wall allows
+        hx.step = min(step0, 0.5 * c["wall"]) if step0 else None
+        plan = grid_plan(hx)
+        if plan["fits"]:
+            c["grid"] = {k: plan[k] for k in ("step", "points", "peakMemoryGB")}
+            keep.append(c)
+        else:
+            dropped += 1
+            nearest = plan if nearest is None or plan["maxPointsNeeded"] < nearest["maxPointsNeeded"] else nearest
+    res["candidates"], res["best"] = keep, keep[0] if keep else None
+    res["unmeshable"], res["maxPoints"] = dropped, int(hx.max_points)
+    if dropped:
+        res["note"] = (f"{dropped} candidate(s) dropped: their walls are too thin for the design step to mesh "
+                       f"this core within {hx.max_points / 1e6:g}M grid points (the nearest needs "
+                       f"{nearest['maxPointsNeeded'] / 1e6:.0f}M, about "
+                       f"{nearest['memoryNeededGB']:.1f} GB): raise --max-points or "
+                       "shrink the core")
     res.update(coreVolume=core_volume, flowLengths=dict(zip(hx.names, lengths)),
                next="Put the best cell, wall and split in the spec and run it "
                     "(loadpath heatx / loadpath_heat_exchanger).")

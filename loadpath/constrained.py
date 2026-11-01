@@ -27,7 +27,7 @@ import time
 import numpy as np
 
 from .domain import Domain
-from .fem import elastic_c, hex8_b_center
+from .fem import elastic_c, hex8_b, hex8_b_center
 from .manufacture import tie_groups
 from .mma import MMA
 from .simp import (E_MIN, PENALTY, SimpOptions, SimpResult, _Analysis, _dproject, _extrude, _pad,
@@ -42,6 +42,7 @@ __all__ = ["Limits", "optimize_constrained"]
 # density and the run converges onto the limit.
 _Q = 1.0
 _P = 8.0
+STRESS_POINTS = "corners"     # where cell stress is sampled: "corners" or "center"
 _VM = np.array([
     [1.0, -0.5, -0.5, 0, 0, 0],
     [-0.5, 1.0, -0.5, 0, 0, 0],
@@ -86,8 +87,18 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     # Stress is not counted in cells where loads and supports are applied.
     contact = (domain.support_nodes | domain.load_nodes)[mesh.enode].any(axis=1)
     counted = ~contact
-    b0 = hex8_b_center() / mesh.pitch
-    cb = elastic_c(1.0, nu) @ b0                      # (6, 24): stress per unit-E displacement
+    # Stress per unit-E displacement (6x24) at each sample point: the cell's
+    # 8 corners (STRESS_POINTS), with the element's own strain there
+    # (fem.hex8_b: the incompatible-mode bubbles carry part of a member's
+    # bending). Verification reads the surface of the meshed part, where a
+    # bent member peaks; the cell centre read it 1.5-3.4x low on the eval
+    # cases (MBB, bell crank, hook, motor mount, wrist yoke at 15k cells),
+    # the corners 1.2-2x.
+    c0 = elastic_c(1.0, nu)
+    if STRESS_POINTS == "corners":
+        cbs = [c0 @ hex8_b(a, b, cz, nu) / mesh.pitch for a in (-1.0, 1.0) for b in (-1.0, 1.0) for cz in (-1.0, 1.0)]
+    else:
+        cbs = [c0 @ hex8_b_center() / mesh.pitch]
 
     # Printed without supports along build_direction: the AM filter (am.py)
     # after each projection, as simp.optimize applies it.
@@ -166,22 +177,28 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
             adj_rhs, partials = [], []
             for c in stress_cases:
                 ue = us[c][mesh.edof]                        # (n, 24)
-                sig = ue @ cb.T                              # (n, 6) solid stress, MPa
-                vm = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", sig, _VM, sig), 1e-30))
-                srel = np.where(counted, xe ** _Q * vm / limits.stress, 0.0)
-                nc = max(int(counted.sum()), 1)
-                pm = (np.sum(srel ** _P) / nc) ** (1.0 / _P)
-                smax = float(srel.max())
+                nc = max(int(counted.sum()), 1) * len(cbs)
+                parts = []
+                for cbk in cbs:
+                    sig = ue @ cbk.T                         # (n, 6) solid stress, MPa
+                    vm = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", sig, _VM, sig), 1e-30))
+                    parts.append((cbk, sig, vm, np.where(counted, xe ** _Q * vm / limits.stress, 0.0)))
+                pm = (sum(float(np.sum(sr ** _P)) for *_, sr in parts) / nc) ** (1.0 / _P)
+                smax = max(float(sr.max()) for *_, sr in parts)
                 kappa[c] = 0.5 * (kappa[c] + smax / max(pm, 1e-30)) if it > 1 else smax / max(pm, 1e-30)
                 g = kappa[c] * pm
-                dg_ds = kappa[c] * (srel ** (_P - 1)) * pm ** (1.0 - _P) / nc
-                # explicit: d s / d xe at fixed u
-                g_xe = dg_ds * np.where(counted, _Q * np.maximum(xe, 1e-12) ** (_Q - 1) * vm / limits.stress, 0.0)
-                # adjoint right-hand side: dg/du
-                coef = dg_ds * np.where(counted, xe ** _Q / (vm * limits.stress), 0.0)   # (n,)
-                dvm_du = (sig @ _VM) @ cb                                               # (n, 24) = d(vm^2)/2du
-                rhs = np.bincount(mesh.edof.ravel(), weights=(coef[:, None] * dvm_du).ravel(),
-                                  minlength=mesh.n_dof)
+                g_xe = np.zeros(n)
+                rhs = np.zeros(mesh.n_dof)
+                for cbk, sig, vm, srel in parts:
+                    dg_ds = kappa[c] * (srel ** (_P - 1)) * pm ** (1.0 - _P) / nc
+                    # explicit: d s / d xe at fixed u
+                    g_xe += dg_ds * np.where(counted, _Q * np.maximum(xe, 1e-12) ** (_Q - 1) * vm / limits.stress,
+                                             0.0)
+                    # adjoint right-hand side: dg/du
+                    coef = dg_ds * np.where(counted, xe ** _Q / (vm * limits.stress), 0.0)   # (n,)
+                    dvm_du = (sig @ _VM) @ cbk                                              # d(vm^2)/2du
+                    rhs += np.bincount(mesh.edof.ravel(), weights=(coef[:, None] * dvm_du).ravel(),
+                                       minlength=mesh.n_dof)
                 rhs[domain.fixed] = 0.0
                 adj_rhs.append(rhs)
                 partials.append((c, g, g_xe, smax))

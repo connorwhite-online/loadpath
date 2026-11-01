@@ -65,6 +65,16 @@ def test_compare_flags_regressions():
     assert "+10.0%" in md and "regressed" in md
 
 
+def test_compare_allows_a_cases_measured_spread():
+    base = [{"case": "a", "pass": True, "pareto": {"massAtTarget": 100}, "spread": {"range": 0.072}},
+            {"case": "b", "pass": True, "pareto": {"massAtTarget": 100}}]
+    rows = [{"case": "a", "pass": True, "pareto": {"massAtTarget": 106}},
+            {"case": "b", "pass": True, "pareto": {"massAtTarget": 106}}]
+    reg, imp = ev.compare(rows, base, tolerance=0.05)
+    assert reg == ["b"] and not imp, (reg, imp)
+    assert rows[0]["vsBaseline"]["tolerance"] == 0.072
+
+
 def test_corpus_is_deterministic_and_valid():
     for s in range(9):
         a, b = corpus.generate(s), corpus.generate(s)

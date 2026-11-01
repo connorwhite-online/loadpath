@@ -279,12 +279,111 @@ field. `check` reports every problem at once: fix them all, then check again.
   a 47 mm charge-air port cost more than the core). `sizing.verify` then
   simulates a candidate whole; big cross cores skip the design and use
   `porous.simulate_box` (minutes; its header dp is an upper bound).
+  On the command line: `loadpath check exchanger.json` lints the spec and
+  prints the design grid (`gridStep`, `gridPoints`) and `peakMemoryGB`
+  (about 400 bytes a grid point) against what is free, in milliseconds.
+  `loadpath heatx spec.json --size --out DIR` writes `sizing.json` (the
+  ranked result) and `best.json` (the top spec) to DIR; `--objective`
+  is `mass`, `effectiveness` or `pressure` (as `sizing.objective`; the
+  flag wins), `--min-wall` and `--splits` narrow the sweep, `--axes xy|yx`
+  (or the spec's `axes`) pins which way the first fluid runs. Sized cores
+  sit centred in the envelope's frame ([0, 0, 0] to the envelope), so the
+  ports land inside it. The sizer returns only designs the design step can
+  mesh within its grid cap (16M points, a grid of at most wall / 2; thin
+  LPBF walls on a large core are dropped and `note` says so): raise it with
+  `--max-points N` for both steps if the machine has the memory. Its
+  `solidVolume` and `coreMass` are the core's sheet only; the design
+  report's `mass` (g, from `duty.wall`) is the whole part. `loadpath heatx`
+  refuses a design whose estimated peak is over the free memory (`--force`
+  runs it anyway) and keeps `status.json` in the out folder (`running` with
+  its stage, `done`, or `failed` with the error; a run killed for memory
+  stays `running` with its pid). `report.warnings` names an outer wall
+  under the process's minimum, and for lpbf over 300 mm^2 of flat internal
+  ceiling or over 20 mm^3 of trapped powder. The rating's `duty` is the heat
+  moved (W, positive whichever fluid is listed first; `dutySign` -1 when
+  the first fluid takes it, `hotFluid` names the hot one).
 - Holding a mesh from somewhere else (your own field model, a CAD export)?
   `loadpath_check_printability`, `loadpath_check_isolation` and
   `loadpath_check_fit` check it directly. From Python, `check_dfm` and
   `check_networks` also take the implicit field itself (`f(P) < 0` inside,
   with bounds), which skips meshing and is the fast path for a part built
   from a field.
+
+## Multi-material parts
+
+For a part printed in two to four materials at once (Bambu AMS, Prusa
+MMU/XL, IDEX, PolyJet): a rigid core with a TPU grip pad, a bumper, an
+isolator. Add a `multiMaterial` block; the optimizer places each material
+as well as the topology (`loadpath_schema` has every field):
+
+```json
+"multiMaterial": {
+  "materials": ["pla", "tpu"],
+  "assign": [{"region": "pad", "material": "tpu"},
+             {"region": "pivot-boss", "material": "pla"}],
+  "interfaceSafetyFactor": 2.0,
+  "export": {"slicer": "bambu", "extruders": {"pla": 1, "tpu": 2}}
+}
+```
+
+- `materials`: library names or custom objects; each keeps its own
+  stiffness, Poisson's ratio and strength. `assign` fixes cells to one
+  material: `region` (a preserve or keepOut id), a `shape`, or `near`
+  (`{"region" or "shape", "distance"}` mm from it, optionally `within` a
+  region); earlier entries win. Assign the bosses and bearing seats to the
+  rigid material and the pad to the soft one, or the optimizer may put
+  rubber round a pin. `maxFraction` / `minFraction` cap or floor a
+  material's share of the part.
+- `requirements` make it soft where it has to be: `knock` (`energy` J,
+  `maxForce` N: a bumper that stops a knock under that peak force) or
+  `indentation` (`relativeTo` a case with the same force spread out,
+  `atLeast` mm: a pad that gives). Those cases leave the stiffness
+  objective, so at least one other case must remain.
+- The bond: every interface face of the delivered bodies is checked against
+  the pair's strength (`interfaces: {"pla+tpu": {"tensile", "shear"}}`
+  overrides the sourced card; measure your printer's) at
+  `interfaceSafetyFactor` (default the goal's safetyFactor, else 2).
+  `interlock: true` interlaces the bodies in a beam lattice at the
+  interface and credits the bond with its gain. Stress beside supports and
+  load nodes is left out of the check; a body thinner than that band (a
+  2 mm pad loaded on its face) is checked closer in, and the report's
+  `warnings` say so. A material or bond no cell was read for is listed in
+  `unchecked`, and the design does not pass.
+- A safety-factor goal runs a short search over volume fractions; it starts
+  above the share of the design space that `preserve` fills (a warning says
+  when it moved the start).
+- Delivers, in `--out`: an STL per material (`<name>-<material>.stl`, the
+  study's coordinates), `<name>.3mf` (one object, one part per material
+  with its extruder; `export.slicer` picks the PrusaSlicer or Bambu/Orca
+  layout), `optimum.npz` (the design fields) and `report.json`: `mass`,
+  `materialMass`, `safetyFactor` (worst material), `interfaceSafetyFactor`
+  (worst bond), per case `materials` and `interfaces`, `requirementsMet`,
+  `passes`, `outcomes` (each fraction tried) and `print` (supports,
+  bridges, islands, when the study has a build direction). `report["3mf"]`
+  says where the 3MF puts the part: `"bed"` (default: build direction to
+  +z, on the bed at 128,128; `transform` maps study coordinates to the
+  file's) or `"study"` (`loadpath run --3mf-coordinates study`: identity,
+  as the STLs). `status.json`, `partial/` and the progress lines (an
+  `outcome` per fraction verified, with mass and safety factors per
+  material and bond) work as for one material.
+- Verify an edited multi-material part from Python (`loadpath verify` is
+  single-material). The bodies are in the study's coordinates and must not
+  overlap; list the stiff material first (a cell both claim goes to the
+  first):
+
+  ```python
+  import json, trimesh
+  from loadpath.spec import study_from_dict
+  from loadpath.multimat import verify_multimaterial
+  st = study_from_dict(json.load(open("study.json")), base_dir=".")
+  mm = st.multi_material
+  bodies = [(mm.index("pla"), trimesh.load("out/finger-pla.stl")),
+            (mm.index("tpu"), trimesh.load("out/finger-tpu.stl"))]
+  rep = verify_multimaterial(st, mm, bodies)
+  rep["safetyFactor"], rep["interfaceSafetyFactor"], rep.get("unchecked"), rep.get("warnings")
+  ```
+
+  Only what is connected to the supports is analysed.
 
 ## Printing direction
 
