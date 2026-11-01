@@ -2,11 +2,11 @@
 
 Rendered 2026-11-01 from the tet-confirmed full baseline run (`063c233`) by `python docs/gallery.py`.
 
-Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress maps colour worst-case von Mises stress against the part's own 98th percentile, to show the load paths, on the shape bent by the worst load case, exaggerated; the margin against the material is the SF.
+Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress maps colour worst-case von Mises stress against the part's own 98th percentile, to show the load paths, on the shape bent by the worst load case, exaggerated; the margin against the material is the SF. "Under envelope" compares each part with its design space filled solid, not with a conventionally designed part. All numbers are simulated ([VALIDATION.md](VALIDATION.md)).
 
 ## arm-link-cast
 
-67.8 g · 46% lighter · SF 20.85 · pass
+67.8 g · 46% under envelope · SF 20.85 · pass
 
 <sub>deflection 0.478 mm · p5Member 5.35 mm · creaseLength 0.0 mm · volumeFraction 45% · 494 s</sub>
 
@@ -16,7 +16,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## arm-link-driven
 
-51.3 g · 59% lighter · SF 12.50 · pass
+51.3 g · 59% under envelope · SF 12.50 · pass
 
 <sub>deflection 0.362 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 32% · 374 s</sub>
 
@@ -26,7 +26,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## arm-link
 
-54.2 g · 57% lighter · SF 10.97 · pass
+54.2 g · 57% under envelope · SF 10.97 · pass
 
 <sub>deflection 0.489 mm · p5Member 1.46 mm · creaseLength 0.0 mm · volumeFraction 36% · 901 s</sub>
 
@@ -36,7 +36,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## bell-crank
 
-23.8 g · 84% lighter · SF 4.90 · pass
+23.8 g · 84% under envelope · SF 4.90 · pass
 
 <sub>deflection 0.066 mm · p5Member 4.19 mm · creaseLength 0.0 mm · volumeFraction 7% · 374 s</sub>
 
@@ -46,7 +46,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## grip-turret
 
-142.1 g · 91% lighter · SF 2.45 · pass
+142.1 g · 91% under envelope · SF 2.45 · pass
 
 <sub>deflection 0.767 mm · p5Member 5.49 mm · creaseLength 32.7 mm · volumeFraction 2% · 1025 s</sub>
 
@@ -56,7 +56,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## grip-upper-arm
 
-208.1 g · 88% lighter · SF 5.83 · pass
+208.1 g · 88% under envelope · SF 5.83 · pass
 
 <sub>deflection 0.515 mm · p5Member 4.96 mm · creaseLength 35.3 mm · volumeFraction 7% · 1383 s</sub>
 
@@ -66,7 +66,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## grip-wrist-link-mjf
 
-41.0 g · 95% lighter · SF 3.71 · pass
+41.0 g · 95% under envelope · SF 3.71 · pass
 
 <sub>deflection 0.530 mm · p5Member 1.83 mm · creaseLength 0.5 mm · volumeFraction 6% · 2234 s</sub>
 
@@ -76,7 +76,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## grip-wrist-yoke
 
-22.0 g · 91% lighter · SF 4.24 · pass
+22.0 g · 91% under envelope · SF 4.24 · pass
 
 <sub>deflection 0.112 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 8% · 810 s</sub>
 
@@ -86,7 +86,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## mbb-beam
 
-14.2 g · 78% lighter · SF 1.51 · pass
+14.2 g · 78% under envelope · SF 1.51 · pass
 
 <sub>deflection 3.008 mm · p5Member 1.01 mm · creaseLength 0.0 mm · volumeFraction 23% · 1607 s</sub>
 
@@ -96,7 +96,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## motor-mount
 
-27.6 g · 69% lighter · SF 4.07 · pass
+27.6 g · 69% under envelope · SF 4.07 · pass
 
 <sub>deflection 0.431 mm · p5Member 1.46 mm · creaseLength 0.0 mm · volumeFraction 30% · 129 s</sub>
 
@@ -106,7 +106,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## printed-hook
 
-27.4 g · 82% lighter · SF 2.73 · pass
+27.4 g · 82% under envelope · SF 2.73 · pass
 
 <sub>deflection 1.041 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 18% · 2438 s</sub>
 
@@ -116,7 +116,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## wall-bracket-fasteners
 
-41.0 g · 90% lighter · SF 2.89 · pass
+41.0 g · 90% under envelope · SF 2.89 · pass
 
 <sub>deflection 0.552 mm · p5Member 4.55 mm · creaseLength 0.0 mm · volumeFraction 6% · 790 s</sub>
 
@@ -126,7 +126,7 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## wall-bracket
 
-64.4 g · 85% lighter · SF 2.75 · pass
+64.4 g · 85% under envelope · SF 2.75 · pass
 
 <sub>deflection 0.199 mm · p5Member 4.55 mm · creaseLength 0.0 mm · volumeFraction 11% · 381 s</sub>
 

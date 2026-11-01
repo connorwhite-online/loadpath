@@ -674,7 +674,7 @@ def serve():
 
     @tool
     def loadpath_field(graph: dict | str, base_dir: str | None = None) -> dict:
-        """Mesh an implicit part described as a graph of fields (nTop style): shapes and meshes as signed
+        """Mesh an implicit part described as a graph of fields: shapes and meshes as signed
         distances, simulation results and imported scalar fields, remap/expr math, and field-driven
         operations (variable shell walls, variable fillets, TPMS lattices with graded cell size and wall).
         Any numeric parameter can be another node. With a 'process' (sls, mjf, sla, dlp, volumetric, lpbf)

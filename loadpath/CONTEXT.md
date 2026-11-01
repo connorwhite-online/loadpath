@@ -3,12 +3,9 @@
 State as of 2026-10-29. loadpath is an open-source, agent-native generative
 design library: topology optimization for printed parts, driven by
 constraints, keep-outs and loads, with its own verification and an eval loop.
-It is published at https://github.com/connorwhite-online/loadpath (MIT,
-Linear MTR-354). It was built inside Materialize's CAD sidecar
-(`cad-runner/loadpath/`, branch `claude/project-thread-um8gfo`, PR
-connorwhite-online/materialize#467, Linear MTR-352); new loadpath work happens
-in this repository, and the Materialize copy is the sidecar's vendored
-version.
+It is published at https://github.com/connorwhite-online/loadpath (MIT).
+It started inside another project's CAD service and now lives in this
+repository.
 
 ## The goal
 

@@ -3,7 +3,7 @@ Field-driven lattices: fill a part's interior with a triply periodic minimal
 surface (TPMS) sheet whose wall thickness follows the stress, keeping a solid
 skin and solid material wherever the part works hard.
 
-Everything is an implicit field, nTop style:
+Everything is an implicit field:
 
 - the part as a signed distance (negative inside), from a voxelization of
   its mesh and distance transforms;

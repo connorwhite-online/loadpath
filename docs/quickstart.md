@@ -1,6 +1,6 @@
 # Quickstart
 
-Ten minutes from install to a printable, verified part. Units everywhere are
+Ten minutes from install to a printable part, checked by a fresh analysis. Units everywhere are
 millimetres, newtons, megapascals.
 
 ## 1. Install

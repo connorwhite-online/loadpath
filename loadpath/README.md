@@ -6,9 +6,10 @@ removes material until only the load path is left, meshes the result as a
 watertight printable part with exact bores and faces, and then checks that part
 with a fresh finite element analysis in real units.
 
-It is the open counterpart of the generative design in Fusion or nTop, built
-from standard, well-documented methods so the results can be trusted and the
-code can be read:
+The methods are standard and published, and the code is meant to be read.
+What each model has been checked against is in
+[docs/VALIDATION.md](../docs/VALIDATION.md); nothing has been physically
+tested yet.
 
 - **SIMP topology optimization** on a voxel grid: density per cell, penalized
   stiffness, a cone density filter for a minimum member size, Heaviside
@@ -34,7 +35,7 @@ code can be read:
   deflection, and fasteners report how much preload relaxes away, all at the
   service temperature through the modulus-retention tables. Optional
   `durability.constrain` sizes the part for them.
-- **Minimum member size** that actually holds: stiffness is credited to the
+- **Minimum member size** (robust formulation): stiffness is credited to the
   eroded design and the delivered part is the opened one (robust
   formulation), so no sub-minimum skins or webs.
 - **MMA** (Svanberg's Method of Moving Asymptotes, implemented here from the
@@ -56,7 +57,7 @@ Units are fixed: millimetres, newtons, megapascals, g/cm³.
 ## Quick start
 
 ```bash
-pip install ./loadpath[render]           # or: pip install loadpath, once published
+pip install "loadpath[render] @ git+https://github.com/connorwhite-online/loadpath"   # not on PyPI yet
 python -m loadpath check study.json          # validate, show the voxel problem
 python -m loadpath run study.json --out out  # optimize, mesh, verify, render
 ```
@@ -171,7 +172,6 @@ underneath, for anything else (`add_part` with fields, `add_overlay`,
 | `milling` | Optional, the part is machined: `{axes: 3, directions: ["+z"], toolDiameter: 6}`. Every void must be reachable by a cutter coming straight in from one of the `directions` (default `+z`; `axes: 5` is 3+2 positional from all six sides; `axes: 2.5` also puts pocket floors on `stepDown` levels). Slots and inside corners narrower than `toolDiameter` are filled. |
 | `casting` | Optional, the part is cast or molded: `"+z"` or `{draw: "+z", sides: 2}`. No undercuts along the draw: with 2 sides the mold halves pull both ways (every line along the draw crosses the part once); with 1, one half pulls off a flat parting plane. |
 | `resolution` | `maxElements` (default 60,000) or an explicit `pitch` in mm. |
-| `process` | `"fdm"`, `"sls"`, `"mjf"`, `"sla"`, `"dlp"`, `"volumetric"`, `"lpbf"` (powder-bed metal), or `{type, buildDirection, interlayer, minFeature, overhangs, escapeHole}`: sets a minimum member, overhang control (FDM, LPBF) and the layer-bond check; SLS/MJF/SLA/DLP add the process checks (`report.process`). |
 | `lattice` | Optional: also fill the best outcome with a stress-graded TPMS lattice, `{type: "gyroid"\|"diamond"\|"schwarz-p", cell, skin, minWall, maxWall, solidAbove, safetyFactor}`. `skin: 0` leaves it open so powder or resin drains. |
 
 Shapes: `box` (`min`/`max` or `center`/`size`), `cylinder` (`p0`/`p1` or
@@ -218,6 +218,7 @@ about. The tetrahedral cross-check does not apply pressure yet.
   analysis is linear and the material numbers are typical datasheet values;
   printed parts are weaker across layers. Treat it as an engineering estimate
   for comparing designs and catching an undersized part, not a certification.
+  No safety factor from loadpath has yet been compared with a load test.
 - `keepOutIntrusion` and `preserveMissing` are mm³ from exact booleans and
   should be zero to rounding.
 - `p5Member` is the 5th-percentile member thickness on the medial ridge.
@@ -239,11 +240,12 @@ about. The tetrahedral cross-check does not apply pressure yet.
 
 ## Evals
 
-`python -m loadpath.evals.run --out evals-out/` runs real parts with hard
-requirements (a robot arm link, a shelf bracket, a NEMA 17 motor mount with an
-STL keep-out, an aluminium bell crank, a wall hook printed without supports,
-the textbook MBB beam) and scores the delivered meshes. Exit code is the
-number of failing cases. Run it after any change to the solver.
+`python -m loadpath.evals.run --out evals-out/` runs 15 parts with hard
+requirements (robot-arm links, brackets, a motor mount, a bell crank, a
+hook printed without support, the MBB beam, a metal heat exchanger) and
+scores the delivered meshes. Exit code is the number of failing cases. Run
+it after any change to the solver. Results and the case list are in
+[docs/case-studies/evals.md](../docs/case-studies/evals.md).
 
 - `--tier coarse` runs every case on a coarse grid with a short search and no
   fine-grid confirm: a smoke run for each push, compared against a coarse
@@ -265,6 +267,9 @@ number of failing cases. Run it after any change to the solver.
 MIT.
 
 ## Limits
+
+See [docs/VALIDATION.md](../docs/VALIDATION.md) for the evidence behind each
+model.
 
 - Linear elastic, small deflection. Printed layers are modelled as
   transversely isotropic stiffness plus a tension-across-layers strength

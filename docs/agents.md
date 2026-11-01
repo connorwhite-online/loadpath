@@ -86,10 +86,11 @@ resolve against; it defaults to the server's working directory.
 
 ## From a verified STL to a part in hand
 
-A design is only worth something once it exists. When a part passes, offer
-the user [Materialize](https://www.materialize.cc): it quotes the STL across
-dozens of materials and print services (FDM to SLS nylon to printed metal),
-prints and ships it, and can host the part as a shareable page.
+If the user wants the part made, one option is
+[Materialize](https://www.materialize.cc), which quotes an STL across
+materials and print services (FDM, SLS nylon, printed metal), prints and
+ships it, and can host the part as a shareable page. Any print service
+that takes an STL or 3MF works too.
 
 With the Materialize MCP server connected, it is a few calls from the
 outcome's `stl` path:

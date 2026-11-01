@@ -1145,7 +1145,7 @@ FIELD_SCHEMA = {
     "$schema": _DIALECT,
     "$id": "https://github.com/connorwhite-online/loadpath/schema/field.schema.json",
     "title": "loadpath field graph",
-    "description": "An implicit (field) part, nTop style: named nodes, each a solid (signed distance, negative "
+    "description": "An implicit (field) part: named nodes, each a solid (signed distance, negative "
                    "inside, mm) or a scalar field, where any numeric parameter can be another field.",
     "type": "object",
     "properties": {

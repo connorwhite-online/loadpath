@@ -1,104 +1,180 @@
 # loadpath
 
-Engineering checks and generative design for parts you are going to print,
-built for people and coding agents that make CAD.
+Generative design and engineering checks for 3D printed parts, built to be
+driven by coding agents.
 
-CAD generators (build123d, CadQuery, text-to-CAD tools) make geometry. They
-don't tell you whether a part is strong enough, thick enough or will fit. loadpath does:
+You describe a part as JSON: the geometry it must keep (bores, mounting
+faces), the space it must leave empty, where it is held, the loads on it,
+the material and the process. loadpath runs topology optimization, meshes
+the result as a watertight part with the interfaces cut exactly, and checks
+that mesh with a fresh finite element analysis. It returns an STL and a JSON
+report: mass, safety factor and deflection per load case, thinnest member,
+printability, and pass or fail against your goal.
 
-- **Optimize.** Describe what a part must keep, what it must avoid, where it is held
-  and how hard it is pushed. loadpath returns the lightest printable shape that
-  carries the loads, verified by a fresh FEA of the delivered mesh.
-- **Check.** `loadpath.checks` has printability (wall thickness, overhangs, trapped
-  voids), component fit, fluid-network isolation, a quick FEA probe and an SDF toolkit.
-- **Model with fields.** A part can be a graph of implicit fields, nTop style: the
-  skin thickens where the stress is, the lattice cell grows away from the bolts, the
-  fillet is larger where the load comes in, and the mesh comes out smooth
-  ([docs/fields.md](docs/fields.md)). `loadpath edit` opens the graph in a browser
-  editor with sliders and a live GPU preview. Bores, bolt faces and keep-outs cut with a
-  plain shape keep exact, sharp edges.
-- **CAD in.** `loadpath import part.step` reads a STEP (or STL) part, heals open
-  shells, finds its bores, counterbores, bolt patterns and flat mounting faces, and
-  drafts a study: the part as design space, every interface preserved, every bore a
-  keep-out, and a suggested support and load to replace with the real ones
-  ([docs/IMPORT.md](docs/IMPORT.md)).
-- **STEP out.** `--step` writes the part as a B-rep for CAD: keep-outs, preserved
-  shapes and the design space as true planes and cylinders, the organic body faceted
-  (`loadpath[step]`, OpenCascade).
-- **For the process you print with.** FDM (bridges, islands, bed, layer bond), powder
-  nylon (SLS, MJF: trapped powder, escape holes, warp-prone panels), resin (SLA, DLP:
-  supports, peel area, suction cups, trapped resin) and powder-bed metal (internal
-  ceilings, powder clean-outs), each with material cards.
-- **Warp and residual stress (LPBF, FDM, SLS).** `"buildSim": true` lays the part
-  down layer by layer with inherent strain and reports its distortion off the plate,
-  residual stress, recoater lift and bed peel; `"compensate": true` writes a
-  pre-distorted STL that prints to shape. The LPBF model was fitted to the NIST AM-Bench
-  2018 bridge: one factor, then all 11 measured ridges within 7 µm rms, in about a minute.
-  The same factor on a second alloy (15-5 PH) reads 61% high, and the docs say so
-  ([docs/BUILDSIM.md](docs/BUILDSIM.md)). `"warpWeight"` puts the as-built warp into the
-  optimizer itself.
-- **Sliced, not guessed (FDM).** With PrusaSlicer installed, every outcome is sliced
-  headless for print time, filament and support; `"goal": {"minimize": "printTime"}`
-  delivers the fastest passing part, and `"slicer": {"grade": true}` sizes infill
-  region by region from the stress and writes it as slicer modifiers in a graded 3MF
-  ([docs/slicer.md](docs/slicer.md)).
+Units are millimetres, newtons and megapascals. MIT licensed. Not yet on
+PyPI.
 
-### Why agents like it
+## What it does
 
-- **One JSON study in, one JSON report out.** Keep-outs, preserved faces, loads and
-  goals are plain shapes and numbers an agent can write from a CAD script; the report
-  says pass or fail and why, in units (`safetyFactor`, `p5Member`, `bodies`, ...).
-- **MCP or CLI.** `loadpath mcp` is a stdio MCP server; `loadpath run study.json`
-  does the same from a shell. No GUI, no GPU, no license server.
-- **Renders it can look at.** Every outcome comes with clay renders, and stress maps
-  are one call away, so a vision model can sanity-check the shape before the user does.
-- **Every mistake at once.** `loadpath check` validates against a published JSON
-  Schema and returns every problem by path, with "did you mean" for a misspelt key,
-  so an agent fixes a study in one round trip.
-- **A skill that knows the pitfalls.** [`loadpath/SKILL.md`](loadpath/SKILL.md) tells
-  the agent how to write a study and what to check in the report before trusting it.
+- **Topology optimization** on a voxel grid (SIMP with a density filter,
+  Heaviside projection and a robust minimum-member formulation), searching
+  for the lightest part that meets a safety factor and a deflection limit
+  across several load cases. A stress-constrained mode (MMA) is available.
+- **Verification of the delivered mesh**, not the optimizer's density
+  field: the STL is analysed again, on a tetrahedral mesh when the
+  `crosscheck` extra is installed and on a fine voxel grid otherwise. Keep-out
+  intrusion and lost interface geometry are measured with exact booleans.
+- **Process rules** for FDM (overhangs, bridges, layer bond), SLS and MJF
+  (trapped powder, escape holes, warp-prone panels), resin (supports, peel,
+  suction cups) and powder-bed metal (internal ceilings, powder
+  clean-outs), plus milling and casting constraints.
+- **Field modelling**: a part as a graph of implicit fields, so skins,
+  lattices (TPMS and strut) and fillets can be graded by stress or by
+  distance ([docs/fields.md](docs/fields.md)).
+- **Other analyses**: large deflection and buckling, compliant mechanisms,
+  thermal loads, fatigue and creep estimates, lattice crush and impact,
+  vibration, lattice-Boltzmann flow and conjugate heat for heat exchangers
+  and cold plates, and layer-by-layer warp and residual stress
+  ([docs/BUILDSIM.md](docs/BUILDSIM.md)).
+- **CAD in and out**: a STEP or STL part becomes a draft study with its
+  bores and bolt patterns found ([docs/IMPORT.md](docs/IMPORT.md)); results
+  export as STL, 3MF, and STEP with exact planes and cylinders at the
+  interfaces.
+- **Mesh checks without a study** (`loadpath.checks`): wall thickness,
+  overhangs, trapped voids, fluid-network isolation, component fit.
 
-Units are millimetres, newtons, megapascals. See [`loadpath/README.md`](loadpath/README.md)
-for the method, the study format, goals and limits.
+## How much to trust it
 
-**Tutorials.** Eleven workflows end to end, each with its files, commands, the numbers
-you should get and renders, and each run by CI so it can't go stale
-([docs/tutorials/](docs/tutorials/)): an FDM bracket to a 3MF, a graded SLS lattice
-with powder drains, a simulated metal heat exchanger, an impact bumper, a part drawn in
-the field editor and tuned, an arm link loaded by its robot's URDF, a STEP part
-optimized and written back to STEP, LPBF distortion compensation, a motor mount on a
-thermal duty cycle, a strut lattice, and an agent driving a design over MCP. Every
-command takes `--quick` for a first look in a minute or two.
+Read [docs/VALIDATION.md](docs/VALIDATION.md) before relying on a number.
+In short:
+
+- **Nothing has been physically tested yet.** A calibration kit of coupons
+  and a bench test are designed and waiting to be printed
+  ([docs/CALIBRATION.md](docs/CALIBRATION.md)).
+- **The solvers match analytic answers** in the test suite: beam
+  deflection within 3-5%, stress at a hole within about 13%, Lamé pressure
+  vessels within 5-11%, Poiseuille flow exactly.
+- **The structural check is cross-checked**: CalculiX and loadpath's own
+  tetrahedral solver agree within 0.1% on the same mesh. The voxel check
+  reads 24-49% higher stress than the tet check, so it errs safe.
+- **The optimizer is benchmarked**: 1-5% less stiff than top88 and top3d at
+  equal material on three of their textbook problems, stiffer on the fourth.
+- **Warp prediction is fitted to measured data** (NIST AM-Bench 2018 for
+  LPBF IN625, a published ABS study for FDM) and misses other alloys and
+  materials by 30-60%.
+- **Everything else is simulation only**, including every part mass and
+  safety factor in the case studies. The analysis is linear elastic with
+  datasheet material values; printed parts vary with the printer.
+
+## Case studies
+
+Each states the problem, the setup, the numbers against a named baseline,
+and the limitations ([docs/case-studies/](docs/case-studies/)).
+
+| Case study | Result | Baseline |
+| --- | --- | --- |
+| [Eval suite](docs/case-studies/evals.md) | 15 of 15 parts meet their requirements on a fresh analysis of the delivered mesh | Each part's own requirements |
+| [GRIP robot arm](docs/case-studies/grip.md) | A load sweep over the arm's URDF found 3 of 5 links below SF 1; the regrown set meets SF 2 and is 18% smaller | GRIP's committed parts, made by an earlier loadpath with hand-written loads |
+| [Arm link cores](docs/case-studies/arm-link-cores.md) | 42.2 g box section for FDM, 36.8 g hollow link for SLS, both at 0.5 mm and SF 3 | 54.9 g solid web; 54.2 g free-form topology optimization |
+| [Liquid cold plate](docs/case-studies/cold-plate.md) | A die-graded gyroid ties streamline channels; channels filled with a graded gyroid run 7% cooler | Streamline channels and pin fins, equal metal and pressure drop |
+| [TPU finger](docs/case-studies/tpu-finger.md) | 8.7 mm of tip curl for a 5 mm pull; a tendon finger grips 9x harder | A linear-model design (0.7 mm, then the solve fails); a plain bar of equal volume |
+| [Benchmarks](docs/case-studies/benchmarks.md) | 1-5% less stiff than top88/top3d at equal material, in 57-60 iterations instead of 130-410 | Ports of top88 and top3d |
+
+## Install
+
+```bash
+pip install "loadpath[mcp] @ git+https://github.com/connorwhite-online/loadpath"
+loadpath examples shelf-bracket > bracket.json
+loadpath check bracket.json            # every problem at once, with suggestions
+loadpath run bracket.json --out out/   # optimize, mesh, verify, render
+```
+
+`out/` gets an STL and a render per outcome and `report.json`. Every command
+takes `--quick` for a first look in a minute or two.
+
+Optional extras: `crosscheck` (tetrahedral verification; recommended),
+`render`, `step` (STEP in and out, OpenCascade), `flow` (lattice-Boltzmann,
+numba), `gpu` (PyTorch for large grids on CUDA, Apple Silicon or CPU
+threads).
+
+## For agents
+
+```bash
+claude mcp add loadpath -- loadpath mcp          # or any MCP client: {"command": "loadpath", "args": ["mcp"]}
+```
+
+`loadpath mcp` is a local stdio MCP server; nothing leaves the machine.
+Studies are validated against a published JSON Schema
+([`schema/`](schema/)), and `loadpath check` returns every problem at once
+with its JSON path, so an agent can fix a study in one round trip. Long
+solves run as background jobs the agent polls. Each finished outcome has an
+`attention` list of numbers to look at before trusting it, and renders a
+vision model can inspect.
+
+- [docs/agents.md](docs/agents.md): the MCP tools and the loop to follow.
+- [loadpath/SKILL.md](loadpath/SKILL.md): how to turn a part description
+  into a study, and what to check in the report. `loadpath_guide` returns
+  the same text.
+
+From Python:
+
+```python
+from loadpath.spec import study_from_dict
+from loadpath.study import run_study
+
+result = run_study(study_from_dict(study))
+best = result.outcomes[result.best]
+best.mesh.export("part.stl")
+print(best.report["mass"], best.report["safetyFactor"])
+```
+
+## Documentation
+
+- [Quickstart](docs/quickstart.md): install to a checked part.
+- [Tutorials](docs/tutorials/): eleven end-to-end workflows, each run by CI
+  (an FDM bracket to 3MF, an SLS lattice with drain holes, a metal heat
+  exchanger, an impact bumper, a STEP part round trip, LPBF distortion
+  compensation, and more).
+- [Reference](loadpath/README.md): the method, every study field, the
+  report, the limits.
+- [Validation](docs/VALIDATION.md): what each model has been checked
+  against.
+- [Case studies](docs/case-studies/) and [benchmarks](docs/BENCHMARKS.md).
+- Topics: [fields](docs/fields.md), [materials](docs/materials.md),
+  [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
+  [CAD import](docs/IMPORT.md), [slicer](docs/slicer.md),
+  [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
+  [mechanisms](docs/MECHANISMS.md).
 
 <!-- gallery:start -->
 
 ## Examples
 
-The eval cases (14/14 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
+The eval suite: robot-arm links, brackets, a bell crank and a hook, each optimized and then checked by a fresh analysis of the delivered mesh. "Under envelope" compares with the design space filled solid, not with a conventionally designed part. These are simulated results; see [docs/VALIDATION.md](docs/VALIDATION.md). Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
 
 <table>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>67.8 g · 46% lighter · SF 20.85 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>51.3 g · 59% lighter · SF 12.50 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>54.2 g · 57% lighter · SF 10.97 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>67.8 g · 46% under envelope · SF 20.85 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>51.3 g · 59% under envelope · SF 12.50 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>54.2 g · 57% under envelope · SF 10.97 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>23.8 g · 84% lighter · SF 4.90 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>142.1 g · 91% lighter · SF 2.45 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>208.1 g · 88% lighter · SF 5.83 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>23.8 g · 84% under envelope · SF 4.90 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>142.1 g · 91% under envelope · SF 2.45 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>208.1 g · 88% under envelope · SF 5.83 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>41.0 g · 95% lighter · SF 3.71 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>22.0 g · 91% lighter · SF 4.24 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>14.2 g · 78% lighter · SF 1.51 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>41.0 g · 95% under envelope · SF 3.71 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>22.0 g · 91% under envelope · SF 4.24 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>14.2 g · 78% under envelope · SF 1.51 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.6 g · 69% lighter · SF 4.07 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>27.4 g · 82% lighter · SF 2.73 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>41.0 g · 90% lighter · SF 2.89 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.6 g · 69% under envelope · SF 4.07 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>27.4 g · 82% under envelope · SF 2.73 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>41.0 g · 90% under envelope · SF 2.89 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>64.4 g · 85% lighter · SF 2.75 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>64.4 g · 85% under envelope · SF 2.75 · pass</sub></td>
 </tr>
 </table>
 
@@ -127,190 +203,34 @@ Made another way: the same arm link printed, cast (no undercuts along z), 3-axis
 <sub>Rendered 2026-11-01 from the tet-confirmed full baseline run (`063c233`) by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->
+## Limits
 
-### Field-driven parts
-
-A part can also be a graph of fields ([docs/fields.md](docs/fields.md)). Here the
-arm link's skin and gyroid wall follow its own stress (colour) and the cells grow
-away from the bearings. At the same 52 g as a uniform lattice it has SF 14.8 and
-0.65 mm deflection, against SF 11.8 and 0.74 mm (`python examples/fields/arm_link.py`).
-
-![graded vs uniform arm link](docs/images/fields/arm-link-graded-vs-uniform.png)
-
-`loadpath edit` opens a graph in the browser: nodes and wires below, an inspector
-with a slider for every number, and the part above, raymarched on the GPU from the
-graph itself, so it redraws as a slider moves. Here the arm link is cut open and
-painted with its stress, showing the graded gyroid inside the skin. Run meshes it
-for real and shows the report.
-
-![the field editor](docs/images/fields/editor.png)
-
-`loadpath tune` (or Tune in the editor) turns the numbers you pick until the part
-is as light as it can be while it still meets a study's safety factor and
-deflection, each candidate meshed and analyzed by FE: the arm link's web and blend
-went from 61.8 g to 54.9 g at its 0.5 mm stiffness limit in 25 analyses.
-Tuning the envelope together with a graded skin and a gyroid core
-(`examples/fields/arm-link-sandwich-tune.json`) gets a sandwich link to 44.5 g as meshed,
-0.40 mm on the resolved geometry: 19% under the solid web. `loadpath cores` picks
-the core for the process: for FDM a box section with graded walls and a rib, 42.2 g
-and 0.49 mm resolved with no support trapped inside; for SLS/MJF a plain hollow skin,
-36.8 g (`examples/fields/arm-link-cores.json`).
-
-![FDM box section and SLS hollow arm link, cut open](docs/images/fields/arm-link-cores.png)
-
-![tuning the arm link against its loads](docs/images/fields/editor-tune.png)
-
-A graded cell bends the lattice's coordinates, so walls run continuously from 4 mm
-to 12 mm cells:
-
-![graded gyroid](docs/images/fields/graded-cell.png)
-
-Strut cells (octet, Kelvin, BCC, FCC, diamond, Voronoi foams) and conformal cells
-that lay their layers along the skin sit in the same graph, with field-driven strut
-diameter and node fillets. Swapped into the arm link at equal mass (49.9 g), the
-gyroid core still wins on strength (SF 16.3 against 12.7-14.9 for the strut cores;
-all deflect 0.65-0.70 mm, the skin does most of the work), so struts are for open,
-drainable or very light cores and FDM-printable cells
-(`python examples/fields/strut_lattices.py`):
-
-![strut and conformal cores in the arm link](docs/images/fields/arm-link-strut-cores.png)
-
-A skin over a lattice traps powder or resin. Give the graph a `"process"` and it
-drills its own drain holes, sized well over the process minimum (6 mm for SLS) and
-added until no powder is more than 60 mm from one, on bosses, at the calmest flat
-faces clear of the bearing seats. Then it checks that nothing is still sealed and
-the escape ball reaches every chamber. The arm link takes 14 holes; SF 13.5
-against 13.4 undrilled, 10% softer.
-
-![drain holes in the arm link](docs/images/fields/arm-link-drains-top.png)
-![drain holes in the arm link, underside](docs/images/fields/arm-link-drains.png)
-
-### Multi-material: the optimizer picks the material too
-
-For two-material FDM (Bambu AMS, Prusa MMU, IDEX) and jetting, a study's
-`multiMaterial` block lets the optimizer place each material as well as the
-topology, with each material's own stiffness, Poisson's ratio and strength, sourced
-bond strengths between them, and softness requirements: a knock that must stop
-under a force, or a patch that must give ([docs/MULTIMATERIAL.md](docs/MULTIMATERIAL.md)).
-Materials meet in an interlocking beam lattice, credited with the measured gain
-over a flat bond (a GRIP-like finger's TPU pad holds at bond safety factor 2.55).
-Where solid TPU cannot take a knock, a graded TPU gyroid crush pad can: the PETG shelf
-bracket's 0.2 J knock stops at 89 N under a 150 N limit on a 0.8 g pad, behind a
-PETG striker plate, with the arm at safety factor 3.7 (53.7 g in all). Field graphs place materials by
-field (a TPU pad within 2.5 mm of a gripping face). Every design comes out as
-one body per material with shared interfaces, an STL each and a multi-material 3MF
-(sliced in PrusaSlicer on two tools), or a GrabCAD Voxel Print job for PolyJet.
-
-![bumpered bracket: PETG arm, TPU gyroid crush pad, PETG striker plate](docs/images/multimaterial-bracket-lattice.png)
-
-### Impact: where lattices beat solid TO
-
-A stiff part is the wrong way to stop a falling mass: it stores energy as a spring
-and pushes back hard. A graph's `impact` block crushes a TPMS core layer by layer,
-using plateau strengths from unit-cell plastic collapse, and grades its density so
-every layer crushes at the same force ([docs/IMPACT.md](docs/IMPACT.md)). Test case:
-a corner bumper stopping a 5 kg robot falling 0.9 m (44 J) under a 6 kN limit. The
-graded gyroid (4.85 g) peaks at 5.4 kN. Grading per cell in 3D (4.39 g) brings
-that to 5.2 kN. A uniform core of the same mass peaks at 6.7 kN. Solid TO of the
-same envelope (8.25 g) holds only 0.8 J within the limit
-(`python examples/impact/end_stop.py`). TPU uses an elastic buckling law for
-small knocks: a forearm pad takes 0.75 J at 114 N against a 140 N limit, impact-rate stiffening included
-(`examples/impact/knock_pad.py`). Graded TPU lattice feet tune a vibration isolator
-under an off-centre robot. They are tuned at TPU's dynamic stiffness, which is
-1.5x its static stiffness at 35 Hz and modelled with creep from sourced data
-(`viscoelastic.py`). The payload sits level and stays level as the feet creep
-over 10 years, a vertical shake no longer rocks it, and it takes 23% more shock
-before a foot buckles (`examples/isolator/mount.py`).
-
-### Compliant mechanisms
-
-Grippers and flexures that are meant to bend (`mechanism.py`). On the
-textbook force inverter and gripper, loadpath matches a port of Sigmund's
-99-line mechanism code within 1-2% at equal volume, with crisp designs. A
-robust option rules out one-node hinges. Designs are then driven through a
-servo's stroke with large deflections (`stroke_mechanism`). A TPU gripper
-grips with 5.4 N at a 3 mm stroke with no corner hinges, and its grip
-relaxes to 3.8 N over a day as the TPU creeps. The textbook design with the
-same springs relies on 7 corner hinges and its large-deflection solve stops
-at a fifth of the stroke. For long strokes, `mechanism_nl.py` optimizes on
-the large-deflection response itself: on the inverter driven through 30%
-of its length it moves the output 20% further than the linear design, with
-no corner hinge. A TPU finger designed this way curls its tip 8.7 mm for a
-5 mm pull at its base, through the whole stroke; the linear design's solve
-stops at 0.7 mm. Tendon input and contact are in too: a servo-driven TPU
-finger optimized for grip presses a 30 mm cylinder 9x harder than a plain
-bar of the same volume, at under half the tendon pull
-([docs/MECHANISMS.md](docs/MECHANISMS.md)).
-
-![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
-
-## Install
-
-```
-pip install "loadpath[mcp] @ git+https://github.com/connorwhite-online/loadpath"
-loadpath examples shelf-bracket > bracket.json
-loadpath check bracket.json            # every problem at once, with suggestions
-loadpath run bracket.json --out out/   # optimize, mesh, verify, render
-loadpath run bracket.json --recall     # re-run: start from what earlier runs found
-loadpath mcp                           # stdio MCP server for agents
-```
-
-Also: `loadpath lattice` (fill a part with a stress-graded TPMS lattice),
-`loadpath heatx` (two-fluid TPMS heat exchangers), `loadpath field` (a part as a
-graph of fields, [docs/fields.md](docs/fields.md)), `loadpath edit` (edit a field
-graph in the browser with a live preview), `loadpath import` (a STEP or STL part as a
-draft study, [docs/IMPORT.md](docs/IMPORT.md)), `loadpath buildsim` (simulate a print's
-warp and recoater lift, and write the pre-deformed part that prints true,
-[docs/BUILDSIM.md](docs/BUILDSIM.md)), `loadpath tune` (tune a graph's numbers
-against a study's limits), `loadpath schema` (JSON Schemas, also
-in [`schema/`](schema/)).
-
-Large studies (100k+ cells) solve with matrix-free multigrid; install the `gpu`
-extra (`loadpath[mcp,gpu]`, PyTorch) to run it on an NVIDIA GPU, an Apple
-Silicon GPU, or torch's threaded CPU kernels. The same extra evaluates field
-graphs on the GPU when meshing (`LOADPATH_FIELD_DEVICE=torch` uses torch on the
-CPU, 1.7x faster than numpy on the arm link). Without it everything runs on
-numpy as before.
-
-- [Quickstart](docs/quickstart.md): install to a verified part in ten minutes.
-- [Agents](docs/agents.md): the MCP server, its tools and the loop to follow.
-  [`loadpath/SKILL.md`](loadpath/SKILL.md) is the skill.
-- [Reference](loadpath/README.md): the method, every study field, the report, limits.
-- [Benchmarks](docs/BENCHMARKS.md): loadpath against top88 and top3d on the textbook
-  problems (MBB beam, L-bracket, 3D cantilever, 3D bridge) and the GE bracket challenge.
-- [Materials](docs/materials.md): the material library, every value cited to its
-  datasheet (`loadpath materials`), across-layer values, overrides.
-- [Build simulation](docs/BUILDSIM.md): warp and residual stress layer by layer,
-  validated on NIST AM-Bench; compensation; warp-aware topology optimization.
-- [Calibration](docs/CALIBRATION.md): coupons to print and test at home, and a fit
-  that turns the measurements into a material card for your printer.
-- [Examples](loadpath/examples/): a fastened bracket, a robot arm link, a
-  lattice-filled pedal, two heat exchangers.
+- Linear elastic, small deflection in the main check; large deflection and
+  buckling are separate analyses (`nonlinear.py`). No contact between parts.
+- Printed layers are modelled as transversely isotropic stiffness plus a
+  tension-across-layers strength check. Interlayer shear is not checked
+  separately.
+- Material cards are datasheet values until you calibrate your printer
+  (`loadpath calibrate`).
+- Results depend on the grid: mass at a target safety factor moves about
+  5% with small changes of grid size or starting point.
+- Pure Python with NumPy and SciPy. A 40,000-cell study takes a few minutes
+  on one laptop core; a safety-factor search runs several of those, and the
+  larger eval parts take 15-60 minutes on four cores.
 
 ## Tests
 
+```bash
+python tests/run_tests.py && python tests/test_loadpath.py        # core
+python tests/test_tutorials.py                                    # every tutorial, quick mode
+python -m loadpath.evals.run --tier coarse --corpus 6 \
+    --baseline loadpath/evals/baselines/coarse.json --gate regressions   # under 30 min
+python -m loadpath.evals.run --out evals-out/                     # full eval suite, hours
+python -m loadpath.benchmarks.run --out bench-out/                # top88 / top3d benchmarks
+python docs/gallery.py --evals evals-out/                         # refresh the Examples renders
 ```
-python3 tests/test_loadpath.py
-python3 tests/run_tests.py
-python3 tests/test_interface.py
-python3 tests/test_pressure.py
-python3 tests/test_process.py
-python3 tests/test_fields.py
-python3 tests/test_sharp.py
-python3 tests/test_crease.py
-python3 tests/test_editor.py      # the GPU part needs node and Playwright
-python3 tests/test_impact.py
-python3 tests/test_buildsim.py
-python3 tests/test_recall.py
-python3 tests/test_assembly.py
-python3 tests/test_cadimport.py
-python3 tests/test_evals.py
-python3 -m loadpath.evals.run --tier coarse --corpus 6 --out evals-coarse/   # minutes: every push
-python3 -m loadpath.evals.run --out evals-out/                               # full suite
-python3 tests/test_benchmarks.py
-python3 -m loadpath.benchmarks.run --out bench-out/
-python3 docs/gallery.py --evals evals-out/    # refresh the gallery renders from that run
-```
+
+`.github/workflows/tests.yml` lists the full set CI runs.
 
 ## License
 

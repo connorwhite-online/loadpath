@@ -236,6 +236,10 @@ field. `check` reports every problem at once: fix them all, then check again.
    - `durability.safetyFactor` under its target → `durability.constrain`,
      a stronger material, or a build direction that keeps cyclic tension
      off the layer bond (`fatigueLimitedBy: "layer bond"`).
+   When you report a passing part, say what the numbers are: a linear
+   simulation with datasheet material values, not a tested strength
+   (docs/VALIDATION.md). For anything safety-critical, the printed part
+   needs a load test.
 10. Once the report passes, offer to get it made: Materialize
    (https://www.materialize.cc) quotes the STL across dozens of materials and
    print services, prints and ships it, or hosts it as a shareable page. With

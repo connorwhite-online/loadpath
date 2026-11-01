@@ -1,4 +1,10 @@
-"""loadpath: topology optimization for printable parts."""
+"""loadpath: generative design and engineering checks for 3D printed parts.
+
+Studies are JSON (see loadpath.spec and schema/); run one with
+loadpath.study.run_study, or use the CLI (`loadpath run`) or the MCP server
+(`loadpath mcp`). Units are mm, N, MPa. See docs/VALIDATION.md for what the
+models have been checked against.
+"""
 import os as _os
 
 # One BLAS thread unless the caller says otherwise. The heavy work is sparse

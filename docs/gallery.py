@@ -233,7 +233,7 @@ def _caption(row):
     if b.get("mass") is not None:
         bits.append(f"{b['mass']:.1f} g")
     if b.get("massReduction") is not None:
-        bits.append(f"{b['massReduction']:.0%} lighter")
+        bits.append(f"{b['massReduction']:.0%} under envelope")
     if b.get("safetyFactor") is not None:
         bits.append(f"SF {b['safetyFactor']:.2f}")
     bits.append("pass" if row.get("pass") else "**fail**")
@@ -281,9 +281,12 @@ def write_docs(rows, evals):
     passed = sum(1 for r in rows if r.get("pass"))
     # The README shows the tool off in a screenful; docs/GALLERY.md has everything.
     readme = [START, "", "## Examples", "",
-              f"The eval cases ({passed}/{len(rows)} passing): GRIP robot-arm style parts, each optimized "
-              f"and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. "
-              f"Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).", "",
+              f"The eval suite ({passed}/{len(rows)} passing): robot-arm links, brackets, a bell crank and a hook, "
+              f"each optimized and then checked by a fresh analysis of the delivered mesh. "
+              f"\"Under envelope\" compares with the design space filled solid, not with a conventionally "
+              f"designed part. These are simulated results; see [docs/VALIDATION.md](docs/VALIDATION.md). "
+              f"Blue arrows are loads, red is keep-out. Every view, stress map and number is in "
+              f"[docs/GALLERY.md](docs/GALLERY.md).", "",
               _grid([(img("cases", f"{r['case']}.png"), f"<b>{r['case']}</b><br><sub>{_caption(r)}</sub>")
                      for r in cases], width=250)]
     stress = [r for r in cases if exist("stress", f"{r['case']}.png")]
@@ -318,7 +321,9 @@ def write_docs(rows, evals):
     g = ["# Gallery", "", _stamp(evals), "", "Regenerate with the commands at the top of "
          "[`gallery.py`](gallery.py). Stress maps colour worst-case von Mises stress against the part's "
          "own 98th percentile, to show the load paths, on the shape bent by the worst load case, "
-         "exaggerated; the margin against the material is the SF.", ""]
+         "exaggerated; the margin against the material is the SF. \"Under envelope\" compares each part "
+         "with its design space filled solid, not with a conventionally designed part. All numbers are "
+         "simulated ([VALIDATION.md](VALIDATION.md)).", ""]
     for r in cases:
         g += [f"## {r['case']}", "", _caption(r), ""]
         b = r.get("best") or {}

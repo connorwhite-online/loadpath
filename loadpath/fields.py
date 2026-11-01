@@ -1,5 +1,5 @@
 """
-Field-driven design, nTop style: a part is a graph of implicit fields that an
+Field-driven (implicit) design: a part is a graph of implicit fields that an
 agent writes as JSON (or builds in Python), and every operation can be driven
 by another field.
 
