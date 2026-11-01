@@ -713,7 +713,15 @@ STUDY_SCHEMA = {
                                                          "which the searches are tuned to, but a design "
                                                          "made of one-cell walls can come out several "
                                                          "times softer than the optimizer's model (the "
-                                                         "camera boom: 16x)."}},
+                                                         "camera boom: 16x)."},
+                                      "pitchStarts": {
+                                          "oneOf": [{"type": "integer", "minimum": 1, "maximum": 5},
+                                                    {"const": "auto"}],
+                                          "description": "Searches run on this many grids 1% apart in "
+                                                         "pitch, keeping the lightest passing part: one grid's "
+                                                         "result can swing 25-140% with a 1% pitch change. "
+                                                         "'auto' (default): 3 for safety-factor and deflection "
+                                                         "searches up to 30k cells with no pitch given, else 1."}},
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
         "gravity": {**_VEC3, "description": "m/s², the part's own weight in every load case"},

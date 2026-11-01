@@ -48,7 +48,11 @@ def voxelize(mesh, pitch: float, box=None, fractional=False):
         return _voxel_fractions(mesh, pitch, box)
     mlo = np.asarray(mesh.bounds, float)[0]
     lo, hi = (np.asarray(b, float) for b in box) if box is not None else np.asarray(mesh.bounds, float)
-    dims = np.maximum(np.ceil((hi - lo) / pitch).astype(int), 1)
+    # a box a whole number of cells across (a design grid's) must come out
+    # that many: (hi - lo) / pitch rounds to just over n at some pitches
+    # (the arm link's 57 cells read 58 at 2.887 mm, and its access report
+    # failed on the shape mismatch)
+    dims = np.maximum(np.ceil((hi - lo) / pitch - 1e-6).astype(int), 1)
     origin = lo - 0.5 * (dims * pitch - (hi - lo))
     xs = origin[0] + (np.arange(dims[0]) + 0.5) * pitch
     ys = origin[1] + (np.arange(dims[1]) + 0.5) * pitch
@@ -93,7 +97,7 @@ def voxelize(mesh, pitch: float, box=None, fractional=False):
 
 def _voxel_fractions(mesh, pitch, box=None, sub=3):
     lo, hi = (np.asarray(b, float) for b in box) if box is not None else np.asarray(mesh.bounds, float)
-    dims = np.maximum(np.ceil((hi - lo) / pitch).astype(int), 1)
+    dims = np.maximum(np.ceil((hi - lo) / pitch - 1e-6).astype(int), 1)
     origin = lo - 0.5 * (dims * pitch - (hi - lo))
     # the sub-columns are one bool grid at pitch/sub in x and y; each z
     # interval's overlap with each cell is added exactly

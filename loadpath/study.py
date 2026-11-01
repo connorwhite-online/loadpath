@@ -163,9 +163,12 @@ class StudyResult:
     best: int | None
     seconds: float
     warnings: list = field(default_factory=list)
+    # resolution.pitchStarts: each grid's pitch, pick and whether it passed
+    starts: list | None = None
 
     def to_dict(self) -> dict:
         return {
+            **({"pitchStarts": self.starts} if self.starts else {}),
             "name": self.study.name,
             "domain": self.domain,
             "outcomes": [o.summary() for o in self.outcomes],
@@ -538,6 +541,64 @@ def _parallel(studies: list, on_progress, should_stop) -> list:
     return results
 
 
+# resolution.pitchStarts: the extra grids are this much coarser each (coarser
+# so maxElements still holds), and "auto" runs 3 up to this many cells
+PITCH_STEP = 0.01
+PITCH_STARTS_MAX_CELLS = 30_000
+
+
+def pitch_starts(study: Study) -> int:
+    """How many grids the study's search runs on (resolution.pitchStarts).
+
+    One grid's answer is a sample, not the answer: the search's mass swings
+    with sub-percent changes of the pitch, because the optimizer settles in
+    a different layout and the verified stress, read near supports and
+    sharp junctions, differs between layouts. Over six pitches 0-5% apart,
+    the 16 coarse-tier safety-factor cases ranged 24% from lightest to
+    heaviest (median; 138% at worst, corpus-bracket-4 82-196 g) and 3 of 96
+    runs failed. Paired runs of the coarse tier 3% apart in pitch, one grid
+    against three (the lightest passing of grids 1% apart): massAtTarget
+    spread mean 17% -> 10%, worst 80% -> 46%, delivered mass 8% lower, no
+    lost passes, 2.7x the time; the median spread did not move
+    (bench/results/pitch_starts.json, docs/BENCHMARKS.md)."""
+    v = (study.raw.get("resolution") or {}).get("pitchStarts", "auto")
+    if v == "auto" and os.environ.get("LOADPATH_PITCH_STARTS"):
+        v = int(os.environ["LOADPATH_PITCH_STARTS"])     # the default, for a whole run (evals)
+    if v != "auto":
+        return int(v)
+    g = study.goal
+    if g.safety_factor is None and g.max_deflection is None and not _durability_drives(study):
+        return 1
+    if study.pitch:
+        return 1
+    return 3 if cell_cap(study) <= PITCH_STARTS_MAX_CELLS else 1
+
+
+def _run_pitches(study: Study, starts: int, on_progress, should_stop) -> StudyResult:
+    """The search on `starts` grids, PITCH_STEP coarser each; the result of
+    the grid whose lightest part passes (or of the first grid when none
+    does), with every grid's pick in result.starts."""
+    import dataclasses
+
+    p0 = float(study.pitch) if study.pitch else build_domain(study).pitch
+    studies = [dataclasses.replace(study, pitch=p0 * (1.0 + PITCH_STEP * k)) for k in range(starts)]
+    t0 = time.time()
+    results = _parallel(studies, on_progress, should_stop)
+    rows = []
+    for st, r in zip(studies, results):
+        o = r.outcomes[r.best] if r.best is not None else None
+        rows.append({"pitch": st.pitch, "mass": o.report["mass"] if o is not None else None,
+                     "passes": bool(o is not None and o.passes), "outcomes": len(r.outcomes)})
+    passing = [i for i, x in enumerate(rows) if x["passes"]]
+    k = min(passing, key=lambda i: rows[i]["mass"]) if passing else 0
+    r = results[k]
+    rows[k]["picked"] = True
+    r.starts = rows
+    r.study = study
+    r.seconds = time.time() - t0
+    return r
+
+
 def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     """on_progress(event: dict, xphys | None) is called with
     {"stage": "domain"|"optimize"|"mesh"|"verify"|"outcome", ...}.
@@ -555,8 +616,10 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         study = choose_build_direction(study, on_progress=on_progress)["study"]
     mats = study.materials or [study.material]
     if len(mats) == 1:
-        return _build_sim(_slice(_process_checks(_run_single(study, on_progress, should_stop), on_progress),
-                                 on_progress), on_progress)
+        starts = pitch_starts(study)
+        r = (_run_single(study, on_progress, should_stop) if starts <= 1 else
+             _run_pitches(study, starts, on_progress, should_stop))
+        return _build_sim(_slice(_process_checks(r, on_progress), on_progress), on_progress)
     t0 = time.time()
     outcomes, warnings, domain = [], [], None
     for r in _parallel([dataclasses.replace(study, material=m, materials=[m]) for m in mats],

@@ -1,0 +1,1345 @@
+{
+ "about": "Coarse eval tier. 'singleGridAtPitch': each safety-factor case searched on one grid at pitch p0*scale (p0 = the case's default). 'paired': the whole coarse tier run with pitchStarts 1 and 3, at maxElements x1 and x0.91 (pitch ~3% coarser).",
+ "singleGridAtPitch": [
+  {
+   "case": "arm-link-cast",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 48.462197378825465,
+   "mass": 67.34630581473562,
+   "error": null
+  },
+  {
+   "case": "arm-link-cast",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 45.46391209386743,
+   "mass": 67.55434350514092,
+   "error": null
+  },
+  {
+   "case": "arm-link-cast",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 51.62180632692856,
+   "mass": 68.01321363429551,
+   "error": null
+  },
+  {
+   "case": "arm-link-cast",
+   "scale": 1.03,
+   "pass": false,
+   "massAtTarget": null,
+   "mass": null,
+   "error": "ValueError: operands could not be broadcast together with shapes (58,13,8) (58,12,8) "
+  },
+  {
+   "case": "arm-link-cast",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 45.83126046746646,
+   "mass": 77.25221806325224,
+   "error": null
+  },
+  {
+   "case": "arm-link-cast",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 44.89360117740987,
+   "mass": 80.03896782097974,
+   "error": null
+  },
+  {
+   "case": "arm-link-driven",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 46.286250929346544,
+   "mass": 50.04663254521901,
+   "error": null
+  },
+  {
+   "case": "arm-link-driven",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 46.28925014060836,
+   "mass": 50.34307636990416,
+   "error": null
+  },
+  {
+   "case": "arm-link-driven",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 48.417264725805026,
+   "mass": 51.14898799492974,
+   "error": null
+  },
+  {
+   "case": "arm-link-driven",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 46.32192267100593,
+   "mass": 52.85240303806098,
+   "error": null
+  },
+  {
+   "case": "arm-link-driven",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 47.691011069860316,
+   "mass": 59.26970569901889,
+   "error": null
+  },
+  {
+   "case": "arm-link-driven",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 46.53350266779363,
+   "mass": 56.8281921819248,
+   "error": null
+  },
+  {
+   "case": "arm-link",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 44.476455040167316,
+   "mass": 66.97656363392713,
+   "error": null
+  },
+  {
+   "case": "arm-link",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 44.25457647370629,
+   "mass": 67.17293569487383,
+   "error": null
+  },
+  {
+   "case": "arm-link",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 43.77961070180745,
+   "mass": 67.09236599361891,
+   "error": null
+  },
+  {
+   "case": "arm-link",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 46.75063333499473,
+   "mass": 63.69561166830534,
+   "error": null
+  },
+  {
+   "case": "arm-link",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 44.245272578295896,
+   "mass": 63.86913646467113,
+   "error": null
+  },
+  {
+   "case": "arm-link",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 44.003653066094856,
+   "mass": 65.3556515515212,
+   "error": null
+  },
+  {
+   "case": "bell-crank",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 27.400242147890797,
+   "mass": 27.400242147890797,
+   "error": null
+  },
+  {
+   "case": "bell-crank",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 24.60499751153732,
+   "mass": 31.217778478049,
+   "error": null
+  },
+  {
+   "case": "bell-crank",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 24.800247509245466,
+   "mass": 31.033117040510227,
+   "error": null
+  },
+  {
+   "case": "bell-crank",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 27.34075423132461,
+   "mass": 30.451175850741883,
+   "error": null
+  },
+  {
+   "case": "bell-crank",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 25.405598730902028,
+   "mass": 31.4697676442794,
+   "error": null
+  },
+  {
+   "case": "bell-crank",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 24.703901717976986,
+   "mass": 31.270324787119403,
+   "error": null
+  },
+  {
+   "case": "grip-turret",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 156.09165229469738,
+   "mass": 181.07067085067385,
+   "error": null
+  },
+  {
+   "case": "grip-turret",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 145.3602841967285,
+   "mass": 145.3602841967285,
+   "error": null
+  },
+  {
+   "case": "grip-turret",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 167.01408429477493,
+   "mass": 167.01408429477493,
+   "error": null
+  },
+  {
+   "case": "grip-turret",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 178.8210443865418,
+   "mass": 178.8210443865418,
+   "error": null
+  },
+  {
+   "case": "grip-turret",
+   "scale": 1.04,
+   "pass": false,
+   "massAtTarget": 156.52400180419374,
+   "mass": 192.91163054831827,
+   "error": null
+  },
+  {
+   "case": "grip-turret",
+   "scale": 1.05,
+   "pass": false,
+   "massAtTarget": 157.53241676270778,
+   "mass": 175.0596106545089,
+   "error": null
+  },
+  {
+   "case": "grip-upper-arm",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 192.3501479558316,
+   "mass": 250.0614487008669,
+   "error": null
+  },
+  {
+   "case": "grip-upper-arm",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 239.94178750050037,
+   "mass": 281.9422043545755,
+   "error": null
+  },
+  {
+   "case": "grip-upper-arm",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 230.0045004538312,
+   "mass": 279.8857232752176,
+   "error": null
+  },
+  {
+   "case": "grip-upper-arm",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 225.10480088969365,
+   "mass": 281.1844494158596,
+   "error": null
+  },
+  {
+   "case": "grip-upper-arm",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 228.1861469484587,
+   "mass": 280.9861312904342,
+   "error": null
+  },
+  {
+   "case": "grip-upper-arm",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 240.42480241368736,
+   "mass": 287.22418160118457,
+   "error": null
+  },
+  {
+   "case": "grip-wrist-yoke",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 22.69771715666421,
+   "mass": 23.839587898042257,
+   "error": null
+  },
+  {
+   "case": "grip-wrist-yoke",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 27.787282129165124,
+   "mass": 30.79187787923724,
+   "error": null
+  },
+  {
+   "case": "grip-wrist-yoke",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 28.8190767468485,
+   "mass": 32.823825305492356,
+   "error": null
+  },
+  {
+   "case": "grip-wrist-yoke",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 23.588308813206503,
+   "mass": 37.05620422361381,
+   "error": null
+  },
+  {
+   "case": "grip-wrist-yoke",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 24.793078312117274,
+   "mass": 36.651082444400444,
+   "error": null
+  },
+  {
+   "case": "grip-wrist-yoke",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 21.69970268917333,
+   "mass": 36.335492710155236,
+   "error": null
+  },
+  {
+   "case": "mbb-beam",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 18.546999898354283,
+   "mass": 20.289034674364316,
+   "error": null
+  },
+  {
+   "case": "mbb-beam",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 28.732275366218204,
+   "mass": 29.530779983524365,
+   "error": null
+  },
+  {
+   "case": "mbb-beam",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 28.889387167806714,
+   "mass": 35.558421777897195,
+   "error": null
+  },
+  {
+   "case": "mbb-beam",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 15.743850598426523,
+   "mass": 15.743850598426523,
+   "error": null
+  },
+  {
+   "case": "mbb-beam",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 16.283028764881028,
+   "mass": 18.024734307933667,
+   "error": null
+  },
+  {
+   "case": "mbb-beam",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 28.480759126008202,
+   "mass": 35.879362322671014,
+   "error": null
+  },
+  {
+   "case": "printed-hook",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 28.153427551846605,
+   "mass": 28.153427551846605,
+   "error": null
+  },
+  {
+   "case": "printed-hook",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 36.278798659132846,
+   "mass": 47.08534829772783,
+   "error": null
+  },
+  {
+   "case": "printed-hook",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 49.61900027844189,
+   "mass": 63.15695523253075,
+   "error": null
+  },
+  {
+   "case": "printed-hook",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 37.897813640655386,
+   "mass": 47.91040102882184,
+   "error": null
+  },
+  {
+   "case": "printed-hook",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 37.11055889170054,
+   "mass": 45.353975694006344,
+   "error": null
+  },
+  {
+   "case": "printed-hook",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 42.25173930384951,
+   "mass": 61.60098293557555,
+   "error": null
+  },
+  {
+   "case": "wall-bracket",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 81.758289738498,
+   "mass": 99.31756221127253,
+   "error": null
+  },
+  {
+   "case": "wall-bracket",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 82.00120909919102,
+   "mass": 95.36895759438998,
+   "error": null
+  },
+  {
+   "case": "wall-bracket",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 84.20157827885414,
+   "mass": 102.14552073640549,
+   "error": null
+  },
+  {
+   "case": "wall-bracket",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 45.158555619071365,
+   "mass": 57.46577928313661,
+   "error": null
+  },
+  {
+   "case": "wall-bracket",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 40.69708240955763,
+   "mass": 40.69708240955763,
+   "error": null
+  },
+  {
+   "case": "wall-bracket",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 78.09875870438479,
+   "mass": 97.43597372510214,
+   "error": null
+  },
+  {
+   "case": "corpus-link-0",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 27.753706716104766,
+   "mass": 27.753706716104766,
+   "error": null
+  },
+  {
+   "case": "corpus-link-0",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 29.128178531865487,
+   "mass": 32.31676077433863,
+   "error": null
+  },
+  {
+   "case": "corpus-link-0",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 28.198040713325383,
+   "mass": 28.806435910676925,
+   "error": null
+  },
+  {
+   "case": "corpus-link-0",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 29.30646415016023,
+   "mass": 29.30646415016023,
+   "error": null
+  },
+  {
+   "case": "corpus-link-0",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 29.268704601342233,
+   "mass": 29.268704601342233,
+   "error": null
+  },
+  {
+   "case": "corpus-link-0",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 31.046851802311966,
+   "mass": 33.935753836003556,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-1",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 134.45503375592767,
+   "mass": 167.90154806624727,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-1",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 220.37754659579423,
+   "mass": 241.42760234588403,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-1",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 198.4407033585209,
+   "mass": 223.06462966062156,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-1",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 217.37093409816362,
+   "mass": 234.61765462489737,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-1",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 128.0071685324112,
+   "mass": 141.37171587200768,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-1",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 147.4510036417946,
+   "mass": 157.63047052136565,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-2",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 36.939237420550086,
+   "mass": 49.29848685359777,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-2",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 40.05974969282413,
+   "mass": 49.380536477333294,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-2",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 38.73316220670108,
+   "mass": 46.00712939361267,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-2",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 38.402187300888855,
+   "mass": 47.04536054245608,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-2",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 41.19326509606972,
+   "mass": 47.024281479049534,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-2",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 42.00766847861249,
+   "mass": 47.17992140174356,
+   "error": null
+  },
+  {
+   "case": "corpus-link-3",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 31.14084063493789,
+   "mass": 31.14084063493789,
+   "error": null
+  },
+  {
+   "case": "corpus-link-3",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 32.26163712804651,
+   "mass": 35.65250037802073,
+   "error": null
+  },
+  {
+   "case": "corpus-link-3",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 30.741053934557375,
+   "mass": 34.694961463551145,
+   "error": null
+  },
+  {
+   "case": "corpus-link-3",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 31.128065919718793,
+   "mass": 35.8547722141405,
+   "error": null
+  },
+  {
+   "case": "corpus-link-3",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 31.515114069513956,
+   "mass": 34.91606470935583,
+   "error": null
+  },
+  {
+   "case": "corpus-link-3",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 31.366983814157635,
+   "mass": 34.85689170859689,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-4",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 88.11940598393655,
+   "mass": 103.06666317193755,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-4",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 110.26441816239127,
+   "mass": 122.51559118897737,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-4",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 194.43834776567545,
+   "mass": 267.1856021195757,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-4",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 195.7570407385676,
+   "mass": 226.9896926710089,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-4",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 93.6134814875326,
+   "mass": 93.6134814875326,
+   "error": null
+  },
+  {
+   "case": "corpus-bracket-4",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 82.24795676160318,
+   "mass": 106.1456468122138,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-5",
+   "scale": 1.0,
+   "pass": true,
+   "massAtTarget": 130.04970020703254,
+   "mass": 132.88352481651995,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-5",
+   "scale": 1.01,
+   "pass": true,
+   "massAtTarget": 95.40566693129213,
+   "mass": 104.29827938341843,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-5",
+   "scale": 1.02,
+   "pass": true,
+   "massAtTarget": 79.12625861360112,
+   "mass": 79.12625861360112,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-5",
+   "scale": 1.03,
+   "pass": true,
+   "massAtTarget": 93.78489804878976,
+   "mass": 95.31150490732092,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-5",
+   "scale": 1.04,
+   "pass": true,
+   "massAtTarget": 85.71934987438006,
+   "mass": 89.42508565742439,
+   "error": null
+  },
+  {
+   "case": "corpus-tri-mount-5",
+   "scale": 1.05,
+   "pass": true,
+   "massAtTarget": 92.23607033148619,
+   "mass": 96.9782899842356,
+   "error": null
+  }
+ ],
+ "paired": {
+  "arm-link-cast": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 67.34630581473562,
+     "massAtTarget": 48.462197378825465,
+     "seconds": 119.72850799560547
+    },
+    {
+     "pass": true,
+     "mass": 78.19783047582735,
+     "massAtTarget": 43.96157965555953,
+     "seconds": 93.16954731941223
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 67.34630581473562,
+     "massAtTarget": 48.462197378825465,
+     "seconds": 340.0221791267395
+    },
+    {
+     "pass": true,
+     "mass": 77.47895926609841,
+     "massAtTarget": 55.54600667594858,
+     "seconds": 274.9860899448395
+    }
+   ]
+  },
+  "arm-link-driven": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 50.04663254521901,
+     "massAtTarget": 46.286250929346544,
+     "seconds": 63.243244647979736
+    },
+    {
+     "pass": true,
+     "mass": 51.35968972258946,
+     "massAtTarget": 46.144160122920944,
+     "seconds": 82.98162245750427
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 50.04663254521901,
+     "massAtTarget": 46.286250929346544,
+     "seconds": 222.38700318336487
+    },
+    {
+     "pass": true,
+     "mass": 50.605813893151435,
+     "massAtTarget": 46.999815341337545,
+     "seconds": 216.82926774024963
+    }
+   ]
+  },
+  "arm-link-sandwich": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 42.72677789524204,
+     "massAtTarget": null,
+     "seconds": 125.74026775360107
+    },
+    {
+     "pass": true,
+     "mass": 42.72677789524204,
+     "massAtTarget": null,
+     "seconds": 116.37617468833923
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 42.72677789524204,
+     "massAtTarget": null,
+     "seconds": 125.7979736328125
+    },
+    {
+     "pass": true,
+     "mass": 42.72677789524204,
+     "massAtTarget": null,
+     "seconds": 119.59805226325989
+    }
+   ]
+  },
+  "arm-link": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 66.97656363392713,
+     "massAtTarget": 44.67263250027323,
+     "seconds": 116.40212988853455
+    },
+    {
+     "pass": true,
+     "mass": 63.8205273416117,
+     "massAtTarget": 44.57511498260563,
+     "seconds": 82.49143266677856
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 66.97656363392713,
+     "massAtTarget": 44.476455040167316,
+     "seconds": 334.9091958999634
+    },
+    {
+     "pass": true,
+     "mass": 63.8205273416117,
+     "massAtTarget": 44.57511498260563,
+     "seconds": 256.6372764110565
+    }
+   ]
+  },
+  "bell-crank": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 32.37823634700997,
+     "massAtTarget": 27.387569174142612,
+     "seconds": 40.23040008544922
+    },
+    {
+     "pass": true,
+     "mass": 30.83865261547793,
+     "massAtTarget": 27.85438048738838,
+     "seconds": 35.9893479347229
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 27.400242147890797,
+     "massAtTarget": 27.400242147890797,
+     "seconds": 119.62814998626709
+    },
+    {
+     "pass": true,
+     "mass": 30.83865261547793,
+     "massAtTarget": 27.85438048738838,
+     "seconds": 105.08934497833252
+    }
+   ]
+  },
+  "grip-turret": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 181.07067085067385,
+     "massAtTarget": 156.09165229469738,
+     "seconds": 58.69754648208618
+    },
+    {
+     "pass": true,
+     "mass": 164.41982251120785,
+     "massAtTarget": 164.41982251120785,
+     "seconds": 62.697771072387695
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 145.3602841967285,
+     "massAtTarget": 145.3602841967285,
+     "seconds": 179.030193567276
+    },
+    {
+     "pass": true,
+     "mass": 164.41982251120785,
+     "massAtTarget": 164.41982251120785,
+     "seconds": 172.8461344242096
+    }
+   ]
+  },
+  "grip-upper-arm": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 250.0614487008669,
+     "massAtTarget": 192.3501479558316,
+     "seconds": 86.26335453987122
+    },
+    {
+     "pass": true,
+     "mass": 278.4961662738434,
+     "massAtTarget": 220.2970897230048,
+     "seconds": 64.83438611030579
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 250.0614487008669,
+     "massAtTarget": 192.3501479558316,
+     "seconds": 231.3162350654602
+    },
+    {
+     "pass": true,
+     "mass": 275.2384061445264,
+     "massAtTarget": 222.27057415070118,
+     "seconds": 594.5076031684875
+    }
+   ]
+  },
+  "grip-wrist-yoke": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 27.64669769818368,
+     "massAtTarget": 24.0235344842419,
+     "seconds": 48.42685413360596
+    },
+    {
+     "pass": true,
+     "mass": 35.70907119280753,
+     "massAtTarget": 29.67581458743774,
+     "seconds": 65.84574747085571
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 23.839587898042257,
+     "massAtTarget": 22.69771715666421,
+     "seconds": 119.930899143219
+    },
+    {
+     "pass": true,
+     "mass": 35.70907119280753,
+     "massAtTarget": 29.67581458743774,
+     "seconds": 203.48375988006592
+    }
+   ]
+  },
+  "lpbf-intercooler-core": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": null,
+     "massAtTarget": null,
+     "seconds": 40.14157509803772
+    },
+    {
+     "pass": true,
+     "mass": null,
+     "massAtTarget": null,
+     "seconds": 40.90014171600342
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": null,
+     "massAtTarget": null,
+     "seconds": 39.90080547332764
+    },
+    {
+     "pass": true,
+     "mass": null,
+     "massAtTarget": null,
+     "seconds": 43.29385495185852
+    }
+   ]
+  },
+  "mbb-beam": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 23.768786200728133,
+     "massAtTarget": 22.156783032158103,
+     "seconds": 61.17647576332092
+    },
+    {
+     "pass": true,
+     "mass": 21.59279066073336,
+     "massAtTarget": 19.466966419000762,
+     "seconds": 51.03899812698364
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 20.289034674364316,
+     "massAtTarget": 18.546999898354283,
+     "seconds": 128.12579488754272
+    },
+    {
+     "pass": true,
+     "mass": 21.59279066073336,
+     "massAtTarget": 19.466966419000762,
+     "seconds": 142.5555455684662
+    }
+   ]
+  },
+  "motor-mount": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 26.39491687456947,
+     "massAtTarget": 19.192653841169793,
+     "seconds": 46.98600435256958
+    },
+    {
+     "pass": true,
+     "mass": 25.595626466587074,
+     "massAtTarget": 22.46102709794575,
+     "seconds": 39.48875117301941
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 26.39491687456947,
+     "massAtTarget": 19.192653841169793,
+     "seconds": 46.97543239593506
+    },
+    {
+     "pass": true,
+     "mass": 25.595626466587074,
+     "massAtTarget": 22.46102709794575,
+     "seconds": 41.4448676109314
+    }
+   ]
+  },
+  "printed-hook": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 28.153427551846605,
+     "massAtTarget": 28.153427551846605,
+     "seconds": 38.876025676727295
+    },
+    {
+     "pass": true,
+     "mass": 48.14620595831507,
+     "massAtTarget": 44.17438584497236,
+     "seconds": 48.48328876495361
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 28.153427551846605,
+     "massAtTarget": 28.153427551846605,
+     "seconds": 139.34999442100525
+    },
+    {
+     "pass": true,
+     "mass": 34.63842258626789,
+     "massAtTarget": 31.043189538307736,
+     "seconds": 167.633526802063
+    }
+   ]
+  },
+  "wall-bracket": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 96.38936109640042,
+     "massAtTarget": 81.51626466744688,
+     "seconds": 34.87375998497009
+    },
+    {
+     "pass": true,
+     "mass": 57.215818467418295,
+     "massAtTarget": 45.269625017042976,
+     "seconds": 33.07991409301758
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 95.36895759438998,
+     "massAtTarget": 82.00120909919102,
+     "seconds": 113.12636590003967
+    },
+    {
+     "pass": true,
+     "mass": 56.191256372237135,
+     "massAtTarget": 56.191256372237135,
+     "seconds": 88.51600956916809
+    }
+   ]
+  },
+  "corpus-link-0": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 28.515280741660664,
+     "massAtTarget": 28.515280741660664,
+     "seconds": 38.74151825904846
+    },
+    {
+     "pass": true,
+     "mass": 29.49946508008336,
+     "massAtTarget": 29.49946508008336,
+     "seconds": 35.375778675079346
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 27.753706716104766,
+     "massAtTarget": 27.753706716104766,
+     "seconds": 158.28877711296082
+    },
+    {
+     "pass": true,
+     "mass": 29.157968693858983,
+     "massAtTarget": 28.49046883714823,
+     "seconds": 140.28788352012634
+    }
+   ]
+  },
+  "corpus-bracket-1": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 167.90154806624727,
+     "massAtTarget": 139.91315526560257,
+     "seconds": 54.42820167541504
+    },
+    {
+     "pass": true,
+     "mass": 245.50290457827197,
+     "massAtTarget": 216.78770210673392,
+     "seconds": 50.076412200927734
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 167.90154806624727,
+     "massAtTarget": 134.45503375592767,
+     "seconds": 158.296484708786
+    },
+    {
+     "pass": true,
+     "mass": 200.87321187472486,
+     "massAtTarget": 125.96122897709074,
+     "seconds": 135.34488439559937
+    }
+   ]
+  },
+  "corpus-tri-mount-2": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 49.29848685359777,
+     "massAtTarget": 36.939237420550086,
+     "seconds": 35.851966381073
+    },
+    {
+     "pass": true,
+     "mass": 46.01932824667528,
+     "massAtTarget": 38.30617226743844,
+     "seconds": 33.03239893913269
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 46.00712939361267,
+     "massAtTarget": 38.73316220670108,
+     "seconds": 105.36134552955627
+    },
+    {
+     "pass": true,
+     "mass": 46.01932824667528,
+     "massAtTarget": 38.30617226743844,
+     "seconds": 98.4536817073822
+    }
+   ]
+  },
+  "corpus-link-3": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 31.14084063493789,
+     "massAtTarget": 30.169443847774478,
+     "seconds": 44.20597577095032
+    },
+    {
+     "pass": true,
+     "mass": 34.851246880263595,
+     "massAtTarget": 31.11512730108915,
+     "seconds": 43.29660773277283
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 31.14084063493789,
+     "massAtTarget": 31.14084063493789,
+     "seconds": 120.39162182807922
+    },
+    {
+     "pass": true,
+     "mass": 34.851246880263595,
+     "massAtTarget": 31.11512730108915,
+     "seconds": 123.65354824066162
+    }
+   ]
+  },
+  "corpus-bracket-4": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 96.86424925693525,
+     "massAtTarget": 84.75194548517459,
+     "seconds": 49.12167191505432
+    },
+    {
+     "pass": true,
+     "mass": 104.14605990056305,
+     "massAtTarget": 84.34614414290935,
+     "seconds": 37.46434426307678
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 103.06666317193755,
+     "massAtTarget": 88.11940598393655,
+     "seconds": 156.2999279499054
+    },
+    {
+     "pass": true,
+     "mass": 91.20919864307484,
+     "massAtTarget": 91.20919864307484,
+     "seconds": 107.0555260181427
+    }
+   ]
+  },
+  "corpus-tri-mount-5": {
+   "oneGrid": [
+    {
+     "pass": true,
+     "mass": 132.88352481651995,
+     "massAtTarget": 130.04970020703254,
+     "seconds": 66.01035904884338
+    },
+    {
+     "pass": true,
+     "mass": 137.3314835983529,
+     "massAtTarget": 134.36425469674083,
+     "seconds": 85.07242560386658
+    }
+   ],
+   "threeGrids": [
+    {
+     "pass": true,
+     "mass": 79.12625861360112,
+     "massAtTarget": 79.12625861360112,
+     "seconds": 139.05991506576538
+    },
+    {
+     "pass": true,
+     "mass": 79.2951570362889,
+     "massAtTarget": 79.2951570362889,
+     "seconds": 163.8953537940979
+    }
+   ]
+  }
+ }
+}
