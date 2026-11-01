@@ -182,6 +182,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     notes = []
     warnings += _preserve_cut(s)
     notes += _resting_supports(s)
+    notes += _glued_faces(s)
     w, n = _blind_bores(s)
     warnings += w
     notes += n
@@ -329,6 +330,45 @@ def _resting_supports(s) -> list[str]:
                        "rod, a cradle, a peg), it bears on a narrow line where the load pushes it: support a thin "
                        "box over that line instead (e.g. ±0.2 r wide, the hole's top), or the bending at the "
                        "opening is hidden")
+    except Exception:  # noqa: BLE001 - a lint
+        return out
+    return out
+
+
+def _glued_faces(s) -> list[str]:
+    """A support on a thin slab under a whole face, holding the face's normal,
+    in a study with bolts through that face: the part is held down
+    everywhere, as if glued to the plate, while a bolted foot is held only
+    where the bolts clamp it (the plate pushes, it does not pull). A load
+    that lifts or tips the part then reads far too stiff and strong: a hot
+    stepper bracket with its whole base fixed in z read SF 3.5, and 0.98
+    held under its two bolts (brief evals, 2026-11-01)."""
+    import numpy as np
+
+    out = []
+    try:
+        if not s.joints:
+            return out
+        lo, hi = s.bounds()
+        ext = np.maximum(hi - lo, 1e-9)
+        for sp in s.supports:
+            sh = sp.shape
+            if getattr(sh, "kind", None) != "box" or sp.pin:
+                continue
+            size = np.minimum(sh.hi, hi) - np.maximum(sh.lo, lo)
+            thin = int(np.argmin(size))
+            if size[thin] > 1.5 or not sp.fix[thin]:
+                continue
+            others = [a for a in range(3) if a != thin]
+            if np.prod(np.clip(size[others], 0, None)) < 0.4 * np.prod(ext[others]):
+                continue
+            axis = "xyz"[thin]
+            if not any(abs(np.asarray(j.get("axis", (0, 0, 0)), float)[thin]) > 0.9 for j in s.joints):
+                continue
+            out.append(f"supports: a slab over the whole {axis} face holds it in {axis} everywhere, as if glued "
+                       f"to what it sits on. A part bolted down is held only under its bolts (the plate pushes, "
+                       f"it cannot pull), so a load that lifts or tips it reads too strong: hold {axis} on a "
+                       "washer-sized disc under each bolt instead, unless the face really is bonded")
     except Exception:  # noqa: BLE001 - a lint
         return out
     return out

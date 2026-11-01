@@ -804,6 +804,14 @@ def test_fasteners_expand_to_rings_keepouts_and_preload():
     st = study_from_dict({**base, "fasteners": [
         {"id": "a", "size": "M4", "seat": [30, 0, 0], "direction": "-x", "grip": 20, "counterbore": 8}]})
     assert abs({r.id: r.shape for r in st.keep_out}["a-head"].r - 4.0) < 1e-9
+    # a slab over the whole face the bolts go through glues it down: noted
+    from loadpath.tasks import _glued_faces
+    glued = study_from_dict({**base, "supports": [{"shape": {"type": "box", "min": [29.5, -11, -11],
+                                                             "max": [30.5, 11, 11]}, "fix": "x"}],
+                             "fasteners": [{"id": "a", "size": "M4", "seat": [30, 0, 0], "direction": "-x",
+                                            "grip": 20}]})
+    assert any("glued" in n for n in _glued_faces(glued))
+    assert not _glued_faces(study_from_dict(base))
     try:
         study_from_dict({**base, "fasteners": [
             {"id": "a", "size": "M4", "seat": [30, 0, 0], "direction": "-x", "grip": 20, "counterbore": 6}]})
@@ -829,6 +837,27 @@ def test_mesh_fidelity_counts_cells_the_mesh_dropped():
     half = trimesh.creation.box(bounds=[lo, [0.5 * (lo[0] + hi[0]), hi[1], hi[2]]])
     f = mesh_fidelity(d, xp, half)
     assert 0.4 < f["lostSolidCells"] < 0.6, f
+
+
+def test_run_status_notices_a_dead_run():
+    """A run killed outright cannot write its own end: `loadpath status`
+    checks the pid and says `died` instead of `running` forever."""
+    import json
+    import os
+    import tempfile
+
+    from loadpath.__main__ import run_status
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "status.json"), "w") as fh:
+        json.dump({"state": "running", "pid": 2 ** 22 + 12345, "started": 0}, fh)
+    assert run_status(d)["state"] == "died"
+    with open(os.path.join(d, "status.json"), "w") as fh:
+        json.dump({"state": "running", "pid": os.getpid(), "started": 1.0}, fh)
+    st = run_status(d)       # pytest's own process: alive, and its command line names loadpath's tests
+    assert st["state"] == "running" and st["elapsedSeconds"] > 0, st
+    assert run_status(os.path.join(d, "nope"))["state"] == "none"
+
 
 def test_viewer_page_carries_fields_and_history():
     """The viewer page embeds the part, its stress and displacement per
@@ -979,6 +1008,7 @@ TESTS = [
     test_heat_exchanger_rating_limits_and_geometry,
     test_fasteners_expand_to_rings_keepouts_and_preload,
     test_mesh_fidelity_counts_cells_the_mesh_dropped,
+    test_run_status_notices_a_dead_run,
     test_viewer_page_carries_fields_and_history,
     test_optimize_is_reproducible,
     test_restarts_deliver_the_lightest_confirmed_pick,

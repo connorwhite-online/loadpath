@@ -476,9 +476,14 @@ def _thermal(t, base_dir) -> Thermal | None:
         out.cycle = Cycle(period, on, n, steps, fw, fsf)
     if not out.temperatures and not any(h > 0 for *_, h, _ in out.convection):
         raise ValueError("thermal needs a way for heat out: a fixed temperature (temperatures) or convection")
-    if not out.temperatures and not out.heat and out.t_ref == out.ambient:
-        raise ValueError("thermal has nothing to do: no heat input, no fixed temperature, and the stress-free "
-                         "temperature is the ambient")
+    # a part that just runs warm (inside a 55 C enclosure): ambient alone,
+    # every cell at it, softened for it; with no heat and no fixed
+    # temperature it is that or nothing
+    if not out.temperatures and not out.heat and out.t_ref == out.ambient \
+            and (not out.soften or abs(out.ambient - 25.0) < 1.0):
+        raise ValueError("thermal has nothing to do: no heat input, no fixed temperature, the stress-free "
+                         "temperature is the ambient, and the ambient is room temperature (for a part that "
+                         "runs warm, set ambient to its service temperature)")
     return out
 
 

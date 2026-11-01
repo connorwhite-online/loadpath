@@ -234,7 +234,8 @@ def check_print(mesh, direction, process: str = "fdm", pitch: float | None = Non
     if bed["aspect"] > 4.0:
         warnings.append(f"stands {bed['aspect']:.1f}x taller than its narrowest base: it will wobble late in the "
                         "print; a brim or a lower orientation helps")
-    if out["supportArea"] > 0 and not n_islands:
+    if out["supportArea"] > 0 and not n_islands and process not in ("sls", "mjf", "binder", "lpbf"):
+        # (powder holds a polymer part up; LPBF counts supports by its own rules)
         warnings.append(f"needs build supports under {out['supportArea']:.0f} mm^2 of downward faces "
                         f"({out['supportVolume']:.0f} mm^3 of support; spans over {span_mm:g} mm count as "
                         "unbridgeable, set process.bridgeSpan for your printer): reorient, chamfer the "
