@@ -35,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-__all__ = ["narrowband_mc", "march_blocks", "peval", "watertight", "signed_volume", "shell_volumes"]
+__all__ = ["narrowband_mc", "march_blocks", "peval", "watertight", "signed_volume", "shell_volumes", "face_cross"]
 
 _BATCH = 2_000_000      # field samples per call
 _CHUNK = 250_000        # field samples per thread task
@@ -118,7 +118,12 @@ def _grid_points(lo, pitch, i0, n):
 
 
 def _eval(field, P):
-    return peval(field, P)
+    # grid samples (kept as float32 for marching cubes): lattice trig in
+    # single precision
+    from .lattice import single_precision
+
+    with single_precision():
+        return peval(field, P)
 
 
 def _lipschitz(field, lo, hi, pitch, n=20_000):
@@ -129,6 +134,35 @@ def _lipschitz(field, lo, hi, pitch, n=20_000):
     f = _eval(field, np.concatenate([P + e for e in E] + [P - e for e in E])).reshape(6, n)
     g = (f[:3] - f[3:]) / (2 * h)
     return float(np.sqrt((g * g).sum(axis=0)).max())
+
+
+_LOCAL = True
+_LOCAL_MARGIN = 3.0     # local slopes come from differences a leaf apart, which smooth over a steep spot
+
+
+def _local_lipschitz(fl, nl, step, margin, floor):
+    """A Lipschitz bound per leaf (blocks, nl**3): the steepest difference
+    between its leaf centre and the next one along each axis (inside its
+    block), over the spacing, times `margin`, never below `floor`. The global
+    bound is the steepest slope anywhere, and a TPMS sheet's distance
+    (value over gradient) climbs steeply round the gradient's zeros, deep
+    in the channels, far from any wall: there it is 20-30, which keeps
+    every leaf of a lattice. Next to a wall the slope is ~1-3, and the
+    field varies over a cell (millimetres), not a leaf, so the local slope
+    is the one that matters for whether the leaf reaches the surface."""
+    F = fl.reshape(-1, nl, nl, nl)
+    G = np.zeros_like(F)
+    with np.errstate(invalid="ignore"):
+        for ax in range(1, 4):
+            d = np.abs(np.diff(F, axis=ax))
+            d = np.where(np.isnan(d), 0.0, d)      # two empty leaves (inf - inf)
+            lo = [slice(None)] * 4
+            hi = [slice(None)] * 4
+            lo[ax] = slice(0, -1)
+            hi[ax] = slice(1, None)
+            G[tuple(lo)] = np.maximum(G[tuple(lo)], d)
+            G[tuple(hi)] = np.maximum(G[tuple(hi)], d)
+    return np.maximum(floor, margin * G / step).reshape(fl.shape)
 
 
 def narrowband_mc(field, lo, dims, pitch, block=32, leaf=4, lipschitz=None, margin=1.5, budget=None,
@@ -231,8 +265,11 @@ def march_blocks(field, lo, dims, pitch, block=32, leaf=4, lipschitz=None, margi
     rf = real.ravel()
     fl[rf] = _eval(field, Cl[rf])
     fl = fl.reshape(len(b0), -1)
+    Ll = L
+    if lipschitz is None and _LOCAL:
+        Ll = np.minimum(L, _local_lipschitz(fl, nl, lf * pitch, _LOCAL_MARGIN, max(1.0, margin)))
     lon = ((l0 == 0) | (l1 == ncells)).any(axis=2)
-    lact = real & ((np.abs(fl) <= L * hl.reshape(len(b0), -1) + pitch) | (lon & (fl < 0)))
+    lact = real & ((np.abs(fl) <= Ll * hl.reshape(len(b0), -1) + pitch) | (lon & (fl < 0)))
     keep = lact.any(axis=1)
     b0, b1, fl, lact = b0[keep], b1[keep], fl[keep], lact[keep]
 
@@ -312,10 +349,34 @@ def watertight(F, nv=None):
     return bool(len(e) < 4 or not np.any(e[1:-1:2] == e[2::2]))
 
 
+def face_cross(V, F):
+    """(b - a) x (c - a) for every face (a, b, c): twice its area along its
+    normal. Column by column, ~3x numpy's cross on (n, 3) rows."""
+    VT = np.ascontiguousarray(np.asarray(V, float).T)
+    a = VT[:, F[:, 0]]
+    b = VT[:, F[:, 1]]
+    c = VT[:, F[:, 2]]
+    b -= a
+    c -= a
+    out = np.empty((len(F), 3))
+    out[:, 0] = b[1] * c[2] - b[2] * c[1]
+    out[:, 1] = b[2] * c[0] - b[0] * c[2]
+    out[:, 2] = b[0] * c[1] - b[1] * c[0]
+    return out
+
+
+def _triple(V, F):
+    """a . (b x c) per face (six times its signed volume from the origin)."""
+    VT = np.ascontiguousarray(np.asarray(V, float).T)
+    a = VT[:, F[:, 0]]
+    b = VT[:, F[:, 1]]
+    c = VT[:, F[:, 2]]
+    return a[0] * (b[1] * c[2] - b[2] * c[1]) + a[1] * (b[2] * c[0] - b[0] * c[2]) + a[2] * (b[0] * c[1] - b[1] * c[0])
+
+
 def signed_volume(V, F):
     """Enclosed volume (divergence theorem), positive with outward normals."""
-    a, b, c = (V[F[:, i]] for i in range(3))
-    return float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum() / 6.0)
+    return float(_triple(V, F).sum() / 6.0)
 
 
 def shell_volumes(V, F):
@@ -330,8 +391,7 @@ def shell_volumes(V, F):
                       shape=(n, n))
     _, lab = connected_components(A, directed=False)
     fl = lab[F[:, 0]]
-    a, b, c = (V[F[:, i]] for i in range(3))
-    vol = np.bincount(fl, weights=np.einsum("ij,ij->i", a, np.cross(b, c)) / 6.0)
+    vol = np.bincount(fl, weights=_triple(V, F) / 6.0)
     # renumber to the shells that have faces
     used = np.unique(fl)
     ren = np.full(lab.max() + 1, -1)

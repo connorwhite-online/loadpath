@@ -211,6 +211,26 @@ def lattice_fit(kind: str) -> dict:
     raise ValueError(f"no homogenized fit for lattice {kind!r} (have {', '.join(list(SHEETS) + list(STRUTS))})")
 
 
+_SINGLE = [0]
+
+
+class single_precision:
+    """Inside this block (from any thread) gyroid and diamond take their
+    trig in single precision, on a phase reduced to one period in double:
+    numpy's float32 sin/cos are SIMD and ~30x faster than float64's, and
+    the value is still good to ~1e-7 of a cell near the surface (1e-6 mm
+    on a 7 mm cell). For sampling a grid for marching cubes (which keeps
+    float32 samples anyway); not for finite differences on a 1e-4 pitch
+    step, as the crease pass takes, where that noise is a 3% gradient."""
+
+    def __enter__(self):
+        _SINGLE[0] += 1
+        return self
+
+    def __exit__(self, *exc):
+        _SINGLE[0] -= 1
+
+
 def tpms(kind: str, pts: np.ndarray, cell: float) -> np.ndarray:
     """Approximate signed distance (mm) to the TPMS mid-surface, `cell` mm per
     period: the level-set value over its gradient's magnitude. Exact on the
@@ -219,14 +239,24 @@ def tpms(kind: str, pts: np.ndarray, cell: float) -> np.ndarray:
     if kind not in TPMS:
         raise ValueError(f"lattice type must be one of {sorted(TPMS)}, got {kind!r}")
     k = 2.0 * np.pi / cell
-    x, y, z = (k * pts[:, i] for i in range(3))
     if kind == "schwarz-p":
+        x, y, z = (k * pts[:, i] for i in range(3))
         f, grad = TPMS[kind]
         g = np.stack(grad(x, y, z), axis=-1) * k
         return f(x, y, z) / np.maximum(np.linalg.norm(g, axis=-1), 0.3 * k)
     # gyroid and diamond from one set of sines and cosines (the separate
-    # value and gradient functions above take each three times): the same
-    # expressions, so the same numbers, in a third of the trig
+    # value and gradient functions above take each three times)
+    if _SINGLE[0]:
+        two_pi = np.float32(2.0 * np.pi)
+        ph = []
+        for i in range(3):
+            u = pts[:, i] * (1.0 / cell)
+            u -= np.floor(u)
+            ph.append(u.astype(np.float32) * two_pi)
+        x, y, z = ph
+        k = np.float32(k)
+    else:
+        x, y, z = (k * pts[:, i] for i in range(3))
     sx, cx, sy, cy, sz, cz = np.sin(x), np.cos(x), np.sin(y), np.cos(y), np.sin(z), np.cos(z)
     if kind == "gyroid":
         f = sx * cy + sy * cz + sz * cx
@@ -237,7 +267,7 @@ def tpms(kind: str, pts: np.ndarray, cell: float) -> np.ndarray:
              sx * cy * sz - sx * sy * cz + cx * cy * cz - cx * sy * sz,
              sx * sy * cz - sx * cy * sz - cx * sy * sz + cx * cy * cz)
     gn = np.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * k
-    return f / np.maximum(gn, 0.3 * k)
+    return np.asarray(f / np.maximum(gn, 0.3 * k), np.float64)
 
 
 @lru_cache(maxsize=None)

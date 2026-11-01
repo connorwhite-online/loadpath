@@ -619,6 +619,57 @@ walls meet the body, and wherever a crease would touch those it is left
 rounded, so the worst point barely moves. The pass costs 2 to 4 times the
 meshing time on a lattice, a fraction of it on a solid. Not with `stream`.
 
+## Lattices as lattices: 3MF
+
+`"lattice3mf": true` (or `loadpath field graph.json --lattice-3mf`; needs
+`pip install "loadpath[3mf]"`, lib3mf) also writes `<name>-lattice.3mf`
+with every lattice kept as a lattice instead of its triangles
+(loadpath/lattice3mf.py):
+
+- a TPMS (gyroid, diamond, Schwarz P; sheet or network) is a level set of
+  the 3MF Volumetric & Implicit extension: the TPMS formula loadpath meshes,
+  written as an implicit function (about 50-90 nodes). What a field grades
+  is sampled into 3D images (16-bit PNG stacks, `grid` mm, default the
+  smaller of cell / 6 and 1 mm, one voxel of margin) the function reads:
+  the wall, an offset, and for a graded cell (warp grading) or a conformal
+  frame the lattice coordinates themselves, which are smooth, so the
+  surface stays within 0.05 mm of the field (0.015 mm p99);
+- a strut cell (cubic, BCC, octet, Kelvin, ...) is a beam lattice of the
+  Beam Lattice extension, each strut a beam with its radius at each end
+  from the thickness field. The same object carries the struts as
+  octagonal prisms inside the beams (a beam lattice object is its
+  triangles and its beams), so a mesh-only reader still gets the lattice,
+  about 1-10% thinner.
+
+Each lattice is clipped by its own region: the part with that lattice solid
+and the others gone, so a part can hold several (a gyroid core and an octet
+end, say). The rest of the part, skin, bosses and bores, is an ordinary
+mesh beside them; meshes are decimated to `decimate` mm (default 0.02).
+Where the graph unions a TPMS into the body with a `blend` (a number or a
+graded field, sampled like the wall), the level set is the blend itself,
+max(smin(body, lattice in its region, r), region), with body and region as
+signed distances to their meshes (the extension's mesh node), so the
+fillets carry over. Strut lattices meet the body sharp. The file is read
+back with lib3mf as a check (`lattice3mf.readBack`).
+
+Fidelity (Monte Carlo against the field, 150-200k points): box with a
+gyroid, graded cell, blended gyroid, gyroid plus octet: 0.13-0.23% of
+points differ (the 0.02 mm decimation). Arm link sandwich (graded blend
+radius): 0.22% with the blend, 1.3% when the fillets were dropped (they are
+about 4% of the part); 1.7 MB against a 37.7 MB STL, 2 minutes.
+
+Readers. lib3mf reads everything. PrusaSlicer 2.x reads neither extension
+and refuses any 3MF holding an object outside the build (the clip
+regions); with `"lattice3mf": {"meshReaders": true}` the regions are type
+"other" (which it skips; the Beam Lattice spec asks for "model", which
+lib3mf does not enforce) and the body goes into the beam lattice's mesh as
+one shell with the prisms, so PrusaSlicer opens and slices a strut lattice
+file as one part (box octet: 2427 mm3 of prisms + body against 2460 in the
+STL). A level set file needs an implicit-capable reader (few yet; ship the
+STL to the rest). Refused, with the reason in the report: cylindrical and
+spherical frames, blend grading, strut lattices with a graded cell, frame
+or offset, Voronoi foams.
+
 ## STEP
 
 `"step": true` (or `loadpath field graph.json --step`) also writes
@@ -630,7 +681,26 @@ face per triangle, decimated first to `"step": {"faces": 20000}` (about
 which readers rebuild and which were over half of it). The report gives the faces by type, the
 share of the area on exact geometry, the volume against the STL's, and what
 decimating cost (`decimated[].deviation`, mm). A lattice does not decimate
-and is refused: ship lattice parts as STL or 3MF.
+to a useful size, so for a graph with `lattice` nodes the STEP file is the
+part with every lattice solid: a sandwich's skin, bosses, bores and faces
+exactly as printed, which is all an assembly mates against or checks for
+interference, while the STL carries the lattice. `step.lattice` in the
+report says so, with the envelope's and the part's volumes (use the part's
+for mass) and `trueSurface`, the share of the STEP's outside that is the
+printed part's own surface: 1.0 under a closed skin, less where a lattice
+is open to the outside. Drain holes are in it, their bores true
+cylinders through the skin (blind, since the voids they drain are solid
+here); on the sandwich printed in MJF, 8 drain bores, 11.8 MB, patches
+within 0.087 mm, `trueSurface` 0.97. The arm link sandwich
+(`examples/fields/arm-link-sandwich.json`, pitch 0.4, `"surface": "smooth"`):
+4374 patches, 3 cylinders, 2 planes, 7.5 MB, patches within 0.023 mm p99 /
+0.079 mm max, `trueSurface` 1.0, 5 minutes with the part.
+
+Smooth patches straight over a lattice were tried and are not practical:
+on the sandwich's gyroid, 18k patches that did not make a valid solid and
+missed by about a millimetre at the knife-edge junctions with the skin. A
+part's sealed voids (a skin round its core) are kept, as inner shells of
+the one solid.
 
 Study parts carry their plan too (`loadpath run study.json --step`): the
 keep-outs, preserved shapes and design space are exact, the organic body
@@ -653,19 +723,28 @@ still true cylinders and planes (loadpath/brep.py). It works on the
 finished mesh, after the booleans, so OpenCascade never has to cut a
 smooth surface: triangles on exact surfaces are labelled, the mesh is
 coarsened without moving a seam (`"patches"`, default 2000, counts the
-organic triangles left), pairs of triangles become one quintic patch
-through points of the surface, and each exact region becomes one face
+organic triangles to start from), pairs of triangles become one cubic
+patch through points of the surface, and each exact region becomes one face
 bounded by its seams (one whose seams will not make a valid face, such as
 a seam that doubles back, is patched instead and reported as
 `exactDemoted`). A result that is not a valid solid within 0.2% of
 the mesh's volume falls back to facets, with a warning in `decimated`.
-The report's `decimated[0].deviation` is the distance (mm) from the
-patches to the mesh. Measured (re-read from the file):
+Then the layout is refined where it misses: each patch is sampled on a
+9 x 9 grid and each edge curve at 12 points against the mesh, and the
+edges of patches more than 0.07 mm off are split (the one bending most
+for a bad patch, every edge that misses), up to 8 rounds, so tight bends
+get small patches and flat sweeps stay big (`refinedEdges`). Points are
+written to 5 decimals and shared points written once, which with cubic
+patches keeps the file well under the faceted one. The report's
+`decimated[0].deviation` is the distance (mm) from the patches to the
+mesh; the mesh's own flat facets sag off big bores by more than that
+(0.22 mm on the arm link), so the bores and planes, exact, are left out of
+it. Measured (re-read from the file):
 
 | part | STEP faces | deviation p99 / max | volume vs STL | size (facets) | time |
 | --- | --- | --- | --- | --- | --- |
-| GRIP turret | 2065 patches, 24 cylinders, 19 planes | 0.048 / 0.5 mm | -0.0005% | 12.2 MB (14.4 MB) | 25 s build, 3 min with the check |
-| arm link field graph (solid) | 2074 patches, 8 cylinders, 6 planes | 0.031 / 0.26 mm | -0.009% | 11.7 MB (12.7 MB) | 20 s build, 1 min with the check |
+| GRIP turret | 3624 patches, 24 cylinders, 20 planes | 0.046 / 0.081 mm | -0.01% | 6.8 MB (14.4 MB) | 3.4 min |
+| arm link field graph (solid) | 2351 patches, 10 cylinders, 6 planes | 0.033 / 0.077 mm | -0.009% | 4.2 MB (12.7 MB) | 85 s |
 
 Needs `embreex` (in the `step` extra) for fast ray casts: seconds
 instead of minutes on the turret. Lattices are refused as for facets.

@@ -165,7 +165,8 @@ def test_step_smooth_patches():
         assert rep["faces"].get("bspline", 0) >= 150 and not rep["faces"].get("facet"), rep["faces"]
         assert abs(rep["volume"] / b.volume - 1) < 0.002, (rep["volume"], b.volume)
         dev = rep["decimated"][0]["deviation"]
-        assert rep["decimated"][0]["patches"] < 400, rep["decimated"]
+        assert rep["decimated"][0]["patches"] < 450, rep["decimated"]        # pairs, plus refined bends
+        assert dev["max"] < 0.1, dev
         assert dev["p99"] < 0.05, dev
         back = shape_to_trimesh(read_step(path), deflection=0.005, angle=0.05)
         assert np.percentile(mesh_distance(b, back.sample(5000)), 99) < 0.05
@@ -200,11 +201,39 @@ def test_smooth_step_keeps_the_bore_exact():
         assert BRepCheck_Analyzer(back).IsValid() and abs(_volume(back) / m.volume - 1) < 0.002, _volume(back)
 
 
+def test_smooth_step_keeps_sealed_voids():
+    """A body with sealed voids inside (a sandwich's skin round its lattice
+    core): one solid, an outer shell and one inner shell per void."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    import trimesh
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
+    from loadpath.step import _volume
+
+    b = trimesh.creation.icosphere(4, radius=15)
+    v = b.vertices
+    b.vertices = v * (1 + 0.1 * np.sin(v[:, 0] / 3))[:, None]
+    voids = [trimesh.creation.icosphere(3, radius=6), trimesh.creation.icosphere(3, radius=3)]
+    voids[1].apply_translation([0, 9, 0])
+    for h in voids:
+        h.invert()
+    m = trimesh.util.concatenate([b, *voids])
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "voids.step")
+        rep = export_step(m, path, surface="smooth", patches=600)
+        assert rep["valid"] and rep["solids"] == 1 and not rep["faces"].get("facet"), rep
+        assert abs(rep["volume"] / m.volume - 1) < 0.002, (rep["volume"], m.volume)
+        back = read_step(path)
+        assert BRepCheck_Analyzer(back).IsValid() and abs(_volume(back) / m.volume - 1) < 0.002, _volume(back)
+
+
 TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact_where_the_field_rounds_it,
          test_mesh_distance_matches_trimesh, test_step_keeps_the_bore_a_cylinder,
          test_study_part_exports_exact_interfaces, test_run_field_reports_edges_and_writes_step,
          test_collapse_keeps_holes, test_step_smooth_patches,
-         test_smooth_step_keeps_the_bore_exact]
+         test_smooth_step_keeps_the_bore_exact, test_smooth_step_keeps_sealed_voids]
 
 
 def main():

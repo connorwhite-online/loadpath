@@ -336,13 +336,16 @@ def _md_spread(rows):
     if not rows:
         return ""
     lines = ["", "Run-to-run spread: massAtTarget (g) with the search started at each fraction", "",
-             "| Case | Starts | massAtTarget g | Spread |", "| --- | --- | --- | --- |"]
+             "| Case | Starts | massAtTarget g | Spread | Delivered g | Spread |",
+             "| --- | --- | --- | --- | --- | --- |"]
     for r in rows:
         sp = r["spread"]
         fmt = lambda v: "-" if v is None else f"{v:.1f}"  # noqa: E731
         rng = "-" if sp.get("range") is None else f"{100 * sp['range']:.1f}%"
+        mrng = "-" if sp.get("massRange") is None else f"{100 * sp['massRange']:.1f}%"
         lines.append(f"| {r['case']} | {', '.join(str(x['start']) for x in sp['runs'])} | "
-                     f"{', '.join(fmt(x['massAtTarget']) for x in sp['runs'])} | {rng} |")
+                     f"{', '.join(fmt(x['massAtTarget']) for x in sp['runs'])} | {rng} | "
+                     f"{', '.join(fmt(x.get('mass')) for x in sp['runs'])} | {mrng} |")
     return "\n".join(lines) + "\n"
 
 
@@ -557,8 +560,13 @@ def _spread(raw: dict, base: str, row: dict, tier: str) -> dict:
         sc = score_case(r2, res, time.time() - t0, st, tier)
         runs.append({"start": r2["goal"]["volumeFraction"], "massAtTarget": (sc.get("pareto") or {}).get("massAtTarget"),
                      "mass": (sc.get("best") or {}).get("mass"), "pass": sc.get("pass")})
-    m = [x["massAtTarget"] for x in runs if x["massAtTarget"] is not None]
-    return {"runs": runs, "range": (max(m) - min(m)) / min(m) if len(m) > 1 and min(m) > 0 else None}
+    def rng(key):
+        v = [x[key] for x in runs if x.get(key) is not None]
+        return (max(v) - min(v)) / min(v) if len(v) > 1 and min(v) > 0 else None
+    # range: of massAtTarget (the front's mass at the goal SF); massRange: of
+    # the delivered part's mass, which can swing wider (the wall bracket:
+    # 68.7, 80.6, 71.4 g delivered, 67.1, 71.9, 68.9 g at target)
+    return {"runs": runs, "range": rng("massAtTarget"), "massRange": rng("mass")}
 
 
 def compare(rows, base_rows, tolerance=0.05):

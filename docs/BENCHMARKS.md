@@ -235,6 +235,54 @@ draw with plate fins (within -10% to +8% depending on grid and geometry).
 The next places a lattice should win are where plates can't follow the
 heat: several dies, a non-straight flow path, or liquid cold plates.
 
+## Lattices in a liquid cold plate
+
+The case where a lattice should have its best chance (`bench/cold_plate.py`,
+results in `bench/cold_plate.json`): water, three dies at different powers
+(25, 25 and 15 W under a 24 x 24 mm AlSi10Mg plate, 1.5 mm base, 2.5 mm
+cavity), and a U-turn flow path with the inlet and outlet on the same side.
+Every design holds 30% of the cavity in metal touching the base and is rated
+at the same 1 kPa, port to port, by lattice Boltzmann water flow then
+conjugate heat (energy balance to 1e-6). Score: the hottest die's peak rise
+over the inlet water, lower is better. Each family's parameter was swept on
+the coarse grid; the best of each was then rated on finer grids.
+
+| Design (best of its family) | 0.25 mm | 0.1875 mm | 0.15 mm |
+| --- | --- | --- | --- |
+| Gyroid 3 mm, graded over the dies (Gaussian 4 mm, 0.15-0.55 solid) | **35.9 K** | 35.4 K | **32.3 K** |
+| Curved channels along the streamlines, 10 channels | 40.4 K | **35.3 K** | 32.6 K |
+| Uniform gyroid, 3 mm cells | 42.0 K | 39.4 K | |
+| Staggered pin fins, 3 mm pitch | 43.1 K | 42.5 K | |
+
+Swept on the coarse grid and dropped: pins at 1.5, 2 and 4 mm pitch (46.7-47.0 K),
+6 and 8 channels (51.9 and 43.9 K), gyroid cells of 2 and 4 mm (50.0 and 43.1 K),
+and other grading widths and cells (36.3-37.8 K).
+
+What it says:
+
+- **The die-graded gyroid ties the best curved channels.** It is 1% ahead at
+  0.15 mm and 0.3% behind at 0.1875 mm. That is inside the grid error: every
+  design is still dropping by about 8% per refinement, and channels improve
+  fastest (their 0.5 mm walls are the least resolved feature).
+- **Grading is what makes the lattice competitive.** Putting the metal over
+  the dies beats the uniform gyroid by 10% and the pins by 17% at 0.1875 mm.
+  Those gaps are larger than the grid trend.
+- **The channels here are not naive.** They follow the empty cavity's
+  streamlines, so a straight-channel design would do worse in this U-turn
+  plate. A designer who has the streamlines ties the lattice. Pins, the usual
+  printable default, lose clearly.
+- Lattices still haven't clearly won a thermal case. Next: grade the
+  channels too (thicker walls over the dies), or grade the lattice by the
+  conjugate solution rather than by die position, then rate both on a
+  finer grid.
+- Method note: the averaged lattice Boltzmann velocity does not conserve
+  volume cell by cell. Interpolated to faces and used for upwind advection,
+  it lost 99% of the heat on this plate. `conjugate.solve_heat(...,
+  project=True)` first projects the face fluxes onto volume-conserving ones
+  (least squares, the inlet held), and the balance then closes to 1e-6. The
+  air heat sink results above used the conservative form, which balances
+  globally by construction.
+
 ## Gaps found
 
 Fixed in this round:
@@ -327,6 +375,22 @@ Open, as next work:
    time, but the arm link gets heavier (60.5 g), the GRIP wrist yoke's solve
    fails at 1.2 mm, and the wrist link did not finish in 90 minutes. So the
    default search and the evals keep their grids.
+
+   Where the deflection gap comes from (arm link, 0.5 mm, 1.2 mm grid): the
+   optimizer reads deflection on its eroded design, which is about 25%
+   floppier than the blueprint it delivers (0.48 mm eroded, 0.38 mm
+   blueprint). Holding the limit on the blueprint instead (blueprint solved
+   every 5 iterations and at each beta, eroded reading scaled by
+   blueprint/eroded) made the first run 52 g at 0.51 mm on the blueprint, but
+   the meshed part verified at 0.79 mm. The thresholded voxels also read 0.50
+   mm, so the stiffness is lost in reconstruction or in how verification
+   applies the loads, not in grey cells, and the loss depends on the layout
+   (verified/blueprint 0.97, 1.44, 1.57 in three runs, with mass matching the
+   voxels). The robust erosion had been absorbing it. With the outer limit
+   search the study ended at 57.7 g in 80 minutes (59.6 g in 19 minutes
+   without the correction), still heavier than the default search's 55.4 g,
+   so it was not adopted. The next target is that voxel-to-mesh stiffness
+   loss on light layouts.
 2. **Spread loads on regions that are not faces.** A load over a region too
    small or too chunky to count as a face is still not pinned, and on a
    coarse grid its nodes can end on void (a 24x6x8 bridge does this). The

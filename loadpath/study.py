@@ -1277,6 +1277,12 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             o = run_one(vf)
             outcomes.append(o)
             m = o.report["margin"]
+            if m >= 1.0 and o.report.get("bodies", 1) > 1:
+                # strong enough but in pieces (a fastener's rings or an
+                # unloaded pad left floating) is a failed outcome: step up
+                # about a third, more material reconnects it. It used to
+                # count as passing and end the search with no passing part.
+                m = 0.8
             if m >= 1.0:
                 hi_pass = (vf, m) if hi_pass is None or vf < hi_pass[0] else hi_pass
             else:

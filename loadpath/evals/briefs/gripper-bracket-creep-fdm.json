@@ -1,0 +1,340 @@
+{
+ "id": "gripper-bracket-creep-fdm",
+ "brief": "Bracket between my arm's wrist-roll flange and the gripper, PETG on an FDM printer, printed on its\nside with layers along +Z. The flange is a vertical face at x = 0 (the roll axis is X); the bracket\nhas a 4 mm mounting plate on it (x = 0 to 4, y and z = -15 to 15) held by four M3 socket screws\nalong X at (y, z) = (+/-12, +/-12) through 3.4 mm holes, heads on the plate's x = 4 face, and each\nneeds a 7 mm diameter clear column along +X right out to the end of the part for the hex key. The\ngripper cable runs along the roll axis: keep a 10 mm diameter hole clear along X through the whole\npart. At the far end the gripper bolts onto a 4 mm pad (x = 56 to 60, y = -15 to 15, z = -8 to 8)\nwith two M3 screws into heat-set inserts at (y, z) = (+/-10, 0): 4 mm holes, 6 mm deep from the x =\n60 face. The part fits in x = 0 to 60, y and z = -18 to 18. The gripper with what it carries is 0.9\nkg with its centre of mass 40 mm beyond the pad (x = 100) on the axis, and gravity is -Z. The arm\nparks holding it like that for most of the day: about 20,000 hours over its life, inside an\nenclosure that sits at 55 C. Moving, it sees the same 0.9 kg at 2 g, and the roll servo can stall at\n0.6 N·m about X with the gripper jammed. Safety factor 2 on the moving and stall loads, and 2\nagainst creep rupture under the parked load at 55 C. Under 20 g.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "fdm",
+  "creep",
+  "temperature",
+  "moment"
+ ],
+ "gold": {
+  "name": "gripper-bracket-creep-fdm",
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0.0,
+     -18.0,
+     -18.0
+    ],
+    "max": [
+     60.0,
+     18.0,
+     18.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "mount-plate",
+    "shape": {
+     "type": "box",
+     "min": [
+      0.0,
+      -15.0,
+      -15.0
+     ],
+     "max": [
+      4.0,
+      15.0,
+      15.0
+     ]
+    }
+   },
+   {
+    "id": "pad",
+    "shape": {
+     "type": "box",
+     "min": [
+      56.0,
+      -15.0,
+      -8.0
+     ],
+     "max": [
+      60.0,
+      15.0,
+      8.0
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m3",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -1.0,
+        12,
+        12
+       ],
+       "p1": [
+        5.0,
+        12,
+        12
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -1.0,
+        -12,
+        12
+       ],
+       "p1": [
+        5.0,
+        -12,
+        12
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -1.0,
+        12,
+        -12
+       ],
+       "p1": [
+        5.0,
+        12,
+        -12
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -1.0,
+        -12,
+        -12
+       ],
+       "p1": [
+        5.0,
+        -12,
+        -12
+       ],
+       "r": 1.7
+      }
+     ]
+    }
+   },
+   {
+    "id": "heads",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        4.0,
+        12,
+        12
+       ],
+       "p1": [
+        61.0,
+        12,
+        12
+       ],
+       "r": 3.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        4.0,
+        -12,
+        12
+       ],
+       "p1": [
+        61.0,
+        -12,
+        12
+       ],
+       "r": 3.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        4.0,
+        12,
+        -12
+       ],
+       "p1": [
+        61.0,
+        12,
+        -12
+       ],
+       "r": 3.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        4.0,
+        -12,
+        -12
+       ],
+       "p1": [
+        61.0,
+        -12,
+        -12
+       ],
+       "r": 3.5
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "cable",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      61.0,
+      0.0,
+      0.0
+     ],
+     "r": 5.0
+    },
+    "bore": false
+   },
+   {
+    "id": "inserts",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        54.0,
+        10.0,
+        0.0
+       ],
+       "p1": [
+        61.0,
+        10.0,
+        0.0
+       ],
+       "r": 2.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        54.0,
+        -10.0,
+        0.0
+       ],
+       "p1": [
+        61.0,
+        -10.0,
+        0.0
+       ],
+       "r": 2.0
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m3",
+    "fix": "yz"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -0.5,
+      -15.0,
+      -15.0
+     ],
+     "max": [
+      0.3,
+      15.0,
+      15.0
+     ]
+    },
+    "fix": "x"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "parked",
+    "hours": 20000,
+    "loads": [
+     {
+      "region": "inserts",
+      "mass": 0.9,
+      "dynamic": 1,
+      "gravity": "-z",
+      "at": [
+       100.0,
+       0.0,
+       0.0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "moving",
+    "loads": [
+     {
+      "region": "inserts",
+      "mass": 0.9,
+      "dynamic": 2,
+      "gravity": "-z",
+      "at": [
+       100.0,
+       0.0,
+       0.0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "stall",
+    "loads": [
+     {
+      "region": "inserts",
+      "moment": [
+       600.0,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "durability": {
+   "temperature": 55,
+   "safetyFactor": 2,
+   "constrain": true
+  },
+  "material": "petg",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "durabilitySafetyFactor": 2,
+  "maxMass": 20.0
+ }
+}

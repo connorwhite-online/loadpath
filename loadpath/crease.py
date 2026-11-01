@@ -632,8 +632,10 @@ def label_masks(tree, V, pitch, tol=1e-5):
 
 
 def _face_normals(V, F):
-    n = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
-    return n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-300)
+    from .narrowband import face_cross
+
+    n = face_cross(V, F)
+    return n / np.maximum(np.sqrt(np.einsum("ij,ij->i", n, n))[:, None], 1e-300)
 
 
 # ---- clean-up: collapse the slivers and turned-over triangles the split leaves ------

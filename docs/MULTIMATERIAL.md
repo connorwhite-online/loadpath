@@ -192,6 +192,22 @@ at 199 N and weighs 243 g (two thirds TPU). The bracket needs the bumper's
 TPU loaded in compression (a striker plate on a rubber block), which this
 optimizer does not find on its own yet.
 
+**Bumper in compression** (`bumpered-bracket-compression.json`, 2026-11-01).
+The nose is a PETG plate, every cell within 15 mm of it is TPU where solid,
+and a gap keeps the shelf pad off the nose, so the knock has to cross
+rubber. The knock is judged at its own safety factor of 1.5. At 35% the
+optimizer grows a single TPU post from the plate to the arm: the knock
+stops at **98 N** (limit 150), PETG safety factor 2.2 at the knock and 20
+under the shelf, TPU 1.57. 95 g. The bond is the miss: **0.57** at the
+knock, at the edges of the post's ends. A bonded rubber block in
+compression bulges, and its edges shear the bond. Constraining the bond
+while the layout forms (with the materials free) lifts the knock's bond to
+1.24 but spreads TPU over half the part, and the shelf's bond drops to
+0.98. Fixing PETG everywhere outside the rubber zone made the bond worse
+(0.23 to 0.31).
+
+![bumper in compression](images/multimaterial-bracket-compression.png)
+
 ## Bond strengths
 
 `interface_library.py` (sources and test geometry in the module). MPa,
