@@ -497,6 +497,31 @@ def test_crosscheck_layered_beam():
     assert abs(r["safetyFactor"] - 0.6 * 50 / (5.28 * STRESS_ALLOWANCE)) < 0.08 * r["safetyFactor"], r["safetyFactor"]
 
 
+def test_crosscheck_calculix_layered():
+    # CalculiX on the same quadratic mesh, the layered FDM beam (layers
+    # stacked along it): engineering constants in the layers' frame and an
+    # *ORIENTATION on the build direction, the bond check from its stresses.
+    # It agreed with the native P2 solve to 4 digits.
+    import shutil
+    from loadpath.crosscheck import mesher_missing
+    if shutil.which("ccx") is None or mesher_missing():
+        print("  (skipped: CalculiX ccx not on PATH, or no tet mesher)")
+        return
+    import manifold3d as m3d
+    from loadpath.crosscheck import crosscheck
+    from loadpath.shapes import trimesh_from_manifold
+    st = study_from_dict(dict(BEAM, minMember=4, process={"type": "fdm", "buildDirection": "+x"}))
+    mesh = trimesh_from_manifold(m3d.Manifold.cube((100, 10, 10)).refine(20))
+    r = crosscheck(st, mesh, size=2.5, contact_band=12, backend="both")
+    a, b = r["cases"][0], r["calculix"]["cases"][0]
+    assert abs(a["deflection"] - b["deflection"]) < 0.01 * a["deflection"], (a["deflection"], b["deflection"])
+    assert abs(a["interlayerStress"] - b["interlayerStress"]) < 0.03 * a["interlayerStress"], \
+        (a["interlayerStress"], b["interlayerStress"])
+    assert abs(r["safetyFactor"] - r["calculix"]["safetyFactor"]) < 0.03 * r["safetyFactor"]
+    # Timoshenko with E across the layers 0.85 E and interlayer shear 0.75 G
+    assert 2.25 < b["deflection"] < 2.45, b["deflection"]
+
+
 def test_search_confirms_on_tets():
     # goal.confirm "tet": the delivered pick is the tet mesh's reading, at
     # or above the target, and the rest of the search is read through it

@@ -663,13 +663,11 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                                        for u in us])
         timings["native"] = time.time() - t1
     if backend in ("ccx", "both"):
-        if el is not mat.nu and not isinstance(el, float):
-            raise ValueError("the CalculiX backend solves isotropic elasticity only; a layered process "
-                             "needs backend='native'")
         # the same quadratic mesh, held nodes and nodal forces: only the
-        # solver and its stress recovery differ
+        # solver and its stress recovery differ (a layered material as
+        # engineering constants in the frame of its layers)
         t2 = time.time()
-        out["ccx"] = summarize(_solve_ccx(mat, nodes, conn, supports, loads, len(pts)))
+        out["ccx"] = summarize(_solve_ccx(mat, nodes, conn, supports, loads, len(pts), el, normal))
         timings["ccx"] = time.time() - t2
     if not out:
         raise ValueError(f"backend must be 'native', 'ccx' or 'both', not {backend!r}")
@@ -688,12 +686,41 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                      "seconds": time.time() - t0}
 
 
-def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices):
+def _ccx_material(mat, el) -> str:
+    """The *MATERIAL block: isotropic, or for a fem.Layered the same
+    transversely isotropic constants as engineering constants in the frame
+    of the layers (1, 2 in the layer, 3 along the build direction), with an
+    *ORIENTATION putting axis 3 on the layer normal; the section names it.
+    fem.Layered: E3 = ez E, nu12 = nu13 = nu23 = nu (so nu31 = nu ez),
+    G12 = E / 2(1 + nu), G13 = G23 = gz G12."""
+    from .fem import Layered
+
+    if not isinstance(el, Layered):
+        return (f"*MATERIAL,NAME=M\n*ELASTIC\n{mat.E:.9g},{float(el):.9g}\n"
+                "*SOLID SECTION,ELSET=PART,MATERIAL=M\n")
+    e, nu = mat.E, el.nu
+    g = e / (2.0 * (1.0 + nu))
+    z = np.asarray(el.normal, float)
+    # the local frame fem.Layered.c rotates from
+    a = np.array([1.0, 0.0, 0.0]) if abs(z[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    x = np.cross(a, z)
+    x /= np.linalg.norm(x)
+    y = np.cross(z, x)
+    consts = (e, e, el.ez * e, nu, nu, nu, g, el.gz * g, el.gz * g)
+    return ("*MATERIAL,NAME=M\n*ELASTIC,TYPE=ENGINEERING CONSTANTS\n"
+            + ",".join(f"{v:.9g}" for v in consts[:8]) + f"\n{consts[8]:.9g}\n"
+            "*ORIENTATION,NAME=LAYERS,SYSTEM=RECTANGULAR\n" + ",".join(f"{v:.9g}" for v in (*x, *y)) + "\n"
+            "*SOLID SECTION,ELSET=PART,MATERIAL=M,ORIENTATION=LAYERS\n")
+
+
+def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=None):
     """The quadratic system solved by CalculiX (ccx on PATH): one Abaqus-
     style deck, one static step per load case. Returns [(u, von Mises at
-    the vertices)] per case, as the native solve does. CalculiX recovers
-    stress at its integration points and extrapolates to the nodes, a
-    different route from _nodal_von_mises."""
+    the vertices)] per case, as the native solve does, and with `normal`
+    (a layered study's build direction) the normal stress across the
+    layers too, (u, vm, sn). CalculiX recovers stress at its integration
+    points and extrapolates to the nodes, a different route from
+    _nodal_von_mises; its nodal stresses are in the global frame."""
     exe = shutil.which("ccx")
     if exe is None:
         raise RuntimeError("CalculiX (ccx) is not on PATH; install it (Debian: apt install calculix-ccx) "
@@ -718,8 +745,7 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices):
                     fh.write(f"*TRANSFORM,NSET=S{k},TYPE=C\n" + ",".join(f"{v:.9g}" for v in (*a, *b)) + "\n")
                     bc += [f"S{k},1,1", f"S{k},3,3"]
                 bc += [f"S{k},{a + 1},{a + 1}" for a in range(3) if fix[a]]
-            fh.write(f"*MATERIAL,NAME=M\n*ELASTIC\n{mat.E:.9g},{mat.nu:.9g}\n"
-                     "*SOLID SECTION,ELSET=PART,MATERIAL=M\n*BOUNDARY\n" + "\n".join(bc) + "\n")
+            fh.write(_ccx_material(mat, mat.nu if el is None else el) + "*BOUNDARY\n" + "\n".join(bc) + "\n")
             for _name, f, _l in loads:
                 fh.write(f"*STEP\n*STATIC,SOLVER={solver}\n*CLOAD,OP=NEW\n")
                 i, c = np.nonzero(f)
@@ -733,7 +759,16 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices):
         steps = _read_frd(deck + ".frd", len(nodes))
     if len(steps) != len(loads):
         raise RuntimeError(f"CalculiX returned {len(steps)} steps for {len(loads)} load cases")
-    return [(u, vm[:n_vertices]) for u, vm in steps]
+    if normal is None:
+        return [(u, vm[:n_vertices]) for u, vm, _s in steps]
+    n = np.asarray(normal, float)
+    out = []
+    for u, vm, sig in steps:
+        sx, sy, sz, sxy, syz, szx = sig[:n_vertices].T
+        sn = (sx * n[0] ** 2 + sy * n[1] ** 2 + sz * n[2] ** 2
+              + 2.0 * (sxy * n[0] * n[1] + syz * n[1] * n[2] + szx * n[2] * n[0]))
+        out.append((u, vm[:n_vertices], sn))
+    return out
 
 
 # CalculiX's solver: its direct SPOOLES factorization up to this many
@@ -744,8 +779,9 @@ _CCX_SOLVER = None
 
 
 def _read_frd(path, n):
-    """Per step: displacements (n, 3) and nodal von Mises (n,) from a
-    CalculiX .frd result file (fixed-width records)."""
+    """Per step: displacements (n, 3), nodal von Mises (n,) and the nodal
+    stress (n, 6: xx, yy, zz, xy, yz, zx) from a CalculiX .frd result file
+    (fixed-width records)."""
     steps, u, s, block = [], None, None, None
     with open(path) as fh:
         for line in fh:
@@ -767,5 +803,5 @@ def _read_frd(path, n):
     for u, s in steps:
         sx, sy, sz, sxy, syz, szx = s.T
         out.append((u, np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2)
-                               + 3 * (sxy ** 2 + syz ** 2 + szx ** 2))))
+                               + 3 * (sxy ** 2 + syz ** 2 + szx ** 2)), s))
     return out
