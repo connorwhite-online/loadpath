@@ -325,7 +325,11 @@ def rate(kind, cell, wall, core_volume, lengths, duty, arrangement="cross", port
     out["effectivenessRange"] = lo_hi
     if None not in t:
         q = eff * cmin * (t[0] - t[1])
-        out["duty"] = q
+        # the heat moved, whichever fluid is listed first; dutySign is +1 when the first
+        # fluid is the hot one (it gives the heat), -1 when it takes it
+        out["duty"] = abs(q)
+        out["dutySign"] = 1 if q >= 0 else -1
+        out["hotFluid"] = names[0] if t[0] >= t[1] else names[1]
         out["tOut"] = {names[0]: t[0] - q / caps[0], names[1]: t[1] + q / caps[1]}
         out["tOutRange"] = {n: sorted(tin - (1 if i == 0 else -1) * e * cmin * (t[0] - t[1]) / caps[i]
                                       for e in lo_hi) for i, (n, tin) in enumerate(zip(names, t))}
@@ -377,10 +381,13 @@ def size_core(kind, core_volume, lengths, duty, arrangement="cross", port_diamet
     and mass (g, from the duty's wall material). Ranked by `objective`:
     "effectiveness" (best first) or "metal" (least solid first: the
     lightest core that meets the limits; thin the wall and keep the
-    hydraulic diameter, rather than grow the cell). `split` is the first
-    fluid's share of the void, or a list of shares to sweep too."""
-    if objective not in ("effectiveness", "metal"):
-        raise ValueError('objective is "effectiveness" or "metal"')
+    hydraulic diameter, rather than grow the cell; "mass" is the same), or
+    "pressure" (least of the worst fluid's share of its limit). `split` is
+    the first fluid's share of the void, or a list of shares to sweep
+    too. "solidVolume" and "coreMass" are the core's sheet only."""
+    objective = "mass" if objective == "metal" else objective
+    if objective not in ("effectiveness", "mass", "pressure"):
+        raise ValueError('objective is "mass" (or "metal"), "effectiveness" or "pressure"')
     cells = cells if cells is not None else np.arange(4.0, 20.01, 1.0)
     walls = walls if walls is not None else np.round(np.arange(min_wall, 2.01, 0.2), 2)
     splits = [float(x) for x in np.atleast_1d(split)]
@@ -406,7 +413,7 @@ def size_core(kind, core_volume, lengths, duty, arrangement="cross", port_diamet
                        "dh": {n: g["dh"] for n, g in zip(names, geo["sides"])},
                        "pressureDrop": {n: r["fluids"][n]["pressureDrop"] for n in names},
                        "duty": r.get("duty"), "solidVolume": solid,
-                       "mass": solid * density / 1000.0 if density else None}
+                       "coreMass": solid * density / 1000.0 if density else None}
                 lim = max_pressure_drop or {}
                 if not all(row["pressureDrop"][n] <= lim.get(n, np.inf) for n in names):
                     rejected.append(row)
@@ -414,8 +421,11 @@ def size_core(kind, core_volume, lengths, duty, arrangement="cross", port_diamet
                     rejected.append(row)
                 else:
                     ok.append(row)
-    if objective == "metal":
+    if objective == "mass":
         ok.sort(key=lambda x: (x["solidVolume"], -x["effectiveness"]))
+    elif objective == "pressure":
+        lim = max_pressure_drop or {}
+        ok.sort(key=lambda x: max(x["pressureDrop"][n] / lim.get(n, 1.0) for n in names))
     else:
         ok.sort(key=lambda x: -x["effectiveness"])
     return {"best": ok[0] if ok else None, "candidates": ok[:10], "objective": objective,

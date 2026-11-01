@@ -234,6 +234,11 @@ def check_print(mesh, direction, process: str = "fdm", pitch: float | None = Non
     if bed["aspect"] > 4.0:
         warnings.append(f"stands {bed['aspect']:.1f}x taller than its narrowest base: it will wobble late in the "
                         "print; a brim or a lower orientation helps")
+    if out["supportArea"] > 0 and not n_islands:
+        warnings.append(f"needs build supports under {out['supportArea']:.0f} mm^2 of downward faces "
+                        f"({out['supportVolume']:.0f} mm^3 of support; spans over {span_mm:g} mm count as "
+                        "unbridgeable, set process.bridgeSpan for your printer): reorient, chamfer the "
+                        "overhangs, or accept the supports")
     if n_islands:
         warnings.append(f"{n_islands} region(s) start in mid-air ({island_area:.0f} mm^2): they need support")
     mat = getattr(material, "name", material)

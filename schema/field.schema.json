@@ -148,7 +148,7 @@
             "patches": {
               "type": "integer",
               "minimum": 50,
-              "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch (default 2000)"
+              "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch, refined where it misses (default 2000)"
             }
           },
           "additionalProperties": false
@@ -619,7 +619,7 @@
             "solid",
             "homogenized"
           ],
-          "description": "auto (default): a part with a lattice is analyzed with the lattice homogenized (unit-cell stiffness and wall stress), else meshed and verified as a solid"
+          "description": "auto (default): a part with a lattice is analyzed with the lattice homogenized (unit-cell stiffness and wall stress), else meshed and verified as a solid; homogenized on a part with no lattice reads it on the same fill-weighted grid (thin skins without a fine mesh)"
         },
         "pitch": {
           "type": "number",
@@ -905,6 +905,11 @@
               "type": "number",
               "exclusiveMinimum": 0,
               "description": "mm: narrowest hole or gap the optimizer may leave (default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"
+            },
+            "bridgeSpan": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm: longest unsupported bridge the printer prints cleanly (default: 15 FDM, 5 resin, 2 LPBF); longer spans count as needing support"
             },
             "escapeHole": {
               "type": "number",

@@ -115,6 +115,11 @@ def unsupported(study: Study) -> str | None:
         return "a layered process (anisotropic stiffness and interlayer strength)"
     if any(ld.pressure for c in study.load_cases for ld in c.loads):
         return "pressure loads"
+    return mesher_missing()
+
+
+def mesher_missing() -> str | None:
+    """Why no tetrahedral mesh can be made here, or None when one can."""
     if not _has_tetwild():
         try:
             import gmsh  # noqa: F401  (availability check)
@@ -162,8 +167,11 @@ def _tetwild(mesh, size):
 
     import pytetwild
 
-    v = np.ascontiguousarray(mesh.vertices, np.float64)
-    f = np.ascontiguousarray(mesh.faces, np.int32)
+    # copies: the binding refuses a read-only array ("incompatible function
+    # arguments"), and ascontiguousarray hands a read-only mesh's own back,
+    # which failed every tet confirm, the study falling back to voxels
+    v = np.array(mesh.vertices, np.float64, order="C", copy=True)
+    f = np.array(mesh.faces, np.int32, order="C", copy=True)
     opts = dict(edge_length_abs=float(size), epsilon=TETWILD_EPSILON,
                 # its defaults (energy 10, 80 passes) took twice as long for
                 # a handful fewer elements under a tenth of regular quality

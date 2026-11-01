@@ -677,7 +677,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         from .printcheck import check_print
 
         report["print"] = check_print(mesh, build, process=proc.kind if proc is not None else "fdm",
-                                      material=mat)
+                                      material=mat, bridge_span=getattr(proc, "bridge_span", None))
 
     pitch = (vol / max_cells) ** (1.0 / 3.0)
     if min_pitch:

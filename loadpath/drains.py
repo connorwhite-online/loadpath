@@ -331,7 +331,7 @@ def drain_graph(g, process=None, opts: DrainOptions | None = None, build=None, m
             placed += len(new)
         if not placed:
             break
-        F = _apply(F0, fill, holes, lo, p, dims, k, _smin, Cylinder)
+        F = _apply(F0, fill, holes, lo, p, dims, k, _smin, Cylinder, outside0)
 
     # what is left sealed, after everything
     sealed_after = list(range(1, n + 1))
@@ -386,7 +386,7 @@ def drain_graph(g, process=None, opts: DrainOptions | None = None, build=None, m
     # into the graph: fill, bosses (smooth union), bores
     cur = base
     if fill.any():
-        sl, sdf = _fill_grid(fill, p)
+        sl, sdf = _fill_grid(fill, p, outside0)
         org = lo + np.array([s.start for s in sl]) * p
         g.sources["drain-fill"] = {"origin": org, "pitch": p, "values": sdf}
         hi_ = org + (np.array(sdf.shape) - 1) * p
@@ -412,21 +412,28 @@ def _cyl(a, b, rad):
     return {"type": "cylinder", "p0": np.round(a, 4).tolist(), "p1": np.round(b, 4).tolist(), "r": round(float(rad), 4)}
 
 
-def _fill_grid(mask, p):
+def _fill_grid(mask, p, outside=None):
     """The filled pockets as a local signed-distance grid, grown two voxels
     (the labelling's half voxel, and one more) into the walls round them:
     they are sealed, so that stays inside, and a fill that stopped short
     would leave a thin sealed shell of its own."""
     sl = ndimage.find_objects(mask.astype(np.int8))[0]
     sl = tuple(slice(max(s.start - 3, 0), min(s.stop + 3, n)) for s, n in zip(sl, mask.shape))
-    return sl, _mask_sdf(mask[sl], p) - 2.0 * p
+    sdf = _mask_sdf(mask[sl], p) - 2.0 * p
+    if outside is not None and outside[sl].any():
+        # never past the part's own outside: grown into a wall thinner than
+        # two voxels (a speck where a wall grazes the skin) the fill came
+        # through it, and stood 0.4-0.55 mm proud of a box the graph had
+        # already clipped the part to (an MJF riser, 2026-11-01)
+        sdf = np.maximum(sdf, _mask_sdf(~outside[sl], p))
+    return sl, sdf
 
 
-def _apply(F0, fill, holes, lo, p, dims, k, _smin, Cylinder):
+def _apply(F0, fill, holes, lo, p, dims, k, _smin, Cylinder, outside=None):
     """F0 with the fill, bosses and bores applied, as the graph will do it."""
     F = F0.copy()
     if fill.any():
-        sl, sdf = _fill_grid(fill, p)
+        sl, sdf = _fill_grid(fill, p, outside)
         F[sl] = np.minimum(F[sl], sdf)
     for h in holes:
         a, b, rad = h["boss"]

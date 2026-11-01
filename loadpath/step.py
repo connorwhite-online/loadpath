@@ -27,7 +27,8 @@ __all__ = ["attach_plan", "available", "export_step", "plan_of", "read_step", "s
 
 DEFAULT_FACES = 20_000      # organic facets in the B-rep: ~14 MB of STEP, ~20 s
 FUZZY = 1e-4                # boolean fuzz (mm): facets snapped onto exact faces
-DEFAULT_PATCHES = 2000      # surface="smooth": organic triangles of the patch layout (~1 quintic patch per 2)
+POINT_DECIMALS = 5          # mm places for written points (10 nm)
+DEFAULT_PATCHES = 2000      # surface="smooth": organic triangles to start the patch layout from (refined where it misses)
 
 
 def available():
@@ -472,7 +473,27 @@ def _planes(shape, out):
     return out
 
 
-def _smooth_shape(part, plan, patches, notes):
+def _bezier_faces(shape):
+    """A compound of the shape's Bezier and B-spline faces."""
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_BezierSurface, GeomAbs_BSplineSurface
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS, TopoDS_Compound
+
+    bb = BRep_Builder()
+    out = TopoDS_Compound()
+    bb.MakeCompound(out)
+    ex = TopExp_Explorer(shape, TopAbs_FACE)
+    while ex.More():
+        if BRepAdaptor_Surface(TopoDS.Face(ex.Current())).GetType() in (GeomAbs_BezierSurface, GeomAbs_BSplineSurface):
+            bb.Add(out, ex.Current())
+        ex.Next()
+    return out
+
+
+def _smooth_shape(part, plan, patches, notes, degree=None):
     """surface="smooth": the finished mesh as a B-rep of smooth patches with
     its exact faces exact (brep.py), or None (and a note) when that does not
     come out a valid solid within 0.2% of the mesh's volume."""
@@ -485,14 +506,16 @@ def _smooth_shape(part, plan, patches, notes):
     from .sharp import mesh_distance
 
     try:
-        solid, rep = smooth_brep(part, plan, patches)
+        solid, rep = smooth_brep(part, plan, patches, **({"order": int(degree)} if degree else {}))
         vol = _volume(solid)
         if not BRepCheck_Analyzer(solid).IsValid() or abs(vol - abs(part.volume)) > 2e-3 * abs(part.volume):
             raise RuntimeError(f"invalid or {abs(vol / abs(part.volume) - 1):.2%} off in volume")
     except Exception as e:  # noqa: BLE001 - facets always work
         notes.append({"warning": f"smooth surfaces failed ({e}); faceted instead"})
         return None
-    back = shape_to_trimesh(solid, deflection=0.005, angle=0.05)
+    # the patches against the mesh; the exact faces are the truth there (a
+    # mesh's facets sag off a big bore by more than the patches miss)
+    back = shape_to_trimesh(_bezier_faces(solid), deflection=0.005, angle=0.05)
     d = mesh_distance(part, back.sample(20000), cap=1.0)
     rep["deviation"] = {"mean": round(float(d.mean()), 4), "p99": round(float(np.percentile(d, 99)), 4),
                         "max": round(float(d.max()), 4)}
@@ -501,7 +524,7 @@ def _smooth_shape(part, plan, patches, notes):
 
 
 def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=True, surface="facets",
-                patches=DEFAULT_PATCHES):
+                patches=DEFAULT_PATCHES, degree=None):
     """Write `part` (a trimesh from a field graph or a study, or a CSG plan)
     to a STEP file at `path`. `faces` is the budget of organic facets; the
     exact shapes cost a handful of faces each. Returns a report: faces by
@@ -533,7 +556,7 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     budget = _organic_budget(plan, faces)
     shape = None
     if surface == "smooth":
-        shape = _smooth_shape(part, mesh_plan if mesh_volume is not None else None, patches, notes)
+        shape = _smooth_shape(part, mesh_plan if mesh_volume is not None else None, patches, notes, degree)
     if shape is None:
         shapes, _ = _build(plan, budget, faces, notes)
         shape = _fuse_all(shapes) if len(shapes) > 1 else shapes[0]
@@ -575,6 +598,7 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     if int(w.Write(str(path))) != 1:
         raise RuntimeError(f"OpenCascade could not write {path}")
+    _compact(path)
     from OCP.TopAbs import TopAbs_SOLID
     from OCP.TopExp import TopExp_Explorer
 
@@ -593,6 +617,51 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
         rep["decimated"] = notes
     rep["shape"] = shape
     return rep
+
+
+def _compact(path, decimals=POINT_DECIMALS):
+    """Rewrite a STEP file smaller: points to `decimals` places (mm; 10 nm
+    is a thousandth of the sewing tolerance) and each distinct point once.
+    Three quarters of a smooth STEP file is points, and a patch's edge poles
+    are the same points as its edge curve's and its neighbour's."""
+    import re
+
+    with open(path) as fh:
+        text = fh.read()
+    head, sep, rest = text.partition("DATA;")
+    data, sep2, tail = rest.partition("ENDSEC;")
+    if not sep or not sep2:
+        return
+    ents = re.split(r"\n(?=#\d+\s*=)", data)
+    num = re.compile(r"-?\d+\.\d*(?:E[-+]?\d+)?")
+    point = re.compile(r"#(\d+)\s*=\s*CARTESIAN_POINT\('([^']*)',\((.*)\)\)\s*;\s*$", re.DOTALL)
+
+    def short(x):
+        t = f"{float(x):.{decimals}f}".rstrip("0")
+        return "0." if t in ("-0.", "0.") else t
+
+    first, alias, out = {}, {}, []
+    for e in ents:
+        mo = point.match(e.strip())
+        if mo:
+            coords = ",".join(short(x) for x in num.findall(mo.group(3)))
+            key = (mo.group(2), coords)
+            if key in first:
+                alias[mo.group(1)] = first[key]
+                continue
+            first[key] = mo.group(1)
+            out.append(f"#{mo.group(1)} = CARTESIAN_POINT('{mo.group(2)}',({coords}));")
+        else:
+            out.append(e)
+    if alias:
+        ref = re.compile(r"#(\d+)")
+        body = []
+        for e in out:
+            lhs, eq, rhs = e.partition("=")
+            body.append(lhs + eq + ref.sub(lambda m: "#" + alias.get(m.group(1), m.group(1)), rhs) if eq else e)
+        out = body
+    with open(path, "w") as fh:
+        fh.write(head + sep + "\n".join(x.strip("\n") for x in out) + "\n" + sep2 + tail)
 
 
 def read_step(path):

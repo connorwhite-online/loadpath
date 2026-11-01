@@ -236,8 +236,8 @@ def tpms(kind: str, pts: np.ndarray, cell: float) -> np.ndarray:
         g = (cx * sy * sz + cx * cy * cz - sx * sy * cz - sx * cy * sz,
              sx * cy * sz - sx * sy * cz + cx * cy * cz - cx * sy * sz,
              sx * sy * cz - sx * cy * sz - cx * sy * sz + cx * cy * cz)
-    g = np.stack(g, axis=-1) * k
-    return f / np.maximum(np.linalg.norm(g, axis=-1), 0.3 * k)
+    gn = np.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * k
+    return f / np.maximum(gn, 0.3 * k)
 
 
 @lru_cache(maxsize=None)

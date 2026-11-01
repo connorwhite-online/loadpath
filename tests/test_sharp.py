@@ -165,7 +165,8 @@ def test_step_smooth_patches():
         assert rep["faces"].get("bspline", 0) >= 150 and not rep["faces"].get("facet"), rep["faces"]
         assert abs(rep["volume"] / b.volume - 1) < 0.002, (rep["volume"], b.volume)
         dev = rep["decimated"][0]["deviation"]
-        assert rep["decimated"][0]["patches"] < 400, rep["decimated"]
+        assert rep["decimated"][0]["patches"] < 450, rep["decimated"]        # pairs, plus refined bends
+        assert dev["max"] < 0.1, dev
         assert dev["p99"] < 0.05, dev
         back = shape_to_trimesh(read_step(path), deflection=0.005, angle=0.05)
         assert np.percentile(mesh_distance(b, back.sample(5000)), 99) < 0.05

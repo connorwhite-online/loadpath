@@ -78,9 +78,19 @@ from .lattice import tpms
 from .reconstruct import _smooth_union
 from .shapes import Box, Cylinder, Shape, shape_from_spec
 
-__all__ = ["HeatExchangerSpec", "Zone", "design_heat_exchanger", "heat_exchanger_from_spec", "zones_for"]
+__all__ = ["HeatExchangerSpec", "Zone", "design_heat_exchanger", "grid_plan", "heat_exchanger_from_spec",
+           "zones_for"]
 
 _SQRT2 = np.sqrt(2.0)
+# the design's peak memory: about this many bytes per grid point (measured on the
+# design with fluid spaces and grids, 3-6M points: 350-390 B), plus the interpreter
+_BYTES_PER_POINT = 400.0
+_BASE_BYTES = 0.25e9
+# report warnings, per process: an internal ceiling area (mm^2, faces within 20 degrees
+# of level over a fluid) and trapped open space (mm^3) past which powder-bed metal
+# needs a look (the eval briefs' limits)
+_LPBF_FLAT_CEILING = 300.0
+_LPBF_TRAPPED = 20.0
 # plenum edges and roofs lean at 55 degrees from level, a margin on FDM's 45 (an edge's
 # lean is set on the surface, and spreads out over a convex one)
 _LEAN = 55.0
@@ -424,8 +434,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     lo, hi = clo - reach - 0.137 * step, chi + reach
     step = max(step, (float(np.prod(hi - lo)) / hx.max_points) ** (1.0 / 3.0))
     if step > hx.wall / 2.0:
-        raise ValueError(f"the heat exchanger needs a {step:.2f} mm grid for its size, too coarse for "
-                         f"{hx.wall:g} mm walls; shrink the core or raise max_points")
+        raise ValueError(_too_coarse(hx, float(np.prod(hi - lo)), step))
     pts, dims = _grid(lo, hi, step)
     # the lowest point of the part, where a port's gusset may stand
     bed = None
@@ -561,6 +570,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                        "portDiameter": zi["portDiameter"]}
                        for z, zi in zip(zones, zinfo)},
                    "warnings": warnings})
+    warnings += _process_warnings(hx, report)
     del side_a
     extra = ({"masks": masks, "lo": lo, "step": step, "dims": tuple(dims)},) if grids else ()
     if not fluid_meshes:
@@ -583,6 +593,85 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                 fm.invert()
             spaces[name] = fm
     return (mesh, report, spaces, *extra)
+
+
+def _too_coarse(hx, volume, step):
+    need = volume / (0.5 * hx.wall) ** 3
+    return (f"the heat exchanger needs a {step:.2f} mm grid for its size within its point cap "
+            f"({hx.max_points / 1e6:.1f}M points), too coarse for {hx.wall:g} mm walls (at most wall / 2 = "
+            f"{0.5 * hx.wall:.2f} mm). Shrink the core, thicken the wall, or raise the cap (`loadpath heatx "
+            f"--max-points {int(np.ceil(need / 1e6)) * 1_000_000}`: about "
+            f"{(_BASE_BYTES + _BYTES_PER_POINT * need) / 1e9:.1f} GB at its peak)")
+
+
+def _reach_estimate(hx, zones=None):
+    """How far past the core the design grid reaches (mm), without the zone
+    stage: a sideways zone's plenum is `header` deep, an up or down one a
+    55 degree cone over (at most) the core's half-width."""
+    zones = zones if zones is not None else zones_for(hx)
+    clo, chi = (np.asarray(b, float) for b in hx.core.bounds())
+    ext = chi - clo
+    cap = hx.cap if hx.cap is not None else hx.wall + 1.0
+    up = _unit(hx.build) if hx.build is not None else None
+    heights = [hx.header]
+    for z in zones:
+        if up is not None and abs(float(_unit(z.direction) @ up)) > 0.6:
+            across = [ext[i] for i in range(3) if abs(up[i]) < 0.5] or [ext.min()]
+            heights.append(max(0.5 * min(across) - cap, 0.0) * np.tan(np.radians(_LEAN)))
+    return max(heights) + hx.shell + hx.port_length + 4.0
+
+
+def grid_plan(hx) -> dict:
+    """The design grid before designing (milliseconds): its step (mm), point
+    count and estimated peak memory, and whether the point cap
+    (hx.max_points) leaves a grid fine enough for the wall (at most
+    wall / 2). The roofs' heights are estimated (a cone over the core's
+    half-width), so the real grid is no larger."""
+    clo, chi = (np.asarray(b, float) for b in hx.core.bounds())
+    reach = _reach_estimate(hx)
+    ext = chi - clo + 2.0 * reach
+    vol = float(np.prod(ext))
+    step = max(hx.step or hx.wall / 3.0, (vol / hx.max_points) ** (1.0 / 3.0))
+    points = float(np.prod(np.maximum(np.ceil(ext / step), 2)))
+    out = {"step": round(step, 4), "points": int(points), "maxPoints": int(hx.max_points),
+           "bounds": [np.round(clo - reach, 2).tolist(), np.round(chi + reach, 2).tolist()],
+           "peakMemoryGB": round((_BASE_BYTES + _BYTES_PER_POINT * points) / 1e9, 2),
+           "fits": bool(step <= hx.wall / 2.0 + 1e-12)}
+    if not out["fits"]:
+        out["error"] = _too_coarse(hx, vol, step)
+        out["maxPointsNeeded"] = int(np.ceil(vol / (0.5 * hx.wall) ** 3))
+        out["memoryNeededGB"] = round((_BASE_BYTES + _BYTES_PER_POINT * out["maxPointsNeeded"]) / 1e9, 1)
+    return out
+
+
+def _process_warnings(hx, report) -> list[str]:
+    """What the report shows past the process's limits (sizing.PROCESS_LIMITS):
+    the outer wall away from the ports' mouths, and in powder-bed metal,
+    internal ceilings and powder no opening reaches."""
+    from .sizing import PROCESS_LIMITS
+
+    lim = PROCESS_LIMITS.get(hx.process, PROCESS_LIMITS["fdm"])
+    out = []
+    w = report.get("minOuterWall")
+    if w is not None and w < lim["minWall"]:
+        out.append(f"the outer wall is {w:.2f} mm at {report.get('minOuterWallAt')} (away from the ports' mouths), "
+                   f"under {hx.process}'s {lim['minWall']:g} mm minimum: raise shell (now {hx.shell:g} mm)")
+    if hx.process == "lpbf":
+        ic = report.get("internalCeilings") or {}
+        if (ic.get("flatArea") or 0.0) > _LPBF_FLAT_CEILING:
+            out.append(f"{ic['flatArea']:.0f} mm^2 of internal ceiling within 20 degrees of level (worst near "
+                       f"{ic.get('worstAt')}), over {_LPBF_FLAT_CEILING:g} mm^2: lpbf cannot support anything "
+                       "inside. Keep closure on, try another build axis, a smaller cell or phase")
+        tv = report.get("trappedVolume") or 0.0
+        if tv > _LPBF_TRAPPED:
+            lt = report.get("largestTrapped") or {}
+            out.append(f"{tv:.1f} mm^3 of open space no port reaches ({report.get('trappedPockets')} pockets, the "
+                       f"largest {lt.get('volume', 0):.1f} mm^3 from {lt.get('from')} to {lt.get('to')}), over "
+                       f"{_LPBF_TRAPPED:g} mm^3: powder stays trapped there")
+        for n, p in (report.get("powder") or {}).items():
+            if (p.get("unreached") or 0.0) > 0:
+                out.append(f"{n}: {p['unreached']:.1f} mm^3 of its space no opening reaches: powder cannot get out")
+    return out
 
 
 # A surface within this many degrees of level is a ceiling over the channels
@@ -843,8 +932,12 @@ def _port(hx, zi, pts, up, bed):
     # teardrop: a 45 degree peak over the bore's top
     peak = np.maximum(np.maximum((l + u) / _SQRT2 - r, (l - u) / _SQRT2), np.maximum(-a, a - length - 2.0))
     bore = np.minimum(bore, peak)
-    # and the tube peaked the same over it, so its wall keeps its thickness there
-    tube = np.minimum(tube, np.maximum(np.maximum((l + u) / _SQRT2 - ro, (l - u) / _SQRT2), np.maximum(-a, a - length)))
+    # and the tube peaked the same over it, so its wall keeps its thickness there; it starts
+    # a shell back toward the core, so where the peak rises over a plenum's leaning top edge
+    # the bore's root is closed, not open to the air
+    back = hx.shell + 1.0
+    tube = np.minimum(np.minimum(tube, Cylinder(p0 - ax * back, p0, ro).sdf(pts)),
+                      np.maximum(np.maximum((l + u) / _SQRT2 - ro, (l - u) / _SQRT2), np.maximum(-a - back, a - length)))
     # gusset: under the tube, its underside rising 45 degrees from the wall to the tube's end
     under = (a - length - u - ro) / _SQRT2         # < 0 above the 45 degree plane
     gus = np.maximum(np.maximum(l - ro, u), np.maximum(np.maximum(-a, a - length), under))
@@ -906,11 +999,15 @@ def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap, 
     dist_out = ndimage.distance_transform_edt(~outside) * step
     near_mouth = np.zeros(int(np.prod(dims)), bool)
     pts = _grid_points(lo, dims, step)
+    up = _unit(hx.build) if hx.build is not None else None
     for zi in zinfo:
         p0, p1 = zi["port"]
+        ax = (p1 - p0) / np.linalg.norm(p1 - p0)
+        # a sideways port's teardrop bore peaks r sqrt(2) over its axis (_port): its mouth
+        # reaches that far, so the check leaves out that far too
+        r_m = 0.5 * zi["portDiameter"] * (_SQRT2 if up is not None and abs(float(ax @ up)) <= 0.7 else 1.0)
         sel = _port_box(hx, zi, pts, None, None)
-        near_mouth[sel] |= Cylinder(zi["exit"], p1 + (p1 - p0) / np.linalg.norm(p1 - p0) * 3.0,
-                                   0.5 * zi["portDiameter"] + hx.shell + 2 * step).sdf(pts[sel]) < 0
+        near_mouth[sel] |= Cylinder(zi["exit"], p1 + ax * 3.0, r_m + hx.shell + 2 * step).sdf(pts[sel]) < 0
     for a_, b_, r_ in mouths:
         a_, b_ = np.asarray(a_, float), np.asarray(b_, float)
         ax_ = (b_ - a_) / np.linalg.norm(b_ - a_)

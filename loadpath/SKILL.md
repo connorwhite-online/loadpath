@@ -45,8 +45,10 @@ field. `check` reports every problem at once: fix them all, then check again.
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and
-   the head and driver path clear, and adds a preload case. Don't draw a
-   solid boss round a screw.
+   the head and driver path clear, and adds a preload case. Heads default
+   to ISO 4762 socket heads (M3 5.5, M4 7, M5 8.5 mm); give `head` for a
+   washer or pan head and `counterbore` for the pocket's diameter. Don't
+   draw a solid boss round a screw.
 2. **Bound the design space** generously: the envelope the part may occupy,
    minus nothing (keep-outs are subtracted for you). Too tight a box is the
    most common reason a result looks like the box.
@@ -111,7 +113,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    `"buildDirection": "auto"` to let it compare all six (slower: every
    direction half-designed on a coarse grid, the best three finished; with
    no overhang control, one design checked per axis). `report.json` → `print` says whether it needs
-   support, its bridges, and whether the first layer holds; `run` writes a
+   support (a warning says so when it does), its bridges, and whether the
+   first layer holds; spans past `process.bridgeSpan` (mm; default 15 FDM)
+   count as needing support, so set it for your printer. `run` writes a
    `.3mf` per part already standing the right way up for the slicer.
    FDM outcomes are also sliced headless when PrusaSlicer is installed
    (`report.json` → `slicer`: `printTime` s, `filamentVolume` cm^3,
@@ -149,10 +153,14 @@ field. `check` reports every problem at once: fix them all, then check again.
    deliver the lightest part meeting both (report `warp`; on the demo
    bracket a 40% cut cost no measurable mass, 65% was infeasible at SF 2).
    `maxRecoaterLift` exists but the optimizer's lumped layers misjudge
-   lift: check `buildSim.recoater` on the result. For FDM (PETG, nylon, PP), the
-   limit runs on the elastic-bed model, but it has not yet met a limit on
-   a test part and reads 3-4x below `buildSim`: check FDM warp in
-   `report.buildSim`. Nylon and PP shrink from their crystallization
+   lift: check `buildSim.recoater` on the result. For FDM (PETG, nylon, PP), warp is
+   extrapolated to the printed layer (`printLayer`, default 0.2 mm), and
+   the limit is checked on each outcome's delivered part
+   (`report.warp.delivered`), because the optimizer's grid still reads it
+   2-3.5x low. On a bed-printed beam the lift barely moves with the shape,
+   so a tight FDM limit finds no part. Lower the warp with the process
+   instead: bed and chamber temperature, `bedAdhesion`, the orientation, or
+   PETG over nylon. Nylon and PP shrink from their crystallization
    temperature and warp far more than PETG. FDM: `bedAdhesion` (MPa) lets
    the first layer let go; `bedFailed` in the report means the part
    popped off. docs/BUILDSIM.md has the validation.
@@ -191,13 +199,19 @@ field. `check` reports every problem at once: fix them all, then check again.
    size), per-case numbers, and `warnings` gathered from every check (print,
    process, durability). Quote those numbers. To check any STL against a
    study later (an edited part, an older outcome):
-   `loadpath verify study.json part.stl` (its own grid, `--cells`, so it
+   `loadpath verify study.json part.stl` (its own grid, as the run's
+   outcome check; `--cells N` for a grid of about N cells, finer or not, so it
    reads a few percent off the run's fine re-check; quote `deliver` for a
    delivered part). `deliver.tetCrossCheck` says why the body-fitted check
    did not run when it did not. Then:
    - `safetyFactor` below target, or `passes: false` → raise the goal's
      volume fraction, the material, or check the loads are right;
    - `bodies` > 1 → something is not connected to a support;
+   - a "mesh lost N% of the optimized solid cells" warning (`meshFidelity`)
+     → the mesh came out thinner than the optimized design, so the part
+     reads softer than it should and the search picks a heavier outcome.
+     The verified numbers hold; if the part is too heavy, a hand-built
+     field graph of the same layout (`loadpath field`) can do better;
    - `keepOutIntrusion` / `preserveMissing` above ~1 mm³ → report a bug;
    - `p5Member` under the printer's minimum → raise `minMember`;
    - `durability.safetyFactor` under its target → `durability.constrain`,
@@ -279,12 +293,111 @@ field. `check` reports every problem at once: fix them all, then check again.
   a 47 mm charge-air port cost more than the core). `sizing.verify` then
   simulates a candidate whole; big cross cores skip the design and use
   `porous.simulate_box` (minutes; its header dp is an upper bound).
+  On the command line: `loadpath check exchanger.json` lints the spec and
+  prints the design grid (`gridStep`, `gridPoints`) and `peakMemoryGB`
+  (about 400 bytes a grid point) against what is free, in milliseconds.
+  `loadpath heatx spec.json --size --out DIR` writes `sizing.json` (the
+  ranked result) and `best.json` (the top spec) to DIR; `--objective`
+  is `mass`, `effectiveness` or `pressure` (as `sizing.objective`; the
+  flag wins), `--min-wall` and `--splits` narrow the sweep, `--axes xy|yx`
+  (or the spec's `axes`) pins which way the first fluid runs. Sized cores
+  sit centred in the envelope's frame ([0, 0, 0] to the envelope), so the
+  ports land inside it. The sizer returns only designs the design step can
+  mesh within its grid cap (16M points, a grid of at most wall / 2; thin
+  LPBF walls on a large core are dropped and `note` says so): raise it with
+  `--max-points N` for both steps if the machine has the memory. Its
+  `solidVolume` and `coreMass` are the core's sheet only; the design
+  report's `mass` (g, from `duty.wall`) is the whole part. `loadpath heatx`
+  refuses a design whose estimated peak is over the free memory (`--force`
+  runs it anyway) and keeps `status.json` in the out folder (`running` with
+  its stage, `done`, or `failed` with the error; a run killed for memory
+  stays `running` with its pid). `report.warnings` names an outer wall
+  under the process's minimum, and for lpbf over 300 mm^2 of flat internal
+  ceiling or over 20 mm^3 of trapped powder. The rating's `duty` is the heat
+  moved (W, positive whichever fluid is listed first; `dutySign` -1 when
+  the first fluid takes it, `hotFluid` names the hot one).
 - Holding a mesh from somewhere else (your own field model, a CAD export)?
   `loadpath_check_printability`, `loadpath_check_isolation` and
   `loadpath_check_fit` check it directly. From Python, `check_dfm` and
   `check_networks` also take the implicit field itself (`f(P) < 0` inside,
   with bounds), which skips meshing and is the fast path for a part built
   from a field.
+
+## Multi-material parts
+
+For a part printed in two to four materials at once (Bambu AMS, Prusa
+MMU/XL, IDEX, PolyJet): a rigid core with a TPU grip pad, a bumper, an
+isolator. Add a `multiMaterial` block; the optimizer places each material
+as well as the topology (`loadpath_schema` has every field):
+
+```json
+"multiMaterial": {
+  "materials": ["pla", "tpu"],
+  "assign": [{"region": "pad", "material": "tpu"},
+             {"region": "pivot-boss", "material": "pla"}],
+  "interfaceSafetyFactor": 2.0,
+  "export": {"slicer": "bambu", "extruders": {"pla": 1, "tpu": 2}}
+}
+```
+
+- `materials`: library names or custom objects; each keeps its own
+  stiffness, Poisson's ratio and strength. `assign` fixes cells to one
+  material: `region` (a preserve or keepOut id), a `shape`, or `near`
+  (`{"region" or "shape", "distance"}` mm from it, optionally `within` a
+  region); earlier entries win. Assign the bosses and bearing seats to the
+  rigid material and the pad to the soft one, or the optimizer may put
+  rubber round a pin. `maxFraction` / `minFraction` cap or floor a
+  material's share of the part.
+- `requirements` make it soft where it has to be: `knock` (`energy` J,
+  `maxForce` N: a bumper that stops a knock under that peak force) or
+  `indentation` (`relativeTo` a case with the same force spread out,
+  `atLeast` mm: a pad that gives). Those cases leave the stiffness
+  objective, so at least one other case must remain.
+- The bond: every interface face of the delivered bodies is checked against
+  the pair's strength (`interfaces: {"pla+tpu": {"tensile", "shear"}}`
+  overrides the sourced card; measure your printer's) at
+  `interfaceSafetyFactor` (default the goal's safetyFactor, else 2).
+  `interlock: true` interlaces the bodies in a beam lattice at the
+  interface and credits the bond with its gain. Stress beside supports and
+  load nodes is left out of the check; a body thinner than that band (a
+  2 mm pad loaded on its face) is checked closer in, and the report's
+  `warnings` say so. A material or bond no cell was read for is listed in
+  `unchecked`, and the design does not pass.
+- A safety-factor goal runs a short search over volume fractions; it starts
+  above the share of the design space that `preserve` fills (a warning says
+  when it moved the start).
+- Delivers, in `--out`: an STL per material (`<name>-<material>.stl`, the
+  study's coordinates), `<name>.3mf` (one object, one part per material
+  with its extruder; `export.slicer` picks the PrusaSlicer or Bambu/Orca
+  layout), `optimum.npz` (the design fields) and `report.json`: `mass`,
+  `materialMass`, `safetyFactor` (worst material), `interfaceSafetyFactor`
+  (worst bond), per case `materials` and `interfaces`, `requirementsMet`,
+  `passes`, `outcomes` (each fraction tried) and `print` (supports,
+  bridges, islands, when the study has a build direction). `report["3mf"]`
+  says where the 3MF puts the part: `"bed"` (default: build direction to
+  +z, on the bed at 128,128; `transform` maps study coordinates to the
+  file's) or `"study"` (`loadpath run --3mf-coordinates study`: identity,
+  as the STLs). `status.json`, `partial/` and the progress lines (an
+  `outcome` per fraction verified, with mass and safety factors per
+  material and bond) work as for one material.
+- Verify an edited multi-material part from Python (`loadpath verify` is
+  single-material). The bodies are in the study's coordinates and must not
+  overlap; list the stiff material first (a cell both claim goes to the
+  first):
+
+  ```python
+  import json, trimesh
+  from loadpath.spec import study_from_dict
+  from loadpath.multimat import verify_multimaterial
+  st = study_from_dict(json.load(open("study.json")), base_dir=".")
+  mm = st.multi_material
+  bodies = [(mm.index("pla"), trimesh.load("out/finger-pla.stl")),
+            (mm.index("tpu"), trimesh.load("out/finger-tpu.stl"))]
+  rep = verify_multimaterial(st, mm, bodies)
+  rep["safetyFactor"], rep["interfaceSafetyFactor"], rep.get("unchecked"), rep.get("warnings")
+  ```
+
+  Only what is connected to the supports is analysed.
 
 ## Printing direction
 

@@ -34,12 +34,15 @@ import numpy as np
 __all__ = ["coarsen", "label", "smooth_brep", "surfaces"]
 
 TOL = 0.005          # mm: a vertex this close to an exact surface lies on it
-PATCHES = 2000       # organic triangles of the layout (two make one patch)
+PATCHES = 2000       # organic triangles to start the layout from (two make one patch; refined where it misses)
 RAY_MAX = 3.0        # mm: farthest a patch point is pulled along its normal onto the surface
 CREASE = 40.0        # degrees: organic faces meeting sharper than this are separate smooth regions
 SEW = 0.01           # mm: sewing tolerance (exact faces' seams sit within TOL of the patches')
 ASPECT = 0.1         # least 2*area / longest edge^2 of a patch (equilateral 0.87)
 LEAN = 0.5           # least cosine between a patch's plane and the surface normal at its corners
+REFINE = 0.07        # mm: a patch or edge missing the mesh by more is split
+REFINE_ROUNDS = 8
+MIN_SPLIT = 0.3      # mm: shortest edge that splits
 ISLAND = 1.0         # mm^2: label regions smaller than this, inside one other region, join it
 TURN = 0.5           # least cosine between a coarsened face's normal and its old one
 
@@ -105,6 +108,44 @@ class Surf:
                                            float(self.r))
         return Geom_SphericalSurface(gp_Ax3(gp_Pnt(*map(float, self.c)), gp_Dir(0, 0, 1)), float(self.r))
 
+
+
+def _closest(mesh, P, edge=0.5, k=16):
+    """Closest points on a mesh to P and the normals there: trimesh's
+    closest_point gathers candidates by triangle bounding boxes, and an
+    exact boolean's slivers (a bore wall the length of the bore) make every
+    point a candidate of all of them, minutes on a part; here the mesh is
+    split to `edge` and each point tries the k nearest centroids."""
+    import trimesh
+    from scipy.spatial import cKDTree
+
+    from .fields import _closest_on_triangles
+
+    cache = getattr(mesh, "_loadpath_closest", None)
+    if cache is None or cache[0] != edge:
+        v, f = trimesh.remesh.subdivide_to_size(np.asarray(mesh.vertices, float),
+                                                np.asarray(mesh.faces, np.int64), max_edge=edge, max_iter=16)
+        tri = v[f]
+        nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-300)
+        cache = (edge, tri, nrm, cKDTree(tri.mean(axis=1)))
+        mesh._loadpath_closest = cache
+    _, tri, nrm, tree = cache
+    P = np.asarray(P, float).reshape(-1, 3)
+    k = min(k, len(tri))
+    out, nout = np.empty_like(P), np.empty_like(P)
+    for j in range(0, len(P), 100_000):
+        q = P[j:j + 100_000]
+        cand = tree.query(q, k=k)[1].reshape(len(q), k)
+        T = tri[cand]
+        Q = np.repeat(q[:, None], k, axis=1).reshape(-1, 3)
+        C = _closest_on_triangles(Q, T[:, :, 0].reshape(-1, 3), T[:, :, 1].reshape(-1, 3),
+                                  T[:, :, 2].reshape(-1, 3)).reshape(len(q), k, 3)
+        b = np.argmin(np.sum((C - q[:, None]) ** 2, axis=2), axis=1)
+        r = np.arange(len(q))
+        out[j:j + len(q)] = C[r, b]
+        nout[j:j + len(q)] = nrm[cand[r, b]]
+    return out, nout
 
 def _shape_surfaces(shape, out):
     from .shapes import Box, Cylinder, Shell, Sphere, Union
@@ -406,9 +447,9 @@ def _relax(W, F, lb, org, surfs, O, rounds=2, step=0.5):
         T = W + step * (A - W)
         o = free & (one >= O)
         if org is not None and o.any():
-            cp, _, tri = trimesh.proximity.closest_point(org, T[o])
+            cp, cn = _closest(org, T[o])
             vn = trimesh.Trimesh(W, F, process=False).vertex_normals[o]
-            ok = np.einsum("ij,ij->i", org.face_normals[tri], vn) > 0.5
+            ok = np.einsum("ij,ij->i", cn, vn) > 0.5
             idx = np.flatnonzero(o)
             W[idx[ok]] = cp[ok]
         for k, sf in surfs.items():
@@ -464,7 +505,7 @@ def _fit(P, tol):
     return GeomAPI_PointsToBSpline(arr, 2, 5, GeomAbs_C2, tol).Curve()
 
 
-def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
+def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
     """The part as an OpenCascade solid: exact faces on the plan's planes,
     cylinders and spheres, smooth B-spline patches elsewhere. Returns
     (solid, report). Raises if the construction fails."""
@@ -528,7 +569,7 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
 
     rays = RayMeshIntersector(org_mesh)
 
-    def pull(P, nrm):
+    def pull(P, nrm, reach=None):
         """Points onto the organic surface along the patch normal (the nearer
         hit either way, where the surface faces the same way); else the
         closest point, where its normal agrees; else left where they are."""
@@ -536,19 +577,24 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
             return P
         best = np.full(len(P), np.inf)
         out = P.copy()
+        lim = np.full(len(P), RAY_MAX) if reach is None else np.minimum(reach, RAY_MAX)
         for sgn in (1.0, -1.0):
             loc, ri, ti = rays.intersects_location(P, sgn * nrm, multiple_hits=False)
             if not len(ri):
                 continue
             d = np.linalg.norm(loc - P[ri], axis=1)
-            ok = (np.einsum("ij,ij->i", org_mesh.face_normals[ti], nrm[ri]) > 0.3) & (d < RAY_MAX) & (d < best[ri])
+            ok = (np.einsum("ij,ij->i", org_mesh.face_normals[ti], nrm[ri]) > 0.3) & (d < lim[ri]) & (d < best[ri])
             out[ri[ok]] = loc[ok]
             best[ri[ok]] = d[ok]
         miss = ~np.isfinite(best)
         if miss.any():
-            cp, _, tri = trimesh.proximity.closest_point(org_mesh, P[miss])
-            ok = np.einsum("ij,ij->i", org_mesh.face_normals[tri], nrm[miss]) > 0.3
+            cp, cn = _closest(org_mesh, P[miss])
             idx = np.flatnonzero(miss)
+            # where it faces the same way; else (a layout triangle wrapped
+            # round a thin wall's edge, its normal side-on to the surface)
+            # wherever it is within reach: a point left off the surface
+            # drags its whole patch off
+            ok = (np.einsum("ij,ij->i", cn, nrm[miss]) > 0.3) | (np.linalg.norm(cp - P[miss], axis=1) < lim[miss])
             out[idx[ok]] = cp[ok]
         return out
 
@@ -566,13 +612,16 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
         P = np.array(P, float)
         m, n = P.shape[:2]
         R = np.repeat(np.asarray(nrm, float)[:, None], n - 2, axis=1).reshape(-1, 3)
+        # the surface under a chord is never further from it than half its
+        # length: a hit beyond is another sheet (a thin wall's far side)
+        reach = np.repeat(0.5 * np.linalg.norm(P[:, -1] - P[:, 0], axis=1) + TOL, n - 2)
         for k in range(rounds + 1):
-            P[:, 1:-1] = pull(P[:, 1:-1].reshape(-1, 3), R).reshape(m, n - 2, 3)
+            P[:, 1:-1] = pull(P[:, 1:-1].reshape(-1, 3), R, reach).reshape(m, n - 2, 3)
             if k < rounds:
                 P = np.stack([resample(x, n) for x in P])
         return P
 
-    def build(attempt):
+    def build(attempt, refine=False):
         """Edges and faces from the coarse layout: (sewing, counts), or
         (None, regions to demote) when an exact region needs patches."""
         # every coarse edge: a polyline over the surface
@@ -603,9 +652,14 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
                 P = None
             else:
                 pth = _path(Gs, int(loc[vid[a]]), int(loc[vid[b]]), limit=4 * L + 1.0) if vid[a] >= 0 and vid[b] >= 0 else None
-                if pth is None:
-                    raise RuntimeError("no surface path for a patch edge")
-                P = V[sv[pth]]
+                if pth is not None:
+                    P = V[sv[pth]]
+                elif la >= O and lb >= O:            # between two patched regions: drape it
+                    nn = cfn[f0e] + cfn[f1e]
+                    inner.append(((a, b), pa * (1 - t17) + pb * t17, nn / max(np.linalg.norm(nn), 1e-300)))
+                    P = None
+                else:
+                    raise RuntimeError(f"no surface path for a seam edge ({vid[a]}, {vid[b]}, labels {la}, {lb})")
             poly[(a, b)] = P
             split[(a, b)] = False                     # set below: next to a three-quad triangle, two half edges
             fl_edge[(a, b)] = la >= O or lb >= O      # organic on a side: a Bezier edge
@@ -681,19 +735,21 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
                  - ((1 - U) * W)[..., None] * st_[0] - (U * W)[..., None] * st_[-1])
             return X
 
-        def patch(bottom, top, left, right, X):
-            """The Bezier patch with those sides through points X (N, N, 3): its
-            inside poles solved for, so it passes through the pulled points."""
-            from OCP.Geom import Geom_BezierSurface
-            from OCP.OCP.collections import Array2_gp_Pnt
-
+        def poles_of(bottom, top, left, right, X):
+            """Poles of the Bezier patch with those sides through points X
+            (N, N, 3): its inside poles solved for, so it passes through them."""
             C = np.zeros((N, N, 3))
             C[:, 0], C[:, -1], C[0, :], C[-1, :] = bottom, top, left, right
-            # interior poles so the patch passes through those points
             Cb = C.copy()
             Cb[1:-1, 1:-1] = 0.0
             R = X[1:-1, 1:-1] - np.einsum("ia,abk,jb->ijk", Bm[1:-1], Cb, Bm[1:-1])
             C[1:-1, 1:-1] = np.einsum("ia,abk,jb->ijk", Bint, R, Bint)
+            return C
+
+        def patch(C):
+            from OCP.Geom import Geom_BezierSurface
+            from OCP.OCP.collections import Array2_gp_Pnt
+
             arr = Array2_gp_Pnt(1, N, 1, N)
             for i in range(N):
                 for j in range(N):
@@ -798,7 +854,7 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
             # that doubles back on itself): smooth patches there instead,
             # flat on its plane, and build again
             return None, demote
-        todo = []                                    # (sides, normal) of every patch
+        todo, owner = [], []                         # (sides, normal) of every patch, its triangles
         # pairs: one patch over the quad a, c, b, d (shared edge a-b, c and d the far corners)
         for i, j in pair:
             fi, fj = [int(x) for x in F[i]], [int(x) for x in F[j]]
@@ -809,32 +865,49 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
             n /= max(np.linalg.norm(n), 1e-300)
             # corners 00 = a, 10 = c, 01 = d, 11 = b
             todo.append(((curve(a, c), curve(d, b), curve(a, d), curve(c, b)), n))
+            owner.append((i, j))
             nq += 1
+        # odd triangles: three patches each, centroid to edge midpoints;
+        # the centroids and spokes of all of them pulled in one go
+        odd = []
         for i in np.flatnonzero(single):
             f = [int(x) for x in F[i]]
-            T = CV[f]
-            n = cfn[i]
             H = {(x, y): half(x, y) for x in f for y in f if x != y}
             Mid = {(min(x, y), max(x, y)): H[(x, y)][-1] for (x, y) in H}
-            Gc = pull(np.mean([*T, *Mid.values()], axis=0)[None], n[None])[0]
-            spoke = {}
-            for e, M in Mid.items():                 # centroid -> edge midpoint
-                t = np.linspace(0, 1, 13)[:, None]
-                spoke[e] = Bi @ resample(drape((Gc * (1 - t) + M * t)[None], n[None])[0], N)
+            odd.append((i, f, H, Mid, np.mean([*CV[f], *Mid.values()], axis=0)))
+        if odd:
+            Gc = pull(np.stack([o[4] for o in odd]), cfn[[o[0] for o in odd]],
+                      np.array([np.ptp(CV[o[1]], axis=0).max() for o in odd]) + TOL)
+            t = np.linspace(0, 1, 13)[:, None]
+            lines = np.stack([Gc[q] * (1 - t) + M * t for q, o in enumerate(odd) for M in o[3].values()])
+            lines = drape(lines, np.repeat(cfn[[o[0] for o in odd]], 3, axis=0))
+        for q, (i, f, H, Mid, _) in enumerate(odd):
+            n = cfn[i]
+            spoke = {e: Bi @ resample(lines[3 * q + r], N) for r, e in enumerate(Mid)}
             for k in range(3):
                 c, j, i2 = f[k], f[(k + 1) % 3], f[(k + 2) % 3]
                 e1, e2 = (min(c, j), max(c, j)), (min(c, i2), max(c, i2))
                 # corners 00 = c, 10 = M(c, j), 01 = M(c, i), 11 = G
                 todo.append(((H[(c, j)], spoke[e2][::-1], H[(c, i2)], spoke[e1][::-1]), n))
+                owner.append((i,))
                 nq += 1
         # every patch's inside onto the surface in one go
         if todo:
             X = np.stack([coons(*sd) for sd, _ in todo])
             inner = X[:, 1:-1, 1:-1].reshape(-1, 3)
             nrm = np.repeat(np.stack([n for _, n in todo]), (N - 2) ** 2, axis=0)
-            X[:, 1:-1, 1:-1] = pull(inner, nrm).reshape(len(todo), N - 2, N - 2, 3)
-            for (sd, _), x in zip(todo, X):
-                sew.Add(patch(*sd, x))
+            # a point of the inside is never further off the surface than
+            # its patch is across: a hit further than that is another sheet
+            size = np.linalg.norm(X[:, 0, 0] - X[:, -1, -1], axis=1) + np.linalg.norm(X[:, 0, -1] - X[:, -1, 0], axis=1)
+            reach = np.repeat(0.5 * size, (N - 2) ** 2)
+            X[:, 1:-1, 1:-1] = pull(inner, nrm, reach).reshape(len(todo), N - 2, N - 2, 3)
+            Cs = [poles_of(*sd, x) for (sd, _), x in zip(todo, X)]
+            if refine:
+                split = deviant(Cs, owner, edge_cache, poly)
+                if split:
+                    return "split", (split, poly)
+            for C in Cs:
+                sew.Add(patch(C))
         sew.Perform()
         return sew, (nq, n_region, n_fallback, why)
 
@@ -902,10 +975,222 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
         _, c = connected_components(G, directed=False)
         return (c == c[t]) & (flab == flab[t])
 
+    from math import comb as _comb
+
+    from .sharp import mesh_distance
     from .step import shape_to_trimesh
+
+    g9 = np.linspace(0, 1, 9)
+    B9 = np.array([[_comb(N - 1, j) * x ** j * (1 - x) ** (N - 1 - j) for j in range(N)] for x in g9])
+
+    vn = np.asarray(mesh.vertex_normals)
+
+    def bend(e):
+        """How much the surface turns along coarse edge e, times its length:
+        the edge to split across a tight bend (the longest one would cut along it)."""
+        _, i = vtree.query(CV[list(e)])
+        c = float(np.clip(vn[i[0]] @ vn[i[1]], -1, 1))
+        return (np.arccos(c) + 0.05) * float(np.linalg.norm(CV[e[0]] - CV[e[1]]))
+
+    worst = [0.0]
+
+    def deviant(Cs, owner, edges, poly):
+        """Coarse edges to split: those whose curve misses the mesh by more
+        than REFINE, and the longest edge of each triangle under a patch that
+        does. Edges shorter than MIN_SPLIT stay."""
+        from OCP.BRep import BRep_Tool
+
+        S = np.einsum("ua,nabk,vb->nuvk", B9, np.stack(Cs), B9).reshape(len(Cs), -1, 3)
+        dp = mesh_distance(mesh, S.reshape(-1, 3), cap=2.0).reshape(len(Cs), -1).max(axis=1)
+        keys = list(edges)
+        P = []
+        for k in keys:
+            c = BRep_Tool.Curve_s(edges[k], 0.0, 1.0)
+            t = np.linspace(c.FirstParameter(), c.LastParameter(), 12)
+            P.append([[q.X(), q.Y(), q.Z()] for q in (c.Value(x) for x in t)])
+        de = mesh_distance(mesh, np.array(P, float).reshape(-1, 3), cap=2.0).reshape(len(keys), -1).max(axis=1) if keys else []
+        out = {k[-1] for k, d in zip(keys, de) if d > REFINE}
+        worst[0] = float(dp.max()) if len(dp) else 0.0
+        # and every edge whose draped path is off the surface (a coarse
+        # triangle bridging a groove: its chord found no surface to fall on)
+        pe = [e for e, P in poly.items() if P is not None]
+        if pe:
+            dl = mesh_distance(mesh, np.concatenate([poly[e] for e in pe]), cap=2.0)
+            cut = np.cumsum([len(poly[e]) for e in pe])[:-1]
+            out |= {e for e, d in zip(pe, np.split(dl, cut)) if d.max() > REFINE}
+        for C_owner, d in zip(owner, dp):
+            if d > REFINE:
+                for t in C_owner:
+                    f = [int(x) for x in F[t]]
+                    es = [(min(f[k], f[(k + 1) % 3]), max(f[k], f[(k + 1) % 3])) for k in range(3)]
+                    out.add(max(es, key=bend))
+        return {e for e in out if np.linalg.norm(CV[e[0]] - CV[e[1]]) > MIN_SPLIT and e in poly and poly[e] is not None}
+
+    from scipy.spatial import cKDTree as _KDT
+
+    vtree = _KDT(V)
+
+    def split_edges(split, poly):
+        """The coarse mesh with those edges cut at their middle on the
+        surface (a seam's at its mesh vertex), triangles split to match."""
+        nonlocal CV, vid, F, flab
+        mid = {}
+        kq = {int(k): (int(a), int(b)) for k, a, b in zip(ckey, cf0, cf1)}
+        for e in split:
+            P = poly[e]
+            d = np.r_[0, np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))]
+            i = int(np.argmin(np.abs(d - 0.5 * d[-1])))
+            g0, g1 = kq[e[0] * (int(F.max()) + 1) + e[1]]
+            seam = flab[g0] != flab[g1]
+            if seam and not 0 < i < len(P) - 1:
+                continue                         # a seam splits only at one of its mesh vertices
+            if 0 < i < len(P) - 1:
+                q = P[i]
+            else:
+                w = 0.5 * d[-1]
+                j = min(max(int(np.searchsorted(d, w)), 1), len(P) - 1)
+                q = P[j - 1] + (P[j] - P[j - 1]) * (w - d[j - 1]) / max(d[j] - d[j - 1], 1e-300)
+            dd, vi = vtree.query(q)
+            mid[e] = (q, int(vi) if dd < 1e-9 else -1)
+        idx = {}
+        CVl, vidl = list(CV), list(vid)
+        for e, (q, vi) in mid.items():
+            idx[e] = len(CVl)
+            CVl.append(q)
+            vidl.append(vi)
+        nF, nL = [], []
+        for f, lf in zip(F, flab):
+            v = [int(x) for x in f]
+            m = [idx.get((min(v[k], v[(k + 1) % 3]), max(v[k], v[(k + 1) % 3]))) for k in range(3)]
+            cnt = sum(x is not None for x in m)
+            if cnt == 0:
+                tri = [v]
+            elif cnt == 3:
+                tri = [[v[0], m[0], m[2]], [m[0], v[1], m[1]], [m[2], m[1], v[2]], [m[0], m[1], m[2]]]
+            else:
+                r = 0
+                if cnt == 1:
+                    r = next(k for k in range(3) if m[k] is not None)
+                else:
+                    r = (next(k for k in range(3) if m[k] is None) + 1) % 3
+                v = v[r:] + v[:r]
+                m = m[r:] + m[:r]
+                if cnt == 1:
+                    tri = [[v[0], m[0], v[2]], [m[0], v[1], v[2]]]
+                else:                          # m[0] on v0-v1, m[1] on v1-v2, v2-v0 whole
+                    tri = [[m[0], v[1], m[1]], [v[0], m[0], m[1]], [v[0], m[1], v[2]]]
+            nF += tri
+            nL += [int(lf)] * len(tri)
+        CV, vid = np.array(CVl, float), np.array(vidl)
+        F, flab = np.array(nF, np.int64), np.array(nL, np.int64)
+
+    def snap():
+        """A vertex inside the organic body that is off the mesh (one of an
+        exact region's, slid along its surface's extension past the region,
+        until the region became patches): onto the mesh, or every patch
+        round it misses by as much and no splitting can help."""
+        nonlocal CV, vid
+        _, _, nl, _, one = _vertex_sets(F, flab, len(CV))
+        o = np.flatnonzero((nl == 1) & (one >= O))
+        if len(o):
+            cp, _ = _closest(mesh, CV[o])
+            far = np.flatnonzero(np.linalg.norm(cp - CV[o], axis=1) > TOL)
+            if len(far):
+                CV, vid = CV.copy(), vid.copy()
+                CV[o[far]] = cp[far]
+                vid[o[far]] = -1
+        unfold()
+
+    def unfold(passes=4):
+        """Flip edges of organic coarse triangles that face against the
+        surface under them (a collapse or a split folded the layout there):
+        the pulls along a backwards normal miss, and the patch folds over
+        its neighbours."""
+        nonlocal F
+        for _ in range(passes):
+            org = np.flatnonzero(flab >= O)
+            fn = lambda T: np.cross(T[..., 1, :] - T[..., 0, :], T[..., 2, :] - T[..., 0, :])
+            T = CV[F[org]]
+            n = fn(T)
+            n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-300)
+            _, sn = _closest(mesh, T.mean(axis=1))
+            bad = org[np.einsum("ij,ij->i", n, sn) < 0.3]
+            if not len(bad):
+                return
+            owner_e = {}
+            for t, f in enumerate(F):
+                for k in range(3):
+                    owner_e.setdefault((min(f[k], f[(k + 1) % 3]), max(f[k], f[(k + 1) % 3])), []).append(t)
+            done, changed = set(), False
+            for t in bad:
+                if t in done:
+                    continue
+                f = [int(x) for x in F[t]]
+                best = None
+                for k in range(3):
+                    a, b, c = f[k], f[(k + 1) % 3], f[(k + 2) % 3]
+                    ts = owner_e[(min(a, b), max(a, b))]
+                    if len(ts) != 2:
+                        continue
+                    u = ts[0] if ts[1] == t else ts[1]
+                    if u in done or flab[u] != flab[t]:
+                        continue
+                    d = next(int(x) for x in F[u] if x not in (a, b))
+                    if (min(c, d), max(c, d)) in owner_e:
+                        continue                        # the flipped edge exists already
+                    new = np.array([[c, a, d], [c, d, b]])
+                    Tn = CV[new]
+                    nn = fn(Tn)
+                    area = np.linalg.norm(nn, axis=1)
+                    if area.min() < 1e-9:
+                        continue
+                    _, s2 = _closest(mesh, Tn.mean(axis=1))
+                    q = np.einsum("ij,ij->i", nn / area[:, None], s2).min()
+                    if q > 0.5 and (best is None or q > best[0]):
+                        best = (q, u, new)
+                if best is not None:
+                    _, u, new = best
+                    F = F.copy()
+                    F[t], F[u] = new[0], new[1]
+                    done |= {t, int(u)}
+                    changed = True
+            if not changed:
+                return
+
+    # refine while it helps: a split can also fold the layout somewhere
+    # (a big triangle wrapped round a thin wall's edge), so the best layout
+    # so far, by its worst patch, is kept and refining stops once two
+    # rounds in a row are no better
+    refined, best, worse = 0, None, 0
+    for r in range(REFINE_ROUNDS + 1):
+        snap()
+        CE, ckey, cf0, cf1 = _edge_faces(F)
+        sew, got = build(0, refine=True)
+        if sew is None:                          # a region to patch first
+            for tris in got:
+                flab[tris] = int(flab.max()) + 1
+            best, worse = None, 0
+            continue
+        if not isinstance(sew, str):
+            best = None                          # nothing left to split: this one
+            break
+        split, poly_ = got
+        if best is None or worst[0] < best[0]:
+            best, worse = (worst[0], CV, vid, F, flab, refined), 0
+        else:
+            worse += 1
+        if r == REFINE_ROUNDS or worse >= 2:
+            break
+        split_edges(split, poly_)
+        refined += len(split)
+    if best is not None:
+        _, CV, vid, F, flab, refined = best
+    CE, ckey, cf0, cf1 = _edge_faces(F)
 
     demoted = 0
     for attempt in range(5):
+        snap()
+        CE, ckey, cf0, cf1 = _edge_faces(F)
         sew, got = build(attempt)
         if sew is None:
             for tris in got:
@@ -922,7 +1207,7 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
     nq, n_region, n_fallback, why = got
     solid = _forward(solid)
     t3 = time.time()
-    rep = {"patches": nq, "degree": N - 1, "exactFaces": n_region, "exactDemoted": demoted, "exactFallbacks": n_fallback, "reasons": why[:5],
+    rep = {"patches": nq, "degree": N - 1, "exactFaces": n_region, "refinedEdges": refined, "exactDemoted": demoted, "exactFallbacks": n_fallback, "reasons": why[:5],
            "triangles": int((flab >= O).sum()), "exactTriangles": int((flab < O).sum()),
            "exactSurfaces": len({int(x) for x in np.unique(lab) if x < O}),
            "smoothRegions": len({int(x) for x in np.unique(lab) if x >= O}),

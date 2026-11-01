@@ -333,6 +333,21 @@ def test_drains_fill_small_pockets_and_know_when_to_stop():
         assert "drains" not in rep and rep["enclosedVoids"] == 2, rep
 
 
+
+def test_drains_fill_stays_inside_the_part():
+    """A bubble 0.3 mm under the top face: the fill, grown two voxels into
+    the walls, used to come through that skin and stand 0.3 mm proud of the
+    box (an MJF riser clipped to its envelope came out 0.5 mm over it)."""
+    from loadpath.fields import run_field
+
+    doc = {"name": "bubble", "mesh": {"pitch": 0.3}, "check": False, "process": "mjf", "nodes": {
+        "b": {"op": "shape", "shape": {"type": "box", "min": [0, 0, 0], "max": [12, 12, 12]}},
+        "part": {"op": "subtract", "inputs": ["b", {"op": "shape", "shape": {"type": "sphere",
+                                                                               "center": [6, 6, 10.5], "r": 1.2}}]}}}
+    _, rep = run_field(doc, render=False)
+    assert rep["enclosedVoids"] == 0 and rep["drains"]["filledVolume"] > 5, rep
+    assert rep["bounds"][1][2] < 12.02, rep["bounds"]
+
 def test_drains_keep_clear():
     """Every boss stays out of a keepClear node: here the whole top face."""
     from loadpath.fields import run_field
@@ -431,7 +446,8 @@ TESTS = [test_shell_volume_and_projection, test_variable_shell_follows_its_field
          test_result_node_from_verify_fields, test_expressions_are_whitelisted, test_graph_errors_and_lint,
          test_unbounded_lattice_asks_for_bounds, test_cli_writes_part_and_report, test_mcp_field_job,
          test_drains_open_every_sealed_void, test_drains_go_where_it_is_calm,
-         test_drains_fill_small_pockets_and_know_when_to_stop, test_drains_keep_clear]
+         test_drains_fill_small_pockets_and_know_when_to_stop, test_drains_fill_stays_inside_the_part,
+         test_drains_keep_clear]
 
 
 def main():

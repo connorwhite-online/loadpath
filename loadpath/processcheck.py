@@ -358,7 +358,8 @@ def check_process(part, process="sls", build=None, material=None, pitch: float |
         if slicer and not is_field:
             from .printcheck import check_print
 
-            pc = check_print(part, build, process=kind, material=material)
+            pc = check_print(part, build, process=kind, material=material,
+                             bridge_span=getattr(process, "bridge_span", None))
             rep["supports"] = {k: pc[k] for k in ("supportArea", "supportVolume", "islands", "islandArea",
                                                   "maxBridgeSpan")}
             if pc["islands"]:

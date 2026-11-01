@@ -131,6 +131,9 @@ FDM_RELAX = 0.895
 FDM_BED = 4.0
 FDM_DECAY = 6.0
 FDM_ADHESION = float("inf")
+# FDM: the printed layer (mm) builds are extrapolated to when their analysis
+# layers are thicker (layer_extrapolation); 0.2 mm is the common setting.
+FDM_PRINT_LAYER = 0.2
 ROOM = 23.0
 
 
@@ -177,6 +180,8 @@ class BuildSetup:
     # None = FDM_ADHESION, inf = never
     bed_adhesion: float | None = None
     recoater_gap: float = 0.05          # mm: lift at the build plane that can touch the recoater
+    # fdm: the printed layer, mm (None: FDM_PRINT_LAYER; 0: no extrapolation)
+    print_layer: float | None = None
 
 
 @dataclass
@@ -479,7 +484,70 @@ def _grid_mesh(solid, pitch, origin, setup):
     return mesh, part, layer_of, fixed, z_above, plate_cells, springs
 
 
+def layer_extrapolation(t, setup) -> float:
+    """k for extrapolating an FDM build at analysis layers t mm to the
+    printed layer: u = (1 + k) u(t) - k u(2t), k = log2(t / printed).
+
+    FDM warp grows as the analysis layers thin and does not settle: a
+    60 x 4 x 3 mm nylon bar on the bed lifts 0.30, 0.46, 0.62, 0.80 mm at
+    1, 0.5, 0.25, 0.125 mm layers, whatever the voxel size (0.125-0.5 mm
+    voxels agree within 1%), about +0.16 mm per halving. Each layer goes
+    down stress-free on a part already curled by the ones below, so thin
+    layers keep adding curl. The model was fitted at the printed layers
+    (Armillotta, 0.254 mm), so that is where it must be read: the gain per
+    halving between t and 2t, carried log-linearly down to the printed
+    layer, lands within 4% of the direct thin-layer runs (0.61 against
+    0.62, and 0.92 against 0.96 on a 5.5 mm bar)."""
+    if setup is None or setup.process.lower() != "fdm":
+        return 0.0
+    tp = FDM_PRINT_LAYER if setup.print_layer is None else float(setup.print_layer)
+    if tp <= 0 or t <= 1.05 * tp:
+        return 0.0
+    return float(np.log2(t / tp))
+
+
 def simulate_build(solid, pitch, origin=(0.0, 0.0, 0.0), setup: BuildSetup | None = None, on_layer=None):
+    """Simulate printing a voxel part (bool grid, build direction +z, the
+    lowest cells sit on the plate or bed) and releasing it.
+
+    solid: bool (nx, ny, nz); pitch mm; origin: world position of the grid's
+    min corner. Returns a BuildResult; its mesh is the part's cells (plus a
+    plate, lpbf), in the same world frame. FDM analysis layers thicker than
+    the printed layer are extrapolated to it (layer_extrapolation): the
+    build runs twice, at its layers and at twice them."""
+    setup = setup or BuildSetup()
+    t = float(setup.layer or pitch)
+    kx = layer_extrapolation(t, setup)
+    r1 = _simulate_build(solid, pitch, origin, setup, on_layer)
+    if not kx:
+        return r1
+    from dataclasses import replace
+    r2 = _simulate_build(solid, pitch, origin, replace(setup, layer=2 * t))
+    lin = (lambda a, b: (1.0 + kx) * a - kx * b)
+    res = replace(r1, u_built=lin(r1.u_built, r2.u_built), u=lin(r1.u, r2.u),
+                  stress_built=lin(r1.stress_built, r2.stress_built), stress=lin(r1.stress, r2.stress))
+    rep = res.report
+    m, part = res.mesh, res.part
+    pn = np.flatnonzero(res.node_active)
+    dmag = np.linalg.norm(res.u[pn], axis=1)
+    rep["distortion"] = {"max": float(dmag.max()), "rms": float(np.sqrt((dmag ** 2).mean())),
+                         "maxZ": float(np.abs(res.u[pn, 2]).max()),
+                         "at": [float(c) for c in m.node_xyz[pn[np.argmax(dmag)]]]}
+    rep["builtDistortionMax"] = float(np.linalg.norm(res.u_built[m.enode[part].ravel()], axis=1).max())
+    keep = np.abs(res.stress).sum(axis=1) > 0
+    vm_b, vm = von_mises(res.stress_built[part]), von_mises(res.stress[keep & part] if (keep & part).any()
+                                                            else res.stress[part])
+    rs = rep["residualStress"]
+    rs.update(vmMaxBuilt=float(vm_b.max()), vmP95Built=float(np.percentile(vm_b, 95)), vmMax=float(vm.max()),
+              vmP95=float(np.percentile(vm, 95)), overYieldShare=float((vm > rs["yield"]).mean()))
+    rep["layerExtrapolation"] = {"analysisLayer": t, "printedLayer": t / 2 ** kx, "k": kx,
+                                 "distortionMaxUnextrapolated": r1.report["distortion"]["max"],
+                                 "note": "linear in log(layer) from builds at the analysis layer and twice it"}
+    rep["warnings"] = _warnings(rep, setup)
+    return res
+
+
+def _simulate_build(solid, pitch, origin=(0.0, 0.0, 0.0), setup: BuildSetup | None = None, on_layer=None):
     """Simulate printing a voxel part (bool grid, build direction +z, the
     lowest cells sit on the plate or bed) and releasing it.
 
@@ -1210,6 +1278,12 @@ class WarpTerm:
         lump = max(1, int(round((layer or (1 if setup.process.lower() == "fdm" else 4) * mesh.pitch) / mesh.pitch)))
         self.layer_of = hgt // lump
         self.n_layers = int(self.layer_of.max()) + 1
+        # FDM: lumps thicker than the printed layer read the warp low (it
+        # grows as the layers thin); extrapolate (layer_extrapolation)
+        self.extrapolate = 0.0
+        if self.fdm:
+            self.extrapolate = layer_extrapolation(lump * mesh.pitch, setup)
+            self.layer_of2 = hgt // (2 * lump)
         target = np.ones(mesh.n_nodes, bool) if target is None else np.asarray(target, bool)
         self.wdof = np.repeat(target, 3).astype(float) / max(int(target.sum()), 1)
         self.last_u = None
@@ -1220,63 +1294,73 @@ class WarpTerm:
         vals, grad = self.measures(e, de, lambda v: {"mean": 1.0})
         return vals["mean"], grad
 
-    def measures(self, e, de=None, weights=None):
-        """The as-built measures of moduli e: "mean" (D), "max" (the largest
-        |u| at the end of the build, mm) and "lift" (the largest rise along
-        the build at the build plane, over the layers as each goes down: the
-        recoater's clearance, mm). With de, also the gradient with respect
-        to the design density of sum(w[m] * measure m), w = weights(vals)
-        (a callable, so weights can depend on this design's values). The
-        maxima are steered through 16-norms rescaled to the true maximum at
-        this design (adaptive normalization), so the gradient is that of
-        the maximum to first order."""
+    def _forward(self, e, layer_of, keep):
+        """One build at the given layer lumps: the end displacement, each
+        step's (dofs, solve, cells, du, active, eps) when keep, and the
+        build-plane rises (step, dofs, rise)."""
         from scipy.sparse.linalg import splu
         mesh, kern = self.mesh, self.kern
         ne = mesh.n_elem
         u = np.zeros(mesh.n_dof)
-        steps = []
-        lifts = []                      # (step, build-plane dofs along the build, their rise)
+        steps, lifts = [], []
         node_on = np.zeros(mesh.n_nodes, bool)
         active = np.zeros(ne, bool)
-        for li in range(self.n_layers):
-            new = self.layer_of == li
+
+        def step(scale, f):
+            d = _dofs(node_on, self.fixed)
+            k = kern.k(scale)[d][:, d]
+            du = np.zeros(mesh.n_dof)
+            if len(d) <= self.DIRECT:
+                lu = splu(k.tocsc(), permc_spec="MMD_AT_PLUS_A")
+                du[d] = lu.solve(f[d])
+                return d, lu.solve, du
+            du[d] = _solve(k, f[d], mesh.node_xyz, d)
+            return d, (lambda kk, dd: (lambda r: _solve(kk, r, mesh.node_xyz, dd)))(k, d), du
+
+        for li in range(int(layer_of.max()) + 1):
+            new = layer_of == li
             if not new.any():
                 continue
             active |= new
             node_on[mesh.enode[new].ravel()] = True
-            d = _dofs(node_on, self.fixed)
-            k = kern.k(e * active)[d][:, d]
             el = np.flatnonzero(new)
-            f = kern.load(e, self.eps[el], el)
-            du = np.zeros(mesh.n_dof)
-            if len(d) <= self.DIRECT:
-                lu = splu(k.tocsc(), permc_spec="MMD_AT_PLUS_A")
-                du[d] = lu.solve(f[d])
-                solve = lu.solve
-            else:
-                du[d] = _solve(k, f[d], mesh.node_xyz, d)
-                solve = (lambda kk, dd: (lambda r: _solve(kk, r, mesh.node_xyz, dd)))(k, d)
+            d, solve, du = step(e * active, kern.load(e, self.eps[el], el))
             u += du
             plane = np.flatnonzero(node_on & (self.hn == self.hgt[el].max() + 1))
             ldof = 3 * plane + self.axis
             lifts.append((len(steps), ldof, self.sign * u[ldof]))
-            steps.append((d, solve, el, du, np.flatnonzero(active), self.eps))
+            steps.append((d, solve, el, du, np.flatnonzero(active), self.eps) if keep else None)
         if self.cool is not None:
             # FDM: the finished part cools on the bed to room temperature
-            d = _dofs(node_on, self.fixed)
-            k = kern.k(e)[d][:, d]
             el = np.arange(ne)
-            f = kern.load(e, self.cool, el)
-            du = np.zeros(mesh.n_dof)
-            if len(d) <= self.DIRECT:
-                lu = splu(k.tocsc(), permc_spec="MMD_AT_PLUS_A")
-                du[d] = lu.solve(f[d])
-                solve = lu.solve
-            else:
-                du[d] = _solve(k, f[d], mesh.node_xyz, d)
-                solve = (lambda kk, dd: (lambda r: _solve(kk, r, mesh.node_xyz, dd)))(k, d)
+            d, solve, du = step(e, kern.load(e, self.cool, el))
             u += du
-            steps.append((d, solve, el, du, el, self.cool))
+            steps.append((d, solve, el, du, el, self.cool) if keep else None)
+        return u, steps, lifts
+
+    def measures(self, e, de=None, weights=None):
+        """The as-built measures of moduli e: "mean" (D), "max" (the largest
+        |u| at the end of the build, mm; along the build only for FDM) and
+        "lift" (the largest rise along the build at the build plane, over
+        the layers as each goes down: the recoater's clearance, mm). With
+        de, also the gradient with respect to the design density of
+        sum(w[m] * measure m), w = weights(vals) (a callable, so weights can
+        depend on this design's values). The maxima are steered through
+        16-norms rescaled to the true maximum at this design (adaptive
+        normalization), so the gradient is that of the maximum to first
+        order. FDM builds at lumps thicker than the printed layer are
+        extrapolated to it from a second build at twice the lumps (see
+        layer_extrapolation)."""
+        mesh, kern = self.mesh, self.kern
+        ne = mesh.n_elem
+        keep = de is not None
+        u1, steps, lifts = self._forward(e, self.layer_of, keep)
+        kx = self.extrapolate
+        if kx:
+            u2, steps2, _ = self._forward(e, self.layer_of2, keep)
+            u = (1.0 + kx) * u1 - kx * u2
+        else:
+            u = u1
         self.last_u = u
         uu = u.reshape(-1, 3) * self.mask
         un = np.linalg.norm(uu, axis=1)
@@ -1306,19 +1390,26 @@ class WarpTerm:
         # adjoint: J depends on the final u = sum of the layer increments
         # and on each step's u_k (the lift), so dJ/d du_j = gu + the sum of
         # the step terms from j on; K_j lam_j = that, and
-        # dJ/de = sum_j lam_j^T (df_j/de - dK_j/de du_j)
+        # dJ/de = sum_j lam_j^T (df_j/de - dK_j/de du_j). Extrapolated, u is
+        # (1 + k) u1 - k u2, so each build's adjoint takes its share.
         dd = np.zeros(ne)
         ke, g = kern.st.ke, kern.g
-        acc = np.zeros(mesh.n_dof)
-        for si in range(len(steps) - 1, -1, -1):
-            d, solve, el, du, ia, eps = steps[si]
-            if si in gstep:
-                acc = acc + gstep[si]
-            rhs = gu + acc
-            lam = np.zeros(mesh.n_dof)
-            lam[d] = solve(rhs[d])
-            dd[el] += np.einsum("ij,ij->i", lam[mesh.edof[el]], eps[el] @ g.T)
-            dd[ia] -= np.einsum("ij,jk,ik->i", lam[mesh.edof[ia]], ke, du[mesh.edof[ia]])
+
+        def adjoint(steps, scale, with_lift):
+            acc = np.zeros(mesh.n_dof)
+            for si in range(len(steps) - 1, -1, -1):
+                d, solve, el, du, ia, eps = steps[si]
+                if with_lift and si in gstep:
+                    acc = acc + gstep[si]
+                rhs = scale * gu + acc
+                lam = np.zeros(mesh.n_dof)
+                lam[d] = solve(rhs[d])
+                dd[el] += np.einsum("ij,ij->i", lam[mesh.edof[el]], eps[el] @ g.T)
+                dd[ia] -= np.einsum("ij,jk,ik->i", lam[mesh.edof[ia]], ke, du[mesh.edof[ia]])
+
+        adjoint(steps, 1.0 + kx, True)
+        if kx:
+            adjoint(steps2, -kx, False)
         return vals, dd * de
 
 
@@ -1351,7 +1442,8 @@ class CoarseWarp:
     def fine(self):
         """The same build model on the full grid."""
         if self._fine is None:
-            self._fine = WarpTerm(self.fine_mesh, self.setup, build=self.build, layer=self.layer,
+            self._fine = WarpTerm(self.fine_mesh, self.setup, build=self.build,
+                                  layer=self.layer,
                                   nu=self.term.kern.nu)
         return self._fine
 
