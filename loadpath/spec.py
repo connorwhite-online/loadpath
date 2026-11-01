@@ -910,6 +910,9 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError(f"resolution.maxElements is capped at {MAX_ELEMENTS_CEILING}")
     if pitch is not None and float(pitch) <= 0:
         raise ValueError("resolution.pitch must be positive (mm)")
+    ps = res.get("pitchStarts", "auto")
+    if ps != "auto" and (isinstance(ps, bool) or not isinstance(ps, int) or not 1 <= ps <= 5):
+        raise ValueError("resolution.pitchStarts must be 'auto' or an integer 1-5")
 
     min_member = d.get("minMember")
     process = _process(d.get("process"))

@@ -283,6 +283,58 @@ What it says:
   air heat sink results above used the conservative form, which balances
   globally by construction.
 
+## Pitch sensitivity: one grid is a sample
+
+A safety-factor search's answer moves a lot with sub-percent changes of the
+cell size. On a grid 1% coarser the optimizer settles in a different layout,
+and the verified stress, read near supports and sharp junctions, differs
+between layouts. The search then brackets a different fraction. The MBB beam
+at 30% read SF 1.43 on a 1.3336 mm grid and 0.88 on a 1.3373 mm one, with
+the same 27945 cells. Its peak sat at the beam's end, one cell above the
+pin, which is modelled as a clamped pad. The 0.88 search stepped up to 55%.
+
+Measured on the coarse tier (bench/results/pitch_starts.json):
+
+| | Median range | Worst range | Failed runs |
+| --- | --- | --- | --- |
+| One grid, six pitches 0-5% apart (16 safety-factor cases) | 24% | 138% (corpus-bracket-4, 82-196 g) | 3 of 96 |
+
+`resolution.pitchStarts` runs the search on N grids, each 1% coarser than
+the last. Coarser keeps maxElements a hard cap. It keeps the grid whose
+lightest part passes, and `result.starts` lists every grid's pick. "auto",
+the default, means 3 grids for safety-factor, deflection and durability
+searches up to 30k cells with no pitch given, and 1 grid otherwise. The
+grids run in parallel where memory allows.
+
+Paired runs of the whole coarse tier at maxElements x1 and x0.91 (the pitch
+about 3% coarser), one grid against three:
+
+| | Delivered mass, median / mean pair spread | massAtTarget, median / mean / worst | Sum of delivered mass (17 cases) | Lost passes | Time |
+| --- | --- | --- | --- | --- | --- |
+| 1 grid | 10% / 18% | 5% / 17% / 80% | 1405 g | 0 | 1x |
+| 3 grids | 12% / 15% | 5% / 10% / 46% | 1287 g (-8%) | 0 | 2.7x |
+
+Three grids cut the worst swings (the hook went from 28-48 g to 28-35 g,
+corpus-bracket-1 from 168-246 g to 168-201 g, corpus-tri-mount-5 from
+133-137 g to 79 g at both scales), and they make parts about 8% lighter.
+They don't make the typical case reproducible: the median spread is
+unchanged. That needs the layout itself to stop depending on the grid,
+through a mesh-independent filter or start, or a peak stress read that
+doesn't ride the supports' singular field.
+
+A latent bug turned up along the way. `verify.voxelize` gave a box a whole
+number of cells across one cell too many at 107 of 400 pitches tried, and
+the access report then crashed on the shape mismatch (the arm link, twice).
+It is fixed.
+
+Full tier with pitchStarts on (one worker, tet confirm): all 14 cases
+pass, in 186 min against the old baseline's 145. The MBB beam, which main
+had at a 32.1 g massAtTarget on a single grid (55% over the old baseline's
+20.7 g), comes out at 26.7 g. The sum of massAtTarget is 757 g against the
+old baseline's 747 g; that baseline was taken before the hard maxElements
+cap and the other commits since. baselines/full.json and coarse.json are
+re-saved on this code.
+
 ## Gaps found
 
 Fixed in this round:
