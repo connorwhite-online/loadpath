@@ -39,6 +39,7 @@ from loadpath.thermal import CONDUCTIVITY
 L_UP, L_FIN, L_DOWN = 10.0, 40.0, 10.0
 W, BASE, FIN_H = 40.0, 3.0, 15.0
 DIE = 20.0
+DIE_X = L_FIN / 2          # the die's centre along the flow (from the fins' leading edge)
 POWER = 30.0
 
 
@@ -57,7 +58,7 @@ class Sink:
         self.space = self.under & (self.Z >= BASE)          # where fins go
         self.duct = self.Z >= BASE                          # fluid can be here
         bz = int(round(BASE / pitch))
-        self.die = self.base & (self.Z < pitch) & (np.abs(self.X - L_FIN / 2) <= DIE / 2) & \
+        self.die = self.base & (self.Z < pitch) & (np.abs(self.X - DIE_X) <= DIE / 2) & \
             (np.abs(self.Y - W / 2) <= DIE / 2)
 
     def masks(self, fins):
@@ -70,20 +71,23 @@ class Sink:
 
 
 def plate_fins(s: Sink, vf):
-    """Straight fins along the flow, full height, 2 mm pitch steps: the count
-    whose thickness hits vf with gaps >= 2 mm."""
-    best = None
+    """Straight fins along the flow, full height, a whole number of voxels
+    thick (>= 2) with gaps >= 2 mm: of the counts whose metal comes within 3%
+    of vf, the most fins (voxel rounding of a fixed thickness otherwise
+    misses vf by up to 7% on a fine grid)."""
+    ny = s.ny
+    fits = []
     for n in range(3, 20):
-        t = vf * W / n
-        gap = W / n - t
-        if t >= 2 * s.h and gap >= 2.0:
-            best = (n, t)
-    n, t = best
-    yc = (np.arange(n) + 0.5) * W / n
-    m = np.zeros_like(s.space)
-    for c in yc:
-        m |= np.abs(s.Y - c) <= t / 2
-    return m & s.space
+        k = int(round(vf * ny / n))
+        if k >= 2 and W / n - k * s.h >= 2.0:
+            fits.append((abs(n * k / ny - vf) / vf, n, k))
+    close = [f for f in fits if f[0] <= 0.03]
+    _, n, k = max(close, key=lambda f: f[1]) if close else min(fits)
+    m1 = np.zeros(ny, bool)
+    for c in (np.arange(n) + 0.5) * ny / n:
+        lo = int(round(c - k / 2))
+        m1[lo:lo + k] = True
+    return m1[None, :, None] & s.space
 
 
 def gyroid_value(s: Sink, cell):
@@ -144,7 +148,7 @@ def solid_to(s: Sink, vf, h_conv=50.0, pitch=1.0, radius=2.0):
     ds = Box([0, 0, 0], [L_FIN, W, BASE + FIN_H])
     base = Box([0, 0, 0], [L_FIN, W, BASE])
     grid = thermal_grid([ds], pitch, preserve=[base], symmetry=["y"])
-    die = Box([L_FIN / 2 - DIE / 2, W / 2 - DIE / 2, -0.01], [L_FIN / 2 + DIE / 2, W / 2 + DIE / 2, 0.01])
+    die = Box([DIE_X - DIE / 2, W / 2 - DIE / 2, -0.01], [DIE_X + DIE / 2, W / 2 + DIE / 2, 0.01])
     open_x = lambda c, n: np.abs(n[:, 0]) > 0.5
     bc = thermal_bc(grid.mesh, ambient=0.0, heat=[(die, POWER)],
                     convection=[Convection(h_conv, 0.0, boundary=False),
@@ -162,6 +166,36 @@ def solid_to(s: Sink, vf, h_conv=50.0, pitch=1.0, radius=2.0):
     print(json.dumps({"solidTO": {"iterations": res.iterations, "seconds": time.time() - t0,
                                   "constantHRise": res.objective, "vf": res.volume_fraction}}), flush=True)
     return fins & s.space
+
+
+# what plate fins pass at 20 Pa in the 0.5 mm lattice Boltzmann rating
+# (bench/lattice_heatsink.json): the Darcy model's calibration
+PLATES_LPM_AT_20PA = 91.1
+
+
+def flow_to(s: Sink, vf, dp, pitch=1.0, radius=2.0, calib_lpm=PLATES_LPM_AT_20PA, calib_dp=20.0):
+    """flowtopo.optimize_flow_thermal: Darcy flow and advection-conduction in
+    the loop, at the duct's pressure drop, on a `pitch` grid (open-duct
+    permeability calibrated so plate fins pass what LBM says they do), the
+    density resampled onto the rating grid and matched to vf."""
+    from loadpath.flowtopo import FlowSink, FlowTopoOptions, calibrate_alpha, optimize_flow_thermal
+
+    c = Sink(pitch)
+    plates = plate_fins(c, vf)
+    ps, pf = c.masks(plates)
+    alpha_f = calibrate_alpha(ps, pf, pitch, calib_dp, calib_lpm)
+    fs = FlowSink(c.space, c.base, c.duct & ~c.space, c.die, pitch, CONDUCTIVITY["alsi10mg"], FLUIDS["air"], dp,
+                  alpha_f)
+    t0 = time.time()
+    res = optimize_flow_thermal(fs, c.space, pitch, FlowTopoOptions(vf, filter_radius=radius, equal_volume=True))
+    last = res["history"][-1]
+    print(json.dumps({"flowTO": {"iterations": len(res["history"]), "seconds": time.time() - t0,
+                                 "darcyRiseKperW": last["objective"], "darcyLpm": last["flowLpm"],
+                                 "alphaF": alpha_f}}), flush=True)
+    full = ndimage.gaussian_filter(res["x"], 0.5)
+    coords = [(s.X - c.X[0, 0, 0]) / pitch, (s.Y - c.Y[0, 0, 0]) / pitch, (s.Z - c.Z[0, 0, 0]) / pitch]
+    dens = ndimage.map_coordinates(full, coords, order=1, mode="nearest")
+    return match(s, lambda t: (dens > 1.0 - t) & s.space, vf, 0.0, 1.0)
 
 
 def keep_connected(s: Sink, fins):
@@ -188,6 +222,12 @@ def rate(s: Sink, fins, dp, guess, name):
     q = guess
     for i in range(3):
         fl = duct_flow(fluid, s.h, q, "air", **LBM)
+        if not np.isfinite(fl["velocity"]).all():
+            # a jet through a narrow gap can still blow the LBM up at cs
+            # 0.17: more Smagorinsky damping for this run
+            fl = duct_flow(fluid, s.h, q, "air", **{**LBM, "cs": 0.25})
+            if not np.isfinite(fl["velocity"]).all():
+                raise RuntimeError(f"{name}: lattice Boltzmann diverged at {q:.1f} L/min")
         ht = solve_heat(solid, fluid, fl["velocity"], s.h, CONDUCTIVITY["alsi10mg"], air, s.die, POWER)
         pts.append((q, fl["dp"], ht["resistance"], ht["meanResistance"], ht["balance"]))
         lo = [p for p in pts if p[1] <= dp]
@@ -215,6 +255,7 @@ def rate(s: Sink, fins, dp, guess, name):
 
 
 def main():
+    global DIE, DIE_X, FIN_H
     ap = argparse.ArgumentParser()
     ap.add_argument("--pitch", type=float, default=0.5)
     ap.add_argument("--dp", type=float, default=20.0)
@@ -222,7 +263,12 @@ def main():
     ap.add_argument("--cells", default="8")
     ap.add_argument("--only", default="")
     ap.add_argument("--out", default="bench/lattice_heatsink.json")
+    # a second geometry: die size and position, fin height
+    ap.add_argument("--die", type=float, default=DIE)
+    ap.add_argument("--die-x", type=float, default=DIE_X)
+    ap.add_argument("--fin-h", type=float, default=FIN_H)
     a = ap.parse_args()
+    DIE, DIE_X, FIN_H = a.die, a.die_x, a.fin_h
     s = Sink(a.pitch)
     # resume: designs already rated in --out are kept, not rerun
     done = {}
@@ -240,6 +286,8 @@ def main():
         print(json.dumps({"platesVf": s.vf(designs["plates"])}), flush=True)
     if want("solid-to"):
         designs["solid-to"] = solid_to(s, a.vf)
+    if want("flow-to"):
+        designs["flow-to"] = flow_to(s, a.vf, a.dp)
     cells = [float(c) for c in a.cells.split(",")]
     for c in cells:
         if want(f"gyroid-{c:g}"):
@@ -249,6 +297,7 @@ def main():
     def save():
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         Path(a.out).write_text(json.dumps({"pitch": a.pitch, "dp": a.dp, "vf": a.vf, "power": POWER,
+                                           "die": DIE, "dieX": DIE_X, "finH": FIN_H,
                                            "results": results}, indent=1))
 
     for name, fins in designs.items():
@@ -263,7 +312,8 @@ def main():
             save()
         np.save(Path(a.out).with_suffix(f".{name}.npy"), np.packbits(fins))
         guess = out["flowLpm"]
-        if name.startswith("gyroid-") and want(f"graded-{name[7:]}"):
+        tag = f"graded-{name[7:]}"
+        if name.startswith("gyroid-") and (want(tag) or any(o.startswith(tag + "-") for o in only)):
             # grade by the heat flux through the uniform lattice's metal:
             # |grad T| x k in the solid, smoothed over a cell
             T = np.nan_to_num(ht["T"])
@@ -272,13 +322,13 @@ def main():
             c = float(name[7:])
             sm = ndimage.uniform_filter(flux, size=int(c / s.h)) / np.maximum(
                 ndimage.uniform_filter((fins | s.base).astype(float), size=int(c / s.h)), 1e-3)
-            grades = {f"graded-{c:g}-flux{e:g}": sm ** e for e in (0.25, 0.5)}
+            grades = {f"graded-{c:g}-flux{e:g}": np.nan_to_num(np.clip(sm, 0, None)) ** e for e in (0.25, 0.5)}
             # and by height: denser at the base, where all the heat enters
             zf = (s.Z - BASE) / FIN_H
             for r in (2.0, 3.0):
                 grades[f"graded-{c:g}-z{r:g}"] = r - (r - 1.0) * zf
             for gname, field in grades.items():
-                if gname in done:
+                if gname in done or (only and gname not in only and tag not in only):
                     continue
                 gf = gyroid_graded(s, a.vf, c, field)
                 o2, _, _ = rate(s, gf, a.dp, guess, gname)

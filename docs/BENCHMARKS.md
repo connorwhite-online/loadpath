@@ -179,23 +179,61 @@ die's hottest point over the inlet air, per watt (lower is better).
 \* the uniform gyroid's connected metal jumps from under 20% to 21.4% (its
 ligaments break below that at 0.5 mm); the graded ones hold exactly 20%.
 
-What it says:
+What it says, on this grid alone:
 
-- Lattices win this one. Every gyroid beat the solid topology by a quarter at
-  equal metal and pressure drop, and beat plate fins by 6-8%. The solid TO's
-  weakness is its model, not its search: a constant h pays for surface
-  anywhere, so it grows a dense pin field that chokes the flow (53 L/min
-  against the plates' 91) without being charged for it.
+- Every gyroid beat the solid topology by a quarter at equal metal and
+  pressure drop, and beat plate fins by 6-8%. The solid TO's weakness is its
+  model, not its search: a constant h pays for surface anywhere, so it grows
+  a dense pin field that chokes the flow (53 L/min against the plates' 91)
+  without being charged for it.
 - Grading by height (denser at the base, where all the heat enters) is the
-  best of the graded rules, 1-2% over uniform at slightly less metal. Grading
-  by the heat flux is no better than uniform, and an uncapped flux grading
-  (density up to 0.6 at the base) rated 2-3x worse on a 1 mm grid: a
-  near-solid layer of lattice over the base walls the air off from it, so
-  graded densities are capped at 0.4.
-- Limits: one geometry, one pressure drop, one grid (0.5 mm; at 1 mm the
-  ranking held but the numbers moved 2x, so the absolute K/W are not
-  grid-converged); the TO design was made on a 1 mm grid and resampled;
-  plate fins were not tuned for count.
+  best of the graded rules, 1-2% over uniform. Grading by the heat flux is no
+  better than uniform, and an uncapped flux grading (density up to 0.6 at the
+  base) rated 2-3x worse on a 1 mm grid: a near-solid layer of lattice over
+  the base walls the air off from it, so graded densities are capped at 0.4.
+
+### Grid check, a second geometry, and flow-aware TO
+
+The lattice-over-plates margin did not survive the follow-up checks
+(`bench/lattice_heatsink_0375.json`, `bench/lattice_heatsink_geo2.json`):
+
+| Case | Plates | Uniform gyroid 8 mm | Gyroid graded 3:1 by height | Solid TO (constant h) |
+| --- | --- | --- | --- | --- |
+| 20 mm centred die, 15 mm fins, 20 Pa, 0.5 mm voxels (table above) | 2.56 | 2.39 | **2.36** | 3.19 |
+| Same sink, 0.375 mm voxels (820k cells) | **1.95** | 2.17 | 2.18 | 2.79 |
+| 10 mm die 10 mm behind the leading edge, 25 mm fins, 10 Pa, 0.5 mm | **2.34** | 2.48 | 2.38 | 3.95 |
+
+(die max K/W; 20% metal in every design; at 0.375 mm the plates are 7 fins
+of 1.125 mm, the nearest whole-voxel match to 20%, against 8 of 1.0 mm at
+0.5 mm.)
+
+- **Lattices beat constant-h solid TO in every case** (by 22% at 0.375 mm
+  and 37-40% on the second geometry). That gap is the constant-h model's.
+- **Lattices do not beat well-drawn plate fins.** At 0.375 mm the plates win
+  by 10%; on the second geometry by 2%. The 0.5 mm win was inside the grid
+  error: the gyroid's sub-millimetre ligaments are the most under-resolved
+  thing in the sink, and plates gain most from refinement (2.56 to 1.95).
+- **Flow-aware TO** (`loadpath/flowtopo.py`): density TO with the flow in the
+  loop, so the solid side is no longer handicapped by constant h. Darcy flow
+  with a Borrvall-Petersson inverse permeability (open-duct permeability
+  calibrated so plate fins pass what LBM says they do at 20 Pa), then
+  advection-conduction, both adjoint-differentiated (checked against finite
+  differences), at fixed pressure drop, MMA with permeability continuation.
+  On a 1 mm grid it is not yet competitive even in its own model: from a
+  grey start it reaches 5.2 K/W (mean die rise, crisp design) at 12% metal,
+  against 4.2 for plates and 2.5 for the gyroid in the same model, and
+  warm-started from either it does not improve them (the crisp design's
+  projection gradients vanish, and a softened start re-greys the fins and
+  chokes the flow). An equal-volume run from grey collapsed to a choked
+  design. It was not worth a lattice Boltzmann rating. What it needs:
+  finer grids (the fins are 1-2 voxels at 1 mm), a body-fitted or
+  level-set boundary instead of grey Darcy walls, or a turbulence-aware h.
+
+Honest summary: for an air sink at these sizes, a TPMS lattice is a large
+win over what loadpath's solid TO produced before (constant h), and a
+draw with plate fins (within -10% to +8% depending on grid and geometry).
+The next places a lattice should win are where plates can't follow the
+heat: several dies, a non-straight flow path, or liquid cold plates.
 
 ## Gaps found
 
