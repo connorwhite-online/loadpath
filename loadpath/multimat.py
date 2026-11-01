@@ -117,6 +117,7 @@ class MultiMaterial:
     extruders: dict = field(default_factory=dict)    # material name -> extruder (1-based)
     slicer: str = "all"
     interlock: object = None                         # interlock.Interlock, or None: flat bonds
+    bond_in_topology: bool = False                   # experimental: bond constrained from beta 4
 
     @property
     def names(self):
@@ -214,6 +215,7 @@ def parse_multimaterial(d, study=None, base_dir=None) -> MultiMaterial | None:
                 c[k_] = float(v[k_])
         mm.interfaces[f"{a}+{b}"] = c
     mm.interface_penalty = bool(d.get("interfacePenalty", True))
+    mm.bond_in_topology = bool(d.get("bondInTopology", False))
     if d.get("interlock") not in (None, False):
         from .interlock import parse_interlock
         mm.interlock = parse_interlock(d["interlock"], getattr(study, "process", None))
@@ -722,7 +724,7 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
         # (x * 4 w_i w_j), so the optimizer meets it by moving the interface
         # to where the bond is not loaded, or by having less of it there.
         int_g = None
-        if use_int and frozen:
+        if use_int and (frozen or (mm.bond_in_topology and beta >= 4.0)):
             # every case: a softness case is a real load too (the poke's
             # edge presses on the pad's bond as hard as anything)
             stress = [stiff.stress(u, lam_e, mu_e) * sc for u, sc in zip(us, scales)]
@@ -848,7 +850,14 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
                 g_x.append(-(gcx / F - gmx / Fr) / tgt)
                 g_y.append(-(gcy / F - gmy / Fr) / tgt)
         if use_int:
-            if int_g is None or f0_frozen is None:
+            if int_g is not None and not frozen:
+                # experimental (bondInTopology): the bond as a constraint while
+                # the layout forms, now that the stored-energy limit keeps MMA
+                # from cutting the load path to unload it
+                g_vals.append(int_g[0])
+                g_x.append(int_g[1])
+                g_y.append(int_g[2])
+            elif int_g is None or f0_frozen is None:
                 g_vals.append(-1.0)
                 g_x.append(np.zeros(n))
                 g_y.append(np.zeros((m_y, n)))

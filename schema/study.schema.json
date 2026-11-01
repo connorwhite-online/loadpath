@@ -1228,6 +1228,10 @@
           ],
           "description": "Interlock the materials where they meet (an interlaced beam lattice, as Cura's / Bambu's interlocking beams): the delivered bodies interpenetrate and the bond is credited with the measured gain, capped by what the lattice carries (interlock.py)"
         },
+        "bondInTopology": {
+          "type": "boolean",
+          "description": "experimental: constrain the bond while the layout forms (from projection 4), not only in the final bond stage"
+        },
         "interfacePenalty": {
           "type": "boolean",
           "description": "constrain the bond in the optimizer (default true); verification always checks it"
