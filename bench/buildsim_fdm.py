@@ -47,7 +47,8 @@ def run(length, height, relax=1.0, bed=None, adhesion=None, layer=LAYER):
     nx, ny, nz = int(round(length / layer)), max(2, int(round(1.0 / layer))), int(round(height / layer))
     solid = np.ones((nx, ny, nz), bool)
     setup = BuildSetup(process="fdm", material="abs", relax=relax, bed=75.0, chamber=75.0,
-                        bed_stiffness=bed, bed_adhesion=adhesion, layer=layer)
+                        bed_stiffness=bed, bed_adhesion=adhesion, layer=layer,
+                        print_layer=LAYER)
     t0 = time.time()
     r = simulate_build(solid, layer, (0, 0, 0), setup)
     return flatness(r), r, time.time() - t0

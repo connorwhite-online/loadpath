@@ -194,6 +194,18 @@ per case on average. What was learned:
   The search stays the default until the full suite (GRIP cases, arm
   links) is measured with `"method": "constrained"`; the hook is
   excluded (print direction).
+- Constrained vs search, all strength-bound evals (2026-11-01, one box,
+  LOADPATH_WORKERS=1): the constrained method now takes a print direction
+  (the AM filter), but wins only the wall brackets (68.7 -> 28.1 g, 35.5
+  -> 26.5 g). The search is lighter on MBB (12.5 vs 15.6 g), hook (27.2 vs
+  37.9), bell crank (22.4 vs 24.8) and arm link (55.4 vs 59.6); on the GRIP
+  yoke, wrist link and upper arm the constrained run's solve broke down
+  (singular factor, or no convergence: a mechanism), and on the turret it
+  never passed in 90 minutes (tets SF 0.93-1.24). So the search stays the
+  default; running both would double the time to win two cases nothing
+  predicts. A constrained study that finds no passing design now falls
+  back to the search on the search's own grid (the yoke: 21-24 g instead
+  of an error).
 - The voxel reading also moves with the cell budget, and most on thin
   sections. Tuning the arm link's field graph (tune.py, 2026-10-30), the
   start part read 0.500 mm deflection on 30k cells and 0.487 mm on 60k, while

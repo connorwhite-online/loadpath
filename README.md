@@ -226,8 +226,10 @@ relaxes to 3.8 N over a day as the TPU creeps. The textbook design with the
 same springs relies on 7 corner hinges and its large-deflection solve stops
 at a fifth of the stroke. For long strokes, `mechanism_nl.py` optimizes on
 the large-deflection response itself: on the inverter driven through 30%
-of its length it moves the output 18% further than the linear design, with
-no corner hinge ([docs/MECHANISMS.md](docs/MECHANISMS.md)).
+of its length it moves the output 20% further than the linear design, with
+no corner hinge. A TPU finger designed this way curls its tip 8.7 mm for a
+5 mm pull at its base, through the whole stroke; the linear design's solve
+stops at 0.7 mm ([docs/MECHANISMS.md](docs/MECHANISMS.md)).
 
 ![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
 

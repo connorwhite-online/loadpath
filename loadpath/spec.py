@@ -279,7 +279,7 @@ def _calibrated_process(process, mat_in, spec):
 _BUILD_SIM_KEYS = {"layer": "layer", "plate": "plate", "scale": "scale", "release": "release",
                    "bedTemperature": "bed", "chamberTemperature": "chamber", "bedStiffness": "bed_stiffness",
                    "relax": "relax", "recoaterGap": "recoater_gap", "plateCells": "plate_cells",
-                   "bedAdhesion": "bed_adhesion"}
+                   "bedAdhesion": "bed_adhesion", "printLayer": "print_layer"}
 
 
 def _build_sim(spec, process, material):

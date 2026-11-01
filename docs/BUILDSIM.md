@@ -282,41 +282,80 @@ along the build direction at the end, cooled on the bed: the lift off the
 bed. The in-plane shrink is left out because it is uniform and the slicer
 scales it away.
 
-**A warp limit on an FDM part: not working yet.** `bench/buildsim_fdm_warp_limit.py`
-runs a 120 x 24 x 12 mm beam printed flat on the bed, bolted at two
-preserved end pads, 200 N at mid-span, SF 2, with no limit and then with
-`maxDistortion` below what the unlimited part builds to:
+**FDM warp depends on the layer thickness, so it is extrapolated to the
+printed layer.** The 3-4x gap between the optimizer's FDM warp and the
+re-simulation of the delivered part came from here. On a solid 60 x 4 x 3 mm
+PA12 bar on the bed, the lift is set by the analysis layer and not by the
+voxel pitch, and it keeps growing as the layers thin:
 
-| | no limit | maxDistortion 0.5x | maxDistortion 0.7x |
+| analysis layer, mm | 1 | 0.5 | 0.25 | 0.125 |
+|---|---|---|---|---|
+| lift, mm (any pitch from 0.125 to 0.5) | 0.298 | 0.455 | 0.621 | 0.795 |
+
+Each halving adds about the same amount (0.157, 0.165, 0.174 mm), so the warp
+is close to linear in log(layer). The optimizer's coarse grid built in
+3.7 mm lumps and the re-simulation in about 1.1 mm ones, against 0.2 mm in
+the printer. Every FDM build now runs a second time at twice the lumps and
+takes u = (1 + k) u(t) - k u(2t), with k = log2(t / printed layer).
+`buildSim.printLayer` sets the printed layer (default 0.2 mm; 0 turns the
+correction off). The optimizer's term carries it exactly, because both
+builds go through the adjoint and the gradients match finite differences.
+The report's `layerExtrapolation` gives the raw number. From 0.5 mm lumps
+the correction lands within 3% of a direct 0.25 mm build, where the plain
+0.5 mm build reads 25% low (a test checks this). It needs four or more lumps
+through the part. With fewer it still reads low (0.52 against about 0.68 mm
+for the 3 mm bar in 1 mm lumps). The Armillotta fit used one voxel per
+printed layer, so it does not change.
+
+On the PA12 beam below, at 28% volume, the re-simulation of the same
+delivered part now settles at 2.3-2.9 mm from 8,000 to 60,000 cells
+(2.33, 2.45, 2.93 and 2.53 mm). Before, it read 1.0-1.5 mm and was still
+climbing with the cell count. The optimizer's own number rose from 0.34 to
+1.55 mm.
+
+**What is left: the optimizer's grid.** A 12 mm tall part on a 1.85 mm
+density grid has six layers, and thin members are one or two cells.
+There, the optimizer's FDM warp still reads 2-3.5x below the delivered part,
+and the ratio changes from design to design. So FDM warp limits are now
+checked on the delivered part. In the safety-factor search, each outcome's
+mesh is re-simulated (`simulate_part` at `buildSim.cells`, at most 30,000,
+on the bed, about 1-3 minutes) into `report.warp.delivered`. The margin
+uses that number, and the optimizer's limit for the next try is scaled by
+`deliveredOverOptimizer` from the last one. The metal build model keeps its
+full-grid check, which passed its re-simulation on the Ti64 bracket.
+
+**A warp limit on this FDM beam: no part passes, because the warp is not
+the optimizer's to move.** `bench/buildsim_fdm_warp_limit.py` runs a
+120 x 24 x 12 mm beam printed flat on the bed, bolted at two preserved end
+pads, 200 N at mid-span, SF 2. The PA12 runs, with every lift taken from
+the delivered part:
+
+| PA12 | no limit | maxDistortion 0.85x (2.1 mm) | 0.5x (1.24 mm) |
 |---|---|---|---|
-| PETG | 15.7 g, SF 2.40, lift 0.070 mm (re-simulated: 0.19) | no part passed (SF 0) | no part passed (SF <= 0.22) |
-| PA12 | 11.5 g, SF 2.05, lift 0.25 mm (re-simulated: 1.02) | no part passed (SF <= 0.01) | no part passed (SF 0.97-1.54, lift 0.22-0.25) |
+| best part | 11.5 g, SF 2.05, lift 2.48 mm | none passed | none passed |
+| outcomes tried | 30%: 3.52 mm; 26%: 2.94 mm; 28%: 2.48 mm | 30%: 3.52; 53%: 3.39 (SF 0.78); 70%: 3.71 (SF 0.09) | 30%: 3.52; 60%: 2.46 (SF 0.54); 70%: 2.59 (SF 0.64) |
 
-(The 0.5x runs are with the shipped limit weight, but before the FDM build
-model went to one cell per layer; the 0.7x runs have one cell per layer and
-tried a capped limit weight, see below; bench/results keeps the 0.7x rows.)
+Across every design and volume fraction tried, the delivered lift stays at
+2.5-3.7 mm. Pushing the optimizer toward the limit costs the load path
+(SF down to 0.09) and does not lower it. The worst lift is not in the
+preserved pads, so exempting them would not help. It sits in the bottom
+chord on the bed, just inside the pads (x 22-26 and 92-96 mm, 1-3 mm up).
+On this part the warp is set by the material, the height and the length on
+the bed, not by the topology. The levers are the process: bed and chamber
+temperature, a brim or `bedAdhesion`, a lower or tilted part, or PETG. In
+PETG the same beam lifts 0.36-0.40 mm, a seventh of nylon's, in line with
+nylon's reputation on open printers. A part whose warp lives in what the
+optimizer may change (long thin floors, wide flanges) is where an FDM limit
+should bite, and that has not been shown yet.
 
-Two problems, both open:
-
-- **The optimizer cannot move this warp.** Most of the lift comes from the
-  preserved end pads, solid blocks on the bed that the optimizer may not
-  touch, so taking material away elsewhere costs strength and buys almost
-  no flatness. With the limit's weight as on the metal bracket, the
-  failing designs lost their load path (SF near 0, as in the PETG row);
-  capping the weight and scaling it to the current compliance kept PA12
-  structural (SF 1-1.5, the row above) but still missed the limit, and it
-  broke the metal bracket's passing 0.6x case, so it was not kept. A part whose warp lives in what it may change
-  (long thin floors, wide flanges) is where a limit should bite; it has
-  not been shown yet.
-- **The optimizer's FDM warp reads 3-4x lower than the re-simulation of
-  the delivered part** (0.25 against 1.02 mm for PA12). On the same voxel
-  field the two models agree within 2% (a test checks it), so the gap is
-  between the optimizer's density field and the delivered mesh (smoothing,
-  voxelization of the mesh, the first layer's contact). Until that is
-  found, read FDM warp from `report.buildSim`, not from `report.warp`.
-
-Nylon warps about five times as much as PETG on this beam (re-simulated
-1.02 against 0.19 mm), in line with nylon's reputation on open printers.
+**Calibration print.** The FDM fit is ABS in a 75 °C chamber, so for PETG on
+an open printer it is a guess. `bench/warp_coupon.py` writes five flat
+bars in Armillotta's shapes (20 mm wide, 60-140 mm long, 1.5 and 3.5 mm
+tall), with the model's on-bed lift and off-bed flatness for each, and the
+measuring steps (feeler gauges on glass). The PETG set for an A1 mini at a
+70 °C bed predicts 0.17-0.30 mm flatness and 0.05-0.12 mm lift on the bed.
+Measured flatness refits `relax` and the bed hold as `bench/buildsim_fdm.py`
+does.
 
 ## SLS / MJF
 

@@ -68,12 +68,16 @@ class Box(Shape):
             raise ValueError(f"box max {self.hi.tolist()} must exceed min {self.lo.tolist()}")
 
     def sdf(self, p):
+        # column by column: ~10x faster than the (n, 3) array form, and the
+        # field graphs evaluate primitives tens of millions of times
+        p = np.asarray(p, float)
         c = 0.5 * (self.lo + self.hi)
         h = 0.5 * (self.hi - self.lo)
-        q = np.abs(np.asarray(p, float) - c) - h
-        outside = np.linalg.norm(np.maximum(q, 0.0), axis=-1)
-        inside = np.minimum(q.max(axis=-1), 0.0)
-        return outside + inside
+        q0 = np.abs(p[..., 0] - c[0]) - h[0]
+        q1 = np.abs(p[..., 1] - c[1]) - h[1]
+        q2 = np.abs(p[..., 2] - c[2]) - h[2]
+        a, b, d = np.maximum(q0, 0.0), np.maximum(q1, 0.0), np.maximum(q2, 0.0)
+        return np.sqrt(a * a + b * b + d * d) + np.minimum(np.maximum(np.maximum(q0, q1), q2), 0.0)
 
     def bounds(self):
         return self.lo.copy(), self.hi.copy()
@@ -107,9 +111,19 @@ class Cylinder(Shape):
         self.axis = (self.p1 - self.p0) / self.length
 
     def sdf(self, p):
-        d = np.asarray(p, float) - self.p0
-        t = d @ self.axis
-        radial = np.linalg.norm(d - t[..., None] * self.axis, axis=-1)
+        p = np.asarray(p, float)
+        ax = self.axis
+        k = int(np.argmax(np.abs(ax)))
+        if abs(ax[k]) == 1.0:
+            # along x, y or z (the usual bore, boss or channel): two columns
+            i, j = [x for x in range(3) if x != k]
+            t = (p[..., k] - self.p0[k]) * ax[k]
+            u, v = p[..., i] - self.p0[i], p[..., j] - self.p0[j]
+            radial = np.sqrt(u * u + v * v)
+        else:
+            d = p - self.p0
+            t = d @ ax
+            radial = np.sqrt(np.maximum(np.einsum("...i,...i->...", d, d) - t * t, 0.0))
         half = 0.5 * self.length
         # 2D (radial, axial) box SDF; a tube is the band rInner..r.
         if self.r_inner > 0:
@@ -118,8 +132,8 @@ class Cylinder(Shape):
         else:
             rad_q = radial - self.r
         ax_q = np.abs(t - half) - half
-        q = np.stack([rad_q, ax_q], axis=-1)
-        return np.linalg.norm(np.maximum(q, 0.0), axis=-1) + np.minimum(q.max(axis=-1), 0.0)
+        a, b = np.maximum(rad_q, 0.0), np.maximum(ax_q, 0.0)
+        return np.sqrt(a * a + b * b) + np.minimum(np.maximum(rad_q, ax_q), 0.0)
 
     def bounds(self):
         # Exact AABB of a capped cylinder: each cap disc extends r*sqrt(1-a_i^2)
@@ -171,7 +185,9 @@ class Sphere(Shape):
             raise ValueError("sphere r must be > 0")
 
     def sdf(self, p):
-        return np.linalg.norm(np.asarray(p, float) - self.center, axis=-1) - self.r
+        p = np.asarray(p, float)
+        x, y, z = (p[..., i] - self.center[i] for i in range(3))
+        return np.sqrt(x * x + y * y + z * z) - self.r
 
     def bounds(self):
         return self.center - self.r, self.center + self.r
@@ -267,7 +283,10 @@ class Union(Shape):
         self.shapes = list(shapes)
 
     def sdf(self, p):
-        return np.min([s.sdf(p) for s in self.shapes], axis=0)
+        out = self.shapes[0].sdf(p)
+        for s in self.shapes[1:]:
+            out = np.minimum(out, s.sdf(p))
+        return out
 
     def bounds(self):
         b = [s.bounds() for s in self.shapes]
@@ -297,10 +316,10 @@ class Boolean(Shape):
         self.parts = list(shapes)
 
     def sdf(self, p):
-        d = [s.sdf(p) for s in self.parts]
-        if self.kind == "intersect":
-            return np.max(d, axis=0)
-        return np.maximum(d[0], -np.min(d[1:], axis=0))
+        out = self.parts[0].sdf(p)
+        for s in self.parts[1:]:
+            out = np.maximum(out, s.sdf(p)) if self.kind == "intersect" else np.maximum(out, -s.sdf(p))
+        return out
 
     def bounds(self):
         if self.kind == "subtract":
@@ -538,10 +557,20 @@ def _shape(spec, base_dir):
 
 
 def manifold_from_trimesh(mesh):
+    """A manifold3d Manifold from a trimesh, in double precision where the
+    library has it (Mesh64): rounding a lattice to float32 moves a vertex
+    up to ~5e-6 mm at 100 mm, enough to push one sheet of a wall a few
+    microns thick through the other."""
     import manifold3d as m3d
-    verts = np.ascontiguousarray(mesh.vertices, dtype=np.float32)
-    faces = np.ascontiguousarray(mesh.faces, dtype=np.uint32)
-    man = m3d.Manifold(m3d.Mesh(vert_properties=verts, tri_verts=faces))
+    if hasattr(m3d, "Mesh64"):
+        # copies: the binding refuses read-only arrays (trimesh's caches)
+        verts = np.array(mesh.vertices, dtype=np.float64, order="C", copy=True)
+        faces = np.array(mesh.faces, dtype=np.uint64, order="C", copy=True).reshape(-1, 3)
+        man = m3d.Manifold(m3d.Mesh64(vert_properties=verts, tri_verts=faces))
+    else:
+        verts = np.ascontiguousarray(mesh.vertices, dtype=np.float32)
+        faces = np.ascontiguousarray(mesh.faces, dtype=np.uint32)
+        man = m3d.Manifold(m3d.Mesh(vert_properties=verts, tri_verts=faces))
     if man.status() != m3d.Error.NoError:
         raise ValueError(f"mesh is not a valid manifold ({man.status()})")
     return man
@@ -549,7 +578,7 @@ def manifold_from_trimesh(mesh):
 
 def trimesh_from_manifold(man):
     import trimesh
-    mesh = man.to_mesh()
+    mesh = man.to_mesh64() if hasattr(man, "to_mesh64") else man.to_mesh()
     verts = np.asarray(mesh.vert_properties, float)[:, :3]
     faces = np.asarray(mesh.tri_verts, np.int64)
     return trimesh.Trimesh(verts, faces, process=False)

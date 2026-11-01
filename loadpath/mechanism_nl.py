@@ -134,7 +134,7 @@ class _Model:
             k = (self.stiff.finish(data) + sp.diags(self.springs)).tocsr()
         return fint, k, jmin, br, dbr
 
-    def newton(self, u, mod, gam, lam, rtol=1e-8, max_it=25):
+    def newton(self, u, mod, gam, lam, rtol=1e-8, max_it=40):
         u = u.copy()
         u[self.pd] = lam * self.pv
         r0 = None
@@ -150,9 +150,19 @@ class _Model:
                 return u
             du = self.lin.solve(k, -r)
             du[~self.free] = 0.0
-            u += du
-            if not np.all(np.isfinite(u)):
+            # damped step: a full Newton step can invert a solid cell next
+            # to soft void ones; halve it until no cell inverts and the
+            # residual does not blow up
+            for _ in range(6):
+                un = u + du
+                fn, _, jn, _, _ = self.assemble(un, mod, gam, tangent=False)
+                if np.all(np.isfinite(un)) and np.isfinite(jn) and jn > 0 and \
+                        np.linalg.norm(np.where(self.free, fn, 0.0)) < 2.0 * rn:
+                    break
+                du *= 0.5
+            else:
                 return None
+            u = un
         return None
 
     def solve(self, mod, gam, u0=None, steps=4):
@@ -233,7 +243,7 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     from .mma import MMA
     mma = MMA(int(design.sum()), 1, xmin=0.0, xmax=1.0, move=opts.move)
     history, u_prev, j0 = [], {}, None
-    x_ok, beta_ok, backtracks, beta_cap, stopped = None, beta, 0, opts.beta_max, None
+    x_ok, beta_ok, backtracks, beta_cap, stopped, refused = None, beta, 0, opts.beta_max, None, 0
     it = 0
     for it in range(1, opts.max_iterations + 1):
         real = None
@@ -257,8 +267,11 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
                 backtracks += 1
                 if beta > beta_ok:
                     # the sharper projection is what broke it: keep the last
-                    # beta and stop sharpening
-                    beta, beta_cap = beta_ok, beta_ok
+                    # beta for now and try again later; stop sharpening
+                    # after three refusals
+                    beta, since, refused = beta_ok, 0, refused + 1
+                    if refused >= 3:
+                        beta_cap = beta_ok
                 else:
                     x = 0.5 * (x + x_ok)      # backtrack toward the last design that converged
         if real is None:

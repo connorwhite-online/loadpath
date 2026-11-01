@@ -40,7 +40,7 @@ def run(pitch=0.5, bed_stiffness=None, relax=None, release="full"):
     n, nz = int(round(50 / pitch)), int(round(2.0 / pitch))
     solid = np.ones((n, n, nz), bool)
     st = BuildSetup(process="fdm", material="pp", bed=100.0, chamber=25.0, layer=0.5, release=release,
-                    bed_stiffness=bed_stiffness, relax=relax)
+                    bed_stiffness=bed_stiffness, relax=relax, print_layer=0.5)
     t0 = time.time()
     r = simulate_build(solid, pitch, (0, 0, 0), st)
     m = r.mesh
