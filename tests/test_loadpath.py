@@ -468,6 +468,35 @@ def test_crosscheck_cantilever():
     assert abs(c["peakStress"] - 5.1) < 0.4, c["peakStress"]
 
 
+def test_crosscheck_layered_beam():
+    # FDM layers stacked along the beam (buildDirection +x): the cross-check
+    # solves the voxel verify's transversely isotropic stiffness (across the
+    # layers 0.85 E, interlayer shear 0.75 G) and checks the bending tension
+    # pulling the layers apart against interlayer (0.6) x strength.
+    # Timoshenko: 1000e3 / (3 * 1700 * 833.3) + 10 * 100 / (5/6 * 577 * 100)
+    # = 2.37 mm; M c / I at the band's edge (x = 12) is 5.28 MPa.
+    try:
+        from loadpath.crosscheck import mesher_missing
+        if mesher_missing():
+            raise ImportError
+    except ImportError:
+        print("  (skipped: pip install loadpath[crosscheck])")
+        return
+    import manifold3d as m3d
+    from loadpath.crosscheck import crosscheck, unsupported
+    from loadpath.shapes import trimesh_from_manifold
+    from loadpath.verify import STRESS_ALLOWANCE
+    st = study_from_dict(dict(BEAM, minMember=4, process={"type": "fdm", "buildDirection": "+x"}))
+    assert unsupported(st) is None
+    mesh = trimesh_from_manifold(m3d.Manifold.cube((100, 10, 10)).refine(20))
+    r = crosscheck(st, mesh, size=2.5, contact_band=12)
+    c = r["cases"][0]
+    assert 2.25 < c["deflection"] < 2.45, c["deflection"]
+    assert abs(c["interlayerStress"] - 5.28) < 0.4, c["interlayerStress"]
+    # the bond governs: 0.6 * 50 / (5.28 * allowance)
+    assert abs(r["safetyFactor"] - 0.6 * 50 / (5.28 * STRESS_ALLOWANCE)) < 0.08 * r["safetyFactor"], r["safetyFactor"]
+
+
 def test_search_confirms_on_tets():
     # goal.confirm "tet": the delivered pick is the tet mesh's reading, at
     # or above the target, and the rest of the search is read through it
