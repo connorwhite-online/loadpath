@@ -1333,7 +1333,22 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                 if o.report["margin"] < _TET_CLOSE:
                     return
                 vf = 0.5 * (floor + top)
-                if top - vf < max(0.005, 0.05 * top):
+                retry = False
+                if name == "cold":
+                    # a fraction the chain failed warm, between the floor
+                    # and the pick, first: its own fresh layout is the one
+                    # the chain lost (GRIP's MJF wrist link: 5.25% warm from
+                    # 6% read tets 0.99, fresh 4.00 for 2, 37.2 g against
+                    # 41.0; the midpoint, 4.2%, read 0.41)
+                    fresh = [q.volume_fraction for q in outcomes
+                             if str(q.report.get("start", "")).startswith(("cold", "layout search: cold"))]
+                    lost = [q.volume_fraction for q in outcomes
+                            if not q.passes and floor < q.volume_fraction < top and q.voxel_sf
+                            and q.report.get("bodies", 1) <= 1 and str(q.report.get("start", "")).startswith("warm")
+                            and not any(abs(q.volume_fraction - v) < 0.003 for v in fresh)]
+                    if lost:
+                        vf, retry = max(lost), True
+                if top - vf < max(0.005, 0.05 * top) and not retry:
                     break
                 if name.startswith("warm") and any(abs(q.volume_fraction - vf) < 0.003 for q in outcomes):
                     break   # the chain already ran warm there

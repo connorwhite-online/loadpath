@@ -69,13 +69,20 @@ FILL_MIN = 0.1
 
 
 def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000, samples: int = 3,
-                      fields: bool = False, graph=None, solid_ok: bool = False) -> dict:
+                      fields: bool = False, graph=None, solid_ok: bool = False,
+                      contact_band: float | None = None) -> dict:
     """mass, safety factor (worst case) and deflection of the graph's part
     under `study` with its lattice homogenized (module docstring). Returns
     a verify_part-like dict: mass, volume, safetyFactor, cases (name,
     safetyFactor, deflection, peakStress, peakAt, inLattice), bodies,
     analysisPitch, analysisCells, latticeFraction. `graph` is a built
-    FieldGraph of `doc` to evaluate (and reuse the resources of)."""
+    FieldGraph of `doc` to evaluate (and reuse the resources of).
+    `contact_band` (mm): stress this close to a support or load is left out
+    of the peak; default the study's optimization cell (domain.choose_pitch),
+    as the study runner's own check does, and never under 1.5 analysis cells.
+    A band that shrinks with the grid lets a bolt-hole singularity govern a
+    fine confirm: a GRIP forearm read SF 4.7 on 60k cells and 1.3 on 2M,
+    1 mm from a J3 bolt the part is clamped by."""
     import time
 
     from scipy.spatial import cKDTree
@@ -193,7 +200,10 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
             k = (k + mat.E * bc.springs).tocsr()
         us = Solver(hm, rtol=1e-6, maxiter=3000).solve_many(k, rhs)
     nu = study.elastic(mat)
-    band = 1.5 * pitch
+    if contact_band is None:
+        from .domain import choose_pitch
+        contact_band = choose_pitch(study)
+    band = max(1.5 * pitch, float(contact_band))
     wall_k = ec if lat is None else ec * sheet_stress_factor(kind, rho)
     vol_cell = pitch ** 3
     volume = float((fill * (fs + fc * rho) * vol_cell).sum())

@@ -105,14 +105,15 @@ def fit_size(volume: float, size: float, budget: float | None = None) -> float:
 
 def unsupported(study: Study) -> str | None:
     """Why the cross-check cannot stand in for verify.py on this study, or
-    None when it can: it solves isotropic linear elasticity under the
-    study's supports, forces, moments and bearing loads, and nothing else."""
+    None when it can: it solves linear elasticity under the study's
+    supports, forces, moments and bearing loads, and nothing else. A layered
+    process is covered: the stiffness is the voxel verify's (study.elastic:
+    transversely isotropic about the build direction) and the safety factor
+    takes the same across-layer bond check (process.interlayer)."""
     if not study.supports:
         return "no supports (a self-equilibrated part)"
     if study.gravity is not None:
         return "gravity loads"
-    if study.process is not None:
-        return "a layered process (anisotropic stiffness and interlayer strength)"
     if any(ld.pressure for c in study.load_cases for ld in c.loads):
         return "pressure loads"
     return mesher_missing()
@@ -366,13 +367,13 @@ def _b_matrices(d):
 
 
 def _elastic(E, nu):
-    lam = E * nu / ((1 + nu) * (1 - 2 * nu))
-    mu = E / (2 * (1 + nu))
-    c = np.zeros((6, 6))
-    c[:3, :3] = lam
-    c[np.arange(3), np.arange(3)] += 2 * mu
-    c[np.arange(3, 6), np.arange(3, 6)] = mu
-    return c
+    """6x6 elasticity (engineering shear, the order of fem._VOIGT, which
+    _b_matrices shares): isotropic for a Poisson's ratio, transversely
+    isotropic about the build direction for a fem.Layered, exactly the
+    matrix the voxel verify solves with."""
+    from .fem import elastic_c
+
+    return elastic_c(E, nu)
 
 
 def _assemble(nodes, conn, E, nu, chunk=20_000):
@@ -499,13 +500,16 @@ def _rigid_modes(xyz, comp):
     return b
 
 
-def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices):
+def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices, normal=None):
     """Von Mises at each vertex: the P2 field's stress at each element's own
-    vertices, averaged over the elements sharing it."""
+    vertices, averaged over the elements sharing it. With `normal` (the
+    build direction, unit), also the normal stress across the layers there,
+    (vm, sn)."""
     c = _elastic(E, nu)
     vol, g = _grads(nodes, conn)
     ue = u.reshape(-1, 3)[conn].reshape(len(conn), 30)
     acc = np.zeros(n_vertices)
+    acc_n = np.zeros(n_vertices)
     cnt = np.zeros(n_vertices)
     for i in range(4):
         lam = np.zeros(4)
@@ -515,8 +519,17 @@ def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices):
         sx, sy, sz, txy, tyz, tzx = sig.T
         vm = np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2) + 3 * (txy ** 2 + tyz ** 2 + tzx ** 2))
         np.add.at(acc, conn[:, i], vm)
+        if normal is not None:
+            n = normal
+            # n . sigma . n, as verify.py reads it (shear terms counted twice)
+            sn = (sx * n[0] ** 2 + sy * n[1] ** 2 + sz * n[2] ** 2
+                  + 2.0 * (txy * n[0] * n[1] + tyz * n[1] * n[2] + tzx * n[2] * n[0]))
+            np.add.at(acc_n, conn[:, i], sn)
         np.add.at(cnt, conn[:, i], 1)
-    return acc / np.maximum(cnt, 1)
+    vm = acc / np.maximum(cnt, 1)
+    if normal is None:
+        return vm
+    return vm, acc_n / np.maximum(cnt, 1)
 
 
 def crosscheck(study: Study, mesh, size: float | None = None, contact_band: float | None = None,
@@ -532,6 +545,17 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     mesher: "tetwild" (default when pytetwild is installed) or "gmsh"."""
     t0 = time.time()
     mat = study.material
+    # the voxel verify's elasticity and bond check (verify.py), so both read
+    # a layered part the same way
+    el = study.elastic(mat)
+    proc = study.process
+    normal, interlayer = None, 1.0
+    if proc is not None and proc.build not in (None, "auto") and proc.interlayer < 1.0:
+        from .am import build_vector
+
+        normal = build_vector(proc.build)
+        normal = normal / np.linalg.norm(normal)
+        interlayer = float(proc.interlayer)
     asked = size or element_size(study)
     # an explicit size is the caller's; the default is coarsened to fit memory
     size = asked if size else fit_size(float(mesh.volume), asked)
@@ -596,31 +620,54 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
 
     def summarize(results):
         cases = []
-        for (name, f, lnodes), (u, vm) in zip(loads, results):
+        sfs, sfs_raw = [], []
+        for (name, f, lnodes), res in zip(loads, results):
+            u, vm = res[0], res[1]
+            sn = res[2] if len(res) > 2 else None
             i = int(np.argmax(np.where(far, vm, -1)))
             # where the stress is within half of the peak: the next pass refines there
             order = np.argsort(-np.where(far, vm, -1))[:200]
             hot = pts[order[vm[order] > 0.5 * vm[i]]]
-            cases.append({"name": name, "peakStress": float(vm[i]), "peakAt": pts[i].tolist(),
+            peak = float(vm[i])
+            raw = mat.strength / peak if peak > 0 else float("inf")
+            row = {}
+            if sn is not None:
+                # layers part along their bond: tension across them against
+                # interlayer x strength, beside von Mises against strength
+                # (verify.py's check, the same allowance)
+                tens = np.where(far, np.maximum(sn, 0.0), 0.0)
+                j = int(np.argmax(tens))
+                inter = float(tens[j])
+                raw_i = interlayer * mat.strength / inter if inter > 0 else float("inf")
+                row = {"interlayerStress": inter, "interlayerAt": pts[j].tolist(),
+                       "interlayerSafetyFactor": raw_i / STRESS_ALLOWANCE}
+                raw = min(raw, raw_i)
+            sfs_raw.append(raw)
+            sfs.append(raw / STRESS_ALLOWANCE)
+            cases.append({"name": name, "peakStress": peak, "peakAt": pts[i].tolist(),
                           "hotspots": hot.tolist(),
                           "deflection": float(np.linalg.norm(u[lnodes].mean(axis=0))),
-                          "maxDisplacement": float(np.linalg.norm(u, axis=1).max())})
-        peak = max(c["peakStress"] for c in cases)
-        return {"safetyFactor": mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else float("inf"),
-                "safetyFactorNoAllowance": mat.strength / peak if peak > 0 else float("inf"), "cases": cases}
+                          "maxDisplacement": float(np.linalg.norm(u, axis=1).max()),
+                          "safetyFactor": raw / STRESS_ALLOWANCE, **row})
+        return {"safetyFactor": min(sfs), "safetyFactorNoAllowance": min(sfs_raw), "cases": cases}
 
     out = {}
     if backend in ("native", "both"):
-        us = _solve(nodes, conn, mat.E, mat.nu, fixed_dof, _pin_springs(pin_blocks, mat.E * size, len(nodes)),
+        us = _solve(nodes, conn, mat.E, el, fixed_dof, _pin_springs(pin_blocks, mat.E * size, len(nodes)),
                     loads, len(pts), edges)
-        out["native"] = summarize([(u, _nodal_von_mises(nodes, conn, u.ravel(), mat.E, mat.nu, len(pts)))
-                                   for u in us])
+        if normal is None:
+            out["native"] = summarize([(u, _nodal_von_mises(nodes, conn, u.ravel(), mat.E, el, len(pts)))
+                                       for u in us])
+        else:
+            out["native"] = summarize([(u, *_nodal_von_mises(nodes, conn, u.ravel(), mat.E, el, len(pts), normal))
+                                       for u in us])
         timings["native"] = time.time() - t1
     if backend in ("ccx", "both"):
         # the same quadratic mesh, held nodes and nodal forces: only the
-        # solver and its stress recovery differ
+        # solver and its stress recovery differ (a layered material as
+        # engineering constants in the frame of its layers)
         t2 = time.time()
-        out["ccx"] = summarize(_solve_ccx(mat, nodes, conn, supports, loads, len(pts)))
+        out["ccx"] = summarize(_solve_ccx(mat, nodes, conn, supports, loads, len(pts), el, normal))
         timings["ccx"] = time.time() - t2
     if not out:
         raise ValueError(f"backend must be 'native', 'ccx' or 'both', not {backend!r}")
@@ -639,12 +686,41 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                      "seconds": time.time() - t0}
 
 
-def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices):
+def _ccx_material(mat, el) -> str:
+    """The *MATERIAL block: isotropic, or for a fem.Layered the same
+    transversely isotropic constants as engineering constants in the frame
+    of the layers (1, 2 in the layer, 3 along the build direction), with an
+    *ORIENTATION putting axis 3 on the layer normal; the section names it.
+    fem.Layered: E3 = ez E, nu12 = nu13 = nu23 = nu (so nu31 = nu ez),
+    G12 = E / 2(1 + nu), G13 = G23 = gz G12."""
+    from .fem import Layered
+
+    if not isinstance(el, Layered):
+        return (f"*MATERIAL,NAME=M\n*ELASTIC\n{mat.E:.9g},{float(el):.9g}\n"
+                "*SOLID SECTION,ELSET=PART,MATERIAL=M\n")
+    e, nu = mat.E, el.nu
+    g = e / (2.0 * (1.0 + nu))
+    z = np.asarray(el.normal, float)
+    # the local frame fem.Layered.c rotates from
+    a = np.array([1.0, 0.0, 0.0]) if abs(z[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    x = np.cross(a, z)
+    x /= np.linalg.norm(x)
+    y = np.cross(z, x)
+    consts = (e, e, el.ez * e, nu, nu, nu, g, el.gz * g, el.gz * g)
+    return ("*MATERIAL,NAME=M\n*ELASTIC,TYPE=ENGINEERING CONSTANTS\n"
+            + ",".join(f"{v:.9g}" for v in consts[:8]) + f"\n{consts[8]:.9g}\n"
+            "*ORIENTATION,NAME=LAYERS,SYSTEM=RECTANGULAR\n" + ",".join(f"{v:.9g}" for v in (*x, *y)) + "\n"
+            "*SOLID SECTION,ELSET=PART,MATERIAL=M,ORIENTATION=LAYERS\n")
+
+
+def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=None):
     """The quadratic system solved by CalculiX (ccx on PATH): one Abaqus-
     style deck, one static step per load case. Returns [(u, von Mises at
-    the vertices)] per case, as the native solve does. CalculiX recovers
-    stress at its integration points and extrapolates to the nodes, a
-    different route from _nodal_von_mises."""
+    the vertices)] per case, as the native solve does, and with `normal`
+    (a layered study's build direction) the normal stress across the
+    layers too, (u, vm, sn). CalculiX recovers stress at its integration
+    points and extrapolates to the nodes, a different route from
+    _nodal_von_mises; its nodal stresses are in the global frame."""
     exe = shutil.which("ccx")
     if exe is None:
         raise RuntimeError("CalculiX (ccx) is not on PATH; install it (Debian: apt install calculix-ccx) "
@@ -669,8 +745,7 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices):
                     fh.write(f"*TRANSFORM,NSET=S{k},TYPE=C\n" + ",".join(f"{v:.9g}" for v in (*a, *b)) + "\n")
                     bc += [f"S{k},1,1", f"S{k},3,3"]
                 bc += [f"S{k},{a + 1},{a + 1}" for a in range(3) if fix[a]]
-            fh.write(f"*MATERIAL,NAME=M\n*ELASTIC\n{mat.E:.9g},{mat.nu:.9g}\n"
-                     "*SOLID SECTION,ELSET=PART,MATERIAL=M\n*BOUNDARY\n" + "\n".join(bc) + "\n")
+            fh.write(_ccx_material(mat, mat.nu if el is None else el) + "*BOUNDARY\n" + "\n".join(bc) + "\n")
             for _name, f, _l in loads:
                 fh.write(f"*STEP\n*STATIC,SOLVER={solver}\n*CLOAD,OP=NEW\n")
                 i, c = np.nonzero(f)
@@ -684,7 +759,16 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices):
         steps = _read_frd(deck + ".frd", len(nodes))
     if len(steps) != len(loads):
         raise RuntimeError(f"CalculiX returned {len(steps)} steps for {len(loads)} load cases")
-    return [(u, vm[:n_vertices]) for u, vm in steps]
+    if normal is None:
+        return [(u, vm[:n_vertices]) for u, vm, _s in steps]
+    n = np.asarray(normal, float)
+    out = []
+    for u, vm, sig in steps:
+        sx, sy, sz, sxy, syz, szx = sig[:n_vertices].T
+        sn = (sx * n[0] ** 2 + sy * n[1] ** 2 + sz * n[2] ** 2
+              + 2.0 * (sxy * n[0] * n[1] + syz * n[1] * n[2] + szx * n[2] * n[0]))
+        out.append((u, vm[:n_vertices], sn))
+    return out
 
 
 # CalculiX's solver: its direct SPOOLES factorization up to this many
@@ -695,8 +779,9 @@ _CCX_SOLVER = None
 
 
 def _read_frd(path, n):
-    """Per step: displacements (n, 3) and nodal von Mises (n,) from a
-    CalculiX .frd result file (fixed-width records)."""
+    """Per step: displacements (n, 3), nodal von Mises (n,) and the nodal
+    stress (n, 6: xx, yy, zz, xy, yz, zx) from a CalculiX .frd result file
+    (fixed-width records)."""
     steps, u, s, block = [], None, None, None
     with open(path) as fh:
         for line in fh:
@@ -718,5 +803,5 @@ def _read_frd(path, n):
     for u, s in steps:
         sx, sy, sz, sxy, syz, szx = s.T
         out.append((u, np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2)
-                               + 3 * (sxy ** 2 + syz ** 2 + szx ** 2))))
+                               + 3 * (sxy ** 2 + syz ** 2 + szx ** 2)), s))
     return out
