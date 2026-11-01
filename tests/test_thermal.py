@@ -260,7 +260,12 @@ def test_study_thermal_block_parses_and_lints():
                        ({"temperatures": [{"region": "motor", "t": 50}], "cycle": {"period": 60, "on": 30}},
                         "give thermal.heat"),
                        ({"heat": [{"region": "motor", "watts": 1}], "cycle": {"period": 60, "on": 60}},
-                        "shorter than the period")]:
+                        "shorter than the period"),
+                       ({"heat": [{"region": "motor", "watts": 1}],
+                         "cycle": {"period": 60, "on": 30, "fatigueSafetyFactor": 2}}, "needs cycles"),
+                       ({"heat": [{"region": "motor", "watts": 1}],
+                         "cycle": {"period": 60, "on": 30, "cycles": 1e4, "fatigueSafetyFactor": 2,
+                                   "fatigueWeight": 1}}, "not both")]:
         try:
             st = _hot_study(wrong)
             build_domain(st)
@@ -478,7 +483,7 @@ def test_duty_cycle_gradient_and_verification():
     assert tc["cycles"] == 1e4 and abs(tc["damage"] - 1e4 / tc["life"]) < 1e-12
 
 
-def test_thermal_cycling_swing_gradient():
+def test_thermal_cycling_swing_gradient(constraint=False):
     """thermal.cycle.fatigueWeight adds the hot-to-cold swing to the
     objective: an expansion problem of its own (eps = alpha (T_hot -
     T_cold), no mechanical load) measured by the p-norm of its von Mises
@@ -488,12 +493,15 @@ def test_thermal_cycling_swing_gradient():
     from scipy.sparse.linalg import spsolve
 
     from loadpath.directions import _VM
-    from loadpath.fem import Stiffness, elastic_c, hex8_b_center
+    from loadpath.fem import Stiffness, elastic_c
     from loadpath.simp import E_MIN, PENALTY, _Analysis, _heat_state
 
     th = {"heat": [{"region": "motor", "watts": 0.5}], "convection": 10,
           "temperatures": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.5, 9, 9]}, "t": 25}],
           "cycle": {"period": 600, "on": 200, "cycles": 1e4, "steps": 16, "fatigueWeight": 1.0}}
+    if constraint:
+        del th["cycle"]["fatigueWeight"]
+        th["cycle"]["fatigueSafetyFactor"] = 2.0
     st = _hot_study(th)
     d = build_domain(st)
     mesh, heat = d.mesh, d.thermal
@@ -512,7 +520,11 @@ def test_thermal_cycling_swing_gradient():
 
     stf = Stiffness(mesh, nu, d.fixed)
     free = ~d.fixed
-    c0, b = elastic_c(1.0, nu), hex8_b_center() / mesh.pitch
+    from loadpath.fem import hex8_b
+
+    c0 = elastic_c(1.0, nu)
+    assert heat.SWING_POINTS == "corners"
+    bs = [hex8_b(a, b_, c, nu) / mesh.pitch for a in (-1, 1) for b_ in (-1, 1) for c in (-1, 1)]
     m = np.array([1.0, 1, 1, 0, 0, 0])
 
     def swing(x):
@@ -527,18 +539,33 @@ def test_thermal_cycling_swing_gradient():
         k = stf.assemble((E_MIN + p) * g).tocsr()
         u = np.zeros_like(f)
         u[free] = spsolve(k[free][:, free], f[free])
-        sg = x[:, None] ** 0.5 * (u[mesh.edof] @ (c0 @ b).T - (heat.E0 * eps)[:, None] * (c0 @ m))
-        sg = sg * (~heat.near)[:, None]              # not by the supports and loads
-        vm = np.sqrt(np.einsum("ij,jk,ik->i", sg, _VM, sg))
-        return np.sum(vm ** 8) ** (1 / 8)
+        tot = 0.0
+        for bk in bs:                                 # the cell's corners (StudyHeat.SWING_POINTS)
+            sg = x[:, None] ** 0.5 * (u[mesh.edof] @ (c0 @ bk).T - (heat.E0 * eps)[:, None] * (c0 @ m))
+            sg = sg * (~heat.near)[:, None]          # not by the supports and loads
+            tot += np.sum(np.einsum("ij,jk,ik->i", sg, _VM, sg) ** 4)
+        return tot ** (1 / 8)
 
     assert heat.near.any() and not heat.near.all()
+    if constraint:
+        # the swing kept apart from the objective, with its own gradient
+        j, grad = state["swing"], state["swing_grad"]
+        assert heat.swing_limit is not None and 0 < heat.swing_limit < st.material.strength
     assert abs(swing(rho) / j - 1) < 1e-8, (swing(rho), j)
     # (rel 1e-3: PETG's retention curve is piecewise linear)
     _fd_check(swing, grad, rho, [3, 171, 85, 33, 104], rel=1e-3)
 
 
+def test_thermal_cycling_swing_constraint_gradient():
+    """thermal.cycle.fatigueSafetyFactor: the swing as a constraint (MMA in
+    simp), its p-norm and full gradient (temperature path through its own
+    adjoint) against the same finite difference; the limit is the fatigue
+    strength at cycles x SF^k, times 0.7 for a stress range."""
+    test_thermal_cycling_swing_gradient(constraint=True)
+
+
 TESTS = [
+    test_thermal_cycling_swing_constraint_gradient,
     test_slab_with_generation_is_exact,
     test_convective_fin_matches_closed_form,
     test_composite_wall_and_face_flux,

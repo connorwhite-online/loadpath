@@ -390,11 +390,21 @@ _THERMAL = {
                                                        "hot-to-cold swing (thermal-cycling fatigue): a p-norm of "
                                                        "the swing's stress over strength retention, weighted "
                                                        "against the hot moment's objective at the start. 0 "
-                                                       "(default): hot moment only. Experimental: on the motor "
-                                                       "mount 1 lifted the verified fatigue SF 2.48 -> 3.38 at "
-                                                       "12k cells, but at 45k no weight beat 2.83 (0.3 tied "
-                                                       "it, 1 lowered it), so verify the result. Adding material does not help "
-                                                       "thermal cycling (stiffer parts hold more expansion)."}},
+                                                       "(default): hot moment only. Experimental: it helped the "
+                                                       "motor mount at 12k cells but not at 45k, so verify the "
+                                                       "result. Adding material does not help "
+                                                       "thermal cycling (stiffer parts hold more expansion)."},
+                      "fatigueSafetyFactor": {"type": "number", "exclusiveMinimum": 0,
+                                              "description": "Design against thermal-cycling fatigue as a "
+                                                             "constraint: the optimizer (MMA) holds the "
+                                                             "hot-to-cold swing's stress under the material's "
+                                                             "fatigue strength at `cycles`, over this safety "
+                                                             "factor, while it minimizes the hot objective. "
+                                                             "Needs cycles; not with fatigueWeight. "
+                                                             "Experimental: motor mount at 12k cells, SF 3.5 "
+                                                             "took the verified fatigue SF 2.67 -> 3.00 at equal "
+                                                             "hot SF, but at 45k it came out lower (2.45 -> "
+                                                             "2.05), so verify the result."}},
                   "required": ["period", "on"], "additionalProperties": False},
     },
     "additionalProperties": False,

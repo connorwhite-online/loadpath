@@ -684,6 +684,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
 
     heat = domain.thermal
     heat_state = {}
+    mma_s = None
     warp_state = {}
 
     ijk = tuple(mesh.elem_ijk.T)
@@ -864,6 +865,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 s_sh = float(np.max(dc[live] / dv[live]))
                 if s_sh > 0:
                     dc = dc - 1.05 * s_sh * dv - 1e-12
+        dc_raw = dc
         dc = np.minimum(dc, 0.0)
         if robust:
             # A worst case over directions swings: stiffening the weakest
@@ -907,7 +909,47 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         ratio = np.sqrt(-dc / dv)
         l1, l2 = 1e-12, 1e12
         x_new = x
-        for _ in range(80):
+        swing_step = heat is not None and heat.swing_limit is not None and "swing_grad" in heat_state
+        if swing_step:
+            # Thermal cycling as a constraint (thermal.cycle.
+            # fatigueSafetyFactor): MMA on the hot objective with two
+            # constraints, volume and the swing's peak stress range. The
+            # peak is the p-norm scaled to this iteration's max (Le et al.
+            # 2010), its gradient the p-norm's times that scale.
+            from .mma import MMA
+
+            free = design & ~pres if void is None else design & ~pres & ~void
+            dgs = ht @ (printed_grad(am_e, heat_state["swing_grad"]) * dproj_e / hs)
+            dco = dc_raw
+            if domain.mirror:
+                dgs = _symmetrize(dgs, domain.mirror)
+                dco = _symmetrize(dco, domain.mirror)
+            dgs = _extrude(dgs, columns, design)
+            dco = _extrude(dco, columns, design)
+            scale = heat_state["swing_max"] / max(heat_state["swing"], 1e-300)
+            g_s = scale * heat_state["swing"] / heat.swing_limit - 1.0
+            vol = float(physical(x, beta)[1][design].sum())
+            if mma_s is None:
+                mma_s = MMA(int(free.sum()), 2, move=opts.move)
+            mma_s.move = move
+            x_new = x.copy()
+            with np.errstate(all="ignore"):
+                x_new[free] = mma_s.update(x[free], comp / c0, dco[free] / c0,
+                                           np.array([vol / target - 1.0, g_s]),
+                                           np.array([dv[free] / target, scale * dgs[free] / heat.swing_limit]))
+            if not np.all(np.isfinite(x_new)):
+                # the MMA subproblem broke down (seen once at 45k cells):
+                # take this step with the optimality criteria, restart MMA
+                swing_step, mma_s, x_new = False, None, x
+            x_new[pres] = 1.0
+            if void is not None:
+                x_new[void] = 0.0
+            if domain.mirror:
+                x_new = _symmetrize(x_new, domain.mirror)
+            x_new = _extrude(x_new, columns, design)
+        if swing_step:
+            swing_rec = {"swingPeak": float(heat_state["swing_max"]), "swingLimit": float(heat.swing_limit)}
+        for _ in range(80 if not swing_step else 0):
             lm = np.sqrt(l1 * l2)
             x_new = np.clip(x * ratio / np.sqrt(lm), lo_x, hi_x)
             x_new[pres] = 1.0
@@ -939,6 +981,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             rec["warpLift"] = warp_v["lift"]
             if domain.warp.max_distortion or domain.warp.max_lift:
                 rec["warpMultipliers"] = dict(warp_state["lam"])
+        if swing_step:
+            rec.update(swing_rec)
         if excess is not None:
             rec["maxMemberExcess"] = excess
             rec["maxMemberWeight"] = mu

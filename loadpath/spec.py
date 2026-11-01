@@ -448,7 +448,19 @@ def _thermal(t, base_dir) -> Thermal | None:
             raise ValueError("thermal.cycle.fatigueWeight must be >= 0")
         if fw > 0 and out.expansion is False:
             raise ValueError("thermal.cycle.fatigueWeight needs expansion: without it the swing carries no stress")
-        out.cycle = Cycle(period, on, n, steps, fw)
+        fsf = cy.get("fatigueSafetyFactor")
+        if fsf is not None:
+            fsf = num(fsf, "thermal.cycle.fatigueSafetyFactor", True)
+            if n is None:
+                raise ValueError("thermal.cycle.fatigueSafetyFactor needs cycles: the fatigue strength it holds "
+                                 "the swing under is the one at that many cycles")
+            if out.expansion is False:
+                raise ValueError("thermal.cycle.fatigueSafetyFactor needs expansion: without it the swing "
+                                 "carries no stress")
+            if fw > 0:
+                raise ValueError("thermal.cycle: give fatigueWeight (objective) or fatigueSafetyFactor "
+                                 "(constraint), not both")
+        out.cycle = Cycle(period, on, n, steps, fw, fsf)
     if not out.temperatures and not any(h > 0 for *_, h, _ in out.convection):
         raise ValueError("thermal needs a way for heat out: a fixed temperature (temperatures) or convection")
     if not out.temperatures and not out.heat and out.t_ref == out.ambient:
