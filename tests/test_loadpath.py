@@ -910,6 +910,35 @@ def test_pitch_starts_keep_the_lightest_passing_grid():
     assert "pitchStarts" in r.to_dict()
 
 
+def test_restarts_deliver_the_lightest_confirmed_pick():
+    """goal.restarts runs the search from several starts and keeps the
+    lightest of their own picks (a stand-in search here: no optimizing)."""
+    from loadpath import study as S
+    from loadpath.study import Outcome, StudyResult
+
+    st = study_from_dict({**LUG, "goal": {"safetyFactor": 2.0, "volumeFraction": 0.3, "restarts": 3},
+                          "resolution": {**(LUG.get("resolution") or {}), "pitchStarts": 1}})
+    seen = []
+
+    def fake(study, on_progress=None, should_stop=None):
+        vf = study.goal.volume_fraction
+        seen.append(vf)
+        mass = {0.3: 50.0, 0.24: 45.0, 0.375: 55.0}[round(vf, 3)]
+        picks = [Outcome(vf, None, {"mass": mass, "safetyFactor": 2.1}, {}, {}, passes=True),
+                 Outcome(vf * 0.9, None, {"mass": mass - 10, "safetyFactor": 2.2}, {}, {}, passes=True)]
+        return StudyResult(study=study, domain={}, outcomes=picks, best=0, seconds=0.0)
+
+    orig = S._run_single
+    S._run_single = fake
+    try:
+        r = S._run_restarts(st)
+    finally:
+        S._run_single = orig
+    assert [round(v, 3) for v in seen] == [0.3, 0.24, 0.375]
+    # the lightest pick (45 g), not a lighter unconfirmed outcome (35 g)
+    assert r.outcomes[r.best].report["mass"] == 45.0 and len(r.domain["restarts"]) == 3
+
+
 TESTS = [
     test_voxelize_keeps_a_whole_grid_box,
     test_pitch_starts_keep_the_lightest_passing_grid,
@@ -952,6 +981,7 @@ TESTS = [
     test_mesh_fidelity_counts_cells_the_mesh_dropped,
     test_viewer_page_carries_fields_and_history,
     test_optimize_is_reproducible,
+    test_restarts_deliver_the_lightest_confirmed_pick,
 ]
 
 

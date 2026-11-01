@@ -68,6 +68,16 @@ For each outcome: `mass`, `safetyFactor` and `deflection` per load case,
 the loads, the supports or the design space are the usual suspects, in that
 order.
 
+**Before you print the final part, consider `"goal": {"restarts": 3}`.** A
+safety-factor search lands in the local optimum its starting fraction leads
+to. Started at 0.8x and 1.25x the study's `volumeFraction`, the same eval
+parts delivered 68.7-80.6 g (wall bracket), 140.7-150.1 g (GRIP turret) and
+20.5-22.0 g (GRIP wrist yoke). `restarts: N` runs the search from N starts
+(the study's own, then 0.8x, 1.25x, 0.65x, 1.5x, ...) and delivers the
+lightest part that confirmed. It takes N times as long, so leave it at 1 while
+you iterate on loads and geometry, and set 3 for the part you'll print or
+order. `report.domain.restarts` lists each search's pick. Evals stay at 1.
+
 ## Beyond plain parts
 
 **Lattice infill.** Add `"lattice": {"type": "gyroid", "cell": 10, "skin": 1.2}`

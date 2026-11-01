@@ -139,6 +139,13 @@ class Goal:
     # the one a slicer prints fastest ("printTime") or with the least
     # filament, support included ("filament"); see slicer.py.
     minimize: str = "mass"
+    # Search this many times from different starting fractions (the goal's
+    # volumeFraction times RESTART_STARTS) and deliver the lightest confirmed
+    # part. One search settles in the local optimum its start leads to: the
+    # same study started at 0.8x and 1.25x delivered 68.7-80.6 g (wall
+    # bracket), 140.7-150.1 g (GRIP turret). For a final production part;
+    # N times the time. See docs/study-format.md.
+    restarts: int = 1
 
 
 # How the part will be made. Each process sets what the design must respect:
@@ -875,7 +882,10 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         confirm=str(g.get("confirm", "auto")),
         outcomes=[float(v) for v in g.get("outcomes") or []],
         minimize=str(g.get("minimize", "mass")),
+        restarts=int(g.get("restarts", 1)),
     )
+    if goal.restarts < 1:
+        raise ValueError("goal.restarts must be 1 or more")
     if goal.minimize not in ("mass", "printTime", "filament"):
         raise ValueError("goal.minimize must be 'mass', 'printTime' or 'filament'")
     if goal.volume_fraction is None and goal.safety_factor is None and goal.max_deflection is None:

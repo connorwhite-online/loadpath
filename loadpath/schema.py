@@ -292,6 +292,12 @@ _GOAL = {
                                    "applicable)."},
         "outcomes": {"type": "array", "items": {"type": "number", "minimum": 0.02, "maximum": 0.95},
                      "description": "Extra fixed volume fractions for a trade-off gallery."},
+        "restarts": {"type": "integer", "minimum": 1, "maximum": 8,
+                     "description": "Run the safety-factor/deflection search this many times from different "
+                                    "starting fractions and deliver the lightest confirmed part (default 1). One "
+                                    "search lands in the local optimum its start leads to (7-17% apart in "
+                                    "delivered mass on the eval parts); worth it for a final production part, at "
+                                    "N times the time."},
         "minimize": {"enum": ["mass", "printTime", "filament"],
                      "description": "Which passing outcome is delivered: the lightest (default), or (FDM, with a "
                                     "slicer installed) the one that prints fastest or with the least filament, "
