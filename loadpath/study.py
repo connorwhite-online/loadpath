@@ -1317,6 +1317,54 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 best = len(outcomes) - 1
             else:
                 conf_fail = q.volume_fraction
+        # The voxel-confirmed counterpart of layout_search: a fraction below
+        # the pick that failed warm, carried down from the pick's layout, is
+        # run once more from its own coarse layout. The warm chain can lose
+        # the layout on the way down: GRIP's MJF wrist link (no tet confirm,
+        # a layered process) read SF 1.42 at 5.25% warm from 6% (tets 1.16)
+        # and 2.06 started fresh (tets 4.49), 37.2 g against the 41.0 g pick.
+        # Each fresh design that passes is confirmed on the finer grid like
+        # any pick; one that holds becomes the pick, and the next failed
+        # fraction below it is tried the same way.
+        cold_runs = 0
+        while voxel_confirm and best is not None and best in confirmed and cold_runs < _LAYOUT_RUNS \
+                and not (should_stop is not None and should_stop()):
+            o = outcomes[best]
+            if o.report["margin"] < _TET_CLOSE:
+                break
+            fresh = [q.volume_fraction for q in outcomes if str(q.report.get("start", "")).startswith(
+                ("cold", "layout search: cold"))]
+            lost = [q.volume_fraction for q in outcomes
+                    if not q.passes and q.volume_fraction < o.volume_fraction and q.voxel_sf
+                    and q.report.get("bodies", 1) <= 1 and str(q.report.get("start", "")).startswith("warm")
+                    and q.volume_fraction > o.volume_fraction * 1.03 / max(o.report["margin"], 1e-9)
+                    and not any(abs(q.volume_fraction - v) < 0.003 for v in fresh)]
+            if not lost:
+                break
+            vf = max(lost)
+            emit({"stage": "optimize", "volumeFraction": vf, "start": "layout search: cold"})
+            try:
+                if domain.n_elem >= _COARSE_MIN_CELLS:
+                    x0 = _coarse_start(study, domain, vf, radius, should_stop)
+                    q = attempt(vf, x0, _WARM_BETA if x0 is not None else 1.0)
+                else:
+                    q = attempt(vf, None, 1.0)
+            except RuntimeError:
+                break
+            cold_runs += 1
+            q.report["start"] = "layout search: cold"
+            outcomes.append(q)
+            emit({"stage": "outcome", **q.summary()})
+            if not q.passes:
+                break   # fresh fails too: the fractions below it would not do better
+            emit({"stage": "confirm", "volumeFraction": q.volume_fraction})
+            mc = _confirm(q)
+            emit({"stage": "confirmed", "volumeFraction": q.volume_fraction, "margin": mc})
+            if mc < 1.0:
+                q.passes = False
+                break
+            best = len(outcomes) - 1
+            confirmed.add(best)
     else:
         fractions = [float(goal.volume_fraction)] + [v for v in goal.outcomes if v != goal.volume_fraction]
         if len(fractions) > 1 and _workers(len(fractions), cells=_study_cells(study)) > 1:
