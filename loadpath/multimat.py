@@ -1633,7 +1633,7 @@ def _print_check(study, mm, bodies, rep):
             vols[k] = vols.get(k, 0.0) + float(m.volume)
         main = mm.materials[max(vols, key=vols.get)]
         pc = check_print(trimesh_from_manifold(whole), build, process=proc.kind if proc is not None else "fdm",
-                         material=main)
+                         material=main, bridge_span=getattr(proc, "bridge_span", None))
         return {k: v for k, v in pc.items() if k != "bridgeList"}
     except Exception as exc:  # noqa: BLE001 - the parts and the report stand without it
         rep.setdefault("warnings", []).append(f"print check not run: {type(exc).__name__}: {exc}")

@@ -252,7 +252,10 @@ _FASTENER = {
                     "description": "N. Default: a quarter of what the seat can bear in this material, at most "
                                    "what a class 8.8 screw is tightened to."},
         "hole": {**_POS, "description": "Clearance hole diameter, mm (default from size)."},
-        "head": {**_POS, "description": "Head (or washer) diameter, mm (default from size)."},
+        "head": {**_POS, "description": "Head (or washer) diameter, mm (default from size: the ISO 4762 socket "
+                                        "head, e.g. M3 5.5, M4 7, M5 8.5)."},
+        "counterbore": {**_POS, "description": "Diameter of the head and driver keep-out, mm: the counterbore "
+                                               "the head sits in (default the seat ring's width, at least head + 1)."},
         "diameter": {**_POS, "description": "The screw's nominal diameter, mm, when not given as size."},
         "wall": {**_POS, "description": "mm of seat ring beyond the head's radius (default 15% of the "
                                         "diameter, at least 1). The head and driver keep-out is as wide as "
@@ -526,6 +529,8 @@ _PROCESS = {"anyOf": [
                     "minFeature": _POS, "overhangs": {"type": "boolean"},
                     "minHole": {**_POS, "description": "mm: narrowest hole or gap the optimizer may leave "
                                                        "(default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"},
+                    "bridgeSpan": {**_POS, "description": "mm: longest unsupported bridge the printer prints cleanly "
+                                   "(default: 15 FDM, 5 resin, 2 LPBF); longer spans count as needing support"},
                     "escapeHole": {**_POS, "description": "mm: smallest powder escape / resin drain hole "
                                                           "(default SLS 4, MJF 5, SLA/DLP 3.5)"}},
      "required": ["type"], "additionalProperties": False},
@@ -1192,7 +1197,9 @@ FIELD_SCHEMA = {
                      "analysis": {"enum": ["auto", "solid", "homogenized"],
                                   "description": "auto (default): a part with a lattice is analyzed with the "
                                                  "lattice homogenized (unit-cell stiffness and wall stress), "
-                                                 "else meshed and verified as a solid"},
+                                                 "else meshed and verified as a solid; homogenized on a part with no "
+                                                 "lattice reads it on the same fill-weighted grid (thin skins "
+                                                 "without a fine mesh)"},
                      "pitch": {**_POS, "description": "mm mesh for each candidate (default 1)"},
                      "cells": {"type": "integer", "minimum": 1000, "description": "analysis cells (default 30000)"},
                      "checkCells": {"type": "integer", "minimum": 1000,

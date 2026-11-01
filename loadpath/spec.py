@@ -194,6 +194,8 @@ class Process:
     # may rely on (processcheck.RULES default)
     escape_hole: float | None = None
     min_hole: float | None = None      # mm
+    # mm: longest unsupported bridge the printer manages (printcheck.BRIDGE_SPAN default)
+    bridge_span: float | None = None
 
 
 def _process(spec) -> Process | None:
@@ -222,11 +224,15 @@ def _process(spec) -> Process | None:
     esc = spec.get("escapeHole")
     if esc is not None and float(esc) <= 0:
         raise ValueError("process.escapeHole is a hole diameter in mm, > 0")
+    span = spec.get("bridgeSpan")
+    if span is not None and float(span) <= 0:
+        raise ValueError("process.bridgeSpan is the longest bridge the printer prints cleanly, in mm, > 0")
     return Process(kind, build, inter, float(spec.get("minFeature", base["minFeature"])),
                    bool(spec.get("overhangs", base["overhangs"])),
                    anisotropic=_anisotropic(spec.get("anisotropic", False)),
                    escape_hole=float(esc) if esc is not None else None,
-                   min_hole=float(spec.get("minHole", base["minHole"])), **stiff)
+                   min_hole=float(spec.get("minHole", base["minHole"])),
+                   bridge_span=float(span) if span is not None else None, **stiff)
 
 
 def _drains(spec, process):

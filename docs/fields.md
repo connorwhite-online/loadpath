@@ -387,20 +387,12 @@ examples/fields/arm-link-sandwich.json is the result:
 | sandwich: 29.6 x 20 mm web, skin 0.84-2.35 mm, 16 mm gyroid, homogenized on 1M cells | 42.8 g | 0.436 mm | 9.2 |
 | the same, meshed at 0.3 mm and verified resolved on 1.2M cells | 44.5 g | 0.40 mm | 13.5 |
 | the same skin with no core, homogenized | 35.9 g | 0.508 mm | 7.0 |
-| the search run again with the confirming check below (37 analyses) | 42.3 g | 0.465 mm on 1.4M and 1M cells | 11.5 |
+| the search run again with the confirming check (37 analyses) | 42.3 g | 0.465 mm on 1.4M and 1M cells | 11.5 |
 
 The sandwich is 19-22% lighter than the solid web at the same limit, and
 the homogenized reading errs on the safe side of the resolved one (0.436
 against 0.40 mm, mass 4% light: the blends round the collars are finer
-than the analysis grid). Most of the win is the hollow section: the same
-skin with nothing inside nearly holds the limit at 35.9 g, so a plain
-hollow link with a slightly thicker skin would likely be lighter still.
-The core buys 14% of stiffness for 7 g, and what the analysis does not
-count: it holds the 30 mm wide top skin up while it prints, and keeps the
-thin skins from buckling or denting. The skin seals the core, so SLS and
-MJF need escape holes (`drains`; a 16 mm gyroid is open inside, so a few
-holes clear it); on FDM it prints like a coarse gyroid infill under a
-graded wall.
+than the analysis grid).
 
 ![the sandwich arm link, whole and cut open at mid-height: graded skin, 16 mm gyroid core, cable channel](images/fields/arm-link-sandwich.png)
 
@@ -411,6 +403,32 @@ candidate at 0.554 mm; the same part read 0.748 mm on 240k cells and
 0.597-0.611 mm on all four grids and fails on each, and the 42.8 g
 result 0.425-0.436 mm. The eval case `arm-link-sandwich` holds both: the
 tuned link must pass, and the 38 g one must fail.
+
+### Hollow or sandwich?
+
+Most of the sandwich's win is the hollow section, so the plain hollow link
+was tuned on equal terms (examples/fields/arm-link-hollow-tune.json: the
+same envelope and skin knobs, no core, `analysis: homogenized`, which reads
+a part with no lattice on the same fill-weighted grid). Both checked the
+same ways: the search's confirming grids, the mesh verified resolved on
+1.2M cells, and FDM printability flat on the bed (`check_print`, 0.4 mm
+cells; support area net of the 3,300 mm^2 the solid envelope itself needs
+under its web, so what is left is inside the part, where no support can be
+removed):
+
+| arm link | mass (meshed) | deflection, homogenized | deflection, resolved | support inside, flat | longest bridge on its side |
+|---|---|---|---|---|---|
+| hollow, skin 0.88-3.05 mm | 36.8 g | 0.484 mm | 0.501 mm | ~2,800 mm^2 and a 325 mm^2 island (the roof) | 14.8 mm |
+| sandwich, 14 mm gyroid (search result) | 44.0 g | 0.465 mm | 0.462 mm | ~560 mm^2 (down-facing gyroid patches) | 10 mm |
+
+The hollow link is 16% lighter but sits on the limit when resolved, and
+its roof is a 26 mm span over a sealed cavity: on FDM it needs support
+that stays inside, or it sags. The gyroid holds the roof up every half
+cell. So for FDM, which loadpath designs for first, the sandwich stays the
+arm-link reference (examples/fields/arm-link-sandwich.json, the eval case
+`arm-link-sandwich`). For SLS or MJF, where nothing needs support, the
+hollow link with a slightly thicker skin (about 37.5 g) and escape holes
+for the powder is the lighter answer.
 
 ### Strut and conformal lattices against the gyroid
 

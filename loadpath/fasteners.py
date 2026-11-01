@@ -43,9 +43,13 @@ import numpy as np
 
 __all__ = ["expand_fasteners", "METRIC"]
 
-# ISO metric: (clearance hole, pan/socket head or washer diameter), mm
-METRIC = {"M2": (2.4, 4.5), "M2.5": (2.9, 5.5), "M3": (3.4, 6.5), "M4": (4.5, 8.5),
-          "M5": (5.5, 10.0), "M6": (6.6, 12.0), "M8": (9.0, 16.0), "M10": (11.0, 20.0)}
+# ISO metric: (medium clearance hole, ISO 4762 socket head diameter), mm.
+# The heads were a mix of pan, socket and washer sizes (M4 8.5 mm): a brief
+# with 8 mm M4 counterbores read 678 mm^3 of keep-out intrusion against the
+# default's 10.5 mm head keep-out (2026-11-01). Give `head` for a washer or a
+# pan head, `counterbore` for the pocket the head sits in.
+METRIC = {"M2": (2.4, 3.8), "M2.5": (2.9, 4.5), "M3": (3.4, 5.5), "M4": (4.5, 7.0),
+          "M5": (5.5, 8.5), "M6": (6.6, 10.0), "M8": (9.0, 13.0), "M10": (11.0, 16.0)}
 _AXES = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
 
 
@@ -124,7 +128,11 @@ def expand_fasteners(d: dict) -> dict:
         if head_on == "this":
             # as wide as the seat ring: a head path narrower than the ring
             # leaves a sub-millimetre lip of ring standing round it
-            keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, max(0.5 * head + 0.5, r_ring))})
+            cb = f.get("counterbore")
+            if cb is not None and float(cb) <= head:
+                raise ValueError(f"{label}.counterbore ({float(cb):g} mm) must be wider than the head ({head:g} mm)")
+            r_head = 0.5 * float(cb) if cb is not None else max(0.5 * head + 0.5, r_ring)
+            keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, r_head)})
         preserve.append({"id": f"{fid}-seat", "shape": _tube(seat, seat + a * ring, r_ring, 0.5 * hole)})
         far = None
         if end_kind == "face":

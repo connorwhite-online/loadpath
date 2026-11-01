@@ -76,6 +76,13 @@ def _voigt_s_tensor(s):
     return t
 
 
+_BEAM_STUDY = {"designSpace": {"type": "box", "min": [0, 0, 0], "max": [20, 10, 10]},
+               "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.1, 11, 11]}}],
+               "loadCases": [{"name": "t", "loads": [{"shape": {"type": "box", "min": [19.9, -1, -1],
+                                                                "max": [21, 11, 11]}, "force": [0, 0, -5]}]}],
+               "material": "petg", "goal": {"volumeFraction": 0.4}}
+
+
 def test_process_sets_layered_design_and_physical_stiffness():
     base = {"designSpace": {"type": "box", "min": [0, 0, 0], "max": [20, 10, 10]},
             "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.1, 11, 11]}}],
@@ -160,6 +167,12 @@ def test_print_check_bridges_ledges_islands_and_bed():
     long_ = _union(_box((0, 0, 0), (5, 10, 10)), _box((35, 0, 0), (40, 10, 10)), _box((0, 0, 10), (40, 10, 13)))
     r = check_print(long_, (2, 1), pitch=0.5)
     assert not r["supportFree"] and r["supportArea"] > 250 and r["supportVolume"] > 2500
+    # a part that needs support says so in warnings, not only in the numbers
+    assert any("needs build supports" in w and "bridgeSpan" in w for w in r["warnings"]), r["warnings"]
+    # the short bridge fails on a printer that only bridges 8 mm, from the study's process block
+    assert not check_print(bridge, (2, 1), pitch=0.5, bridge_span=8.0)["supportFree"]
+    proc = study_from_dict({**_BEAM_STUDY, "process": {"type": "fdm", "bridgeSpan": 8}}).process
+    assert proc.bridge_span == 8.0
     # the same part on its side prints without support
     r = check_print(long_, (1, 1), pitch=0.5)
     assert r["supportFree"], r
