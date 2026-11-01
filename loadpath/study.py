@@ -1075,13 +1075,26 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         # and t is steered by that reading: the voxel one left the wall
         # brackets at SF 2.7-2.8 on voxels and 3.6 on tets for 2.5.
         tets = goal.safety_factor is not None and _confirm_on_tets(study, outcomes)
+        fails = []
         t, t_pass, t_fail, x_pass = 1.0, None, None, None
         for _ in range(_MAX_CONSTRAINED_RUNS):
             if should_stop is not None and should_stop():
                 break
             limits = Limits(stress * t if stress is not None else None,
                             goal.max_deflection * t if goal.max_deflection is not None else None, mat.E)
-            o = run_constrained(limits, x_pass)
+            try:
+                o = run_constrained(limits, x_pass)
+            except RuntimeError as exc:
+                # a run whose solve broke down (the design let go of a
+                # support: GRIP's yoke, wrist link and upper arm) is a
+                # failed run; one that fails first ends the constrained
+                # attempt, and the search below takes over
+                fails.append(f"t {t:.3g}: {exc}")
+                if not any(q.optimizer.get("method") == "constrained" for q in outcomes):
+                    break
+                t_fail = t if t_fail is None else min(t_fail, t)
+                t = (t_pass * t_fail) ** 0.5 if t_pass is not None else 0.5 * t
+                continue
             outcomes.append(o)
             if tets and o.voxel_sf and o.report.get("bodies", 1) <= 1 and tet_confirm(o) is None:
                 tets = False   # the mesher failed: voxels from here on
@@ -1108,6 +1121,18 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 t *= min(ratio ** 0.5, 4.0)
         passing = [i for i, o in enumerate(outcomes) if o.passes]
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+        if best is None:
+            # Search instead, on the search's own grid: the constrained
+            # method runs finer (minimum member 2.5 cells across), and the
+            # search on that grid broke down on the GRIP yoke too.
+            import dataclasses
+
+            why = ("the constrained method found no passing design"
+                   + (f" ({'; '.join(fails)})" if fails else "") + ": searched over volume fractions instead")
+            r = _run_single(dataclasses.replace(study, goal=dataclasses.replace(goal, method="search")),
+                            on_progress, should_stop)
+            r.warnings.insert(0, why)
+            return r
     elif goal.safety_factor is not None or goal.max_deflection is not None or _durability_drives(study):
         vf = float(goal.volume_fraction or 0.3)
         if memory is not None:
