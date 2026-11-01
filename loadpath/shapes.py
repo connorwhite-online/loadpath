@@ -538,10 +538,20 @@ def _shape(spec, base_dir):
 
 
 def manifold_from_trimesh(mesh):
+    """A manifold3d Manifold from a trimesh, in double precision where the
+    library has it (Mesh64): rounding a lattice to float32 moves a vertex
+    up to ~5e-6 mm at 100 mm, enough to push one sheet of a wall a few
+    microns thick through the other."""
     import manifold3d as m3d
-    verts = np.ascontiguousarray(mesh.vertices, dtype=np.float32)
-    faces = np.ascontiguousarray(mesh.faces, dtype=np.uint32)
-    man = m3d.Manifold(m3d.Mesh(vert_properties=verts, tri_verts=faces))
+    if hasattr(m3d, "Mesh64"):
+        # copies: the binding refuses read-only arrays (trimesh's caches)
+        verts = np.array(mesh.vertices, dtype=np.float64, order="C", copy=True)
+        faces = np.array(mesh.faces, dtype=np.uint64, order="C", copy=True).reshape(-1, 3)
+        man = m3d.Manifold(m3d.Mesh64(vert_properties=verts, tri_verts=faces))
+    else:
+        verts = np.ascontiguousarray(mesh.vertices, dtype=np.float32)
+        faces = np.ascontiguousarray(mesh.faces, dtype=np.uint32)
+        man = m3d.Manifold(m3d.Mesh(vert_properties=verts, tri_verts=faces))
     if man.status() != m3d.Error.NoError:
         raise ValueError(f"mesh is not a valid manifold ({man.status()})")
     return man
@@ -549,7 +559,7 @@ def manifold_from_trimesh(mesh):
 
 def trimesh_from_manifold(man):
     import trimesh
-    mesh = man.to_mesh()
+    mesh = man.to_mesh64() if hasattr(man, "to_mesh64") else man.to_mesh()
     verts = np.asarray(mesh.vert_properties, float)[:, :3]
     faces = np.asarray(mesh.tri_verts, np.int64)
     return trimesh.Trimesh(verts, faces, process=False)

@@ -1967,8 +1967,12 @@ def _finish(V, F, field, pitch, project, stats=None, decimate=None, creases=None
 
     V = np.asarray(V, float)
     F = np.asarray(F, np.int64)
+    unfolded = None
     if project:
+        V0 = V
         V = _relax(V, F, field, pitch, int(project))
+        if _UNFOLD:
+            V, unfolded = _unfold(V0, V, F, pitch)
     locked, sharp_st = None, None
     if creases is not None and project:
         from .crease import sharpen
@@ -2000,6 +2004,8 @@ def _finish(V, F, field, pitch, project, stats=None, decimate=None, creases=None
         F = F[:, ::-1].copy()
     mesh = trimesh.Trimesh(V, F, process=False)
     mesh.metadata["pitch"] = pitch
+    if unfolded is not None:
+        mesh.metadata["unfolded"] = int(unfolded)
     if stats:
         mesh.metadata["sampling"] = stats
     if dec:
@@ -2193,6 +2199,68 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
         else:
             V[idx] = _project(field, V[idx], pitch, backtrack=4 if k >= 2 else 0)
     return V
+
+
+_UNFOLD = True
+_UNFOLD_RINGS = 0          # rings round the folded edges' faces' vertices
+
+
+def _unfold(V0, V, F, pitch, rounds=6, chunk=200_000):
+    """Undo the relax where it folded the mesh through itself. Marching
+    cubes' own mesh (V0) never crosses itself, but relaxing and projecting
+    across a wall or a wedge thinner than a pitch can push one sheet
+    through another. Faces that cross another face (sharing no vertex)
+    send their vertices back to where marching cubes put them, a few
+    rounds, each looking only round what the last one moved.
+
+    Only faces round an edge folded past 90 degrees (and a ring round
+    them) are searched in the first round: on the arm-link gyroid that
+    holds every folded face, at 6% of the mesh.
+    Returns (V, number of vertices sent back)."""
+    from .crease import _Centroids, crossing_faces
+
+    def normals(X):
+        n = np.cross(X[F[:, 1]] - X[F[:, 0]], X[F[:, 2]] - X[F[:, 0]])
+        return n / np.maximum(np.sqrt(np.einsum("ij,ij->i", n, n))[:, None], 1e-300)
+
+    V = np.array(V, float)
+    # a fold shows as an edge whose two faces meet at over 90 degrees
+    N = normals(V)
+    a, b = F.ravel(), np.roll(F, -1, axis=1).ravel()
+    key = np.minimum(a, b) * np.int64(len(V)) + np.maximum(a, b)
+    o = np.argsort(key)
+    ks = key[o]
+    pair = np.flatnonzero(ks[1:] == ks[:-1])
+    f1, f2 = o[pair] // 3, o[pair + 1] // 3
+    sharp = np.einsum("ij,ij->i", N[f1], N[f2]) < 0.0
+    near = np.zeros(len(V), bool)
+    near[F[f1[sharp]].ravel()] = True
+    near[F[f2[sharp]].ravel()] = True
+    for _r in range(_UNFOLD_RINGS):
+        near[F[near[F].any(axis=1)].ravel()] = True
+    q = np.flatnonzero(near[F].any(axis=1))
+    if not len(q):
+        return V, 0
+    cache = _Centroids(V, F)
+    back = 0
+    for _ in range(rounds):
+        x = [crossing_faces(V, F, q[i:i + chunk], cache) for i in range(0, len(q), chunk)]
+        x = np.unique(np.concatenate(x)) if x else np.zeros(0, np.int64)
+        if not len(x):
+            break
+        verts = np.unique(F[x].ravel())
+        verts = verts[np.any(V[verts] != V0[verts], axis=1)]
+        if not len(verts):
+            break
+        V[verts] = V0[verts]
+        back += len(verts)
+        vm = np.zeros(len(V), bool)
+        vm[verts] = True
+        cache.update(V, F, np.flatnonzero(vm[F].any(axis=1)))
+        for _r in range(2):
+            vm[F[vm[F].any(axis=1)].ravel()] = True
+        q = np.flatnonzero(vm[F].any(axis=1))
+    return V, back
 
 
 # ---- material bodies -------------------------------------------------------------

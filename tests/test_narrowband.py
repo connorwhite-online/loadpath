@@ -273,3 +273,27 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_relax_does_not_fold_the_mesh_through_itself():
+    """Relaxing a graded gyroid at a coarse pitch pushes some sheets through
+    their neighbours (188 crossing faces at 0.5 mm); field_mesh sends those
+    vertices back to marching cubes' own (uncrossed) positions."""
+    import loadpath.fields as LF
+    from loadpath.crease import crossing_faces
+
+    g = FieldGraph(GRADED)
+    f = g.field()
+    m = field_mesh(f, *g.bounds(), pitch=0.5)
+    V, F = np.asarray(m.vertices), np.asarray(m.faces)
+    assert m.metadata["unfolded"] > 0
+    assert len(crossing_faces(V, F, np.arange(len(F)))) == 0
+    old = LF._UNFOLD
+    try:
+        LF._UNFOLD = False
+        m0 = field_mesh(f, *g.bounds(), pitch=0.5)
+    finally:
+        LF._UNFOLD = old
+    V0, F0 = np.asarray(m0.vertices), np.asarray(m0.faces)
+    assert len(crossing_faces(V0, F0, np.arange(len(F0)))) > 50
+    assert abs(m.volume / m0.volume - 1) < 0.01
