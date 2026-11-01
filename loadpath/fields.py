@@ -53,6 +53,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage
 
+from .narrowband import face_cross
+
 __all__ = ["FieldGraph", "MeshField", "field_mesh", "save_result_field", "result_samples", "OPS"]
 
 # the operations and what they take (the schema says the same, with docs)
@@ -1759,8 +1761,14 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
         verts, faces, stats = narrowband_mc(field, lo, dims, pitch, budget=_CELL_BUDGET, progress=progress)
         if not len(faces):
             raise ValueError("the field has no inside over these bounds (nothing is below zero)")
+        if not watertight(faces, len(verts)) and stats.get("lipschitz"):
+            # the per-leaf Lipschitz bounds let a crossing through: the
+            # global one (the steepest slope anywhere) for every leaf
+            verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=stats["lipschitz"],
+                                                budget=_CELL_BUDGET, progress=progress)
+            stats["fallback"] = "global"
         if not watertight(faces, len(verts)):
-            # the Lipschitz bound let a crossing through: sample every block
+            # and if even that let one through: sample every block
             verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=np.inf, budget=_CELL_BUDGET,
                                                 progress=progress)
             stats["fallback"] = True
@@ -2102,7 +2110,7 @@ class _Normals:
 
     def __call__(self, V, sharp):
         F = self.F
-        fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+        fn = face_cross(V, F)
         N = self.M @ fn
         N /= np.maximum(np.sqrt(np.einsum("ij,ij->i", N, N))[:, None], 1e-300)
         if self.edge is None:
@@ -2196,8 +2204,14 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
             nrm[ed] = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
         return nrm
 
+    from .lattice import single_precision
+
     for _ in range(rounds):
-        nrm = newton(np.flatnonzero(move))
+        # these rounds move a vertex a fraction of a pitch toward the zero
+        # level: single-precision lattice trig (~1e-6 mm) is plenty; the
+        # closing passes below, to 1e-6 pitch, take it in double
+        with single_precision():
+            nrm = newton(np.flatnonzero(move))
         d = (A @ V) / deg[:, None] - V
         d -= (d * nrm).sum(axis=1, keepdims=True) * nrm
         V[move] += 0.5 * d[move]
@@ -2220,13 +2234,14 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
 
 _UNFOLD = True
 _UNFOLD_RINGS = 0          # rings round the folded edges' faces' vertices
+_FLAT_FOLD = 1e-3          # an edge folded back within this * pitch of flat is a crossing
 
 
 def _sliver(V, F, sin_min=float(np.sin(np.radians(5.0)))):
     """Faces with an angle under ~5 degrees."""
     a, b, c = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
     e1, e2 = b - a, c - a
-    n = np.cross(e1, e2)
+    n = face_cross(V, F)
     e3 = c - b
     l2 = np.sort(np.stack([(e1 * e1).sum(1), (e2 * e2).sum(1), (e3 * e3).sum(1)], 1), axis=1)
     return np.sqrt((n * n).sum(1)) < sin_min * np.sqrt(l2[:, 1] * l2[:, 2])
@@ -2249,7 +2264,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
     from .crease import _Centroids, crossing_faces
 
     def normals(X):
-        n = np.cross(X[F[:, 1]] - X[F[:, 0]], X[F[:, 2]] - X[F[:, 0]])
+        n = face_cross(X, F)
         return n / np.maximum(np.sqrt(np.einsum("ij,ij->i", n, n))[:, None], 1e-300)
 
     V = np.array(V, float)
@@ -2261,12 +2276,65 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
     ks = key[o]
     pair = np.flatnonzero(ks[1:] == ks[:-1])
     f1, f2 = o[pair] // 3, o[pair + 1] // 3
-    sharp = np.einsum("ij,ij->i", N[f1], N[f2]) < 0.0
+    dots = np.einsum("ij,ij->i", N[f1], N[f2])
+    sharp = dots < 0.0
+    # an edge folded flat back on itself (the two faces overlapping in one
+    # plane, as projecting onto a flat cut can leave them): no segment
+    # crosses a face there, but manifold3d swaps such edges and the swap
+    # crosses. Candidates are the edges folded past ~150 degrees anywhere.
+    c2 = F[f2, (o[pair + 1] % 3 + 2) % 3]
+    tol = _FLAT_FOLD * pitch
+
+    # the edge pair of every half-edge (-1 on an open edge)
+    he = np.full(3 * len(F), -1, np.int64)
+    he[o[pair]] = np.arange(len(pair))
+    he[o[pair + 1]] = np.arange(len(pair))
+    # the faces round every vertex
+    flat_f = F.ravel()
+    vf = np.argsort(flat_f, kind="stable")
+    vptr = np.searchsorted(flat_f[vf], np.arange(len(V) + 1))
+
+    def faces_of(verts):
+        a, ln = vptr[verts], vptr[verts + 1] - vptr[verts]
+        idx = np.repeat(a - np.cumsum(ln) + ln, ln) + np.arange(int(ln.sum()))
+        return np.unique(vf[idx] // 3)
+
+    def rings(verts, k):
+        for _r in range(k):
+            verts = np.unique(F[faces_of(verts)].ravel())
+        return verts
+
+    def flat(X, faces, k=None):
+        if k is None:
+            k = he[(3 * np.asarray(faces)[:, None] + np.arange(3)).ravel()]
+            k = np.unique(k[k >= 0])
+            k = k[~flat0[k]]
+        g1, g2 = f1[k], f2[k]
+        n1 = face_cross(X, F[g1])
+        n2 = face_cross(X, F[g2])
+        l1 = np.sqrt(np.einsum("ij,ij->i", n1, n1))
+        l2 = np.sqrt(np.einsum("ij,ij->i", n2, n2))
+        d = np.einsum("ij,ij->i", n1, n2) < -0.9 * np.maximum(l1 * l2, 1e-300)
+        d &= np.abs(np.einsum("ij,ij->i", X[c2[k]] - X[F[g1, 0]], n1)) < tol * np.maximum(l1, 1e-300)
+        return np.concatenate([g1[d], g2[d]])
+
+    # folded flat in marching cubes' own mesh too: sending vertices back
+    # cannot undo those, so they are left alone
+    flat0 = np.zeros(len(pair), bool)
+    k0 = np.flatnonzero(dots < -0.9)
+    if len(k0):
+        hit = flat(V0, None, k0)
+        if len(hit):
+            fm = np.zeros(len(F), bool)
+            fm[hit] = True
+            flat0[k0[fm[f1[k0]] & fm[f2[k0]]]] = True
+
     near = np.zeros(len(V), bool)
     near[F[f1[sharp]].ravel()] = True
     near[F[f2[sharp]].ravel()] = True
     for _r in range(_UNFOLD_RINGS):
         near[F[near[F].any(axis=1)].ravel()] = True
+    near[F[f1[dots < -0.9]].ravel()] = True
     q = np.flatnonzero(near[F].any(axis=1))
     if not len(q):
         return V, 0
@@ -2276,7 +2344,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
     level = np.zeros(len(V), np.int64)
     for _ in range(rounds):
         x = [crossing_faces(V, F, q[i:i + chunk], cache) for i in range(0, len(q), chunk)]
-        x = np.unique(np.concatenate(x)) if x else np.zeros(0, np.int64)
+        x = np.unique(np.concatenate(x + [flat(V, q)]))
         if not len(x):
             break
         verts = np.unique(F[x].ravel())
@@ -2291,12 +2359,8 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
         level[verts] += 1
         s = np.where(level[verts] >= 3, 0.0, 0.5 ** level[verts])[:, None]
         V[verts] = V0[verts] + s * (V1[verts] - V0[verts])
-        vm = np.zeros(len(V), bool)
-        vm[verts] = True
-        cache.update(V, F, np.flatnonzero(vm[F].any(axis=1)))
-        for _r in range(2):
-            vm[F[vm[F].any(axis=1)].ravel()] = True
-        q = np.flatnonzero(vm[F].any(axis=1))
+        cache.update(V, F, faces_of(verts))
+        q = faces_of(rings(verts, 2))
     if field is not None and back:
         # those vertices sit off the zero level: project them along the
         # true gradient, and keep the projection wherever it folds nothing
@@ -2306,7 +2370,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
             V[moved] = _project(field, V[moved], pitch)
         mf = np.zeros(len(V), bool)
         mf[moved] = True
-        faces = np.flatnonzero(mf[F].any(axis=1))
+        faces = faces_of(moved)
         # nor onto another vertex (two pulled to the same point of an edge,
         # which an STL's vertex merge would fuse)
         ring = np.unique(F[faces].ravel())
@@ -2320,7 +2384,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
         cache.update(V, F, faces)
         for _ in range(8):
             x = [crossing_faces(V, F, faces[i:i + chunk], cache) for i in range(0, len(faces), chunk)]
-            x = np.unique(np.concatenate(x)) if x else np.zeros(0, np.int64)
+            x = np.unique(np.concatenate(x + [flat(V, faces)]))
             bad = np.zeros(len(V), bool)
             bad[F[x].ravel()] = True
             # and no sliver (manifold3d flips those, and a flip can cross)
@@ -2329,13 +2393,8 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
             if not len(back_to):
                 break
             V[moved[back_to]] = safe[back_to]
-            vm = np.zeros(len(V), bool)
-            vm[moved[back_to]] = True
-            faces = np.flatnonzero(vm[F].any(axis=1))
-            cache.update(V, F, faces)
-            for _r in range(2):
-                vm[F[vm[F].any(axis=1)].ravel()] = True
-            faces = np.flatnonzero(vm[F].any(axis=1))
+            cache.update(V, F, faces_of(moved[back_to]))
+            faces = faces_of(rings(moved[back_to], 2))
         else:
             # not settled: no projection at all round what is still moving
             vm = np.zeros(len(V), bool)
