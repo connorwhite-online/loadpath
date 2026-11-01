@@ -335,7 +335,19 @@ def impact_response(curve: CrushCurve, energy: float, mass: float | None = None)
         out.update(bottomedOut=True, residualEnergy=round(float(energy - e[-1]), 1),
                    crush=round(float(curve.d[-1]), 3), peakForce=None, usedStroke=1.0)
         return out
-    d = float(np.interp(energy, e, curve.d))
+    # f is piecewise linear in d, so within a segment the energy is
+    # quadratic in d: solve it there (a straight line between the corners
+    # reads a stiff core that stops on its first ramp far too low)
+    k = int(np.clip(np.searchsorted(e, energy, side="right") - 1, 0, len(e) - 2))
+    d0, d1 = float(curve.d[k]), float(curve.d[k + 1])
+    f0, f1 = float(curve.f[k]), float(curve.f[k + 1])
+    rest = max(float(energy - e[k]), 0.0)
+    s = (f1 - f0) / max(d1 - d0, 1e-12)
+    if abs(s) < 1e-12:
+        x = rest / max(f0, 1e-12)
+    else:
+        x = (-f0 + np.sqrt(max(f0 * f0 + 2 * s * rest, 0.0))) / s
+    d = float(min(d0 + max(x, 0.0), d1))
     j = int(np.searchsorted(curve.d, d, side="right"))
     fpk = float(max(curve.f[:j].max(initial=0.0), np.interp(d, curve.d, curve.f)))
     out.update(bottomedOut=False, crush=round(d, 3), peakForce=round(fpk, 1),

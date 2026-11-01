@@ -331,3 +331,16 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_impact_response_on_a_linear_ramp_is_exact():
+    # a spring of k = 1000 N/mm taking 500 N·mm stops at 1 mm and 1000 N;
+    # straight-line interpolation of energy between the curve's corners
+    # read a stiff core like this about 4x soft
+    import numpy as np
+    from loadpath.impact import CrushCurve, impact_response
+    d = np.array([0.0, 10.0])
+    c = CrushCurve(d=d, f=1000.0 * d, stroke=10.0, layer_force=np.zeros(1), layer_area=np.ones(1),
+                   layer_rho=np.ones(1), layer_stroke=np.ones(1))
+    r = impact_response(c, 500.0)
+    assert abs(r["crush"] - 1.0) < 1e-3 and abs(r["peakForce"] - 1000.0) < 1.0, r
