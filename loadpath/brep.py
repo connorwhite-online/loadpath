@@ -195,6 +195,29 @@ def creases(mesh, lab, O, angle=CREASE):
     return out
 
 
+def peninsulas(mesh, lab, O, rounds=4):
+    """Exact faces poking into the organic body (two of their three
+    neighbours organic, of one region) turn organic: a seam that juts out
+    and back makes a face boundary cross itself."""
+    A = np.asarray(mesh.face_adjacency)
+    lab = lab.copy()
+    for _ in range(rounds):
+        nb = [[] for _ in range(len(lab))]
+        for x, y in A:
+            nb[x].append(y)
+            nb[y].append(x)
+        flip = []
+        for f in np.flatnonzero(lab < O):
+            other = [lab[g] for g in nb[f] if lab[g] != lab[f]]
+            if len(other) >= 2 and other[0] >= O and all(o == other[0] for o in other):
+                flip.append((f, other[0]))
+        if not flip:
+            break
+        for f, l in flip:
+            lab[f] = l
+    return lab
+
+
 def islands(mesh, lab, area=ISLAND, surfs=None, tol=0.02):
     """Small label regions (under `area` mm^2) wholly surrounded by one other
     label take that label: a sliver of organic faces inside a flat face (its
@@ -478,7 +501,7 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
         if lk < len(curved):
             curved[lk] = sf.kind != "plane"
     O = (max(geo) if geo else 0) + 1
-    lab = islands(mesh, creases(mesh, lab, O))
+    lab = islands(mesh, peninsulas(mesh, creases(mesh, lab, O), O))
     CV, vid, F, flab = coarsen(mesh, lab, patches, curved, geo, O)
     # a coarse patch can end up an island inside another face (a sliver of the
     # body on a flat face): it joins that face
@@ -494,7 +517,9 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
 
     CE, ckey, cf0, cf1 = _edge_faces(F)
     N = int(order) + 1                              # points per patch side
-    org_mesh = trimesh.Trimesh(V, np.asarray(mesh.faces)[fl >= O], process=False)
+    # the whole surface is the target: a patch near a seam lands on the true
+    # surface either side, and a demoted exact region (below) is patches too
+    org_mesh = trimesh.Trimesh(V, np.asarray(mesh.faces), process=False)
 
     try:
         from trimesh.ray.ray_pyembree import RayMeshIntersector  # embreex: ~100x faster
@@ -547,278 +572,360 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
                 P = np.stack([resample(x, n) for x in P])
         return P
 
-    # every coarse edge: a polyline over the surface
-    poly, split, fl_edge = {}, {}, {}
-    cfn = np.cross(CV[F[:, 1]] - CV[F[:, 0]], CV[F[:, 2]] - CV[F[:, 0]])
-    cfn /= np.maximum(np.linalg.norm(cfn, axis=1, keepdims=True), 1e-300)
-    # seam paths over the seam vertices alone (a small graph: fast Dijkstra)
-    sv = np.unique(Ef[seam_e])
-    loc = np.full(len(V), -1)
-    loc[sv] = np.arange(len(sv))
-    w = np.linalg.norm(V[Ef[seam_e, 0]] - V[Ef[seam_e, 1]], axis=1)
-    Gs = sp.coo_matrix((w, (loc[Ef[seam_e, 0]], loc[Ef[seam_e, 1]])), shape=(len(sv), len(sv))).tocsr()
-    inner, t17 = [], np.linspace(0, 1, 17)[:, None]
-    for (a, b), la, lb, f0e, f1e in zip(CE, flab[cf0], flab[cf1], cf0, cf1):
-        a, b = int(a), int(b)
-        pa, pb = CV[a], CV[b]
-        L = float(np.linalg.norm(pa - pb))
-        if la == lb and la < O:
-            t = np.linspace(0, 1, 9)[:, None]
-            P = _onto(geo[int(la)], pa * (1 - t) + pb * t)
-            P[0], P[-1] = pa, pb
-        elif la == lb:
-            # inside the organic body: the chord draped over the surface (the
-            # shortest path over the mesh's edges is a staircase, and two
-            # from one corner can share their first half); below, all at once
-            nn = cfn[f0e] + cfn[f1e]
-            inner.append(((a, b), pa * (1 - t17) + pb * t17, nn / max(np.linalg.norm(nn), 1e-300)))
-            P = None
-        else:
-            pth = _path(Gs, int(loc[vid[a]]), int(loc[vid[b]]), limit=4 * L + 1.0) if vid[a] >= 0 and vid[b] >= 0 else None
-            if pth is None:
-                raise RuntimeError("no surface path for a patch edge")
-            P = V[sv[pth]]
-        poly[(a, b)] = P
-        split[(a, b)] = False                     # set below: next to a three-quad triangle, two half edges
-        fl_edge[(a, b)] = la >= O or lb >= O      # organic on a side: a Bezier edge
-    if inner:
-        Pd = drape(np.stack([x[1] for x in inner]), np.stack([x[2] for x in inner]))
-        for (e, _, _), P in zip(inner, Pd):
-            poly[e] = P
+    def build(attempt):
+        """Edges and faces from the coarse layout: (sewing, counts), or
+        (None, regions to demote) when an exact region needs patches."""
+        # every coarse edge: a polyline over the surface
+        poly, split, fl_edge = {}, {}, {}
+        cfn = np.cross(CV[F[:, 1]] - CV[F[:, 0]], CV[F[:, 2]] - CV[F[:, 0]])
+        cfn /= np.maximum(np.linalg.norm(cfn, axis=1, keepdims=True), 1e-300)
+        # seam paths over the seam vertices alone (a small graph: fast Dijkstra)
+        sv = np.unique(Ef[seam_e])
+        loc = np.full(len(V), -1)
+        loc[sv] = np.arange(len(sv))
+        w = np.linalg.norm(V[Ef[seam_e, 0]] - V[Ef[seam_e, 1]], axis=1)
+        Gs = sp.coo_matrix((w, (loc[Ef[seam_e, 0]], loc[Ef[seam_e, 1]])), shape=(len(sv), len(sv))).tocsr()
+        inner, t17 = [], np.linspace(0, 1, 17)[:, None]
+        for (a, b), la, lb, f0e, f1e in zip(CE, flab[cf0], flab[cf1], cf0, cf1):
+            a, b = int(a), int(b)
+            pa, pb = CV[a], CV[b]
+            L = float(np.linalg.norm(pa - pb))
+            if la == lb and la < O:
+                t = np.linspace(0, 1, 9)[:, None]
+                P = _onto(geo[int(la)], pa * (1 - t) + pb * t)
+                P[0], P[-1] = pa, pb
+            elif la == lb:
+                # inside the organic body: the chord draped over the surface (the
+                # shortest path over the mesh's edges is a staircase, and two
+                # from one corner can share their first half); below, all at once
+                nn = cfn[f0e] + cfn[f1e]
+                inner.append(((a, b), pa * (1 - t17) + pb * t17, nn / max(np.linalg.norm(nn), 1e-300)))
+                P = None
+            else:
+                pth = _path(Gs, int(loc[vid[a]]), int(loc[vid[b]]), limit=4 * L + 1.0) if vid[a] >= 0 and vid[b] >= 0 else None
+                if pth is None:
+                    raise RuntimeError("no surface path for a patch edge")
+                P = V[sv[pth]]
+            poly[(a, b)] = P
+            split[(a, b)] = False                     # set below: next to a three-quad triangle, two half edges
+            fl_edge[(a, b)] = la >= O or lb >= O      # organic on a side: a Bezier edge
+        if inner:
+            Pd = drape(np.stack([x[1] for x in inner]), np.stack([x[2] for x in inner]))
+            for (e, _, _), P in zip(inner, Pd):
+                poly[e] = P
 
-    D = N - 1                                       # patch and edge degree
-    Bm = _bernstein(D)                              # Bm[i, j]: j-th Bernstein at i / D
-    Bi = np.linalg.inv(Bm)                          # points at even parameters -> poles
-    Bint = np.linalg.inv(Bm[1:-1, 1:-1])
+        D = N - 1                                       # patch and edge degree
+        Bm = _bernstein(D)                              # Bm[i, j]: j-th Bernstein at i / D
+        Bi = np.linalg.inv(Bm)                          # points at even parameters -> poles
+        Bint = np.linalg.inv(Bm[1:-1, 1:-1])
 
-    # organic triangles pair up into quads (one patch for two triangles);
-    # the rest split into three quads each
-    pair = _pairs(CV, F, flab, O)
-    single = np.ones(len(F), bool)
-    single[[i for i, j in pair]] = False
-    single[[j for i, j in pair]] = False
-    single &= flab >= O
-    for i in np.flatnonzero(single):
-        for k in range(3):
-            a, b = int(F[i, k]), int(F[i, (k + 1) % 3])
-            split[(min(a, b), max(a, b))] = True
-
-    poles = {}
-
-    def curve(a, b):
-        """Poles of coarse edge (a, b), from a to b."""
-        e = (min(a, b), max(a, b))
-        if e not in poles:
-            poles[e] = Bi @ resample(poly[e], N)
-        return poles[e] if a < b else poles[e][::-1]
-
-    def casteljau(C):
-        """Poles of the two halves (t <= 1/2, t >= 1/2) of a Bezier curve."""
-        L, R = [C[0]], [C[-1]]
-        W = C.copy()
-        for _ in range(D):
-            W = 0.5 * (W[:-1] + W[1:])
-            L.append(W[0])
-            R.append(W[-1])
-        return np.array(L), np.array(R[::-1])
-
-    def half(a, b):
-        """Poles from corner a to the midpoint of edge (a, b)."""
-        return casteljau(curve(a, b))[0]
-
-    def value(C, t):
-        from math import comb
-
-        t = np.atleast_1d(t)
-        B = np.array([[comb(D, j) * x ** j * (1 - x) ** (D - j) for j in range(D + 1)] for x in t])
-        return B @ C
-
-    def make_curve(C):
-        from OCP.Geom import Geom_BezierCurve
-        from OCP.OCP.collections import Array1_gp_Pnt
-
-        arr = Array1_gp_Pnt(1, len(C))
-        for j, c in enumerate(C):
-            arr.SetValue(j + 1, _pnt(c))
-        return Geom_BezierCurve(arr)
-
-    def coons(bottom, top, left, right):
-        """Points of the Coons blend of a patch's four sides (poles: bottom,
-        top along u; left, right along v; corners shared) at even parameters."""
-        sb, st_, sl, sr = (Bm @ x for x in (bottom, top, left, right))
-        U, W = np.meshgrid(u, u, indexing="ij")
-        X = ((1 - W)[..., None] * sb[:, None] + W[..., None] * st_[:, None]
-             + (1 - U)[..., None] * sl[None] + U[..., None] * sr[None]
-             - ((1 - U) * (1 - W))[..., None] * sb[0] - (U * (1 - W))[..., None] * sb[-1]
-             - ((1 - U) * W)[..., None] * st_[0] - (U * W)[..., None] * st_[-1])
-        return X
-
-    def patch(bottom, top, left, right, X):
-        """The Bezier patch with those sides through points X (N, N, 3): its
-        inside poles solved for, so it passes through the pulled points."""
-        from OCP.Geom import Geom_BezierSurface
-        from OCP.OCP.collections import Array2_gp_Pnt
-
-        C = np.zeros((N, N, 3))
-        C[:, 0], C[:, -1], C[0, :], C[-1, :] = bottom, top, left, right
-        # interior poles so the patch passes through those points
-        Cb = C.copy()
-        Cb[1:-1, 1:-1] = 0.0
-        R = X[1:-1, 1:-1] - np.einsum("ia,abk,jb->ijk", Bm[1:-1], Cb, Bm[1:-1])
-        C[1:-1, 1:-1] = np.einsum("ia,abk,jb->ijk", Bint, R, Bint)
-        arr = Array2_gp_Pnt(1, N, 1, N)
-        for i in range(N):
-            for j in range(N):
-                arr.SetValue(i + 1, j + 1, _pnt(C[i, j]))
-        return BRepBuilderAPI_MakeFace(Geom_BezierSurface(arr), 1e-7).Face()
-
-    edge_cache = {}
-    surf_geom = {}
-
-    def edge(key, C=None, P=None):
-        if key not in edge_cache:
-            edge_cache[key] = BRepBuilderAPI_MakeEdge(make_curve(C) if C is not None else _fit(P, 1e-5)).Edge()
-        return edge_cache[key]
-
-    t2 = time.time()
-    sew = BRepBuilderAPI_Sewing(SEW)
-    u = np.linspace(0, 1, N)
-    nq = 0
-    def side(a, b):
-        """[(edge, reversed?)] along coarse edge a -> b."""
-        e = (min(a, b), max(a, b))
-        if split[e]:
-            return [(edge(("h", a, e), half(a, b)), False), (edge(("h", b, e), half(b, a)), True)]
-        if fl_edge[e]:
-            return [(edge(("e", e), curve(e[0], e[1])), a > b)]
-        return [(edge(("p", e), P=poly[e]), a > b)]
-
-    # each connected exact region is one face, bounded by its seams
-    import scipy.sparse as sp2
-    from scipy.sparse.csgraph import connected_components as _cc
-
-    n_region = n_fallback = 0
-    exact = flab < O
-    same = exact[cf0] & (flab[cf0] == flab[cf1])
-    G = sp2.coo_matrix((np.ones(same.sum()), (cf0[same], cf1[same])), shape=(len(F), len(F)))
-    _, comp = _cc(G, directed=False)
-    comp = np.where(exact, comp, -1)
-    for c in np.unique(comp[exact]):
-        tris = np.flatnonzero(comp == c)
-        lf = int(flab[tris[0]])
-        if lf not in surf_geom:
-            surf_geom[lf] = geo[lf].geom()
-        inside = {int(t) for t in tris}
-        out_edges = {}
-        for t in tris:
-            f = [int(x) for x in F[t]]
+        # organic triangles pair up into quads (one patch for two triangles);
+        # the rest split into three quads each
+        pair = _pairs(CV, F, flab, O)
+        single = np.ones(len(F), bool)
+        single[[i for i, j in pair]] = False
+        single[[j for i, j in pair]] = False
+        single &= flab >= O
+        for i in np.flatnonzero(single):
             for k in range(3):
-                a, b = f[k], f[(k + 1) % 3]
-                e = (min(a, b), max(a, b))
-                pos = int(np.searchsorted(ckey, e[0] * (int(F.max()) + 1) + e[1]))
-                other = int(cf1[pos]) if int(cf0[pos]) == t else int(cf0[pos])
-                if other not in inside:
-                    out_edges.setdefault(a, []).append(b)
-        loops = []
-        while out_edges:
-            a0 = next(iter(out_edges))
-            loop, a = [], a0
-            while True:
-                b = out_edges[a].pop()
-                if not out_edges[a]:
-                    del out_edges[a]
-                loop += side(a, b)
-                a = b
-                if a == a0 or a not in out_edges:
-                    break
-            loops.append(loop)
-        T = CV[F[tris]]
-        tn = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
-        flip = float(np.einsum("ij,ij->", tn, geo[lf].normal(T.mean(axis=1)))) < 0
-        try:
-            sew.Add(_region_face(geo[lf], surf_geom[lf], loops, flip))
-            n_region += 1
-        except Exception:  # noqa: BLE001 - one face per triangle still works
+                a, b = int(F[i, k]), int(F[i, (k + 1) % 3])
+                split[(min(a, b), max(a, b))] = True
+
+        poles = {}
+
+        def curve(a, b):
+            """Poles of coarse edge (a, b), from a to b."""
+            e = (min(a, b), max(a, b))
+            if e not in poles:
+                poles[e] = Bi @ resample(poly[e], N)
+            return poles[e] if a < b else poles[e][::-1]
+
+        def casteljau(C):
+            """Poles of the two halves (t <= 1/2, t >= 1/2) of a Bezier curve."""
+            L, R = [C[0]], [C[-1]]
+            W = C.copy()
+            for _ in range(D):
+                W = 0.5 * (W[:-1] + W[1:])
+                L.append(W[0])
+                R.append(W[-1])
+            return np.array(L), np.array(R[::-1])
+
+        def half(a, b):
+            """Poles from corner a to the midpoint of edge (a, b)."""
+            return casteljau(curve(a, b))[0]
+
+        def value(C, t):
+            from math import comb
+
+            t = np.atleast_1d(t)
+            B = np.array([[comb(D, j) * x ** j * (1 - x) ** (D - j) for j in range(D + 1)] for x in t])
+            return B @ C
+
+        def make_curve(C):
+            from OCP.Geom import Geom_BezierCurve
+            from OCP.OCP.collections import Array1_gp_Pnt
+
+            arr = Array1_gp_Pnt(1, len(C))
+            for j, c in enumerate(C):
+                arr.SetValue(j + 1, _pnt(c))
+            return Geom_BezierCurve(arr)
+
+        def coons(bottom, top, left, right):
+            """Points of the Coons blend of a patch's four sides (poles: bottom,
+            top along u; left, right along v; corners shared) at even parameters."""
+            sb, st_, sl, sr = (Bm @ x for x in (bottom, top, left, right))
+            U, W = np.meshgrid(u, u, indexing="ij")
+            X = ((1 - W)[..., None] * sb[:, None] + W[..., None] * st_[:, None]
+                 + (1 - U)[..., None] * sl[None] + U[..., None] * sr[None]
+                 - ((1 - U) * (1 - W))[..., None] * sb[0] - (U * (1 - W))[..., None] * sb[-1]
+                 - ((1 - U) * W)[..., None] * st_[0] - (U * W)[..., None] * st_[-1])
+            return X
+
+        def patch(bottom, top, left, right, X):
+            """The Bezier patch with those sides through points X (N, N, 3): its
+            inside poles solved for, so it passes through the pulled points."""
+            from OCP.Geom import Geom_BezierSurface
+            from OCP.OCP.collections import Array2_gp_Pnt
+
+            C = np.zeros((N, N, 3))
+            C[:, 0], C[:, -1], C[0, :], C[-1, :] = bottom, top, left, right
+            # interior poles so the patch passes through those points
+            Cb = C.copy()
+            Cb[1:-1, 1:-1] = 0.0
+            R = X[1:-1, 1:-1] - np.einsum("ia,abk,jb->ijk", Bm[1:-1], Cb, Bm[1:-1])
+            C[1:-1, 1:-1] = np.einsum("ia,abk,jb->ijk", Bint, R, Bint)
+            arr = Array2_gp_Pnt(1, N, 1, N)
+            for i in range(N):
+                for j in range(N):
+                    arr.SetValue(i + 1, j + 1, _pnt(C[i, j]))
+            return BRepBuilderAPI_MakeFace(Geom_BezierSurface(arr), 1e-7).Face()
+
+        edge_cache = {}
+        surf_geom = {}
+
+        def edge(key, C=None, P=None):
+            if key not in edge_cache:
+                edge_cache[key] = BRepBuilderAPI_MakeEdge(make_curve(C) if C is not None else _fit(P, 1e-5)).Edge()
+            return edge_cache[key]
+
+        sew = BRepBuilderAPI_Sewing(SEW)
+        u = np.linspace(0, 1, N)
+        nq = 0
+        def side(a, b):
+            """[(edge, reversed?)] along coarse edge a -> b."""
+            e = (min(a, b), max(a, b))
+            if split[e]:
+                return [(edge(("h", a, e), half(a, b)), False), (edge(("h", b, e), half(b, a)), True)]
+            if fl_edge[e]:
+                return [(edge(("e", e), curve(e[0], e[1])), a > b)]
+            return [(edge(("p", e), P=poly[e]), a > b)]
+
+        # each connected exact region is one face, bounded by its seams
+        import scipy.sparse as sp2
+        from scipy.sparse.csgraph import connected_components as _cc
+
+        n_region = n_fallback = 0
+        why, demote = [], []
+        exact = flab < O
+        same = exact[cf0] & (flab[cf0] == flab[cf1])
+        G = sp2.coo_matrix((np.ones(same.sum()), (cf0[same], cf1[same])), shape=(len(F), len(F)))
+        _, comp = _cc(G, directed=False)
+        comp = np.where(exact, comp, -1)
+        for c in np.unique(comp[exact]):
+            tris = np.flatnonzero(comp == c)
+            lf = int(flab[tris[0]])
+            if lf not in surf_geom:
+                surf_geom[lf] = geo[lf].geom()
+            inside = {int(t) for t in tris}
+            out_edges = {}
+            for t in tris:
+                f = [int(x) for x in F[t]]
+                for k in range(3):
+                    a, b = f[k], f[(k + 1) % 3]
+                    e = (min(a, b), max(a, b))
+                    pos = int(np.searchsorted(ckey, e[0] * (int(F.max()) + 1) + e[1]))
+                    other = int(cf1[pos]) if int(cf0[pos]) == t else int(cf0[pos])
+                    if other not in inside:
+                        out_edges.setdefault(a, []).append(b)
+            # a seam path running through another corner of this boundary
+            # doubles back: those corners' triangles go to patches first
+            bv = sorted(set(out_edges) | {b for bs in out_edges.values() for b in bs})
+            spikes = set()
+            if attempt < 4:
+                from scipy.spatial import cKDTree as _KD
+
+                kd = _KD(CV[bv])
+                for a, bs in out_edges.items():
+                    for b in bs:
+                        Pp = poly[(min(a, b), max(a, b))]
+                        if Pp is None or len(Pp) < 3:
+                            continue
+                        for hit in kd.query_ball_point(Pp[1:-1], 1e-6):
+                            spikes.update(bv[h] for h in hit if bv[h] not in (a, b))
+            loops = []
+            while out_edges:
+                a0 = next(iter(out_edges))
+                loop, a = [], a0
+                while True:
+                    b = out_edges[a].pop()
+                    if not out_edges[a]:
+                        del out_edges[a]
+                    loop += side(a, b)
+                    a = b
+                    if a == a0 or a not in out_edges:
+                        break
+                loops.append(loop)
+            T = CV[F[tris]]
+            tn = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+            flip = float(np.einsum("ij,ij->", tn, geo[lf].normal(T.mean(axis=1)))) < 0
+            try:
+                sew.Add(_region_face(geo[lf], surf_geom[lf], loops, flip))
+                n_region += 1
+                continue
+            except Exception as e:  # noqa: BLE001 - patches or one face per triangle still work
+                why.append(f"{geo[lf].kind} with {len(loops)} loops: {e}"[:200])
+            if attempt < 4:
+                near = np.isin(F[tris], list(spikes)).any(axis=1) if spikes else np.zeros(len(tris), bool)
+                demote.append(tris[near] if near.any() and attempt == 0 else tris)
+                continue
             n_fallback += 1
             for t in tris:                       # one face per triangle, merged later
                 f = [int(x) for x in F[t]]
                 loop = side(f[0], f[1]) + side(f[1], f[2]) + side(f[2], f[0])
                 sew.Add(_exact_face(geo[lf], surf_geom[lf], loop, CV[f].mean(axis=0)))
-    todo = []                                    # (sides, normal) of every patch
-    # pairs: one patch over the quad a, c, b, d (shared edge a-b, c and d the far corners)
-    for i, j in pair:
-        fi, fj = [int(x) for x in F[i]], [int(x) for x in F[j]]
-        a, b = sorted(set(fi) & set(fj))
-        c = (set(fi) - {a, b}).pop()
-        d = (set(fj) - {a, b}).pop()
-        n = cfn[i] + cfn[j]
-        n /= max(np.linalg.norm(n), 1e-300)
-        # corners 00 = a, 10 = c, 01 = d, 11 = b
-        todo.append(((curve(a, c), curve(d, b), curve(a, d), curve(c, b)), n))
-        nq += 1
-    for i in np.flatnonzero(single):
-        f = [int(x) for x in F[i]]
-        T = CV[f]
-        n = cfn[i]
-        H = {(x, y): half(x, y) for x in f for y in f if x != y}
-        Mid = {(min(x, y), max(x, y)): H[(x, y)][-1] for (x, y) in H}
-        Gc = pull(np.mean([*T, *Mid.values()], axis=0)[None], n[None])[0]
-        spoke = {}
-        for e, M in Mid.items():                 # centroid -> edge midpoint
-            t = np.linspace(0, 1, 13)[:, None]
-            spoke[e] = Bi @ resample(drape((Gc * (1 - t) + M * t)[None], n[None])[0], N)
-        for k in range(3):
-            c, j, i2 = f[k], f[(k + 1) % 3], f[(k + 2) % 3]
-            e1, e2 = (min(c, j), max(c, j)), (min(c, i2), max(c, i2))
-            # corners 00 = c, 10 = M(c, j), 01 = M(c, i), 11 = G
-            todo.append(((H[(c, j)], spoke[e2][::-1], H[(c, i2)], spoke[e1][::-1]), n))
+        if demote:
+            # a region whose boundary will not make one valid face (a seam
+            # that doubles back on itself): smooth patches there instead,
+            # flat on its plane, and build again
+            return None, demote
+        todo = []                                    # (sides, normal) of every patch
+        # pairs: one patch over the quad a, c, b, d (shared edge a-b, c and d the far corners)
+        for i, j in pair:
+            fi, fj = [int(x) for x in F[i]], [int(x) for x in F[j]]
+            a, b = sorted(set(fi) & set(fj))
+            c = (set(fi) - {a, b}).pop()
+            d = (set(fj) - {a, b}).pop()
+            n = cfn[i] + cfn[j]
+            n /= max(np.linalg.norm(n), 1e-300)
+            # corners 00 = a, 10 = c, 01 = d, 11 = b
+            todo.append(((curve(a, c), curve(d, b), curve(a, d), curve(c, b)), n))
             nq += 1
-    # every patch's inside onto the surface in one go
-    if todo:
-        X = np.stack([coons(*sd) for sd, _ in todo])
-        inner = X[:, 1:-1, 1:-1].reshape(-1, 3)
-        nrm = np.repeat(np.stack([n for _, n in todo]), (N - 2) ** 2, axis=0)
-        X[:, 1:-1, 1:-1] = pull(inner, nrm).reshape(len(todo), N - 2, N - 2, 3)
-        for (sd, _), x in zip(todo, X):
-            sew.Add(patch(*sd, x))
-    sew.Perform()
+        for i in np.flatnonzero(single):
+            f = [int(x) for x in F[i]]
+            T = CV[f]
+            n = cfn[i]
+            H = {(x, y): half(x, y) for x in f for y in f if x != y}
+            Mid = {(min(x, y), max(x, y)): H[(x, y)][-1] for (x, y) in H}
+            Gc = pull(np.mean([*T, *Mid.values()], axis=0)[None], n[None])[0]
+            spoke = {}
+            for e, M in Mid.items():                 # centroid -> edge midpoint
+                t = np.linspace(0, 1, 13)[:, None]
+                spoke[e] = Bi @ resample(drape((Gc * (1 - t) + M * t)[None], n[None])[0], N)
+            for k in range(3):
+                c, j, i2 = f[k], f[(k + 1) % 3], f[(k + 2) % 3]
+                e1, e2 = (min(c, j), max(c, j)), (min(c, i2), max(c, i2))
+                # corners 00 = c, 10 = M(c, j), 01 = M(c, i), 11 = G
+                todo.append(((H[(c, j)], spoke[e2][::-1], H[(c, i2)], spoke[e1][::-1]), n))
+                nq += 1
+        # every patch's inside onto the surface in one go
+        if todo:
+            X = np.stack([coons(*sd) for sd, _ in todo])
+            inner = X[:, 1:-1, 1:-1].reshape(-1, 3)
+            nrm = np.repeat(np.stack([n for _, n in todo]), (N - 2) ** 2, axis=0)
+            X[:, 1:-1, 1:-1] = pull(inner, nrm).reshape(len(todo), N - 2, N - 2, 3)
+            for (sd, _), x in zip(todo, X):
+                sew.Add(patch(*sd, x))
+        sew.Perform()
+        return sew, (nq, n_region, n_fallback, why)
+
+    def close(sew):
+        """The sewn faces as a solid; exact regions that fell back to one
+        face per triangle merge back (patches stay patches)."""
+        ex = TopExp_Explorer(sew.SewedShape(), TopAbs_SHELL)
+        shells = []
+        while ex.More():
+            shells.append(TopoDS.Shell(ex.Current()))
+            ex.Next()
+        if len(shells) != 1 or sew.NbFreeEdges():
+            raise RuntimeError(f"patches did not close ({len(shells)} shells, {sew.NbFreeEdges()} free edges)")
+        fx = ShapeFix_Solid(BRepBuilderAPI_MakeSolid(shells[0]).Solid())
+        fx.Perform()
+        solid = fx.Solid()
+        if _volume(solid) < 0:
+            solid.Reverse()
+        u = ShapeUpgrade_UnifySameDomain(solid, False, True, False)
+        fe = TopExp_Explorer(solid, TopAbs_FACE)
+        while fe.More():
+            if BRepAdaptor_Surface(TopoDS.Face(fe.Current())).GetType() == GeomAbs_BezierSurface:
+                ee = TopExp_Explorer(fe.Current(), TopAbs_EDGE)
+                while ee.More():
+                    u.KeepShape(ee.Current())
+                    ee.Next()
+            fe.Next()
+        u.Build()
+        merged = u.Shape()
+        if not BRepCheck_Analyzer(merged).IsValid():
+            sf = ShapeFix_Shape(merged)
+            sf.Perform()
+            merged = sf.Shape()
+        return merged if BRepCheck_Analyzer(merged).IsValid() or not BRepCheck_Analyzer(solid).IsValid() else solid
+
+    def bad_regions(solid):
+        """Coarse triangles of the exact regions behind the solid's invalid
+        faces (sewing can still tangle a boundary a lone face had right)."""
+        from scipy.spatial import cKDTree
+
+        ex_t = np.flatnonzero(flab < O)
+        if not len(ex_t):
+            return []
+        kd = cKDTree(CV[F[ex_t]].mean(axis=1))
+        out = []
+        fe = TopExp_Explorer(solid, TopAbs_FACE)
+        while fe.More():
+            f = TopoDS.Face(fe.Current())
+            if BRepAdaptor_Surface(f).GetType() != GeomAbs_BezierSurface and not BRepCheck_Analyzer(f).IsValid():
+                tm = shape_to_trimesh(f, deflection=0.05, angle=0.3)
+                if len(tm.faces):
+                    _, i = kd.query(tm.triangles_center[np.argmax(tm.area_faces)])
+                    t = ex_t[i]
+                    out.append(np.flatnonzero(comp_of(t)))
+            fe.Next()
+        return out
+
+    def comp_of(t):
+        """Mask of the exact region (connected, one label) holding triangle t."""
+        import scipy.sparse as sp3
+        from scipy.sparse.csgraph import connected_components
+
+        same = (flab[cf0] == flab[cf1]) & (flab[cf0] == flab[t])
+        G = sp3.coo_matrix((np.ones(same.sum()), (cf0[same], cf1[same])), shape=(len(F), len(F)))
+        _, c = connected_components(G, directed=False)
+        return (c == c[t]) & (flab == flab[t])
+
+    from .step import shape_to_trimesh
+
+    demoted = 0
+    for attempt in range(5):
+        sew, got = build(attempt)
+        if sew is None:
+            for tris in got:
+                flab[tris] = int(flab.max()) + 1
+            demoted += len(got)
+            continue
+        solid = close(sew)
+        bad = bad_regions(solid) if not BRepCheck_Analyzer(solid).IsValid() and attempt < 4 else []
+        if not bad:
+            break
+        for tris in bad:
+            flab[tris] = int(flab.max()) + 1
+        demoted += len(bad)
+    nq, n_region, n_fallback, why = got
     t3 = time.time()
-    ex = TopExp_Explorer(sew.SewedShape(), TopAbs_SHELL)
-    shells = []
-    while ex.More():
-        shells.append(TopoDS.Shell(ex.Current()))
-        ex.Next()
-    if len(shells) != 1 or sew.NbFreeEdges():
-        raise RuntimeError(f"patches did not close ({len(shells)} shells, {sew.NbFreeEdges()} free edges)")
-    fx = ShapeFix_Solid(BRepBuilderAPI_MakeSolid(shells[0]).Solid())
-    fx.Perform()
-    solid = fx.Solid()
-    if _volume(solid) < 0:
-        solid.Reverse()
-    # exact regions that fell back to one face per triangle merge back; the
-    # patches stay patches (their edges are kept)
-    u = ShapeUpgrade_UnifySameDomain(solid, False, True, False)
-    fe = TopExp_Explorer(solid, TopAbs_FACE)
-    while fe.More():
-        if BRepAdaptor_Surface(TopoDS.Face(fe.Current())).GetType() == GeomAbs_BezierSurface:
-            ee = TopExp_Explorer(fe.Current(), TopAbs_EDGE)
-            while ee.More():
-                u.KeepShape(ee.Current())
-                ee.Next()
-        fe.Next()
-    u.Build()
-    merged = u.Shape()
-    if not BRepCheck_Analyzer(merged).IsValid():
-        sf = ShapeFix_Shape(merged)
-        sf.Perform()
-        merged = sf.Shape()
-    if BRepCheck_Analyzer(merged).IsValid() or not BRepCheck_Analyzer(solid).IsValid():
-        solid = merged                           # else keep the faces unmerged: valid beats tidy
-    rep = {"patches": nq, "degree": D, "exactFaces": n_region, "exactFallbacks": n_fallback,
+    rep = {"patches": nq, "degree": N - 1, "exactFaces": n_region, "exactDemoted": demoted, "exactFallbacks": n_fallback, "reasons": why[:5],
            "triangles": int((flab >= O).sum()), "exactTriangles": int((flab < O).sum()),
            "exactSurfaces": len({int(x) for x in np.unique(lab) if x < O}),
            "smoothRegions": len({int(x) for x in np.unique(lab) if x >= O}),
-           "seconds": {"coarsen": round(t1 - t0, 1), "edges": round(t2 - t1, 1), "faces": round(t3 - t2, 1),
+           "seconds": {"coarsen": round(t1 - t0, 1), "patches": round(t3 - t1, 1),
                        "solid": round(time.time() - t3, 1)}}
     return solid, rep
 
