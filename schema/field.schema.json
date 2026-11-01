@@ -619,7 +619,7 @@
             "solid",
             "homogenized"
           ],
-          "description": "auto (default): a part with a lattice is analyzed with the lattice homogenized (unit-cell stiffness and wall stress), else meshed and verified as a solid"
+          "description": "auto (default): a part with a lattice is analyzed with the lattice homogenized (unit-cell stiffness and wall stress), else meshed and verified as a solid; homogenized on a part with no lattice reads it on the same fill-weighted grid (thin skins without a fine mesh)"
         },
         "pitch": {
           "type": "number",

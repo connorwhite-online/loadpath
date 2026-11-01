@@ -69,7 +69,7 @@ FILL_MIN = 0.1
 
 
 def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000, samples: int = 3,
-                      fields: bool = False, graph=None) -> dict:
+                      fields: bool = False, graph=None, solid_ok: bool = False) -> dict:
     """mass, safety factor (worst case) and deflection of the graph's part
     under `study` with its lattice homogenized (module docstring). Returns
     a verify_part-like dict: mass, volume, safetyFactor, cases (name,
@@ -94,22 +94,29 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     full = {**full, "output": name}
     g = graph or FieldGraph(full, base_dir=base_dir)
     lats = lattice_nodes(g, name)
+    if not lats and not solid_ok:
+        raise ValueError(f"{name!r} has no lattice in it: analyze it as a solid (verify_part), "
+                         "or pass solid_ok to read it on the same fill-weighted grid")
     if not lats:
-        raise ValueError(f"{name!r} has no lattice in it: analyze it as a solid (verify_part)")
-    if len(lats) > 1:
+        # no lattice: the same grid, every cell solid by its fill. A thin
+        # skin reads here without a mesh fine enough to resolve it, and
+        # against a lattice part on equal terms
+        lat, kind, lrefs, g_solid, g_empty = None, None, {}, g, g
+    elif len(lats) > 1:
         raise ValueError(f"homogenized check handles one lattice node, {name!r} uses {', '.join(lats)}")
-    lat = lats[0]
-    lnode = g.nodes[lat]
-    lspec, lrefs = lnode.spec, lnode.refs
-    kind = lspec.get("type", "gyroid")
-    if not is_strut(kind) and lspec.get("form", "sheet") != "sheet":
-        raise ValueError(f"lattice {lat!r}: the homogenized fits are for sheet lattices, not network")
-    lattice_fit(kind)                    # refuse a cell with no fit before any work
-    if "aspect" in lspec:
-        raise ValueError(f"lattice {lat!r}: the homogenized fits are for cubic cells, not a stretched 'aspect' "
-                         "cell; check it resolved (verify_part on the mesh)")
-    g_solid = _variant(g, full, base_dir, lat, _SOLID)
-    g_empty = _variant(g, full, base_dir, lat, _EMPTY)
+    else:
+        lat = lats[0]
+        lnode = g.nodes[lat]
+        lspec, lrefs = lnode.spec, lnode.refs
+        kind = lspec.get("type", "gyroid")
+        if not is_strut(kind) and lspec.get("form", "sheet") != "sheet":
+            raise ValueError(f"lattice {lat!r}: the homogenized fits are for sheet lattices, not network")
+        lattice_fit(kind)                    # refuse a cell with no fit before any work
+        if "aspect" in lspec:
+            raise ValueError(f"lattice {lat!r}: the homogenized fits are for cubic cells, not a stretched "
+                             "'aspect' cell; check it resolved (verify_part on the mesh)")
+        g_solid = _variant(g, full, base_dir, lat, _SOLID)
+        g_empty = _variant(g, full, base_dir, lat, _EMPTY)
     b = g_solid.bounds(name)
     if b is None:
         raise ValueError(f"{name!r} is unbounded: intersect its lattice with a solid")
@@ -133,7 +140,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     # grid fell
     active = f_full >= FILL_MIN
     f_skin = np.zeros(len(ijk))
-    f_skin[active] = occupancy_at(g_empty, name, origin, ijk[active], offs, pitch)
+    f_skin[active] = (f_full[active] if lat is None
+                      else occupancy_at(g_empty, name, origin, ijk[active], offs, pitch))
     grid = np.zeros(tuple(dims), bool)
     grid[tuple(ijk[active].T)] = True
     lbl, _ = ndimage.label(grid)
@@ -143,7 +151,9 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     fill = np.clip(f_full[active], 0.0, 1.0)
     centers = origin + (e_ijk + 0.5) * pitch
     # the lattice's density where it is
-    if "density" in lrefs:
+    if lat is None:
+        rho = np.ones(len(centers))
+    elif "density" in lrefs:
         rho = _field(g, lrefs["density"], centers)
     else:
         wall = np.broadcast_to(_field(g, lrefs.get("thickness", 1.0), centers), (len(centers),))
@@ -162,7 +172,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         e_ijk, fs, fc, rho, centers, fill = e_ijk[keep], fs[keep], fc[keep], rho[keep], centers[keep], fill[keep]
         hm = HexMesh(e_ijk, pitch, origin)
         bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pitch)
-    ec = sheet_modulus(kind, rho)
+    ec = np.ones(len(rho)) if lat is None else sheet_modulus(kind, rho)
     e_cell = mat.E * fill * (fs + fc * ec)
     rhs = [bc.loads[ci] for ci in range(len(study.load_cases))]
     if _use_mg(hm.n_elem):
@@ -184,7 +194,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         us = Solver(hm, rtol=1e-6, maxiter=3000).solve_many(k, rhs)
     nu = study.elastic(mat)
     band = 1.5 * pitch
-    wall_k = ec * sheet_stress_factor(kind, rho)
+    wall_k = ec if lat is None else ec * sheet_stress_factor(kind, rho)
     vol_cell = pitch ** 3
     volume = float((fill * (fs + fc * rho) * vol_cell).sum())
     cases, worst = [], np.inf

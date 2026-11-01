@@ -1197,7 +1197,9 @@ FIELD_SCHEMA = {
                      "analysis": {"enum": ["auto", "solid", "homogenized"],
                                   "description": "auto (default): a part with a lattice is analyzed with the "
                                                  "lattice homogenized (unit-cell stiffness and wall stress), "
-                                                 "else meshed and verified as a solid"},
+                                                 "else meshed and verified as a solid; homogenized on a part with no "
+                                                 "lattice reads it on the same fill-weighted grid (thin skins "
+                                                 "without a fine mesh)"},
                      "pitch": {**_POS, "description": "mm mesh for each candidate (default 1)"},
                      "cells": {"type": "integer", "minimum": 1000, "description": "analysis cells (default 30000)"},
                      "checkCells": {"type": "integer", "minimum": 1000,
