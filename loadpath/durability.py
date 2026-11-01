@@ -134,6 +134,8 @@ DURABILITY = {
                           "S-N data was found; verify with nonlinear analysis and a test", "rough"),
     "pa-cf": DurabilityData(0.15, 8.0, 0.50, 0.20, 0.10,
                             "estimate between FDM PLA and filled nylon; moisture lowers both", "rough"),
+    "pp": DurabilityData(0.20, 8.0, 1.00, 0.20, 0.10,
+                         "rough estimate: PP fatigues well but creeps fast at room temperature", "rough"),
     "pa12": DurabilityData(0.30, 10.0, 0.80, 0.20, 0.10,
                            "Van Hooreweder & Kruth, CIRP Annals 2014 (SLS PA12, 18 MPa at 1e6, R=-1); "
                            "creep from PA12 creep-modulus data, dry", "measured"),

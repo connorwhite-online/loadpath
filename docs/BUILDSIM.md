@@ -234,6 +234,89 @@ area in tension, its maximum, and the net lift force). The maximum sits at an
 edge, where a bonded joint's peel stress is singular and grows as the voxels
 shrink, so the warning goes on the mean. ASA, PETG and PLA use the same two
 fitted numbers with their own Tg and CTE, and none of them is validated.
+PP and nylon use them too, with their crystallization temperature in
+place of Tg (below).
+
+### Semi-crystalline polymers: PP and nylon
+
+An amorphous road (ABS, ASA, PETG, PLA) turns solid at its glass
+transition. A semi-crystalline one (polypropylene, nylon) is still a melt
+well below its melting point and turns solid when it crystallizes on
+cooling, near 115 °C for PP and 150 °C for PA12, far above its Tg (PP's is
+below 0 °C). With a Tg the model would see almost no shrink. So PP and PA12
+take their crystallization temperature (`BUILD["fdm"]` rows with `tc`,
+estimates from typical DSC cooling scans), and the shrink below it is
+`relax * cte * (Tc - T)` as before, which is why they warp so much more
+than PETG on the same bed. The report's `strain.solidifies` says which
+model ran.
+
+**A blind check on PP.** No published warp measurement with its geometry
+and settings could be found for PETG or for nylon. The nearest is Samy et
+al. 2022 (Polymers 14:2746): isotactic PP plates, 50 x 50 x 2 mm in four
+0.5 mm layers, bed 100 °C, enclosed at 25 °C, scanned for the z warpage at a
+point near a corner, (7.8, 2.1) mm. `bench/buildsim_fdm_pp.py` runs it with
+nothing fitted to PP (relax and the bed from the ABS fit above; PP's card
+values are estimates: 1.1 GPa, 120 µm/(m K), Tc 115 °C):
+
+| | warpage at the point (mm) |
+|---|---|
+| measured, five raster patterns | 0.80-1.25 (0.80 lines 90/90, 0.83 concentric, 1.10-1.25 others) |
+| Samy et al.'s own model (crystallization kinetics, viscoelastic) | 0.75-1.09 |
+| loadpath, after removal, over the plate's lowest point | 0.53 |
+| loadpath, the corner itself | 0.83 |
+
+loadpath reads a third low at the point (0.53 against 0.80 for the
+flattest raster), and the paper does not say exactly what the point was
+measured against, so this is a check of magnitude, not a validation.
+The model has no raster: Samy et al. measured up to 50% more warp for some
+patterns than others, which an isotropic shrink cannot tell apart. With
+Tg instead of Tc the same plate would hardly warp at all.
+
+### FDM in the optimizer
+
+The warp term and the warp limits work for FDM on the same build model:
+the elastic bed (corners free to lift), each road solid below its Tg or
+Tc, and the cool-down on the bed at the end. On a PETG bar it moves within
+0.5% of `simulate_build`. For FDM, `maxDistortion` is the largest movement
+along the build direction at the end, cooled on the bed: the lift off the
+bed. The in-plane shrink is left out because it is uniform and the slicer
+scales it away.
+
+**A warp limit on an FDM part: not working yet.** `bench/buildsim_fdm_warp_limit.py`
+runs a 120 x 24 x 12 mm beam printed flat on the bed, bolted at two
+preserved end pads, 200 N at mid-span, SF 2, with no limit and then with
+`maxDistortion` below what the unlimited part builds to:
+
+| | no limit | maxDistortion 0.5x | maxDistortion 0.7x |
+|---|---|---|---|
+| PETG | 15.7 g, SF 2.40, lift 0.070 mm (re-simulated: 0.19) | no part passed (SF 0) | no part passed (SF <= 0.22) |
+| PA12 | 11.5 g, SF 2.05, lift 0.25 mm (re-simulated: 1.02) | no part passed (SF <= 0.01) | no part passed (SF 0.97-1.54, lift 0.22-0.25) |
+
+(The 0.5x runs are with the shipped limit weight, but before the FDM build
+model went to one cell per layer; the 0.7x runs have one cell per layer and
+tried a capped limit weight, see below; bench/results keeps the 0.7x rows.)
+
+Two problems, both open:
+
+- **The optimizer cannot move this warp.** Most of the lift comes from the
+  preserved end pads, solid blocks on the bed that the optimizer may not
+  touch, so taking material away elsewhere costs strength and buys almost
+  no flatness. With the limit's weight as on the metal bracket, the
+  failing designs lost their load path (SF near 0, as in the PETG row);
+  capping the weight and scaling it to the current compliance kept PA12
+  structural (SF 1-1.5, the row above) but still missed the limit, and it
+  broke the metal bracket's passing 0.6x case, so it was not kept. A part whose warp lives in what it may change
+  (long thin floors, wide flanges) is where a limit should bite; it has
+  not been shown yet.
+- **The optimizer's FDM warp reads 3-4x lower than the re-simulation of
+  the delivered part** (0.25 against 1.02 mm for PA12). On the same voxel
+  field the two models agree within 2% (a test checks it), so the gap is
+  between the optimizer's density field and the delivered mesh (smoothing,
+  voxelization of the mesh, the first layer's contact). Until that is
+  found, read FDM warp from `report.buildSim`, not from `report.warp`.
+
+Nylon warps about five times as much as PETG on this beam (re-simulated
+1.02 against 0.19 mm), in line with nylon's reputation on open printers.
 
 ## SLS / MJF
 

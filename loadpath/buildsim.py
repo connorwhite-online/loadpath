@@ -87,9 +87,11 @@ BUILD = {
     # LPBF: k is the share of the yield strain a layer keeps (fit: see
     # LPBF_K below); kz the build-direction strain relative to in-plane.
     "lpbf": {"k": None, "kz": 1.0},
-    # FDM: tg is where the road stops flowing (DSC Tg); relax the share of
-    # the thermal shrink below Tg the polymer keeps as stress (the rest
-    # creeps out while the part is warm). bed/chamber: typical settings.
+    # FDM: tg is where an amorphous road stops flowing (DSC Tg); tc, for a
+    # semi-crystalline one (PP, nylon), where it crystallizes on cooling
+    # and turns solid, far above its Tg. relax is the share of the thermal
+    # shrink below that the polymer keeps as stress (the rest creeps out
+    # while the part is warm). bed/chamber: typical settings.
     "fdm": {
         "abs": {"tg": (101.1, "polylite-abs DSC"), "bed": 100.0, "chamber": 35.0},
         "asa": {"tg": (97.8, "polylite-asa DSC"), "bed": 100.0, "chamber": 35.0},
@@ -97,6 +99,10 @@ BUILD = {
                  "bed": 80.0, "chamber": 30.0},
         "pla": {"tg": (60.0, "estimate: PLA Tg 55-65 C"), "bed": 60.0, "chamber": 30.0},
         "pa-cf": {"tg": (70.0, "bambu-paht-cf DSC"), "bed": 90.0, "chamber": 40.0},
+        "pp": {"tc": (115.0, "estimate: isotactic PP crystallizes at 110-120 C on cooling (DSC, 10 K/min)"),
+               "bed": 100.0, "chamber": 25.0},
+        "pa12": {"tc": (150.0, "estimate: PA12 crystallizes at 145-155 C on cooling (DSC, 10 K/min)"),
+                 "bed": 90.0, "chamber": 40.0},
     },
     # SLS: ds the extra linear shrink of a thick section over a thin wall;
     # depth_sat the depth (mm) past which a section counts as thick.
@@ -245,7 +251,7 @@ def inherent_strain(setup: BuildSetup, z=None, depth=None) -> tuple[np.ndarray, 
         ep = -p["relax"] * p["alpha"] * np.maximum(p["tg"] - tz, 0.0) * setup.scale
         out = np.zeros((n, 6))
         out[:, :3] = ep[:, None]
-        info.update({"model": "glass-transition shrink", **{k: v for k, v in p.items() if k != "tgSource"},
+        info.update({"model": "solidification shrink", **{k: v for k, v in p.items() if k != "tgSource"},
                      "tgSource": p["tgSource"]})
         return out, info
     if proc in ("sls", "mjf"):
@@ -261,20 +267,30 @@ def inherent_strain(setup: BuildSetup, z=None, depth=None) -> tuple[np.ndarray, 
 
 
 def _fdm_params(setup):
+    """The FDM shrink model's numbers. 'tg' is the temperature the road
+    turns solid at: Tg for an amorphous polymer, the crystallization
+    temperature for a semi-crystalline one (the BUILD row's 'tc')."""
     from .thermal import expansion
     name = str(setup.material).lower()
     row = BUILD["fdm"].get(name)
-    tg = _lib(name, "tg")
-    src = "material library DSC"
-    if row is not None and tg is None:
-        tg, src = row["tg"]
+    if row is not None and "tc" in row:
+        tg, src = row["tc"]
+        kind = "semi-crystalline: solid below crystallization"
+    else:
+        kind = "amorphous: solid below Tg"
+        tg = _lib(name, "tg")
+        src = "material library DSC"
+        if row is not None and tg is None:
+            tg, src = row["tg"]
     if tg is None:
-        raise ValueError(f"fdm build simulation: no glass transition for {name!r}; give BuildSetup.strain")
+        raise ValueError(f"fdm build simulation: no glass transition or crystallization temperature for {name!r}; "
+                         "give BuildSetup.strain")
     alpha = float(setup.alpha) if setup.alpha is not None else float(expansion(name))
     bed = setup.bed if setup.bed is not None else (row or {}).get("bed", 60.0)
     ch = setup.chamber if setup.chamber is not None else (row or {}).get("chamber", 30.0)
-    return {"tg": float(tg), "tgSource": src, "alpha": alpha, "bed": float(bed), "chamber": float(ch),
-            "room": float(setup.room), "relax": FDM_RELAX if setup.relax is None else float(setup.relax),
+    return {"tg": float(tg), "tgSource": src, "solidifies": kind, "alpha": alpha, "bed": float(bed),
+            "chamber": float(ch), "room": float(setup.room),
+            "relax": FDM_RELAX if setup.relax is None else float(setup.relax),
             "decay": FDM_DECAY if setup.decay is None else float(setup.decay)}
 
 
@@ -1140,21 +1156,58 @@ class WarpTerm:
         hgt = sign * mesh.elem_ijk[:, axis]
         hgt = hgt - hgt.min()
         hn = sign * mesh.node_ijk[:, axis]
-        self.fixed = np.repeat(hn == hn.min(), 3)
         self.sign = sign
         self.hgt = hgt
         self.hn = hn - hn.min()
-        self.kern = _Kernel(mesh, nu, self.fixed)
+        self.fdm = setup.process.lower() == "fdm"
+        inplane = [a for a in range(3) if a != axis]
+        springs = None
+        if self.fdm:
+            # FDM: the elastic bed of simulate_build (springs on the first
+            # layer's underside, a quarter cell of area per touching cell),
+            # pinned only against drift in its plane, so corners can lift
+            kb = float(setup.bed_stiffness if setup.bed_stiffness is not None else FDM_BED)
+            area = np.zeros(mesh.n_nodes)
+            under = hgt == 0
+            for c in range(8):
+                nd = mesh.enode[under, c]
+                on = self.hn[nd] == 0
+                np.add.at(area, nd[on], 0.25 * mesh.pitch ** 2)
+            springs = np.repeat(area * kb, 3)
+            bottom = np.flatnonzero(self.hn == 0)
+            pc = mesh.node_xyz[bottom][:, inplane]
+            a = bottom[np.argmin(np.linalg.norm(pc - pc.mean(axis=0), axis=1))]
+            b = bottom[np.argmax(np.abs(pc[:, 0] - mesh.node_xyz[a, inplane[0]]))]
+            self.fixed = np.zeros(mesh.n_dof, bool)
+            self.fixed[3 * a + inplane[0]] = self.fixed[3 * a + inplane[1]] = True
+            self.fixed[3 * b + inplane[1]] = True
+        else:
+            self.fixed = np.repeat(hn == hn.min(), 3)
+        self.kern = _Kernel(mesh, nu, self.fixed, springs)
+        # the distortion measure: |u| for a plate-held metal build; along
+        # the build only for FDM, where the in-plane shrink is uniform (the
+        # slicer scales it out) and the warp is the lift off the bed
+        self.mask = np.ones(3)
+        if self.fdm:
+            self.mask = np.zeros(3)
+            self.mask[axis] = 1.0
+        self.cool = None
+        if self.fdm:
+            p = _fdm_params(setup)
+            tz = _fdm_temperature(p, (hgt + 0.5) * mesh.pitch)
+            self.cool = np.zeros((mesh.n_elem, 6))
+            self.cool[:, :3] = (-p["alpha"] * (tz - p["room"]) * setup.scale)[:, None]
         eps, self.info = inherent_strain(setup, z=(hgt + 0.5) * mesh.pitch if setup.process == "fdm" else None)
         eps = np.broadcast_to(eps, (mesh.n_elem, 6))
         # build frame (in plane, in plane, along the build) -> grid axes
-        inplane = [a for a in range(3) if a != axis]
         world = np.zeros((mesh.n_elem, 6))
         world[:, inplane[0]] = eps[:, 0]
         world[:, inplane[1]] = eps[:, 1]
         world[:, axis] = eps[:, 2]
         self.eps = world
-        lump = max(1, int(round((layer or 4 * mesh.pitch) / mesh.pitch)))
+        # default lumps: 4 cells for metal; 1 for FDM, whose warp builds up
+        # layer by layer on a bed that gives (4-cell lumps read it 2-3x low)
+        lump = max(1, int(round((layer or (1 if setup.process.lower() == "fdm" else 4) * mesh.pitch) / mesh.pitch)))
         self.layer_of = hgt // lump
         self.n_layers = int(self.layer_of.max()) + 1
         target = np.ones(mesh.n_nodes, bool) if target is None else np.asarray(target, bool)
@@ -1192,7 +1245,7 @@ class WarpTerm:
             active |= new
             node_on[mesh.enode[new].ravel()] = True
             d = _dofs(node_on, self.fixed)
-            k = kern.st.assemble(e * active)[d][:, d]
+            k = kern.k(e * active)[d][:, d]
             el = np.flatnonzero(new)
             f = kern.load(e, self.eps[el], el)
             du = np.zeros(mesh.n_dof)
@@ -1207,9 +1260,26 @@ class WarpTerm:
             plane = np.flatnonzero(node_on & (self.hn == self.hgt[el].max() + 1))
             ldof = 3 * plane + self.axis
             lifts.append((len(steps), ldof, self.sign * u[ldof]))
-            steps.append((d, solve, el, du, np.flatnonzero(active)))
+            steps.append((d, solve, el, du, np.flatnonzero(active), self.eps))
+        if self.cool is not None:
+            # FDM: the finished part cools on the bed to room temperature
+            d = _dofs(node_on, self.fixed)
+            k = kern.k(e)[d][:, d]
+            el = np.arange(ne)
+            f = kern.load(e, self.cool, el)
+            du = np.zeros(mesh.n_dof)
+            if len(d) <= self.DIRECT:
+                lu = splu(k.tocsc(), permc_spec="MMD_AT_PLUS_A")
+                du[d] = lu.solve(f[d])
+                solve = lu.solve
+            else:
+                du[d] = _solve(k, f[d], mesh.node_xyz, d)
+                solve = (lambda kk, dd: (lambda r: _solve(kk, r, mesh.node_xyz, dd)))(k, d)
+            u += du
+            steps.append((d, solve, el, du, el, self.cool))
         self.last_u = u
-        un = np.linalg.norm(u.reshape(-1, 3), axis=1)
+        uu = u.reshape(-1, 3) * self.mask
+        un = np.linalg.norm(uu, axis=1)
         allrise = np.concatenate([r for _, _, r in lifts]) if lifts else np.zeros(1)
         vals = {"mean": float((self.wdof * u * u).sum()), "max": float(un.max()),
                 "lift": float(max(allrise.max(), 0.0))}
@@ -1225,7 +1295,7 @@ class WarpTerm:
         if w.get("max") and vals["max"] > 0:
             r = un / vals["max"]
             c = r ** (q - 1) / (r ** q).sum()
-            gu += w["max"] * ((c / np.maximum(un, 1e-30))[:, None] * u.reshape(-1, 3)).ravel()
+            gu += w["max"] * ((c / np.maximum(un, 1e-30))[:, None] * uu).ravel()
         gstep = {}
         if w.get("lift") and vals["lift"] > 0:
             tot = float(np.sum((np.maximum(allrise, 0.0) / vals["lift"]) ** q))
@@ -1241,13 +1311,13 @@ class WarpTerm:
         ke, g = kern.st.ke, kern.g
         acc = np.zeros(mesh.n_dof)
         for si in range(len(steps) - 1, -1, -1):
-            d, solve, el, du, ia = steps[si]
+            d, solve, el, du, ia, eps = steps[si]
             if si in gstep:
                 acc = acc + gstep[si]
             rhs = gu + acc
             lam = np.zeros(mesh.n_dof)
             lam[d] = solve(rhs[d])
-            dd[el] += np.einsum("ij,ij->i", lam[mesh.edof[el]], self.eps[el] @ g.T)
+            dd[el] += np.einsum("ij,ij->i", lam[mesh.edof[el]], eps[el] @ g.T)
             dd[ia] -= np.einsum("ij,jk,ik->i", lam[mesh.edof[ia]], ke, du[mesh.edof[ia]])
         return vals, dd * de
 
@@ -1270,7 +1340,7 @@ class CoarseWarp:
         self.fine_mesh = mesh
         self._fine = None
         self.ratio = {"mean": 1.0, "max": 1.0, "lift": 1.0}
-        self.layer = layer or 4 * mesh.pitch
+        self.layer = layer or (f if setup.process.lower() == "fdm" else 4) * mesh.pitch
         self.setup, self.build = setup, build
         self.term = WarpTerm(self.mesh, setup, build=build, layer=self.layer, nu=nu)
         self.factor = f

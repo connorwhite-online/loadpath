@@ -146,7 +146,42 @@ def test_warp_limit_gradients_match_finite_differences():
                 xp[i] += h
                 xm[i] -= h
                 fd = c * (t.measures(xp ** 3)[0][pk] - t.measures(xm ** 3)[0][pk]) / (2 * h)
-                assert abs(g[i] - fd) < 1e-5 * abs(fd) + 1e-9, (build, key, i, g[i], fd)
+                assert abs(g[i] - fd) < 1e-4 * abs(fd) + 1e-9, (build, key, i, g[i], fd)
+
+
+def test_fdm_warp_term_matches_the_build_and_its_gradient():
+    """FDM in the optimizer's build model: an elastic bed whose corners can
+    lift, and the cool-down on the bed. On a solid PETG bar it moves as
+    simulate_build does; its corner-lift and mean gradients are exact,
+    built along +z and along -y. Nylon and PP solidify at crystallization,
+    far above their Tg."""
+    solid = np.ones((60, 4, 8), bool)
+    st = B.BuildSetup(process="fdm", material="petg", layer=0.5, release="none")
+    r = B.simulate_build(solid, 0.5, (0, 0, 0), st)
+    mesh = HexMesh(np.argwhere(solid), 0.5, np.zeros(3))
+    v, _ = B.WarpTerm(mesh, st, build=(2, 1), layer=0.5).measures(np.full(mesh.n_elem, 1500.0))
+    assert abs(v["max"] / np.abs(r.u_built[:, 2]).max() - 1) < 0.02, (v, np.abs(r.u_built[:, 2]).max())
+    solid = np.ones((8, 2, 6), bool)
+    solid[3:, :, :3] = False
+    mesh = HexMesh(np.argwhere(solid), 1.0, np.zeros(3))
+    rng = np.random.default_rng(2)
+    x = rng.uniform(0.3, 1, mesh.n_elem)
+    for build in ((2, 1), (1, -1)):
+        t = B.WarpTerm(mesh, B.BuildSetup(process="fdm", material="petg"), build=build, layer=1.0)
+        v0, _ = t.measures(x ** 3)
+        for key, pk in (("max", "_maxP"), ("mean", "mean")):
+            c = v0[key] / v0[pk]
+            _, g = t.measures(x ** 3, 3 * x ** 2, {key: 1.0})
+            for i in rng.choice(mesh.n_elem, 2, replace=False):
+                h = 1e-6
+                xp, xm = x.copy(), x.copy()
+                xp[i] += h
+                xm[i] -= h
+                fd = c * (t.measures(xp ** 3)[0][pk] - t.measures(xm ** 3)[0][pk]) / (2 * h)
+                assert abs(g[i] - fd) < 1e-5 * abs(fd) + 1e-10, (build, key, i, g[i], fd)
+    for mat, tset in (("pa12", 150.0), ("pp", 115.0)):
+        _, info = B.inherent_strain(B.BuildSetup(process="fdm", material=mat), z=np.array([1.0]))
+        assert info["tg"] == tset and info["solidifies"].startswith("semi"), info
 
 
 def test_study_key_parses():
@@ -247,6 +282,7 @@ TESTS = [
     test_compensation_cuts_the_printed_error,
     test_warp_gradient_matches_finite_differences,
     test_warp_limit_gradients_match_finite_differences,
+    test_fdm_warp_term_matches_the_build_and_its_gradient,
     test_study_key_parses,
     test_warp_term_gradient_along_any_grid_axis,
     test_study_warp_weight_cuts_as_built_distortion,

@@ -1,0 +1,66 @@
+{
+ "measured": {
+  "line 90/90": 0.8,
+  "line 0/90": 1.1,
+  "zigzag 45/45": 1.14,
+  "zigzag 45/-45": 1.25,
+  "concentric": 0.83
+ },
+ "samyModel": {
+  "line 90/90": 0.794,
+  "line 0/90": 0.98,
+  "zigzag 45/45": 0.92,
+  "zigzag 45/-45": 1.09,
+  "concentric": 0.75
+ },
+ "loadpath": [
+  {
+   "pitch": 0.5,
+   "release": "full",
+   "liftOverLowest": 0.5313084410819794,
+   "riseOverCorner": -0.29390364690715487,
+   "cornerLift": 0.8252120879891343,
+   "maxDistortion": 0.7941979792249558,
+   "strain": {
+    "process": "fdm",
+    "material": "pp",
+    "E": 1100.0,
+    "model": "solidification shrink",
+    "tg": 115.0,
+    "solidifies": "semi-crystalline: solid below crystallization",
+    "alpha": 0.00012,
+    "bed": 100.0,
+    "chamber": 25.0,
+    "room": 23.0,
+    "relax": 0.895,
+    "decay": 6.0,
+    "tgSource": "estimate: isotactic PP crystallizes at 110-120 C on cooling (DSC, 10 K/min)"
+   },
+   "seconds": 24.4
+  },
+  {
+   "pitch": 0.5,
+   "release": "none",
+   "liftOverLowest": 0.04935557338143923,
+   "riseOverCorner": -0.0978625561567628,
+   "cornerLift": 0.147218129538202,
+   "maxDistortion": 0.4122145771893931,
+   "strain": {
+    "process": "fdm",
+    "material": "pp",
+    "E": 1100.0,
+    "model": "solidification shrink",
+    "tg": 115.0,
+    "solidifies": "semi-crystalline: solid below crystallization",
+    "alpha": 0.00012,
+    "bed": 100.0,
+    "chamber": 25.0,
+    "room": 23.0,
+    "relax": 0.895,
+    "decay": 6.0,
+    "tgSource": "estimate: isotactic PP crystallizes at 110-120 C on cooling (DSC, 10 K/min)"
+   },
+   "seconds": 16.4
+  }
+ ]
+}

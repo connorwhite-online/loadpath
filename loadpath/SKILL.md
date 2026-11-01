@@ -149,7 +149,11 @@ field. `check` reports every problem at once: fix them all, then check again.
    deliver the lightest part meeting both (report `warp`; on the demo
    bracket a 40% cut cost no measurable mass, 65% was infeasible at SF 2).
    `maxRecoaterLift` exists but the optimizer's lumped layers misjudge
-   lift: check `buildSim.recoater` on the result. FDM: `bedAdhesion` (MPa) lets
+   lift: check `buildSim.recoater` on the result. For FDM (PETG, nylon, PP), the
+   limit runs on the elastic-bed model, but it has not yet met a limit on
+   a test part and reads 3-4x below `buildSim`: check FDM warp in
+   `report.buildSim`. Nylon and PP shrink from their crystallization
+   temperature and warp far more than PETG. FDM: `bedAdhesion` (MPa) lets
    the first layer let go; `bedFailed` in the report means the part
    popped off. docs/BUILDSIM.md has the validation.
 6. **Say how long it has to last.** A load that repeats (a servo lifting,
