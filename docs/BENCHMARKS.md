@@ -375,6 +375,22 @@ Open, as next work:
    time, but the arm link gets heavier (60.5 g), the GRIP wrist yoke's solve
    fails at 1.2 mm, and the wrist link did not finish in 90 minutes. So the
    default search and the evals keep their grids.
+
+   Where the deflection gap comes from (arm link, 0.5 mm, 1.2 mm grid): the
+   optimizer reads deflection on its eroded design, which is about 25%
+   floppier than the blueprint it delivers (0.48 mm eroded, 0.38 mm
+   blueprint). Holding the limit on the blueprint instead (blueprint solved
+   every 5 iterations and at each beta, eroded reading scaled by
+   blueprint/eroded) made the first run 52 g at 0.51 mm on the blueprint, but
+   the meshed part verified at 0.79 mm. The thresholded voxels also read 0.50
+   mm, so the stiffness is lost in reconstruction or in how verification
+   applies the loads, not in grey cells, and the loss depends on the layout
+   (verified/blueprint 0.97, 1.44, 1.57 in three runs, with mass matching the
+   voxels). The robust erosion had been absorbing it. With the outer limit
+   search the study ended at 57.7 g in 80 minutes (59.6 g in 19 minutes
+   without the correction), still heavier than the default search's 55.4 g,
+   so it was not adopted. The next target is that voxel-to-mesh stiffness
+   loss on light layouts.
 2. **Spread loads on regions that are not faces.** A load over a region too
    small or too chunky to count as a face is still not pinned, and on a
    coarse grid its nodes can end on void (a 24x6x8 bridge does this). The
