@@ -235,6 +235,113 @@ draw with plate fins (within -10% to +8% depending on grid and geometry).
 The next places a lattice should win are where plates can't follow the
 heat: several dies, a non-straight flow path, or liquid cold plates.
 
+## Lattices in a liquid cold plate
+
+The case where a lattice should have its best chance (`bench/cold_plate.py`,
+results in `bench/cold_plate.json`): water, three dies at different powers
+(25, 25 and 15 W under a 24 x 24 mm AlSi10Mg plate, 1.5 mm base, 2.5 mm
+cavity), and a U-turn flow path with the inlet and outlet on the same side.
+Every design holds 30% of the cavity in metal touching the base and is rated
+at the same 1 kPa, port to port, by lattice Boltzmann water flow then
+conjugate heat (energy balance to 1e-6). Score: the hottest die's peak rise
+over the inlet water, lower is better. Each family's parameter was swept on
+the coarse grid; the best of each was then rated on finer grids.
+
+| Design (best of its family) | 0.25 mm | 0.1875 mm | 0.15 mm |
+| --- | --- | --- | --- |
+| Gyroid 3 mm, graded over the dies (Gaussian 4 mm, 0.15-0.55 solid) | **35.9 K** | 35.4 K | **32.3 K** |
+| Curved channels along the streamlines, 10 channels | 40.4 K | **35.3 K** | 32.6 K |
+| Uniform gyroid, 3 mm cells | 42.0 K | 39.4 K | |
+| Staggered pin fins, 3 mm pitch | 43.1 K | 42.5 K | |
+| **Hybrid: 8 streamline channels (walls 15% of the cavity) with a die-graded 2 mm gyroid inside** | | **32.8 K** | **30.4 K** |
+| Streamline channels with walls graded over the dies (wall fraction 0.25-0.6 of the pitch) | | 34.3 K | |
+
+Swept on the coarse grid and dropped: pins at 1.5, 2 and 4 mm pitch (46.7-47.0 K),
+6 and 8 channels (51.9 and 43.9 K), gyroid cells of 2 and 4 mm (50.0 and 43.1 K),
+and other grading widths and cells (36.3-37.8 K).
+
+What it says:
+
+- **The die-graded gyroid ties the best curved channels.** It is 1% ahead at
+  0.15 mm and 0.3% behind at 0.1875 mm. That is inside the grid error: every
+  design is still dropping by about 8% per refinement, and channels improve
+  fastest (their 0.5 mm walls are the least resolved feature).
+- **Grading is what makes the lattice competitive.** Putting the metal over
+  the dies beats the uniform gyroid by 10% and the pins by 17% at 0.1875 mm.
+  Those gaps are larger than the grid trend.
+- **The channels here are not naive.** They follow the empty cavity's
+  streamlines, so a straight-channel design would do worse in this U-turn
+  plate. A designer who has the streamlines ties the lattice. Pins, the usual
+  printable default, lose clearly.
+- **A hybrid wins.** Thinner streamline channels that steer the water
+  round the U, filled with a gyroid graded over the dies, beat the best
+  channels by 7% on both fine grids (32.8 vs 35.3 K, 30.4 vs 32.6 K) and the
+  graded lattice alone by 6-7%. Its flow runs converged on both grids,
+  while the baseline's higher-flow run at 0.15 mm had not settled. The
+  channels set where the water goes and the lattice takes the heat out
+  where the dies are. Grading the channel walls alone gained 3%.
+  Next: grade the lattice from the conjugate temperature field rather than
+  from die position, and give the channels their own share of the metal.
+- Method note: the averaged lattice Boltzmann velocity does not conserve
+  volume cell by cell. Interpolated to faces and used for upwind advection,
+  it lost 99% of the heat on this plate. `conjugate.solve_heat(...,
+  project=True)` first projects the face fluxes onto volume-conserving ones
+  (least squares, the inlet held), and the balance then closes to 1e-6. The
+  air heat sink results above used the conservative form, which balances
+  globally by construction.
+
+## Pitch sensitivity: one grid is a sample
+
+A safety-factor search's answer moves a lot with sub-percent changes of the
+cell size. On a grid 1% coarser the optimizer settles in a different layout,
+and the verified stress, read near supports and sharp junctions, differs
+between layouts. The search then brackets a different fraction. The MBB beam
+at 30% read SF 1.43 on a 1.3336 mm grid and 0.88 on a 1.3373 mm one, with
+the same 27945 cells. Its peak sat at the beam's end, one cell above the
+pin, which is modelled as a clamped pad. The 0.88 search stepped up to 55%.
+
+Measured on the coarse tier (bench/results/pitch_starts.json):
+
+| | Median range | Worst range | Failed runs |
+| --- | --- | --- | --- |
+| One grid, six pitches 0-5% apart (16 safety-factor cases) | 24% | 138% (corpus-bracket-4, 82-196 g) | 3 of 96 |
+
+`resolution.pitchStarts` runs the search on N grids, each 1% coarser than
+the last. Coarser keeps maxElements a hard cap. It keeps the grid whose
+lightest part passes, and `result.starts` lists every grid's pick. "auto",
+the default, means 3 grids for safety-factor, deflection and durability
+searches up to 30k cells with no pitch given, and 1 grid otherwise. The
+grids run in parallel where memory allows.
+
+Paired runs of the whole coarse tier at maxElements x1 and x0.91 (the pitch
+about 3% coarser), one grid against three:
+
+| | Delivered mass, median / mean pair spread | massAtTarget, median / mean / worst | Sum of delivered mass (17 cases) | Lost passes | Time |
+| --- | --- | --- | --- | --- | --- |
+| 1 grid | 10% / 18% | 5% / 17% / 80% | 1405 g | 0 | 1x |
+| 3 grids | 12% / 15% | 5% / 10% / 46% | 1287 g (-8%) | 0 | 2.7x |
+
+Three grids cut the worst swings (the hook went from 28-48 g to 28-35 g,
+corpus-bracket-1 from 168-246 g to 168-201 g, corpus-tri-mount-5 from
+133-137 g to 79 g at both scales), and they make parts about 8% lighter.
+They don't make the typical case reproducible: the median spread is
+unchanged. That needs the layout itself to stop depending on the grid,
+through a mesh-independent filter or start, or a peak stress read that
+doesn't ride the supports' singular field.
+
+A latent bug turned up along the way. `verify.voxelize` gave a box a whole
+number of cells across one cell too many at 107 of 400 pitches tried, and
+the access report then crashed on the shape mismatch (the arm link, twice).
+It is fixed.
+
+Full tier with pitchStarts on (one worker, tet confirm): all 14 cases
+pass, in 186 min against the old baseline's 145. The MBB beam, which main
+had at a 32.1 g massAtTarget on a single grid (55% over the old baseline's
+20.7 g), comes out at 26.7 g. The sum of massAtTarget is 757 g against the
+old baseline's 747 g; that baseline was taken before the hard maxElements
+cap and the other commits since. baselines/full.json and coarse.json are
+re-saved on this code.
+
 ## Gaps found
 
 Fixed in this round:
@@ -327,6 +434,22 @@ Open, as next work:
    time, but the arm link gets heavier (60.5 g), the GRIP wrist yoke's solve
    fails at 1.2 mm, and the wrist link did not finish in 90 minutes. So the
    default search and the evals keep their grids.
+
+   Where the deflection gap comes from (arm link, 0.5 mm, 1.2 mm grid): the
+   optimizer reads deflection on its eroded design, which is about 25%
+   floppier than the blueprint it delivers (0.48 mm eroded, 0.38 mm
+   blueprint). Holding the limit on the blueprint instead (blueprint solved
+   every 5 iterations and at each beta, eroded reading scaled by
+   blueprint/eroded) made the first run 52 g at 0.51 mm on the blueprint, but
+   the meshed part verified at 0.79 mm. The thresholded voxels also read 0.50
+   mm, so the stiffness is lost in reconstruction or in how verification
+   applies the loads, not in grey cells, and the loss depends on the layout
+   (verified/blueprint 0.97, 1.44, 1.57 in three runs, with mass matching the
+   voxels). The robust erosion had been absorbing it. With the outer limit
+   search the study ended at 57.7 g in 80 minutes (59.6 g in 19 minutes
+   without the correction), still heavier than the default search's 55.4 g,
+   so it was not adopted. The next target is that voxel-to-mesh stiffness
+   loss on light layouts.
 2. **Spread loads on regions that are not faces.** A load over a region too
    small or too chunky to count as a face is still not pinned, and on a
    coarse grid its nodes can end on void (a 24x6x8 bridge does this). The

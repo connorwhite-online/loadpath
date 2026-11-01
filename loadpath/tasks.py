@@ -182,6 +182,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     notes = []
     warnings += _preserve_cut(s)
     notes += _resting_supports(s)
+    notes += _glued_faces(s)
     w, n = _blind_bores(s)
     warnings += w
     notes += n
@@ -212,7 +213,9 @@ def check_study(raw, base_dir: str | None = None) -> dict:
                      f"resolution.maxElements {s.max_elements}")
     planar = [c.name for c in s.load_cases if "@" in c.name]
     if planar:
-        notes.append(f"{len(s.load_cases)} load cases ({len(planar)} from in-plane directions, 8 each): every "
+        src = len({c.name.split("@")[0] for c in s.load_cases if "@" in c.name})
+        notes.append(f"{len(s.load_cases)} load cases ({len(planar)} of them are {src} in-plane load case"
+                     f"{'s' if src > 1 else ''} expanded into one case per direction, 8 or 16 each): every "
                      "optimizer step solves each one, so the run takes about that many times as long as one case")
     from .study import _available_bytes, _confirm_cells, _run_bytes
     g = s.goal
@@ -220,8 +223,9 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     mem = _run_bytes(peak) / 1e9
     avail = _available_bytes()
     if mem > 4 and (g.safety_factor or g.max_deflection) and not os.environ.get("LOADPATH_CONFIRM_CELLS"):
-        notes.append(f"the fine re-check sets the peak ({mem:.1f} GB); on a shared machine cap it with "
-                     "LOADPATH_CONFIRM_CELLS (e.g. 50000 for about a third of the memory)")
+        notes.append(f"the fine re-check sets the peak ({mem:.1f} GB at full size); the run shrinks it to fit "
+                     "the free memory by itself, so nothing needs setting. To leave room for other jobs on a "
+                     "shared machine, LOADPATH_CONFIRM_CELLS caps it (e.g. 50000 for about a third)")
     if avail and mem * 1e9 > 0.8 * avail:
         warnings.append(f"this run needs about {mem:.1f} GB at its peak and {avail / 1e9:.1f} GB is free: "
                         "lower resolution.maxElements, or set LOADPATH_CONFIRM_CELLS for the confirm stage")
@@ -331,6 +335,45 @@ def _resting_supports(s) -> list[str]:
     return out
 
 
+def _glued_faces(s) -> list[str]:
+    """A support on a thin slab under a whole face, holding the face's normal,
+    in a study with bolts through that face: the part is held down
+    everywhere, as if glued to the plate, while a bolted foot is held only
+    where the bolts clamp it (the plate pushes, it does not pull). A load
+    that lifts or tips the part then reads far too stiff and strong: a hot
+    stepper bracket with its whole base fixed in z read SF 3.5, and 0.98
+    held under its two bolts (brief evals, 2026-11-01)."""
+    import numpy as np
+
+    out = []
+    try:
+        if not s.joints:
+            return out
+        lo, hi = s.bounds()
+        ext = np.maximum(hi - lo, 1e-9)
+        for sp in s.supports:
+            sh = sp.shape
+            if getattr(sh, "kind", None) != "box" or sp.pin:
+                continue
+            size = np.minimum(sh.hi, hi) - np.maximum(sh.lo, lo)
+            thin = int(np.argmin(size))
+            if size[thin] > 1.5 or not sp.fix[thin]:
+                continue
+            others = [a for a in range(3) if a != thin]
+            if np.prod(np.clip(size[others], 0, None)) < 0.4 * np.prod(ext[others]):
+                continue
+            axis = "xyz"[thin]
+            if not any(abs(np.asarray(j.get("axis", (0, 0, 0)), float)[thin]) > 0.9 for j in s.joints):
+                continue
+            out.append(f"supports: a slab over the whole {axis} face holds it in {axis} everywhere, as if glued "
+                       f"to what it sits on. A part bolted down is held only under its bolts (the plate pushes, "
+                       f"it cannot pull), so a load that lifts or tips it reads too strong: hold {axis} on a "
+                       "washer-sized disc under each bolt instead, unless the face really is bonded")
+    except Exception:  # noqa: BLE001 - a lint
+        return out
+    return out
+
+
 def _blind_bores(s) -> tuple[list[str], list[str]]:
     """A bore keep-out (a shaft, pin or bearing seat) that ends inside the
     design space: the optimizer may close material over its end, and then the
@@ -355,7 +398,8 @@ def _blind_bores(s) -> tuple[list[str], list[str]]:
         for k in s.keep_out:
             # a fastener's head and driver path: `driver` sizes it, and its
             # far end against material is the user's call (a side tool)
-            if not getattr(k, "bore", True) or str(k.id).endswith("-head"):
+            # (and its tap: blind by design, the screw comes from the mating part)
+            if not getattr(k, "bore", True) or str(k.id).endswith(("-head", "-tap")):
                 continue
             for c in _leaves(k.shape):
                 if getattr(c, "kind", None) != "cylinder" or c.r_inner > 0:

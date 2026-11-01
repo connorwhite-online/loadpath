@@ -1,0 +1,558 @@
+{
+ "id": "elbow-gearbox-forearm-mjf",
+ "brief": "elbow-gearbox.stl (attached, mm, placed where it sits) is the cycloidal gearbox at my GRIP arm's\nelbow: housing, output flange and centre spigot, axis along Y through the origin. I need the\nforearm's root, MJF PA11, bolted flat onto the flange's +Y face with M3 socket-head screws into\nthe six tapped holes on its 30 mm circle (take the positions off the STL), through a 5 mm thick\nclamping face with 3.4 mm holes; each head bears on that face and needs an 8 mm column clear along\n+Y above it for the hex key. The spigot locates in a hole in the part; nothing may enter the\ngearbox. The forearm reaches along +X to the wrist servo's mounting face, the plane x = 110: the\nservo screws onto it with four M2.5 screws into heat-set inserts (3.5 mm holes, 5 mm deep along X,\n1.5 mm of wall, a flat 6.5 mm landing on the face) at y = 9 and 29, z = -10 and 10, and its cable\nneeds an 8 mm channel along X on (y = 19, z = 0) from x = 60 to the face. The part stays in\nx = -24 to 110, y from the flange face to 34, z = -20 to 20. Loads at the wrist face: the gearbox\nstalls at 6 N.m about Y with the wrist blocked; the wrist-roll servo stalls at 2 N.m about X; and\na 20 N side knock along Y, either way. Safety factor 2, under 35 g.",
+ "attachments": [
+  "assets/elbow-gearbox.stl"
+ ],
+ "tags": [
+  "arm",
+  "mjf",
+  "stl",
+  "fasteners",
+  "inserts",
+  "moment"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -24.0,
+     4.0,
+     -20.0
+    ],
+    "max": [
+     110.0,
+     34.0,
+     20.0
+    ]
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "fl-0",
+    "size": "M3",
+    "seat": [
+     12.9904,
+     9,
+     7.5
+    ],
+    "direction": "-y",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 8
+   },
+   {
+    "id": "fl-1",
+    "size": "M3",
+    "seat": [
+     0.0,
+     9,
+     15.0
+    ],
+    "direction": "-y",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 8
+   },
+   {
+    "id": "fl-2",
+    "size": "M3",
+    "seat": [
+     -12.9904,
+     9,
+     7.5
+    ],
+    "direction": "-y",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 8
+   },
+   {
+    "id": "fl-3",
+    "size": "M3",
+    "seat": [
+     -12.9904,
+     9,
+     -7.5
+    ],
+    "direction": "-y",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 8
+   },
+   {
+    "id": "fl-4",
+    "size": "M3",
+    "seat": [
+     -0.0,
+     9,
+     -15.0
+    ],
+    "direction": "-y",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 8
+   },
+   {
+    "id": "fl-5",
+    "size": "M3",
+    "seat": [
+     12.9904,
+     9,
+     -7.5
+    ],
+    "direction": "-y",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 8
+   },
+   {
+    "id": "wr-0",
+    "size": "M2.5",
+    "seat": [
+     110,
+     9,
+     -10
+    ],
+    "direction": "-x",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 3.5,
+    "threadLength": 5
+   },
+   {
+    "id": "wr-1",
+    "size": "M2.5",
+    "seat": [
+     110,
+     9,
+     10
+    ],
+    "direction": "-x",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 3.5,
+    "threadLength": 5
+   },
+   {
+    "id": "wr-2",
+    "size": "M2.5",
+    "seat": [
+     110,
+     29,
+     -10
+    ],
+    "direction": "-x",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 3.5,
+    "threadLength": 5
+   },
+   {
+    "id": "wr-3",
+    "size": "M2.5",
+    "seat": [
+     110,
+     29,
+     10
+    ],
+    "direction": "-x",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 3.5,
+    "threadLength": 5
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "gearbox",
+    "shape": {
+     "type": "mesh",
+     "path": "elbow-gearbox.stl"
+    },
+    "bore": false
+   },
+   {
+    "id": "cable",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      60.0,
+      19.0,
+      0.0
+     ],
+     "p1": [
+      120.0,
+      19.0,
+      0.0
+     ],
+     "r": 4.0
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "region": "fl-0-bore",
+    "fix": "xz"
+   },
+   {
+    "region": "fl-1-bore",
+    "fix": "xz"
+   },
+   {
+    "region": "fl-2-bore",
+    "fix": "xz"
+   },
+   {
+    "region": "fl-3-bore",
+    "fix": "xz"
+   },
+   {
+    "region": "fl-4-bore",
+    "fix": "xz"
+   },
+   {
+    "region": "fl-5-bore",
+    "fix": "xz"
+   },
+   {
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        12.99038105676658,
+        3.7,
+        7.499999999999999
+       ],
+       "p1": [
+        12.99038105676658,
+        4.5,
+        7.499999999999999
+       ],
+       "r": 3.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        9.18485099360515e-16,
+        3.7,
+        15.0
+       ],
+       "p1": [
+        9.18485099360515e-16,
+        4.5,
+        15.0
+       ],
+       "r": 3.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -12.99038105676658,
+        3.7,
+        7.499999999999999
+       ],
+       "p1": [
+        -12.99038105676658,
+        4.5,
+        7.499999999999999
+       ],
+       "r": 3.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -12.990381056766578,
+        3.7,
+        -7.500000000000002
+       ],
+       "p1": [
+        -12.990381056766578,
+        4.5,
+        -7.500000000000002
+       ],
+       "r": 3.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -2.7554552980815444e-15,
+        3.7,
+        -15.0
+       ],
+       "p1": [
+        -2.7554552980815444e-15,
+        4.5,
+        -15.0
+       ],
+       "r": 3.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        12.990381056766577,
+        3.7,
+        -7.500000000000007
+       ],
+       "p1": [
+        12.990381056766577,
+        4.5,
+        -7.500000000000007
+       ],
+       "r": 3.75
+      }
+     ]
+    },
+    "fix": "y"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "elbow-stall",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          9.0,
+          -10.0
+         ],
+         "p1": [
+          105.0,
+          9.0,
+          -10.0
+         ],
+         "r": 3.25
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          9.0,
+          10.0
+         ],
+         "p1": [
+          105.0,
+          9.0,
+          10.0
+         ],
+         "r": 3.25
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          29.0,
+          -10.0
+         ],
+         "p1": [
+          105.0,
+          29.0,
+          -10.0
+         ],
+         "r": 3.25
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          29.0,
+          10.0
+         ],
+         "p1": [
+          105.0,
+          29.0,
+          10.0
+         ],
+         "r": 3.25
+        }
+       ]
+      },
+      "force": [
+       0,
+       0,
+       -54.55
+      ]
+     }
+    ]
+   },
+   {
+    "name": "wrist-stall",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          9.0,
+          -10.0
+         ],
+         "p1": [
+          105.0,
+          9.0,
+          -10.0
+         ],
+         "r": 3.25
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          9.0,
+          10.0
+         ],
+         "p1": [
+          105.0,
+          9.0,
+          10.0
+         ],
+         "r": 3.25
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          29.0,
+          -10.0
+         ],
+         "p1": [
+          105.0,
+          29.0,
+          -10.0
+         ],
+         "r": 3.25
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          29.0,
+          10.0
+         ],
+         "p1": [
+          105.0,
+          29.0,
+          10.0
+         ],
+         "r": 3.25
+        }
+       ]
+      },
+      "moment": [
+       2000,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "knock",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          9.0,
+          -10.0
+         ],
+         "p1": [
+          105.0,
+          9.0,
+          -10.0
+         ],
+         "r": 3.25
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          9.0,
+          10.0
+         ],
+         "p1": [
+          105.0,
+          9.0,
+          10.0
+         ],
+         "r": 3.25
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          29.0,
+          -10.0
+         ],
+         "p1": [
+          105.0,
+          29.0,
+          -10.0
+         ],
+         "r": 3.25
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          110.0,
+          29.0,
+          10.0
+         ],
+         "p1": [
+          105.0,
+          29.0,
+          10.0
+         ],
+         "r": 3.25
+        }
+       ]
+      },
+      "force": [
+       0,
+       20,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa11",
+  "process": "mjf",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "resolution": {
+   "maxElements": 20000
+  },
+  "name": "elbow-gearbox-forearm-mjf"
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxMass": 35
+ }
+}

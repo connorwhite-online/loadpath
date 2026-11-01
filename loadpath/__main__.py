@@ -223,8 +223,12 @@ def _verify(args):
     study = study_from_dict(raw, base_dir=base)
     mesh = trimesh.load(part, force="mesh")
     pitch = choose_pitch(study)
-    rep = verify_part(study, mesh, max_cells=quick.verify_cells(args.cells), min_pitch=0.5 * pitch,
-                      contact_band=pitch)
+    # the default grid matches the run's own check (no finer than half the
+    # design cell); --cells asks for a grid, so it gets one: it used to be
+    # floored to that same pitch, and 120k cells read exactly as 60k did
+    asked = args.cells is not None
+    rep = verify_part(study, mesh, max_cells=quick.verify_cells(args.cells if asked else 60_000),
+                      min_pitch=None if asked else 0.5 * pitch, contact_band=pitch)
     m = _margin(study, rep)
     summary = {"ok": True, "part": part, "study": args.study, "mass": rep["mass"],
                "safetyFactor": rep.get("safetyFactor"), "margin": m,
@@ -236,7 +240,7 @@ def _verify(args):
                   if isinstance(rep.get("durability"), dict) else {}),
                "warnings": list(rep.get("warnings") or []),
                "cases": {c["name"]: {"safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection"),
-                                     "peakStress": c.get("peakStress")}
+                                     "peakStress": c.get("peakStress"), "peakAt": c.get("peakAt")}
                          for c in rep.get("cases", [])},
                "report": rep}
     if args.out:
@@ -270,6 +274,40 @@ def _materials(args):
     return 0
 
 
+def run_status(out: str) -> dict:
+    """out/status.json, with `running` checked against the process: a run
+    the OOM killer or a closed shell took down (SIGKILL) never gets to write
+    its own end, and its status kept reading `running` with a dead pid."""
+    path = os.path.join(out, "status.json")
+    if not os.path.exists(path):
+        return {"state": "none", "error": f"no {path}: the run has not started, or --out was another folder"}
+    with open(path) as fh:
+        st = json.load(fh)
+    part = os.path.join(out, "partial", "outcomes.jsonl")
+    if os.path.exists(part):
+        with open(part) as fh:
+            st["partialOutcomes"] = sum(1 for line in fh if line.strip())
+    if st.get("state") == "running" and st.get("pid"):
+        alive = True
+        try:
+            os.kill(int(st["pid"]), 0)
+            with open(f"/proc/{int(st['pid'])}/cmdline", "rb") as fh:
+                alive = b"loadpath" in fh.read()
+        except ProcessLookupError:
+            alive = False
+        except (OSError, ValueError):
+            pass
+        if not alive:
+            st["state"] = "died"
+            st["hint"] = ("the process is gone without writing an end: killed (out of memory, or by the shell "
+                          "that launched it). Outcomes found so far are in out/partial/. Relaunch detached "
+                          "(setsid nohup ... > run.log 2>&1 < /dev/null &); if it was memory, set "
+                          "LOADPATH_CONFIRM_CELLS lower or resolution.maxElements")
+    if st.get("started") and st.get("state") == "running":
+        st["elapsedSeconds"] = round(time.time() - float(st["started"]))
+    return st
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="loadpath", description="Generative design for printed parts.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -289,11 +327,16 @@ def main(argv=None):
     r.add_argument("--recall", action="store_true",
                    help="start from what earlier runs on the same design space found (recall.py; "
                         "or set LOADPATH_RECALL=1)")
+    stp = sub.add_parser("status", help="is a background run still going? reads out/status.json and checks its "
+                                        "process is alive (a killed run cannot update the file itself)")
+    stp.add_argument("out", nargs="?", default="out", help="the run's --out folder (default out)")
     v = sub.add_parser("verify", help="check a finished part against a study: mass, SF per load case, keep-outs")
     v.add_argument("study")
     v.add_argument("part", help="the part's STL, or a `run` output folder (its best outcome)")
     v.add_argument("--out", help="also write verify.json (with the full report) here")
-    v.add_argument("--cells", type=int, default=60_000, help="analysis grid cells (default 60000)")
+    v.add_argument("--cells", type=int, default=None,
+                   help="analysis grid cells (default: 60000, no finer than half the study's design cell, as "
+                        "`run` checks; given, the grid is about this many cells whatever the design cell)")
     v.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
     c = sub.add_parser("check", help="validate a study and report the voxel problem (or a heat exchanger "
                                      "spec: its design grid and memory; a lattice or field graph: lint)")
@@ -347,6 +390,9 @@ def main(argv=None):
     fg.add_argument("--no-render", action="store_true")
     fg.add_argument("--step", action="store_true", help="also write a STEP file (exact planes and cylinders; "
                                                          "needs loadpath[step])")
+    fg.add_argument("--lattice-3mf", action="store_true",
+                    help="also write <name>-lattice.3mf with the lattice as a lattice (implicit TPMS level set or "
+                         "beam lattice; needs loadpath[3mf])")
     fg.add_argument("--base-dir")
     tu = sub.add_parser("tune", help="tune a field graph's numbers (its `tune` block) for the lightest part "
                                      "that still meets a study's safety factor and deflection")
@@ -354,6 +400,12 @@ def main(argv=None):
     tu.add_argument("--out", default="loadpath-tune")
     tu.add_argument("--evaluations", type=int, help="analyses to spend (overrides tune.evaluations)")
     tu.add_argument("--base-dir")
+    co = sub.add_parser("cores", help="tune each core option (hollow, ribbed, lattice...) of a part and pick the "
+                                      "lightest that meets its loads and can be built by each process")
+    co.add_argument("spec")
+    co.add_argument("--out", default="loadpath-cores")
+    co.add_argument("--process", help="comma-separated: fdm, sls, mjf (overrides the spec's processes)")
+    co.add_argument("--base-dir")
     ed = sub.add_parser("edit", help="edit a field graph in the browser: node graph, sliders, live GPU preview, run")
     ed.add_argument("graph")
     ed.add_argument("--html", help="write one self-contained editor page (every bake inside) instead of serving")
@@ -475,12 +527,17 @@ def main(argv=None):
         return _edit(args)
     if args.cmd == "tune":
         return _tune(args)
+    if args.cmd == "cores":
+        return _cores(args)
     if args.cmd == "orient":
         return _orient(args)
     if args.cmd == "calibrate":
         return _calibrate(args)
     if args.cmd == "assembly":
         return _assembly(args)
+    if args.cmd == "status":
+        print(json.dumps(run_status(args.out), indent=1))
+        return 0
     if args.cmd == "verify":
         return _verify(args)
     if args.cmd == "import":
@@ -541,6 +598,23 @@ def main(argv=None):
             json.dump({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study), **kw}, fh)
 
     _status("running", started=time.time())
+    import signal
+
+    def _killed(signum, _frame):
+        # a hang-up or kill from the shell that launched us (an agent's tool
+        # call ending takes its process group down): say so, then go
+        try:
+            _status("killed", signal=signal.Signals(signum).name, stage=seen.get("stage"),
+                    partial=os.environ.get("LOADPATH_PARTIAL_DIR"),
+                    hint="relaunch detached: setsid nohup loadpath run ... > run.log 2>&1 < /dev/null &")
+        finally:
+            os._exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(sig, _killed)
+        except (ValueError, OSError):
+            pass
     # each outcome as the search finds it, kept if a later stage dies
     os.environ.setdefault("LOADPATH_PARTIAL_DIR", os.path.join(args.out, "partial"))
     rec = None
@@ -815,6 +889,8 @@ def _field(args):
         doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "pitch": args.pitch}}
     if args.step and not doc.get("step"):
         doc = {**doc, "step": True}
+    if getattr(args, "lattice_3mf", False) and not doc.get("lattice3mf"):
+        doc = {**doc, "lattice3mf": True}
     if args.stream:
         doc = {**doc, "mesh": {**(doc.get("mesh") or {}), "stream": True}}
     if args.decimate:
@@ -845,7 +921,7 @@ def _tune(args):
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
-    summary = {"ok": out["best"] is not None, "best": out["best"], "start": out["start"],
+    summary = {"ok": bool(out["best"] and out["best"].get("ok")), "best": out["best"], "start": out["start"],
                "limits": out["limits"], "evaluations": len(out["history"]),
                "tuned": os.path.join(args.out, "tuned.json")}
     if out["best"] is not None:
@@ -853,8 +929,27 @@ def _tune(args):
         summary["next"] = f"loadpath field {summary['tuned']} --base-dir {os.path.relpath(base)}"
     if out["best"] is None:
         summary["error"] = "no candidate met the limits: widen the params' ranges or ease the limits"
+    elif not summary["ok"]:
+        summary["error"] = ("the lightest candidates met the limits on the search's grid but not on the confirming "
+                            "one: widen the ranges, ease the limits or give more evaluations")
     _write_report(args.out, summary)
-    return 0 if out["best"] is not None else 1
+    return 0 if summary["ok"] else 1
+
+
+def _cores(args):
+    from .cores import choose_core
+
+    spec = _load(args.spec)
+    if args.process:
+        spec["processes"] = args.process.split(",")
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.spec))
+    try:
+        rep = choose_core(spec, base, args.out, progress=_progress)
+    except (ValueError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    _write_report(args.out, {"ok": any(rep["winners"].values()), **rep})
+    return 0 if all(rep["winners"].values()) else 1
 
 
 def _edit(args):

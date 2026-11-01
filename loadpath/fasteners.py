@@ -43,9 +43,13 @@ import numpy as np
 
 __all__ = ["expand_fasteners", "METRIC"]
 
-# ISO metric: (clearance hole, pan/socket head or washer diameter), mm
-METRIC = {"M2": (2.4, 4.5), "M2.5": (2.9, 5.5), "M3": (3.4, 6.5), "M4": (4.5, 8.5),
-          "M5": (5.5, 10.0), "M6": (6.6, 12.0), "M8": (9.0, 16.0), "M10": (11.0, 20.0)}
+# ISO metric: (medium clearance hole, ISO 4762 socket head diameter), mm.
+# The heads were a mix of pan, socket and washer sizes (M4 8.5 mm): a brief
+# with 8 mm M4 counterbores read 678 mm^3 of keep-out intrusion against the
+# default's 10.5 mm head keep-out (2026-11-01). Give `head` for a washer or a
+# pan head, `counterbore` for the pocket the head sits in.
+METRIC = {"M2": (2.4, 3.8), "M2.5": (2.9, 4.5), "M3": (3.4, 5.5), "M4": (4.5, 7.0),
+          "M5": (5.5, 8.5), "M6": (6.6, 10.0), "M8": (9.0, 13.0), "M10": (11.0, 16.0)}
 _AXES = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
 
 
@@ -68,6 +72,24 @@ def _tube(p0, p1, r, r_inner=0.0):
     if r_inner:
         out["rInner"] = float(r_inner)
     return out
+
+
+def _exit_distance(d: dict, p, direction) -> float:
+    """How far from p along `direction` the ray leaves the bounding box of
+    the design space's boxes (0 when it has none)."""
+    boxes = [s for s in d.get("designSpace") or [] if isinstance(s, dict) and s.get("type") == "box"]
+    if not boxes:
+        return 0.0
+    lo = np.min([b["min"] for b in boxes], axis=0)
+    hi = np.max([b["max"] for b in boxes], axis=0)
+    p, u = np.asarray(p, float), np.asarray(direction, float)
+    t = np.inf
+    for k in range(3):
+        if u[k] > 1e-12:
+            t = min(t, (hi[k] - p[k]) / u[k])
+        elif u[k] < -1e-12:
+            t = min(t, (lo[k] - p[k]) / u[k])
+    return float(max(t, 0.0)) if np.isfinite(t) else 0.0
 
 
 def expand_fasteners(d: dict) -> dict:
@@ -117,14 +139,23 @@ def expand_fasteners(d: dict) -> dict:
         wall = float(f.get("wall", max(1.0, 0.15 * nominal)))
         ring = float(f.get("ring", max(2.0, 0.4 * nominal)))
         sleeve = float(f.get("sleeveWall", max(1.5, 0.35 * nominal)))
-        driver = float(f.get("driver", 60.0))
+        # The driver comes in from outside the part, so by default its path
+        # runs on until it leaves the design space: a fixed 60 mm path ended
+        # inside the wall bracket's 120 mm arm, the optimizer built on along
+        # the driver's line past it, and verify read the bore closed there
+        # (wall-bracket-fasteners, every fraction from 4% to 19%).
+        driver = float(f.get("driver", max(60.0, _exit_distance(d, seat, -a) + 2.0)))
         end = seat + a * grip
         r_ring = 0.5 * head + wall
         keep_out.append({"id": f"{fid}-bore", "shape": _tube(seat - a * 1.0, end + a * 2.0, 0.5 * hole)})
         if head_on == "this":
             # as wide as the seat ring: a head path narrower than the ring
             # leaves a sub-millimetre lip of ring standing round it
-            keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, max(0.5 * head + 0.5, r_ring))})
+            cb = f.get("counterbore")
+            if cb is not None and float(cb) <= head:
+                raise ValueError(f"{label}.counterbore ({float(cb):g} mm) must be wider than the head ({head:g} mm)")
+            r_head = 0.5 * float(cb) if cb is not None else max(0.5 * head + 0.5, r_ring)
+            keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, r_head)})
         preserve.append({"id": f"{fid}-seat", "shape": _tube(seat, seat + a * ring, r_ring, 0.5 * hole)})
         far = None
         if end_kind == "face":
@@ -152,7 +183,8 @@ def expand_fasteners(d: dict) -> dict:
                 screw = 0.6 * 600.0 * 0.25 * np.pi * (0.83 * nominal) ** 2
                 p = min(p, screw)
             if p > 0:
-                joints.append({"id": fid, "preload": p, "area": 0.25 * np.pi * (head ** 2 - hole ** 2)})
+                joints.append({"id": fid, "preload": p, "area": 0.25 * np.pi * (head ** 2 - hole ** 2),
+                               "axis": a.tolist()})
                 preload_loads.append({"region": f"{fid}-seat", "force": (a * p).tolist()})
                 preload_loads.append({"region": far, "force": (-a * p).tolist()})
     d["preserve"] = preserve

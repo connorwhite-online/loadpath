@@ -141,6 +141,13 @@ class Goal:
     # the one a slicer prints fastest ("printTime") or with the least
     # filament, support included ("filament"); see slicer.py.
     minimize: str = "mass"
+    # Search this many times from different starting fractions (the goal's
+    # volumeFraction times RESTART_STARTS) and deliver the lightest confirmed
+    # part. One search settles in the local optimum its start leads to: the
+    # same study started at 0.8x and 1.25x delivered 68.7-80.6 g (wall
+    # bracket), 140.7-150.1 g (GRIP turret). For a final production part;
+    # N times the time. See docs/study-format.md.
+    restarts: int = 1
 
 
 # How the part will be made. Each process sets what the design must respect:
@@ -196,6 +203,8 @@ class Process:
     # may rely on (processcheck.RULES default)
     escape_hole: float | None = None
     min_hole: float | None = None      # mm
+    # mm: longest unsupported bridge the printer manages (printcheck.BRIDGE_SPAN default)
+    bridge_span: float | None = None
 
 
 def _process(spec) -> Process | None:
@@ -224,11 +233,15 @@ def _process(spec) -> Process | None:
     esc = spec.get("escapeHole")
     if esc is not None and float(esc) <= 0:
         raise ValueError("process.escapeHole is a hole diameter in mm, > 0")
+    span = spec.get("bridgeSpan")
+    if span is not None and float(span) <= 0:
+        raise ValueError("process.bridgeSpan is the longest bridge the printer prints cleanly, in mm, > 0")
     return Process(kind, build, inter, float(spec.get("minFeature", base["minFeature"])),
                    bool(spec.get("overhangs", base["overhangs"])),
                    anisotropic=_anisotropic(spec.get("anisotropic", False)),
                    escape_hole=float(esc) if esc is not None else None,
-                   min_hole=float(spec.get("minHole", base["minHole"])), **stiff)
+                   min_hole=float(spec.get("minHole", base["minHole"])),
+                   bridge_span=float(span) if span is not None else None, **stiff)
 
 
 def _drains(spec, process):
@@ -465,9 +478,14 @@ def _thermal(t, base_dir) -> Thermal | None:
         out.cycle = Cycle(period, on, n, steps, fw, fsf)
     if not out.temperatures and not any(h > 0 for *_, h, _ in out.convection):
         raise ValueError("thermal needs a way for heat out: a fixed temperature (temperatures) or convection")
-    if not out.temperatures and not out.heat and out.t_ref == out.ambient:
-        raise ValueError("thermal has nothing to do: no heat input, no fixed temperature, and the stress-free "
-                         "temperature is the ambient")
+    # a part that just runs warm (inside a 55 C enclosure): ambient alone,
+    # every cell at it, softened for it; with no heat and no fixed
+    # temperature it is that or nothing
+    if not out.temperatures and not out.heat and out.t_ref == out.ambient \
+            and (not out.soften or abs(out.ambient - 25.0) < 1.0):
+        raise ValueError("thermal has nothing to do: no heat input, no fixed temperature, the stress-free "
+                         "temperature is the ambient, and the ambient is room temperature (for a part that "
+                         "runs warm, set ambient to its service temperature)")
     return out
 
 
@@ -871,7 +889,10 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         confirm=str(g.get("confirm", "auto")),
         outcomes=[float(v) for v in g.get("outcomes") or []],
         minimize=str(g.get("minimize", "mass")),
+        restarts=int(g.get("restarts", 1)),
     )
+    if goal.restarts < 1:
+        raise ValueError("goal.restarts must be 1 or more")
     if goal.minimize not in ("mass", "printTime", "filament"):
         raise ValueError("goal.minimize must be 'mass', 'printTime' or 'filament'")
     if goal.volume_fraction is None and goal.safety_factor is None and goal.max_deflection is None:
@@ -906,6 +927,9 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError(f"resolution.maxElements is capped at {MAX_ELEMENTS_CEILING}")
     if pitch is not None and float(pitch) <= 0:
         raise ValueError("resolution.pitch must be positive (mm)")
+    ps = res.get("pitchStarts", "auto")
+    if ps != "auto" and (isinstance(ps, bool) or not isinstance(ps, int) or not 1 <= ps <= 5):
+        raise ValueError("resolution.pitchStarts must be 'auto' or an integer 1-5")
 
     min_member = d.get("minMember")
     process = _process(d.get("process"))

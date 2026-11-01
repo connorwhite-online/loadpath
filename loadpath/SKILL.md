@@ -45,8 +45,16 @@ field. `check` reports every problem at once: fix them all, then check again.
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and
-   the head and driver path clear, and adds a preload case. Don't draw a
-   solid boss round a screw.
+   the head and driver path clear, and adds a preload case. Heads default
+   to ISO 4762 socket heads (M3 5.5, M4 7, M5 8.5 mm); give `head` for a
+   washer or pan head. The head and driver keep-out is as wide as the seat
+   ring (head + 2 x wall: M3 7.5, M4 9 mm); `counterbore` sets its diameter
+   when the user gives a counterbore or key clearance. Don't
+   draw a solid boss round a screw. A bolted foot: hold the bores sideways
+   and the face's normal only on a washer-sized disc under each bolt; a
+   slab over the whole face glues the part down, and a load that lifts or
+   tips it then reads far too strong (a stepper bracket: SF 3.5 glued, 0.98
+   bolted).
 2. **Bound the design space** generously: the envelope the part may occupy,
    minus nothing (keep-outs are subtracted for you). Too tight a box is the
    most common reason a result looks like the box.
@@ -66,7 +74,12 @@ field. `check` reports every problem at once: fix them all, then check again.
    A link that carries or is driven by a servo or motor: add a case with
    its full stall torque about the joint axis at that interface (a 1.5 N·m
    servo is `"moment": [0, 1500, 0]` about y), since a jam or a hard stop
-   puts all of it through the part; it often sets the size.
+   puts all of it through the part; it often sets the size. Where the
+   servo itself holds the part (the link is supported on the horn), the
+   jam reacts at the far end instead: a force there of torque / arm (2.5 N·m
+   at 100 mm is 25 N, perpendicular to the link in the joint's plane). A
+   screw through this part into a horn's or mating part's thread is
+   `headOn: "this"` (default) with `end: "face"`.
    When the direction is genuinely unknown (contact, bumps, handling, a
    push at the tool "from anywhere"), say so instead of guessing:
    `{"region": "tool", "force": [0, 0, -20], "direction": "any"}` designs
@@ -111,7 +124,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    `"buildDirection": "auto"` to let it compare all six (slower: every
    direction half-designed on a coarse grid, the best three finished; with
    no overhang control, one design checked per axis). `report.json` → `print` says whether it needs
-   support, its bridges, and whether the first layer holds; `run` writes a
+   support (a warning says so when it does), its bridges, and whether the
+   first layer holds; spans past `process.bridgeSpan` (mm; default 15 FDM)
+   count as needing support, so set it for your printer. `run` writes a
    `.3mf` per part already standing the right way up for the slicer.
    FDM outcomes are also sliced headless when PrusaSlicer is installed
    (`report.json` → `slicer`: `printTime` s, `filamentVolume` cm^3,
@@ -179,10 +194,14 @@ field. `check` reports every problem at once: fix them all, then check again.
    and warnings. Fix every warning before running; `notes` are information
    (for example that `minMember` set the pitch, so there are fewer cells
    than `maxElements`).
-8. `python -m loadpath run study.json --out out/`: run it in the background
-   (`nohup ... &`, or the MCP `loadpath_start` job) and poll, never in a
-   foreground call with a time limit. `out/status.json` says `running`
-   (with its `pid`), `done` or `failed`; each outcome is written to
+8. `python -m loadpath run study.json --out out/`: run it in the background,
+   detached from your shell (`setsid nohup loadpath run study.json --out out
+   > run.log 2>&1 < /dev/null &`; a plain `nohup ... &` dies with the tool
+   call that started it), or the MCP `loadpath_start` job, and poll with
+   `loadpath status out`, never in a foreground call with a time limit. It
+   says `running` (with its `pid` and elapsed time), `done`, `failed`,
+   `killed` (a signal), or `died` (the process is gone without a word: out of
+   memory, or killed outright); each outcome is written to
    `out/partial/` (STL plus a line in `outcomes.jsonl`) as the search finds
    it, so a run killed late still leaves its verified parts.
    Progress is JSON lines on stderr. A `safetyFactor` goal runs several
@@ -195,13 +214,19 @@ field. `check` reports every problem at once: fix them all, then check again.
    size), per-case numbers, and `warnings` gathered from every check (print,
    process, durability). Quote those numbers. To check any STL against a
    study later (an edited part, an older outcome):
-   `loadpath verify study.json part.stl` (its own grid, `--cells`, so it
+   `loadpath verify study.json part.stl` (its own grid, as the run's
+   outcome check; `--cells N` for a grid of about N cells, finer or not, so it
    reads a few percent off the run's fine re-check; quote `deliver` for a
    delivered part). `deliver.tetCrossCheck` says why the body-fitted check
    did not run when it did not. Then:
    - `safetyFactor` below target, or `passes: false` → raise the goal's
      volume fraction, the material, or check the loads are right;
    - `bodies` > 1 → something is not connected to a support;
+   - a "mesh lost N% of the optimized solid cells" warning (`meshFidelity`)
+     → the mesh came out thinner than the optimized design, so the part
+     reads softer than it should and the search picks a heavier outcome.
+     The verified numbers hold; if the part is too heavy, a hand-built
+     field graph of the same layout (`loadpath field`) can do better;
    - `keepOutIntrusion` / `preserveMissing` above ~1 mm³ → report a bug;
    - `p5Member` under the printer's minimum → raise `minMember`;
    - `durability.safetyFactor` under its target → `durability.constrain`,
@@ -234,6 +259,30 @@ field. `check` reports every problem at once: fix them all, then check again.
   `check` reports (`peakMemoryGB`); `LOADPATH_CONFIRM_CELLS=60000` lowers it.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
+
+## Heat, fatigue and creep
+
+- A part next to something hot (a stepper face at 70 C, a heated bed):
+  a `thermal` block. `temperatures` hold surfaces at a temperature
+  (`region` or inline `shape`, `t` in C), `heat` puts watts in,
+  `convection` takes it off (default 8 W/(m² K), still air), `ambient`
+  25 by default. The temperature is solved on the part; every load case
+  then softens and derates each cell for its temperature and carries the
+  restrained expansion. `thermal.cycle` (`period`, `on` s, `cycles`) adds
+  heat-up/cool-down fatigue. See examples/thermal/motor-mount-hot.json.
+- Repeated loads: `cycles` on the load case (not on a load). A held load:
+  `hours` on the load case (creep rupture and crept deflection). A load of
+  unknown in-plane direction with `cycles` counts its cycles once, at the
+  worst direction.
+- `durability`: `temperature` (C the cyclic and held cases run at; it
+  derates only the fatigue and creep checks, so a part in a hot enclosure
+  also needs `"thermal": {"ambient": 55}` (the whole part at that
+  temperature, softened for it) for its static safety factor), `safetyFactor` (default 1.5), and
+  `constrain: true` to size the part for it rather than only check it.
+  With `fasteners`, the preload is also checked held for `preloadHours`
+  (default a year).
+- The result is `durability` in each outcome (`fatigueSafetyFactor`,
+  `creepSafetyFactor`, per-case `life`), and `deliver.durabilitySafetyFactor`.
 
 ## Lattices and heat exchangers
 

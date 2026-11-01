@@ -1,177 +1,72 @@
 [
  {
-  "case": "arm-link",
-  "tier": "full",
-  "pass": true,
-  "best": {
-   "volumeFraction": 0.3645316281394794,
-   "mass": 55.42521893892803,
-   "massReduction": 0.5577551988564422,
-   "safetyFactor": 14.594581568288536,
-   "p5Member": 1.8663582233137679,
-   "minMember": 1.4625000000000001,
-   "creaseLength": 0.0,
-   "p5Thickness": 3.123754573057904,
-   "p1Thickness": 2.7705850517402384,
-   "deflection": 0.4643538050040854,
-   "iterations": 43,
-   "optimizerSeconds": 57.39563512802124
-  },
-  "pareto": {
-   "points": 5,
-   "front": [
-    [
-     47.446433255217926,
-     7.20118107263972
-    ],
-    [
-     52.72227369126408,
-     12.144050858538261
-    ],
-    [
-     55.42521893892803,
-     14.594581568288536
-    ],
-    [
-     57.33640568804703,
-     14.817737368780891
-    ],
-    [
-     66.51426943104735,
-     21.973766943634335
-    ]
-   ],
-   "solidMass": 125.32701073163406,
-   "target": 3.0,
-   "massAtTarget": 47.446433255217926,
-   "bracketed": false,
-   "hypervolume": 1.2428378690557587
-  },
-  "checks": [
-   {
-    "check": "massReduction",
-    "value": 0.5577551988564422,
-    "op": ">=",
-    "limit": 0.4,
-    "pass": true
-   },
-   {
-    "check": "safetyFactor",
-    "value": 14.594581568288536,
-    "op": ">=",
-    "limit": 3.0,
-    "pass": true
-   },
-   {
-    "check": "deflection",
-    "value": 0.4643538050040854,
-    "op": "<=",
-    "limit": 0.5,
-    "pass": true
-   },
-   {
-    "check": "keepOutIntrusion",
-    "value": 0.0003897868850062562,
-    "op": "<=",
-    "limit": 1.0,
-    "pass": true
-   },
-   {
-    "check": "preserveMissing",
-    "value": 0.0,
-    "op": "<=",
-    "limit": 1.0,
-    "pass": true
-   },
-   {
-    "check": "bodies",
-    "value": 1,
-    "op": "==",
-    "limit": 1,
-    "pass": true
-   },
-   {
-    "check": "member",
-    "value": 3.123754573057904,
-    "op": ">=",
-    "limit": 2.4,
-    "pass": true
-   }
-  ],
-  "seconds": 625.3789916038513
- },
- {
   "case": "arm-link-cast",
   "tier": "full",
   "pass": true,
   "best": {
    "volumeFraction": 0.44999999999999996,
-   "mass": 67.39090014000473,
-   "massReduction": 0.4622795218158471,
-   "safetyFactor": 17.7901599620637,
-   "p5Member": 4.11528877671519,
-   "minMember": 4.11528877671519,
+   "mass": 67.81409224572266,
+   "massReduction": 0.458902818715315,
+   "safetyFactor": 20.85001893518442,
+   "p5Member": 5.353863566213887,
+   "minMember": 4.1238850160664935,
    "creaseLength": 0.0,
-   "p5Thickness": 4.71585615608655,
-   "p1Thickness": 4.483611890686093,
-   "deflection": 0.4755085772193249,
-   "iterations": 37,
-   "optimizerSeconds": 57.621930837631226
+   "p5Thickness": 4.7239935599598875,
+   "p1Thickness": 4.531318461442897,
+   "deflection": 0.4776468535937122,
+   "iterations": 38,
+   "optimizerSeconds": 58.3886137008667
   },
   "pareto": {
    "points": 3,
    "front": [
     [
-     50.59208527155245,
-     2.6606775022932854
+     50.74147711583434,
+     4.6258160846463285
     ],
     [
-     67.39090014000473,
-     17.7901599620637
-    ],
-    [
-     82.56623565314233,
-     18.265718088468752
+     67.81409224572266,
+     20.85001893518442
     ]
    ],
    "solidMass": 125.32701073163405,
    "target": 3.0,
-   "massAtTarget": 50.96884738716565,
-   "bracketed": true,
-   "hypervolume": 1.0434379895315795
+   "massAtTarget": 50.74147711583434,
+   "bracketed": false,
+   "hypervolume": 1.1278555359953917
   },
   "checks": [
    {
     "check": "mass",
-    "value": 67.39090014000473,
+    "value": 67.81409224572266,
     "op": "<=",
     "limit": 75,
     "pass": true
    },
    {
     "check": "massReduction",
-    "value": 0.4622795218158471,
+    "value": 0.458902818715315,
     "op": ">=",
     "limit": 0.4,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 17.7901599620637,
+    "value": 20.85001893518442,
     "op": ">=",
     "limit": 3.0,
     "pass": true
    },
    {
     "check": "deflection",
-    "value": 0.4755085772193249,
+    "value": 0.4776468535937122,
     "op": "<=",
     "limit": 0.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 0.0004775371509868945,
+    "value": 2.1347939759800046e-13,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -192,86 +87,82 @@
    },
    {
     "check": "member",
-    "value": 4.71585615608655,
+    "value": 4.7239935599598875,
     "op": ">=",
     "limit": 2.4,
     "pass": true
    },
    {
     "check": "undercut",
-    "value": 103.80825000000027,
+    "value": 140.8826250000002,
     "op": "<=",
     "limit": 150,
     "pass": true
    }
   ],
-  "seconds": 472.27131032943726
+  "seconds": 494.2201280593872
  },
  {
   "case": "arm-link-driven",
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.27679201462697606,
-   "mass": 46.12275767026247,
-   "massReduction": 0.6296803566359943,
-   "safetyFactor": 11.537739783313704,
+   "volumeFraction": 0.3233282237560495,
+   "mass": 51.28820082339242,
+   "massReduction": 0.5882070110923594,
+   "safetyFactor": 12.50372930416406,
    "p5Member": 3.4125000000000005,
    "minMember": 1.4625000000000001,
    "creaseLength": 0.0,
-   "p5Thickness": 3.1297091405477424,
-   "p1Thickness": 2.846706182132527,
-   "deflection": 0.4594679142344735,
-   "iterations": 37,
-   "optimizerSeconds": 59.12418580055237
+   "p5Thickness": 3.1406120525369863,
+   "p1Thickness": 3.1397929832093467,
+   "deflection": 0.3622305225407168,
+   "iterations": 42,
+   "optimizerSeconds": 53.984962940216064
   },
   "pareto": {
-   "points": 3,
+   "points": 2,
    "front": [
     [
-     42.95623778523518,
-     7.050639432972014
+     48.49912350777847,
+     8.482920472134914
     ],
     [
-     46.12275767026247,
-     11.537739783313704
-    ],
-    [
-     48.645431920432685,
-     13.77845234510946
+     51.28820082339242,
+     12.50372930416406
     ]
    ],
-   "solidMass": 124.54850423617982,
+   "solidMass": 124.5485042361798,
    "target": 3.0,
-   "massAtTarget": 42.95623778523518,
+   "massAtTarget": 48.49912350777847,
    "bracketed": false,
-   "hypervolume": 1.3102086926105867
+   "hypervolume": 1.221201028383124
   },
   "checks": [
    {
     "check": "massReduction",
-    "value": 0.6296803566359943,
+    "value": 0.5882070110923594,
     "op": ">=",
     "limit": 0.4,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 11.537739783313704,
+    "value": 12.50372930416406,
     "op": ">=",
     "limit": 3.0,
     "pass": true
    },
    {
     "check": "deflection",
-    "value": 0.4594679142344735,
+    "value": 0.3622305225407168,
     "op": "<=",
     "limit": 0.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 0.0004220365950255486,
+    "value": 1.2194412146726563e-13,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -292,91 +183,138 @@
    },
    {
     "check": "member",
-    "value": 3.1297091405477424,
+    "value": 3.1406120525369863,
     "op": ">=",
     "limit": 2.4,
     "pass": true
    }
   ],
-  "seconds": 642.5934569835663
+  "seconds": 374.04565715789795
  },
  {
-  "case": "bell-crank",
+  "case": "arm-link-sandwich",
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.0703125,
-   "mass": 24.281904058759128,
-   "massReduction": 0.8389041919074904,
-   "safetyFactor": 3.9914840393918265,
-   "p5Member": 4.18994407771256,
-   "minMember": 3.2273604634371584,
-   "creaseLength": 0.0,
-   "p5Thickness": 4.109401985508682,
-   "p1Thickness": 3.576488219618305,
-   "deflection": 0.060079761765548384,
-   "iterations": 48,
-   "optimizerSeconds": 14.142995595932007
-  },
-  "pareto": {
-   "points": 6,
-   "front": [
-    [
-     22.963951330364022,
-     2.5015871663123512
-    ],
-    [
-     24.281904058759128,
-     3.9914840393918265
-    ],
-    [
-     25.36744422977511,
-     4.191908017872137
-    ],
-    [
-     27.906055672073006,
-     6.15792147230329
-    ],
-    [
-     32.65620743003599,
-     8.899144597109334
-    ],
-    [
-     52.478289082757264,
-     18.840279051395733
-    ]
-   ],
-   "solidMass": 150.7295835085616,
-   "target": 3.0,
-   "massAtTarget": 23.40484396252859,
-   "bracketed": true,
-   "hypervolume": 1.6701270911717512
+   "mass": 42.72316219028543,
+   "safetyFactor": 8.996635463002038,
+   "deflection": 0.43813751026265196,
+   "analysisCells": 968162,
+   "latticeDensity": [
+    0.15248842592592593,
+    0.15248842592592593
+   ]
   },
   "checks": [
    {
-    "check": "massReduction",
-    "value": 0.8389041919074904,
-    "op": ">=",
-    "limit": 0.6,
+    "check": "mass",
+    "value": 42.72316219028543,
+    "op": "<=",
+    "limit": 45.0,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 3.9914840393918265,
+    "value": 8.996635463002038,
     "op": ">=",
     "limit": 3.0,
     "pass": true
    },
    {
     "check": "deflection",
-    "value": 0.060079761765548384,
+    "value": 0.43813751026265196,
     "op": "<=",
-    "limit": 0.1,
+    "limit": 0.5,
+    "pass": true
+   },
+   {
+    "check": "bodies",
+    "value": 1,
+    "op": "==",
+    "limit": 1,
+    "pass": true
+   },
+   {
+    "check": "rejects 38 g thin-skin link",
+    "value": 0.6152095465109247,
+    "op": ">",
+    "limit": 0.5,
+    "pass": true,
+    "mass": 37.5931127512491,
+    "safetyFactor": 8.986405687464773
+   }
+  ],
+  "seconds": 234.06671261787415
+ },
+ {
+  "case": "arm-link",
+  "tier": "full",
+  "pass": true,
+  "best": {
+   "volumeFraction": 0.35768364979913003,
+   "mass": 54.169301462101664,
+   "massReduction": 0.5677763225511236,
+   "safetyFactor": 10.968143724369718,
+   "p5Member": 1.4625000000000001,
+   "minMember": 1.4625000000000001,
+   "creaseLength": 0.0,
+   "p5Thickness": 3.055137134889967,
+   "p1Thickness": 2.6577746626692362,
+   "deflection": 0.488761964441841,
+   "iterations": 37,
+   "optimizerSeconds": 47.63655138015747
+  },
+  "pareto": {
+   "points": 4,
+   "front": [
+    [
+     46.8180334211266,
+     9.285245672032373
+    ],
+    [
+     54.169301462101664,
+     10.968143724369718
+    ],
+    [
+     56.743947778499425,
+     11.23429066515862
+    ],
+    [
+     67.17684582795921,
+     19.524459584442738
+    ]
+   ],
+   "solidMass": 125.32701073163402,
+   "target": 3.0,
+   "massAtTarget": 46.8180334211266,
+   "bracketed": false,
+   "hypervolume": 1.2528660318663585
+  },
+  "checks": [
+   {
+    "check": "massReduction",
+    "value": 0.5677763225511236,
+    "op": ">=",
+    "limit": 0.4,
+    "pass": true
+   },
+   {
+    "check": "safetyFactor",
+    "value": 10.968143724369718,
+    "op": ">=",
+    "limit": 3.0,
+    "pass": true
+   },
+   {
+    "check": "deflection",
+    "value": 0.488761964441841,
+    "op": "<=",
+    "limit": 0.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 1.5638940194657637e-05,
+    "value": 2.1316282072803006e-13,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -397,72 +335,181 @@
    },
    {
     "check": "member",
-    "value": 4.109401985508682,
+    "value": 3.055137134889967,
+    "op": ">=",
+    "limit": 2.4,
+    "pass": true
+   }
+  ],
+  "seconds": 901.0552046298981
+ },
+ {
+  "case": "bell-crank",
+  "tier": "full",
+  "pass": true,
+  "best": {
+   "volumeFraction": 0.06640625,
+   "mass": 23.811310996267128,
+   "massReduction": 0.8420262934322071,
+   "safetyFactor": 4.899859666948992,
+   "p5Member": 4.18994407771256,
+   "minMember": 2.84375,
+   "creaseLength": 0.0,
+   "p5Thickness": 3.9763401576135773,
+   "p1Thickness": 3.5369511008251324,
+   "deflection": 0.0660370488610933,
+   "iterations": 51,
+   "optimizerSeconds": 13.239974021911621
+  },
+  "pareto": {
+   "points": 9,
+   "front": [
+    [
+     20.189016184006196,
+     0.012792532482096757
+    ],
+    [
+     21.80445969162314,
+     0.7364510203704416
+    ],
+    [
+     23.001779525931727,
+     2.739115333177954
+    ],
+    [
+     23.811310996267128,
+     4.899859666948992
+    ],
+    [
+     27.959577297618186,
+     5.7699018329478
+    ],
+    [
+     32.66131862759165,
+     8.547002554387658
+    ],
+    [
+     52.36654779028757,
+     16.766914178160754
+    ]
+   ],
+   "solidMass": 150.7295835085616,
+   "target": 3.0,
+   "massAtTarget": 23.099521005393033,
+   "bracketed": true,
+   "hypervolume": 1.6784670785140172
+  },
+  "checks": [
+   {
+    "check": "massReduction",
+    "value": 0.8420262934322071,
+    "op": ">=",
+    "limit": 0.6,
+    "pass": true
+   },
+   {
+    "check": "safetyFactor",
+    "value": 4.899859666948992,
+    "op": ">=",
+    "limit": 3.0,
+    "pass": true
+   },
+   {
+    "check": "deflection",
+    "value": 0.0660370488610933,
+    "op": "<=",
+    "limit": 0.1,
+    "pass": true
+   },
+   {
+    "check": "keepOutIntrusion",
+    "value": -2.220446049250313e-16,
+    "op": "<=",
+    "limit": 1.0,
+    "pass": true
+   },
+   {
+    "check": "preserveMissing",
+    "value": 0.0,
+    "op": "<=",
+    "limit": 1.0,
+    "pass": true
+   },
+   {
+    "check": "bodies",
+    "value": 1,
+    "op": "==",
+    "limit": 1,
+    "pass": true
+   },
+   {
+    "check": "member",
+    "value": 3.9763401576135773,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    }
   ],
-  "seconds": 304.3726019859314
+  "seconds": 373.59693479537964
  },
  {
   "case": "grip-turret",
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.02,
-   "mass": 140.11838750419952,
-   "massReduction": 0.9151434890964435,
-   "safetyFactor": 2.0473945645192653,
+   "volumeFraction": 0.021110089937070153,
+   "mass": 142.08663720530507,
+   "massReduction": 0.9139515056230555,
+   "safetyFactor": 2.4494547927101062,
    "p5Member": 5.486623096426445,
    "minMember": 2.3514098984684764,
-   "creaseLength": 30.308083473282085,
-   "p5Thickness": 5.493730853834019,
-   "p1Thickness": 3.4499762516025436,
-   "deflection": 0.7708192895903855,
-   "iterations": 38,
-   "optimizerSeconds": 57.14499354362488
+   "creaseLength": 32.72603303113877,
+   "p5Thickness": 5.534376214672398,
+   "p1Thickness": 3.692281826407767,
+   "deflection": 0.7672436775524428,
+   "iterations": 39,
+   "optimizerSeconds": 55.91727638244629
   },
   "pareto": {
    "points": 4,
    "front": [
     [
-     140.11838750419952,
-     2.0473945645192653
+     142.08663720530507,
+     2.4494547927101062
     ],
     [
-     159.70945102056766,
-     3.626942353133108
+     165.4531103519006,
+     3.504860881444586
     ],
     [
-     208.8841045210124,
-     4.916459431916929
+     220.25772246732527,
+     4.571890713058324
     ]
    ],
-   "solidMass": 1651.239085984231,
+   "solidMass": 1651.2390859842305,
    "target": 2.0,
-   "massAtTarget": 140.11838750419952,
+   "massAtTarget": 142.08663720530507,
    "bracketed": false,
-   "hypervolume": 1.8131487581405366
+   "hypervolume": 1.8087153960720932
   },
   "checks": [
    {
     "check": "mass",
-    "value": 140.11838750419952,
+    "value": 142.08663720530507,
     "op": "<=",
     "limit": 236.0,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 2.0473945645192653,
+    "value": 2.4494547927101062,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 0.003483640570845622,
+    "value": 6.720974201568519e-13,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -490,14 +537,14 @@
    },
    {
     "check": "member",
-    "value": 5.493730853834019,
+    "value": 5.534376214672398,
     "op": ">=",
     "limit": 2.4,
     "pass": true
    },
    {
     "check": "crease",
-    "value": 30.308083473282085,
+    "value": 32.72603303113877,
     "op": "<=",
     "limit": 60,
     "pass": true
@@ -510,77 +557,77 @@
     "pass": true
    }
   ],
-  "seconds": 925.480546951294
+  "seconds": 1024.9582743644714
  },
  {
   "case": "grip-upper-arm",
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.06906568051044021,
-   "mass": 209.4623072395267,
-   "massReduction": 0.8762264254493557,
-   "safetyFactor": 5.2513690557939094,
-   "p5Member": 4.968969278626801,
-   "minMember": 2.1295582622686293,
-   "creaseLength": 35.747529914496596,
-   "p5Thickness": 4.934630046019732,
-   "p1Thickness": 4.205179313095594,
-   "deflection": 0.49753437642333287,
-   "iterations": 48,
-   "optimizerSeconds": 123.82694339752197
+   "volumeFraction": 0.0688874381347627,
+   "mass": 208.13097140003353,
+   "massReduction": 0.877013126397861,
+   "safetyFactor": 5.8343905808224665,
+   "p5Member": 4.958419357795821,
+   "minMember": 2.1250368676267803,
+   "creaseLength": 35.34536674676504,
+   "p5Thickness": 4.9388582952346685,
+   "p1Thickness": 4.1480813909615835,
+   "deflection": 0.5152153267126263,
+   "iterations": 39,
+   "optimizerSeconds": 108.39808249473572
   },
   "pareto": {
    "points": 4,
    "front": [
     [
-     199.17424934727885,
-     4.527035614898534
+     197.5087230139585,
+     4.718935930006999
     ],
     [
-     209.4623072395267,
-     5.2513690557939094
+     208.13097140003353,
+     5.8343905808224665
     ],
     [
-     219.04491039849958,
-     8.114469707786254
+     218.0621051403771,
+     8.536380222432273
     ],
     [
-     334.23997227235515,
-     18.45758665328556
+     334.5181882083464,
+     20.4210043585585
     ]
    ],
-   "solidMass": 1692.3023189721418,
+   "solidMass": 1692.3023189721423,
    "target": 2.0,
-   "massAtTarget": 199.17424934727885,
+   "massAtTarget": 197.5087230139585,
    "bracketed": false,
-   "hypervolume": 1.7646115033769476
+   "hypervolume": 1.7665798589297923
   },
   "checks": [
    {
     "check": "mass",
-    "value": 209.4623072395267,
+    "value": 208.13097140003353,
     "op": "<=",
     "limit": 214,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 5.2513690557939094,
+    "value": 5.8343905808224665,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
     "check": "deflection",
-    "value": 0.49753437642333287,
+    "value": 0.5152153267126263,
     "op": "<=",
     "limit": 0.54,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 0.004522218013839556,
+    "value": 2.1497028739351706e-12,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -601,80 +648,84 @@
    },
    {
     "check": "boundaryCut",
-    "value": 1086.575869870449,
+    "value": 994.3014202852373,
     "op": "<=",
     "limit": 1300,
     "pass": true
    }
   ],
-  "seconds": 1362.0581312179565
+  "seconds": 1383.02605509758
  },
  {
   "case": "grip-wrist-link-mjf",
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.06,
-   "mass": 43.67196949060526,
-   "massReduction": 0.9435387291881037,
-   "safetyFactor": 4.592624406343971,
+   "volumeFraction": 0.056249999999999994,
+   "mass": 40.959824824628626,
+   "massReduction": 0.9470446375651199,
+   "safetyFactor": 3.7083090410814488,
    "p5Member": 1.833360074363167,
    "minMember": 1.833360074363167,
-   "creaseLength": 0.0,
-   "p5Thickness": 3.6331299135832276,
-   "p1Thickness": 2.6060558297619574,
-   "deflection": 0.464148467418259,
-   "iterations": 53,
-   "optimizerSeconds": 90.18920040130615
+   "creaseLength": 0.5017586582409027,
+   "p5Thickness": 3.583521869479489,
+   "p1Thickness": 2.5256632849303804,
+   "deflection": 0.5296439569940959,
+   "iterations": 48,
+   "optimizerSeconds": 70.03208494186401
   },
   "pareto": {
-   "points": 5,
+   "points": 7,
    "front": [
     [
-     17.372019286751005,
+     17.482343345162587,
      0.0
     ],
     [
-     29.18314419719868,
-     0.3244826258720485
+     32.21628547796118,
+     1.020721174933512
     ],
     [
-     34.84802511067802,
-     0.946665216457145
+     37.18616287570541,
+     1.5372060974412627
     ],
     [
-     43.67196949060526,
-     4.592624406343971
+     40.959824824628626,
+     3.7083090410814488
     ],
     [
-     88.48853985298196,
-     20.762941219570504
+     43.54413931088336,
+     4.34125943051553
+    ],
+    [
+     88.9037229091586,
+     20.993847964464507
     ]
    ],
-   "solidMass": 773.4854150927758,
+   "solidMass": 773.4783210104072,
    "target": 2.0,
-   "massAtTarget": 37.39730420551983,
+   "massAtTarget": 37.99055943617041,
    "bracketed": true,
-   "hypervolume": 1.8936654795926546
+   "hypervolume": 1.9006311094704738
   },
   "checks": [
    {
     "check": "mass",
-    "value": 43.67196949060526,
+    "value": 40.959824824628626,
     "op": "<=",
     "limit": 46.0,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 4.592624406343971,
+    "value": 3.7083090410814488,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 0.002185333635943626,
+    "value": -8.433399378143802e-13,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -695,14 +746,14 @@
    },
    {
     "check": "member",
-    "value": 3.6331299135832276,
+    "value": 3.583521869479489,
     "op": ">=",
     "limit": 2.4,
     "pass": true
    },
    {
     "check": "processWall",
-    "value": 2.812511682510376,
+    "value": 2.814295530319214,
     "op": ">=",
     "limit": 0.8,
     "pass": true
@@ -722,74 +773,78 @@
     "pass": true
    }
   ],
-  "seconds": 2030.4800124168396
+  "seconds": 2233.6226992607117
  },
  {
   "case": "grip-wrist-yoke",
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.08249999999999999,
-   "mass": 23.662823617188135,
-   "massReduction": 0.9046871037369011,
-   "safetyFactor": 2.542789403120815,
+   "volumeFraction": 0.075,
+   "mass": 22.001282845753646,
+   "massReduction": 0.9113797227474917,
+   "safetyFactor": 4.236821783131676,
    "p5Member": 3.4125000000000005,
    "minMember": 1.4625000000000001,
    "creaseLength": 0.0,
-   "p5Thickness": 3.2762655052821845,
-   "p1Thickness": 2.100223255390484,
-   "deflection": 0.22131599828485932,
+   "p5Thickness": 3.04473121653171,
+   "p1Thickness": 2.06634590556421,
+   "deflection": 0.11208427075978135,
    "iterations": 53,
-   "optimizerSeconds": 35.47621536254883
+   "optimizerSeconds": 33.36702752113342
   },
   "pareto": {
-   "points": 5,
+   "points": 7,
    "front": [
     [
-     17.296254915700388,
-     0.8275747639691928
+     16.01846844656723,
+     0.07614585599230517
     ],
     [
-     22.08564594842937,
-     1.6668943116450512
+     16.665415990818353,
+     0.39500450966858885
     ],
     [
-     23.662823617188135,
-     2.542789403120815
+     17.09250755284384,
+     0.9286112775619302
     ],
     [
-     25.911515334215284,
-     5.020119609614014
+     19.840331435904936,
+     1.7646194745060424
     ],
     [
-     33.241571539034574,
-     5.106121803328628
+     22.001282845753646,
+     4.236821783131676
+    ],
+    [
+     25.945528657357556,
+     6.1333467050709345
     ]
    ],
-   "solidMass": 248.26465824593123,
+   "solidMass": 248.26465824593103,
    "target": 2.0,
-   "massAtTarget": 22.68545163077972,
+   "massAtTarget": 20.046077493435263,
    "bracketed": true,
-   "hypervolume": 1.816052061386306
+   "hypervolume": 1.8360172380095032
   },
   "checks": [
    {
     "check": "mass",
-    "value": 23.662823617188135,
+    "value": 22.001282845753646,
     "op": "<=",
     "limit": 26.0,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 2.542789403120815,
+    "value": 4.236821783131676,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 0.008102961707967727,
+    "value": 1.4134892983663113e-12,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -817,7 +872,7 @@
    },
    {
     "check": "member",
-    "value": 3.2762655052821845,
+    "value": 3.04473121653171,
     "op": ">=",
     "limit": 2.4,
     "pass": true
@@ -837,7 +892,7 @@
     "pass": true
    }
   ],
-  "seconds": 825.0615496635437
+  "seconds": 809.9203908443451
  },
  {
   "case": "lpbf-intercooler-core",
@@ -866,7 +921,7 @@
    },
    {
     "check": "mass",
-    "value": 131.83411364015433,
+    "value": 131.84304812898773,
     "op": "<=",
     "limit": 140,
     "pass": true
@@ -915,65 +970,65 @@
    },
    {
     "check": "seconds",
-    "value": 52.099732637405396,
+    "value": 43.46238446235657,
     "op": "<=",
     "limit": 300,
     "pass": true
    }
   ],
-  "seconds": 52.099732637405396
+  "seconds": 43.46238446235657
  },
  {
   "case": "mbb-beam",
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.36511401397907145,
-   "mass": 23.772725000938497,
-   "massReduction": 0.6367692671901587,
-   "safetyFactor": 1.6736335601324694,
-   "p5Member": 2.5621437468623407,
-   "minMember": 2.5621437468623407,
+   "volumeFraction": 0.23334380398762,
+   "mass": 14.245591889285402,
+   "massReduction": 0.7823372465272369,
+   "safetyFactor": 1.5059959526228857,
+   "p5Member": 1.0130114274428321,
+   "minMember": 1.0130114274428321,
    "creaseLength": 0.0,
-   "p5Thickness": 2.524999911739791,
-   "p1Thickness": 2.5153594897997076,
-   "deflection": 1.7244402408745112,
+   "p5Thickness": 1.526104109102939,
+   "p1Thickness": 1.3612279265025697,
+   "deflection": 3.0083363247954824,
    "iterations": 37,
-   "optimizerSeconds": 36.57501220703125
+   "optimizerSeconds": 30.47830104827881
   },
   "pareto": {
    "points": 5,
    "front": [
     [
-     19.19675346072831,
-     1.413249595433979
+     14.245591889285402,
+     1.5059959526228857
     ],
     [
-     23.772725000938497,
-     1.6736335601324694
+     18.878177720693746,
+     1.9863394359705855
     ],
     [
-     25.835992386833315,
-     2.010315990257545
+     33.687573851815735,
+     3.1300220872387814
     ]
    ],
    "solidMass": 65.44800000000001,
    "target": 1.5,
-   "massAtTarget": 20.72129965486702,
-   "bracketed": true,
-   "hypervolume": 0.9122030291675061
+   "massAtTarget": 14.245591889285402,
+   "bracketed": false,
+   "hypervolume": 1.341262493531656
   },
   "checks": [
    {
     "check": "massReduction",
-    "value": 0.6367692671901587,
+    "value": 0.7823372465272369,
     "op": ">=",
     "limit": 0.4,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 1.6736335601324694,
+    "value": 1.5059959526228857,
     "op": ">=",
     "limit": 1.5,
     "pass": true
@@ -986,7 +1041,7 @@
     "pass": true
    }
   ],
-  "seconds": 415.77431893348694
+  "seconds": 1606.9635915756226
  },
  {
   "case": "motor-mount",
@@ -994,61 +1049,65 @@
   "pass": true,
   "best": {
    "volumeFraction": 0.3,
-   "mass": 27.541902351322005,
-   "massReduction": 0.6911498546840962,
-   "safetyFactor": 3.4279406118275486,
+   "mass": 27.578132399222987,
+   "massReduction": 0.6907390899698203,
+   "safetyFactor": 4.071098761666184,
    "p5Member": 1.4625000000000001,
    "minMember": 1.4625000000000001,
    "creaseLength": 0.0,
-   "p5Thickness": 2.8353371341405316,
-   "p1Thickness": 2.489839896371392,
-   "deflection": 0.42855437492644527,
-   "iterations": 60,
-   "optimizerSeconds": 20.81453800201416
+   "p5Thickness": 2.814079249970982,
+   "p1Thickness": 2.4442379834784127,
+   "deflection": 0.43148290728405325,
+   "iterations": 58,
+   "optimizerSeconds": 22.581682205200195
   },
   "pareto": {
    "points": 3,
    "front": [
     [
-     20.570865603167967,
-     1.8608773904004459
+     20.458530635056118,
+     1.6145096909585077
     ],
     [
-     27.541902351322005,
-     3.4279406118275486
+     27.578132399222987,
+     4.071098761666184
+    ],
+    [
+     37.88519979954059,
+     7.560348607466855
     ]
    ],
-   "solidMass": 89.17561726626707,
+   "solidMass": 89.17432337805553,
    "target": 2.0,
-   "massAtTarget": 21.18974862636493,
+   "massAtTarget": 21.575745360565914,
    "bracketed": true,
-   "hypervolume": 1.257344585669943
+   "hypervolume": 1.4459287168687571
   },
   "checks": [
    {
     "check": "massReduction",
-    "value": 0.6911498546840962,
+    "value": 0.6907390899698203,
     "op": ">=",
     "limit": 0.6,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 3.4279406118275486,
+    "value": 4.071098761666184,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
     "check": "deflection",
-    "value": 0.42855437492644527,
+    "value": 0.43148290728405325,
     "op": "<=",
     "limit": 0.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 9.193743979853998e-05,
+    "value": 9.282478444233407e-15,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -1069,72 +1128,72 @@
    },
    {
     "check": "member",
-    "value": 2.8353371341405316,
+    "value": 2.814079249970982,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    }
   ],
-  "seconds": 155.35106205940247
+  "seconds": 128.6979501247406
  },
  {
   "case": "printed-hook",
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.2,
-   "mass": 30.998817140165954,
-   "massReduction": 0.7952835566486496,
-   "safetyFactor": 3.08420816690118,
+   "volumeFraction": 0.18003543729978083,
+   "mass": 27.38837859889927,
+   "massReduction": 0.8191269770952329,
+   "safetyFactor": 2.730627168630853,
    "p5Member": 3.4125000000000005,
    "minMember": 3.4125000000000005,
    "creaseLength": 0.0,
-   "p5Thickness": 4.317152957034443,
-   "p1Thickness": 3.9289015050908116,
-   "deflection": 0.8534069478962385,
-   "iterations": 46,
-   "optimizerSeconds": 50.52264404296875
+   "p5Thickness": 4.27555439324243,
+   "p1Thickness": 3.926316180183461,
+   "deflection": 1.0413015884237748,
+   "iterations": 43,
+   "optimizerSeconds": 49.91251277923584
   },
   "pareto": {
    "points": 4,
    "front": [
     [
-     23.098502308854254,
-     1.394444476479147
+     24.8724797010338,
+     2.0640333967679876
     ],
     [
-     26.671717196662232,
-     1.477413054346337
+     27.38837859889927,
+     2.730627168630853
     ],
     [
-     30.998817140165954,
-     3.08420816690118
+     30.871082943056905,
+     3.8653758902897133
     ]
    ],
-   "solidMass": 151.42319118432198,
+   "solidMass": 151.42323691532343,
    "target": 2.5,
-   "massAtTarget": 29.425544290229883,
+   "massAtTarget": 26.517931463225214,
    "bracketed": true,
-   "hypervolume": 1.0111777426816038
+   "hypervolume": 1.26977144520096
   },
   "checks": [
    {
     "check": "massReduction",
-    "value": 0.7952835566486496,
+    "value": 0.8191269770952329,
     "op": ">=",
     "limit": 0.6,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 3.08420816690118,
+    "value": 2.730627168630853,
     "op": ">=",
     "limit": 2.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 5.3157770476244714e-05,
+    "value": 2.6645352591003757e-14,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -1155,194 +1214,98 @@
    },
    {
     "check": "member",
-    "value": 4.317152957034443,
+    "value": 4.27555439324243,
     "op": ">=",
     "limit": 2.4,
     "pass": true
    },
    {
     "check": "overhang",
-    "value": 0.038231336299137664,
+    "value": 0.02837691942624879,
     "op": "<=",
     "limit": 0.04,
     "pass": true
    }
   ],
-  "seconds": 373.11141061782837
- },
- {
-  "case": "wall-bracket",
-  "tier": "full",
-  "pass": true,
-  "best": {
-   "volumeFraction": 0.12584703748911297,
-   "mass": 67.81674848622605,
-   "massReduction": 0.838222682489365,
-   "safetyFactor": 2.682826609097383,
-   "p5Member": 4.55,
-   "minMember": 1.9500000000000002,
-   "creaseLength": 0.0,
-   "p5Thickness": 4.466744611526235,
-   "p1Thickness": 3.8639370582424175,
-   "deflection": 0.17474086326106136,
-   "iterations": 41,
-   "optimizerSeconds": 21.290776252746582
-  },
-  "pareto": {
-   "points": 4,
-   "front": [
-    [
-     57.90111405347588,
-     1.950750183480825
-    ],
-    [
-     67.81674848622605,
-     2.682826609097383
-    ],
-    [
-     78.71797935931237,
-     3.8719069924605454
-    ]
-   ],
-   "solidMass": 419.1981269671377,
-   "target": 2.5,
-   "massAtTarget": 65.34044716445874,
-   "bracketed": true,
-   "hypervolume": 1.3042963833386967
-  },
-  "checks": [
-   {
-    "check": "massReduction",
-    "value": 0.838222682489365,
-    "op": ">=",
-    "limit": 0.6,
-    "pass": true
-   },
-   {
-    "check": "safetyFactor",
-    "value": 2.682826609097383,
-    "op": ">=",
-    "limit": 2.5,
-    "pass": true
-   },
-   {
-    "check": "deflection",
-    "value": 0.17474086326106136,
-    "op": "<=",
-    "limit": 1.5,
-    "pass": true
-   },
-   {
-    "check": "keepOutIntrusion",
-    "value": 3.995473574114856e-05,
-    "op": "<=",
-    "limit": 1.0,
-    "pass": true
-   },
-   {
-    "check": "preserveMissing",
-    "value": 0.0,
-    "op": "<=",
-    "limit": 1.0,
-    "pass": true
-   },
-   {
-    "check": "bodies",
-    "value": 1,
-    "op": "==",
-    "limit": 1,
-    "pass": true
-   },
-   {
-    "check": "member",
-    "value": 4.466744611526235,
-    "op": ">=",
-    "limit": 3.0,
-    "pass": true
-   },
-   {
-    "check": "closedBores",
-    "value": 0,
-    "op": "<=",
-    "limit": 0,
-    "pass": true
-   }
-  ],
-  "seconds": 215.87445545196533
+  "seconds": 2437.8974573612213
  },
  {
   "case": "wall-bracket-fasteners",
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.075,
-   "mass": 48.77882396687218,
-   "massReduction": 0.8863573372502159,
-   "safetyFactor": 4.233869759086761,
+   "volumeFraction": 0.06093749999999999,
+   "mass": 40.97943323522457,
+   "massReduction": 0.9027952349136439,
+   "safetyFactor": 2.8882806282940714,
    "p5Member": 4.55,
-   "minMember": 1.9500000000000002,
+   "minMember": 3.853332099679081,
    "creaseLength": 0.0,
-   "p5Thickness": 4.756841181566175,
-   "p1Thickness": 4.415892465106416,
-   "deflection": 0.21128798951350722,
-   "iterations": 46,
-   "optimizerSeconds": 24.372624158859253
+   "p5Thickness": 4.6650948747074334,
+   "p1Thickness": 3.901975834664085,
+   "deflection": 0.5521046197808188,
+   "iterations": 49,
+   "optimizerSeconds": 20.323698043823242
   },
   "pareto": {
-   "points": 5,
+   "points": 9,
    "front": [
     [
-     36.08954711233189,
-     1.2096125179010724
+     30.41590128861338,
+     0.9529791278255216
     ],
     [
-     42.507728100694855,
-     1.5478650785097505
+     39.4248450492579,
+     2.151923642780198
     ],
     [
-     45.06912501264159,
-     1.913612912230116
+     40.97943323522457,
+     2.8882806282940714
     ],
     [
-     48.77882396687218,
-     4.233869759086761
+     43.19976790363101,
+     3.969051243334844
     ],
     [
-     79.91131868733864,
-     9.232353077077613
+     47.88640931307488,
+     7.921997693067712
+    ],
+    [
+     78.01263486346247,
+     9.016084841044094
     ]
    ],
-   "solidMass": 429.22985775396967,
+   "solidMass": 421.578440098268,
    "target": 2.5,
-   "massAtTarget": 46.00665896248049,
+   "massAtTarget": 40.15969975070491,
    "bracketed": true,
-   "hypervolume": 1.7680324196456307
+   "hypervolume": 1.807877379541465
   },
   "checks": [
    {
     "check": "massReduction",
-    "value": 0.8863573372502159,
+    "value": 0.9027952349136439,
     "op": ">=",
     "limit": 0.6,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 4.233869759086761,
+    "value": 2.8882806282940714,
     "op": ">=",
     "limit": 2.5,
     "pass": true
    },
    {
     "check": "deflection",
-    "value": 0.21128798951350722,
+    "value": 0.5521046197808188,
     "op": "<=",
     "limit": 1.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 3.492551759192635e-05,
+    "value": -1.163821914274693e-14,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -1363,7 +1326,7 @@
    },
    {
     "check": "member",
-    "value": 4.756841181566175,
+    "value": 4.6650948747074334,
     "op": ">=",
     "limit": 3.0,
     "pass": true
@@ -1376,6 +1339,110 @@
     "pass": true
    }
   ],
-  "seconds": 308.2582268714905
+  "seconds": 790.324116230011
+ },
+ {
+  "case": "wall-bracket",
+  "tier": "full",
+  "pass": true,
+  "best": {
+   "volumeFraction": 0.1140338838267853,
+   "mass": 64.43668990403624,
+   "massReduction": 0.8462835690321173,
+   "safetyFactor": 2.753731534003235,
+   "p5Member": 4.55,
+   "minMember": 1.9500000000000002,
+   "creaseLength": 0.0,
+   "p5Thickness": 4.337600816873144,
+   "p1Thickness": 3.4877877869329312,
+   "deflection": 0.19939395218159084,
+   "iterations": 48,
+   "optimizerSeconds": 22.521174430847168
+  },
+  "pareto": {
+   "points": 5,
+   "front": [
+    [
+     58.47507932201094,
+     2.1624659490668154
+    ],
+    [
+     64.43668990403624,
+     2.753731534003235
+    ],
+    [
+     68.92188575002524,
+     3.0403425685345202
+    ],
+    [
+     78.65111243735423,
+     3.8585850506210253
+    ]
+   ],
+   "solidMass": 419.19194648423456,
+   "target": 2.5,
+   "massAtTarget": 61.878366476046,
+   "bracketed": true,
+   "hypervolume": 1.306159405054031
+  },
+  "checks": [
+   {
+    "check": "massReduction",
+    "value": 0.8462835690321173,
+    "op": ">=",
+    "limit": 0.6,
+    "pass": true
+   },
+   {
+    "check": "safetyFactor",
+    "value": 2.753731534003235,
+    "op": ">=",
+    "limit": 2.5,
+    "pass": true
+   },
+   {
+    "check": "deflection",
+    "value": 0.19939395218159084,
+    "op": "<=",
+    "limit": 1.5,
+    "pass": true
+   },
+   {
+    "check": "keepOutIntrusion",
+    "value": 1.8321954276368046e-14,
+    "op": "<=",
+    "limit": 1.0,
+    "pass": true
+   },
+   {
+    "check": "preserveMissing",
+    "value": 0.0,
+    "op": "<=",
+    "limit": 1.0,
+    "pass": true
+   },
+   {
+    "check": "bodies",
+    "value": 1,
+    "op": "==",
+    "limit": 1,
+    "pass": true
+   },
+   {
+    "check": "member",
+    "value": 4.337600816873144,
+    "op": ">=",
+    "limit": 3.0,
+    "pass": true
+   },
+   {
+    "check": "closedBores",
+    "value": 0,
+    "op": "<=",
+    "limit": 0,
+    "pass": true
+   }
+  ],
+  "seconds": 381.23923087120056
  }
 ]

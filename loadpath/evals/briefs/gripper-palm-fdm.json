@@ -1,0 +1,715 @@
+{
+ "id": "gripper-palm-fdm",
+ "brief": "The palm of my GRIP arm's gripper, ASA on FDM, printed bottom down (layers along +Z). Its bottom\nface (z = 0) screws to the wrist with four M3 screws coming up into heat-set inserts at (+/-20,\n+/-20): 4.2 mm holes 6 mm deep, 1.5 mm of wall round each, and a flat 7.5 mm landing round each\nwhere the wrist flange clamps. Two MG90S servos stand in it shafts up: bodies x = -11.5 to 11.5,\nz = 2 to 25, at y = 7 to 19.5 and y = -19.5 to -7, mounting ears (x = -16.5 to 16.5) resting at\nz = 18; they drop in from above, so keep clear over the bodies and ears. Each servo is fixed by\ntwo M2 self-tapping screws through its ears at (+/-14, +/-13.25) into 1.7 mm pilot holes 6 mm deep\nfrom z = 18 down, with 5 mm bosses and a flat 5.8 mm landing under each ear. A 25 g camera (body\nx, y = -6 to 6, z = 10 up) is glued on a 12 x 12 x 3 mm pad (z = 7 to 10); its cables drop through\nan 8 mm hole along Z at (0, 0). The palm fits in x = -30 to 30, y = -26 to 26, z = 0 to 22. Each\nfinger's reaction is a force at its tip, (0, +/-13.25, 60), carried by its servo: squeezing, 10 N\npushing each finger outward (+Y on the +Y servo, -Y on the other); a held 0.8 kg part at 2 g\npulling both along +Z (half each; the camera feels 2 g too); a 20 N knock along +X on both tips; a\ntable crash, 40 N down (-Z) on the +Y tip alone. Safety factor 3, under 20 g.",
+ "attachments": [],
+ "tags": [
+  "gripper",
+  "fdm",
+  "fasteners",
+  "inserts",
+  "moment"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -30.0,
+     -26.0,
+     0.0
+    ],
+    "max": [
+     30.0,
+     26.0,
+     22.0
+    ]
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "wrist-0",
+    "size": "M3",
+    "seat": [
+     20,
+     20,
+     0
+    ],
+    "direction": "+z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 4.2,
+    "threadLength": 6
+   },
+   {
+    "id": "wrist-1",
+    "size": "M3",
+    "seat": [
+     -20,
+     20,
+     0
+    ],
+    "direction": "+z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 4.2,
+    "threadLength": 6
+   },
+   {
+    "id": "wrist-2",
+    "size": "M3",
+    "seat": [
+     -20,
+     -20,
+     0
+    ],
+    "direction": "+z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 4.2,
+    "threadLength": 6
+   },
+   {
+    "id": "wrist-3",
+    "size": "M3",
+    "seat": [
+     20,
+     -20,
+     0
+    ],
+    "direction": "+z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "insert": 4.2,
+    "threadLength": 6
+   },
+   {
+    "id": "ear-0",
+    "size": "M2",
+    "seat": [
+     14,
+     13.25,
+     18
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "threadLength": 6
+   },
+   {
+    "id": "ear-1",
+    "size": "M2",
+    "seat": [
+     -14,
+     13.25,
+     18
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "threadLength": 6
+   },
+   {
+    "id": "ear-2",
+    "size": "M2",
+    "seat": [
+     14,
+     -13.25,
+     18
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "threadLength": 6
+   },
+   {
+    "id": "ear-3",
+    "size": "M2",
+    "seat": [
+     -14,
+     -13.25,
+     18
+    ],
+    "direction": "-z",
+    "grip": 0,
+    "end": "thread",
+    "headOn": "mating",
+    "threadLength": 6
+   }
+  ],
+  "preserve": [
+   {
+    "id": "camera-pad",
+    "shape": {
+     "type": "box",
+     "min": [
+      -6.0,
+      -6.0,
+      7.0
+     ],
+     "max": [
+      6.0,
+      6.0,
+      10.0
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "servo-a",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "box",
+       "min": [
+        -11.5,
+        7.0,
+        2.0
+       ],
+       "max": [
+        11.5,
+        19.5,
+        40.0
+       ]
+      },
+      {
+       "type": "box",
+       "min": [
+        -16.5,
+        7.0,
+        18.0
+       ],
+       "max": [
+        16.5,
+        19.5,
+        40.0
+       ]
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "servo-b",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "box",
+       "min": [
+        -11.5,
+        -19.5,
+        2.0
+       ],
+       "max": [
+        11.5,
+        -7.0,
+        40.0
+       ]
+      },
+      {
+       "type": "box",
+       "min": [
+        -16.5,
+        -19.5,
+        18.0
+       ],
+       "max": [
+        16.5,
+        -7.0,
+        40.0
+       ]
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "camera",
+    "shape": {
+     "type": "box",
+     "min": [
+      -6.0,
+      -6.0,
+      10.0
+     ],
+     "max": [
+      6.0,
+      6.0,
+      40.0
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "cable",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -5.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      12.0
+     ],
+     "r": 4.0
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "region": "wrist-0-tap",
+    "fix": "xy"
+   },
+   {
+    "region": "wrist-1-tap",
+    "fix": "xy"
+   },
+   {
+    "region": "wrist-2-tap",
+    "fix": "xy"
+   },
+   {
+    "region": "wrist-3-tap",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        20.0,
+        20.0,
+        -0.5
+       ],
+       "p1": [
+        20.0,
+        20.0,
+        0.3
+       ],
+       "r": 3.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -20.0,
+        20.0,
+        -0.5
+       ],
+       "p1": [
+        -20.0,
+        20.0,
+        0.3
+       ],
+       "r": 3.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -20.0,
+        -20.0,
+        -0.5
+       ],
+       "p1": [
+        -20.0,
+        -20.0,
+        0.3
+       ],
+       "r": 3.75
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        20.0,
+        -20.0,
+        -0.5
+       ],
+       "p1": [
+        20.0,
+        -20.0,
+        0.3
+       ],
+       "r": 3.75
+      }
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "squeeze",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          14.0,
+          13.25,
+          12.0
+         ],
+         "p1": [
+          14.0,
+          13.25,
+          18.0
+         ],
+         "r": 2.5
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -14.0,
+          13.25,
+          12.0
+         ],
+         "p1": [
+          -14.0,
+          13.25,
+          18.0
+         ],
+         "r": 2.5
+        }
+       ]
+      },
+      "force": [
+       0,
+       10,
+       0
+      ],
+      "at": [
+       0,
+       13.25,
+       60
+      ]
+     },
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          14.0,
+          -13.25,
+          12.0
+         ],
+         "p1": [
+          14.0,
+          -13.25,
+          18.0
+         ],
+         "r": 2.5
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -14.0,
+          -13.25,
+          12.0
+         ],
+         "p1": [
+          -14.0,
+          -13.25,
+          18.0
+         ],
+         "r": 2.5
+        }
+       ]
+      },
+      "force": [
+       0,
+       -10,
+       0
+      ],
+      "at": [
+       0,
+       -13.25,
+       60
+      ]
+     }
+    ]
+   },
+   {
+    "name": "pull",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          14.0,
+          13.25,
+          12.0
+         ],
+         "p1": [
+          14.0,
+          13.25,
+          18.0
+         ],
+         "r": 2.5
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -14.0,
+          13.25,
+          12.0
+         ],
+         "p1": [
+          -14.0,
+          13.25,
+          18.0
+         ],
+         "r": 2.5
+        }
+       ]
+      },
+      "force": [
+       0,
+       0,
+       7.848
+      ],
+      "at": [
+       0,
+       13.25,
+       60
+      ]
+     },
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          14.0,
+          -13.25,
+          12.0
+         ],
+         "p1": [
+          14.0,
+          -13.25,
+          18.0
+         ],
+         "r": 2.5
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -14.0,
+          -13.25,
+          12.0
+         ],
+         "p1": [
+          -14.0,
+          -13.25,
+          18.0
+         ],
+         "r": 2.5
+        }
+       ]
+      },
+      "force": [
+       0,
+       0,
+       7.848
+      ],
+      "at": [
+       0,
+       -13.25,
+       60
+      ]
+     },
+     {
+      "region": "camera-pad",
+      "force": [
+       0,
+       0,
+       0.4905
+      ]
+     }
+    ]
+   },
+   {
+    "name": "knock",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          14.0,
+          13.25,
+          12.0
+         ],
+         "p1": [
+          14.0,
+          13.25,
+          18.0
+         ],
+         "r": 2.5
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -14.0,
+          13.25,
+          12.0
+         ],
+         "p1": [
+          -14.0,
+          13.25,
+          18.0
+         ],
+         "r": 2.5
+        }
+       ]
+      },
+      "force": [
+       20,
+       0,
+       0
+      ],
+      "at": [
+       0,
+       13.25,
+       60
+      ]
+     },
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          14.0,
+          -13.25,
+          12.0
+         ],
+         "p1": [
+          14.0,
+          -13.25,
+          18.0
+         ],
+         "r": 2.5
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -14.0,
+          -13.25,
+          12.0
+         ],
+         "p1": [
+          -14.0,
+          -13.25,
+          18.0
+         ],
+         "r": 2.5
+        }
+       ]
+      },
+      "force": [
+       20,
+       0,
+       0
+      ],
+      "at": [
+       0,
+       -13.25,
+       60
+      ]
+     }
+    ]
+   },
+   {
+    "name": "crash",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          14.0,
+          13.25,
+          12.0
+         ],
+         "p1": [
+          14.0,
+          13.25,
+          18.0
+         ],
+         "r": 2.5
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -14.0,
+          13.25,
+          12.0
+         ],
+         "p1": [
+          -14.0,
+          13.25,
+          18.0
+         ],
+         "r": 2.5
+        }
+       ]
+      },
+      "force": [
+       0,
+       0,
+       -40
+      ],
+      "at": [
+       0,
+       13.25,
+       60
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "asa",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 3
+  },
+  "resolution": {
+   "maxElements": 20000
+  },
+  "name": "gripper-palm-fdm"
+ },
+ "pass": {
+  "safetyFactor": 3,
+  "maxMass": 20
+ }
+}

@@ -1,0 +1,251 @@
+{
+ "id": "elbow-link-fatigue-fdm",
+ "brief": "Forearm link for my desktop robot arm, PA-CF (carbon-fibre nylon) on an FDM printer, printed flat\nwith layers along +Z. The elbow servo's 25 mm aluminium horn has its face at z = 0 and its axis on Z\nthrough the origin; the link sits on that face and is held by four M3 socket screws on a 16 mm\ncircle (at (8,0), (-8,0), (0,8), (0,-8)) through 3.4 mm holes, heads on top of a 5 mm thick hub (z =\n0 to 5), each with a 7.5 mm diameter column kept clear above it for the head and the hex key. Keep a\n6 mm hole clear on the axis (z = 0 up) for the horn's centre screw. The wrist end, 100 mm out along\n+X, carries two 10 mm OD bearings on a vertical axis at (100, 0): a 10 mm bore through z = 0 to 12\nwith at least 3 mm of wall round it. The wrist cable goes through an 8 mm vertical hole at (50, 0).\nThe link fits in x = -16 to 116, y = -16 to 16, z = 0 to 12. The elbow axis is horizontal, so the\nwrist's 0.8 kg swings in the link's plane (along -Y) on every move, at 2 g: that is 2 million cycles\nover its life, and I want a fatigue safety factor of 1.5 on it. It must also survive the elbow servo\nstalling at 2.5 N·m with the wrist jammed (once, not cycled) and a 10 N push on the wrist bearings\nalong the axis. Static safety factor 2, as light as you can, under 16 g.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "fdm",
+  "fatigue",
+  "fasteners"
+ ],
+ "gold": {
+  "name": "elbow-link-fatigue-fdm",
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -16.0,
+     -16.0,
+     0.0
+    ],
+    "max": [
+     116.0,
+     16.0,
+     12.0
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "wrist-boss",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      100.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      100.0,
+      0.0,
+      12.0
+     ],
+     "r": 8.0,
+     "rInner": 5.0
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "horn-screw",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -1.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      13.0
+     ],
+     "r": 3.0
+    }
+   },
+   {
+    "id": "wrist-bearings",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      100.0,
+      0.0,
+      -1.0
+     ],
+     "p1": [
+      100.0,
+      0.0,
+      13.0
+     ],
+     "r": 5.0
+    }
+   },
+   {
+    "id": "cable",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      50.0,
+      0.0,
+      -1.0
+     ],
+     "p1": [
+      50.0,
+      0.0,
+      13.0
+     ],
+     "r": 4.0
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "h1",
+    "size": "M3",
+    "seat": [
+     8,
+     0,
+     5.0
+    ],
+    "direction": "-z",
+    "grip": 5.0,
+    "end": "face"
+   },
+   {
+    "id": "h2",
+    "size": "M3",
+    "seat": [
+     -8,
+     0,
+     5.0
+    ],
+    "direction": "-z",
+    "grip": 5.0,
+    "end": "face"
+   },
+   {
+    "id": "h3",
+    "size": "M3",
+    "seat": [
+     0,
+     8,
+     5.0
+    ],
+    "direction": "-z",
+    "grip": 5.0,
+    "end": "face"
+   },
+   {
+    "id": "h4",
+    "size": "M3",
+    "seat": [
+     0,
+     -8,
+     5.0
+    ],
+    "direction": "-z",
+    "grip": 5.0,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "h1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "h2-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "h3-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "h4-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -0.5
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      0.3
+     ],
+     "r": 12.5
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "duty",
+    "cycles": 2000000.0,
+    "loads": [
+     {
+      "region": "wrist-bearings",
+      "force": [
+       0,
+       -15.696000000000002,
+       0
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "stall",
+    "loads": [
+     {
+      "region": "wrist-bearings",
+      "force": [
+       0,
+       -25.0,
+       0
+      ],
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "push",
+    "loads": [
+     {
+      "region": "wrist-bearings",
+      "force": [
+       0,
+       0,
+       -10.0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa-cf",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "durability": {
+   "safetyFactor": 1.5,
+   "constrain": true
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "durabilitySafetyFactor": 1.5,
+  "maxMass": 16.0
+ }
+}

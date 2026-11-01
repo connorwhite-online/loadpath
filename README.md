@@ -74,31 +74,31 @@ command takes `--quick` for a first look in a minute or two.
 
 ## Examples
 
-The eval cases (13/14 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
+The eval cases (14/14 passing): GRIP robot-arm style parts, each optimized and then checked by a fresh FEA of the delivered mesh. Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
 
 <table>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>67.8 g · 46% lighter · SF 15.13 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>50.9 g · 59% lighter · SF 10.22 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>56.7 g · 55% lighter · SF 8.51 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>67.8 g · 46% lighter · SF 20.85 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>51.3 g · 59% lighter · SF 12.50 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>54.2 g · 57% lighter · SF 10.97 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>24.3 g · 84% lighter · SF 3.68 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>140.7 g · 91% lighter · SF 2.07 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>208.1 g · 88% lighter · SF 7.38 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>23.8 g · 84% lighter · SF 4.90 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>142.1 g · 91% lighter · SF 2.45 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>208.1 g · 88% lighter · SF 5.83 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>43.5 g · 94% lighter · SF 4.36 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>22.0 g · 91% lighter · SF 2.97 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>40.4 g · 38% lighter · SF 2.12 · **fail**</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>41.0 g · 95% lighter · SF 3.71 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>22.0 g · 91% lighter · SF 4.24 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>14.2 g · 78% lighter · SF 1.51 · pass</sub></td>
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.6 g · 69% lighter · SF 4.07 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>30.9 g · 80% lighter · SF 3.13 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>45.7 g · 89% lighter · SF 3.22 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>27.4 g · 82% lighter · SF 2.73 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>41.0 g · 90% lighter · SF 2.89 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>68.9 g · 84% lighter · SF 2.76 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>64.4 g · 85% lighter · SF 2.75 · pass</sub></td>
 </tr>
 </table>
 
@@ -124,7 +124,7 @@ Made another way: the same arm link printed, cast (no undercuts along z), 3-axis
 
 ![manufacturing constraints](docs/images/manufacturing/arm-link.png)
 
-<sub>Rendered 2026-11-01 from the `2771878` eval run by `python docs/gallery.py`.</sub>
+<sub>Rendered 2026-11-01 from the tet-confirmed full baseline run (`063c233`) by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->
 
@@ -151,7 +151,12 @@ deflection, each candidate meshed and analyzed by FE: the arm link's web and ble
 went from 61.8 g to 54.9 g at its 0.5 mm stiffness limit in 25 analyses.
 Tuning the envelope together with a graded skin and a gyroid core
 (`examples/fields/arm-link-sandwich-tune.json`) gets a sandwich link to 44.5 g as meshed,
-0.40 mm on the resolved geometry: 19% under the solid web.
+0.40 mm on the resolved geometry: 19% under the solid web. `loadpath cores` picks
+the core for the process: for FDM a box section with graded walls and a rib, 42.2 g
+and 0.49 mm resolved with no support trapped inside; for SLS/MJF a plain hollow skin,
+36.8 g (`examples/fields/arm-link-cores.json`).
+
+![FDM box section and SLS hollow arm link, cut open](docs/images/fields/arm-link-cores.png)
 
 ![tuning the arm link against its loads](docs/images/fields/editor-tune.png)
 
@@ -187,13 +192,16 @@ For two-material FDM (Bambu AMS, Prusa MMU, IDEX) and jetting, a study's
 topology, with each material's own stiffness, Poisson's ratio and strength, sourced
 bond strengths between them, and softness requirements: a knock that must stop
 under a force, or a patch that must give ([docs/MULTIMATERIAL.md](docs/MULTIMATERIAL.md)).
-On a PETG shelf bracket it put a TPU spring where the nose meets the arm, so a
-0.2 J knock stops at 140 N under a 150 N limit. Field graphs place materials by
+Materials meet in an interlocking beam lattice, credited with the measured gain
+over a flat bond (a GRIP-like finger's TPU pad holds at bond safety factor 2.55).
+Where solid TPU cannot take a knock, a graded TPU gyroid crush pad can: the PETG shelf
+bracket's 0.2 J knock stops at 89 N under a 150 N limit on a 0.8 g pad, behind a
+PETG striker plate, with the arm at safety factor 3.7 (53.7 g in all). Field graphs place materials by
 field (a TPU pad within 2.5 mm of a gripping face). Every design comes out as
 one body per material with shared interfaces, an STL each and a multi-material 3MF
 (sliced in PrusaSlicer on two tools), or a GrabCAD Voxel Print job for PolyJet.
 
-![bumpered bracket, PETG and TPU](docs/images/multimaterial-bracket.png)
+![bumpered bracket: PETG arm, TPU gyroid crush pad, PETG striker plate](docs/images/multimaterial-bracket-lattice.png)
 
 ### Impact: where lattices beat solid TO
 
@@ -229,7 +237,10 @@ the large-deflection response itself: on the inverter driven through 30%
 of its length it moves the output 20% further than the linear design, with
 no corner hinge. A TPU finger designed this way curls its tip 8.7 mm for a
 5 mm pull at its base, through the whole stroke; the linear design's solve
-stops at 0.7 mm ([docs/MECHANISMS.md](docs/MECHANISMS.md)).
+stops at 0.7 mm. Tendon input and contact are in too: a servo-driven TPU
+finger optimized for grip presses a 30 mm cylinder 9x harder than a plain
+bar of the same volume, at under half the tendon pull
+([docs/MECHANISMS.md](docs/MECHANISMS.md)).
 
 ![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
 

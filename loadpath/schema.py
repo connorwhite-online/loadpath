@@ -252,7 +252,10 @@ _FASTENER = {
                     "description": "N. Default: a quarter of what the seat can bear in this material, at most "
                                    "what a class 8.8 screw is tightened to."},
         "hole": {**_POS, "description": "Clearance hole diameter, mm (default from size)."},
-        "head": {**_POS, "description": "Head (or washer) diameter, mm (default from size)."},
+        "head": {**_POS, "description": "Head (or washer) diameter, mm (default from size: the ISO 4762 socket "
+                                        "head, e.g. M3 5.5, M4 7, M5 8.5)."},
+        "counterbore": {**_POS, "description": "Diameter of the head and driver keep-out, mm: the counterbore "
+                                               "the head sits in (default the seat ring's width, at least head + 1)."},
         "diameter": {**_POS, "description": "The screw's nominal diameter, mm, when not given as size."},
         "wall": {**_POS, "description": "mm of seat ring beyond the head's radius (default 15% of the "
                                         "diameter, at least 1). The head and driver keep-out is as wide as "
@@ -289,6 +292,12 @@ _GOAL = {
                                    "applicable)."},
         "outcomes": {"type": "array", "items": {"type": "number", "minimum": 0.02, "maximum": 0.95},
                      "description": "Extra fixed volume fractions for a trade-off gallery."},
+        "restarts": {"type": "integer", "minimum": 1, "maximum": 8,
+                     "description": "Run the safety-factor/deflection search this many times from different "
+                                    "starting fractions and deliver the lightest confirmed part (default 1). One "
+                                    "search lands in the local optimum its start leads to (7-17% apart in "
+                                    "delivered mass on the eval parts); worth it for a final production part, at "
+                                    "N times the time."},
         "minimize": {"enum": ["mass", "printTime", "filament"],
                      "description": "Which passing outcome is delivered: the lightest (default), or (FDM, with a "
                                     "slicer installed) the one that prints fastest or with the least filament, "
@@ -526,6 +535,8 @@ _PROCESS = {"anyOf": [
                     "minFeature": _POS, "overhangs": {"type": "boolean"},
                     "minHole": {**_POS, "description": "mm: narrowest hole or gap the optimizer may leave "
                                                        "(default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"},
+                    "bridgeSpan": {**_POS, "description": "mm: longest unsupported bridge the printer prints cleanly "
+                                   "(default: 15 FDM, 5 resin, 2 LPBF); longer spans count as needing support"},
                     "escapeHole": {**_POS, "description": "mm: smallest powder escape / resin drain hole "
                                                           "(default SLS 4, MJF 5, SLA/DLP 3.5)"}},
      "required": ["type"], "additionalProperties": False},
@@ -699,7 +710,24 @@ STUDY_SCHEMA = {
                      "description": "Planes through the design-space centre, by normal axis."},
         "resolution": {"type": "object",
                        "properties": {"maxElements": {"type": "integer", "minimum": 1, "maximum": 4000000},
-                                      "pitch": _POS},
+                                      "pitch": _POS,
+                                      "keepThinMembers": {
+                                          "type": "boolean",
+                                          "description": "Mesh members one or two cells thick without "
+                                                         "thinning them (volume-keeping smoothing there). "
+                                                         "Off by default: the default rounding thins them, "
+                                                         "which the searches are tuned to, but a design "
+                                                         "made of one-cell walls can come out several "
+                                                         "times softer than the optimizer's model (the "
+                                                         "camera boom: 16x)."},
+                                      "pitchStarts": {
+                                          "oneOf": [{"type": "integer", "minimum": 1, "maximum": 5},
+                                                    {"const": "auto"}],
+                                          "description": "Searches run on this many grids 1% apart in "
+                                                         "pitch, keeping the lightest passing part: one grid's "
+                                                         "result can swing 25-140% with a 1% pitch change. "
+                                                         "'auto' (default): 3 for safety-factor and deflection "
+                                                         "searches up to 30k cells with no pitch given, else 1."}},
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
         "gravity": {**_VEC3, "description": "m/s², the part's own weight in every load case"},
@@ -1145,10 +1173,28 @@ FIELD_SCHEMA = {
                         "description": "organic regions as flat facets (default) or smooth B-spline patches "
                                        "(experimental: CAD-friendlier, not smaller; falls back to facets when "
                                        "OpenCascade's booleans fail)"},
-            "patches": {"type": "integer", "minimum": 50, "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch (default 2000)"}},
+            "patches": {"type": "integer", "minimum": 50, "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch, refined where it misses (default 2000)"}},
             "additionalProperties": False}],
                  "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres "
-                                "where the graph's hard booleans use plain shapes, the rest faceted"},
+                                "where the graph's hard booleans use plain shapes, the rest faceted or smooth; "
+                                "with lattice nodes, the part with its lattices solid (drain bores included)"},
+        "lattice3mf": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
+            "decimate": {"type": "number", "exclusiveMinimum": 0,
+                         "description": "body and region meshes within this many mm of the surface (default 0.02)"},
+            "grid": {"type": "number", "exclusiveMinimum": 0,
+                     "description": "voxel size, mm, of the 3D images a graded TPMS reads (wall, cell, lattice "
+                                    "coordinates, blend radius; default min(cell / 6, 1))"},
+            "meshReaders": {"type": "boolean",
+                            "description": "mark the lattice region meshes type \"other\" (not the Beam Lattice "
+                                           "spec's \"model\") so PrusaSlicer 2.x opens a beam lattice file, "
+                                           "printing the struts' prism fallback; level sets still need an "
+                                           "implicit-capable reader"}},
+            "additionalProperties": False}],
+            "description": "also write <name>-lattice.3mf (needs loadpath[3mf]): every lattice node as a lattice, "
+                           "TPMS as an implicit level set (3MF Volumetric & Implicit; graded cell, wall and "
+                           "conformal frames through 3D images; a blended union with the body kept as a smooth "
+                           "union in the level set), strut cells as a beam lattice with prism fallback triangles, "
+                           "each clipped by its own region, beside the rest of the part as a mesh"},
         "material": {**_ONE_MATERIAL, "description": "Reports the mass."},
         "materials": {"type": "array", "minItems": 1, "items": _MATERIAL_BODY,
                       "description": "Multi-material: split the output into material bodies, in precedence "
@@ -1192,7 +1238,9 @@ FIELD_SCHEMA = {
                      "analysis": {"enum": ["auto", "solid", "homogenized"],
                                   "description": "auto (default): a part with a lattice is analyzed with the "
                                                  "lattice homogenized (unit-cell stiffness and wall stress), "
-                                                 "else meshed and verified as a solid"},
+                                                 "else meshed and verified as a solid; homogenized on a part with no "
+                                                 "lattice reads it on the same fill-weighted grid (thin skins "
+                                                 "without a fine mesh)"},
                      "pitch": {**_POS, "description": "mm mesh for each candidate (default 1)"},
                      "cells": {"type": "integer", "minimum": 1000, "description": "analysis cells (default 30000)"},
                      "checkCells": {"type": "integer", "minimum": 1000,

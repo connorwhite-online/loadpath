@@ -1019,7 +1019,12 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 converged = True
                 break
             w = opts.stall_window
-            if since_beta >= w and len(history) > w:
+            # a max member still over its limit is not a stall: its weight
+            # is still climbing (with the incompatible-mode element the
+            # test beam's compliance went flat at iteration 65 with the
+            # flanges still 8 mm against a 5 mm limit)
+            mm_over = excess is not None and (over > 0.05 or excess > 0.05)
+            if since_beta >= w and len(history) > w and not mm_over:
                 old = history[-1 - w]["compliance"]
                 if abs(comp - old) <= opts.stall_rtol * abs(old):
                     converged = True

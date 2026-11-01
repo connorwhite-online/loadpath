@@ -304,3 +304,22 @@ def test_a_failed_check_teaches_the_search(monkeypatch):
     t = best["values"][0]
     assert best["ok"] and best["check"]["ok"] and 1.25 < t < 1.6, best
     assert best["check"]["deflection"] <= 1.0
+
+
+def test_a_part_with_no_lattice_reads_on_the_same_grid():
+    """solid_ok: a hollow bar (the lattice bar's skin and ends, no core)
+    reads on the fill-weighted grid, weighs its shell and bends more than
+    the same bar with its gyroid; without solid_ok it is refused."""
+    from loadpath.homogenized import homogenized_check
+    from loadpath.spec import study_from_dict
+
+    st = study_from_dict(LATTICE_STUDY)
+    hollow = json.loads(json.dumps(LATTICE_BAR))
+    hollow["nodes"]["part"]["inputs"] = ["skin", "ends"]
+    with pytest.raises(ValueError, match="no lattice"):
+        homogenized_check(hollow, st, cells=8000)
+    r = homogenized_check(hollow, st, cells=8000, solid_ok=True)
+    shell = 60 * 12 * 12 - 52 * 10 * 10      # 1 mm skin round a box, solid 4 mm ends
+    assert abs(r["volume"] / shell - 1) < 0.03 and r["lattice"] is None and r["latticeDensity"] is None, r
+    cored = homogenized_check(LATTICE_BAR, st, cells=8000)
+    assert r["cases"][0]["deflection"] > cored["cases"][0]["deflection"] and r["mass"] < cored["mass"]

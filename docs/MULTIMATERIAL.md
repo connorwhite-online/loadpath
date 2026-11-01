@@ -192,6 +192,63 @@ at 199 N and weighs 243 g (two thirds TPU). The bracket needs the bumper's
 TPU loaded in compression (a striker plate on a rubber block), which this
 optimizer does not find on its own yet.
 
+**Bumper in compression** (`bumpered-bracket-compression.json`, 2026-11-01).
+The nose is a PETG plate, every cell within 15 mm of it is TPU where solid,
+and a gap keeps the shelf pad off the nose, so the knock has to cross
+rubber. The knock is judged at its own safety factor of 1.5. At 35% the
+optimizer grows a single TPU post from the plate to the arm: the knock
+stops at **98 N** (limit 150), PETG safety factor 2.2 at the knock and 20
+under the shelf, TPU 1.57. 95 g. The bond is the miss: **0.57** at the
+knock, at the edges of the post's ends. A bonded rubber block in
+compression bulges, and its edges shear the bond. Constraining the bond
+while the layout forms (with the materials free) lifts the knock's bond to
+1.24 but spreads TPU over half the part, and the shelf's bond drops to
+0.98. Fixing PETG everywhere outside the rubber zone made the bond worse
+(0.23 to 0.31).
+
+![bumper in compression](images/multimaterial-bracket-compression.png)
+
+**Why it does not close (hand sizing, 2026-11-01).** A solid TPU spring that
+stores the knock's 0.2 J at a stress S needs a volume V = 2 E U / S^2. At
+safety factor 1.5 (S = 15.8 MPa) that is 107 mm^3, and stopping under
+150 N at that stress needs a section of at least 9.5 mm^2, so a uniform
+post 3.5 mm across and 11 mm long: no margin on strength, and as a
+fixed-fixed column it buckles at about 150 N. At a stress with margin
+(10 MPa) the post must be 18 mm long and buckles near 90 N. Flared ends
+would lower the bond's stress, but they stiffen the post (a 15 mm spool 8 mm across
+with 14 mm ends stops the knock at ~350 N). Keying the TPU into PETG pockets
+does not rescue the bending springs of the free layout either: their bond
+would have to carry ~16 MPa, more than TPU 95A itself (23.7 MPa in-layer,
+6.4 across layers) carries through the necks of any key. In this envelope
+(3 mm nose, design space ending at x = 100) solid TPU cannot take a 0.2 J
+knock under 150 N with margin. A longer stroke (more room behind the
+nose), a smaller knock, or a crushable TPU lattice bumper (impact.py's
+lattice crush grading) can.
+
+**Crushable TPU bumper: passes (2026-11-01).** Same envelope, same spec
+(0.2 J, stop under 150 N, shelf at safety factor 3). The nose is a 3 mm
+PETG striker plate (x 97..100) that floats on a TPU gyroid pad, 24 x 16 mm
+and 8 mm deep (x 89..97), seated on the arm
+(`examples/impact/bracket-bumper.json`, graded with impact.py's
+`grade_for_impact`, 7 mm cells, 0.5 mm thinnest wall, TPU impact-rate
+stiffening included). TPU walls buckle and spring back, so the pad stops
+the knock at a nearly flat force: **89 N** peak (limit 150), crushing 2.4 mm
+of its 8 mm, with 0.14 J of the 0.2 J returned as rebound. The PETG arm
+(`bumpered-bracket-lattice.json`, single material) is optimized for the
+shelf loads and the pad's force on its seat, taken at the full 150 N
+limit: verified safety factor **3.7** at 48.4 g. In all 53.7 g (arm
+48.4, plate 4.6, pad 0.8), and the 3MF slices in PrusaSlicer on two tools.
+The bond between pad and PETG is pressed, not pulled, by the knock (about
+0.9 MPa over the lattice's contact area).
+
+![crushable bumper](images/multimaterial-bracket-lattice.png)
+
+Limits: the crush model is axial. A knock off the pad's axis (the plate is
+40 x 30 mm, the pad 24 x 16) tilts the plate and crushes one side first;
+side knocks shear the pad's bond, which holds about 90 N flat. The crush
+law for TPU is Gibson and Ashby's elastic collapse, checked by linear
+buckling but not yet by a printed coupon (docs/IMPACT.md).
+
 ## Bond strengths
 
 `interface_library.py` (sources and test geometry in the module). MPa,

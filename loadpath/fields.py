@@ -53,6 +53,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage
 
+from .narrowband import face_cross
+
 __all__ = ["FieldGraph", "MeshField", "field_mesh", "save_result_field", "result_samples", "OPS"]
 
 # the operations and what they take (the schema says the same, with docs)
@@ -696,6 +698,13 @@ def _frame_coords(P, frame, cell):
 
 def _smin(a, b, k):
     """Polynomial smooth minimum with a per-point radius k (0 = hard)."""
+    if np.ndim(k) == 0:
+        # one radius (the usual case; 0 for every hard boolean): no masks
+        k = float(k)
+        if k <= 1e-9:
+            return np.minimum(a, b)
+        h = np.clip(0.5 + 0.5 * (b - a) / k, 0.0, 1.0)
+        return b * (1 - h) + a * h - k * h * (1 - h)
     k = np.broadcast_to(np.asarray(k, float), np.shape(a))
     hard = k <= 1e-9
     kk = np.where(hard, 1.0, k)
@@ -1752,8 +1761,14 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
         verts, faces, stats = narrowband_mc(field, lo, dims, pitch, budget=_CELL_BUDGET, progress=progress)
         if not len(faces):
             raise ValueError("the field has no inside over these bounds (nothing is below zero)")
+        if not watertight(faces, len(verts)) and stats.get("lipschitz"):
+            # the per-leaf Lipschitz bounds let a crossing through: the
+            # global one (the steepest slope anywhere) for every leaf
+            verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=stats["lipschitz"],
+                                                budget=_CELL_BUDGET, progress=progress)
+            stats["fallback"] = "global"
         if not watertight(faces, len(verts)):
-            # the Lipschitz bound let a crossing through: sample every block
+            # and if even that let one through: sample every block
             verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=np.inf, budget=_CELL_BUDGET,
                                                 progress=progress)
             stats["fallback"] = True
@@ -1890,7 +1905,12 @@ def _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschit
             Vmm[si] = np.array(got)
         end_keys = keys(V[end])
         if project:
+            V0 = Vmm
             Vmm = _relax(Vmm, F, field, pitch, int(project), pinned=start, seam=end)
+            if _UNFOLD:
+                # the previous slab's seam is fixed: never sent back
+                Vmm, nb = _unfold(V0, Vmm, F, pitch, fixed=start, field=field)
+                rep["unfolded"] = rep.get("unfolded", 0) + int(nb)
         carry = dict(zip(end_keys, Vmm[end]))
         if decimate:
             from .decimate import decimate as thin
@@ -1972,7 +1992,7 @@ def _finish(V, F, field, pitch, project, stats=None, decimate=None, creases=None
         V0 = V
         V = _relax(V, F, field, pitch, int(project))
         if _UNFOLD:
-            V, unfolded = _unfold(V0, V, F, pitch)
+            V, unfolded = _unfold(V0, V, F, pitch, field=field)
     locked, sharp_st = None, None
     if creases is not None and project:
         from .crease import sharpen
@@ -2086,17 +2106,22 @@ class _Normals:
         vs = vi[self.o]
         self.start = np.flatnonzero(np.r_[True, vs[1:] != vs[:-1]])
         self.vs = vs[self.start]
+        self.edge = None
 
     def __call__(self, V, sharp):
         F = self.F
-        fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+        fn = face_cross(V, F)
         N = self.M @ fn
         N /= np.maximum(np.sqrt(np.einsum("ij,ij->i", N, N))[:, None], 1e-300)
-        fn /= np.maximum(np.sqrt(np.einsum("ij,ij->i", fn, fn))[:, None], 1e-300)
-        c = np.concatenate([np.einsum("ij,ij->i", fn, N[F[:, k]]) for k in range(3)])
-        lo = np.ones(self.n)
-        lo[self.vs] = np.minimum.reduceat(c[self.o], self.start)
-        return N, lo < sharp
+        if self.edge is None:
+            # the edges and corners are found once: a relax round moves a
+            # vertex a fraction of a pitch, not off its edge
+            fn /= np.maximum(np.sqrt(np.einsum("ij,ij->i", fn, fn))[:, None], 1e-300)
+            c = np.concatenate([np.einsum("ij,ij->i", fn, N[F[:, k]]) for k in range(3)])
+            lo = np.ones(self.n)
+            lo[self.vs] = np.minimum.reduceat(c[self.o], self.start)
+            self.edge = lo < sharp
+        return N, self.edge
 
 
 def _line_newton(field, V, N, pitch, h):
@@ -2179,8 +2204,14 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
             nrm[ed] = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
         return nrm
 
+    from .lattice import single_precision
+
     for _ in range(rounds):
-        nrm = newton(np.flatnonzero(move))
+        # these rounds move a vertex a fraction of a pitch toward the zero
+        # level: single-precision lattice trig (~1e-6 mm) is plenty; the
+        # closing passes below, to 1e-6 pitch, take it in double
+        with single_precision():
+            nrm = newton(np.flatnonzero(move))
         d = (A @ V) / deg[:, None] - V
         d -= (d * nrm).sum(axis=1, keepdims=True) * nrm
         V[move] += 0.5 * d[move]
@@ -2203,24 +2234,37 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
 
 _UNFOLD = True
 _UNFOLD_RINGS = 0          # rings round the folded edges' faces' vertices
+_FLAT_FOLD = 1e-3          # an edge folded back within this * pitch of flat is a crossing
 
 
-def _unfold(V0, V, F, pitch, rounds=6, chunk=200_000):
+def _sliver(V, F, sin_min=float(np.sin(np.radians(5.0)))):
+    """Faces with an angle under ~5 degrees."""
+    a, b, c = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
+    e1, e2 = b - a, c - a
+    n = face_cross(V, F)
+    e3 = c - b
+    l2 = np.sort(np.stack([(e1 * e1).sum(1), (e2 * e2).sum(1), (e3 * e3).sum(1)], 1), axis=1)
+    return np.sqrt((n * n).sum(1)) < sin_min * np.sqrt(l2[:, 1] * l2[:, 2])
+
+
+def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
     """Undo the relax where it folded the mesh through itself. Marching
     cubes' own mesh (V0) never crosses itself, but relaxing and projecting
     across a wall or a wedge thinner than a pitch can push one sheet
     through another. Faces that cross another face (sharing no vertex)
-    send their vertices back to where marching cubes put them, a few
-    rounds, each looking only round what the last one moved.
+    send their vertices back toward where marching cubes put them (half
+    way, then a quarter of the way from it, then onto it), a few rounds,
+    each looking only round what the last one moved.
 
     Only faces round an edge folded past 90 degrees (and a ring round
     them) are searched in the first round: on the arm-link gyroid that
-    holds every folded face, at 6% of the mesh.
+    holds every folded face, at 6% of the mesh. `fixed` vertices (a
+    streamed slab's seam with the last one) are never sent back.
     Returns (V, number of vertices sent back)."""
     from .crease import _Centroids, crossing_faces
 
     def normals(X):
-        n = np.cross(X[F[:, 1]] - X[F[:, 0]], X[F[:, 2]] - X[F[:, 0]])
+        n = face_cross(X, F)
         return n / np.maximum(np.sqrt(np.einsum("ij,ij->i", n, n))[:, None], 1e-300)
 
     V = np.array(V, float)
@@ -2232,34 +2276,131 @@ def _unfold(V0, V, F, pitch, rounds=6, chunk=200_000):
     ks = key[o]
     pair = np.flatnonzero(ks[1:] == ks[:-1])
     f1, f2 = o[pair] // 3, o[pair + 1] // 3
-    sharp = np.einsum("ij,ij->i", N[f1], N[f2]) < 0.0
+    dots = np.einsum("ij,ij->i", N[f1], N[f2])
+    sharp = dots < 0.0
+    # an edge folded flat back on itself (the two faces overlapping in one
+    # plane, as projecting onto a flat cut can leave them): no segment
+    # crosses a face there, but manifold3d swaps such edges and the swap
+    # crosses. Candidates are the edges folded past ~150 degrees anywhere.
+    c2 = F[f2, (o[pair + 1] % 3 + 2) % 3]
+    tol = _FLAT_FOLD * pitch
+
+    # the edge pair of every half-edge (-1 on an open edge)
+    he = np.full(3 * len(F), -1, np.int64)
+    he[o[pair]] = np.arange(len(pair))
+    he[o[pair + 1]] = np.arange(len(pair))
+    # the faces round every vertex
+    flat_f = F.ravel()
+    vf = np.argsort(flat_f, kind="stable")
+    vptr = np.searchsorted(flat_f[vf], np.arange(len(V) + 1))
+
+    def faces_of(verts):
+        a, ln = vptr[verts], vptr[verts + 1] - vptr[verts]
+        idx = np.repeat(a - np.cumsum(ln) + ln, ln) + np.arange(int(ln.sum()))
+        return np.unique(vf[idx] // 3)
+
+    def rings(verts, k):
+        for _r in range(k):
+            verts = np.unique(F[faces_of(verts)].ravel())
+        return verts
+
+    def flat(X, faces, k=None):
+        if k is None:
+            k = he[(3 * np.asarray(faces)[:, None] + np.arange(3)).ravel()]
+            k = np.unique(k[k >= 0])
+            k = k[~flat0[k]]
+        g1, g2 = f1[k], f2[k]
+        n1 = face_cross(X, F[g1])
+        n2 = face_cross(X, F[g2])
+        l1 = np.sqrt(np.einsum("ij,ij->i", n1, n1))
+        l2 = np.sqrt(np.einsum("ij,ij->i", n2, n2))
+        d = np.einsum("ij,ij->i", n1, n2) < -0.9 * np.maximum(l1 * l2, 1e-300)
+        d &= np.abs(np.einsum("ij,ij->i", X[c2[k]] - X[F[g1, 0]], n1)) < tol * np.maximum(l1, 1e-300)
+        return np.concatenate([g1[d], g2[d]])
+
+    # folded flat in marching cubes' own mesh too: sending vertices back
+    # cannot undo those, so they are left alone
+    flat0 = np.zeros(len(pair), bool)
+    k0 = np.flatnonzero(dots < -0.9)
+    if len(k0):
+        hit = flat(V0, None, k0)
+        if len(hit):
+            fm = np.zeros(len(F), bool)
+            fm[hit] = True
+            flat0[k0[fm[f1[k0]] & fm[f2[k0]]]] = True
+
     near = np.zeros(len(V), bool)
     near[F[f1[sharp]].ravel()] = True
     near[F[f2[sharp]].ravel()] = True
     for _r in range(_UNFOLD_RINGS):
         near[F[near[F].any(axis=1)].ravel()] = True
+    near[F[f1[dots < -0.9]].ravel()] = True
     q = np.flatnonzero(near[F].any(axis=1))
     if not len(q):
         return V, 0
     cache = _Centroids(V, F)
     back = 0
+    V1 = V.copy()
+    level = np.zeros(len(V), np.int64)
     for _ in range(rounds):
         x = [crossing_faces(V, F, q[i:i + chunk], cache) for i in range(0, len(q), chunk)]
-        x = np.unique(np.concatenate(x)) if x else np.zeros(0, np.int64)
+        x = np.unique(np.concatenate(x + [flat(V, q)]))
         if not len(x):
             break
         verts = np.unique(F[x].ravel())
         verts = verts[np.any(V[verts] != V0[verts], axis=1)]
+        if fixed is not None:
+            verts = verts[~fixed[verts]]
         if not len(verts):
             break
-        V[verts] = V0[verts]
-        back += len(verts)
-        vm = np.zeros(len(V), bool)
-        vm[verts] = True
-        cache.update(V, F, np.flatnonzero(vm[F].any(axis=1)))
-        for _r in range(2):
-            vm[F[vm[F].any(axis=1)].ravel()] = True
-        q = np.flatnonzero(vm[F].any(axis=1))
+        # halfway back first (closer to the surface than marching cubes'
+        # point), then a quarter, then all the way
+        back += int((level[verts] == 0).sum())
+        level[verts] += 1
+        s = np.where(level[verts] >= 3, 0.0, 0.5 ** level[verts])[:, None]
+        V[verts] = V0[verts] + s * (V1[verts] - V0[verts])
+        cache.update(V, F, faces_of(verts))
+        q = faces_of(rings(verts, 2))
+    if field is not None and back:
+        # those vertices sit off the zero level: project them along the
+        # true gradient, and keep the projection wherever it folds nothing
+        moved = np.flatnonzero(level > 0)
+        safe = V[moved].copy()
+        for _ in range(2):
+            V[moved] = _project(field, V[moved], pitch)
+        mf = np.zeros(len(V), bool)
+        mf[moved] = True
+        faces = faces_of(moved)
+        # nor onto another vertex (two pulled to the same point of an edge,
+        # which an STL's vertex merge would fuse)
+        ring = np.unique(F[faces].ravel())
+        _, inv, cnt = np.unique(np.round(V[ring] / (1e-9 * pitch)), axis=0, return_inverse=True,
+                                return_counts=True)
+        dup = ring[cnt[inv.ravel()] > 1]
+        dup = dup[mf[dup]]
+        if len(dup):
+            j = np.searchsorted(moved, dup)
+            V[dup] = safe[j]
+        cache.update(V, F, faces)
+        for _ in range(8):
+            x = [crossing_faces(V, F, faces[i:i + chunk], cache) for i in range(0, len(faces), chunk)]
+            x = np.unique(np.concatenate(x + [flat(V, faces)]))
+            bad = np.zeros(len(V), bool)
+            bad[F[x].ravel()] = True
+            # and no sliver (manifold3d flips those, and a flip can cross)
+            bad[F[faces[_sliver(V, F[faces])]].ravel()] = True
+            back_to = np.flatnonzero(bad[moved] & np.any(V[moved] != safe, axis=1))
+            if not len(back_to):
+                break
+            V[moved[back_to]] = safe[back_to]
+            cache.update(V, F, faces_of(moved[back_to]))
+            faces = faces_of(rings(moved[back_to], 2))
+        else:
+            # not settled: no projection at all round what is still moving
+            vm = np.zeros(len(V), bool)
+            vm[F[faces].ravel()] = True
+            k = vm[moved]
+            V[moved[k]] = safe[k]
     return V, back
 
 
@@ -2582,6 +2723,101 @@ def node_doc(doc, node):
     return {**full, "output": node, "name": f"{doc.get('name', 'field')}-{node}"}
 
 
+
+
+def _lattice_variant(doc, g, solid, empty, base_dir, sources, meshes, progress, mesh_opts=None):
+    """The part as meshed (drain holes and all: drain_graph added them to
+    g) with the lattice nodes in `solid` made solid and those in `empty`
+    gone: the envelope a STEP uses, one lattice's clip region, or the body
+    beside the lattices. A drain bore is an exact cylinder through the
+    skin, blind where its void is solid."""
+    full = expand_groups(doc)
+    box = {"op": "shape", "shape": {"type": "box", "min": [-1e4] * 3, "max": [1e4] * 3}}
+    nodes = {}
+    for k, nd in g.nodes.items():
+        nodes[k] = dict(box) if k in solid else {"op": "constant", "value": 1e3} if k in empty else nd.spec
+    env = {**full, "nodes": nodes, "output": g.output}
+    env.pop("drains", None)
+    if mesh_opts:
+        env["mesh"] = {**(env.get("mesh") or {}), **mesh_opts}
+    pre = {k: (g._built[k], g.analyses.get(k)) for k, nd in g.nodes.items()
+           if nd.op == "result" and k in g._built}
+    ge = FieldGraph(env, base_dir=base_dir, sources={**(sources or {}), **g.sources}, meshes=meshes).seed(pre)
+    return ge.mesh(progress=progress)
+
+
+def _lattice_3mf(doc, g, lattices, out_dir, name, opts, base_dir, sources, meshes, progress):
+    """<name>-lattice.3mf: the part's lattices as lattices (lattice3mf.py),
+    each clipped by its own region (the part with that lattice solid and
+    the others gone), beside the rest of the part as a mesh. A lattice the
+    graph blends into the body carries the blend (the level set is the
+    smooth union of body and lattice). Meshes are decimated to `decimate`
+    mm (default 0.02) of the true surface."""
+    from .lattice3mf import _grid, _quantize, blend_of, image, lattice_from_graph, write_lattice_3mf
+
+    mo = {"decimate": float(opts.get("decimate", 0.02))}
+    body = _lattice_variant(doc, g, (), lattices, base_dir, sources, meshes, progress, mo)
+    lat = []
+    for k in lattices:
+        clip = _lattice_variant(doc, g, (k,), [x for x in lattices if x != k], base_dir, sources, meshes,
+                                progress, mo)
+        if not len(clip.faces):
+            continue
+        lo, hi = clip.bounds
+        x = lattice_from_graph(g, k, lo, hi, opts.get("grid"))
+        x["clip"] = clip
+        b = blend_of(g, k)
+        if isinstance(b, str):      # a graded blend radius: sampled like the wall
+            h = float(opts.get("grid") or 1.0)
+            lo_, hi_ = lo - h, hi + h
+            P, shape, size = _grid(lo_, hi_, h)
+            v = np.maximum(np.broadcast_to(np.asarray(g._val(b, P, {}), float), (len(P),)), 1e-3)
+            q, off, span = _quantize(v.reshape(shape))
+            x.setdefault("images", {})[f"{k}-blend"] = (q, off, span)
+            x["blend"] = image(f"{k}-blend", lo_, size)
+        elif b is not None and float(b) > 0:
+            x["blend"] = float(b)
+        lat.append(x)
+    path = os.path.join(out_dir, f"{name}-lattice.3mf")
+    rep = write_lattice_3mf(path, body if len(body.faces) else None, lat, name=name,
+                            mesh_readers=bool(opts.get("meshReaders", False)))
+    rep["note"] = ("lattices as lattices (implicit level sets, beam lattices), each clipped by its region; "
+                   "the body is a mesh; TPMS-to-body blend fillets are in the level set (mesh distance "
+                   "nodes), strut lattices meet the body sharp")
+    for x, l_ in zip(rep["lattices"], lat):
+        for k in ("cell", "thickness", "coordinates"):
+            if k in l_:
+                x[k] = l_[k]
+        if "blend" in l_:
+            x["blend"] = l_["blend"] if isinstance(l_["blend"], float) else "graded"
+    return rep
+
+def _envelope_step(doc, g, mesh, lattices, out_dir, name, opts, base_dir, sources, meshes, progress):
+    """STEP for a part with lattices: the part with every lattice solid (a
+    sandwich's skin, bosses and bores exactly as printed; the lattice is in
+    the STL/3MF), since CAD has no use for a few hundred thousand lattice
+    facets and they do not decimate. The report says how much of that
+    outside is the printed part's own surface (all of it under a closed
+    skin; less where the lattice is open)."""
+    from .sharp import mesh_distance
+    from .step import DEFAULT_FACES, DEFAULT_PATCHES, export_step
+
+    em = _lattice_variant(doc, g, lattices, (), base_dir, sources, meshes, progress)
+    st = export_step(em, os.path.join(out_dir, f"{name}.step"), faces=int(opts.get("faces", DEFAULT_FACES)),
+                     name=name, surface=opts.get("surface", "facets"),
+                     patches=int(opts.get("patches", DEFAULT_PATCHES)))
+    st.pop("shape", None)
+    d = mesh_distance(mesh, em.sample(20000), cap=1.0)
+    tol = max(0.05, 0.5 * float(mesh.metadata.get("pitch") or 0.1))
+    st["lattice"] = {"export": "solid envelope", "lattices": lattices,
+                     "trueSurface": round(float((d < tol).mean()), 4),
+                     "envelopeVolume": round(float(em.volume), 1), "partVolume": round(float(mesh.volume), 1),
+                     "note": "lattices solid in the STEP (outside, bores and faces as printed); "
+                             "the printed part, lattice and all, is the STL"
+                             + ("; drain bores are blind there (their voids are solid)"
+                                if any(k.startswith("drain-bore-") for k in g.nodes) else "")}
+    return st
+
 def _write_graded(doc, rep, out_dir):
     """With the impact block's `grade`: the graph again with its density node
     replaced by the graded table (<name>-graded.json beside the STL), ready
@@ -2738,15 +2974,27 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
             from .step import DEFAULT_FACES, DEFAULT_PATCHES, export_step
 
             opts = doc["step"] if isinstance(doc["step"], dict) else {}
+            lat = [k for k, nd in g.nodes.items() if nd.op == "lattice"]
             try:
-                st = export_step(mesh, os.path.join(out_dir, f"{rep['name']}.step"),
-                                 faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"],
-                                 surface=opts.get("surface", "facets"),
-                                 patches=int(opts.get("patches", DEFAULT_PATCHES)))
+                if lat:
+                    st = _envelope_step(doc, g, mesh, lat, out_dir, rep["name"], opts, base_dir, sources, meshes, progress)
+                else:
+                    st = export_step(mesh, os.path.join(out_dir, f"{rep['name']}.step"),
+                                     faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"],
+                                     surface=opts.get("surface", "facets"),
+                                     patches=int(opts.get("patches", DEFAULT_PATCHES)))
                 st.pop("shape", None)
                 rep["step"] = st
             except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing
                 rep["step"] = {"error": f"{type(exc).__name__}: {exc}"}
+        lat = [k for k, nd in g.nodes.items() if nd.op == "lattice"]
+        if doc.get("lattice3mf") and lat:
+            opts = doc["lattice3mf"] if isinstance(doc["lattice3mf"], dict) else {}
+            try:
+                rep["lattice3mf"] = _lattice_3mf(doc, g, lat, out_dir, rep["name"], opts, base_dir, sources,
+                                                 meshes, progress)
+            except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why this is missing
+                rep["lattice3mf"] = {"error": f"{type(exc).__name__}: {exc}"}
         if render:
             try:
                 from .render import render_views
