@@ -257,6 +257,13 @@ field. `check` reports every problem at once: fix them all, then check again.
   or gravity or pressure loads: those are confirmed on a finer voxel grid,
   `deliver.tetCrossCheck` says why. That fine re-check is the memory peak
   `check` reports (`peakMemoryGB`); `LOADPATH_CONFIRM_CELLS=60000` lowers it.
+  `goal.method` (default `auto`) picks the optimizer: the volume-fraction
+  search first, then the stress-constrained method (MMA, finer grid) when
+  the search's part idles (`stressUtilization`, mean over near-peak von
+  Mises, under 0.15) and stiffness is not what sets its mass; the lighter
+  part is kept and `methodChoice` says which and why. Brackets with one
+  hot corner come out 20-55% lighter that way, at up to 4.5x the time.
+  `"search"` or `"constrained"` force one.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
 

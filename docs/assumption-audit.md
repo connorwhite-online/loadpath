@@ -206,6 +206,37 @@ per case on average. What was learned:
   predicts. A constrained study that finds no passing design now falls
   back to the search on the search's own grid (the yoke: 21-24 g instead
   of an error).
+- Auto-selecting the method (2026-11-01). The GRIP crashes had two
+  causes. Hinge-connected designs (live cells joined by an edge or corner)
+  made the multigrid's coarse factor singular or stalled CG; the multigrid
+  path now retries on the full grid with void at E_MIN, as the direct path
+  already did. And on the upper arm the p-norm overflowed (stress^8 of a
+  design that let go) and handed MMA NaNs; the p-norm is now scaled by its
+  peak and MMA guards non-finite input. With that, the yoke's constrained
+  run passes at 16.1 g against the search's 23.7 g (SF 2.13 for 2 on
+  voxels; 45 min against 21). The upper arm and wrist link no longer crash, but
+  find no passing part within 90 minutes on the finer grid.
+  The predictor is the search pick's stress utilization (verify's new
+  `stressUtilization`: mean nodal von Mises over the 99.9th percentile):
+  fastener bracket 0.10, wall bracket 0.11, turret 0.11, MBB 0.19, bell
+  crank 0.20, yoke 0.21, wrist link 0.23, upper arm 0.24, hook 0.30, arm
+  link 0.33. The brackets idle (90% of nodes under a fifth of the peak):
+  one hot corner sets the search's whole part. The arm link and upper arm
+  are deflection-bound (0.48 of 0.5 mm; 0.50 of 0.54 mm at SF 11 for 2),
+  where the compliance design is already right. So `goal.method` now
+  defaults to `auto`: the search (with its restarts and pitch starts), then
+  the constrained method when utilization is under 0.15 and the part is not
+  deflection-bound, time-boxed to 3.5x the search, keeping the lighter part
+  (`methodChoice` in the result; any constrained failure keeps the search's
+  part). Tet-confirmed, against the full baseline on 063c233: wall bracket
+  64.4 -> 26.6 g (1883 s vs 381), fastener bracket 41.0 -> 26.4 g (2574 s
+  vs 790). At 0.25 the bell crank (23.8 g either way, 2x the time) and the
+  yoke (22.0 g either way, 5.5x: steered by tets, constrained found 17.4 g
+  at SF 1.3 and then 25.2 g passing; the 16.1 g yoke above was steered by
+  voxels and read 2.13 on them) gained nothing, hence 0.15. MBB 15.1 g
+  (baseline 14.2, the search alone: pitch noise). The cost is time on idle
+  parts the constrained method can't finish: the turret (0.11) gets up to
+  3.5x its search for nothing.
 - The voxel reading also moves with the cell budget, and most on thin
   sections. Tuning the arm link's field graph (tune.py, 2026-10-30), the
   start part read 0.500 mm deflection on 30k cells and 0.487 mm on 60k, while

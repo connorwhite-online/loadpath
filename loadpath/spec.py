@@ -127,8 +127,9 @@ class Goal:
     # one passes; "constrained": minimize mass with the limits as MMA
     # constraints, corrected against the verified mesh (constrained.py);
     # "auto": the search, then the constrained method too when the search's
-    # part idles (stress utilization under 0.25), keeping the lighter.
-    method: str = "search"
+    # part idles (stress utilization under 0.15, not deflection-bound),
+    # keeping the lighter (the default; study._run_auto).
+    method: str = "auto"
     # How the search's pick is confirmed before delivery: "voxel" re-verifies
     # it on a finer voxel grid; "tet" on a body-fitted tetrahedral mesh
     # (crosscheck.py), whose reading also calibrates the search's voxel
@@ -885,7 +886,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         volume_fraction=g.get("volumeFraction"),
         safety_factor=g.get("safetyFactor"),
         max_deflection=g.get("maxDeflection"),
-        method=str(g.get("method", "search")),
+        method=str(g.get("method", "auto")),
         confirm=str(g.get("confirm", "auto")),
         outcomes=[float(v) for v in g.get("outcomes") or []],
         minimize=str(g.get("minimize", "mass")),

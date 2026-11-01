@@ -51,13 +51,15 @@ _WARM_BETA = 4.0
 _MAX_CONSTRAINED_RUNS = 6
 # method auto: run the constrained method after the search when the search's
 # part idles (verify's stressUtilization, mean von Mises over the near peak,
-# under this) and is not deflection-bound. Search picks (utilization, search
-# against constrained, both tet-confirmed): fastener bracket 0.10 (35.5 / 26.5
-# g), wall bracket 0.11 (68.7 / 28.1), GRIP yoke 0.21 (23.7 / 16.1) where
-# constrained won; MBB 0.19 (12.5 / 15.6), bell crank 0.20 (22.4 / 24.8)
-# where it lost by less (auto keeps the search there, at the cost of time);
-# hook 0.30 (27.2 / 37.9) and arm link 0.33 (deflection-bound) skipped.
-_AUTO_UTILIZATION = 0.25
+# under this) and is not deflection-bound. Search picks' utilization, and
+# tet-confirmed search / auto masses (2026-11-01): fastener bracket 0.10
+# (41.0 / 26.4 g), wall bracket 0.11 (64.4 / 26.6 g), where constrained wins;
+# MBB 0.19, bell crank 0.20 and GRIP yoke 0.21, where it found nothing
+# lighter in 2-5x the search's time; hook 0.30 and arm link 0.33, where it
+# was 10-40% heavier.
+_AUTO_UTILIZATION = 0.15
+# and gives it at most this many times the search's own time
+_AUTO_BUDGET = 3.5
 # The pick of a safety-factor search is checked again on a grid this many
 # cells finer before it is delivered. The in-loop check resolves a fillet
 # only as well as its grid: GRIP's turret read SF 2.26 there and 1.65 at
@@ -631,8 +633,14 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         study = choose_build_direction(study, on_progress=on_progress)["study"]
     mats = study.materials or [study.material]
     if len(mats) == 1:
-        return _build_sim(_slice(_process_checks(_run_restarts(study, on_progress, should_stop), on_progress),
-                                 on_progress), on_progress)
+        if study.goal.method == "auto":
+            # the search (with its restarts and pitch starts), then perhaps
+            # the constrained method once
+            r = _run_auto(study, on_progress, should_stop,
+                          search=lambda st: _run_restarts(st, on_progress, should_stop))
+        else:
+            r = _run_restarts(study, on_progress, should_stop)
+        return _build_sim(_slice(_process_checks(r, on_progress), on_progress), on_progress)
     t0 = time.time()
     outcomes, warnings, domain = [], [], None
     for r in _parallel([dataclasses.replace(study, material=m, materials=[m]) for m in mats],
@@ -930,7 +938,7 @@ def _constrained_applies(study: Study) -> bool:
         and not any(ld.direction for c in study.load_cases for ld in c.loads)
 
 
-def _run_auto(study: Study, on_progress=None, should_stop=None) -> StudyResult:
+def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> StudyResult:
     """goal.method auto: the search, then the constrained method only when the
     search's part idles (stressUtilization under _AUTO_UTILIZATION), keeping
     the lighter passing part. The constrained method costs about as much as
@@ -938,8 +946,9 @@ def _run_auto(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     import dataclasses
 
     goal = study.goal
-    r = _run_single(dataclasses.replace(study, goal=dataclasses.replace(goal, method="search")),
-                    on_progress, should_stop)
+    st = dataclasses.replace(study, goal=dataclasses.replace(goal, method="search"))
+    # `search` runs the search side (run_study: restarts and pitch starts)
+    r = search(st) if search is not None else _run_single(st, on_progress, should_stop)
     choice = {"method": "search"}
     pick = r.outcomes[r.best] if r.best is not None else None
     u = pick.report.get("stressUtilization") if pick is not None else None
@@ -969,10 +978,19 @@ def _run_auto(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         return r
     if on_progress is not None:
         on_progress({"stage": "method", "method": "constrained", "stressUtilization": u}, None)
+    # time box: the constrained method runs on a finer grid and took about
+    # 2.9x the search on the yoke (2.5x cut it before its 16 g run); on the
+    # wrist link it found no passing part in 90 minutes (the search: 24).
+    # Past the budget the runs it has stand.
+    deadline = time.time() + max(600.0, _AUTO_BUDGET * r.seconds)
+
+    def stop():
+        return time.time() > deadline or (should_stop is not None and should_stop())
+
     try:
         rc = _run_single(dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained")),
-                         on_progress, should_stop, fallback=False)
-    except RuntimeError as exc:
+                         on_progress, stop, fallback=False)
+    except Exception as exc:  # noqa: BLE001 - the constrained run is a bonus: any failure keeps the search's part
         choice["reason"] = f"the constrained method failed ({exc})"
         r.choice = choice
         return r
@@ -1418,7 +1436,9 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                             goal.max_deflection * t if goal.max_deflection is not None else None, mat.E)
             try:
                 o = run_constrained(limits, x_pass)
-            except RuntimeError as exc:
+            except (RuntimeError, ValueError) as exc:
+                # (ValueError: the design let go of a load's region, which
+                # then touches no material in the verify)
                 # a run whose solve broke down (the design let go of a
                 # support: GRIP's yoke, wrist link and upper arm) is a
                 # failed run; one that fails first ends the constrained
