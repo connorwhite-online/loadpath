@@ -162,18 +162,46 @@ def test_step_smooth_patches():
         path = os.path.join(td, "blob.step")
         rep = export_step(b, path, surface="smooth", patches=400)
         assert rep["valid"] and rep["solids"] == 1, rep
-        assert rep["faces"].get("bspline", 0) >= 380 and not rep["faces"].get("facet"), rep["faces"]
+        assert rep["faces"].get("bspline", 0) >= 150 and not rep["faces"].get("facet"), rep["faces"]
         assert abs(rep["volume"] / b.volume - 1) < 0.002, (rep["volume"], b.volume)
         dev = rep["decimated"][0]["deviation"]
+        assert rep["decimated"][0]["patches"] < 400, rep["decimated"]
         assert dev["p99"] < 0.05, dev
         back = shape_to_trimesh(read_step(path), deflection=0.005, angle=0.05)
         assert np.percentile(mesh_distance(b, back.sample(5000)), 99) < 0.05
 
 
+def test_smooth_step_keeps_the_bore_exact():
+    """surface="smooth" on a field part with a bore: the organic body in
+    smooth patches, the bore one true cylinder, a valid solid on re-read."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    import copy
+
+    g = copy.deepcopy(PLATE)
+    g["nodes"]["plate"]["shape"] = {"type": "box", "min": [-17, -12, -2], "max": [17, 12, 2]}
+    g["nodes"]["soft"]["distance"] = 3.0
+    g["nodes"]["body"]["blend"] = 4
+    m = FieldGraph(g).mesh(pitch=0.5)
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "soft.step")
+        rep = export_step(m, path, surface="smooth", patches=400)
+        assert rep["valid"] and rep["solids"] == 1, rep
+        assert rep["faces"].get("cylinder") == 1 and rep["faces"].get("bspline", 0) > 300, rep["faces"]
+        sm = rep["decimated"][0]
+        assert sm["leaf"] == "smooth" and sm["deviation"]["p99"] < 0.08, sm
+        assert abs(rep["volume"] / m.volume - 1) < 0.002
+        from OCP.BRepCheck import BRepCheck_Analyzer
+
+        assert BRepCheck_Analyzer(read_step(path)).IsValid()
+
+
 TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact_where_the_field_rounds_it,
          test_mesh_distance_matches_trimesh, test_step_keeps_the_bore_a_cylinder,
          test_study_part_exports_exact_interfaces, test_run_field_reports_edges_and_writes_step,
-         test_collapse_keeps_holes, test_step_smooth_patches]
+         test_collapse_keeps_holes, test_step_smooth_patches,
+         test_smooth_step_keeps_the_bore_exact]
 
 
 def main():

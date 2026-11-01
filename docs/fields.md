@@ -628,19 +628,27 @@ the STL. Measured (bench/sharp_edges.py, coarse eval tier):
 | GRIP wrist yoke | 42 cylinders, 29 planes, 16.3k facets | 28% | -0.002% | 42 MB, 34 s |
 | arm link field graph (solid) | 3 cylinders, 2 planes, 11.4k facets | 29% | -0.02% | 28 MB, 16 s (12.7 MB, 20 s since 8b54f5d) |
 
-`"step": {"surface": "smooth"}` (`export_step(..., surface="smooth")`) is
-experimental: organic regions become smooth B-spline patches instead of
-facets. The organic mesh is coarsened to `"patches"` triangles (default
-1500) without tearing thin members, each coarse edge becomes a B-spline
-curve on the surface and each coarse triangle a plate-filled B-spline
-surface through points of the full surface; strips within 0.5 mm of exact
-geometry stay flat facets, since patches grazing a bearing seat defeat
-OpenCascade's booleans. On a smooth blob, 400 patches stay within 0.03 mm
-(p99) and the solid is valid. It is not smaller (about 8 kB a patch, so
-1500 patches weigh more than 20k facets), and on real parts it is not
-there yet: the GRIP turret's union with its preserved bosses failed every
-retry, so it fell back to facets, and the arm link field graph took over
-50 minutes. Any invalid or volume-off result falls back to facets.
+`"step": {"surface": "smooth"}` (`export_step(..., surface="smooth")`)
+writes editable CAD instead: the organic body as smooth Bezier patches a
+CAD user can fillet, offset and shell, the bores, bosses and flat faces
+still true cylinders and planes (loadpath/brep.py). It works on the
+finished mesh, after the booleans, so OpenCascade never has to cut a
+smooth surface: triangles on exact surfaces are labelled, the mesh is
+coarsened without moving a seam (`"patches"`, default 2000, counts the
+organic triangles left), pairs of triangles become one quintic patch
+through points of the surface, and each exact region becomes one face
+bounded by its seams. A result that is not a valid solid within 0.2% of
+the mesh's volume falls back to facets, with a warning in `decimated`.
+The report's `decimated[0].deviation` is the distance (mm) from the
+patches to the mesh. Measured (re-read from the file):
+
+| part | STEP faces | deviation p99 / max | volume vs STL | size (facets) | time |
+| --- | --- | --- | --- | --- | --- |
+| GRIP turret | 2040 patches, 25 cylinders, 20 planes | 0.047 / 0.19 mm | -0.005% | 12.1 MB (14.4 MB) | 13 s build, 3 min with the check |
+ARMROW
+
+Faster with `embreex` (in the `step` extra) for the ray casts: 13 s
+instead of minutes on the turret. Lattices are refused as for facets.
 
 The study STLs' circles are now 0.002 mm true as well (they were 96-gons:
 the turret's 48 mm J2 sleeve was 0.026 mm off, and only 59% of its keep-out
