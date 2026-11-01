@@ -696,6 +696,13 @@ def _frame_coords(P, frame, cell):
 
 def _smin(a, b, k):
     """Polynomial smooth minimum with a per-point radius k (0 = hard)."""
+    if np.ndim(k) == 0:
+        # one radius (the usual case; 0 for every hard boolean): no masks
+        k = float(k)
+        if k <= 1e-9:
+            return np.minimum(a, b)
+        h = np.clip(0.5 + 0.5 * (b - a) / k, 0.0, 1.0)
+        return b * (1 - h) + a * h - k * h * (1 - h)
     k = np.broadcast_to(np.asarray(k, float), np.shape(a))
     hard = k <= 1e-9
     kk = np.where(hard, 1.0, k)
@@ -1890,7 +1897,12 @@ def _stream_stl(field, lo, dims, pitch, path, project, progress, block, lipschit
             Vmm[si] = np.array(got)
         end_keys = keys(V[end])
         if project:
+            V0 = Vmm
             Vmm = _relax(Vmm, F, field, pitch, int(project), pinned=start, seam=end)
+            if _UNFOLD:
+                # the previous slab's seam is fixed: never sent back
+                Vmm, nb = _unfold(V0, Vmm, F, pitch, fixed=start, field=field)
+                rep["unfolded"] = rep.get("unfolded", 0) + int(nb)
         carry = dict(zip(end_keys, Vmm[end]))
         if decimate:
             from .decimate import decimate as thin
@@ -1972,7 +1984,7 @@ def _finish(V, F, field, pitch, project, stats=None, decimate=None, creases=None
         V0 = V
         V = _relax(V, F, field, pitch, int(project))
         if _UNFOLD:
-            V, unfolded = _unfold(V0, V, F, pitch)
+            V, unfolded = _unfold(V0, V, F, pitch, field=field)
     locked, sharp_st = None, None
     if creases is not None and project:
         from .crease import sharpen
@@ -2086,17 +2098,22 @@ class _Normals:
         vs = vi[self.o]
         self.start = np.flatnonzero(np.r_[True, vs[1:] != vs[:-1]])
         self.vs = vs[self.start]
+        self.edge = None
 
     def __call__(self, V, sharp):
         F = self.F
         fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
         N = self.M @ fn
         N /= np.maximum(np.sqrt(np.einsum("ij,ij->i", N, N))[:, None], 1e-300)
-        fn /= np.maximum(np.sqrt(np.einsum("ij,ij->i", fn, fn))[:, None], 1e-300)
-        c = np.concatenate([np.einsum("ij,ij->i", fn, N[F[:, k]]) for k in range(3)])
-        lo = np.ones(self.n)
-        lo[self.vs] = np.minimum.reduceat(c[self.o], self.start)
-        return N, lo < sharp
+        if self.edge is None:
+            # the edges and corners are found once: a relax round moves a
+            # vertex a fraction of a pitch, not off its edge
+            fn /= np.maximum(np.sqrt(np.einsum("ij,ij->i", fn, fn))[:, None], 1e-300)
+            c = np.concatenate([np.einsum("ij,ij->i", fn, N[F[:, k]]) for k in range(3)])
+            lo = np.ones(self.n)
+            lo[self.vs] = np.minimum.reduceat(c[self.o], self.start)
+            self.edge = lo < sharp
+        return N, self.edge
 
 
 def _line_newton(field, V, N, pitch, h):
@@ -2205,17 +2222,29 @@ _UNFOLD = True
 _UNFOLD_RINGS = 0          # rings round the folded edges' faces' vertices
 
 
-def _unfold(V0, V, F, pitch, rounds=6, chunk=200_000):
+def _sliver(V, F, sin_min=float(np.sin(np.radians(5.0)))):
+    """Faces with an angle under ~5 degrees."""
+    a, b, c = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
+    e1, e2 = b - a, c - a
+    n = np.cross(e1, e2)
+    e3 = c - b
+    l2 = np.sort(np.stack([(e1 * e1).sum(1), (e2 * e2).sum(1), (e3 * e3).sum(1)], 1), axis=1)
+    return np.sqrt((n * n).sum(1)) < sin_min * np.sqrt(l2[:, 1] * l2[:, 2])
+
+
+def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
     """Undo the relax where it folded the mesh through itself. Marching
     cubes' own mesh (V0) never crosses itself, but relaxing and projecting
     across a wall or a wedge thinner than a pitch can push one sheet
     through another. Faces that cross another face (sharing no vertex)
-    send their vertices back to where marching cubes put them, a few
-    rounds, each looking only round what the last one moved.
+    send their vertices back toward where marching cubes put them (half
+    way, then a quarter of the way from it, then onto it), a few rounds,
+    each looking only round what the last one moved.
 
     Only faces round an edge folded past 90 degrees (and a ring round
     them) are searched in the first round: on the arm-link gyroid that
-    holds every folded face, at 6% of the mesh.
+    holds every folded face, at 6% of the mesh. `fixed` vertices (a
+    streamed slab's seam with the last one) are never sent back.
     Returns (V, number of vertices sent back)."""
     from .crease import _Centroids, crossing_faces
 
@@ -2243,6 +2272,8 @@ def _unfold(V0, V, F, pitch, rounds=6, chunk=200_000):
         return V, 0
     cache = _Centroids(V, F)
     back = 0
+    V1 = V.copy()
+    level = np.zeros(len(V), np.int64)
     for _ in range(rounds):
         x = [crossing_faces(V, F, q[i:i + chunk], cache) for i in range(0, len(q), chunk)]
         x = np.unique(np.concatenate(x)) if x else np.zeros(0, np.int64)
@@ -2250,16 +2281,67 @@ def _unfold(V0, V, F, pitch, rounds=6, chunk=200_000):
             break
         verts = np.unique(F[x].ravel())
         verts = verts[np.any(V[verts] != V0[verts], axis=1)]
+        if fixed is not None:
+            verts = verts[~fixed[verts]]
         if not len(verts):
             break
-        V[verts] = V0[verts]
-        back += len(verts)
+        # halfway back first (closer to the surface than marching cubes'
+        # point), then a quarter, then all the way
+        back += int((level[verts] == 0).sum())
+        level[verts] += 1
+        s = np.where(level[verts] >= 3, 0.0, 0.5 ** level[verts])[:, None]
+        V[verts] = V0[verts] + s * (V1[verts] - V0[verts])
         vm = np.zeros(len(V), bool)
         vm[verts] = True
         cache.update(V, F, np.flatnonzero(vm[F].any(axis=1)))
         for _r in range(2):
             vm[F[vm[F].any(axis=1)].ravel()] = True
         q = np.flatnonzero(vm[F].any(axis=1))
+    if field is not None and back:
+        # those vertices sit off the zero level: project them along the
+        # true gradient, and keep the projection wherever it folds nothing
+        moved = np.flatnonzero(level > 0)
+        safe = V[moved].copy()
+        for _ in range(2):
+            V[moved] = _project(field, V[moved], pitch)
+        mf = np.zeros(len(V), bool)
+        mf[moved] = True
+        faces = np.flatnonzero(mf[F].any(axis=1))
+        # nor onto another vertex (two pulled to the same point of an edge,
+        # which an STL's vertex merge would fuse)
+        ring = np.unique(F[faces].ravel())
+        _, inv, cnt = np.unique(np.round(V[ring] / (1e-9 * pitch)), axis=0, return_inverse=True,
+                                return_counts=True)
+        dup = ring[cnt[inv.ravel()] > 1]
+        dup = dup[mf[dup]]
+        if len(dup):
+            j = np.searchsorted(moved, dup)
+            V[dup] = safe[j]
+        cache.update(V, F, faces)
+        for _ in range(8):
+            x = [crossing_faces(V, F, faces[i:i + chunk], cache) for i in range(0, len(faces), chunk)]
+            x = np.unique(np.concatenate(x)) if x else np.zeros(0, np.int64)
+            bad = np.zeros(len(V), bool)
+            bad[F[x].ravel()] = True
+            # and no sliver (manifold3d flips those, and a flip can cross)
+            bad[F[faces[_sliver(V, F[faces])]].ravel()] = True
+            back_to = np.flatnonzero(bad[moved] & np.any(V[moved] != safe, axis=1))
+            if not len(back_to):
+                break
+            V[moved[back_to]] = safe[back_to]
+            vm = np.zeros(len(V), bool)
+            vm[moved[back_to]] = True
+            faces = np.flatnonzero(vm[F].any(axis=1))
+            cache.update(V, F, faces)
+            for _r in range(2):
+                vm[F[vm[F].any(axis=1)].ravel()] = True
+            faces = np.flatnonzero(vm[F].any(axis=1))
+        else:
+            # not settled: no projection at all round what is still moving
+            vm = np.zeros(len(V), bool)
+            vm[F[faces].ravel()] = True
+            k = vm[moved]
+            V[moved[k]] = safe[k]
     return V, back
 
 
