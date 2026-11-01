@@ -4,19 +4,25 @@ another tool without a 40-65 MB STL of lattice triangles:
 
 - TPMS lattices (gyroid, diamond, Schwarz P, sheet or network) as a level
   set of the 3MF Volumetric & Implicit extension: the TPMS formula itself
-  as an implicit function (the same expression loadpath meshes, so the
-  surface is exact), its wall thickness a constant or, when a field grades
-  it, sampled into a 3D image (16-bit PNG stack) the function reads;
+  as an implicit function (the expression loadpath meshes). What a field
+  grades is sampled into 3D images (16-bit PNG stacks) the function reads:
+  the wall, an offset, and for a graded cell (warp grading) or a conformal
+  frame the lattice coordinates themselves, which are smooth, so trilinear
+  samples of them keep the surface within a few microns;
 - strut lattices (cubic, BCC, octet, Kelvin, ...) as a beam lattice of the
   Beam Lattice extension: every strut a beam, its radius at each end from
-  the thickness field.
+  the thickness field. The beam object also carries the struts as
+  octagonal prisms inside the beams, so a reader without beam support (a
+  mesh-only slicer) still gets a printable lattice, about 10% thinner.
 
-Either is clipped by the part's envelope (the part with its lattice solid,
-as in the STEP), and the rest of the part, skin, bosses and bores, is an
-ordinary mesh object beside it; a printer or slicer unions the two. What
-does not carry over: the blend fillets where the lattice meets the body
-(junctions come out sharp), graded cells and non-cartesian frames (those
-lattices are refused here; ship the STL). Written with lib3mf
+Each lattice is clipped by its own region: the part with that lattice solid
+and the others gone. The rest of the part, skin, bosses and bores, is an
+ordinary mesh object beside them. Where the graph blends a lattice into the
+body, its level set is the whole blend, max(smin(body, lattice clipped,
+r), region) with the body and region as signed distances to their meshes
+(the extension's mesh node) and r the graph's blend radius, so the fillets
+carry over. Strut lattices are written without their fillets, and with a
+constant cell in the cartesian frame only. Written with lib3mf
 (pip install "loadpath[3mf]"), which also reads the file back as a check.
 """
 from __future__ import annotations
@@ -25,8 +31,6 @@ import io
 import os
 
 import numpy as np
-
-UNIT_MM = "millimeter"
 
 
 def available() -> bool:
@@ -100,23 +104,40 @@ def fmax(a, b):
     return X("max", (_x(a), _x(b)))
 
 
+def fmin(a, b):
+    return X("min", (_x(a), _x(b)))
+
+
 def image(name, lo, size):
-    """The red channel of image3d `name` (registered with the writer) over
-    the box lo .. lo + size, as a scalar of the position."""
+    """3D image `name` (registered with the writer) over the box lo .. lo +
+    size, as a scalar of the position."""
     return X("image", value=(name, np.asarray(lo, float), np.asarray(size, float)))
+
+
+def mesh(name):
+    """Signed distance (negative inside) to mesh `name` (registered with the
+    writer)."""
+    return X("mesh", value=name)
+
+
+def smin(a, b, k):
+    """fields._smin (polynomial smooth minimum, radius k), as an expression."""
+    a, b, k = _x(a), _x(b), _x(k)
+    h = fmin(fmax(0.5 + 0.5 * (b - a) / k, 0.0), 1.0)
+    return b * (1.0 - h) + a * h - k * h * (1.0 - h)
 
 
 POS = {k: X("pos", value=i) for i, k in enumerate("xyz")}
 
 
-def evaluate(e, P, images=None, memo=None):
-    """e at points P (n, 3); `images` {name: (grid, offset, scale)} for image
-    nodes, sampled the way the extension says (trilinear between voxel
-    centres, clamped)."""
+def evaluate(e, P, images=None, meshes=None, memo=None):
+    """e at points P (n, 3); `images` {name: (grid[z, y, x], offset, scale)}
+    sampled the way the extension says (trilinear between voxel centres,
+    clamped), `meshes` {name: trimesh} for mesh distances."""
     memo = {} if memo is None else memo
     if id(e) in memo:
         return memo[id(e)]
-    a = [evaluate(x, P, images, memo) for x in e.args]
+    a = [evaluate(x, P, images, meshes, memo) for x in e.args]
     op = e.op
     if op == "pos":
         r = P[:, e.value]
@@ -126,11 +147,20 @@ def evaluate(e, P, images=None, memo=None):
         name, lo, size = e.value
         grid, off, scale = images[name]
         r = _sample(grid, (P - lo) / size) * scale + off
+    elif op == "mesh":
+        from .sharp import mesh_distance
+
+        # exact near the surface; beyond `cap` only the side matters here
+        m, cap = meshes[e.value], 4.0
+        r = mesh_distance(m, P, cap=cap, signed=True)
+        far = ~(np.abs(r) < cap)
+        if far.any():
+            r[far] = np.where(m.contains(P[far]), -cap, cap)
     else:
         r = {"add": lambda: a[0] + a[1], "sub": lambda: a[0] - a[1], "mul": lambda: a[0] * a[1],
              "div": lambda: a[0] / a[1], "sin": lambda: np.sin(a[0]), "cos": lambda: np.cos(a[0]),
              "sqrt": lambda: np.sqrt(a[0]), "abs": lambda: np.abs(a[0]),
-             "max": lambda: np.maximum(a[0], a[1])}[op]()
+             "max": lambda: np.maximum(a[0], a[1]), "min": lambda: np.minimum(a[0], a[1])}[op]()
     memo[id(e)] = r
     return r
 
@@ -146,11 +176,18 @@ def _sample(grid, uvw):
     return map_coordinates(grid, c, order=1, mode="nearest")
 
 
+def _quantize(grid):
+    """The grid as 16-bit levels in [0, 1], and the offset and scale back."""
+    lo_, hi_ = float(grid.min()), float(grid.max())
+    span = hi_ - lo_ if hi_ > lo_ else 1.0
+    return np.round((grid - lo_) / span * 65535) / 65535, lo_, span
+
+
 class _Emitter:
     """X expressions as nodes of one lib3mf implicit function."""
 
-    def __init__(self, lib, model, fn, images):
-        self.lib, self.model, self.fn, self.images = lib, model, fn, images
+    def __init__(self, lib, fn, images, meshes):
+        self.lib, self.fn, self.images, self.meshes = lib, fn, images, meshes
         self.n = 0
         self.memo = {}
         pos = fn.AddInput("pos", "position", lib.ImplicitPortType.Vector)
@@ -165,7 +202,7 @@ class _Emitter:
     def port(self, e):
         if id(e) in self.memo:
             return self.memo[id(e)]
-        lib, fn, S = self.lib, self.fn, self.lib.ImplicitNodeConfiguration.ScalarToScalar
+        fn, S = self.fn, self.lib.ImplicitNodeConfiguration.ScalarToScalar
         if e.op == "pos":
             out = (self.dec.GetOutputX, self.dec.GetOutputY, self.dec.GetOutputZ)[e.value]()
         elif e.op == "const":
@@ -174,10 +211,17 @@ class _Emitter:
             out = nd.GetOutputValue()
         elif e.op == "image":
             out = self._image(e)
+        elif e.op == "mesh":
+            rid = fn.AddResourceIdNode(self._id("meshid"), "", "")
+            rid.SetResource(self.meshes[e.value])
+            mn = fn.AddMeshNode(self._id("meshdist"), e.value, "")
+            fn.AddLink(rid.GetOutputValue(), mn.GetInputMesh())
+            fn.AddLink(self.posport, mn.GetInputPos())
+            out = mn.GetOutputDistance()
         else:
             add = {"add": fn.AddAdditionNode, "sub": fn.AddSubtractionNode, "mul": fn.AddMultiplicationNode,
                    "div": fn.AddDivisionNode, "sin": fn.AddSinNode, "cos": fn.AddCosNode, "sqrt": fn.AddSqrtNode,
-                   "abs": fn.AddAbsNode, "max": fn.AddMaxNode}[e.op]
+                   "abs": fn.AddAbsNode, "max": fn.AddMaxNode, "min": fn.AddMinNode}[e.op]
             nd = add(self._id(e.op), S, "", "")
             fn.AddLink(self.port(e.args[0]), nd.GetInputA())
             if len(e.args) > 1:
@@ -218,12 +262,12 @@ class _Emitter:
 _TPMS = ("gyroid", "diamond", "schwarz-p")
 
 
-def tpms_expr(kind, cell, thickness, form="sheet", origin=(0, 0, 0)):
-    """Signed distance (mm, negative inside) of a TPMS sheet or network as an
-    expression: loadpath.lattice.tpms (value over gradient magnitude, the
-    magnitude floored at 0.3 k) less half the wall."""
-    k = 2.0 * np.pi / float(cell)
-    x, y, z = ((POS[c] - float(o)) * k for c, o in zip("xyz", origin))
+def tpms_unit(kind, x, y, z):
+    """loadpath.lattice.tpms at period 1 over coordinate expressions x, y, z
+    (cell units): value over gradient magnitude (floored at 0.3 k), in
+    cell units."""
+    k = 2.0 * np.pi
+    x, y, z = x * k, y * k, z * k
     sx, cx, sy, cy, sz, cz = sin(x), cos(x), sin(y), cos(y), sin(z), cos(z)
     if kind == "gyroid":
         f = sx * cy + sy * cz + sz * cx
@@ -238,8 +282,18 @@ def tpms_expr(kind, cell, thickness, form="sheet", origin=(0, 0, 0)):
         g = (-1.0 * sx, -1.0 * sy, -1.0 * sz)
     else:
         raise ValueError(f"TPMS kind must be one of {', '.join(_TPMS)}")
-    gn = fmax(sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * k, 0.3 * k)
-    d = f / gn
+    return f / fmax(sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * k, 0.3 * k)
+
+
+def tpms_expr(kind, cell, thickness, form="sheet", origin=(0, 0, 0)):
+    """Signed distance (mm, negative inside) of a TPMS sheet or network with
+    a constant cell, as an expression."""
+    c = float(cell)
+    U = [(POS[a] - float(o)) / c for a, o in zip("xyz", origin)]
+    return _wall(tpms_unit(kind, *U) * c, thickness, form)
+
+
+def _wall(d, thickness, form):
     half = 0.5 * thickness
     if form == "sheet":
         return fabs(d) - half
@@ -278,13 +332,75 @@ def lattice_beams(kind, cell, lo, hi, origin=(0, 0, 0), aspect=(1, 1, 1)):
     return V, B
 
 
+def strut_prisms(V, B, R, clip=None, sides=8):
+    """The beams as `sides`-gonal frustums inside them (radius R at each
+    end, vertices on the beam's circle), unioned and clipped by `clip` (a
+    trimesh): a closed mesh a reader without beam support can print."""
+    import manifold3d as m3d
+    import trimesh
+
+    from .shapes import manifold_from_trimesh
+
+    parts = []
+    for a, b in B:
+        p, q = V[a], V[b]
+        L = float(np.linalg.norm(q - p))
+        if L < 1e-6:
+            continue
+        c = m3d.Manifold.cylinder(L, float(R[a]), float(R[b]), sides)
+        z = (q - p) / L
+        x = np.cross(z, (1.0, 0, 0) if abs(z[0]) < 0.9 else (0, 1.0, 0))
+        x /= np.linalg.norm(x)
+        y = np.cross(z, x)
+        M = np.column_stack([x, y, z, p])                        # 3 x 4
+        parts.append(c.transform(M.tolist()))
+    if not parts:
+        return trimesh.Trimesh()
+    u = m3d.Manifold.batch_boolean(parts, m3d.OpType.Add)
+    if clip is not None:
+        u = u ^ manifold_from_trimesh(clip)
+    return _solid(u)
+
+
+def _solid(u):
+    """A manifold3d result as a trimesh, without the specks (under 0.01
+    mm3: pinholes where prisms meet at a node, slivers where a strut
+    grazes the region) that a slicer would count as parts."""
+    import trimesh
+
+    me = u.to_mesh()
+    t = trimesh.Trimesh(np.asarray(me.vert_properties)[:, :3], np.asarray(me.tri_verts), process=False)
+    parts = t.split(only_watertight=False)
+    if len(parts) > 1:
+        keep = [x for x in parts if abs(x.volume) > 1e-2]
+        t = trimesh.util.concatenate(keep) if keep else trimesh.Trimesh()
+    return t
+
+
 # ---- the file
 
-def write_lattice_3mf(path, body, envelope, lattices, name="part", check=True):
-    """Write the 3MF: `body` (trimesh, the part without its lattices) and,
-    per lattice, a level set or a beam lattice clipped by `envelope` (trimesh,
-    the part with its lattices solid). `lattices`: dicts from
-    lattice_from_graph. Returns a report (objects, bytes, beams, nodes)."""
+def _union(a, b):
+    from .shapes import manifold_from_trimesh
+
+    if b is None or not len(b.faces):
+        return a
+    return _solid(manifold_from_trimesh(a) + manifold_from_trimesh(b))
+
+
+def write_lattice_3mf(path, body, lattices, name="part", check=True, prisms=True, mesh_readers=False):
+    """Write the 3MF: `body` (trimesh or None, the part without its
+    lattices) and per lattice (dicts from lattice_from_graph, each with its
+    `clip` trimesh, the region it fills) a level set or a beam lattice
+    clipped by that region; a lattice with a `blend` radius becomes the
+    blend of body and lattice. Returns a report.
+
+    The region meshes are objects of type "model" outside the build, as
+    the Beam Lattice spec asks of a clipping mesh. PrusaSlicer 2.x refuses
+    any file with an object outside the build; `mesh_readers` marks the
+    regions type "other" instead, which it skips, so it opens a beam
+    lattice file (printing the prisms), and puts the body into the (first)
+    beam lattice's mesh, so it gets one object rather than two it would
+    lay apart on the bed. lib3mf reads either."""
     lib = _need()
     w = lib.get_wrapper()
     model = w.CreateModel()
@@ -304,51 +420,77 @@ def write_lattice_3mf(path, body, envelope, lattices, name="part", check=True):
     for i in range(4):
         for j in range(3):
             ident.Fields[i][j] = 1.0 if i == j else 0.0
-    env = mesh_object(envelope, f"{name} envelope (lattice clip)")
-    if body is not None and len(body.faces):
+    bo, items = None, []
+    # for mesh-only readers, the body goes into the first beam lattice's
+    # mesh (a beam lattice object is its triangles and its beams), as one
+    # shell with the prisms: a slicer lays separate objects (or a components
+    # object's parts) apart on the bed
+    merge = (mesh_readers and body is not None and len(body.faces) and prisms
+             and lattices and all(x["kind"] not in _TPMS for x in lattices))
+    if body is not None and len(body.faces) and not merge:
         bo = mesh_object(body, f"{name} body")
-        model.AddBuildItem(bo, ident)
-        rep["objects"].append({"name": f"{name} body", "triangles": len(body.faces)})
+        items.append(bo)
+        rep["objects"].append({"name": f"{name} body", "triangles": int(len(body.faces))})
     for lat in lattices:
+        clip = mesh_object(lat["clip"], f"{name} {lat['name']} region")
+        if mesh_readers:
+            clip.SetType(lib.ObjectType.Other)
         if lat["kind"] in _TPMS:
-            images = {}
-            for nm, (grid, off, scale) in lat.get("images", {}).items():
-                images[nm] = _image3d(lib, model, nm, grid, off, scale)
+            images = {nm: _image3d(lib, model, nm, *im) for nm, im in lat.get("images", {}).items()}
+            meshes = {"region": clip}
+            e = lat["expr"]
+            blend = lat.get("blend")
+            if blend is not None and bo is not None:
+                meshes["body"] = bo
+                rg = mesh("region")
+                e = fmax(smin(mesh("body"), fmax(e, rg), blend), rg)
             fn = model.AddImplicitFunction()
             fn.SetDisplayName(f"{lat['name']} ({lat['kind']})")
-            em = _Emitter(lib, model, fn, images)
+            em = _Emitter(lib, fn, images, meshes)
             out = fn.AddOutput("distance", "signed distance, mm", lib.ImplicitPortType.Scalar)
-            fn.AddLink(em.port(lat["expr"]), out)
+            fn.AddLink(em.port(e), out)
             ls = model.AddLevelSet()
             ls.SetName(f"{name} {lat['name']}")
             ls.SetFunction(fn)
             ls.SetChannelName("distance")
-            ls.SetMesh(env)
+            ls.SetMesh(clip)
             ls.SetMeshBBoxOnly(False)
             ls.SetMinFeatureSize(float(lat.get("minFeature", 0.0)))
             ls.SetFallBackValue(1.0)
-            model.AddBuildItem(ls, ident)
-            rep["lattices"].append({"name": lat["name"], "as": "levelset", "kind": lat["kind"],
-                                    "nodes": em.n, "graded": bool(images)})
+            items.append(ls)
+            rep["lattices"].append({"name": lat["name"], "as": "levelset", "kind": lat["kind"], "nodes": em.n,
+                                    "images": sorted(images), "blended": blend is not None and bo is not None})
         else:
             V, B, R = lat["vertices"], lat["beams"], lat["radii"]
-            mo = model.AddMeshObject()
-            mo.SetName(f"{name} {lat['name']}")
-            mo.SetGeometry([lib.Position((float(a), float(b), float(c))) for a, b, c in V], [])
+            pm = strut_prisms(V, B, R, lat["clip"]) if prisms else None
+            if merge and not rep["objects"]:
+                pm = _union(body, pm)
+                rep["objects"].append({"name": f"{name} {lat['name']}", "triangles": int(len(pm.faces)),
+                                       "with": "body"})
+            mo = mesh_object(pm, f"{name} {lat['name']}") if pm is not None and len(pm.faces) else None
+            if mo is None:
+                mo = model.AddMeshObject()
+                mo.SetName(f"{name} {lat['name']}")
+            nv = mo.GetVertexCount()
+            for p in V:
+                mo.AddVertex(lib.Position((float(p[0]), float(p[1]), float(p[2]))))
             bl = mo.BeamLattice()
             bl.SetMinLength(1e-4)
-            bl.SetClipping(lib.BeamLatticeClipMode.Inside, env.GetUniqueResourceID())
+            bl.SetClipping(lib.BeamLatticeClipMode.Inside, clip.GetUniqueResourceID())
             beams = []
             for (a, b) in B:
                 bm = lib.Beam()
-                bm.Indices[0], bm.Indices[1] = int(a), int(b)
+                bm.Indices[0], bm.Indices[1] = int(a) + nv, int(b) + nv
                 bm.Radii[0], bm.Radii[1] = float(R[a]), float(R[b])
                 bm.CapModes[0] = bm.CapModes[1] = lib.BeamLatticeCapMode.Sphere
                 beams.append(bm)
             bl.SetBeams(beams)
-            model.AddBuildItem(mo, ident)
+            items.append(mo)
             rep["lattices"].append({"name": lat["name"], "as": "beamlattice", "kind": lat["kind"],
-                                    "beams": len(B), "nodes": len(V)})
+                                    "beams": int(len(B)), "nodes": int(len(V)),
+                                    "prismTriangles": int(len(pm.faces)) if pm is not None else 0})
+    for it in items:
+        model.AddBuildItem(it, ident)
     wr = model.QueryWriter("3mf")
     wr.WriteToFile(path)
     if any(x["as"] == "levelset" for x in rep["lattices"]):
@@ -399,7 +541,7 @@ def _image3d(lib, model, nm, grid, off, scale):
         st.CreateSheetFromBuffer(k, f"/3D/volumetric/{nm}/sheet{k:04d}.png", list(buf.getvalue()))
     f = model.AddFunctionFromImage3D(st)
     f.SetDisplayName(nm)
-    f.SetFilter(lib.TextureFilter.Linear) if hasattr(lib, "TextureFilter") else None
+    f.SetFilter(lib.TextureFilter.Linear)
     f.SetTileStyles(lib.TextureTileStyle.Clamp, lib.TextureTileStyle.Clamp, lib.TextureTileStyle.Clamp)
     f.SetOffset(float(off))
     f.SetScale(float(scale))
@@ -419,24 +561,29 @@ def read_back(path):
         out["meshes"] += 1
         out["triangles"] += mo.GetTriangleCount()
         out["beams"] += mo.BeamLattice().GetBeamCount()
-    it = m.GetLevelSets()
-    while it.MoveNext():
-        out["levelsets"] += 1
-    it = m.GetFunctions()
-    while it.MoveNext():
-        out["functions"] += 1
-    it = m.GetBuildItems()
-    while it.MoveNext():
-        out["build"] += 1
+    for get, key in ((m.GetLevelSets, "levelsets"), (m.GetFunctions, "functions"), (m.GetBuildItems, "build")):
+        it = get()
+        while it.MoveNext():
+            out[key] += 1
     return out
+
+
+# ---- from a field graph
+
+def _grid(lo, hi, h):
+    lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    n = np.maximum(np.ceil((hi - lo) / h).astype(int), 1)
+    ax = [lo[i] + (np.arange(n[i]) + 0.5) * h for i in range(3)]
+    Z, Y, Xg = np.meshgrid(ax[2], ax[1], ax[0], indexing="ij")
+    return np.stack([Xg.ravel(), Y.ravel(), Z.ravel()], axis=1), Z.shape, n * h
 
 
 def lattice_from_graph(g, name, lo, hi, grid=None):
     """A lattice node of FieldGraph `g` as the writer's dict: the TPMS
-    expression (thickness constant, or sampled over lo..hi into a 3D image
-    at `grid` mm, default the smaller of cell / 6 and 1 mm), or the beams
+    expression, what a field grades in it sampled over lo..hi into 3D images
+    at `grid` mm (default the smaller of cell / 6 and 1 mm); or the beams
     tiled over lo..hi with a radius per node. Raises ValueError for what the
-    formats cannot say (a graded cell, a frame, an offset, Voronoi foams)."""
+    formats cannot say."""
     from .struts import canonical, is_strut
 
     nd = g.nodes[name]
@@ -445,58 +592,127 @@ def lattice_from_graph(g, name, lo, hi, grid=None):
     tp = {"gyroid": "gyroid", "diamond": "diamond", "schwarz-p": "schwarz-p", "schwarz_p": "schwarz-p",
           "schwarzP": "schwarz-p"}.get(kind)
     strut = is_strut(kind)
-    if (s.get("frame") or {}).get("type", "cartesian") != "cartesian":
-        raise ValueError(f"lattice {name!r}: only the cartesian frame goes into 3MF as a lattice")
-    if isinstance(r.get("cell"), str) or isinstance(s.get("cell"), dict):
-        raise ValueError(f"lattice {name!r}: a graded cell does not go into 3MF as a lattice")
-    if "offset" in s:
-        raise ValueError(f"lattice {name!r}: an offset lattice does not go into 3MF as a lattice")
-    if strut and canonical(kind) == "voronoi":
-        raise ValueError(f"lattice {name!r}: a Voronoi foam does not go into 3MF as a beam lattice")
+    ftype = (s.get("frame") or {}).get("type", "cartesian")
+    graded = isinstance(r.get("cell"), str)
     if tp is None and not strut:
         raise ValueError(f"lattice {name!r}: unknown lattice type {kind!r}")
-    if tp is not None and "aspect" in s:
-        raise ValueError(f"lattice {name!r}: a stretched TPMS cell does not go into 3MF as a lattice")
-    cell = float(s.get("cell", 8.0))
+    if strut and canonical(kind) == "voronoi":
+        raise ValueError(f"lattice {name!r}: a Voronoi foam does not go into 3MF as a beam lattice")
+    if strut and (graded or ftype != "cartesian" or "offset" in s):
+        raise ValueError(f"lattice {name!r}: a strut lattice goes into 3MF with a constant cell in the "
+                         "cartesian frame and no offset")
+    if ftype in ("cylindrical", "spherical"):
+        raise ValueError(f"lattice {name!r}: a {ftype} frame's coordinates wrap round, which a 3D image "
+                         "cannot sample; ship the STL")
+    if graded and s.get("grading", "warp") != "warp":
+        raise ValueError(f"lattice {name!r}: blend grading does not go into 3MF (use the default warp)")
     origin = tuple(float(v) for v in s.get("origin", (0, 0, 0)))
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    cell0 = float(s["cell"]) if isinstance(s.get("cell"), (int, float)) else None
+
+    def local_cell(P):
+        if cell0 is not None:
+            return np.full(len(P), cell0)
+        return np.broadcast_to(np.asarray(g._val(r["cell"], P, {}), float), (len(P),))
 
     def wall(P):
         memo = {}
         if "thickness" in r:
             return np.broadcast_to(np.asarray(g._val(r["thickness"], P, memo), float), (len(P),))
         if "density" in r:
-            rho = np.clip(np.broadcast_to(np.asarray(g._val(r["density"], P, memo), float), (len(P),)), 0.05, 0.95)
+            rho = np.clip(np.broadcast_to(np.asarray(g._val(r["density"], P, memo), float), (len(P),)),
+                          0.02 if strut else 0.05, 0.95)
             if strut:
                 from .struts import strut_diameter_for_density
 
-                return strut_diameter_for_density(kind, rho, cell)
+                return strut_diameter_for_density(kind, rho, local_cell(P))
             from .lattice import wall_for_density
 
-            return wall_for_density(tp, rho, cell)
+            return wall_for_density(tp, rho, local_cell(P))
         return np.ones(len(P))
 
-    out = {"name": name, "kind": tp or canonical(kind), "cell": cell}
+    out = {"name": name, "kind": tp or canonical(kind)}
     if strut:
-        V, B = lattice_beams(kind, cell, lo, hi, origin, s.get("aspect", (1, 1, 1)))
-        out.update(vertices=V, beams=B, radii=0.5 * wall(V))
+        V, B = lattice_beams(kind, cell0 or 8.0, lo, hi, origin, s.get("aspect", (1, 1, 1)))
+        out.update(vertices=V, beams=B, radii=0.5 * wall(V), cell=cell0 or 8.0)
         return out
-    h = float(grid or min(cell / 6.0, 1.0))
-    n = np.maximum(np.ceil((hi - lo) / h).astype(int), 1)
-    size = n * h
-    ax = [lo[i] + (np.arange(n[i]) + 0.5) * h for i in range(3)]
-    Z, Y, Xg = np.meshgrid(ax[2], ax[1], ax[0], indexing="ij")
-    P = np.stack([Xg.ravel(), Y.ravel(), Z.ravel()], axis=1)
-    t = wall(P).reshape(Z.shape)
-    t0, t1 = float(t.min()), float(t.max())
-    if t1 - t0 <= 1e-6 * max(t1, 1e-9):
-        thick = t0
-        out["thickness"] = round(t0, 4)
+
+    images = {}
+    cmin = cell0 or float(np.min(local_cell(_grid(lo, hi, 2.0)[0])))
+    h = float(grid or min(cmin / 6.0, 1.0))
+    lo, hi = lo - h, hi + h       # a voxel of margin: clamped samples hold still past the outer voxel centres
+    P, shape, size = _grid(lo, hi, h)
+
+    def field(tag, v, const_ok=True):
+        """v at the grid: a constant, or an image expression."""
+        v = np.asarray(v, float).reshape(shape)
+        if const_ok and float(np.ptp(v)) <= 1e-6 * max(float(np.abs(v).max()), 1e-9):
+            return float(v.flat[0]), None
+        q, off, span = _quantize(v)
+        images[f"{name}-{tag}"] = (q, off, span)
+        return image(f"{name}-{tag}", lo, size), {"min": round(float(v.min()), 4), "max": round(float(v.max()), 4)}
+
+    if graded or ftype == "conformal":
+        # the lattice's own coordinates (cell units) and its cell, as images
+        U, cl = g.lattice_coords(nd, P)
+        Ux = [field(f"u{i}", U[:, i], const_ok=False)[0] for i in range(3)]
+        cexp, cinfo = field("cell", cl)
+        d = tpms_unit(tp, *Ux)
+        if "aspect" in s:
+            d = d * float(np.min(s["aspect"]))
+        d = d * cexp
+        out["cell"] = cinfo or round(cexp, 4)
+        out["coordinates"] = {"grid": h, "voxels": list(shape[::-1])}
     else:
-        img = f"{name}-wall"
-        out["images"] = {img: ((t - t0) / (t1 - t0), t0, t1 - t0)}
-        thick = image(img, lo, size)
-        out["thickness"] = {"min": round(t0, 4), "max": round(t1, 4), "grid": h, "voxels": n.tolist()}
-    out["expr"] = tpms_expr(tp, cell, thick, s.get("form", "sheet"), origin)
-    out["minFeature"] = round(0.5 * t0, 4)
+        if "aspect" in s:
+            a = np.asarray(s["aspect"], float)
+            Uc = [(POS[ax] - o) / (cell0 * a_) for ax, o, a_ in zip("xyz", origin, a)]
+            d = tpms_unit(tp, *Uc) * float(np.min(a)) * cell0
+        else:
+            Uc = [(POS[ax] - o) / cell0 for ax, o in zip("xyz", origin)]
+            d = tpms_unit(tp, *Uc) * cell0
+        out["cell"] = cell0
+    if "offset" in r:
+        oexp, _ = field("offset", np.broadcast_to(np.asarray(g._val(r["offset"], P, {}), float), (len(P),)))
+        d = d - oexp
+    t = wall(P)
+    texp, tinfo = field("wall", t)
+    out["thickness"] = tinfo or round(texp, 4)
+    out["expr"] = _wall(d, texp, s.get("form", "sheet"))
+    out["images"] = images
+    out["minFeature"] = round(0.5 * float(np.min(t)), 4)
     return out
+
+
+def blend_of(g, name):
+    """The blend radius where the graph unions lattice `name` into the
+    rest: the first blended union with an input that depends on the lattice
+    and one that does not. (number, or a node name, or None)."""
+    memo = {}
+
+    def deps(n):
+        if n in memo:
+            return memo[n]
+        memo[n] = False
+        nd = g.nodes.get(n)
+        if nd is None:
+            return False
+        if n == name:
+            memo[n] = True
+            return True
+        hit = False
+        for v in (nd.refs or {}).values():
+            for x in (v if isinstance(v, list) else v.values() if isinstance(v, dict) else [v]):
+                if isinstance(x, str) and deps(x):
+                    hit = True
+        memo[n] = hit
+        return hit
+
+    for nd in g.nodes.values():
+        if nd.op != "union" or "blend" not in nd.spec:
+            continue
+        ins = [x for x in nd.refs.get("inputs", []) if isinstance(x, str)]
+        with_ = [deps(x) for x in ins]
+        if any(with_) and not all(with_):
+            return nd.refs["blend"]
+    return None

@@ -623,32 +623,52 @@ meshing time on a lattice, a fraction of it on a solid. Not with `stream`.
 
 `"lattice3mf": true` (or `loadpath field graph.json --lattice-3mf`; needs
 `pip install "loadpath[3mf]"`, lib3mf) also writes `<name>-lattice.3mf`
-with the lattice kept as a lattice instead of its triangles
+with every lattice kept as a lattice instead of its triangles
 (loadpath/lattice3mf.py):
 
 - a TPMS (gyroid, diamond, Schwarz P; sheet or network) is a level set of
   the 3MF Volumetric & Implicit extension: the TPMS formula loadpath meshes,
-  written as an implicit function (about 50 nodes), so the surface is the
-  same field to rounding. A wall a field grades is sampled into a 3D image
-  (a 16-bit PNG stack, `grid` mm, default the smaller of cell / 6 and 1 mm)
-  the function reads;
+  written as an implicit function (about 50-90 nodes). What a field grades
+  is sampled into 3D images (16-bit PNG stacks, `grid` mm, default the
+  smaller of cell / 6 and 1 mm, one voxel of margin) the function reads:
+  the wall, an offset, and for a graded cell (warp grading) or a conformal
+  frame the lattice coordinates themselves, which are smooth, so the
+  surface stays within 0.05 mm of the field (0.015 mm p99);
 - a strut cell (cubic, BCC, octet, Kelvin, ...) is a beam lattice of the
   Beam Lattice extension, each strut a beam with its radius at each end
-  from the thickness field.
+  from the thickness field. The same object carries the struts as
+  octagonal prisms inside the beams (a beam lattice object is its
+  triangles and its beams), so a mesh-only reader still gets the lattice,
+  about 1-10% thinner.
 
-The lattice is clipped by the part's envelope (the part with its lattice
-solid, as in the STEP) and the rest of the part, skin, bosses and bores, is
-an ordinary mesh beside it, both decimated to `decimate` mm (default
-0.02); a printer or slicer unions the two. The file is read back with
-lib3mf as a check (`lattice3mf.readBack`). The arm link sandwich: 1.6 MB
-against a 37.7 MB STL, 2 minutes with the part. On graphs without blends
-the two objects are the part exactly (Monte Carlo, 400k points); where a
-graph blends the lattice into the body, those fillets come out sharp.
-Refused, with the reason in the report: more than one lattice node, a
-graded cell, a non-cartesian frame, an offset, a stretched TPMS cell,
-Voronoi foams (ship the STL). Readers: lib3mf reads both extensions; beam
-lattices are widely supported by AM build-prep tools, the implicit
-extension (2023-24) by few yet.
+Each lattice is clipped by its own region: the part with that lattice solid
+and the others gone, so a part can hold several (a gyroid core and an octet
+end, say). The rest of the part, skin, bosses and bores, is an ordinary
+mesh beside them; meshes are decimated to `decimate` mm (default 0.02).
+Where the graph unions a TPMS into the body with a `blend` (a number or a
+graded field, sampled like the wall), the level set is the blend itself,
+max(smin(body, lattice in its region, r), region), with body and region as
+signed distances to their meshes (the extension's mesh node), so the
+fillets carry over. Strut lattices meet the body sharp. The file is read
+back with lib3mf as a check (`lattice3mf.readBack`).
+
+Fidelity (Monte Carlo against the field, 150-200k points): box with a
+gyroid, graded cell, blended gyroid, gyroid plus octet: 0.13-0.23% of
+points differ (the 0.02 mm decimation). Arm link sandwich (graded blend
+radius): 0.22% with the blend, 1.3% when the fillets were dropped (they are
+about 4% of the part); 1.7 MB against a 37.7 MB STL, 2 minutes.
+
+Readers. lib3mf reads everything. PrusaSlicer 2.x reads neither extension
+and refuses any 3MF holding an object outside the build (the clip
+regions); with `"lattice3mf": {"meshReaders": true}` the regions are type
+"other" (which it skips; the Beam Lattice spec asks for "model", which
+lib3mf does not enforce) and the body goes into the beam lattice's mesh as
+one shell with the prisms, so PrusaSlicer opens and slices a strut lattice
+file as one part (box octet: 2427 mm3 of prisms + body against 2460 in the
+STL). A level set file needs an implicit-capable reader (few yet; ship the
+STL to the rest). Refused, with the reason in the report: cylindrical and
+spherical frames, blend grading, strut lattices with a graded cell, frame
+or offset, Voronoi foams.
 
 ## STEP
 
