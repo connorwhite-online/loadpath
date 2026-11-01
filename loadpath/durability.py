@@ -295,6 +295,12 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
         return r
 
     damage = {"inPlane": 0.0, "acrossLayers": 0.0}
+    # a load of unknown in-plane direction expands into one case per
+    # direction (name@angle, spec._expand_planar), each carrying the case's
+    # cycles: the cycles happen once, in some direction, so the group adds
+    # its worst direction's damage, not the sum (16 directions read PETG's
+    # fatigue SF 1.66x low)
+    group = {}
     creep_sf = np.inf
     for lc, c in zip(study.load_cases, cases):
         hours = lc.hours
@@ -321,11 +327,12 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
             life = cycles_to_failure(data, s_t, peak)
             row.update(cycles=lc.cycles, fatigueStrength=fatigue_strength(data, s_t, lc.cycles), life=life,
                        damage=lc.cycles / life)
-            damage["inPlane"] += lc.cycles / life
+            g = group.setdefault(str(lc.name).split("@")[0], {"inPlane": 0.0, "acrossLayers": 0.0})
+            g["inPlane"] = max(g["inPlane"], lc.cycles / life)
             if tens > 0:
                 life_i = cycles_to_failure(data, inter * s_t, tens)
                 row.update(interlayerLife=life_i, interlayerDamage=lc.cycles / life_i)
-                damage["acrossLayers"] += lc.cycles / life_i
+                g["acrossLayers"] = max(g["acrossLayers"], lc.cycles / life_i)
         if hours:
             phi = creep_ratio(data, hours, r)
             s_r = rupture_strength(data, s_t, hours)
@@ -341,6 +348,9 @@ def assess(study, cases: list, allowance: float = 1.0) -> dict:
                     "nonlinear and faster than the estimate")
         out["cases"].append(row)
 
+    for g in group.values():
+        for where in damage:
+            damage[where] += g[where]
     n_th = _thermal_cycles(study)
     if n_th is not None and any("cycleStress" in c for c in cases):
         # heating up and cooling down (thermal.Cycle): the worst load case's

@@ -99,6 +99,13 @@ def test_miner_sum_and_safety_factor():
                         for c in cases])
     assert abs(scaled["fatigueDamage"] - 1.0) < 1e-6
     assert r["creepSafetyFactor"] is None and r["safetyFactor"] == r["fatigueSafetyFactor"]
+    # one in-plane load expanded into directions (name@angle) is one load:
+    # its cycles count once, at the worst direction, not once per direction
+    s = study_from_dict(_bar(case={"cycles": 1e6}))
+    C = type(s.load_cases[0])
+    s.load_cases = [C(f"duty@{a}", s.load_cases[0].loads, cycles=1e6) for a in (0, 45, 90, 135)]
+    r = assess(s, [{"peakStress": p, "deflection": 0.1} for p in (8.0, 10.0, 9.0, 7.0)])
+    assert abs(r["fatigueDamage"] - 1e6 / cycles_to_failure(d, uts, 10.0)) / r["fatigueDamage"] < 1e-9
 
 
 def test_verify_reports_fatigue_creep_and_layer_bond():

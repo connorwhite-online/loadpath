@@ -919,9 +919,16 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=3, progress=None):
         while ex.More():
             shells.append(TopoDS.Shell(ex.Current()))
             ex.Next()
-        if len(shells) != 1 or sew.NbFreeEdges():
+        if not shells or sew.NbFreeEdges():
             raise RuntimeError(f"patches did not close ({len(shells)} shells, {sew.NbFreeEdges()} free edges)")
-        fx = ShapeFix_Solid(BRepBuilderAPI_MakeSolid(shells[0]).Solid())
+        # more than one shell: sealed voids inside (a sandwich's skin round
+        # its lattice), the biggest is the outside
+        size = [abs(_volume(BRepBuilderAPI_MakeSolid(sh).Solid())) for sh in shells]
+        order = np.argsort(size)[::-1]
+        mk = BRepBuilderAPI_MakeSolid(shells[int(order[0])])
+        for k in order[1:]:
+            mk.Add(shells[int(k)])
+        fx = ShapeFix_Solid(mk.Solid())
         fx.Perform()
         solid = fx.Solid()
         if _volume(solid) < 0:
@@ -1225,35 +1232,52 @@ def _forward(solid, tries=20):
     in an order it gets right, or a reader would turn the part inside out."""
     from OCP.BRep import BRep_Builder
     from OCP.BRepClass3d import BRepClass3d_SolidClassifier
-    from OCP.TopAbs import TopAbs_FACE, TopAbs_OUT
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_OUT, TopAbs_SHELL
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopoDS import TopoDS_Shell, TopoDS_Solid
 
     from .step import _volume
 
-    faces = []
-    ex = TopExp_Explorer(solid, TopAbs_FACE)
-    while ex.More():
-        faces.append(ex.Current())
-        ex.Next()
+    shells = []                                  # faces of each shell, outside first
+    es = TopExp_Explorer(solid, TopAbs_SHELL)
+    while es.More():
+        fs, ex = [], TopExp_Explorer(es.Current(), TopAbs_FACE)
+        while ex.More():
+            fs.append(ex.Current())
+            ex.Next()
+        shells.append(fs)
+        es.Next()
+    if not shells:
+        return solid
 
-    def make(fs):
+    def shell_of(fs):
         bb = BRep_Builder()
         shell = TopoDS_Shell()
         bb.MakeShell(shell)
         for f in fs:
             bb.Add(shell, f)
         shell.Closed(True)
+        return shell
+
+    def make(fs, rest):
+        bb = BRep_Builder()
         out = TopoDS_Solid()
         bb.MakeSolid(out)
-        bb.Add(out, shell)
+        bb.Add(out, shell_of(fs))
+        for r in rest:
+            bb.Add(out, shell_of(r))
         return out
 
-    out = make(faces)
+    if len(shells) > 1:                          # the outside first
+        vols = [_volume(make(fs, [])) for fs in shells]
+        k = int(np.argmax(vols))
+        shells = [shells[k]] + shells[:k] + shells[k + 1:]
+    faces, rest = shells[0], shells[1:]
+    out = make(faces, rest)
     if _volume(out) <= 0:
         return solid
     for k in range(min(tries, len(faces))):
-        cand = make(faces[k:] + faces[:k]) if k else out
+        cand = make(faces[k:] + faces[:k], rest) if k else out
         cl = BRepClass3d_SolidClassifier(cand)
         cl.PerformInfinitePoint(1e-6)
         if cl.State() == TopAbs_OUT:

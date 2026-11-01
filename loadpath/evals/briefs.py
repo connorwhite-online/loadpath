@@ -168,6 +168,15 @@ def score(brief: dict, stl: str, max_cells: int = VERIFY_CELLS) -> dict:
         for c in row["cases"]:
             if c["safetyFactor"] < SF_SLACK * sf:
                 f.append(f"SF {c['safetyFactor']:.2f} < {sf} in '{c['name']}'")
+    dsf = want.get("durabilitySafetyFactor")
+    if dsf:
+        # fatigue / creep under the gold study's durability block
+        dur = rep.get("durability") if isinstance(rep.get("durability"), dict) else {}
+        row["durabilitySafetyFactor"] = dur.get("safetyFactor")
+        if dur.get("safetyFactor") is None:
+            f.append("no durability check under the gold study")
+        elif dur["safetyFactor"] < SF_SLACK * dsf:
+            f.append(f"durability SF {dur['safetyFactor']:.2f} < {dsf}")
     dmax = want.get("maxDeflection")
     if dmax:
         for c in row["cases"]:

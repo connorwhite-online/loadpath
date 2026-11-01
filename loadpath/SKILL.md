@@ -47,7 +47,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    preserves only the bearing rings or the thread sleeve, keeps the bore and
    the head and driver path clear, and adds a preload case. Heads default
    to ISO 4762 socket heads (M3 5.5, M4 7, M5 8.5 mm); give `head` for a
-   washer or pan head and `counterbore` for the pocket's diameter. Don't
+   washer or pan head. The head and driver keep-out is as wide as the seat
+   ring (head + 2 x wall: M3 7.5, M4 9 mm); `counterbore` sets its diameter
+   when the user gives a counterbore or key clearance. Don't
    draw a solid boss round a screw.
 2. **Bound the design space** generously: the envelope the part may occupy,
    minus nothing (keep-outs are subtracted for you). Too tight a box is the
@@ -244,6 +246,30 @@ field. `check` reports every problem at once: fix them all, then check again.
   `check` reports (`peakMemoryGB`); `LOADPATH_CONFIRM_CELLS=60000` lowers it.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
+
+## Heat, fatigue and creep
+
+- A part next to something hot (a stepper face at 70 C, a heated bed):
+  a `thermal` block. `temperatures` hold surfaces at a temperature
+  (`region` or inline `shape`, `t` in C), `heat` puts watts in,
+  `convection` takes it off (default 8 W/(m² K), still air), `ambient`
+  25 by default. The temperature is solved on the part; every load case
+  then softens and derates each cell for its temperature and carries the
+  restrained expansion. `thermal.cycle` (`period`, `on` s, `cycles`) adds
+  heat-up/cool-down fatigue. See examples/thermal/motor-mount-hot.json.
+- Repeated loads: `cycles` on the load case (not on a load). A held load:
+  `hours` on the load case (creep rupture and crept deflection). A load of
+  unknown in-plane direction with `cycles` counts its cycles once, at the
+  worst direction.
+- `durability`: `temperature` (C the cyclic and held cases run at; it
+  derates only the fatigue and creep checks, so a part in a hot enclosure
+  also needs a `thermal` block, e.g. `temperatures` at that value, for its
+  static safety factor), `safetyFactor` (default 1.5), and
+  `constrain: true` to size the part for it rather than only check it.
+  With `fasteners`, the preload is also checked held for `preloadHours`
+  (default a year).
+- The result is `durability` in each outcome (`fatigueSafetyFactor`,
+  `creepSafetyFactor`, per-case `life`), and `deliver.durabilitySafetyFactor`.
 
 ## Lattices and heat exchangers
 

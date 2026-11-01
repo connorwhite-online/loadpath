@@ -424,6 +424,48 @@ def _drop_slivers(mesh):
     return m
 
 
+def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, keep_thin=False, lamb=0.5,
+                    nu=0.53):
+    """Smooth the isosurface: alternating steps v += f (L v - v), the first
+    shrinking (lamb), the second shrinking on thick members and inflating
+    (Taubin's) on members about two cells thick or less.
+
+    This code long passed nu = -0.53 to trimesh.smoothing.filter_taubin,
+    which subtracts its nu, so both steps shrank: plain Laplacian smoothing.
+    On thick members that rounds the staircase off in a way the evals are
+    tuned to: true Taubin everywhere read worse (mass at target SF +3% to
+    +10% on six full-tier cases, the wrist yoke failing on creases). But it
+    is curvature flow, and members one or two cells thick shrink until they
+    nearly part: the GRIP wrist yoke's stress-constrained design at 15k
+    cells lost 20% of its mesh volume (verified peak 33 -> 176 MPa) and the
+    camera boom's two-cell walls came out one cell thick (16x softer).
+    Capping each vertex's shift instead (0.1 / 0.25 cell) only halved the
+    damage. So it is opt-in (resolution.keepThinMembers): the member's
+    half-thickness at a vertex is the largest distance to void within two
+    cells; Taubin at 1.5 cells or less, as before at 2.5 or more, blended
+    between. That keeps the yoke at SF 1.22 and the motor mount's 15k
+    design at 1.42 (0.95 before); a narrower window (1.0-1.5) kept only
+    0.43 on the yoke. Off, every vertex smooths as before."""
+    import trimesh
+
+    w = 1.0
+    if keep_thin:
+        grid = domain.full_grid(np.asarray(xphys, float)) > 0.5
+        half = ndimage.maximum_filter(ndimage.distance_transform_edt(grid), size=5)
+        ijk = np.floor((np.asarray(iso.vertices) - domain.origin) / domain.pitch).astype(int)
+        ijk = np.clip(ijk, 0, np.array(grid.shape) - 1)
+        w = np.clip((half[ijk[:, 0], ijk[:, 1], ijk[:, 2]] - THIN[0]) / (THIN[1] - THIN[0]), 0.0, 1.0)[:, None]
+    second = nu * (2.0 * w - 1.0)          # -nu thin (Taubin), +nu thick (as before)
+    lap = trimesh.smoothing.laplacian_calculation(iso)
+    v = np.asarray(iso.vertices, float).copy()
+    for k in range(iterations):
+        v = v + (lamb if k % 2 == 0 else second) * (lap @ v - v)
+    iso.vertices = v
+
+
+THIN = (1.5, 2.5)    # member half-thickness (cells): Taubin below the first, shrinking above the second
+
+
 def _bodies(man):
     return sorted(man.decompose(), key=lambda b: -b.volume())
 
@@ -475,8 +517,8 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
                       flush=flush, preserve=[r.shape for r in study.preserve], design=list(study.design_space))
     info = {"isoTriangles": int(len(iso.faces))}
     if o.taubin_iterations:
-        import trimesh
-        trimesh.smoothing.filter_taubin(iso, lamb=0.5, nu=-0.53, iterations=o.taubin_iterations)
+        keep_thin = bool((getattr(study, "raw", None) or {}).get("resolution", {}).get("keepThinMembers", False))
+        _smooth_surface(iso, domain, xphys, o.taubin_iterations, keep_thin)
     if study.preserve and o.fillet and o.blend > 0:
         _snap_to_flat_faces(iso, [r.shape for r in study.preserve], domain.pitch / o.upsample, o.blend)
     if len(iso.faces) > o.max_triangles:

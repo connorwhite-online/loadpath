@@ -286,6 +286,21 @@ def _pieces(shape, faces):
     return [_exact(shape, faces)]
 
 
+def _on_float32(mesh):
+    """The mesh with its vertices on float32's grid. manifold3d's results
+    come back in double precision now (shapes.trimesh_from_manifold), and a
+    study part's organic leaf, decimated from those, leaves OpenCascade's
+    booleans against the exact planes with no clean result (the lug's
+    STEP came out with no solid); rounded as manifold3d's float32 output
+    used to round them, they fuse. Moves a vertex ~1e-5 mm at most."""
+    import trimesh
+
+    V = np.asarray(mesh.vertices, np.float32).astype(float)
+    if np.array_equal(V, mesh.vertices):
+        return mesh
+    return trimesh.Trimesh(V, np.asarray(mesh.faces), process=False)
+
+
 def _build(plan, budget, faces, notes):
     """(OpenCascade solids, the same thing as a manifold3d Manifold). The
     manifold is the referee: each OpenCascade boolean is tried a few ways
@@ -299,7 +314,7 @@ def _build(plan, budget, faces, notes):
     if isinstance(plan, Exact):
         return _pieces(plan.shape, faces), exact_manifold(plan.shape)
     if isinstance(plan, Organic):
-        m = plan.mesh
+        m = _on_float32(plan.mesh)
         d = _decimate(m, budget.get(id(plan), faces))
         if len(d.faces) < len(m.faces):
             notes.append({"leaf": ",".join(plan.names) or "organic", "faces": len(m.faces),

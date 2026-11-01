@@ -1,0 +1,328 @@
+{
+ "id": "gripper-jaw-fatigue-mjf",
+ "brief": "One jaw of my robot gripper, printed in PA12 by MJF. It is driven directly by the gripper servo's 25\nmm horn: the horn face is at z = 0, axis Z through the origin, and the jaw is screwed to it with\nfour M2.5 screws through 2.9 mm holes on a 16 mm circle (at (8,0), (-8,0), (0,8), (0,-8)), heads on\ntop of a 4 mm thick hub disc (z = 0 to 4, 25 mm diameter) that I want solid apart from the holes;\nleave a 6 mm column clear above each screw head (z = 4 up) and a 6 mm hole on the axis for the horn\nscrew. The jaw reaches out along +X to a fingertip pad x = 55 to 75, y = -6 to -2, z = 0 to 12,\nwhose y = -6 face grips. A 4 mm wire for the fingertip sensor runs along the jaw at y = 4, z = 6\nfrom x = 12 to x = 78 (keep it clear). The jaw fits in x = -14 to 78, y = -6 to 14, z = 0 to 12,\nplus anywhere within 14 mm of the horn axis. Every grasp pushes the pad back with 15 N (+Y): a\nmillion grasps over its life, fatigue safety factor 2. Opening, it can jam against the housing with\nthe servo's full 1.8 N·m stall torque (the pad pushed toward -Y, taken at the pad's centre 65 mm\nout), and it gets knocked: 20 N on the pad from any direction. Static safety factor 2, under 9 g.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "gripper",
+  "mjf",
+  "fatigue",
+  "any-direction"
+ ],
+ "gold": {
+  "name": "gripper-jaw-fatigue-mjf",
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -14.0,
+     -6.0,
+     0.0
+    ],
+    "max": [
+     78.0,
+     14.0,
+     12.0
+    ]
+   },
+   {
+    "type": "cylinder",
+    "p0": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "p1": [
+     0.0,
+     0.0,
+     12.0
+    ],
+    "r": 14.0
+   }
+  ],
+  "preserve": [
+   {
+    "id": "hub",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      4.0
+     ],
+     "r": 12.5
+    }
+   },
+   {
+    "id": "pad",
+    "shape": {
+     "type": "box",
+     "min": [
+      55.0,
+      -6.0,
+      0.0
+     ],
+     "max": [
+      75.0,
+      -2.0,
+      12.0
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "horn-screws",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        8,
+        0,
+        -1.0
+       ],
+       "p1": [
+        8,
+        0,
+        5.0
+       ],
+       "r": 1.45
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -8,
+        0,
+        -1.0
+       ],
+       "p1": [
+        -8,
+        0,
+        5.0
+       ],
+       "r": 1.45
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0,
+        8,
+        -1.0
+       ],
+       "p1": [
+        0,
+        8,
+        5.0
+       ],
+       "r": 1.45
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0,
+        -8,
+        -1.0
+       ],
+       "p1": [
+        0,
+        -8,
+        5.0
+       ],
+       "r": 1.45
+      }
+     ]
+    }
+   },
+   {
+    "id": "heads",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        8,
+        0,
+        4.0
+       ],
+       "p1": [
+        8,
+        0,
+        13.0
+       ],
+       "r": 3.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -8,
+        0,
+        4.0
+       ],
+       "p1": [
+        -8,
+        0,
+        13.0
+       ],
+       "r": 3.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0,
+        8,
+        4.0
+       ],
+       "p1": [
+        0,
+        8,
+        13.0
+       ],
+       "r": 3.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        0,
+        -8,
+        4.0
+       ],
+       "p1": [
+        0,
+        -8,
+        13.0
+       ],
+       "r": 3.0
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "horn-screw",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -1.0
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      13.0
+     ],
+     "r": 3.0
+    }
+   },
+   {
+    "id": "wire",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      12.0,
+      4.0,
+      6.0
+     ],
+     "p1": [
+      79.0,
+      4.0,
+      6.0
+     ],
+     "r": 2.0
+    },
+    "bore": false
+   }
+  ],
+  "supports": [
+   {
+    "region": "horn-screws",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      0.0,
+      -0.5
+     ],
+     "p1": [
+      0.0,
+      0.0,
+      0.3
+     ],
+     "r": 12.5
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "grasp",
+    "cycles": 1000000.0,
+    "loads": [
+     {
+      "region": "pad",
+      "force": [
+       0,
+       15.0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "jam",
+    "loads": [
+     {
+      "region": "pad",
+      "force": [
+       0,
+       -27.692307692307693,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "knock",
+    "loads": [
+     {
+      "region": "pad",
+      "force": [
+       0,
+       20.0,
+       0
+      ],
+      "direction": "any"
+     }
+    ]
+   }
+  ],
+  "durability": {
+   "safetyFactor": 2,
+   "constrain": true
+  },
+  "material": "pa12",
+  "process": "mjf",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "durabilitySafetyFactor": 2,
+  "maxMass": 9.0
+ }
+}
