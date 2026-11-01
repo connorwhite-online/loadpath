@@ -810,6 +810,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     from scipy.spatial import cKDTree
     cases = []
     worst_sf = np.inf
+    env = None   # von Mises per node, the worst over the cases
     for ci, case in enumerate(study.load_cases):
         load_nodes = bc.case_load_nodes[ci]
         # Exclude nodes within the contact band of an applied load or support.
@@ -839,6 +840,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             if idx[0] is not None:
                 f, u = f + rhs[idx[0]], u + displacements[idx[0]]
         vm = nodal_von_mises(stiff, u, moduli, eps)
+        env = vm if env is None else np.maximum(env, vm)
         if bc.case_pressure_nodes[ci].any():
             vm = _smooth_wetted(hm.node_xyz, vm, bc.case_pressure_nodes[ci], pitch)
         # hot material is weaker: the peak is where stress / retention is
@@ -958,6 +960,14 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         })
     report["cases"] = cases
     report["safetyFactor"] = worst_sf
+    if env is not None and len(env):
+        # how evenly the material is worked: mean von Mises over the near
+        # peak (99.9th percentile, so one singular node does not set it).
+        # Low (about 0.1, the wall brackets) means most of the part idles
+        # at a few percent of the peak, which the stress-constrained method
+        # trims (study.py, method auto)
+        pk = float(np.quantile(env, 0.999))
+        report["stressUtilization"] = float(env.mean() / pk) if pk > 0 else None
     report["stressAllowance"] = STRESS_ALLOWANCE
     from .durability import active, assess
     if active(study):

@@ -487,6 +487,36 @@ def test_search_confirms_on_tets():
     assert all("calibration" in o.report for o in others) or not others
 
 
+def test_auto_method_keeps_the_lighter():
+    # goal.method auto: the search first; the constrained method runs only
+    # when the search's part idles (low stressUtilization), and the lighter
+    # passing part is kept
+    import loadpath.study as ST
+    from loadpath.study import Outcome, StudyResult
+    s = study_from_dict({**LUG, "goal": {"safetyFactor": 2.0, "method": "auto"}})
+    calls = []
+
+    def fake(st, on_progress=None, should_stop=None, fallback=True):
+        calls.append(st.goal.method)
+        mass, util = {"search": (30.0, U[0]), "constrained": (20.0, 0.3)}[st.goal.method]
+        o = Outcome(0.2, None, {"mass": mass, "stressUtilization": util}, {}, {}, passes=True)
+        return StudyResult(st, {}, [o], 0, 1.0)
+
+    real = ST._run_single
+    try:
+        ST._run_single = lambda st, *a, **k: real(st, *a, **k) if st.goal.method == "auto" else fake(st, *a, **k)
+        U = [0.1]
+        r = ST._run_single(s)
+        assert calls == ["search", "constrained"] and r.choice["method"] == "constrained", r.choice
+        assert r.outcomes[r.best].report["mass"] == 20.0
+        calls.clear()
+        U = [0.3]
+        r = ST._run_single(s)
+        assert calls == ["search"] and r.choice["method"] == "search", r.choice
+    finally:
+        ST._run_single = real
+
+
 def test_crosscheck_calculix_agrees():
     # CalculiX on the same quadratic mesh and boundary conditions: the two
     # solvers' deflection and peak stress agree; a support sliding in x and y
@@ -870,6 +900,7 @@ TESTS = [
     test_compliant_inverter,
     test_crosscheck_cantilever,
     test_search_confirms_on_tets,
+    test_auto_method_keeps_the_lighter,
     test_crosscheck_calculix_agrees,
     test_process_layers_weaken_across_build_direction,
     test_crease_metric_finds_unfilleted_junctions,

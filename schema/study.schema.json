@@ -2044,7 +2044,8 @@
         "method": {
           "enum": [
             "search",
-            "constrained"
+            "constrained",
+            "auto"
           ]
         },
         "confirm": {

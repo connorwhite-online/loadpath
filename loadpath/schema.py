@@ -281,7 +281,7 @@ _GOAL = {
                                            "false over it). The search already returns the lightest part that "
                                            "meets the other limits, so over the cap means a lighter material, "
                                            "smaller preserves or a lower safety factor."},
-        "method": {"enum": ["search", "constrained"]},
+        "method": {"enum": ["search", "constrained", "auto"]},
         "confirm": {"enum": ["auto", "voxel", "tet"],
                     "description": "How the lightest passing part is confirmed: voxel (a finer voxel grid), tet "
                                    "(a body-fitted tetrahedral mesh, which also calibrates the search's voxel "

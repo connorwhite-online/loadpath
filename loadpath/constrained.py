@@ -183,14 +183,18 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                     sig = ue @ cbk.T                         # (n, 6) solid stress, MPa
                     vm = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", sig, _VM, sig), 1e-30))
                     parts.append((cbk, sig, vm, np.where(counted, xe ** _Q * vm / limits.stress, 0.0)))
-                pm = (sum(float(np.sum(sr ** _P)) for *_, sr in parts) / nc) ** (1.0 / _P)
                 smax = max(float(sr.max()) for *_, sr in parts)
+                # the p-norm scaled by the peak, so a design that lets go
+                # (stress 1e40) does not overflow sr ** P to inf and hand
+                # MMA a NaN step (the GRIP upper arm)
+                sc = max(smax, 1e-30)
+                pm = sc * (sum(float(np.sum((sr / sc) ** _P)) for *_, sr in parts) / nc) ** (1.0 / _P)
                 kappa[c] = 0.5 * (kappa[c] + smax / max(pm, 1e-30)) if it > 1 else smax / max(pm, 1e-30)
                 g = kappa[c] * pm
                 g_xe = np.zeros(n)
                 rhs = np.zeros(mesh.n_dof)
                 for cbk, sig, vm, srel in parts:
-                    dg_ds = kappa[c] * (srel ** (_P - 1)) * pm ** (1.0 - _P) / nc
+                    dg_ds = kappa[c] * (srel / max(pm, 1e-30)) ** (_P - 1) / nc
                     # explicit: d s / d xe at fixed u
                     g_xe += dg_ds * np.where(counted, _Q * np.maximum(xe, 1e-12) ** (_Q - 1) * vm / limits.stress,
                                              0.0)

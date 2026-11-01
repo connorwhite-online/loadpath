@@ -49,6 +49,15 @@ _COARSE_MIN_CELLS = 12_000
 _WARM_BETA = 4.0
 # runs of the constrained method's limit search (study.run, method constrained)
 _MAX_CONSTRAINED_RUNS = 6
+# method auto: run the constrained method after the search when the search's
+# part idles (verify's stressUtilization, mean von Mises over the near peak,
+# under this) and is not deflection-bound. Search picks (utilization, search
+# against constrained, both tet-confirmed): fastener bracket 0.10 (35.5 / 26.5
+# g), wall bracket 0.11 (68.7 / 28.1), GRIP yoke 0.21 (23.7 / 16.1) where
+# constrained won; MBB 0.19 (12.5 / 15.6), bell crank 0.20 (22.4 / 24.8)
+# where it lost by less (auto keeps the search there, at the cost of time);
+# hook 0.30 (27.2 / 37.9) and arm link 0.33 (deflection-bound) skipped.
+_AUTO_UTILIZATION = 0.25
 # The pick of a safety-factor search is checked again on a grid this many
 # cells finer before it is delivered. The in-loop check resolves a fillet
 # only as well as its grid: GRIP's turret read SF 2.26 there and 1.65 at
@@ -163,6 +172,8 @@ class StudyResult:
     best: int | None
     seconds: float
     warnings: list = field(default_factory=list)
+    # method auto: which method made `best` and why
+    choice: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -172,6 +183,7 @@ class StudyResult:
             "best": self.best,
             "seconds": self.seconds,
             "warnings": self.warnings,
+            **({"methodChoice": self.choice} if self.choice else {}),
             **({"orientation": self.study.raw["orientation"]} if "orientation" in self.study.raw else {}),
         }
 
@@ -735,7 +747,82 @@ def _material_named(name, study):
     return study.material
 
 
-def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult:
+def _constrained_applies(study: Study) -> bool:
+    goal = study.goal
+    return (goal.safety_factor is not None or goal.max_deflection is not None) \
+        and study.gravity is None and not _durability_drives(study) \
+        and study.access is None and study.max_member is None \
+        and not any(ld.direction for c in study.load_cases for ld in c.loads)
+
+
+def _run_auto(study: Study, on_progress=None, should_stop=None) -> StudyResult:
+    """goal.method auto: the search, then the constrained method only when the
+    search's part idles (stressUtilization under _AUTO_UTILIZATION), keeping
+    the lighter passing part. The constrained method costs about as much as
+    the search again, so it runs only where it tends to win."""
+    import dataclasses
+
+    goal = study.goal
+    r = _run_single(dataclasses.replace(study, goal=dataclasses.replace(goal, method="search")),
+                    on_progress, should_stop)
+    choice = {"method": "search"}
+    pick = r.outcomes[r.best] if r.best is not None else None
+    u = pick.report.get("stressUtilization") if pick is not None else None
+    if u is not None:
+        choice["stressUtilization"] = u
+    if pick is None or not pick.passes or u is None or not _constrained_applies(study):
+        choice["reason"] = "the constrained method does not apply" if pick is not None and pick.passes \
+            else "no passing search part to compare"
+        r.choice = choice
+        return r
+    rep = pick.report
+    sf = rep.get("safetyFactor")
+    if goal.max_deflection and rep.get("cases") \
+            and max(c.get("deflection") or 0.0 for c in rep["cases"]) >= 0.85 * goal.max_deflection \
+            and (goal.safety_factor is None or (sf is not None and sf >= 1.3 * goal.safety_factor)):
+        # stiffness sets the mass (the arm link, the GRIP upper arm at SF
+        # 11 for 2): the compliance search is already the right design
+        choice["reason"] = "deflection-bound: the search's compliance design is the right one"
+        r.choice = choice
+        return r
+    if u >= _AUTO_UTILIZATION:
+        choice["reason"] = f"stress utilization {u:.2f} >= {_AUTO_UTILIZATION}: the search part is worked evenly"
+        r.choice = choice
+        return r
+    if should_stop is not None and should_stop():
+        r.choice = choice
+        return r
+    if on_progress is not None:
+        on_progress({"stage": "method", "method": "constrained", "stressUtilization": u}, None)
+    try:
+        rc = _run_single(dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained")),
+                         on_progress, should_stop, fallback=False)
+    except RuntimeError as exc:
+        choice["reason"] = f"the constrained method failed ({exc})"
+        r.choice = choice
+        return r
+    ms, mc = pick.report["mass"], None
+    if rc.best is not None and rc.outcomes[rc.best].passes:
+        mc = rc.outcomes[rc.best].report["mass"]
+    choice.update({"searchMass": ms, "constrainedMass": mc})
+    if mc is not None and mc < ms:
+        choice["method"] = "constrained"
+        choice["reason"] = (f"stress utilization {u:.2f}: constrained {mc:.1f} g against "
+                            f"search {ms:.1f} g")
+        rc.choice = choice
+        rc.seconds += r.seconds
+        return rc
+    choice["reason"] = (f"stress utilization {u:.2f}: constrained "
+                        + (f"{mc:.1f} g" if mc is not None else "found no passing part")
+                        + f" against search {ms:.1f} g")
+    r.choice = choice
+    r.seconds += rc.seconds
+    return r
+
+
+def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool = True) -> StudyResult:
+    if study.goal.method == "auto":
+        return _run_auto(study, on_progress, should_stop)
     t0 = time.time()
 
     def emit(event, field_=None):
@@ -1108,10 +1195,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         return o
 
     goal = study.goal
-    if goal.method == "constrained" and (goal.safety_factor is not None or goal.max_deflection is not None) \
-            and study.gravity is None and not _durability_drives(study) \
-            and study.access is None and study.max_member is None \
-            and not any(ld.direction for c in study.load_cases for ld in c.loads):
+    if goal.method == "constrained" and _constrained_applies(study):
         from .constrained import Limits
         from .verify import STRESS_ALLOWANCE
 
@@ -1177,7 +1261,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 t *= min(ratio ** 0.5, 4.0)
         passing = [i for i, o in enumerate(outcomes) if o.passes]
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
-        if best is None:
+        if best is None and fallback:
             # Search instead, on the search's own grid: the constrained
             # method runs finer (minimum member 2.5 cells across), and the
             # search on that grid broke down on the GRIP yoke too.

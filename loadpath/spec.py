@@ -125,7 +125,9 @@ class Goal:
     max_deflection: float | None = None
     # "search": compliance designs at a sequence of volume fractions until
     # one passes; "constrained": minimize mass with the limits as MMA
-    # constraints, corrected against the verified mesh (constrained.py).
+    # constraints, corrected against the verified mesh (constrained.py);
+    # "auto": the search, then the constrained method too when the search's
+    # part idles (stress utilization under 0.25), keeping the lighter.
     method: str = "search"
     # How the search's pick is confirmed before delivery: "voxel" re-verifies
     # it on a finer voxel grid; "tet" on a body-fitted tetrahedral mesh
@@ -874,8 +876,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError("goal.minimize must be 'mass', 'printTime' or 'filament'")
     if goal.volume_fraction is None and goal.safety_factor is None and goal.max_deflection is None:
         raise ValueError("goal needs volumeFraction (0..1), safetyFactor (>1) and/or maxDeflection (mm)")
-    if goal.method not in ("search", "constrained"):
-        raise ValueError("goal.method must be 'search' or 'constrained'")
+    if goal.method not in ("search", "constrained", "auto"):
+        raise ValueError("goal.method must be 'search', 'constrained' or 'auto'")
     if goal.confirm not in ("auto", "voxel", "tet"):
         raise ValueError("goal.confirm must be 'auto', 'voxel' or 'tet'")
     if goal.max_deflection is not None and goal.max_deflection <= 0:

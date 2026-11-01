@@ -198,20 +198,41 @@ class _Analysis:
         mg = self._mg
         mg.rtol = rtol
         keep = self._connected(alive) if alive.mean() < REDUCE_BELOW else np.ones(len(e), bool)
-        mg.set_moduli(np.where(keep, e, 0.0))
-        if not keep.all() and any(np.any(f[~mg.live_dofs()]) for f in loads):
+        try:
+            mg.set_moduli(np.where(keep, e, 0.0))
+            if not keep.all() and any(np.any(f[~mg.live_dofs()]) for f in loads):
+                keep = np.ones(len(e), bool)
+                mg.set_moduli(e)
+            out = mg.solve_many(list(loads), list(us))
+        except RuntimeError:
+            if keep.all():
+                raise
+            # The live cells hang on the rest by an edge or a corner (a hinge),
+            # or a coarse level lost a thin support: singular or stalled. The
+            # full grid, void at E_MIN, holds it (as in the direct path).
             keep = np.ones(len(e), bool)
             mg.set_moduli(e)
-        out = mg.solve_many(list(loads), list(us))
+            out = mg.solve_many(list(loads), [None] * len(loads))
         self.last_iters, self.last_cells = mg.last_iters, int(keep.sum())
         self._last = None
+        self._mg_reduced = not keep.all()
+        self._last_e = e
         return out
 
     def resolve(self, rhss, x0s=None):
         """Solve more right-hand sides (adjoints) against the matrix of the
         last solve(); full-size in, full-size out."""
         if self._mg is not None:
-            return self._mg.solve_many(list(rhss), x0s)
+            try:
+                return self._mg.solve_many(list(rhss), x0s)
+            except RuntimeError:
+                if not getattr(self, "_mg_reduced", False):
+                    raise
+                # a hinge the loads did not excite but an adjoint does (see
+                # solve): solve on the full grid, void at E_MIN
+                self._mg_reduced = False
+                self._mg.set_moduli(self._last_e)
+                return self._mg.solve_many(list(rhss), None)
         k, fd, solver = self._last
         n_dof = self.domain.mesh.n_dof
         if fd is None:

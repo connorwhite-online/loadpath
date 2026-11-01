@@ -58,11 +58,14 @@ class MMA:
         """One MMA step from design x with objective value/gradient (f0, df0)
         and constraint values/gradients (f: (m,), df: (m, n)). Returns the new
         design."""
-        x = np.asarray(x, float)
-        f = np.asarray(f, float).reshape(self.m)
-        df = np.asarray(df, float).reshape(self.m, self.n)
-        self.iter += 1
         xmin, xmax = self.xmin, self.xmax
+        # Non-finite values (a solve that broke down) would turn the whole
+        # subproblem NaN; read them as a large violation and stay in bounds.
+        x = np.clip(np.nan_to_num(np.asarray(x, float), nan=0.5), xmin, xmax)
+        f = np.nan_to_num(np.asarray(f, float).reshape(self.m), nan=1e6, posinf=1e6, neginf=-1e6)
+        df = np.nan_to_num(np.asarray(df, float).reshape(self.m, self.n), nan=0.0, posinf=1e6, neginf=-1e6)
+        df0 = np.nan_to_num(np.asarray(df0, float), nan=0.0, posinf=1e6, neginf=-1e6)
+        self.iter += 1
         span = xmax - xmin
         if self.iter <= 2 or self.low is None:
             self.low = x - self.asyinit * span
@@ -98,7 +101,12 @@ class MMA:
         Q = (Q + PQ) * xl2
         b = P @ (1.0 / ux1) + Q @ (1.0 / xl1) - f
 
-        xnew = self._subsolv(low, upp, alfa, beta, p0, q0, P, Q, b)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xnew = self._subsolv(low, upp, alfa, beta, p0, q0, P, Q, b)
+        if not np.all(np.isfinite(xnew)):
+            # the interior point broke down: keep those variables in place
+            xnew = np.where(np.isfinite(xnew), xnew, x)
+        xnew = np.clip(xnew, alfa, beta)
         self.xold2 = self.xold1 if self.xold1 is not None else x.copy()
         self.xold1 = x.copy()
         return xnew
