@@ -24,7 +24,8 @@ Designs (each family's one parameter swept on the coarse grid):
 - uniform gyroid network (solid side), `cell` mm,
 - gyroid graded over the dies: denser where the heat goes in.
 
-Run: `python bench/cold_plate.py --pitch 0.25 --out <json>` (resumes per
+Results: bench/cold_plate.json, docs/BENCHMARKS.md. Run: `python bench/cold_plate.py
+--pitch 0.25 --dp 1000 --out <json>` (resumes per
 design; `--only name,name` to pick).
 """
 from __future__ import annotations
