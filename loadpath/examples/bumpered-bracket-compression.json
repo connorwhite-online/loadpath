@@ -1,0 +1,225 @@
+{
+  "name": "bumpered-bracket-compression",
+  "description": "The bumpered bracket with its bumper's rubber in compression: a PETG nose plate takes the knock and every path from it to the arm runs through TPU (cells within 15 mm of the nose), with a gap keeping the shelf pad off the nose. The knock (0.2 J) is judged at its own safety factor of 1.5. Does not pass yet: the bond at the rubber block's edges reads 0.57 at the knock (see docs/MULTIMATERIAL.md).",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [
+        0,
+        0,
+        -15
+      ],
+      "max": [
+        100,
+        80,
+        15
+      ]
+    }
+  ],
+  "fasteners": [
+    {
+      "id": "upper",
+      "size": "M5",
+      "seat": [
+        6,
+        65,
+        0
+      ],
+      "direction": "-x",
+      "grip": 6,
+      "end": "face"
+    },
+    {
+      "id": "lower",
+      "size": "M5",
+      "seat": [
+        6,
+        15,
+        0
+      ],
+      "direction": "-x",
+      "grip": 6,
+      "end": "face"
+    }
+  ],
+  "preserve": [
+    {
+      "id": "shelf-pad",
+      "shape": {
+        "type": "box",
+        "min": [
+          60,
+          76,
+          -15
+        ],
+        "max": [
+          92,
+          80,
+          15
+        ]
+      }
+    },
+    {
+      "id": "nose",
+      "shape": {
+        "type": "box",
+        "min": [
+          97,
+          40,
+          -15
+        ],
+        "max": [
+          100,
+          80,
+          15
+        ]
+      }
+    }
+  ],
+  "supports": [
+    {
+      "region": "upper-bore",
+      "fix": "yz"
+    },
+    {
+      "region": "lower-bore",
+      "fix": "yz"
+    },
+    {
+      "shape": {
+        "type": "box",
+        "min": [
+          0,
+          0,
+          -15
+        ],
+        "max": [
+          1,
+          80,
+          15
+        ]
+      },
+      "fix": "x"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "shelf",
+      "loads": [
+        {
+          "region": "shelf-pad",
+          "force": [
+            0,
+            -100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pull",
+      "loads": [
+        {
+          "region": "shelf-pad",
+          "force": [
+            0,
+            -40,
+            15
+          ]
+        }
+      ]
+    },
+    {
+      "name": "knock",
+      "loads": [
+        {
+          "shape": {
+            "type": "box",
+            "min": [
+              99.5,
+              40,
+              -15
+            ],
+            "max": [
+              100,
+              80,
+              15
+            ]
+          },
+          "force": [
+            -100,
+            0,
+            0
+          ]
+        }
+      ]
+    }
+  ],
+  "process": {
+    "type": "fdm",
+    "buildDirection": "+z"
+  },
+  "multiMaterial": {
+    "materials": [
+      "petg",
+      "tpu"
+    ],
+    "assign": [
+      {
+        "region": "shelf-pad",
+        "material": "petg"
+      },
+      {
+        "region": "nose",
+        "material": "petg"
+      },
+      {
+        "near": {
+          "region": "nose",
+          "distance": 15
+        },
+        "material": "tpu"
+      }
+    ],
+    "requirements": [
+      {
+        "case": "knock",
+        "knock": {
+          "energy": 0.2,
+          "maxForce": 150,
+          "safetyFactor": 1.5
+        }
+      }
+    ],
+    "interlock": true,
+    "export": {
+      "slicer": "all"
+    }
+  },
+  "goal": {
+    "volumeFraction": 0.35,
+    "safetyFactor": 3.0
+  },
+  "minMember": 4.0,
+  "resolution": {
+    "maxElements": 20000
+  },
+  "keepOut": [
+    {
+      "id": "nose-gap",
+      "shape": {
+        "type": "box",
+        "min": [
+          92,
+          70,
+          -15
+        ],
+        "max": [
+          97,
+          80,
+          15
+        ]
+      }
+    }
+  ]
+}
