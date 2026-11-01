@@ -920,6 +920,7 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
             flab[tris] = int(flab.max()) + 1
         demoted += len(bad)
     nq, n_region, n_fallback, why = got
+    solid = _forward(solid)
     t3 = time.time()
     rep = {"patches": nq, "degree": N - 1, "exactFaces": n_region, "exactDemoted": demoted, "exactFallbacks": n_fallback, "reasons": why[:5],
            "triangles": int((flab >= O).sum()), "exactTriangles": int((flab < O).sum()),
@@ -928,6 +929,51 @@ def smooth_brep(mesh, plan, patches=PATCHES, order=5, progress=None):
            "seconds": {"coarsen": round(t1 - t0, 1), "patches": round(t3 - t1, 1),
                        "solid": round(time.time() - t3, 1)}}
     return solid, rep
+
+
+def _forward(solid, tries=20):
+    """The solid rebuilt with every face carrying its own outward
+    orientation: STEP keeps faces' orientations but not a reversed shell's
+    or solid's, so an inside-out shell would read back inside out. Readers
+    then check the orientation with OpenCascade's infinite-point test,
+    which shoots from the first face and can misjudge a patch; the faces go
+    in an order it gets right, or a reader would turn the part inside out."""
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_OUT
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS_Shell, TopoDS_Solid
+
+    from .step import _volume
+
+    faces = []
+    ex = TopExp_Explorer(solid, TopAbs_FACE)
+    while ex.More():
+        faces.append(ex.Current())
+        ex.Next()
+
+    def make(fs):
+        bb = BRep_Builder()
+        shell = TopoDS_Shell()
+        bb.MakeShell(shell)
+        for f in fs:
+            bb.Add(shell, f)
+        shell.Closed(True)
+        out = TopoDS_Solid()
+        bb.MakeSolid(out)
+        bb.Add(out, shell)
+        return out
+
+    out = make(faces)
+    if _volume(out) <= 0:
+        return solid
+    for k in range(min(tries, len(faces))):
+        cand = make(faces[k:] + faces[:k]) if k else out
+        cl = BRepClass3d_SolidClassifier(cand)
+        cl.PerformInfinitePoint(1e-6)
+        if cl.State() == TopAbs_OUT:
+            return cand
+    return out
 
 
 def _pairs(V, F, lab, O, cos_min=0.5, angle_max=160.0):

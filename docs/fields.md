@@ -637,17 +637,19 @@ smooth surface: triangles on exact surfaces are labelled, the mesh is
 coarsened without moving a seam (`"patches"`, default 2000, counts the
 organic triangles left), pairs of triangles become one quintic patch
 through points of the surface, and each exact region becomes one face
-bounded by its seams. A result that is not a valid solid within 0.2% of
+bounded by its seams (one whose seams will not make a valid face, such as
+a seam that doubles back, is patched instead and reported as
+`exactDemoted`). A result that is not a valid solid within 0.2% of
 the mesh's volume falls back to facets, with a warning in `decimated`.
 The report's `decimated[0].deviation` is the distance (mm) from the
 patches to the mesh. Measured (re-read from the file):
 
 | part | STEP faces | deviation p99 / max | volume vs STL | size (facets) | time |
 | --- | --- | --- | --- | --- | --- |
-| GRIP turret | 2040 patches, 25 cylinders, 20 planes | 0.047 / 0.19 mm | -0.005% | 12.1 MB (14.4 MB) | 13 s build, 3 min with the check |
-ARMROW
+| GRIP turret | 2065 patches, 24 cylinders, 19 planes | 0.048 / 0.5 mm | -0.0005% | 12.2 MB (14.4 MB) | 25 s build, 3 min with the check |
+| arm link field graph (solid) | 2074 patches, 8 cylinders, 6 planes | 0.031 / 0.26 mm | -0.009% | 11.7 MB (12.7 MB) | 20 s build, 1 min with the check |
 
-Faster with `embreex` (in the `step` extra) for the ray casts: 13 s
+Needs `embreex` (in the `step` extra) for fast ray casts: seconds
 instead of minutes on the turret. Lattices are refused as for facets.
 
 The study STLs' circles are now 0.002 mm true as well (they were 96-gons:

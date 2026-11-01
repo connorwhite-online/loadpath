@@ -194,7 +194,10 @@ def test_smooth_step_keeps_the_bore_exact():
         assert abs(rep["volume"] / m.volume - 1) < 0.002
         from OCP.BRepCheck import BRepCheck_Analyzer
 
-        assert BRepCheck_Analyzer(read_step(path)).IsValid()
+        from loadpath.step import _volume
+
+        back = read_step(path)
+        assert BRepCheck_Analyzer(back).IsValid() and abs(_volume(back) / m.volume - 1) < 0.002, _volume(back)
 
 
 TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact_where_the_field_rounds_it,
