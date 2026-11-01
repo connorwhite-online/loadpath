@@ -351,7 +351,14 @@ def watertight(F, nv=None):
 
 def face_cross(V, F):
     """(b - a) x (c - a) for every face (a, b, c): twice its area along its
-    normal. Column by column, ~3x numpy's cross on (n, 3) rows."""
+    normal (compiled, meshops.py; else column by column in numpy)."""
+    from .meshops import face_cross as fc
+
+    return fc(V, F)
+
+
+def _face_cross_np(V, F):
+    # column by column, ~3x numpy's cross on (n, 3) rows
     VT = np.ascontiguousarray(np.asarray(V, float).T)
     a = VT[:, F[:, 0]]
     b = VT[:, F[:, 1]]
@@ -367,6 +374,12 @@ def face_cross(V, F):
 
 def _triple(V, F):
     """a . (b x c) per face (six times its signed volume from the origin)."""
+    from .meshops import triple
+
+    return triple(V, F)
+
+
+def _triple_np(V, F):
     VT = np.ascontiguousarray(np.asarray(V, float).T)
     a = VT[:, F[:, 0]]
     b = VT[:, F[:, 1]]

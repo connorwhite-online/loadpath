@@ -820,6 +820,24 @@ check (each slab's open edges are matched against its neighbours'). The
 checks that need the whole mesh (printability, bodies, the render) are
 skipped. Field evaluation runs on every core (`LOADPATH_THREADS` caps it).
 
+On a lattice most of the meshing time is not the field but the mesh
+bookkeeping after marching cubes: the relax's check that it folded no
+sheet through another (a self-intersection search run ~20 times a mesh),
+vertex normals, the edge adjacency. Those run as compiled numba kernels,
+parallel over the faces (`loadpath/selfx.py`, `loadpath/meshops.py`; strut
+lattice distances too, in `struts.py`), each with its numpy path as a
+fallback (`LOADPATH_SELFX=numpy`, `LOADPATH_MESHOPS=numpy`). The kernels
+compile once into numba's cache (~18 s the first time), then load in about
+a second. Measured on the 4-core cloud box (`bench/huge_lattices.py`, an
+80 x 80 x 40 mm box with a 1.2 mm skin and a graded 5 mm core), the same
+mesh to the face either way:
+
+| part, pitch | faces | numpy | compiled |
+|---|---|---|---|
+| graded gyroid box, 0.4 mm | 5.9M | 327 s | 58 s |
+| graded octet box, 0.4 mm | 5.4M | 384 s | 67 s |
+| graded arm link, 0.4 mm | 0.7M | 14.2 s | 10.6 s |
+
 ### Evaluating on the GPU
 
 Once meshing is narrow-band, evaluating the graph is most of the time

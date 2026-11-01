@@ -17,6 +17,8 @@ dependencies = [
   "trimesh>=4.0",
   "manifold3d>=3.0",
   "rtree>=1.0",
+  # compiled kernels for meshing big lattices (selfx.py, meshops.py, struts.py); each has a numpy fallback
+  "numba>=0.59",
 ]
 keywords = ["topology optimization", "generative design", "3d printing", "fea", "cad"]
 classifiers = [

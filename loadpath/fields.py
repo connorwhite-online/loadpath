@@ -1985,8 +1985,8 @@ def _finish(V, F, field, pitch, project, stats=None, decimate=None, creases=None
 
     from .narrowband import shell_volumes, signed_volume
 
-    V = np.asarray(V, float)
-    F = np.asarray(F, np.int64)
+    V = np.ascontiguousarray(V, float)
+    F = np.ascontiguousarray(F, np.int64)      # (marching cubes' faces come reversed, as a view)
     unfolded = None
     if project:
         V0 = V
@@ -2095,32 +2095,29 @@ class _Normals:
     cosine) from the normal: edges and corners, where a mesh normal is
     not the field's gradient."""
 
-    def __init__(self, F, n):
-        import scipy.sparse as sp
+    def __init__(self, F, n, vf=None):
+        from .meshops import vertex_faces
 
         self.F, self.n = F, n
-        nf = len(F)
-        vi = F.T.ravel()                  # corner k of every face, k = 0, 1, 2
-        self.M = sp.csr_matrix((np.ones(3 * nf), (vi, np.tile(np.arange(nf), 3))), shape=(n, nf))
-        self.o = np.argsort(vi, kind="stable")
-        vs = vi[self.o]
-        self.start = np.flatnonzero(np.r_[True, vs[1:] != vs[:-1]])
-        self.vs = vs[self.start]
+        # vertex -> faces (CSR), each face once per corner
+        self.vf = vertex_faces(F, n) if vf is None else vf
         self.edge = None
 
     def __call__(self, V, sharp):
+        from .meshops import vertex_sum
+
         F = self.F
         fn = face_cross(V, F)
-        N = self.M @ fn
+        ptr, idx = self.vf
+        N = vertex_sum(ptr, idx, fn)
         N /= np.maximum(np.sqrt(np.einsum("ij,ij->i", N, N))[:, None], 1e-300)
         if self.edge is None:
             # the edges and corners are found once: a relax round moves a
             # vertex a fraction of a pitch, not off its edge
             fn /= np.maximum(np.sqrt(np.einsum("ij,ij->i", fn, fn))[:, None], 1e-300)
-            c = np.concatenate([np.einsum("ij,ij->i", fn, N[F[:, k]]) for k in range(3)])
-            lo = np.ones(self.n)
-            lo[self.vs] = np.minimum.reduceat(c[self.o], self.start)
-            self.edge = lo < sharp
+            from .meshops import min_cos
+
+            self.edge = min_cos(self.vf, fn, N) < sharp
         return N, self.edge
 
 
@@ -2160,24 +2157,21 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
     as they are, so they must not lean on one side's vertices."""
     import scipy.sparse as sp
 
+    from .meshops import neighbors, vertex_faces
     from .narrowband import peval
 
     V = np.array(V, float)
     n = len(V)
-    a = np.r_[F[:, 0], F[:, 1], F[:, 2]]
-    b = np.r_[F[:, 1], F[:, 2], F[:, 0]]
-    r, c = np.r_[a, b], np.r_[b, a]
-    if seam is not None:
-        seam = np.asarray(seam, bool)
-        k = ~seam[r] | seam[c]
-        r, c = r[k], c[k]
-    A = sp.coo_matrix((np.ones(len(r), np.float32), (r, c)), shape=(n, n)).tocsr()
-    A.data[:] = 1.0                       # an edge counts once, from either face
-    deg = np.maximum(np.diff(A.indptr), 1)
+    vf = vertex_faces(F, n)
+    # the edge adjacency: an edge counts once, from either face; a seam
+    # vertex leans on its seam neighbours only
+    indptr, indices = neighbors(F, n, seam=seam, vf=vf)
+    A = sp.csr_matrix((np.ones(len(indices)), indices, indptr), shape=(n, n))
+    deg = np.maximum(np.diff(indptr), 1)
     move = np.ones(n, bool) if pinned is None else ~np.asarray(pinned, bool)
     h = 0.05 * pitch
     line = getattr(field, "relax_line", _RELAX_LINE)
-    normals = _Normals(F, n) if line else None
+    normals = _Normals(F, n, vf) if line else None
 
     def newton(idx):
         """One Newton step of the vertices idx onto the zero level; the
@@ -2261,54 +2255,62 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
     holds every folded face, at 6% of the mesh. `fixed` vertices (a
     streamed slab's seam with the last one) are never sent back.
     Returns (V, number of vertices sent back)."""
+    from . import selfx
     from .crease import _Centroids, crossing_faces
+
+    if selfx.available():
+        chunk = 1 << 62             # the compiled search takes any number at once
 
     def normals(X):
         n = face_cross(X, F)
         return n / np.maximum(np.sqrt(np.einsum("ij,ij->i", n, n))[:, None], 1e-300)
 
     V = np.array(V, float)
+    from . import meshops
+
+    # the faces round every vertex, and the two faces of every edge (as
+    # half-edges h1, h2: corner h % 3 of face h // 3 to the next corner)
+    vf = meshops.vertex_faces(F, len(V))
+    nf = len(F)
+    h1, h2 = meshops.edge_pairs(F, vf)
     # a fold shows as an edge whose two faces meet at over 90 degrees
     N = normals(V)
-    a, b = F.ravel(), np.roll(F, -1, axis=1).ravel()
-    key = np.minimum(a, b) * np.int64(len(V)) + np.maximum(a, b)
-    o = np.argsort(key)
-    ks = key[o]
-    pair = np.flatnonzero(ks[1:] == ks[:-1])
-    f1, f2 = o[pair] // 3, o[pair + 1] // 3
-    dots = np.einsum("ij,ij->i", N[f1], N[f2])
+    f1, f2 = h1 // 3, h2 // 3
+    dots = meshops.row_dots(N, N, f1, f2)
     sharp = dots < 0.0
     # an edge folded flat back on itself (the two faces overlapping in one
     # plane, as projecting onto a flat cut can leave them): no segment
     # crosses a face there, but manifold3d swaps such edges and the swap
     # crosses. Candidates are the edges folded past ~150 degrees anywhere.
-    c2 = F[f2, (o[pair + 1] % 3 + 2) % 3]
+    c2 = F[f2, (h2 % 3 + 2) % 3]
     tol = _FLAT_FOLD * pitch
+    pair = h1
 
     # the edge pair of every half-edge (-1 on an open edge)
     he = np.full(3 * len(F), -1, np.int64)
-    he[o[pair]] = np.arange(len(pair))
-    he[o[pair + 1]] = np.arange(len(pair))
-    # the faces round every vertex
-    flat_f = F.ravel()
-    vf = np.argsort(flat_f, kind="stable")
-    vptr = np.searchsorted(flat_f[vf], np.arange(len(V) + 1))
+    he[h1] = np.arange(len(h1))
+    he[h2] = np.arange(len(h1))
 
     def faces_of(verts):
-        a, ln = vptr[verts], vptr[verts + 1] - vptr[verts]
-        idx = np.repeat(a - np.cumsum(ln) + ln, ln) + np.arange(int(ln.sum()))
-        return np.unique(vf[idx] // 3)
+        return meshops.faces_of(vf, verts, nf)
+
+    def unique_verts(faces):
+        m = np.zeros(len(V), bool)
+        m[F[faces].ravel()] = True
+        return np.flatnonzero(m)
 
     def rings(verts, k):
         for _r in range(k):
-            verts = np.unique(F[faces_of(verts)].ravel())
+            verts = unique_verts(faces_of(verts))
         return verts
 
     def flat(X, faces, k=None):
         if k is None:
             k = he[(3 * np.asarray(faces)[:, None] + np.arange(3)).ravel()]
-            k = np.unique(k[k >= 0])
-            k = k[~flat0[k]]
+            m = np.zeros(len(pair), bool)
+            m[k[k >= 0]] = True
+            m &= ~flat0
+            k = np.flatnonzero(m)
         g1, g2 = f1[k], f2[k]
         n1 = face_cross(X, F[g1])
         n2 = face_cross(X, F[g2])
@@ -2347,7 +2349,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
         x = np.unique(np.concatenate(x + [flat(V, q)]))
         if not len(x):
             break
-        verts = np.unique(F[x].ravel())
+        verts = unique_verts(x)
         verts = verts[np.any(V[verts] != V0[verts], axis=1)]
         if fixed is not None:
             verts = verts[~fixed[verts]]
@@ -2373,7 +2375,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
         faces = faces_of(moved)
         # nor onto another vertex (two pulled to the same point of an edge,
         # which an STL's vertex merge would fuse)
-        ring = np.unique(F[faces].ravel())
+        ring = unique_verts(faces)
         _, inv, cnt = np.unique(np.round(V[ring] / (1e-9 * pitch)), axis=0, return_inverse=True,
                                 return_counts=True)
         dup = ring[cnt[inv.ravel()] > 1]
@@ -2753,7 +2755,14 @@ def _lattice_3mf(doc, g, lattices, out_dir, name, opts, base_dir, sources, meshe
     graph blends into the body carries the blend (the level set is the
     smooth union of body and lattice). Meshes are decimated to `decimate`
     mm (default 0.02) of the true surface."""
-    from .lattice3mf import _grid, _quantize, blend_of, image, lattice_from_graph, write_lattice_3mf
+    from .lattice3mf import (
+        _grid,
+        _quantize,
+        blend_of,
+        image,
+        lattice_from_graph,
+        write_lattice_3mf,
+    )
 
     mo = {"decimate": float(opts.get("decimate", 0.02))}
     body = _lattice_variant(doc, g, (), lattices, base_dir, sources, meshes, progress, mo)

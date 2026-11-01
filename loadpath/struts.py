@@ -251,6 +251,56 @@ def _smin_many(D, k):
     return out
 
 
+try:
+    import numba as _nb
+except ImportError:  # pragma: no cover - numba is a dependency; numpy without it
+    _nb = None
+
+if _nb is not None:
+
+    @_nb.njit(cache=True, nogil=True)
+    def _strut_kernel(f, A, B, blend, out):
+        """_seg_dist + (_smin_many or min) per point, without the (N, S)
+        intermediates: ~10x the numpy path. nogil, so peval's threads run
+        it in parallel."""
+        S = A.shape[0]
+        m = min(S, 6)
+        best = np.empty(6)
+        AB = B - A
+        L2 = np.empty(S)
+        for s in range(S):
+            L2[s] = max(AB[s, 0] * AB[s, 0] + AB[s, 1] * AB[s, 1] + AB[s, 2] * AB[s, 2], 1e-18)
+        for i in range(f.shape[0]):
+            for j in range(6):
+                best[j] = np.inf
+            for s in range(S):
+                p0 = f[i, 0] - A[s, 0]
+                p1 = f[i, 1] - A[s, 1]
+                p2 = f[i, 2] - A[s, 2]
+                t = (p0 * AB[s, 0] + p1 * AB[s, 1] + p2 * AB[s, 2]) / L2[s]
+                t = min(max(t, 0.0), 1.0)
+                d0 = p0 - t * AB[s, 0]
+                d1 = p1 - t * AB[s, 1]
+                d2 = p2 - t * AB[s, 2]
+                d = d0 * d0 + d1 * d1 + d2 * d2          # squared: sqrt only the kept ones
+                if d < best[m - 1]:
+                    j = m - 1
+                    while j > 0 and best[j - 1] > d:
+                        best[j] = best[j - 1]
+                        j -= 1
+                    best[j] = d
+            for j in range(m):
+                best[j] = np.sqrt(best[j])
+            o = best[0]
+            k = blend[i]
+            if k > 0:
+                for j in range(1, m):
+                    b = best[j]
+                    h = min(max(0.5 + 0.5 * (b - o) / k, 0.0), 1.0)
+                    o = b * (1 - h) + o * h - k * h * (1 - h)
+            out[i] = o
+
+
 def unit_cell_distance(kind, U, blend=0.0, aspect=None):
     """Distance (cell units) from lattice coordinates U (period 1) to the
     nearest strut centreline of a periodic cell; `blend` (cell units, per
@@ -267,6 +317,11 @@ def unit_cell_distance(kind, U, blend=0.0, aspect=None):
     blend = np.broadcast_to(np.asarray(blend, float), (len(U),))
     sc = np.asarray(a if a else (1.0, 1.0, 1.0))
     A, B = segs[:, 0] * sc, segs[:, 1] * sc
+    if _nb is not None and len(U):
+        f = np.ascontiguousarray(_fold(U, mirror, swaps) * sc)
+        _strut_kernel(f, np.ascontiguousarray(A), np.ascontiguousarray(B),
+                      np.ascontiguousarray(blend, np.float64), out)
+        return out
     step = max(1, _CHUNK * 8 // max(len(segs), 1))
     for i in range(0, len(U), step):
         f = _fold(U[i:i + step], mirror, swaps) * sc

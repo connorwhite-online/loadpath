@@ -927,15 +927,31 @@ class _Centroids:
     searched in a small tree of their own instead."""
 
     def __init__(self, V, F, p99=None):
+        self._V, self._F, self._p99 = V, F, p99
+        self._built = False
+
+    def _build(self):
         from scipy.spatial import cKDTree
 
-        self.C, self.rad = _cent_rad(V, F)
-        self.p99 = float(np.percentile(self.rad, 99)) if p99 is None else float(p99)
+        self.C, self.rad = _cent_rad(self._V, self._F)
+        self.p99 = float(np.percentile(self.rad, 99)) if self._p99 is None else float(self._p99)
         # built once and queried a few times: the unbalanced build is ~2x faster
         self.tree = cKDTree(self.C, balanced_tree=False, compact_nodes=False)
-        self.dirty = np.zeros(len(F), bool)
+        self.dirty = np.zeros(len(self._F), bool)
+        self._V = self._F = None
+        self._built = True
+
+    def __getattr__(self, name):
+        # built on first use: the compiled search (selfx.py) needs none of it
+        if name in ("C", "rad", "p99", "tree", "dirty") and not self.__dict__.get("_built"):
+            self._build()
+            return getattr(self, name)
+        raise AttributeError(name)
 
     def update(self, V, F, faces):
+        if not self._built:
+            self._V = V             # not built yet: built from V as it is when it is
+            return
         self.C[faces], self.rad[faces] = _cent_rad(V, F[faces])
         self.dirty[faces] = True
 
@@ -977,6 +993,10 @@ def crossing_faces(V, F, faces, cache=None):
     faces = np.asarray(faces, np.int64)
     if not len(faces):
         return faces
+    from . import selfx
+
+    if selfx.available():
+        return selfx.crossing_faces(V, F, faces)
     if cache is None:
         cache = _Centroids(V, F)
     C, rad = cache.C, cache.rad
