@@ -53,6 +53,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage
 
+from .narrowband import face_cross
+
 __all__ = ["FieldGraph", "MeshField", "field_mesh", "save_result_field", "result_samples", "OPS"]
 
 # the operations and what they take (the schema says the same, with docs)
@@ -1759,8 +1761,14 @@ def field_mesh(field, lo, hi, pitch=None, project=3, pad=2, progress=None, spars
         verts, faces, stats = narrowband_mc(field, lo, dims, pitch, budget=_CELL_BUDGET, progress=progress)
         if not len(faces):
             raise ValueError("the field has no inside over these bounds (nothing is below zero)")
+        if not watertight(faces, len(verts)) and stats.get("lipschitz"):
+            # the per-leaf Lipschitz bounds let a crossing through: the
+            # global one (the steepest slope anywhere) for every leaf
+            verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=stats["lipschitz"],
+                                                budget=_CELL_BUDGET, progress=progress)
+            stats["fallback"] = "global"
         if not watertight(faces, len(verts)):
-            # the Lipschitz bound let a crossing through: sample every block
+            # and if even that let one through: sample every block
             verts, faces, stats = narrowband_mc(field, lo, dims, pitch, lipschitz=np.inf, budget=_CELL_BUDGET,
                                                 progress=progress)
             stats["fallback"] = True
@@ -2102,7 +2110,7 @@ class _Normals:
 
     def __call__(self, V, sharp):
         F = self.F
-        fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+        fn = face_cross(V, F)
         N = self.M @ fn
         N /= np.maximum(np.sqrt(np.einsum("ij,ij->i", N, N))[:, None], 1e-300)
         if self.edge is None:
@@ -2196,8 +2204,14 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
             nrm[ed] = g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
         return nrm
 
+    from .lattice import single_precision
+
     for _ in range(rounds):
-        nrm = newton(np.flatnonzero(move))
+        # these rounds move a vertex a fraction of a pitch toward the zero
+        # level: single-precision lattice trig (~1e-6 mm) is plenty; the
+        # closing passes below, to 1e-6 pitch, take it in double
+        with single_precision():
+            nrm = newton(np.flatnonzero(move))
         d = (A @ V) / deg[:, None] - V
         d -= (d * nrm).sum(axis=1, keepdims=True) * nrm
         V[move] += 0.5 * d[move]
@@ -2220,13 +2234,14 @@ def _relax(V, F, field, pitch, rounds, pinned=None, seam=None):
 
 _UNFOLD = True
 _UNFOLD_RINGS = 0          # rings round the folded edges' faces' vertices
+_FLAT_FOLD = 1e-3          # an edge folded back within this * pitch of flat is a crossing
 
 
 def _sliver(V, F, sin_min=float(np.sin(np.radians(5.0)))):
     """Faces with an angle under ~5 degrees."""
     a, b, c = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
     e1, e2 = b - a, c - a
-    n = np.cross(e1, e2)
+    n = face_cross(V, F)
     e3 = c - b
     l2 = np.sort(np.stack([(e1 * e1).sum(1), (e2 * e2).sum(1), (e3 * e3).sum(1)], 1), axis=1)
     return np.sqrt((n * n).sum(1)) < sin_min * np.sqrt(l2[:, 1] * l2[:, 2])
@@ -2249,7 +2264,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
     from .crease import _Centroids, crossing_faces
 
     def normals(X):
-        n = np.cross(X[F[:, 1]] - X[F[:, 0]], X[F[:, 2]] - X[F[:, 0]])
+        n = face_cross(X, F)
         return n / np.maximum(np.sqrt(np.einsum("ij,ij->i", n, n))[:, None], 1e-300)
 
     V = np.array(V, float)
@@ -2261,12 +2276,65 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
     ks = key[o]
     pair = np.flatnonzero(ks[1:] == ks[:-1])
     f1, f2 = o[pair] // 3, o[pair + 1] // 3
-    sharp = np.einsum("ij,ij->i", N[f1], N[f2]) < 0.0
+    dots = np.einsum("ij,ij->i", N[f1], N[f2])
+    sharp = dots < 0.0
+    # an edge folded flat back on itself (the two faces overlapping in one
+    # plane, as projecting onto a flat cut can leave them): no segment
+    # crosses a face there, but manifold3d swaps such edges and the swap
+    # crosses. Candidates are the edges folded past ~150 degrees anywhere.
+    c2 = F[f2, (o[pair + 1] % 3 + 2) % 3]
+    tol = _FLAT_FOLD * pitch
+
+    # the edge pair of every half-edge (-1 on an open edge)
+    he = np.full(3 * len(F), -1, np.int64)
+    he[o[pair]] = np.arange(len(pair))
+    he[o[pair + 1]] = np.arange(len(pair))
+    # the faces round every vertex
+    flat_f = F.ravel()
+    vf = np.argsort(flat_f, kind="stable")
+    vptr = np.searchsorted(flat_f[vf], np.arange(len(V) + 1))
+
+    def faces_of(verts):
+        a, ln = vptr[verts], vptr[verts + 1] - vptr[verts]
+        idx = np.repeat(a - np.cumsum(ln) + ln, ln) + np.arange(int(ln.sum()))
+        return np.unique(vf[idx] // 3)
+
+    def rings(verts, k):
+        for _r in range(k):
+            verts = np.unique(F[faces_of(verts)].ravel())
+        return verts
+
+    def flat(X, faces, k=None):
+        if k is None:
+            k = he[(3 * np.asarray(faces)[:, None] + np.arange(3)).ravel()]
+            k = np.unique(k[k >= 0])
+            k = k[~flat0[k]]
+        g1, g2 = f1[k], f2[k]
+        n1 = face_cross(X, F[g1])
+        n2 = face_cross(X, F[g2])
+        l1 = np.sqrt(np.einsum("ij,ij->i", n1, n1))
+        l2 = np.sqrt(np.einsum("ij,ij->i", n2, n2))
+        d = np.einsum("ij,ij->i", n1, n2) < -0.9 * np.maximum(l1 * l2, 1e-300)
+        d &= np.abs(np.einsum("ij,ij->i", X[c2[k]] - X[F[g1, 0]], n1)) < tol * np.maximum(l1, 1e-300)
+        return np.concatenate([g1[d], g2[d]])
+
+    # folded flat in marching cubes' own mesh too: sending vertices back
+    # cannot undo those, so they are left alone
+    flat0 = np.zeros(len(pair), bool)
+    k0 = np.flatnonzero(dots < -0.9)
+    if len(k0):
+        hit = flat(V0, None, k0)
+        if len(hit):
+            fm = np.zeros(len(F), bool)
+            fm[hit] = True
+            flat0[k0[fm[f1[k0]] & fm[f2[k0]]]] = True
+
     near = np.zeros(len(V), bool)
     near[F[f1[sharp]].ravel()] = True
     near[F[f2[sharp]].ravel()] = True
     for _r in range(_UNFOLD_RINGS):
         near[F[near[F].any(axis=1)].ravel()] = True
+    near[F[f1[dots < -0.9]].ravel()] = True
     q = np.flatnonzero(near[F].any(axis=1))
     if not len(q):
         return V, 0
@@ -2276,7 +2344,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
     level = np.zeros(len(V), np.int64)
     for _ in range(rounds):
         x = [crossing_faces(V, F, q[i:i + chunk], cache) for i in range(0, len(q), chunk)]
-        x = np.unique(np.concatenate(x)) if x else np.zeros(0, np.int64)
+        x = np.unique(np.concatenate(x + [flat(V, q)]))
         if not len(x):
             break
         verts = np.unique(F[x].ravel())
@@ -2291,12 +2359,8 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
         level[verts] += 1
         s = np.where(level[verts] >= 3, 0.0, 0.5 ** level[verts])[:, None]
         V[verts] = V0[verts] + s * (V1[verts] - V0[verts])
-        vm = np.zeros(len(V), bool)
-        vm[verts] = True
-        cache.update(V, F, np.flatnonzero(vm[F].any(axis=1)))
-        for _r in range(2):
-            vm[F[vm[F].any(axis=1)].ravel()] = True
-        q = np.flatnonzero(vm[F].any(axis=1))
+        cache.update(V, F, faces_of(verts))
+        q = faces_of(rings(verts, 2))
     if field is not None and back:
         # those vertices sit off the zero level: project them along the
         # true gradient, and keep the projection wherever it folds nothing
@@ -2306,7 +2370,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
             V[moved] = _project(field, V[moved], pitch)
         mf = np.zeros(len(V), bool)
         mf[moved] = True
-        faces = np.flatnonzero(mf[F].any(axis=1))
+        faces = faces_of(moved)
         # nor onto another vertex (two pulled to the same point of an edge,
         # which an STL's vertex merge would fuse)
         ring = np.unique(F[faces].ravel())
@@ -2320,7 +2384,7 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
         cache.update(V, F, faces)
         for _ in range(8):
             x = [crossing_faces(V, F, faces[i:i + chunk], cache) for i in range(0, len(faces), chunk)]
-            x = np.unique(np.concatenate(x)) if x else np.zeros(0, np.int64)
+            x = np.unique(np.concatenate(x + [flat(V, faces)]))
             bad = np.zeros(len(V), bool)
             bad[F[x].ravel()] = True
             # and no sliver (manifold3d flips those, and a flip can cross)
@@ -2329,13 +2393,8 @@ def _unfold(V0, V, F, pitch, rounds=8, chunk=200_000, fixed=None, field=None):
             if not len(back_to):
                 break
             V[moved[back_to]] = safe[back_to]
-            vm = np.zeros(len(V), bool)
-            vm[moved[back_to]] = True
-            faces = np.flatnonzero(vm[F].any(axis=1))
-            cache.update(V, F, faces)
-            for _r in range(2):
-                vm[F[vm[F].any(axis=1)].ravel()] = True
-            faces = np.flatnonzero(vm[F].any(axis=1))
+            cache.update(V, F, faces_of(moved[back_to]))
+            faces = faces_of(rings(moved[back_to], 2))
         else:
             # not settled: no projection at all round what is still moving
             vm = np.zeros(len(V), bool)
@@ -2666,16 +2725,18 @@ def node_doc(doc, node):
 
 
 
-def _lattice_variant(doc, g, lattices, solid, base_dir, sources, meshes, progress, mesh_opts=None):
+def _lattice_variant(doc, g, solid, empty, base_dir, sources, meshes, progress, mesh_opts=None):
     """The part as meshed (drain holes and all: drain_graph added them to
-    g) with every lattice solid (`solid`) or gone: the envelope a STEP or a
-    lattice clip uses, or the body beside a lattice. A drain bore is an
-    exact cylinder through the skin, blind where its void is solid."""
+    g) with the lattice nodes in `solid` made solid and those in `empty`
+    gone: the envelope a STEP uses, one lattice's clip region, or the body
+    beside the lattices. A drain bore is an exact cylinder through the
+    skin, blind where its void is solid."""
     full = expand_groups(doc)
-    fill = ({"op": "shape", "shape": {"type": "box", "min": [-1e4] * 3, "max": [1e4] * 3}} if solid
-            else {"op": "constant", "value": 1e3})
-    env = {**full, "nodes": {k: (dict(fill) if k in lattices else nd.spec) for k, nd in g.nodes.items()},
-           "output": g.output}
+    box = {"op": "shape", "shape": {"type": "box", "min": [-1e4] * 3, "max": [1e4] * 3}}
+    nodes = {}
+    for k, nd in g.nodes.items():
+        nodes[k] = dict(box) if k in solid else {"op": "constant", "value": 1e3} if k in empty else nd.spec
+    env = {**full, "nodes": nodes, "output": g.output}
     env.pop("drains", None)
     if mesh_opts:
         env["mesh"] = {**(env.get("mesh") or {}), **mesh_opts}
@@ -2687,26 +2748,48 @@ def _lattice_variant(doc, g, lattices, solid, base_dir, sources, meshes, progres
 
 def _lattice_3mf(doc, g, lattices, out_dir, name, opts, base_dir, sources, meshes, progress):
     """<name>-lattice.3mf: the part's lattices as lattices (lattice3mf.py),
-    clipped by its envelope, beside the rest of it as a mesh. Both meshes
-    are decimated to `decimate` mm (default 0.02) of the true surface."""
-    from .lattice3mf import lattice_from_graph, write_lattice_3mf
+    each clipped by its own region (the part with that lattice solid and
+    the others gone), beside the rest of the part as a mesh. A lattice the
+    graph blends into the body carries the blend (the level set is the
+    smooth union of body and lattice). Meshes are decimated to `decimate`
+    mm (default 0.02) of the true surface."""
+    from .lattice3mf import _grid, _quantize, blend_of, image, lattice_from_graph, write_lattice_3mf
 
-    if len(lattices) > 1:
-        raise ValueError(f"lattice 3MF takes one lattice node (this graph has {', '.join(lattices)}): "
-                         "each would be clipped by the whole envelope")
     mo = {"decimate": float(opts.get("decimate", 0.02))}
-    env = _lattice_variant(doc, g, lattices, True, base_dir, sources, meshes, progress, mo)
-    body = _lattice_variant(doc, g, lattices, False, base_dir, sources, meshes, progress, mo)
-    lo, hi = env.bounds
-    lat = [lattice_from_graph(g, k, lo, hi, opts.get("grid")) for k in lattices]
+    body = _lattice_variant(doc, g, (), lattices, base_dir, sources, meshes, progress, mo)
+    lat = []
+    for k in lattices:
+        clip = _lattice_variant(doc, g, (k,), [x for x in lattices if x != k], base_dir, sources, meshes,
+                                progress, mo)
+        if not len(clip.faces):
+            continue
+        lo, hi = clip.bounds
+        x = lattice_from_graph(g, k, lo, hi, opts.get("grid"))
+        x["clip"] = clip
+        b = blend_of(g, k)
+        if isinstance(b, str):      # a graded blend radius: sampled like the wall
+            h = float(opts.get("grid") or 1.0)
+            lo_, hi_ = lo - h, hi + h
+            P, shape, size = _grid(lo_, hi_, h)
+            v = np.maximum(np.broadcast_to(np.asarray(g._val(b, P, {}), float), (len(P),)), 1e-3)
+            q, off, span = _quantize(v.reshape(shape))
+            x.setdefault("images", {})[f"{k}-blend"] = (q, off, span)
+            x["blend"] = image(f"{k}-blend", lo_, size)
+        elif b is not None and float(b) > 0:
+            x["blend"] = float(b)
+        lat.append(x)
     path = os.path.join(out_dir, f"{name}-lattice.3mf")
-    rep = write_lattice_3mf(path, body if len(body.faces) else None, env, lat, name=name)
-    rep["note"] = ("lattice as a lattice (implicit level set or beam lattice), clipped by the envelope; "
-                   "the body is a mesh; lattice-to-body fillets come out sharp")
+    rep = write_lattice_3mf(path, body if len(body.faces) else None, lat, name=name,
+                            mesh_readers=bool(opts.get("meshReaders", False)))
+    rep["note"] = ("lattices as lattices (implicit level sets, beam lattices), each clipped by its region; "
+                   "the body is a mesh; TPMS-to-body blend fillets are in the level set (mesh distance "
+                   "nodes), strut lattices meet the body sharp")
     for x, l_ in zip(rep["lattices"], lat):
-        for k in ("cell", "thickness"):
+        for k in ("cell", "thickness", "coordinates"):
             if k in l_:
                 x[k] = l_[k]
+        if "blend" in l_:
+            x["blend"] = l_["blend"] if isinstance(l_["blend"], float) else "graded"
     return rep
 
 def _envelope_step(doc, g, mesh, lattices, out_dir, name, opts, base_dir, sources, meshes, progress):
@@ -2719,7 +2802,7 @@ def _envelope_step(doc, g, mesh, lattices, out_dir, name, opts, base_dir, source
     from .sharp import mesh_distance
     from .step import DEFAULT_FACES, DEFAULT_PATCHES, export_step
 
-    em = _lattice_variant(doc, g, lattices, True, base_dir, sources, meshes, progress)
+    em = _lattice_variant(doc, g, lattices, (), base_dir, sources, meshes, progress)
     st = export_step(em, os.path.join(out_dir, f"{name}.step"), faces=int(opts.get("faces", DEFAULT_FACES)),
                      name=name, surface=opts.get("surface", "facets"),
                      patches=int(opts.get("patches", DEFAULT_PATCHES)))

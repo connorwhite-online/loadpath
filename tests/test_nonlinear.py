@@ -318,6 +318,37 @@ def test_nonlinear_mechanism_gradient_matches_finite_differences():
         assert abs(dj[e] - fd) <= 1e-5 * max(abs(fd), 1e-3), (e, dj[e], fd)
 
 
+def test_tendon_grip_gradient_matches_finite_differences():
+    # a servo-wound tendon curls a small finger onto a rigid cylinder; the
+    # adjoint sensitivity of the grip force (contact penalty weighted by the
+    # density, tendon load stiffness in the tangent) against central
+    # differences on a random density field
+    from loadpath.benchmarks.mechanisms import MechProblem, mech_domain
+    from loadpath.benchmarks.problems import _nodes
+    from loadpath.mechanism_nl import RigidCylinder, ServoTendon, _Model, nonlinear_response
+    from loadpath.nonlinear import nodes_near
+    p = MechProblem(name="f", title="f", source="", dims=(16, 1, 4), volfrac=0.4, rmin=1.5,
+                    fixed=[(_nodes(0, 0, range(0, 5)), "xz")], sym=[], inp=(_nodes(16, 0, range(0, 2)), "x", -1.0),
+                    out=(_nodes(16, 0, range(0, 2)), "z", -1.0))
+    dom = mech_domain(p)
+    m = dom.mesh
+    ten = ServoTendon(path=[np.array([-2.0, 0.5, 0.5]), nodes_near(m, (8, 0.5, 0), 0.8),
+                            nodes_near(m, (16, 0.5, 0), 0.8)], stroke=2.0, stiffness=0.5)
+    obj = RigidCylinder(center=(13, 0, -4.6), radius=4.0)
+    model = _Model(m, 0.45, dom.fixed, np.zeros(0, int), np.zeros(0), np.zeros(m.n_dof), tendons=[ten], contact=obj)
+    rng = np.random.default_rng(2)
+    xp = np.clip(0.6 + 0.3 * rng.standard_normal(m.n_elem), 0.05, 1.0)
+    j, dj, u = nonlinear_response(model, xp, 26.0, None, steps=6)
+    assert j > 0.01                     # it touches
+    for e in (3, 20, 40, 60):
+        h = 1e-5
+        xa, xb = xp.copy(), xp.copy()
+        xa[e] += h
+        xb[e] -= h
+        fd = (nonlinear_response(model, xa, 26.0, None, u0=u)[0] - nonlinear_response(model, xb, 26.0, None, u0=u)[0]) / (2 * h)
+        assert abs(dj[e] - fd) <= 1e-4 * max(abs(fd), 1e-2 * np.abs(dj).max()), (e, dj[e], fd)
+
+
 TESTS = [
     test_tangent_matches_finite_differences,
     test_small_load_matches_linear,
@@ -331,6 +362,7 @@ TESTS = [
     test_stroke_mechanism_pushes_a_bar,
     test_robust_mechanism_has_no_corner_hinges,
     test_nonlinear_mechanism_gradient_matches_finite_differences,
+    test_tendon_grip_gradient_matches_finite_differences,
 ]
 
 
