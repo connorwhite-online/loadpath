@@ -77,6 +77,7 @@ parts delivered 68.7-80.6 g (wall bracket), 140.7-150.1 g (GRIP turret) and
 lightest part that confirmed. It takes N times as long, so leave it at 1 while
 you iterate on loads and geometry, and set 3 for the part you'll print or
 order. `report.domain.restarts` lists each search's pick. Evals stay at 1.
+Each restart runs on `resolution.pitchStarts` grids, so the two multiply.
 
 ## Beyond plain parts
 
