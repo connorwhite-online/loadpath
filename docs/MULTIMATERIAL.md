@@ -225,6 +225,30 @@ knock under 150 N with margin. A longer stroke (more room behind the
 nose), a smaller knock, or a crushable TPU lattice bumper (impact.py's
 lattice crush grading) can.
 
+**Crushable TPU bumper: passes (2026-11-01).** Same envelope, same spec
+(0.2 J, stop under 150 N, shelf at safety factor 3). The nose is a 3 mm
+PETG striker plate (x 97..100) that floats on a TPU gyroid pad, 24 x 16 mm
+and 8 mm deep (x 89..97), seated on the arm
+(`examples/impact/bracket-bumper.json`, graded with impact.py's
+`grade_for_impact`, 7 mm cells, 0.5 mm thinnest wall, TPU impact-rate
+stiffening included). TPU walls buckle and spring back, so the pad stops
+the knock at a nearly flat force: **89 N** peak (limit 150), crushing 2.4 mm
+of its 8 mm, with 0.14 J of the 0.2 J returned as rebound. The PETG arm
+(`bumpered-bracket-lattice.json`, single material) is optimized for the
+shelf loads and the pad's force on its seat, taken at the full 150 N
+limit: verified safety factor **3.7** at 48.4 g. In all 53.7 g (arm
+48.4, plate 4.6, pad 0.8), and the 3MF slices in PrusaSlicer on two tools.
+The bond between pad and PETG is pressed, not pulled, by the knock (about
+0.9 MPa over the lattice's contact area).
+
+![crushable bumper](images/multimaterial-bracket-lattice.png)
+
+Limits: the crush model is axial. A knock off the pad's axis (the plate is
+40 x 30 mm, the pad 24 x 16) tilts the plate and crushes one side first;
+side knocks shear the pad's bond, which holds about 90 N flat. The crush
+law for TPU is Gibson and Ashby's elastic collapse, checked by linear
+buckling but not yet by a printed coupon (docs/IMPACT.md).
+
 ## Bond strengths
 
 `interface_library.py` (sources and test geometry in the module). MPa,

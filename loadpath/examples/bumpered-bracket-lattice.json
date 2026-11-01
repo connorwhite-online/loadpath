@@ -1,0 +1,204 @@
+{
+  "name": "bumpered-bracket-lattice-arm",
+  "description": "The bumpered bracket with a crushable bumper: the PETG arm optimized here carries the shelf (10 kg, factor 3) and the knock as the TPU gyroid pad's force on its seat (150 N, the limit; the graded pad peaks at 89 N). The pad is examples/impact/bracket-bumper.json (x 89..97), the striker plate a 3 mm PETG plate on the nose (x 97..100). See docs/MULTIMATERIAL.md.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [
+        0,
+        0,
+        -15
+      ],
+      "max": [
+        100,
+        80,
+        15
+      ]
+    }
+  ],
+  "fasteners": [
+    {
+      "id": "upper",
+      "size": "M5",
+      "seat": [
+        6,
+        65,
+        0
+      ],
+      "direction": "-x",
+      "grip": 6,
+      "end": "face"
+    },
+    {
+      "id": "lower",
+      "size": "M5",
+      "seat": [
+        6,
+        15,
+        0
+      ],
+      "direction": "-x",
+      "grip": 6,
+      "end": "face"
+    }
+  ],
+  "preserve": [
+    {
+      "id": "shelf-pad",
+      "shape": {
+        "type": "box",
+        "min": [
+          60,
+          76,
+          -15
+        ],
+        "max": [
+          92,
+          80,
+          15
+        ]
+      }
+    },
+    {
+      "id": "pad-seat",
+      "shape": {
+        "type": "box",
+        "min": [
+          86,
+          46,
+          -10
+        ],
+        "max": [
+          89,
+          74,
+          10
+        ]
+      }
+    }
+  ],
+  "supports": [
+    {
+      "region": "upper-bore",
+      "fix": "yz"
+    },
+    {
+      "region": "lower-bore",
+      "fix": "yz"
+    },
+    {
+      "shape": {
+        "type": "box",
+        "min": [
+          0,
+          0,
+          -15
+        ],
+        "max": [
+          1,
+          80,
+          15
+        ]
+      },
+      "fix": "x"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "shelf",
+      "loads": [
+        {
+          "region": "shelf-pad",
+          "force": [
+            0,
+            -100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pull",
+      "loads": [
+        {
+          "region": "shelf-pad",
+          "force": [
+            0,
+            -40,
+            15
+          ]
+        }
+      ]
+    },
+    {
+      "name": "knock",
+      "loads": [
+        {
+          "shape": {
+            "type": "box",
+            "min": [
+              88.5,
+              48,
+              -8
+            ],
+            "max": [
+              89,
+              72,
+              8
+            ]
+          },
+          "force": [
+            -150,
+            0,
+            0
+          ]
+        }
+      ]
+    }
+  ],
+  "process": {
+    "type": "fdm",
+    "buildDirection": "+z"
+  },
+  "goal": {
+    "safetyFactor": 3.0
+  },
+  "minMember": 4.0,
+  "resolution": {
+    "maxElements": 20000
+  },
+  "material": "petg",
+  "keepOut": [
+    {
+      "id": "bumper",
+      "shape": {
+        "type": "box",
+        "min": [
+          89,
+          0,
+          -15
+        ],
+        "max": [
+          100,
+          74,
+          15
+        ]
+      }
+    },
+    {
+      "id": "nose-gap",
+      "shape": {
+        "type": "box",
+        "min": [
+          92,
+          74,
+          -15
+        ],
+        "max": [
+          100,
+          80,
+          15
+        ]
+      }
+    }
+  ]
+}

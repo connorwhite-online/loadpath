@@ -183,7 +183,8 @@ def expand_fasteners(d: dict) -> dict:
                 screw = 0.6 * 600.0 * 0.25 * np.pi * (0.83 * nominal) ** 2
                 p = min(p, screw)
             if p > 0:
-                joints.append({"id": fid, "preload": p, "area": 0.25 * np.pi * (head ** 2 - hole ** 2)})
+                joints.append({"id": fid, "preload": p, "area": 0.25 * np.pi * (head ** 2 - hole ** 2),
+                               "axis": a.tolist()})
                 preload_loads.append({"region": f"{fid}-seat", "force": (a * p).tolist()})
                 preload_loads.append({"region": far, "force": (-a * p).tolist()})
     d["preserve"] = preserve

@@ -307,8 +307,11 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
         # meets the brief, and the fix is in the study: say so.
         o.passes = False
         report.setdefault("warnings", []).append(
-            f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
-            "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+            f"the part came out in {report['bodies']} pieces: either each piece has its own supports and "
+            "load path and nothing ties them together (two mirror halves, each on its own bolts), or some "
+            "preserved geometry is on no load path. For one part, preserve a link between the pieces (a "
+            "ring, a web, a plate) or add a load case that runs between them; for a floating preserve, "
+            "load it or drop it.")
     if report.get("closedBores"):
         o.passes = False
         report.setdefault("warnings", []).append(
@@ -616,10 +619,8 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         study = choose_build_direction(study, on_progress=on_progress)["study"]
     mats = study.materials or [study.material]
     if len(mats) == 1:
-        starts = pitch_starts(study)
-        r = (_run_single(study, on_progress, should_stop) if starts <= 1 else
-             _run_pitches(study, starts, on_progress, should_stop))
-        return _build_sim(_slice(_process_checks(r, on_progress), on_progress), on_progress)
+        return _build_sim(_slice(_process_checks(_run_restarts(study, on_progress, should_stop), on_progress),
+                                 on_progress), on_progress)
     t0 = time.time()
     outcomes, warnings, domain = [], [], None
     for r in _parallel([dataclasses.replace(study, material=m, materials=[m]) for m in mats],
@@ -633,6 +634,58 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     return _build_sim(_slice(_process_checks(StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
                                                          seconds=time.time() - t0, warnings=warnings), on_progress),
                              on_progress), on_progress)
+
+
+# goal.restarts: the k-th search starts at the goal's volumeFraction times
+# RESTART_STARTS[k] (the first is the study as written; then below, above,
+# further below, further above)
+RESTART_STARTS = (1.0, 0.8, 1.25, 0.65, 1.5, 0.55, 1.75, 0.45)
+
+
+def _run_restarts(study: Study, on_progress=None, should_stop=None) -> StudyResult:
+    """goal.restarts searches from different starting fractions, pooled: the
+    outcomes of all, `best` the lightest of the searches' own (confirmed)
+    picks. Each search's other outcomes keep their in-loop readings only, so
+    they are not candidates."""
+    import dataclasses
+
+    def search(st):
+        starts = pitch_starts(st)
+        return (_run_single(st, on_progress, should_stop) if starts <= 1 else
+                _run_pitches(st, starts, on_progress, should_stop))
+
+    g = study.goal
+    n = min(g.restarts, len(RESTART_STARTS))
+    if n <= 1 or (g.safety_factor is None and g.max_deflection is None):
+        return search(study)
+    t0 = time.time()
+    vf0 = float(g.volume_fraction or 0.3)
+    outcomes, picks, warnings, domain = [], [], [], None
+    for k in range(n):
+        if k and should_stop is not None and should_stop():
+            break
+        vf = float(np.clip(vf0 * RESTART_STARTS[k], _VF_MIN, _VF_MAX))
+        if on_progress is not None:
+            on_progress({"stage": "restart", "run": k + 1, "of": n, "volumeFraction": vf}, None)
+        st = dataclasses.replace(study, goal=dataclasses.replace(g, volume_fraction=vf))
+        r = search(st)
+        for o in r.outcomes:
+            o.report["restart"] = k + 1
+        if r.best is not None:
+            picks.append(len(outcomes) + r.best)
+        outcomes.extend(r.outcomes)
+        warnings.extend(w for w in r.warnings if w not in warnings)
+        domain = domain or r.domain
+    ok = [i for i in picks if outcomes[i].passes]
+    pool = ok or picks
+    best = min(pool, key=lambda i: outcomes[i].report["mass"]) if pool else None
+    if domain is not None:
+        domain = dict(domain, restarts=[{"run": outcomes[i].report.get("restart"),
+                                         "volumeFraction": outcomes[i].volume_fraction,
+                                         "mass": outcomes[i].report.get("mass"), "passes": outcomes[i].passes}
+                                        for i in picks])
+    return StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
+                       seconds=time.time() - t0, warnings=warnings)
 
 
 def _build_sim(result: StudyResult, on_progress=None) -> StudyResult:
@@ -964,8 +1017,11 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             # meets the brief, and the fix is in the study: say so.
             o.passes = False
             report.setdefault("warnings", []).append(
-                f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
-                "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+                f"the part came out in {report['bodies']} pieces: either each piece has its own supports and "
+                "load path and nothing ties them together (two mirror halves, each on its own bolts), or some "
+                "preserved geometry is on no load path. For one part, preserve a link between the pieces (a "
+                "ring, a web, a plate) or add a load case that runs between them; for a floating preserve, "
+                "load it or drop it.")
         if report.get("closedBores"):
             o.passes = False
             report.setdefault("warnings", []).append(

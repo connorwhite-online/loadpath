@@ -115,8 +115,8 @@ def delivery(summary: dict, study: dict) -> dict | None:
         # which analysis that number comes from: "tet" (body-fitted cross-check),
         # "voxel-fine" (a finer voxel re-analysis) or "voxel" (the design grid)
         "safetyFactorMethod": _sf_method(o),
-        **({"target": {k: goal[k] for k in ("safetyFactor", "maxDeflection") if k in goal}}
-           if any(k in goal for k in ("safetyFactor", "maxDeflection")) else {}),
+        **({"target": {k: goal[k] for k in ("safetyFactor", "maxDeflection", "maxMass") if k in goal}}
+           if any(k in goal for k in ("safetyFactor", "maxDeflection", "maxMass")) else {}),
         "governedBy": _governing(o, goal),
         "maxDeflection": max((c.get("deflection") or 0.0) for c in o.get("cases") or [{}]) or None,
         "cases": cases,

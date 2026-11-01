@@ -253,6 +253,8 @@ the coarse grid; the best of each was then rated on finer grids.
 | Curved channels along the streamlines, 10 channels | 40.4 K | **35.3 K** | 32.6 K |
 | Uniform gyroid, 3 mm cells | 42.0 K | 39.4 K | |
 | Staggered pin fins, 3 mm pitch | 43.1 K | 42.5 K | |
+| **Hybrid: 8 streamline channels (walls 15% of the cavity) with a die-graded 2 mm gyroid inside** | | **32.8 K** | **30.4 K** |
+| Streamline channels with walls graded over the dies (wall fraction 0.25-0.6 of the pitch) | | 34.3 K | |
 
 Swept on the coarse grid and dropped: pins at 1.5, 2 and 4 mm pitch (46.7-47.0 K),
 6 and 8 channels (51.9 and 43.9 K), gyroid cells of 2 and 4 mm (50.0 and 43.1 K),
@@ -271,10 +273,15 @@ What it says:
   streamlines, so a straight-channel design would do worse in this U-turn
   plate. A designer who has the streamlines ties the lattice. Pins, the usual
   printable default, lose clearly.
-- Lattices still haven't clearly won a thermal case. Next: grade the
-  channels too (thicker walls over the dies), or grade the lattice by the
-  conjugate solution rather than by die position, then rate both on a
-  finer grid.
+- **A hybrid wins.** Thinner streamline channels that steer the water
+  round the U, filled with a gyroid graded over the dies, beat the best
+  channels by 7% on both fine grids (32.8 vs 35.3 K, 30.4 vs 32.6 K) and the
+  graded lattice alone by 6-7%. Its flow runs converged on both grids,
+  while the baseline's higher-flow run at 0.15 mm had not settled. The
+  channels set where the water goes and the lattice takes the heat out
+  where the dies are. Grading the channel walls alone gained 3%.
+  Next: grade the lattice from the conjugate temperature field rather than
+  from die position, and give the channels their own share of the metal.
 - Method note: the averaged lattice Boltzmann velocity does not conserve
   volume cell by cell. Interpolated to faces and used for upwind advection,
   it lost 99% of the heat on this plate. `conjugate.solve_heat(...,
