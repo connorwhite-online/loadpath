@@ -307,8 +307,11 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
         # meets the brief, and the fix is in the study: say so.
         o.passes = False
         report.setdefault("warnings", []).append(
-            f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
-            "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+            f"the part came out in {report['bodies']} pieces: either each piece has its own supports and "
+            "load path and nothing ties them together (two mirror halves, each on its own bolts), or some "
+            "preserved geometry is on no load path. For one part, preserve a link between the pieces (a "
+            "ring, a web, a plate) or add a load case that runs between them; for a floating preserve, "
+            "load it or drop it.")
     if report.get("closedBores"):
         o.passes = False
         report.setdefault("warnings", []).append(
@@ -1014,8 +1017,11 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             # meets the brief, and the fix is in the study: say so.
             o.passes = False
             report.setdefault("warnings", []).append(
-                f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
-                "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+                f"the part came out in {report['bodies']} pieces: either each piece has its own supports and "
+                "load path and nothing ties them together (two mirror halves, each on its own bolts), or some "
+                "preserved geometry is on no load path. For one part, preserve a link between the pieces (a "
+                "ring, a web, a plate) or add a load case that runs between them; for a floating preserve, "
+                "load it or drop it.")
         if report.get("closedBores"):
             o.passes = False
             report.setdefault("warnings", []).append(
