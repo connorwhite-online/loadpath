@@ -215,8 +215,8 @@ safety factor 1.5 (S = 15.8 MPa) that is 107 mm^3, and stopping under
 post 3.5 mm across and 11 mm long: no margin on strength, and as a
 fixed-fixed column it buckles at about 150 N. At a stress with margin
 (10 MPa) the post must be 18 mm long and buckles near 90 N. Flared ends
-would lower the bond's stress, but they stiffen the post (a 15 mm spool
-with 7 mm ends stops the knock at ~350 N). Keying the TPU into PETG pockets
+would lower the bond's stress, but they stiffen the post (a 15 mm spool 8 mm across
+with 14 mm ends stops the knock at ~350 N). Keying the TPU into PETG pockets
 does not rescue the bending springs of the free layout either: their bond
 would have to carry ~16 MPa, more than TPU 95A itself (23.7 MPa in-layer,
 6.4 across layers) carries through the necks of any key. In this envelope
