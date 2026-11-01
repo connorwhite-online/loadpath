@@ -173,7 +173,7 @@ def stream_function(p: Plate):
     return x, y, psi
 
 
-def channels(p: Plate, n, vf=VF):
+def channels(p: Plate, n, vf=VF, field=None, f_min=0.25, f_max=0.6):
     """Walls along n - 1 streamlines of the empty cavity's potential flow:
     curved channels that follow the U, evenly spaced across the plate's
     middle (the levels are psi at even steps along y = W/2, from the inner
@@ -201,8 +201,32 @@ def channels(p: Plate, n, vf=VF):
     # each wall takes the fraction f of its local channel pitch (thinner
     # where the channels narrow), down to MIN_WALL, and stops where the
     # channel left would be under MIN_GAP
-    return match(p, lambda f: (dist <= 0.5 * f * width) & (f * width >= MIN_WALL) & ((1 - f) * width >= MIN_GAP)
-                 & p.space, vf, 0.0, 0.95)
+    walls = lambda f: (dist <= 0.5 * f * width) & (f * width >= MIN_WALL) & ((1 - f) * width >= MIN_GAP) & p.space
+    if field is None:
+        return match(p, walls, vf, 0.0, 0.95)
+    # graded: the wall fraction follows `field` (thicker walls over the
+    # dies, where the heat has to get into the water), clipped to
+    # [f_min, f_max], its scale matched to vf
+    fr = field / max(float(field[p.space].mean()), 1e-30)
+    return match(p, lambda c: walls(np.clip(c * fr, f_min, f_max)), vf, 0.0, 1.0)
+
+
+def hybrid(p: Plate, n, cell, wall_vf=0.15, vf=VF, sigma=4.0):
+    """Streamline channels (walls holding `wall_vf` of the cavity) with a
+    gyroid graded over the dies filling the channels, its scale matched so
+    walls and lattice together hold vf."""
+    walls = channels(p, n, wall_vf)
+    g = _dither(p, gyroid_value(p, cell), 1.0)
+    room = p.space & ~walls
+    vals = np.sort(g[room])
+    f = die_field(p, sigma)
+    f = f / max(float(f[room].mean()), 1e-30)
+
+    def build(c):
+        rho = np.clip(c * f, 0.0, 0.6)
+        return walls | ((g <= vals[np.clip((rho * (len(vals) - 1)).astype(int), 0, len(vals) - 1)]) & room)
+
+    return match(p, build, vf, 0.0, 5.0)
 
 
 def gyroid(p: Plate, cell, vf=VF):
@@ -301,6 +325,12 @@ def build(p: Plate, name):
         return pins(p, float(arg))
     if kind == "channels":
         return channels(p, int(arg))
+    if kind == "gchannels":                    # gchannels-10-s4: walls graded over the dies
+        nn, _, sig = arg.partition("-s")
+        return channels(p, int(nn), field=die_field(p, float(sig or 4.0)))
+    if kind == "hybrid":                       # hybrid-8-2: channels 8, graded gyroid 2 mm inside
+        nn, _, cell = arg.partition("-")
+        return hybrid(p, int(nn), float(cell))
     if kind == "gyroid":
         return gyroid(p, float(arg))
     if kind == "graded":
