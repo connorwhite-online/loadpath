@@ -206,6 +206,15 @@ def _margin(study: Study, report: dict) -> float | None:
     return min(ms) if ms else None
 
 
+def _whole(report: dict) -> bool:
+    """A part that can be delivered at all, whatever its margin: one body,
+    and every bore open at both ends. A capped bore takes no screw (the
+    wall bracket with fasteners at 5.6%, tets 3.52 for 2.5, came out with
+    one closed over; the search delivered it), so the search counts it
+    failing and steps on to a fraction that keeps the bore."""
+    return report.get("bodies", 1) <= 1 and not report.get("closedBores")
+
+
 def _warp_delivered(study: Study, mesh) -> dict | None:
     """The as-built measures of the delivered part (buildsim.simulate_part
     at buildSim.cells, on the plate or bed at the end of the build, as the
@@ -297,6 +306,12 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
         report.setdefault("warnings", []).append(
             f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
             "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+    if report.get("closedBores"):
+        o.passes = False
+        report.setdefault("warnings", []).append(
+            f"the part closes over {len(report['closedBores'])} bore end(s) "
+            f"({', '.join(b['id'] + ' ' + b['end'] for b in report['closedBores'])}): no fastener goes through, "
+            "so it does not pass. Extend the keep-out over the head and the driver's reach if this repeats.")
     return o
 
 
@@ -888,6 +903,12 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             report.setdefault("warnings", []).append(
                 f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
                 "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+        if report.get("closedBores"):
+            o.passes = False
+            report.setdefault("warnings", []).append(
+                f"the part closes over {len(report['closedBores'])} bore end(s) "
+                f"({', '.join(b['id'] + ' ' + b['end'] for b in report['closedBores'])}): no fastener goes through, "
+                "so it does not pass. Extend the keep-out over the head and the driver's reach if this repeats.")
         return o
 
     def run_one(vf: float) -> Outcome:
@@ -1030,7 +1051,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                         "seconds": cc["seconds"],
                         "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
                                   for c in cc["cases"]]}
-        o.passes = bool(mt >= 1.0) and r.get("bodies", 1) <= 1
+        o.passes = bool(mt >= 1.0) and _whole(r)
         emit({"stage": "confirmed", "volumeFraction": o.volume_fraction, "margin": mt, "method": "tet"})
         return mt
 
@@ -1043,7 +1064,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         r.pop("voxelSafetyFactor", None)
         r["safetyFactor"] = o.voxel_sf
         r["margin"] = _margin(study, r)
-        o.passes = bool(r["margin"] >= 1.0) and r.get("bodies", 1) <= 1
+        o.passes = bool(r["margin"] >= 1.0) and _whole(r)
         r["tetCheck"] = c
         worst = min(c["cases"], key=lambda q: -q["peakStress"])
         r.setdefault("warnings", []).append(
@@ -1126,7 +1147,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             r["calibration"] = {"tetOverVoxel": k, "safetyFactor": o.voxel_sf * k}
             m = _margin(study, {**r, "safetyFactor": o.voxel_sf * k})
         r["margin"] = m
-        o.passes = bool(m >= 1.0) and r.get("bodies", 1) <= 1
+        o.passes = bool(m >= 1.0) and _whole(r)
 
     def run_constrained(limits, x0) -> Outcome:
         from .constrained import optimize_constrained
