@@ -1,0 +1,339 @@
+{
+ "id": "camera-boom-mjf",
+ "kind": "lattice",
+ "brief": "A boom that holds a camera out from the wrist of my GRIP arm, in MJF PA12. It bolts to the wrist\nwith a 36 x 36 mm flange, 3 mm thick (x = 0 to 3, centred on y = z = 0), by four M3 screws along\nX at (y, z) = (+/-14, +/-14); their heads sit on the boom side and need 6.4 mm clear from x = 3 to\nx = 12. The boom runs out along +X and has to stay inside a 22 x 22 mm section (y and z from -11 to\n11) out to x = 95. The camera, 60 g with its housing, screws onto a flat pad on top at the far end:\nz = 9 to 11, x = 70 to 95, the full 22 mm wide, with two M2 screws along Z at x = 72 and x = 93\n(y = 0). The wrist servos buzz and the picture shakes if the boom resonates, so with the camera on\nand the wrist face held, its first natural frequency has to be above 120 Hz. Keep it under 20 g. It\nshould take a 10 g knock on the camera (6 N, down or sideways) at safety factor 2, and any closed\nspace inside has to let the powder out.",
+ "attachments": [],
+ "tags": [
+  "mjf",
+  "vibration",
+  "point-mass",
+  "arm"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0,
+     -18,
+     -18
+    ],
+    "max": [
+     3,
+     18,
+     18
+    ]
+   },
+   {
+    "type": "box",
+    "min": [
+     3,
+     -11,
+     -11
+    ],
+    "max": [
+     95,
+     11,
+     11
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "flange",
+    "shape": {
+     "type": "box",
+     "min": [
+      0,
+      -18,
+      -18
+     ],
+     "max": [
+      3,
+      18,
+      18
+     ]
+    }
+   },
+   {
+    "id": "camera-pad",
+    "shape": {
+     "type": "box",
+     "min": [
+      70,
+      -11,
+      9
+     ],
+     "max": [
+      95,
+      11,
+      11
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m3",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -1,
+        -14,
+        -14
+       ],
+       "p1": [
+        5,
+        -14,
+        -14
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -1,
+        -14,
+        14
+       ],
+       "p1": [
+        5,
+        -14,
+        14
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -1,
+        14,
+        -14
+       ],
+       "p1": [
+        5,
+        14,
+        -14
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -1,
+        14,
+        14
+       ],
+       "p1": [
+        5,
+        14,
+        14
+       ],
+       "r": 1.7
+      }
+     ]
+    }
+   },
+   {
+    "id": "m3-heads",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        3,
+        -14,
+        -14
+       ],
+       "p1": [
+        12,
+        -14,
+        -14
+       ],
+       "r": 3.2
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        3,
+        -14,
+        14
+       ],
+       "p1": [
+        12,
+        -14,
+        14
+       ],
+       "r": 3.2
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        3,
+        14,
+        -14
+       ],
+       "p1": [
+        12,
+        14,
+        -14
+       ],
+       "r": 3.2
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        3,
+        14,
+        14
+       ],
+       "p1": [
+        12,
+        14,
+        14
+       ],
+       "r": 3.2
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "camera-screws",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        72,
+        0,
+        5
+       ],
+       "p1": [
+        72,
+        0,
+        12
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        93,
+        0,
+        5
+       ],
+       "p1": [
+        93,
+        0,
+        12
+       ],
+       "r": 1.1
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m3"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -0.5,
+      -18,
+      -18
+     ],
+     "max": [
+      0.3,
+      18,
+      18
+     ]
+    },
+    "fix": "x"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "camera-shock",
+    "loads": [
+     {
+      "region": "camera-screws",
+      "force": [
+       0,
+       0,
+       -6
+      ]
+     }
+    ]
+   },
+   {
+    "name": "camera-side",
+    "loads": [
+     {
+      "region": "camera-screws",
+      "force": [
+       0,
+       6,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "mjf",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "camera-boom-mjf",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxMass": 20,
+  "vibration": {
+   "minFrequency": 120,
+   "fixed": {
+    "min": [
+     -1,
+     -18,
+     -18
+    ],
+    "max": [
+     0.5,
+     18,
+     18
+    ]
+   },
+   "pointMasses": [
+    {
+     "min": [
+      70,
+      -11,
+      10.4
+     ],
+     "max": [
+      95,
+      11,
+      12
+     ],
+     "mass": 0.06
+    }
+   ],
+   "pitch": 1.0
+  },
+  "drains": {
+   "maxEnclosed": 50
+  }
+ }
+}

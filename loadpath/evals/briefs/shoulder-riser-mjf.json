@@ -1,0 +1,487 @@
+{
+ "id": "shoulder-riser-mjf",
+ "kind": "lattice",
+ "brief": "The shoulder riser on my GRIP desk arm is a solid 60 x 50 x 40 mm block of MJF PA12 and weighs\n110 g, which is a lot to spin on the turntable. Origin at the centre of its bottom face, z up: it\noccupies x = -30 to 30, y = -25 to 25, z = 0 to 40, and sits flat on the turntable. Four M4 screws\ngo through it top to bottom into the turntable at (+/-22, +/-17); their heads sit in 8 mm\ncounterbores from z = 34 up, on solid seats. The shoulder bracket screws down onto the top with two\nM5 heat-set inserts at (+/-18, 0) (6.4 mm holes from z = 30 to the top), and a 16 mm cable hole runs\nthrough the middle along Z. The arm puts up to 20 N\u00b7m on the top through the inserts, about X or\nabout Y depending on where it points, plus 60 N down. Safety factor 2.5. Keep the outside exactly as\nit is (other parts locate on its faces) and keep the top 2 mm solid for the bracket to seat on, but\nfill the inside with a lattice that is denser where the stress is, with open cells and no closed\nskin so the powder can be blown out. Get it under 70 g.",
+ "attachments": [],
+ "tags": [
+  "mjf",
+  "lattice",
+  "arm",
+  "lighten"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -30,
+     -25,
+     0
+    ],
+    "max": [
+     30,
+     25,
+     40
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "top-plate",
+    "shape": {
+     "type": "box",
+     "min": [
+      -30,
+      -25,
+      38
+     ],
+     "max": [
+      30,
+      25,
+      40
+     ]
+    }
+   },
+   {
+    "id": "base-pads",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -22,
+        -17,
+        0
+       ],
+       "p1": [
+        -22,
+        -17,
+        4
+       ],
+       "r": 5.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -22,
+        17,
+        0
+       ],
+       "p1": [
+        -22,
+        17,
+        4
+       ],
+       "r": 5.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        22,
+        -17,
+        0
+       ],
+       "p1": [
+        22,
+        -17,
+        4
+       ],
+       "r": 5.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        22,
+        17,
+        0
+       ],
+       "p1": [
+        22,
+        17,
+        4
+       ],
+       "r": 5.5
+      }
+     ]
+    }
+   },
+   {
+    "id": "insert-bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -18,
+        0,
+        28
+       ],
+       "p1": [
+        -18,
+        0,
+        40
+       ],
+       "r": 6.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        18,
+        0,
+        28
+       ],
+       "p1": [
+        18,
+        0,
+        40
+       ],
+       "r": 6.0
+      }
+     ]
+    }
+   },
+   {
+    "id": "head-seats",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -22,
+        -17,
+        30
+       ],
+       "p1": [
+        -22,
+        -17,
+        34
+       ],
+       "r": 6.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -22,
+        17,
+        30
+       ],
+       "p1": [
+        -22,
+        17,
+        34
+       ],
+       "r": 6.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        22,
+        -17,
+        30
+       ],
+       "p1": [
+        22,
+        -17,
+        34
+       ],
+       "r": 6.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        22,
+        17,
+        30
+       ],
+       "p1": [
+        22,
+        17,
+        34
+       ],
+       "r": 6.5
+      }
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m4",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -22,
+        -17,
+        -1
+       ],
+       "p1": [
+        -22,
+        -17,
+        41
+       ],
+       "r": 2.2
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -22,
+        17,
+        -1
+       ],
+       "p1": [
+        -22,
+        17,
+        41
+       ],
+       "r": 2.2
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        22,
+        -17,
+        -1
+       ],
+       "p1": [
+        22,
+        -17,
+        41
+       ],
+       "r": 2.2
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        22,
+        17,
+        -1
+       ],
+       "p1": [
+        22,
+        17,
+        41
+       ],
+       "r": 2.2
+      }
+     ]
+    }
+   },
+   {
+    "id": "m4-heads",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -22,
+        -17,
+        34
+       ],
+       "p1": [
+        -22,
+        -17,
+        45
+       ],
+       "r": 4.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -22,
+        17,
+        34
+       ],
+       "p1": [
+        -22,
+        17,
+        45
+       ],
+       "r": 4.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        22,
+        -17,
+        34
+       ],
+       "p1": [
+        22,
+        -17,
+        45
+       ],
+       "r": 4.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        22,
+        17,
+        34
+       ],
+       "p1": [
+        22,
+        17,
+        45
+       ],
+       "r": 4.0
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "inserts",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -18,
+        0,
+        30
+       ],
+       "p1": [
+        -18,
+        0,
+        41
+       ],
+       "r": 3.2
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        18,
+        0,
+        30
+       ],
+       "p1": [
+        18,
+        0,
+        41
+       ],
+       "r": 3.2
+      }
+     ]
+    }
+   },
+   {
+    "id": "cable",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0,
+      0,
+      -1
+     ],
+     "p1": [
+      0,
+      0,
+      41
+     ],
+     "r": 8.0
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m4"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -30,
+      -25,
+      -0.5
+     ],
+     "max": [
+      30,
+      25,
+      0.3
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "arm-forward",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       0,
+       0,
+       -60
+      ],
+      "moment": [
+       0,
+       20000,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "arm-sideways",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       0,
+       0,
+       -60
+      ],
+      "moment": [
+       20000,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "mjf",
+  "goal": {
+   "safetyFactor": 2.5
+  },
+  "name": "shoulder-riser-mjf",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5,
+  "maxMass": 70,
+  "cellular": {
+   "probe": {
+    "min": [
+     -27,
+     -22,
+     6
+    ],
+    "max": [
+     27,
+     22,
+     34
+    ]
+   },
+   "maxFill": 0.6,
+   "minWallsPer10mm": 0.6,
+   "minHull": 0.9
+  },
+  "drains": {
+   "maxEnclosed": 50
+  }
+ }
+}

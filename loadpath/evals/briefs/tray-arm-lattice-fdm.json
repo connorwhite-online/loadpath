@@ -1,0 +1,260 @@
+{
+ "id": "tray-arm-lattice-fdm",
+ "kind": "lattice",
+ "brief": "A cantilever arm that holds a small cable tray off the side of my GRIP robot's base, in PETG on an\nFDM printer. The arm runs along +X from the base's side wall at x = 0 to x = 80; it is 30 mm wide\n(y = -15 to 15) and 40 mm tall (z = 0 to 40), and it prints standing just like that, z up, with its\nbottom face on the bed. At x = 0 a 4 mm plate (x = 0 to 4, the full 30 x 40) bolts to the base with\ntwo M4 screws along X at (y, z) = (0, 10) and (0, 30); their heads are on the arm side, so leave\n8 mm diameter clear for each from x = 4 to x = 12. At the far end a 6 mm plate (x = 74 to 80) takes\ntwo M3 heat-set inserts along X at (y, z) = (-8, 30) and (8, 30), in 4 mm holes from x = 73.5\noutward. The tray pushes 60 N straight down on the inserts, and if someone bumps it, 20 N sideways\n(along Y) with 30 N down. Safety factor 2. Between the plates I want an open strut lattice, not a\nsolid web, under 55 g, and it has to print without any support: my printer bridges about 8 mm\ncleanly and nothing longer.",
+ "attachments": [],
+ "tags": [
+  "fdm",
+  "lattice",
+  "struts",
+  "support-free",
+  "arm"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0,
+     -15,
+     0
+    ],
+    "max": [
+     80,
+     15,
+     40
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "wall-plate",
+    "shape": {
+     "type": "box",
+     "min": [
+      0,
+      -15,
+      0
+     ],
+     "max": [
+      4,
+      15,
+      40
+     ]
+    }
+   },
+   {
+    "id": "tip-plate",
+    "shape": {
+     "type": "box",
+     "min": [
+      74,
+      -15,
+      0
+     ],
+     "max": [
+      80,
+      15,
+      40
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m4",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        -1,
+        0,
+        10
+       ],
+       "p1": [
+        5,
+        0,
+        10
+       ],
+       "r": 2.2
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -1,
+        0,
+        30
+       ],
+       "p1": [
+        5,
+        0,
+        30
+       ],
+       "r": 2.2
+      }
+     ]
+    }
+   },
+   {
+    "id": "m4-heads",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        4,
+        0,
+        10
+       ],
+       "p1": [
+        12,
+        0,
+        10
+       ],
+       "r": 4.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        4,
+        0,
+        30
+       ],
+       "p1": [
+        12,
+        0,
+        30
+       ],
+       "r": 4.0
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "inserts",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        73.5,
+        -8,
+        30
+       ],
+       "p1": [
+        81,
+        -8,
+        30
+       ],
+       "r": 2.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        73.5,
+        8,
+        30
+       ],
+       "p1": [
+        81,
+        8,
+        30
+       ],
+       "r": 2.0
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m4"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -0.5,
+      -15,
+      0
+     ],
+     "max": [
+      0.3,
+      15,
+      40
+     ]
+    },
+    "fix": "x"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "tray",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       0,
+       0,
+       -60
+      ]
+     }
+    ]
+   },
+   {
+    "name": "bumped",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       0,
+       20,
+       -30
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "petg",
+  "process": "fdm",
+  "printDirection": "+z",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "lattice-arm-fdm",
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxMass": 55,
+  "print": {
+   "direction": "+z",
+   "bridgeSpan": 8,
+   "maxSupportArea": 25
+  },
+  "cellular": {
+   "probe": {
+    "min": [
+     14,
+     -13,
+     4
+    ],
+    "max": [
+     70,
+     13,
+     26
+    ]
+   },
+   "maxFill": 0.4,
+   "minWallsPer10mm": 0.4,
+   "minSeeThrough": 0.15
+  }
+ }
+}
