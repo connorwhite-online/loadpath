@@ -36,15 +36,22 @@ __all__ = ["solve_heat", "duct_flow", "at_pressure_drop"]
 
 
 def solve_heat(solid: np.ndarray, fluid: np.ndarray, velocity, h: float, k_solid: float, fluid_props,
-               heat_faces: np.ndarray, power: float, flow_axis: int = 0) -> dict:
+               heat_faces: np.ndarray, power: float, flow_axis: int = 0, outlet=None, inlet=None,
+               project: bool = False) -> dict:
     """Steady temperature rise over the inlet (K) in every solid and fluid voxel.
 
     solid, fluid: bool voxel masks (disjoint; everything else is an
     adiabatic wall). velocity: (3, *shape) m/s on the voxels (zero in the
     solid). heat_faces: bool mask of solid voxels whose face on the low side
-    of axis 2 takes the heat (spread evenly by area), `power` W in all. The
-    fluid enters through the voxels on the grid's low face along `flow_axis`
-    at temperature 0 and leaves through the high one.
+    of axis 2 takes the heat (spread evenly by area), or a float field of
+    weights (several dies at different powers), `power` W in all. The fluid
+    enters through the voxels on the grid's low face along `flow_axis` at
+    temperature 0 and leaves through the high one; or, with `inlet` and
+    `outlet` = (mask, axis, sign), enters and leaves through the masked
+    fluid voxels, inward (inlet) or outward (outlet) along `sign` x `axis`.
+    project: first make the face fluxes conserve volume (`_project`); for a
+    lattice Boltzmann flow through a fine network, without it the heat
+    balance can be far off.
 
     Returns {"T": field (nan outside), "maxRise", "meanRise" (over the heated
     faces), "resistance" K/W (max), "meanResistance", "balance" (heat carried
@@ -59,9 +66,10 @@ def solve_heat(solid: np.ndarray, fluid: np.ndarray, velocity, h: float, k_solid
     rc = fluid_props.rho * fluid_props.cp
     U = np.asarray(velocity, float)
     rows, cols, vals = [], [], []
-    diag = np.zeros(n)
     rhs = np.zeros(n)
-    out_flux = []
+    # the faces: conduction across every live pair, volume flux (m^3/s,
+    # a to b positive) across fluid pairs from the averaged cell velocities
+    fa, fb, flux = [], [], []
     for ax in range(3):
         a = [slice(None)] * 3
         b = [slice(None)] * 3
@@ -72,36 +80,64 @@ def solve_heat(solid: np.ndarray, fluid: np.ndarray, velocity, h: float, k_solid
         ia, ib = idx[a][both], idx[b][both]
         ka, kb = k[a][both], k[b][both]
         g = 2.0 * ka * kb / (ka + kb) * hm                    # W/K across the face
-        # conduction
         rows += [ia, ib, ia, ib]
         cols += [ib, ia, ia, ib]
         vals += [-g, -g, g, g]
-        # advection between fluid cells: upwind, F > 0 from a to b
-        ff = fluid[a][both] & fluid[b][both]
-        un = 0.5 * (U[ax][a][both] + U[ax][b][both])
-        F = np.where(ff, rc * un * hm * hm, 0.0)               # W/K
-        fp, fm = np.maximum(F, 0.0), np.maximum(-F, 0.0)
-        # cell a: outflow fp leaves at T_a, inflow fm arrives at T_b
-        rows += [ia, ia, ib, ib]
-        cols += [ia, ib, ib, ia]
-        vals += [fp, -fm, fm, -fp]
-    # inlet and outlet faces of the duct
-    lo = [slice(None)] * 3
-    hi = [slice(None)] * 3
-    lo[flow_axis] = 0
-    hi[flow_axis] = -1
-    lo, hi = tuple(lo), tuple(hi)
-    f_in = fluid[lo]
-    # inflow at temperature 0: nothing to add (the upwind value is 0)
-    f_out = fluid[hi]
-    Fo = np.maximum(rc * U[flow_axis][hi][f_out] * hm * hm, 0.0)
-    io = idx[hi][f_out]
-    np.add.at(diag, io, Fo)
+        ff = fluid[a] & fluid[b]
+        fa.append(idx[a][ff])
+        fb.append(idx[b][ff])
+        flux.append(0.5 * (U[ax][a][ff] + U[ax][b][ff]) * hm * hm)
+    fa, fb, flux = np.concatenate(fa), np.concatenate(fb), np.concatenate(flux)
+    # inlet and outlet: (cells, volume flux in / out)
+    if inlet is None:
+        lo = [slice(None)] * 3
+        lo[flow_axis] = 0
+        lo = tuple(lo)
+        ii = idx[lo][fluid[lo]]
+        qi = np.maximum(U[flow_axis][lo][fluid[lo]] * hm * hm, 0.0)
+    else:
+        im, iax, isign = inlet
+        im = np.asarray(im, bool) & fluid
+        ii, qi = idx[im], np.maximum(isign * U[iax][im] * hm * hm, 0.0)
+    if outlet is None:
+        hi = [slice(None)] * 3
+        hi[flow_axis] = -1
+        hi = tuple(hi)
+        io = idx[hi][fluid[hi]]
+        qo = np.maximum(U[flow_axis][hi][fluid[hi]] * hm * hm, 0.0)
+    else:
+        om, oax, osign = outlet
+        om = np.asarray(om, bool) & fluid
+        io, qo = idx[om], np.maximum(osign * U[oax][om] * hm * hm, 0.0)
+    if project:
+        flux, qo = _project(n, fa, fb, flux, ii, qi, io, qo)
+    F = rc * flux                                             # W/K
+    fp, fm = np.maximum(F, 0.0), np.maximum(-F, 0.0)
+    Fo = rc * qo
+    # upwind advection, conservative: each cell gives out at its own T and
+    # takes in F T_upwind. A cell's diagonal is its outflow; where (the LBM's
+    # averaged velocity is weakly compressible) a cell's inflow beats it, the
+    # matrix loses diagonal dominance and AIR can diverge, so the diagonal
+    # is max(outflow, inflow): exact for a divergence-free flow, and with
+    # `project` the flow is made divergence-free first.
+    outs = np.zeros(n)
+    ins = np.zeros(n)
+    np.add.at(outs, fa, fp)
+    np.add.at(outs, fb, fm)
+    np.add.at(ins, fb, fp)
+    np.add.at(ins, fa, fm)
+    np.add.at(ins, ii, rc * qi)                               # inflow at temperature 0
+    np.add.at(outs, io, Fo)
+    rows += [fb, fa]
+    cols += [fa, fb]
+    vals += [-fp, -fm]
+    diag = np.maximum(outs, ins)
     # heat in
-    q = heat_faces & solid
+    wq = np.where(solid, np.asarray(heat_faces, float), 0.0)
+    q = wq > 0
     if not q.any():
         raise ValueError("no heated face on the solid")
-    np.add.at(rhs, idx[q], power / q.sum())
+    np.add.at(rhs, idx[q], power * wq[q] / wq[q].sum())
     A = sp.coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n)).tocsr()
     A = A + sp.diags(diag)
     t = _solve(A, rhs)
@@ -111,7 +147,43 @@ def solve_heat(solid: np.ndarray, fluid: np.ndarray, velocity, h: float, k_solid
     tq = T[q]
     return {"T": T, "maxRise": float(tq.max()), "meanRise": float(tq.mean()),
             "resistance": float(tq.max() / power), "meanResistance": float(tq.mean() / power),
-            "balance": carried / power, "inletCells": int(f_in.sum())}
+            "balance": carried / power, "inletCells": int(ii.size)}
+
+
+def _project(n, fa, fb, flux, ii, qi, io, qo):
+    """The nearest face fluxes to `flux` that conserve volume in every cell
+    (least squares, the inlet fluxes held, the outlet ones free): flux -
+    grad phi with L phi = div, L the fluid cells' graph Laplacian (the
+    outlets tied to phi = 0). The averaged LBM velocity, interpolated to
+    faces, gains and loses volume cell by cell; advected heat with it does
+    the same, and on a water cold plate that lost 99% of the heat."""
+    import pyamg
+
+    div = np.zeros(n)
+    np.add.at(div, fa, flux)
+    np.add.at(div, fb, -flux)
+    np.add.at(div, io, qo)
+    np.add.at(div, ii, -qi)
+    used = np.zeros(n, bool)
+    used[fa] = used[fb] = used[io] = used[ii] = True
+    m = np.flatnonzero(used)
+    loc = -np.ones(n, np.int64)
+    loc[m] = np.arange(m.size)
+    a, b = loc[fa], loc[fb]
+    d = np.zeros(m.size)
+    np.add.at(d, a, 1.0)
+    np.add.at(d, b, 1.0)
+    np.add.at(d, loc[io], 1.0)
+    d += 1e-9                                                 # pockets cut off from the outlet
+    Lm = sp.coo_matrix((np.concatenate([-np.ones(a.size), -np.ones(a.size)]),
+                        (np.concatenate([a, b]), np.concatenate([b, a]))), shape=(m.size, m.size)).tocsr()
+    Lm = Lm + sp.diags(d)
+    rhs = -div[m]
+    ml = pyamg.smoothed_aggregation_solver(Lm)
+    phi = ml.solve(rhs, tol=1e-12, accel="cg", maxiter=500)
+    flux = flux - (phi[b] - phi[a])
+    qo = qo + phi[loc[io]]
+    return flux, qo
 
 
 def _solve(A, b):
