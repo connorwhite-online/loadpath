@@ -600,6 +600,11 @@
               "exclusiveMinimum": 0,
               "description": "mm: narrowest hole or gap the optimizer may leave (default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"
             },
+            "bridgeSpan": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm: longest unsupported bridge the printer prints cleanly (default: 15 FDM, 5 resin, 2 LPBF); longer spans count as needing support"
+            },
             "escapeHole": {
               "type": "number",
               "exclusiveMinimum": 0,
@@ -1970,7 +1975,12 @@
         "head": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Head (or washer) diameter, mm (default from size)."
+          "description": "Head (or washer) diameter, mm (default from size: the ISO 4762 socket head, e.g. M3 5.5, M4 7, M5 8.5)."
+        },
+        "counterbore": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Diameter of the head and driver keep-out, mm: the counterbore the head sits in (default the seat ring's width, at least head + 1)."
         },
         "diameter": {
           "type": "number",

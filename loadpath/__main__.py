@@ -223,8 +223,12 @@ def _verify(args):
     study = study_from_dict(raw, base_dir=base)
     mesh = trimesh.load(part, force="mesh")
     pitch = choose_pitch(study)
-    rep = verify_part(study, mesh, max_cells=quick.verify_cells(args.cells), min_pitch=0.5 * pitch,
-                      contact_band=pitch)
+    # the default grid matches the run's own check (no finer than half the
+    # design cell); --cells asks for a grid, so it gets one: it used to be
+    # floored to that same pitch, and 120k cells read exactly as 60k did
+    asked = args.cells is not None
+    rep = verify_part(study, mesh, max_cells=quick.verify_cells(args.cells if asked else 60_000),
+                      min_pitch=None if asked else 0.5 * pitch, contact_band=pitch)
     m = _margin(study, rep)
     summary = {"ok": True, "part": part, "study": args.study, "mass": rep["mass"],
                "safetyFactor": rep.get("safetyFactor"), "margin": m,
@@ -293,7 +297,9 @@ def main(argv=None):
     v.add_argument("study")
     v.add_argument("part", help="the part's STL, or a `run` output folder (its best outcome)")
     v.add_argument("--out", help="also write verify.json (with the full report) here")
-    v.add_argument("--cells", type=int, default=60_000, help="analysis grid cells (default 60000)")
+    v.add_argument("--cells", type=int, default=None,
+                   help="analysis grid cells (default: 60000, no finer than half the study's design cell, as "
+                        "`run` checks; given, the grid is about this many cells whatever the design cell)")
     v.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
     c = sub.add_parser("check", help="validate a study and report the voxel problem (or a heat exchanger "
                                      "spec: its design grid and memory; a lattice or field graph: lint)")

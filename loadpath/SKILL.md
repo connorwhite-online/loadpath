@@ -45,8 +45,10 @@ field. `check` reports every problem at once: fix them all, then check again.
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and
-   the head and driver path clear, and adds a preload case. Don't draw a
-   solid boss round a screw.
+   the head and driver path clear, and adds a preload case. Heads default
+   to ISO 4762 socket heads (M3 5.5, M4 7, M5 8.5 mm); give `head` for a
+   washer or pan head and `counterbore` for the pocket's diameter. Don't
+   draw a solid boss round a screw.
 2. **Bound the design space** generously: the envelope the part may occupy,
    minus nothing (keep-outs are subtracted for you). Too tight a box is the
    most common reason a result looks like the box.
@@ -111,7 +113,9 @@ field. `check` reports every problem at once: fix them all, then check again.
    `"buildDirection": "auto"` to let it compare all six (slower: every
    direction half-designed on a coarse grid, the best three finished; with
    no overhang control, one design checked per axis). `report.json` → `print` says whether it needs
-   support, its bridges, and whether the first layer holds; `run` writes a
+   support (a warning says so when it does), its bridges, and whether the
+   first layer holds; spans past `process.bridgeSpan` (mm; default 15 FDM)
+   count as needing support, so set it for your printer. `run` writes a
    `.3mf` per part already standing the right way up for the slicer.
    FDM outcomes are also sliced headless when PrusaSlicer is installed
    (`report.json` → `slicer`: `printTime` s, `filamentVolume` cm^3,
@@ -195,13 +199,19 @@ field. `check` reports every problem at once: fix them all, then check again.
    size), per-case numbers, and `warnings` gathered from every check (print,
    process, durability). Quote those numbers. To check any STL against a
    study later (an edited part, an older outcome):
-   `loadpath verify study.json part.stl` (its own grid, `--cells`, so it
+   `loadpath verify study.json part.stl` (its own grid, as the run's
+   outcome check; `--cells N` for a grid of about N cells, finer or not, so it
    reads a few percent off the run's fine re-check; quote `deliver` for a
    delivered part). `deliver.tetCrossCheck` says why the body-fitted check
    did not run when it did not. Then:
    - `safetyFactor` below target, or `passes: false` → raise the goal's
      volume fraction, the material, or check the loads are right;
    - `bodies` > 1 → something is not connected to a support;
+   - a "mesh lost N% of the optimized solid cells" warning (`meshFidelity`)
+     → the mesh came out thinner than the optimized design, so the part
+     reads softer than it should and the search picks a heavier outcome.
+     The verified numbers hold; if the part is too heavy, a hand-built
+     field graph of the same layout (`loadpath field`) can do better;
    - `keepOutIntrusion` / `preserveMissing` above ~1 mm³ → report a bug;
    - `p5Member` under the printer's minimum → raise `minMember`;
    - `durability.safetyFactor` under its target → `durability.constrain`,

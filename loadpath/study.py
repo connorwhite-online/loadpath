@@ -727,6 +727,50 @@ def _grade(result: StudyResult, i: int, opts, on_progress=None) -> None:
     o.report["graded"] = rep
 
 
+
+def mesh_fidelity(domain, xphys, mesh) -> dict | None:
+    """How much of the optimized field the delivered mesh kept: the share of
+    solid cells (xphys > 0.5) whose centre lies outside the mesh, overall, on
+    the surface of the solid, and in thin members (gone under a one-cell
+    opening). The camera boom (2026-11-01) lost 21% of its solid cells: 44%
+    of its thin members and 34% of its surface cells, against 8% inside.
+    Meshed, it read 16x softer than the optimizer's own model on the same
+    grid and supports, so the run reported SF 0.99 for a field that carries
+    the load with room to spare."""
+    from scipy import ndimage
+
+    from .voxels import mesh_solid
+
+    solid = np.asarray(xphys) > 0.5
+    if not solid.any() or mesh is None or len(getattr(mesh, "faces", ())) == 0:
+        return None
+    step = domain.pitch / 2.0
+    lo = np.asarray(domain.origin, float)
+    hi = lo + np.asarray(domain.dims) * domain.pitch
+    try:
+        g, org, *_ = mesh_solid(mesh, step, pad=2, bounds=(lo, hi))
+    except (MemoryError, ValueError):
+        return None
+    c = domain.mesh.elem_centers()
+    ijk = np.clip(np.floor((c - np.asarray(org)) / step).astype(int), 0, np.array(g.shape) - 1)
+    inside = g[tuple(ijk.T)]
+    at = tuple(domain.mesh.elem_ijk.T)
+    grid = np.zeros(domain.dims, bool)
+    grid[at] = solid
+    cross = ndimage.generate_binary_structure(3, 1)
+    thin = (grid & ~ndimage.binary_opening(grid, structure=cross))[at]
+    surface = (grid & ~ndimage.binary_erosion(grid, structure=cross))[at] & ~thin
+    lost = solid & ~inside
+
+    def share(m):
+        return float((lost & m).sum() / max(int(m.sum()), 1))
+
+    return {"lostSolidCells": share(solid), "lostThinCells": share(thin), "lostSurfaceCells": share(surface),
+            "thinCells": float(thin.sum() / solid.sum())}
+
+
+MESH_LOSS_WARN = 0.10
+
 def _material_named(name, study):
     """The study's Material called `name` (a study can try several)."""
     for m in study.materials or [study.material]:
@@ -812,6 +856,16 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         making = manufacturing_report(study, domain, mesh)
         if making:
             report["manufacturing"] = making
+        fid = mesh_fidelity(domain, xphys, mesh)
+        if fid is not None:
+            report["meshFidelity"] = fid
+            if fid["lostSolidCells"] > MESH_LOSS_WARN:
+                report.setdefault("warnings", []).append(
+                    f"the mesh lost {fid['lostSolidCells']:.0%} of the optimized solid cells "
+                    f"({fid['lostSurfaceCells']:.0%} of the surface cells, {fid['lostThinCells']:.0%} of the thin "
+                    "members): the meshed part is softer and weaker than the design the optimizer found, so "
+                    "the outcome search goes heavier than the design needs. The verified numbers are the "
+                    "ones that hold.")
         if warp:
             report["warp"] = warp
             if limits0 is not None:
