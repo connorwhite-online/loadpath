@@ -1,0 +1,11 @@
+{
+ "description": "The arm link's core chosen by process: a plain hollow skin, FDM-printable box sections with a rib (uniform walls, or walls and flanges graded along the link), and a skin over a gyroid, each tuned for the lightest link that keeps the arm-link study's safety factor and 0.5 mm deflection, then read for each process. Run: loadpath cores examples/fields/arm-link-cores.json --out cores-out",
+ "options": [
+  {"name": "hollow", "graph": "arm-link-hollow-tune.json"},
+  {"name": "box", "graph": "arm-link-box-tune.json"},
+  {"name": "box-graded", "graph": "arm-link-box-graded-tune.json"},
+  {"name": "sandwich", "graph": "arm-link-sandwich-tune.json"}
+ ],
+ "processes": ["fdm", "sls"],
+ "up": "+z"
+}

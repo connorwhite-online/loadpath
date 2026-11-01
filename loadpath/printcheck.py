@@ -196,6 +196,19 @@ def check_print(mesh, direction, process: str = "fdm", pitch: float | None = Non
     out["maxBridgeSpan"] = max((b["span"] for b in bridges), default=0.0)
     out["bridgeList"] = sorted(bridges, key=lambda b: -b["span"])[:8]
     out["supportFree"] = bool(out["supportArea"] == 0.0)
+    # support inside a sealed cavity can never come out: the cells that
+    # need support over a void that does not reach the outside (the grid's
+    # faces, or the open top above the part)
+    void = ~solid
+    lbl_v, _ = ndimage.label(void)
+    border = np.unique(np.concatenate([lbl_v[0].ravel(), lbl_v[-1].ravel(), lbl_v[:, 0].ravel(),
+                                       lbl_v[:, -1].ravel(), lbl_v[:, :, 0].ravel(), lbl_v[:, :, -1].ravel()]))
+    sealed = void & ~np.isin(lbl_v, border)
+    under = np.zeros_like(need)
+    under[:, :, 1:] = sealed[:, :, :-1]
+    trapped = need & under
+    out["trappedSupportArea"] = float(trapped.sum() * a_cell)
+    out["sealedVoidVolume"] = float(sealed.sum() * a_cell * pitch)
 
     first = solid[:, :, 0]
     lbl, n = ndimage.label(first, _EIGHT)

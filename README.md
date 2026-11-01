@@ -151,7 +151,12 @@ deflection, each candidate meshed and analyzed by FE: the arm link's web and ble
 went from 61.8 g to 54.9 g at its 0.5 mm stiffness limit in 25 analyses.
 Tuning the envelope together with a graded skin and a gyroid core
 (`examples/fields/arm-link-sandwich-tune.json`) gets a sandwich link to 44.5 g as meshed,
-0.40 mm on the resolved geometry: 19% under the solid web.
+0.40 mm on the resolved geometry: 19% under the solid web. `loadpath cores` picks
+the core for the process: for FDM a box section with graded walls and a rib, 42.2 g
+and 0.49 mm resolved with no support trapped inside; for SLS/MJF a plain hollow skin,
+36.8 g (`examples/fields/arm-link-cores.json`).
+
+![FDM box section and SLS hollow arm link, cut open](docs/images/fields/arm-link-cores.png)
 
 ![tuning the arm link against its loads](docs/images/fields/editor-tune.png)
 

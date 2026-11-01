@@ -400,6 +400,12 @@ def main(argv=None):
     tu.add_argument("--out", default="loadpath-tune")
     tu.add_argument("--evaluations", type=int, help="analyses to spend (overrides tune.evaluations)")
     tu.add_argument("--base-dir")
+    co = sub.add_parser("cores", help="tune each core option (hollow, ribbed, lattice...) of a part and pick the "
+                                      "lightest that meets its loads and can be built by each process")
+    co.add_argument("spec")
+    co.add_argument("--out", default="loadpath-cores")
+    co.add_argument("--process", help="comma-separated: fdm, sls, mjf (overrides the spec's processes)")
+    co.add_argument("--base-dir")
     ed = sub.add_parser("edit", help="edit a field graph in the browser: node graph, sliders, live GPU preview, run")
     ed.add_argument("graph")
     ed.add_argument("--html", help="write one self-contained editor page (every bake inside) instead of serving")
@@ -521,6 +527,8 @@ def main(argv=None):
         return _edit(args)
     if args.cmd == "tune":
         return _tune(args)
+    if args.cmd == "cores":
+        return _cores(args)
     if args.cmd == "orient":
         return _orient(args)
     if args.cmd == "calibrate":
@@ -913,7 +921,7 @@ def _tune(args):
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
-    summary = {"ok": out["best"] is not None, "best": out["best"], "start": out["start"],
+    summary = {"ok": bool(out["best"] and out["best"].get("ok")), "best": out["best"], "start": out["start"],
                "limits": out["limits"], "evaluations": len(out["history"]),
                "tuned": os.path.join(args.out, "tuned.json")}
     if out["best"] is not None:
@@ -921,8 +929,27 @@ def _tune(args):
         summary["next"] = f"loadpath field {summary['tuned']} --base-dir {os.path.relpath(base)}"
     if out["best"] is None:
         summary["error"] = "no candidate met the limits: widen the params' ranges or ease the limits"
+    elif not summary["ok"]:
+        summary["error"] = ("the lightest candidates met the limits on the search's grid but not on the confirming "
+                            "one: widen the ranges, ease the limits or give more evaluations")
     _write_report(args.out, summary)
-    return 0 if out["best"] is not None else 1
+    return 0 if summary["ok"] else 1
+
+
+def _cores(args):
+    from .cores import choose_core
+
+    spec = _load(args.spec)
+    if args.process:
+        spec["processes"] = args.process.split(",")
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.spec))
+    try:
+        rep = choose_core(spec, base, args.out, progress=_progress)
+    except (ValueError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    _write_report(args.out, {"ok": any(rep["winners"].values()), **rep})
+    return 0 if all(rep["winners"].values()) else 1
 
 
 def _edit(args):

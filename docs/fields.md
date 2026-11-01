@@ -424,11 +424,54 @@ removed):
 The hollow link is 16% lighter but sits on the limit when resolved, and
 its roof is a 26 mm span over a sealed cavity: on FDM it needs support
 that stays inside, or it sags. The gyroid holds the roof up every half
-cell. So for FDM, which loadpath designs for first, the sandwich stays the
-arm-link reference (examples/fields/arm-link-sandwich.json, the eval case
-`arm-link-sandwich`). For SLS or MJF, where nothing needs support, the
-hollow link with a slightly thicker skin (about 37.5 g) and escape holes
-for the powder is the lighter answer.
+cell, but still leaves ~700 mm^2 of down-facing patches inside.
+
+### The core chosen by process: `loadpath cores`
+
+`loadpath cores` makes that choice itself. It takes a list of core options
+(each a tunable graph), tunes each one (the confirmed search above), meshes
+the tuned part and reads it the way each process builds it
+(`cores.choose_core`):
+
+- **fdm**: support that would sit over a sealed void can never come out, so
+  `check_print` now reports `trappedSupportArea` (support needed over void
+  not connected to the outside) and `sealedVoidVolume`. FDM refuses an
+  option with more than 50 mm^2 trapped (`trappedLimit`).
+- **sls, mjf**: nothing needs support; a sealed void gets a note to add
+  escape holes (see Drain holes).
+
+The lightest option that met its loads and the process wins, by meshed
+mass. Tuned options are cached in the output folder, keyed by their graph.
+
+    loadpath cores examples/fields/arm-link-cores.json --out cores-out
+
+The FDM-printable option is a box section
+(examples/fields/arm-link-box-tune.json, arm-link-box-graded-tune.json): a
+flat-roofed rectangular cavity with one 1 mm rib down the middle, so every
+roof span is a bridge of at most ~13 mm and nothing inside needs support.
+A stress-graded skin does not work here: grading thins the roof toward the
+middle, which turns it into a shallow ramp that needs support (a ribbed
+hollow with a graded skin still trapped 1,400 mm^2). The graded box grades
+its flanges and walls along the link only, so each layer's roof stays flat.
+
+| arm link option | mass (meshed) | deflection (confirming grid) | trapped support, flat | FDM | SLS / MJF |
+|---|---|---|---|---|---|
+| hollow, graded skin | 36.8 g | 0.484 mm | 2,811 mm^2 | no | **wins** (escape holes) |
+| box, graded walls, rib | 42.0 g | 0.493 mm | 0 | **wins** | yes |
+| (the same, web 0.12 mm deeper) | 42.2 g | 0.492 mm resolved | 0 | reference | |
+| box, uniform walls, rib | 43.6 g | 0.494 mm | 0 | yes | yes |
+| sandwich, gyroid core | 44.0 g | 0.465 mm | 725 mm^2 | no | yes |
+
+![the FDM box section (blue) and the SLS hollow link (tan), cut open](images/fields/arm-link-cores.png)
+
+Thin solid walls read about 3% stiffer on the confirming grid than on the
+resolved mesh (1.2M cells, 0.33 mm): the hollow link 0.484 against 0.501 mm,
+the graded box 0.493 against 0.506 mm. So the FDM reference
+(examples/fields/arm-link-box-graded.json) is the graded box with its web
+0.12 mm deeper each side: 42.2 g, 0.492 mm resolved, SF 10. That is 23%
+under the 54.9 g solid web and 4% under the sandwich, printable flat with
+no support inside. SLS and MJF take the 36.8 g hollow link (about 37.5 g
+with the same margin) with escape holes.
 
 ### Strut and conformal lattices against the gyroid
 
