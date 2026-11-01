@@ -1,0 +1,471 @@
+{
+ "id": "hot-stepper-mount-asa-fdm",
+ "brief": "Bracket that holds the shoulder NEMA 17 stepper on my desktop arm's aluminium base plate. ASA on an\nFDM printer, printed with the base on the bed (layers along +Z). Shaft axis along Y at x = 0, z =\n30; the motor's front face sits behind a face plate at y = 0 to 5, and its body takes x = -21.5 to\n21.5, y = 5 to 45, z = 8.5 to 51.5 (keep that clear). Four M3 socket screws go along +Y through 3.4\nmm holes in the face plate into the motor, on a 31 mm square round the shaft (x = +/-15.5, z = 14.5\nand 45.5), heads on the front (y = 0) face; the 22 mm pilot boss needs a 23 mm hole through the face\nplate. The bracket screws down to the base plate (z = 0) with two M4 screws along Z at (+/-30, 25),\nheads on top of a 5 mm thick foot (z = 0 to 5), each with a 9 mm diameter column clear straight\nabove it for the driver. It fits in x = -36 to 36, y = 0 to 45, z = 0 to 54. The GT2 belt pulley\nsits 12 mm in front of the face (at y = -12, on the shaft) and pulls with 80 N upward (+Z), and up\nto 40 N sideways (+X) at the end of the swing; the motor can also stall at 0.45 N·m about its shaft.\nAll of it comes in through the four face screws. Under load the motor case runs at 70 C, and the\nbracket's face touching it is at that temperature, while the aluminium base plate stays at 25 C\n(still 25 C air elsewhere). Safety factor 2 hot, under 21 g.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "fdm",
+  "thermal",
+  "fasteners",
+  "motor"
+ ],
+ "gold": {
+  "name": "hot-stepper-mount-asa-fdm",
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -36.0,
+     0.0,
+     0.0
+    ],
+    "max": [
+     36.0,
+     45.0,
+     54.0
+    ]
+   }
+  ],
+  "preserve": [],
+  "keepOut": [
+   {
+    "id": "motor",
+    "shape": {
+     "type": "box",
+     "min": [
+      -21.5,
+      5.0,
+      8.5
+     ],
+     "max": [
+      21.5,
+      46.0,
+      51.5
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "pilot",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      -1.0,
+      30.0
+     ],
+     "p1": [
+      0.0,
+      6.0,
+      30.0
+     ],
+     "r": 11.5
+    }
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "f1",
+    "size": "M3",
+    "seat": [
+     15.5,
+     0.0,
+     14.5
+    ],
+    "direction": "+y",
+    "grip": 5.0,
+    "end": "face"
+   },
+   {
+    "id": "f2",
+    "size": "M3",
+    "seat": [
+     -15.5,
+     0.0,
+     14.5
+    ],
+    "direction": "+y",
+    "grip": 5.0,
+    "end": "face"
+   },
+   {
+    "id": "f3",
+    "size": "M3",
+    "seat": [
+     15.5,
+     0.0,
+     45.5
+    ],
+    "direction": "+y",
+    "grip": 5.0,
+    "end": "face"
+   },
+   {
+    "id": "f4",
+    "size": "M3",
+    "seat": [
+     -15.5,
+     0.0,
+     45.5
+    ],
+    "direction": "+y",
+    "grip": 5.0,
+    "end": "face"
+   },
+   {
+    "id": "b1",
+    "size": "M4",
+    "seat": [
+     30.0,
+     25.0,
+     5.0
+    ],
+    "direction": "-z",
+    "grip": 5.0,
+    "end": "face"
+   },
+   {
+    "id": "b2",
+    "size": "M4",
+    "seat": [
+     -30.0,
+     25.0,
+     5.0
+    ],
+    "direction": "-z",
+    "grip": 5.0,
+    "end": "face"
+   }
+  ],
+  "supports": [
+   {
+    "region": "b1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "b2-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        30.0,
+        25.0,
+        -0.5
+       ],
+       "p1": [
+        30.0,
+        25.0,
+        0.3
+       ],
+       "r": 6.0
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -30.0,
+        25.0,
+        -0.5
+       ],
+       "p1": [
+        -30.0,
+        25.0,
+        0.3
+       ],
+       "r": 6.0
+      }
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "belt-up",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          15.5,
+          3.0,
+          14.5
+         ],
+         "p1": [
+          15.5,
+          5.0,
+          14.5
+         ],
+         "r": 3.75
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -15.5,
+          3.0,
+          14.5
+         ],
+         "p1": [
+          -15.5,
+          5.0,
+          14.5
+         ],
+         "r": 3.75
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          15.5,
+          3.0,
+          45.5
+         ],
+         "p1": [
+          15.5,
+          5.0,
+          45.5
+         ],
+         "r": 3.75
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -15.5,
+          3.0,
+          45.5
+         ],
+         "p1": [
+          -15.5,
+          5.0,
+          45.5
+         ],
+         "r": 3.75
+        }
+       ]
+      },
+      "force": [
+       0,
+       0,
+       80.0
+      ],
+      "at": [
+       0.0,
+       -12.0,
+       30.0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "belt-side",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          15.5,
+          3.0,
+          14.5
+         ],
+         "p1": [
+          15.5,
+          5.0,
+          14.5
+         ],
+         "r": 3.75
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -15.5,
+          3.0,
+          14.5
+         ],
+         "p1": [
+          -15.5,
+          5.0,
+          14.5
+         ],
+         "r": 3.75
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          15.5,
+          3.0,
+          45.5
+         ],
+         "p1": [
+          15.5,
+          5.0,
+          45.5
+         ],
+         "r": 3.75
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -15.5,
+          3.0,
+          45.5
+         ],
+         "p1": [
+          -15.5,
+          5.0,
+          45.5
+         ],
+         "r": 3.75
+        }
+       ]
+      },
+      "force": [
+       40.0,
+       0,
+       0
+      ],
+      "at": [
+       0.0,
+       -12.0,
+       30.0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "stall",
+    "loads": [
+     {
+      "shape": {
+       "type": "union",
+       "shapes": [
+        {
+         "type": "cylinder",
+         "p0": [
+          15.5,
+          3.0,
+          14.5
+         ],
+         "p1": [
+          15.5,
+          5.0,
+          14.5
+         ],
+         "r": 3.75
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -15.5,
+          3.0,
+          14.5
+         ],
+         "p1": [
+          -15.5,
+          5.0,
+          14.5
+         ],
+         "r": 3.75
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          15.5,
+          3.0,
+          45.5
+         ],
+         "p1": [
+          15.5,
+          5.0,
+          45.5
+         ],
+         "r": 3.75
+        },
+        {
+         "type": "cylinder",
+         "p0": [
+          -15.5,
+          3.0,
+          45.5
+         ],
+         "p1": [
+          -15.5,
+          5.0,
+          45.5
+         ],
+         "r": 3.75
+        }
+       ]
+      },
+      "moment": [
+       0,
+       450.0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "thermal": {
+   "ambient": 25,
+   "temperatures": [
+    {
+     "shape": {
+      "type": "box",
+      "min": [
+       -21.5,
+       4.0,
+       8.5
+      ],
+      "max": [
+       21.5,
+       5.5,
+       51.5
+      ]
+     },
+     "t": 70
+    },
+    {
+     "shape": {
+      "type": "box",
+      "min": [
+       -36.0,
+       -1.0,
+       -1.0
+      ],
+      "max": [
+       36.0,
+       46.0,
+       0.4
+      ]
+     },
+     "t": 25
+    }
+   ],
+   "convection": 8
+  },
+  "material": "asa",
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "resolution": {
+   "maxElements": 60000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxMass": 21.0
+ }
+}

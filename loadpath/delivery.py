@@ -99,6 +99,7 @@ def delivery(summary: dict, study: dict) -> dict | None:
     peaks = {c.get("name"): c.get("peakStress") for c in (o.get("confirm") or {}).get("cases") or []}
     cases = [{"name": c.get("name"), "safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection"),
               "peakStress": c.get("peakStress") if c.get("peakStress") is not None else peaks.get(c.get("name")),
+              **({"peakAt": c["peakAt"]} if c.get("peakAt") is not None else {}),
               **({"worstDirection": c["worstDirection"]} if c.get("worstDirection") else {})}
              for c in o.get("cases") or []]
     d = {

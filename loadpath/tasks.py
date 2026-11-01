@@ -212,7 +212,9 @@ def check_study(raw, base_dir: str | None = None) -> dict:
                      f"resolution.maxElements {s.max_elements}")
     planar = [c.name for c in s.load_cases if "@" in c.name]
     if planar:
-        notes.append(f"{len(s.load_cases)} load cases ({len(planar)} from in-plane directions, 8 each): every "
+        src = len({c.name.split("@")[0] for c in s.load_cases if "@" in c.name})
+        notes.append(f"{len(s.load_cases)} load cases ({len(planar)} of them are {src} in-plane load case"
+                     f"{'s' if src > 1 else ''} expanded into one case per direction, 8 or 16 each): every "
                      "optimizer step solves each one, so the run takes about that many times as long as one case")
     from .study import _available_bytes, _confirm_cells, _run_bytes
     g = s.goal
@@ -220,8 +222,9 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     mem = _run_bytes(peak) / 1e9
     avail = _available_bytes()
     if mem > 4 and (g.safety_factor or g.max_deflection) and not os.environ.get("LOADPATH_CONFIRM_CELLS"):
-        notes.append(f"the fine re-check sets the peak ({mem:.1f} GB); on a shared machine cap it with "
-                     "LOADPATH_CONFIRM_CELLS (e.g. 50000 for about a third of the memory)")
+        notes.append(f"the fine re-check sets the peak ({mem:.1f} GB at full size); the run shrinks it to fit "
+                     "the free memory by itself, so nothing needs setting. To leave room for other jobs on a "
+                     "shared machine, LOADPATH_CONFIRM_CELLS caps it (e.g. 50000 for about a third)")
     if avail and mem * 1e9 > 0.8 * avail:
         warnings.append(f"this run needs about {mem:.1f} GB at its peak and {avail / 1e9:.1f} GB is free: "
                         "lower resolution.maxElements, or set LOADPATH_CONFIRM_CELLS for the confirm stage")
@@ -355,7 +358,8 @@ def _blind_bores(s) -> tuple[list[str], list[str]]:
         for k in s.keep_out:
             # a fastener's head and driver path: `driver` sizes it, and its
             # far end against material is the user's call (a side tool)
-            if not getattr(k, "bore", True) or str(k.id).endswith("-head"):
+            # (and its tap: blind by design, the screw comes from the mating part)
+            if not getattr(k, "bore", True) or str(k.id).endswith(("-head", "-tap")):
                 continue
             for c in _leaves(k.shape):
                 if getattr(c, "kind", None) != "cylinder" or c.r_inner > 0:

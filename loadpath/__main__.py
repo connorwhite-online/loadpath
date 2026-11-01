@@ -240,7 +240,7 @@ def _verify(args):
                   if isinstance(rep.get("durability"), dict) else {}),
                "warnings": list(rep.get("warnings") or []),
                "cases": {c["name"]: {"safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection"),
-                                     "peakStress": c.get("peakStress")}
+                                     "peakStress": c.get("peakStress"), "peakAt": c.get("peakAt")}
                          for c in rep.get("cases", [])},
                "report": rep}
     if args.out:
