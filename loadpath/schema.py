@@ -704,7 +704,16 @@ STUDY_SCHEMA = {
                      "description": "Planes through the design-space centre, by normal axis."},
         "resolution": {"type": "object",
                        "properties": {"maxElements": {"type": "integer", "minimum": 1, "maximum": 4000000},
-                                      "pitch": _POS},
+                                      "pitch": _POS,
+                                      "keepThinMembers": {
+                                          "type": "boolean",
+                                          "description": "Mesh members one or two cells thick without "
+                                                         "thinning them (volume-keeping smoothing there). "
+                                                         "Off by default: the default rounding thins them, "
+                                                         "which the searches are tuned to, but a design "
+                                                         "made of one-cell walls can come out several "
+                                                         "times softer than the optimizer's model (the "
+                                                         "camera boom: 16x)."}},
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
         "gravity": {**_VEC3, "description": "m/s², the part's own weight in every load case"},

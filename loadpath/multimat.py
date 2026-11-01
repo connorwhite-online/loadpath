@@ -1664,8 +1664,17 @@ def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int =
         def on_iter(rec, _):
             emit({"stage": "optimize", "volumeFraction": vf, **rec})
 
-        res = optimize_multimaterial(study, domain, mm, vf, radius, x0=start[0] if start else None,
-                                     y0=start[1] if start else None, on_iter=on_iter, should_stop=should_stop)
+        try:
+            res = optimize_multimaterial(study, domain, mm, vf, radius, x0=start[0] if start else None,
+                                         y0=start[1] if start else None, on_iter=on_iter, should_stop=should_stop)
+        except (ValueError, FloatingPointError, np.linalg.LinAlgError) as exc:
+            # MMA can diverge on a badly violated start; that fraction fails, the search goes on
+            rep = {"mass": np.inf, "volume": 0.0, "safetyFactor": 0.0, "interfaceSafetyFactor": 0.0,
+                   "maxDisplacement": np.inf, "requirementsMet": False, "materialFraction": {}, "cases": [],
+                   "bodies": [], "warnings": [f"optimization failed: {exc}"], "volumeFraction": vf,
+                   "margin": 0.0, "passes": False}
+            tried[vf] = (None, [], rep)
+            return rep
         emit({"stage": "mesh", "volumeFraction": vf})
         solid, _ = reconstruct(study, domain, res.xphys, ReconstructOptions())
         labels = material_labels(domain, res.xphys, res.w)
@@ -1724,7 +1733,7 @@ def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int =
         lo, hi = None, None    # highest failing, lowest passing
         for _ in range(max_runs):
             above = [v for v in tried if v > vf]
-            src = tried[min(above)][0] if above else None
+            src = next((tried[v][0] for v in sorted(above) if tried[v][0] is not None), None)
             rep = attempt(vf, (src.x, src.y) if src is not None else None)
             if rep["passes"]:
                 hi = vf if hi is None else min(hi, vf)
@@ -1746,8 +1755,12 @@ def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int =
     if passing:
         pick = min(passing, key=lambda v: tried[v][2]["mass"])
     else:
-        pick = max(tried, key=lambda v: (tried[v][2]["margin"] or 0.0))
+        ran = [v for v in tried if tried[v][0] is not None] or list(tried)
+        pick = max(ran, key=lambda v: (tried[v][2]["margin"] or 0.0))
     res, bodies, rep = tried[pick]
+    if res is None:
+        raise RuntimeError("multiMaterial: the optimizer failed at every fraction tried: "
+                           + "; ".join(w for t in tried.values() for w in t[2].get("warnings", [])))
     rep = dict(rep)
     if search_warnings:
         rep["warnings"] = search_warnings + list(rep.get("warnings") or [])

@@ -197,6 +197,10 @@
         "pitch": {
           "type": "number",
           "exclusiveMinimum": 0
+        },
+        "keepThinMembers": {
+          "type": "boolean",
+          "description": "Mesh members one or two cells thick without thinning them (volume-keeping smoothing there). Off by default: the default rounding thins them, which the searches are tuned to, but a design made of one-cell walls can come out several times softer than the optimizer's model (the camera boom: 16x)."
         }
       },
       "additionalProperties": false
