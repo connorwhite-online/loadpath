@@ -223,8 +223,12 @@ def _verify(args):
     study = study_from_dict(raw, base_dir=base)
     mesh = trimesh.load(part, force="mesh")
     pitch = choose_pitch(study)
-    rep = verify_part(study, mesh, max_cells=quick.verify_cells(args.cells), min_pitch=0.5 * pitch,
-                      contact_band=pitch)
+    # the default grid matches the run's own check (no finer than half the
+    # design cell); --cells asks for a grid, so it gets one: it used to be
+    # floored to that same pitch, and 120k cells read exactly as 60k did
+    asked = args.cells is not None
+    rep = verify_part(study, mesh, max_cells=quick.verify_cells(args.cells if asked else 60_000),
+                      min_pitch=None if asked else 0.5 * pitch, contact_band=pitch)
     m = _margin(study, rep)
     summary = {"ok": True, "part": part, "study": args.study, "mass": rep["mass"],
                "safetyFactor": rep.get("safetyFactor"), "margin": m,
@@ -283,6 +287,9 @@ def main(argv=None):
     r.add_argument("--step", action="store_true",
                    help="also write the best outcome as STEP: keep-outs, preserved shapes and the design space "
                         "exact (planes, cylinders), the organic body faceted (needs loadpath[step])")
+    r.add_argument("--3mf-coordinates", dest="mm_coordinates", choices=["bed", "study"], default="bed",
+                   help="multiMaterial studies: the 3MF placed for printing (bed: build direction +z, on the bed "
+                        "at 128,128; default) or in the study's coordinates (study), as the STLs are")
     r.add_argument("--recall", action="store_true",
                    help="start from what earlier runs on the same design space found (recall.py; "
                         "or set LOADPATH_RECALL=1)")
@@ -290,9 +297,12 @@ def main(argv=None):
     v.add_argument("study")
     v.add_argument("part", help="the part's STL, or a `run` output folder (its best outcome)")
     v.add_argument("--out", help="also write verify.json (with the full report) here")
-    v.add_argument("--cells", type=int, default=60_000, help="analysis grid cells (default 60000)")
+    v.add_argument("--cells", type=int, default=None,
+                   help="analysis grid cells (default: 60000, no finer than half the study's design cell, as "
+                        "`run` checks; given, the grid is about this many cells whatever the design cell)")
     v.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
-    c = sub.add_parser("check", help="validate a study and report the voxel problem")
+    c = sub.add_parser("check", help="validate a study and report the voxel problem (or a heat exchanger "
+                                     "spec: its design grid and memory; a lattice or field graph: lint)")
     c.add_argument("study")
     c.add_argument("--base-dir")
     s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
@@ -308,15 +318,26 @@ def main(argv=None):
     lt.add_argument("--base-dir")
     h = sub.add_parser("heatx", help="design (or --size) a two-fluid TPMS heat exchanger")
     h.add_argument("spec")
-    h.add_argument("--out", default="loadpath-out")
+    h.add_argument("--out", help="output folder (default loadpath-out; with --size: also write sizing.json "
+                                 "and best.json there)")
     h.add_argument("--size", action="store_true", help="only sweep cell and wall for the duty (seconds)")
-    h.add_argument("--objective", choices=["effectiveness", "metal"], default="effectiveness",
-                   help="--size ranking: best effectiveness, or least metal meeting the limits")
+    h.add_argument("--objective", choices=["effectiveness", "mass", "pressure", "metal"],
+                   help="--size ranking: best effectiveness (default), least mass meeting the limits (metal: the "
+                        "same), or least pressure drop against the limits; overrides the spec's sizing.objective")
     h.add_argument("--min-effectiveness", type=float, help="--size: drop candidates below this")
     h.add_argument("--splits", help="--size: first fluid's shares of the void to sweep, e.g. 0.5,0.6,0.66")
     h.add_argument("--max-pressure-drop", metavar="FLUID=PA,...",
                    help="--size: drop candidates over these pressure drops, e.g. coolant=2000,water=2000")
-    h.add_argument("--min-wall", type=float, default=0.8, help="--size: thinnest wall to try, mm (default 0.8)")
+    h.add_argument("--min-wall", type=float,
+                   help="--size: thinnest wall to try, mm (default the process's minimum: fdm 0.8, lpbf 0.5)")
+    h.add_argument("--axes", choices=["xy", "yx"],
+                   help="--size with an envelope: the first fluid runs along axes[0] (default: both tried; the "
+                        "spec's axes pins it too)")
+    h.add_argument("--max-points", type=int,
+                   help="design grid cap (default 16000000, about 6.6 GB at its peak); --size keeps only "
+                        "designs that mesh within it")
+    h.add_argument("--force", action="store_true",
+                   help="design even when the estimated peak memory is over what is free")
     h.add_argument("--no-render", action="store_true")
     h.add_argument("--no-viewer", action="store_true", help="skip the interactive HTML viewer")
     h.add_argument("--base-dir")
@@ -479,6 +500,11 @@ def main(argv=None):
 
     raw = _load(args.study)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
+    if args.cmd == "check":
+        from .tasks import check_document
+        checked = check_document(raw, base)
+        print(json.dumps(checked, indent=2))
+        return 0 if checked["ok"] else 2
     if getattr(args, "recall", False):
         os.environ.setdefault("LOADPATH_RECALL", "1")
     from .tasks import check_study
@@ -506,19 +532,7 @@ def main(argv=None):
         return 0
 
     if study.multi_material is not None:
-        # several materials placed by the optimizer (multimat.py): bodies,
-        # an STL per material, a multi-material 3MF and report.json
-        from .multimat import run_multimaterial
-
-        mres = run_multimaterial(study, on_progress=lambda ev, *_: _progress(ev, None))
-        files = mres.write(args.out)
-        print(json.dumps(_jsonable({"ok": True, "mass": mres.report.get("mass"),
-                          "materialMass": mres.report.get("materialMass"),
-                          "safetyFactor": mres.report.get("safetyFactor"),
-                          "interfaceSafetyFactor": mres.report.get("interfaceSafetyFactor"),
-                          "requirementsMet": mres.report.get("requirementsMet"), "files": files}),
-                         indent=2, default=str))
-        return 0
+        return _run_multimaterial(args, study)
     if not args.no_render and not _can_render():
         args.no_render = True
     from .study import run_study
@@ -652,6 +666,61 @@ def main(argv=None):
     return 0
 
 
+def _run_multimaterial(args, study):
+    """`run` on a multiMaterial study (multimat.py): bodies, an STL per
+    material, a multi-material 3MF and report.json, with out/status.json
+    and out/partial/ kept as the single-material run keeps them."""
+    from .multimat import run_multimaterial
+
+    os.makedirs(args.out, exist_ok=True)
+    status_path = os.path.join(args.out, "status.json")
+
+    def _status(state, **kw):
+        with open(status_path, "w") as fh:
+            json.dump(_jsonable({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study),
+                                 "multiMaterial": True, **kw}), fh)
+
+    started = time.time()
+    _status("running", started=started)
+    os.environ.setdefault("LOADPATH_PARTIAL_DIR", os.path.join(args.out, "partial"))
+    seen = {"stage": None, "outcomes": []}
+
+    def _tracked(event, *_):
+        st = event.get("stage")
+        if st == "outcome":
+            # each verified fraction: mass and safety factors, per material and bond
+            seen["outcomes"].append({k: event.get(k) for k in (
+                "volumeFraction", "mass", "safetyFactor", "interfaceSafetyFactor", "margin", "passes")})
+        if st and st != seen["stage"] or st == "outcome":
+            seen["stage"] = st
+            try:
+                _status("running", started=started, stage=st, outcomes=len(seen["outcomes"]),
+                        tried=seen["outcomes"],
+                        **({"volumeFraction": event["volumeFraction"]} if "volumeFraction" in event else {}))
+            except OSError:
+                pass
+        _progress(event, None)
+
+    try:
+        mres = run_multimaterial(study, on_progress=_tracked)
+        files = mres.write(args.out, coordinates=getattr(args, "mm_coordinates", None) or "bed")
+    except BaseException as exc:
+        _status("failed", error=f"{type(exc).__name__}: {exc}", partial=os.environ.get("LOADPATH_PARTIAL_DIR"))
+        raise
+    rep = mres.report
+    print(json.dumps(_jsonable({"ok": True, "mass": rep.get("mass"), "materialMass": rep.get("materialMass"),
+                                "safetyFactor": rep.get("safetyFactor"),
+                                "interfaceSafetyFactor": rep.get("interfaceSafetyFactor"),
+                                "requirementsMet": rep.get("requirementsMet"), "passes": rep.get("passes"),
+                                **({"unchecked": rep["unchecked"]} if rep.get("unchecked") else {}),
+                                **({"warnings": rep["warnings"]} if rep.get("warnings") else {}),
+                                "3mf": {k: v for k, v in (getattr(mres, "delivered_3mf", None) or {}).items()
+                                        if k != "transform"} or None,
+                                "files": files}), indent=2, default=str))
+    _status("done", report=os.path.abspath(files["report"]), passes=rep.get("passes"))
+    return 0
+
+
 def _can_render():
     if os.environ.get("LOADPATH_NO_RENDER"):
         return False
@@ -674,6 +743,19 @@ def _heatx(args):
     from .tasks import heat_exchanger, size_heat_exchanger
     spec = _load(args.spec)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.spec))
+    status_path = None
+
+    def _status(state, **kw):
+        if status_path is None:
+            return
+        try:
+            with open(status_path, "w") as fh:
+                json.dump(_jsonable({"state": state, "pid": os.getpid(), "spec": os.path.abspath(args.spec),
+                                     "started": started, "updated": time.time(), **kw}), fh)
+        except OSError:
+            pass
+
+    started = time.time()
     try:
         if args.size:
             splits = [float(x) for x in args.splits.split(",")] if args.splits else None
@@ -691,14 +773,38 @@ def _heatx(args):
                     raise ValueError(f"--max-pressure-drop names {unknown}; the fluids are {fluids}")
             print(json.dumps(size_heat_exchanger(spec, base, max_pressure_drop=max_dp, min_wall=args.min_wall,
                                                  objective=args.objective, min_effectiveness=args.min_effectiveness,
-                                                 splits=splits), indent=2))
+                                                 splits=splits, axes=args.axes, max_points=args.max_points,
+                                                 out_dir=args.out), indent=2))
             return 0
-        rep = heat_exchanger(spec, args.out, base, render=not args.no_render and _can_render(),
-                             on_progress=_progress, viewer=not args.no_viewer and not os.environ.get("LOADPATH_NO_RENDER"))
+        out = args.out or "loadpath-out"
+        # a design can take minutes and gigabytes: status.json says which stage it is
+        # in (a run killed for memory leaves "running" with its stage and pid)
+        os.makedirs(out, exist_ok=True)
+        status_path = os.path.join(out, "status.json")
+        _status("running", stage="check")
+
+        seen = {}
+
+        def _tracked(event):
+            if event.get("stage"):
+                seen.update({k: v for k, v in event.items() if k in ("stage", "gridStep", "gridPoints",
+                                                                    "peakMemoryGB")})
+                _status("running", **seen)
+            _progress(event)
+
+        rep = heat_exchanger(spec, out, base, render=not args.no_render and _can_render(),
+                             on_progress=_tracked, viewer=not args.no_viewer and not os.environ.get("LOADPATH_NO_RENDER"),
+                             max_points=args.max_points, force=args.force)
     except ValueError as exc:
+        _status("failed", error=str(exc))
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
-    _write_report(args.out, rep)
+    except BaseException as exc:
+        _status("failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    _write_report(out, rep)
+    _status("done", report=os.path.join(out, "report.json"), passes=rep.get("passes"),
+            warnings=(rep.get("report") or {}).get("warnings"))
     return 0
 
 

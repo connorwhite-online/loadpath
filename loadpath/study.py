@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .domain import Domain, build_domain
+from .domain import Domain, build_domain, cell_cap
 from .manufacture import report as manufacturing_report
 from .reconstruct import ReconstructOptions, reconstruct
 from .simp import SimpOptions, filter_radius, optimize
@@ -196,11 +196,44 @@ def _margin(study: Study, report: dict) -> float | None:
         ms.append(dur["safetyFactor"] / dur["target"])
     warp = report.get("warp")
     if warp:
-        # buildSim warp limits: the as-built build of the delivered field
+        # buildSim warp limits: the build of the delivered part when it was
+        # re-simulated (_warp_delivered), else the optimizer's on its field
+        got = warp.get("delivered") or warp
+        lims = warp.get("userLimits") or warp["limits"]
         for key, lim in (("maxDistortion", "maxDistortion"), ("recoaterLift", "maxRecoaterLift")):
-            if warp["limits"].get(lim):
-                ms.append(warp["limits"][lim] / max(warp[key], 1e-12))
+            if lims.get(lim) and got.get(key) is not None:
+                ms.append(lims[lim] / max(got[key], 1e-12))
     return min(ms) if ms else None
+
+
+def _warp_delivered(study: Study, mesh) -> dict | None:
+    """The as-built measures of the delivered part (buildsim.simulate_part
+    at buildSim.cells, on the plate or bed at the end of the build, as the
+    optimizer's limits are): the largest movement (along the build for
+    FDM, |u| otherwise) and the recoater lift, mm. The optimizer's build
+    model runs on its coarse density grid, which under-resolves thin
+    members (FDM warp on the PA12 beam read 2-3.5x low there), so FDM warp
+    limits are checked on this one."""
+    import dataclasses as _dc
+    from .buildsim import simulate_part
+    bs = study.build_sim
+    build = study.process.build if study.process is not None and study.process.build not in (None, "auto") else "+z"
+    if study.print_direction is not None:
+        build = study.print_direction
+    setup = _dc.replace(bs["setup"], release="none")
+    t0 = time.time()
+    try:
+        r = simulate_part(mesh, setup, build=build, cells=min(int(bs.get("cells") or 8000), 30_000))
+    except Exception as exc:  # noqa: BLE001 - leave the optimizer's numbers standing
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    m = r.mesh
+    on = np.zeros(m.n_nodes, bool)
+    on[m.enode[r.part].ravel()] = True
+    u = r.u_built[on]
+    d = np.abs(u[:, 2]) if setup.process.lower() == "fdm" else np.linalg.norm(u, axis=1)
+    return {"maxDistortion": float(d.max()),
+            "recoaterLift": (r.report.get("recoater") or {}).get("maxLift"),
+            "pitch": r.report.get("pitch"), "seconds": round(time.time() - t0, 1)}
 
 
 def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, beta0: float = 1.0,
@@ -277,10 +310,15 @@ def _confirm_on_tets(study: Study, outcomes: list) -> bool:
     why = unsupported(study)
     if why is None:
         return True
-    if mode == "tet" and outcomes:
+    if outcomes and (mode == "tet" or why.startswith("no tetrahedral mesher")):
+        # A missing mesher is the install, not the study: say so on every
+        # part it changes. The voxel grid reads peak stress high (the MBB
+        # beam 0.86 on voxels, 1.94 on tets at 30%), so without the tet
+        # confirm a search stops heavier: the MBB beam's eval went from
+        # 14.5 g to 40.4 g and failed its mass reduction, silently.
         outcomes[0].report.setdefault("warnings", []).append(
-            f"goal.confirm is tet, but the tetrahedral cross-check does not cover this study ({why}): "
-            "confirmed on voxels instead")
+            f"the tetrahedral cross-check does not cover this study ({why}): confirmed on voxels instead, "
+            "which read peak stress high, so the part comes out heavier than it needs to be")
     return False
 
 
@@ -460,7 +498,7 @@ def _study_cells(st: Study) -> int:
     """The most cells one run of `st` solves at once."""
     g = st.goal
     search = g.safety_factor is not None or g.max_deflection is not None
-    return max(st.max_elements, _CONFIRM_CELLS if search else 60_000)
+    return max(cell_cap(st), _CONFIRM_CELLS if search else 60_000)
 
 
 def _parallel(studies: list, on_progress, should_stop) -> list:
@@ -689,6 +727,50 @@ def _grade(result: StudyResult, i: int, opts, on_progress=None) -> None:
     o.report["graded"] = rep
 
 
+
+def mesh_fidelity(domain, xphys, mesh) -> dict | None:
+    """How much of the optimized field the delivered mesh kept: the share of
+    solid cells (xphys > 0.5) whose centre lies outside the mesh, overall, on
+    the surface of the solid, and in thin members (gone under a one-cell
+    opening). The camera boom (2026-11-01) lost 21% of its solid cells: 44%
+    of its thin members and 34% of its surface cells, against 8% inside.
+    Meshed, it read 16x softer than the optimizer's own model on the same
+    grid and supports, so the run reported SF 0.99 for a field that carries
+    the load with room to spare."""
+    from scipy import ndimage
+
+    from .voxels import mesh_solid
+
+    solid = np.asarray(xphys) > 0.5
+    if not solid.any() or mesh is None or len(getattr(mesh, "faces", ())) == 0:
+        return None
+    step = domain.pitch / 2.0
+    lo = np.asarray(domain.origin, float)
+    hi = lo + np.asarray(domain.dims) * domain.pitch
+    try:
+        g, org, *_ = mesh_solid(mesh, step, pad=2, bounds=(lo, hi))
+    except (MemoryError, ValueError):
+        return None
+    c = domain.mesh.elem_centers()
+    ijk = np.clip(np.floor((c - np.asarray(org)) / step).astype(int), 0, np.array(g.shape) - 1)
+    inside = g[tuple(ijk.T)]
+    at = tuple(domain.mesh.elem_ijk.T)
+    grid = np.zeros(domain.dims, bool)
+    grid[at] = solid
+    cross = ndimage.generate_binary_structure(3, 1)
+    thin = (grid & ~ndimage.binary_opening(grid, structure=cross))[at]
+    surface = (grid & ~ndimage.binary_erosion(grid, structure=cross))[at] & ~thin
+    lost = solid & ~inside
+
+    def share(m):
+        return float((lost & m).sum() / max(int(m.sum()), 1))
+
+    return {"lostSolidCells": share(solid), "lostThinCells": share(thin), "lostSurfaceCells": share(surface),
+            "thinCells": float(thin.sum() / solid.sum())}
+
+
+MESH_LOSS_WARN = 0.10
+
 def _material_named(name, study):
     """The study's Material called `name` (a study can try several)."""
     for m in study.materials or [study.material]:
@@ -713,6 +795,27 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
     # what earlier runs on this domain found (recall.py), when turned on
     from .recall import Recall
     memory = Recall.open(study, domain, radius, _making(study))
+    # warp limits: each outcome's delivered part is re-simulated and the
+    # limits checked on that; the optimizer's limits for the next attempt
+    # are scaled by how far its build model read off on the last one
+    ws = domain.warp
+    # (FDM, where the gap was measured: 2-3.5x on the PA12 beam; the metal
+    # build model's limits are checked on its full grid, as before)
+    limits0 = (ws.max_distortion, ws.max_lift) if ws is not None and (ws.max_distortion or ws.max_lift) \
+        and study.build_sim["setup"].process.lower() == "fdm" else None
+
+    def _check_warp(warp, mesh):
+        warp["userLimits"] = {"maxDistortion": limits0[0], "maxRecoaterLift": limits0[1]}
+        d = _warp_delivered(study, mesh)
+        warp["delivered"] = d
+        if not d or "error" in d:
+            return
+        for key, attr, lim in (("maxDistortion", "max_distortion", limits0[0]),
+                               ("recoaterLift", "max_lift", limits0[1])):
+            if lim and d.get(key) and warp.get(key):
+                ratio = d[key] / warp[key]
+                setattr(ws, attr, lim / ratio)
+                warp.setdefault("deliveredOverOptimizer", {})[key] = round(ratio, 3)
 
     def attempt(vf: float, x0, beta0, replay=None) -> Outcome:
         def on_iter(rec, xp):
@@ -753,8 +856,20 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         making = manufacturing_report(study, domain, mesh)
         if making:
             report["manufacturing"] = making
+        fid = mesh_fidelity(domain, xphys, mesh)
+        if fid is not None:
+            report["meshFidelity"] = fid
+            if fid["lostSolidCells"] > MESH_LOSS_WARN:
+                report.setdefault("warnings", []).append(
+                    f"the mesh lost {fid['lostSolidCells']:.0%} of the optimized solid cells "
+                    f"({fid['lostSurfaceCells']:.0%} of the surface cells, {fid['lostThinCells']:.0%} of the thin "
+                    "members): the meshed part is softer and weaker than the design the optimizer found, so "
+                    "the outcome search goes heavier than the design needs. The verified numbers are the "
+                    "ones that hold.")
         if warp:
             report["warp"] = warp
+            if limits0 is not None:
+                _check_warp(warp, mesh)
         o = Outcome(vf, mesh, report, opt, rinfo)
         o.xphys = xphys
         o.x = x
@@ -1070,13 +1185,26 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         # and t is steered by that reading: the voxel one left the wall
         # brackets at SF 2.7-2.8 on voxels and 3.6 on tets for 2.5.
         tets = goal.safety_factor is not None and _confirm_on_tets(study, outcomes)
+        fails = []
         t, t_pass, t_fail, x_pass = 1.0, None, None, None
         for _ in range(_MAX_CONSTRAINED_RUNS):
             if should_stop is not None and should_stop():
                 break
             limits = Limits(stress * t if stress is not None else None,
                             goal.max_deflection * t if goal.max_deflection is not None else None, mat.E)
-            o = run_constrained(limits, x_pass)
+            try:
+                o = run_constrained(limits, x_pass)
+            except RuntimeError as exc:
+                # a run whose solve broke down (the design let go of a
+                # support: GRIP's yoke, wrist link and upper arm) is a
+                # failed run; one that fails first ends the constrained
+                # attempt, and the search below takes over
+                fails.append(f"t {t:.3g}: {exc}")
+                if not any(q.optimizer.get("method") == "constrained" for q in outcomes):
+                    break
+                t_fail = t if t_fail is None else min(t_fail, t)
+                t = (t_pass * t_fail) ** 0.5 if t_pass is not None else 0.5 * t
+                continue
             outcomes.append(o)
             if tets and o.voxel_sf and o.report.get("bodies", 1) <= 1 and tet_confirm(o) is None:
                 tets = False   # the mesher failed: voxels from here on
@@ -1103,6 +1231,18 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 t *= min(ratio ** 0.5, 4.0)
         passing = [i for i, o in enumerate(outcomes) if o.passes]
         best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+        if best is None:
+            # Search instead, on the search's own grid: the constrained
+            # method runs finer (minimum member 2.5 cells across), and the
+            # search on that grid broke down on the GRIP yoke too.
+            import dataclasses
+
+            why = ("the constrained method found no passing design"
+                   + (f" ({'; '.join(fails)})" if fails else "") + ": searched over volume fractions instead")
+            r = _run_single(dataclasses.replace(study, goal=dataclasses.replace(goal, method="search")),
+                            on_progress, should_stop)
+            r.warnings.insert(0, why)
+            return r
     elif goal.safety_factor is not None or goal.max_deflection is not None or _durability_drives(study):
         vf = float(goal.volume_fraction or 0.3)
         if memory is not None:
@@ -1312,6 +1452,54 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 best = len(outcomes) - 1
             else:
                 conf_fail = q.volume_fraction
+        # The voxel-confirmed counterpart of layout_search: a fraction below
+        # the pick that failed warm, carried down from the pick's layout, is
+        # run once more from its own coarse layout. The warm chain can lose
+        # the layout on the way down: GRIP's MJF wrist link (no tet confirm,
+        # a layered process) read SF 1.42 at 5.25% warm from 6% (tets 1.16)
+        # and 2.06 started fresh (tets 4.49), 37.2 g against the 41.0 g pick.
+        # Each fresh design that passes is confirmed on the finer grid like
+        # any pick; one that holds becomes the pick, and the next failed
+        # fraction below it is tried the same way.
+        cold_runs = 0
+        while voxel_confirm and best is not None and best in confirmed and cold_runs < _LAYOUT_RUNS \
+                and not (should_stop is not None and should_stop()):
+            o = outcomes[best]
+            if o.report["margin"] < _TET_CLOSE:
+                break
+            fresh = [q.volume_fraction for q in outcomes if str(q.report.get("start", "")).startswith(
+                ("cold", "layout search: cold"))]
+            lost = [q.volume_fraction for q in outcomes
+                    if not q.passes and q.volume_fraction < o.volume_fraction and q.voxel_sf
+                    and q.report.get("bodies", 1) <= 1 and str(q.report.get("start", "")).startswith("warm")
+                    and q.volume_fraction > o.volume_fraction * 1.03 / max(o.report["margin"], 1e-9)
+                    and not any(abs(q.volume_fraction - v) < 0.003 for v in fresh)]
+            if not lost:
+                break
+            vf = max(lost)
+            emit({"stage": "optimize", "volumeFraction": vf, "start": "layout search: cold"})
+            try:
+                if domain.n_elem >= _COARSE_MIN_CELLS:
+                    x0 = _coarse_start(study, domain, vf, radius, should_stop)
+                    q = attempt(vf, x0, _WARM_BETA if x0 is not None else 1.0)
+                else:
+                    q = attempt(vf, None, 1.0)
+            except RuntimeError:
+                break
+            cold_runs += 1
+            q.report["start"] = "layout search: cold"
+            outcomes.append(q)
+            emit({"stage": "outcome", **q.summary()})
+            if not q.passes:
+                break   # fresh fails too: the fractions below it would not do better
+            emit({"stage": "confirm", "volumeFraction": q.volume_fraction})
+            mc = _confirm(q)
+            emit({"stage": "confirmed", "volumeFraction": q.volume_fraction, "margin": mc})
+            if mc < 1.0:
+                q.passes = False
+                break
+            best = len(outcomes) - 1
+            confirmed.add(best)
     else:
         fractions = [float(goal.volume_fraction)] + [v for v in goal.outcomes if v != goal.volume_fraction]
         if len(fractions) > 1 and _workers(len(fractions), cells=_study_cells(study)) > 1:

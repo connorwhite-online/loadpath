@@ -155,8 +155,12 @@ The bond is credited `S_eff = min(gain * S, cap)`:
   2.3 MPa for PETG/TPU. Shear caps at 0.6 of those.
 
 So PETG/TPU goes from 1.48 / 0.89 MPa (tensile / shear) to 3.7 / 2.2 in
-layer and 2.3 / 1.4 across layers. The optimizer's bond stage and
-verification both use the credited card. Verification judges the smooth
+layer and 2.3 / 1.4 across layers. The lattice stays a beam width plus
+half a design cell off the part's outer surface (as Cura's boundary
+avoidance does; there it would leave slivers), so the bond's rim is flat.
+The optimizer's bond stage and verification both use the credited card
+inside and the flat card at the rim, and the report gives the
+`interlockedFraction` of the interface. Verification judges the smooth
 interface the optimizer designed; a voxel model at analysis pitch cannot
 resolve 0.8 mm beams, so the lattice is a homogenized bond, not analysed
 beam by beam. For a part that matters, print a pull coupon with and
@@ -166,6 +170,27 @@ in `interlock.gain`.
 ```json
 "interlock": {"depth": 2, "beamWidth": 0.8, "layers": 2, "pairs": ["petg+tpu"]}
 ```
+
+### Interlock results (2026-11-01, cloud box)
+
+**Gripper finger** with `"interlock": true`, searched for the lightest
+design at SF 2: **6.6 g** (was 7.1 g with a flat bond), PETG safety factor
+11.8, bond **2.55** under the squeeze and 3.7 under the pull (goal 2; the
+flat-bonded finger read 1.70). 52% of the interface is interlocked; the
+rest is the flat rim. Tip deflection 0.50 mm.
+
+![interlocked pad](images/multimaterial-finger-interlock.png)
+
+**Bumpered bracket: does not pass.** The knock (0.2 J, stop under 150 N)
+governs everything. With the knock on the nose face, interlocks, and the
+knock judged at its own safety factor of 1.5, the search found no passing
+fraction up to 256 g: the bond at the nose reads 0.29 to 0.34, because the
+optimizer's TPU springs carry the knock in tension and shear across the
+bond. Constraining the bond while the layout forms (`bondInTopology`,
+experimental) lifts it to 1.46 at the knock, but that design stops the knock
+at 199 N and weighs 243 g (two thirds TPU). The bracket needs the bumper's
+TPU loaded in compression (a striker plate on a rubber block), which this
+optimizer does not find on its own yet.
 
 ## Bond strengths
 
@@ -222,5 +247,7 @@ graph's `mix` body writes one.
 * The optimizer solves the full grid each iteration (no reduced systems,
   no multigrid yet): ~7 s an iteration at 12k cells with three cases and a
   knock, so keep `maxElements` near 10-25k.
+* A knock's `safetyFactor` governs that case's materials and bonds as well
+  as its stored energy (an accidental load, judged at its peak).
 * `run_study` and the MCP study job do not route multi-material studies yet;
   `loadpath run` and `multimat.run_multimaterial` do.

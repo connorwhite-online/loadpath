@@ -3,7 +3,8 @@ FDM warp as a limit in the safety-factor search: a 120 x 24 x 12 mm beam
 bracket printed flat on the bed (+z), bolted at both end pads and loaded
 200 N down at mid-span, in PETG and in nylon (PA12), SF 2. Each material
 runs with no limit, then with buildSim.maxDistortion at half of what the
-unlimited design builds to. maxDistortion for FDM is the largest
+unlimited design builds to (its delivered part re-simulated, which is
+what the limit is checked on). maxDistortion for FDM is the largest
 movement along the build direction at the end of the print, cooled on the
 bed: the corner lift off the bed (in-plane shrink is uniform and the
 slicer scales it out).
@@ -59,7 +60,8 @@ def main():
         rows.append(base)
         print(json.dumps(base), flush=True)
         if base.get("warp"):
-            r = row(mat, f"maxDistortion {a.fraction:g}x", {"maxDistortion": round(a.fraction * base["warp"]["maxDistortion"], 4)})
+            got = base["warp"].get("delivered") or base["warp"]
+            r = row(mat, f"maxDistortion {a.fraction:g}x", {"maxDistortion": round(a.fraction * got["maxDistortion"], 4)})
             rows.append(r)
             print(json.dumps(r), flush=True)
         if a.out:

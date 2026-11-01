@@ -189,7 +189,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
             dd = node_doc(d, node) if node else expand_groups(d)
             g = resources.graph(dd, base_dir)
             if homogenized:
-                rep = homogenized_check(dd, study, base_dir=base_dir, cells=n_cells, graph=g)
+                rep = homogenized_check(dd, study, base_dir=base_dir, cells=n_cells, graph=g, solid_ok=True)
             else:
                 rep = verify_part(study, g.mesh(pitch=pitch, project=1), max_cells=n_cells, refine=0, fractional=True)
             resources.keep(g, dd)

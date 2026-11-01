@@ -563,8 +563,12 @@ def _spread(raw: dict, base: str, row: dict, tier: str) -> dict:
 
 def compare(rows, base_rows, tolerance=0.05):
     """Regressions against an earlier scorecard: a case that passed and now
-    fails, or whose Pareto massAtTarget grew by more than `tolerance`. Also
-    lists improvements. Adds row["vsBaseline"]."""
+    fails, or whose Pareto massAtTarget grew by more than `tolerance`, or by
+    more than the case's own measured run-to-run spread (row "spread", from
+    --spread, in either scorecard) where that is wider: the wall bracket's
+    massAtTarget moved 7% with the starting fraction alone, so a 6% move
+    there is not a regression. Also lists improvements. Adds
+    row["vsBaseline"]."""
     base = {r["case"]: r for r in base_rows}
     regress, improve = [], []
     for r in rows:
@@ -581,11 +585,14 @@ def compare(rows, base_rows, tolerance=0.05):
             d["massAtTarget"] = m / mb - 1.0
         elif mb and m is None:
             d["massAtTarget"] = "lost"
+        tol = max([tolerance] + [(x.get("spread") or {}).get("range") or 0.0 for x in (r, b)])
+        if tol > tolerance:
+            d["tolerance"] = tol
         r["vsBaseline"] = d
         worse = d.get("pass") == "lost" or d.get("massAtTarget") == "lost" or \
-            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] > tolerance)
+            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] > tol)
         better = d.get("pass") == "gained" or \
-            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] < -tolerance)
+            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] < -tol)
         (regress if worse else improve if better else []).append(r["case"])
     return regress, improve
 
@@ -739,7 +746,21 @@ def main(argv=None):
     p.add_argument("--save-baseline", help="also write this run's scores (no traces) here, for --baseline")
     p.add_argument("--gate", choices=["failures", "regressions"], default="failures",
                    help="what the exit code counts")
+    p.add_argument("--allow-voxel-confirm", action="store_true",
+                   help="run although no tetrahedral mesher is installed (the safety-factor cases then "
+                        "confirm on voxels and come out heavier than the baselines)")
     args = p.parse_args(argv)
+    from ..crosscheck import mesher_missing
+
+    no_tets = mesher_missing()
+    if no_tets and not args.allow_voxel_confirm:
+        # The baselines were taken with the tet confirm: without it every
+        # safety-factor case steps down on the voxel reading alone, and
+        # the scorecard reads as a regression of the optimizer (13/14 with
+        # the MBB beam at 40.4 g against 14.5 g) when it is the install.
+        print(f"loadpath.evals.run: {no_tets}. The safety-factor cases confirm on tetrahedra; install it, "
+              "or pass --allow-voxel-confirm to run without (not comparable to the baselines).", file=sys.stderr)
+        return 2
     # a scorecard measures the optimizer, not what earlier runs left behind
     os.environ.pop("LOADPATH_RECALL", None)
     # and the same optimizer whatever else the box is running: the confirm
@@ -776,6 +797,8 @@ def main(argv=None):
                 os.environ.setdefault(v, "1")
         rows = _run_isolated(files, args.out, args.tier, args.critic, int(args.jobs), args.spread)
     md = _md(rows)
+    if no_tets:
+        md = f"**No tet confirm** ({no_tets}): safety-factor cases confirmed on voxels; not comparable to the baselines.\n\n" + md
     regress = []
     if args.baseline:
         with open(args.baseline) as fh:
@@ -786,7 +809,7 @@ def main(argv=None):
     with open(os.path.join(args.out, "scorecard.md"), "w") as fh:
         fh.write(md)
     if args.save_baseline:
-        keep = ("case", "tier", "pass", "skipped", "best", "pareto", "checks", "seconds", "error")
+        keep = ("case", "tier", "pass", "skipped", "best", "pareto", "checks", "seconds", "error", "spread")
         with open(args.save_baseline, "w") as fh:
             json.dump(_jsonable([{k: r[k] for k in keep if k in r} for r in rows]), fh, indent=1)
     print(md)

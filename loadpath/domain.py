@@ -83,6 +83,15 @@ def _fraction(shapes: list[Shape], centers: np.ndarray, pitch: float) -> np.ndar
     return hit.mean(axis=1)
 
 
+def cell_cap(study: Study) -> int:
+    """The most cells a study's grid may have: maxElements, or up to 4x it
+    for the constrained method, whose members need 2.5 cells across (see
+    choose_pitch)."""
+    if study.goal.method == "constrained" and study.min_member:
+        return 4 * int(study.max_elements)
+    return int(study.max_elements)
+
+
 def choose_pitch(study: Study) -> float:
     """Cell size: explicit, else the size that puts roughly maxElements cells
     in the design space (estimated from a coarse occupancy sample)."""
@@ -403,12 +412,16 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     # maxElements is a cap: the pitch is estimated from a coarse occupancy
     # sample, which came out 2-5% over in the brief evals (20988 cells for
     # 20000); grow the cells until the grid fits
+    # (cell_cap: the constrained method's finer grid is allowed past it; the
+    # cap had undone that, and the arm link's first constrained run went back
+    # to verifying 1.32 mm against the optimizer's 0.48 mm)
     p = choose_pitch(study)
+    cap = cell_cap(study)
     for _ in range(4):
         d = _build_domain(study, p)
-        if d.n_elem <= study.max_elements:
+        if d.n_elem <= cap:
             return d
-        p *= (d.n_elem / study.max_elements) ** (1.0 / 3.0) * 1.003
+        p *= (d.n_elem / cap) ** (1.0 / 3.0) * 1.003
     return d
 
 

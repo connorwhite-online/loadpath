@@ -162,8 +162,12 @@ def test_streamed_stl_matches_the_mesh():
     assert rep["slabs"] >= 6 and rep["watertight"], rep
     assert rep["faces"] == len(F) and abs(rep["faces"] - len(m.faces)) <= 8, (rep["faces"], len(m.faces))
     assert watertight(F, len(V))
-    assert abs(signed_volume(V, F) / m.volume - 1) < 1e-4 and abs(rep["volume"] / m.volume - 1) < 1e-4
-    assert np.abs(f(V)).max() < 0.05 and np.percentile(np.abs(f(V)), 99) < 1e-5
+    # (each slab unfolds its own folds: the whole mesh sees a few more pairs
+    # across the slab planes, so the two differ by a hair)
+    assert abs(signed_volume(V, F) / m.volume - 1) < 3e-4 and abs(rep["volume"] / m.volume - 1) < 3e-4
+    # (a vertex the unfold sent back toward marching cubes' point sits a
+    # little off the zero level: under 0.3 pitch)
+    assert np.abs(f(V)).max() < 0.075 and np.percentile(np.abs(f(V)), 99) < 1e-5
 
 
 def test_streamed_stl_recovers_from_a_low_lipschitz_bound():
@@ -273,3 +277,27 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_relax_does_not_fold_the_mesh_through_itself():
+    """Relaxing a graded gyroid at a coarse pitch pushes some sheets through
+    their neighbours (188 crossing faces at 0.5 mm); field_mesh sends those
+    vertices back to marching cubes' own (uncrossed) positions."""
+    import loadpath.fields as LF
+    from loadpath.crease import crossing_faces
+
+    g = FieldGraph(GRADED)
+    f = g.field()
+    m = field_mesh(f, *g.bounds(), pitch=0.5)
+    V, F = np.asarray(m.vertices), np.asarray(m.faces)
+    assert m.metadata["unfolded"] > 0
+    assert len(crossing_faces(V, F, np.arange(len(F)))) == 0
+    old = LF._UNFOLD
+    try:
+        LF._UNFOLD = False
+        m0 = field_mesh(f, *g.bounds(), pitch=0.5)
+    finally:
+        LF._UNFOLD = old
+    V0, F0 = np.asarray(m0.vertices), np.asarray(m0.faces)
+    assert len(crossing_faces(V0, F0, np.arange(len(F0)))) > 50
+    assert abs(m.volume / m0.volume - 1) < 0.01

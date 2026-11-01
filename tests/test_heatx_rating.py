@@ -47,7 +47,7 @@ def test_size_core_least_metal_meets_the_limits():
     c = res["candidates"]
     assert c and all(x["effectiveness"] >= 0.6 and x["pressureDrop"]["air"] <= 12000 for x in c)
     assert [x["solidVolume"] for x in c] == sorted(x["solidVolume"] for x in c)
-    assert c[0]["mass"] == c[0]["solidVolume"] * 2.67 / 1000
+    assert c[0]["coreMass"] == c[0]["solidVolume"] * 2.67 / 1000
 
 
 def test_ports_can_differ_per_fluid():

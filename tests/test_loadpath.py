@@ -798,6 +798,37 @@ def test_fasteners_expand_to_rings_keepouts_and_preload():
          "headOn": "mating", "threadLength": 8}]})
     assert {r.id for r in st.keep_out} == {"c-bore", "c-tap"}
     assert {r.id for r in st.preserve} == {"c-seat", "c-thread"}
+    # ISO 4762 heads by default (M4: 7 mm, so a 9 mm head path with the
+    # 1 mm ring), and a counterbore sets the head path's width
+    assert abs(keep["a-head"].r - 4.5) < 1e-9, keep["a-head"].r
+    st = study_from_dict({**base, "fasteners": [
+        {"id": "a", "size": "M4", "seat": [30, 0, 0], "direction": "-x", "grip": 20, "counterbore": 8}]})
+    assert abs({r.id: r.shape for r in st.keep_out}["a-head"].r - 4.0) < 1e-9
+    try:
+        study_from_dict({**base, "fasteners": [
+            {"id": "a", "size": "M4", "seat": [30, 0, 0], "direction": "-x", "grip": 20, "counterbore": 6}]})
+        raise AssertionError("a counterbore narrower than the head passed")
+    except ValueError as exc:
+        assert "counterbore" in str(exc)
+
+
+def test_mesh_fidelity_counts_cells_the_mesh_dropped():
+    """The run compares the delivered mesh with the optimized field on the
+    optimizer's grid: a mesh that keeps the field loses nothing, one that
+    keeps half of it is reported (and warned about) as losing half."""
+    import trimesh
+
+    from loadpath.domain import build_domain
+    from loadpath.study import mesh_fidelity
+
+    d = build_domain(study_from_dict(BEAM))
+    xp = np.ones(d.mesh.n_elem)
+    lo = np.asarray(d.origin); hi = lo + np.asarray(d.dims) * d.pitch
+    whole = trimesh.creation.box(bounds=[lo, hi])
+    assert mesh_fidelity(d, xp, whole)["lostSolidCells"] < 0.01
+    half = trimesh.creation.box(bounds=[lo, [0.5 * (lo[0] + hi[0]), hi[1], hi[2]]])
+    f = mesh_fidelity(d, xp, half)
+    assert 0.4 < f["lostSolidCells"] < 0.6, f
 
 def test_viewer_page_carries_fields_and_history():
     """The viewer page embeds the part, its stress and displacement per
@@ -884,6 +915,7 @@ TESTS = [
     test_heat_exchanger_on_a_cylinder_counterflow,
     test_heat_exchanger_rating_limits_and_geometry,
     test_fasteners_expand_to_rings_keepouts_and_preload,
+    test_mesh_fidelity_counts_cells_the_mesh_dropped,
     test_viewer_page_carries_fields_and_history,
     test_optimize_is_reproducible,
 ]

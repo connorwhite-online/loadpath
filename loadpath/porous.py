@@ -691,7 +691,9 @@ def summarize(dom, fluids, flows, heat, t_in):
         wc = dom.centers(heat["wallCells"])
         hot = int(np.argmax(tw))
         cold = int(np.argmin(tw))
-        out.update(duty=0.5 * (qa + qb), effectiveness=0.5 * (qa + qb) / qmax if qmax else None,
+        # the heat moved (W), whichever fluid is listed first (dutySign -1: the first takes it)
+        out.update(duty=abs(0.5 * (qa + qb)), dutySign=1 if qa + qb >= 0 else -1,
+                   effectiveness=0.5 * (qa + qb) / qmax if qmax else None,
                    energyBalance=(qa - qb) / max(abs(qa), abs(qb), 1e-30),
                    wall={"max": float(tw.max()), "maxAt": np.round(wc[hot], 1).tolist(),
                          "min": float(tw.min()), "minAt": np.round(wc[cold], 1).tolist()})

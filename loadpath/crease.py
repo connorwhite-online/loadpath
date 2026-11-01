@@ -519,7 +519,9 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
     for _ in range(3):
         mfall = _project(field, mfall, pitch)
     X[~ok] = mfall[~ok]
-    home = np.concatenate([home, mfall])
+    # home: the plain midpoint of the edge as the mesh had it, on its
+    # faces (the projected one can poke through a thin neighbour)
+    home = np.concatenate([home, 0.5 * (home[E[ci, 0]] + home[E[ci, 1]])])
     st["split"] = int(len(ci))
     st["splitFallback"] = int((~ok).sum())
     nv = len(V)
@@ -588,10 +590,9 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
             for _ in range(3):
                 q = _project(field, q, pitch)
             cen[~good] = q
-        q = cen0
-        for _ in range(3):
-            q = _project(field, q, pitch)
-        home = np.concatenate([home, q])
+        # home: the centre of the three edge midpoints' homes, inside the
+        # face the mesh had
+        home = np.concatenate([home, home[M[idx]].mean(axis=1)])
         k = len(V) + np.arange(len(idx))
         V = np.concatenate([V, cen])
         crease = np.r_[crease, good]
@@ -610,7 +611,7 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
         masks = np.zeros(len(V), np.int64)
         masks[ring] = label_masks(tree, V[ring], pitch)
         tick("masks")
-        V, F2, _, crease, used = cleanup(V, F2, tree, masks, crease, pitch, stats=st)
+        V, F2, _, crease, used = cleanup(V, F2, tree, masks, crease, pitch, stats=st, home=home)
         home = home[used]
         tick("cleanup")
         V, crease = untangle(V, F2, tree, crease, home, pitch, stats=st)
@@ -699,7 +700,7 @@ def _turns_or_degenerates(V, old, new):
     return bool((np.sqrt(s1 / (l2[:, 1] * l2[:, 2])) < _SIN_DEGENERATE).any())
 
 
-def cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None):
+def cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None, home=None):
     """Collapse slivers and turned-over triangles near the creases (see
     _cleanup), on the patch of faces within four rings of a crease vertex:
     the passes look two rings out, and a vertex on the patch's border (it
@@ -716,7 +717,8 @@ def cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None
     frozen = np.zeros(len(V), bool)
     frozen[F[~sub].ravel()] = True
     frozen &= inside
-    Fs = _cleanup(V, F[sub], tree, mask, crease, pitch, min_angle, passes, stats, frozen)
+    check = None if home is None else (np.asarray(home, float),)
+    Fs = _cleanup(V, F[sub], tree, mask, crease, pitch, min_angle, passes, stats, frozen, check)
     F = np.concatenate([F[~sub], Fs])
     # drop the vertices nothing uses
     used = np.zeros(len(V), bool)
@@ -725,13 +727,39 @@ def cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None
     return np.asarray(V, float)[used], new[F], np.asarray(mask)[used], crease[used], used
 
 
-def _cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None, frozen=None):
+def _fold_undo(F, alive, log, check):
+    """The collapses of `log` (see _cleanup) whose rewritten faces cross
+    another live face at any of the positions in `check`."""
+    owner = {}
+    for k, (_s, moved, _o, _a, _b) in enumerate(log):
+        for f in moved.tolist():
+            owner[f] = k
+    if not owner:
+        return []
+    live = np.flatnonzero(alive)
+    pos = np.full(len(F), -1, np.int64)
+    pos[live] = np.arange(len(live))
+    Fl = F[live]
+    mv = np.fromiter(owner.keys(), np.int64)
+    mv = mv[alive[mv]]
+    q = pos[mv]
+    bad = set()
+    for X in check:
+        x = crossing_faces(X, Fl, q)
+        hit = live[x]
+        bad |= {owner[f] for f in hit.tolist() if f in owner}
+    return sorted(bad)
+
+
+def _cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=None, frozen=None, check=None):
     """Collapse, near the creases, every triangle that is turned over against
     its surface's true normal or thinner than `min_angle`: its shortest
     collapsible edge goes, the crease end kept (two crease ends only on the
     same curve), and only where the two ends share exactly the two opposite
     vertices (so the mesh stays a closed manifold) and no remaining triangle
-    turns over; never an edge with a `frozen` end. Returns the faces."""
+    turns over; never an edge with a `frozen` end. With `check` (vertex
+    positions, one array or several), a pass's collapses that leave a face
+    crossing another at any of them are undone. Returns the faces."""
     st = stats if stats is not None else {}
     V = np.asarray(V, float)
     F = np.asarray(F, np.int64).copy()
@@ -778,6 +806,7 @@ def _cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=Non
                     inv.setdefault(v, set()).add(int(fi))
         alive = np.ones(len(F), bool)
         touched = set()
+        log = []                # per collapse: (faces removed, faces rewritten, their old rows, keep, gone)
         changed = 0
         order = bad[np.argsort(ma[np.searchsorted(region, bad)])]
         # each face's edges, shortest first (a face is only collapsed while
@@ -821,6 +850,7 @@ def _cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=Non
                         continue
                     F[moved] = new
                     known_f[moved] = False
+                log.append((list(shared), moved, old if len(moved) else None, keep, gone))
                 for x in shared:
                     alive[x] = False
                 for x in moved:
@@ -828,6 +858,22 @@ def _cleanup(V, F, tree, mask, crease, pitch, min_angle=8.0, passes=6, stats=Non
                 touched |= fk | fg
                 changed += 1
                 break
+        if log and check is not None:
+            # a collapse may fold the mesh through a face a ring or two off
+            # (a thin wall's other side), with the vertices where they are
+            # or where untangle may send them back: undo those, and leave
+            # their ends alone from now on
+            undone = _fold_undo(F, alive, log, check)
+            for k in undone:
+                shared_k, moved_k, old_k, keep_k, gone_k = log[k]
+                if old_k is not None:
+                    F[moved_k] = old_k
+                    known_f[moved_k] = False
+                alive[shared_k] = True
+                if frozen is None:
+                    frozen = np.zeros(len(V), bool)
+                frozen[[keep_k, gone_k]] = True
+            changed -= len(undone)
         F = F[alive]
         face_n, face_h, known_f = face_n[alive], face_h[alive], known_f[alive]
         face_a, face_m = face_a[alive], face_m[alive]
@@ -894,13 +940,13 @@ class _Centroids:
 
 def _within(ctree, Q, r, ids=None):
     """Pairs (query row, point) with the point within r[row] of Q[row]: the
-    nearest 40, then 160, then 640 where that many were all within reach
+    nearest 24, then 96, then 384 where that many were all within reach
     (as arrays: ball queries build python lists), and a ball query for
     what is left. `ids` maps the tree's points to face numbers."""
     rows = np.arange(len(Q))
     A, B = [], []
     n = ctree.n
-    for k in (40, 160, 640):
+    for k in (24, 96, 384):
         if not len(rows):
             break
         k = min(k, n)
@@ -974,10 +1020,18 @@ def crossing_faces(V, F, faces, cache=None):
 _MOVED = 0.05          # pitches a crease vertex must move before untangle checks it
 
 
+def _away(V, home, crease, pitch):
+    """Vertices away from home: a crease vertex moved more than _MOVED
+    pitch, any other (a split's fallback, on the field) at all."""
+    d = np.linalg.norm(V - home, axis=1)
+    return np.where(crease, d > _MOVED * pitch, d > 0)
+
+
 def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
-    """Send crease vertices back to where the mesh had them (`home`) wherever
-    the sharpened crease crosses another part of the mesh or turns a
-    triangle over: a crease is kept only where it does no harm."""
+    """Send crease vertices (and the split points that fell back to the
+    field) back to where the mesh had them (`home`: on its faces, as it
+    was) wherever the sharpened crease crosses another part of the mesh or
+    turns a triangle over: a crease is kept only where it does no harm."""
     V = np.array(V, float)
     crease = np.array(crease, bool)
     back = 0
@@ -987,7 +1041,7 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
     # every round looks at faces with a moved crease vertex (a set that only
     # shrinks) and the rings round what it sent back: the patch of faces
     # within three rings of the first round's, not the whole mesh
-    moved = crease & (np.linalg.norm(V - home, axis=1) > _MOVED * pitch)
+    moved = _away(V, home, crease, pitch)
     pv = np.zeros(len(V), bool)
     pv[F[moved[F].any(axis=1)].ravel()] = True
     for _r in range(3):
@@ -998,7 +1052,7 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
         # only where a crease vertex moved: elsewhere the mesh is as it was;
         # after the first round, only around what the last round sent back
         if _:
-            moved = crease & (np.linalg.norm(V - home, axis=1) > _MOVED * pitch)
+            moved = _away(V, home, crease, pitch)
         sel = moved[FL].any(axis=1)
         if near is not None:
             sel &= near[FL].any(axis=1)
@@ -1013,7 +1067,7 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
         flip = cf[has & ((_face_normals(V, F[cf]) * sn).sum(1) < 0)]
         bad = np.union1d(bad, flip)
         verts = np.unique(F[bad].ravel())
-        verts = verts[crease[verts]]
+        verts = verts[np.any(V[verts] != home[verts], axis=1)]
         if not len(verts):
             break
         V[verts] = home[verts]

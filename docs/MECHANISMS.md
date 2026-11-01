@@ -137,16 +137,16 @@ r = optimize_mechanism_nonlinear(domain, nu, MechanismOptions(
     volume_fraction=0.3, filter_radius=1.5, k_out=0.02), stroke=12.0)
 ```
 
-`python examples/mechanism/large_stroke.py` (about 5 min) compares it with
+`python examples/mechanism/large_stroke.py` (about 2 min) compares it with
 the linear design on the textbook inverter driven 12 cells (30% of its
 length), both judged by `stroke_mechanism`:
 
 | | linear design | large-deflection design |
 |---|---|---|
-| output travel at the full stroke | 2.98 | **3.53** (+18%) |
+| output travel at the full stroke | 2.98 | **3.57** (+20%) |
 | what linear theory promised the linear design | 5.39 | |
 | one-node hinges | 1 | **0** |
-| peak strain | 17.6% | 16.2% |
+| peak strain | 17.6% | 16.4% |
 
 ![large-stroke inverter](images/mechanism/large-stroke-inverter.png)
 
@@ -155,20 +155,44 @@ near 10 cells of stroke and then stalls as its members swing past their
 leverage. The design optimized on the large-deflection response keeps
 pulling through the whole stroke, with no corner hinge.
 
+## A TPU finger that curls
+
+`examples/mechanism/curling_finger.py` (about 20 min) designs a 40 x 10 mm
+TPU 95A finger, printed flat. It is clamped along the top half of its
+base. A tendon or servo horn pulls the bottom of the base 5 mm back, and
+the tip should curl down against a soft object (0.01 N/mm). Both designs
+use the robust option, and both are judged by driving them through the
+stroke with the nonlinear solver:
+
+| | linear design | large-deflection design |
+|---|---|---|
+| tip travel for a 5 mm pull | 0.7 mm (solve stops at 0.75 mm of pull) | **8.7 mm** (full stroke) |
+| one-node hinges | 8 | **0** |
+| pull force at 5 mm | | 7.1 N |
+| peak strain | | 45% (TPU 95A breaks past 400%) |
+
+![curling finger](images/mechanism/curling-finger.png)
+
+Three things made it work, all now in `mechanism_nl.py`:
+
+- **Damped Newton steps.** A full step can invert a solid cell next to
+  soft void ones. The step is halved until no cell inverts. Before this,
+  a sharper design often failed to reach the stroke and the optimizer
+  stayed grey.
+- **Sharpening is retried, not abandoned.** If a sharper projection cannot
+  reach the stroke, the optimizer keeps the last one for a while and tries
+  again; it stops sharpening only after three refusals.
+- **The robust option.** Without it the optimizer finds a grey answer: its
+  tip travel (11-25 mm) runs through grey cells and one-cell grey hinges.
+  Sharpened, that answer drops from 11 mm to 0.01 mm, and thresholded, the
+  tip falls off. With robust, the eroded design must work too, so a grey
+  hinge is worth nothing.
+
+The check (`stroke_mechanism`) now also reports a tip held only by the
+plate's symmetry plane as detached; it used to read 0 mm.
+
 ## Not yet
 
-- **Far-curling fingers:** the large-deflection optimizer works on the
-  inverter but not yet on a slender TPU finger (40 x 10 cells, 5 mm pull at
-  the base, soft workpiece at the tip). It finds a big tip travel (11-25 mm)
-  only through grey material: the design stays 55% grey, because every
-  sharper projection it tries cannot be driven through the stroke, and
-  thresholded at 0.5 its tip falls off. The optimizer now keeps the last
-  design that reached the stroke instead of failing, and `stroke_mechanism`
-  now reports a tip held only by the plate's symmetry plane as detached
-  (it used to read 0 mm of travel). The linear robust design is crisp (9%
-  grey) but moves the tip only 0.7 mm before its solve stops. Next: grade
-  the void threshold with the projection sharpness, or score the
-  thresholded design, so grey cells cannot carry the stroke.
 - **Tendon input:** `mechanism_nl` takes a prescribed stroke; a tendon
   (`nonlinear.Tendon`) as the input is not wired in yet.
 - **No contact:** the workpiece is a spring on the jaw, not a body the jaw

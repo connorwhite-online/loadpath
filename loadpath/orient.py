@@ -202,7 +202,7 @@ def _candidate(args):
 
 def _row(c, o, proc, study):
     rep = o.report
-    pc = check_print(o.mesh, c, process=proc.kind, material=study.material)
+    pc = check_print(o.mesh, c, process=proc.kind, material=study.material, bridge_span=proc.bridge_span)
     inter = [cs.get("interlayerStress") for cs in rep.get("cases", []) if cs.get("interlayerStress") is not None]
     return {"direction": direction_label(c), "build": c, "safetyFactor": rep["safetyFactor"],
             "mass": rep["mass"], "interlayerStress": max(inter) if inter else None,
