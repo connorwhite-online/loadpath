@@ -46,7 +46,7 @@ Writes scorecard.json, scorecard.md and a render per case. Exit code is the
 number of failing cases, so it can gate a change to the solver.
 
 Tiers (--tier):
-    full     the suite as written (~2 h on the 4-core cloud box at --jobs 1; every
+    full     the suite as written (~1 h 50 min on the 4-core cloud box at its default --jobs 2; every
              case in its own fresh process).
     coarse   every case at <= COARSE["maxElements"] cells, fewer iterations,
              a shorter search and no fine-grid confirm: a smoke run for every
@@ -325,7 +325,22 @@ def _md_hx(rows):
 def _md(rows):
     hx = [r for r in rows if r.get("kind") == "heatExchanger"]
     rows = [r for r in rows if r.get("kind") != "heatExchanger"]
-    return _md_study(rows) + ("\n" + _md_hx(hx) if hx else "")
+    return _md_study(rows) + ("\n" + _md_hx(hx) if hx else "") + _md_spread(rows)
+
+
+def _md_spread(rows):
+    rows = [r for r in rows if r.get("spread")]
+    if not rows:
+        return ""
+    lines = ["", "Run-to-run spread: massAtTarget (g) with the search started at each fraction", "",
+             "| Case | Starts | massAtTarget g | Spread |", "| --- | --- | --- | --- |"]
+    for r in rows:
+        sp = r["spread"]
+        fmt = lambda v: "-" if v is None else f"{v:.1f}"  # noqa: E731
+        rng = "-" if sp.get("range") is None else f"{100 * sp['range']:.1f}%"
+        lines.append(f"| {r['case']} | {', '.join(str(x['start']) for x in sp['runs'])} | "
+                     f"{', '.join(fmt(x['massAtTarget']) for x in sp['runs'])} | {rng} |")
+    return "\n".join(lines) + "\n"
 
 
 def _mat(pa):
@@ -388,8 +403,18 @@ def run_hx_case(raw: dict, path: str, out: str, tier: str = "full") -> dict:
     return _jsonable(row)
 
 
-def run_case(path, out: str, tier: str = "full", critic: str | None = None) -> dict:
-    """Run one case: `path` is a case file, or a generated case dict."""
+# --spread: the search started this much lower and higher than the case's own
+# goal.volumeFraction (one extra full search each)
+SPREAD_STARTS = (0.8, 1.25)
+
+
+def run_case(path, out: str, tier: str = "full", critic: str | None = None, spread: bool = False) -> dict:
+    """Run one case: `path` is a case file, or a generated case dict. With
+    `spread`, a safety-factor case is searched again from other starting
+    fractions (SPREAD_STARTS) and row["spread"] says how far its massAtTarget
+    moved: the search is deterministic on one machine, so this is the honest
+    run-to-run number (a different start, a different machine's rounding, a
+    small change to the code all send it down another path)."""
     from ..__main__ import _jsonable
     from ..render import render_interfaces, render_views
     from ..spec import study_from_dict
@@ -441,6 +466,8 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None) -> d
         row["trace"] = [o.summary() for o in result.outcomes]
         for t in row["trace"]:
             t.pop("cases", None)
+        if spread and study.goal.safety_factor is not None:
+            row["spread"] = _spread(raw, base, row, tier)
     except Exception as exc:  # noqa: BLE001 - a crashing case is a failing case
         import traceback
         row = {"case": name, "pass": False, "seconds": time.time() - t0, "tier": tier,
@@ -448,6 +475,30 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None) -> d
     print(json.dumps(_jsonable({k: row.get(k) for k in ("case", "pass", "best", "error")})),
           file=sys.stderr, flush=True)
     return _jsonable(row)
+
+
+def _spread(raw: dict, base: str, row: dict, tier: str) -> dict:
+    """massAtTarget from the case's own start and from each SPREAD_STARTS
+    multiple of it; "range" is (max - min) / min."""
+    import copy
+
+    from ..spec import study_from_dict
+    from ..study import run_study
+
+    vf0 = float((raw.get("goal") or {}).get("volumeFraction") or 0.3)
+    runs = [{"start": vf0, "massAtTarget": (row.get("pareto") or {}).get("massAtTarget"),
+             "mass": (row.get("best") or {}).get("mass")}]
+    for f in SPREAD_STARTS:
+        r2 = copy.deepcopy(raw)
+        r2.setdefault("goal", {})["volumeFraction"] = round(vf0 * f, 4)
+        st = study_from_dict(r2, base_dir=base)
+        t0 = time.time()
+        res = run_study(st)
+        sc = score_case(r2, res, time.time() - t0, st, tier)
+        runs.append({"start": r2["goal"]["volumeFraction"], "massAtTarget": (sc.get("pareto") or {}).get("massAtTarget"),
+                     "mass": (sc.get("best") or {}).get("mass"), "pass": sc.get("pass")})
+    m = [x["massAtTarget"] for x in runs if x["massAtTarget"] is not None]
+    return {"runs": runs, "range": (max(m) - min(m)) / min(m) if len(m) > 1 and min(m) > 0 else None}
 
 
 def compare(rows, base_rows, tolerance=0.05):
@@ -524,7 +575,7 @@ def _died(f, tier, exc) -> dict:
             "error": f"worker process died ({type(exc).__name__}: {exc}); out of memory?"}
 
 
-def _run_isolated(files: list, out: str, tier: str = "full", critic=None, jobs: int = 1) -> list:
+def _run_isolated(files: list, out: str, tier: str = "full", critic=None, jobs: int = 1, spread=False) -> list:
     """Run each case in a fresh spawned process, `jobs` at a time. In one
     long process the cases add up: a finished case leaves its peak behind
     (glibc keeps freed arenas and Python's allocator keeps its pools), the
@@ -541,7 +592,7 @@ def _run_isolated(files: list, out: str, tier: str = "full", critic=None, jobs: 
     todo = list(range(len(files)))
     while todo:
         ex = ProcessPoolExecutor(jobs, mp_context=mp.get_context("spawn"), max_tasks_per_child=1)
-        futs = {ex.submit(run_case, files[i], out, tier, critic): i for i in todo}
+        futs = {ex.submit(run_case, files[i], out, tier, critic, spread): i for i in todo}
         broken = False
         for fut, i in futs.items():
             try:
@@ -563,7 +614,7 @@ def _run_isolated(files: list, out: str, tier: str = "full", critic=None, jobs: 
     return [rows[i] for i in range(len(files))]
 
 
-def _run_budgeted(files: list, out: str, tier: str = "full", critic=None) -> list:
+def _run_budgeted(files: list, out: str, tier: str = "full", critic=None, spread=False) -> list:
     """Run cases in processes, largest first, starting each only while the
     expected peaks of everything running fit in 80% of the memory available (the
     container's limit, when it has one)
@@ -591,7 +642,7 @@ def _run_budgeted(files: list, out: str, tier: str = "full", critic=None) -> lis
                 if len(running) >= slots:
                     break
                 if not running or used + need[f] <= budget:
-                    running[ex.submit(run_case, f, out, tier, critic)] = f
+                    running[ex.submit(run_case, f, out, tier, critic, spread)] = f
                     used += need[f]
                     queue.remove(f)
             done, _ = wait(running, return_when=FIRST_COMPLETED)
@@ -611,12 +662,15 @@ def main(argv=None):
     p.add_argument("cases", nargs="*", help="case names (default: all)")
     p.add_argument("--out", default="evals-out")
     p.add_argument("--jobs",
-                   help="cases to run at once (each case also parallelizes its own outcomes); default 1, "
+                   help="cases to run at once (each case also parallelizes its own outcomes); default 2 (full tier), "
                         "or every core for the coarse tier (its cases are small); 'auto': as many as fit in "
                         "the memory available, by each case's size")
     p.add_argument("--tier", choices=["full", "coarse"], default="full")
     p.add_argument("--corpus", help="add generated cases: N (seeds 0..N-1), A:B, or a,b,c")
     p.add_argument("--only-corpus", action="store_true", help="run the generated cases only")
+    p.add_argument("--spread", action="store_true",
+                   help="search each safety-factor case again from other starting fractions and report how far "
+                        "its massAtTarget moves (row spread; about 3x the time)")
     p.add_argument("--critic", choices=["anthropic", "agent"], help="vision critic on interface close-ups")
     p.add_argument("--baseline", help="an earlier scorecard.json to diff against")
     p.add_argument("--tolerance", type=float, default=0.05, help="massAtTarget growth that counts as a regression")
@@ -626,6 +680,10 @@ def main(argv=None):
     args = p.parse_args(argv)
     # a scorecard measures the optimizer, not what earlier runs left behind
     os.environ.pop("LOADPATH_RECALL", None)
+    # and the same optimizer whatever else the box is running: the confirm
+    # grid otherwise shrinks to the memory free when it starts (study.py
+    # _confirm_cells), so a case's numbers would depend on its neighbours
+    os.environ.setdefault("LOADPATH_CONFIRM_CELLS", "150000")
     files = sorted(glob.glob(os.path.join(HERE, "cases", "*.json")))
     if args.cases:
         files = [f for f in files if os.path.splitext(os.path.basename(f))[0] in args.cases]
@@ -636,12 +694,16 @@ def main(argv=None):
         files += [generate(s) for s in seeds(args.corpus)]
     os.makedirs(args.out, exist_ok=True)
     if args.jobs is None:
-        args.jobs = (os.cpu_count() or 1) if args.tier == "coarse" else 1
+        # full: two at a time. With the AMG coarse-factor leak fixed (fem.py)
+        # a GRIP case peaks near 2 GB, and two ran the suite in 1 h 50 min
+        # against 2 h 30 min one at a time on the 4-core 15 GB box, the
+        # box at 3.8 GB, every number the same as --jobs 1
+        args.jobs = (os.cpu_count() or 1) if args.tier == "coarse" else min(2, os.cpu_count() or 1)
     if args.jobs == "auto":
-        rows = _run_budgeted(files, args.out, args.tier, args.critic)
+        rows = _run_budgeted(files, args.out, args.tier, args.critic, args.spread)
     elif os.environ.get("LOADPATH_EVAL_INPROCESS") == "1":
         # debugging: every case in this process (it accumulates; see _run_isolated)
-        rows = [run_case(f, args.out, args.tier, args.critic) for f in files]
+        rows = [run_case(f, args.out, args.tier, args.critic, args.spread) for f in files]
     else:
         if int(args.jobs) > 1:
             # One process per case; outcomes inside a case stay in that process.
@@ -650,7 +712,7 @@ def main(argv=None):
             # core's worth of BLAS threads ran 3-10x slower than one at a time
             for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
                 os.environ.setdefault(v, "1")
-        rows = _run_isolated(files, args.out, args.tier, args.critic, int(args.jobs))
+        rows = _run_isolated(files, args.out, args.tier, args.critic, int(args.jobs), args.spread)
     md = _md(rows)
     regress = []
     if args.baseline:
