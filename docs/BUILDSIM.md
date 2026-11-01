@@ -348,6 +348,65 @@ nylon's reputation on open printers. A part whose warp lives in what the
 optimizer may change (long thin floors, wide flanges) is where an FDM limit
 should bite, and that has not been shown yet.
 
+**Picking the print setup: `buildSim.printSetup`.** Since this beam's
+warp is the process's to fix, a study can search the process instead.
+`"printSetup": true` (or `{"materials": [...], "orientations": [...],
+"bedTemperatures": [...], "brims": [...], "maxBed": 110}`) ranks print
+setups for the delivered part (`printsetup.py`, report `printSetup`):
+
+1. Every material and build direction (the six grid axes by default) at
+   the material's usual bed, without a brim. Strength comes from
+   `verify_part` with that material and layer direction, so a part standing
+   on end is checked for tension across its layers. Warp comes from
+   `simulate_part` on the bed.
+2. Bed temperature (a few steps around the usual one, kept 5 °C below Tg
+   so the first layer does not sag) and brim (0 and 5 mm) on each
+   material's best two orientations.
+3. Ranking: meets the goal, the warp limit, and stands up. A part over 4x
+   taller than its narrowest base needs a brim, and over 10x it does not
+   count. Then the lightest, then a lift under 80% of the limit (the warp
+   model is good to tens of percent), then the least support, no brim, and
+   the least lift.
+
+When no outcome meets the warp limit as set up, the study runs the search
+on the lightest outcome that meets the rest of the goal. If a setup makes
+it pass, the study says which. If none does, it re-optimizes for the
+setup with room under the limit and the most strength per gram (turn this
+off with `reoptimize: false`). The search re-checks the delivered shape and
+does not re-optimize it per setup. Each setup costs a strength check
+(30,000 cells) and a build (4,000 cells): about 45 minutes on the beam on 4
+cores, mostly the six tall builds standing on end.
+
+FDM limits no longer go into the optimizer by default
+(`buildSim.warpInOptimizer`, default true for lpbf and false for fdm). In
+the optimizer at the PA12 beam's real numbers, they took the safety factor
+from 2.45 to 0.02 and the lift up to 8.4 mm. They are checked on each
+outcome's delivered part instead.
+
+On the PA12 beam with `maxDistortion` 1.24 mm (`bench/buildsim_fdm_warp_limit.py
+--print-setup 1.24`, bench/results/buildsim_print_setup.json, 61 min):
+
+| setup for the 30% part | mass | SF | lift, mm | |
+|---|---|---|---|---|
+| PA12 flat (+z), bed 90 °C, as asked | 12.5 g | 2.57 | 2.93 | fails the limit |
+| PA12 on end (±x), bed 90 °C | 12.5 g | 2.51 | 1.18 | 23x taller than its base: will not stand |
+| PETG on its side (+y), bed 80 °C | 15.7 g | 2.42 | 1.01 | passes, but at 81% of the limit |
+| **PETG flat (+z), bed 80 °C, no brim** | **15.7 g** | **2.42** | **0.37** | **picked** |
+| PETG on end (±x), bed 70 °C, 5 mm brim | 15.7 g | 2.37 | 0.27 | will not stand |
+| PETG upside down (-z), bed 80 °C | 15.7 g | 2.42 | 2.48 | fails |
+
+So for this beam the search moves to PETG printed flat. That is 3.2 g
+heavier (+26%), but it is a part that meets both SF 2 and the warp limit.
+PA12 met neither in any shape the SF search tried. PETG alone, with no
+limit, comes out at 15.7 g and SF 2.40, so re-optimizing for PETG would gain
+little here. On this part the brim takes 0.01-0.06 mm off the lift, and a
+cooler bed adds up to 0.07 mm (PETG flat: 0.43 at 60 °C, 0.39 at 70 °C,
+0.36 at 80 °C). The brim model is an estimate: more bed hold under the
+footprint's edge, not validated. The run itself picked the tall PETG part
+on end with a brim. The rules for tall prints and for room under the limit
+came after it and were applied to the same rows (`rerankedBest` in the
+results).
+
 **Calibration print.** The FDM fit is ABS in a 75 °C chamber, so for PETG on
 an open printer it is a guess. `bench/warp_coupon.py` writes five flat
 bars in Armillotta's shapes (20 mm wide, 60-140 mm long, 1.5 and 3.5 mm

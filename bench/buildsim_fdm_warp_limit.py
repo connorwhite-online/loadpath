@@ -32,19 +32,29 @@ def study(material, limits):
             "buildSim": {"cells": 8000, "release": "none", **limits}}
 
 
-def row(material, name, limits):
+def row(material, name, limits, verbose=False):
     t0 = time.time()
-    res = run_study(study_from_dict(study(material, limits)))
+
+    def prog(ev, _x):
+        if verbose and ev.get("stage") in ("outcome", "printSetup", "buildSim", "verify"):
+            print(round(time.time() - t0), json.dumps({k: v for k, v in ev.items() if k != "rows"}, default=float)[:300],
+                  flush=True)
+
+    res = run_study(study_from_dict(study(material, limits)), on_progress=prog)
     out = {"material": material, "name": name, "limits": limits, "seconds": round(time.time() - t0),
            "tried": [{"vf": round(q.volume_fraction, 4), "mass": round(q.report.get("mass", 0), 2),
                       "sf": q.report.get("safetyFactor"), "warp": q.report.get("warp"), "passes": q.passes}
                      for q in res.outcomes]}
     if res.best is None:
         out["error"] = "no outcome met the goal"
+        out["warnings"] = res.warnings
+        out["printSetup"] = next((q.report["printSetup"] for q in res.outcomes if q.report.get("printSetup")), None)
         return out
     o = res.outcomes[res.best]
     out.update(mass=o.report["mass"], safetyFactor=o.report.get("safetyFactor"), warp=o.report.get("warp"),
-               volumeFraction=o.volume_fraction, buildSim=o.report.get("buildSim", {}).get("distortion"))
+               volumeFraction=o.volume_fraction, buildSim=o.report.get("buildSim", {}).get("distortion"),
+               material=o.report.get("material", {}).get("name"), warnings=res.warnings,
+               printSetup={k: v for k, v in (o.report.get("printSetup") or {}).items() if k != "rows"})
     return out
 
 
@@ -53,7 +63,17 @@ def main():
     ap.add_argument("--materials", nargs="+", default=["petg", "pa12"])
     ap.add_argument("--fraction", type=float, default=0.5)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--print-setup", type=float, default=None, metavar="MM",
+                    help="one PA12 run at maxDistortion MM with buildSim.printSetup over PA12 and PETG")
     a = ap.parse_args()
+    if a.print_setup:
+        r = row("pa12", "printSetup", {"maxDistortion": a.print_setup,
+                                         "printSetup": {"materials": ["pa12", "petg"]}}, verbose=True)
+        print(json.dumps(r, default=float), flush=True)
+        if a.out:
+            with open(a.out, "w") as fh:
+                json.dump(r, fh, indent=1, default=float)
+        return
     rows = []
     for mat in a.materials:
         base = row(mat, "no limit", {"maxDistortion": 100.0})

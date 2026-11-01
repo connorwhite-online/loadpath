@@ -295,7 +295,7 @@ def _calibrated_process(process, mat_in, spec):
 _BUILD_SIM_KEYS = {"layer": "layer", "plate": "plate", "scale": "scale", "release": "release",
                    "bedTemperature": "bed", "chamberTemperature": "chamber", "bedStiffness": "bed_stiffness",
                    "relax": "relax", "recoaterGap": "recoater_gap", "plateCells": "plate_cells",
-                   "bedAdhesion": "bed_adhesion", "printLayer": "print_layer"}
+                   "bedAdhesion": "bed_adhesion", "printLayer": "print_layer", "brim": "brim"}
 
 
 def _build_sim(spec, process, material):
@@ -332,11 +332,21 @@ def _build_sim(spec, process, material):
             raise ValueError(f"buildSim.{what} needs process.buildDirection along a grid axis "
                              "('+z', '-y', ...), not 'auto' or a tilted vector")
     coarsen = spec.get("warpCoarsen")
-    return {"setup": setup, "compensate": bool(spec.get("compensate", False)),
+    ps = spec.get("printSetup")
+    if ps is True:
+        ps = {}
+    if ps:
+        if kind != "fdm":
+            raise ValueError("buildSim.printSetup searches FDM print setups: process fdm")
+        ps = {"materials": ps.get("materials"), "builds": ps.get("orientations"), "beds": ps.get("bedTemperatures"),
+              "brims": tuple(float(b) for b in ps.get("brims", (0.0, 5.0))), "max_bed": float(ps.get("maxBed", 110.0)),
+              "reoptimize": bool(ps.get("reoptimize", True))}
+    return {"printSetup": ps or None, "setup": setup, "compensate": bool(spec.get("compensate", False)),
             "cells": int(spec.get("cells", 60_000)), "iterations": int(spec.get("iterations", 2)),
             "warpWeight": warp, "warpLayer": float(spec["warpLayer"]) if spec.get("warpLayer") else None,
             "maxDistortion": lim_d, "maxRecoaterLift": lim_l,
-            "warpCoarsen": int(coarsen) if coarsen is not None else None}
+            "warpCoarsen": int(coarsen) if coarsen is not None else None,
+            "warpInOptimizer": bool(spec.get("warpInOptimizer", kind != "fdm"))}
 
 
 def _slicer(spec, process, base_dir, goal):

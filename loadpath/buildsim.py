@@ -182,6 +182,8 @@ class BuildSetup:
     recoater_gap: float = 0.05          # mm: lift at the build plane that can touch the recoater
     # fdm: the printed layer, mm (None: FDM_PRINT_LAYER; 0: no extrapolation)
     print_layer: float | None = None
+    # fdm: brim width, mm (0: none): more bed hold under the footprint's edge
+    brim: float = 0.0
 
 
 @dataclass
@@ -477,8 +479,16 @@ def _grid_mesh(solid, pitch, origin, setup):
         fixed = _in_plane_pins(mesh, bottom)
         area = np.zeros(mesh.n_nodes)
         under = mesh.elem_ijk[:, 2] == 0
+        touch = np.zeros(mesh.n_nodes)
         for c in range(4):
             np.add.at(area, mesh.enode[under, c], 0.25 * pitch ** 2)
+            np.add.at(touch, mesh.enode[under, c], 1.0)
+        if setup.brim:
+            # a brim: a bonded skirt brim mm wide around the footprint,
+            # counted as more bed under the edge nodes (an estimate: a thin
+            # skirt holds less than the bed under the part)
+            edge = (touch > 0) & (touch < 4)
+            area[edge] += float(setup.brim) * pitch * (4 - touch[edge]) / 2
         springs = np.repeat(area * float(kb), 3)
     z_above = (mesh.elem_ijk[:, 2] - plate_cells + 0.5) * pitch
     return mesh, part, layer_of, fixed, z_above, plate_cells, springs

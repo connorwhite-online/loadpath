@@ -171,7 +171,11 @@ field. `check` reports every problem at once: fix them all, then check again.
    2-3.5x low. On a bed-printed beam the lift barely moves with the shape,
    so a tight FDM limit finds no part. Lower the warp with the process
    instead: bed and chamber temperature, `bedAdhesion`, the orientation, or
-   PETG over nylon. Nylon and PP shrink from their crystallization
+   PETG over nylon. `"printSetup": true` does that search for you:
+   orientation, material (`"materials"`), bed temperature and brim, ranked on
+   strength, warp and whether the print stands up (report `printSetup`).
+   When nothing passes as set up, it says which setup does, or
+   re-optimizes for the best one. Nylon and PP shrink from their crystallization
    temperature and warp far more than PETG. FDM: `bedAdhesion` (MPa) lets
    the first layer let go; `bedFailed` in the report means the part
    popped off. docs/BUILDSIM.md has the validation.

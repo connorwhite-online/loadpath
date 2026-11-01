@@ -604,6 +604,11 @@ def _warp_term(study, mesh):
     bs = getattr(study, "build_sim", None)
     if not bs or not (bs.get("warpWeight") or bs.get("maxDistortion") or bs.get("maxRecoaterLift")):
         return None
+    if bs["setup"].process.lower() == "fdm" and not bs.get("warpWeight") and not bs.get("warpInOptimizer"):
+        # FDM limits are checked on the delivered part (study.py); pushing
+        # them through the optimizer cost the load path and did not lower
+        # the warp (docs/BUILDSIM.md)
+        return None
     from .buildsim import CoarseWarp, WarpTerm
     nu = float(study.elastic(design=True))
     f = bs.get("warpCoarsen") or (2 if mesh.n_elem >= 4000 else 1)

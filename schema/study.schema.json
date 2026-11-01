@@ -889,6 +889,66 @@
               "exclusiveMinimum": 0,
               "description": "lpbf: a limit, mm, on how far the part rises at the build plane as each layer goes down (the recoater's clearance, ~0.05 mm); held like maxDistortion"
             },
+            "brim": {
+              "type": "number",
+              "minimum": 0,
+              "description": "fdm: brim width, mm (default 0): more bed hold under the footprint's edge (an estimate, not validated)"
+            },
+            "printSetup": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "materials": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "materials to try (default the study's)"
+                    },
+                    "orientations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "build directions to try (default the six grid axes)"
+                    },
+                    "bedTemperatures": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "description": "bed temperatures, C (default a few around each material's usual)"
+                    },
+                    "brims": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "description": "brim widths to try, mm (default [0, 5])"
+                    },
+                    "maxBed": {
+                      "type": "number",
+                      "description": "the printer's hottest bed, C (default 110)"
+                    },
+                    "reoptimize": {
+                      "type": "boolean",
+                      "description": "when no outcome passes a warp limit and no setup rescues the shape as it is, re-run the study for the best setup (default true)"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ],
+              "description": "fdm: rank print setups (orientation, material, bed temperature, brim) for the delivered part on strength and warp (report 'printSetup'; printsetup.py)"
+            },
+            "warpInOptimizer": {
+              "type": "boolean",
+              "description": "carry maxDistortion / maxRecoaterLift in the optimizer (default true for lpbf; false for fdm, whose limits are checked on each outcome's re-simulated part: in the optimizer they cost strength and did not lower the warp)"
+            },
             "warpCoarsen": {
               "type": "integer",
               "minimum": 1,

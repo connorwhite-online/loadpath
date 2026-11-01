@@ -714,7 +714,11 @@ def _build_sim(result: StudyResult, on_progress=None) -> StudyResult:
     bed peel), with its warnings; with compensate, also a pre-distorted
     mesh on the outcome (`compensated`, written as <name>-compensated.stl)."""
     bs = result.study.build_sim
-    if bs is None or result.best is None:
+    if bs is None:
+        return result
+    if result.best is None:
+        if bs.get("printSetup"):
+            return _print_setup_rescue(result, on_progress)
         return result
     o = result.outcomes[result.best]
     if getattr(o, "mesh", None) is None:
@@ -742,6 +746,70 @@ def _build_sim(result: StudyResult, on_progress=None) -> StudyResult:
         rep = {"process": setup.process, "error": f"{type(exc).__name__}: {exc}", "warnings": []}
     o.report["buildSim"] = rep
     o.report.setdefault("warnings", []).extend(rep.get("warnings", []))
+    if bs.get("printSetup"):
+        # FDM: rank orientation, material, bed temperature and brim for this part
+        from .printsetup import search_print_setup
+        if on_progress is not None:
+            on_progress({"stage": "printSetup"}, None)
+        try:
+            ps = search_print_setup(st, o.mesh, cells=min(bs["cells"], 4000), **bs["printSetup"])
+            o.report["printSetup"] = ps
+        except Exception as exc:  # noqa: BLE001 - the search is advice; the part's report stands
+            o.report["printSetup"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return result
+
+
+def _build_label(study):
+    from .printsetup import _build_name
+    return _build_name(study)
+
+
+def _print_setup_rescue(result: StudyResult, on_progress=None) -> StudyResult:
+    """No outcome passed (an FDM warp limit the shape cannot meet): run the
+    print setup search on the lightest outcome that meets the rest of the
+    goal, so the report says which orientation, material, bed temperature
+    and brim would make it pass."""
+    from .printsetup import search_print_setup
+    st, bs = result.study, result.study.build_sim
+    sf = st.goal.safety_factor
+
+    def ok(o):
+        return sf is None or (o.report.get("safetyFactor") or 0.0) >= sf
+
+    pool = [o for o in result.outcomes if getattr(o, "mesh", None) is not None and ok(o)]
+    if not pool:
+        return result
+    o = min(pool, key=lambda q: q.report.get("mass", float("inf")))
+    if on_progress is not None:
+        on_progress({"stage": "printSetup"}, None)
+    try:
+        ps = search_print_setup(st, o.mesh, cells=min(bs["cells"], 4000), **bs["printSetup"])
+    except Exception as exc:  # noqa: BLE001
+        ps = {"error": f"{type(exc).__name__}: {exc}"}
+    o.report["printSetup"] = ps
+    b = ps.get("best")
+    re = ps.get("rerun")
+    if not (b and b.get("passes")) and re and bs["printSetup"].get("reoptimize", True):
+        # no setup makes this shape pass: re-optimize for the setup with
+        # room under the warp limit and the most strength per gram
+        from .printsetup import study_for
+        if on_progress is not None:
+            on_progress({"stage": "printSetup", "rerun": {k: re[k] for k in ("material", "build", "bed", "brim")}},
+                        None)
+        again = run_study(study_for(st, re), on_progress)
+        again.warnings.insert(0, f"no outcome met the warp limit as {st.material.name}, build "
+                                 f"{_build_label(st)}; re-optimized for {re['material']}, build {re['build']}, "
+                                 f"bed {re['bed']:g} C" + (f", {re['brim']:g} mm brim" if re["brim"] else "")
+                                 + " (report printSetup has the search)")
+        if again.best is not None:
+            again.outcomes[again.best].report["printSetup"] = {**ps, "reoptimizedFor": re}
+        return again
+    if b and b.get("passes"):
+        result.warnings.append(
+            f"no outcome met the warp limit as set up; the {o.volume_fraction:.0%} outcome does printed as "
+            f"{b['material']}, build {b['build']}, bed {b['bed']:g} C"
+            + (f", {b['brim']:g} mm brim" if b["brim"] else "") + f" ({b['mass']:.1f} g, lifts {b['lift']:.2f} mm, "
+            f"SF {b['safetyFactor']:.2f}): set that in the study and run it again (report printSetup)")
     return result
 
 
@@ -1031,20 +1099,23 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
     # what earlier runs on this domain found (recall.py), when turned on
     from .recall import Recall
     memory = Recall.open(study, domain, radius, _making(study))
-    # warp limits: each outcome's delivered part is re-simulated and the
-    # limits checked on that; the optimizer's limits for the next attempt
-    # are scaled by how far its build model read off on the last one
+    # FDM warp limits are checked on each outcome's delivered part,
+    # re-simulated (the optimizer's coarse grid reads FDM warp 2-3.5x low,
+    # and the ratio moves from design to design). The optimizer carries
+    # them only with buildSim.warpInOptimizer; then its limits for the next
+    # attempt are scaled by how far it read off on the last one. Metal
+    # limits stay in the optimizer and are checked on its full grid.
     ws = domain.warp
-    # (FDM, where the gap was measured: 2-3.5x on the PA12 beam; the metal
-    # build model's limits are checked on its full grid, as before)
-    limits0 = (ws.max_distortion, ws.max_lift) if ws is not None and (ws.max_distortion or ws.max_lift) \
-        and study.build_sim["setup"].process.lower() == "fdm" else None
+    bsim = study.build_sim or {}
+    limits0 = (bsim.get("maxDistortion"), bsim.get("maxRecoaterLift")) \
+        if bsim and (bsim.get("maxDistortion") or bsim.get("maxRecoaterLift")) \
+        and bsim["setup"].process.lower() == "fdm" else None
 
     def _check_warp(warp, mesh):
         warp["userLimits"] = {"maxDistortion": limits0[0], "maxRecoaterLift": limits0[1]}
         d = _warp_delivered(study, mesh)
         warp["delivered"] = d
-        if not d or "error" in d:
+        if not d or "error" in d or ws is None:
             return
         for key, attr, lim in (("maxDistortion", "max_distortion", limits0[0]),
                                ("recoaterLift", "max_lift", limits0[1])):
@@ -1102,6 +1173,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                     "members): the meshed part is softer and weaker than the design the optimizer found, so "
                     "the outcome search goes heavier than the design needs. The verified numbers are the "
                     "ones that hold.")
+        if limits0 is not None and not warp:
+            warp = {"limits": {"maxDistortion": limits0[0], "maxRecoaterLift": limits0[1]}}
         if warp:
             report["warp"] = warp
             if limits0 is not None:
