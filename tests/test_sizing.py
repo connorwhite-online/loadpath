@@ -31,7 +31,9 @@ def test_sized_candidates_fit_the_envelope_and_the_budget():
 
 
 def test_effectiveness_objective_and_floor():
-    kw = dict(process="lpbf", cells=[5.0, 8.0], walls=[0.5], fractions=(0.6, 1.0))
+    # 0.5 mm walls in this envelope need a grid far over the design cap:
+    # lift it, since this is about the ranking, not the meshing
+    kw = dict(process="lpbf", cells=[5.0, 8.0], walls=[0.5], fractions=(0.6, 1.0), max_points=10**9)
     best = size_exchanger(DUTY, ENV, objective="effectiveness", **kw)["best"]
     light = size_exchanger(DUTY, ENV, objective="mass", **kw)["best"]
     assert best["effectiveness"] >= light["effectiveness"]

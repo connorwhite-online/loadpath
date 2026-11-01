@@ -78,7 +78,7 @@ from .materials import Material, material_from_spec
 
 __all__ = ["MultiMaterial", "Requirement", "parse_multimaterial", "optimize_multimaterial",
            "run_multimaterial", "verify_multimaterial", "split_bodies", "lame", "LameStiffness",
-           "MultiMaterialResult"]
+           "MultiMaterialResult", "write_bodies_3mf"]
 
 PENALTY = 3.0
 E_FLOOR = 1e-6          # void stiffness, as a fraction of the stiffest material
@@ -1070,8 +1070,11 @@ def _region_mesh(domain, labels, k, upsample=3):
         return None
     step = domain.pitch / upsample
     verts, faces, _, _ = marching_cubes(fine, 0.5, spacing=(step,) * 3)
-    # fine voxel (a) centre sits at origin + (a - 1 + 0.5) * step - pad * pitch (zoom aligns corners)
-    scale = (np.array(ind.shape) * domain.pitch) / np.maximum(np.array(fine.shape) - 2 - 1, 1)
+    # zoom aligns corners: zoomed sample a (fine index a + 1, after the pad
+    # of one) sits at coarse index a (s - 1) / (S - 1), s and S the coarse
+    # and zoomed sizes, and coarse cell c's centre is at
+    # origin + (c - pad + 0.5) * pitch
+    scale = ((np.array(ind.shape) - 1) * domain.pitch) / np.maximum(np.array(fine.shape) - 2 - 1, 1)
     verts = (verts / step - 1.0) * scale + domain.origin - pad * domain.pitch + 0.5 * domain.pitch
     m = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
     if m.volume < 0:
@@ -1258,13 +1261,33 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
     cases = []
     worst = {"material": np.inf, "interface": np.inf}
     centres = hm.elem_centers()
+    warnings = []
+    narrowed = {}    # what the contact band would have hidden -> the band it was checked at
+    # The stress next to a support or a spread load node is a voxel
+    # artifact, so cells within `band` of them are left out. A body thinner
+    # than the band (a 2 mm pad loaded on its face) would then go unchecked,
+    # its bond with it; there the band narrows (to half, then to cells
+    # touching no contact node, then none) until something is read.
+    tiers = [band, 0.5 * band, 0.0, None]
+
+    def _beyond(d, t):
+        return d >= t if t > 0 else d > 0
+
+    def _away(el_d, ok):
+        for t in tiers:
+            sel = ok if t is None else ok & _beyond(el_d, t)
+            if sel.any():
+                return sel, t
+        return ok, None
+
     for ci, case in enumerate(study.load_cases):
         f, u = bc.loads[ci], us[ci]
         F = _case_force(f)
         comp = float(f @ u)
         contact = bc.support_nodes | bc.case_load_nodes[ci]
-        near_node = cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1, distance_upper_bound=band)[0] < np.inf
-        body_el = ~near_node[hm.enode].any(axis=1)
+        node_d = cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1)[0] if contact.any() \
+            else np.full(len(hm.node_xyz), np.inf)
+        el_d = node_d[hm.enode].min(axis=1)
         scale = 1.0
         rec = {"name": case.name, "force": F, "compliance": comp}
         r = req.get(case.name)
@@ -1281,14 +1304,17 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
         rec["maxDisplacement"] = float(disp.max())
         per = {}
         for kk in range(N):
-            sel = (mat == kk) & body_el
-            if not sel.any():
+            if not (mat == kk).any():
                 continue
+            sel, t = _away(el_d, mat == kk)
             m = mm.materials[kk]
+            if t != band:
+                narrowed[(case.name, m.name)] = t
             peak = float(vm[sel].max())
             sf = m.strength / peak if peak > 0 else np.inf
             entry = {"peakStress": peak, "safetyFactor": sf,
-                     "at": centres[sel][np.argmax(vm[sel])].tolist()}
+                     "at": centres[sel][np.argmax(vm[sel])].tolist(),
+                     **({"contactBand": t} if t != band else {})}
             if fdm and build_axis is not None and m.strength_z:
                 sz = float(np.maximum(s[sel][:, build_axis], 0).max())
                 entry["acrossLayers"] = {"stress": sz, "safetyFactor": m.strength_z / sz if sz > 0 else np.inf}
@@ -1301,9 +1327,14 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
         ints = {}
         for p in pairs:
             utils, where = [], []
-            for a, b, ax in faces:
-                sel = (((mat[a] == p[0]) & (mat[b] == p[1])) | ((mat[a] == p[1]) & (mat[b] == p[0])))
-                sel &= body_el[a] & body_el[b]
+            on_p = [(((mat[a] == p[0]) & (mat[b] == p[1])) | ((mat[a] == p[1]) & (mat[b] == p[0])))
+                    for a, b, _ in faces]
+            if not any(o.any() for o in on_p):
+                continue
+            fd = np.concatenate([np.minimum(el_d[a], el_d[b]) for a, b, _ in faces])
+            _, t = _away(fd, np.concatenate(on_p))
+            for (a, b, ax), op in zip(faces, on_p):
+                sel = op if t is None else op & _beyond(np.minimum(el_d[a], el_d[b]), t)
                 if not sel.any():
                     continue
                 sm = 0.5 * (s[a[sel]] + s[b[sel]])
@@ -1326,7 +1357,9 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
             name = f"{mm.materials[p[0]].name}+{mm.materials[p[1]].name}"
             ints[name] = {"faces": int(len(ut)), "peakUtilization": float(ut.max()),
                           "utilization": p99, "safetyFactor": 1.0 / p99 if p99 > 0 else np.inf,
-                          "at": wh[np.argmax(ut)].tolist()}
+                          "at": wh[np.argmax(ut)].tolist(), **({"contactBand": t} if t != band else {})}
+            if t != band:
+                narrowed[(case.name, name)] = t
             worst["interface"] = min(worst["interface"], ints[name]["safetyFactor"])
         rec["interfaces"] = ints
         cases.append(rec)
@@ -1361,6 +1394,24 @@ def verify_multimaterial(study, mm: MultiMaterial, bodies, max_cells: int = 90_0
         "requirementsMet": all(c.get("knock", c.get("indentation", {"meets": True}))["meets"] for c in cases),
     }
     rep["voxelInterfaceArea"] = face_area
+    for (cname, what), t in narrowed.items():
+        warnings.append(f"case {cname!r}: {what} lies within the {band:.2g} mm contact band of the supports or "
+                        "loads; checked " + ("on every cell, contact concentrations included" if t is None else
+                                             "on the cells touching no support or load node" if t == 0 else
+                                             f"at {t:.2g} mm from them") + " instead")
+    # a material or bond the delivered bodies have that no case read: the
+    # report must not pass on a check it never made
+    unchecked = [f"{mm.materials[p[0]].name}+{mm.materials[p[1]].name}" for p in pairs
+                 if pair_area.get(p, 0.0) > 0 and not any(
+                     f"{mm.materials[p[0]].name}+{mm.materials[p[1]].name}" in c["interfaces"] for c in cases)]
+    unchecked += [mm.materials[k_].name for k_ in sorted(set(mat.tolist()))
+                  if not any(mm.materials[k_].name in c["materials"] for c in cases)]
+    if unchecked:
+        rep["unchecked"] = unchecked
+        warnings.append(f"not checked: {', '.join(unchecked)} (no cell or interface face was read); "
+                        "the design does not pass on it")
+    if warnings:
+        rep["warnings"] = warnings
     if il is not None:
         rep["interlockedFraction"] = deep_area / face_area if face_area > 0 else 0.0
     return rep
@@ -1378,8 +1429,12 @@ class MultiMaterialResult:
     optimum: MMOptimum | None = None
     domain: object = None
 
-    def write(self, out_dir, name=None) -> dict:
-        """One STL per material, a multi-material 3MF and report.json."""
+    def write(self, out_dir, name=None, coordinates: str = "bed") -> dict:
+        """One STL per material (study coordinates), a multi-material 3MF and
+        report.json. `coordinates`: "bed" (default) places the 3MF for
+        printing (build direction to +z, lowest point at z = 0, centred on
+        the bed at 128, 128); "study" keeps the study's coordinates, as the
+        STLs have them. report["3mf"] says which, with the transform."""
         import json
         from pathlib import Path
 
@@ -1395,11 +1450,12 @@ class MultiMaterialResult:
                    **({"extruder": self.mm.extruders[self.mm.materials[k].name]}
                       if self.mm.materials[k].name in self.mm.extruders else {})}
                   for k, m in self.bodies]
+        tmf = None
         try:
-            from .threemf import write_multimaterial_3mf
-            files["3mf"] = write_multimaterial_3mf(out / f"{name}.3mf", bodies,
-                                                   direction=self.study.print_direction, name=name,
-                                                   process=self.study.process, slicer=self.mm.slicer)
+            tmf = write_bodies_3mf(out / f"{name}.3mf", bodies, direction=self.study.print_direction,
+                                   name=name, process=self.study.process, slicer=self.mm.slicer,
+                                   coordinates=coordinates)
+            files["3mf"] = tmf["path"]
         except ImportError:
             pass
         if self.optimum is not None:
@@ -1409,10 +1465,56 @@ class MultiMaterialResult:
             files["optimum"] = str(out / "optimum.npz")
         rep = dict(self.report)
         rep["files"] = files
+        self.delivered_3mf = tmf
+        if tmf is not None:
+            rep["3mf"] = tmf
         rep["outcomes"] = self.outcomes
         (out / "report.json").write_text(json.dumps(_jsonable(rep), indent=2))
         files["report"] = str(out / "report.json")
         return files
+
+
+def write_bodies_3mf(path, bodies, direction=None, name="part", process=None, slicer="all",
+                            coordinates: str = "bed") -> dict:
+    """threemf.write_multimaterial_3mf, with a choice of where the parts sit:
+    "bed" (its default: the print transform, build direction to +z, lowest
+    point at z = 0, footprint centred on (128, 128)) or "study" (the build
+    item's transform set to identity, so the 3MF's coordinates are the
+    study's, as the STLs and verification have them; a slicer drops it to
+    the bed itself). Returns {path, coordinates, transform (4x4, study ->
+    file coordinates), note}."""
+    import re
+    import zipfile
+    from types import SimpleNamespace
+
+    from . import threemf
+
+    if coordinates not in ("bed", "study"):
+        raise ValueError(f"coordinates is 'bed' or 'study', got {coordinates!r}")
+    p = threemf.write_multimaterial_3mf(path, bodies, direction=direction, name=name, process=process, slicer=slicer)
+    d = direction if direction is not None else (2, 1)
+    if coordinates == "bed":
+        allv = np.vstack([np.asarray(b["mesh"].vertices, float) for b in bodies])
+        tf = threemf.print_transform(SimpleNamespace(vertices=allv), d)
+        note = ("placed for printing: build direction to +z, lowest point at z = 0, centred on the bed at "
+                "(128, 128); `transform` maps study coordinates to the file's (the STLs keep the study's)")
+    else:
+        # the writer always applies the print transform on the build item;
+        # put identity there instead (the meshes themselves are in study
+        # coordinates in both slicer layouts)
+        with zipfile.ZipFile(p) as z:
+            parts = {i.filename: z.read(i.filename) for i in z.infolist()}
+        model = parts["3D/3dmodel.model"].decode()
+        ident = "1 0 0 0 1 0 0 0 1 0 0 0"
+        model = re.sub(r"(<build\b.*?</build>)",
+                       lambda m: re.sub(r'transform="[^"]*"', f'transform="{ident}"', m.group(1)), model, flags=re.S)
+        parts["3D/3dmodel.model"] = model.encode()
+        with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as z:
+            for k, v in parts.items():
+                z.writestr(k, v)
+        tf = np.eye(4)
+        note = "in the study's coordinates (identity transform), as the STLs; the slicer places it on the bed"
+    return {"path": str(p), "coordinates": coordinates, "transform": tf.tolist(), "note": note}
 
 
 def _jsonable(o):
@@ -1458,6 +1560,84 @@ def _margin(study, mm, rep):
     if g.max_deflection:
         ms.append(g.max_deflection / max(rep["maxDisplacement"], 1e-12))
     return min(ms) if ms else None
+
+
+def _attempt_summary(vf, rep) -> dict:
+    """One fraction tried, as the progress event and report.outcomes give it."""
+    out = {"volumeFraction": vf, "mass": rep["mass"], "safetyFactor": rep["safetyFactor"],
+           "interfaceSafetyFactor": rep["interfaceSafetyFactor"], "margin": rep["margin"],
+           "passes": rep["passes"], "materialFraction": rep["materialFraction"],
+           "requirementsMet": rep.get("requirementsMet")}
+    # the worst case per material and per bond, so a failed step says which
+    per, bond = {}, {}
+    for c in rep.get("cases") or []:
+        for k, v in (c.get("materials") or {}).items():
+            if k not in per or v["safetyFactor"] < per[k]["safetyFactor"]:
+                per[k] = {"safetyFactor": v["safetyFactor"], "case": c["name"]}
+        for k, v in (c.get("interfaces") or {}).items():
+            if k not in bond or v["safetyFactor"] < bond[k]["safetyFactor"]:
+                bond[k] = {"safetyFactor": v["safetyFactor"], "case": c["name"]}
+    if per:
+        out["materials"] = per
+    if bond:
+        out["interfaces"] = bond
+    for k in ("unchecked", "warnings"):
+        if rep.get(k):
+            out[k] = rep[k]
+    return out
+
+
+def _write_partial(mm, vf, bodies, summary):
+    """With LOADPATH_PARTIAL_DIR set (`loadpath run` sets it to out/partial),
+    each fraction's bodies (an STL per material) and summary as the search
+    verifies it, so a run killed later keeps what it found (study.py does
+    the same for one material)."""
+    import json
+    import os
+
+    d = os.environ.get("LOADPATH_PARTIAL_DIR")
+    if not d:
+        return
+    try:
+        os.makedirs(d, exist_ok=True)
+        stem = f"vf{vf:.4f}".replace(".", "p")
+        stls = {}
+        for k, m in bodies:
+            name = mm.materials[k].name
+            m.export(os.path.join(d, f"{stem}-{name}.stl"))
+            stls[name] = f"{stem}-{name}.stl"
+        with open(os.path.join(d, "outcomes.jsonl"), "a") as fh:
+            fh.write(json.dumps(_jsonable({"stl": stls, **summary})) + "\n")
+    except Exception:  # noqa: BLE001  (a convenience: never fail the run for it)
+        pass
+
+
+def _print_check(study, mm, bodies, rep):
+    """printcheck.check_print on the union of the bodies (support, bridges,
+    islands, bed contact), as verify.py gives a single-material part, when
+    the study has a build direction; None without one."""
+    proc = study.process
+    build = study.print_direction if study.print_direction is not None else \
+        (proc.build if proc is not None and proc.build not in (None, "auto") else None)
+    if build is None or not bodies:
+        return None
+    try:
+        from .printcheck import check_print
+        from .shapes import manifold_from_trimesh, trimesh_from_manifold
+
+        whole = manifold_from_trimesh(bodies[0][1])
+        for _, m in bodies[1:]:
+            whole = whole + manifold_from_trimesh(m)
+        vols = {}
+        for k, m in bodies:
+            vols[k] = vols.get(k, 0.0) + float(m.volume)
+        main = mm.materials[max(vols, key=vols.get)]
+        pc = check_print(trimesh_from_manifold(whole), build, process=proc.kind if proc is not None else "fdm",
+                         material=main)
+        return {k: v for k, v in pc.items() if k != "bridgeList"}
+    except Exception as exc:  # noqa: BLE001 - the parts and the report stand without it
+        rep.setdefault("warnings", []).append(f"print check not run: {type(exc).__name__}: {exc}")
+        return None
 
 
 def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int = 5) -> MultiMaterialResult:
@@ -1509,15 +1689,38 @@ def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int =
         rep["volumeFraction"] = vf
         m = _margin(study, mm, rep)
         rep["margin"] = m
-        rep["passes"] = bool((m is None or m >= 1.0) and rep["requirementsMet"])
+        # a bond or material verification could not read passes nothing
+        rep["passes"] = bool((m is None or m >= 1.0) and rep["requirementsMet"] and not rep.get("unchecked"))
         tried[vf] = (res, bodies, rep)
+        summary = _attempt_summary(vf, rep)
+        emit({"stage": "outcome", **summary})
+        _write_partial(mm, vf, bodies, summary)
         return rep
 
     g = study.goal
+    # Preserved cells are solid at any fraction, so a fraction at or under
+    # their share of the design space cannot be met: the volume constraint
+    # stays violated and MMA runs a step that means nothing.
+    pres_share = float(np.mean(domain.preserve))
+    vf_floor = min(0.9, pres_share + 0.05)
+    search_warnings = []
+
+    def _warn(msg):
+        search_warnings.append(msg)
+        emit({"stage": "warning", "message": msg})
+
     if g.safety_factor is None and g.max_deflection is None:
-        attempt(float(g.volume_fraction))
+        vf = float(g.volume_fraction)
+        if vf <= pres_share:
+            _warn(f"goal.volumeFraction {vf:.2f} is at or under the preserved share of the design space "
+                  f"({pres_share:.2f}): the volume constraint cannot be met; raise it above {pres_share:.2f}")
+        attempt(vf)
     else:
         vf = float(g.volume_fraction or 0.3)
+        if vf < vf_floor:
+            _warn(f"preserved regions are {pres_share:.0%} of the design space; the search starts at a volume "
+                  f"fraction of {vf_floor:.2f} instead of {vf:.2f}")
+            vf = vf_floor
         lo, hi = None, None    # highest failing, lowest passing
         for _ in range(max_runs):
             above = [v for v in tried if v > vf]
@@ -1532,7 +1735,7 @@ def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int =
                     break
                 vf = min(0.9, vf * 1.5)
             elif lo is None:
-                vf = max(0.03, vf * 0.7)
+                vf = max(0.03, vf_floor, vf * 0.7)
             else:
                 if hi - lo < 0.01:
                     break
@@ -1546,6 +1749,8 @@ def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int =
         pick = max(tried, key=lambda v: (tried[v][2]["margin"] or 0.0))
     res, bodies, rep = tried[pick]
     rep = dict(rep)
+    if search_warnings:
+        rep["warnings"] = search_warnings + list(rep.get("warnings") or [])
     if mm.interlock is not None and len(bodies) > 1:
         # verification judged the smooth interface against the interlocked
         # card; the delivered bodies carry the lattice
@@ -1561,12 +1766,10 @@ def run_multimaterial(study, on_progress=None, should_stop=None, max_runs: int =
             bodies = locked
         except Exception as exc:   # noqa: BLE001 - a failed lattice leaves the smooth bodies
             rep.setdefault("warnings", []).append(f"interlock not built ({exc}); bodies have flat interfaces")
+    rep["print"] = _print_check(study, mm, bodies, rep)
     rep["multiMaterial"] = {"materials": [m.to_dict() for m in mm.materials],
                             "requirements": [r.to_dict() for r in mm.requirements],
                             "interfaceSafetyFactor": mm.interface_safety_factor,
                             "interlock": mm.interlock.to_dict() if mm.interlock is not None else None}
-    summary = [{"volumeFraction": v, "mass": t[2]["mass"], "safetyFactor": t[2]["safetyFactor"],
-                "interfaceSafetyFactor": t[2]["interfaceSafetyFactor"], "margin": t[2]["margin"],
-                "passes": t[2]["passes"], "materialFraction": t[2]["materialFraction"]}
-               for v, t in sorted(tried.items())]
+    summary = [_attempt_summary(v, t[2]) for v, t in sorted(tried.items())]
     return MultiMaterialResult(study, mm, bodies, rep, summary, res, domain)

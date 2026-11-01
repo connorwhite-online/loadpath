@@ -88,7 +88,8 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
                    min_effectiveness: float | None = None, target_duty: float | None = None,
                    objective: str = "mass", header: float | None = None, shell: float | None = None,
                    port_length: float = 8.0, cap: float | None = None, port_share: float = 0.25,
-                   fractions=(0.4, 0.55, 0.7, 0.85, 1.0), keep: int = 8) -> dict:
+                   fractions=(0.4, 0.55, 0.7, 0.85, 1.0), keep: int = 8, min_wall: float | None = None,
+                   axes: str | None = None, max_points: int | None = None) -> dict:
     """Sweep the core's dimensions (fractions of what the envelope leaves),
     cell, wall, split and layout for `duty` ({"A": {"fluid", "kgPerS" |
     "lPerMin", "tIn"}, "B": {...}, "wall": material}). `envelope` (mm) is
@@ -98,12 +99,31 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
     `max_pressure_drop` ({fluid: Pa}) and, if given, `min_effectiveness`
     or `target_duty` (W). `objective`: "mass" (lightest that meets them),
     "effectiveness" (best), or "pressure" (least of the worst fluid's
-    share of its budget). Returns the best few, each with a heatx spec
-    ready to design ("spec")."""
+    share of its budget; "metal" is "mass"). Returns the best few, each
+    with a heatx spec ready to design ("spec"): its core centred in the
+    envelope's frame (the box from [0, 0, 0] to `envelope`), so ports and
+    plenums land inside it.
+
+    `min_wall` (mm) floors the walls swept (the default walls start at the
+    process's minimum);
+    `axes` ("xy" or "yx") pins which way fluid A runs (A along axes[0]);
+    without it both are tried. Only candidates the design step can mesh
+    within `max_points` grid points (heatx's cap, default 16M: a grid of at
+    most wall / 2) are returned; "unmeshable" counts those dropped.
+    "solidVolume" and "coreMass" are the core's sheet only: the shell,
+    plenums and ports add to it (the design's report.mass is the part)."""
+    from .heatx import HeatExchangerSpec, grid_plan, heat_exchanger_from_spec
+
     if process not in PROCESS_LIMITS:
         raise ValueError(f"process is one of {sorted(PROCESS_LIMITS)}")
+    objective = "mass" if objective == "metal" else objective
     if objective not in ("mass", "effectiveness", "pressure"):
         raise ValueError('objective is "mass", "effectiveness" or "pressure"')
+    if axes is not None and axes not in ("xy", "yx"):
+        raise ValueError(f"sizing puts the ports on the envelope's x and y faces (z, the build axis, carries "
+                         f"none): axes is \"xy\" (the first fluid along x) or \"yx\", got {axes!r}; turn the "
+                         "envelope so the ports face x and y")
+    max_points = int(max_points or HeatExchangerSpec.max_points)
     lim = PROCESS_LIMITS[process]
     names = [n for n in duty if n != "wall"]
     if len(names) != 2:
@@ -122,11 +142,16 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
     shell = shell if shell is not None else max(1.6, 2 * lim["minWall"])
     env = np.asarray(envelope, float)
     headers = [float(header)] if header is not None else [6.0, 9.0, 12.0, 16.0, 20.0]
-    walls = walls if walls is not None else [w for w in (0.5, 0.6, 0.8, 1.0, 1.2, 1.5) if w >= lim["minWall"]]
+    # the process's minimum floors the default walls; min_wall floors any
+    floor = max(lim["minWall"] if walls is None else 0.0, float(min_wall or 0.0))
+    walls = [w for w in (walls if walls is not None else (0.5, 0.6, 0.8, 1.0, 1.2, 1.5)) if w >= floor - 1e-9]
+    if not walls:
+        raise ValueError(f"no wall to sweep at or over {floor:g} mm")
     cells = cells if cells is not None else [4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 14.0]
     layouts = ["cross", "counter"] if layout == "auto" else [layout]
     rows, rejected = [], 0
-    for hd, lay, axes in itertools.product(headers, layouts, ("xy", "yx")):
+    axes_tried = (axes,) if axes else ("xy", "yx")
+    for hd, lay, axes in itertools.product(headers, layouts, axes_tried):
         allow = hd + shell + port_length
         # what the envelope leaves the core: A's zones on its axis, B's on the other (both
         # layouts); `room` is in A's frame (A along its first entry)
@@ -185,13 +210,14 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
                         s["pressureDropPorts"] + s["pressureDropMouths"] + plen[n]
                 solid = float(np.prod(dims)) * (1.0 - geo["phiSheet"])
                 world = dims if axes == "xy" else dims[[1, 0, 2]]
-                row = {"layout": lay, "axes": axes, "core": np.round(world, 1).tolist(), "cell": float(a), "wall": float(t),
+                row = {"layout": lay, "axes": axes, "fluidAxes": dict(zip(names, axes)),
+                       "core": np.round(world, 1).tolist(), "cell": float(a), "wall": float(t),
                        "split": float(sp), "cap": cp_, "header": hd,
                        "pressureDropPlenums": plen, "ports": dict(zip(names, ports)),
                        "effectiveness": r["effectiveness"], "effectivenessRange": r["effectivenessRange"],
                        "duty": r.get("duty"), "tOut": r.get("tOut"), "pressureDrop": dp,
                        "workingCore": round(v_eff / float(np.prod(dims)), 3),
-                       "solidVolume": solid, "mass": solid * density / 1000.0 if density else None,
+                       "solidVolume": solid, "coreMass": solid * density / 1000.0 if density else None,
                        "portLimited": bool(too_big)}
                 ok = all(dp[n] <= budget.get(n, np.inf) for n in names) and \
                     (min_effectiveness is None or r["effectiveness"] >= min_effectiveness)
@@ -205,25 +231,46 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
         rows.sort(key=lambda x: -x["effectiveness"])
     else:
         rows.sort(key=lambda x: max(x["pressureDrop"][n] / budget.get(n, 1.0) for n in names))
-    best = []
+    best, unmeshable, nearest = [], 0, None
     for x in rows:
         # skip near-duplicates (same cell, wall and layout) so the list shows real options
         if any(b["cell"] == x["cell"] and b["wall"] == x["wall"] and b["layout"] == x["layout"]
                and b["axes"] == x["axes"] for b in best):
             continue
-        x["spec"] = _spec(x, names, kind, x["header"], shell, port_length, lim["heatx"], duty)
+        spec = _spec(x, names, kind, x["header"], shell, port_length, lim["heatx"], duty, env)
+        # only what the design step can mesh within its point cap
+        hx = heat_exchanger_from_spec({k: v for k, v in spec.items() if k not in ("name", "duty")})
+        hx.max_points = max_points
+        plan = grid_plan(hx)
+        if not plan["fits"]:
+            unmeshable += 1
+            nearest = plan if nearest is None or plan["maxPointsNeeded"] < nearest["maxPointsNeeded"] else nearest
+            continue
+        x["spec"] = spec
+        x["grid"] = {k: plan[k] for k in ("step", "points", "peakMemoryGB")}
         best.append(x)
         if len(best) >= keep:
             break
-    return {"best": best[0] if best else None, "candidates": best, "objective": objective,
-            "considered": len(rows) + rejected, "feasible": len(rows), "process": process,
-            "minEffectiveness": min_effectiveness}
+    out = {"best": best[0] if best else None, "candidates": best, "objective": objective,
+           "considered": len(rows) + rejected, "feasible": len(rows), "process": process,
+           "minEffectiveness": min_effectiveness, "unmeshable": unmeshable, "maxPoints": max_points,
+           "envelopeFrame": {"min": [0.0, 0.0, 0.0], "max": env.tolist()}}
+    if unmeshable:
+        out["note"] = (f"{unmeshable} candidate(s) were dropped: the design step could not mesh them "
+                       f"within {max_points / 1e6:g}M grid points (it needs a grid of at most wall / 2). The "
+                       f"nearest needs {nearest['maxPointsNeeded'] / 1e6:.0f}M points, about "
+                       f"{nearest['memoryNeededGB']:.1f} GB: raise the cap with "
+                       "--max-points if the machine has that, or take a thicker wall")
+    return out
 
 
-def _spec(row, names, kind, header, shell, port_length, heatx_process, duty):
-    c = row["core"]
+def _spec(row, names, kind, header, shell, port_length, heatx_process, duty, envelope=None):
+    c = np.asarray(row["core"], float)
+    # centred in the envelope's frame ([0, 0, 0] to envelope): ports and plenums inside it
+    lo = 0.5 * (np.asarray(envelope, float) - c) if envelope is not None else np.zeros(3)
     return {"name": f"sized-{row['layout']}-{row['cell']:g}-{row['wall']:g}",
-            "core": {"type": "box", "min": [0, 0, 0], "max": c}, "type": kind, "layout": row["layout"],
+            "core": {"type": "box", "min": np.round(lo, 2).tolist(), "max": np.round(lo + c, 2).tolist()},
+            "type": kind, "layout": row["layout"],
             "axes": row["axes"], "fluids": list(names), "cell": row["cell"], "wall": row["wall"],
             "split": row["split"], "cap": row["cap"], "header": header, "shell": shell,
             "portLength": port_length, "portDiameter": row["ports"], "process": heatx_process,

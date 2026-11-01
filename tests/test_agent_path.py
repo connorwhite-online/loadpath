@@ -190,8 +190,8 @@ def test_mcp_tools_return_errors_instead_of_raising():
 def test_brief_gold_studies_check():
     from loadpath.evals import briefs
 
-    ids = briefs.all_ids()
-    assert len(ids) == 20, ids
+    ids = [i for i in briefs.all_ids() if briefs.load(i).get("kind", "study") == "study"]
+    assert len(ids) >= 20, ids
     for i in ids:
         r = check_study(briefs.load(i)["gold"], briefs.ASSETS)
         assert r["ok"], (i, r.get("error"))
