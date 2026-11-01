@@ -1,0 +1,300 @@
+{
+ "id": "elbow-bearing-bracket-sls",
+ "brief": "The elbow bearing bracket on my GRIP desk arm, SLS PA12. It bolts flat to the upper arm's side\nplate (z = 0) with four M4 socket-head screws along Z at (+/-22, +/-16), through 4.5 mm holes in a\n5 mm thick foot (z = 0 to 5); the heads bear on top of the foot, so each needs a flat 9 mm seat at\nz = 5 and a 9 mm column clear straight up above it for the hex key. The bracket holds two 608\nbearings back to back for the elbow shaft: their axis is along Y through (0, 0, 42), the seat is\n22 mm diameter from y = -7 to 7 with at least 4 mm of wall round it, the bearings press in from\nthe -Y side (keep the 22 mm bore open out that way), and the 8 mm shaft runs right through along Y\n(10 mm clearance). Everything fits in x = -32 to 32, y = -22 to 22, z = 0 to 60. Loads on the\nbearings: up to 150 N radial from the forearm, in any direction perpendicular to the shaft; 60 N\nof axial thrust along +Y; and a 2.5 N.m tipping moment about +X from the forearm hanging off the\nshaft. Safety factor 2, and under 16 g.",
+ "attachments": [],
+ "tags": [
+  "arm",
+  "sls",
+  "fasteners",
+  "bearing",
+  "any-direction",
+  "moment"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -32.0,
+     -22.0,
+     0.0
+    ],
+    "max": [
+     32.0,
+     22.0,
+     60.0
+    ]
+   }
+  ],
+  "fasteners": [
+   {
+    "id": "m4-0",
+    "size": "M4",
+    "seat": [
+     22,
+     16,
+     5
+    ],
+    "direction": "-z",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 9
+   },
+   {
+    "id": "m4-1",
+    "size": "M4",
+    "seat": [
+     -22,
+     16,
+     5
+    ],
+    "direction": "-z",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 9
+   },
+   {
+    "id": "m4-2",
+    "size": "M4",
+    "seat": [
+     -22,
+     -16,
+     5
+    ],
+    "direction": "-z",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 9
+   },
+   {
+    "id": "m4-3",
+    "size": "M4",
+    "seat": [
+     22,
+     -16,
+     5
+    ],
+    "direction": "-z",
+    "grip": 5,
+    "end": "face",
+    "headOn": "this",
+    "counterbore": 9
+   }
+  ],
+  "preserve": [
+   {
+    "id": "housing",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      -7.0,
+      42.0
+     ],
+     "p1": [
+      0.0,
+      7.0,
+      42.0
+     ],
+     "r": 15.0,
+     "rInner": 11.0
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "bearing",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      -7.0,
+      42.0
+     ],
+     "p1": [
+      0.0,
+      7.0,
+      42.0
+     ],
+     "r": 11.0
+    }
+   },
+   {
+    "id": "bearing-entry",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      -30.0,
+      42.0
+     ],
+     "p1": [
+      0.0,
+      -7.0,
+      42.0
+     ],
+     "r": 11.0
+    },
+    "bore": false
+   },
+   {
+    "id": "shaft",
+    "shape": {
+     "type": "cylinder",
+     "p0": [
+      0.0,
+      -30.0,
+      42.0
+     ],
+     "p1": [
+      0.0,
+      30.0,
+      42.0
+     ],
+     "r": 5.0
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m4-0-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "m4-1-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "m4-2-bore",
+    "fix": "xy"
+   },
+   {
+    "region": "m4-3-bore",
+    "fix": "xy"
+   },
+   {
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        22.0,
+        16.0,
+        -0.5
+       ],
+       "p1": [
+        22.0,
+        16.0,
+        0.3
+       ],
+       "r": 4.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -22.0,
+        16.0,
+        -0.5
+       ],
+       "p1": [
+        -22.0,
+        16.0,
+        0.3
+       ],
+       "r": 4.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -22.0,
+        -16.0,
+        -0.5
+       ],
+       "p1": [
+        -22.0,
+        -16.0,
+        0.3
+       ],
+       "r": 4.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        22.0,
+        -16.0,
+        -0.5
+       ],
+       "p1": [
+        22.0,
+        -16.0,
+        0.3
+       ],
+       "r": 4.5
+      }
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "radial",
+    "loads": [
+     {
+      "region": "bearing",
+      "force": [
+       0,
+       0,
+       -150
+      ],
+      "direction": "xz",
+      "distribution": "bearing"
+     }
+    ]
+   },
+   {
+    "name": "thrust",
+    "loads": [
+     {
+      "region": "bearing",
+      "force": [
+       0,
+       60,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "tip",
+    "loads": [
+     {
+      "region": "bearing",
+      "moment": [
+       2500,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "resolution": {
+   "maxElements": 20000
+  },
+  "name": "elbow-bearing-bracket-sls"
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxMass": 16
+ }
+}
