@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .domain import Domain, build_domain
+from .domain import Domain, build_domain, cell_cap
 from .manufacture import report as manufacturing_report
 from .reconstruct import ReconstructOptions, reconstruct
 from .simp import SimpOptions, filter_radius, optimize
@@ -498,7 +498,7 @@ def _study_cells(st: Study) -> int:
     """The most cells one run of `st` solves at once."""
     g = st.goal
     search = g.safety_factor is not None or g.max_deflection is not None
-    return max(st.max_elements, _CONFIRM_CELLS if search else 60_000)
+    return max(cell_cap(st), _CONFIRM_CELLS if search else 60_000)
 
 
 def _parallel(studies: list, on_progress, should_stop) -> list:
