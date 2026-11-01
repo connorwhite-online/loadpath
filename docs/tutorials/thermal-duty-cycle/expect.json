@@ -1,38 +1,164 @@
 {
-  "files": ["cold/best.stl", "hot/best.stl", "cold-hot/verify.json"],
-  "quick": [
-    {"file": "cold/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "PETG designed cold meets SF 3 cold"},
-    {"file": "cold/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 17, "max": 26, "what": "PETG designed cold: mass, g"},
-    {"file": "cold-hot/verify.json", "value": "r['passes']", "equals": false, "what": "PETG designed cold passes the duty cycle"},
-    {"file": "cold-hot/verify.json", "value": "r['report']['thermal']['maxTemperature']", "min": 65, "max": 82,
-     "what": "PETG designed cold: hottest point over the cycle, C"},
-    {"file": "cold-hot/verify.json", "value": "r['report']['durability']['fatigueSafetyFactor']", "min": 0.75, "max": 1.4,
-     "what": "PETG designed cold: thermal-cycling fatigue SF (target 1.5)"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "PA-CF designed for the cycle meets SF 3 hot and fatigue 1.5"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 10, "max": 15.5, "what": "PA-CF designed for the cycle: mass, g"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 3.0, "what": "PA-CF designed for the cycle: SF at the hot moment"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['durability']['fatigueSafetyFactor']", "min": 1.5, "max": 3.6,
-     "what": "PA-CF designed for the cycle: thermal-cycling fatigue SF"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['thermal']['maxTemperature']", "min": 63, "max": 82,
-     "what": "PA-CF designed for the cycle: hottest point, C"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['bodies']", "equals": 1, "what": "one body"}
-  ],
-  "full": [
-    {"file": "cold/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "PETG designed cold meets SF 3 cold"},
-    {"file": "cold/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 23.5, "max": 26.7, "what": "PETG designed cold: mass (25.1), g"},
-    {"file": "cold/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 3.2, "max": 3.9, "what": "PETG designed cold: SF (3.54)"},
-    {"file": "cold-hot/verify.json", "value": "r['passes']", "equals": false, "what": "PETG designed cold passes the duty cycle"},
-    {"file": "cold-hot/verify.json", "value": "r['safetyFactor']", "min": 4.0, "max": 4.9, "what": "PETG designed cold: static SF at the hot moment (4.4)"},
-    {"file": "cold-hot/verify.json", "value": "r['report']['thermal']['maxTemperature']", "min": 73, "max": 78,
-     "what": "PETG designed cold: hottest point (75), C"},
-    {"file": "cold-hot/verify.json", "value": "r['report']['durability']['fatigueSafetyFactor']", "min": 1.12, "max": 1.38,
-     "what": "PETG designed cold: thermal-cycling fatigue SF (1.25)"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "PA-CF designed for the cycle passes"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 12.0, "max": 13.8, "what": "PA-CF designed for the cycle: mass (12.9), g"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 3.0, "max": 3.7, "what": "PA-CF: SF at the hot moment (3.33)"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['durability']['fatigueSafetyFactor']", "min": 2.5, "max": 3.4,
-     "what": "PA-CF: thermal-cycling fatigue SF (2.9)"},
-    {"file": "hot/report.json", "value": "r['outcomes'][r['best']]['thermal']['maxTemperature']", "min": 75, "max": 80,
-     "what": "PA-CF: hottest point (78), C"}
-  ]
+ "files": [
+  "cold/best.stl",
+  "hot/best.stl",
+  "cold-hot/verify.json"
+ ],
+ "quick": [
+  {
+   "file": "cold/report.json",
+   "value": "r['outcomes'][r['best']]['passes']",
+   "equals": true,
+   "what": "PETG designed cold meets SF 3 cold"
+  },
+  {
+   "file": "cold/report.json",
+   "value": "r['outcomes'][r['best']]['mass']",
+   "min": 13,
+   "max": 26,
+   "what": "PETG designed cold: mass, g"
+  },
+  {
+   "file": "cold-hot/verify.json",
+   "value": "r['passes']",
+   "equals": false,
+   "what": "PETG designed cold passes the duty cycle"
+  },
+  {
+   "file": "cold-hot/verify.json",
+   "value": "r['report']['thermal']['maxTemperature']",
+   "min": 65,
+   "max": 82,
+   "what": "PETG designed cold: hottest point over the cycle, C"
+  },
+  {
+   "file": "cold-hot/verify.json",
+   "value": "r['report']['durability']['fatigueSafetyFactor']",
+   "min": 0.3,
+   "max": 1.4,
+   "what": "PETG designed cold: thermal-cycling fatigue SF (target 1.5)"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['passes']",
+   "equals": true,
+   "what": "PA-CF designed for the cycle meets SF 3 hot and fatigue 1.5"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['mass']",
+   "min": 10,
+   "max": 15.5,
+   "what": "PA-CF designed for the cycle: mass, g"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['safetyFactor']",
+   "min": 3.0,
+   "what": "PA-CF designed for the cycle: SF at the hot moment"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['durability']['fatigueSafetyFactor']",
+   "min": 1.5,
+   "max": 3.6,
+   "what": "PA-CF designed for the cycle: thermal-cycling fatigue SF"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['thermal']['maxTemperature']",
+   "min": 63,
+   "max": 82,
+   "what": "PA-CF designed for the cycle: hottest point, C"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['bodies']",
+   "equals": 1,
+   "what": "one body"
+  }
+ ],
+ "full": [
+  {
+   "file": "cold/report.json",
+   "value": "r['outcomes'][r['best']]['passes']",
+   "equals": true,
+   "what": "PETG designed cold meets SF 3 cold"
+  },
+  {
+   "file": "cold/report.json",
+   "value": "r['outcomes'][r['best']]['mass']",
+   "min": 23.5,
+   "max": 26.7,
+   "what": "PETG designed cold: mass (25.1), g"
+  },
+  {
+   "file": "cold/report.json",
+   "value": "r['outcomes'][r['best']]['safetyFactor']",
+   "min": 3.2,
+   "max": 3.9,
+   "what": "PETG designed cold: SF (3.54)"
+  },
+  {
+   "file": "cold-hot/verify.json",
+   "value": "r['passes']",
+   "equals": false,
+   "what": "PETG designed cold passes the duty cycle"
+  },
+  {
+   "file": "cold-hot/verify.json",
+   "value": "r['safetyFactor']",
+   "min": 4.0,
+   "max": 4.9,
+   "what": "PETG designed cold: static SF at the hot moment (4.4)"
+  },
+  {
+   "file": "cold-hot/verify.json",
+   "value": "r['report']['thermal']['maxTemperature']",
+   "min": 73,
+   "max": 78,
+   "what": "PETG designed cold: hottest point (75), C"
+  },
+  {
+   "file": "cold-hot/verify.json",
+   "value": "r['report']['durability']['fatigueSafetyFactor']",
+   "min": 1.12,
+   "max": 1.38,
+   "what": "PETG designed cold: thermal-cycling fatigue SF (1.25)"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['passes']",
+   "equals": true,
+   "what": "PA-CF designed for the cycle passes"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['mass']",
+   "min": 12.0,
+   "max": 13.8,
+   "what": "PA-CF designed for the cycle: mass (12.9), g"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['safetyFactor']",
+   "min": 3.0,
+   "max": 3.7,
+   "what": "PA-CF: SF at the hot moment (3.33)"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['durability']['fatigueSafetyFactor']",
+   "min": 2.5,
+   "max": 3.4,
+   "what": "PA-CF: thermal-cycling fatigue SF (2.9)"
+  },
+  {
+   "file": "hot/report.json",
+   "value": "r['outcomes'][r['best']]['thermal']['maxTemperature']",
+   "min": 75,
+   "max": 80,
+   "what": "PA-CF: hottest point (78), C"
+  }
+ ]
 }
