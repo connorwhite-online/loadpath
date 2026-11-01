@@ -237,7 +237,10 @@ the large-deflection response itself: on the inverter driven through 30%
 of its length it moves the output 20% further than the linear design, with
 no corner hinge. A TPU finger designed this way curls its tip 8.7 mm for a
 5 mm pull at its base, through the whole stroke; the linear design's solve
-stops at 0.7 mm ([docs/MECHANISMS.md](docs/MECHANISMS.md)).
+stops at 0.7 mm. Tendon input and contact are in too: a servo-driven TPU
+finger optimized for grip presses a 30 mm cylinder 9x harder than a plain
+bar of the same volume, at under half the tendon pull
+([docs/MECHANISMS.md](docs/MECHANISMS.md)).
 
 ![graded vs uniform vs solid TO bumpers](docs/images/impact/end-stop-designs.png)
 

@@ -191,12 +191,70 @@ Three things made it work, all now in `mechanism_nl.py`:
 The check (`stroke_mechanism`) now also reports a tip held only by the
 plate's symmetry plane as detached; it used to read 0 mm.
 
+## A tendon-driven finger that grips
+
+`mechanism_nl` also takes a tendon as the input and an object to close on,
+and then maximizes the grip force:
+
+```python
+from loadpath.mechanism_nl import RigidCylinder, ServoTendon, optimize_mechanism_nonlinear, tendon_grip
+ten = ServoTendon(path=[spool_xyz, guide_nodes, ..., knot_nodes], stroke=8.0, stiffness=0.5)
+obj = RigidCylinder(center=(30, 0, -16.5), radius=15)
+r = optimize_mechanism_nonlinear(domain, nu, opts, tendons=[ten], contact=obj)
+check = tendon_grip(domain, r.xphys, E, nu, [ten], obj)     # thresholded, full pull
+```
+
+- **Tendons.** A `nonlinear.Tendon` is a cable at constant tension through
+  guides on the part; it follows the part as it curls. A `ServoTendon` is
+  wound in by a servo: a set length of cable (`stroke`), with the cable
+  and servo giving like a spring (`stiffness`), so the pull can never pass
+  stiffness x stroke. Use the servo version for optimization. At constant
+  tension the soft, grey early designs snap over the object, and no solver
+  can follow a snap under a fixed force; a wound-in cable is displacement
+  driven and can.
+- **Contact.** `RigidCylinder` is a fixed object (a cylinder through the
+  plate). Each node is pushed out of it by a smooth penalty, weighted by
+  the density around the node (cubed), so empty cells cannot grip. The
+  grip force is the sum of the normal forces, and its gradient (contact,
+  tendon load stiffness and all) matches finite differences.
+
+`python examples/mechanism/tendon_grip.py` (about 25 min) designs a 50 x 10
+mm TPU 95A finger, its base clamped to the palm. The tendon runs from the
+spool behind the palm through guides on the palm side to a knot at the
+tip. A 30 mm cylinder (a GRIP-sized handle) sits 1.5 mm below. The servo
+winds in 8 mm of cable at 0.5 N/mm. Forces are per mm of finger width
+(a 15 mm wide finger grips 15 times as much):
+
+| | plain palm-side bar, same volume | optimized (robust) |
+|---|---|---|
+| grip force | 0.046 N | **0.42 N** (9x) |
+| tendon tension at full wind | 2.27 N | 0.88 N |
+| grip per newton of tendon pull | 0.02 | **0.48** |
+| one-node hinges | 0 | 0 |
+
+![tendon grip](images/mechanism/tendon-grip.png)
+
+The bar curls its tip past the cylinder and touches it with one edge. The
+optimized finger is a lever: a diagonal strut from the top of the palm
+mount carries the tendon's pull down into a knee that presses on the top of
+the cylinder, while the tip beyond it buckles up out of the way. It does not
+wrap the object; it pushes on it, which is what "most normal force" asks
+for. Two things to know before printing it:
+
+- **It cut the middle guide free.** Printed, that guide would be a loose
+  bead on the cable. Leave it out: the cable runs straight from the palm
+  to the next guide, clear of the cylinder (checked on the deformed shape).
+- **The object is fixed.** The grip is what the finger presses on a held
+  object; a second finger or the palm on the other side is not modelled.
+
 ## Not yet
 
-- **Tendon input:** `mechanism_nl` takes a prescribed stroke; a tendon
-  (`nonlinear.Tendon`) as the input is not wired in yet.
-- **No contact:** the workpiece is a spring on the jaw, not a body the jaw
-  wraps around.
+- **Contact with one rigid cylinder only**, fixed in space; no friction,
+  no second finger, and the cable does not touch the object (check its
+  path on the deformed shape).
+- **Wrapping grasps:** maximizing the normal force gives a pressing
+  finger. A finger that wraps would need the contact spread over the
+  object (more nodes in contact, or a pull-out force objective).
 - **2.5D plates only** for the gripper above. The optimizer itself is 3D;
   GRIP's tendon-driven TPU finger (examples/grip/finger.py) has the
   nonlinear analysis but not yet a mechanism design.
