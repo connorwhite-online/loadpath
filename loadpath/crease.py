@@ -545,7 +545,14 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
                                           (m12, v2, k), (v2, m20, k), (m20, v0, k))]
     F2 = np.concatenate(out).astype(np.int64)
     if clean:
-        V, F2, _, crease, used = cleanup(V, F2, tree, label_masks(tree, V, pitch), crease, pitch, stats=st)
+        # masks only within three rings of the creases (clean-up looks at
+        # faces within two): the whole mesh's took seconds on a lattice
+        ring = crease.copy()
+        for _r in range(3):
+            ring[F2[ring[F2].any(axis=1)].ravel()] = True
+        masks = np.zeros(len(V), np.int64)
+        masks[ring] = label_masks(tree, V[ring], pitch)
+        V, F2, _, crease, used = cleanup(V, F2, tree, masks, crease, pitch, stats=st)
         home = home[used]
         V, crease = untangle(V, F2, tree, crease, home, pitch, stats=st)
     st["creaseVertices"] = int(crease.sum())
@@ -727,24 +734,48 @@ def _seg_tri(p, q, T, eps=1e-9):
     return ok & (u > eps) & (v > eps) & (u + v < 1 - eps) & (t > eps) & (t < 1 - eps)
 
 
-def crossing_faces(V, F, faces):
-    """Faces among `faces` that cross another face of the mesh (sharing no
-    vertex with it): a self-intersection."""
-    from scipy.spatial import cKDTree
+class _Centroids:
+    """Face centroids, circumradii and a k-d tree over them, kept across
+    untangle's rounds: a round moves a few vertices back, so only their
+    faces are refreshed, and the tree (built once) is queried with the
+    largest distance a centroid has moved since as slack."""
 
+    def __init__(self, V, F):
+        from scipy.spatial import cKDTree
+
+        self.C = V[F].mean(1)
+        self.rad = np.linalg.norm(V[F] - self.C[:, None], axis=2).max(axis=1)
+        self.p99 = float(np.percentile(self.rad, 99))
+        self.tree = cKDTree(self.C)
+        self.C0 = self.C.copy()
+        self.slack = 0.0
+
+    def update(self, V, F, faces):
+        T = V[F[faces]]
+        self.C[faces] = T.mean(1)
+        self.rad[faces] = np.linalg.norm(T - self.C[faces][:, None], axis=2).max(axis=1)
+        if len(faces):
+            self.slack = max(self.slack, float(np.linalg.norm(self.C[faces] - self.C0[faces], axis=1).max()))
+
+
+def crossing_faces(V, F, faces, cache=None):
+    """Faces among `faces` that cross another face of the mesh (sharing no
+    vertex with it): a self-intersection. `cache` (a _Centroids of this
+    V, F) saves rebuilding the centroids and their tree."""
     faces = np.asarray(faces, np.int64)
     if not len(faces):
         return faces
-    C = V[F].mean(1)
+    if cache is None:
+        cache = _Centroids(V, F)
+    C, rad, ctree = cache.C, cache.rad, cache.tree
     # a face's reach: its own circumradius plus a typical neighbour's
     # (the 99th percentile: the long faces are the crease's own, and those
     # are tested from their side)
-    rad = np.linalg.norm(V[F] - C[:, None], axis=2).max(axis=1)
     # the nearest 64 centroids within reach (as arrays: ball queries build
     # python lists, the slow part on a lattice), a ball query where 64 is not all
-    r = rad[faces] + np.percentile(rad, 99) + 1e-12
+    # the tree holds the centroids as they were built: search 2 x slack wider
+    r = rad[faces] + cache.p99 + 2 * cache.slack + 1e-12
     k = min(64, len(F))
-    ctree = cKDTree(C)
     d, B = ctree.query(C[faces], k=k, distance_upper_bound=float(r.max()))
     d, B = d.reshape(len(faces), k), B.reshape(len(faces), k)
     ok = d <= r[:, None]
@@ -793,6 +824,7 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
     crease = np.array(crease, bool)
     back = 0
     near = None
+    cache = _Centroids(V, F)
     for _ in range(rounds):
         # only where a crease vertex moved: elsewhere the mesh is as it was;
         # after the first round, only around what the last round sent back
@@ -803,8 +835,10 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
         cf = np.flatnonzero(sel)
         if not len(cf):
             break
-        bad = crossing_faces(V, F, cf)
-        mask = label_masks(tree, V, pitch)
+        bad = crossing_faces(V, F, cf, cache)
+        mask = np.zeros(len(V), np.int64)
+        fv = np.unique(F[cf].ravel())
+        mask[fv] = label_masks(tree, V[fv], pitch)
         sn, has = side_normals(tree, V, F[cf], mask)
         flip = cf[has & ((_face_normals(V, F[cf]) * sn).sum(1) < 0)]
         bad = np.union1d(bad, flip)
@@ -815,6 +849,9 @@ def untangle(V, F, tree, crease, home, pitch, rounds=4, stats=None):
         V[verts] = home[verts]
         crease[verts] = False
         back += len(verts)
+        vm = np.zeros(len(V), bool)
+        vm[verts] = True
+        cache.update(V, F, np.flatnonzero(vm[F].any(axis=1)))
         # the faces that could cross now: within a few rings of those moved back
         near = np.zeros(len(V), bool)
         near[verts] = True

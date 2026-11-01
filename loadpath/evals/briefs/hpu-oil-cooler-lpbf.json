@@ -1,0 +1,121 @@
+{
+ "id": "hpu-oil-cooler-lpbf",
+ "kind": "heatx",
+ "brief": "An oil cooler for the hydraulic power unit on our quadruped robot, printed in AlSi10Mg on a metal\npowder-bed machine, built along +Z with its 90 x 50 face on the plate. It has to fit a 90 x 50 x 40 mm\nbox: x along the 90 mm length, y across the 50, z up, origin at a bottom corner. The fittings on the\nmanifold are already fixed: the hydraulic oil (ISO VG 32, 4 L/min, 60 C coming in) enters at the\nmiddle of the x = 0 end (y = 25, z = 20) and leaves at the middle of the x = 90 end; the robot's\ncoolant loop (50/50 water-glycol, 3 L/min at 30 C) comes in on the y = 0 side at x = 60, z = 20 and\ngoes out on the y = 50 side at x = 30, z = 20. Every port points straight out of its face and has to\nreach it. It must take at least 400 W out of the oil. The pump can spare 0.5 bar for the cooler on the\noil side, the coolant pump 0.1 bar. Under 150 g, and no powder left trapped inside.",
+ "attachments": [],
+ "tags": [
+  "heatx",
+  "metal",
+  "lpbf",
+  "ports",
+  "pressure-drop",
+  "mass"
+ ],
+ "gold": {
+  "name": "hpu-oil-cooler",
+  "core": {
+   "type": "box",
+   "min": [
+    18,
+    15.5,
+    6
+   ],
+   "max": [
+    72,
+    34.5,
+    34
+   ]
+  },
+  "type": "gyroid",
+  "layout": "counter",
+  "axes": "xy",
+  "fluids": [
+   "oil",
+   "coolant"
+  ],
+  "cell": 7,
+  "wall": 1.0,
+  "shell": 1.6,
+  "header": 6,
+  "portLength": 7.5,
+  "portDiameter": {
+   "oil": 8,
+   "coolant": 8
+  },
+  "build": "z",
+  "process": "lpbf",
+  "duty": {
+   "oil": {
+    "fluid": "oil",
+    "lPerMin": 4,
+    "tIn": 60
+   },
+   "coolant": {
+    "fluid": "glycol50",
+    "lPerMin": 3,
+    "tIn": 30
+   },
+   "wall": "alsi10mg"
+  }
+ },
+ "pass": {
+  "envelope": {
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    90,
+    50,
+    40
+   ]
+  },
+  "ports": {
+   "oil-in": {
+    "at": [
+     0,
+     25,
+     20
+    ],
+    "direction": "-x"
+   },
+   "oil-out": {
+    "at": [
+     90,
+     25,
+     20
+    ],
+    "direction": "+x"
+   },
+   "coolant-in": {
+    "at": [
+     60,
+     0,
+     20
+    ],
+    "direction": "-y"
+   },
+   "coolant-out": {
+    "at": [
+     30,
+     50,
+     20
+    ],
+    "direction": "+y"
+   }
+  },
+  "portTolerance": {
+   "lateral": 3,
+   "axial": 5
+  },
+  "minDuty": 400,
+  "maxPressureDrop": {
+   "oil": 50000,
+   "coolant": 10000
+  },
+  "maxMass": 150,
+  "maxTrappedVolume": 20,
+  "maxInternalFlatArea": 300
+ }
+}

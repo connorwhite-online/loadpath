@@ -732,6 +732,9 @@ class Cycle:
     # to the hot moment's at the start (StudyHeat.sensitivities); 0: design
     # for the hot moment alone
     fatigue_weight: float = 0.0
+    # or instead: hold the swing's stress under the fatigue strength at
+    # `cycles` over this safety factor, a constraint (MMA in simp.optimize)
+    fatigue_sf: float | None = None
 
 
 @dataclass
@@ -1348,6 +1351,22 @@ class StudyHeat:
         # weight of the thermal-cycling swing in the optimizer's objective
         # (relative to the hot objective at the first iteration)
         self.swing_weight = float(th.cycle.fatigue_weight) if th.cycle is not None else 0.0
+        # or the swing as a constraint: the largest swing stress range over
+        # retention (MPa) allowed, from the fatigue strength at the cycle
+        # count over the safety factor. Fatigue SF S means damage
+        # n/N(sigma) <= S^-k, so sigma <= fatigue strength at n S^k
+        # cycles; durability reads the cycle stress as range / 0.7.
+        self.swing_limit = None
+        if th.cycle is not None and th.cycle.fatigue_sf is not None:
+            from .durability import durability_data, fatigue_strength
+
+            dur = getattr(study, "durability", None)
+            data = durability_data(mat, dur.overrides if dur is not None else None)
+            n_eq = float(th.cycle.cycles) * float(th.cycle.fatigue_sf) ** data.fatigue_slope
+            # / SWING_ALLOWANCE: verification reads the surface of the meshed
+            # part, about 1.2-1.3x what the cells' corners read on the grid
+            # (motor mount, first pass: 1.24 at 12k cells, 1.19-1.26 at 45k)
+            self.swing_limit = 0.7 * fatigue_strength(data, mat.strength, n_eq) / self.SWING_ALLOWANCE
 
     @property
     def expands(self):
@@ -1544,6 +1563,21 @@ class StudyHeat:
             dx += k_s * dx_s
             dte_g += k_s * dte_gs
             dte_s = k_s * dte_s
+        elif self.swing_limit is not None and self.expands and self.r is not None:
+            # Thermal cycling as a constraint (simp.optimize runs MMA): the
+            # swing's p-norm and its full gradient, temperature path
+            # included through an adjoint of its own, kept apart from the
+            # objective
+            j_s, dx_s, dte_gs, dte_s1 = self._swing_pnorm(fe, xe, state, pth, dp, estiff, dE, g, dg)
+            if not self.bc.fixed.all():
+                def nodes1(v):
+                    return np.bincount(mesh.enode.ravel(), weights=np.repeat(v / 8.0, 8), minlength=mesh.n_nodes)
+                rhs_s = nodes1(dte_gs) * self.r + nodes1(dte_s1) * (self.r - self.r_cold)
+                state["lam_swing"] = self.th.adjoint(rhs_s, state.get("lam_swing"))
+                dx_s = dx_s + self.th.gradient(xe, state["lam_swing"])
+            state["swing"] = j_s
+            state["swing_grad"] = dx_s
+            dte_s = None
         else:
             dte_s = None
         # through temperature: a node holds 1/8 of each of its cells' T, and
@@ -1562,6 +1596,8 @@ class StudyHeat:
         return j, case_j, dx, dirs
 
     SWING_P = 8.0       # p of the swing's stress p-norm
+    SWING_ALLOWANCE = 1.25     # verified / optimizer swing peak, for the constraint's limit
+    SWING_POINTS = "corners"   # where the swing's stress is sampled: "corners" or "center"
     SWING_Q = 0.5       # grey cells' stress relaxation, x^q (Bruggi's qp)
 
     def _swing_pnorm(self, fe, xe, state, pth, dp, estiff, dE, g, dg):
@@ -1582,33 +1618,55 @@ class StudyHeat:
         u = fe.resolve([f], state.get("u_swing"))[0]
         state["u_swing"] = [u]
         c0 = elastic_c(1.0, self.nu)
-        b = hex8_b_center() / mesh.pitch
         m = np.array([1.0, 1, 1, 0, 0, 0])
+        cm = c0 @ m
         eta = np.maximum(xe, 1e-9) ** q
-        sig = u[mesh.edof] @ (c0 @ b).T - (self.E0 * eps)[:, None] * (c0 @ m)[None, :]
-        s = eta[:, None] * sig
-        if self.near is not None:
-            s = s * (~self.near)[:, None]
-        vs = s @ _VM
-        vm = np.sqrt(np.maximum(np.einsum("ij,ij->i", s, vs), 1e-300))
-        big = vm.max()
-        r = vm / big                                   # scaled against overflow
-        sp = float(np.sum(r ** p))
+        keep = (~self.near) if self.near is not None else np.ones(mesh.n_elem, bool)
+        # sample points: the cell centre, or its 8 corners (SWING_POINTS):
+        # a member's bending puts its peak at the surface, which the centre
+        # of a cell spanning it reads low
+        if self.SWING_POINTS == "corners":
+            # (hex8_b: with the incompatible-mode element part of the
+            # bending strain lives in its condensed bubbles, which the plain
+            # trilinear B misses at the corners)
+            from .fem import hex8_b
+            pts = [(a, b_, c) for a in (-1.0, 1.0) for b_ in (-1.0, 1.0) for c in (-1.0, 1.0)]
+            cbs = [c0 @ (hex8_b(*pt, self.nu) / mesh.pitch) for pt in pts]
+        else:
+            cbs = [c0 @ (hex8_b_center() / mesh.pitch)]
+        ue = u[mesh.edof]
+        sigs, vss, vms = [], [], []
+        for cb in cbs:
+            sig = ue @ cb.T - (self.E0 * eps)[:, None] * cm[None, :]
+            sk = eta[:, None] * sig * keep[:, None]
+            vs = sk @ _VM
+            sigs.append(sig)
+            vss.append(vs)
+            vms.append(np.sqrt(np.maximum(np.einsum("ij,ij->i", sk, vs), 1e-300)))
+        big = max(float(v.max()) for v in vms)
+        state["swing_max"] = big
+        sp = float(sum(np.sum((v / big) ** p) for v in vms))     # scaled against overflow
         P = big * sp ** (1.0 / p)
-        dpv = sp ** (1.0 / p - 1.0) * r ** (p - 1.0)    # dP/dvm_e
-        ds = (dpv / vm)[:, None] * vs                  # dP/ds_e
-        dsig = eta[:, None] * ds                       # dP/dsig_e
-        gu = np.bincount(mesh.edof.ravel(), weights=(dsig @ (c0 @ b)).ravel(), minlength=mesh.n_dof)
+        gu = np.zeros(mesh.n_dof)
+        dxq = np.zeros(mesh.n_elem)
+        dsc = np.zeros(mesh.n_elem)
+        for cb, sig, vs, vm in zip(cbs, sigs, vss, vms):
+            dpv = sp ** (1.0 / p - 1.0) * (vm / big) ** (p - 1.0)   # dP/dvm
+            ds = (dpv / vm)[:, None] * vs                            # dP/ds
+            dsig = eta[:, None] * ds                                 # dP/dsig
+            gu += np.bincount(mesh.edof.ravel(), weights=(dsig @ cb).ravel(), minlength=mesh.n_dof)
+            dxq += np.einsum("ij,ij->i", ds, sig)
+            dsc += dsig @ cm
         gu[self.fixed] = 0.0
         mu = fe.resolve([gu], state.get("mu_swing"))[0]
         state["mu_swing"] = [mu]
         mk = 0.25 * (fe.strain_energy(mu + u) - fe.strain_energy(mu - u))     # mu_e^T K0 u_e
         mv = mu[mesh.edof] @ self.vth                                          # mu_e . vth
         # P(x, u(x)): explicit + mu^T (df/dx - dK/dx u)
-        dx = q * np.maximum(xe, 1e-9) ** (q - 1) * np.einsum("ij,ij->i", ds, sig) \
+        dx = q * np.maximum(xe, 1e-9) ** (q - 1) * dxq \
             + self.E0 * dp * g * eps * mv - dE * g * mk
         # through the swing strain: explicit, and mu . df/deps
-        de = -self.E0 * (dsig @ (c0 @ m)) + self.E0 * pth * g * mv
+        de = -self.E0 * dsc + self.E0 * pth * g * mv
         # through the hot moment's retention: K and f_s both carry g
         dgv = dg * (self.E0 * pth * eps * mv - estiff * mk)
         return P, dx, dgv, de * self.alpha

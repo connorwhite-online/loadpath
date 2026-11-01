@@ -1,0 +1,675 @@
+{
+ "id": "isolated-camera-mount-mm",
+ "kind": "multimat",
+ "brief": "I want a vibration-isolating mount for a small camera on my robot arm's base, printed in PETG\nand TPU 95A on a two-material FDM printer, flat on the bed (layers along Z, base down). The\nbottom is a PETG flange, z = 0 to 4, that screws down to the arm with four M3 screws along Z\nat (+-24, +-24): 3.4 mm holes, and the screw heads need 7 mm diameter clearance above the\nflange up to z = 20. The camera sits on a 32 x 32 mm PETG top plate,\nz = 9 to 13, centred over the origin, fixed with four M2.5 screws from above at (+-10, +-10)\ninto 2.2 mm pilot holes 4 mm deep from the top face. Between the flange and the top plate is a\n5 mm TPU layer (z = 4 to 9) under the whole top plate: the vibration must go through rubber,\nso there must be no PETG path at all from the flange to the top plate. Everything fits in\nx, y = -30 to 30, z = 0 to 13. Loads: the flange screws hold it; the camera is 150 g, and with\nthe arm's shocks design for 15 N pushing down on the top plate, and 10 N sideways along X on\nthe top plate. Safety factor 3 on the plastics and on the TPU-PETG bond, and under 25 g.",
+ "attachments": [],
+ "tags": [
+  "fdm",
+  "multimat",
+  "isolation",
+  "fasteners"
+ ],
+ "gold": {
+  "name": "isolated-camera-mount-mm",
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -30,
+     -30,
+     0
+    ],
+    "max": [
+     30,
+     30,
+     13
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "flange-bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        24,
+        24,
+        0
+       ],
+       "p1": [
+        24,
+        24,
+        4
+       ],
+       "r": 4.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -24,
+        24,
+        0
+       ],
+       "p1": [
+        -24,
+        24,
+        4
+       ],
+       "r": 4.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        24,
+        -24,
+        0
+       ],
+       "p1": [
+        24,
+        -24,
+        4
+       ],
+       "r": 4.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -24,
+        -24,
+        0
+       ],
+       "p1": [
+        -24,
+        -24,
+        4
+       ],
+       "r": 4.5
+      }
+     ]
+    }
+   },
+   {
+    "id": "top-plate",
+    "shape": {
+     "type": "box",
+     "min": [
+      -16,
+      -16,
+      9
+     ],
+     "max": [
+      16,
+      16,
+      13
+     ]
+    }
+   },
+   {
+    "id": "isolator",
+    "shape": {
+     "type": "box",
+     "min": [
+      -16,
+      -16,
+      4
+     ],
+     "max": [
+      16,
+      16,
+      9
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m3",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        24,
+        24,
+        -1
+       ],
+       "p1": [
+        24,
+        24,
+        5
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -24,
+        24,
+        -1
+       ],
+       "p1": [
+        -24,
+        24,
+        5
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        24,
+        -24,
+        -1
+       ],
+       "p1": [
+        24,
+        -24,
+        5
+       ],
+       "r": 1.7
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -24,
+        -24,
+        -1
+       ],
+       "p1": [
+        -24,
+        -24,
+        5
+       ],
+       "r": 1.7
+      }
+     ]
+    }
+   },
+   {
+    "id": "heads",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        24,
+        24,
+        4
+       ],
+       "p1": [
+        24,
+        24,
+        21
+       ],
+       "r": 3.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -24,
+        24,
+        4
+       ],
+       "p1": [
+        -24,
+        24,
+        21
+       ],
+       "r": 3.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        24,
+        -24,
+        4
+       ],
+       "p1": [
+        24,
+        -24,
+        21
+       ],
+       "r": 3.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -24,
+        -24,
+        4
+       ],
+       "p1": [
+        -24,
+        -24,
+        21
+       ],
+       "r": 3.5
+      }
+     ]
+    },
+    "bore": false
+   },
+   {
+    "id": "m25",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        10,
+        10,
+        9
+       ],
+       "p1": [
+        10,
+        10,
+        14
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -10,
+        10,
+        9
+       ],
+       "p1": [
+        -10,
+        10,
+        14
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        10,
+        -10,
+        9
+       ],
+       "p1": [
+        10,
+        -10,
+        14
+       ],
+       "r": 1.1
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -10,
+        -10,
+        9
+       ],
+       "p1": [
+        -10,
+        -10,
+        14
+       ],
+       "r": 1.1
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m3"
+   },
+   {
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "p0": [
+        24,
+        24,
+        -0.5
+       ],
+       "p1": [
+        24,
+        24,
+        0.3
+       ],
+       "r": 4.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -24,
+        24,
+        -0.5
+       ],
+       "p1": [
+        -24,
+        24,
+        0.3
+       ],
+       "r": 4.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        24,
+        -24,
+        -0.5
+       ],
+       "p1": [
+        24,
+        -24,
+        0.3
+       ],
+       "r": 4.5
+      },
+      {
+       "type": "cylinder",
+       "p0": [
+        -24,
+        -24,
+        -0.5
+       ],
+       "p1": [
+        -24,
+        -24,
+        0.3
+       ],
+       "r": 4.5
+      }
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "down",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -16,
+        -16,
+        12.8
+       ],
+       "max": [
+        16,
+        16,
+        13
+       ]
+      },
+      "force": [
+       0,
+       0,
+       -15
+      ]
+     }
+    ]
+   },
+   {
+    "name": "side",
+    "loads": [
+     {
+      "shape": {
+       "type": "box",
+       "min": [
+        -16,
+        -16,
+        12.8
+       ],
+       "max": [
+        16,
+        16,
+        13
+       ]
+      },
+      "force": [
+       10,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "process": {
+   "type": "fdm",
+   "buildDirection": "+z"
+  },
+  "multiMaterial": {
+   "materials": [
+    "petg",
+    "tpu"
+   ],
+   "assign": [
+    {
+     "region": "isolator",
+     "material": "tpu"
+    },
+    {
+     "region": "top-plate",
+     "material": "petg"
+    },
+    {
+     "region": "flange-bosses",
+     "material": "petg"
+    }
+   ],
+   "interfaceSafetyFactor": 3.0
+  },
+  "goal": {
+   "safetyFactor": 3.0
+  },
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "reference": [
+  {
+   "material": "tpu",
+   "shape": {
+    "type": "box",
+    "min": [
+     -16,
+     -16,
+     4
+    ],
+    "max": [
+     16,
+     16,
+     9
+    ]
+   }
+  },
+  {
+   "material": "petg",
+   "shape": {
+    "type": "union",
+    "shapes": [
+     {
+      "type": "box",
+      "min": [
+       -16,
+       -16,
+       9
+      ],
+      "max": [
+       16,
+       16,
+       13
+      ]
+     },
+     {
+      "type": "box",
+      "min": [
+       -17,
+       -17,
+       0
+      ],
+      "max": [
+       17,
+       17,
+       4
+      ]
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       -24,
+       -24,
+       2
+      ],
+      "p1": [
+       24,
+       24,
+       2
+      ],
+      "r": 2.0
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       -24,
+       24,
+       2
+      ],
+      "p1": [
+       24,
+       -24,
+       2
+      ],
+      "r": 2.0
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       24,
+       24,
+       0
+      ],
+      "p1": [
+       24,
+       24,
+       4
+      ],
+      "r": 4.5
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       -24,
+       24,
+       0
+      ],
+      "p1": [
+       -24,
+       24,
+       4
+      ],
+      "r": 4.5
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       24,
+       -24,
+       0
+      ],
+      "p1": [
+       24,
+       -24,
+       4
+      ],
+      "r": 4.5
+     },
+     {
+      "type": "cylinder",
+      "p0": [
+       -24,
+       -24,
+       0
+      ],
+      "p1": [
+       -24,
+       -24,
+       4
+      ],
+      "r": 4.5
+     }
+    ]
+   }
+  }
+ ],
+ "pass": {
+  "safetyFactor": 3.0,
+  "interfaceSafetyFactor": 3.0,
+  "maxMass": 25,
+  "materials": [
+   "petg",
+   "tpu"
+  ],
+  "minMaterials": 2,
+  "zones": [
+   {
+    "id": "isolator",
+    "region": "isolator",
+    "materials": [
+     "tpu"
+    ],
+    "minShare": 0.9,
+    "minFill": 0.6
+   },
+   {
+    "id": "top-plate",
+    "region": "top-plate",
+    "materials": [
+     "petg"
+    ],
+    "minShare": 0.9,
+    "minFill": 0.9
+   },
+   {
+    "id": "flange-bosses",
+    "region": "flange-bosses",
+    "materials": [
+     "petg"
+    ],
+    "minShare": 0.9
+   }
+  ],
+  "isolate": [
+   {
+    "id": "isolation",
+    "from": {
+     "shape": {
+      "type": "box",
+      "min": [
+       -31,
+       -31,
+       -1
+      ],
+      "max": [
+       31,
+       31,
+       2
+      ]
+     }
+    },
+    "to": {
+     "region": "top-plate"
+    },
+    "materials": [
+     "petg"
+    ]
+   }
+  ]
+ }
+}

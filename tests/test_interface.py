@@ -41,6 +41,9 @@ TINY = {  # test_loadpath's LUG, cut short
 def _docs():
     for p in CASES:
         doc = json.loads(p.read_text())
+        if "graph" in doc:      # a field-graph case (evals/run.py run_field_case): its graph lints as one
+            yield p.name, "field", doc["graph"]
+            continue
         yield p.name, "heatExchanger" if "core" in doc else "study", doc
     for e in examples():
         yield e["name"], e["kind"], example(e["name"])

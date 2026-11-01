@@ -9,7 +9,10 @@ outcome gets) and scored by mass, worst-case safety factor and deflection.
 The search is COBYQA over the knobs scaled to [0, 1] (derivative-free: an
 analysis on a voxel grid is not smooth in its inputs), and what comes back
 is the lightest candidate that met every limit, checked again on a grid
-twice as fine, not wherever the search stopped. A part with a lattice in
+twice as fine (and, for a part with a thin shell, on two grids with at
+least two cells through its thinnest wall, CELLS_THROUGH_WALL), not
+wherever the search stopped. A candidate that fails that check is never
+returned as ok. A part with a lattice in
 it is analyzed with the lattice homogenized (homogenized.py): its walls are
 far finer than a grid a search can afford.
 
@@ -34,7 +37,15 @@ import time
 
 import numpy as np
 
-__all__ = ["tune_field", "get_at", "set_at"]
+__all__ = ["tune_field", "get_at", "set_at", "thinnest_wall", "check_cells"]
+
+# A thin wall read on a grid about one cell through it moves 10-35% as the
+# wall slides across the grid (the arm-link sandwich: 0.554 mm on 120k
+# cells, 0.748 on 240k, 0.569 on 500k, 0.580 on 1M). From about two cells
+# through the thinnest wall the readings settle to a few percent, so the
+# confirming check runs there, on two grids, and both must pass.
+CELLS_THROUGH_WALL = 2.0
+MAX_CHECK_CELLS = 2_000_000
 
 
 def _keys(path):
@@ -110,6 +121,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
                          "or {\"safetyFactor\": [2, 4]}")
     node = spec.get("node") or doc.get("output")
     pitch, cells = float(spec.get("pitch", 1.0)), int(spec.get("cells", 30_000))
+    max_check = int(spec.get("checkCells", MAX_CHECK_CELLS))
     from . import quick
     budget = quick.tune_evaluations(int(evaluations or spec.get("evaluations", 20)))
 
@@ -190,6 +202,34 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
         rec["seconds"] = round(time.time() - t0, 1)
         return rec
 
+    def confirm(values, rec=None):
+        """The candidate on the confirming grid (check_cells): twice the
+        search's cells, more for a thin shell, and then on a second grid a
+        little coarser too, so a wall that happens to sit well on one grid
+        can't pass; the worse reading of the two counts."""
+        try:
+            d = apply(values)
+            dd = node_doc(d, node) if node else expand_groups(d)
+            g = resources.graph(dd, base_dir)
+            vol = None
+            if not homogenized and rec is not None and "mass" in rec:
+                vol = rec["mass"] * 1000.0 / float(study.material.density)
+            n, wall = check_cells(g, None, cells, homogenized, volume=vol, cap=max_check)
+        except Exception as exc:  # noqa: BLE001
+            return {"values": [float(v) for v in values], "error": str(exc), "ok": False}
+        out = analyze(values, n)
+        out["cells"], out["thinnestWall"] = [n], wall
+        if wall is not None and n > 2 * cells and "error" not in out:
+            other = analyze(values, int(0.7 * n))
+            out["cells"].append(int(0.7 * n))
+            if "error" in other:
+                return {**out, "error": other["error"], "ok": False}
+            out["safetyFactor"] = min(out["safetyFactor"], other["safetyFactor"])
+            out["deflection"] = max(out["deflection"], other["deflection"])
+            out["seconds"] = round(out["seconds"] + other["seconds"], 1)
+            out["ok"] = margin(out) >= 0
+        return out
+
     def margin(rec):
         """>= 0 when every limit holds; the worst limit's relative slack."""
         if "error" in rec:
@@ -202,7 +242,8 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
         return min(m)
 
     def report_check(r, check):
-        r["check"] = {k: check.get(k) for k in ("safetyFactor", "deflection", "ok", "seconds")}
+        r["check"] = {k: check.get(k) for k in ("safetyFactor", "deflection", "ok", "seconds", "cells",
+                                                 "thinnestWall")}
         if progress:
             progress({"event": "tune-check", "mass": r.get("mass"),
                       **{k: v for k, v in r["check"].items() if v is not None},
@@ -210,7 +251,7 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
 
     first, first_fine = evaluate((start - lo) / (hi - lo)), None
     if "error" not in first:
-        fine = analyze(first["values"], 2 * cells)
+        fine = confirm(first["values"], first)
         if "error" not in fine:
             for k in bias:
                 c = first["coarse"][k]
@@ -224,37 +265,73 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
         rec = evaluate(x)
         return rec["mass"] / m0 if "mass" in rec else 10.0
 
-    def search(x0):
+    def search(x0, fev=None):
         # COBYQA keeps every candidate inside the knobs' ranges and spends
         # one analysis per point (objective and limits come from the same
         # one, cached across searches)
         minimize(objective, x0, method="COBYQA", bounds=[(0.0, 1.0)] * len(params), constraints=cons,
-                 options={"initial_tr_radius": 0.25, "final_tr_radius": 5e-3, "maxfev": max(budget, 2)})
+                 options={"initial_tr_radius": 0.25, "final_tr_radius": 5e-3, "maxfev": max(fev or budget, 2)})
 
     checks = {}
 
-    def pick():
+    def learn(r, check):
+        """A candidate that passed on the search's grid failed on the
+        confirming one: the search's correction was too kind there. Take
+        the ratio this check saw, if it is worse than the one in use, and
+        judge every candidate again by it."""
+        raw = r.get("coarse")
+        if not raw or "error" in check:
+            return
+        for k, worse in (("deflection", max), ("safetyFactor", min)):
+            if raw.get(k) and check.get(k):
+                bias[k] = worse(bias[k], check[k] / raw[k])
+        for h in history:
+            judge(h)
+
+    def pick(tries: int = 4):
         """The lightest candidate that meets the current limits on the fine
         grid too. The coarse/fine ratio holds only roughly away from the
         start, and a voxel reading moves a few percent as the part slides
-        across its grid: the lightest few that pass are analyzed again on
-        twice the cells, and the first that still passes is the answer."""
-        good = sorted((r for r in history if "error" not in r and margin(r) >= 0), key=lambda r: r["mass"])
-        for r in good[:3]:
+        across its grid: the lightest that passes is analyzed again on the
+        confirming grid (confirm); if it fails there, the ratio it showed
+        is learned (learn) and the next lightest that still passes is
+        tried, up to `tries` checks."""
+        for _ in range(tries):
+            good = sorted((r for r in history if "error" not in r and margin(r) >= 0), key=lambda r: r["mass"])
+            r = next((g for g in good if tuple(g["values"]) not in checks), None)
+            if r is None:
+                break
             key = tuple(r["values"])
-            if key not in checks:
-                checks[key] = first_fine if r is first and first_fine is not None else analyze(r["values"], 2 * cells)
+            checks[key] = first_fine if r is first and first_fine is not None else confirm(r["values"], r)
             check = checks[key]
             report_check(r, {**check, "ok": "error" not in check and margin(check) >= 0})
             if r["check"]["ok"]:
                 return {**r, "ok": True}
-        return {**good[0], "ok": True, "unconfirmed": True} if good else None    # passed coarse, not fine
+            learn(r, check)
+        for key, check in checks.items():
+            # an earlier check of a candidate that still passes
+            r = next((h for h in history if tuple(h["values"]) == key), None)
+            if r is not None and "error" not in check and margin(check) >= 0:
+                return {**r, "ok": True}
+        # passed on the search's grid, not on the confirming one: not a
+        # result to build, so not ok
+        good = sorted((r for r in history if "error" not in r and margin(r) >= 0), key=lambda r: r["mass"])
+        return {**good[0], "ok": False, "unconfirmed": True} if good else None
 
     def x_of(r):
         return (np.asarray(r["values"]) - lo) / (hi - lo)
 
     search(np.clip(x_of(first), 0.0, 1.0))
     best = pick()
+    if best is not None and best.get("unconfirmed"):
+        # the corrections learned from the failed checks move the limit:
+        # search again from the lightest candidate that meets it now
+        near = [r for r in history if "error" not in r and margin(r) >= 0]
+        x0 = x_of(min(near, key=lambda r: r["mass"])) if near else x_of(first)
+        if progress:
+            progress({"event": "tune-research", "bias": dict(bias)})
+        search(np.clip(x0, 0.0, 1.0), fev=max(budget // 2, 4))
+        best = pick()
     out = {"best": best, "start": first, "analysis": "homogenized" if homogenized else "solid",
            "limits": dict(lim), "params": [{"path": p["path"], "min": p["min"], "max": p["max"]} for p in params]}
     if sweep:
@@ -296,6 +373,54 @@ def tune_field(doc, base_dir=None, out_dir=None, progress=None, evaluations=None
             json.dump({k: v for k, v in out.items() if k != "doc"}, fh, indent=2)
             fh.write("\n")
     return out
+
+
+def thinnest_wall(graph, name=None, samples: int = 20_000):
+    """The thinnest shell wall (mm) in the part: every `shell` node the
+    output depends on, its thickness a number or the least its field takes
+    over the part's box. None when the part has no shell."""
+    name = name or graph.output
+    b = graph.bounds(name)
+    pts = None
+    seen, todo, walls = set(), [name], []
+    while todo:
+        k = todo.pop()
+        if k in seen or k not in graph.nodes:
+            continue
+        seen.add(k)
+        todo.extend(graph.deps.get(k, []))
+        nd = graph.nodes[k]
+        if nd.op != "shell":
+            continue
+        ref = nd.refs.get("thickness", nd.spec.get("thickness"))
+        if isinstance(ref, (int, float)) and not isinstance(ref, bool):
+            walls.append(float(ref))
+        elif isinstance(ref, str) and b is not None:
+            if pts is None:
+                pts = np.random.default_rng(0).uniform(b[0], b[1], (samples, 3))
+            t = np.asarray(graph.evaluate(pts, ref), float)
+            t = t[np.isfinite(t) & (t > 0)]
+            if t.size:
+                walls.append(float(t.min()))
+    return min(walls) if walls else None
+
+
+def check_cells(graph, name, cells: int, homogenized: bool, volume: float | None = None,
+                cap: int = MAX_CHECK_CELLS):
+    """Analysis cells for the confirming check: twice the search's, and
+    enough for CELLS_THROUGH_WALL cells through the thinnest shell wall
+    (capped at `cap`). Returns (cells, thinnest wall or None)."""
+    wall = thinnest_wall(graph, name)
+    n = 2 * cells
+    if wall is not None:
+        pitch = wall / CELLS_THROUGH_WALL
+        if homogenized:
+            lo, hi = graph.bounds(name)
+            need = float(np.prod(np.asarray(hi) - np.asarray(lo))) * 0.6 / pitch ** 3
+        else:
+            need = (volume or 0.0) / pitch ** 3
+        n = max(n, int(min(need, cap)))
+    return n, wall
 
 
 def _front(history):

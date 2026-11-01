@@ -4,7 +4,7 @@ would; the others pass."""
 import os
 
 
-def run_case(path, out, tier="full", critic=None):
+def run_case(path, out, tier="full", critic=None, spread=False):
     name = os.path.splitext(os.path.basename(path))[0]
     if name.startswith("dies"):
         os._exit(9)

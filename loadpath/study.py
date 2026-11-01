@@ -1147,7 +1147,13 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 if memory is not None:
                     nxt = memory.snap(nxt, skip=[q.volume_fraction for q in outcomes])
             nxt = float(np.clip(nxt, _VF_MIN, _VF_MAX))
-            if abs(nxt - vf) < 0.005:
+            # A step under 0.005 stops an unbracketed search. A bracket is
+            # left to the 10% rule above: its midpoint sits half the gap from
+            # either end, and at low fractions that is under 0.005 while the
+            # gap is still worth closing (GRIP's MJF wrist link passed at 6%,
+            # SF 4.36 for 2, failed at 5.2%, and stopped there at 43.5 g
+            # without trying 5.6%).
+            if abs(nxt - vf) < 0.005 and not (hi_pass and lo_fail):
                 break
             vf = nxt
         passing = [i for i, o in enumerate(outcomes) if o.passes]
@@ -1240,7 +1246,12 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                 if lo is not None:
                     nxt = max(nxt, 0.5 * (lo + o.volume_fraction))
                 nxt = float(np.clip(nxt, _VF_MIN, _VF_MAX))
-                if any(abs(nxt - q.volume_fraction) < 0.005 for q in outcomes):
+                # already tried there; inside a bracket the bracket sets the
+                # scale (the bell crank confirmed 7.03%, SF 4.85 for 3, with
+                # 6.25% failing at 2.93, and its midpoint 6.64% sat under
+                # 0.005 from 6.25%, so nothing in between was tried)
+                tol = 0.005 if lo is None else min(0.005, 0.25 * (o.volume_fraction - lo))
+                if any(abs(nxt - q.volume_fraction) < tol for q in outcomes):
                     break
                 outcomes.append(run_one(nxt))
                 calibrate(outcomes[-1], k)

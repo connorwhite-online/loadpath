@@ -630,6 +630,11 @@
           "type": "integer",
           "minimum": 1000,
           "description": "analysis cells (default 30000)"
+        },
+        "checkCells": {
+          "type": "integer",
+          "minimum": 1000,
+          "description": "most cells for the confirming check, which runs at two cells through the thinnest shell wall (default 2000000)"
         }
       }
     },

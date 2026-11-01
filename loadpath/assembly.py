@@ -527,8 +527,13 @@ def sweep_loads(robot: Robot, link: str, *, joint: str | None = None, payload: P
 
     W, kinds, states = [], [], []
 
-    def record(st, q, qd, qdd, kind, pay, contact=None, extra=None):
+    def record(st, q, qd, qdd, kind, pay, contact=None, extra=None, moment=None):
         F, M = st.wrench(joint, contact)
+        if moment is not None:
+            # (axis, torque): the joint at exactly that torque about its axis
+            # (the actuator holds the load and the jam together)
+            z, tq = moment
+            M = M + (tq - z @ M) * z
         # world at this state -> the part's frame -> world at home -> study frame
         Rl = home_link[:3, :3] @ st.T[link][:3, :3].T
         Fs = rot_frame @ (Rl @ F)
@@ -572,6 +577,7 @@ def sweep_loads(robot: Robot, link: str, *, joint: str | None = None, payload: P
     moving = [n for n in relevant if jt[n].type in ("revolute", "continuous", "prismatic")]
     stall_every = max(1, len(poses) // 200)
     upstream = [n for n in robot.path_joints(jt[joint].child) if n in chain]
+    jam = jt[joint].type in ("revolute", "continuous") and jt[joint].effort > 0
     for i, q in enumerate(poses):
         pay = draw_payload()
         st = _State(robot, q, None, None, g, pay3(pay))
@@ -591,6 +597,15 @@ def sweep_loads(robot: Robot, link: str, *, joint: str | None = None, payload: P
             qdd = {n: v * s for n, v in qdd.items()}
             record(_State(robot, q, qd, qdd, g, pay3(pay)), q, qd, qdd, "dynamic", pay,
                    extra={"accelScale": round(float(s), 3)})
+        if stall and i % stall_every == 0 and jam:
+            # the far joint's own actuator at full effort against a jam past
+            # it (a hard stop, a blocked gripper, the hand caught): its whole
+            # rated torque goes through the part, however little lever a
+            # contact at the tool would have
+            z = st.T[jt[joint].child][:3, :3] @ jt[joint].axis
+            for sgn in (-1.0, 1.0):
+                record(st, q, None, None, f"stall:{joint}", pay, None,
+                       {"jam": True, "effortNm": jt[joint].effort}, moment=(z, sgn * jt[joint].effort))
         if payload is None:
             continue
         if push > 0 and i % 2 == 0:

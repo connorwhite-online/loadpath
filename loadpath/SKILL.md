@@ -63,6 +63,10 @@ field. `check` reports every problem at once: fix them all, then check again.
    bore: add `"distribution": "bearing"` so a radial force presses on the
    half of the bore it pushes, as a real shaft does. Add a sideways or torsional case if the part
    can see one; a design optimized for one direction is weak in the others.
+   A link that carries or is driven by a servo or motor: add a case with
+   its full stall torque about the joint axis at that interface (a 1.5 N·m
+   servo is `"moment": [0, 1500, 0]` about y), since a jam or a hard stop
+   puts all of it through the part; it often sets the size.
    When the direction is genuinely unknown (contact, bumps, handling, a
    push at the tool "from anywhere"), say so instead of guessing:
    `{"region": "tool", "force": [0, 0, -20], "direction": "any"}` designs
@@ -361,7 +365,9 @@ loadpath run derived/forearm.derived.json
 
 It sweeps poses over the joint limits, speeds and accelerations (scaled to
 what each joint's rated effort can deliver), a scattered payload, a push at
-the tool and each joint upstream stalled against an obstacle, does
+the tool, each joint upstream stalled against an obstacle, and the part's
+far joint jammed at its full rated torque (a hard stop or a blocked
+hand: a servo-driven link must survive its own servo's stall torque), does
 Newton-Euler for the wrench the part carries at its far joint, and keeps the
 few samples that set the peak stress everywhere in the solid design space
 (`assembly.json` says how close they come: `envelopeRatio`). The parent and
