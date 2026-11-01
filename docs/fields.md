@@ -339,10 +339,26 @@ the whole search. Sheet and strut lattices (lattice.SHEETS, lattice.STRUTS);
 a stretched `aspect` cell has no fit and is refused.
 
 Checked against the resolved geometry: a 60 mm skin-and-gyroid bar (1 mm
-skin, 0.8 mm walls in 6 mm cells) under a tip load deflects 0.99-1.04 mm
-homogenized (8k-50k cells, 3-12 s) and 0.95-1.00 mm meshed at 0.12 mm and
-verified on 150k-900k voxels; the homogenized mass reads about 6% heavy
-(7.3 g against 6.86 g), the safety factor 2.7-2.9 against 2.1-2.9.
+skin, 0.8 mm walls in 6 mm cells) under a tip load deflects 1.07-1.15 mm
+homogenized (8k-250k cells) and 0.95-1.00 mm meshed at 0.12 mm and
+verified on 150k-900k voxels, so the homogenized reading errs 10-15% on
+the safe side; it weighs 6.87 g on every grid against 6.86 g meshed.
+
+Each analysis cell counts by the share of it the part fills (sub-samples
+weighted by how deep they sit), as stiff and as heavy as that share, down
+to a tenth full. An earlier version kept only cells at least half full,
+which peeled up to half a cell off every face: a 1 mm skin read 13%
+light on a grid whose cells straddled it and 6% heavy on others, and its
+deflection swung by a third from one grid to the next. The check also
+solves on matrix-free multigrid from 100k cells (as verify_part does): the
+arm link on 1M cells takes about 3 minutes and 1.4 GB.
+
+The search confirms its answer on a finer grid: twice its own cells, and
+for a part with a shell, at least two cells through the thinnest wall
+(`tune.thinnest_wall`, the least value of each shell's thickness field) on
+two grids, 0.7x apart in cell count, the worse reading counting
+(`checkCells` caps it, default 2M). A candidate that fails there is
+returned with `ok: false` and `unconfirmed: true`, never as a result.
 
 Tuning the graded-lattice arm link (examples/fields/arm-link-lattice-tune.json:
 the skin's thinnest and thickest wall and the gyroid's thickest wall, same
@@ -368,33 +384,33 @@ examples/fields/arm-link-sandwich.json is the result:
 | arm link | mass | deflection | safety factor |
 |---|---|---|---|
 | tuned solid web (arm-link-tune.json) | 54.9 g | 0.490 mm | |
-| sandwich, 29.6 x 20 mm web, skin 0.84-2.35 mm, 16 mm gyroid | 41.4 g | 0.478 mm | 9.1 |
-| the same with a 2.15 mm thickest skin | 40.6 g | 0.501 mm | 9.2 |
-| the same skin with no core | 33.6 g | 0.594 mm | 7.1 |
-| a 21 mm web, 2.6 mm skin | 46.1 g | 0.384 mm | 8.9 |
+| sandwich: 29.6 x 20 mm web, skin 0.84-2.35 mm, 16 mm gyroid, homogenized on 1M cells | 42.8 g | 0.436 mm | 9.2 |
+| the same, meshed at 0.3 mm and verified resolved on 1.2M cells | 44.5 g | 0.40 mm | 13.5 |
+| the same skin with no core, homogenized | 35.9 g | 0.508 mm | 7.0 |
+| the search run again with the confirming check below (37 analyses) | 42.3 g | 0.465 mm on 1.4M and 1M cells | 11.5 |
 
-(homogenized on 1M analysis cells). Meshed at 0.3 mm the 41.4 g link
-weighs 44.5 g (the blends round the collars and the skin's inside, which
-the analysis grid reads short), and its resolved geometry, verified by FE
-on 1.2M cells at 0.33 mm, deflects 0.40 mm (0.27 mm in the second load
-case) at safety factor 13.5: the homogenized reading is the conservative
-one, and the real part is still 19% lighter than the solid web with 20%
-of stiffness to spare. The core earns its grams: without it the skins
-lose a sixth of their stiffness, because the gyroid ties the faces
-together in shear. The skin seals the core, so SLS and MJF need escape
-holes (`drains`; a 16 mm gyroid is open inside, so a few holes clear it);
-on FDM it prints like a coarse gyroid infill under a graded wall.
+The sandwich is 19-22% lighter than the solid web at the same limit, and
+the homogenized reading errs on the safe side of the resolved one (0.436
+against 0.40 mm, mass 4% light: the blends round the collars are finer
+than the analysis grid). Most of the win is the hollow section: the same
+skin with nothing inside nearly holds the limit at 35.9 g, so a plain
+hollow link with a slightly thicker skin would likely be lighter still.
+The core buys 14% of stiffness for 7 g, and what the analysis does not
+count: it holds the 30 mm wide top skin up while it prints, and keeps the
+thin skins from buckling or denting. The skin seals the core, so SLS and
+MJF need escape holes (`drains`; a 16 mm gyroid is open inside, so a few
+holes clear it); on FDM it prints like a coarse gyroid infill under a
+graded wall.
 
 ![the sandwich arm link, whole and cut open at mid-height: graded skin, 16 mm gyroid core, cable channel](images/fields/arm-link-sandwich.png)
 
-Thin skins need a fine analysis grid. The search ran on 120k cells
-(0.95 mm, about one cell through the thinnest skin) and the same
-candidate read 0.554 mm there, 0.748 mm on 240k cells, 0.569 mm on 500k
-and 0.580 mm on 1M; the mass 38.0, 35.1, 38.5 and 37.9 g. The 240k grid
-happened to straddle the skin badly, so the search's two-grid check
-(twice the cells) is not enough here: check a thin-skinned result on a
-grid with three or more cells through its thinnest wall before trusting
-it.
+Thin skins once fooled the search. The first sandwich search ran on 120k
+cells, about one cell through the thinnest skin, and passed a 38 g
+candidate at 0.554 mm; the same part read 0.748 mm on 240k cells and
+0.58 mm on 1M. With every cell counted by its fill (above) it reads
+0.597-0.611 mm on all four grids and fails on each, and the 42.8 g
+result 0.425-0.436 mm. The eval case `arm-link-sandwich` holds both: the
+tuned link must pass, and the 38 g one must fail.
 
 ### Strut and conformal lattices against the gyroid
 

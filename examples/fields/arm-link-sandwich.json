@@ -1,6 +1,6 @@
 {
  "name": "arm-link-sandwich",
- "description": "Sandwich arm link, the tuned result of arm-link-sandwich-tune.json checked on 1M analysis cells: a stress-graded skin (0.84-2.35 mm) over a sparse gyroid core (16 mm cells, 0.8 mm walls) in a 29.6 x 20 mm web. 41.4 g, 0.478 mm at the wrist bearing, SF 9.1 (homogenized), against 54.9 g for the tuned solid web.",
+ "description": "Sandwich arm link, the tuned result of arm-link-sandwich-tune.json checked on 1M analysis cells: a stress-graded skin (0.84-2.35 mm) over a sparse gyroid core (16 mm cells, 0.8 mm walls) in a 29.6 x 20 mm web. 42.8 g, 0.436 mm at the wrist bearing, SF 9.2 (homogenized; meshed 44.5 g, 0.40 mm resolved), against 54.9 g for the tuned solid web.",
  "nodes": {
   "shoulder": {
    "op": "shape",

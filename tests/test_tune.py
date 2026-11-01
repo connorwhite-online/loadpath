@@ -142,9 +142,11 @@ LATTICE_BAR = {"name": "latbar", "nodes": {
 
 
 def test_homogenized_lattice_matches_the_resolved_one():
-    """With the lattice homogenized, the bar deflects within 10% of the
-    fully resolved reading and weighs within 10%; a thicker wall is stiffer
-    and heavier; a solid core is stiffer still."""
+    """With the lattice homogenized, the bar weighs what the resolved one
+    does (within 3%) and deflects up to a fifth more on this coarse grid
+    (11% from 40k cells), never much less (the fits are the conservative
+    reading); a thicker wall is stiffer and
+    heavier; a solid core is stiffer still."""
     from loadpath.homogenized import homogenized_check
     from loadpath.spec import study_from_dict
 
@@ -152,7 +154,7 @@ def test_homogenized_lattice_matches_the_resolved_one():
     r = homogenized_check(LATTICE_BAR, st, cells=8000)
     d = r["cases"][0]["deflection"]
     ref = 0.975 * 2000 / st.material.E
-    assert abs(d / ref - 1) < 0.1 and abs(r["mass"] / 6.86 - 1) < 0.1, r
+    assert -0.05 < d / ref - 1 < 0.2 and abs(r["mass"] / 6.86 - 1) < 0.03, r
     assert r["lattice"] == "core" and r["bodies"] == 1 and r["cases"][0]["inLattice"] in (True, False)
     thick = json.loads(json.dumps(LATTICE_BAR))
     thick["nodes"]["core"]["thickness"] = 1.6
@@ -224,3 +226,81 @@ def test_fractional_cells_read_smoothly():
         mesh = FieldGraph(g).mesh(pitch=0.8, project=1)
         sf.append(verify_part(study, mesh, max_cells=6000, refine=0, fractional=True)["safetyFactor"])
     assert all(b > a for a, b in zip(sf, sf[1:])), sf
+
+
+def test_the_confirming_grid_resolves_the_thinnest_wall():
+    """The check runs at two cells or more through the thinnest shell wall
+    (a field-driven wall reads its least value), capped."""
+    from loadpath.fields import FieldGraph
+    from loadpath.tune import CELLS_THROUGH_WALL, check_cells, thinnest_wall
+
+    g = FieldGraph(LATTICE_BAR)
+    assert thinnest_wall(g) == 1.0
+    n, wall = check_cells(g, None, 5000, homogenized=True)
+    assert wall == 1.0 and n >= int(60 * 12 * 12 * 0.6 / (1.0 / CELLS_THROUGH_WALL) ** 3) - 1
+    assert check_cells(g, None, 5000, homogenized=True, cap=20_000)[0] == 20_000
+    graded = json.loads(json.dumps(LATTICE_BAR))
+    graded["nodes"]["t"] = {"op": "remap", "input": {"op": "coordinate", "axis": "x"}, "from": [0, 60], "to": [0.6, 2]}
+    graded["nodes"]["skin"]["thickness"] = "t"
+    assert abs(thinnest_wall(FieldGraph(graded)) - 0.6) < 0.02
+    solid = {"nodes": {"b": {"op": "shape", "shape": {"type": "box", "min": [0, 0, 0], "max": [9, 9, 9]}}}}
+    assert check_cells(FieldGraph(solid), None, 5000, homogenized=False, volume=729.0) == (10_000, None)
+
+
+def test_a_thin_skin_that_only_passes_on_the_coarse_grid_is_not_ok(monkeypatch):
+    """A thin skin read on a coarse grid can look stiffer than it is. If no
+    candidate holds its limit on the confirming grids, the tuner says so
+    (ok false, unconfirmed) instead of handing back a part that fails."""
+    import loadpath.homogenized as hom
+
+    seen = []
+
+    def fake(doc, study, base_dir=None, cells=30_000, graph=None, **kw):
+        t = doc["nodes"]["core"]["thickness"]
+        seen.append(cells)
+        coarse = cells <= 5000
+        return {"mass": 5.0 + t, "safetyFactor": 3.0, "bodies": 1,
+                "cases": [{"deflection": 1.0 / t + (0.0 if coarse else 0.6)}]}
+
+    monkeypatch.setattr(hom, "homogenized_check", fake)
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "study.json"), "w") as fh:
+        json.dump({**LATTICE_STUDY, "goal": {"maxDeflection": 1.0}}, fh)
+    g = json.loads(json.dumps(LATTICE_BAR))
+    g["nodes"]["core"]["thickness"] = 1.6
+    g["tune"] = {"study": "study.json", "params": [{"path": "nodes/core/thickness", "min": 0.5, "max": 2.0}],
+                 "cells": 5000, "evaluations": 5}
+    out = tune_field(g, d)
+    best = out["best"]
+    # nothing holds 1.0 mm on the fine grids: no result, or one marked
+    # unconfirmed, never ok
+    assert best is None or (best["ok"] is False and best["unconfirmed"]), best
+    fine = sorted({c for c in seen if c > 5000})
+    assert len(fine) == 2 and fine[1] >= 40_000 and abs(fine[0] / fine[1] - 0.7) < 0.01, fine
+    checked = [r for r in out["history"] if "check" in r]
+    assert checked and all(r["check"]["thinnestWall"] == 1.0 and not r["check"]["ok"] for r in checked)
+
+
+def test_a_failed_check_teaches_the_search(monkeypatch):
+    """The fine grid reads thin candidates worse than the start's ratio
+    says: the first check fails, its ratio is learned, and a thicker
+    candidate that really holds the limit comes back ok."""
+    import loadpath.homogenized as hom
+
+    def fake(doc, study, base_dir=None, cells=30_000, graph=None, **kw):
+        t = doc["nodes"]["core"]["thickness"]
+        d = 1.0 / t * (1.0 if cells <= 5000 else 1.0 + 0.3 * (2.0 - t))
+        return {"mass": 5.0 + t, "safetyFactor": 3.0, "bodies": 1, "cases": [{"deflection": d}]}
+
+    monkeypatch.setattr(hom, "homogenized_check", fake)
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "study.json"), "w") as fh:
+        json.dump({**LATTICE_STUDY, "goal": {"maxDeflection": 1.0}}, fh)
+    g = json.loads(json.dumps(LATTICE_BAR))
+    g["nodes"]["core"]["thickness"] = 1.6
+    g["tune"] = {"study": "study.json", "params": [{"path": "nodes/core/thickness", "min": 0.5, "max": 2.0}],
+                 "cells": 5000, "evaluations": 10}
+    best = tune_field(g, d)["best"]
+    t = best["values"][0]
+    assert best["ok"] and best["check"]["ok"] and 1.25 < t < 1.6, best
+    assert best["check"]["deflection"] <= 1.0

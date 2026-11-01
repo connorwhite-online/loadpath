@@ -64,6 +64,10 @@ def _variant(graph, doc, base_dir, lattice, value):
     return g
 
 
+# the least share of a cell the part must fill for the cell to be analyzed
+FILL_MIN = 0.1
+
+
 def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000, samples: int = 3,
                       fields: bool = False, graph=None) -> dict:
     """mass, safety factor (worst case) and deflection of the graph's part
@@ -78,6 +82,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
 
     from .domain import boundary_conditions
     from .fem import HexMesh, Solver, Stiffness, von_mises
+    from .simp import _use_mg
     from .fields import FieldGraph, expand_groups
     from .lattice import lattice_fit, relative_density, sheet_modulus, sheet_stress_factor
     from .struts import is_strut
@@ -121,7 +126,12 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     offs = np.stack(np.meshgrid(sub, sub, sub, indexing="ij"), -1).reshape(-1, 3)
 
     f_full = occupancy_at(g_solid, name, origin, ijk, offs, pitch)
-    active = f_full >= 0.5
+    # every cell the part fills a tenth of or more, each as stiff and as
+    # heavy as its share: dropping the half-filled cells at a face (as a
+    # 0.5 threshold did) peeled up to half a cell off every skin, a quarter
+    # of a 1 mm skin on a 0.5 mm grid, and which half depended on how the
+    # grid fell
+    active = f_full >= FILL_MIN
     f_skin = np.zeros(len(ijk))
     f_skin[active] = occupancy_at(g_empty, name, origin, ijk[active], offs, pitch)
     grid = np.zeros(tuple(dims), bool)
@@ -130,6 +140,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     e_ijk = ijk[active]
     fs = np.clip(f_skin[active] / np.maximum(f_full[active], 1e-9), 0.0, 1.0)
     fc = 1.0 - fs
+    fill = np.clip(f_full[active], 0.0, 1.0)
     centers = origin + (e_ijk + 0.5) * pitch
     # the lattice's density where it is
     if "density" in lrefs:
@@ -148,24 +159,38 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     keep = np.isin(lbl[tuple(e_ijk.T)], sup)
     bodies = int(len(np.unique(lbl[grid])))
     if not keep.all():
-        e_ijk, fs, fc, rho, centers = e_ijk[keep], fs[keep], fc[keep], rho[keep], centers[keep]
+        e_ijk, fs, fc, rho, centers, fill = e_ijk[keep], fs[keep], fc[keep], rho[keep], centers[keep], fill[keep]
         hm = HexMesh(e_ijk, pitch, origin)
         bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pitch)
     ec = sheet_modulus(kind, rho)
-    e_cell = mat.E * (fs + fc * ec)
-    stiff = Stiffness(hm, study.elastic(mat), bc.fixed)
-    k = stiff.assemble(e_cell)
-    if bc.springs is not None:
-        k = (k + mat.E * bc.springs).tocsr()
-    us = Solver(hm, rtol=1e-6, maxiter=3000).solve_many(k, [bc.loads[ci] for ci in range(len(study.load_cases))])
+    e_cell = mat.E * fill * (fs + fc * ec)
+    rhs = [bc.loads[ci] for ci in range(len(study.load_cases))]
+    if _use_mg(hm.n_elem):
+        # a fine grid (a thin skin's re-check runs to a million cells and
+        # more): matrix-free multigrid, as verify_part, a fraction of the
+        # assembled matrix's memory (13 GB at 1M cells)
+        from .mg import GridElasticity
+
+        stiff = GridElasticity(hm, study.elastic(mat), bc.fixed,
+                               springs=mat.E * bc.springs if bc.springs is not None else None,
+                               rtol=1e-6, maxiter=3000)
+        stiff.set_moduli(np.asarray(e_cell, float))
+        us = stiff.solve_many(rhs)
+    else:
+        stiff = Stiffness(hm, study.elastic(mat), bc.fixed)
+        k = stiff.assemble(e_cell)
+        if bc.springs is not None:
+            k = (k + mat.E * bc.springs).tocsr()
+        us = Solver(hm, rtol=1e-6, maxiter=3000).solve_many(k, rhs)
+    nu = study.elastic(mat)
     band = 1.5 * pitch
     wall_k = ec * sheet_stress_factor(kind, rho)
     vol_cell = pitch ** 3
-    volume = float(((fs + fc * rho) * vol_cell).sum())
+    volume = float((fill * (fs + fc * rho) * vol_cell).sum())
     cases, worst = [], np.inf
     for ci, case in enumerate(study.load_cases):
         u = us[ci]
-        se = von_mises(stiff.stress(u, mat.E))
+        se = von_mises(_center_stress(hm, nu, u, mat.E))
         s_solid = np.where(fs > 0.05, se, 0.0)
         s_wall = np.where(fc > 0.05, se * wall_k, 0.0)
         s = np.maximum(s_solid, s_wall)
@@ -192,12 +217,30 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     return rep
 
 
+def _center_stress(hm, nu, u, modulus):
+    """Element-center stress (Stiffness.stress without the matrix layout)."""
+    from .fem import elastic_c, hex8_b_center
+
+    b = hex8_b_center() / hm.pitch
+    strain = u[hm.edof] @ b.T
+    return (strain @ elastic_c(1.0, nu).T) * modulus
+
+
 def occupancy_at(graph, name, origin, ijk, offs, pitch):
+    """Solid share of each cell from its sub-samples, each counted by how
+    deep it sits (the signed distance over the sample spacing, a linear ramp
+    across it) rather than in or out: a flat face that lands on a row of
+    samples would otherwise drop them all, and a thin wall's reading jumped
+    by a third from one grid to the next (a 1 mm skin on a 0.5 mm grid lost
+    13% of its mass)."""
     occ = np.empty(len(ijk))
+    n = round(len(offs) ** (1.0 / 3.0))
+    h = pitch / max(n, 1)
     step = max(1, 400_000 // len(offs))
     for i in range(0, len(ijk), step):
         P = (origin + (ijk[i:i + step, None, :] + offs[None]) * pitch).reshape(-1, 3)
-        occ[i:i + step] = (graph.evaluate(P, name) < 0).reshape(-1, len(offs)).mean(axis=1)
+        d = np.asarray(graph.evaluate(P, name), float)
+        occ[i:i + step] = np.clip(0.5 - d / h, 0.0, 1.0).reshape(-1, len(offs)).mean(axis=1)
     return occ
 
 

@@ -2,7 +2,10 @@
 Eval suite: real parts with hard requirements, run end to end and scored on
 the delivered mesh.
 
-Each case in cases/*.json is an ordinary study plus an `expect` block:
+Each case in cases/*.json is an ordinary study plus an `expect` block (a
+case with a `graph` is a field graph instead, analyzed with its lattice
+homogenized on `cells` cells under `study`, and each of its `mustFail`
+variants must miss a limit: run_field_case):
 
     "expect": {
       "maxMass": 45,              # g, best outcome
@@ -403,6 +406,60 @@ def run_hx_case(raw: dict, path: str, out: str, tier: str = "full") -> dict:
     return _jsonable(row)
 
 
+def run_field_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
+    """A field-graph case ("graph"): the part the graph makes, its lattice
+    homogenized, analyzed under the case's study on `cells` cells (the
+    coarse tier: expect.coarse.cells, default 120k) and held to `expect`.
+    Each `mustFail` variant (the graph with some numbers set, tune paths)
+    must miss a limit: a design the search was once fooled into passing."""
+    from ..__main__ import _jsonable
+    from ..homogenized import homogenized_check
+    from ..tune import _study, set_at
+
+    name = raw.get("name")
+    expect = raw.get("expect", {})
+    cells = int(raw.get("cells", 1_000_000))
+    if tier == "coarse":
+        cells = int((expect.get("coarse") or {}).get("cells", 120_000))
+    t0 = time.time()
+    row = {"case": name, "kind": "field", "tier": tier, "checks": []}
+    try:
+        study = _study(raw, base)
+        graph = raw["graph"]
+        rep = homogenized_check(graph, study, cells=cells, base_dir=base)
+        row["best"] = {"mass": rep["mass"], "safetyFactor": rep["safetyFactor"],
+                       "deflection": max(c["deflection"] for c in rep["cases"]),
+                       "analysisCells": rep["analysisCells"], "latticeDensity": rep.get("latticeDensity")}
+        ok = True
+        for check, (key, measure, op) in CHECKS.items():
+            if key not in expect:
+                continue
+            v = measure(rep)
+            passed = _cmp(v, op, expect[key])
+            ok &= passed
+            row["checks"].append({"check": check, "value": v, "op": op, "limit": expect[key], "pass": passed})
+        for var in raw.get("mustFail") or []:
+            d = json.loads(json.dumps(graph))
+            for path, v in var["set"].items():
+                set_at(d, path, v)
+            r = homogenized_check(d, study, cells=cells, base_dir=base)
+            defl = max(c["deflection"] for c in r["cases"])
+            missed = (defl > expect.get("maxDeflection", float("inf"))
+                      or r["safetyFactor"] < expect.get("minSafetyFactor", 0.0))
+            ok &= missed
+            row["checks"].append({"check": f"rejects {var['name']}", "value": defl, "op": ">",
+                                  "limit": expect.get("maxDeflection"), "pass": bool(missed),
+                                  "mass": r["mass"], "safetyFactor": r["safetyFactor"]})
+        row["pass"] = bool(ok)
+    except Exception as exc:  # noqa: BLE001 - a crashing case is a failing case
+        import traceback
+        row.update({"pass": False, "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()})
+    row["seconds"] = time.time() - t0
+    print(json.dumps(_jsonable({k: row.get(k) for k in ("case", "pass", "best", "error")})),
+          file=sys.stderr, flush=True)
+    return _jsonable(row)
+
+
 # --spread: the search started this much lower and higher than the case's own
 # goal.volumeFraction (one extra full search each)
 SPREAD_STARTS = (0.8, 1.25)
@@ -432,6 +489,9 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None, spre
     if skip:
         print(f"== {name} (skipped in the coarse tier: {skip})", file=sys.stderr, flush=True)
         return {"case": name, "tier": tier, "skipped": skip, "pass": True, "seconds": 0.0, "checks": []}
+    if "graph" in raw:
+        print(f"== {name} ({tier})", file=sys.stderr, flush=True)
+        return run_field_case(raw, base, out, tier)
     raw = apply_tier(raw, tier)
     print(f"== {name} ({tier})", file=sys.stderr, flush=True)
     if "core" in raw:
@@ -558,6 +618,8 @@ def _case_bytes(path: str) -> float:
         raw = json.load(fh)
     if "core" in raw:
         return _run_bytes(60_000)
+    if "graph" in raw:
+        return 2.5e9           # a 1M-cell homogenized check on multigrid peaks near 1.4 GB
     try:
         return _run_bytes(_study_cells(study_from_dict(raw, base_dir=os.path.dirname(path))))
     except Exception:  # noqa: BLE001 - it fails properly when run

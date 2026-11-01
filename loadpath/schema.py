@@ -1187,7 +1187,10 @@ FIELD_SCHEMA = {
                                                  "lattice homogenized (unit-cell stiffness and wall stress), "
                                                  "else meshed and verified as a solid"},
                      "pitch": {**_POS, "description": "mm mesh for each candidate (default 1)"},
-                     "cells": {"type": "integer", "minimum": 1000, "description": "analysis cells (default 30000)"}}},
+                     "cells": {"type": "integer", "minimum": 1000, "description": "analysis cells (default 30000)"},
+                     "checkCells": {"type": "integer", "minimum": 1000,
+                                    "description": "most cells for the confirming check, which runs at two cells "
+                                                   "through the thinnest shell wall (default 2000000)"}}},
         "impact": {"type": "object", "properties": {
             "envelope": {"type": "string", "description": "solid node the lattice core fills (the crush pad)"},
             "density": {"anyOf": [{"type": "string"}, {"type": "number", "exclusiveMinimum": 0, "maximum": 1}],
