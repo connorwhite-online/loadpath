@@ -563,8 +563,12 @@ def _spread(raw: dict, base: str, row: dict, tier: str) -> dict:
 
 def compare(rows, base_rows, tolerance=0.05):
     """Regressions against an earlier scorecard: a case that passed and now
-    fails, or whose Pareto massAtTarget grew by more than `tolerance`. Also
-    lists improvements. Adds row["vsBaseline"]."""
+    fails, or whose Pareto massAtTarget grew by more than `tolerance`, or by
+    more than the case's own measured run-to-run spread (row "spread", from
+    --spread, in either scorecard) where that is wider: the wall bracket's
+    massAtTarget moved 7% with the starting fraction alone, so a 6% move
+    there is not a regression. Also lists improvements. Adds
+    row["vsBaseline"]."""
     base = {r["case"]: r for r in base_rows}
     regress, improve = [], []
     for r in rows:
@@ -581,11 +585,14 @@ def compare(rows, base_rows, tolerance=0.05):
             d["massAtTarget"] = m / mb - 1.0
         elif mb and m is None:
             d["massAtTarget"] = "lost"
+        tol = max([tolerance] + [(x.get("spread") or {}).get("range") or 0.0 for x in (r, b)])
+        if tol > tolerance:
+            d["tolerance"] = tol
         r["vsBaseline"] = d
         worse = d.get("pass") == "lost" or d.get("massAtTarget") == "lost" or \
-            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] > tolerance)
+            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] > tol)
         better = d.get("pass") == "gained" or \
-            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] < -tolerance)
+            (isinstance(d.get("massAtTarget"), float) and d["massAtTarget"] < -tol)
         (regress if worse else improve if better else []).append(r["case"])
     return regress, improve
 
@@ -786,7 +793,7 @@ def main(argv=None):
     with open(os.path.join(args.out, "scorecard.md"), "w") as fh:
         fh.write(md)
     if args.save_baseline:
-        keep = ("case", "tier", "pass", "skipped", "best", "pareto", "checks", "seconds", "error")
+        keep = ("case", "tier", "pass", "skipped", "best", "pareto", "checks", "seconds", "error", "spread")
         with open(args.save_baseline, "w") as fh:
             json.dump(_jsonable([{k: r[k] for k in keep if k in r} for r in rows]), fh, indent=1)
     print(md)
