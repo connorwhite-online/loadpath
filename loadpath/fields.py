@@ -2664,6 +2664,39 @@ def node_doc(doc, node):
     return {**full, "output": node, "name": f"{doc.get('name', 'field')}-{node}"}
 
 
+
+def _envelope_step(doc, g, mesh, lattices, out_dir, name, opts, base_dir, sources, meshes, progress):
+    """STEP for a part with lattices: the part with every lattice solid (a
+    sandwich's skin, bosses and bores exactly as printed; the lattice is in
+    the STL/3MF), since CAD has no use for a few hundred thousand lattice
+    facets and they do not decimate. The report says how much of that
+    outside is the printed part's own surface (all of it under a closed
+    skin; less where the lattice is open)."""
+    from .sharp import mesh_distance
+    from .step import DEFAULT_FACES, DEFAULT_PATCHES, export_step
+
+    full = expand_groups(doc)
+    solid = {"op": "shape", "shape": {"type": "box", "min": [-1e4] * 3, "max": [1e4] * 3}}
+    env = {**full, "nodes": {k: (dict(solid) if k in lattices else v) for k, v in full["nodes"].items()}}
+    env.pop("drains", None)
+    pre = {k: (g._built[k], g.analyses.get(k)) for k, nd in g.nodes.items()
+           if nd.op == "result" and k in g._built}
+    ge = FieldGraph(env, base_dir=base_dir, sources=sources, meshes=meshes).seed(pre)
+    em = ge.mesh(progress=progress)
+    st = export_step(em, os.path.join(out_dir, f"{name}.step"), faces=int(opts.get("faces", DEFAULT_FACES)),
+                     name=name, surface=opts.get("surface", "facets"),
+                     patches=int(opts.get("patches", DEFAULT_PATCHES)))
+    st.pop("shape", None)
+    d = mesh_distance(mesh, em.sample(20000), cap=1.0)
+    tol = max(0.05, 0.5 * float(mesh.metadata.get("pitch") or 0.1))
+    st["lattice"] = {"export": "solid envelope", "lattices": lattices,
+                     "trueSurface": round(float((d < tol).mean()), 4),
+                     "envelopeVolume": round(float(em.volume), 1), "partVolume": round(float(mesh.volume), 1),
+                     "note": "lattices solid in the STEP (outside, bores and faces as printed); "
+                             "the printed part, lattice and all, is the STL"
+                             + ("; drain holes are not in the STEP" if doc.get("drains") not in (None, False, "off") else "")}
+    return st
+
 def _write_graded(doc, rep, out_dir):
     """With the impact block's `grade`: the graph again with its density node
     replaced by the graded table (<name>-graded.json beside the STL), ready
@@ -2820,11 +2853,15 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
             from .step import DEFAULT_FACES, DEFAULT_PATCHES, export_step
 
             opts = doc["step"] if isinstance(doc["step"], dict) else {}
+            lat = [k for k, nd in g.nodes.items() if nd.op == "lattice"]
             try:
-                st = export_step(mesh, os.path.join(out_dir, f"{rep['name']}.step"),
-                                 faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"],
-                                 surface=opts.get("surface", "facets"),
-                                 patches=int(opts.get("patches", DEFAULT_PATCHES)))
+                if lat:
+                    st = _envelope_step(doc, g, mesh, lat, out_dir, rep["name"], opts, base_dir, sources, meshes, progress)
+                else:
+                    st = export_step(mesh, os.path.join(out_dir, f"{rep['name']}.step"),
+                                     faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"],
+                                     surface=opts.get("surface", "facets"),
+                                     patches=int(opts.get("patches", DEFAULT_PATCHES)))
                 st.pop("shape", None)
                 rep["step"] = st
             except Exception as exc:  # noqa: BLE001 - the STL is the deliverable; say why STEP is missing

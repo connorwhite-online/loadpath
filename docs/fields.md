@@ -630,7 +630,23 @@ face per triangle, decimated first to `"step": {"faces": 20000}` (about
 which readers rebuild and which were over half of it). The report gives the faces by type, the
 share of the area on exact geometry, the volume against the STL's, and what
 decimating cost (`decimated[].deviation`, mm). A lattice does not decimate
-and is refused: ship lattice parts as STL or 3MF.
+to a useful size, so for a graph with `lattice` nodes the STEP file is the
+part with every lattice solid: a sandwich's skin, bosses, bores and faces
+exactly as printed, which is all an assembly mates against or checks for
+interference, while the STL carries the lattice. `step.lattice` in the
+report says so, with the envelope's and the part's volumes (use the part's
+for mass) and `trueSurface`, the share of the STEP's outside that is the
+printed part's own surface: 1.0 under a closed skin, less where a lattice
+is open to the outside. Drain holes are not in it. The arm link sandwich
+(`examples/fields/arm-link-sandwich.json`, pitch 0.4, `"surface": "smooth"`):
+4374 patches, 3 cylinders, 2 planes, 7.5 MB, patches within 0.023 mm p99 /
+0.079 mm max, `trueSurface` 1.0, 5 minutes with the part.
+
+Smooth patches straight over a lattice were tried and are not practical:
+on the sandwich's gyroid, 18k patches that did not make a valid solid and
+missed by about a millimetre at the knife-edge junctions with the skin. A
+part's sealed voids (a skin round its core) are kept, as inner shells of
+the one solid.
 
 Study parts carry their plan too (`loadpath run study.json --step`): the
 keep-outs, preserved shapes and design space are exact, the organic body
