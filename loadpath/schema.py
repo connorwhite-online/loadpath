@@ -475,6 +475,10 @@ _BUILD_SIM = {"anyOf": [
                         "description": "fdm: MPa of bond tension the first layer holds before it lets go of the "
                                        "bed (corners lift and the part re-balances; default: the value fitted to "
                                        "Armillotta 2018)"},
+        "printLayer": {"type": "number", "minimum": 0,
+                       "description": "fdm: the printed layer height, mm (default 0.2). Warp grows as layers "
+                                      "thin, so builds simulated at thicker voxel layers are extrapolated to "
+                                      "it; 0 turns that off"},
         "plateCells": {"type": "integer", "minimum": 1,
                        "description": "lpbf: voxel layers modelling the build plate, its stiffness scaled to the "
                                       "full plate (default 2; the default k is fitted with it)"},

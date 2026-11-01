@@ -149,10 +149,14 @@ field. `check` reports every problem at once: fix them all, then check again.
    deliver the lightest part meeting both (report `warp`; on the demo
    bracket a 40% cut cost no measurable mass, 65% was infeasible at SF 2).
    `maxRecoaterLift` exists but the optimizer's lumped layers misjudge
-   lift: check `buildSim.recoater` on the result. For FDM (PETG, nylon, PP), the
-   limit runs on the elastic-bed model, but it has not yet met a limit on
-   a test part and reads 3-4x below `buildSim`: check FDM warp in
-   `report.buildSim`. Nylon and PP shrink from their crystallization
+   lift: check `buildSim.recoater` on the result. For FDM (PETG, nylon, PP), warp is
+   extrapolated to the printed layer (`printLayer`, default 0.2 mm), and
+   the limit is checked on each outcome's delivered part
+   (`report.warp.delivered`), because the optimizer's grid still reads it
+   2-3.5x low. On a bed-printed beam the lift barely moves with the shape,
+   so a tight FDM limit finds no part. Lower the warp with the process
+   instead: bed and chamber temperature, `bedAdhesion`, the orientation, or
+   PETG over nylon. Nylon and PP shrink from their crystallization
    temperature and warp far more than PETG. FDM: `bedAdhesion` (MPa) lets
    the first layer let go; `bedFailed` in the report means the part
    popped off. docs/BUILDSIM.md has the validation.

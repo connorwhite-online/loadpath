@@ -196,11 +196,44 @@ def _margin(study: Study, report: dict) -> float | None:
         ms.append(dur["safetyFactor"] / dur["target"])
     warp = report.get("warp")
     if warp:
-        # buildSim warp limits: the as-built build of the delivered field
+        # buildSim warp limits: the build of the delivered part when it was
+        # re-simulated (_warp_delivered), else the optimizer's on its field
+        got = warp.get("delivered") or warp
+        lims = warp.get("userLimits") or warp["limits"]
         for key, lim in (("maxDistortion", "maxDistortion"), ("recoaterLift", "maxRecoaterLift")):
-            if warp["limits"].get(lim):
-                ms.append(warp["limits"][lim] / max(warp[key], 1e-12))
+            if lims.get(lim) and got.get(key) is not None:
+                ms.append(lims[lim] / max(got[key], 1e-12))
     return min(ms) if ms else None
+
+
+def _warp_delivered(study: Study, mesh) -> dict | None:
+    """The as-built measures of the delivered part (buildsim.simulate_part
+    at buildSim.cells, on the plate or bed at the end of the build, as the
+    optimizer's limits are): the largest movement (along the build for
+    FDM, |u| otherwise) and the recoater lift, mm. The optimizer's build
+    model runs on its coarse density grid, which under-resolves thin
+    members (FDM warp on the PA12 beam read 2-3.5x low there), so FDM warp
+    limits are checked on this one."""
+    import dataclasses as _dc
+    from .buildsim import simulate_part
+    bs = study.build_sim
+    build = study.process.build if study.process is not None and study.process.build not in (None, "auto") else "+z"
+    if study.print_direction is not None:
+        build = study.print_direction
+    setup = _dc.replace(bs["setup"], release="none")
+    t0 = time.time()
+    try:
+        r = simulate_part(mesh, setup, build=build, cells=min(int(bs.get("cells") or 8000), 30_000))
+    except Exception as exc:  # noqa: BLE001 - leave the optimizer's numbers standing
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    m = r.mesh
+    on = np.zeros(m.n_nodes, bool)
+    on[m.enode[r.part].ravel()] = True
+    u = r.u_built[on]
+    d = np.abs(u[:, 2]) if setup.process.lower() == "fdm" else np.linalg.norm(u, axis=1)
+    return {"maxDistortion": float(d.max()),
+            "recoaterLift": (r.report.get("recoater") or {}).get("maxLift"),
+            "pitch": r.report.get("pitch"), "seconds": round(time.time() - t0, 1)}
 
 
 def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, beta0: float = 1.0,
@@ -718,6 +751,27 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
     # what earlier runs on this domain found (recall.py), when turned on
     from .recall import Recall
     memory = Recall.open(study, domain, radius, _making(study))
+    # warp limits: each outcome's delivered part is re-simulated and the
+    # limits checked on that; the optimizer's limits for the next attempt
+    # are scaled by how far its build model read off on the last one
+    ws = domain.warp
+    # (FDM, where the gap was measured: 2-3.5x on the PA12 beam; the metal
+    # build model's limits are checked on its full grid, as before)
+    limits0 = (ws.max_distortion, ws.max_lift) if ws is not None and (ws.max_distortion or ws.max_lift) \
+        and study.build_sim["setup"].process.lower() == "fdm" else None
+
+    def _check_warp(warp, mesh):
+        warp["userLimits"] = {"maxDistortion": limits0[0], "maxRecoaterLift": limits0[1]}
+        d = _warp_delivered(study, mesh)
+        warp["delivered"] = d
+        if not d or "error" in d:
+            return
+        for key, attr, lim in (("maxDistortion", "max_distortion", limits0[0]),
+                               ("recoaterLift", "max_lift", limits0[1])):
+            if lim and d.get(key) and warp.get(key):
+                ratio = d[key] / warp[key]
+                setattr(ws, attr, lim / ratio)
+                warp.setdefault("deliveredOverOptimizer", {})[key] = round(ratio, 3)
 
     def attempt(vf: float, x0, beta0, replay=None) -> Outcome:
         def on_iter(rec, xp):
@@ -760,6 +814,8 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             report["manufacturing"] = making
         if warp:
             report["warp"] = warp
+            if limits0 is not None:
+                _check_warp(warp, mesh)
         o = Outcome(vf, mesh, report, opt, rinfo)
         o.xphys = xphys
         o.x = x

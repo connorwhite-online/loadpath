@@ -184,6 +184,28 @@ def test_fdm_warp_term_matches_the_build_and_its_gradient():
         assert info["tg"] == tset and info["solidifies"].startswith("semi"), info
 
 
+def test_fdm_warp_is_extrapolated_to_the_printed_layer():
+    """FDM warp grows as the analysis layers thin (the voxel pitch does not
+    matter), so builds at lumps thicker than the printed layer are
+    extrapolated to it from a second build at twice the lumps: 0.5 mm lumps
+    taken to 0.25 mm land within 5% of a direct 0.25 mm build, where the
+    plain 0.5 mm build reads a quarter low."""
+    solid = np.ones((120, 2, 12), bool)
+
+    def lift(layer, printed):
+        st = B.BuildSetup(process="fdm", material="pa12", layer=layer, release="none", print_layer=printed)
+        r = B.simulate_build(solid, 0.25, (0, 0, 0), st)
+        return np.abs(r.u_built[:, 2]).max(), r.report.get("layerExtrapolation")
+
+    direct, rep = lift(0.25, 0.25)
+    assert rep is None
+    ex, rep = lift(0.5, 0.25)
+    plain, _ = lift(0.5, 0)
+    assert rep["k"] == 1.0
+    assert abs(ex / direct - 1) < 0.05, (ex, direct)
+    assert plain < 0.85 * direct, (plain, direct)
+
+
 def test_study_key_parses():
     from loadpath.schema import lint
     from loadpath.spec import study_from_dict
