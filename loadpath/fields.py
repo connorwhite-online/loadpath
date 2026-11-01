@@ -500,6 +500,11 @@ class _CellWarp:
             self.u.append((u - u[n // 2]).reshape(tuple(dims)) + G[n // 2, comp] * g.ravel()[n // 2])
         self.lo, self.h, self.dims = lo, h, dims
 
+    def _grids(self):
+        if getattr(self, "_c", None) is None:
+            self._c = tuple(np.ascontiguousarray(u, np.float64) for u in self.u)
+        return self._c
+
     @staticmethod
     def grid(cell_fn, lo, hi, max_cells):
         """(lo, h, dims) of the grid the map is solved on."""
@@ -523,6 +528,10 @@ class _CellWarp:
         return self.lo + ijk * self.h
 
     def __call__(self, P, cell):
+        from . import fieldops
+
+        if fieldops.available() and len(P):
+            return fieldops.warp(P, self.lo, self.h, self._grids(), cell)
         idx = ((P - self.lo) / self.h).T
         n = (self.dims - 1)[:, None]
         cl = np.clip(idx, 0, n)

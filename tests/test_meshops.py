@@ -105,3 +105,18 @@ def test_field_mesh_same_with_numpy_paths(monkeypatch):
     assert abs(a.volume / b.volume - 1) < 1e-6
     np.testing.assert_allclose(np.sort(np.asarray(a.vertices), axis=0), np.sort(np.asarray(b.vertices), axis=0),
                                atol=1e-6)
+
+
+def test_field_kernels_match_numpy(monkeypatch):
+    """fieldops: compiled TPMS (double) and graded-cell warp give numpy's values."""
+    import loadpath.fields as LF
+    from loadpath import lattice
+
+    P = np.random.default_rng(2).uniform(-20, 40, (50_000, 3))
+    warp = LF._CellWarp(lambda G: 4 + 0.05 * G[:, 0], np.zeros(3), np.array([30.0, 20, 10]))
+    cell = 4 + 0.05 * P[:, 0]
+    fast = [lattice.tpms(k, P, 5.0) for k in ("gyroid", "diamond", "schwarz-p")] + [warp(P, cell), warp(P, 4.5)]
+    monkeypatch.setenv("LOADPATH_FIELDOPS", "numpy")
+    slow = [lattice.tpms(k, P, 5.0) for k in ("gyroid", "diamond", "schwarz-p")] + [warp(P, cell), warp(P, 4.5)]
+    for a, b in zip(fast, slow):
+        np.testing.assert_allclose(a, b, rtol=0, atol=1e-12)

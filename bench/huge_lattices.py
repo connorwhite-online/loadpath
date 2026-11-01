@@ -12,7 +12,9 @@ top functions (--tottime sorts by own time); --save PATH.npz keeps the mesh.
 
 4-core cloud box, 2026-11-01 (numpy paths at f38bd76 -> compiled kernels):
 gyroid-box 0.4 mm 327 -> 58 s (5.9M faces), octet-box 0.4 mm 384 -> 67 s,
-arm-link 0.4 mm 14.2 -> 10.6 s; gyroid-box 0.25 mm 133 s (14.8M faces).
+arm-link 0.4 mm 14.2 -> 10.6 s; gyroid-box 0.25 mm 519 -> 133 s (14.8M faces),
+arm-link 0.2 mm 48 -> 32 s. With fieldops.py (compiled TPMS, warp): gyroid-box
+0.4 mm 53 s, arm-link 0.4 mm 9.2 s, 0.2 mm 27.7 s.
 """
 import copy, json, sys, time
 from pathlib import Path

@@ -275,11 +275,16 @@ def march_blocks(field, lo, dims, pitch, block=32, leaf=4, lipschitz=None, margi
 
     def mask(k):
         """The samples block k needs: every sample of a passing leaf."""
-        m = np.zeros(tuple(b1[k] - b0[k] + 1), bool)
-        for j in np.flatnonzero(lact[k]):
-            a = li[j] * lf
-            m[a[0]:a[0] + lf + 1, a[1]:a[1] + lf + 1, a[2]:a[2] + lf + 1] = True
-        return m
+        n = b1[k] - b0[k] + 1
+        # a leaf's samples run from its first corner to one past its last
+        # cell: its cells, grown by one sample on the high side of each axis
+        c = np.zeros((nl * lf + 1,) * 3, bool)
+        c[:-1, :-1, :-1] = np.repeat(np.repeat(np.repeat(lact[k].reshape(nl, nl, nl), lf, 0), lf, 1), lf, 2)
+        m = c.copy()
+        m[1:] |= c[:-1]
+        m[:, 1:] |= m[:, :-1].copy()
+        m[:, :, 1:] |= m[:, :, :-1].copy()
+        return m[:n[0], :n[1], :n[2]]
 
     fine = None
     if budget is not None:

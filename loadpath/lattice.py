@@ -238,6 +238,12 @@ def tpms(kind: str, pts: np.ndarray, cell: float) -> np.ndarray:
     as a sheet wall reaches."""
     if kind not in TPMS:
         raise ValueError(f"lattice type must be one of {sorted(TPMS)}, got {kind!r}")
+    if not _SINGLE[0] and np.ndim(cell) == 0:
+        from . import fieldops
+
+        if fieldops.available():
+            # double precision, one compiled pass (bit for bit the code below)
+            return fieldops.tpms(kind, pts, cell)
     k = 2.0 * np.pi / cell
     if kind == "schwarz-p":
         x, y, z = (k * pts[:, i] for i in range(3))

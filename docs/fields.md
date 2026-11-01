@@ -834,9 +834,16 @@ mesh to the face either way:
 
 | part, pitch | faces | numpy | compiled |
 |---|---|---|---|
-| graded gyroid box, 0.4 mm | 5.9M | 327 s | 58 s |
+| graded gyroid box, 0.4 mm | 5.9M | 327 s | 53 s |
+| graded gyroid box, 0.25 mm | 14.8M | 519 s | 133 s |
 | graded octet box, 0.4 mm | 5.4M | 384 s | 67 s |
-| graded arm link, 0.4 mm | 0.7M | 14.2 s | 10.6 s |
+| graded arm link, 0.4 mm | 0.7M | 14.2 s | 9.2 s |
+| graded arm link, 0.2 mm | 2.9M | 48.0 s | 27.7 s |
+
+The hottest field ops are compiled too (`loadpath/fieldops.py`): TPMS
+distances in double precision (~4x numpy, bit for bit) and a graded
+cell's warp lookup (~5x); `LOADPATH_FIELDOPS=numpy` turns them off. The
+arm link's organic leaf evaluates at 3.5M points/s on 4 cores (was 2.1M).
 
 ### Evaluating on the GPU
 
