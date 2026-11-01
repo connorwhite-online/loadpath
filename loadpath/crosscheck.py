@@ -115,6 +115,11 @@ def unsupported(study: Study) -> str | None:
         return "a layered process (anisotropic stiffness and interlayer strength)"
     if any(ld.pressure for c in study.load_cases for ld in c.loads):
         return "pressure loads"
+    return mesher_missing()
+
+
+def mesher_missing() -> str | None:
+    """Why no tetrahedral mesh can be made here, or None when one can."""
     if not _has_tetwild():
         try:
             import gmsh  # noqa: F401  (availability check)

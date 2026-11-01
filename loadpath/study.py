@@ -277,10 +277,15 @@ def _confirm_on_tets(study: Study, outcomes: list) -> bool:
     why = unsupported(study)
     if why is None:
         return True
-    if mode == "tet" and outcomes:
+    if outcomes and (mode == "tet" or why.startswith("no tetrahedral mesher")):
+        # A missing mesher is the install, not the study: say so on every
+        # part it changes. The voxel grid reads peak stress high (the MBB
+        # beam 0.86 on voxels, 1.94 on tets at 30%), so without the tet
+        # confirm a search stops heavier: the MBB beam's eval went from
+        # 14.5 g to 40.4 g and failed its mass reduction, silently.
         outcomes[0].report.setdefault("warnings", []).append(
-            f"goal.confirm is tet, but the tetrahedral cross-check does not cover this study ({why}): "
-            "confirmed on voxels instead")
+            f"the tetrahedral cross-check does not cover this study ({why}): confirmed on voxels instead, "
+            "which read peak stress high, so the part comes out heavier than it needs to be")
     return False
 
 

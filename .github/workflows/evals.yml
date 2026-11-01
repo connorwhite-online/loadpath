@@ -22,7 +22,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e ".[render]"
+      # crosscheck: the safety-factor cases confirm on tetrahedra (the
+      # baselines were taken that way; evals.run refuses to run without it)
+      - run: pip install -e ".[render,crosscheck]"
       - env:
           CASES: ${{ github.event.inputs.cases }}
         run: python -m loadpath.evals.run $CASES --out evals-out --jobs 2

@@ -739,7 +739,21 @@ def main(argv=None):
     p.add_argument("--save-baseline", help="also write this run's scores (no traces) here, for --baseline")
     p.add_argument("--gate", choices=["failures", "regressions"], default="failures",
                    help="what the exit code counts")
+    p.add_argument("--allow-voxel-confirm", action="store_true",
+                   help="run although no tetrahedral mesher is installed (the safety-factor cases then "
+                        "confirm on voxels and come out heavier than the baselines)")
     args = p.parse_args(argv)
+    from ..crosscheck import mesher_missing
+
+    no_tets = mesher_missing()
+    if no_tets and not args.allow_voxel_confirm:
+        # The baselines were taken with the tet confirm: without it every
+        # safety-factor case steps down on the voxel reading alone, and
+        # the scorecard reads as a regression of the optimizer (13/14 with
+        # the MBB beam at 40.4 g against 14.5 g) when it is the install.
+        print(f"loadpath.evals.run: {no_tets}. The safety-factor cases confirm on tetrahedra; install it, "
+              "or pass --allow-voxel-confirm to run without (not comparable to the baselines).", file=sys.stderr)
+        return 2
     # a scorecard measures the optimizer, not what earlier runs left behind
     os.environ.pop("LOADPATH_RECALL", None)
     # and the same optimizer whatever else the box is running: the confirm
@@ -776,6 +790,8 @@ def main(argv=None):
                 os.environ.setdefault(v, "1")
         rows = _run_isolated(files, args.out, args.tier, args.critic, int(args.jobs), args.spread)
     md = _md(rows)
+    if no_tets:
+        md = f"**No tet confirm** ({no_tets}): safety-factor cases confirmed on voxels; not comparable to the baselines.\n\n" + md
     regress = []
     if args.baseline:
         with open(args.baseline) as fh:
