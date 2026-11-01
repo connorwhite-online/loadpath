@@ -273,6 +273,14 @@ def test_study_thermal_block_parses_and_lints():
             assert msg is None or msg in str(e), (wrong, e)
         else:
             raise AssertionError(f"accepted {wrong}")
+    # a part that just runs warm: the ambient alone, every cell softened for it
+    from loadpath.spec import _thermal
+    assert _thermal({"ambient": 55}, None).ambient == 55
+    try:
+        _thermal({"ambient": 25}, None)
+        raise AssertionError("a room-temperature block with nothing in it passed")
+    except ValueError as e:
+        assert "nothing to do" in str(e) and "service temperature" in str(e)
 
 
 def test_study_thermal_gradient_matches_finite_differences():

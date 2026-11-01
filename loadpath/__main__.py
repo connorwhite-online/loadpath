@@ -274,6 +274,40 @@ def _materials(args):
     return 0
 
 
+def run_status(out: str) -> dict:
+    """out/status.json, with `running` checked against the process: a run
+    the OOM killer or a closed shell took down (SIGKILL) never gets to write
+    its own end, and its status kept reading `running` with a dead pid."""
+    path = os.path.join(out, "status.json")
+    if not os.path.exists(path):
+        return {"state": "none", "error": f"no {path}: the run has not started, or --out was another folder"}
+    with open(path) as fh:
+        st = json.load(fh)
+    part = os.path.join(out, "partial", "outcomes.jsonl")
+    if os.path.exists(part):
+        with open(part) as fh:
+            st["partialOutcomes"] = sum(1 for line in fh if line.strip())
+    if st.get("state") == "running" and st.get("pid"):
+        alive = True
+        try:
+            os.kill(int(st["pid"]), 0)
+            with open(f"/proc/{int(st['pid'])}/cmdline", "rb") as fh:
+                alive = b"loadpath" in fh.read()
+        except ProcessLookupError:
+            alive = False
+        except (OSError, ValueError):
+            pass
+        if not alive:
+            st["state"] = "died"
+            st["hint"] = ("the process is gone without writing an end: killed (out of memory, or by the shell "
+                          "that launched it). Outcomes found so far are in out/partial/. Relaunch detached "
+                          "(setsid nohup ... > run.log 2>&1 < /dev/null &); if it was memory, set "
+                          "LOADPATH_CONFIRM_CELLS lower or resolution.maxElements")
+    if st.get("started") and st.get("state") == "running":
+        st["elapsedSeconds"] = round(time.time() - float(st["started"]))
+    return st
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="loadpath", description="Generative design for printed parts.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -293,6 +327,9 @@ def main(argv=None):
     r.add_argument("--recall", action="store_true",
                    help="start from what earlier runs on the same design space found (recall.py; "
                         "or set LOADPATH_RECALL=1)")
+    stp = sub.add_parser("status", help="is a background run still going? reads out/status.json and checks its "
+                                        "process is alive (a killed run cannot update the file itself)")
+    stp.add_argument("out", nargs="?", default="out", help="the run's --out folder (default out)")
     v = sub.add_parser("verify", help="check a finished part against a study: mass, SF per load case, keep-outs")
     v.add_argument("study")
     v.add_argument("part", help="the part's STL, or a `run` output folder (its best outcome)")
@@ -490,6 +527,9 @@ def main(argv=None):
         return _calibrate(args)
     if args.cmd == "assembly":
         return _assembly(args)
+    if args.cmd == "status":
+        print(json.dumps(run_status(args.out), indent=1))
+        return 0
     if args.cmd == "verify":
         return _verify(args)
     if args.cmd == "import":
@@ -550,6 +590,23 @@ def main(argv=None):
             json.dump({"state": state, "pid": os.getpid(), "study": os.path.abspath(args.study), **kw}, fh)
 
     _status("running", started=time.time())
+    import signal
+
+    def _killed(signum, _frame):
+        # a hang-up or kill from the shell that launched us (an agent's tool
+        # call ending takes its process group down): say so, then go
+        try:
+            _status("killed", signal=signal.Signals(signum).name, stage=seen.get("stage"),
+                    partial=os.environ.get("LOADPATH_PARTIAL_DIR"),
+                    hint="relaunch detached: setsid nohup loadpath run ... > run.log 2>&1 < /dev/null &")
+        finally:
+            os._exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(sig, _killed)
+        except (ValueError, OSError):
+            pass
     # each outcome as the search finds it, kept if a later stage dies
     os.environ.setdefault("LOADPATH_PARTIAL_DIR", os.path.join(args.out, "partial"))
     rec = None

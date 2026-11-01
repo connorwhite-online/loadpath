@@ -50,7 +50,11 @@ field. `check` reports every problem at once: fix them all, then check again.
    washer or pan head. The head and driver keep-out is as wide as the seat
    ring (head + 2 x wall: M3 7.5, M4 9 mm); `counterbore` sets its diameter
    when the user gives a counterbore or key clearance. Don't
-   draw a solid boss round a screw.
+   draw a solid boss round a screw. A bolted foot: hold the bores sideways
+   and the face's normal only on a washer-sized disc under each bolt; a
+   slab over the whole face glues the part down, and a load that lifts or
+   tips it then reads far too strong (a stepper bracket: SF 3.5 glued, 0.98
+   bolted).
 2. **Bound the design space** generously: the envelope the part may occupy,
    minus nothing (keep-outs are subtracted for you). Too tight a box is the
    most common reason a result looks like the box.
@@ -70,7 +74,12 @@ field. `check` reports every problem at once: fix them all, then check again.
    A link that carries or is driven by a servo or motor: add a case with
    its full stall torque about the joint axis at that interface (a 1.5 N·m
    servo is `"moment": [0, 1500, 0]` about y), since a jam or a hard stop
-   puts all of it through the part; it often sets the size.
+   puts all of it through the part; it often sets the size. Where the
+   servo itself holds the part (the link is supported on the horn), the
+   jam reacts at the far end instead: a force there of torque / arm (2.5 N·m
+   at 100 mm is 25 N, perpendicular to the link in the joint's plane). A
+   screw through this part into a horn's or mating part's thread is
+   `headOn: "this"` (default) with `end: "face"`.
    When the direction is genuinely unknown (contact, bumps, handling, a
    push at the tool "from anywhere"), say so instead of guessing:
    `{"region": "tool", "force": [0, 0, -20], "direction": "any"}` designs
@@ -185,10 +194,14 @@ field. `check` reports every problem at once: fix them all, then check again.
    and warnings. Fix every warning before running; `notes` are information
    (for example that `minMember` set the pitch, so there are fewer cells
    than `maxElements`).
-8. `python -m loadpath run study.json --out out/`: run it in the background
-   (`nohup ... &`, or the MCP `loadpath_start` job) and poll, never in a
-   foreground call with a time limit. `out/status.json` says `running`
-   (with its `pid`), `done` or `failed`; each outcome is written to
+8. `python -m loadpath run study.json --out out/`: run it in the background,
+   detached from your shell (`setsid nohup loadpath run study.json --out out
+   > run.log 2>&1 < /dev/null &`; a plain `nohup ... &` dies with the tool
+   call that started it), or the MCP `loadpath_start` job, and poll with
+   `loadpath status out`, never in a foreground call with a time limit. It
+   says `running` (with its `pid` and elapsed time), `done`, `failed`,
+   `killed` (a signal), or `died` (the process is gone without a word: out of
+   memory, or killed outright); each outcome is written to
    `out/partial/` (STL plus a line in `outcomes.jsonl`) as the search finds
    it, so a run killed late still leaves its verified parts.
    Progress is JSON lines on stderr. A `safetyFactor` goal runs several
@@ -263,8 +276,8 @@ field. `check` reports every problem at once: fix them all, then check again.
   worst direction.
 - `durability`: `temperature` (C the cyclic and held cases run at; it
   derates only the fatigue and creep checks, so a part in a hot enclosure
-  also needs a `thermal` block, e.g. `temperatures` at that value, for its
-  static safety factor), `safetyFactor` (default 1.5), and
+  also needs `"thermal": {"ambient": 55}` (the whole part at that
+  temperature, softened for it) for its static safety factor), `safetyFactor` (default 1.5), and
   `constrain: true` to size the part for it rather than only check it.
   With `fasteners`, the preload is also checked held for `preloadHours`
   (default a year).

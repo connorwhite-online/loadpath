@@ -804,6 +804,14 @@ def test_fasteners_expand_to_rings_keepouts_and_preload():
     st = study_from_dict({**base, "fasteners": [
         {"id": "a", "size": "M4", "seat": [30, 0, 0], "direction": "-x", "grip": 20, "counterbore": 8}]})
     assert abs({r.id: r.shape for r in st.keep_out}["a-head"].r - 4.0) < 1e-9
+    # a slab over the whole face the bolts go through glues it down: noted
+    from loadpath.tasks import _glued_faces
+    glued = study_from_dict({**base, "supports": [{"shape": {"type": "box", "min": [29.5, -11, -11],
+                                                             "max": [30.5, 11, 11]}, "fix": "x"}],
+                             "fasteners": [{"id": "a", "size": "M4", "seat": [30, 0, 0], "direction": "-x",
+                                            "grip": 20}]})
+    assert any("glued" in n for n in _glued_faces(glued))
+    assert not _glued_faces(study_from_dict(base))
     try:
         study_from_dict({**base, "fasteners": [
             {"id": "a", "size": "M4", "seat": [30, 0, 0], "direction": "-x", "grip": 20, "counterbore": 6}]})
@@ -829,6 +837,27 @@ def test_mesh_fidelity_counts_cells_the_mesh_dropped():
     half = trimesh.creation.box(bounds=[lo, [0.5 * (lo[0] + hi[0]), hi[1], hi[2]]])
     f = mesh_fidelity(d, xp, half)
     assert 0.4 < f["lostSolidCells"] < 0.6, f
+
+
+def test_run_status_notices_a_dead_run():
+    """A run killed outright cannot write its own end: `loadpath status`
+    checks the pid and says `died` instead of `running` forever."""
+    import json
+    import os
+    import tempfile
+
+    from loadpath.__main__ import run_status
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "status.json"), "w") as fh:
+        json.dump({"state": "running", "pid": 2 ** 22 + 12345, "started": 0}, fh)
+    assert run_status(d)["state"] == "died"
+    with open(os.path.join(d, "status.json"), "w") as fh:
+        json.dump({"state": "running", "pid": os.getpid(), "started": 1.0}, fh)
+    st = run_status(d)       # pytest's own process: alive, and its command line names loadpath's tests
+    assert st["state"] == "running" and st["elapsedSeconds"] > 0, st
+    assert run_status(os.path.join(d, "nope"))["state"] == "none"
+
 
 def test_viewer_page_carries_fields_and_history():
     """The viewer page embeds the part, its stress and displacement per
@@ -878,7 +907,70 @@ def test_optimize_is_reproducible():
                                                            max_iterations=8)).xphys)
     assert np.array_equal(outs[0], outs[1])
 
+def test_voxelize_keeps_a_whole_grid_box():
+    """A box a whole number of cells across voxelizes to exactly that many:
+    (hi - lo) / pitch read just over n at 107 of 400 pitches, and the
+    access report's grid then mismatched the design grid (crash)."""
+    m = trimesh.creation.box(extents=[50, 20, 10])
+    lo, dims = np.array([-25.3, -10.1, -5.2]), np.array([57, 12, 8])
+    for p in np.linspace(1.0, 3.0, 400):
+        s, _ = voxelize(m, p, box=(lo, lo + dims * p))
+        assert s.shape == tuple(dims), (p, s.shape)
+
+
+def test_pitch_starts_keep_the_lightest_passing_grid():
+    from loadpath.study import pitch_starts
+
+    raw = {**BEAM, "goal": {"safetyFactor": 2.0}, "resolution": {"maxElements": 1500, "pitchStarts": 2},
+           "maxIterations": 15}
+    s = study_from_dict(raw)
+    assert pitch_starts(s) == 2
+    assert pitch_starts(study_from_dict({**raw, "resolution": {"maxElements": 1500}})) == 3
+    assert pitch_starts(study_from_dict({**raw, "resolution": {"pitch": 2.0}})) == 1
+    assert pitch_starts(study_from_dict({**raw, "goal": {"volumeFraction": 0.3}, "resolution": {}})) == 1
+    r = run_study(s)
+    assert len(r.starts) == 2 and abs(r.starts[1]["pitch"] / r.starts[0]["pitch"] - 1.01) < 1e-9
+    picked = [x for x in r.starts if x.get("picked")]
+    assert len(picked) == 1
+    passing = [x for x in r.starts if x["passes"]]
+    if passing:
+        assert picked[0]["mass"] == min(x["mass"] for x in passing)
+        assert abs(r.outcomes[r.best].report["mass"] - picked[0]["mass"]) < 1e-9
+    assert "pitchStarts" in r.to_dict()
+
+
+def test_restarts_deliver_the_lightest_confirmed_pick():
+    """goal.restarts runs the search from several starts and keeps the
+    lightest of their own picks (a stand-in search here: no optimizing)."""
+    from loadpath import study as S
+    from loadpath.study import Outcome, StudyResult
+
+    st = study_from_dict({**LUG, "goal": {"safetyFactor": 2.0, "volumeFraction": 0.3, "restarts": 3},
+                          "resolution": {**(LUG.get("resolution") or {}), "pitchStarts": 1}})
+    seen = []
+
+    def fake(study, on_progress=None, should_stop=None):
+        vf = study.goal.volume_fraction
+        seen.append(vf)
+        mass = {0.3: 50.0, 0.24: 45.0, 0.375: 55.0}[round(vf, 3)]
+        picks = [Outcome(vf, None, {"mass": mass, "safetyFactor": 2.1}, {}, {}, passes=True),
+                 Outcome(vf * 0.9, None, {"mass": mass - 10, "safetyFactor": 2.2}, {}, {}, passes=True)]
+        return StudyResult(study=study, domain={}, outcomes=picks, best=0, seconds=0.0)
+
+    orig = S._run_single
+    S._run_single = fake
+    try:
+        r = S._run_restarts(st)
+    finally:
+        S._run_single = orig
+    assert [round(v, 3) for v in seen] == [0.3, 0.24, 0.375]
+    # the lightest pick (45 g), not a lighter unconfirmed outcome (35 g)
+    assert r.outcomes[r.best].report["mass"] == 45.0 and len(r.domain["restarts"]) == 3
+
+
 TESTS = [
+    test_voxelize_keeps_a_whole_grid_box,
+    test_pitch_starts_keep_the_lightest_passing_grid,
     test_shapes_sdf_and_exact_volume,
     test_spec_errors_name_the_field,
     test_fem_matches_beam_theory,
@@ -916,8 +1008,10 @@ TESTS = [
     test_heat_exchanger_rating_limits_and_geometry,
     test_fasteners_expand_to_rings_keepouts_and_preload,
     test_mesh_fidelity_counts_cells_the_mesh_dropped,
+    test_run_status_notices_a_dead_run,
     test_viewer_page_carries_fields_and_history,
     test_optimize_is_reproducible,
+    test_restarts_deliver_the_lightest_confirmed_pick,
 ]
 
 

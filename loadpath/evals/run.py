@@ -123,7 +123,21 @@ CRITIC = {"criticBlockers": ("maxCriticBlockers", "<="), "criticScore": ("maxCri
 
 
 def apply_tier(raw: dict, tier: str) -> dict:
-    """The case as the tier runs it (a copy)."""
+    """The case as the tier runs it (a copy). LOADPATH_EVAL_CELLS_SCALE
+    scales every case's maxElements (the pitch moves by its cube root): run
+    the suite at 1 and at 0.91 to see how far each result moves with a 3%
+    pitch change."""
+    raw = _apply_tier(raw, tier)
+    scale = float(os.environ.get("LOADPATH_EVAL_CELLS_SCALE") or 1.0)
+    if scale != 1.0 and "core" not in raw and "graph" not in raw:
+        raw = json.loads(json.dumps(raw))
+        res = raw.setdefault("resolution", {})
+        if "pitch" not in res:
+            res["maxElements"] = max(1, int(round(int(res.get("maxElements", 60000)) * scale)))
+    return raw
+
+
+def _apply_tier(raw: dict, tier: str) -> dict:
     if tier == "full":
         return raw
     if tier != "coarse":
@@ -136,7 +150,8 @@ def apply_tier(raw: dict, tier: str) -> dict:
         raw["step"] = raw.get("step", 0.4) * cfg["hxStep"]
         return raw
     res = raw.get("resolution") or {}
-    raw["resolution"] = {"maxElements": min(int(res.get("maxElements", 80000)), cfg["maxElements"])}
+    raw["resolution"] = {"maxElements": min(int(res.get("maxElements", 80000)), cfg["maxElements"]),
+                         **{k: v for k, v in res.items() if k == "pitchStarts"}}
     raw["maxIterations"] = min(int(raw.get("maxIterations", 120)), cfg["maxIterations"])
     return raw
 

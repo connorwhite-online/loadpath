@@ -163,9 +163,12 @@ class StudyResult:
     best: int | None
     seconds: float
     warnings: list = field(default_factory=list)
+    # resolution.pitchStarts: each grid's pitch, pick and whether it passed
+    starts: list | None = None
 
     def to_dict(self) -> dict:
         return {
+            **({"pitchStarts": self.starts} if self.starts else {}),
             "name": self.study.name,
             "domain": self.domain,
             "outcomes": [o.summary() for o in self.outcomes],
@@ -204,6 +207,15 @@ def _margin(study: Study, report: dict) -> float | None:
             if lims.get(lim) and got.get(key) is not None:
                 ms.append(lims[lim] / max(got[key], 1e-12))
     return min(ms) if ms else None
+
+
+def _whole(report: dict) -> bool:
+    """A part that can be delivered at all, whatever its margin: one body,
+    and every bore open at both ends. A capped bore takes no screw (the
+    wall bracket with fasteners at 5.6%, tets 3.52 for 2.5, came out with
+    one closed over; the search delivered it), so the search counts it
+    failing and steps on to a fraction that keeps the bore."""
+    return report.get("bodies", 1) <= 1 and not report.get("closedBores")
 
 
 def _warp_delivered(study: Study, mesh) -> dict | None:
@@ -297,6 +309,12 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
         report.setdefault("warnings", []).append(
             f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
             "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+    if report.get("closedBores"):
+        o.passes = False
+        report.setdefault("warnings", []).append(
+            f"the part closes over {len(report['closedBores'])} bore end(s) "
+            f"({', '.join(b['id'] + ' ' + b['end'] for b in report['closedBores'])}): no fastener goes through, "
+            "so it does not pass. Extend the keep-out over the head and the driver's reach if this repeats.")
     return o
 
 
@@ -523,6 +541,64 @@ def _parallel(studies: list, on_progress, should_stop) -> list:
     return results
 
 
+# resolution.pitchStarts: the extra grids are this much coarser each (coarser
+# so maxElements still holds), and "auto" runs 3 up to this many cells
+PITCH_STEP = 0.01
+PITCH_STARTS_MAX_CELLS = 30_000
+
+
+def pitch_starts(study: Study) -> int:
+    """How many grids the study's search runs on (resolution.pitchStarts).
+
+    One grid's answer is a sample, not the answer: the search's mass swings
+    with sub-percent changes of the pitch, because the optimizer settles in
+    a different layout and the verified stress, read near supports and
+    sharp junctions, differs between layouts. Over six pitches 0-5% apart,
+    the 16 coarse-tier safety-factor cases ranged 24% from lightest to
+    heaviest (median; 138% at worst, corpus-bracket-4 82-196 g) and 3 of 96
+    runs failed. Paired runs of the coarse tier 3% apart in pitch, one grid
+    against three (the lightest passing of grids 1% apart): massAtTarget
+    spread mean 17% -> 10%, worst 80% -> 46%, delivered mass 8% lower, no
+    lost passes, 2.7x the time; the median spread did not move
+    (bench/results/pitch_starts.json, docs/BENCHMARKS.md)."""
+    v = (study.raw.get("resolution") or {}).get("pitchStarts", "auto")
+    if v == "auto" and os.environ.get("LOADPATH_PITCH_STARTS"):
+        v = int(os.environ["LOADPATH_PITCH_STARTS"])     # the default, for a whole run (evals)
+    if v != "auto":
+        return int(v)
+    g = study.goal
+    if g.safety_factor is None and g.max_deflection is None and not _durability_drives(study):
+        return 1
+    if study.pitch:
+        return 1
+    return 3 if cell_cap(study) <= PITCH_STARTS_MAX_CELLS else 1
+
+
+def _run_pitches(study: Study, starts: int, on_progress, should_stop) -> StudyResult:
+    """The search on `starts` grids, PITCH_STEP coarser each; the result of
+    the grid whose lightest part passes (or of the first grid when none
+    does), with every grid's pick in result.starts."""
+    import dataclasses
+
+    p0 = float(study.pitch) if study.pitch else build_domain(study).pitch
+    studies = [dataclasses.replace(study, pitch=p0 * (1.0 + PITCH_STEP * k)) for k in range(starts)]
+    t0 = time.time()
+    results = _parallel(studies, on_progress, should_stop)
+    rows = []
+    for st, r in zip(studies, results):
+        o = r.outcomes[r.best] if r.best is not None else None
+        rows.append({"pitch": st.pitch, "mass": o.report["mass"] if o is not None else None,
+                     "passes": bool(o is not None and o.passes), "outcomes": len(r.outcomes)})
+    passing = [i for i, x in enumerate(rows) if x["passes"]]
+    k = min(passing, key=lambda i: rows[i]["mass"]) if passing else 0
+    r = results[k]
+    rows[k]["picked"] = True
+    r.starts = rows
+    r.study = study
+    r.seconds = time.time() - t0
+    return r
+
+
 def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     """on_progress(event: dict, xphys | None) is called with
     {"stage": "domain"|"optimize"|"mesh"|"verify"|"outcome", ...}.
@@ -540,7 +616,7 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         study = choose_build_direction(study, on_progress=on_progress)["study"]
     mats = study.materials or [study.material]
     if len(mats) == 1:
-        return _build_sim(_slice(_process_checks(_run_single(study, on_progress, should_stop), on_progress),
+        return _build_sim(_slice(_process_checks(_run_restarts(study, on_progress, should_stop), on_progress),
                                  on_progress), on_progress)
     t0 = time.time()
     outcomes, warnings, domain = [], [], None
@@ -555,6 +631,58 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     return _build_sim(_slice(_process_checks(StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
                                                          seconds=time.time() - t0, warnings=warnings), on_progress),
                              on_progress), on_progress)
+
+
+# goal.restarts: the k-th search starts at the goal's volumeFraction times
+# RESTART_STARTS[k] (the first is the study as written; then below, above,
+# further below, further above)
+RESTART_STARTS = (1.0, 0.8, 1.25, 0.65, 1.5, 0.55, 1.75, 0.45)
+
+
+def _run_restarts(study: Study, on_progress=None, should_stop=None) -> StudyResult:
+    """goal.restarts searches from different starting fractions, pooled: the
+    outcomes of all, `best` the lightest of the searches' own (confirmed)
+    picks. Each search's other outcomes keep their in-loop readings only, so
+    they are not candidates."""
+    import dataclasses
+
+    def search(st):
+        starts = pitch_starts(st)
+        return (_run_single(st, on_progress, should_stop) if starts <= 1 else
+                _run_pitches(st, starts, on_progress, should_stop))
+
+    g = study.goal
+    n = min(g.restarts, len(RESTART_STARTS))
+    if n <= 1 or (g.safety_factor is None and g.max_deflection is None):
+        return search(study)
+    t0 = time.time()
+    vf0 = float(g.volume_fraction or 0.3)
+    outcomes, picks, warnings, domain = [], [], [], None
+    for k in range(n):
+        if k and should_stop is not None and should_stop():
+            break
+        vf = float(np.clip(vf0 * RESTART_STARTS[k], _VF_MIN, _VF_MAX))
+        if on_progress is not None:
+            on_progress({"stage": "restart", "run": k + 1, "of": n, "volumeFraction": vf}, None)
+        st = dataclasses.replace(study, goal=dataclasses.replace(g, volume_fraction=vf))
+        r = search(st)
+        for o in r.outcomes:
+            o.report["restart"] = k + 1
+        if r.best is not None:
+            picks.append(len(outcomes) + r.best)
+        outcomes.extend(r.outcomes)
+        warnings.extend(w for w in r.warnings if w not in warnings)
+        domain = domain or r.domain
+    ok = [i for i in picks if outcomes[i].passes]
+    pool = ok or picks
+    best = min(pool, key=lambda i: outcomes[i].report["mass"]) if pool else None
+    if domain is not None:
+        domain = dict(domain, restarts=[{"run": outcomes[i].report.get("restart"),
+                                         "volumeFraction": outcomes[i].volume_fraction,
+                                         "mass": outcomes[i].report.get("mass"), "passes": outcomes[i].passes}
+                                        for i in picks])
+    return StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
+                       seconds=time.time() - t0, warnings=warnings)
 
 
 def _build_sim(result: StudyResult, on_progress=None) -> StudyResult:
@@ -888,6 +1016,12 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             report.setdefault("warnings", []).append(
                 f"the part came out in {report['bodies']} pieces: some preserved geometry is not on any load "
                 "path. Add a load case that runs through it (what does it carry?) or drop it from preserve.")
+        if report.get("closedBores"):
+            o.passes = False
+            report.setdefault("warnings", []).append(
+                f"the part closes over {len(report['closedBores'])} bore end(s) "
+                f"({', '.join(b['id'] + ' ' + b['end'] for b in report['closedBores'])}): no fastener goes through, "
+                "so it does not pass. Extend the keep-out over the head and the driver's reach if this repeats.")
         return o
 
     def run_one(vf: float) -> Outcome:
@@ -1030,7 +1164,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
                         "seconds": cc["seconds"],
                         "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
                                   for c in cc["cases"]]}
-        o.passes = bool(mt >= 1.0) and r.get("bodies", 1) <= 1
+        o.passes = bool(mt >= 1.0) and _whole(r)
         emit({"stage": "confirmed", "volumeFraction": o.volume_fraction, "margin": mt, "method": "tet"})
         return mt
 
@@ -1043,7 +1177,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
         r.pop("voxelSafetyFactor", None)
         r["safetyFactor"] = o.voxel_sf
         r["margin"] = _margin(study, r)
-        o.passes = bool(r["margin"] >= 1.0) and r.get("bodies", 1) <= 1
+        o.passes = bool(r["margin"] >= 1.0) and _whole(r)
         r["tetCheck"] = c
         worst = min(c["cases"], key=lambda q: -q["peakStress"])
         r.setdefault("warnings", []).append(
@@ -1126,7 +1260,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None) -> StudyResult
             r["calibration"] = {"tetOverVoxel": k, "safetyFactor": o.voxel_sf * k}
             m = _margin(study, {**r, "safetyFactor": o.voxel_sf * k})
         r["margin"] = m
-        o.passes = bool(m >= 1.0) and r.get("bodies", 1) <= 1
+        o.passes = bool(m >= 1.0) and _whole(r)
 
     def run_constrained(limits, x0) -> Outcome:
         from .constrained import optimize_constrained

@@ -292,6 +292,12 @@ _GOAL = {
                                    "applicable)."},
         "outcomes": {"type": "array", "items": {"type": "number", "minimum": 0.02, "maximum": 0.95},
                      "description": "Extra fixed volume fractions for a trade-off gallery."},
+        "restarts": {"type": "integer", "minimum": 1, "maximum": 8,
+                     "description": "Run the safety-factor/deflection search this many times from different "
+                                    "starting fractions and deliver the lightest confirmed part (default 1). One "
+                                    "search lands in the local optimum its start leads to (7-17% apart in "
+                                    "delivered mass on the eval parts); worth it for a final production part, at "
+                                    "N times the time."},
         "minimize": {"enum": ["mass", "printTime", "filament"],
                      "description": "Which passing outcome is delivered: the lightest (default), or (FDM, with a "
                                     "slicer installed) the one that prints fastest or with the least filament, "
@@ -713,7 +719,15 @@ STUDY_SCHEMA = {
                                                          "which the searches are tuned to, but a design "
                                                          "made of one-cell walls can come out several "
                                                          "times softer than the optimizer's model (the "
-                                                         "camera boom: 16x)."}},
+                                                         "camera boom: 16x)."},
+                                      "pitchStarts": {
+                                          "oneOf": [{"type": "integer", "minimum": 1, "maximum": 5},
+                                                    {"const": "auto"}],
+                                          "description": "Searches run on this many grids 1% apart in "
+                                                         "pitch, keeping the lightest passing part: one grid's "
+                                                         "result can swing 25-140% with a 1% pitch change. "
+                                                         "'auto' (default): 3 for safety-factor and deflection "
+                                                         "searches up to 30k cells with no pitch given, else 1."}},
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
         "gravity": {**_VEC3, "description": "m/s², the part's own weight in every load case"},

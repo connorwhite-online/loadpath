@@ -253,6 +253,8 @@ the coarse grid; the best of each was then rated on finer grids.
 | Curved channels along the streamlines, 10 channels | 40.4 K | **35.3 K** | 32.6 K |
 | Uniform gyroid, 3 mm cells | 42.0 K | 39.4 K | |
 | Staggered pin fins, 3 mm pitch | 43.1 K | 42.5 K | |
+| **Hybrid: 8 streamline channels (walls 15% of the cavity) with a die-graded 2 mm gyroid inside** | | **32.8 K** | **30.4 K** |
+| Streamline channels with walls graded over the dies (wall fraction 0.25-0.6 of the pitch) | | 34.3 K | |
 
 Swept on the coarse grid and dropped: pins at 1.5, 2 and 4 mm pitch (46.7-47.0 K),
 6 and 8 channels (51.9 and 43.9 K), gyroid cells of 2 and 4 mm (50.0 and 43.1 K),
@@ -271,10 +273,15 @@ What it says:
   streamlines, so a straight-channel design would do worse in this U-turn
   plate. A designer who has the streamlines ties the lattice. Pins, the usual
   printable default, lose clearly.
-- Lattices still haven't clearly won a thermal case. Next: grade the
-  channels too (thicker walls over the dies), or grade the lattice by the
-  conjugate solution rather than by die position, then rate both on a
-  finer grid.
+- **A hybrid wins.** Thinner streamline channels that steer the water
+  round the U, filled with a gyroid graded over the dies, beat the best
+  channels by 7% on both fine grids (32.8 vs 35.3 K, 30.4 vs 32.6 K) and the
+  graded lattice alone by 6-7%. Its flow runs converged on both grids,
+  while the baseline's higher-flow run at 0.15 mm had not settled. The
+  channels set where the water goes and the lattice takes the heat out
+  where the dies are. Grading the channel walls alone gained 3%.
+  Next: grade the lattice from the conjugate temperature field rather than
+  from die position, and give the channels their own share of the metal.
 - Method note: the averaged lattice Boltzmann velocity does not conserve
   volume cell by cell. Interpolated to faces and used for upwind advection,
   it lost 99% of the heat on this plate. `conjugate.solve_heat(...,
@@ -282,6 +289,58 @@ What it says:
   (least squares, the inlet held), and the balance then closes to 1e-6. The
   air heat sink results above used the conservative form, which balances
   globally by construction.
+
+## Pitch sensitivity: one grid is a sample
+
+A safety-factor search's answer moves a lot with sub-percent changes of the
+cell size. On a grid 1% coarser the optimizer settles in a different layout,
+and the verified stress, read near supports and sharp junctions, differs
+between layouts. The search then brackets a different fraction. The MBB beam
+at 30% read SF 1.43 on a 1.3336 mm grid and 0.88 on a 1.3373 mm one, with
+the same 27945 cells. Its peak sat at the beam's end, one cell above the
+pin, which is modelled as a clamped pad. The 0.88 search stepped up to 55%.
+
+Measured on the coarse tier (bench/results/pitch_starts.json):
+
+| | Median range | Worst range | Failed runs |
+| --- | --- | --- | --- |
+| One grid, six pitches 0-5% apart (16 safety-factor cases) | 24% | 138% (corpus-bracket-4, 82-196 g) | 3 of 96 |
+
+`resolution.pitchStarts` runs the search on N grids, each 1% coarser than
+the last. Coarser keeps maxElements a hard cap. It keeps the grid whose
+lightest part passes, and `result.starts` lists every grid's pick. "auto",
+the default, means 3 grids for safety-factor, deflection and durability
+searches up to 30k cells with no pitch given, and 1 grid otherwise. The
+grids run in parallel where memory allows.
+
+Paired runs of the whole coarse tier at maxElements x1 and x0.91 (the pitch
+about 3% coarser), one grid against three:
+
+| | Delivered mass, median / mean pair spread | massAtTarget, median / mean / worst | Sum of delivered mass (17 cases) | Lost passes | Time |
+| --- | --- | --- | --- | --- | --- |
+| 1 grid | 10% / 18% | 5% / 17% / 80% | 1405 g | 0 | 1x |
+| 3 grids | 12% / 15% | 5% / 10% / 46% | 1287 g (-8%) | 0 | 2.7x |
+
+Three grids cut the worst swings (the hook went from 28-48 g to 28-35 g,
+corpus-bracket-1 from 168-246 g to 168-201 g, corpus-tri-mount-5 from
+133-137 g to 79 g at both scales), and they make parts about 8% lighter.
+They don't make the typical case reproducible: the median spread is
+unchanged. That needs the layout itself to stop depending on the grid,
+through a mesh-independent filter or start, or a peak stress read that
+doesn't ride the supports' singular field.
+
+A latent bug turned up along the way. `verify.voxelize` gave a box a whole
+number of cells across one cell too many at 107 of 400 pitches tried, and
+the access report then crashed on the shape mismatch (the arm link, twice).
+It is fixed.
+
+Full tier with pitchStarts on (one worker, tet confirm): all 14 cases
+pass, in 186 min against the old baseline's 145. The MBB beam, which main
+had at a 32.1 g massAtTarget on a single grid (55% over the old baseline's
+20.7 g), comes out at 26.7 g. The sum of massAtTarget is 757 g against the
+old baseline's 747 g; that baseline was taken before the hard maxElements
+cap and the other commits since. baselines/full.json and coarse.json are
+re-saved on this code.
 
 ## Gaps found
 
