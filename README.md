@@ -187,13 +187,16 @@ For two-material FDM (Bambu AMS, Prusa MMU, IDEX) and jetting, a study's
 topology, with each material's own stiffness, Poisson's ratio and strength, sourced
 bond strengths between them, and softness requirements: a knock that must stop
 under a force, or a patch that must give ([docs/MULTIMATERIAL.md](docs/MULTIMATERIAL.md)).
-On a PETG shelf bracket it put a TPU spring where the nose meets the arm, so a
-0.2 J knock stops at 140 N under a 150 N limit. Field graphs place materials by
+Materials meet in an interlocking beam lattice, credited with the measured gain
+over a flat bond (a GRIP-like finger's TPU pad holds at bond safety factor 2.55).
+Where solid TPU cannot take a knock, a graded TPU gyroid crush pad can: the PETG shelf
+bracket's 0.2 J knock stops at 89 N under a 150 N limit on a 0.8 g pad, behind a
+PETG striker plate, with the arm at safety factor 3.7 (53.7 g in all). Field graphs place materials by
 field (a TPU pad within 2.5 mm of a gripping face). Every design comes out as
 one body per material with shared interfaces, an STL each and a multi-material 3MF
 (sliced in PrusaSlicer on two tools), or a GrabCAD Voxel Print job for PolyJet.
 
-![bumpered bracket, PETG and TPU](docs/images/multimaterial-bracket.png)
+![bumpered bracket: PETG arm, TPU gyroid crush pad, PETG striker plate](docs/images/multimaterial-bracket-lattice.png)
 
 ### Impact: where lattices beat solid TO
 
