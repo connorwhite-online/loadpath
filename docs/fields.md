@@ -635,19 +635,28 @@ still true cylinders and planes (loadpath/brep.py). It works on the
 finished mesh, after the booleans, so OpenCascade never has to cut a
 smooth surface: triangles on exact surfaces are labelled, the mesh is
 coarsened without moving a seam (`"patches"`, default 2000, counts the
-organic triangles left), pairs of triangles become one quintic patch
-through points of the surface, and each exact region becomes one face
+organic triangles to start from), pairs of triangles become one cubic
+patch through points of the surface, and each exact region becomes one face
 bounded by its seams (one whose seams will not make a valid face, such as
 a seam that doubles back, is patched instead and reported as
 `exactDemoted`). A result that is not a valid solid within 0.2% of
 the mesh's volume falls back to facets, with a warning in `decimated`.
-The report's `decimated[0].deviation` is the distance (mm) from the
-patches to the mesh. Measured (re-read from the file):
+Then the layout is refined where it misses: each patch is sampled on a
+9 x 9 grid and each edge curve at 12 points against the mesh, and the
+edges of patches more than 0.07 mm off are split (the one bending most
+for a bad patch, every edge that misses), up to 8 rounds, so tight bends
+get small patches and flat sweeps stay big (`refinedEdges`). Points are
+written to 5 decimals and shared points written once, which with cubic
+patches keeps the file well under the faceted one. The report's
+`decimated[0].deviation` is the distance (mm) from the patches to the
+mesh; the mesh's own flat facets sag off big bores by more than that
+(0.22 mm on the arm link), so the bores and planes, exact, are left out of
+it. Measured (re-read from the file):
 
 | part | STEP faces | deviation p99 / max | volume vs STL | size (facets) | time |
 | --- | --- | --- | --- | --- | --- |
-| GRIP turret | 2065 patches, 24 cylinders, 19 planes | 0.048 / 0.5 mm | -0.0005% | 12.2 MB (14.4 MB) | 25 s build, 3 min with the check |
-| arm link field graph (solid) | 2074 patches, 8 cylinders, 6 planes | 0.031 / 0.26 mm | -0.009% | 11.7 MB (12.7 MB) | 20 s build, 1 min with the check |
+| GRIP turret | 3624 patches, 24 cylinders, 20 planes | 0.046 / 0.081 mm | -0.01% | 6.8 MB (14.4 MB) | 3.4 min |
+| arm link field graph (solid) | 2351 patches, 10 cylinders, 6 planes | 0.033 / 0.077 mm | -0.009% | 4.2 MB (12.7 MB) | 85 s |
 
 Needs `embreex` (in the `step` extra) for fast ray casts: seconds
 instead of minutes on the turret. Lattices are refused as for facets.
