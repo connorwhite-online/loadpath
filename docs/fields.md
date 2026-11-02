@@ -458,6 +458,71 @@ the meshed part verified resolved reads 13.5): the gyroid's quartic stress
 surface reads combined and hydrostatic stress states the scalar factor
 missed.
 
+**Stretched cells.** A lattice with `aspect` (say a tall BCC, [1, 1, 1.5],
+whose struts rise above 45 degrees and print on FDM without support) is read
+from its own tensors: the unit cell is solved in its stretched box (box
+dimensions from the shortest side, orthorhombic symmetry), at six densities
+on first use, and cached on disk (`~/.cache/loadpath/lattice-tensors`, or
+`LOADPATH_CACHE`; about 3 minutes per cell and aspect on 4 cores). The
+density at a given strut or wall comes from the same solves. Before this a
+stretched cell was refused by the homogenized check. Against the resolved
+lattice, a 1 mm skinned 60 x 24 x 24 mm beam of tall BCC cells along the
+beam reads compliance 0.98-1.02x and wall stress 0.85-1.34x (the pull reads
+15% low; skinned cubic cells read 0.95-1.43x), `bench/results/lattice-aniso-aspect.json`.
+
+**Infill sizing on the same tensors.** `lattice_infill` sizes an STL's TPMS
+infill to a safety factor by fully stressed iteration on a homogenized grid.
+It now runs on the cell tensors as well (`LatticeOptions.anisotropic`, on by
+default; LOADPATH_LATTICE_ANISO=0 off): each cell's stiffness is its 6x6
+tensor, and its density is the least of 28 candidates whose wall stress
+surface stays under the allowable with the cell's macro stress held. On the
+SLS cantilever block in the tests (target SF 1.2, verified resolved after
+meshing), gyroid infill comes out 3% heavier and verifies at SF 1.59 against
+1.33 with the scalar fits; Schwarz-P comes out the same mass, verifying at
+1.42 either way, with the sizing's own prediction landing nearer the target
+(1.18 against 1.43). TPMS sheets are close to isotropic, so the tensors buy
+consistency with the part check here, not mass.
+
+### Turning the cells to the load
+
+A lattice node's `orient` turns its cells (a rotation vector in degrees,
+or {"axis", "degrees"}) about the lattice's origin and leaves the fields that
+grade it where they are; a `transform` node would move those too.
+`loadpath lattice-orient graph.json --study study.json` (or
+`lattice_orient.optimize_orientation`) picks the orient:
+
+1. one homogenized analysis with the cells as they lie gives every lattice
+   cell's macro stress;
+2. a screen holds those stresses and scores about 1,500 rotations from the
+   tensors alone (a p-norm of the wall stress, and the complementary
+   energy): turns that put each of the cell's stiffest directions on the
+   dominant stress direction, spun about it, plus random ones, in a few
+   seconds;
+3. the best three that the cell's symmetry does not make the same get a
+   full analysis each, and Nelder-Mead on the rotation vector refines the
+   best (16 more analyses by default). It returns the graph with the orient
+   written in, for the best worst-case safety factor or, with
+   `--objective stiffness`, the least compliance.
+
+`bench/lattice_orient_mass.py`: lattice-only 48 x 12 x 12 mm bars with
+solid ends, 6 mm cells. The cells as they lie at a 2 mm wall set the
+target safety factor; the cells are turned at that wall, then the wall is
+bisected to the same safety factor. All homogenized on 8k cells:
+
+| bar | SF at 2 mm, as laid / turned | wall to the same SF | mass |
+|---|---|---|---|
+| BCCz, z struts across the bar; bend + pull | 0.68 / 1.17 | 1.56 mm | -23% |
+| simple cubic in twist | 0.048 / 0.087 | 1.64 mm | -15% |
+| octet in a pull | 7.5 / 10.0 | 1.84 mm | -7% |
+| simple cubic, rods along the bar; bend + pull (control) | 0.52 / 0.52 | 2.00 mm | 0% |
+
+The control comes back unturned. The orientation is one rotation for the
+whole lattice; a cell that follows the stress from place to place (a
+conformal or stress-aligned frame) is the next step. Each analysis takes
+10-25 s at 8k cells on the cloud box, so a run is 5-10 minutes. The
+turned readings rest on the tensors' validation above (turned cells
+included), not on a resolved solve of each optimum.
+
 Tuning the graded-lattice arm link (examples/fields/arm-link-lattice-tune.json:
 the skin's thinnest and thickest wall and the gyroid's thickest wall, same
 study and limits as the solid one above) does not beat the solid: the

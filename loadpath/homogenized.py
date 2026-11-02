@@ -27,7 +27,8 @@ Safety factor and deflection are read as verify_part reads them: peaks
 outside a contact band round supports and loads, the stress allowance
 included, deflection the mean displacement of each case's loaded nodes.
 Sheet lattices (lattice.SHEETS) and strut cells (lattice.STRUTS); a
-stretched `aspect` cell has no tables and is refused. Validation against
+stretched `aspect` cell is read from its own tensors, solved on first use
+and cached (lattice_tensors.aspect_table). Validation against
 the resolved lattice: bench/lattice_aniso_validate.py, docs/fields.md.
 """
 from __future__ import annotations
@@ -114,6 +115,13 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     from .verify import STRESS_ALLOWANCE
 
     t0 = time.time()
+    if anisotropic is None:
+        import os
+
+        anisotropic = os.environ.get("LOADPATH_LATTICE_ANISO", "1").strip() not in ("0", "false", "off")
+    from .lattice_tensors import aspect_density, has_tensors
+
+    aspect = None
     full = expand_groups(doc)
     name = node or full.get("output") or list(full["nodes"])[-1]
     full = {**full, "output": name}
@@ -138,8 +146,10 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
             raise ValueError(f"lattice {lat!r}: the homogenized fits are for sheet lattices, not network")
         lattice_fit(kind)                    # refuse a cell with no fit before any work
         if "aspect" in lspec and not np.allclose(lspec["aspect"], 1.0):
-            raise ValueError(f"lattice {lat!r}: the homogenized fits are for cubic cells, not a stretched "
-                             "'aspect' cell; check it resolved (verify_part on the mesh)")
+            aspect = tuple(float(x) for x in lspec["aspect"])
+            if not (anisotropic and has_tensors(kind, aspect)):
+                raise ValueError(f"lattice {lat!r}: a stretched 'aspect' cell is read from its own tensors "
+                                 "(anisotropic on); the scalar fits are for cubic cells")
         g_solid = _variant(g, full, base_dir, lat, _SOLID)
         g_empty = _variant(g, full, base_dir, lat, _EMPTY)
     b = g_solid.bounds(name)
@@ -178,6 +188,20 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     # the lattice's density where it is
     if lat is None:
         rho = np.ones(len(centers))
+    elif aspect is not None:
+        # a stretched cell's density at a wall is its own (aspect_table)
+        from .lattice import wall_for_density
+        from .struts import strut_diameter_for_density
+
+        cell = np.broadcast_to(_field(g, lrefs.get("cell", 8.0), centers), (len(centers),))
+        if "density" in lrefs:
+            dens = np.broadcast_to(_field(g, lrefs["density"], centers), (len(centers),))
+            dens = np.clip(dens, 0.02 if is_strut(kind) else 0.05, 0.95)
+            wall = (strut_diameter_for_density(kind, dens, cell) if is_strut(kind)
+                    else wall_for_density(kind, dens, cell))
+        else:
+            wall = np.broadcast_to(_field(g, lrefs.get("thickness", 1.0), centers), (len(centers),))
+        rho = aspect_density(kind, aspect, wall / cell)
     elif "density" in lrefs:
         rho = _field(g, lrefs["density"], centers)
     else:
@@ -214,18 +238,12 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     e_cell = mat.E * fill * (fs + fc * ec * knock)
     rhs = [bc.loads[ci] for ci in range(len(study.load_cases))]
     nu = study.elastic(mat)
-    if anisotropic is None:
-        import os
-
-        anisotropic = os.environ.get("LOADPATH_LATTICE_ANISO", "1").strip() not in ("0", "false", "off")
-    from .lattice_tensors import has_tensors
-
-    aniso = bool(anisotropic) and lat is not None and has_tensors(kind)
+    aniso = bool(anisotropic) and lat is not None and has_tensors(kind, aspect)
     if aniso:
         from .fem import elastic_c
         from .lattice_tensors import rotate_stiffness, stress_rotation, stress_surface, tensors_at
 
-        c_lat, p_lat, q_lat, f_lat = tensors_at(kind, rho)
+        c_lat, p_lat, q_lat, f_lat = tensors_at(kind, rho, aspect)
         rot = lattice_frames(g, lat, centers, pitch, start=name)
         # stiffness into the part's axes; stresses go into the cell's
         # (stress_rotation) for its wall-stress surface
@@ -260,12 +278,15 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     vol_cell = pitch ** 3
     volume = float((fill * (fs + fc * rho) * vol_cell).sum())
     cases, worst = [], np.inf
+    macro, bodies_mask = [], []
     for ci, case in enumerate(study.load_cases):
         u = us[ci]
         if aniso:
             strain = _center_strain(hm, u)
             se = von_mises(strain @ (mat.E * elastic_c(1.0, nu)).T)
             sig_lat = mat.E * np.einsum("eab,eb->ea", c_lat, strain)
+            if fields:
+                macro.append(sig_lat)           # global axes
             if t_rot is not None:
                 sig_lat = np.einsum("eab,eb->ea", t_rot, sig_lat)
             s_lat = np.empty(len(sig_lat))
@@ -281,6 +302,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         contact = bc.support_nodes | bc.case_load_nodes[ci]
         near = cKDTree(hm.node_xyz[contact]).query(centers, k=1, distance_upper_bound=band)[0] < np.inf
         body = ~near if (~near).any() else np.ones(len(s), bool)
+        if fields:
+            bodies_mask.append(body)
         i = int(np.argmax(np.where(body, s, -1.0)))
         peak = float(s[i])
         sf = mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else np.inf
@@ -303,7 +326,12 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
            "latticeExposed": float((fc * fill * (exposed > 0.5)).sum() / max((fc * fill).sum(), 1e-12))
            if lat is not None else None}
     if fields:
-        rep["fields"] = {"centers": centers, "rho": rho, "fs": fs, "fc": fc}
+        rep["fields"] = {"centers": centers, "rho": rho, "fs": fs, "fc": fc, "fill": fill,
+                         "knock": knock if lat is not None else None,
+                         # anisotropic: per case the lattice's macro stress (global
+                         # axes) and the cells the peak is read over; the cell frames
+                         "latticeStress": macro or None, "body": bodies_mask,
+                         "frames": rot if aniso else None, "aspect": aspect, "kind": kind}
     return rep
 
 
@@ -348,7 +376,8 @@ def lattice_frames(g, lat, centers, pitch, start=None):
     rotated = any("rotate" in g.nodes[t].spec for t in moves)
     frame = (s.get("frame") or {}).get("type", "cartesian")
     graded = isinstance(nd.refs.get("cell"), str) and s.get("grading", "warp") == "warp"
-    if not rotated and (canonical(s.get("type", "gyroid")) == "voronoi" or (frame == "cartesian" and not graded)):
+    if not rotated and (canonical(s.get("type", "gyroid")) == "voronoi"
+                        or (frame == "cartesian" and not graded and "orient" not in s)):
         return None
 
     def coords(P):

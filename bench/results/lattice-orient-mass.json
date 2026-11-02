@@ -1,0 +1,74 @@
+{
+ "bccz-bar": {
+  "targetSF": 0.6824558932549842,
+  "wallAsLaid": 2.0,
+  "massAsLaid": 3.865264114428951,
+  "orient": [
+   61.51,
+   -68.82,
+   -10.34
+  ],
+  "sfTurnedAtSameWall": 1.17087913727209,
+  "complianceAsLaid": 74.04579549595505,
+  "complianceTurned": 36.331689122390195,
+  "wallTurned": 1.5625,
+  "massTurned": 2.989371857045536,
+  "sfTurned": 0.6827561618173901,
+  "massSaved": 0.22660605626242392,
+  "seconds": 504.55786991119385
+ },
+ "cubic-twist": {
+  "targetSF": 0.04792806260736878,
+  "wallAsLaid": 2.0,
+  "massAsLaid": 2.38284526381918,
+  "orient": [
+   13.24,
+   -31.89,
+   -42.4
+  ],
+  "sfTurnedAtSameWall": 0.08691350069631938,
+  "complianceAsLaid": 7936.643631742568,
+  "complianceTurned": 3253.4801263435106,
+  "wallTurned": 1.6406250000000002,
+  "massTurned": 2.0211622767066415,
+  "sfTurned": 0.048207692377559924,
+  "massSaved": 0.15178618293192891,
+  "seconds": 392.8804793357849
+ },
+ "octet-pull": {
+  "targetSF": 7.503876980342121,
+  "wallAsLaid": 2.0,
+  "massAsLaid": 5.619010144141438,
+  "orient": [
+   -13.84,
+   33.41,
+   -43.54
+  ],
+  "sfTurnedAtSameWall": 9.985242898494995,
+  "complianceAsLaid": 4.566424000940011,
+  "complianceTurned": 4.041394746514534,
+  "wallTurned": 1.8406250000000002,
+  "massTurned": 5.217887389405125,
+  "sfTurned": 7.541965408071497,
+  "massSaved": 0.07138672905841537,
+  "seconds": 340.93249559402466
+ },
+ "cubic-bar": {
+  "targetSF": 0.517123062591063,
+  "wallAsLaid": 2.0,
+  "massAsLaid": 2.38284526381918,
+  "orient": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "sfTurnedAtSameWall": 0.517123062591063,
+  "complianceAsLaid": 94.66279194682005,
+  "complianceTurned": 94.66279194682005,
+  "wallTurned": 2.0,
+  "massTurned": 2.38284526381918,
+  "sfTurned": 0.517123062591063,
+  "massSaved": 0.0,
+  "seconds": 588.5804758071899
+ }
+}

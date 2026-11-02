@@ -400,6 +400,16 @@ def main(argv=None):
     tu.add_argument("--out", default="loadpath-tune")
     tu.add_argument("--evaluations", type=int, help="analyses to spend (overrides tune.evaluations)")
     tu.add_argument("--base-dir")
+    lo_ = sub.add_parser("lattice-orient", help="turn a field graph's lattice cells (their `orient`) to line "
+                                                "their stiff directions up with the load: best safety factor "
+                                                "or stiffness at the same mass")
+    lo_.add_argument("graph")
+    lo_.add_argument("--study", help="study JSON or example:<name> (default: the graph's tune.study)")
+    lo_.add_argument("--objective", choices=["safetyFactor", "stiffness"], default="safetyFactor")
+    lo_.add_argument("--cells", type=int, default=15000, help="homogenized analysis cells per evaluation")
+    lo_.add_argument("--refine", type=int, default=16, help="Nelder-Mead evaluations after the screen")
+    lo_.add_argument("--out", default="loadpath-lattice-orient")
+    lo_.add_argument("--base-dir")
     co = sub.add_parser("cores", help="tune each core option (hollow, ribbed, lattice...) of a part and pick the "
                                       "lightest that meets its loads and can be built by each process")
     co.add_argument("spec")
@@ -529,6 +539,8 @@ def main(argv=None):
         return _tune(args)
     if args.cmd == "cores":
         return _cores(args)
+    if args.cmd == "lattice-orient":
+        return _lattice_orient(args)
     if args.cmd == "orient":
         return _orient(args)
     if args.cmd == "calibrate":
@@ -934,6 +946,33 @@ def _tune(args):
                             "one: widen the ranges, ease the limits or give more evaluations")
     _write_report(args.out, summary)
     return 0 if summary["ok"] else 1
+
+
+def _lattice_orient(args):
+    from .fields import load_study
+    from .lattice_orient import optimize_orientation
+
+    doc = _load(args.graph)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
+    ref = args.study or (doc.get("tune") or {}).get("study")
+    if not ref:
+        print(json.dumps({"ok": False, "error": "give --study (or a tune.study in the graph)"}))
+        return 2
+    try:
+        study = load_study(ref, base, doc.get("material"))
+        out = optimize_orientation(doc, study, base_dir=base, cells=args.cells, objective=args.objective,
+                                   refine=args.refine, progress=_progress)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    os.makedirs(args.out, exist_ok=True)
+    path = os.path.join(args.out, "oriented.json")
+    with open(path, "w") as fh:
+        json.dump(out["doc"], fh, indent=1)
+    summary = {"ok": True, **{k: v for k, v in out.items() if k not in ("doc", "history")},
+               "oriented": path, "next": f"loadpath field {path} --base-dir {os.path.relpath(base)}"}
+    _write_report(args.out, summary)
+    return 0
 
 
 def _cores(args):

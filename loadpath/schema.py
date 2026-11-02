@@ -1061,6 +1061,13 @@ _FIELD_OPS = {
                     "aspect": {"type": "array", "items": _POS, "minItems": 3, "maxItems": 3,
                                "description": "stretch the cell per axis, e.g. [1, 1, 1.5]: a tall BCC cell's "
                                               "struts rise above 45 degrees and print on FDM unsupported"},
+                    "orient": {"description": "turn the cells (not the fields grading them) about the "
+                                              "origin: a rotation vector in degrees [rx, ry, rz], or "
+                                              "{axis, degrees}; `loadpath lattice-orient` picks one that "
+                                              "lines the stiff cell directions up with the load",
+                               "anyOf": [{"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+                                         {"type": "object", "additionalProperties": False,
+                                          "properties": {"axis": _AXIS, "degrees": {"type": "number"}}}]},
                     "seed": {"type": "integer", "description": "voronoi: random seed (default 0)"},
                     "offset": {**_FIELD, "description": "mm, moves the level surface (network form)"},
                     "origin": _VEC3,

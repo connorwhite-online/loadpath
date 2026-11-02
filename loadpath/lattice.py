@@ -434,6 +434,8 @@ class LatticeOptions:
     step: float | None = None       # field sampling, mm (default: wall_min / 2.5)
     max_points: int = 12_000_000
     exact_surface: bool = True      # mesh the TPMS itself (projected), not its grid samples
+    anisotropic: bool | None = None  # (homogenized sizing) full cell tensors (lattice_tensors); None: on
+                                     # where tables exist and LOADPATH_LATTICE_ANISO is not 0
 
     @classmethod
     def from_spec(cls, spec: dict, process=None, safety_factor: float | None = None) -> "LatticeOptions":
@@ -563,6 +565,16 @@ def _size(study: Study, o: LatticeOptions, lo, step, inside, solid_zone):
     rho[~lattice_cell] = 1.0
     stiff = Stiffness(hm, mat.nu, bc.fixed)
     solver = Solver(hm, rtol=1e-6, maxiter=3000)
+    aniso = _use_tensors(o)
+    if aniso:
+        from .fem import elastic_c
+        from .homogenized import _center_strain, solve_anisotropic
+        from .lattice_tensors import stress_surface, tensors_at
+
+        c_solid = elastic_c(1.0, mat.nu)
+        # candidate densities a cell can be sized to, and their tensors
+        cand = np.geomspace(rho_min, rho_max, 28)
+        cand_t = tensors_at(kind, cand)
     target = o.target_sf * 1.15             # verify's discretization allowance
     allow = mat.strength / target
     contact = bc.support_nodes.copy()
@@ -578,11 +590,40 @@ def _size(study: Study, o: LatticeOptions, lo, step, inside, solid_zone):
     analyzed = rho
     for it in range(o.iterations):
         e_cell = mat.E * (fs + fc * sheet_modulus(kind, rho))
+        fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, bc.fixed) if bc.gravity is not None else 0.0
+        rhs = [bc.loads[ci] + fg for ci in range(len(study.load_cases))]
+        if aniso:
+            c_lat = tensors_at(kind, rho)[0]
+            c_cell = mat.E * (fs[:, None, None] * c_solid + fc[:, None, None] * c_lat)
+            us = solve_anisotropic(hm, mat.nu, c_cell, bc, mat.E, rhs, proxy=e_cell)
+            need, wall_u, se = _tensor_need(kind, us, hm, mat, rho, rho_max, cand, cand_t, allow,
+                                            _center_strain, stress_surface, c_solid)
+            need = np.where(lattice_cell, need, 0.0)
+            grid[:] = 0.0
+            grid[tuple(ijk.T)] = need
+            need = ndimage.maximum_filter(grid, size=2 * grow + 1)[tuple(ijk.T)]
+            new = np.clip(np.maximum(need, 0.5 * np.minimum(rho, rho_max)), rho_min, None)
+            stay = (rho >= 1.0) & (need > 0.8 * rho_max)
+            new = np.where((new > rho_max) | stay, 1.0, np.minimum(new, rho_max))
+            new[~lattice_cell] = 1.0
+            wall_u = np.where(lattice_cell & (rho < 1.0), wall_u, 0.0)
+            solid_u = np.where(~lattice_cell | (rho >= 1.0), se, 0.0)
+            peak = float(np.max(np.where(near, 0.0, np.maximum(wall_u, solid_u))))
+            frac = float((fs + fc * rho).mean())
+            history.append({"iteration": it, "predictedSF": mat.strength / (1.15 * peak) if peak > 0 else np.inf,
+                            "solidCells": float((rho >= 1).mean()), "fill": frac,
+                            "compliance": float(sum(f @ u for f, u in zip(rhs, us)))})
+            short = history[-1]["predictedSF"] / o.target_sf
+            if it >= 2:
+                allow *= float(np.clip(short, 0.85, 1.15)) ** 0.5
+            if np.allclose(new, rho, atol=0.01) and abs(short - 1.0) < 0.05:
+                break
+            analyzed, rho = rho, new
+            continue
         k = stiff.assemble(e_cell)
         if bc.springs is not None:
             k = (k + mat.E * bc.springs).tocsr()
-        fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, bc.fixed) if bc.gravity is not None else 0.0
-        us = solver.solve_many(k, [bc.loads[ci] + fg for ci in range(len(study.load_cases))])
+        us = solver.solve_many(k, rhs)
         # stress at the solid's modulus for each cell's strain: what the
         # skin carries, and E*/E of it is the lattice's macro stress
         se = np.max([von_mises(stiff.stress(u, mat.E)) for u in us], axis=0)
@@ -629,6 +670,54 @@ def _size(study: Study, o: LatticeOptions, lo, step, inside, solid_zone):
             "predictedSF": history[-1]["predictedSF"],
             "solidCellFraction": float((rho[lattice_cell] >= 1).mean()) if lattice_cell.any() else 0.0}
     return rho_grid, se_grid, mask, r, info
+
+
+def _use_tensors(o) -> bool:
+    import os
+
+    from .lattice_tensors import has_tensors
+
+    on = o.anisotropic
+    if on is None:
+        on = os.environ.get("LOADPATH_LATTICE_ANISO", "1").strip() not in ("0", "false", "off")
+    return bool(on) and has_tensors(o.kind)
+
+
+def _tensor_need(kind, us, hm, mat, rho, rho_max, cand, cand_t, allow, center_strain, stress_surface, c_solid):
+    """Fully-stressed sizing on the cell tensors: each cell's macro stress
+    (its lattice tensor at the density it was analyzed at, a solid cell as
+    the densest lattice) held while the density changes, the least
+    candidate density whose wall stress surface stays under `allow` in every
+    load case (log-interpolated between candidates; above rho_max where none
+    does). Also the walls' stress at the analyzed density and the solid's
+    von Mises, both worst over the cases."""
+    from .fem import von_mises
+    from .lattice_tensors import tensors_at
+
+    r_eval = np.minimum(rho, rho_max)
+    c_now, p_now, q_now, f_now = tensors_at(kind, r_eval)
+    Ck, Pk, Qk, Fk = cand_t
+    worst = np.zeros((len(rho), len(cand)))
+    wall_now = np.zeros(len(rho))
+    se = np.zeros(len(rho))
+    for u in us:
+        eps = center_strain(hm, u)
+        se = np.maximum(se, von_mises(mat.E * eps @ c_solid.T))
+        sig = mat.E * np.einsum("eab,eb->ea", c_now, eps)
+        wall_now = np.maximum(wall_now, stress_surface(sig, p_now, q_now, f_now))
+        for j in range(len(cand)):
+            worst[:, j] = np.maximum(worst[:, j], stress_surface(sig, Pk[j], Qk[j], Fk[j]))
+    ok = worst <= allow
+    first = np.where(ok.any(axis=1), ok.argmax(axis=1), len(cand))
+    need = np.full(len(rho), 1.5 * rho_max)
+    at = first < len(cand)
+    need[at] = cand[first[at]]
+    mid = at & (first > 0)
+    j = first[mid]
+    lw0, lw1 = np.log(worst[mid, j - 1]), np.log(worst[mid, j])
+    t = np.clip((lw0 - np.log(allow)) / np.maximum(lw0 - lw1, 1e-12), 0.0, 1.0)
+    need[mid] = np.exp(np.log(cand[j - 1]) + t * (np.log(cand[j]) - np.log(cand[j - 1])))
+    return need, wall_now, se
 
 
 def _to_fine(coarse, mask, r, dims):

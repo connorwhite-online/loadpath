@@ -40,13 +40,15 @@ from loadpath.mg import GridElasticity  # noqa: E402
 from loadpath.spec import study_from_dict  # noqa: E402
 
 
-def bar(kind, thickness, rotate=None, cell=6.0, length=48.0, side=12.0, end=4.0, blend=0.0, skin=0.0):
+def bar(kind, thickness, rotate=None, cell=6.0, length=48.0, side=12.0, end=4.0, blend=0.0, skin=0.0, aspect=None):
     """A cantilever of lattice (in a `skin` mm shell if given): solid end
     blocks, the lattice between."""
     h = side / 2
     lat = {"op": "lattice", "type": kind, "cell": cell, "thickness": thickness, "origin": [0, -h, -h]}
     if blend:
         lat["blend"] = blend
+    if aspect:
+        lat["aspect"] = list(aspect)
     nodes = {"lat": lat}
     core = "lat"
     if rotate:
@@ -98,6 +100,10 @@ CASES = {
     "octet-skin-45z": lambda: bar("octet", 1.1, ("z", 45), length=60, side=24, skin=1.0),
     "cubic-skin-45z": lambda: bar("cubic", 1.3, ("z", 45), length=60, side=24, skin=1.0),
     "bccz-skin-90y": lambda: bar("bccz", 1.1, ("y", 90), length=60, side=24, skin=1.0),
+    # stretched cells (aspect): tall BCC, its long axis along the beam and across it
+    "bcc-tall-skin-90y": lambda: bar("bcc", 1.1, ("y", 90), length=60, side=24, skin=1.0, aspect=(1, 1, 1.5)),
+    "bcc-tall-skin": lambda: bar("bcc", 1.1, length=60, side=24, skin=1.0, aspect=(1, 1, 1.5)),
+    "octet-flat-skin-45z": lambda: bar("octet", 1.1, ("z", 45), length=60, side=24, skin=1.0, aspect=(1.4, 1, 1)),
 }
 
 
@@ -248,7 +254,8 @@ def main():
         doc, sd = CASES[name]()
         st = study_from_dict(sd)
         row = {}
-        for model in ("anisotropic", "isotropic"):
+        stretched = bool(doc["nodes"]["lat"].get("aspect"))
+        for model in ("anisotropic",) if stretched else ("anisotropic", "isotropic"):
             r = homogenized_check(copy.deepcopy(doc), st, cells=a.cells, anisotropic=model == "anisotropic",
                                   contact_band=float(doc["nodes"]["lat"]["cell"]), free_surface=a.knockdown)
             row[model] = {"mass": r["mass"], "seconds": r["seconds"], "cells": r["analysisCells"],
@@ -269,11 +276,13 @@ def main():
                 row["ccx"] = ccx_check(res, td)
         results[name] = row
         for ci, c in enumerate(row["resolved"]["cases"]):
-            ani, iso = row["anisotropic"]["cases"][ci], row["isotropic"]["cases"][ci]
+            ani = row["anisotropic"]["cases"][ci]
+            iso = row["isotropic"]["cases"][ci] if "isotropic" in row else None
             line = (f"{name:16s} {c['name']:6s} compliance res {c['compliance']:.4g} "
-                    f"aniso x{ani['compliance'] / c['compliance']:.2f} iso x{iso['compliance'] / c['compliance']:.2f}"
-                    f" | cell peak res {c['cellPeak']:.3g} aniso x{ani['peakStress'] / c['cellPeak']:.2f} "
-                    f"iso x{iso['peakStress'] / c['cellPeak']:.2f}")
+                    f"aniso x{ani['compliance'] / c['compliance']:.2f}"
+                    + (f" iso x{iso['compliance'] / c['compliance']:.2f}" if iso else "")
+                    + f" | cell peak res {c['cellPeak']:.3g} aniso x{ani['peakStress'] / c['cellPeak']:.2f}"
+                    + (f" iso x{iso['peakStress'] / c['cellPeak']:.2f}" if iso else ""))
             if "ccx" in row:
                 line += f" | ccx/res compliance {row['ccx'][ci]['compliance'] / c['compliance']:.3f}"
             print(line, flush=True)

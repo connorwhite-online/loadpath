@@ -167,3 +167,60 @@ def test_matrix_free_anisotropic_solve_matches_the_assembled_one(monkeypatch):
     for x, y in zip(a["cases"], m["cases"]):
         assert y["compliance"] == pytest.approx(x["compliance"], rel=1e-4)
         assert y["peakStress"] == pytest.approx(x["peakStress"], rel=1e-3)
+
+
+def test_orient_turns_the_cells_and_not_their_fields():
+    """`orient` on a lattice node: the field at P is the unturned lattice's
+    at R^T P, for strut and TPMS cells, the axis/degrees form included; the
+    homogenized check reads the turned frame (a cubic cell turned 45 degrees
+    by orient reads as turned by a transform node)."""
+    from scipy.spatial.transform import Rotation
+
+    from loadpath.fields import FieldGraph
+    from loadpath.homogenized import homogenized_check
+    from loadpath.spec import study_from_dict
+
+    P = np.random.default_rng(0).uniform(0, 12, (40, 3))
+    R = Rotation.from_rotvec(np.radians([10.0, -20.0, 30.0])).as_matrix()
+    for kind in ("octet", "gyroid"):
+        plain = FieldGraph({"nodes": {"lat": {"op": "lattice", "type": kind, "cell": 6.0, "thickness": 1.0}},
+                            "output": "lat"})
+        turned = FieldGraph({"nodes": {"lat": {"op": "lattice", "type": kind, "cell": 6.0, "thickness": 1.0,
+                                               "orient": [10.0, -20.0, 30.0]}}, "output": "lat"})
+        assert np.allclose(turned.evaluate(P), plain.evaluate(P @ R), atol=1e-9)
+    ax = FieldGraph({"nodes": {"lat": {"op": "lattice", "type": "octet", "cell": 6.0, "thickness": 1.0,
+                                       "orient": {"axis": "z", "degrees": 30}}}, "output": "lat"})
+    vec = FieldGraph({"nodes": {"lat": {"op": "lattice", "type": "octet", "cell": 6.0, "thickness": 1.0,
+                                        "orient": [0, 0, 30]}}, "output": "lat"})
+    assert np.allclose(ax.evaluate(P), vec.evaluate(P))
+    st = study_from_dict(_STUDY)
+    by_node = homogenized_check(_bar("cubic", 1.3, ("z", 45)), st, cells=6000)
+    doc = _bar("cubic", 1.3)
+    doc["nodes"]["lat"]["orient"] = [0, 0, 45]
+    by_orient = homogenized_check(doc, st, cells=6000)
+    for a, b in zip(by_node["cases"], by_orient["cases"]):
+        assert b["compliance"] == pytest.approx(a["compliance"], rel=0.05)
+
+
+def test_orientation_screen_finds_the_stiff_axis():
+    """A BCCz bar with its stiff z struts across the bar: the screen (macro
+    stresses held) ranks the turn that lays z along the bar far above the
+    cell as it lies; the full optimizer, a few analyses only, turns it and
+    the bar gets several times stiffer and stronger at the same wall."""
+    from loadpath.lattice_orient import optimize_orientation
+    from loadpath.spec import study_from_dict
+
+    st = study_from_dict(_STUDY)
+    r = optimize_orientation(_bar("bccz", 1.1), st, cells=5000, full_checks=2, refine=0)
+    assert abs(r["dominantStress"][0]) > 0.95                  # the bar's axis
+    assert r["best"]["safetyFactor"] > 1.8 * r["unrotated"]["safetyFactor"]
+    assert r["best"]["compliance"] < 0.4 * r["unrotated"]["compliance"]
+    R = np.asarray(_rotation(r["orient"]))
+    assert abs(R[0, 2]) > 0.85                                  # the cell's z on the bar's x
+    assert r["doc"]["nodes"]["lat"]["orient"] == [round(x, 3) for x in r["orient"]]
+
+
+def _rotation(deg):
+    from scipy.spatial.transform import Rotation
+
+    return Rotation.from_rotvec(np.radians(deg)).as_matrix()

@@ -393,6 +393,41 @@ def _frame_points(P, frame):
     return np.stack([r, th, h], axis=1), float(frame.get("radius", 0) or 0)
 
 
+def lattice_orientation(nd):
+    """A lattice node's `orient` as a rotation matrix (columns: the cell's
+    axes in global components), or None. `orient` is a rotation vector in
+    degrees ([rx, ry, rz], its direction the axis, its length the angle) or
+    {"axis": [x, y, z] or "x"/"y"/"z", "degrees": a}. It turns the cells
+    about the lattice's origin and leaves its fields (thickness, density,
+    cell) where they are, unlike a transform node, which moves those too."""
+    o = nd.spec.get("orient")
+    if o is None:
+        return None
+    from scipy.spatial.transform import Rotation
+
+    if isinstance(o, dict):
+        ax = o.get("axis", "z")
+        ax = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[ax] if isinstance(ax, str) else ax
+        ax = np.asarray(ax, float)
+        n = np.linalg.norm(ax)
+        if n == 0:
+            raise ValueError(f"node {nd.name!r}: orient axis is zero")
+        rv = ax / n * np.radians(float(o.get("degrees", 0.0)))
+    else:
+        rv = np.radians(np.asarray(o, float))
+        if rv.shape != (3,):
+            raise ValueError(f"node {nd.name!r}: orient is a rotation vector [rx, ry, rz] in degrees")
+    frame = (nd.spec.get("frame") or {}).get("type", "cartesian")
+    if frame != "cartesian":
+        raise ValueError(f"node {nd.name!r}: orient turns a cartesian lattice; a {frame} frame sets its own axes")
+    if isinstance(nd.refs.get("cell"), str) and nd.spec.get("grading", "warp") == "warp":
+        raise ValueError(f"node {nd.name!r}: orient with a graded (warp) cell is not supported; "
+                         "grade the thickness or density instead")
+    if not np.any(rv):
+        return None
+    return Rotation.from_rotvec(rv).as_matrix()
+
+
 def _tpms_distance(kind, P, cell, frame=None):
     """Signed mm distance to the TPMS midsurface with period `cell` (a scalar
     or a per-point array). This is the `grading: "blend"` path for a varying
@@ -1325,6 +1360,9 @@ class FieldGraph:
         Q = P
         if "origin" in s:
             Q = P - np.asarray(s["origin"], float)
+        R = lattice_orientation(nd)
+        if R is not None:
+            Q = Q @ R
         if isinstance(r.get("cell"), str) and s.get("grading", "warp") == "warp":
             from .lattice import tpms
 
@@ -1363,6 +1401,9 @@ class FieldGraph:
         cell = self._val(r["cell"], P, memo) if "cell" in r else 8.0
         cell = np.broadcast_to(np.asarray(cell, float), (len(P),))
         Q = P - np.asarray(s["origin"], float) if "origin" in s else P
+        R = lattice_orientation(nd)
+        if R is not None:
+            Q = Q @ R                    # the cell's axes are R's columns
         frame = s.get("frame") or {}
         ftype = frame.get("type", "cartesian")
         aspect = np.asarray(s.get("aspect", (1, 1, 1)), float)
@@ -1399,8 +1440,8 @@ class FieldGraph:
             raise ValueError(f"node {nd.name!r}: a strut lattice's form is 'beam' (got {form!r})")
         blend = np.asarray(self._val(r["blend"], P, memo), float) if "blend" in r else 0.0
         if kind == "voronoi":
-            if (s.get("frame") or {}).get("type", "cartesian") != "cartesian" or "aspect" in s:
-                raise ValueError(f"node {nd.name!r}: a voronoi foam is cartesian (no frame or aspect)")
+            if (s.get("frame") or {}).get("type", "cartesian") != "cartesian" or "aspect" in s or "orient" in s:
+                raise ValueError(f"node {nd.name!r}: a voronoi foam is cartesian (no frame, aspect or orient)")
             vor = self._resource(nd, lambda: self._voronoi(nd))
             Q = P - np.asarray(s["origin"], float) if "origin" in s else P
             cell = np.broadcast_to(np.asarray(self._val(r["cell"], P, memo) if "cell" in r else 8.0, float),

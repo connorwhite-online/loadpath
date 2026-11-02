@@ -120,6 +120,8 @@ def _group(kind_sym: str) -> np.ndarray:
                 continue
             if kind_sym == "tetragonal" and abs(r[2, 2]) != 1:
                 continue
+            if kind_sym == "orthorhombic" and not np.allclose(np.abs(r), np.eye(3)):
+                continue
             out.append(r)
     return np.array(out)
 
@@ -169,14 +171,16 @@ def _directions(seed=0, n_random=600):
 
 
 def unit_cell_tensors(kind: str, wall_over_cell: float, n: int = 40, nu: float = 0.35, blend: float = 0.0,
-                      percentile: float = 99.5, _keep: bool = False) -> dict:
+                      percentile: float = 99.5, aspect=None, _keep: bool = False) -> dict:
     """Full anisotropic homogenization of one unit cell (module docstring)
-    on an n^3 voxel grid. `wall_over_cell`: sheet wall or strut diameter
-    over the cell; `blend` the strut node fillet over the cell. Returns rho,
-    C (6x6 over E), P (6x6, peak wall stress^2 per macro stress^2), the fit
-    (worst and mean of fitted over sampled peak, after the conservative
-    scaling), the sampled directions' peaks, and the scalar readings
-    (E100, E111, G) for comparison with the isotropic tables."""
+    on a periodic voxel grid, n voxels along its shortest side. `wall_over_cell`:
+    sheet wall or strut diameter over the cell; `blend` the strut node
+    fillet over the cell; `aspect` (per axis) a stretched cell, its box
+    `aspect` cells along each axis, as the field graph's `aspect` key lays
+    it out. Returns rho, C (6x6 over E), the wall-stress surface (P, Q4,
+    floor), held-out checks of it, the sampled directions' peaks, and the
+    scalar readings (E100, E111, G) for comparison with the isotropic
+    tables."""
     import pyamg
     import scipy.sparse as sp
     from scipy.sparse.linalg import cg
@@ -185,17 +189,23 @@ def unit_cell_tensors(kind: str, wall_over_cell: float, n: int = 40, nu: float =
     from .lattice import tpms
     from .struts import is_strut, unit_cell_distance
 
-    h = 1.0 / n
-    c = (np.arange(n) + 0.5) * h
-    g = np.stack(np.meshgrid(c, c, c, indexing="ij"), -1).reshape(-1, 3)
+    a = np.ones(3) if aspect is None else np.asarray(aspect, float)
+    stretched = not np.allclose(a, 1.0)
+    h = float(a.min()) / n
+    dims = np.maximum(np.round(a / h).astype(int), 1)
+    a = dims * h                                       # the box the grid holds exactly
+    axes = [(np.arange(d) + 0.5) * h for d in dims]
+    g = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+    U = g / a
     if is_strut(kind):
-        solid = unit_cell_distance(kind, g, blend) < 0.5 * wall_over_cell
+        solid = unit_cell_distance(kind, U, blend, aspect=tuple(a) if stretched else None) < 0.5 * wall_over_cell
     else:
-        solid = np.abs(tpms(kind, g, 1.0)) < 0.5 * wall_over_cell
-    eijk = np.argwhere(solid.reshape(n, n, n))
+        solid = np.abs(tpms(kind, U, 1.0) * float(a.min())) < 0.5 * wall_over_cell
+    eijk = np.argwhere(solid.reshape(tuple(dims)))
     ne = len(eijk)
-    corner = (eijk[:, None, :] + CORNERS[None]) % n
-    used, inv = np.unique((corner[..., 0] * n + corner[..., 1]) * n + corner[..., 2], return_inverse=True)
+    corner = (eijk[:, None, :] + CORNERS[None]) % dims
+    used, inv = np.unique((corner[..., 0] * dims[1] + corner[..., 1]) * dims[2] + corner[..., 2],
+                          return_inverse=True)
     enode = inv.reshape(ne, 8)
     nn = len(used)
     edof = (3 * enode[:, :, None] + np.arange(3)).reshape(ne, 24)
@@ -209,13 +219,13 @@ def unit_cell_tensors(kind: str, wall_over_cell: float, n: int = 40, nu: float =
     xc = (eijk[:, None, :] + CORNERS[None]) * h
     c0 = elastic_c(1.0, nu)
     bc = _b_matrix(0, 0, 0) / h
-    bcorner = [hex8_b(a, b, cc, nu) / h for (a, b, cc) in 2.0 * CORNERS - 1.0]
+    bcorner = [hex8_b(x, y, z, nu) / h for (x, y, z) in 2.0 * CORNERS - 1.0]
     count = np.bincount(enode.ravel(), minlength=nn)[:, None]
     C = np.zeros((6, 6))
     L = np.zeros((nn, 6, 6), np.float32)            # nodal stress per unit macro strain
-    for a in range(6):
+    for comp in range(6):
         e = np.zeros(6)
-        e[a] = 1.0
+        e[comp] = 1.0
         eps = np.array([[e[0], e[3] / 2, e[5] / 2], [e[3] / 2, e[1], e[4] / 2], [e[5] / 2, e[4] / 2, e[2]]])
         u0 = (xc @ eps.T).reshape(ne, 24)
         f = np.zeros(3 * nn)
@@ -226,12 +236,15 @@ def unit_cell_tensors(kind: str, wall_over_cell: float, n: int = 40, nu: float =
         u = np.zeros(3 * nn)
         u[free] = uf
         ue = u[edof] + u0
-        C[:, a] = ((ue @ bc.T) @ c0.T).sum(axis=0) / n ** 3
+        C[:, comp] = ((ue @ bc.T) @ c0.T).sum(axis=0) * h ** 3 / float(np.prod(a))
         acc = np.zeros((nn, 6))
         for kk in range(8):
             np.add.at(acc, enode[:, kk], (ue @ bcorner[kk].T) @ c0.T)
-        L[:, :, a] = acc / count
+        L[:, :, comp] = acc / count
     sym = symmetry_of(kind)
+    if stretched and sym != "none":
+        # a cell stretched along its axes keeps only the half turns about them
+        sym = "orthorhombic"
     C = _symmetrize(C, sym, rotate_stiffness)
     S = np.linalg.inv(C)
 
@@ -288,6 +301,7 @@ def unit_cell_tensors(kind: str, wall_over_cell: float, n: int = 40, nu: float =
     e100 = 1.0 / S[0, 0]
     d111 = np.full(3, 1 / np.sqrt(3.0))
     return {"kind": kind, "d": float(wall_over_cell), "n": n, "nu": nu, "rho": float(solid.mean()),
+            "aspect": a.tolist() if stretched else None,
             "C": C, "P": P, "Q4": Q4, "floor": floor, "symmetry": sym,
             "holdout": {"min": float(ratio.min()), "mean": float(ratio.mean()), "max": float(ratio.max())},
             "holdoutQuadratic": {"min": float(ratio_quad.min()), "mean": float(ratio_quad.mean()),
@@ -388,13 +402,84 @@ def _key(kind: str) -> str:
     return canonical(kind) if is_strut(kind) else kind
 
 
-def has_tensors(kind: str) -> bool:
+def _aspect_key(aspect):
+    if aspect is None:
+        return None
+    a = tuple(round(float(x), 3) for x in aspect)
+    return None if np.allclose(a, 1.0) else a
+
+
+def has_tensors(kind: str, aspect=None) -> bool:
+    """Tables exist (cubic cells), or can be built (a stretched strut or
+    sheet cell; not a Voronoi foam)."""
+    from .struts import canonical
+
+    if _aspect_key(aspect) is not None:
+        return canonical(kind) != "voronoi" and _key(kind) in _tables().get("kinds", {})
     return _key(kind) in _tables().get("kinds", {})
 
 
+# stretched cells: a short ladder solved on first use (about a minute and a
+# half a cell type and aspect on 4 cores), cached on disk
+ASPECT_RHO = (0.06, 0.12, 0.22, 0.36, 0.55, 0.8)
+ASPECT_N = 32
+
+
+def _cache_dir() -> Path:
+    import os
+
+    return Path(os.environ.get("LOADPATH_CACHE") or Path.home() / ".cache" / "loadpath") / "lattice-tensors"
+
+
 @lru_cache(maxsize=None)
-def _rows(kind: str):
-    t = _tables()["kinds"][_key(kind)]
+def aspect_table(kind: str, aspect: tuple) -> list:
+    """Rows (rho, d, C, P, Q4, floor) of a stretched cell, from the disk
+    cache or solved now (unit_cell_tensors with `aspect`). `d` is the wall
+    or strut diameter over the cell: a stretched cell's density at a given
+    wall is not the cubic cell's, so it is read from these rows too."""
+    from .lattice import SHEETS, wall_for_density
+    from .struts import strut_diameter_for_density
+
+    k = _key(kind)
+    path = _cache_dir() / f"{k}-{aspect[0]:g}x{aspect[1]:g}x{aspect[2]:g}.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError):
+            pass
+    rows = []
+    for rho in ASPECT_RHO:
+        d = float(wall_for_density(k, rho, 1.0)) if k in SHEETS else float(strut_diameter_for_density(k, rho, 1.0))
+        r = unit_cell_tensors(k, d, n=ASPECT_N, aspect=aspect)
+        rows.append({"rho": r["rho"], "d": d, "C": r["C"].tolist(), "P": r["P"].tolist(),
+                     "Q4": r["Q4"].tolist(), "floor": r["floor"], "holdout": r["holdout"]})
+    rows.sort(key=lambda x: x["rho"])
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(rows))
+    except OSError:
+        pass
+    return rows
+
+
+def aspect_density(kind: str, aspect, d_over_cell):
+    """Relative density of a stretched cell at wall (or strut diameter)
+    over cell `d_over_cell`, from its rows (log-log, to the solid)."""
+    rows = aspect_table(kind, _aspect_key(aspect))
+    d = np.array([r["d"] for r in rows])
+    rho = np.array([r["rho"] for r in rows])
+    x = np.log(np.clip(np.asarray(d_over_cell, float), 1e-4, None))
+    lx, ly = np.log(d), np.log(rho)
+    slope = (ly[1] - ly[0]) / (lx[1] - lx[0])
+    hi = (ly[-1] - ly[-2]) / (lx[-1] - lx[-2])
+    out = np.where(x < lx[0], ly[0] + slope * (x - lx[0]),
+                   np.where(x > lx[-1], ly[-1] + hi * (x - lx[-1]), np.interp(x, lx, ly)))
+    return np.clip(np.exp(out), 1e-3, 1.0)
+
+
+@lru_cache(maxsize=None)
+def _rows(kind: str, aspect=None):
+    t = aspect_table(kind, aspect) if aspect is not None else _tables()["kinds"][_key(kind)]
     nu = float(_tables().get("nu", 0.35))
     from .fem import elastic_c
 
@@ -430,16 +515,17 @@ def _interp(rho, xs, M, norm):
     return lead(norm).reshape((-1,) + (1,) * (M.ndim - 1)) * (shape[j] * (1 - tt) + shape[j + 1] * tt)
 
 
-def tensors_at(kind: str, rho):
+def tensors_at(kind: str, rho, aspect=None):
     """(C, P, Q4, floor) of a cell type at relative densities rho, in the
     cell's own axes: C (k, 6, 6) over the solid's E (engineering shears);
     the wall-stress surface (stress_surface) as its quadratic form P (k, 6,
     6), quartic Q4 (k, 126) and floor (k,), for the macro stress the lattice
-    carries (Voigt, tensor shears)."""
-    if not has_tensors(kind):
+    carries (Voigt, tensor shears). `aspect`: a stretched cell (its own
+    tables, aspect_table)."""
+    if not has_tensors(kind, aspect):
         raise ValueError(f"no anisotropic tensors for lattice {kind!r}; run bench/lattice_tensors.py")
     rho = np.atleast_1d(np.asarray(rho, float))
-    xs, C, P, Q, F = _rows(kind)
+    xs, C, P, Q, F = _rows(kind, _aspect_key(aspect))
     _, j, t = _interp_at(rho, xs)
     return (_interp(rho, xs, C, C[:, 0, 0]), _interp(rho, xs, P, P[:, 0, 0]),
             _interp(rho, xs, Q, P[:, 0, 0] ** 2), F[j] * (1 - t) + F[j + 1] * t)
