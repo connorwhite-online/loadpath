@@ -239,7 +239,8 @@ def optimize_orientation(doc, study, node=None, base_dir=None, cells: int = 15_0
         return {"orient": [float(x) for x in rv], "mass": rep["mass"], "safetyFactor": rep["safetyFactor"],
                 "compliance": float(sum(c["compliance"] for c in rep["cases"])),
                 "cases": [{k: c[k] for k in ("name", "safetyFactor", "deflection", "compliance")}
-                          for c in rep["cases"]]}
+                          for c in rep["cases"]],
+                "latticeTurnedExposed": rep.get("latticeTurnedExposed"), "warnings": rep.get("warnings", [])}
 
     cache = {}
 
@@ -395,7 +396,8 @@ def optimize_zones(doc, study, zones: int = 3, node=None, base_dir=None, cells: 
     def check(at, rots, fields=False):
         rep = homogenized_check(doc_for(at, rots), study, node=name, base_dir=base_dir, cells=cells, fields=fields)
         row = {"zones": doc_for(at, rots)["nodes"][lat]["orient"]["zones"], "mass": rep["mass"],
-               "safetyFactor": rep["safetyFactor"], "compliance": float(sum(c["compliance"] for c in rep["cases"]))}
+               "safetyFactor": rep["safetyFactor"], "compliance": float(sum(c["compliance"] for c in rep["cases"])),
+               "latticeTurnedExposed": rep.get("latticeTurnedExposed"), "warnings": rep.get("warnings", [])}
         history.append(row)
         say({"stage": "lattice-zones", "safetyFactor": rep["safetyFactor"], "compliance": row["compliance"]})
         return score(rep), row, rep

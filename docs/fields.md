@@ -535,6 +535,15 @@ bisected to the same safety factor. All homogenized on 8k cells:
 | octet in a pull | 7.5 / 10.0 | 1.84 mm | -7% |
 | simple cubic, rods along the bar; bend + pull (control) | 0.52 / 0.52 | 2.00 mm | 0% |
 
+> **Caveat (skinless parts).** These bars have no skin, so the turned
+> cells are cut open on the bias at bare faces, where the homogenized check
+> reads them too stiff: a graded, zoned skinless beam (below) came out 3.5x
+> softer with a 4x higher peak at full resolution. Treat the skinless gains
+> in this table, the zones table and the graded table as unconfirmed. The
+> check now reports `latticeTurnedExposed` (the share of the lattice that is
+> turned and cut open at a face) and warns above 10%. With a skin over the
+> lattice the optimizer leaves the cells as laid (graded section below).
+
 The control comes back unturned. The orientation is one rotation for the
 whole lattice; a cell that follows the stress from place to place (a
 conformal or stress-aligned frame) is the next step. Each analysis takes
@@ -567,10 +576,74 @@ Most of the win is in turning the cells at all; zones add little on top
 while the wall is one thickness everywhere. The safety factor is set by the
 one most stressed spot, so turning cells elsewhere cannot raise it, and
 stiffness gains only where the stress direction changes across the part (the
-deep beam's shear-carrying middle against its axial top and bottom). Zones
-should pay off once the wall is graded too (fully stressed sizing), where
-every cell's direction sets how much material it needs; that is not built
-yet for field graphs.
+deep beam's shear-carrying middle against its axial top and bottom).
+
+Where zones meet, both zones' lattices are present, each worn away (by up
+to half a cell) as its share falls, so the struts on either side stay
+joined. (Averaging the two fields, the first version, left gaps in the seam
+that cut a strut lattice in two.)
+
+### Walls graded to the stress
+
+`loadpath lattice-grade graph.json --study study.json [--orient uniform|N]`
+(`lattice_grade.grade_lattice`) replaces the lattice's constant `thickness`
+with a `density` grid sized by fully stressed iteration on the homogenized
+check: each cell takes the least of 28 candidate densities whose wall stress
+surface, under the cell's macro stress held and in its own axes, stays under
+the allowable in every load case (the skin-junction factor included). The
+requirement spreads over a quarter cell, a pass at most halves or doubles a
+cell, and the allowable follows how far each analysis lands from the target.
+The density goes to an .npz the graded graph's `grid` node reads, so `loadpath
+field` meshes it as sized.
+
+With `--orient` the cells are turned too, chosen for the least material the
+sized lattice needs rather than for the peak. Holding each cell's stress, a
+candidate rotation's need per cell is a few matrix products (the quartic
+features of the turned stress against every candidate density's surface),
+so about 850 rotations per zone are scored by mass. Zones start from the
+best single direction; sizing and turning alternate.
+
+`bench/lattice_grade_mass.py`, same parts as above, each sized to the
+safety factor the uniform 2 mm wall gives (homogenized, 8k cells):
+
+| part | uniform wall, as laid | graded | graded + one direction | graded + 3 zones |
+|---|---|---|---|---|
+| BCCz L-bracket | 4.96 g | 2.57 g (-48%) | 2.06 g (-59%) | 2.06 g (-59%) |
+| simple cubic deep cantilever | 4.47 g | 3.72 g (-17%) | 3.70 g (-17%) | 3.49 g (-22%) |
+
+Those rows are skinless and, turned, not confirmed: at full resolution
+(0.2 mm voxels, bench/lattice_aniso_validate.py `resolved`) the graded
+3-zone deep beam weighed the same (3.55 g against 3.49 g) but was 3.5x
+softer (compliance 6602 against 1754-1879 homogenized) and its peak 4x
+higher (1162 against 259-289 MPa). Its middle zone, turned 45 degrees about
+x in a member two cells wide, is cut open on the bias at both faces, the
+regime the knockdown was not fitted on, and the optimizer chose it because
+the check read it stiff.
+
+With a 1 mm skin (`--skin 1.0`, the regime the tensors were validated in):
+
+| part | uniform wall, as laid | graded | graded + one direction | graded + 3 zones |
+|---|---|---|---|---|
+| BCCz L-bracket | 8.25 g | 6.18 g (-25%) | same, left unturned | same, left unturned |
+| simple cubic deep cantilever | 7.53 g | 6.75 g (-10%) | same, left unturned | same, left unturned |
+
+At full resolution the graded skinned deep beam bears the homogenized
+reading out: 6.48 g resolved against 6.75 g, compliance 76.0 against 71.5
+(8k cells) and 74.8 (30k), so 2-6% softer, and a peak of 12.5 MPa against
+18.8-22.0 homogenized, the check on the safe side.
+
+Grading pays in both regimes. With a skin, the skin carries the bending and
+turning the core buys nothing: the L-bracket's lattice drops to the
+thinnest wall everywhere, the deep beam's runs from the thinnest wall to
+the density cap (0.6) where the shear is, and the orientation search keeps
+the cells as laid. Without a skin, turning and zones read as large gains
+that the resolved check does not bear out. The rest of this paragraph is
+about the skinless homogenized rows: turning on top of grading pays on the L-bracket.
+Zones pay only where the stress direction really changes across the part
+(the deep beam); on the L-bracket one tilted direction serves both arms. A
+sizing run takes 15 s to 5 minutes. The sizing grid matters: the deep beam
+sized on 8k cells reads SF 0.161 there and 0.144 (-10%) on 30k cells, so
+size on the grid you will check on, or leave margin.
 
 Tuning the graded-lattice arm link (examples/fields/arm-link-lattice-tune.json:
 the skin's thinnest and thickest wall and the gyroid's thickest wall, same

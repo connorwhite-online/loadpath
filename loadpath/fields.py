@@ -1446,19 +1446,30 @@ class FieldGraph:
 
     def _lattice_zones(self, nd, P, memo):
         """A lattice whose cells turn from zone to zone (orient.zones): each
-        zone's lattice, turned by its own rotation, blended by the zones'
-        weights (orient_weights) where they meet."""
+        zone's lattice, turned by its own rotation; where zones meet (their
+        weights, orient_weights) both lattices are there, each worn away
+        as its share falls."""
         import copy as _copy
 
         zones = nd.spec["orient"]["zones"]
         w = orient_weights(nd, P)
-        out = np.zeros(len(P))
+        wmax = w.max(axis=1)
+        cell = nd.spec.get("cell", 8.0)
+        reach = 0.5 * float(cell if isinstance(cell, (int, float)) else 8.0)
+        out = np.full(len(P), np.inf)
         for i, z in enumerate(zones):
-            if not (w[:, i] > 1e-6).any():
+            share = w[:, i] / wmax
+            near = share > 0.05
+            if not near.any():
                 continue
             sub = _copy.copy(nd)
             sub.spec = {**nd.spec, "orient": list(z.get("rotate", (0.0, 0.0, 0.0)))}
-            out += w[:, i] * np.asarray(self._lattice(sub, P, memo), float)
+            # each zone's lattice, worn away (by up to half a cell) as its
+            # share falls: where two zones meet both are there (a union, so
+            # the struts on either side stay joined), away from it only one.
+            # Averaging the two fields instead left gaps in the seam
+            f = np.asarray(self._lattice(sub, P, memo), float)
+            out = np.minimum(out, np.where(near, f + reach * (1.0 - share), np.inf))
         return out
 
     def lattice_coords(self, nd, P, memo=None):

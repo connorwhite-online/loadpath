@@ -62,7 +62,7 @@ def _variant(graph, doc, base_dir, lattice, value):
     `result` node behind the lattice's wall field is not run again."""
     from .fields import FieldGraph
 
-    g = FieldGraph(doc, base_dir=base_dir)
+    g = FieldGraph(doc, base_dir=base_dir, sources=graph.sources)
     g._built, g.analyses = graph._built, graph.analyses
     nd = g.nodes[lattice]
     nd.op, nd.spec, nd.refs = "constant", {"op": "constant", "value": value}, {}
@@ -86,11 +86,21 @@ FREE_SURFACE_KNOCKDOWN = 0.5
 # both skin and lattice read this many times their stress
 SKIN_JUNCTION = 1.25
 
+# the contact band is measured to analysis cell centres, a resolved check's
+# to its nodes: a cell straddling the band's edge was left out whole, up to
+# half a cell more than the resolved check leaves out, and right there (where
+# a load spreads from the block it comes in through) the stress climbs. The
+# band shrinks by this many cells so straddling cells count: a tall-BCC
+# beam's pull read 0.88x of the resolved peak at the band's edge, 0.99x with
+# it; the other skinned beams move up 1-5%
+BAND_EDGE = 0.5
+
 
 def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000, samples: int = 3,
                       fields: bool = False, graph=None, solid_ok: bool = False,
                       contact_band: float | None = None, anisotropic: bool | None = None,
-                      free_surface: float | None = None, skin_junction: float | None = None) -> dict:
+                      free_surface: float | None = None, skin_junction: float | None = None,
+                      sources: dict | None = None) -> dict:
     """mass, safety factor (worst case) and deflection of the graph's part
     under `study` with its lattice homogenized (module docstring). Returns
     a verify_part-like dict: mass, volume, safetyFactor, cases (name,
@@ -111,7 +121,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     (lattice_tensors) instead of the scalar fits' worst direction. False
     gives the isotropic reading. The report says which (`latticeModel`).
     `skin_junction` (default SKIN_JUNCTION) scales the stress in cells
-    where the lattice meets a skin or solid."""
+    where the lattice meets a skin or solid. `sources`: in-memory fields
+    for the graph's `source` nodes (a sized density grid, lattice_grade)."""
     import time
 
     from scipy.spatial import cKDTree
@@ -135,7 +146,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     full = expand_groups(doc)
     name = node or full.get("output") or list(full["nodes"])[-1]
     full = {**full, "output": name}
-    g = graph or FieldGraph(full, base_dir=base_dir)
+    g = graph or FieldGraph(full, base_dir=base_dir, sources=sources)
     lats = lattice_nodes(g, name)
     if not lats and not solid_ok:
         raise ValueError(f"{name!r} has no lattice in it: analyze it as a solid (verify_part), "
@@ -283,7 +294,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     if contact_band is None:
         from .domain import choose_pitch
         contact_band = choose_pitch(study)
-    band = max(1.5 * pitch, float(contact_band))
+    band = max(1.5 * pitch, float(contact_band) - BAND_EDGE * pitch)
     wall_k = ec if lat is None else ec * sheet_stress_factor(kind, rho)
     vol_cell = pitch ** 3
     volume = float((fill * (fs + fc * rho) * vol_cell).sum())
@@ -339,6 +350,13 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
            # cut open by (no skin): homogenization reads it too stiff there
            "latticeExposed": float((fc * fill * (exposed > 0.5)).sum() / max((fc * fill).sum(), 1e-12))
            if lat is not None else None}
+    turned_exposed = None if lat is None else _turned_exposed(rot if aniso else None, fc * fill, exposed)
+    rep["latticeTurnedExposed"] = turned_exposed
+    if turned_exposed is not None and turned_exposed > TURNED_EXPOSED_WARN:
+        rep.setdefault("warnings", []).append(
+            f"{100 * turned_exposed:.0f}% of the lattice is turned cells cut open at a free face (no skin): "
+            "homogenization reads those too stiff (a skinless graded, zoned beam came out 3.5x softer and its "
+            "peak 4x higher at full resolution). Add a skin or confirm with a resolved check.")
     if fields:
         rep["fields"] = {"centers": centers, "rho": rho, "fs": fs, "fc": fc, "fill": fill,
                          "knock": knock if lat is not None else None,
@@ -374,6 +392,26 @@ def _center_strain(hm, u):
     from .fem import hex8_b_center
 
     return u[hm.edof] @ (hex8_b_center() / hm.pitch).T
+
+
+# share of the lattice (by volume) that is turned more than 5 degrees off
+# its laid axes AND within half a cell of a free face it is cut open by.
+# Above this the result carries a warning: the free-surface knockdown was
+# fitted on cells cut square, and turned cells cut on the bias at a bare
+# face read far too stiff (bench: skinless graded deep beam, resolved check)
+TURNED_EXPOSED_WARN = 0.1
+
+
+def _turned_exposed(rot, weight, exposed):
+    if rot is None:
+        return 0.0
+    R = np.asarray(rot, float)
+    if R.ndim == 2:
+        R = np.broadcast_to(R, (len(weight), 3, 3))
+    ang = np.degrees(np.arccos(np.clip((np.trace(R, axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)))
+    w = np.asarray(weight, float)
+    hit = (ang > 5.0) & (np.asarray(exposed) > 0.5)
+    return float((w * hit).sum() / max(w.sum(), 1e-12))
 
 
 def lattice_frames(g, lat, centers, pitch, start=None):

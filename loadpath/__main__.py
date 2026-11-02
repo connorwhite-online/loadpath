@@ -412,6 +412,18 @@ def main(argv=None):
                                                           "direction and turn each its own way (orient.zones)")
     lo_.add_argument("--out", default="loadpath-lattice-orient")
     lo_.add_argument("--base-dir")
+    lg = sub.add_parser("lattice-grade", help="grade a field graph's lattice wall to the stress (fully stressed, "
+                                              "on the anisotropic homogenized check), optionally turning its cells")
+    lg.add_argument("graph")
+    lg.add_argument("--study", help="study JSON or example:<name> (default: the graph's tune.study)")
+    lg.add_argument("--target-sf", type=float, help="safety factor to size to (default: the study's goal)")
+    lg.add_argument("--orient", help="'uniform' (one direction) or N (zones) to turn the cells too")
+    lg.add_argument("--wall-min", type=float, help="mm (default: the process's minimum feature, at least 0.6)")
+    lg.add_argument("--wall-max", type=float, help="mm (default: density 0.6)")
+    lg.add_argument("--cells", type=int, default=15000)
+    lg.add_argument("--out", default="loadpath-lattice-grade", help="folder for graded.json and its density "
+                                                                    "grid (inside the graph's folder)")
+    lg.add_argument("--base-dir")
     co = sub.add_parser("cores", help="tune each core option (hollow, ribbed, lattice...) of a part and pick the "
                                       "lightest that meets its loads and can be built by each process")
     co.add_argument("spec")
@@ -543,6 +555,8 @@ def main(argv=None):
         return _cores(args)
     if args.cmd == "lattice-orient":
         return _lattice_orient(args)
+    if args.cmd == "lattice-grade":
+        return _lattice_grade(args)
     if args.cmd == "orient":
         return _orient(args)
     if args.cmd == "calibrate":
@@ -978,6 +992,53 @@ def _lattice_orient(args):
     summary = {"ok": True, **{k: v for k, v in out.items() if k not in ("doc", "history")},
                "oriented": path, "next": f"loadpath field {path} --base-dir {os.path.relpath(base)}"}
     _write_report(args.out, summary)
+    return 0
+
+
+def _lattice_grade(args):
+    import numpy as np
+
+    from .fields import load_study
+    from .lattice_grade import grade_lattice
+
+    doc = _load(args.graph)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
+    ref = args.study or (doc.get("tune") or {}).get("study")
+    if not ref:
+        print(json.dumps({"ok": False, "error": "give --study (or a tune.study in the graph)"}))
+        return 2
+    out_dir = os.path.abspath(args.out if os.path.isabs(args.out) else os.path.join(base, args.out))
+    if os.path.commonpath([os.path.realpath(base), os.path.realpath(out_dir)]) != os.path.realpath(base):
+        print(json.dumps({"ok": False, "error": "--out must be inside the graph's folder (its density grid is "
+                                                "read from there)"}))
+        return 2
+    orient = args.orient
+    if orient and orient.isdigit():
+        orient = int(orient)
+    try:
+        study = load_study(ref, base, doc.get("material"))
+        out = grade_lattice(doc, study, target_sf=args.target_sf, wall_min=args.wall_min, wall_max=args.wall_max,
+                            cells=args.cells, orient=orient, base_dir=base, progress=_progress)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    if out["best"] is None:
+        print(json.dumps({"ok": False, "error": "no graded design met the target: raise --wall-max or lower "
+                                                "--target-sf", "history": out["history"]}))
+        return 1
+    os.makedirs(out_dir, exist_ok=True)
+    npz = os.path.join(out_dir, "density.npz")
+    d = out["density"]
+    np.savez(npz, origin=np.asarray(d["origin"]), pitch=d["pitch"], values=d["values"])
+    g = out["doc"]
+    g["nodes"][out["densityNode"]] = {"op": "grid", "path": os.path.relpath(npz, base)}
+    path = os.path.join(out_dir, "graded.json")
+    with open(path, "w") as fh:
+        json.dump(g, fh, indent=1)
+    summary = {"ok": True, "best": out["best"], "target": out["target"], "densityLimits": out["densityLimits"],
+               "graded": path, "density": npz, "seconds": out["seconds"],
+               "next": f"loadpath field {path} --base-dir {os.path.relpath(base)}"}
+    _write_report(out_dir, summary)
     return 0
 
 

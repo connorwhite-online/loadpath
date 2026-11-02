@@ -23,6 +23,7 @@ part; every FEA package has the same caveat. Everything else counts.
 """
 from __future__ import annotations
 
+import threading
 import time
 
 import numpy as np
@@ -481,6 +482,12 @@ def _user_edges(study: Study, band: float):
     return near
 
 
+# trimesh's ray/contains queries share the mesh's rtree, which is not
+# thread-safe (concurrent queries corrupt its node reads: "RTreeError:
+# readNode"); the submodels' voxelizing takes turns, their solves overlap
+_MESH_QUERY = threading.Lock()
+
+
 def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None, edges=None):
     """Re-solve a small box around a global hotspot at a finer pitch, driven by
     the global displacement field on the box's cut faces (classic FE
@@ -490,7 +497,8 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     from scipy.spatial import cKDTree
 
     lo, hi = center - half, center + half
-    solid, origin = voxelize(mesh, pitch, box=(lo, hi))
+    with _MESH_QUERY:
+        solid, origin = voxelize(mesh, pitch, box=(lo, hi))
     if solid.sum() < 64:
         return None
     sm = HexMesh(np.argwhere(solid), pitch, origin)

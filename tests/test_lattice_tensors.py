@@ -200,6 +200,11 @@ def test_orient_turns_the_cells_and_not_their_fields():
     by_orient = homogenized_check(doc, st, cells=6000)
     for a, b in zip(by_node["cases"], by_orient["cases"]):
         assert b["compliance"] == pytest.approx(a["compliance"], rel=0.05)
+    # a skinless bar: the turned cells are cut open at its faces, which the
+    # check flags (homogenization reads those too stiff); laid square, none
+    assert by_orient["latticeTurnedExposed"] > 0.1 and by_orient["warnings"]
+    plain = homogenized_check(_bar("cubic", 1.3), st, cells=6000)
+    assert plain["latticeTurnedExposed"] == 0.0 and not plain.get("warnings")
 
 
 def test_orientation_screen_finds_the_stiff_axis():
@@ -268,3 +273,29 @@ def test_zones_turn_each_arm_of_an_l_bracket_its_own_way():
     zones = r["doc"]["nodes"]["lat"]["orient"]["zones"]
     arm_x = min(zones, key=lambda z: z["at"][2])           # the lower zone: the arm along x
     assert abs(_rotation(arm_x["rotate"])[0, 2]) > 0.7      # its cells' z laid along x
+
+
+def test_graded_lattice_meets_the_target_lighter():
+    """Fully stressed grading of a BCCz L-bracket's wall: at the safety
+    factor the uniform wall gives, the graded lattice is much lighter, its
+    density varies, and the density lands in a grid node of the graph."""
+    sys.path.insert(0, str(ROOT / "bench"))
+    from lattice_zones_mass import case
+
+    from loadpath.homogenized import homogenized_check
+    from loadpath.lattice_grade import SOURCE, grade_lattice
+    from loadpath.spec import study_from_dict
+
+    doc, sd, _ = case("l-bracket")
+    st = study_from_dict(sd)
+    ref = homogenized_check(doc, st, cells=5000)
+    r = grade_lattice(doc, st, target_sf=ref["safetyFactor"], cells=5000, iterations=6)
+    b = r["best"]
+    assert b is not None and b["safetyFactor"] >= 0.99 * ref["safetyFactor"]
+    assert b["mass"] < 0.7 * ref["mass"]
+    lo, hi = b["densityRange"]
+    assert hi > 2 * lo
+    node = r["doc"]["nodes"][r["densityNode"]]
+    assert node == {"op": "grid", "source": SOURCE}
+    assert r["doc"]["nodes"][r["lattice"]]["density"] == r["densityNode"]
+    assert "thickness" not in r["doc"]["nodes"][r["lattice"]]

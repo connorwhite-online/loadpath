@@ -41,20 +41,23 @@ def _box(lo, hi):
     return {"type": "box", "min": list(lo), "max": list(hi)}
 
 
-def _part(kind, wall, cell, solid, blocks, origin):
+def _part(kind, wall, cell, solid, blocks, origin, skin=0.0):
     nodes = {"lat": {"op": "lattice", "type": kind, "cell": cell, "thickness": wall, "origin": origin},
              "space": {"op": "shape", "shape": {"type": "union", "shapes": solid}},
              "fill": {"op": "intersect", "inputs": ["space", "lat"]},
              "ends": {"op": "shape", "shape": {"type": "union", "shapes": blocks}},
              "part": {"op": "union", "inputs": ["fill", "ends"]}}
+    if skin:
+        nodes["skin"] = {"op": "shell", "input": "space", "thickness": skin}
+        nodes["part"]["inputs"].append("skin")
     return {"name": kind, "nodes": nodes, "output": "part"}
 
 
-def case(name):
+def case(name, skin=0.0):
     if name == "l-bracket":
         arm_x, arm_z = _box((0, -6, -6), (60, 6, 6)), _box((48, -6, -6), (60, 6, 54))
         root, tip = _box((0, -6, -6), (4, 6, 6)), _box((48, -6, 50), (60, 6, 54))
-        doc = _part("bccz", 1.4, 6.0, [arm_x, arm_z], [root, tip], [0, -6, -6])
+        doc = _part("bccz", 1.4, 6.0, [arm_x, arm_z], [root, tip], [0, -6, -6], skin)
         study = {"name": "l", "designSpace": [arm_x, arm_z],
                  "preserve": [{"id": "root", "shape": root}, {"id": "tip", "shape": tip}],
                  "supports": [{"region": "root"}],
@@ -64,7 +67,7 @@ def case(name):
     if name == "deep-beam":
         space = _box((0, -6, -12), (60, 6, 12))
         root, tip = _box((0, -6, -12), (4, 6, 12)), _box((56, -6, -12), (60, 6, 12))
-        doc = _part("cubic", 1.6, 6.0, [space], [root, tip], [0, -6, -12])
+        doc = _part("cubic", 1.6, 6.0, [space], [root, tip], [0, -6, -12], skin)
         study = {"name": "beam", "designSpace": [space],
                  "preserve": [{"id": "root", "shape": root}, {"id": "tip", "shape": tip}],
                  "supports": [{"region": "root"}],
