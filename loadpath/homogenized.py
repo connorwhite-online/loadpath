@@ -357,11 +357,23 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
            if lat is not None else None}
     turned_exposed = None if lat is None else _turned_exposed(rot if aniso else None, fc * fill, exposed)
     rep["latticeTurnedExposed"] = turned_exposed
-    if turned_exposed is not None and turned_exposed > TURNED_EXPOSED_WARN:
+    zo = (lspec.get("orient") if lat is not None else None)
+    zoned = isinstance(zo, dict) and len(zo.get("zones") or []) > 1
+    if zoned and not zo.get("seam"):
+        rep.setdefault("warnings", []).append(
+            "zoned lattice without seam plates (orient.seam): where thin cells of two directions meet the "
+            "check reads the seam too stiff (a skinless graded zoned beam: peak 2.4x higher, 1.4x softer at full "
+            "resolution, the peak on the seam). Add orient.seam (1 mm) or confirm with a resolved check.")
+    elif zoned:
+        rep.setdefault("warnings", []).append(
+            "zoned lattice with seam plates: the peak reads on the safe side but the stiffness about 20-25% "
+            "high (a skinless graded zoned beam at full resolution); leave margin on deflection.")
+    elif turned_exposed is not None and turned_exposed > TURNED_EXPOSED_WARN:
         rep.setdefault("warnings", []).append(
             f"{100 * turned_exposed:.0f}% of the lattice is turned cells cut open at a free face (no skin): "
-            "homogenization reads those too stiff (a skinless graded, zoned beam came out 3.5x softer and its "
-            "peak 4x higher at full resolution). Add a skin or confirm with a resolved check.")
+            "confirmed at full resolution on one graded cubic beam turned 45 degrees (within 4%), not yet across "
+            "cells and loads (a turned 2-cell cubic bar in twist read 1.6x too stiff). Add a skin or "
+            "confirm with a resolved check.")
     if fields:
         rep["fields"] = {"centers": centers, "rho": rho, "fs": fs, "fc": fc, "fill": fill,
                          "knock": knock if lat is not None else None,

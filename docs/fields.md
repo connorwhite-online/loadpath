@@ -536,13 +536,12 @@ bisected to the same safety factor. All homogenized on 8k cells:
 | simple cubic, rods along the bar; bend + pull (control) | 0.52 / 0.52 | 2.00 mm | 0% |
 
 > **Caveat (skinless parts).** These bars have no skin, so the turned
-> cells are cut open on the bias at bare faces, where the homogenized check
-> reads them too stiff: a graded, zoned skinless beam (below) came out 3.5x
-> softer with a 4x higher peak at full resolution. Treat the skinless gains
-> in this table, the zones table and the graded table as unconfirmed. The
-> check now reports `latticeTurnedExposed` (the share of the lattice that is
-> turned and cut open at a face) and warns above 10%. With a skin over the
-> lattice the optimizer leaves the cells as laid (graded section below).
+> cells are cut open on the bias at bare faces. One such case is confirmed
+> at full resolution (a graded cubic deep beam turned 45 degrees, within
+> 4%, "Where the zones' error came from" below); the bars in this table are
+> not yet, and a turned two-cell cubic bar in twist reads 1.6x too stiff.
+> The check reports `latticeTurnedExposed` (the share of the lattice turned
+> and cut open at a face) and warns above 10%.
 
 The control comes back unturned. The orientation is one rotation for the
 whole lattice; a cell that follows the stress from place to place (a
@@ -611,14 +610,38 @@ safety factor the uniform 2 mm wall gives (homogenized, 8k cells):
 | BCCz L-bracket | 4.96 g | 2.57 g (-48%) | 2.06 g (-59%) | 2.06 g (-59%) |
 | simple cubic deep cantilever | 4.47 g | 3.72 g (-17%) | 3.70 g (-17%) | 3.49 g (-22%) |
 
-Those rows are skinless and, turned, not confirmed: at full resolution
-(0.2 mm voxels, bench/lattice_aniso_validate.py `resolved`) the graded
-3-zone deep beam weighed the same (3.55 g against 3.49 g) but was 3.5x
-softer (compliance 6602 against 1754-1879 homogenized) and its peak 4x
-higher (1162 against 259-289 MPa). Its middle zone, turned 45 degrees about
-x in a member two cells wide, is cut open on the bias at both faces, the
-regime the knockdown was not fitted on, and the optimizer chose it because
-the check read it stiff.
+**Where the zones' error came from.** The skinless 3-zone row did not
+hold up at full resolution (0.2 mm voxels, bench/lattice_aniso_validate.py
+`resolved`): same mass, but 3.5x softer and its peak 4x higher. Taking the
+design apart, each piece checked at full resolution (compliance and peak,
+homogenized at 8k-30k cells over resolved; the deep beam, skinless;
+bench/results/lattice-seams-deep-beam.json):
+
+| deep beam, skinless | compliance | peak |
+|---|---|---|
+| uniform 1.6 mm wall, as laid | 1.38-1.47x | 1.64x |
+| graded, as laid | 1.18-1.25x | 1.11-1.15x |
+| graded, one direction (-45 deg about x), new tables | 0.96-1.02x | 0.96-0.99x |
+| 3 zones, uniform wall, cross-faded | 0.84-0.90x | 0.65x |
+| graded + 3 zones, cross-faded, old tables | 0.27-0.28x | 0.22-0.25x |
+| same, re-graded on the new tables | 0.67-0.72x | 0.39-0.42x |
+| the re-graded zones with 1 mm seam plates | 0.73-0.80x | 1.19-1.34x |
+
+Two causes, neither of them the bare faces:
+
+- **Under the table.** Graded walls went down to density 0.022, under the
+  tables' lowest row (0.06), where holding the first row's shape read the
+  cubic cell's shear (a bending mode, about rho^2.3) 3x too stiff. The
+  tables now have rows at 0.02 and 0.035 for every strut cell, and under
+  the table each eigen-mode runs on its own power law.
+- **Zone seams.** Every resolved peak sat on a seam: cross-faded zones join
+  two directions of thin struts at a few small joints. `orient.seam` (mm,
+  default 1 in `optimize_zones`, `grade_lattice` and the CLIs' `--seam`)
+  puts a solid plate on each face between zones, and both zones' cells end
+  on it as on a skin. With plates the peak reads on the safe side; the
+  stiffness still reads 20-27% high. Sized with plates, the deep beam's
+  lightest design drops the zones for one direction: the plates cost more
+  than the zones save. The check warns on zones without plates.
 
 With a 1 mm skin (`--skin 1.0`, the regime the tensors were validated in):
 
@@ -637,8 +660,9 @@ turning the core buys nothing: the L-bracket's lattice drops to the
 thinnest wall everywhere, the deep beam's runs from the thinnest wall to
 the density cap (0.6) where the shear is, and the orientation search keeps
 the cells as laid. Without a skin, turning and zones read as large gains
-that the resolved check does not bear out. The rest of this paragraph is
-about the skinless homogenized rows: turning on top of grading pays on the L-bracket.
+that the resolved check bears out for one direction (the deep beam) but not
+for cross-faded zones. In the skinless homogenized rows, turning on top of
+grading pays on the L-bracket.
 Zones pay only where the stress direction really changes across the part
 (the deep beam); on the L-bracket one tilted direction serves both arms. A
 sizing run takes 15 s to 5 minutes. The sizing grid matters: the deep beam
