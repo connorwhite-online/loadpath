@@ -466,9 +466,28 @@ on first use, and cached on disk (`~/.cache/loadpath/lattice-tensors`, or
 `LOADPATH_CACHE`; about 3 minutes per cell and aspect on 4 cores). The
 density at a given strut or wall comes from the same solves. Before this a
 stretched cell was refused by the homogenized check. Against the resolved
-lattice, a 1 mm skinned 60 x 24 x 24 mm beam of tall BCC cells along the
-beam reads compliance 0.98-1.02x and wall stress 0.85-1.34x (the pull reads
-15% low; skinned cubic cells read 0.95-1.43x), `bench/results/lattice-aniso-aspect.json`.
+lattice (1 mm skin, 60 x 24 x 24 mm beams, `bench/results/lattice-aniso-aspect*.json`;
+each resolved peak read per lattice cell box, as the tables are), compliance
+is within 2% on all three:
+
+| beam | compliance | peak stress |
+|---|---|---|
+| tall BCC [1, 1, 1.5], long axis across the beam | 0.98-1.02x | 1.01-1.37x (contact band 12 mm); 0.88-1.37x (6 mm) |
+| tall BCC, long axis along the beam (turned 90 degrees) | 0.98-1.01x | 1.29-1.55x |
+| flat octet [1.4, 1, 1], turned 45 degrees | 0.98-1.00x | 1.07-1.44x |
+
+**Where the lattice roots into a skin.** The tall BCC beam first read
+0.87-0.90x in bend and pull. Away from the faces its lattice read safe
+(1.04x); the resolved peak sat in the skin, where each strut pulls on it
+over a small patch, 10-13% above the smooth stress the homogenized skin
+carries. Analysis cells that hold both skin and lattice now read 1.25x
+their stress (`SKIN_JUNCTION`, `skin_junction` in `homogenized_check`),
+which brings that beam to 1.01-1.05x and moves the other skinned beams to
+1.07-1.89x (they were 0.95-1.43x). One reading stays under: with the
+default 6 mm contact band, the tall BCC pull peaks 0.88x right at the band's
+edge by the loaded end block, where the load spreads from the block into
+skin and lattice; with a 12 mm band that spot reads 1.05x. The sandwich arm
+link eval reads the same with it (SF 6.65; its peak is not at a junction).
 
 **Infill sizing on the same tensors.** `lattice_infill` sizes an STL's TPMS
 infill to a safety factor by fully stressed iteration on a homogenized grid.

@@ -78,11 +78,19 @@ FILL_MIN = 0.1
 # rising linearly to all of it one lattice cell in (free_surface_exposure)
 FREE_SURFACE_KNOCKDOWN = 0.5
 
+# where a lattice roots into a skin or solid, each strut or sheet pulls on
+# the skin over a small patch, and the resolved skin peaks there above the
+# smooth stress the homogenized skin carries: a skinned tall-BCC beam read
+# 0.87-0.90x of the resolved peak, 1.01-1.05x with this (bench/lattice_aniso_validate.py,
+# --band 12). Analysis cells holding
+# both skin and lattice read this many times their stress
+SKIN_JUNCTION = 1.25
+
 
 def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000, samples: int = 3,
                       fields: bool = False, graph=None, solid_ok: bool = False,
                       contact_band: float | None = None, anisotropic: bool | None = None,
-                      free_surface: float | None = None) -> dict:
+                      free_surface: float | None = None, skin_junction: float | None = None) -> dict:
     """mass, safety factor (worst case) and deflection of the graph's part
     under `study` with its lattice homogenized (module docstring). Returns
     a verify_part-like dict: mass, volume, safetyFactor, cases (name,
@@ -101,7 +109,9 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     unit cell's full 6x6 stiffness, rotated into the frame the lattice lies
     in, and its wall stress is read from the directional stress surface
     (lattice_tensors) instead of the scalar fits' worst direction. False
-    gives the isotropic reading. The report says which (`latticeModel`)."""
+    gives the isotropic reading. The report says which (`latticeModel`).
+    `skin_junction` (default SKIN_JUNCTION) scales the stress in cells
+    where the lattice meets a skin or solid."""
     import time
 
     from scipy.spatial import cKDTree
@@ -279,6 +289,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     volume = float((fill * (fs + fc * rho) * vol_cell).sum())
     cases, worst = [], np.inf
     macro, bodies_mask = [], []
+    junction_k = float(SKIN_JUNCTION if skin_junction is None else skin_junction)
+    junction = (fs > 0.05) & (fc > 0.05)
     for ci, case in enumerate(study.load_cases):
         u = us[ci]
         if aniso:
@@ -299,6 +311,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         s_solid = np.where(fs > 0.05, se, 0.0)
         s_wall = np.where(fc > 0.05, s_lat, 0.0)
         s = np.maximum(s_solid, s_wall)
+        if lat is not None:
+            s = np.where(junction, s * junction_k, s)
         contact = bc.support_nodes | bc.case_load_nodes[ci]
         near = cKDTree(hm.node_xyz[contact]).query(centers, k=1, distance_upper_bound=band)[0] < np.inf
         body = ~near if (~near).any() else np.ones(len(s), bool)

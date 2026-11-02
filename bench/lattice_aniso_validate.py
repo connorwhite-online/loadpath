@@ -165,7 +165,9 @@ def resolved(doc, study_d, pitch, band, cell_size=6.0, skin=0.0):
         # each lattice cell's 99.5th percentile (the unit-cell tables' reading),
         # the worst cell outside the contact band
         far = ~near
-        key = np.floor((hm.node_xyz[far] - origin) / cell_size).astype(int)
+        # bins one lattice cell each: a stretched cell's box (cell_size may
+        # be per axis), as the unit-cell tables read their percentile
+        key = np.floor((hm.node_xyz[far] - origin) / np.asarray(cell_size, float)).astype(int)
         _, inv = np.unique(key, axis=0, return_inverse=True)
         v = vm[far]
         order = np.argsort(inv, kind="stable")
@@ -178,7 +180,8 @@ def resolved(doc, study_d, pitch, band, cell_size=6.0, skin=0.0):
         # the same reading away from the outer faces (a skin and the strut
         # roots in it): how much of the peak is the junction with the skin
         dface = np.minimum(xyz - lo, hi - xyz).min(axis=1)
-        inner = dface > skin + 0.5 * cell_size if skin else dface > 0.5 * cell_size
+        half = 0.5 * float(np.min(cell_size))
+        inner = dface > skin + half if skin else dface > half
         inner_peaks = [np.percentile(v[gr[inner[gr]]], 99.5) for gr in groups if inner[gr].sum() > 50]
         out.append({"name": case.name, "deflection": float(np.linalg.norm(disp[ln].mean(axis=0))),
                     "compliance": float(bc.loads[ci] @ u),
@@ -248,6 +251,24 @@ def _read_frd(path, n):
     return u
 
 
+def _cell_box(doc):
+    """The lattice cell's box in global axes (mm): the cell times its
+    aspect, permuted by a quarter-turn transform; a cube's side otherwise."""
+    lat = doc["nodes"]["lat"]
+    cell = float(lat["cell"])
+    a = np.asarray(lat.get("aspect", (1, 1, 1)), float) * cell
+    t = doc["nodes"].get("turned")
+    if t is None:
+        return a
+    deg = float(t["rotate"]["degrees"]) % 180
+    if np.isclose(deg, 90):
+        ax = "xyz".index(t["rotate"]["axis"])
+        i, j = [k for k in range(3) if k != ax]
+        a[[i, j]] = a[[j, i]]
+        return a
+    return a if np.isclose(deg, 0) else np.full(3, a.min())
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pitch", type=float, default=0.15)
@@ -257,6 +278,8 @@ def main():
     ap.add_argument("--out", default=str(ROOT / "bench" / "results" / "lattice-aniso.json"))
     ap.add_argument("--reuse", action="store_true", help="keep the resolved results already in --out; "
                                                           "rerun only the homogenized checks")
+    ap.add_argument("--band", type=float, default=None, help="contact band, mm (default one cell): stress "
+                                                             "this near a support or load is left out of both peaks")
     ap.add_argument("--knockdown", type=float, default=None, help="free-surface knockdown (homogenized.py)")
     a = ap.parse_args()
     results = json.loads(Path(a.out).read_text()) if Path(a.out).exists() else {}
@@ -267,7 +290,7 @@ def main():
         stretched = bool(doc["nodes"]["lat"].get("aspect"))
         for model in ("anisotropic",) if stretched else ("anisotropic", "isotropic"):
             r = homogenized_check(copy.deepcopy(doc), st, cells=a.cells, anisotropic=model == "anisotropic",
-                                  contact_band=float(doc["nodes"]["lat"]["cell"]), free_surface=a.knockdown)
+                                  contact_band=a.band or float(doc["nodes"]["lat"]["cell"]), free_surface=a.knockdown)
             row[model] = {"mass": r["mass"], "seconds": r["seconds"], "cells": r["analysisCells"],
                           "latticeExposed": r["latticeExposed"],
                           "cases": [{k: c[k] for k in ("name", "deflection", "compliance", "peakStress",
@@ -280,7 +303,7 @@ def main():
                 row["ccx"] = results[name]["ccx"]
         else:
             skin = float(doc["nodes"]["skin"]["thickness"]) if "skin" in doc["nodes"] else 0.0
-            res = resolved(doc, sd, a.pitch, band=cell, cell_size=cell, skin=skin)
+            res = resolved(doc, sd, a.pitch, band=a.band or cell, cell_size=_cell_box(doc), skin=skin)
             row["resolved"] = {k: res[k] for k in ("cells", "pitch", "seconds", "mass", "cases")}
         if name in a.ccx.split(",") and not (a.reuse and "ccx" in row):
             with tempfile.TemporaryDirectory() as td:
