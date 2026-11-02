@@ -1485,6 +1485,13 @@ class FieldGraph:
         return lambda G: self.evaluate(G + off, cell_ref), np.asarray(lo, float) - off, np.asarray(hi, float) - off
 
     def _transform(self, nd, P, memo):
+        Q = self.transform_points(nd, P)
+        scale = float(nd.spec.get("scale", 1.0))
+        out = self._val(nd.refs["input"], Q, memo)
+        return out * scale
+
+    def transform_points(self, nd, P):
+        """Where a transform node samples its input for points P."""
         s = nd.spec
         Q = P
         if "translate" in s:
@@ -1503,8 +1510,7 @@ class FieldGraph:
         scale = float(s.get("scale", 1.0))
         if scale != 1.0:
             Q = Q / scale
-        out = self._val(nd.refs["input"], Q, memo)
-        return out * scale
+        return Q
 
     # -- bounds --
 

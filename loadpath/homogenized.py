@@ -11,19 +11,24 @@ material it holds on average, as lattice.py does for its own infill:
   node filled solid and once with it empty, so each cell knows how much of
   it is solid skin or boss (`fs`) and how much is lattice (`fc`);
 - the lattice's own fields (wall or density, cell) at the cell's centre give
-  its relative density rho (lattice.relative_density), and the unit-cell
-  fits give its modulus E C rho^n and its peak wall stress A rho^-m times
-  the stress it carries on average (lattice.SHEETS);
-- the cell's modulus is E (fs + fc C rho^n); the solid's stress is the
-  strain times E, the lattice's wall stress is that times C rho^n A rho^-m.
+  its relative density rho (lattice.relative_density);
+- by default (lattice_tensors.py) the lattice is its unit cell's full 6x6
+  stiffness at rho, rotated into the frame the cells lie in, and its wall
+  stress comes from the cell's directional stress surface under the macro
+  stress the lattice carries; the cell's elasticity is E (fs C_solid +
+  fc C_lattice), each element its own;
+- with anisotropic=False, the scalar fits: modulus E C rho^n, peak wall
+  stress A rho^-m times the stress it carries on average (lattice.SHEETS),
+  the cell's modulus E (fs + fc C rho^n);
+- lattice cut open by a face with no skin over it keeps only part of its
+  stiffness within a cell of that face (FREE_SURFACE_KNOCKDOWN).
 
 Safety factor and deflection are read as verify_part reads them: peaks
 outside a contact band round supports and loads, the stress allowance
 included, deflection the mean displacement of each case's loaded nodes.
-Sheet lattices (lattice.SHEETS) and strut cells (lattice.STRUTS, the
-conservative isotropic reading of an anisotropic cell); a stretched
-`aspect` cell has no fit and is refused. The cell's frame (graded,
-cylindrical, conformal) only moves cells around: the fits are per cell.
+Sheet lattices (lattice.SHEETS) and strut cells (lattice.STRUTS); a
+stretched `aspect` cell has no tables and is refused. Validation against
+the resolved lattice: bench/lattice_aniso_validate.py, docs/fields.md.
 """
 from __future__ import annotations
 
@@ -67,10 +72,16 @@ def _variant(graph, doc, base_dir, lattice, value):
 # the least share of a cell the part must fill for the cell to be analyzed
 FILL_MIN = 0.1
 
+# lattice stiffness lost at a face the lattice is cut open by (no skin):
+# the cell right at the face keeps 1 - this of its unit-cell stiffness,
+# rising linearly to all of it one lattice cell in (free_surface_exposure)
+FREE_SURFACE_KNOCKDOWN = 0.5
+
 
 def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000, samples: int = 3,
                       fields: bool = False, graph=None, solid_ok: bool = False,
-                      contact_band: float | None = None) -> dict:
+                      contact_band: float | None = None, anisotropic: bool | None = None,
+                      free_surface: float | None = None) -> dict:
     """mass, safety factor (worst case) and deflection of the graph's part
     under `study` with its lattice homogenized (module docstring). Returns
     a verify_part-like dict: mass, volume, safetyFactor, cases (name,
@@ -82,7 +93,14 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     as the study runner's own check does, and never under 1.5 analysis cells.
     A band that shrinks with the grid lets a bolt-hole singularity govern a
     fine confirm: a GRIP forearm read SF 4.7 on 60k cells and 1.3 on 2M,
-    1 mm from a J3 bolt the part is clamped by."""
+    1 mm from a J3 bolt the part is clamped by.
+
+    `anisotropic` (default: on wherever lattice_tensors has the cell's
+    tables; LOADPATH_LATTICE_ANISO=0 turns it off): each lattice cell is its
+    unit cell's full 6x6 stiffness, rotated into the frame the lattice lies
+    in, and its wall stress is read from the directional stress surface
+    (lattice_tensors) instead of the scalar fits' worst direction. False
+    gives the isotropic reading. The report says which (`latticeModel`)."""
     import time
 
     from scipy.spatial import cKDTree
@@ -119,7 +137,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         if not is_strut(kind) and lspec.get("form", "sheet") != "sheet":
             raise ValueError(f"lattice {lat!r}: the homogenized fits are for sheet lattices, not network")
         lattice_fit(kind)                    # refuse a cell with no fit before any work
-        if "aspect" in lspec:
+        if "aspect" in lspec and not np.allclose(lspec["aspect"], 1.0):
             raise ValueError(f"lattice {lat!r}: the homogenized fits are for cubic cells, not a stretched "
                              "'aspect' cell; check it resolved (verify_part on the mesh)")
         g_solid = _variant(g, full, base_dir, lat, _SOLID)
@@ -179,10 +197,45 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         e_ijk, fs, fc, rho, centers, fill = e_ijk[keep], fs[keep], fc[keep], rho[keep], centers[keep], fill[keep]
         hm = HexMesh(e_ijk, pitch, origin)
         bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pitch)
+    # lattice cut open by the part's face with no skin over it: within a
+    # cell of that face its struts and sheets end free, and carry less than
+    # the periodic unit cell says
+    if lat is None:
+        exposed = np.zeros(len(e_ijk))
+    else:
+        cell_mm = np.broadcast_to(np.asarray(_field(g, lrefs.get("cell", 8.0), centers), float), (len(centers),))
+        exposed = free_surface_exposure(e_ijk, dims, fs, fc, pitch, cell_mm)
     ec = np.ones(len(rho)) if lat is None else sheet_modulus(kind, rho)
-    e_cell = mat.E * fill * (fs + fc * ec)
+    if free_surface is None:
+        free_surface = FREE_SURFACE_KNOCKDOWN
+    # stiffness only: the stress read below takes the cell's full tensor
+    # times the (larger) strain the softer cell takes, so it errs high
+    knock = 1.0 - float(free_surface) * exposed
+    e_cell = mat.E * fill * (fs + fc * ec * knock)
     rhs = [bc.loads[ci] for ci in range(len(study.load_cases))]
-    if _use_mg(hm.n_elem):
+    nu = study.elastic(mat)
+    if anisotropic is None:
+        import os
+
+        anisotropic = os.environ.get("LOADPATH_LATTICE_ANISO", "1").strip() not in ("0", "false", "off")
+    from .lattice_tensors import has_tensors
+
+    aniso = bool(anisotropic) and lat is not None and has_tensors(kind)
+    if aniso:
+        from .fem import elastic_c
+        from .lattice_tensors import rotate_stiffness, stress_rotation, stress_surface, tensors_at
+
+        c_lat, p_lat, q_lat, f_lat = tensors_at(kind, rho)
+        rot = lattice_frames(g, lat, centers, pitch, start=name)
+        # stiffness into the part's axes; stresses go into the cell's
+        # (stress_rotation) for its wall-stress surface
+        t_rot = None
+        if rot is not None:
+            c_lat, t_rot = rotate_stiffness(c_lat, rot), stress_rotation(rot)
+        c_cell = (mat.E * fill)[:, None, None] * (fs[:, None, None] * elastic_c(1.0, nu)[None]
+                                                    + (fc * knock)[:, None, None] * c_lat)
+        us = solve_anisotropic(hm, nu, c_cell, bc, mat.E, rhs, proxy=e_cell)
+    elif _use_mg(hm.n_elem):
         # a fine grid (a thin skin's re-check runs to a million cells and
         # more): matrix-free multigrid, as verify_part, a fraction of the
         # assembled matrix's memory (13 GB at 1M cells)
@@ -199,7 +252,6 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         if bc.springs is not None:
             k = (k + mat.E * bc.springs).tocsr()
         us = Solver(hm, rtol=1e-6, maxiter=3000).solve_many(k, rhs)
-    nu = study.elastic(mat)
     if contact_band is None:
         from .domain import choose_pitch
         contact_band = choose_pitch(study)
@@ -210,9 +262,21 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     cases, worst = [], np.inf
     for ci, case in enumerate(study.load_cases):
         u = us[ci]
-        se = von_mises(_center_stress(hm, nu, u, mat.E))
+        if aniso:
+            strain = _center_strain(hm, u)
+            se = von_mises(strain @ (mat.E * elastic_c(1.0, nu)).T)
+            sig_lat = mat.E * np.einsum("eab,eb->ea", c_lat, strain)
+            if t_rot is not None:
+                sig_lat = np.einsum("eab,eb->ea", t_rot, sig_lat)
+            s_lat = np.empty(len(sig_lat))
+            for a in range(0, len(sig_lat), 100_000):
+                sl = slice(a, a + 100_000)
+                s_lat[sl] = stress_surface(sig_lat[sl], p_lat[sl], q_lat[sl], f_lat[sl])
+        else:
+            se = von_mises(_center_stress(hm, nu, u, mat.E))
+            s_lat = se * wall_k
         s_solid = np.where(fs > 0.05, se, 0.0)
-        s_wall = np.where(fc > 0.05, se * wall_k, 0.0)
+        s_wall = np.where(fc > 0.05, s_lat, 0.0)
         s = np.maximum(s_solid, s_wall)
         contact = bc.support_nodes | bc.case_load_nodes[ci]
         near = cKDTree(hm.node_xyz[contact]).query(centers, k=1, distance_upper_bound=band)[0] < np.inf
@@ -225,16 +289,215 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         defl = float(np.linalg.norm(disp[ln].mean(axis=0))) if ln.any() else 0.0
         worst = min(worst, sf)
         cases.append({"name": case.name, "safetyFactor": sf, "deflection": defl, "peakStress": peak,
+                      "compliance": float(rhs[ci] @ u),
                       "peakAt": centers[i].tolist(), "inLattice": bool(s_wall[i] >= s_solid[i]),
                       "maxDisplacement": float(np.linalg.norm(disp, axis=1).max())})
     rep = {"mass": volume * mat.density / 1000.0, "volume": volume, "safetyFactor": worst, "cases": cases,
            "bodies": bodies, "analysisPitch": pitch, "analysisCells": int(hm.n_elem),
            "latticeFraction": float((fc * vol_cell).sum() / max(len(fc) * vol_cell, 1e-12)),
            "latticeDensity": [float(rho[fc > 0.05].min()), float(rho[fc > 0.05].max())] if (fc > 0.05).any()
-           else None, "lattice": lat, "stressAllowance": STRESS_ALLOWANCE, "seconds": time.time() - t0}
+           else None, "lattice": lat, "stressAllowance": STRESS_ALLOWANCE, "seconds": time.time() - t0,
+           "latticeModel": None if lat is None else ("anisotropic" if aniso else "isotropic"),
+           # share of the lattice's volume within half a cell of a face it is
+           # cut open by (no skin): homogenization reads it too stiff there
+           "latticeExposed": float((fc * fill * (exposed > 0.5)).sum() / max((fc * fill).sum(), 1e-12))
+           if lat is not None else None}
     if fields:
         rep["fields"] = {"centers": centers, "rho": rho, "fs": fs, "fc": fc}
     return rep
+
+
+def free_surface_exposure(e_ijk, dims, fs, fc, pitch, cell_mm):
+    """Per analysis cell, 1 - (distance to the part's outside) / (lattice
+    cell), clipped to [0, 1], where the outside is nearer than any solid
+    (skin) cell; 0 elsewhere. A lattice under a skin is not exposed."""
+    from scipy import ndimage
+
+    pad = 1
+    shape = tuple(int(d) + 2 * pad for d in dims)
+    inside = np.zeros(shape, bool)
+    idx = tuple((e_ijk + pad).T)
+    inside[idx] = True
+    skin = np.zeros(shape, bool)
+    skin[idx] = fs > 0.5
+    d_out = ndimage.distance_transform_edt(inside)[idx] * pitch - 0.5 * pitch
+    d_skin = ndimage.distance_transform_edt(~skin)[idx] * pitch if skin.any() else np.full(len(e_ijk), np.inf)
+    e = np.clip(1.0 - d_out / np.maximum(cell_mm, 1e-9), 0.0, 1.0)
+    return np.where((fc > 0.05) & (d_out < d_skin), e, 0.0)
+
+
+def _center_strain(hm, u):
+    """Element-center strain (ne, 6), engineering shears (the bubbles'
+    strain is zero there)."""
+    from .fem import hex8_b_center
+
+    return u[hm.edof] @ (hex8_b_center() / hm.pitch).T
+
+
+def lattice_frames(g, lat, centers, pitch, start=None):
+    """(n, 3, 3) the lattice's local cell axes at `centers` (columns, in
+    global components): the polar factor of the lattice coordinates'
+    Jacobian, by central differences. None where the cell axes are the
+    global ones (a cartesian, ungraded lattice, or a Voronoi foam, whose
+    tables are its own periodic draw in global axes)."""
+    nd = g.nodes[lat]
+    s = nd.spec
+    from .struts import canonical
+
+    moves = _path_transforms(g, start or g.output, lat)
+    rotated = any("rotate" in g.nodes[t].spec for t in moves)
+    frame = (s.get("frame") or {}).get("type", "cartesian")
+    graded = isinstance(nd.refs.get("cell"), str) and s.get("grading", "warp") == "warp"
+    if not rotated and (canonical(s.get("type", "gyroid")) == "voronoi" or (frame == "cartesian" and not graded)):
+        return None
+
+    def coords(P):
+        for t in moves:
+            P = g.transform_points(g.nodes[t], P)
+        if canonical(s.get("type", "gyroid")) == "voronoi":
+            return P
+        return g.lattice_coords(nd, P)[0]
+
+    h = 1e-3 * pitch
+    jac = np.empty((len(centers), 3, 3))
+    for i in range(3):
+        d = np.zeros(3)
+        d[i] = h
+        up = coords(centers + d)
+        um = coords(centers - d)
+        du = up - um
+        du -= np.round(du)                    # a frame's seam jumps by whole cells
+        jac[:, :, i] = du / (2 * h)
+    w, _, vt = np.linalg.svd(jac)
+    q = w @ vt                                # rows: the cell's axes
+    return np.swapaxes(q, 1, 2)
+
+
+def _path_transforms(g, start, target):
+    """Transform nodes on a path from `start` down to `target`, outermost
+    first (each moves the points the lattice is sampled at)."""
+    def walk(n, seen):
+        if n == target:
+            return []
+        if n in seen or n not in g.nodes:
+            return None
+        seen.add(n)
+        for d in g.deps.get(n, ()):
+            rest = walk(d, seen)
+            if rest is not None:
+                return ([n] if g.nodes[n].op == "transform" else []) + rest
+        return None
+
+    return walk(start, set()) or []
+
+
+def solve_anisotropic(hm, nu, c_cell, bc, modulus, rhs, proxy, rtol=1e-6, maxiter=3000):
+    """Displacements for per-element elasticity matrices `c_cell` (ne, 6, 6,
+    moduli included). Below simp.MG_MIN_CELLS: the assembled matrix, each
+    element its own condensed hex8 (fem.hex8_ke_batch), CG + AMG. From
+    there: the operator matrix-free (each element's C and bubble
+    condensation kept, in single precision) inside CG preconditioned by the
+    geometric multigrid of the isotropic stand-in with moduli `proxy`."""
+    from .fem import Solver, Stiffness, hex8_ke_batch
+    from .simp import _use_mg
+
+    springs = modulus * bc.springs if bc.springs is not None else None
+    ne = len(c_cell)
+    chunk = 20_000
+    if not _use_mg(ne):
+        stiff = Stiffness(hm, nu, bc.fixed)
+        data = np.zeros(stiff.nnz)
+        for a in range(0, ne, chunk):
+            idx = np.arange(a, min(a + chunk, ne))
+            ke, _ = hex8_ke_batch(c_cell[idx])
+            stiff.add_elements(data, ke * hm.pitch, idx)
+        k = stiff.finish(data)
+        if springs is not None:
+            k = (k + springs).tocsr()
+        return Solver(hm, rtol=rtol, maxiter=maxiter).solve_many(k, rhs)
+    return _AnisoMG(hm, nu, c_cell, bc, springs, proxy, rtol, maxiter).solve_many(rhs)
+
+
+class _AnisoMG:
+    """Matrix-free anisotropic operator + isotropic multigrid preconditioner."""
+
+    CHUNK = 40_000
+
+    def __init__(self, hm, nu, c_cell, bc, springs, proxy, rtol, maxiter):
+        from .fem import _gauss_b, hex8_ke_batch
+        from .mg import GridElasticity
+
+        self.hm, self.rtol, self.maxiter = hm, rtol, maxiter
+        self.free = ~np.asarray(bc.fixed, bool)
+        self.springs = springs.tocsr() if springs is not None else None
+        b, ba = _gauss_b()
+        self.b = (b.reshape(48, 24) / hm.pitch).astype(np.float32)
+        self.ba = np.zeros((48, 9), np.float32)
+        for gi in range(8):
+            self.ba[6 * gi:6 * gi + 6] = ba[gi] / hm.pitch
+        self.w = hm.pitch ** 3 / 8.0
+        ne = len(c_cell)
+        self.c = c_cell.astype(np.float32)
+        self.r = np.empty((ne, 9, 24), np.float32)
+        for a in range(0, ne, 20_000):
+            _, r = hex8_ke_batch(c_cell[a:a + 20_000])
+            self.r[a:a + 20_000] = 0.0 if r is None else r
+        self.mg = GridElasticity(hm, nu, bc.fixed, springs=springs, rtol=rtol, maxiter=maxiter)
+        self.mg.set_moduli(np.asarray(proxy, float))
+        self.last_iters = 0
+
+    def apply(self, u):
+        hm = self.hm
+        out = np.zeros(hm.n_dof)
+        u = np.where(self.free, u, 0.0)
+        for a in range(0, hm.n_elem, self.CHUNK):
+            sl = slice(a, a + self.CHUNK)
+            ed = hm.edof[sl]
+            ue = u[ed]
+            alpha = np.einsum("eij,ej->ei", self.r[sl], ue)
+            eps = (ue @ self.b.T + alpha @ self.ba.T).reshape(-1, 8, 6)
+            sig = np.einsum("eij,egj->egi", self.c[sl], eps).reshape(-1, 48)
+            fe = (sig @ self.b) * self.w
+            out += np.bincount(ed.ravel(), weights=fe.astype(np.float64).ravel(), minlength=hm.n_dof)
+        if self.springs is not None:
+            out += self.springs @ u
+        return np.where(self.free, out, 0.0)
+
+    def precondition(self, r):
+        g = self.mg.to_grid(r) * self.mg.levels[0].mask
+        return np.where(self.free, self.mg.from_grid(self.mg.precondition(g) * self.mg.levels[0].mask), 0.0)
+
+    def solve_many(self, fs):
+        out = []
+        for f in fs:
+            b = np.where(self.free, f, 0.0)
+            x = np.zeros_like(b)
+            bn = float(np.linalg.norm(b))
+            if bn == 0:
+                out.append(x)
+                continue
+            r = b.copy()
+            z = self.precondition(r)
+            p = z.copy()
+            rz = float(r @ z)
+            ok = False
+            for it in range(1, self.maxiter + 1):
+                ap = self.apply(p)
+                alpha = rz / float(p @ ap)
+                x += alpha * p
+                r -= alpha * ap
+                if np.linalg.norm(r) <= self.rtol * bn:
+                    ok = True
+                    break
+                z = self.precondition(r)
+                rz_new = float(r @ z)
+                p = z + (rz_new / rz) * p
+                rz = rz_new
+            self.last_iters = it
+            if not ok:
+                raise RuntimeError(f"anisotropic lattice solve did not converge ({it} iterations)")
+            out.append(x)
+        return out
 
 
 def _center_stress(hm, nu, u, modulus):

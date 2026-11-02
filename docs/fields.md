@@ -332,11 +332,14 @@ the lattice homogenized instead (homogenized.py, `tune.analysis` `auto`):
 the graph is evaluated with the lattice node filled solid and with it empty,
 so each analysis cell knows its share of solid skin and of lattice; the
 lattice's own wall (or density) and cell fields give the lattice's relative
-density there, and lattice.py's unit-cell fits give its modulus
-(E C rho^n) and its peak wall stress (A rho^-m times the stress it carries
-on average). A `result` node behind the wall field runs its study once for
-the whole search. Sheet and strut lattices (lattice.SHEETS, lattice.STRUTS);
-a stretched `aspect` cell has no fit and is refused.
+density there, and the unit-cell tables give its stiffness and its peak wall
+stress: by default the full anisotropic tensors (lattice_tensors.py, see
+"Lattices are read anisotropic" below), or with `anisotropic: false`
+lattice.py's scalar fits (modulus E C rho^n, peak wall stress A rho^-m times
+the stress it carries on average). A `result` node behind the wall field
+runs its study once for the whole search. Sheet and strut lattices
+(lattice.SHEETS, lattice.STRUTS); a stretched `aspect` cell has no tables
+and is refused.
 
 Checked against the resolved geometry: a 60 mm skin-and-gyroid bar (1 mm
 skin, 0.8 mm walls in 6 mm cells) under a tip load deflects 1.07-1.15 mm
@@ -359,6 +362,101 @@ for a part with a shell, at least two cells through the thinnest wall
 two grids, 0.7x apart in cell count, the worse reading counting
 (`checkCells` caps it, default 2M). A candidate that fails there is
 returned with `ok: false` and `unconfirmed: true`, never as a result.
+
+### Lattices are read anisotropic
+
+Lattice cells are not isotropic. A simple cubic cell is 10-25x stiffer
+along its rods than along the cube diagonal, an octet 1.5x stiffer along
+its struts than along the cube axes, a BCCz 30x stiffer along z than
+across. The scalar fits (SHEETS, STRUTS) read every cell at its weakest
+direction and its worst stress concentration, which is safe in stiffness
+and throws mass away wherever the cells are loaded the way they are strong.
+The scalar fits also scale the wall stress by the macro von Mises stress, so
+a hydrostatic load, which the walls feel in full, read as zero.
+
+The homogenized check now reads each cell from its full tensor
+(lattice_tensors.py, the default whenever the cell has tables; `anisotropic:
+false` in `homogenized_check`, or LOADPATH_LATTICE_ANISO=0, gives the scalar
+reading):
+
+- **Stiffness**: six periodic unit-cell solves per cell type and density (a
+  unit macro strain per Voigt component, nodes wrapping across the cell
+  faces) give the full 6x6 effective stiffness, symmetrized over the cell's
+  cubic or tetragonal (BCCz, FCCz) group. Tables for every sheet and strut
+  cell at 7-8 densities from 0.06 to 0.9 are in
+  `loadpath/data/lattice_tensors.json` (bench/lattice_tensors.py rebuilds
+  them in about an hour on 4 cores); between rows the leading entry is
+  interpolated log-log and the shape linearly in log density, up to the solid
+  at 1.
+- **Wall stress**: the six unit-cell stress fields superpose to the walls'
+  stress under any macro stress. Sampled over ~15,000 directions (axes,
+  diagonals, shears, hydrostatic, random, and their symmetry images), the
+  walls' peak (99.5th percentile of nodal von Mises, as the scalar fits read
+  it) is fitted by a quartic surface in the macro stress, floored by a
+  positive-definite quadratic one and scaled onto or above every sample. On
+  200 held-out directions per row, solved directly, it reads 3-11% high on
+  average and is never more than 1% low. A quadratic (Hill-type) surface
+  alone read 10-41% high.
+- **Frame**: each analysis cell's tensors are rotated by the polar factor of
+  the lattice coordinates' Jacobian (central differences), so cylindrical,
+  spherical, conformal and graded frames, and lattices turned by a
+  `transform` node above them, are read the way they lie.
+- **Solve**: each element gets its own elasticity matrix, with the
+  incompatible-mode bubbles condensed per element (`fem.hex8_ke_batch`).
+  Under 100k cells the matrix is assembled; above that the operator runs
+  matrix-free inside CG, preconditioned by the isotropic multigrid. Both
+  paths agree to 1e-4.
+
+Checked against the resolved lattice (bench/lattice_aniso_validate.py): the
+field graph voxelized at 0.15-0.2 mm, five or more voxels across a strut,
+solved on the same hex8 elements. CalculiX (C3D8I) on the same voxels agrees
+with loadpath's resolved solve to 1e-8 in all three load cases. Compliance
+(f·u) and the worst lattice cell's 99.5th-percentile wall stress, each over
+the resolved value:
+
+| bar (bend, pull and twist; ranges over the three) | compliance, tensor | compliance, scalar | wall stress, tensor | wall stress, scalar |
+|---|---|---|---|---|
+| simple cubic, turned 45 deg, 1 mm skin, 4 cells | 0.95-1.01 | 1.02-1.04 | 0.95-1.20 | 0.85-1.18 |
+| BCCz, z struts along the beam, 1 mm skin, 4 cells | 1.00-1.02 | 1.18-1.32 | 1.09-1.43 | 1.35-1.89 |
+| simple cubic, along the beam, no skin, 4 cells across | 1.14-1.39 | 1.31-15.29 | 1.28-1.41 | 1.59-8.39 |
+| simple cubic, along the bar, no skin, 2 cells across | 1.40-2.07 | 1.91-19.20 | 1.58-2.01 | 2.09-10.58 |
+| simple cubic, turned 45 deg, no skin, 2 cells | 0.64-1.43 | 1.38-2.07 | 1.39-2.23 | 1.33-3.03 |
+| BCCz, z across the bar, no skin, 2 cells | 1.27-1.36 | 1.70-14.30 | 1.43-2.18 | 3.27-21.00 |
+| BCCz, z struts along the bar, no skin, 2 cells | 1.33-2.05 | 9.86-14.36 | 1.64-2.20 | 9.77-22.87 |
+| gyroid, no skin, 2 cells | 1.09-1.47 | 1.02-1.67 | 1.36-2.13 | 1.22-2.57 |
+| gyroid, turned 45 deg, no skin, 2 cells | 1.10-1.32 | 1.14-1.38 | 1.02-1.24 | 1.08-1.30 |
+| octet, no skin, 2 cells (resolved at 0.25 mm) | 1.81-2.00 | 1.76-3.00 | 2.02-3.20 | 1.71-4.97 |
+| octet, turned 45 deg, no skin, 2 cells (0.25 mm) | 1.40-1.64 | 1.81-2.12 | 1.67-2.88 | 1.80-2.83 |
+
+Bars are 48 x 12 x 12 mm (2 cells of 6 mm across) or 60 x 24 x 24 mm (4
+cells), solid end blocks, tip bend, pull and twist; above 1 errs safe. With
+a skin over the lattice, the way a printed part carries one, the tensor
+reading is within 5% of the resolved stiffness and 0.95-1.43x on stress,
+where the scalar reading was up to 32% soft and read one twist 15% low on
+stress. Where the cells line up with the load (cubic or BCCz along the
+bar) the scalar reading was 10-20x too soft and 8-23x too high on stress,
+which a sizing pays for in mass.
+
+**Free faces.** A lattice cut open by the part's face with no skin over it
+ends in free struts and sheet edges that carry less than the periodic unit
+cell says. Before the knockdown below, the skinless 2-cell bars read too
+stiff under both models (gyroid 0.69x of the resolved compliance, the
+cubic turned 45 degrees 0.40x in twist) and gyroid wall stress read
+0.70-0.81x. `free_surface_exposure` marks each lattice cell by its distance
+to an unskinned face (one at the face, zero a lattice cell in, zero under
+a skin), and the cell keeps 1 - 0.5 x that of its lattice stiffness
+(`FREE_SURFACE_KNOCKDOWN`, `free_surface` in `homogenized_check`); stress is
+read from the full tensor times the larger strain, so it errs high too.
+The table is with it. One case stays under: the turned cubic bar in twist,
+0.64x. The report's `latticeExposed` is the share of lattice within half a
+cell of such a face; a part with much of it and fewer than about four cells
+across a member is one to check resolved.
+
+The sandwich arm link eval case (1M cells, skinned gyroid core) reads 42.7 g
+as before, deflection 0.432 mm (was 0.438) and safety factor 6.65 (was 9.0;
+the meshed part verified resolved reads 13.5): the gyroid's quartic stress
+surface reads combined and hydrostatic stress states the scalar factor
+missed.
 
 Tuning the graded-lattice arm link (examples/fields/arm-link-lattice-tune.json:
 the skin's thinnest and thickest wall and the gyroid's thickest wall, same

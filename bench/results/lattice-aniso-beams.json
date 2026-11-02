@@ -1,0 +1,91 @@
+{
+ "cubic-beam": {
+  "anisotropic": {
+   "mass": 7.570268863603372,
+   "seconds": 34.62148308753967,
+   "cells": 53312,
+   "latticeExposed": 0.32537303743652723,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 2.224283114847204,
+     "compliance": 44.48566229694417,
+     "peakStress": 29.06091678900813,
+     "safetyFactor": 1.436263375234254
+    },
+    {
+     "name": "pull",
+     "deflection": 0.16184624615524837,
+     "compliance": 16.18462461552483,
+     "peakStress": 8.085118650990887,
+     "safetyFactor": 5.162463562568397
+    },
+    {
+     "name": "twist",
+     "deflection": 2.0119923541881185e-08,
+     "compliance": 3502.1936467105525,
+     "peakStress": 350.6063507117589,
+     "safetyFactor": 0.11904841526700483
+    }
+   ]
+  },
+  "isotropic": {
+   "mass": 7.570268863603372,
+   "seconds": 18.98835802078247,
+   "cells": 53312,
+   "latticeExposed": 0.32537303743652723,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 11.383914375881233,
+     "compliance": 227.67828751762482,
+     "peakStress": 127.67990905948946,
+     "safetyFactor": 0.32690444990319695
+    },
+    {
+     "name": "pull",
+     "deflection": 2.172623131068232,
+     "compliance": 217.2623131068231,
+     "peakStress": 52.34806125298792,
+     "safetyFactor": 0.7973386107475037
+    },
+    {
+     "name": "twist",
+     "deflection": 4.692019160941098e-08,
+     "compliance": 3291.3931710562947,
+     "peakStress": 393.5248380648432,
+     "safetyFactor": 0.10606479286043193
+    }
+   ]
+  },
+  "resolved": {
+   "cells": 932608,
+   "pitch": 0.2,
+   "seconds": 1136.8700013160706,
+   "mass": 7.535472640000002,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 1.9022333242824665,
+     "compliance": 38.04466648565003,
+     "peak995": 19.6691748747975,
+     "cellPeak": 22.64640351030636
+    },
+    {
+     "name": "pull",
+     "deflection": 0.14206789423128782,
+     "compliance": 14.2067894231296,
+     "peak995": 6.0726095747717235,
+     "cellPeak": 6.240097190012607
+    },
+    {
+     "name": "twist",
+     "deflection": 4.450336542585969e-10,
+     "compliance": 2517.923269667737,
+     "peak995": 188.32921957886032,
+     "cellPeak": 247.84032040599737
+    }
+   ]
+  }
+ }
+}

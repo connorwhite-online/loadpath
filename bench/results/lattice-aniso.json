@@ -1,0 +1,536 @@
+{
+ "cubic-bar": {
+  "anisotropic": {
+   "mass": 1.7240500916370085,
+   "seconds": 36.38474750518799,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 12.152105125700958,
+     "compliance": 243.0421025140202,
+     "peakStress": 166.3860953010979,
+     "safetyFactor": 0.2508570824938831
+    },
+    {
+     "name": "pull",
+     "deflection": 0.5903698487289674,
+     "compliance": 59.03698487289677,
+     "peakStress": 37.86529624599733,
+     "safetyFactor": 1.102305661723029
+    },
+    {
+     "name": "twist",
+     "deflection": 4.876770627191979e-08,
+     "compliance": 51673.19957859226,
+     "peakStress": 3501.9137901705667,
+     "safetyFactor": 0.011918948590893106
+    }
+   ]
+  },
+  "isotropic": {
+   "mass": 1.7240500916370085,
+   "seconds": 19.1281795501709,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 95.87422403403913,
+     "compliance": 1917.4844806807803,
+     "peakStress": 935.5976363233298,
+     "safetyFactor": 0.04461226580136222
+    },
+    {
+     "name": "pull",
+     "deflection": 8.072339905201316,
+     "compliance": 807.233990520132,
+     "peakStress": 253.20073528279238,
+     "safetyFactor": 0.16484600800296026
+    },
+    {
+     "name": "twist",
+     "deflection": 1.56805445618164e-07,
+     "compliance": 47766.98302374454,
+     "peakStress": 3630.9364380753286,
+     "safetyFactor": 0.011495417544931608
+    }
+   ]
+  },
+  "resolved": {
+   "cells": 517632,
+   "pitch": 0.15,
+   "seconds": 280.4373483657837,
+   "mass": 1.76447808,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 7.800670886756303,
+     "compliance": 156.01341773512672,
+     "peak995": 88.70718947855107,
+     "cellPeak": 105.29657280219035
+    },
+    {
+     "name": "pull",
+     "deflection": 0.4203899705066125,
+     "compliance": 42.03899705066074,
+     "peak995": 21.918845475645746,
+     "cellPeak": 23.931004752128075
+    },
+    {
+     "name": "twist",
+     "deflection": 2.8179179200762834e-09,
+     "compliance": 24958.265527317082,
+     "peak995": 1300.630743343416,
+     "cellPeak": 1739.40320823269
+    }
+   ]
+  }
+ },
+ "cubic-bar-45z": {
+  "anisotropic": {
+   "mass": 1.7240500916370085,
+   "seconds": 38.56803274154663,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 66.1642946953924,
+     "compliance": 1323.28589390785,
+     "peakStress": 942.1970044121963,
+     "safetyFactor": 0.04429979106208493
+    },
+    {
+     "name": "pull",
+     "deflection": 5.756958954970519,
+     "compliance": 575.6958954970529,
+     "peakStress": 263.5862214782516,
+     "safetyFactor": 0.15835095704434038
+    },
+    {
+     "name": "twist",
+     "deflection": 8.94388856510866e-07,
+     "compliance": 22174.00937847894,
+     "peakStress": 2499.9918367529012,
+     "safetyFactor": 0.016695706690384726
+    }
+   ]
+  },
+  "isotropic": {
+   "mass": 1.7240500916370085,
+   "seconds": 20.502434253692627,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 95.87422403403913,
+     "compliance": 1917.4844806807803,
+     "peakStress": 935.5976363233298,
+     "safetyFactor": 0.04461226580136222
+    },
+    {
+     "name": "pull",
+     "deflection": 8.072339905201316,
+     "compliance": 807.233990520132,
+     "peakStress": 253.20073528279238,
+     "safetyFactor": 0.16484600800296026
+    },
+    {
+     "name": "twist",
+     "deflection": 1.56805445618164e-07,
+     "compliance": 47766.98302374454,
+     "peakStress": 3630.9364380753286,
+     "safetyFactor": 0.011495417544931608
+    }
+   ]
+  },
+  "resolved": {
+   "cells": 504048,
+   "pitch": 0.15,
+   "seconds": 254.71930766105652,
+   "mass": 1.7181736199999997,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 46.359884298569796,
+     "compliance": 927.1976859714096,
+     "peak995": 285.7868037041766,
+     "cellPeak": 421.5821945720546
+    },
+    {
+     "name": "pull",
+     "deflection": 5.8623952171651705,
+     "compliance": 586.2395217165224,
+     "peak995": 170.7418326984673,
+     "cellPeak": 190.0450290729481
+    },
+    {
+     "name": "twist",
+     "deflection": 9.004317238502479e-08,
+     "compliance": 34701.30781218754,
+     "peak995": 1159.3410053546218,
+     "cellPeak": 1197.9139213522128
+    }
+   ]
+  }
+ },
+ "bccz-bar": {
+  "anisotropic": {
+   "mass": 2.1615391846110277,
+   "seconds": 34.56313371658325,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 29.992716753477783,
+     "compliance": 599.8543350695564,
+     "peakStress": 319.24160463494064,
+     "safetyFactor": 0.13074464552485937
+    },
+    {
+     "name": "pull",
+     "deflection": 3.000261368751303,
+     "compliance": 300.0261368751294,
+     "peakStress": 112.8575830528661,
+     "safetyFactor": 0.36983895371240294
+    },
+    {
+     "name": "twist",
+     "deflection": 4.3141370478412525e-07,
+     "compliance": 2183.976724665479,
+     "peakStress": 356.70058101448774,
+     "safetyFactor": 0.11701447279977191
+    }
+   ]
+  },
+  "isotropic": {
+   "mass": 2.1615391846110277,
+   "seconds": 19.4770405292511,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 47.740408235243876,
+     "compliance": 954.8081647048773,
+     "peakStress": 951.5830526585239,
+     "safetyFactor": 0.0438628350075931
+    },
+    {
+     "name": "pull",
+     "deflection": 4.0201584123821075,
+     "compliance": 402.0158412382112,
+     "peakStress": 257.5503912190836,
+     "safetyFactor": 0.1620619958572592
+    },
+    {
+     "name": "twist",
+     "deflection": 1.3097528605736157e-07,
+     "compliance": 23785.79708618865,
+     "peakStress": 3692.9007377913,
+     "safetyFactor": 0.011302532453051125
+    }
+   ]
+  },
+  "resolved": {
+   "cells": 641312,
+   "pitch": 0.15,
+   "seconds": 438.2878108024597,
+   "mass": 2.18607228,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 21.975941519599264,
+     "compliance": 439.5188303919839,
+     "peak995": 118.81525722569233,
+     "cellPeak": 146.76459978200407
+    },
+    {
+     "name": "pull",
+     "deflection": 2.368000405089123,
+     "compliance": 236.8000405089125,
+     "peak995": 75.51096581929765,
+     "cellPeak": 78.87426372301412
+    },
+    {
+     "name": "twist",
+     "deflection": 2.914852122249444e-09,
+     "compliance": 1663.0573666505618,
+     "peak995": 145.21777124481127,
+     "cellPeak": 175.86170577664092
+    }
+   ]
+  }
+ },
+ "bccz-bar-90y": {
+  "anisotropic": {
+   "mass": 2.1615391846110277,
+   "seconds": 31.315515518188477,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 6.903084999510126,
+     "compliance": 138.06169999020244,
+     "peakStress": 148.1166108452439,
+     "safetyFactor": 0.2817991189279421
+    },
+    {
+     "name": "pull",
+     "deflection": 0.5927096539198204,
+     "compliance": 59.27096539198201,
+     "peakStress": 43.19906521592418,
+     "safetyFactor": 0.9662044821145018
+    },
+    {
+     "name": "twist",
+     "deflection": 6.676355781637071e-08,
+     "compliance": 2209.194758654701,
+     "peakStress": 355.43591513567407,
+     "safetyFactor": 0.11743081848903844
+    }
+   ]
+  },
+  "isotropic": {
+   "mass": 2.1615391846110277,
+   "seconds": 20.278971195220947,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 47.740408235243876,
+     "compliance": 954.8081647048773,
+     "peakStress": 951.5830526585239,
+     "safetyFactor": 0.0438628350075931
+    },
+    {
+     "name": "pull",
+     "deflection": 4.0201584123821075,
+     "compliance": 402.0158412382112,
+     "peakStress": 257.5503912190836,
+     "safetyFactor": 0.1620619958572592
+    },
+    {
+     "name": "twist",
+     "deflection": 1.3097528605736157e-07,
+     "compliance": 23785.79708618865,
+     "peakStress": 3692.9007377913,
+     "safetyFactor": 0.011302532453051125
+    }
+   ]
+  },
+  "resolved": {
+   "cells": 638848,
+   "pitch": 0.15,
+   "seconds": 414.57713174819946,
+   "mass": 2.1776731199999997,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 3.3608657960264496,
+     "compliance": 67.21731592052693,
+     "peak995": 51.35494578328106,
+     "cellPeak": 74.70567525792544
+    },
+    {
+     "name": "pull",
+     "deflection": 0.40757455374148305,
+     "compliance": 40.75745537414834,
+     "peak995": 24.732792920339236,
+     "cellPeak": 26.36088921106614
+    },
+    {
+     "name": "twist",
+     "deflection": 1.0856990410809559e-10,
+     "compliance": 1656.759844683757,
+     "peak995": 144.02245635632184,
+     "cellPeak": 161.4394107804259
+    }
+   ]
+  }
+ },
+ "gyroid-bar": {
+  "anisotropic": {
+   "mass": 3.1249309891170096,
+   "seconds": 26.005159616470337,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 2.100558881164628,
+     "compliance": 42.011177623292554,
+     "peakStress": 43.83935657462674,
+     "safetyFactor": 0.9520926787265008
+    },
+    {
+     "name": "pull",
+     "deflection": 0.17930241767494162,
+     "compliance": 17.93024176749412,
+     "peakStress": 11.906698396754537,
+     "safetyFactor": 3.5055167304951333
+    },
+    {
+     "name": "twist",
+     "deflection": 3.8148688024349484e-08,
+     "compliance": 867.5649060998438,
+     "peakStress": 126.61530668221876,
+     "safetyFactor": 0.32965311642406864
+    }
+   ]
+  },
+  "isotropic": {
+   "mass": 3.1249309891170096,
+   "seconds": 15.62517499923706,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 1.9814821656022177,
+     "compliance": 39.629643312044294,
+     "peakStress": 39.38071499619261,
+     "safetyFactor": 1.0598875728594064
+    },
+    {
+     "name": "pull",
+     "deflection": 0.16757000970087654,
+     "compliance": 16.757000970087617,
+     "peakStress": 10.670800517061815,
+     "safetyFactor": 3.911527571717309
+    },
+    {
+     "name": "twist",
+     "deflection": 5.379183239141988e-09,
+     "compliance": 987.9197721997521,
+     "peakStress": 152.70925272491786,
+     "safetyFactor": 0.273324174468781
+    }
+   ]
+  },
+  "resolved": {
+   "cells": 924896,
+   "pitch": 0.15,
+   "seconds": 437.75848031044006,
+   "mass": 3.1527392399999994,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 1.9345823302104792,
+     "compliance": 38.69048230449504,
+     "peak995": 19.608570227923686,
+     "cellPeak": 27.779061490092456
+    },
+    {
+     "name": "pull",
+     "deflection": 0.14747658674906544,
+     "compliance": 14.746519926318975,
+     "peak995": 8.547743737487991,
+     "cellPeak": 8.745438808314633
+    },
+    {
+     "name": "twist",
+     "deflection": 0.28208072605484746,
+     "compliance": 590.7114631052141,
+     "peak995": 57.18840514165939,
+     "cellPeak": 59.378871767051784
+    }
+   ]
+  }
+ },
+ "gyroid-bar-45z": {
+  "anisotropic": {
+   "mass": 3.1249309891170096,
+   "seconds": 27.73952627182007,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 1.892632130255487,
+     "compliance": 37.852642605109736,
+     "peakStress": 37.501581239535305,
+     "safetyFactor": 1.112996547217053
+    },
+    {
+     "name": "pull",
+     "deflection": 0.1602370569212533,
+     "compliance": 16.02370569212533,
+     "peakStress": 10.11251223858823,
+     "safetyFactor": 4.127473910539331
+    },
+    {
+     "name": "twist",
+     "deflection": 7.574340936297115e-09,
+     "compliance": 950.5883553703961,
+     "peakStress": 152.17718883897433,
+     "safetyFactor": 0.2742798099585655
+    }
+   ]
+  },
+  "isotropic": {
+   "mass": 3.1249309891170096,
+   "seconds": 16.471070051193237,
+   "cells": 53568,
+   "latticeExposed": 0.6841850991686829,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 1.9814821656022177,
+     "compliance": 39.629643312044294,
+     "peakStress": 39.38071499619261,
+     "safetyFactor": 1.0598875728594064
+    },
+    {
+     "name": "pull",
+     "deflection": 0.16757000970087654,
+     "compliance": 16.757000970087617,
+     "peakStress": 10.670800517061815,
+     "safetyFactor": 3.911527571717309
+    },
+    {
+     "name": "twist",
+     "deflection": 5.379183239141988e-09,
+     "compliance": 987.9197721997521,
+     "peakStress": 152.70925272491786,
+     "safetyFactor": 0.273324174468781
+    }
+   ]
+  },
+  "resolved": {
+   "cells": 914192,
+   "pitch": 0.15,
+   "seconds": 410.57364988327026,
+   "mass": 3.1162519799999995,
+   "cases": [
+    {
+     "name": "bend",
+     "deflection": 1.4319977356769442,
+     "compliance": 28.63540974615921,
+     "peak995": 17.08232590625462,
+     "cellPeak": 30.27450658084816
+    },
+    {
+     "name": "pull",
+     "deflection": 0.12222098000827437,
+     "compliance": 12.192151075052157,
+     "peak995": 8.171042543564681,
+     "cellPeak": 9.898081192352564
+    },
+    {
+     "name": "twist",
+     "deflection": 0.3443445447393032,
+     "compliance": 864.7046177811103,
+     "peak995": 77.43011557503058,
+     "cellPeak": 124.66817250179525
+    }
+   ]
+  }
+ }
+}

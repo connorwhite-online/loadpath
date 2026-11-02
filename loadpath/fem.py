@@ -235,6 +235,41 @@ def hex8_b(xi, eta, zeta, nu, element: str | None = None) -> np.ndarray:
     return b
 
 
+_GAUSS_B = {}
+
+
+def _gauss_b():
+    """(B (8, 6, 24), bubble B (8, 6, 9)) at the 2x2x2 Gauss points of the
+    unit cube."""
+    if not _GAUSS_B:
+        g = 1.0 / np.sqrt(3.0)
+        pts = [(a, b, c) for a in (-g, g) for b in (-g, g) for c in (-g, g)]
+        _GAUSS_B["b"] = np.array([_b_matrix(*p) for p in pts])
+        _GAUSS_B["ba"] = np.array([_b_bubble(*p) for p in pts])
+    return _GAUSS_B["b"], _GAUSS_B["ba"]
+
+
+def hex8_ke_batch(c: np.ndarray, element: str | None = None):
+    """Per-element stiffness of unit cubes with per-element elasticity
+    matrices `c` (ne, 6, 6): (ke (ne, 24, 24), R (ne, 9, 24) or None), the
+    bubbles condensed element by element as hex8_ke does for one material
+    (the condensation depends on each element's C, so an anisotropic cell
+    cannot share one matrix). For side h the element matrix is h * ke; R
+    maps nodal displacements to bubble amplitudes (strain recovery)."""
+    element = element or hex8_element()
+    c = np.asarray(c, float)
+    b, ba = _gauss_b()
+    cb = np.einsum("eij,gjk->egik", c, b)                    # (ne, 8, 6, 24)
+    kuu = 0.125 * np.einsum("gia,egib->eab", b, cb)
+    if element == "plain":
+        return 0.5 * (kuu + np.swapaxes(kuu, 1, 2)), None
+    kua = 0.125 * np.einsum("egia,gib->eab", cb, ba)          # (ne, 24, 9)
+    kaa = 0.125 * np.einsum("gia,eij,gjb->eab", ba, c, ba)
+    r = -np.linalg.solve(kaa, np.swapaxes(kua, 1, 2))         # (ne, 9, 24)
+    ke = kuu + kua @ r
+    return 0.5 * (ke + np.swapaxes(ke, 1, 2)), r
+
+
 def hex8_fth(nu) -> np.ndarray:
     """Thermal load (24,) of a unit cube with E = 1 and a free expansion
     strain of 1 in every direction (alpha * dT = 1): the integral of

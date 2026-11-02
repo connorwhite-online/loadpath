@@ -193,18 +193,8 @@
  },
  {
   "case": "arm-link-sandwich",
+  "kind": "field",
   "tier": "full",
-  "pass": true,
-  "best": {
-   "mass": 42.72316219028543,
-   "safetyFactor": 8.996635463002038,
-   "deflection": 0.43813751026265196,
-   "analysisCells": 968162,
-   "latticeDensity": [
-    0.15248842592592593,
-    0.15248842592592593
-   ]
-  },
   "checks": [
    {
     "check": "mass",
@@ -215,14 +205,14 @@
    },
    {
     "check": "safetyFactor",
-    "value": 8.996635463002038,
+    "value": 6.650520807964149,
     "op": ">=",
     "limit": 3.0,
     "pass": true
    },
    {
     "check": "deflection",
-    "value": 0.43813751026265196,
+    "value": 0.43225116692743915,
     "op": "<=",
     "limit": 0.5,
     "pass": true
@@ -236,15 +226,26 @@
    },
    {
     "check": "rejects 38 g thin-skin link",
-    "value": 0.6152095465109247,
+    "value": 0.610450606365141,
     "op": ">",
     "limit": 0.5,
     "pass": true,
     "mass": 37.5931127512491,
-    "safetyFactor": 8.986405687464773
+    "safetyFactor": 6.479868824873382
    }
   ],
-  "seconds": 233.60342454910278
+  "best": {
+   "mass": 42.72316219028543,
+   "safetyFactor": 6.650520807964149,
+   "deflection": 0.43225116692743915,
+   "analysisCells": 968162,
+   "latticeDensity": [
+    0.15248842592592593,
+    0.15248842592592593
+   ]
+  },
+  "pass": true,
+  "seconds": 727.9862048625946
  },
  {
   "case": "arm-link",
