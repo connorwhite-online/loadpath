@@ -260,6 +260,10 @@ class _Analysis:
     def strain_energy(self, u):
         if self._mg is not None:
             return self._mg.strain_energy(u)
+        from . import femops
+
+        if femops.available():
+            return femops.element_energy(u, None, self.domain.mesh.edof, self.ke)
         ue = u[self.domain.mesh.edof]
         return np.einsum("ij,jk,ik->i", ue, self.ke, ue)
 

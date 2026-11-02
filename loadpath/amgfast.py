@@ -153,6 +153,63 @@ if nb is not None:
                 x[ib + U(m)] = acc
             i += row_step
 
+    @nb.njit(cache=True, nogil=True, inline="always")
+    def _row_cols(i, Ap, Aj, Bp, Bj, mark, cols):
+        # the block row's output columns in scipy's order: first visit
+        n = 0
+        for jj in range(Ap[i], Ap[i + 1]):
+            j = U(Aj[jj])
+            for kk in range(Bp[j], Bp[j + U(1)]):
+                k = Bj[kk]
+                if mark[k] != i:
+                    mark[k] = i
+                    cols[n] = k
+                    n += 1
+        return n
+
+    @nb.njit(cache=True, parallel=True)
+    def _bsr_count(n_brow, n_bcol, Ap, Aj, Bp, Bj, counts):
+        nch = 64
+        for c in nb.prange(nch):
+            mark = np.full(n_bcol, -1, np.int64)
+            cols = np.empty(n_bcol, np.int64)
+            for i in range(c * n_brow // nch, (c + 1) * n_brow // nch):
+                counts[i] = _row_cols(i, Ap, Aj, Bp, Bj, mark, cols)
+
+    @nb.njit(cache=True, parallel=True)
+    def _bsr_fill(n_brow, n_bcol, R, C, N, Ap, Aj, Ax, Bp, Bj, Bx, Cp, Cj, Cx):
+        # scipy sparsetools bsr_matmat, a block row at a time: each output
+        # block gathers A(i, j) B(j, k) in the same (jj, kk) order, by its
+        # gemm (dot from the block's value, d ascending), so the same bits
+        RC, RN, NC = R * C, R * N, N * C
+        nch = 64
+        for c in nb.prange(nch):
+            mark = np.full(n_bcol, -1, np.int64)
+            slot = np.empty(n_bcol, np.int64)
+            cols = np.empty(n_bcol, np.int64)
+            for i in range(c * n_brow // nch, (c + 1) * n_brow // nch):
+                n = _row_cols(i, Ap, Aj, Bp, Bj, mark, cols)
+                base = Cp[i]
+                for q in range(n):
+                    Cj[base + q] = cols[q]
+                    slot[cols[q]] = base + q
+                    for t in range(RC):
+                        Cx[(base + q) * RC + t] = 0.0
+                for jj in range(Ap[i], Ap[i + 1]):
+                    j = U(Aj[jj])
+                    a0 = U(jj) * U(RN)
+                    for kk in range(Bp[j], Bp[j + U(1)]):
+                        k = Bj[kk]
+                        b0 = U(kk) * U(NC)
+                        c0 = U(slot[k]) * U(RC)
+                        for r in range(R):
+                            for cc in range(C):
+                                o = c0 + U(C * r + cc)
+                                dot = Cx[o]
+                                for d in range(N):
+                                    dot += Ax[a0 + U(N * r + d)] * Bx[b0 + U(C * d + cc)]
+                                Cx[o] = dot
+
 
 def _u(a):
     """An index array viewed unsigned (they are never negative)."""
@@ -194,6 +251,54 @@ class _Core:
         _block_gs(_u(Ap), _u(Aj), Ax, x, b, Tx, int(row_start), int(row_stop), int(row_step), int(R))
 
 
+_MATMUL_MIN = 20_000      # block nonzeros of A below which scipy's own is as quick
+
+
+def _bsr_matmul(self, other, _orig=None):
+    """scipy's BSR @ sparse (bsr._matmul_sparse) with the product itself on
+    numba's threads. pyamg's setup (R A P, the prolongation smoother) does
+    these on one core while the others wait; same entries, same order, so
+    the same bits."""
+    M = self.shape[0]
+    N = other.shape[1]
+    R, n = self.blocksize
+    C = other.blocksize[1] if other.format == "bsr" else 1
+    if (self.data.dtype != np.float64 or other.dtype != np.float64 or len(self.indices) < _MATMUL_MIN
+            or (R == 1 and n == 1 and C == 1)):
+        return _orig(self, other)
+    if other.format == "csr" and n == 1:
+        other = other.tobsr(blocksize=(n, C), copy=False)
+    else:
+        other = other.tobsr(blocksize=(n, C))
+    n_brow, n_bcol = M // R, N // C
+    Ap = np.ascontiguousarray(self.indptr, np.int64)
+    Aj = np.ascontiguousarray(self.indices, np.int64)
+    Bp = np.ascontiguousarray(other.indptr, np.int64)
+    Bj = np.ascontiguousarray(other.indices, np.int64)
+    counts = np.empty(n_brow, np.int64)
+    _bsr_count(n_brow, n_bcol, Ap, Aj, Bp, Bj, counts)
+    Cp = np.zeros(n_brow + 1, np.int64)
+    np.cumsum(counts, out=Cp[1:])
+    nnz = int(Cp[-1])
+    Cj = np.empty(nnz, np.int64)
+    Cx = np.empty(R * C * nnz, np.float64)
+    _bsr_fill(n_brow, n_bcol, R, C, n, Ap, Aj, np.ascontiguousarray(np.ravel(self.data)), Bp, Bj,
+              np.ascontiguousarray(np.ravel(other.data)), Cp, Cj, Cx)
+    idx = self._get_index_dtype((self.indptr, self.indices, other.indptr, other.indices), maxval=nnz)
+    return self._bsr_container((Cx.reshape(-1, R, C), Cj.astype(idx), Cp.astype(idx)), shape=(M, N),
+                               blocksize=(R, C))
+
+
+_SCIPY_BSR_MATMUL = None
+
+
+def _bsr_matmul_method(self, other):
+    return _bsr_matmul(self, other, _orig=_SCIPY_BSR_MATMUL)
+
+
+_bsr_matmul_method._loadpath = True
+
+
 def installed():
     """Whether pyamg's Gauss-Seidel is the GIL-free one now."""
     return _INSTALLED
@@ -210,5 +315,12 @@ def install():
         return False
     if not isinstance(rel.amg_core, _Core):
         rel.amg_core = _Core(rel.amg_core)
+    global _SCIPY_BSR_MATMUL
+    from scipy.sparse import _bsr
+
+    orig = _bsr._bsr_base._matmul_sparse
+    if not getattr(orig, "_loadpath", False):
+        _SCIPY_BSR_MATMUL = orig
+        _bsr._bsr_base._matmul_sparse = _bsr_matmul_method
     _INSTALLED = True
     return True

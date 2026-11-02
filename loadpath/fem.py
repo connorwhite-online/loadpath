@@ -417,6 +417,10 @@ class Stiffness:
         # int32 slots when they fit: these 64 arrays are the bulk of this
         # object's memory (9 slots per element per corner pair).
         idx_t = np.int32 if nnz < 2 ** 31 - 1 else np.int64
+        # one (64, elements, 9) array, the pairs views of it (femops.scatter
+        # runs over all 64 in one call)
+        self._slots = np.empty((64, mesh.n_elem, 9), idx_t)
+        self._blks = np.empty((64, 9))
         self._pairs = []
         for a in range(8):
             na = enode[:, a]
@@ -424,9 +428,11 @@ class Stiffness:
             for b in range(8):
                 base = self.indptr[3 * na] + 3 * rank[na, pair_off[a, b]]
                 blk = self.ke[3 * a:3 * a + 3, 3 * b:3 * b + 3].ravel()
-                slots = (base[:, None] + np.repeat(np.arange(3), 3)[None, :] * row[:, None]
-                         + np.tile(np.arange(3), 3)[None, :])
-                self._pairs.append((slots.astype(idx_t), blk))
+                p = 8 * a + b
+                self._slots[p] = (base[:, None] + np.repeat(np.arange(3), 3)[None, :] * row[:, None]
+                                  + np.tile(np.arange(3), 3)[None, :])
+                self._blks[p] = blk
+                self._pairs.append((self._slots[p], self._blks[p]))
         self.indptr = self.indptr.astype(idx_t)
         self.indices = self.indices.astype(idx_t)
 
@@ -442,9 +448,14 @@ class Stiffness:
 
     def assemble(self, scale: np.ndarray) -> sp.csr_matrix:
         data = np.zeros(self.nnz)
-        s = np.asarray(scale, float)[:, None]
-        for slots, blk in self._pairs:
-            data[slots] += s * blk
+        from . import femops
+
+        if femops.available():
+            femops.scatter(data, self._slots, self._blks, scale)
+        else:
+            s = np.asarray(scale, float)[:, None]
+            for slots, blk in self._pairs:
+                data[slots] += s * blk
         data *= self._keep
         data[self._diag_fixed] = 1.0
         k = sp.csr_matrix((data, self.indices, self.indptr), shape=(self.mesh.n_dof, self.mesh.n_dof))
@@ -471,6 +482,10 @@ class Stiffness:
 
     def strain_energy(self, u: np.ndarray) -> np.ndarray:
         """Per element u_e^T Ke u_e at unit modulus (multiply by E_e)."""
+        from . import femops
+
+        if femops.available():
+            return femops.element_energy(u, None, self.mesh.edof, self.ke)
         ue = u[self.mesh.edof]
         return np.einsum("ij,jk,ik->i", ue, self.ke, ue)
 
