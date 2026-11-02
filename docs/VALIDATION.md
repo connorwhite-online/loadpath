@@ -10,6 +10,7 @@ Each claim carries one of these labels, strongest first:
 | Label | Meaning |
 | --- | --- |
 | **Tested** | Compared with a physical part or coupon that was printed and measured for this project. |
+| **Matched published experiment** | A published physical test reproduced from its stated geometry and material, with nothing fitted to it; the error against the measurement is reported, good or bad. |
 | **Measured data** | Compared with published measurements of a physical part (for example NIST AM-Bench). Says whether a parameter was fitted to the same data. |
 | **Analytic** | Matches a closed-form answer (beam theory, Lamé, Poiseuille) in the test suite. |
 | **Cross-checked** | Agrees with an independent solver run on the same problem (CalculiX, or loadpath's second, tetrahedral solver). |
@@ -19,7 +20,8 @@ Each claim carries one of these labels, strongest first:
 ## Nothing is physically tested yet
 
 No loadpath prediction has been compared with a part printed and measured
-for this project. A calibration kit is ready and waiting to be printed
+for this project (published tests of other people's prints are below, under
+[Printed lattices against published tests](#printed-lattices-against-published-tests)). A calibration kit is ready and waiting to be printed
 ([CALIBRATION.md](CALIBRATION.md)): stiffness and strength coupons along and
 across layers, a gyroid-core beam, TPU creep and crush coupons, PETG warp
 bars, and a bench test of the GRIP wrist yoke with a predicted rotation per
@@ -61,8 +63,80 @@ certified strength.
 | Anisotropic lattice tensors (stiffness and directional wall stress) | Cross-checked (against resolved geometry and CalculiX) | Eleven bars and beams of cubic, BCCz, octet and gyroid cells, straight and turned 45 degrees, with and without a skin, analysed homogenized and resolved on 0.15-0.25 mm voxels; CalculiX C3D8I on the same voxels agrees with the resolved solve to 1e-8. Skinned: stiffness within 5%, peak stress 1.07-1.89x with the skin-junction factor (1.25x where lattice meets skin, fitted to the tall BCC beam). Stretched (aspect) cells, three skinned beams: stiffness within 2%, peak stress 1.01-1.55x, except one pull reading 0.88x at the edge of a 6 mm contact band by the loaded block. Skinless lattices need the free-surface knockdown and one case (turned cubic in twist) still reads 0.64x ([fields.md](fields.md#lattices-are-read-anisotropic), `bench/lattice_aniso_validate.py`). Not tested on prints. |
 | Lattice orientation optimization (`orient`, `loadpath lattice-orient`) | Simulation only | Mass at equal safety factor: 7-23% lighter on lattice bars whose cells lay badly, 0% on one already aligned (`bench/lattice_orient_mass.py`). Zoned orientation (`orient.zones`): 0-5% more on top of the best single direction at a uniform wall (`bench/lattice_zones_mass.py`). Homogenized readings, skinless parts. **Not confirmed:** turned cells cut open at a bare face read too stiff; a graded 3-zone skinless beam was 3.5x softer and its peak 4x higher at full resolution. The check reports `latticeTurnedExposed` and warns above 10%. Under a skin the optimizer leaves the cells as laid. |
 | Lattice wall grading (`loadpath lattice-grade`, density grid) | Simulation only | Fully stressed sizing to a target SF on the homogenized check: 25% (L-bracket) and 10% (deep beam) lighter than a uniform 2 mm wall under a 1 mm skin; 17-48% skinless (`bench/lattice_grade_mass.py`). Resolved check (0.2 mm voxels) of the graded skinned deep beam: compliance 2-6% above the homogenized reading, peak 12.5 MPa against 18.8-22.0 (conservative); the skinless rows are unconfirmed (see orientation row). Sizing-grid dependence: 8k-cell sizing read SF 0.161 on 8k cells, 0.144 on 30k. |
+| Printed lattice stiffness (33 published compression tests) | Matched published experiment (misses) | The designed geometry reads stiffer than the prints: median 1.0-1.7x the measured modulus for SLS, resin and FDM PLA lattices, 2.2-2.8x (worst 4.1x) for FDM ABS and PC strut lattices. Two thin SLS sheets and one SLS Schwarz P read 0.70-0.88x. Deflections of lattice parts will be larger than predicted ([below](#printed-lattices-against-published-tests)). |
+| Printed lattice strength (first yield) | Matched published experiment | The homogenized check's first-yield stress is under the measured first peak, plateau or yield on 32 of 33 specimens (0.18-0.91x), so lattice safety factors err safe. The exception is FDM PLA Schwarz P, 1.19x: its flat walls buckle before they yield, and the check is linear ([below](#printed-lattices-against-published-tests)). |
 | Lattice crush and impact | Simulation only | Elastic-compensation collapse of a unit cell, fitted within 6% of its own solves (`impact.CRUSH_DATA`); Gibson-Ashby densification. Not tested. |
 | Exact bores and interfaces | Analytic | Keep-outs and preserved shapes are cut with exact mesh booleans; intrusion and loss are measured on every delivered part and are zero to rounding. |
+
+## Printed lattices against published tests
+
+Three published studies give everything needed to rebuild their specimens:
+cell type and size, wall or strut, specimen size, the printed material's
+properties, and the measured modulus and strength of each lattice. Each
+specimen is a cube of lattice, cut open at its sides, compressed between
+flat platens along the build axis. `bench/published_experiments.py`
+rebuilds every one as a field graph (lattice in the cube, 2 mm platens
+bonded top and bottom, the top one held sideways and pushed down) and reads
+it three ways: the periodic unit-cell tables, the homogenized check of the
+specimen (what an agent gets for a lattice part), and a resolved voxel
+solve of the designed geometry (0.2 mm voxels, 0.3-2 million cells, matrix-free multigrid).
+Nothing was fitted to these data. The data and their sources are in
+`loadpath/data/published_experiments.json`, the results in
+`bench/results/published-experiments.json`, and the documented bands are
+pinned by `tests/test_published_experiments.py`.
+
+| Source | Specimens | Homogenized modulus / measured | Resolved modulus / measured | Homogenized first yield / measured strength |
+| --- | --- | --- | --- | --- |
+| Shevchenko et al. 2023, SLS PA12 ([doi](https://doi.org/10.1021/acsomega.3c01631)) | Schwarz P, diamond, gyroid sheets; 10 mm cells, 0.8 mm walls, 30 mm cubes | 0.70, 1.51, 1.30 | 0.72, 1.90, 1.51 | 0.56-0.83 of first peak |
+| same, FDM PLA | same | 1.67, 1.73, 1.65 | 1.72, 2.17, 1.91 | 0.66, 0.75, **1.19** (Schwarz P) |
+| same, LCD resin | same | 1.43, 1.43, 1.34 | 1.48, 1.80, 1.55 | 0.62-0.82 |
+| Guerra Silva et al. 2021, FDM ABS ([doi](https://doi.org/10.3390/ma14061462)) | 8 Kelvin and diamond strut lattices; 5 and 7 mm cells, 1.0 and 1.5 mm struts, 35 mm cubes | 1.68-4.12 (median 2.83) | 1.68-4.60 (median 3.11) | 0.18-0.42 of plateau |
+| same, FDM PC | same 8 geometries | 1.33-3.61 (median 2.21) | 1.28-3.90 (median 2.48) | 0.33-0.78 of plateau |
+| Abou-Ali et al. 2022, SLS PA11 ([doi](https://doi.org/10.3390/polym14214583)) | gyroid and diamond sheets, octet and Kelvin struts; 8 mm cells, 40 mm cubes | sheets 0.77-1.19, struts 1.28-2.56 | sheets 0.87-1.36, struts 1.49-2.88 | 0.45-0.91 of yield |
+
+What this shows, and what it does not:
+
+- **loadpath agrees with itself on these shapes.** The homogenized check
+  reads 0.80-1.04x the resolved solve's modulus on all 33 specimens (the
+  free-surface knockdown takes it from 0.96-1.24x without), so the error
+  against the tests is not the homogenization.
+- **The prints are softer than their design.** Even the resolved designed
+  geometry reads 1.25-4.6x stiffer than the measurement on 29 of 33 specimens. The paper's
+  material card is part of it for the FDM struts (datasheet modulus of
+  injection-moulded filament, not printed struts); so are struts and walls
+  thinner and rougher than drawn, layer bonding, and modulus taken from
+  crosshead travel without an extensometer, which reads low. Shevchenko et al.
+  measured their solid modulus in compression in the same lab, which
+  cancels some of the test bias, and still see 1.5-2.2x on diamond and
+  gyroid. A thin-feature effect is documented
+  elsewhere: Cobian et al. 2024 (PA12 PBF, [data](https://zenodo.org/records/13747315))
+  measured single struts of 0.5 mm reaching 20-50% of the 1.5 mm struts'
+  tensile strength.
+- **What to do with it.** Treat a lattice part's predicted deflection as a
+  lower bound: allow about 2x for SLS, resin and FDM PLA sheet lattices,
+  and 3-4x for FDM strut lattices at 1-1.5 mm struts, unless the material
+  card is calibrated on printed lattice coupons (the gyroid coupon in the
+  calibration kit is that check, [CALIBRATION.md](CALIBRATION.md)).
+- **Strength errs safe, with one class of miss.** The linear first-yield
+  reading is a lower bound on a ductile lattice's first peak or plateau, as
+  it should be. Flat-walled Schwarz P in brittle FDM PLA failed at 0.84x the
+  first-yield reading, by wall buckling the linear check does not see; the
+  resolved solve reads 1.28x there. Resolved first yield is also over the
+  measurement on a few strut lattices (octet SLS 1.09-1.15x, thin PC
+  diamond 1.24x), so its tighter reading is not a safe substitute.
+- **Limits of the data.** Abou-Ali et al. published power-law fits over
+  measured density rather than per-specimen values, and their sheets
+  weighed 1.4-2.9x the design (powder sintered onto the surface); loadpath
+  models the designed walls. Guerra Silva et al. list datasheet properties
+  for ABS and PC. None of the papers state where the lattice phase sits at
+  the cut faces. No study here tested a part loaded in bending, a skinned
+  lattice, or a topology-optimized part.
+
+No open dataset was found with both the geometry of a printed
+topology-optimized part and its measured stiffness or strength; published
+bracket tests give neither the STL nor enough to rebuild it. The GRIP wrist
+yoke bench test in the calibration kit remains the planned check for a
+printed optimized part.
 
 ## Flow and heat
 

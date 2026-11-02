@@ -1,0 +1,2255 @@
+{
+ "shev-sls-primitive": {
+  "source": "shevchenko2023",
+  "process": "SLS PA12",
+  "lattice": {
+   "type": "schwarz-p",
+   "cell": 10.0,
+   "rho": 0.18,
+   "wall": 0.8
+  },
+  "geometry": "schwarz-p-c10-t0.7738-30x30x30",
+  "measured": {
+   "E": 62.8,
+   "Esd": 3.2,
+   "strength": 2.67,
+   "strengthSd": 0.12,
+   "strengthKind": "first peak",
+   "rho": null
+  },
+  "material": {
+   "E": 1260.0,
+   "strength": 57.3,
+   "nu": 0.38,
+   "density": 1.01,
+   "basis": "measured in compression by the same lab (Table 1)"
+  },
+  "table": {
+   "rho": 0.18,
+   "thickness": 0.7738397711015736,
+   "E": 46.32594841298673,
+   "firstYield": 2.3567764733372396,
+   "stressFactor": 24.312869993505206
+  },
+  "homogenized": {
+   "E": 43.88859749915983,
+   "firstYield": 1.4951538184346689,
+   "deflection": 0.6851361436430154,
+   "peakStress": 38.32381611411022,
+   "cells": 103275,
+   "pitch": 0.6738664100805333,
+   "latticeExposed": 0.45432057621596766,
+   "mass": 8.52602647576402
+  },
+  "homogenizedNoKnockdown": {
+   "E": 56.05054762786269,
+   "firstYield": 1.9428703993207255,
+   "deflection": 0.5368184682688385,
+   "peakStress": 29.492445826563348
+  },
+  "resolvedUnit": {
+   "E": 35.903442983745315,
+   "firstYield": 0.027975000215192274,
+   "deflection": 0.8375744604655881,
+   "peakStress": 35.74620169107037,
+   "voxels": 1057176,
+   "pitch": 0.2,
+   "seconds": 293.25683999061584,
+   "mass": 8.457408000000001,
+   "innerFirstYield": 0.027975000215192274
+  },
+  "resolved": {
+   "E": 45.238338159519095,
+   "firstYield": 1.6029675123305172,
+   "innerFirstYield": 1.6029675123305172,
+   "voxels": 1057176,
+   "pitch": 0.2,
+   "mass": 8.54198208
+  },
+  "seconds": 61.68745255470276
+ },
+ "shev-sls-diamond": {
+  "source": "shevchenko2023",
+  "process": "SLS PA12",
+  "lattice": {
+   "type": "diamond",
+   "cell": 10.0,
+   "rho": 0.33,
+   "wall": 0.8
+  },
+  "geometry": "diamond-c10-t0.9168-30x30x30",
+  "measured": {
+   "E": 105.4,
+   "Esd": 4.1,
+   "strength": 5.9,
+   "strengthSd": 0.19,
+   "strengthKind": "first peak",
+   "rho": null
+  },
+  "material": {
+   "E": 1260.0,
+   "strength": 57.3,
+   "nu": 0.38,
+   "density": 1.01,
+   "basis": "measured in compression by the same lab (Table 1)"
+  },
+  "table": {
+   "rho": 0.33,
+   "thickness": 0.9167692307692308,
+   "E": 188.45142198101192,
+   "firstYield": 5.469425779152867,
+   "stressFactor": 10.476419703582653
+  },
+  "homogenized": {
+   "E": 159.53326137325323,
+   "firstYield": 3.9299824235995096,
+   "deflection": 0.18963586112756114,
+   "peakStress": 14.580217879834272,
+   "cells": 103275,
+   "pitch": 0.6738664100805333,
+   "latticeExposed": 0.45432057621596766,
+   "mass": 12.599547829355956
+  },
+  "homogenizedNoKnockdown": {
+   "E": 203.91199159193576,
+   "firstYield": 4.994209221898818,
+   "deflection": 0.1487095956995348,
+   "peakStress": 11.473287852809321
+  },
+  "resolvedUnit": {
+   "E": 159.0867729644469,
+   "firstYield": 0.09469980089872425,
+   "deflection": 0.1905763312749104,
+   "peakStress": 10.559684291938902,
+   "voxels": 1583136,
+   "pitch": 0.2,
+   "seconds": 401.3282594680786,
+   "mass": 12.665088000000003,
+   "innerFirstYield": 0.09469980089872425
+  },
+  "resolved": {
+   "E": 200.44933393520313,
+   "firstYield": 5.4262985914968995,
+   "innerFirstYield": 5.4262985914968995,
+   "voxels": 1583136,
+   "pitch": 0.2,
+   "mass": 12.791738880000002
+  },
+  "seconds": 57.16928958892822
+ },
+ "shev-sls-gyroid": {
+  "source": "shevchenko2023",
+  "process": "SLS PA12",
+  "lattice": {
+   "type": "gyroid",
+   "cell": 10.0,
+   "rho": 0.24,
+   "wall": 0.8
+  },
+  "geometry": "gyroid-c10-t0.8033-30x30x30",
+  "measured": {
+   "E": 68.9,
+   "Esd": 3.7,
+   "strength": 3.1,
+   "strengthSd": 0.15,
+   "strengthKind": "first peak",
+   "rho": null
+  },
+  "material": {
+   "E": 1260.0,
+   "strength": 57.3,
+   "nu": 0.38,
+   "density": 1.01,
+   "basis": "measured in compression by the same lab (Table 1)"
+  },
+  "table": {
+   "rho": 0.24,
+   "thickness": 0.8032529550827423,
+   "E": 103.32158760499217,
+   "firstYield": 3.670312675998474,
+   "stressFactor": 15.611748932102104
+  },
+  "homogenized": {
+   "E": 89.90485757318422,
+   "firstYield": 2.5662161199066618,
+   "deflection": 0.335273387187064,
+   "peakStress": 22.328594834827907,
+   "cells": 103275,
+   "pitch": 0.6738664100805333,
+   "latticeExposed": 0.45432057621596766,
+   "mass": 10.155435017200789
+  },
+  "homogenizedNoKnockdown": {
+   "E": 114.96341178822716,
+   "firstYield": 3.276438449353452,
+   "deflection": 0.2625398910534412,
+   "peakStress": 17.488501885731182
+  },
+  "resolvedUnit": {
+   "E": 82.52770918990932,
+   "firstYield": 0.05670024167849822,
+   "deflection": 0.36551427047326923,
+   "peakStress": 17.63660912893813,
+   "voxels": 1264968,
+   "pitch": 0.2,
+   "seconds": 392.24556493759155,
+   "mass": 10.119744000000003,
+   "innerFirstYield": 0.056240855826748745
+  },
+  "resolved": {
+   "E": 103.98491357928575,
+   "firstYield": 3.248923848177948,
+   "innerFirstYield": 3.222601038872703,
+   "voxels": 1264968,
+   "pitch": 0.2,
+   "mass": 10.220941440000002
+  },
+  "seconds": 56.952476024627686
+ },
+ "shev-fdm-primitive": {
+  "source": "shevchenko2023",
+  "process": "FDM PLA",
+  "lattice": {
+   "type": "schwarz-p",
+   "cell": 10.0,
+   "rho": 0.18,
+   "wall": 0.8
+  },
+  "geometry": "schwarz-p-c10-t0.7738-30x30x30",
+  "measured": {
+   "E": 38.3,
+   "Esd": 2.1,
+   "strength": 1.72,
+   "strengthSd": 0.15,
+   "strengthKind": "first peak",
+   "rho": null
+  },
+  "material": {
+   "E": 1832.0,
+   "strength": 78.7,
+   "nu": 0.35,
+   "density": 1.21,
+   "basis": "measured in compression by the same lab (Table 1)"
+  },
+  "table": {
+   "rho": 0.18,
+   "thickness": 0.7738397711015736,
+   "E": 67.35645832745372,
+   "firstYield": 3.2369687338855284,
+   "stressFactor": 24.312869993505206
+  },
+  "homogenized": {
+   "E": 63.79886434191089,
+   "firstYield": 2.0537837370363734,
+   "deflection": 0.47131950898171404,
+   "peakStress": 38.319516597967,
+   "cells": 103275,
+   "pitch": 0.6738664100805333,
+   "latticeExposed": 0.45432057621596766,
+   "mass": 10.214348550172735
+  },
+  "homogenizedNoKnockdown": {
+   "E": 81.48279814577292,
+   "firstYield": 2.6693417417729157,
+   "deflection": 0.36926757186198467,
+   "peakStress": 29.482924111368845
+  },
+  "resolvedUnit": {
+   "E": 35.903442983745315,
+   "firstYield": 0.027975000215192274,
+   "deflection": 0.8375744604655881,
+   "peakStress": 35.74620169107037,
+   "voxels": 1057176,
+   "pitch": 0.2,
+   "seconds": 293.25683999061584,
+   "mass": 8.457408000000001,
+   "innerFirstYield": 0.027975000215192274
+  },
+  "resolved": {
+   "E": 65.77510754622142,
+   "firstYield": 2.201632516935632,
+   "innerFirstYield": 2.201632516935632,
+   "voxels": 1057176,
+   "pitch": 0.2,
+   "mass": 10.233463680000002
+  },
+  "seconds": 57.794981956481934
+ },
+ "shev-fdm-diamond": {
+  "source": "shevchenko2023",
+  "process": "FDM PLA",
+  "lattice": {
+   "type": "diamond",
+   "cell": 10.0,
+   "rho": 0.33,
+   "wall": 0.8
+  },
+  "geometry": "diamond-c10-t0.9168-30x30x30",
+  "measured": {
+   "E": 134.1,
+   "Esd": 4.2,
+   "strength": 8.13,
+   "strengthSd": 0.21,
+   "strengthKind": "first peak",
+   "rho": null
+  },
+  "material": {
+   "E": 1832.0,
+   "strength": 78.7,
+   "nu": 0.35,
+   "density": 1.21,
+   "basis": "measured in compression by the same lab (Table 1)"
+  },
+  "table": {
+   "rho": 0.33,
+   "thickness": 0.9167692307692308,
+   "E": 274.00238497556654,
+   "firstYield": 7.512108356358301,
+   "stressFactor": 10.476419703582653
+  },
+  "homogenized": {
+   "E": 231.7019488967433,
+   "firstYield": 5.3982336212390125,
+   "deflection": 0.13056838697266146,
+   "peakStress": 14.57884291823899,
+   "cells": 103275,
+   "pitch": 0.6738664100805333,
+   "latticeExposed": 0.45432057621596766,
+   "mass": 15.094507795565056
+  },
+  "homogenizedNoKnockdown": {
+   "E": 296.1095426309429,
+   "firstYield": 6.862619204459911,
+   "deflection": 0.10240556053481209,
+   "peakStress": 11.467924658977738
+  },
+  "resolvedUnit": {
+   "E": 159.0867729644469,
+   "firstYield": 0.09469980089872425,
+   "deflection": 0.1905763312749104,
+   "peakStress": 10.559684291938902,
+   "voxels": 1583136,
+   "pitch": 0.2,
+   "seconds": 401.3282594680786,
+   "mass": 12.665088000000003,
+   "innerFirstYield": 0.09469980089872425
+  },
+  "resolved": {
+   "E": 291.4469680708667,
+   "firstYield": 7.452874330729599,
+   "innerFirstYield": 7.452874330729599,
+   "voxels": 1583136,
+   "pitch": 0.2,
+   "mass": 15.324756480000003
+  },
+  "seconds": 51.999841928482056
+ },
+ "shev-fdm-gyroid": {
+  "source": "shevchenko2023",
+  "process": "FDM PLA",
+  "lattice": {
+   "type": "gyroid",
+   "cell": 10.0,
+   "rho": 0.24,
+   "wall": 0.8
+  },
+  "geometry": "gyroid-c10-t0.8033-30x30x30",
+  "measured": {
+   "E": 79.2,
+   "Esd": 2.2,
+   "strength": 4.73,
+   "strengthSd": 0.16,
+   "strengthKind": "first peak",
+   "rho": null
+  },
+  "material": {
+   "E": 1832.0,
+   "strength": 78.7,
+   "nu": 0.35,
+   "density": 1.21,
+   "basis": "measured in compression by the same lab (Table 1)"
+  },
+  "table": {
+   "rho": 0.24,
+   "thickness": 0.8032529550827423,
+   "E": 150.22630832725847,
+   "firstYield": 5.041075176284118,
+   "stressFactor": 15.611748932102104
+  },
+  "homogenized": {
+   "E": 130.63268555690678,
+   "firstYield": 3.5250466803241074,
+   "deflection": 0.2307432628643733,
+   "peakStress": 22.325945480178436,
+   "cells": 103275,
+   "pitch": 0.6738664100805333,
+   "latticeExposed": 0.45432057621596766,
+   "mass": 12.166412248329658
+  },
+  "homogenizedNoKnockdown": {
+   "E": 167.03472053236953,
+   "firstYield": 4.5019278413893575,
+   "deflection": 0.18069508075204432,
+   "peakStress": 17.48139969647139
+  },
+  "resolvedUnit": {
+   "E": 82.52770918990932,
+   "firstYield": 0.05670024167849822,
+   "deflection": 0.36551427047326923,
+   "peakStress": 17.63660912893813,
+   "voxels": 1264968,
+   "pitch": 0.2,
+   "seconds": 392.24556493759155,
+   "mass": 10.119744000000003,
+   "innerFirstYield": 0.056240855826748745
+  },
+  "resolved": {
+   "E": 151.1907632359139,
+   "firstYield": 4.46230902009781,
+   "innerFirstYield": 4.426155353565126,
+   "voxels": 1264968,
+   "pitch": 0.2,
+   "mass": 12.244890240000002
+  },
+  "seconds": 52.90288472175598
+ },
+ "shev-lcd-primitive": {
+  "source": "shevchenko2023",
+  "process": "LCD resin",
+  "lattice": {
+   "type": "schwarz-p",
+   "cell": 10.0,
+   "rho": 0.18,
+   "wall": 0.8
+  },
+  "geometry": "schwarz-p-c10-t0.7738-30x30x30",
+  "measured": {
+   "E": 31.3,
+   "Esd": 0.8,
+   "strength": 1.86,
+   "strengthSd": 0.07,
+   "strengthKind": "first peak",
+   "rho": null
+  },
+  "material": {
+   "E": 1287.0,
+   "strength": 58.3,
+   "nu": 0.4,
+   "density": 1.18,
+   "basis": "measured in compression by the same lab (Table 1)"
+  },
+  "table": {
+   "rho": 0.18,
+   "thickness": 0.7738397711015736,
+   "E": 47.318647307550734,
+   "firstYield": 2.397906952802113,
+   "stressFactor": 24.312869993505206
+  },
+  "homogenized": {
+   "E": 44.837414446833016,
+   "firstYield": 1.5211285791145295,
+   "deflection": 0.6706380772107989,
+   "peakStress": 38.32680603104391,
+   "cells": 103275,
+   "pitch": 0.6738664100805333,
+   "latticeExposed": 0.45432057621596766,
+   "mass": 9.961100239011428
+  },
+  "homogenizedNoKnockdown": {
+   "E": 57.26068866522457,
+   "firstYield": 1.9763517645132116,
+   "deflection": 0.525473652178454,
+   "peakStress": 29.498797251996113
+  },
+  "resolvedUnit": {
+   "E": 35.903442983745315,
+   "firstYield": 0.027975000215192274,
+   "deflection": 0.8375744604655881,
+   "peakStress": 35.74620169107037,
+   "voxels": 1057176,
+   "pitch": 0.2,
+   "seconds": 293.25683999061584,
+   "mass": 8.457408000000001,
+   "innerFirstYield": 0.027975000215192274
+  },
+  "resolved": {
+   "E": 46.20773112008022,
+   "firstYield": 1.6309425125457095,
+   "innerFirstYield": 1.6309425125457095,
+   "voxels": 1057176,
+   "pitch": 0.2,
+   "mass": 9.97974144
+  },
+  "seconds": 56.88159370422363
+ },
+ "shev-lcd-diamond": {
+  "source": "shevchenko2023",
+  "process": "LCD resin",
+  "lattice": {
+   "type": "diamond",
+   "cell": 10.0,
+   "rho": 0.33,
+   "wall": 0.8
+  },
+  "geometry": "diamond-c10-t0.9168-30x30x30",
+  "measured": {
+   "E": 113.9,
+   "Esd": 2.1,
+   "strength": 6.4,
+   "strengthSd": 0.11,
+   "strengthKind": "first peak",
+   "rho": null
+  },
+  "material": {
+   "E": 1287.0,
+   "strength": 58.3,
+   "nu": 0.4,
+   "density": 1.18,
+   "basis": "measured in compression by the same lab (Table 1)"
+  },
+  "table": {
+   "rho": 0.33,
+   "thickness": 0.9167692307692308,
+   "E": 192.4896667377479,
+   "firstYield": 5.564878236031625,
+   "stressFactor": 10.476419703582653
+  },
+  "homogenized": {
+   "E": 163.09790054019626,
+   "firstYield": 3.9982501063577547,
+   "deflection": 0.18549260469136294,
+   "peakStress": 14.581378965586762,
+   "cells": 103275,
+   "pitch": 0.6738664100805333,
+   "latticeExposed": 0.45432057621596766,
+   "mass": 14.72026380063369
+  },
+  "homogenizedNoKnockdown": {
+   "E": 208.4975987544482,
+   "firstYield": 5.079726257795032,
+   "deflection": 0.14544055074794024,
+   "peakStress": 11.47699640517763
+  },
+  "resolvedUnit": {
+   "E": 159.0867729644469,
+   "firstYield": 0.09469980089872425,
+   "deflection": 0.1905763312749104,
+   "peakStress": 10.559684291938902,
+   "voxels": 1583136,
+   "pitch": 0.2,
+   "seconds": 401.3282594680786,
+   "mass": 12.665088000000003,
+   "innerFirstYield": 0.09469980089872425
+  },
+  "resolved": {
+   "E": 204.74467680524316,
+   "firstYield": 5.520998392395623,
+   "innerFirstYield": 5.520998392395623,
+   "voxels": 1583136,
+   "pitch": 0.2,
+   "mass": 14.944803840000002
+  },
+  "seconds": 54.84478187561035
+ },
+ "shev-lcd-gyroid": {
+  "source": "shevchenko2023",
+  "process": "LCD resin",
+  "lattice": {
+   "type": "gyroid",
+   "cell": 10.0,
+   "rho": 0.24,
+   "wall": 0.8
+  },
+  "geometry": "gyroid-c10-t0.8033-30x30x30",
+  "measured": {
+   "E": 68.4,
+   "Esd": 0.9,
+   "strength": 3.88,
+   "strengthSd": 0.06,
+   "strengthKind": "first peak",
+   "rho": null
+  },
+  "material": {
+   "E": 1287.0,
+   "strength": 58.3,
+   "nu": 0.4,
+   "density": 1.18,
+   "basis": "measured in compression by the same lab (Table 1)"
+  },
+  "table": {
+   "rho": 0.24,
+   "thickness": 0.8032529550827423,
+   "E": 105.53562162509915,
+   "firstYield": 3.7343669984417285,
+   "stressFactor": 15.611748932102104
+  },
+  "homogenized": {
+   "E": 91.880374766887,
+   "firstYield": 2.610758315367098,
+   "deflection": 0.32806551259337285,
+   "peakStress": 22.33067674508295,
+   "cells": 103275,
+   "pitch": 0.6738664100805333,
+   "latticeExposed": 0.45432057621596766,
+   "mass": 11.864765663660329
+  },
+  "homogenizedNoKnockdown": {
+   "E": 117.49579165197909,
+   "firstYield": 3.33269641969449,
+   "deflection": 0.2568822952588483,
+   "peakStress": 17.49334252453285
+  },
+  "resolvedUnit": {
+   "E": 82.52770918990932,
+   "firstYield": 0.05670024167849822,
+   "deflection": 0.36551427047326923,
+   "peakStress": 17.63660912893813,
+   "voxels": 1264968,
+   "pitch": 0.2,
+   "seconds": 392.24556493759155,
+   "mass": 10.119744000000003,
+   "innerFirstYield": 0.056240855826748745
+  },
+  "resolved": {
+   "E": 106.2131617274133,
+   "firstYield": 3.305624089856446,
+   "innerFirstYield": 3.2788418946994518,
+   "voxels": 1264968,
+   "pitch": 0.2,
+   "mass": 11.941297920000002
+  },
+  "seconds": 54.972782611846924
+ },
+ "gs-001": {
+  "source": "guerrasilva2021",
+  "process": "FDM ABS 0.25 mm",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 5.0,
+   "diameter": 1.0
+  },
+  "geometry": "kelvin-c5-t1.0000-35x35x35",
+  "measured": {
+   "E": 63.43,
+   "Esd": 4.72,
+   "strength": 4.17,
+   "strengthSd": 0.03,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 2180.0,
+   "strength": 30.0,
+   "nu": 0.35,
+   "density": 1.195,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.20615386962890625,
+   "thickness": 1.0,
+   "E": 112.49126155981055,
+   "firstYield": 0.8894232771817148,
+   "stressFactor": 33.72972213529196
+  },
+  "homogenized": {
+   "E": 106.71259008265575,
+   "firstYield": 0.7437404655185726,
+   "deflection": 0.3289012236663532,
+   "peakStress": 40.336651548309284,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.22673762906730435,
+   "mass": 16.398860994286185
+  },
+  "homogenizedNoKnockdown": {
+   "E": 120.25819043025331,
+   "firstYield": 0.824349888792098,
+   "deflection": 0.29195789899596675,
+   "peakStress": 36.39231400147133
+  },
+  "resolvedUnit": {
+   "E": 48.90175987327073,
+   "firstYield": 0.025629678742605327,
+   "deflection": 0.7177206630334524,
+   "peakStress": 39.01726627332463,
+   "voxels": 1666196,
+   "pitch": 0.2,
+   "seconds": 327.54281187057495,
+   "mass": 13.329568000000004,
+   "innerFirstYield": 0.025629678742605327
+  },
+  "resolved": {
+   "E": 106.60583652373019,
+   "firstYield": 0.7688903622781598,
+   "innerFirstYield": 0.7688903622781598,
+   "voxels": 1666196,
+   "pitch": 0.2,
+   "mass": 15.928833760000005
+  },
+  "seconds": 386.4924867153168
+ },
+ "gs-002": {
+  "source": "guerrasilva2021",
+  "process": "FDM ABS 0.15 mm",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 7.0,
+   "diameter": 1.0
+  },
+  "geometry": "kelvin-c7-t1.0000-35x35x35",
+  "measured": {
+   "E": 15.48,
+   "Esd": 0.3,
+   "strength": 1.0,
+   "strengthSd": 0.05,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 2180.0,
+   "strength": 30.0,
+   "nu": 0.35,
+   "density": 1.195,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.11408587864467075,
+   "thickness": 1.0,
+   "E": 31.98685924265332,
+   "firstYield": 0.3163088918863717,
+   "stressFactor": 94.84399828626051
+  },
+  "homogenized": {
+   "E": 30.176686507767776,
+   "firstYield": 0.2485045120020897,
+   "deflection": 1.1607531868840832,
+   "peakStress": 120.72215413033517,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.29124653185498284,
+   "mass": 11.69250475848311
+  },
+  "homogenizedNoKnockdown": {
+   "E": 35.597608023772075,
+   "firstYield": 0.2902769281143419,
+   "deflection": 0.9841295609691053,
+   "peakStress": 103.34958480814159
+  },
+  "resolvedUnit": {
+   "E": 13.28087423254863,
+   "firstYield": 0.007801801708665234,
+   "deflection": 2.6373686803405123,
+   "peakStress": 128.1755211606223,
+   "voxels": 1196000,
+   "pitch": 0.2,
+   "seconds": 466.96155071258545,
+   "mass": 9.568000000000001,
+   "innerFirstYield": 0.007801801708665234
+  },
+  "resolved": {
+   "E": 28.952305826956014,
+   "firstYield": 0.234054051259957,
+   "innerFirstYield": 0.234054051259957,
+   "voxels": 1196000,
+   "pitch": 0.2,
+   "mass": 11.433760000000003
+  },
+  "seconds": 519.8177044391632
+ },
+ "gs-003": {
+  "source": "guerrasilva2021",
+  "process": "FDM ABS 0.15 mm",
+  "lattice": {
+   "type": "diamond-strut",
+   "cell": 5.0,
+   "diameter": 1.0
+  },
+  "geometry": "diamond-strut-c5-t1.0000-35x35x35",
+  "measured": {
+   "E": 19.65,
+   "Esd": 2.33,
+   "strength": 1.1,
+   "strengthSd": 0.01,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 2180.0,
+   "strength": 30.0,
+   "nu": 0.35,
+   "density": 1.195,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.17842674255371094,
+   "thickness": 1.0,
+   "E": 40.488310253045704,
+   "firstYield": 0.5088770626979722,
+   "stressFactor": 58.953335096193065
+  },
+  "homogenized": {
+   "E": 43.62021414368383,
+   "firstYield": 0.37302385634430046,
+   "deflection": 0.8032977194853985,
+   "peakStress": 80.42381067528841,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.22673762906730435,
+   "mass": 14.981498282053288
+  },
+  "homogenizedNoKnockdown": {
+   "E": 48.93159833920806,
+   "firstYield": 0.43759206215027197,
+   "deflection": 0.7162016480982647,
+   "peakStress": 68.55700227418157
+  },
+  "resolvedUnit": {
+   "E": 22.887400991996426,
+   "firstYield": 0.01848650626650085,
+   "deflection": 1.5312256212157629,
+   "peakStress": 54.09350937294661,
+   "voxels": 1591422,
+   "pitch": 0.2,
+   "seconds": 413.1620931625366,
+   "mass": 12.731376000000004,
+   "innerFirstYield": 0.01347411191519568
+  },
+  "resolved": {
+   "E": 49.894534162552205,
+   "firstYield": 0.5545951879950255,
+   "innerFirstYield": 0.4042233574558704,
+   "voxels": 1591422,
+   "pitch": 0.2,
+   "mass": 15.213994320000007
+  },
+  "seconds": 476.58193945884705
+ },
+ "gs-004": {
+  "source": "guerrasilva2021",
+  "process": "FDM ABS 0.25 mm",
+  "lattice": {
+   "type": "diamond-strut",
+   "cell": 7.0,
+   "diameter": 1.0
+  },
+  "geometry": "diamond-strut-c7-t1.0000-35x35x35",
+  "measured": {
+   "E": 4.49,
+   "Esd": 0.1,
+   "strength": 0.28,
+   "strengthSd": 0.02,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 2180.0,
+   "strength": 30.0,
+   "nu": 0.35,
+   "density": 1.195,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.09666401999337332,
+   "thickness": 1.0,
+   "E": 11.126219017113065,
+   "firstYield": 0.1434476682167766,
+   "stressFactor": 209.13550128026006
+  },
+  "homogenized": {
+   "E": 12.274470659804633,
+   "firstYield": 0.09926898641974248,
+   "deflection": 2.8523642243008105,
+   "peakStress": 302.209190221304,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.29124653185498284,
+   "mass": 10.801929519181396
+  },
+  "homogenizedNoKnockdown": {
+   "E": 14.410618388152272,
+   "firstYield": 0.11762708563118134,
+   "deflection": 2.4296820447067717,
+   "peakStress": 255.0432992454198
+  },
+  "resolvedUnit": {
+   "E": 6.075250091260428,
+   "firstYield": 0.00562038692395507,
+   "deflection": 5.76307970441404,
+   "peakStress": 177.92369342719545,
+   "voxels": 1141250,
+   "pitch": 0.2,
+   "seconds": 523.0893998146057,
+   "mass": 9.130000000000003,
+   "innerFirstYield": 0.004566241492444492
+  },
+  "resolved": {
+   "E": 13.244045198947733,
+   "firstYield": 0.1686116077186521,
+   "innerFirstYield": 0.13698724477333477,
+   "voxels": 1141250,
+   "pitch": 0.2,
+   "mass": 10.910350000000003
+  },
+  "seconds": 586.0712373256683
+ },
+ "gs-005": {
+  "source": "guerrasilva2021",
+  "process": "FDM ABS 0.15 mm",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 5.0,
+   "diameter": 1.5
+  },
+  "geometry": "kelvin-c5-t1.5000-35x35x35",
+  "measured": {
+   "E": 89.62,
+   "Esd": 0.66,
+   "strength": 7.82,
+   "strengthSd": 0.21,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 2180.0,
+   "strength": 30.0,
+   "nu": 0.35,
+   "density": 1.195,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.3961305618286133,
+   "thickness": 1.5,
+   "E": 395.70251199739397,
+   "firstYield": 2.861176933965413,
+   "stressFactor": 10.485195670308256
+  },
+  "homogenized": {
+   "E": 369.36248595369364,
+   "firstYield": 2.3710725513924937,
+   "deflection": 0.09567529462221276,
+   "peakStress": 12.652501916224146,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.22673762906730435,
+   "mass": 26.110140456704617
+  },
+  "homogenizedNoKnockdown": {
+   "E": 414.94704286804694,
+   "firstYield": 2.6233601601437666,
+   "deflection": 0.08526554404601565,
+   "peakStress": 11.43571533020305
+  },
+  "resolvedUnit": {
+   "E": 189.20361715931793,
+   "firstYield": 0.07136939384971105,
+   "deflection": 0.18698589258221437,
+   "peakStress": 14.011608422873673,
+   "voxels": 2752820,
+   "pitch": 0.2,
+   "seconds": 307.5933451652527,
+   "mass": 22.022560000000006,
+   "innerFirstYield": 0.09097772164464797
+  },
+  "resolved": {
+   "E": 412.46388540731306,
+   "firstYield": 2.1410818154913316,
+   "innerFirstYield": 2.7293316493394393,
+   "voxels": 2752820,
+   "pitch": 0.2,
+   "mass": 26.316959200000007
+  },
+  "seconds": 369.8181252479553
+ },
+ "gs-006": {
+  "source": "guerrasilva2021",
+  "process": "FDM ABS 0.25 mm",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 7.0,
+   "diameter": 1.5
+  },
+  "geometry": "kelvin-c7-t1.5000-35x35x35",
+  "measured": {
+   "E": 42.27,
+   "Esd": 1.34,
+   "strength": 2.68,
+   "strengthSd": 0.03,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 2180.0,
+   "strength": 30.0,
+   "nu": 0.35,
+   "density": 1.195,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.23180294036865234,
+   "thickness": 1.5,
+   "E": 146.08434365756324,
+   "firstYield": 1.1228781776507648,
+   "stressFactor": 26.717056753889945
+  },
+  "homogenized": {
+   "E": 131.64886872626175,
+   "firstYield": 0.908087678179342,
+   "deflection": 0.2667761532510756,
+   "peakStress": 33.03645751492641,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.29124653185498284,
+   "mass": 17.709997065879488
+  },
+  "homogenizedNoKnockdown": {
+   "E": 154.85041709052751,
+   "firstYield": 1.043254290614176,
+   "deflection": 0.22694200805601222,
+   "peakStress": 28.75617217192431
+  },
+  "resolvedUnit": {
+   "E": 65.0130116561348,
+   "firstYield": 0.030372704302377828,
+   "deflection": 0.540353771166934,
+   "peakStress": 32.924299069467835,
+   "voxels": 1871000,
+   "pitch": 0.2,
+   "seconds": 401.03239464759827,
+   "mass": 14.968000000000004,
+   "innerFirstYield": 0.03025995052193324
+  },
+  "resolved": {
+   "E": 141.72836541037384,
+   "firstYield": 0.9111811290713349,
+   "innerFirstYield": 0.9077985156579972,
+   "voxels": 1871000,
+   "pitch": 0.2,
+   "mass": 17.886760000000006
+  },
+  "seconds": 453.77611231803894
+ },
+ "gs-007": {
+  "source": "guerrasilva2021",
+  "process": "FDM ABS 0.25 mm",
+  "lattice": {
+   "type": "diamond-strut",
+   "cell": 5.0,
+   "diameter": 1.5
+  },
+  "geometry": "diamond-strut-c5-t1.5000-35x35x35",
+  "measured": {
+   "E": 57.57,
+   "Esd": 3.0,
+   "strength": 3.08,
+   "strengthSd": 0.02,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 2180.0,
+   "strength": 30.0,
+   "nu": 0.35,
+   "density": 1.195,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.35740184783935547,
+   "thickness": 1.5,
+   "E": 175.1639991615039,
+   "firstYield": 1.6078059750245328,
+   "stressFactor": 18.658967851853046
+  },
+  "homogenized": {
+   "E": 176.1142467187201,
+   "firstYield": 1.201265326580585,
+   "deflection": 0.1996520631267826,
+   "peakStress": 24.973666796323283,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.22673762906730435,
+   "mass": 24.130395676358685
+  },
+  "homogenizedNoKnockdown": {
+   "E": 196.68062978786506,
+   "firstYield": 1.3473714618927468,
+   "deflection": 0.17887089838335518,
+   "peakStress": 22.265574749413872
+  },
+  "resolvedUnit": {
+   "E": 90.54506660741565,
+   "firstYield": 0.06016270093431948,
+   "deflection": 0.38854784088626976,
+   "peakStress": 16.62159418493719,
+   "voxels": 2560054,
+   "pitch": 0.2,
+   "seconds": 368.4271206855774,
+   "mass": 20.480432000000004,
+   "innerFirstYield": 0.05671316574663768
+  },
+  "resolved": {
+   "E": 197.3882452041661,
+   "firstYield": 1.8048810280295844,
+   "innerFirstYield": 1.7013949723991304,
+   "voxels": 2560054,
+   "pitch": 0.2,
+   "mass": 24.474116240000004
+  },
+  "seconds": 432.422482252121
+ },
+ "gs-008": {
+  "source": "guerrasilva2021",
+  "process": "FDM ABS 0.15 mm",
+  "lattice": {
+   "type": "diamond-strut",
+   "cell": 7.0,
+   "diameter": 1.5
+  },
+  "geometry": "diamond-strut-c7-t1.5000-35x35x35",
+  "measured": {
+   "E": 18.21,
+   "Esd": 2.47,
+   "strength": 1.11,
+   "strengthSd": 0.01,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 2180.0,
+   "strength": 30.0,
+   "nu": 0.35,
+   "density": 1.195,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.20182718549455914,
+   "thickness": 1.5,
+   "E": 52.31135025211267,
+   "firstYield": 0.6379996549272829,
+   "stressFactor": 47.02196900626741
+  },
+  "homogenized": {
+   "E": 53.37039991905325,
+   "firstYield": 0.4679986792891968,
+   "deflection": 0.6567116552023066,
+   "peakStress": 64.10274500253811,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.29124653185498284,
+   "mass": 16.177688395228156
+  },
+  "homogenizedNoKnockdown": {
+   "E": 62.35671552924029,
+   "firstYield": 0.5486054720403399,
+   "deflection": 0.5622042100575257,
+   "peakStress": 54.68410639147625
+  },
+  "resolvedUnit": {
+   "E": 27.32439904296088,
+   "firstYield": 0.019501475310660574,
+   "deflection": 1.2829064874572769,
+   "peakStress": 51.27817173161998,
+   "voxels": 1713250,
+   "pitch": 0.2,
+   "seconds": 473.3291254043579,
+   "mass": 13.706000000000003,
+   "innerFirstYield": 0.019501475310660574
+  },
+  "resolved": {
+   "E": 59.56718991365472,
+   "firstYield": 0.5850442593198172,
+   "innerFirstYield": 0.5850442593198172,
+   "voxels": 1713250,
+   "pitch": 0.2,
+   "mass": 16.378670000000003
+  },
+  "seconds": 529.2504315376282
+ },
+ "gs-009": {
+  "source": "guerrasilva2021",
+  "process": "FDM PC 0.15 mm",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 5.0,
+   "diameter": 1.0
+  },
+  "geometry": "kelvin-c5-t1.0000-35x35x35",
+  "measured": {
+   "E": 60.42,
+   "Esd": 4.55,
+   "strength": 4.79,
+   "strengthSd": 0.03,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 1958.0,
+   "strength": 64.0,
+   "nu": 0.37,
+   "density": 1.2,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.20615386962890625,
+   "thickness": 1.0,
+   "E": 101.03572941931608,
+   "firstYield": 1.8974363246543249,
+   "stressFactor": 33.72972213529196
+  },
+  "homogenized": {
+   "E": 95.85943679424166,
+   "firstYield": 1.5864977840201002,
+   "deflection": 0.3661393895012315,
+   "peakStress": 40.34042823421249,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.22673762906730435,
+   "mass": 16.467475475433826
+  },
+  "homogenizedNoKnockdown": {
+   "E": 108.02266464773574,
+   "firstYield": 1.7581086202478942,
+   "deflection": 0.3250275293148241,
+   "peakStress": 36.40275649804616
+  },
+  "resolvedUnit": {
+   "E": 48.90175987327073,
+   "firstYield": 0.025629678742605327,
+   "deflection": 0.7177206630334524,
+   "peakStress": 39.01726627332463,
+   "voxels": 1666196,
+   "pitch": 0.2,
+   "seconds": 327.54281187057495,
+   "mass": 13.329568000000004,
+   "innerFirstYield": 0.025629678742605327
+  },
+  "resolved": {
+   "E": 95.74964583186409,
+   "firstYield": 1.640299439526741,
+   "innerFirstYield": 1.640299439526741,
+   "voxels": 1666196,
+   "pitch": 0.2,
+   "mass": 15.995481600000003
+  },
+  "seconds": 51.947426080703735
+ },
+ "gs-010": {
+  "source": "guerrasilva2021",
+  "process": "FDM PC 0.25 mm",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 7.0,
+   "diameter": 1.0
+  },
+  "geometry": "kelvin-c7-t1.0000-35x35x35",
+  "measured": {
+   "E": 20.39,
+   "Esd": 2.48,
+   "strength": 1.52,
+   "strengthSd": 0.03,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 1958.0,
+   "strength": 64.0,
+   "nu": 0.37,
+   "density": 1.2,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.11408587864467075,
+   "thickness": 1.0,
+   "E": 28.729481833539083,
+   "firstYield": 0.6747923026909263,
+   "stressFactor": 94.84399828626051
+  },
+  "homogenized": {
+   "E": 27.104541081386024,
+   "firstYield": 0.530119637375097,
+   "deflection": 1.2923179861547787,
+   "peakStress": 120.72746506222234,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.29124653185498284,
+   "mass": 11.74142737253534
+  },
+  "homogenizedNoKnockdown": {
+   "E": 31.972706640445058,
+   "firstYield": 0.6191606160215994,
+   "deflection": 1.09570512530767,
+   "peakStress": 103.36574766533174
+  },
+  "resolvedUnit": {
+   "E": 13.28087423254863,
+   "firstYield": 0.007801801708665234,
+   "deflection": 2.6373686803405123,
+   "peakStress": 128.1755211606223,
+   "voxels": 1196000,
+   "pitch": 0.2,
+   "seconds": 466.96155071258545,
+   "mass": 9.568000000000001,
+   "innerFirstYield": 0.007801801708665234
+  },
+  "resolved": {
+   "E": 26.00395174733022,
+   "firstYield": 0.49931530935457497,
+   "innerFirstYield": 0.49931530935457497,
+   "voxels": 1196000,
+   "pitch": 0.2,
+   "mass": 11.481600000000002
+  },
+  "seconds": 52.826056480407715
+ },
+ "gs-011": {
+  "source": "guerrasilva2021",
+  "process": "FDM PC 0.25 mm",
+  "lattice": {
+   "type": "diamond-strut",
+   "cell": 5.0,
+   "diameter": 1.0
+  },
+  "geometry": "diamond-strut-c5-t1.0000-35x35x35",
+  "measured": {
+   "E": 21.19,
+   "Esd": 1.39,
+   "strength": 1.55,
+   "strengthSd": 0.07,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 1958.0,
+   "strength": 64.0,
+   "nu": 0.37,
+   "density": 1.2,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.17842674255371094,
+   "thickness": 1.0,
+   "E": 36.36518875021261,
+   "firstYield": 1.0856044004223406,
+   "stressFactor": 58.953335096193065
+  },
+  "homogenized": {
+   "E": 39.176785648532025,
+   "firstYield": 0.7958161665395072,
+   "deflection": 0.8944076591700008,
+   "peakStress": 80.42058290709882,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.22673762906730435,
+   "mass": 15.044182375283635
+  },
+  "homogenizedNoKnockdown": {
+   "E": 43.944363661139114,
+   "firstYield": 0.9332384219497151,
+   "deflection": 0.7974830915904629,
+   "peakStress": 68.5784023618441
+  },
+  "resolvedUnit": {
+   "E": 22.887400991996426,
+   "firstYield": 0.01848650626650085,
+   "deflection": 1.5312256212157629,
+   "peakStress": 54.09350937294661,
+   "voxels": 1591422,
+   "pitch": 0.2,
+   "seconds": 413.1620931625366,
+   "mass": 12.731376000000004,
+   "innerFirstYield": 0.01347411191519568
+  },
+  "resolved": {
+   "E": 44.813531142329005,
+   "firstYield": 1.1831364010560543,
+   "innerFirstYield": 0.8623431625725235,
+   "voxels": 1591422,
+   "pitch": 0.2,
+   "mass": 15.277651200000005
+  },
+  "seconds": 55.59902095794678
+ },
+ "gs-012": {
+  "source": "guerrasilva2021",
+  "process": "FDM PC 0.15 mm",
+  "lattice": {
+   "type": "diamond-strut",
+   "cell": 7.0,
+   "diameter": 1.0
+  },
+  "geometry": "diamond-strut-c7-t1.0000-35x35x35",
+  "measured": {
+   "E": 3.05,
+   "Esd": 1.02,
+   "strength": 0.29,
+   "strengthSd": 0.01,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 1958.0,
+   "strength": 64.0,
+   "nu": 0.37,
+   "density": 1.2,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.09666401999337332,
+   "thickness": 1.0,
+   "E": 9.993182034636414,
+   "firstYield": 0.30602169219579006,
+   "stressFactor": 209.13550128026006
+  },
+  "homogenized": {
+   "E": 11.024181990277862,
+   "firstYield": 0.21175853254248436,
+   "deflection": 3.175860185058394,
+   "peakStress": 302.23103282584333,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.29124653185498284,
+   "mass": 10.847125877002238
+  },
+  "homogenizedNoKnockdown": {
+   "E": 12.942295616045074,
+   "firstYield": 0.25090440081507337,
+   "deflection": 2.705333037703041,
+   "peakStress": 255.07723177470518
+  },
+  "resolvedUnit": {
+   "E": 6.075250091260428,
+   "firstYield": 0.00562038692395507,
+   "deflection": 5.76307970441404,
+   "peakStress": 177.92369342719545,
+   "voxels": 1141250,
+   "pitch": 0.2,
+   "seconds": 523.0893998146057,
+   "mass": 9.130000000000003,
+   "innerFirstYield": 0.004566241492444492
+  },
+  "resolved": {
+   "E": 11.895339678687918,
+   "firstYield": 0.3597047631331245,
+   "innerFirstYield": 0.2922394555164475,
+   "voxels": 1141250,
+   "pitch": 0.2,
+   "mass": 10.956000000000003
+  },
+  "seconds": 55.607783794403076
+ },
+ "gs-013": {
+  "source": "guerrasilva2021",
+  "process": "FDM PC 0.25 mm",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 5.0,
+   "diameter": 1.5
+  },
+  "geometry": "kelvin-c5-t1.5000-35x35x35",
+  "measured": {
+   "E": 130.66,
+   "Esd": 0.22,
+   "strength": 12.84,
+   "strengthSd": 0.13,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 1958.0,
+   "strength": 64.0,
+   "nu": 0.37,
+   "density": 1.2,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.3961305618286133,
+   "thickness": 1.5,
+   "E": 355.4062011426135,
+   "firstYield": 6.1038441257928815,
+   "stressFactor": 10.485195670308256
+  },
+  "homogenized": {
+   "E": 331.92461547225514,
+   "firstYield": 5.058897888111974,
+   "deflection": 0.10646707988428204,
+   "peakStress": 12.650976836357014,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.22673762906730435,
+   "mass": 26.219387906314257
+  },
+  "homogenizedNoKnockdown": {
+   "E": 372.8801727105547,
+   "firstYield": 5.594755560952481,
+   "deflection": 0.09488538467094819,
+   "peakStress": 11.439284398173832
+  },
+  "resolvedUnit": {
+   "E": 189.20361715931793,
+   "firstYield": 0.07136939384971105,
+   "deflection": 0.18698589258221437,
+   "peakStress": 14.011608422873673,
+   "voxels": 2752820,
+   "pitch": 0.2,
+   "seconds": 307.5933451652527,
+   "mass": 22.022560000000006,
+   "innerFirstYield": 0.09097772164464797
+  },
+  "resolved": {
+   "E": 370.4606823979445,
+   "firstYield": 4.5676412063815075,
+   "innerFirstYield": 5.82257418525747,
+   "voxels": 2752820,
+   "pitch": 0.2,
+   "mass": 26.427072000000006
+  },
+  "seconds": 53.5917181968689
+ },
+ "gs-014": {
+  "source": "guerrasilva2021",
+  "process": "FDM PC 0.15 mm",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 7.0,
+   "diameter": 1.5
+  },
+  "geometry": "kelvin-c7-t1.5000-35x35x35",
+  "measured": {
+   "E": 33.72,
+   "Esd": 1.9,
+   "strength": 2.48,
+   "strengthSd": 0.93,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 1958.0,
+   "strength": 64.0,
+   "nu": 0.37,
+   "density": 1.2,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.23180294036865234,
+   "thickness": 1.5,
+   "E": 131.20786462454532,
+   "firstYield": 2.395473445654965,
+   "stressFactor": 26.717056753889945
+  },
+  "homogenized": {
+   "E": 118.26500930233638,
+   "firstYield": 1.9371416612535963,
+   "deflection": 0.2969669732010825,
+   "peakStress": 33.03836847873233,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.29124653185498284,
+   "mass": 17.784097472012874
+  },
+  "homogenizedNoKnockdown": {
+   "E": 139.10247721720233,
+   "firstYield": 2.224954348034502,
+   "deflection": 0.25263451084641386,
+   "peakStress": 28.764635129047402
+  },
+  "resolvedUnit": {
+   "E": 65.0130116561348,
+   "firstYield": 0.030372704302377828,
+   "deflection": 0.540353771166934,
+   "peakStress": 32.924299069467835,
+   "voxels": 1871000,
+   "pitch": 0.2,
+   "seconds": 401.03239464759827,
+   "mass": 14.968000000000004,
+   "innerFirstYield": 0.03025995052193324
+  },
+  "resolved": {
+   "E": 127.29547682271192,
+   "firstYield": 1.943853075352181,
+   "innerFirstYield": 1.9366368334037274,
+   "voxels": 1871000,
+   "pitch": 0.2,
+   "mass": 17.961600000000004
+  },
+  "seconds": 52.656527042388916
+ },
+ "gs-015": {
+  "source": "guerrasilva2021",
+  "process": "FDM PC 0.15 mm",
+  "lattice": {
+   "type": "diamond-strut",
+   "cell": 5.0,
+   "diameter": 1.5
+  },
+  "geometry": "diamond-strut-c5-t1.5000-35x35x35",
+  "measured": {
+   "E": 59.83,
+   "Esd": 0.68,
+   "strength": 3.88,
+   "strengthSd": 0.06,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 1958.0,
+   "strength": 64.0,
+   "nu": 0.37,
+   "density": 1.2,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.35740184783935547,
+   "thickness": 1.5,
+   "E": 157.32619741202967,
+   "firstYield": 3.4299860800523367,
+   "stressFactor": 18.658967851853046
+  },
+  "homogenized": {
+   "E": 158.20010296150696,
+   "firstYield": 2.563066179760784,
+   "deflection": 0.22226024452362467,
+   "peakStress": 24.970092659087424,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.22673762906730435,
+   "mass": 24.231359675004533
+  },
+  "homogenizedNoKnockdown": {
+   "E": 176.66224013633436,
+   "firstYield": 2.873422771619072,
+   "deflection": 0.19913962202245916,
+   "peakStress": 22.273088607820238
+  },
+  "resolvedUnit": {
+   "E": 90.54506660741565,
+   "firstYield": 0.06016270093431948,
+   "deflection": 0.38854784088626976,
+   "peakStress": 16.62159418493719,
+   "voxels": 2560054,
+   "pitch": 0.2,
+   "seconds": 368.4271206855774,
+   "mass": 20.480432000000004,
+   "innerFirstYield": 0.05671316574663768
+  },
+  "resolved": {
+   "E": 177.28724041731985,
+   "firstYield": 3.850412859796447,
+   "innerFirstYield": 3.6296426077848114,
+   "voxels": 2560054,
+   "pitch": 0.2,
+   "mass": 24.576518400000005
+  },
+  "seconds": 52.57300901412964
+ },
+ "gs-016": {
+  "source": "guerrasilva2021",
+  "process": "FDM PC 0.25 mm",
+  "lattice": {
+   "type": "diamond-strut",
+   "cell": 7.0,
+   "diameter": 1.5
+  },
+  "geometry": "diamond-strut-c7-t1.5000-35x35x35",
+  "measured": {
+   "E": 25.6,
+   "Esd": 4.62,
+   "strength": 1.54,
+   "strengthSd": 0.01,
+   "strengthKind": "plateau",
+   "rho": null
+  },
+  "material": {
+   "E": 1958.0,
+   "strength": 64.0,
+   "nu": 0.37,
+   "density": 1.2,
+   "basis": "filament datasheet (paper's Table 2)"
+  },
+  "table": {
+   "rho": 0.20182718549455914,
+   "thickness": 1.5,
+   "E": 46.984231097998446,
+   "firstYield": 1.361065930511537,
+   "stressFactor": 47.02196900626741
+  },
+  "homogenized": {
+   "E": 47.934459276638464,
+   "firstYield": 0.9982126122908935,
+   "deflection": 0.7311851057542426,
+   "peakStress": 64.11459764380284,
+   "cells": 101250,
+   "pitch": 0.7817482155458204,
+   "latticeExposed": 0.29124653185498284,
+   "mass": 16.245377468011533
+  },
+  "homogenizedNoKnockdown": {
+   "E": 56.00134145810508,
+   "firstYield": 1.1699657747627525,
+   "deflection": 0.6260064791876466,
+   "peakStress": 54.70245487563773
+  },
+  "resolvedUnit": {
+   "E": 27.32439904296088,
+   "firstYield": 0.019501475310660574,
+   "deflection": 1.2829064874572769,
+   "peakStress": 51.27817173161998,
+   "voxels": 1713250,
+   "pitch": 0.2,
+   "seconds": 473.3291254043579,
+   "mass": 13.706000000000003,
+   "innerFirstYield": 0.019501475310660574
+  },
+  "resolved": {
+   "E": 53.5011733261174,
+   "firstYield": 1.2480944198822768,
+   "innerFirstYield": 1.2480944198822768,
+   "voxels": 1713250,
+   "pitch": 0.2,
+   "mass": 16.447200000000002
+  },
+  "seconds": 53.393798828125
+ },
+ "aa-sheet-gyroid-10": {
+  "source": "abouali2022",
+  "process": "SLS PA11",
+  "lattice": {
+   "type": "gyroid",
+   "cell": 8.0,
+   "rho": 0.104
+  },
+  "geometry": "gyroid-c8-t0.2713-40x40x40",
+  "measured": {
+   "E": 52.04893025248793,
+   "Esd": null,
+   "strength": 1.5835995412228818,
+   "strengthSd": null,
+   "strengthKind": "yield (fit)",
+   "rho": 0.181
+  },
+  "material": {
+   "E": 1560.0,
+   "strength": 48.0,
+   "nu": 0.4,
+   "density": 0.99,
+   "basis": "EOS PA 1102 black datasheet (x/y, ISO 527)"
+  },
+  "table": {
+   "rho": 0.10400000000000001,
+   "thickness": 0.27130441314553994,
+   "E": 48.607907233992805,
+   "firstYield": 1.2684876120177384,
+   "stressFactor": 37.84033800980374
+  },
+  "homogenized": {
+   "E": 45.6070870525462,
+   "firstYield": 0.9720752730370648,
+   "deflection": 0.8783387235030595,
+   "peakStress": 49.378892079039424,
+   "cells": 101250,
+   "pitch": 0.8895920362277262,
+   "latticeExposed": 0.2971627055738125,
+   "mass": 12.883045667747984
+  },
+  "homogenizedNoKnockdown": {
+   "E": 53.7650964040862,
+   "firstYield": 1.1345713449015282,
+   "deflection": 0.7452591419091957,
+   "peakStress": 42.30672686711122
+  },
+  "resolvedUnit": {
+   "E": 29.157237919153413,
+   "firstYield": 0.020179751994141803,
+   "deflection": 1.3738720583517263,
+   "peakStress": 49.554622885866024,
+   "voxels": 1616000,
+   "pitch": 0.2,
+   "seconds": 3062.6154596805573,
+   "mass": 12.928000000000004,
+   "innerFirstYield": 0.020179751994141803
+  },
+  "resolved": {
+   "E": 45.485291153879324,
+   "firstYield": 0.9686280957188065,
+   "innerFirstYield": 0.9686280957188065,
+   "voxels": 1616000,
+   "pitch": 0.2,
+   "mass": 12.798720000000005
+  },
+  "seconds": 3115.4119198322296
+ },
+ "aa-sheet-gyroid-18": {
+  "source": "abouali2022",
+  "process": "SLS PA11",
+  "lattice": {
+   "type": "gyroid",
+   "cell": 8.0,
+   "rho": 0.182
+  },
+  "geometry": "gyroid-c8-t0.4775-40x40x40",
+  "measured": {
+   "E": 73.77244147123812,
+   "Esd": null,
+   "strength": 2.194367767497724,
+   "strengthSd": null,
+   "strengthKind": "yield (fit)",
+   "rho": 0.25
+  },
+  "material": {
+   "E": 1560.0,
+   "strength": 48.0,
+   "nu": 0.4,
+   "density": 0.99,
+   "basis": "EOS PA 1102 black datasheet (x/y, ISO 527)"
+  },
+  "table": {
+   "rho": 0.182,
+   "thickness": 0.47750606965174125,
+   "E": 91.73274638866896,
+   "firstYield": 2.250241082554809,
+   "stressFactor": 21.33104775844873
+  },
+  "homogenized": {
+   "E": 86.04667518978908,
+   "firstYield": 1.7194563141269668,
+   "deflection": 0.4661460325082159,
+   "peakStress": 27.91580082938683,
+   "cells": 101250,
+   "pitch": 0.8895920362277262,
+   "latticeExposed": 0.2971627055738125,
+   "mass": 17.792452602836036
+  },
+  "homogenizedNoKnockdown": {
+   "E": 101.10093268323207,
+   "firstYield": 1.9892118927527735,
+   "deflection": 0.39692627471693687,
+   "peakStress": 24.130159373607572
+  },
+  "resolvedUnit": {
+   "E": 58.67280011132956,
+   "firstYield": 0.04045986642932627,
+   "deflection": 0.6837469069841804,
+   "peakStress": 24.715850254888043,
+   "voxels": 2244000,
+   "pitch": 0.2,
+   "seconds": 1067.5617988109589,
+   "mass": 17.952000000000005,
+   "innerFirstYield": 0.04045986642932627
+  },
+  "resolved": {
+   "E": 91.52956817367411,
+   "firstYield": 1.942073588607661,
+   "innerFirstYield": 1.942073588607661,
+   "voxels": 2244000,
+   "pitch": 0.2,
+   "mass": 17.772480000000005
+  },
+  "seconds": 1119.1280376911163
+ },
+ "aa-sheet-diamond-13": {
+  "source": "abouali2022",
+  "process": "SLS PA11",
+  "lattice": {
+   "type": "diamond",
+   "cell": 8.0,
+   "rho": 0.126
+  },
+  "geometry": "diamond-c8-t0.2637-40x40x40",
+  "measured": {
+   "E": 86.56646808915593,
+   "Esd": null,
+   "strength": 2.4995834313646306,
+   "strengthSd": null,
+   "strengthKind": "yield (fit)",
+   "rho": 0.279
+  },
+  "material": {
+   "E": 1560.0,
+   "strength": 48.0,
+   "nu": 0.4,
+   "density": 0.99,
+   "basis": "EOS PA 1102 black datasheet (x/y, ISO 527)"
+  },
+  "table": {
+   "rho": 0.126,
+   "thickness": 0.26365408099688475,
+   "E": 73.44569804149346,
+   "firstYield": 1.4105921614255463,
+   "stressFactor": 34.028262252280726
+  },
+  "homogenized": {
+   "E": 66.74958306822332,
+   "firstYield": 1.127575607671766,
+   "deflection": 0.6005367306576043,
+   "peakStress": 42.56920748676985,
+   "cells": 101250,
+   "pitch": 0.8895920362277262,
+   "latticeExposed": 0.2971627055738125,
+   "mass": 14.267750187901024
+  },
+  "homogenizedNoKnockdown": {
+   "E": 78.78883692267502,
+   "firstYield": 1.3051585015426395,
+   "deflection": 0.5089681850329127,
+   "peakStress": 36.777142349581396
+  },
+  "resolvedUnit": {
+   "E": 48.43007854341305,
+   "firstYield": 0.024346580784751368,
+   "deflection": 0.8279329987281299,
+   "peakStress": 41.073529332148155,
+   "voxels": 1784000,
+   "pitch": 0.2,
+   "seconds": 917.2507483959198,
+   "mass": 14.272000000000004,
+   "innerFirstYield": 0.024346580784751368
+  },
+  "resolved": {
+   "E": 75.55092252772437,
+   "firstYield": 1.1686358776680656,
+   "innerFirstYield": 1.1686358776680656,
+   "voxels": 1784000,
+   "pitch": 0.2,
+   "mass": 14.129280000000003
+  },
+  "seconds": 971.0112988948822
+ },
+ "aa-sheet-diamond-21": {
+  "source": "abouali2022",
+  "process": "SLS PA11",
+  "lattice": {
+   "type": "diamond",
+   "cell": 8.0,
+   "rho": 0.209
+  },
+  "geometry": "diamond-c8-t0.4419-40x40x40",
+  "measured": {
+   "E": 100.84772970072824,
+   "Esd": null,
+   "strength": 3.4061904697388976,
+   "strengthSd": null,
+   "strengthKind": "yield (fit)",
+   "rho": 0.342
+  },
+  "material": {
+   "E": 1560.0,
+   "strength": 48.0,
+   "nu": 0.4,
+   "density": 0.99,
+   "basis": "EOS PA 1102 black datasheet (x/y, ISO 527)"
+  },
+  "table": {
+   "rho": 0.209,
+   "thickness": 0.4419091063829787,
+   "E": 131.133119499883,
+   "firstYield": 2.7445378996973315,
+   "stressFactor": 17.48928298832873
+  },
+  "homogenized": {
+   "E": 119.55133792736584,
+   "firstYield": 2.1726805081601723,
+   "deflection": 0.3358663453056134,
+   "peakStress": 22.09252571637716,
+   "cells": 101250,
+   "pitch": 0.8895920362277262,
+   "latticeExposed": 0.2971627055738125,
+   "mass": 19.491862695751134
+  },
+  "homogenizedNoKnockdown": {
+   "E": 140.67662112023433,
+   "firstYield": 2.493501215673849,
+   "deflection": 0.28562211917302344,
+   "peakStress": 19.250040745229143
+  },
+  "resolvedUnit": {
+   "E": 88.07813692216666,
+   "firstYield": 0.05734026207285445,
+   "deflection": 0.45614221278712336,
+   "peakStress": 17.439752869099838,
+   "voxels": 2464000,
+   "pitch": 0.2,
+   "seconds": 865.8564925193787,
+   "mass": 19.712000000000003,
+   "innerFirstYield": 0.05734026207285445
+  },
+  "resolved": {
+   "E": 137.40189359858002,
+   "firstYield": 2.7523325794970135,
+   "innerFirstYield": 2.7523325794970135,
+   "voxels": 2464000,
+   "pitch": 0.2,
+   "mass": 19.51488
+  },
+  "seconds": 917.9078936576843
+ },
+ "aa-octet-11": {
+  "source": "abouali2022",
+  "process": "SLS PA11",
+  "lattice": {
+   "type": "octet",
+   "cell": 8.0,
+   "rho": 0.114
+  },
+  "geometry": "octet-c8-t0.8005-40x40x40",
+  "measured": {
+   "E": 16.248743263021694,
+   "Esd": null,
+   "strength": 0.6436134932348748,
+   "strengthSd": null,
+   "strengthKind": "yield (fit)",
+   "rho": 0.118
+  },
+  "material": {
+   "E": 1560.0,
+   "strength": 48.0,
+   "nu": 0.4,
+   "density": 0.99,
+   "basis": "EOS PA 1102 black datasheet (x/y, ISO 527)"
+  },
+  "table": {
+   "rho": 0.11400000000000002,
+   "thickness": 0.8005334183041247,
+   "E": 29.04397206805586,
+   "firstYield": 0.795497154151032,
+   "stressFactor": 60.3396250376614
+  },
+  "homogenized": {
+   "E": 27.70567083348056,
+   "firstYield": 0.588595444079285,
+   "deflection": 1.4450298038779752,
+   "peakStress": 81.55007056686341,
+   "cells": 101250,
+   "pitch": 0.8895920362277262,
+   "latticeExposed": 0.2971627055738125,
+   "mass": 13.512456813272099
+  },
+  "homogenizedNoKnockdown": {
+   "E": 32.6324325896473,
+   "firstYield": 0.6932384065061054,
+   "deflection": 1.227056436630512,
+   "peakStress": 69.24024916899532
+  },
+  "resolvedUnit": {
+   "E": 18.0637679514673,
+   "firstYield": 0.01546047067687572,
+   "deflection": 2.216377427094375,
+   "peakStress": 64.68108383632223,
+   "voxels": 1624000,
+   "pitch": 0.2,
+   "seconds": 931.0719463825226,
+   "mass": 12.992000000000004,
+   "innerFirstYield": 0.01546047067687572
+  },
+  "resolved": {
+   "E": 28.179478004288992,
+   "firstYield": 0.7421025924900346,
+   "innerFirstYield": 0.7421025924900346,
+   "voxels": 1624000,
+   "pitch": 0.2,
+   "mass": 12.862080000000004
+  },
+  "seconds": 985.1702997684479
+ },
+ "aa-octet-25": {
+  "source": "abouali2022",
+  "process": "SLS PA11",
+  "lattice": {
+   "type": "octet",
+   "cell": 8.0,
+   "rho": 0.25
+  },
+  "geometry": "octet-c8-t1.2450-40x40x40",
+  "measured": {
+   "E": 31.1230867264563,
+   "Esd": null,
+   "strength": 1.4313050488068577,
+   "strengthSd": null,
+   "strengthKind": "yield (fit)",
+   "rho": 0.284
+  },
+  "material": {
+   "E": 1560.0,
+   "strength": 48.0,
+   "nu": 0.4,
+   "density": 0.99,
+   "basis": "EOS PA 1102 black datasheet (x/y, ISO 527)"
+  },
+  "table": {
+   "rho": 0.24999999999999997,
+   "thickness": 1.2450316542802091,
+   "E": 84.27630319294789,
+   "firstYield": 1.7046495303280875,
+   "stressFactor": 28.158280717539412
+  },
+  "homogenized": {
+   "E": 79.62454133420538,
+   "firstYield": 1.2672921092841238,
+   "deflection": 0.5036397330941117,
+   "peakStress": 37.876034773951645,
+   "cells": 101250,
+   "pitch": 0.8895920362277262,
+   "latticeExposed": 0.2971627055738125,
+   "mass": 22.07244839239998
+  },
+  "homogenizedNoKnockdown": {
+   "E": 93.37422784173862,
+   "firstYield": 1.474500952008547,
+   "deflection": 0.4296657811887296,
+   "peakStress": 32.55338691685142
+  },
+  "resolvedUnit": {
+   "E": 57.499649251586106,
+   "firstYield": 0.0325266820811283,
+   "deflection": 0.6976564173980003,
+   "peakStress": 30.74399034939353,
+   "voxels": 2756000,
+   "pitch": 0.2,
+   "seconds": 815.7705931663513,
+   "mass": 22.048000000000005,
+   "innerFirstYield": 0.0325266820811283
+  },
+  "resolved": {
+   "E": 89.69945283247434,
+   "firstYield": 1.5612807398941584,
+   "innerFirstYield": 1.5612807398941584,
+   "voxels": 2756000,
+   "pitch": 0.2,
+   "mass": 21.827520000000003
+  },
+  "seconds": 871.4912779331207
+ },
+ "aa-kelvin-14": {
+  "source": "abouali2022",
+  "process": "SLS PA11",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 8.0,
+   "rho": 0.14
+  },
+  "geometry": "kelvin-c8-t1.2814-40x40x40",
+  "measured": {
+   "E": 25.081827187480314,
+   "Esd": null,
+   "strength": 0.7654743,
+   "strengthSd": null,
+   "strengthKind": "yield (fit)",
+   "rho": 0.153
+  },
+  "material": {
+   "E": 1560.0,
+   "strength": 48.0,
+   "nu": 0.4,
+   "density": 0.99,
+   "basis": "EOS PA 1102 black datasheet (x/y, ISO 527)"
+  },
+  "table": {
+   "rho": 0.14,
+   "thickness": 1.2814133431264538,
+   "E": 34.508433778837315,
+   "firstYield": 0.6984092525131514,
+   "stressFactor": 68.72761182254831
+  },
+  "homogenized": {
+   "E": 32.2037865682369,
+   "firstYield": 0.5494355416403786,
+   "deflection": 1.2433720122015113,
+   "peakStress": 87.36238623495782,
+   "cells": 101250,
+   "pitch": 0.8895920362277262,
+   "latticeExposed": 0.2971627055738125,
+   "mass": 15.14892579163478
+  },
+  "homogenizedNoKnockdown": {
+   "E": 38.08473363219274,
+   "firstYield": 0.6416409645898078,
+   "deflection": 1.0515716604021819,
+   "peakStress": 74.80819126111398
+  },
+  "resolvedUnit": {
+   "E": 25.30458839846344,
+   "firstYield": 0.012275083798302245,
+   "deflection": 1.5827409853949217,
+   "peakStress": 81.46583896545856,
+   "voxels": 1928000,
+   "pitch": 0.2,
+   "seconds": 701.3512375354767,
+   "mass": 15.424000000000003,
+   "innerFirstYield": 0.012275083798302245
+  },
+  "resolved": {
+   "E": 39.47515790160296,
+   "firstYield": 0.5892040223185078,
+   "innerFirstYield": 0.5892040223185078,
+   "voxels": 1928000,
+   "pitch": 0.2,
+   "mass": 15.269760000000003
+  },
+  "seconds": 754.3314821720123
+ },
+ "aa-kelvin-25": {
+  "source": "abouali2022",
+  "process": "SLS PA11",
+  "lattice": {
+   "type": "kelvin",
+   "cell": 8.0,
+   "rho": 0.247
+  },
+  "geometry": "kelvin-c8-t1.7807-40x40x40",
+  "measured": {
+   "E": 74.70709103520434,
+   "Esd": null,
+   "strength": 2.4909552000000006,
+   "strengthSd": null,
+   "strengthKind": "yield (fit)",
+   "rho": 0.276
+  },
+  "material": {
+   "E": 1560.0,
+   "strength": 48.0,
+   "nu": 0.4,
+   "density": 0.99,
+   "basis": "EOS PA 1102 black datasheet (x/y, ISO 527)"
+  },
+  "table": {
+   "rho": 0.247,
+   "thickness": 1.7806752258989857,
+   "E": 118.64989307028232,
+   "firstYield": 2.013035017148124,
+   "stressFactor": 23.844592662874696
+  },
+  "homogenized": {
+   "E": 106.64599053871541,
+   "firstYield": 1.623221145730514,
+   "deflection": 0.3763547548871522,
+   "peakStress": 29.570832123677206,
+   "cells": 101250,
+   "pitch": 0.8895920362277262,
+   "latticeExposed": 0.2971627055738125,
+   "mass": 21.883625048742754
+  },
+  "homogenizedNoKnockdown": {
+   "E": 125.78301589017089,
+   "firstYield": 1.8643341217750051,
+   "deflection": 0.3192900090092418,
+   "peakStress": 25.746457911900418
+  },
+  "resolvedUnit": {
+   "E": 71.26244108393858,
+   "firstYield": 0.03195129478143015,
+   "deflection": 0.5633054982621886,
+   "peakStress": 31.29763619411106,
+   "voxels": 2696000,
+   "pitch": 0.2,
+   "seconds": 670.5164637565613,
+   "mass": 21.568000000000005,
+   "innerFirstYield": 0.03195129478143015
+  },
+  "resolved": {
+   "E": 111.16940809094419,
+   "firstYield": 1.533662149508647,
+   "innerFirstYield": 1.533662149508647,
+   "voxels": 2696000,
+   "pitch": 0.2,
+   "mass": 21.352320000000006
+  },
+  "seconds": 723.1007254123688
+ }
+}

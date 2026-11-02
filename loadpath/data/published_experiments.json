@@ -1,0 +1,71 @@
+{
+ "about": "Published compression tests of printed lattices with fully specified geometry, used to check loadpath's lattice models against measurements (bench/published_experiments.py, docs/VALIDATION.md). Values are copied from the papers' tables; mean +- standard deviation where the paper gives one. Each specimen is a cube of lattice with cut-open side faces, compressed between flat platens along the build direction.",
+ "sources": {
+  "shevchenko2023": {
+   "citation": "Shevchenko V, Balabanov S, Sychov M, Karimova L. Prediction of Cellular Structure Mechanical Properties with the Geometry of Triply Periodic Minimal Surfaces (TPMS). ACS Omega 8(30):26895, 2023.",
+   "doi": "10.1021/acsomega.3c01631",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10398688/",
+   "tables": "Table 1 (solid compressive E and strength of each printed material, same lab), Tables 3-5 (lattices)",
+   "notes": "30 mm cubes, 3x3x3 sheet cells (10 mm), 0.8 mm wall; SLS PA2200 (EOS Formiga P110, 0.1 mm layers), FDM PLA (Anet A6, 0.2 mm layers), LCD urethane-acrylate resin (Anycubic Photon S, 0.05 mm). ISO 604, 5 mm/min, along the build axis; modulus from the stress-strain curve (crosshead strain, no extensometer). Solid modulus and strength measured in compression by the same lab, so the material card is the paper's own. Strength is the first peak (sigma_B). Lattice phase at the faces not stated."
+  },
+  "guerrasilva2021": {
+   "citation": "Guerra Silva R, Salinas Estay C, Morales Pavez G, Zahr Vinuela J, Torres MJ. Influence of Geometric and Manufacturing Parameters on the Compressive Behavior of 3D Printed Polymer Lattice Structures. Materials 14(6):1462, 2021.",
+   "doi": "10.3390/ma14061462",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC8002545/",
+   "tables": "Table 2 (feedstock properties, from datasheets), Tables 3 and 5 (configurations, measured modulus and plateau stress)",
+   "notes": "35 mm cubes, FDM (UP mini 2, 0.4 mm nozzle, raft, no supports) in ABS and PC; truncated-octahedron (Kelvin) and cubic diamond strut cells, 5 or 7 mm cells, 1.0 or 1.5 mm round struts, 0.15 or 0.25 mm layers; two specimens each, ASTM D1621, 2 mm/min, crosshead strain. Solid modulus and strength are filament datasheet values, not printed coupons. Strength reported is the plateau stress, not first yield."
+  },
+  "abouali2022": {
+   "citation": "Abou-Ali AM, Lee DW, Abu Al-Rub RK. On the Effect of Lattice Topology on Mechanical Properties of SLS Additively Manufactured Sheet-, Ligament-, and Strut-Based Polymeric Metamaterials. Polymers 14(21):4583, 2022.",
+   "doi": "10.3390/polym14214583",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9658147/",
+   "tables": "Tables 2-4 (designed and measured relative density), Table 5 (power-law fits E = C RD^n, yield = C RD^n over measured RD)",
+   "notes": "40 mm cubes, 5x5x5 cells of 8 mm, SLS PA 1102 black (polyamide 11, EOS Formiga P110, 80 um layers), 0.001/s. Only power-law fits over the measured relative density are published, so each 'measured' value here is the paper's fit evaluated at its measured RD (two specimens per point); the solid modulus is the EOS datasheet's (1560 MPa x/y, ISO 527), strength 48 MPa. Sheet lattices weighed 1.4-2.9x their designed density (sintered powder stuck to the large surface): loadpath models the designed geometry."
+  }
+ },
+ "materials": {
+  "shevchenko-pa12-sls": {"E": 1260.0, "strength": 57.3, "nu": 0.38, "density": 1.01, "basis": "measured in compression by the same lab (Table 1)"},
+  "shevchenko-pla-fdm": {"E": 1832.0, "strength": 78.7, "nu": 0.35, "density": 1.21, "basis": "measured in compression by the same lab (Table 1)"},
+  "shevchenko-resin-lcd": {"E": 1287.0, "strength": 58.3, "nu": 0.4, "density": 1.18, "basis": "measured in compression by the same lab (Table 1)"},
+  "guerrasilva-abs": {"E": 2180.0, "strength": 30.0, "nu": 0.35, "density": 1.195, "basis": "filament datasheet (paper's Table 2)"},
+  "guerrasilva-pc": {"E": 1958.0, "strength": 64.0, "nu": 0.37, "density": 1.2, "basis": "filament datasheet (paper's Table 2)"},
+  "abouali-pa11-sls": {"E": 1560.0, "strength": 48.0, "nu": 0.4, "density": 0.99, "basis": "EOS PA 1102 black datasheet (x/y, ISO 527)"}
+ },
+ "specimens": [
+  {"id": "shev-sls-primitive", "source": "shevchenko2023", "material": "shevchenko-pa12-sls", "process": "SLS PA12", "lattice": {"type": "schwarz-p", "cell": 10.0, "rho": 0.18, "wall": 0.8}, "size": [30, 30, 30], "measured": {"E": [62.8, 3.2], "strength": [2.67, 0.12], "strengthKind": "first peak"}},
+  {"id": "shev-sls-diamond", "source": "shevchenko2023", "material": "shevchenko-pa12-sls", "process": "SLS PA12", "lattice": {"type": "diamond", "cell": 10.0, "rho": 0.33, "wall": 0.8}, "size": [30, 30, 30], "measured": {"E": [105.4, 4.1], "strength": [5.90, 0.19], "strengthKind": "first peak"}},
+  {"id": "shev-sls-gyroid", "source": "shevchenko2023", "material": "shevchenko-pa12-sls", "process": "SLS PA12", "lattice": {"type": "gyroid", "cell": 10.0, "rho": 0.24, "wall": 0.8}, "size": [30, 30, 30], "measured": {"E": [68.9, 3.7], "strength": [3.10, 0.15], "strengthKind": "first peak"}},
+  {"id": "shev-fdm-primitive", "source": "shevchenko2023", "material": "shevchenko-pla-fdm", "process": "FDM PLA", "lattice": {"type": "schwarz-p", "cell": 10.0, "rho": 0.18, "wall": 0.8}, "size": [30, 30, 30], "measured": {"E": [38.3, 2.1], "strength": [1.72, 0.15], "strengthKind": "first peak"}},
+  {"id": "shev-fdm-diamond", "source": "shevchenko2023", "material": "shevchenko-pla-fdm", "process": "FDM PLA", "lattice": {"type": "diamond", "cell": 10.0, "rho": 0.33, "wall": 0.8}, "size": [30, 30, 30], "measured": {"E": [134.1, 4.2], "strength": [8.13, 0.21], "strengthKind": "first peak"}},
+  {"id": "shev-fdm-gyroid", "source": "shevchenko2023", "material": "shevchenko-pla-fdm", "process": "FDM PLA", "lattice": {"type": "gyroid", "cell": 10.0, "rho": 0.24, "wall": 0.8}, "size": [30, 30, 30], "measured": {"E": [79.2, 2.2], "strength": [4.73, 0.16], "strengthKind": "first peak"}},
+  {"id": "shev-lcd-primitive", "source": "shevchenko2023", "material": "shevchenko-resin-lcd", "process": "LCD resin", "lattice": {"type": "schwarz-p", "cell": 10.0, "rho": 0.18, "wall": 0.8}, "size": [30, 30, 30], "measured": {"E": [31.3, 0.8], "strength": [1.86, 0.07], "strengthKind": "first peak"}},
+  {"id": "shev-lcd-diamond", "source": "shevchenko2023", "material": "shevchenko-resin-lcd", "process": "LCD resin", "lattice": {"type": "diamond", "cell": 10.0, "rho": 0.33, "wall": 0.8}, "size": [30, 30, 30], "measured": {"E": [113.9, 2.1], "strength": [6.40, 0.11], "strengthKind": "first peak"}},
+  {"id": "shev-lcd-gyroid", "source": "shevchenko2023", "material": "shevchenko-resin-lcd", "process": "LCD resin", "lattice": {"type": "gyroid", "cell": 10.0, "rho": 0.24, "wall": 0.8}, "size": [30, 30, 30], "measured": {"E": [68.4, 0.9], "strength": [3.88, 0.06], "strengthKind": "first peak"}},
+
+  {"id": "gs-001", "source": "guerrasilva2021", "material": "guerrasilva-abs", "process": "FDM ABS 0.25 mm", "lattice": {"type": "kelvin", "cell": 5.0, "diameter": 1.0}, "size": [35, 35, 35], "measured": {"E": [63.43, 4.72], "strength": [4.17, 0.03], "strengthKind": "plateau"}},
+  {"id": "gs-002", "source": "guerrasilva2021", "material": "guerrasilva-abs", "process": "FDM ABS 0.15 mm", "lattice": {"type": "kelvin", "cell": 7.0, "diameter": 1.0}, "size": [35, 35, 35], "measured": {"E": [15.48, 0.30], "strength": [1.00, 0.05], "strengthKind": "plateau"}},
+  {"id": "gs-003", "source": "guerrasilva2021", "material": "guerrasilva-abs", "process": "FDM ABS 0.15 mm", "lattice": {"type": "diamond-strut", "cell": 5.0, "diameter": 1.0}, "size": [35, 35, 35], "measured": {"E": [19.65, 2.33], "strength": [1.10, 0.01], "strengthKind": "plateau"}},
+  {"id": "gs-004", "source": "guerrasilva2021", "material": "guerrasilva-abs", "process": "FDM ABS 0.25 mm", "lattice": {"type": "diamond-strut", "cell": 7.0, "diameter": 1.0}, "size": [35, 35, 35], "measured": {"E": [4.49, 0.10], "strength": [0.28, 0.02], "strengthKind": "plateau"}},
+  {"id": "gs-005", "source": "guerrasilva2021", "material": "guerrasilva-abs", "process": "FDM ABS 0.15 mm", "lattice": {"type": "kelvin", "cell": 5.0, "diameter": 1.5}, "size": [35, 35, 35], "measured": {"E": [89.62, 0.66], "strength": [7.82, 0.21], "strengthKind": "plateau"}},
+  {"id": "gs-006", "source": "guerrasilva2021", "material": "guerrasilva-abs", "process": "FDM ABS 0.25 mm", "lattice": {"type": "kelvin", "cell": 7.0, "diameter": 1.5}, "size": [35, 35, 35], "measured": {"E": [42.27, 1.34], "strength": [2.68, 0.03], "strengthKind": "plateau"}},
+  {"id": "gs-007", "source": "guerrasilva2021", "material": "guerrasilva-abs", "process": "FDM ABS 0.25 mm", "lattice": {"type": "diamond-strut", "cell": 5.0, "diameter": 1.5}, "size": [35, 35, 35], "measured": {"E": [57.57, 3.00], "strength": [3.08, 0.02], "strengthKind": "plateau"}},
+  {"id": "gs-008", "source": "guerrasilva2021", "material": "guerrasilva-abs", "process": "FDM ABS 0.15 mm", "lattice": {"type": "diamond-strut", "cell": 7.0, "diameter": 1.5}, "size": [35, 35, 35], "measured": {"E": [18.21, 2.47], "strength": [1.11, 0.01], "strengthKind": "plateau"}},
+  {"id": "gs-009", "source": "guerrasilva2021", "material": "guerrasilva-pc", "process": "FDM PC 0.15 mm", "lattice": {"type": "kelvin", "cell": 5.0, "diameter": 1.0}, "size": [35, 35, 35], "measured": {"E": [60.42, 4.55], "strength": [4.79, 0.03], "strengthKind": "plateau"}},
+  {"id": "gs-010", "source": "guerrasilva2021", "material": "guerrasilva-pc", "process": "FDM PC 0.25 mm", "lattice": {"type": "kelvin", "cell": 7.0, "diameter": 1.0}, "size": [35, 35, 35], "measured": {"E": [20.39, 2.48], "strength": [1.52, 0.03], "strengthKind": "plateau"}},
+  {"id": "gs-011", "source": "guerrasilva2021", "material": "guerrasilva-pc", "process": "FDM PC 0.25 mm", "lattice": {"type": "diamond-strut", "cell": 5.0, "diameter": 1.0}, "size": [35, 35, 35], "measured": {"E": [21.19, 1.39], "strength": [1.55, 0.07], "strengthKind": "plateau"}},
+  {"id": "gs-012", "source": "guerrasilva2021", "material": "guerrasilva-pc", "process": "FDM PC 0.15 mm", "lattice": {"type": "diamond-strut", "cell": 7.0, "diameter": 1.0}, "size": [35, 35, 35], "measured": {"E": [3.05, 1.02], "strength": [0.29, 0.01], "strengthKind": "plateau"}},
+  {"id": "gs-013", "source": "guerrasilva2021", "material": "guerrasilva-pc", "process": "FDM PC 0.25 mm", "lattice": {"type": "kelvin", "cell": 5.0, "diameter": 1.5}, "size": [35, 35, 35], "measured": {"E": [130.66, 0.22], "strength": [12.84, 0.13], "strengthKind": "plateau"}},
+  {"id": "gs-014", "source": "guerrasilva2021", "material": "guerrasilva-pc", "process": "FDM PC 0.15 mm", "lattice": {"type": "kelvin", "cell": 7.0, "diameter": 1.5}, "size": [35, 35, 35], "measured": {"E": [33.72, 1.90], "strength": [2.48, 0.93], "strengthKind": "plateau"}},
+  {"id": "gs-015", "source": "guerrasilva2021", "material": "guerrasilva-pc", "process": "FDM PC 0.15 mm", "lattice": {"type": "diamond-strut", "cell": 5.0, "diameter": 1.5}, "size": [35, 35, 35], "measured": {"E": [59.83, 0.68], "strength": [3.88, 0.06], "strengthKind": "plateau"}},
+  {"id": "gs-016", "source": "guerrasilva2021", "material": "guerrasilva-pc", "process": "FDM PC 0.25 mm", "lattice": {"type": "diamond-strut", "cell": 7.0, "diameter": 1.5}, "size": [35, 35, 35], "measured": {"E": [25.60, 4.62], "strength": [1.54, 0.01], "strengthKind": "plateau"}},
+
+  {"id": "aa-sheet-gyroid-10", "source": "abouali2022", "material": "abouali-pa11-sls", "process": "SLS PA11", "lattice": {"type": "gyroid", "cell": 8.0, "rho": 0.104}, "size": [40, 40, 40], "measured": {"rho": 0.181, "fit": {"E": [329.7, 1.08], "strength": [8.9, 1.01]}, "strengthKind": "yield (fit)"}},
+  {"id": "aa-sheet-gyroid-18", "source": "abouali2022", "material": "abouali-pa11-sls", "process": "SLS PA11", "lattice": {"type": "gyroid", "cell": 8.0, "rho": 0.182}, "size": [40, 40, 40], "measured": {"rho": 0.250, "fit": {"E": [329.7, 1.08], "strength": [8.9, 1.01]}, "strengthKind": "yield (fit)"}},
+  {"id": "aa-sheet-diamond-13", "source": "abouali2022", "material": "abouali-pa11-sls", "process": "SLS PA11", "lattice": {"type": "diamond", "cell": 8.0, "rho": 0.126}, "size": [40, 40, 40], "measured": {"rho": 0.279, "fit": {"E": [225.5, 0.75], "strength": [17.4, 1.52]}, "strengthKind": "yield (fit)"}},
+  {"id": "aa-sheet-diamond-21", "source": "abouali2022", "material": "abouali-pa11-sls", "process": "SLS PA11", "lattice": {"type": "diamond", "cell": 8.0, "rho": 0.209}, "size": [40, 40, 40], "measured": {"rho": 0.342, "fit": {"E": [225.5, 0.75], "strength": [17.4, 1.52]}, "strengthKind": "yield (fit)"}},
+  {"id": "aa-octet-11", "source": "abouali2022", "material": "abouali-pa11-sls", "process": "SLS PA11", "lattice": {"type": "octet", "cell": 8.0, "rho": 0.114}, "size": [40, 40, 40], "measured": {"rho": 0.118, "fit": {"E": [79.0, 0.74], "strength": [4.5, 0.91]}, "strengthKind": "yield (fit)"}},
+  {"id": "aa-octet-25", "source": "abouali2022", "material": "abouali-pa11-sls", "process": "SLS PA11", "lattice": {"type": "octet", "cell": 8.0, "rho": 0.25}, "size": [40, 40, 40], "measured": {"rho": 0.284, "fit": {"E": [79.0, 0.74], "strength": [4.5, 0.91]}, "strengthKind": "yield (fit)"}},
+  {"id": "aa-kelvin-14", "source": "abouali2022", "material": "abouali-pa11-sls", "process": "SLS PA11", "lattice": {"type": "kelvin", "cell": 8.0, "rho": 0.14}, "size": [40, 40, 40], "measured": {"rho": 0.153, "fit": {"E": [808.5, 1.85], "strength": [32.7, 2.00]}, "strengthKind": "yield (fit)"}},
+  {"id": "aa-kelvin-25", "source": "abouali2022", "material": "abouali-pa11-sls", "process": "SLS PA11", "lattice": {"type": "kelvin", "cell": 8.0, "rho": 0.247}, "size": [40, 40, 40], "measured": {"rho": 0.276, "fit": {"E": [808.5, 1.85], "strength": [32.7, 2.00]}, "strengthKind": "yield (fit)"}}
+ ]
+}

@@ -313,6 +313,13 @@ field. `check` reports every problem at once: fix them all, then check again.
   equal mass: SF 16 vs 9-13); pick struts for open, drainable cells, very
   low density, or FDM (`"aspect": [1, 1, 1.5]` BCC prints unsupported; the
   field report's `lattices` block gives the bridging strut length).
+- Printed lattices are softer than their design. Against 33 published
+  compression tests the homogenized check read the modulus 1.0-1.7x the
+  measurement (median) for SLS, resin and FDM PLA lattices and 2.2-2.8x for
+  FDM ABS/PC strut lattices; its first-yield strength erred safe on all but
+  one (thin flat Schwarz P walls in PLA buckle first). So budget about 2x
+  (FDM struts 3-4x) on a lattice part's predicted deflection, and say so in
+  what you report (docs/VALIDATION.md, `loadpath.validation`).
 - Don't use a lattice to make a part stiffer per gram: solid topology
   optimization wins that. Use one to stop an impact (a bumper, a hard stop, a
   drop pad): give a field graph an `impact` block (envelope, density node,
