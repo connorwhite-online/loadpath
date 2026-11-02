@@ -152,6 +152,53 @@ def _tet_cache_dir():
     return env or os.path.join(os.path.expanduser("~"), ".cache", "loadpath", "tets")
 
 
+# fTetWild meshes the part's whole bounding box at the target edge and keeps
+# the inside: on GRIP's upper arm (13% of its box) it optimized ~2M tets to
+# keep 237k, 250 s of a 260 s mesh. Its global edge is set this many times
+# coarser, and a sizing field asks for `size` inside the part and within
+# 1.5 grid steps of its surface: the same mesh in the part (228k tets, mean
+# edge 1.94 vs 1.91 mm, worst-element energy 17 vs 19) in 87 s.
+_COARSE_OUTSIDE = 8.0
+
+
+def _outside_coarse(mesh, v, size):
+    """fTetWild's background sizing field: (points, tets, edge lengths) on
+    a grid 4 elements apart, `size` inside the part and near it, growing
+    with distance outside (to _COARSE_OUTSIDE times). Beyond the grid,
+    fTetWild uses its (coarse) global edge. None if the part's inside test
+    fails (a mesh that is not watertight)."""
+    from scipy.spatial import cKDTree
+
+    h = 4.0 * size
+    lo, hi = v.min(0) - 2.0 * h, v.max(0) + 2.0 * h
+    axes = [np.arange(lo[i], hi[i] + h, h) for i in range(3)]
+    n = [len(a) for a in axes]
+    G = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+    try:
+        inside = np.asarray(mesh.contains(G), bool)
+    except Exception:  # noqa: BLE001 - no inside test: mesh without the field
+        return None
+    surf = np.vstack([v, np.asarray(mesh.triangles_center)])
+    d = np.where(inside, 0.0, cKDTree(surf).query(G)[0])
+    # every grid cell the surface passes through, and its neighbours, stays
+    # at `size` at all 8 corners, so no element at the surface is coarser
+    near = 1.5 * h
+    val = np.minimum(size + 0.5 * np.maximum(d - near, 0.0), _COARSE_OUTSIDE * size)
+    # each grid cube as six tetrahedra around its main diagonal (Kuhn)
+    i, j, k = np.meshgrid(*(np.arange(m - 1) for m in n), indexing="ij")
+    base = (i * n[1] + j) * n[2] + k
+    base = base.ravel()
+    off = np.array([[a * n[1] * n[2] + b * n[2] + c for a, b, c in corner] for corner in (
+        ((0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1, 1)), ((0, 0, 0), (1, 0, 0), (1, 0, 1), (1, 1, 1)),
+        ((0, 0, 0), (0, 1, 0), (1, 1, 0), (1, 1, 1)), ((0, 0, 0), (0, 1, 0), (0, 1, 1), (1, 1, 1)),
+        ((0, 0, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1)), ((0, 0, 0), (0, 0, 1), (0, 1, 1), (1, 1, 1)))])
+    tets = (base[:, None, None] + off[None]).reshape(-1, 4).astype(np.int32)
+    x = G[tets]
+    neg = np.linalg.det(x[:, 1:] - x[:, :1]) < 0
+    tets[neg] = tets[neg][:, [0, 2, 1, 3]]
+    return np.ascontiguousarray(G, np.float64), tets, np.ascontiguousarray(val, np.float64)
+
+
 def _tetwild(mesh, size):
     """fTetWild's mesh of `mesh`, the same one every time for the same
     surface and settings.
@@ -177,7 +224,11 @@ def _tetwild(mesh, size):
                 # its defaults (energy 10, 80 passes) took twice as long for
                 # a handful fewer elements under a tenth of regular quality
                 stop_energy=50.0, num_opt_iter=20)
+    sizing = _outside_coarse(mesh, v, size) if os.environ.get("LOADPATH_TET_SIZING", "1") != "0" else None
+    if sizing is not None:
+        opts["edge_length_abs"] = float(size) * _COARSE_OUTSIDE
     key = hashlib.sha256(v.tobytes() + f.tobytes() + repr(sorted(opts.items())).encode()
+                         + (b"sizing-v1" if sizing is not None else b"")
                          + str(getattr(pytetwild, "__version__", "")).encode()).hexdigest()[:24]
     cache = _tet_cache_dir()
     path = os.path.join(cache, key + ".npz") if cache else None
@@ -193,7 +244,8 @@ def _tetwild(mesh, size):
     with tempfile.TemporaryDirectory() as tmp:
         os.chdir(tmp)
         try:
-            pts, tets = pytetwild.tetrahedralize(v, f, num_threads=os.cpu_count() or 1, **opts)
+            bg = dict(zip(("bg_vertices", "bg_tets", "bg_values"), sizing)) if sizing is not None else {}
+            pts, tets = pytetwild.tetrahedralize(v, f, num_threads=os.cpu_count() or 1, **opts, **bg)
         finally:
             os.chdir(cwd)
     pts, tets = np.asarray(pts, float), np.asarray(tets, np.int64)
