@@ -461,8 +461,20 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
         # 1e-7 is six digits of stress; 1e-9 cost a third more iterations
         u[free], _info = spla.cg(kff, fn.ravel()[free], M=m, rtol=1e-7, maxiter=2000)
         return u.reshape(n, 3)
-    # cases in sequence: Gauss-Seidel holds the GIL, so threads only contend
-    return [one(f) for _n, f, _ in loads]
+    fs = [f for _n, f, _ in loads]
+    from . import amgfast
+
+    if len(fs) < 2 or not amgfast.installed():
+        # pyamg's own Gauss-Seidel holds the GIL: threads would only contend
+        return [one(f) for f in fs]
+    # cases on threads (amgfast's smoother releases the GIL), each its own
+    # CG, so the same numbers; one cycle first factors the coarsest level
+    # once (pyamg does it lazily, and each thread would make its own)
+    precond(np.zeros(kff.shape[0]))
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(min(len(fs), 4)) as ex:
+        return list(ex.map(one, fs))
 
 
 # a pin's stiffness per node, per unit modulus times element size, radially

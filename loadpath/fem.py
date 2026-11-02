@@ -504,6 +504,9 @@ def amg_solver(a, **kw):
     code. Seed the stream for the setup and give the caller's back."""
     import pyamg
 
+    from . import amgfast
+
+    amgfast.install()  # GIL-free Gauss-Seidel, same bits: solve_many's threads overlap
     state = np.random.get_state()
     np.random.seed(0)
     try:
@@ -603,8 +606,8 @@ class Solver:
     def solve_many(self, k, fs, x0s=None):
         """Solve several right-hand sides (load cases) against one matrix.
         The preconditioner is built once and the solves run on threads: the
-        sparse kernels release the GIL for most of their time, which measured
-        1.4x for two cases."""
+        sparse kernels release the GIL, and so does the smoother since
+        amgfast (pyamg's own holds it); 3 GRIP upper-arm cases 1.35 -> 1.07 s."""
         x0s = x0s or [None] * len(fs)
         if len(fs) == 1:
             return [self.solve(k, fs[0], x0s[0])]
