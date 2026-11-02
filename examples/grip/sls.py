@@ -19,6 +19,13 @@ at the J3 hub and the member roots beside it, which hollowing does not
 relieve; a sandwich pays on long stiffness-bound members (the arm link),
 not on a compact strength-bound link like this one.
 
+Kept where it wins (meshed at 0.35-0.4 mm, drained, PA12, 150k voxels / tet):
+upper arm 185.8 g, SF 1.76 / 2.01 (v0.3 184.5 g, 1.81 / 1.66); wrist link
+49.5 g, 3.66 / 3.73 (v0.3 43.3 g, 3.39 / 1.63). The homogenized search read
+the wrist link 18% light (40.7 g): drain bosses and filled specks add mass.
+The tune's 1-2M-cell confirms took 47-52 min each on a 4-core box and
+rejected passing candidates over stray voxel bodies; mesh and check instead.
+
 Interfaces stay as the study wrote them: within `margin` of every preserved
 region the part is the v0.3 part, unchanged, and every keep-out (bolts,
 drivers, servo bodies, the neighbours' sweeps) is cut exactly at the end.
