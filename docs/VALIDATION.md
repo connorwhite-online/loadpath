@@ -80,7 +80,7 @@ bonded top and bottom, the top one held sideways and pushed down) and reads
 it three ways: the periodic unit-cell tables, the homogenized check of the
 specimen (what an agent gets for a lattice part), and a resolved voxel
 solve of the designed geometry (0.2 mm voxels, 0.3-2 million cells, matrix-free multigrid).
-Nothing was fitted to these data. The data and their sources are in
+Refining the resolved grid to 0.15 mm moves the gyroid specimen's modulus 0.1% and a 1 mm-strut diamond lattice's 8% (softer; first yield 13% lower), so the 0.2 mm strut readings carry about that much grid error. Nothing was fitted to these data. The data and their sources are in
 `loadpath/data/published_experiments.json`, the results in
 `bench/results/published-experiments.json`, and the documented bands are
 pinned by `tests/test_published_experiments.py`.
