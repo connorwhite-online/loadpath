@@ -1077,7 +1077,13 @@ _FIELD_OPS = {
                                                   "type": "object", "additionalProperties": False,
                                                   "required": ["at"],
                                                   "properties": {"at": _VEC3, "rotate": _VEC3}}},
-                                              "blend": _POS}}]},
+                                              "blend": _POS,
+                                              "seam": {"type": "number", "minimum": 0,
+                                                       "description": "zones: mm thick solid plate on each face "
+                                                                      "between zones, the cells of both ending on "
+                                                                      "it as on a skin (a hard split, no blend); "
+                                                                      "without one, thin cells of two directions "
+                                                                      "meet at small joints that read too stiff"}}}]},
                     "seed": {"type": "integer", "description": "voronoi: random seed (default 0)"},
                     "offset": {**_FIELD, "description": "mm, moves the level surface (network form)"},
                     "origin": _VEC3,

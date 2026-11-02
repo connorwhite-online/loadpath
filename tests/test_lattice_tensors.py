@@ -257,6 +257,31 @@ def test_zoned_orient_follows_each_zone_and_its_frames():
     assert np.allclose(fr[1], _rotation([0, 0, 45]), atol=1e-6)
 
 
+def test_zone_seam_plates_are_solid_and_read_as_skin():
+    """orient.seam: a solid plate on the face between zones (the bisector
+    plane of their points), a hard split either side of it; the homogenized
+    check counts the plate as solid (skin), not lattice."""
+    from loadpath.fields import FieldGraph, orient_weights
+    from loadpath.homogenized import _EMPTY, _variant
+
+    lat = {"op": "lattice", "type": "cubic", "cell": 6.0, "thickness": 0.8,
+           "orient": {"zones": [{"at": [-20, 0, 0], "rotate": [0, 0, 0]}, {"at": [20, 0, 0], "rotate": [45, 0, 0]}],
+                      "seam": 1.0}}
+    doc = {"nodes": {"lat": lat}, "output": "lat"}
+    g = FieldGraph(doc)
+    P = np.random.default_rng(2).uniform(-12, 12, (4000, 3))
+    f = g.evaluate(P)
+    on = np.abs(P[:, 0]) < 0.45
+    assert np.all(f[on] < 0) and np.all(f[np.abs(P[:, 0]) < 0.5] <= np.abs(P[np.abs(P[:, 0]) < 0.5, 0]) - 0.5 + 1e-9)
+    w = orient_weights(g.nodes["lat"], P)
+    assert set(np.unique(w)) <= {0.0, 1.0}
+    b = FieldGraph({"nodes": {"lat": {**lat, "orient": [45, 0, 0]}}, "output": "lat"}).evaluate(P)
+    right = P[:, 0] > 0
+    assert np.abs(f[right] - np.minimum(b, np.abs(P[:, 0]) - 0.5)[right]).max() < 1e-9
+    plates = _variant(g, doc, None, "lat", _EMPTY).evaluate(P)
+    assert np.allclose(plates, np.abs(P[:, 0]) - 0.5)
+
+
 def test_zones_turn_each_arm_of_an_l_bracket_its_own_way():
     """BCCz is stiff along z only: an L-bracket's arm along x wants z on x,
     its arm up z wants it left alone; zones get the bracket stronger than

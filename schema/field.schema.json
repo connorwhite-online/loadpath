@@ -2866,6 +2866,11 @@
                 "blend": {
                   "type": "number",
                   "exclusiveMinimum": 0
+                },
+                "seam": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "zones: mm thick solid plate on each face between zones, the cells of both ending on it as on a skin (a hard split, no blend); without one, thin cells of two directions meet at small joints that read too stiff"
                 }
               }
             }

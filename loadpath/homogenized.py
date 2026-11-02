@@ -65,6 +65,11 @@ def _variant(graph, doc, base_dir, lattice, value):
     g = FieldGraph(doc, base_dir=base_dir, sources=graph.sources)
     g._built, g.analyses = graph._built, graph.analyses
     nd = g.nodes[lattice]
+    o = nd.spec.get("orient")
+    if value == _EMPTY and isinstance(o, dict) and o.get("zones") and o.get("seam"):
+        # the lattice taken out leaves its zones' seam plates: solid, like a skin
+        nd.spec = {**nd.spec, "_seamOnly": True}
+        return g
     nd.op, nd.spec, nd.refs = "constant", {"op": "constant", "value": value}, {}
     g.deps[lattice] = []
     return g

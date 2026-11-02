@@ -464,9 +464,28 @@ def orient_weights(nd, P):
         raise ValueError(f"node {nd.name!r}: orient turns a cartesian lattice")
     if isinstance(nd.refs.get("cell"), str) and nd.spec.get("grading", "warp") == "warp":
         raise ValueError(f"node {nd.name!r}: orient with a graded (warp) cell is not supported")
+    at = np.array([z["at"] for z in zones], float)
+    if o.get("seam"):
+        # seam plates: each zone's cells run to the plate between it and the
+        # next zone, a hard split (the nearest zone's point)
+        d = ((np.asarray(P, float)[:, None, :] - at[None]) ** 2).sum(-1)
+        return np.eye(len(at))[np.argmin(d, axis=1)]
     cell = nd.spec.get("cell", 8.0)
     blend = float(o.get("blend", cell if isinstance(cell, (int, float)) else 8.0))
-    return zone_weights(np.array([z["at"] for z in zones], float), blend, P)
+    return zone_weights(at, blend, P)
+
+
+def seam_distance(at, P):
+    """Unsigned mm distance from P to the Voronoi face between its nearest
+    zone point and the next nearest (the bisector plane of the two)."""
+    at = np.asarray(at, float)
+    d2 = ((np.asarray(P, float)[:, None, :] - at[None]) ** 2).sum(-1)
+    if len(at) < 2:
+        return np.full(len(P), np.inf)
+    o = np.argsort(d2, axis=1)[:, :2]
+    i = np.arange(len(P))
+    gap = np.linalg.norm(at[o[:, 1]] - at[o[:, 0]], axis=1)
+    return (d2[i, o[:, 1]] - d2[i, o[:, 0]]) / np.maximum(2.0 * gap, 1e-12)
 
 
 def zone_weights(at, blend, P):
@@ -1452,6 +1471,16 @@ class FieldGraph:
         import copy as _copy
 
         zones = nd.spec["orient"]["zones"]
+        seam = float(nd.spec["orient"].get("seam") or 0.0)
+        plate = None
+        if seam > 0:
+            # a solid plate `seam` mm thick on each face between zones: the
+            # cells of both zones end on it the way they end on a skin.
+            # Without one, two directions of thin struts meet at a few small
+            # joints, and that seam read 1.5-4x too stiff (lattice_seams bench)
+            plate = seam_distance([z["at"] for z in zones], P) - 0.5 * seam
+            if nd.spec.get("_seamOnly"):
+                return plate
         w = orient_weights(nd, P)
         wmax = w.max(axis=1)
         cell = nd.spec.get("cell", 8.0)
@@ -1470,7 +1499,7 @@ class FieldGraph:
             # Averaging the two fields instead left gaps in the seam
             f = np.asarray(self._lattice(sub, P, memo), float)
             out = np.minimum(out, np.where(near, f + reach * (1.0 - share), np.inf))
-        return out
+        return out if plate is None else np.minimum(out, plate)
 
     def lattice_coords(self, nd, P, memo=None):
         """(U, cell): a lattice node's coordinates at P (period 1 a cell)

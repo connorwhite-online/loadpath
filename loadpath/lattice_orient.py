@@ -348,7 +348,7 @@ def stress_zones(centers, stresses, weights, k, spatial=1.0, seed=0):
 def optimize_zones(doc, study, zones: int = 3, node=None, base_dir=None, cells: int = 15_000,
                    objective: str = "safetyFactor", rounds: int = 2, alternatives: int = 2, blend=None,
                    progress=None, spatial: float = 1.0, uniform_refine: int = 8, zone_refine: int = 6,
-                   start=None) -> dict:
+                   start=None, seam=1.0) -> dict:
     """Cell direction that follows the stress: the lattice split into
     `zones` zones (stress_zones), each turned on its own (orient.zones,
     cross-faded over `blend` mm, default one cell, where they meet). Each
@@ -358,7 +358,10 @@ def optimize_zones(doc, study, zones: int = 3, node=None, base_dir=None, cells: 
     `alternatives` screened rotations are tried with full analyses, keeping
     any that improve. Returns like optimize_orientation, with "zones" (the
     orient.zones written) and "uniform" (the best single orient, its own
-    run, for comparison) left to the caller."""
+    run, for comparison) left to the caller. `seam` (mm, default 1): a
+    solid plate between zones (orient.seam), which the zones' cells end on
+    as on a skin; 0 for none (cross-faded zones, which read too stiff where
+    thin cells of two directions meet)."""
     from .fields import FieldGraph, expand_groups, zone_weights
     from .homogenized import homogenized_check, lattice_nodes
     from .lattice_tensors import has_tensors, tensors_at
@@ -386,6 +389,8 @@ def optimize_zones(doc, study, zones: int = 3, node=None, base_dir=None, cells: 
         d["nodes"][lat]["orient"] = {"zones": [{"at": [round(float(v), 3) for v in a],
                                                 "rotate": [round(float(v), 3) for v in _rotvec_deg(r)]}
                                                for a, r in zip(at, rots)], "blend": blend}
+        if seam:
+            d["nodes"][lat]["orient"]["seam"] = float(seam)
         return d
 
     def score(rep):

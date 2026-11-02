@@ -115,11 +115,12 @@ def _grid_of(centers, values, origin, pitch):
 
 def grade_lattice(doc, study, target_sf=None, wall_min=None, wall_max=None, cells: int = 15_000,
                   iterations: int = 12, orient=None, rounds: int = 2, base_dir=None, node=None,
-                  progress=None, n_rot: int = 800) -> dict:
+                  progress=None, n_rot: int = 800, seam: float = 1.0) -> dict:
     """Grade the graph's lattice wall to the stress (module docstring).
     Returns {"doc" (density as a grid node reading the in-memory source),
     "density": {"origin", "pitch", "values"}, "best" (the lightest analyzed
-    design that met the target), "history", "orient", "seconds"}."""
+    design that met the target), "history", "orient", "seconds"}. `seam`:
+    zones only, mm of solid plate between zones (orient.seam; 0 for none)."""
     from scipy import ndimage
 
     from .fields import FieldGraph, expand_groups
@@ -287,6 +288,8 @@ def grade_lattice(doc, study, target_sf=None, wall_min=None, wall_max=None, cell
                 work["nodes"][lat]["orient"] = {"zones": [{"at": [round(float(v), 3) for v in a],
                                                            "rotate": [round(float(v), 3) for v in _rotvec_deg(r)]}
                                                           for a, r in zip(at, rots)], "blend": cell}
+                if seam:
+                    work["nodes"][lat]["orient"]["seam"] = float(seam)
             else:
                 work["nodes"][lat]["orient"] = [round(float(v), 3) for v in _rotvec_deg(rots[0])]
             # re-read the stresses in the turned lattice before sizing on

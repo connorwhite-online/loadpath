@@ -527,5 +527,32 @@ def tensors_at(kind: str, rho, aspect=None):
     rho = np.atleast_1d(np.asarray(rho, float))
     xs, C, P, Q, F = _rows(kind, _aspect_key(aspect))
     _, j, t = _interp_at(rho, xs)
-    return (_interp(rho, xs, C, C[:, 0, 0]), _interp(rho, xs, P, P[:, 0, 0]),
-            _interp(rho, xs, Q, P[:, 0, 0] ** 2), F[j] * (1 - t) + F[j + 1] * t)
+    c, pp, q = _interp(rho, xs, C, C[:, 0, 0]), _interp(rho, xs, P, P[:, 0, 0]), _interp(rho, xs, Q, P[:, 0, 0] ** 2)
+    low = rho < xs[0]
+    if low.any():
+        # under the table each eigen-mode runs on with its own power law
+        # (matrix log linear in log rho, through the first two rows): a strut
+        # cell's bending modes (shear for the cubic) fall about as rho^2.3
+        # while its stretching modes fall as rho, so holding the shape of the
+        # first row read the shear 3x too stiff at rho 0.02
+        u = (np.log(np.clip(rho[low], 1e-3, 1.0)) - np.log(xs[0])) / (np.log(xs[1]) - np.log(xs[0]))
+        c_low, p_low = _spd_powerlaw(C[0], C[1], u), _spd_powerlaw(P[0], P[1], u)
+        q[low] = q[low] * (p_low[:, 0, 0] / pp[low][:, 0, 0])[:, None] ** 2
+        c[low], pp[low] = c_low, p_low
+    return c, pp, q, F[j] * (1 - t) + F[j + 1] * t
+
+
+def _spd_logm(A):
+    w, V = np.linalg.eigh(0.5 * (A + A.T))
+    return (V * np.log(np.maximum(w, 1e-300 + 1e-12 * w.max()))) @ V.T
+
+
+def _spd_powerlaw(A0, A1, u):
+    """expm(log A0 + u (log A1 - log A0)) for each u: symmetric positive
+    definite, each eigen-direction on its own power law."""
+    L0, dL = _spd_logm(A0), _spd_logm(A1) - _spd_logm(A0)
+    out = np.empty((len(u),) + A0.shape)
+    for i, ui in enumerate(np.atleast_1d(u)):
+        w, V = np.linalg.eigh(L0 + ui * dL)
+        out[i] = (V * np.exp(w)) @ V.T
+    return out

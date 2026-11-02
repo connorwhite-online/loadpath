@@ -410,6 +410,8 @@ def main(argv=None):
     lo_.add_argument("--refine", type=int, default=16, help="Nelder-Mead evaluations after the screen")
     lo_.add_argument("--zones", type=int, default=1, help="split the lattice into this many zones by stress "
                                                           "direction and turn each its own way (orient.zones)")
+    lo_.add_argument("--seam", type=float, default=1.0, help="zones: mm solid plate between zones (orient.seam), "
+                                                             "0 for cross-faded zones (unconfirmed, read too stiff)")
     lo_.add_argument("--out", default="loadpath-lattice-orient")
     lo_.add_argument("--base-dir")
     lg = sub.add_parser("lattice-grade", help="grade a field graph's lattice wall to the stress (fully stressed, "
@@ -418,6 +420,7 @@ def main(argv=None):
     lg.add_argument("--study", help="study JSON or example:<name> (default: the graph's tune.study)")
     lg.add_argument("--target-sf", type=float, help="safety factor to size to (default: the study's goal)")
     lg.add_argument("--orient", help="'uniform' (one direction) or N (zones) to turn the cells too")
+    lg.add_argument("--seam", type=float, default=1.0, help="zones: mm solid plate between zones (0: none)")
     lg.add_argument("--wall-min", type=float, help="mm (default: the process's minimum feature, at least 0.6)")
     lg.add_argument("--wall-max", type=float, help="mm (default: density 0.6)")
     lg.add_argument("--cells", type=int, default=15000)
@@ -978,7 +981,7 @@ def _lattice_orient(args):
         study = load_study(ref, base, doc.get("material"))
         if args.zones > 1:
             out = optimize_zones(doc, study, zones=args.zones, base_dir=base, cells=args.cells,
-                                 objective=args.objective, progress=_progress)
+                                 objective=args.objective, progress=_progress, seam=args.seam)
         else:
             out = optimize_orientation(doc, study, base_dir=base, cells=args.cells, objective=args.objective,
                                        refine=args.refine, progress=_progress)
@@ -1018,7 +1021,7 @@ def _lattice_grade(args):
     try:
         study = load_study(ref, base, doc.get("material"))
         out = grade_lattice(doc, study, target_sf=args.target_sf, wall_min=args.wall_min, wall_max=args.wall_max,
-                            cells=args.cells, orient=orient, base_dir=base, progress=_progress)
+                            cells=args.cells, orient=orient, base_dir=base, progress=_progress, seam=args.seam)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2

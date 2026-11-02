@@ -6,7 +6,8 @@ cell at a ladder of relative densities, from periodic unit-cell FEA
 
     python bench/lattice_tensors.py [--n 48] [--kinds octet,gyroid] [--out loadpath/data/lattice_tensors.json]
 
-Merges into an existing table, so kinds can be run a few at a time.
+Merges into an existing table, so kinds can be run a few at a time, and
+`--rho` adds densities to a kind (a row within 10% of a new one is replaced).
 """
 import argparse
 import json
@@ -22,8 +23,8 @@ from loadpath.lattice import SHEETS, wall_for_density  # noqa: E402
 from loadpath.lattice_tensors import TABLE_PATH, unit_cell_tensors  # noqa: E402
 from loadpath.struts import _BOX, STRUT_KINDS, strut_diameter_for_density  # noqa: E402
 
-RHO = "0.06,0.1,0.16,0.24,0.34,0.5,0.7,0.9"
-RHO_SHEET = "0.1,0.16,0.24,0.34,0.5,0.7,0.9"
+RHO = "0.02,0.035,0.06,0.1,0.16,0.24,0.34,0.5,0.7,0.9"
+RHO_SHEET = "0.035,0.06,0.1,0.16,0.24,0.34,0.5,0.7,0.9"
 
 
 def main():
@@ -42,7 +43,9 @@ def main():
                            "floored at floor * sqrt(s' P s); Voigt stress, tensor shears), per relative density"})
     kinds = table.setdefault("kinds", {})
     for kind in a.kinds.split(","):
-        rows = []
+        # rows already in the table are kept unless this run solves the same
+        # density again (--rho adds rows to a kind)
+        rows = list(kinds.get(kind, []))
         ladder = a.rho or (RHO_SHEET if kind in SHEETS else RHO)
         for rho in (float(x) for x in ladder.split(",")):
             if kind in SHEETS:
@@ -50,8 +53,9 @@ def main():
             else:
                 d = float(strut_diameter_for_density(kind, rho, 1.0 / _BOX.get(kind, 1.0)))
             t0 = time.time()
-            n = a.n or (48 if rho < 0.2 else 40 if rho < 0.4 else 32)
+            n = a.n or (64 if rho < 0.05 else 48 if rho < 0.2 else 40 if rho < 0.4 else 32)
             r = unit_cell_tensors(kind, d, n=n)
+            rows = [x for x in rows if abs(np.log(x["rho"] / r["rho"])) > 0.1]
             rows.append({"rho": round(r["rho"], 5), "d": round(d, 5), "n": n,
                          "C": np.round(r["C"], 7).tolist(), "P": [[float(f"{v:.6g}") for v in row] for row in r["P"]],
                          "Q4": [float(f"{v:.6g}") for v in r["Q4"]], "floor": round(r["floor"], 4),
