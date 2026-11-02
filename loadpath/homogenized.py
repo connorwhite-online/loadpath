@@ -374,6 +374,20 @@ def lattice_frames(g, lat, centers, pitch, start=None):
 
     moves = _path_transforms(g, start or g.output, lat)
     rotated = any("rotate" in g.nodes[t].spec for t in moves)
+    if isinstance(s.get("orient"), dict) and "zones" in s["orient"]:
+        # turned zone by zone: the polar factor of the zones' rotations
+        # weighted where the cell sits (a transform above moves the points)
+        from .fields import orient_weights, zone_rotations
+
+        P = centers
+        for t in moves:
+            P = g.transform_points(g.nodes[t], P)
+        if rotated:
+            raise ValueError(f"lattice {lat!r}: a zoned orient under a rotating transform node is not supported; "
+                             "fold the rotation into the zones")
+        m = np.einsum("nk,kij->nij", orient_weights(nd, P), zone_rotations(nd))
+        w, _, vt = np.linalg.svd(m)
+        return w @ vt
     frame = (s.get("frame") or {}).get("type", "cartesian")
     graded = isinstance(nd.refs.get("cell"), str) and s.get("grading", "warp") == "warp"
     if not rotated and (canonical(s.get("type", "gyroid")) == "voronoi"

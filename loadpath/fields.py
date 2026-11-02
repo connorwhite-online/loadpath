@@ -403,6 +403,9 @@ def lattice_orientation(nd):
     o = nd.spec.get("orient")
     if o is None:
         return None
+    if isinstance(o, dict) and "zones" in o:
+        raise ValueError(f"node {nd.name!r}: a zoned orient has no one set of lattice coordinates "
+                         "(lattice 3MF and beam export take a single orient)")
     from scipy.spatial.transform import Rotation
 
     if isinstance(o, dict):
@@ -426,6 +429,47 @@ def lattice_orientation(nd):
     if not np.any(rv):
         return None
     return Rotation.from_rotvec(rv).as_matrix()
+
+
+def zone_rotations(nd):
+    """(k, 3, 3) each orient zone's rotation (columns: the cell's axes)."""
+    from scipy.spatial.transform import Rotation
+
+    zones = nd.spec["orient"]["zones"]
+    return np.stack([Rotation.from_rotvec(np.radians(np.asarray(z.get("rotate", (0, 0, 0)), float))).as_matrix()
+                     for z in zones])
+
+
+def orient_weights(nd, P):
+    """(n, k) blend weights of a zoned orient's zones at P, summing to 1: a
+    soft Voronoi split between the zones' `at` points, each zone's weight
+    falling as a Gaussian of how much farther its point is than the
+    nearest one, over `blend` mm (default one cell). Far from a boundary
+    one zone has all of it; across one the lattices cross-fade over about
+    `blend`."""
+    o = nd.spec["orient"]
+    zones = o["zones"]
+    if not zones:
+        raise ValueError(f"node {nd.name!r}: orient.zones is empty")
+    for z in zones:
+        if "at" not in z:
+            raise ValueError(f"node {nd.name!r}: every orient zone needs an 'at' point")
+    if (nd.spec.get("frame") or {}).get("type", "cartesian") != "cartesian":
+        raise ValueError(f"node {nd.name!r}: orient turns a cartesian lattice")
+    if isinstance(nd.refs.get("cell"), str) and nd.spec.get("grading", "warp") == "warp":
+        raise ValueError(f"node {nd.name!r}: orient with a graded (warp) cell is not supported")
+    cell = nd.spec.get("cell", 8.0)
+    blend = float(o.get("blend", cell if isinstance(cell, (int, float)) else 8.0))
+    return zone_weights(np.array([z["at"] for z in zones], float), blend, P)
+
+
+def zone_weights(at, blend, P):
+    """orient_weights for zone points `at` (k, 3) and `blend` mm."""
+    P = np.asarray(P, float)
+    d = np.sqrt(((P[:, None, :] - np.asarray(at, float)[None]) ** 2).sum(-1))
+    x = (d - d.min(axis=1, keepdims=True)) / max(0.5 * blend, 1e-9)
+    w = np.exp(-x * x)
+    return w / w.sum(axis=1, keepdims=True)
 
 
 def _tpms_distance(kind, P, cell, frame=None):
@@ -1349,6 +1393,8 @@ class FieldGraph:
 
     def _lattice(self, nd, P, memo):
         s, r = nd.spec, nd.refs
+        if isinstance(s.get("orient"), dict) and "zones" in s["orient"]:
+            return self._lattice_zones(nd, P, memo)
         kind = s.get("type", "gyroid")
         from .struts import canonical, is_strut
 
@@ -1391,6 +1437,23 @@ class FieldGraph:
         if form == "network":
             return d - 0.5 * t
         raise ValueError(f"node {nd.name!r}: lattice form must be 'sheet' or 'network'")
+
+    def _lattice_zones(self, nd, P, memo):
+        """A lattice whose cells turn from zone to zone (orient.zones): each
+        zone's lattice, turned by its own rotation, blended by the zones'
+        weights (orient_weights) where they meet."""
+        import copy as _copy
+
+        zones = nd.spec["orient"]["zones"]
+        w = orient_weights(nd, P)
+        out = np.zeros(len(P))
+        for i, z in enumerate(zones):
+            if not (w[:, i] > 1e-6).any():
+                continue
+            sub = _copy.copy(nd)
+            sub.spec = {**nd.spec, "orient": list(z.get("rotate", (0.0, 0.0, 0.0)))}
+            out += w[:, i] * np.asarray(self._lattice(sub, P, memo), float)
+        return out
 
     def lattice_coords(self, nd, P, memo=None):
         """(U, cell): a lattice node's coordinates at P (period 1 a cell)

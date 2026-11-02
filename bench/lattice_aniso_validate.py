@@ -107,7 +107,7 @@ CASES = {
 }
 
 
-def resolved(doc, study_d, pitch, band, cell_size=6.0):
+def resolved(doc, study_d, pitch, band, cell_size=6.0, skin=0.0):
     """Voxel FE of the field graph's part at `pitch`."""
     st = study_from_dict(study_d)
     g = FieldGraph(doc)
@@ -170,11 +170,21 @@ def resolved(doc, study_d, pitch, band, cell_size=6.0):
         v = vm[far]
         order = np.argsort(inv, kind="stable")
         bounds = np.searchsorted(inv[order], np.arange(inv.max() + 2))
-        cell_peaks = [np.percentile(v[order[bounds[j]:bounds[j + 1]]], 99.5)
-                      for j in range(len(bounds) - 1) if bounds[j + 1] - bounds[j] > 50]
+        groups = [order[bounds[j]:bounds[j + 1]] for j in range(len(bounds) - 1) if bounds[j + 1] - bounds[j] > 50]
+        cell_peaks = [np.percentile(v[gr], 99.5) for gr in groups]
+        jmax = int(np.argmax(cell_peaks))
+        xyz = hm.node_xyz[far]
+        top = groups[jmax][np.argmax(v[groups[jmax]])]
+        # the same reading away from the outer faces (a skin and the strut
+        # roots in it): how much of the peak is the junction with the skin
+        dface = np.minimum(xyz - lo, hi - xyz).min(axis=1)
+        inner = dface > skin + 0.5 * cell_size if skin else dface > 0.5 * cell_size
+        inner_peaks = [np.percentile(v[gr[inner[gr]]], 99.5) for gr in groups if inner[gr].sum() > 50]
         out.append({"name": case.name, "deflection": float(np.linalg.norm(disp[ln].mean(axis=0))),
                     "compliance": float(bc.loads[ci] @ u),
-                    "peak995": float(np.percentile(v, 99.5)), "cellPeak": float(max(cell_peaks))})
+                    "peak995": float(np.percentile(v, 99.5)), "cellPeak": float(max(cell_peaks)),
+                    "cellPeakAt": xyz[top].tolist(), "cellPeakFaceDistance": float(dface[top]),
+                    "innerCellPeak": float(max(inner_peaks)) if inner_peaks else None})
     return {"cells": int(hm.n_elem), "pitch": pitch, "seconds": time.time() - t0,
             "mass": float(hm.n_elem * pitch ** 3 * mat.density / 1000.0), "cases": out, "hm": hm, "bc": bc,
             "study": st}
@@ -261,7 +271,7 @@ def main():
             row[model] = {"mass": r["mass"], "seconds": r["seconds"], "cells": r["analysisCells"],
                           "latticeExposed": r["latticeExposed"],
                           "cases": [{k: c[k] for k in ("name", "deflection", "compliance", "peakStress",
-                                                       "safetyFactor")}
+                                                       "safetyFactor", "peakAt", "inLattice")}
                                     for c in r["cases"]]}
         cell = float(doc["nodes"]["lat"]["cell"])
         if a.reuse and name in results:
@@ -269,7 +279,8 @@ def main():
             if "ccx" in results[name]:
                 row["ccx"] = results[name]["ccx"]
         else:
-            res = resolved(doc, sd, a.pitch, band=cell, cell_size=cell)
+            skin = float(doc["nodes"]["skin"]["thickness"]) if "skin" in doc["nodes"] else 0.0
+            res = resolved(doc, sd, a.pitch, band=cell, cell_size=cell, skin=skin)
             row["resolved"] = {k: res[k] for k in ("cells", "pitch", "seconds", "mass", "cases")}
         if name in a.ccx.split(",") and not (a.reuse and "ccx" in row):
             with tempfile.TemporaryDirectory() as td:

@@ -2792,7 +2792,7 @@
           "description": "stretch the cell per axis, e.g. [1, 1, 1.5]: a tall BCC cell's struts rise above 45 degrees and print on FDM unsupported"
         },
         "orient": {
-          "description": "turn the cells (not the fields grading them) about the origin: a rotation vector in degrees [rx, ry, rz], or {axis, degrees}; `loadpath lattice-orient` picks one that lines the stiff cell directions up with the load",
+          "description": "turn the cells (not the fields grading them) about the origin: a rotation vector in degrees [rx, ry, rz], or {axis, degrees}, or {zones: [{at, rotate}], blend} to turn them part by part; `loadpath lattice-orient` picks them so the stiff cell directions follow the load",
           "anyOf": [
             {
               "type": "array",
@@ -2805,6 +2805,7 @@
             {
               "type": "object",
               "additionalProperties": false,
+              "description": "{axis, degrees}; or zones: cells turned zone by zone, cross-faded over `blend` mm (default one cell) where the zones meet",
               "properties": {
                 "axis": {
                   "anyOf": [
@@ -2830,6 +2831,41 @@
                 },
                 "degrees": {
                   "type": "number"
+                },
+                "zones": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "at"
+                    ],
+                    "properties": {
+                      "at": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "[x, y, z]"
+                      },
+                      "rotate": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "[x, y, z]"
+                      }
+                    }
+                  }
+                },
+                "blend": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 }
               }
             }

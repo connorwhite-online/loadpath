@@ -1063,11 +1063,21 @@ _FIELD_OPS = {
                                               "struts rise above 45 degrees and print on FDM unsupported"},
                     "orient": {"description": "turn the cells (not the fields grading them) about the "
                                               "origin: a rotation vector in degrees [rx, ry, rz], or "
-                                              "{axis, degrees}; `loadpath lattice-orient` picks one that "
-                                              "lines the stiff cell directions up with the load",
+                                              "{axis, degrees}, or {zones: [{at, rotate}], blend} to turn "
+                                              "them part by part; `loadpath lattice-orient` picks them so "
+                                              "the stiff cell directions follow the load",
                                "anyOf": [{"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
                                          {"type": "object", "additionalProperties": False,
-                                          "properties": {"axis": _AXIS, "degrees": {"type": "number"}}}]},
+                                          "description": "{axis, degrees}; or zones: cells turned zone by zone, "
+                                                         "cross-faded over `blend` mm (default one cell) where "
+                                                         "the zones meet",
+                                          "properties": {
+                                              "axis": _AXIS, "degrees": {"type": "number"},
+                                              "zones": {"type": "array", "minItems": 1, "items": {
+                                                  "type": "object", "additionalProperties": False,
+                                                  "required": ["at"],
+                                                  "properties": {"at": _VEC3, "rotate": _VEC3}}},
+                                              "blend": _POS}}]},
                     "seed": {"type": "integer", "description": "voronoi: random seed (default 0)"},
                     "offset": {**_FIELD, "description": "mm, moves the level surface (network form)"},
                     "origin": _VEC3,

@@ -224,3 +224,47 @@ def _rotation(deg):
     from scipy.spatial.transform import Rotation
 
     return Rotation.from_rotvec(np.radians(deg)).as_matrix()
+
+
+def test_zoned_orient_follows_each_zone_and_its_frames():
+    """orient.zones: away from where zones meet, the lattice is that zone's
+    turned lattice; the weights sum to one and cross-fade over the blend;
+    the homogenized frames are each zone's rotation."""
+    from loadpath.fields import FieldGraph, orient_weights
+    from loadpath.homogenized import lattice_frames
+
+    lat = {"op": "lattice", "type": "octet", "cell": 6.0, "thickness": 1.0,
+           "orient": {"zones": [{"at": [-20, 0, 0], "rotate": [0, 0, 0]}, {"at": [20, 0, 0], "rotate": [0, 0, 45]}],
+                      "blend": 6.0}}
+    g = FieldGraph({"nodes": {"lat": lat}, "output": "lat"})
+    P = np.random.default_rng(1).uniform(-12, 12, (3000, 3))
+    a = FieldGraph({"nodes": {"lat": {**lat, "orient": [0, 0, 0]}}, "output": "lat"}).evaluate(P)
+    b = FieldGraph({"nodes": {"lat": {**lat, "orient": [0, 0, 45]}}, "output": "lat"}).evaluate(P)
+    f = g.evaluate(P)
+    left, right = P[:, 0] < -6, P[:, 0] > 6
+    assert np.abs(f[left] - a[left]).max() < 1e-3 and np.abs(f[right] - b[right]).max() < 1e-3
+    w = orient_weights(g.nodes["lat"], P)
+    assert np.allclose(w.sum(axis=1), 1.0)
+    mid = np.abs(P[:, 0]) < 0.5
+    assert np.all(np.abs(w[mid, 0] - 0.5) < 0.1)
+    fr = lattice_frames(g, "lat", np.array([[-10.0, 0, 0], [10.0, 0, 0]]), 1.0)
+    assert np.allclose(fr[0], np.eye(3), atol=1e-6)
+    assert np.allclose(fr[1], _rotation([0, 0, 45]), atol=1e-6)
+
+
+def test_zones_turn_each_arm_of_an_l_bracket_its_own_way():
+    """BCCz is stiff along z only: an L-bracket's arm along x wants z on x,
+    its arm up z wants it left alone; zones get the bracket stronger than
+    the cells as laid."""
+    sys.path.insert(0, str(ROOT / "bench"))
+    from lattice_zones_mass import case
+
+    from loadpath.lattice_orient import optimize_zones
+    from loadpath.spec import study_from_dict
+
+    doc, sd, _ = case("l-bracket")
+    r = optimize_zones(doc, study_from_dict(sd), zones=2, cells=5000, rounds=1, alternatives=1)
+    assert r["best"]["safetyFactor"] > 1.8 * r["unrotated"]["safetyFactor"]
+    zones = r["doc"]["nodes"]["lat"]["orient"]["zones"]
+    arm_x = min(zones, key=lambda z: z["at"][2])           # the lower zone: the arm along x
+    assert abs(_rotation(arm_x["rotate"])[0, 2]) > 0.7      # its cells' z laid along x

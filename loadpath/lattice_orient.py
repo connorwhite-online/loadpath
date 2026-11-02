@@ -34,7 +34,7 @@ import time
 
 import numpy as np
 
-__all__ = ["optimize_orientation", "screen_rotations", "dominant_directions"]
+__all__ = ["optimize_orientation", "optimize_zones", "screen_rotations", "dominant_directions"]
 
 # directions the cell's stiff axes are looked for along (cube axes, face
 # and body diagonals; with a stretched cell these are in its own axes)
@@ -47,23 +47,36 @@ P_NORM = 8.0          # the screen's soft maximum of the wall stress
 
 
 def _voigt_tensor(s):
-    """(n, 6) Voigt stresses (xx, yy, zz, yz, xz, xy) -> (n, 3, 3)."""
+    """(n, 6) Voigt stresses in loadpath's order (xx, yy, zz, xy, yz, zx,
+    lattice_tensors._VOIGT) -> (n, 3, 3)."""
     t = np.empty((len(s), 3, 3))
     t[:, 0, 0], t[:, 1, 1], t[:, 2, 2] = s[:, 0], s[:, 1], s[:, 2]
-    t[:, 1, 2] = t[:, 2, 1] = s[:, 3]
-    t[:, 0, 2] = t[:, 2, 0] = s[:, 4]
-    t[:, 0, 1] = t[:, 1, 0] = s[:, 5]
+    t[:, 0, 1] = t[:, 1, 0] = s[:, 3]
+    t[:, 1, 2] = t[:, 2, 1] = s[:, 4]
+    t[:, 2, 0] = t[:, 0, 2] = s[:, 5]
     return t
 
 
+def _principal(stresses):
+    """Per cell and case, the principal direction of the largest |stress|
+    and that stress: (n, cases, 3), (n, cases)."""
+    dirs, mags = [], []
+    for st in stresses:
+        lam, vec = np.linalg.eigh(_voigt_tensor(st))
+        i = np.argmax(np.abs(lam), axis=1)
+        dirs.append(vec[np.arange(len(st)), :, i])
+        mags.append(np.abs(lam[np.arange(len(st)), i]))
+    return np.stack(dirs, 1), np.stack(mags, 1)
+
+
 def dominant_directions(stresses, weights):
-    """Principal axes of sum_e w_e sigma_e . sigma_e over cells and cases,
-    strongest first (columns): the directions the lattice's stress mostly
-    runs along, whatever its sign."""
-    m = np.zeros((3, 3))
-    for s in stresses:
-        t = _voigt_tensor(s)
-        m += np.einsum("e,eij,ejk->ik", weights, t, t)
+    """Principal axes of sum_e w_e sum_cases s1^2 n1 n1^T over cells and
+    cases, n1 the direction of each cell's largest principal stress s1,
+    strongest first (columns): the direction the lattice's stress mostly
+    runs along, whatever its sign. (sigma . sigma would do for an axial
+    stress but has no preferred axis in pure shear.)"""
+    n, s = _principal(stresses)
+    m = np.einsum("e,ec,eci,ecj->ij", weights, s ** 2, n, n)
     w, v = np.linalg.eigh(m)
     return v[:, ::-1], w[::-1]
 
@@ -103,7 +116,7 @@ def candidate_rotations(C, dirs, n_spin=12, n_random=1500, seed=0):
     return np.array(out)
 
 
-def screen_rotations(R, fields, aspect=None):
+def screen_rotations(R, fields, aspect=None, mask=None, absolute=False):
     """Score rotations holding each lattice cell's macro stress. Returns
     (peak, energy): per rotation the p-norm of the wall stress over the
     cells the peak is read over (worst case) and the complementary energy
@@ -113,11 +126,14 @@ def screen_rotations(R, fields, aspect=None):
 
     rho, fc, fill = fields["rho"], fields["fc"], fields["fill"]
     lat = fc > 0.05
+    if mask is not None:
+        lat = lat & mask
     C, P, Q, F = tensors_at(fields["kind"], rho[lat], aspect)
     S = np.linalg.inv(C)
     w = (fc * fill)[lat]
     frames = fields["frames"]
-    f0 = np.broadcast_to(np.eye(3), (lat.sum(), 3, 3)) if frames is None else frames[lat]
+    # absolute: R is the cells' frame itself (not a turn of the current one)
+    f0 = np.broadcast_to(np.eye(3), (lat.sum(), 3, 3)) if frames is None or absolute else frames[lat]
     peak = np.zeros(len(R))
     energy = np.zeros(len(R))
     for ci, sig in enumerate(fields["latticeStress"]):
@@ -288,3 +304,189 @@ def optimize_orientation(doc, study, node=None, base_dir=None, cells: int = 15_0
             "screened": int(len(R)), "dominantStress": dirs[:, 0].tolist(),
             "stressAnisotropy": float(strength[0] / max(strength.sum(), 1e-30)),
             "evaluations": len(history), "history": history, "seconds": time.time() - t0}
+
+
+def _cell_directions(stresses, weights):
+    """Per cell, the axis its lattice stress mostly runs along (the top
+    eigenvector of sum over cases of s1^2 n1 n1^T) and its strength."""
+    n, s = _principal(stresses)
+    m = np.einsum("ec,eci,ecj->eij", s ** 2, n, n)
+    w, v = np.linalg.eigh(m)
+    return v[:, :, -1], w[:, -1]
+
+
+def stress_zones(centers, stresses, weights, k, spatial=1.0, seed=0):
+    """Split the lattice cells into k zones whose stress runs one way:
+    k-means on the cells' stress axis (as n n^T, sign free) and position
+    (scaled by the lattice's extent, times `spatial`), weighted by stress.
+    Returns (labels, zone points: the stress-weighted centroids)."""
+    from scipy.cluster.vq import kmeans2
+
+    n, mag = _cell_directions(stresses, weights)
+    nn = np.einsum("ei,ej->eij", n, n).reshape(-1, 9)[:, [0, 1, 2, 4, 5, 8]]
+    nn[:, [1, 2, 4]] *= np.sqrt(2.0)
+    span = np.ptp(centers, axis=0).max()
+    x = np.hstack([nn, spatial * (centers - centers.mean(axis=0)) / max(span, 1e-9)])
+    # weight by stress: repeat the stressed cells (kmeans2 has no weights)
+    sw = np.sqrt(np.maximum(mag, 0.0)) * weights
+    keep = sw > 0.05 * sw.max()
+    rng = np.random.default_rng(seed)
+    best = None
+    for _ in range(6):
+        cen, lab = kmeans2(x[keep], k, minit="++", seed=int(rng.integers(1 << 31)))
+        cost = float(((x[keep] - cen[lab]) ** 2).sum())
+        if best is None or cost < best[0]:
+            best = (cost, cen)
+    cen = best[1]
+    labels = np.argmin(((x[:, None, :] - cen[None]) ** 2).sum(-1), axis=1)
+    at = np.array([np.average(centers[labels == i], axis=0, weights=sw[labels == i] + 1e-12)
+                   if (labels == i).any() else centers.mean(axis=0) for i in range(k)])
+    return labels, at
+
+
+def optimize_zones(doc, study, zones: int = 3, node=None, base_dir=None, cells: int = 15_000,
+                   objective: str = "safetyFactor", rounds: int = 2, alternatives: int = 2, blend=None,
+                   progress=None, spatial: float = 1.0, uniform_refine: int = 8, zone_refine: int = 6,
+                   start=None) -> dict:
+    """Cell direction that follows the stress: the lattice split into
+    `zones` zones (stress_zones), each turned on its own (orient.zones,
+    cross-faded over `blend` mm, default one cell, where they meet). Each
+    round analyzes the current design for the macro stresses, screens every
+    zone's rotations on its own cells (absolute frames, the stresses held)
+    and takes the best per zone; then for each zone in turn its next
+    `alternatives` screened rotations are tried with full analyses, keeping
+    any that improve. Returns like optimize_orientation, with "zones" (the
+    orient.zones written) and "uniform" (the best single orient, its own
+    run, for comparison) left to the caller."""
+    from .fields import FieldGraph, expand_groups, zone_weights
+    from .homogenized import homogenized_check, lattice_nodes
+    from .lattice_tensors import has_tensors, tensors_at
+
+    t0 = time.time()
+    full = expand_groups(doc)
+    name = node or full.get("output") or list(full["nodes"])[-1]
+    g = FieldGraph({**full, "output": name}, base_dir=base_dir)
+    lats = lattice_nodes(g, name)
+    if len(lats) != 1:
+        raise ValueError(f"orientation needs one lattice node in {name!r} (found {len(lats)})")
+    lat = lats[0]
+    spec = full["nodes"][lat]
+    kind = spec.get("type", "gyroid")
+    aspect = tuple(spec["aspect"]) if "aspect" in spec else None
+    if not has_tensors(kind, aspect):
+        raise ValueError(f"lattice {lat!r} ({kind}) has no cell tensors to orient by")
+    say = progress or (lambda *_: None)
+    blend = float(blend if blend is not None else (spec.get("cell", 8.0) if isinstance(spec.get("cell", 8.0),
+                                                                                   (int, float)) else 8.0))
+    history = []
+
+    def doc_for(at, rots):
+        d = copy.deepcopy(full)
+        d["nodes"][lat]["orient"] = {"zones": [{"at": [round(float(v), 3) for v in a],
+                                                "rotate": [round(float(v), 3) for v in _rotvec_deg(r)]}
+                                               for a, r in zip(at, rots)], "blend": blend}
+        return d
+
+    def score(rep):
+        if objective == "safetyFactor":
+            return -float(rep["safetyFactor"])
+        return float(sum(c["compliance"] for c in rep["cases"]))
+
+    def check(at, rots, fields=False):
+        rep = homogenized_check(doc_for(at, rots), study, node=name, base_dir=base_dir, cells=cells, fields=fields)
+        row = {"zones": doc_for(at, rots)["nodes"][lat]["orient"]["zones"], "mass": rep["mass"],
+               "safetyFactor": rep["safetyFactor"], "compliance": float(sum(c["compliance"] for c in rep["cases"]))}
+        history.append(row)
+        say({"stage": "lattice-zones", "safetyFactor": rep["safetyFactor"], "compliance": row["compliance"]})
+        return score(rep), row, rep
+
+    base = copy.deepcopy(full)
+    base["nodes"][lat].pop("orient", None)
+    ref = homogenized_check(base, study, node=name, base_dir=base_dir, cells=cells, fields=True)
+    fl = ref["fields"]
+    if fl["latticeStress"] is None:
+        raise ValueError("the anisotropic reading is off (LOADPATH_LATTICE_ANISO=0): orientation needs it")
+    unrot = {"mass": ref["mass"], "safetyFactor": ref["safetyFactor"],
+             "compliance": float(sum(c["compliance"] for c in ref["cases"]))}
+    lat_cells = fl["fc"] > 0.05
+    w = (fl["fc"] * fl["fill"])
+    labels, at = stress_zones(fl["centers"][lat_cells], [s[lat_cells] for s in fl["latticeStress"]],
+                              w[lat_cells], zones, spatial=spatial)
+    group = _cell_group(kind, aspect)
+    rho_mid = float(np.median(fl["rho"][lat_cells]))
+    C = tensors_at(kind, [rho_mid], aspect)[0][0]
+    # start from the best single direction (so zones can only gain on it)
+    if start is None:
+        uni = optimize_orientation(doc, study, node=node, base_dir=base_dir, cells=cells, objective=objective,
+                                   full_checks=2, refine=uniform_refine, progress=progress)
+        start = uni["orient"]
+        uniform = uni["best"]
+    else:
+        uniform = None
+    r0 = _rotation_from_deg(start)
+    rots = [r0 for _ in range(zones)]
+    sc0, row0, rep0 = check(at, rots, fields=True)
+    best = (sc0, row0, list(rots))
+    fl = rep0["fields"]
+    for rnd in range(rounds):
+        # the zones' weights at the cells: a cell screens with the zone it mostly belongs to
+        wz = zone_weights(at, blend, fl["centers"])
+        own = np.argmax(wz, axis=1)
+        ranked = []
+        for i in range(zones):
+            m = own == i
+            dirs, _ = dominant_directions([s[m & lat_cells] for s in fl["latticeStress"]], w[m & lat_cells])
+            R = np.concatenate([[rots[i]], candidate_rotations(C, dirs, n_random=600, seed=rnd * 31 + i)])
+            peak, energy = screen_rotations(R, fl, aspect, mask=m, absolute=True)
+            order = np.argsort(peak if objective == "safetyFactor" else energy)
+            picks = []
+            for k in order:
+                if picks and min(_angle_mod(R[k], p, group) for p in picks) < np.radians(8.0):
+                    continue
+                picks.append(_smallest(R[k], group))
+                if len(picks) > alternatives:
+                    break
+            ranked.append(picks)
+        trial = [p[0] for p in ranked]
+        sc, row, rep = check(at, trial)
+        if sc < best[0]:
+            best = (sc, row, list(trial))
+        for i in range(zones):
+            for alt in ranked[i][1:]:
+                cand = list(best[2])
+                cand[i] = alt
+                sc2, row2, _ = check(at, cand)
+                if sc2 < best[0]:
+                    best = (sc2, row2, cand)
+        rots = best[2]
+        # the next round's stresses: the design as it now stands
+        fl = homogenized_check(doc_for(at, rots), study, node=name, base_dir=base_dir, cells=cells,
+                               fields=True)["fields"] if rnd + 1 < rounds else fl
+    # then each zone's rotation vector on its own, the others held
+    if zone_refine > 0:
+        from scipy.optimize import minimize
+
+        for i in range(zones):
+            x0 = _rotvec_deg(best[2][i])
+
+            def f(x, i=i):
+                nonlocal best
+                cand = list(best[2])
+                cand[i] = _rotation_from_deg(x)
+                sc2, row2, _ = check(at, cand)
+                if sc2 < best[0]:
+                    best = (sc2, row2, cand)
+                return sc2
+
+            minimize(f, x0, method="Nelder-Mead", options={
+                "initial_simplex": [x0] + [x0 + 10.0 * e for e in np.eye(3)], "maxfev": zone_refine})
+    out_doc = doc_for(at, best[2])
+    return {"doc": out_doc, "lattice": lat, "objective": objective, "zones": out_doc["nodes"][lat]["orient"]["zones"],
+            "blend": blend, "unrotated": unrot, "uniform": uniform, "uniformOrient": list(map(float, start)),
+            "best": best[1], "evaluations": len(history), "history": history, "seconds": time.time() - t0}
+
+
+def _rotation_from_deg(rv):
+    from scipy.spatial.transform import Rotation
+
+    return Rotation.from_rotvec(np.radians(np.asarray(rv, float))).as_matrix()

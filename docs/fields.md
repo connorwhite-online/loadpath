@@ -523,6 +523,36 @@ conformal or stress-aligned frame) is the next step. Each analysis takes
 turned readings rest on the tensors' validation above (turned cells
 included), not on a resolved solve of each optimum.
 
+**Direction that follows the stress.** `orient` can also be
+`{"zones": [{"at": [x, y, z], "rotate": [rx, ry, rz]}, ...], "blend": mm}`:
+the lattice split between the zones' points (a soft Voronoi split), each
+zone's cells turned their own way, the zones' lattices cross-faded over
+`blend` (default one cell) where they meet, so the struts or sheets run on
+through the seam. The homogenized check reads each cell in the polar factor
+of the zones' rotations weighted where it sits. `loadpath lattice-orient
+--zones N` (`optimize_zones`) starts from the best single direction, splits
+the lattice into N zones by k-means on each cell's principal stress axis and
+position, screens each zone's rotations on its own cells, tries the runners
+up with full analyses and refines each zone's rotation by Nelder-Mead.
+
+`bench/lattice_zones_mass.py`, skinless lattice parts, 3 zones, homogenized:
+
+| part | holding | as laid | one direction | zones |
+|---|---|---|---|---|
+| BCCz L-bracket (an arm along x, an arm up z) | safety factor | 4.96 g | 2.93 g (-41%) | 2.87 g (-42%) |
+| same | stiffness | 4.96 g | 2.45 g (-51%) | 2.42 g (-51%) |
+| simple cubic deep cantilever 60 x 12 x 24 mm | safety factor | 4.47 g | 4.46 g (0%) | 4.46 g (0%) |
+| same | stiffness | 4.47 g | 4.47 g (0%) | 4.25 g (-5%; 16% stiffer at the same wall) |
+
+Most of the win is in turning the cells at all; zones add little on top
+while the wall is one thickness everywhere. The safety factor is set by the
+one most stressed spot, so turning cells elsewhere cannot raise it, and
+stiffness gains only where the stress direction changes across the part (the
+deep beam's shear-carrying middle against its axial top and bottom). Zones
+should pay off once the wall is graded too (fully stressed sizing), where
+every cell's direction sets how much material it needs; that is not built
+yet for field graphs.
+
 Tuning the graded-lattice arm link (examples/fields/arm-link-lattice-tune.json:
 the skin's thinnest and thickest wall and the gyroid's thickest wall, same
 study and limits as the solid one above) does not beat the solid: the

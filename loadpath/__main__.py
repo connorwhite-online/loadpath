@@ -408,6 +408,8 @@ def main(argv=None):
     lo_.add_argument("--objective", choices=["safetyFactor", "stiffness"], default="safetyFactor")
     lo_.add_argument("--cells", type=int, default=15000, help="homogenized analysis cells per evaluation")
     lo_.add_argument("--refine", type=int, default=16, help="Nelder-Mead evaluations after the screen")
+    lo_.add_argument("--zones", type=int, default=1, help="split the lattice into this many zones by stress "
+                                                          "direction and turn each its own way (orient.zones)")
     lo_.add_argument("--out", default="loadpath-lattice-orient")
     lo_.add_argument("--base-dir")
     co = sub.add_parser("cores", help="tune each core option (hollow, ribbed, lattice...) of a part and pick the "
@@ -950,7 +952,7 @@ def _tune(args):
 
 def _lattice_orient(args):
     from .fields import load_study
-    from .lattice_orient import optimize_orientation
+    from .lattice_orient import optimize_orientation, optimize_zones
 
     doc = _load(args.graph)
     base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
@@ -960,8 +962,12 @@ def _lattice_orient(args):
         return 2
     try:
         study = load_study(ref, base, doc.get("material"))
-        out = optimize_orientation(doc, study, base_dir=base, cells=args.cells, objective=args.objective,
-                                   refine=args.refine, progress=_progress)
+        if args.zones > 1:
+            out = optimize_zones(doc, study, zones=args.zones, base_dir=base, cells=args.cells,
+                                 objective=args.objective, progress=_progress)
+        else:
+            out = optimize_orientation(doc, study, base_dir=base, cells=args.cells, objective=args.objective,
+                                       refine=args.refine, progress=_progress)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
