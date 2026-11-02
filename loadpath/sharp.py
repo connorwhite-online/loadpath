@@ -564,14 +564,24 @@ def mesh_distance(mesh, P, edge=0.5, k=16, cap=np.inf, signed=False):
     import trimesh
     from scipy.spatial import cKDTree
 
+    from . import meshops as _meshops
     from .fields import _closest_on_triangles
 
     key = (id(mesh), edge)
     cache = getattr(mesh, "_loadpath_dist", None)
     if cache is None or cache[0] != key:
         v, f = np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64)
-        v, f = trimesh.remesh.subdivide_to_size(v, f, max_edge=edge, max_iter=16)
+        # only the long triangles need splitting (a marching-cubes surface's
+        # are already short): subdividing those alone gives the same
+        # triangles without trimesh's passes over the whole mesh (21 of the
+        # arm link's 36 s here)
         tri = v[f]
+        e2 = np.max([np.einsum("ij,ij->i", d, d) for d in (tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 1],
+                                                            tri[:, 0] - tri[:, 2])], axis=0)
+        long = e2 > edge * edge
+        if long.any():
+            vs, fs = trimesh.remesh.subdivide_to_size(v, f[long], max_edge=edge, max_iter=16)
+            tri = np.concatenate([tri[~long], vs[fs]])
         nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
         nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-300)
         cache = (key, tri, nrm, cKDTree(tri.mean(axis=1)))
@@ -589,6 +599,9 @@ def mesh_distance(mesh, P, edge=0.5, k=16, cap=np.inf, signed=False):
         if len(q) > step:
             parts = [best(q[j:j + step], cand[j:j + step]) for j in range(0, len(q), step)]
             return np.concatenate([x[0] for x in parts]), np.concatenate([x[1] for x in parts])
+        if _meshops.available():
+            b2, sg = _meshops.nearest_on_triangles(q, cand, tri, nrm if signed else None, 1e-18, parallel=True)
+            return np.sqrt(b2), sg
         T = tri[cand]
         Q = np.repeat(q[:, None, :], n, axis=1).reshape(-1, 3)
         C = _closest_on_triangles(Q, T[:, :, 0].reshape(-1, 3), T[:, :, 1].reshape(-1, 3),

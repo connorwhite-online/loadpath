@@ -18,6 +18,8 @@ Units are whatever the caller uses consistently; loadpath uses mm, N, MPa.
 """
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import cg
@@ -496,6 +498,9 @@ def rigid_body_modes(xyz: np.ndarray) -> np.ndarray:
     return b
 
 
+_AMG_SETUP = threading.Lock()
+
+
 def amg_solver(a, **kw):
     """pyamg.smoothed_aggregation_solver, reproducibly. pyamg estimates
     spectral radii (the prolongation smoother's weight) from np.random's
@@ -507,12 +512,15 @@ def amg_solver(a, **kw):
     from . import amgfast
 
     amgfast.install()  # GIL-free Gauss-Seidel, same bits: solve_many's threads overlap
-    state = np.random.get_state()
-    np.random.seed(0)
-    try:
-        return pyamg.smoothed_aggregation_solver(a, **kw)
-    finally:
-        np.random.set_state(state)
+    # one setup at a time: the seeded global stream is shared, and threads
+    # setting up at once (verify's submodels) would draw from each other's
+    with _AMG_SETUP:
+        state = np.random.get_state()
+        np.random.seed(0)
+        try:
+            return pyamg.smoothed_aggregation_solver(a, **kw)
+        finally:
+            np.random.set_state(state)
 
 
 class Solver:

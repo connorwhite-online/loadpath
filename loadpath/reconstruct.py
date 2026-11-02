@@ -93,7 +93,42 @@ def _field_distance(fine, step, level=0.5):
     return d
 
 
-def _seat_on_flush_faces(fine, domain: Domain, upsample: int, pad: int, flush, design):
+class _GridSDF:
+    """The primitives' signed distances on one fine grid, each group (the
+    flush faces, preserved shapes, design space, keep-outs) evaluated once
+    and kept: _isosurface asked for the same ones up to three times, and
+    each was a min over a stacked (shapes, cells) array. A running minimum
+    gives the same values."""
+
+    def __init__(self, shape, origin, step):
+        self.shape, self.origin, self.step = tuple(shape), origin, step
+        self._pts = None
+        self._min = {}
+
+    @property
+    def pts(self):
+        if self._pts is None:
+            idx = np.stack(np.meshgrid(*[np.arange(n) for n in self.shape], indexing="ij"), -1).reshape(-1, 3)
+            self._pts = self.origin + idx * self.step
+        return self._pts
+
+    def min(self, shapes):
+        key = tuple(id(s) for s in shapes)
+        if key not in self._min:
+            self._min[key] = _min_sdf(shapes, self.pts)
+        return self._min[key]
+
+
+def _min_sdf(shapes, pts):
+    """min over `shapes` of their signed distance at `pts`."""
+    out = None
+    for sh in shapes:
+        d = sh.sdf(pts)
+        out = np.array(d, float) if out is None else np.minimum(out, d, out=out)
+    return out
+
+
+def _seat_on_flush_faces(fine, domain: Domain, upsample: int, pad: int, flush, design, grid=None):
     """Move material at a flush face (a wall the part is held against) onto
     the face itself.
 
@@ -112,8 +147,8 @@ def _seat_on_flush_faces(fine, domain: Domain, upsample: int, pad: int, flush, d
     step = domain.pitch / upsample
     origin = domain.origin - pad * domain.pitch + 0.5 * step
     shape = fine.shape
-    idx = np.stack(np.meshgrid(*[np.arange(n) for n in shape], indexing="ij"), -1).reshape(-1, 3)
-    pts = origin + idx * step
+    grid = grid if grid is not None else _GridSDF(shape, origin, step)
+    pts = grid.pts
     near = None
     out = fine
     grid_lo = domain.origin
@@ -126,7 +161,7 @@ def _seat_on_flush_faces(fine, domain: Domain, upsample: int, pad: int, flush, d
                 if hang < 0.5 * step:
                     continue
                 if near is None:
-                    near = np.min([sh.sdf(pts) for sh in flush], axis=0) < 1.5 * domain.pitch
+                    near = grid.min(flush) < 1.5 * domain.pitch
                 inward = sign * (pts[:, a] - face)       # mm inside the face
                 w = np.clip((2.5 * domain.pitch - inward) / (1.5 * domain.pitch), 0.0, 1.0) * near
                 if not w.any():
@@ -163,14 +198,18 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         edge = np.pad(np.pad(grid, pad - 1, mode="edge"), 1)
         idx = np.stack(np.meshgrid(*[np.arange(n) for n in padded.shape], indexing="ij"), -1).reshape(-1, 3)
         centers = domain.origin + (idx - pad + 0.5) * domain.pitch
-        near = (np.min([sh.sdf(centers) for sh in flush], axis=0) < 1.5 * domain.pitch).reshape(padded.shape)
+        near = (_min_sdf(flush, centers) < 1.5 * domain.pitch).reshape(padded.shape)
         padded = np.where(near, edge, padded)
     grid = padded
     # Cubic upsampling: linear interpolation of a voxel field leaves the
     # staircase in the isosurface as faceted terraces.
     fine = np.clip(ndimage.zoom(grid, o.upsample, order=3, mode="nearest", grid_mode=True), 0.0, 1.0)
+    # the fine grid's cell centers (see `origin` below), and the shapes'
+    # distances on them, computed once for all the steps that follow
+    sdfs = _GridSDF(fine.shape, domain.origin - pad * domain.pitch + 0.5 * (domain.pitch / o.upsample),
+                    domain.pitch / o.upsample)
     if flush and design and o.seat:
-        fine = _seat_on_flush_faces(fine, domain, o.upsample, pad, flush, design)
+        fine = _seat_on_flush_faces(fine, domain, o.upsample, pad, flush, design, grid=sdfs)
     if o.smooth_sigma > 0:
         fine = ndimage.gaussian_filter(fine, o.smooth_sigma)
     if min_member:
@@ -198,9 +237,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # a member meets a boss the bump fills the crease; elsewhere the
         # preserve field stays under 0.5 and changes nothing. (The exact union
         # in reconstruct() still restores the crisp faces and bores.)
-        idx = np.stack(np.meshgrid(*[np.arange(n) for n in fine.shape], indexing="ij"), -1).reshape(-1, 3)
-        pts = origin + idx * step
-        sd = np.min([sh.sdf(pts) for sh in preserve], axis=0).reshape(fine.shape)
+        sd = sdfs.min(preserve).reshape(fine.shape)
         pf = np.clip(0.5 - sd / (2.0 * o.blend), 0.0, 1.0)
         fine = _smooth_max(fine, pf, o.blend_k)
     if design:
@@ -212,12 +249,10 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # (A multiplicative fade, tried first, thinned every member lying on
         # a boundary face by half a cell: the arm link's flange plates went
         # from 3.4 to 1.5 mm and failed the member check.)
-        idx = np.stack(np.meshgrid(*[np.arange(n) for n in fine.shape], indexing="ij"), -1).reshape(-1, 3)
-        pts = origin + idx * step
-        sd = np.min([sh.sdf(pts) for sh in design], axis=0)
+        sd = sdfs.min(design)
         env = np.clip(0.5 - sd / (2.0 * domain.pitch), 0.0, 1.0)
         if flush:
-            near = np.min([sh.sdf(pts) for sh in flush], axis=0) < 1.5 * domain.pitch
+            near = sdfs.min(flush) < 1.5 * domain.pitch
             env[near] = 1.0
         if preserve and o.fillet and o.blend > 0:
             # Not round a preserved shape either: where a boss runs the full
@@ -227,7 +262,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
             # `blend` of preserved geometry the material runs on to the
             # boundary and ends flush with the boss's face, easing back to
             # the rounding further out.
-            dp = np.min([sh.sdf(pts) for sh in preserve], axis=0)
+            dp = sdfs.min(preserve)
             env = np.maximum(env, np.clip(2.0 - dp / o.blend, 0.0, 1.0))
         fine = _smooth_min(fine, env.reshape(fine.shape), 0.5)
     if preserve and o.blend > 0 and o.fillet:
@@ -242,9 +277,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # met bosses in a hard crease (GRIP's wrist yoke, QA 10/28). The
         # exact union in reconstruct() then adds the preserved shapes, which
         # the fillet meets tangentially, so it leaves no crease of its own.
-        idx = np.stack(np.meshgrid(*[np.arange(n) for n in fine.shape], indexing="ij"), -1).reshape(-1, 3)
-        pts = origin + idx * step
-        sd = np.min([sh.sdf(pts) for sh in preserve], axis=0).reshape(fine.shape)
+        sd = sdfs.min(preserve).reshape(fine.shape)
         k = o.blend / 1.2
         du = _smooth_union(_field_distance(fine, step, o.level), sd, k)
         # back to density, over the same width the smoothing gave the field
@@ -276,10 +309,8 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # channel through the middle of a link), and the exact subtract
         # afterwards leaves a skin a fraction of a millimetre thick wrapped
         # round it: unprintable, and found by the eval suite's member check.
-        idx = np.stack(np.meshgrid(*[np.arange(n) for n in fine.shape], indexing="ij"), -1).reshape(-1, 3)
-        pts = origin + idx * step
         clearance = 0.5 * domain.pitch
-        d = np.min([s.sdf(pts) for s in keep_out], axis=0)
+        d = sdfs.min(keep_out)
         fade = np.clip(d / clearance, 0.0, 1.0)
         if preserve and o.fillet and o.blend > 0:
             # ...except beside preserved geometry: a pad that bears on a
@@ -287,7 +318,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
             # material round it ended a clearance short, leaving the pad's
             # end standing proud in a step all round (the motor mount's
             # pads and pilot ring). There the exact subtract does the cut.
-            dp = np.min([sh.sdf(pts) for sh in preserve], axis=0)
+            dp = sdfs.min(preserve)
             fade = np.maximum(fade, np.clip(2.0 - dp / o.blend, 0.0, 1.0))
         fine = fine * fade.reshape(fine.shape)
     if fine.max() < o.level:

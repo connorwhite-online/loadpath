@@ -857,9 +857,21 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         refined = []
         if refine and body.any():
             half = max(8.0 * pitch, 6.0)
-            for c in _hotspots(hm.node_xyz, vm, body, peak, half, count=refine):
-                r = _submodel_peak(study, mesh, hm, u, c, half, pitch / 2.5, mat,
-                                   hm.node_xyz[contact], band, case, edges=edges)
+            spots = list(_hotspots(hm.node_xyz, vm, body, peak, half, count=refine))
+
+            def sub(c, u=u, case=case, half=half, contact=contact):
+                return _submodel_peak(study, mesh, hm, u, c, half, pitch / 2.5, mat,
+                                      hm.node_xyz[contact], band, case, edges=edges)
+            if len(spots) > 1:
+                # independent boxes, on threads (the solves release the GIL;
+                # amg_solver sets up one at a time, so the same numbers)
+                from concurrent.futures import ThreadPoolExecutor
+
+                with ThreadPoolExecutor(min(len(spots), 3)) as ex:
+                    subs = list(ex.map(sub, spots))
+            else:
+                subs = [sub(c) for c in spots]
+            for r in subs:
                 if r is None:
                     continue
                 refined.append({"at": r[1], "peakStress": r[0]})

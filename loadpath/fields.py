@@ -245,6 +245,12 @@ class MeshField:
         k = min(self.k, len(self._tri))
         _, cand = self._tree.query(P, k=k)
         cand = cand.reshape(len(P), k)
+        from . import meshops
+
+        if meshops.available():
+            # compiled, serial (field evaluation runs on peval's threads)
+            best, side = meshops.nearest_on_triangles(P, cand, self._tri, self._normal, (1e-9 * self.pitch) ** 2)
+            return side * np.sqrt(best)
         T = self._tri[cand]                              # (N, k, 3, 3)
         Pk = np.repeat(P[:, None, :], k, axis=1).reshape(-1, 3)
         C = _closest_on_triangles(Pk, T[:, :, 0].reshape(-1, 3), T[:, :, 1].reshape(-1, 3),

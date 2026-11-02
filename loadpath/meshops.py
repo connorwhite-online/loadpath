@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - numba is a dependency; the numpy paths without it
     nb = None
 
-__all__ = ["available", "face_cross", "triple", "vertex_faces", "vertex_sum", "neighbors", "faces_of"]
+__all__ = ["available", "nearest_on_triangles", "face_cross", "triple", "vertex_faces", "vertex_sum", "neighbors", "faces_of"]
 
 
 def available():
@@ -203,6 +203,116 @@ if nb is not None:
             for j in range(ptr[v], ptr[v + 1]):
                 out[fidx[j]] = True
 
+    @nb.njit(cache=True, nogil=True, inline="always")
+    def _closest(px, py, pz, T, t):
+        # fields._closest_on_triangles for one point and triangle (Ericson
+        # 5.1.5), its cases in the same order (a later case wins)
+        ax, ay, az = T[t, 0, 0], T[t, 0, 1], T[t, 0, 2]
+        bx, by, bz = T[t, 1, 0], T[t, 1, 1], T[t, 1, 2]
+        cx, cy, cz = T[t, 2, 0], T[t, 2, 1], T[t, 2, 2]
+        abx, aby, abz = bx - ax, by - ay, bz - az
+        acx, acy, acz = cx - ax, cy - ay, cz - az
+        apx, apy, apz = px - ax, py - ay, pz - az
+        d1 = abx * apx + aby * apy + abz * apz
+        d2 = acx * apx + acy * apy + acz * apz
+        bpx, bpy, bpz = px - bx, py - by, pz - bz
+        d3 = abx * bpx + aby * bpy + abz * bpz
+        d4 = acx * bpx + acy * bpy + acz * bpz
+        cpx, cpy, cpz = px - cx, py - cy, pz - cz
+        d5 = abx * cpx + aby * cpy + abz * cpz
+        d6 = acx * cpx + acy * cpy + acz * cpz
+        va = d3 * d6 - d5 * d4
+        vb = d5 * d2 - d1 * d6
+        vc = d1 * d4 - d3 * d2
+        if (d6 >= 0) and (d5 <= d6):
+            return cx, cy, cz
+        if (d3 >= 0) and (d4 <= d3):
+            return bx, by, bz
+        if (d1 <= 0) and (d2 <= 0):
+            return ax, ay, az
+        e1 = d4 - d3
+        e2 = d5 - d6
+        if (va <= 0) and (e1 >= 0) and (e2 >= 0):
+            tt = e1 / (e1 + e2)
+            return bx + (cx - bx) * tt, by + (cy - by) * tt, bz + (cz - bz) * tt
+        if (vb <= 0) and (d2 >= 0) and (d6 <= 0):
+            tt = d2 / (d2 - d6)
+            return ax + acx * tt, ay + acy * tt, az + acz * tt
+        if (vc <= 0) and (d1 >= 0) and (d3 <= 0):
+            tt = d1 / (d1 - d3)
+            return ax + abx * tt, ay + aby * tt, az + abz * tt
+        den = 1.0 / (va + vb + vc)
+        v = vb * den
+        w = vc * den
+        return ax + abx * v + acx * w, ay + aby * v + acy * w, az + abz * v + acz * w
+
+    @nb.njit(cache=True, nogil=True, inline="always")
+    def _nearest_row(Q, cand, T, Nrm, tie_abs, signed, i, d2s, cs, out_d2, out_s):
+        px, py, pz = Q[i, 0], Q[i, 1], Q[i, 2]
+        m = cand.shape[1]
+        best = np.inf
+        ib = 0
+        for j in range(m):
+            qx, qy, qz = _closest(px, py, pz, T, cand[i, j])
+            dx, dy, dz = qx - px, qy - py, qz - pz
+            d2 = dx * dx + dy * dy + dz * dz
+            d2s[j] = d2
+            cs[j, 0], cs[j, 1], cs[j, 2] = qx, qy, qz
+            if d2 < best:
+                best = d2
+                ib = j
+        out_d2[i] = best
+        out_s[i] = 1.0
+        if signed:
+            lim = best * (1 + 1e-6) + tie_abs
+            nx = ny = nz = 0.0
+            for j in range(m):
+                if d2s[j] <= lim:
+                    t = cand[i, j]
+                    nx += Nrm[t, 0]
+                    ny += Nrm[t, 1]
+                    nz += Nrm[t, 2]
+            sn = (px - cs[ib, 0]) * nx + (py - cs[ib, 1]) * ny + (pz - cs[ib, 2]) * nz
+            if sn < 0:
+                out_s[i] = -1.0
+
+    @nb.njit(cache=True, nogil=True)
+    def _nearest_serial(Q, cand, T, Nrm, tie_abs, signed, out_d2, out_s):
+        m = cand.shape[1]
+        d2s = np.empty(m)
+        cs = np.empty((m, 3))
+        for i in range(Q.shape[0]):
+            _nearest_row(Q, cand, T, Nrm, tie_abs, signed, i, d2s, cs, out_d2, out_s)
+
+    @nb.njit(cache=True, parallel=True)
+    def _nearest_parallel(Q, cand, T, Nrm, tie_abs, signed, out_d2, out_s):
+        m = cand.shape[1]
+        n = Q.shape[0]
+        nchunk = 64
+        for c in nb.prange(nchunk):
+            d2s = np.empty(m)
+            cs = np.empty((m, 3))
+            for i in range(c * n // nchunk, (c + 1) * n // nchunk):
+                _nearest_row(Q, cand, T, Nrm, tie_abs, signed, i, d2s, cs, out_d2, out_s)
+
+
+def nearest_on_triangles(Q, cand, T, normals=None, tie_abs=0.0, parallel=False):
+    """For each point Q[i], the closest of triangles T[cand[i]] (T: (n, 3, 3),
+    cand: (len(Q), k)): squared distance, and with `normals` the side, by
+    the normals of every candidate whose closest point ties the best (as
+    fields.MeshField and sharp.mesh_distance sign them: -1 inside). One
+    compiled pass without the (points, k, 3) temporaries; `parallel` runs
+    it on numba's threads (callers already on threads leave it off)."""
+    Q = np.ascontiguousarray(Q, np.float64)
+    cand = np.ascontiguousarray(cand, np.int64)
+    T = np.ascontiguousarray(T, np.float64)
+    signed = normals is not None
+    N = np.ascontiguousarray(normals, np.float64) if signed else np.zeros((1, 3))
+    d2 = np.empty(len(Q))
+    s = np.empty(len(Q))
+    if len(Q):
+        (_nearest_parallel if parallel else _nearest_serial)(Q, cand, T, N, float(tie_abs), signed, d2, s)
+    return d2, s
 
 def _ints(F):
     return np.ascontiguousarray(F, np.int64)

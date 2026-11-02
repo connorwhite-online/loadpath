@@ -120,3 +120,36 @@ def test_field_kernels_match_numpy(monkeypatch):
     slow = [lattice.tpms(k, P, 5.0) for k in ("gyroid", "diamond", "schwarz-p")] + [warp(P, cell), warp(P, 4.5)]
     for a, b in zip(fast, slow):
         np.testing.assert_allclose(a, b, rtol=0, atol=1e-12)
+
+
+def test_nearest_on_triangles_matches_numpy():
+    """The compiled closest-triangle search gives the numpy routine's
+    distances and sides (MeshField, sharp.mesh_distance)."""
+    from scipy.spatial import cKDTree
+
+    from loadpath.fields import _closest_on_triangles
+
+    _, m = _mesh(0.8)
+    V, F = np.asarray(m.vertices), np.asarray(m.faces, np.int64)
+    T = V[F]
+    nrm = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+    nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
+    rng = np.random.default_rng(3)
+    # near the surface (both sides), on vertices and edges, and far off
+    P = np.concatenate([V[rng.integers(0, len(V), 3000)] + rng.normal(scale=0.3, size=(3000, 3)),
+                        V[:500], 0.5 * (V[F[:500, 0]] + V[F[:500, 1]]), rng.uniform(-5, 20, (1000, 3))])
+    k = 12
+    _, cand = cKDTree(T.mean(axis=1)).query(P, k=k)
+    Q = np.repeat(P[:, None, :], k, axis=1).reshape(-1, 3)
+    Tc = T[cand]
+    C = _closest_on_triangles(Q, Tc[:, :, 0].reshape(-1, 3), Tc[:, :, 1].reshape(-1, 3),
+                              Tc[:, :, 2].reshape(-1, 3)).reshape(len(P), k, 3)
+    d2 = np.sum((C - P[:, None, :]) ** 2, axis=2)
+    best = d2.min(axis=1)
+    tie = d2 <= best[:, None] * (1 + 1e-6) + 1e-18
+    cb = C[np.arange(len(P)), np.argmin(d2, axis=1)]
+    side = np.where(np.einsum("ij,ij->i", P - cb, (nrm[cand] * tie[:, :, None]).sum(axis=1)) < 0, -1.0, 1.0)
+    for parallel in (False, True):
+        b2, s = meshops.nearest_on_triangles(P, cand, T, nrm, 1e-18, parallel=parallel)
+        np.testing.assert_allclose(b2, best, rtol=1e-12, atol=1e-14)
+        assert (s != side).mean() < 1e-3
