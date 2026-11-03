@@ -1,0 +1,164 @@
+{
+ "l-bracket:safetyFactor": {
+  "objective": "safetyFactor",
+  "asLaid": {
+   "wall": 1.4,
+   "orient": null,
+   "homMass": 4.959887179697559,
+   "resMass": 4.671920640000001,
+   "homPeak": 598.1222990481562,
+   "resPeak": 263.39136946101,
+   "homCompliance": 3500.064413385344,
+   "resCompliance": 2882.886005662186,
+   "latticeTurnedExposed": 0.0,
+   "resCases": [
+    {
+     "name": "down",
+     "compliance": 2882.886005662186,
+     "deflection": 91.11391415806455,
+     "peakStress": 263.39136946101,
+     "safetyFactor": 0.1584681021257277,
+     "peakAt": [
+      15.0,
+      2.0,
+      -4.0
+     ],
+     "peakFaceDistance": 2.0,
+     "peak995": 170.03189978354504
+    }
+   ],
+   "homCases": [
+    {
+     "name": "down",
+     "compliance": 3500.064413385344,
+     "peakStress": 598.1222990481562
+    }
+   ],
+   "seconds": 363.62501430511475
+  },
+  "turned": {
+   "wall": 0.9061718749999998,
+   "orient": [
+    -50.46,
+    100.58,
+    -40.64
+   ],
+   "homMass": 2.9226693881206063,
+   "resMass": 2.9590252800000005,
+   "homPeak": 677.7184043139057,
+   "resPeak": 517.9010459488778,
+   "homCompliance": 3020.0145907336396,
+   "resCompliance": 4336.301455920588,
+   "latticeTurnedExposed": 0.6813334024661246,
+   "resCases": [
+    {
+     "name": "down",
+     "compliance": 4336.301455920588,
+     "deflection": 132.0452708447419,
+     "peakStress": 517.9010459488778,
+     "safetyFactor": 0.08059286761684334,
+     "peakAt": [
+      37.4,
+      -1.3999999999999995,
+      -6.0
+     ],
+     "peakFaceDistance": 0.0,
+     "peak995": 303.7937619190398
+    }
+   ],
+   "homCases": [
+    {
+     "name": "down",
+     "compliance": 3020.0145907336396,
+     "peakStress": 677.7184043139057
+    }
+   ],
+   "seconds": 377.33068013191223
+  },
+  "homTurnedOverLaid": 1.1330766389957667,
+  "resTurnedOverLaid": 1.9662794836773991,
+  "massSavedClaimed": 0.4107387361381831,
+  "confirmed": false
+ },
+ "l-bracket:stiffness": {
+  "objective": "stiffness",
+  "asLaid": {
+   "wall": 1.4,
+   "orient": null,
+   "homMass": 4.959887179697559,
+   "resMass": 4.671920640000001,
+   "homPeak": 598.1222990481562,
+   "resPeak": 263.39136946101,
+   "homCompliance": 3500.064413385344,
+   "resCompliance": 2882.886005662186,
+   "latticeTurnedExposed": 0.0,
+   "resCases": [
+    {
+     "name": "down",
+     "compliance": 2882.886005662186,
+     "deflection": 91.11391415806455,
+     "peakStress": 263.39136946101,
+     "safetyFactor": 0.1584681021257277,
+     "peakAt": [
+      15.0,
+      2.0,
+      -4.0
+     ],
+     "peakFaceDistance": 2.0,
+     "peak995": 170.03189978354504
+    }
+   ],
+   "homCases": [
+    {
+     "name": "down",
+     "compliance": 3500.064413385344,
+     "peakStress": 598.1222990481562
+    }
+   ],
+   "seconds": 352.7079966068268
+  },
+  "turned": {
+   "wall": 0.7645312499999999,
+   "orient": [
+    -12.56,
+    47.25,
+    -37.17
+   ],
+   "homMass": 2.4505446401025406,
+   "resMass": 2.425777600000001,
+   "homPeak": 877.5213964391031,
+   "resPeak": 778.8802128842225,
+   "homCompliance": 3435.113012081049,
+   "resCompliance": 6525.852754142665,
+   "latticeTurnedExposed": 0.6813334024661246,
+   "resCases": [
+    {
+     "name": "down",
+     "compliance": 6525.852754142665,
+     "deflection": 202.6670391924126,
+     "peakStress": 778.8802128842225,
+     "safetyFactor": 0.053588638848868754,
+     "peakAt": [
+      15.0,
+      -2.1999999999999997,
+      4.0
+     ],
+     "peakFaceDistance": 3.8000000000000003,
+     "peak995": 479.8898635072625
+    }
+   ],
+   "homCases": [
+    {
+     "name": "down",
+     "compliance": 3435.113012081049,
+     "peakStress": 877.5213964391031
+    }
+   ],
+   "seconds": 362.6163046360016
+  },
+  "homTurnedOverLaid": 0.9814427982936827,
+  "resTurnedOverLaid": 2.2636527220727567,
+  "massSavedClaimed": 0.5059273424336301,
+  "confirmed": false
+ }
+}

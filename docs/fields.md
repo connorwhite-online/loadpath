@@ -615,6 +615,13 @@ up with full analyses and refines each zone's rotation by Nelder-Mead.
 | simple cubic deep cantilever 60 x 12 x 24 mm | safety factor | 4.47 g | 4.46 g (0%) | 4.46 g (0%) |
 | same | stiffness | 4.47 g | 4.47 g (0%) | 4.25 g (-5%; 16% stiffer at the same wall) |
 
+> **The one-direction L-bracket rows do not hold at full resolution**
+> (0.2 mm voxels, `bench/results/lattice-orient-confirm-lbracket.json`):
+> turned at its thinner wall the bracket's peak is 1.97x the as-laid
+> bracket's (claimed -41%), its compliance 2.26x (claimed -51%). The turned
+> lattice reads 1.4-1.9x too stiff homogenized, the as-laid one 1.2x too
+> soft. The zones there start from that turn and are no better confirmed.
+
 Most of the win is in turning the cells at all; zones add little on top
 while the wall is one thickness everywhere. The safety factor is set by the
 one most stressed spot, so turning cells elsewhere cannot raise it, and

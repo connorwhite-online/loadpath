@@ -28,6 +28,9 @@ __all__ = ["default_pitch", "resolved_check"]
 # voxels across the thinnest wall or strut the default pitch aims at
 VOXELS_PER_WALL = 6
 MAX_CELLS = 4_000_000
+# up to this many voxels the matrix is assembled and solved by AMG (about
+# 13 GB at 1M cells), above it the matrix-free grid multigrid
+ASSEMBLED_MAX = 600_000
 
 
 def _lattice_spec(g, name):
@@ -56,14 +59,16 @@ def default_pitch(doc, node=None, base_dir=None):
 
 def resolved_check(doc, study, pitch: float | None = None, node=None, base_dir=None, sources=None,
                    contact_band: float | None = None, cell_size=None, max_cells: int = MAX_CELLS,
-                   rtol: float = 1e-7, keep_mesh: bool = False) -> dict:
+                   rtol: float = 1e-7, keep_mesh: bool = False, solver: str = "auto") -> dict:
     """Voxel FE of the graph's part at `pitch` (default_pitch), its lattice
     resolved. Returns {mass, volume, safetyFactor, cases (name, compliance,
     deflection, peakStress, peakAt, peakFaceDistance, peak995), cells,
     pitch, seconds}; with keep_mesh also hm, bc. `contact_band` (mm, default
     one lattice cell): stress this close to a support or load is left out.
     `cell_size` (mm, scalar or per axis): the bins the peak is read over,
-    default the lattice's cell. Refuses grids over `max_cells`."""
+    default the lattice's cell. Refuses grids over `max_cells`. `solver`:
+    "mg" (matrix-free grid multigrid), "assembled" (AMG on the assembled
+    matrix), "auto" assembled up to ASSEMBLED_MAX voxels."""
     from scipy import ndimage
     from scipy.spatial import cKDTree
 
@@ -118,10 +123,25 @@ def resolved_check(doc, study, pitch: float | None = None, node=None, base_dir=N
         bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pitch)
     mat = study.material
     nu = study.elastic(mat)
-    solver = GridElasticity(hm, nu, bc.fixed, springs=mat.E * bc.springs if bc.springs is not None else None,
-                            rtol=rtol, maxiter=4000)
-    solver.set_moduli(np.full(hm.n_elem, mat.E))
-    us = solver.solve_many([bc.loads[ci] for ci in range(len(study.load_cases))])
+    rhs = [bc.loads[ci] for ci in range(len(study.load_cases))]
+    if solver == "auto":
+        solver = "mg" if hm.n_elem > ASSEMBLED_MAX else "assembled"
+    if solver == "assembled":
+        # smoothed-aggregation AMG on the assembled matrix: on bias-cut
+        # lattices (struts ending in thin stubs at every face) the grid
+        # multigrid's CG crawls (a turned BCCz bar took 5x as long as laid)
+        from .fem import Solver, Stiffness
+
+        stiff = Stiffness(hm, nu, bc.fixed)
+        k = stiff.assemble(np.full(hm.n_elem, mat.E))
+        if bc.springs is not None:
+            k = (k + mat.E * bc.springs).tocsr()
+        us = Solver(hm, rtol=rtol, maxiter=4000).solve_many(k, rhs)
+    else:
+        grid_solver = GridElasticity(hm, nu, bc.fixed, springs=mat.E * bc.springs if bc.springs is not None
+                                     else None, rtol=rtol, maxiter=4000)
+        grid_solver.set_moduli(np.full(hm.n_elem, mat.E))
+        us = grid_solver.solve_many(rhs)
     c0 = elastic_c(mat.E, nu)
     bcs = [hex8_b(a, b_, c, nu) / pitch for (a, b_, c) in 2.0 * CORNERS - 1.0]
     counts = np.bincount(hm.enode.ravel(), minlength=hm.n_nodes)[:, None]

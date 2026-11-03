@@ -6,7 +6,8 @@ of skinless lattice parts (one direction for the whole lattice) and size
 the turned lattice's wall down to the as-laid safety factor (or stiffness),
 all on homogenized readings. Here each pair (as laid at its wall, turned at
 its thinner wall) is voxelized and solved at `--pitch`
-(lattice_aniso_validate.resolved) and the two are compared again:
+(loadpath.resolved.resolved_check; the bar rows were solved with
+lattice_aniso_validate.resolved, the same reading on the grid multigrid) and the two are compared again:
 
 - confirmed: the turned design is at least as strong (stiff) as the as-laid
   one at full resolution, so the mass it saves is real;
@@ -30,9 +31,9 @@ sys.path.insert(0, str(ROOT / "bench"))
 
 import lattice_orient_mass as lom
 import lattice_zones_mass as lzm
-from lattice_aniso_validate import resolved
 
 from loadpath.homogenized import homogenized_check
+from loadpath.resolved import resolved_check
 from loadpath.spec import study_from_dict
 
 RES = ROOT / "bench" / "results"
@@ -74,10 +75,10 @@ def main():
         for tag, doc in (("asLaid", laid), ("turned", turned)):
             t0 = time.time()
             h = homogenized_check(copy.deepcopy(doc), st, cells=a.cells, contact_band=cell)
-            r = resolved(copy.deepcopy(doc), sd, a.pitch, band=cell, cell_size=cell)
+            r = resolved_check(copy.deepcopy(doc), st, pitch=a.pitch, contact_band=cell, cell_size=cell)
             row[tag] = {"wall": doc["nodes"]["lat"]["thickness"], "orient": doc["nodes"]["lat"].get("orient"),
                         "homMass": h["mass"], "resMass": r["mass"],
-                        "homPeak": reading(h["cases"], "peakStress"), "resPeak": reading(r["cases"], "cellPeak"),
+                        "homPeak": reading(h["cases"], "peakStress"), "resPeak": reading(r["cases"], "peakStress"),
                         "homCompliance": reading(h["cases"], "compliance"),
                         "resCompliance": reading(r["cases"], "compliance"),
                         "latticeTurnedExposed": h.get("latticeTurnedExposed"),
