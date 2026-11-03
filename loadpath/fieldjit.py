@@ -776,6 +776,11 @@ class _Gen:
     # -- the kernel --
 
     def source(self, out):
+        """The kernel: one output (out[i]) or a list of rows (out[j, i])."""
+        if isinstance(out, list):
+            store = "\n".join(f"        out[{j}, i] = {o}" for j, o in enumerate(out)) + "\n"
+        else:
+            store = f"        out[i] = {out}\n"
         args = ", ".join(["P", "C", "TX", "TY", "X", "single", "out"] + [f"G{i}" for i in range(len(self.grids))])
         body = "\n".join("        " + ln for ln in self.lines)
         return (
@@ -786,7 +791,7 @@ class _Gen:
             "    for i in range(P.shape[0]):\n"
             "        px = P[i, 0]\n        py = P[i, 1]\n        pz = P[i, 2]\n"
             f"{body}\n"
-            f"        out[i] = {out}\n")
+            f"{store}")
 
 
 if nb is not None:
@@ -873,6 +878,56 @@ class CompiledField:
         if n:
             self.kernel(P, self.C, self.TX, self.TY, X, bool(_SINGLE[0]), out, *self.grids)
         return out
+
+
+class CompiledRows:
+    """Several values of a graph at once, one compiled pass sharing every
+    node they have in common: rows [(ref, plus, plus_sign, sign)], row j =
+    sign * (ref + plus * plus_sign) (plus a node name, a number or None):
+    a crease tree's leaves (crease.CreaseTree.from_graph)."""
+
+    def __init__(self, g, rows):
+        gen = _Gen(g)
+        outs = []
+        for ref, plus, ps, sign in rows:
+            v = gen.val(ref, 0)
+            if plus is not None:
+                v = gen.t(f"{v} + {gen.val(plus, 0)} * {gen.c(ps)}")
+            outs.append(gen.t(f"{gen.c(sign)} * {v}"))
+        self.g = g
+        self.opaque = gen.opaque
+        self.rows = len(rows)
+        self.C = np.asarray(gen.C, np.float64)
+        tb = np.asarray(gen.tables, np.float64).reshape(-1, 2)
+        self.TX, self.TY = np.ascontiguousarray(tb[:, 0]), np.ascontiguousarray(tb[:, 1])
+        self.grids = gen.grids
+        self.kernel = _kernel(gen.source(outs))
+
+    def __call__(self, P):
+        from .lattice import _SINGLE
+
+        P = np.ascontiguousarray(np.asarray(P, np.float64).reshape(-1, 3))
+        n = len(P)
+        X = np.empty((len(self.opaque), n))
+        memo = {}
+        for j, name in enumerate(self.opaque):
+            X[j] = np.broadcast_to(np.asarray(self.g._eval(name, P, memo), float), (n,))
+        out = np.empty((self.rows, n))
+        if n:
+            self.kernel(P, self.C, self.TX, self.TY, X, bool(_SINGLE[0]), out, *self.grids)
+        return out
+
+
+def compile_rows(g, rows):
+    """CompiledRows, or None (fieldjit off). Rows whose node does not compile
+    are read from the numpy graph, as any opaque node."""
+    if not available():
+        return None
+    try:
+        return CompiledRows(g, rows)
+    except Exception as exc:  # pragma: no cover
+        g._jit_errors = getattr(g, "_jit_errors", []) + [f"rows: {type(exc).__name__}: {exc}"]
+        return None
 
 
 class CompiledShapes:

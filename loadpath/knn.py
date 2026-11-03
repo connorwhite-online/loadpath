@@ -116,7 +116,7 @@ if nb is not None:
         return d
 
     @nb.njit(cache=True, nogil=True)
-    def _query(Q, pts, idx, start, end, left, lo, hi, k, out_i):
+    def _query(Q, pts, spts, idx, start, end, left, lo, hi, k, out_i):
         bestd = np.empty(k)
         besti = np.empty(k, np.int64)
         stack = np.empty(256, np.int64)
@@ -150,9 +150,9 @@ if nb is not None:
                 if c < 0:
                     for t in range(start[nd], end[nd]):
                         p = idx[t]
-                        dx = px - pts[p, 0]
-                        dy = py - pts[p, 1]
-                        dz = pz - pts[p, 2]
+                        dx = px - spts[t, 0]          # the points in tree order: a leaf is contiguous
+                        dy = py - spts[t, 1]
+                        dz = pz - spts[t, 2]
                         d = dx * dx + dy * dy + dz * dz
                         if nb_ < k:
                             if d > bound:
@@ -193,11 +193,12 @@ class KDTree:
         if len(self.pts) == 0:
             raise ValueError("KDTree needs points")
         self.idx, self.start, self.end, self.left, self.lo, self.hi = _build(self.pts, int(leaf))
+        self.spts = np.ascontiguousarray(self.pts[self.idx])
 
     def query(self, P, k):
         P = np.ascontiguousarray(np.asarray(P, np.float64).reshape(-1, 3))
         k = min(int(k), len(self.pts))
         out = np.empty((len(P), k), np.int64)
         if len(P):
-            _query(P, self.pts, self.idx, self.start, self.end, self.left, self.lo, self.hi, k, out)
+            _query(P, self.pts, self.spts, self.idx, self.start, self.end, self.left, self.lo, self.hi, k, out)
         return out

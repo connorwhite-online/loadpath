@@ -1287,9 +1287,26 @@ LOADPATH_KNN=kdtree`):
 | arm link, graded box (`arm-link-box-graded.json`), 0.3 mm | 9.7 -> 36.6 | 2.1 -> 0.6 s | 6.0 -> 4.6 s | 0.87 -> 0.70 GB |
 | GRIP SLS wrist link (`examples/grip/sls.py`), 0.35 mm | 0.24 -> 0.51 | 123.5 -> 46.9 s | 170.7 -> 102.1 s | 2.27 -> 2.18 GB |
 
-On the arm links the field is now a fifth of the meshing time; the rest is
-the mesher's own bookkeeping (narrowband glue, relax, creases, booleans).
-On the GRIP links the mesh distance is still most of it.
+Two more pieces of meshing go through compiled kernels too. Sharp plans'
+keep-out regions (the don't-care field `sharp.py` extends into, its
+primitives and meshes' voxel distances) compile with
+`fieldjit.compile_shapes`, and a crease tree's leaves evaluate in one
+compiled pass (`fieldjit.compile_rows`); points a full blend deep inside a
+cut skip the field, whose value there the clamp discards. Both bit for bit.
+Meshing, all three steps together (same check: same triangles, vertices as
+above):
+
+| part, pitch | meshing | peak RSS |
+|---|---|---|
+| arm link, graded gyroid, 0.3 mm | 12.3 -> 6.8 s | 1.27 -> 1.05 GB |
+| arm link, graded box, 0.3 mm | 6.0 -> 3.2 s | 0.87 -> 0.68 GB |
+| GRIP SLS wrist link, 0.35 mm | 170.7 -> 40.5 s | 2.27 -> 2.03 GB |
+
+On the arm links what is left is the mesher's own bookkeeping (relax ~2 s,
+narrowband glue ~1.5 s, manifold3d's constructor, unfolding). On the GRIP
+links it is the exact mesh distance's nearest-centroid query; skipping it
+where the result can't depend on it qualifies only ~6% of the points (the
+blend reaches deep), so that was left out.
 
 ### Evaluating on the GPU
 

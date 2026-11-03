@@ -260,13 +260,22 @@ class _Extended:
             # unclamped here, seams away from the cuts left holes)
             out = np.asarray(self.field(P), float)
             return np.minimum(np.maximum(out, -self.core), gv + self.core)
+        # 2 * core deep the clamp below gives gv + core whatever the field
+        # reads (a NaN aside): those points skip the projection and the field
+        deep = gv + self.core <= -self.core
+        live = near & ~deep
         Q = P.copy()
-        Pn = P[near]
+        Pn = P[live]
         h = 1e-3
         grad = np.stack([(self.g(Pn + h * e) - self.g(Pn - h * e)) / (2 * h) for e in np.eye(3)], axis=1)
         nrm = grad / np.maximum(np.linalg.norm(grad, axis=1, keepdims=True), 1e-12)
-        Q[near] = Pn + (self.eps - gv[near])[:, None] * nrm
-        out = np.asarray(self.field(Q), float)
+        Q[live] = Pn + (self.eps - gv[live])[:, None] * nrm
+        if deep.any():
+            out = np.full(len(P), -self.core)
+            if not deep.all():
+                out[~deep] = np.asarray(self.field(Q[~deep]), float)
+        else:
+            out = np.asarray(self.field(Q), float)
         # clamped from below, the carried-on field gives way to the solid
         # core by 2 * core deep: continuous there, whatever the projection
         # does at the medial axis (a jump would wreck narrowband's

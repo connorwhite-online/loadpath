@@ -65,10 +65,11 @@ __all__ = ["CreaseTree", "sharpen"]
 
 
 class _Leaf:
-    __slots__ = ("fn", "sign", "name", "index")
+    __slots__ = ("fn", "sign", "name", "index", "spec")
 
-    def __init__(self, fn, sign, name):
+    def __init__(self, fn, sign, name, spec=None):
         self.fn, self.sign, self.name, self.index = fn, sign, name, -1
+        self.spec = spec          # (node, plus, plus sign) for a graph's leaf: fieldjit compiles it
 
 
 class _Node:
@@ -80,7 +81,7 @@ class _Node:
 
 def _negate(t):
     if isinstance(t, _Leaf):
-        return _Leaf(t.fn, -t.sign, t.name)
+        return _Leaf(t.fn, -t.sign, t.name, t.spec)
     return _Node("max" if t.kind == "min" else "min", [_negate(k) for k in t.kids])
 
 
@@ -139,7 +140,8 @@ class CreaseTree:
                     v = v + g._val(plus[0], P, memo) * plus[1]
                 return np.broadcast_to(np.asarray(v, float), (len(P),))
             t = None if plus is None else plus[0] if isinstance(plus[0], str) else f"{plus[0]:g}"
-            return _Leaf(fn, sign, ref if plus is None else f"{ref}{'+' if plus[1] > 0 else '-'}{t}")
+            spec = (ref, None, 0.0) if plus is None else (ref, plus[0], float(plus[1]))
+            return _Leaf(fn, sign, ref if plus is None else f"{ref}{'+' if plus[1] > 0 else '-'}{t}", spec)
 
         def build(ref):
             if isinstance(ref, float):
@@ -171,11 +173,28 @@ class CreaseTree:
         tree = cls(root)
 
         def ev(P):
+            rows = tree._compiled(g, None)
+            if rows is not None:
+                return rows(P)
             memo = {}
             P = np.asarray(P, float).reshape(-1, 3)
             return np.stack([lf.sign * lf.fn(P, memo) for lf in tree.leaves])
         tree._evaluator = ev
+        tree._graph = g
         return tree
+
+    def _compiled(self, g, only):
+        """fieldjit.CompiledRows for the leaves `only` (all with None): every
+        leaf in one compiled pass, the same values. None when fieldjit is off."""
+        key = None if only is None else tuple(only)
+        cache = self.__dict__.setdefault("_rows", {})
+        if key not in cache:
+            from . import fieldjit
+
+            leaves = self.leaves if only is None else [self.leaves[j] for j in only]
+            cache[key] = fieldjit.compile_rows(g, [(lf.spec[0], lf.spec[1], lf.spec[2], lf.sign)
+                                                   for lf in leaves])
+        return cache[key]
 
     @classmethod
     def from_callables(cls, spec):
@@ -211,8 +230,19 @@ class CreaseTree:
             only = [int(i) for i in np.unique(only)]
             if len(only) == L:
                 only = None
+        g = getattr(self, "_graph", None)
         if only is None:
-            return pblock(self._evaluator, P, L)
+            # compiled leaves thread well in small chunks (narrowband.peval)
+            ck = 32_768 if g is not None and self._compiled(g, None) is not None else 250_000
+            return pblock(self._evaluator, P, L, chunk=ck)
+
+        rows = self._compiled(g, only) if g is not None else None
+        if rows is not None:
+            def some(Q):
+                out = np.zeros((L, len(Q)))
+                out[only] = rows(Q)
+                return out
+            return pblock(some, P, L, chunk=32_768)
 
         def some(Q):
             out = np.zeros((L, len(Q)))
