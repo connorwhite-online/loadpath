@@ -401,6 +401,23 @@ def test_followed_load_path_does_not_depend_on_the_last_design():
     assert np.abs(dj2 - dj).max() <= 1e-6 * np.abs(dj).max()
 
 
+def test_keep_best_returns_the_best_printed_iterate():
+    # keep_best: every iteration of the sharpest phase is checked as it would
+    # print (thresholded at 0.5); the result is the best of them, not
+    # wherever the run happened to stop
+    from loadpath.benchmarks.mechanisms import inverter, mech_domain
+    from loadpath.mechanism import MechanismOptions
+    from loadpath.mechanism_nl import optimize_mechanism_nonlinear
+    dom = mech_domain(inverter(16, 8))
+    o = MechanismOptions(volume_fraction=0.3, filter_radius=1.5, modulus=1.0, k_out=0.05, robust=0.15, extrusion=1,
+                         beta_every=5, beta_max=8, max_iterations=40)
+    r = optimize_mechanism_nonlinear(dom, 0.3, o, stroke=2.0, keep_best=True)
+    seen = [h["thresholdedOutput"] for h in r.history[:-1] if h.get("thresholdedOutput") is not None]
+    assert len(seen) >= 5, seen
+    assert r.history[-1]["thresholdedOutput"] >= max(seen) - 1e-12
+    assert r.history[-1]["thresholdedOutput"] > seen[-1] and "keptIteration" in r.history[-1]
+
+
 def test_tendon_grip_gradient_matches_finite_differences():
     # a servo-wound tendon curls a small finger onto a rigid cylinder; the
     # adjoint sensitivity of the grip force (contact penalty weighted by the
@@ -542,6 +559,7 @@ def test_compiled_kernel_matches_numpy_element():
 
 
 TESTS = [
+    test_keep_best_returns_the_best_printed_iterate,
     test_compiled_kernel_matches_numpy_element,
     test_tangent_matches_finite_differences,
     test_small_load_matches_linear,

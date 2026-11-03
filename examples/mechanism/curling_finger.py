@@ -12,7 +12,9 @@ or servo horn pulls the bottom of the base 5 mm back (-x); the tip should
 curl down (-z) against a soft object (0.01 N/mm). Both designs use the
 robust option (eroded / blueprint / dilated), so every hinge is at least
 a filter radius wide and nothing hangs on grey or one-node joints.
-About 20 min.
+About 20 min. `--starts 4 --robust 0.2` is the repeatable recipe: 7.0 mm
+or more in each of eight rounding-perturbed runs (7.0-8.0 in seven),
+where one start spreads 5.8-8.1; it takes 4-5x as long.
 """
 import argparse
 import json
@@ -46,6 +48,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="curling-finger-out")
     ap.add_argument("--starts", type=int, default=1, help="optimizer starts; the best thresholded design is kept")
+    ap.add_argument("--robust", type=float, default=0.15,
+                    help="eroded / dilated offset; 0.2 with --starts 4 is the repeatable recipe (docs/MECHANISMS.md)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     t0 = time.time()
@@ -53,7 +57,7 @@ def main():
     dom = mech_domain(p)
     n, pres = dom.mesh.n_elem, int(dom.preserve.sum())
     vf = (p.volfrac * np.prod(p.dims) - pres) / (n - pres)
-    base = dict(volume_fraction=vf, filter_radius=p.rmin, modulus=E, k_out=K_OUT, extrusion=1, robust=0.15)
+    base = dict(volume_fraction=vf, filter_radius=p.rmin, modulus=E, k_out=K_OUT, extrusion=1, robust=a.robust)
     designs = {
         # a stiff actuator spring makes the force-driven linear optimum the stroke-driven one
         "linear design": optimize_mechanism(dom, NU, MechanismOptions(k_in=100 * E, **base)),

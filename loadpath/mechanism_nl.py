@@ -567,7 +567,7 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
                                  material: str = "neo-hookean", void_threshold: float = GAMMA_ETA,
                                  on_iter=None, tendons: list | None = None,
                                  contact=None, follow_path: bool = True, settle: bool = True, starts: int = 1,
-                                 start: int = 0) -> MechanismResult:
+                                 start: int = 0, keep_best: bool = True) -> MechanismResult:
     """mechanism.optimize_mechanism on the large-deflection response.
 
     Input: the input case's region driven `stroke` mm along its force, or
@@ -594,16 +594,31 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     (start 0 uniform, the others nudged by a seeded 1e-6 per cell) and
     keeps the one whose thresholded design (cells above 0.5 solid, the
     rest void) does best on the large-deflection check;
-    history[-1]["starts"] lists every start's thresholded value.
-    history[-1]["thresholdedOutput"] is that value for the design returned
-    (None if the thresholded design does not reach the stroke)."""
+    history[-1]["starts"] lists every start's thresholded value (None for
+    a start that failed; a start whose first design cannot take the stroke
+    is skipped). keep_best (default) checks the thresholded design at every
+    iteration of the sharpest phase (beta at its cap, full tension, volume
+    within 1% of the target) and returns the best one seen, not wherever
+    the run stopped (history[-1]["keptIteration"] when that is an earlier
+    one): about 15% more time. history[-1]["thresholdedOutput"] is that
+    value for the design returned (None if the thresholded design does not
+    reach the stroke)."""
     if starts > 1:
         t_all = time.time()
-        runs = [optimize_mechanism_nonlinear(domain, nu, opts, stroke, steps, material, void_threshold, on_iter,
-                                             tendons, contact, follow_path, settle, 1, k)
-                for k in range(starts)]
-        vals = [r.history[-1].get("thresholdedOutput") for r in runs]
-        best = max(range(starts), key=lambda k: -np.inf if vals[k] is None else vals[k])
+        runs, err = [], None
+        for k in range(starts):
+            try:
+                runs.append(optimize_mechanism_nonlinear(domain, nu, opts, stroke, steps, material, void_threshold,
+                                                         on_iter, tendons, contact, follow_path, settle, 1, k,
+                                                         keep_best))
+            except RuntimeError as ex:      # this start's first design could not take the stroke
+                runs.append(None)
+                err = ex
+        if all(r is None for r in runs):
+            raise err
+        vals = [None if r is None else r.history[-1].get("thresholdedOutput") for r in runs]
+        best = max(range(starts), key=lambda k: -np.inf if runs[k] is None else
+                   (-1e300 if vals[k] is None else vals[k]))
         r = runs[best]
         r.history[-1]["starts"] = vals
         r.history[-1]["start"] = best
@@ -661,6 +676,7 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     history, u_prev, j0 = [], {}, None
     x_ok, beta_ok, backtracks, beta_cap, stopped, refused = None, beta, 0, opts.beta_max, None, 0
     it = 0
+    best, tpath = None, None
     full = [t.tension for t in tendons or []]
     # (servo tendons are displacement driven and need no ramp)
     ts_ok = 0.08 if tendons and not any(isinstance(t, ServoTendon) for t in tendons) else 0.8
@@ -736,6 +752,17 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
             rec["tensionScale"] = ts
         if len(etas) > 1:
             rec["robustOutputs"] = [float(r[0]) for r in real]
+        if keep_best and beta >= beta_cap and ts >= 1.0 and vol <= target * 1.01:
+            # the design as printed, at every iteration of the sharpest
+            # phase: keep the best one seen
+            try:
+                jt, _, tpath = nonlinear_response(model, (xp > 0.5).astype(float), opts.modulus, lvec, tpath,
+                                                  2 * steps, 0.5, follow=True)
+                rec["thresholdedOutput"] = float(jt)
+                if best is None or jt > best[0]:
+                    best = (float(jt), x_ok.copy(), beta, it)
+            except (RuntimeError, ValueError):
+                tpath = None
         history.append(rec)
         if on_iter is not None:
             on_iter(rec, xp)
@@ -771,5 +798,14 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     except (RuntimeError, ValueError):
         jt = None
     history[-1]["thresholdedOutput"] = None if jt is None else float(jt)
+    if best is not None and (jt is None or best[0] > jt):
+        # an earlier iterate of the sharpest phase prints better: return it
+        x, beta = best[1], best[2]
+        xt = _extrude((h @ x) / hs, columns, design)
+        xp = _project(xt, beta, 0.5)
+        xp[pres] = 1.0
+        history[-1]["thresholdedOutput"] = best[0]
+        history[-1]["keptIteration"] = best[3]
+        history[-1]["outputDisplacement"] = history[best[3] - 1]["outputDisplacement"]
     return MechanismResult(x=x, xphys=xp, output_displacement=float(history[-1]["outputDisplacement"]),
                            iterations=it, seconds=time.time() - t0, history=history)

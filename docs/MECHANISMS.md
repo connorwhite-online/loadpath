@@ -207,22 +207,52 @@ curl (median 5.9). Two causes, measured on 2026-11-03:
   converges instead of wandering until the plateau test stops it.
 
 With both, the same eight runs give **5.5 to 8.0 mm** (median 5.9, mean
-6.4; was 3.8-7.9, mean 6.0): the bad tail is gone, the spread is still
-2.5 mm. `starts=4` runs four starts (uniform, and three nudged by a
-seeded 1e-6 per cell) and keeps the one whose thresholded design does best
-on the large-deflection check; over four runs it delivered 5.7, 5.8, 5.9
-and 7.7 mm, at 4x the time. Every result carries
-`history[-1]["thresholdedOutput"]`, the thresholded design's output on the
-optimizer's own (plain hex8) model; it ranks designs in nearly the same
-order as the stroke check, reading about 1 mm higher.
+6.3-6.4 over two batches; was 3.8-7.9, mean 6.0): the bad tail is gone,
+the spread is still 2.5 mm, in two clusters (about 5.8 and 7.9 mm).
+
+Narrowing it (2026-11-03, eight runs per recipe, stroke check tip travel):
+
+| recipe | runs | min | mean | time |
+|---|---|---|---|---|
+| one start (c630907) | 5.45-8.0 | 5.45 | 6.30 | 1x |
+| + `keep_best` (now the default) | 5.84-8.13 | 5.84 | 6.87 | 1.15x |
+| + `starts=4` | 6.07-8.13 (7.1-8.1 in 7) | 6.07 | 7.46 | 4.6x |
+| + `starts=4`, `robust=0.2` | 7.01-11.96 (7.0-8.0 in 7) | 7.01 | 8.15 | 5-6x |
+
+- **`keep_best=True`** (default). The run used to return wherever the
+  plateau test stopped it. Now every iteration of the sharpest phase
+  (beta at its cap, volume within 1% of the target) is checked as it
+  prints, thresholded at 0.5, and the best one is returned
+  (`history[-1]["keptIteration"]`). It takes the low cluster's runs that
+  passed through a better design on their way (5.45 -> 6.1, 5.65 -> 8.1,
+  5.85 -> 7.1) and costs one extra solve per iteration of that phase.
+- **`starts=4`** keeps the start whose thresholded design does best. The
+  32 single starts behind those eight runs read 5.4-8.8 mm thresholded, so one run
+  in eight still drew four low ones (6.1 mm).
+- **`robust=0.2`** (eroded at 0.7, dilated at 0.3, a wider minimum member
+  than 0.15): single starts land in 6.9-8.0 more often but a few fall to
+  2-3 mm and 2 of 32 failed to take the stroke on their very first
+  design; with four starts both are outvoted and skipped (a start that
+  fails is dropped, not fatal). Seven of eight runs fell in 7.0-8.0 mm and
+  one found a 12.0 mm design (thresholded, 0 hinges, 38% strain, same
+  volume); its blueprint is still 28% grey at the iteration cap, so the
+  long top member it keeps is real in the print but the run had not
+  converged. Use this recipe when one answer has to be trusted:
+  `examples/mechanism/curling_finger.py --starts 4 --robust 0.2`.
+
+Every result carries `history[-1]["thresholdedOutput"]`, the thresholded
+design's output on the optimizer's own (plain hex8) model; it ranks
+designs in nearly the same order as the stroke check, reading about 0.6-1
+mm higher.
 
 What did not help: doubling beta a little every iteration instead of
 every `beta_every` (the eroded design disconnects as it sharpens: 3.5-6.8
 mm), sharpening to beta 32 or 64 (less grey, 5.1-7.2 and 1.6-4.2 mm),
-starts with a visible ripple (+-0.05 on the density: 3.2-5.3 mm).
-Sharpening slower (`beta_every=20`) reaches higher, 8.3-10.3 mm in four of
-eight runs, but two runs failed to reach the stroke and two had one-node
-hinges; with `starts` it may be the better recipe, untested.
+starts with a visible ripple (+-0.05 on the density: 3.2-5.3 mm), a larger
+filter radius (2.5 with keep_best: 2.6-10.3 mm). Sharpening slower
+(`beta_every=20`, with keep_best) reaches higher in some runs but is the
+least repeatable: 0 (tip came off), 1.3, 2.2, 7.6, 8.9, 9.7, 10.7, 10.8 mm,
+and five of eight designs had one-node hinges.
 
 Three things made it work, all now in `mechanism_nl.py`:
 
