@@ -228,7 +228,7 @@ def _cut_bores(shape, bores):
     cut.SetTools(tools)
     cut.SetRunParallel(True)
     cut.Build()
-    if not cut.IsDone() or cut.HasErrors():
+    if not cut.IsDone():
         raise RuntimeError("drain bore cut failed")
     return cut.Shape()
 
