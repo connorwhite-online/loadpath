@@ -4,7 +4,9 @@ From a density field to a part you can print.
 1. Smooth the projected density on a 2x finer grid and take the 0.5
    isosurface (marching cubes). Upsampling first is what turns voxel steps
    into the organic surface; smoothing the field (not the mesh) keeps it
-   watertight.
+   watertight. Before the blur, along members (rods) the surface is
+   averaged along the member's own axis (_axial_smooth), which takes out
+   the grid's staircase on members tilted a little off the grid.
 2. Drop specks: components too small to matter are optimizer noise.
 3. Exact booleans with manifold3d: union the preserved primitives, then
    subtract the keep-outs. The isosurface can only approximate a bore to
@@ -27,7 +29,7 @@ __all__ = ["reconstruct", "ReconstructOptions"]
 class ReconstructOptions:
     def __init__(self, upsample=3, smooth_sigma=0.9, level=0.5, max_triangles=250_000,
                  min_body_fraction=0.002, taubin_iterations=25, blend=None, blend_k=0.8, fillet=True, seat=True,
-                 close=None):
+                 close=None, axial=True):
         self.upsample = upsample            # field refinement before meshing
         self.smooth_sigma = smooth_sigma    # in fine cells
         self.level = level
@@ -54,6 +56,10 @@ class ReconstructOptions:
         # slots narrower than twice the radius (below the minimum member,
         # so unprintable anyway).
         self.close = close
+        # Average the field along each member's own axis before smoothing
+        # (_axial_smooth): a member tilted a few degrees off the grid
+        # otherwise keeps the grid's staircase as a row of bumps and necks.
+        self.axial = axial
 
 
 def _smooth_max(a, b, k):
@@ -176,6 +182,119 @@ def _seat_on_flush_faces(fine, domain: Domain, upsample: int, pad: int, flush, d
 
 FINE_CELLS = 8e6
 
+# _axial_smooth: the Hessian's scale and the axis tensor's spread (Gaussian
+# sigmas in grid cells), the smoothing length along the axis (sigma, cells),
+# the coherence range over which it fades in, and the bilateral range (cells):
+# samples whose surface lies further than that from the point's own are
+# another feature (a branch, a member's end), not a step of the staircase.
+AXIAL_SCALE = 1.5
+AXIAL_SPREAD = 1.5
+AXIAL_LENGTH = 3.0
+AXIAL_COHERENCE = (0.5, 0.8)
+AXIAL_RANGE = 1.5
+
+
+def _rod_axes(g, scale=AXIAL_SCALE, spread=AXIAL_SPREAD):
+    """Where the density `g` has rods, and along which axis: the tensor
+    sum of s e e^T spread over `spread` cells, with e the Hessian's flat
+    direction at `scale` and s its rod strength (the smaller of the two
+    strong curvatures, both negative: a ridge line, not a plate or a blob)."""
+    H = np.empty(g.shape + (3, 3))
+    for i in range(3):
+        for j in range(i, 3):
+            order = [0, 0, 0]
+            order[i] += 1
+            order[j] += 1
+            H[..., i, j] = H[..., j, i] = ndimage.gaussian_filter(g, scale, order=order)
+    lam, vec = np.linalg.eigh(H)
+    del H
+    o = np.argsort(np.abs(lam), axis=-1)
+    lam = np.take_along_axis(lam, o, -1)
+    e = np.take_along_axis(vec, o[..., None, :], -1)[..., :, 0]
+    del vec
+    l1, l2, l3 = lam[..., 0], lam[..., 1], lam[..., 2]
+    s = np.where((l2 < 0) & (l3 < 0), np.clip(-l2 - np.abs(l1), 0.0, None), 0.0)
+    del lam
+    T = {}
+    for i in range(3):
+        for j in range(i, 3):
+            T[i, j] = ndimage.gaussian_filter(s * e[..., i] * e[..., j], spread)
+    return T
+
+
+def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_COHERENCE, rng=AXIAL_RANGE,
+                  reach=2.5, samples=21):
+    """Average the surface's position along the local member axis.
+
+    A member tilted slightly off the grid is voxelized as a staircase: its
+    top and bottom step a cell at a time, a cell / tan(tilt) apart along it,
+    so its section swings by about a cell, out of phase top and bottom. The
+    isotropic upsample and blur below only round each step off, and the part
+    came out with a row of bumps and necks along every long stem (GRIP's
+    upper arm: +-0.6 mm on an 11 mm stem every 19 mm, about 9% less bending
+    stiffness than the same mass at constant section, and the stress
+    concentrated at every neck). The steps carry no design intent: the
+    optimizer's filter blurs over more than a cell, and its sensitivities saw
+    the staircase only as the grid's error.
+
+    Where the material round a point is a rod with one clear axis
+    (_rod_axes: coherent, and strong against the part's own rods), the
+    field's signed distance there is replaced by its Gaussian average along
+    that axis over `length` cells, and the field's 0.5 level moved to the
+    averaged surface (averaging the density instead shrank thin members,
+    whose upsampled density never reaches 1). The average is bilateral:
+    samples whose distance differs from the point's by much more than a
+    step (`rng` cells) count less, so a branch leaving the member, or the
+    member's own end, is not smeared along it. Plates, blobs and junctions
+    of several directions keep the field as it was; only voxels within a
+    cell and a half of the surface change."""
+    g = np.asarray(coarse, float)
+    T = _rod_axes(g)
+    size = 2 * int(np.ceil(1.5 * upsample)) + 1
+    band = (ndimage.maximum_filter(fine, size=size) > 0.02) & (ndimage.minimum_filter(fine, size=size) < 0.98)
+    fi = np.argwhere(band)
+    del band
+    if not len(fi):
+        return fine
+    # fine index i sits at coarse index (i + 0.5) / upsample - 0.5 (see _isosurface)
+    cc = ((fi + 0.5) / upsample - 0.5).T
+    t = np.empty((len(fi), 3, 3))
+    for (i, j), a in T.items():
+        t[:, i, j] = t[:, j, i] = ndimage.map_coordinates(a, cc, order=1, mode="nearest")
+    del cc
+    mu, vec = np.linalg.eigh(t)
+    del t
+    top = np.maximum(mu[:, 2], 1e-30)
+    coh = (mu[:, 2] - mu[:, 1]) / top
+    # strength against the part's own rods, so a design's scale does not matter
+    ref = np.percentile(top, 90)
+    lo, hi = coherence
+    w = np.clip((coh - lo) / (hi - lo), 0.0, 1.0) * np.clip(2.0 * top / max(ref, 1e-30), 0.0, 1.0)
+    keep = w > 0.0
+    fi, axis, w = fi[keep], vec[keep, :, 2].T, w[keep]
+    if not len(fi):
+        return fine
+    z = np.linspace(-reach, reach, samples)
+    gz = np.exp(-0.5 * z * z)
+    base = fi.T.astype(float)
+    dist = _field_distance(fine, 1.0, 0.5)        # in fine cells
+    i, j, k = fi.T
+    d0 = dist[i, j, k]
+    num = np.zeros(len(fi))
+    den = np.zeros(len(fi))
+    r2 = (rng * upsample) ** 2
+    for zk, gk in zip(z, gz):
+        dk = ndimage.map_coordinates(dist, base + (w * (zk * length * upsample)) * axis, order=1, mode="nearest")
+        wk = gk * np.exp(-0.5 * (dk - d0) ** 2 / r2)
+        num += wk * dk
+        den += wk
+    avg = num / den
+    # move the field's 0.5 level by the change in distance, keeping its ramp
+    grad = np.linalg.norm(np.stack(np.gradient(fine)), axis=0)[i, j, k]
+    out = fine.copy()
+    out[i, j, k] = np.clip(fine[i, j, k] + (d0 - avg) * np.maximum(grad, 0.25), 0.0, 1.0)
+    return out
+
 
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
                 flush=(), preserve=(), design=()):
@@ -210,6 +329,8 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
                     domain.pitch / o.upsample)
     if flush and design and o.seat:
         fine = _seat_on_flush_faces(fine, domain, o.upsample, pad, flush, design, grid=sdfs)
+    if o.axial:
+        fine = _axial_smooth(fine, grid, o.upsample)
     if o.smooth_sigma > 0:
         fine = ndimage.gaussian_filter(fine, o.smooth_sigma)
     if min_member:

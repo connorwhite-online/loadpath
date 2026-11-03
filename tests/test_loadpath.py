@@ -1122,3 +1122,41 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_reconstruct_smooths_the_staircase_off_a_tilted_member():
+    # A round member tilted ~10 degrees off the grid, voxelized on 2.8 mm
+    # cells, came out with a row of bumps and necks along it (the grid's
+    # staircase, period cell / tan(tilt)). Averaging along the member's axis
+    # takes the ripple out and keeps its section.
+    import trimesh
+    from loadpath.reconstruct import ReconstructOptions
+    s = study_from_dict({
+        "name": "rod", "designSpace": {"type": "box", "min": [0, -20, -20], "max": [120, 20, 20]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -21, -21], "max": [0.01, 21, 21]}}],
+        "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [119.9, -21, -21],
+                                                          "max": [121, 21, 21]}, "force": [0, 0, -10]}]}],
+        "material": "pa12", "goal": {"volumeFraction": 0.1}, "resolution": {"pitch": 2.8}})
+    d = build_domain(s)
+    c = d.origin + (d.mesh.elem_ijk + 0.5) * d.pitch
+    p0, p1 = np.array([15.0, -8, -3]), np.array([105.0, 8, 4])
+    L = np.linalg.norm(p1 - p0)
+    a = (p1 - p0) / L
+    t = (c - p0) @ a
+    x = (np.linalg.norm(c - p0 - t[:, None] * a, axis=1) <= 5.6).astype(float)
+
+    def profile(mesh):
+        pts, _ = trimesh.sample.sample_surface(mesh, 200_000, seed=1)
+        t = (pts - p0) @ a
+        r = np.linalg.norm(pts - p0 - t[:, None] * a, axis=1)
+        keep = (t > 0) & (t < L) & (r < 11)
+        bins = np.digitize(t[keep], np.arange(0, L, 0.5))
+        med = np.array([np.median(r[keep][bins == i]) for i in np.unique(bins)])
+        res = med - np.polyval(np.polyfit(np.arange(len(med)), med, 1), np.arange(len(med)))
+        return med.mean(), 0.5 * (np.percentile(res, 98) - np.percentile(res, 2))
+
+    r0, ripple0 = profile(reconstruct(s, d, x, ReconstructOptions(axial=False))[0])
+    r1, ripple1 = profile(reconstruct(s, d, x)[0])
+    assert ripple0 > 0.25, ripple0             # the staircase is there without it
+    assert ripple1 < 0.4 * ripple0, (ripple0, ripple1)
+    assert abs(r1 - r0) < 0.1, (r0, r1)        # same section
