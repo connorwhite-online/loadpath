@@ -861,6 +861,421 @@
       "additionalProperties": false,
       "description": "Natural frequencies, effective masses and damping (modal.py). Needs material."
     },
+    "largeDeflection": {
+      "type": "object",
+      "description": "Large-deflection check (nonlinear.py: total Lagrangian hex8, neo-Hookean, Newton with load steps and a buckling watch) of a part meant to bend: a TPU finger, a flexure, a snap fit, a compliant gripper. Drive it by dead loads, prescribed displacements and tendons (cables through guides on the part); contact with rigid obstacles and the part's own surface. Needs material.",
+      "properties": {
+        "part": {
+          "type": "string",
+          "description": "solid node analysed (default the output)"
+        },
+        "fixed": {
+          "type": "string",
+          "description": "solid node: nodes inside it are clamped"
+        },
+        "pitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm analysis grid (default 1; coarsened to fit maxCells)"
+        },
+        "maxCells": {
+          "type": "integer",
+          "minimum": 100,
+          "description": "most cells (default 20000)"
+        },
+        "nu": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 0.499,
+          "description": "Poisson's ratio (default the material's)"
+        },
+        "model": {
+          "enum": [
+            "neo-hookean",
+            "svk"
+          ],
+          "description": "hyperelastic law (default neo-hookean)"
+        },
+        "steps": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "first guess at load steps (default 10)"
+        },
+        "loads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "string",
+                "description": "solid node: the mesh nodes inside it"
+              },
+              "at": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "mm: the mesh nodes within radius of this point"
+              },
+              "radius": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "mm round `at` (default 1.5 cells)"
+              },
+              "force": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "N, dead (keeps its direction), spread evenly"
+              }
+            },
+            "required": [
+              "force"
+            ],
+            "x-requireOne": [
+              [
+                "region"
+              ],
+              [
+                "at"
+              ]
+            ],
+            "additionalProperties": false
+          }
+        },
+        "displacements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "string",
+                "description": "solid node: the mesh nodes inside it"
+              },
+              "at": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "mm: the mesh nodes within radius of this point"
+              },
+              "radius": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "mm round `at` (default 1.5 cells)"
+              },
+              "move": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "mm at full load: an actuator's stroke"
+              },
+              "free": {
+                "type": "boolean",
+                "description": "leave the directions with zero move free (default false: held)"
+              }
+            },
+            "required": [
+              "move"
+            ],
+            "x-requireOne": [
+              [
+                "region"
+              ],
+              [
+                "at"
+              ]
+            ],
+            "additionalProperties": false
+          },
+          "description": "Prescribed motion; the report gives the force it takes (actuatorForce, N)."
+        },
+        "tendons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "a fixed point in space (the spool, a palm pulley)"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "region": {
+                          "type": "string",
+                          "description": "solid node: the mesh nodes inside it"
+                        },
+                        "at": {
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          },
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "description": "mm: the mesh nodes within radius of this point"
+                        },
+                        "radius": {
+                          "type": "number",
+                          "exclusiveMinimum": 0,
+                          "description": "mm round `at` (default 1.5 cells)"
+                        }
+                      },
+                      "x-requireOne": [
+                        [
+                          "region"
+                        ],
+                        [
+                          "at"
+                        ]
+                      ],
+                      "additionalProperties": false,
+                      "description": "a guide on the part; the cable slides through it"
+                    }
+                  ]
+                },
+                "description": "Points the cable runs straight between; the last is the knot."
+              },
+              "tension": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "N, constant (scaled with the load steps)"
+              },
+              "stroke": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "mm of cable a servo winds in (displacement driven)"
+              },
+              "stiffness": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "N/mm of the cable and servo, with stroke"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "x-requireOne": [
+              [
+                "tension"
+              ],
+              [
+                "stroke",
+                "stiffness"
+              ]
+            ],
+            "additionalProperties": false
+          },
+          "description": "Cables through guides on the part: the load follows the part as it curls."
+        },
+        "contact": {
+          "type": "object",
+          "properties": {
+            "obstacles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "description": "A rigid object the part may not enter (frictionless): plane (point, normal: the side the part is on), sphere (center, radius), cylinder (center, axis, radius; infinitely long) or box (min, max). inside: the part stays inside it instead (a socket, a tube). move: mm the object travels at full load (an indenter, a jaw, a snap fit's catch).",
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "plane",
+                      "sphere",
+                      "cylinder",
+                      "box"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "point": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z]"
+                  },
+                  "normal": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z]"
+                  },
+                  "center": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z]"
+                  },
+                  "radius": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "axis": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "x",
+                          "y",
+                          "z"
+                        ]
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "[x, y, z]"
+                      }
+                    ],
+                    "description": "'x', 'y', 'z' or a direction vector"
+                  },
+                  "min": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z]"
+                  },
+                  "max": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z]"
+                  },
+                  "inside": {
+                    "type": "boolean"
+                  },
+                  "move": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "mm at full load"
+                  },
+                  "stiffness": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "penalty, x E x pitch N/mm per node (default 20)"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "self": {
+              "type": "boolean",
+              "description": "the part's surface on itself (fingers meeting, a finger folding, a gap closing)"
+            },
+            "stiffness": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "penalty for all, x E x pitch N/mm per node (default 20)"
+            }
+          },
+          "additionalProperties": false
+        },
+        "probes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "string",
+                "description": "solid node: the mesh nodes inside it"
+              },
+              "at": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "mm: the mesh nodes within radius of this point"
+              },
+              "radius": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "mm round `at` (default 1.5 cells)"
+              },
+              "name": {
+                "type": "string"
+              },
+              "direction": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "report the mean travel along this (mm)"
+              }
+            },
+            "required": [
+              "direction"
+            ],
+            "x-requireOne": [
+              [
+                "region"
+              ],
+              [
+                "at"
+              ]
+            ],
+            "additionalProperties": false
+          }
+        },
+        "maxStrain": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "largest allowed strain: sets ok"
+        }
+      },
+      "required": [
+        "fixed"
+      ],
+      "additionalProperties": false
+    },
     "process": {
       "anyOf": [
         {

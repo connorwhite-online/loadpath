@@ -333,6 +333,16 @@ field. `check` reports every problem at once: fix them all, then check again.
   It returns the peak force and crush, and a density table that crushes every
   layer at the same force. A `vibration` block gives natural frequencies with
   point masses. See docs/IMPACT.md in the repo.
+- For a part meant to bend (a TPU finger, a flexure, a snap fit, a
+  compliant gripper), give the field graph a `largeDeflection` block:
+  `fixed` node, dead `loads`, prescribed `displacements`, `tendons` (path of
+  fixed points and guides `{"at": [x, y, z]}`; `tension`, or a servo's
+  `stroke` and `stiffness`), `contact` (`obstacles`: plane, sphere,
+  cylinder, box, optionally `move`d; `"self": true` for the part on itself)
+  and `probes`. It reports how far the load got, peak strain, travel,
+  tendon tension and each contact's force and penetration. Frictionless;
+  a self-contact solve where faces rotate fast can stop short and says so
+  (`loadReached`). See docs/MECHANISMS.md.
 - A two-fluid heat exchanger is its own document (`loadpath_schema
   "heatExchanger"`): a core shape, a layout (`cross` or `counter`), cell and
   wall, and an optional duty to rate it. Size it first

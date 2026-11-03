@@ -1,0 +1,28 @@
+{
+ "name": "tendon-finger",
+ "description": "A 40 x 3 x 4 mm TPU finger on a clamped palm, curled 330 degrees by a servo-wound tendon (13 mm of cable at 300 N/mm) through guides along its top until its tip lands on its own palm. The largeDeflection block checks it with self contact: the palm takes the tip instead of the tip passing into it.",
+ "material": "tpu",
+ "check": false,
+ "nodes": {
+  "finger": {"op": "shape", "shape": {"type": "box", "min": [0, 0, 0], "max": [40, 3, 4]}},
+  "palm": {"op": "shape", "shape": {"type": "box", "min": [-16, -6, 0], "max": [0, 3, 4]}},
+  "part": {"op": "union", "inputs": ["finger", "palm"]},
+  "holder": {"op": "shape", "shape": {"type": "box", "min": [-17, -7, -1], "max": [-0.5, 4, 5]}}
+ },
+ "output": "part",
+ "largeDeflection": {
+  "fixed": "holder",
+  "pitch": 1.0,
+  "steps": 16,
+  "tendons": [{"path": [[-20, 2.5, 2],
+                        {"at": [4, 2.5, 2], "radius": 1.2}, {"at": [8, 2.5, 2], "radius": 1.2},
+                        {"at": [12, 2.5, 2], "radius": 1.2}, {"at": [16, 2.5, 2], "radius": 1.2},
+                        {"at": [20, 2.5, 2], "radius": 1.2}, {"at": [24, 2.5, 2], "radius": 1.2},
+                        {"at": [28, 2.5, 2], "radius": 1.2}, {"at": [32, 2.5, 2], "radius": 1.2},
+                        {"at": [36, 2.5, 2], "radius": 1.2}, {"at": [40, 2.5, 2], "radius": 1.2}],
+               "stroke": 13, "stiffness": 300}],
+  "contact": {"self": true},
+  "probes": [{"name": "tipY", "at": [40, 1.5, 2], "radius": 1.5, "direction": [0, 1, 0]},
+             {"name": "tipX", "at": [40, 1.5, 2], "radius": 1.5, "direction": [1, 0, 0]}]
+ }
+}

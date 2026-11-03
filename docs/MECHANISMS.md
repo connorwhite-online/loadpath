@@ -247,11 +247,60 @@ for. Two things to know before printing it:
 - **The object is fixed.** The grip is what the finger presses on a held
   object; a second finger or the palm on the other side is not modelled.
 
+## Checking contact and tendons with large deflections
+
+`nonlinear.solve_nonlinear` (the large-deflection check, not the optimizer)
+takes `contact=[...]` next to its tendons (contact.py):
+
+- `RigidObstacle("plane" | "sphere" | "cylinder" | "box", ...)`: a rigid
+  object the part may not enter, fixed (a palm, a table, the object
+  gripped) or moving with the load (`move`: an indenter, a jaw, a snap
+  fit's catch). `inside=True` keeps the part inside a socket or a tube.
+  Exact signed distance, normal and curvature, so the contact tangent is
+  the exact derivative of the contact force.
+- `SelfContact()`: the part's surface on itself, two-pass node-to-face:
+  fingers of one part meeting, a finger curling onto its own palm, a
+  flexure gap closing. Clamped surfaces act only as the master side.
+
+Both are frictionless penalties (k = 20 E pitch per node, so a node
+sinks about F / (20 E h) under a force F) and each step reports each
+contact's force, the nodes touching and the deepest penetration. A
+`ServoTendon` (cable wound in by a servo) drives `solve_nonlinear` too.
+The optimizer's grip objective now takes any `RigidObstacle` shape (it is
+wrapped in a `mechanism_nl.RigidObject`; gradient checked against finite
+differences on a sphere).
+
+Agents reach all of it from a field graph's `largeDeflection` block: the
+part, the clamp, dead loads, prescribed displacements, tendons (fixed
+points and guides, by tension or by servo stroke and stiffness), contact
+(obstacles, `"self": true`) and probes. `examples/fields/tendon-finger.json`
+curls a 40 mm TPU finger 330 degrees with a servo-wound tendon until its
+tip lands on its own palm: without self contact the tip passes 2 mm into
+the palm; with it the palm takes 3.4 N and nothing sinks more than
+0.006 mm.
+
+Validation (`tests/test_contact.py`, closed forms; 3D hex8 against beam
+theory):
+
+| case | quantity | loadpath / reference |
+|---|---|---|
+| cantilever lands on a rigid roller at mid-span | roller reaction, tip deflection | within 3% (propped cantilever) |
+| two fingers of one part pressed together (self contact) | force across, both tips' deflection | within 4% (R = (P - k g) / 2) |
+| ball driven 1 mm into a cantilever (moving obstacle) | force on the ball | within 3% (3 E I d / a^3) |
+| cantilever pressed onto a frictionless floor, tip 35% of its length down | floor reaction, how far the tip slid back, tip rotation | within 3%, 1%, 5% (elastica under P - R) |
+
 ## Not yet
 
-- **Contact with one rigid cylinder only**, fixed in space; no friction,
-  no second finger, and the cable does not touch the object (check its
-  path on the deformed shape).
+- **Friction**: all contact is frictionless. A gripper's hold against
+  pull-out is not modelled.
+- **The optimizer's contact is one rigid object**, fixed in space; no
+  second finger, no self contact inside the optimization (the check above
+  has both), and the cable does not touch the object (check its path on
+  the deformed shape).
+- **Self contact is node-to-face on the voxel surface**: Newton converges
+  linearly where faces rotate fast under contact (a tip edge landing on a
+  surface), so such solves take a few times longer and can stop short of
+  the full load (the report says how far they got).
 - **Wrapping grasps:** maximizing the normal force gives a pressing
   finger. A finger that wraps would need the contact spread over the
   object (more nodes in contact, or a pull-out force objective).

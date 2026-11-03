@@ -1178,6 +1178,78 @@ _MATERIAL_BODY = {
         "color": {"type": "string", "description": "#RRGGBB in the 3MF (default by material)"}},
 }
 
+_ND_WHERE = {"region": {"type": "string", "description": "solid node: the mesh nodes inside it"},
+             "at": {**_VEC3, "description": "mm: the mesh nodes within radius of this point"},
+             "radius": {**_POS, "description": "mm round `at` (default 1.5 cells)"}}
+_OBSTACLE = {
+    "type": "object",
+    "description": "A rigid object the part may not enter (frictionless): plane (point, normal: the side the "
+                   "part is on), sphere (center, radius), cylinder (center, axis, radius; infinitely long) or "
+                   "box (min, max). inside: the part stays inside it instead (a socket, a tube). move: mm the "
+                   "object travels at full load (an indenter, a jaw, a snap fit's catch).",
+    "properties": {"type": {"enum": ["plane", "sphere", "cylinder", "box"]},
+                   "name": {"type": "string"},
+                   "point": _VEC3, "normal": _VEC3, "center": _VEC3, "radius": _POS, "axis": _AXIS,
+                   "min": _VEC3, "max": _VEC3, "inside": {"type": "boolean"},
+                   "move": {**_VEC3, "description": "mm at full load"},
+                   "stiffness": {**_POS, "description": "penalty, x E x pitch N/mm per node (default 20)"}},
+    "required": ["type"],
+    "additionalProperties": False,
+}
+_LARGE_DEFLECTION = {
+    "type": "object",
+    "description": "Large-deflection check (nonlinear.py: total Lagrangian hex8, neo-Hookean, Newton with "
+                   "load steps and a buckling watch) of a part meant to bend: a TPU finger, a flexure, a snap "
+                   "fit, a compliant gripper. Drive it by dead loads, prescribed displacements and tendons "
+                   "(cables through guides on the part); contact with rigid obstacles and the part's own "
+                   "surface. Needs material.",
+    "properties": {
+        "part": {"type": "string", "description": "solid node analysed (default the output)"},
+        "fixed": {"type": "string", "description": "solid node: nodes inside it are clamped"},
+        "pitch": {**_POS, "description": "mm analysis grid (default 1; coarsened to fit maxCells)"},
+        "maxCells": {"type": "integer", "minimum": 100, "description": "most cells (default 20000)"},
+        "nu": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.499,
+               "description": "Poisson's ratio (default the material's)"},
+        "model": {"enum": ["neo-hookean", "svk"], "description": "hyperelastic law (default neo-hookean)"},
+        "steps": {"type": "integer", "minimum": 1, "description": "first guess at load steps (default 10)"},
+        "loads": {"type": "array", "items": {"type": "object", "properties": {
+            **_ND_WHERE, "force": {**_VEC3, "description": "N, dead (keeps its direction), spread evenly"}},
+            "required": ["force"], "x-requireOne": [["region"], ["at"]], "additionalProperties": False}},
+        "displacements": {"type": "array", "items": {"type": "object", "properties": {
+            **_ND_WHERE, "move": {**_VEC3, "description": "mm at full load: an actuator's stroke"},
+            "free": {"type": "boolean", "description": "leave the directions with zero move free (default "
+                                                       "false: held)"}},
+            "required": ["move"], "x-requireOne": [["region"], ["at"]], "additionalProperties": False},
+            "description": "Prescribed motion; the report gives the force it takes (actuatorForce, N)."},
+        "tendons": {"type": "array", "items": {"type": "object", "properties": {
+            "path": {"type": "array", "minItems": 2, "items": {"anyOf": [
+                {**_VEC3, "description": "a fixed point in space (the spool, a palm pulley)"},
+                {"type": "object", "properties": _ND_WHERE, "x-requireOne": [["region"], ["at"]],
+                 "additionalProperties": False, "description": "a guide on the part; the cable slides "
+                                                               "through it"}]},
+                     "description": "Points the cable runs straight between; the last is the knot."},
+            "tension": {**_POS, "description": "N, constant (scaled with the load steps)"},
+            "stroke": {**_POS, "description": "mm of cable a servo winds in (displacement driven)"},
+            "stiffness": {**_POS, "description": "N/mm of the cable and servo, with stroke"}},
+            "required": ["path"], "x-requireOne": [["tension"], ["stroke", "stiffness"]],
+            "additionalProperties": False},
+            "description": "Cables through guides on the part: the load follows the part as it curls."},
+        "contact": {"type": "object", "properties": {
+            "obstacles": {"type": "array", "items": _OBSTACLE},
+            "self": {"type": "boolean", "description": "the part's surface on itself (fingers meeting, a "
+                                                       "finger folding, a gap closing)"},
+            "stiffness": {**_POS, "description": "penalty for all, x E x pitch N/mm per node (default 20)"}},
+                    "additionalProperties": False},
+        "probes": {"type": "array", "items": {"type": "object", "properties": {
+            **_ND_WHERE, "name": {"type": "string"},
+            "direction": {**_VEC3, "description": "report the mean travel along this (mm)"}},
+            "required": ["direction"], "x-requireOne": [["region"], ["at"]], "additionalProperties": False}},
+        "maxStrain": {**_POS, "description": "largest allowed strain: sets ok"}},
+    "required": ["fixed"],
+    "additionalProperties": False,
+}
+
+
 FIELD_SCHEMA = {
     "$schema": _DIALECT,
     "$id": "https://github.com/connorwhite-online/loadpath/schema/field.schema.json",
@@ -1358,6 +1430,7 @@ FIELD_SCHEMA = {
                       "required": ["envelope", "fixed"], "additionalProperties": False,
                       "description": "Natural frequencies, effective masses and damping (modal.py). Needs "
                                      "material."},
+        "largeDeflection": _LARGE_DEFLECTION,
         "process": {**_PROCESS, "description": "How it is made: sets the minimum wall, the build direction and "
                                                "the drain holes (sls, mjf, sla, dlp, volumetric, lpbf drain "
                                                "sealed voids by default)."},

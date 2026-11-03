@@ -3129,7 +3129,8 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
         mat = material_from_spec(doc["material"])
         rep["mass"] = rep["volume"] * mat.density / 1000.0
         rep["material"] = mat.name
-    for key, mod, fn in (("impact", "impact", "impact_report"), ("vibration", "modal", "vibration_report")):
+    for key, mod, fn in (("impact", "impact", "impact_report"), ("vibration", "modal", "vibration_report"),
+                         ("largeDeflection", "nonlinear", "large_deflection_report")):
         if doc.get(key) is not None:
             if "material" not in doc:
                 raise ValueError(f"field graph: '{key}' needs a material")

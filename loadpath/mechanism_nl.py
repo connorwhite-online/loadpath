@@ -49,7 +49,7 @@ from .mechanism import MechanismOptions, MechanismResult, _spring_diag
 from .nonlinear import _CENTER, _CHUNK, _element, _Linear
 from .simp import E_MIN, PENALTY, _dproject, _extrude, _project, density_filter
 
-__all__ = ["optimize_mechanism_nonlinear", "nonlinear_response", "stroke_dofs", "RigidCylinder", "ServoTendon",
+__all__ = ["optimize_mechanism_nonlinear", "nonlinear_response", "stroke_dofs", "RigidCylinder", "RigidObject", "ServoTendon",
            "tendon_grip"]
 
 GAMMA_ETA, GAMMA_BETA = 0.1, 100.0    # the solid/void step on the physical density
@@ -182,6 +182,51 @@ class RigidCylinder:
         dj = np.zeros(u.shape[0])
         np.add.at(dj, self.dofs.ravel(), ((w * dp)[:, None] * nrm).ravel())
         return float(w @ p), dj, p, nrm
+
+
+class RigidObject(RigidCylinder):
+    """RigidCylinder's grip contact on any contact.RigidObstacle shape (a
+    plane, a sphere, a cylinder at any angle, a box; `inside` for a cavity),
+    in 3D: the object a finger, a gripper jaw or a clamp closes on. The
+    obstacle's own penalty settings are not used: contact here is the
+    optimizer's smooth softplus law (`stiffness` N/mm per node, `smooth`
+    mm), weighted by the density round each node so void cells cannot
+    grip, and the grip force (the objective) is the sum of the normal
+    forces."""
+
+    def __init__(self, obstacle, stiffness=50.0, smooth=0.05):
+        self.obstacle = obstacle
+        self.k, self.s = float(stiffness), float(smooth)
+
+    def _setup(self, mesh):
+        adj = sp.csr_matrix((np.ones(mesh.n_elem * 8), (mesh.enode.ravel(), np.repeat(np.arange(mesh.n_elem), 8))),
+                            shape=(mesh.n_nodes, mesh.n_elem))
+        cnt = np.asarray(adj.sum(axis=1)).ravel()
+        self.avg = sp.diags(1.0 / np.maximum(cnt, 1)) @ adj
+        self.x0 = mesh.node_xyz
+        self.dofs = 3 * np.arange(mesh.n_nodes)[:, None] + np.arange(3)[None, :]
+
+    def state(self, u):
+        g, nrm, H = self.obstacle.sdf(self.x0 + u[self.dofs])
+        self._H = H
+        z = -g / self.s
+        sig = 0.5 * (1 + np.tanh(0.5 * z))
+        p = self.k * self.s * np.logaddexp(0.0, z)
+        return g, nrm, p, -self.k * sig, self.k / self.s * sig * (1 - sig)
+
+    def load(self, u, w, tangent=True):
+        g, nrm, p, dp, ddp = self.state(u)
+        act = np.flatnonzero(p * w > 1e-12 * self.k)
+        f = np.zeros(u.shape[0])
+        np.add.at(f, self.dofs[act].ravel(), (-(w * p)[act, None] * nrm[act]).ravel())
+        k = None
+        if tangent:
+            nn = np.einsum("ni,nj->nij", nrm[act], nrm[act])
+            ke = -(w[act] * dp[act])[:, None, None] * nn - (w[act] * p[act])[:, None, None] * self._H[act]
+            rows = np.repeat(self.dofs[act], 3, axis=1).ravel()
+            cols = np.tile(self.dofs[act], (1, 3)).ravel()
+            k = sp.csr_matrix((ke.ravel(), (rows, cols)), shape=(u.shape[0], u.shape[0]))
+        return f, k
 
 
 class _Model:
@@ -387,7 +432,7 @@ def tendon_grip(domain, xphys, modulus, nu, tendons, contact, threshold=0.5, ste
 def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: float | None = None, steps: int = 4,
                                  material: str = "neo-hookean", void_threshold: float = GAMMA_ETA,
                                  on_iter=None, tendons: list | None = None,
-                                 contact: RigidCylinder | None = None) -> MechanismResult:
+                                 contact=None) -> MechanismResult:
     """mechanism.optimize_mechanism on the large-deflection response.
 
     Input: the input case's region driven `stroke` mm along its force, or
@@ -396,8 +441,9 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     on preserved cells).
 
     Objective: the output case's travel along its direction against k_out
-    (the workpiece as a spring), or with `contact` (a RigidCylinder: the
-    object the part closes on) the grip force on it.
+    (the workpiece as a spring), or with `contact` (the object the part
+    closes on: a RigidCylinder, a RigidObject, or a contact.RigidObstacle
+    of any shape, which is wrapped in a RigidObject) the grip force on it.
 
     k_in is ignored. nu and opts.modulus may be per element (a two-material
     part). output_displacement is the travel (mm) or the grip force (N)."""
@@ -412,6 +458,9 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
         pd, pv = np.zeros(0, np.int64), np.zeros(0)
     else:
         pd, pv = stroke_dofs(mesh, domain.loads[opts.input_case], domain.fixed, stroke)
+    from .contact import RigidObstacle
+    if isinstance(contact, RigidObstacle):
+        contact = RigidObject(contact)
     if contact is None:
         lo = domain.loads[opts.output_case]
         wts = np.abs(lo.reshape(-1, 3)).sum(axis=1) > 0

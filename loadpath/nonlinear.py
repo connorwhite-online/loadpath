@@ -22,6 +22,13 @@ voxel hex mesh:
   factors lambda with (K + lambda K_sigma) phi = 0. lambda < 1 means the
   load buckles the part; the modes say how.
 
+Contact (contact.py: rigid planes, spheres, cylinders and boxes, fixed or
+moving with the load, and the part's surface on itself) and tendons
+(cables through guides at a tension, or wound in by a servo) go in as
+`contact=` and `tendons=`; both follow the deformed part.
+`large_deflection_report` runs all of it from a field graph's
+`largeDeflection` block.
+
 `verify_mechanism` puts both behind one call for a compliant mechanism
 design from mechanism.py: the solid cells of the result, the real input
 force, and the output's travel compared with what the linear model
@@ -49,6 +56,7 @@ from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from .fem import CORNERS, HexMesh, Solver, Stiffness, _hex8_parts, hex8_element, von_mises
 
 __all__ = ["NonlinearResult", "BucklingResult", "Tendon", "nodes_near", "solve_nonlinear", "linear_buckling", "stroke_mechanism",
+           "large_deflection_report",
            "solid_submesh", "verify_mechanism"]
 
 # Above this many dofs the Newton steps use CG + AMG instead of a direct
@@ -309,30 +317,37 @@ class Tendon:
                 pts.append((a.astype(float), None))
         if len(pts) < 2:
             raise ValueError("Tendon: the path needs at least two points")
-        self._segs = []
+        segs = []
         for (xa, ga), (xb, gb) in zip(pts[:-1], pts[1:]):
             gd = (gb if gb is not None else 0) - (ga if ga is not None else 0)
             if isinstance(gd, int):
                 continue                       # between two fixed points: no load on the part
-            self._segs.append((xb - xa, sp.csr_matrix(gd)))
-        self._len0 = sum(np.linalg.norm(x0) for x0, _ in self._segs)
+            segs.append((xb - xa, sp.csr_matrix(gd)))
+        self._segs = segs
+        self._len0 = sum(np.linalg.norm(x0) for x0, _ in segs)
+        # all segments at once: d = d0 + G u, (S, 3)
+        self._d0 = np.array([x0 for x0, _ in segs]).reshape(-1, 3)
+        self._G = sp.vstack([gd for _, gd in segs]).tocsr() if segs else sp.csr_matrix((0, mesh.n_dof))
+        S = len(segs)
+        self._bi = (3 * np.arange(S)[:, None, None] + np.arange(3)[None, :, None] + 0 * np.arange(3)[None, None, :]).ravel()
+        self._bj = (3 * np.arange(S)[:, None, None] + 0 * np.arange(3)[None, :, None] + np.arange(3)[None, None, :]).ravel()
 
     def _load(self, u, scale):
         """Force on the part (per dof), load stiffness, and cable length
         (over the segments that touch the part)."""
         t = self.tension * scale
         n = u.shape[0]
-        f = np.zeros(n)
-        k = sp.csr_matrix((n, n))
-        length = 0.0
-        for d0, gd in self._segs:
-            d = d0 + gd @ u
-            ell = float(np.linalg.norm(d))
-            e = d / ell
-            length += ell
-            f -= t * (gd.T @ e)
-            k = k + gd.T @ sp.csr_matrix(t * (np.eye(3) - np.outer(e, e)) / ell) @ gd
-        return f, k.tocsr(), length
+        S = len(self._d0)
+        if S == 0:
+            return np.zeros(n), sp.csr_matrix((n, n)), 0.0
+        d = self._d0 + (self._G @ u).reshape(S, 3)
+        ell = np.linalg.norm(d, axis=1)
+        e = d / ell[:, None]
+        f = -t * (self._G.T @ e.ravel())
+        blocks = t * (np.eye(3)[None] - np.einsum("si,sj->sij", e, e)) / ell[:, None, None]
+        mb = sp.csr_matrix((blocks.ravel(), (self._bi, self._bj)), shape=(3 * S, 3 * S))
+        k = (self._G.T @ mb @ self._G).tocsr()
+        return f, k, float(ell.sum())
 
 
 def nodes_near(mesh: HexMesh, point, radius: float) -> np.ndarray:
@@ -347,8 +362,8 @@ def nodes_near(mesh: HexMesh, point, radius: float) -> np.ndarray:
 def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force: np.ndarray | None = None,
                     prescribed: tuple | None = None, *, material: str = "neo-hookean", steps: int = 10,
                     max_step: float = 0.25, min_step: float = 1e-4, rtol: float = 1e-7, max_newton: int = 25,
-                    springs: np.ndarray | None = None, tendons: list | None = None, stability: bool = True,
-                    probes: dict | None = None,
+                    springs: np.ndarray | None = None, tendons: list | None = None, contact: list | None = None,
+                    stability: bool = True, probes: dict | None = None,
                     on_step=None, element: str | None = None) -> NonlinearResult:
     """Geometrically nonlinear static solve.
 
@@ -357,7 +372,13 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     `values` (mm) at full load, e.g. an actuator's stroke. probes: name ->
     weight per dof; each step records weight . u (with unit-sum weights over
     a face along a direction, the face's mean travel along it). tendons:
-    Tendon loads (cables through guides) that follow the deformed part.
+    Tendon loads (cables through guides) that follow the deformed part, at
+    constant tension, or mechanism_nl.ServoTendon (a servo winding in a
+    stroke of cable through a compliant cable: displacement driven).
+    contact: contact.RigidObstacle (a rigid plane, sphere, cylinder or box,
+    fixed or moving with the load) and contact.SelfContact (the part's
+    surface on itself), frictionless penalty. Each step records each
+    contact's force, nodes touching and deepest penetration.
     springs:
     grounded linear springs, N/mm per dof (an actuator's compliance, a
     workpiece pushing back).
@@ -409,8 +430,23 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     keep_free = sp.diags((~cons).astype(float))
     for t in tendons:
         t._setup(mesh)
+    from .contact import SelfContact
+    contact = contact or []
+    for c in contact:
+        if isinstance(c, SelfContact):
+            c._setup(mesh, mod, fixed=cons)
+        else:
+            c._setup(mesh, mod)
+    loads = tendons + contact
+    if contact:
+        # active sets settle over a few iterations, and a node sliding from
+        # one face to the next leaves a residual of about 1e-7 of the
+        # contact force: converge to 1e-5 of the load (the penalty itself
+        # is a far bigger approximation)
+        max_newton = max(max_newton, 40)
+        rtol = max(rtol, 1e-5)
 
-    def newton(v, target, a=None):
+    def newton(v, target, a=None, search=False):
         rnorm0 = None
         a = alpha if a is None else a
         for its in range(1, max_newton + 1):
@@ -425,7 +461,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                 fint = fint + spr @ v
                 k = (k + spr).tocsr()
             fext = target * f
-            for t in tendons:
+            for t in loads:
                 ft, kt, _ = t._load(v, target)
                 fext = fext + ft
                 # constrained rows and columns stay identity, as Stiffness leaves them
@@ -450,8 +486,36 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             big = np.abs(d).max()
             if big > cap:
                 d *= cap / big
+            if search:
+                # contact switches on and off between iterations, and its
+                # tangent leaves out the faces' rotation, so Newton can
+                # cycle: on a retry, backtrack a step that makes the
+                # residual worse
+                for _ in range(5):
+                    rt = trial(v + d, target, a)
+                    if rt is not None and rt < rnorm:
+                        break
+                    d *= 0.5
             v = v + d
         return None
+
+    def trial(v, target, a):
+        """Residual norm at v without the tangent (None if a cell inverts)."""
+        if a is None:
+            fint, _, jmin = _assemble(stiff, v, mod, nu, material, tangent=False)
+            ra = 0.0
+        else:
+            fint, _, jmin, _, ra = _assemble(stiff, v, mod, nu, material, tangent=False, alpha=a)
+        if not np.isfinite(jmin) or jmin <= 0:
+            return None
+        if spr is not None:
+            fint = fint + spr @ v
+        fext = target * f
+        for t in loads:
+            fext = fext + t._load(v, target)[0]
+        r = fext - fint
+        r[cons] = 0.0
+        return float(np.hypot(np.linalg.norm(r), ra))
 
     u = np.zeros(n)
     lam, dlam = 0.0, min(1.0 / steps, max_step)
@@ -468,6 +532,8 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             v += du_prev * (dlam / dlam_prev)
         v[pd] = target * pv
         out = newton(v, target)
+        if out is None and contact:
+            out = newton(v, target, search=True)
         if out is None:
             if dlam <= min_step:
                 message = (f"stopped at {lam:.3f} of the load: no equilibrium past it under load control "
@@ -527,6 +593,11 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             rec["reaction"] = fint.reshape(-1, 3)[pnodes].sum(axis=0).tolist()
         for i, t in enumerate(tendons):
             rec[f"tendon{i}Travel"] = t._len0 - t._load(u, lam)[2]
+            if hasattr(t, "pull"):
+                rec[f"tendon{i}Tension"] = float(t.pull(u, lam)[0])
+        for i, c in enumerate(contact):
+            info = c._load(u, lam)[2]
+            rec[f"contact{i}"] = {k: v for k, v in info.items()}
         history.append(rec)
         if on_step is not None:
             on_step(rec, u)
@@ -779,3 +850,121 @@ def stroke_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, strok
     if r.message:
         rep["message"] = r.message
     return rep
+
+
+def large_deflection_report(graph, spec: dict, material) -> dict:
+    """The field graph's `largeDeflection` block: the `part` (a solid node,
+    default the graph's output) voxelized at `pitch`, clamped inside
+    `fixed`, under dead `loads`, prescribed `displacements` (an actuator's
+    stroke), `tendons` (cables through guides at a tension, or wound in by
+    a servo: stroke and stiffness) and `contact` (rigid obstacles, fixed or
+    moving, and the part on itself), solved with large deflections.
+
+    Reports how far the load got, peak strain and stress, each probe's
+    travel, each tendon's travel and tension, each contact's force, nodes
+    touching and penetration, and the step history."""
+    from .contact import SelfContact, obstacle_from_spec
+    from .impact import sample_core
+    from .mechanism_nl import ServoTendon
+
+    part = spec.get("part") or graph.output
+    pitch = float(spec.get("pitch", 1.0))
+    max_cells = int(spec.get("maxCells", 20000))
+    b = graph.bounds(part)
+    if b is None:
+        raise ValueError(f"largeDeflection: node {part!r} has no bounds")
+    for _ in range(8):
+        inside, _, lo, h = sample_core(graph, part, None, pitch, bounds=b)
+        if inside.sum() <= max_cells:
+            break
+        pitch *= 1.05 * (inside.sum() / max_cells) ** (1 / 3)
+    ijk = np.argwhere(inside)
+    if len(ijk) == 0:
+        raise ValueError(f"largeDeflection: no cells inside {part!r} at pitch {pitch:g}")
+    mesh = HexMesh(ijk, h, lo)
+
+    def nodes_in(node, what):
+        ids = np.flatnonzero(graph.evaluate(mesh.node_xyz, node) <= 0.5 * h)
+        if len(ids) == 0:
+            raise ValueError(f"largeDeflection: no nodes inside {what} {node!r}")
+        return ids
+
+    def where(item, what):
+        if "region" in item:
+            return nodes_in(item["region"], what)
+        if "at" in item:
+            return nodes_near(mesh, item["at"], float(item.get("radius", 1.5 * h)))
+        raise ValueError(f"largeDeflection: {what} needs a region (node) or at (point)")
+
+    fixed = np.zeros(mesh.n_dof, bool)
+    fn = nodes_in(spec["fixed"], "fixed")
+    for a in range(3):
+        fixed[3 * fn + a] = True
+    force = np.zeros(mesh.n_dof)
+    for ld in spec.get("loads", []):
+        ids = where(ld, "load")
+        force[(3 * ids[:, None] + np.arange(3)).ravel()] += np.tile(np.asarray(ld["force"], float) / len(ids), len(ids))
+    pd, pv = [], []
+    for dsp in spec.get("displacements", []):
+        ids = where(dsp, "displacement")
+        mv = np.asarray(dsp["move"], float)
+        for c in range(3):
+            if dsp.get("free") and abs(mv[c]) < 1e-12:
+                continue
+            dofs = 3 * ids + c
+            dofs = dofs[~fixed[dofs]]
+            pd.append(dofs)
+            pv.append(np.full(len(dofs), mv[c]))
+    prescribed = (np.concatenate(pd), np.concatenate(pv)) if pd else None
+    tendons = []
+    for t in spec.get("tendons", []):
+        path = []
+        for pt in t["path"]:
+            path.append(where(pt, "tendon guide") if isinstance(pt, dict) else np.asarray(pt, float))
+        if "stroke" in t:
+            tendons.append(ServoTendon(path, float(t["stroke"]), float(t["stiffness"])))
+        else:
+            tendons.append(Tendon(float(t["tension"]), path))
+    contact = []
+    cs = spec.get("contact") or {}
+    stiff = {k: cs[k] for k in ("stiffness",) if k in cs}
+    for ob in cs.get("obstacles", []):
+        contact.append(obstacle_from_spec({**stiff, **ob}))
+    if cs.get("self"):
+        contact.append(SelfContact(**stiff))
+    probes = {}
+    for p in spec.get("probes", []):
+        ids = where(p, "probe")
+        d = np.asarray(p["direction"], float)
+        d = d / np.linalg.norm(d)
+        w = np.zeros(mesh.n_dof)
+        for c in range(3):
+            w[3 * ids + c] = d[c] / len(ids)
+        probes[p.get("name") or f"probe{len(probes)}"] = w
+    E, nu = float(material.E), float(spec.get("nu", material.nu))
+    r = solve_nonlinear(mesh, nu, E, fixed, force if force.any() else None, prescribed,
+                        material=spec.get("model", "neo-hookean"), steps=int(spec.get("steps", 10)),
+                        tendons=tendons, contact=contact, probes=probes)
+    last = r.history[-1] if r.history else {}
+    out = {"cells": int(mesh.n_elem), "pitch": h, "converged": r.converged, "loadReached": r.load_factor,
+           "maxStrain": float(r.strain.max()), "maxStress": float(r.stress.max()),
+           "maxDisplacement": float(np.linalg.norm(r.u.reshape(-1, 3), axis=1).max())}
+    if probes:
+        out["probes"] = {k: last.get(k) for k in probes}
+    if tendons:
+        out["tendons"] = [{"travel": last.get(f"tendon{i}Travel"),
+                           "tension": last.get(f"tendon{i}Tension", r.load_factor * getattr(t, "tension", 0.0))}
+                          for i, t in enumerate(tendons)]
+    if contact:
+        names = [getattr(c, "name", None) or (c.shape if hasattr(c, "shape") else "self") for c in contact]
+        out["contact"] = [{"name": nm, **(last.get(f"contact{i}") or {})} for i, nm in enumerate(names)]
+    if prescribed is not None and "reaction" in last:
+        out["actuatorForce"] = last["reaction"]
+    if spec.get("maxStrain") is not None:
+        out["ok"] = bool(r.converged and out["maxStrain"] <= float(spec["maxStrain"]))
+    if r.message:
+        out["message"] = r.message
+    keep = ("loadFactor", "newton", "branchSwitch", *probes)
+    out["history"] = [{**{k: h_[k] for k in keep if k in h_},
+                       **{k: v for k, v in h_.items() if k.startswith(("tendon", "contact"))}} for h_ in r.history]
+    return out
