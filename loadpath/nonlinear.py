@@ -764,12 +764,17 @@ def _geometric(stiff, u, mod, nu):
 
 
 def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force: np.ndarray,
-                    n_modes: int = 3, springs: np.ndarray | None = None,
-                    element: str | None = None) -> BucklingResult:
+                    n_modes: int = 3, springs=None, element: str | None = None,
+                    direct_max_dof: int | None = None) -> BucklingResult:
     """Smallest positive load factors lambda at which lambda * force buckles
     the part (linear eigenvalue buckling: exact for a perfect column, an
     upper bound for real parts with imperfections; take a margin of 2-3 on
-    printed slender members). Below 1, the load as given buckles it."""
+    printed slender members). Below 1, the load as given buckles it.
+    `springs` is a per-dof diagonal or a sparse matrix (absolute stiffness).
+    `direct_max_dof` (default DIRECT_MAX_DOF) is the size up to which K is
+    factored directly: the eigensolver solves with K every iteration, and a
+    factorization pays for itself many times over (a 21k-cell bracket: 17 s
+    direct, 144 s CG + AMG)."""
     mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,)).copy()
     # solve_nonlinear's element (incompatible modes by default), so the load
     # factor and the post-buckling path it seeds are one model's; the plain
@@ -778,8 +783,12 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     stiff = Stiffness(mesh, nu, fixed, element=element)
     k = stiff.assemble(mod)
     if springs is not None:
-        k = (k + sp.diags(np.where(fixed, 0.0, springs))).tocsr()
-    if mesh.n_dof <= DIRECT_MAX_DOF:
+        if sp.issparse(springs):
+            free = sp.diags((~np.asarray(fixed, bool)).astype(float))
+            k = (k + free @ springs @ free).tocsr()
+        else:
+            k = (k + sp.diags(np.where(fixed, 0.0, springs))).tocsr()
+    if mesh.n_dof <= (DIRECT_MAX_DOF if direct_max_dof is None else direct_max_dof):
         kinv = _splu(k).solve
     else:
         sol = Solver(mesh, rtol=1e-10, maxiter=3000)

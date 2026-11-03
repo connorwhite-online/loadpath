@@ -2185,6 +2185,10 @@
             "filament"
           ],
           "description": "Which passing outcome is delivered: the lightest (default), or (FDM, with a slicer installed) the one that prints fastest or with the least filament, support included, as sliced (graded, with slicer.grade)."
+        },
+        "buckling": {
+          "type": "boolean",
+          "description": "Whether the safety factor must hold against buckling too (default true): the part's linear buckling load factor, on a grid of at most 20k cells, must reach safetyFactor. false still reports it (report.buckling)."
         }
       },
       "x-requireOne": [

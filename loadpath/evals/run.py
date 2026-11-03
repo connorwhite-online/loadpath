@@ -227,9 +227,14 @@ def score_case(raw: dict, result, seconds: float, study=None, tier: str = "full"
 
     expect = raw.get("expect", {})
     best = result.best
+    buckles = (raw.get("goal") or {}).get("buckling", True)
+    # the safety factor a part holds counts buckling as well (verify._buckling)
+    held = [{**o.report, "safetyFactor": min(o.report["safetyFactor"], o.report["bucklingFactor"])}
+            if buckles and o.report.get("bucklingFactor") is not None and o.report.get("safetyFactor") is not None
+            else o.report for o in result.outcomes]
     out = {"case": raw.get("name"), "seconds": seconds, "checks": [], "outcomes": len(result.outcomes),
            "tier": tier,
-           "pareto": pareto([o.report for o in result.outcomes],
+           "pareto": pareto(held,
                             (raw.get("goal") or {}).get("safetyFactor") or expect.get("minSafetyFactor"))}
     if best is None:
         out["pass"] = False
@@ -250,7 +255,8 @@ def score_case(raw: dict, result, seconds: float, study=None, tier: str = "full"
                    "creaseLength": flat.get("creaseLength"),
                    "p5Thickness": flat.get("p5Thickness"), "p1Thickness": flat.get("p1Thickness"),
                    "deflection": max(c["deflection"] for c in flat["cases"]),
-                   "iterations": o.optimizer["iterations"], "optimizerSeconds": o.optimizer["seconds"]}
+                   "iterations": o.optimizer["iterations"], "optimizerSeconds": o.optimizer["seconds"],
+                   **({"bucklingFactor": flat["bucklingFactor"]} if flat.get("bucklingFactor") is not None else {})}
     ok = out.get("error") is None
     for name, (key, measure, op) in CHECKS.items():
         if key not in expect or (tier == "coarse" and (name in COARSE_SKIP or key in COARSE_SKIP)):
@@ -259,6 +265,11 @@ def score_case(raw: dict, result, seconds: float, study=None, tier: str = "full"
         passed = _cmp(v, op, expect[key])
         ok &= passed
         out["checks"].append({"check": name, "value": v, "op": op, "limit": expect[key], "pass": passed})
+    if buckles and "minSafetyFactor" in expect and flat.get("bucklingFactor") is not None:
+        passed = _cmp(flat["bucklingFactor"], ">=", expect["minSafetyFactor"])
+        ok &= passed
+        out["checks"].append({"check": "buckling", "value": flat["bucklingFactor"], "op": ">=",
+                              "limit": expect["minSafetyFactor"], "pass": passed})
     if "maxSeconds" in expect and tier != "coarse":
         passed = seconds <= expect["maxSeconds"]
         ok &= passed

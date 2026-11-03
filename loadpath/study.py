@@ -139,6 +139,7 @@ class Outcome:
             "massReduction": r.get("massReduction"),
             "safetyFactor": r.get("safetyFactor"),
             **({"voxelSafetyFactor": r["voxelSafetyFactor"]} if "voxelSafetyFactor" in r else {}),
+            **({"bucklingFactor": r["bucklingFactor"]} if r.get("bucklingFactor") is not None else {}),
             **({"confirm": r["confirm"]} if "confirm" in r else {}),
             **({"calibration": r["calibration"]} if "calibration" in r else {}),
             **({"tetCheck": r["tetCheck"]} if "tetCheck" in r else {}),
@@ -202,6 +203,10 @@ def _margin(study: Study, report: dict) -> float | None:
     ms = []
     if g.safety_factor is not None:
         ms.append(report["safetyFactor"] / g.safety_factor)
+        if g.buckling and report.get("bucklingFactor") is not None:
+            # a part that buckles under safetyFactor x its loads fails as one
+            # that yields there does (verify._buckling)
+            ms.append(report["bucklingFactor"] / g.safety_factor)
     dur = report.get("durability") if _durability_drives(study) else None
     if g.max_deflection is not None:
         worst = max((c["deflection"] for c in report["cases"]), default=float("inf"))

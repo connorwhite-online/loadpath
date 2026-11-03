@@ -1,6 +1,6 @@
 {
   "name": "mbb-beam",
-  "description": "Textbook sanity case: a simply supported beam (pinned left, roller right) with a centre load. The optimum is a well-known truss; this case guards against regressions in the solver itself.",
+  "description": "Textbook sanity case: a simply supported beam (pinned left, roller right) with a centre load. The optimum is a well-known truss; this case guards against regressions in the solver itself. It is the planar textbook problem, so buckling is reported, not required: nothing holds the 12 mm wide truss sideways, and the light designs sway out of plane at under half the load (0.34x, 0.42x with the roller held sideways too).",
   "designSpace": [
     {
       "type": "box",
@@ -43,7 +43,8 @@
   "material": "pa12",
   "goal": {
     "safetyFactor": 1.5,
-    "volumeFraction": 0.3
+    "volumeFraction": 0.3,
+    "buckling": false
   },
   "symmetry": [
     "x",

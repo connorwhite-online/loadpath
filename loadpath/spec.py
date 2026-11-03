@@ -149,6 +149,10 @@ class Goal:
     # bracket), 140.7-150.1 g (GRIP turret). For a final production part;
     # N times the time. See docs/study-format.md.
     restarts: int = 1
+    # A safety factor holds against buckling too: the part's linear
+    # buckling load factor (verify._buckling) must reach it, as the stress
+    # safety factor must. False reports the factor without failing on it.
+    buckling: bool = True
 
 
 # How the part will be made. Each process sets what the design must respect:
@@ -919,6 +923,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         outcomes=[float(v) for v in g.get("outcomes") or []],
         minimize=str(g.get("minimize", "mass")),
         restarts=int(g.get("restarts", 1)),
+        buckling=bool(g.get("buckling", True)),
     )
     if goal.restarts < 1:
         raise ValueError("goal.restarts must be 1 or more")
