@@ -422,6 +422,46 @@ class _Model:
             u = un
         return None
 
+    def solve_path(self, mod, gam, prev=None, steps=4):
+        """Equilibrium at the full stroke followed up the load from rest, so
+        the answer is the branch the part actually takes (the one the stroke
+        check finds), not whichever equilibrium Newton lands on from the last
+        design's answer: near a snap or a buckle the two differ, and which
+        one a warm start picks flips on rounding. The levels are fixed
+        (1/steps, 2/steps, .. 1); each starts from this design's answer one
+        level down plus the last design's increment between the two levels
+        (prev: that design's path), and a level that will not converge is
+        reached in halved sub-steps. Returns (u at the full stroke, path)."""
+        n = self.mesh.n_dof
+        u, lam, path = np.zeros(n), 0.0, []
+        for i in range(steps):
+            t = (i + 1) / steps
+            un = None
+            if prev is not None and len(prev) == steps:
+                un = self.newton(u + prev[i] - (prev[i - 1] if i else 0.0), mod, gam, t)
+            if un is None:
+                un = self._march(u, lam, t, mod, gam)
+            u, lam = un, t
+            path.append(u)
+        return u, path
+
+    def _march(self, u, lam, t_end, mod, gam):
+        """From (u, lam) to t_end in sub-steps, halving one that fails."""
+        dl, v = t_end - lam, None
+        while lam < t_end - 1e-12:
+            t = min(t_end, lam + dl)
+            pred = u if v is None else u + v * ((t - lam) / dlv)
+            un = self.newton(pred, mod, gam, t)
+            if un is None:
+                dl /= 2
+                if dl < 1e-3:
+                    raise RuntimeError(f"Newton failed at {lam:.3f} of the stroke")
+                continue
+            v, dlv = un - u, t - lam
+            u, lam = un, t
+            dl = min(dl * 1.5, t_end - lam) if lam < t_end else dl
+        return u
+
     def solve(self, mod, gam, u0=None, steps=4):
         """Equilibrium at the full stroke: straight from u0 (the last design's
         answer), else in load steps from rest, halving a step that fails."""
@@ -444,11 +484,14 @@ class _Model:
         return u
 
 
-def nonlinear_response(model: _Model, xp, modulus, lvec, u0=None, steps=4, void_threshold=GAMMA_ETA):
+def nonlinear_response(model: _Model, xp, modulus, lvec, u0=None, steps=4, void_threshold=GAMMA_ETA,
+                       follow=False):
     """J at the full stroke (or tension) and dJ/dxp per element: J = lvec . u
     (output travel), or with lvec None the grip force on model.contact.
     modulus: scalar or per element (a two-material part: the solid's E in
-    each cell)."""
+    each cell). follow: trace the load path from rest (_Model.solve_path);
+    u0 is then the last design's path (or None) and the third value
+    returned is this design's path, whose last entry is u."""
     modulus = np.asarray(modulus, float)
     mod = modulus * (E_MIN + xp ** PENALTY * (1 - E_MIN))
     dmod = modulus * PENALTY * xp ** (PENALTY - 1) * (1 - E_MIN)
@@ -456,7 +499,10 @@ def nonlinear_response(model: _Model, xp, modulus, lvec, u0=None, steps=4, void_
     dw = None
     if model.contact is not None:
         model.w, dw = model.contact.weights(xp)
-    u = model.solve(mod, gam, u0, steps)
+    if follow:
+        u, path = model.solve_path(mod, gam, u0, steps)
+    else:
+        u = path = model.solve(mod, gam, u0, steps)
     _, k, _, br, dbr = model.assemble(u, mod, gam, parts=True)
     if lvec is None:
         j, dju, p, nrm = model.contact.grip(u, model.w)
@@ -470,7 +516,7 @@ def nonlinear_response(model: _Model, xp, modulus, lvec, u0=None, steps=4, void_
         # the contact weights depend on the density: the grip term itself
         # and the contact force in the residual
         dj += dw.T @ model.contact.weight_terms(u, lam, lvec is None)
-    return j, dj, u
+    return j, dj, path
 
 
 def _tension(tendons, u, lam):
@@ -520,7 +566,8 @@ def tendon_grip(domain, xphys, modulus, nu, tendons, contact, threshold=0.5, ste
 def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: float | None = None, steps: int = 4,
                                  material: str = "neo-hookean", void_threshold: float = GAMMA_ETA,
                                  on_iter=None, tendons: list | None = None,
-                                 contact=None) -> MechanismResult:
+                                 contact=None, follow_path: bool = True, settle: bool = True, starts: int = 1,
+                                 start: int = 0) -> MechanismResult:
     """mechanism.optimize_mechanism on the large-deflection response.
 
     Input: the input case's region driven `stroke` mm along its force, or
@@ -536,7 +583,32 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     the rest are stops the part may press on but that count for nothing).
 
     k_in is ignored. nu and opts.modulus may be per element (a two-material
-    part). output_displacement is the travel (mm) or the grip force (N)."""
+    part). output_displacement is the travel (mm) or the grip force (N).
+
+    Repeatability: the large-deflection optimum is not unique, and which
+    one a run finds can turn on rounding (sharpening refusals and
+    backtracks are yes/no decisions). follow_path traces each design's
+    equilibrium up the load from rest, so the optimizer sees the branch the
+    part really takes, and settle shrinks the move limit once the
+    projection is at its sharpest. starts > 1 runs from that many starts
+    (start 0 uniform, the others nudged by a seeded 1e-6 per cell) and
+    keeps the one whose thresholded design (cells above 0.5 solid, the
+    rest void) does best on the large-deflection check;
+    history[-1]["starts"] lists every start's thresholded value.
+    history[-1]["thresholdedOutput"] is that value for the design returned
+    (None if the thresholded design does not reach the stroke)."""
+    if starts > 1:
+        t_all = time.time()
+        runs = [optimize_mechanism_nonlinear(domain, nu, opts, stroke, steps, material, void_threshold, on_iter,
+                                             tendons, contact, follow_path, settle, 1, k)
+                for k in range(starts)]
+        vals = [r.history[-1].get("thresholdedOutput") for r in runs]
+        best = max(range(starts), key=lambda k: -np.inf if vals[k] is None else vals[k])
+        r = runs[best]
+        r.history[-1]["starts"] = vals
+        r.history[-1]["start"] = best
+        r.seconds = time.time() - t_all
+        return r
     t0 = time.time()
     mesh = domain.mesh
     n = mesh.n_elem
@@ -573,6 +645,13 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     h, hs = density_filter(domain, opts.filter_radius, pad=opts.extrusion is None)
     ht = h.T.tocsr()
     x = np.full(n, opts.volume_fraction)
+    if start:
+        # a seeded nudge of 1e-6 per cell: the path amplifies differences
+        # this small into different optima (rounding alone spreads the
+        # curling finger 5.5-8 mm), and nudges this small stay in the
+        # uniform start's neighbourhood; a visible ripple (+-0.05) landed
+        # in worse designs (3-5 mm)
+        x = x + 1e-6 * np.random.default_rng(start).uniform(-1.0, 1.0, n)
     x[pres] = 1.0
     target = opts.volume_fraction * design.sum()
     beta, since = 1.0, 0
@@ -602,7 +681,7 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
                     xp = _project(xt, beta, eta)
                     xp[pres] = 1.0
                     j, dj, u = nonlinear_response(model, xp, opts.modulus, lvec, u_prev.get(eta), steps,
-                                                  void_threshold)
+                                                  void_threshold, follow=follow_path)
                     up[eta] = u
                     real.append((j, dj * _dproject(xt, beta, eta)))
                 u_prev.update(up)
@@ -664,6 +743,11 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
         if beta < beta_cap and (since >= opts.beta_every or change < opts.tol * 2):
             beta, since = min(beta * 2, beta_cap), 0
         elif beta >= beta_cap and ts >= 1.0:
+            if settle:
+                # settle: shrink the move limit so the design converges
+                # instead of wandering round the optimum until the
+                # plateau test happens to stop it
+                mma.move = max(opts.move * 0.1, mma.move * 0.85)
             if change < opts.tol:
                 break
             if since >= 10 and len(history) > 10:
@@ -680,5 +764,12 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     xt = _extrude((h @ x) / hs, columns, design)
     xp = _project(xt, beta, 0.5)
     xp[pres] = 1.0
+    # the design as it will be printed: thresholded, void cells linear
+    try:
+        jt = nonlinear_response(model, (xp > 0.5).astype(float), opts.modulus, lvec, None, 2 * steps, 0.5,
+                                follow=True)[0]
+    except (RuntimeError, ValueError):
+        jt = None
+    history[-1]["thresholdedOutput"] = None if jt is None else float(jt)
     return MechanismResult(x=x, xphys=xp, output_displacement=float(history[-1]["outputDisplacement"]),
                            iterations=it, seconds=time.time() - t0, history=history)

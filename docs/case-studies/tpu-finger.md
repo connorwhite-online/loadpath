@@ -44,7 +44,7 @@ works through its whole stroke.
 
 | | Linear design (baseline) | Large-deflection design |
 | --- | --- | --- |
-| Tip travel for a 5 mm pull | 2.5 mm (the solve stops at 3.9 mm of pull) | **3.8-8.0 mm** over five runs (full stroke) |
+| Tip travel for a 5 mm pull | 2.5 mm (the solve stops at 3.9 mm of pull) | **5.5-8.0 mm** over eight runs (full stroke) |
 | One-node hinges | 1 | **0** |
 | Pull force at 5 mm | | 5.6-5.7 N |
 | Peak strain | | 34-35% (TPU 95A elongation at break is past 400%) |
@@ -53,11 +53,11 @@ works through its whole stroke.
 
 The linear design hangs on a corner hinge. Under a real stroke it locks
 and the solve cannot follow it past 3.9 mm of pull. The design optimized
-on the large-deflection response curls its tip 3.8-8.0 mm for 5 mm of
+on the large-deflection response curls its tip 5.5-8.0 mm for 5 mm of
 pull, through the whole stroke. The range is the optimizer's: runs that
-differ only by rounding land on different designs (re-measured
-2026-11-03; the figure is the first published run, 8.7 mm), so run it from
-a few starts and keep the best.
+differ only by rounding still land on different designs, though no longer
+below 5.5 mm (was 3.8; see MECHANISMS.md, Repeatability; the figure is
+the first published run, 8.7 mm). `starts=4` keeps the best of four.
 
 **Tendon finger** (forces per mm of finger width; a 15 mm wide finger
 grips 15 times as much)

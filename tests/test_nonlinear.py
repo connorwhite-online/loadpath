@@ -373,6 +373,34 @@ def test_nonlinear_mechanism_gradient_matches_finite_differences():
         assert abs(dj[e] - fd) <= 1e-5 * max(abs(fd), 1e-3), (e, dj[e], fd)
 
 
+def test_followed_load_path_does_not_depend_on_the_last_design():
+    # mechanism_nl follows each design's load path from rest; seeding the
+    # levels with another design's path must not change the equilibrium it
+    # lands on (a warm start straight at the full stroke could)
+    from loadpath.benchmarks.mechanisms import inverter, mech_domain
+    from loadpath.mechanism import _spring_diag
+    from loadpath.mechanism_nl import _Model, nonlinear_response, stroke_dofs
+    p = inverter(12, 6)
+    dom = mech_domain(p)
+    m = dom.mesh
+    pd, pv = stroke_dofs(m, dom.loads[0], dom.fixed, 2.0)
+    lo = dom.loads[1]
+    wts = np.abs(lo.reshape(-1, 3)).sum(axis=1) > 0
+    d = lo.reshape(-1, 3).sum(axis=0)
+    lv = (wts[:, None] * (d / np.linalg.norm(d))[None, :]).ravel() / wts.sum()
+    springs = _spring_diag(lo, 0.05, m.n_dof)
+    springs[dom.fixed] = 0.0
+    model = _Model(m, 0.3, dom.fixed, pd, pv, springs)
+    rng = np.random.default_rng(1)
+    xp = np.clip(0.5 + 0.35 * rng.standard_normal(m.n_elem), 0.05, 1.0)
+    xq = np.clip(xp + 0.2 * rng.standard_normal(m.n_elem), 0.05, 1.0)
+    j, dj, path = nonlinear_response(model, xp, 1.0, lv, follow=True)
+    _, _, other = nonlinear_response(model, xq, 1.0, lv, follow=True)
+    j2, dj2, path2 = nonlinear_response(model, xp, 1.0, lv, u0=other, follow=True)
+    assert len(path) == 4 and abs(j2 - j) <= 1e-7 * abs(j)
+    assert np.abs(dj2 - dj).max() <= 1e-6 * np.abs(dj).max()
+
+
 def test_tendon_grip_gradient_matches_finite_differences():
     # a servo-wound tendon curls a small finger onto a rigid cylinder; the
     # adjoint sensitivity of the grip force (contact penalty weighted by the

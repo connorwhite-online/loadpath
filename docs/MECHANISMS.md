@@ -171,7 +171,7 @@ re-measured 2026-11-03):
 
 | | linear design | large-deflection design |
 |---|---|---|
-| tip travel for a 5 mm pull | 2.5 mm (solve stops at 3.9 mm of pull) | **3.8-8.0 mm** (full stroke; see below) |
+| tip travel for a 5 mm pull | 2.5 mm (solve stops at 3.9 mm of pull) | **5.5-8.0 mm** (full stroke; see below) |
 | one-node hinges | 1 | **0** |
 | pull force at 5 mm | | 5.6-5.7 N |
 | peak strain | | 34-35% (TPU 95A breaks past 400%) |
@@ -181,15 +181,48 @@ re-measured 2026-11-03):
 (The figure is the first published run, 8.7 mm of curl with the plain
 hex8 check.)
 
-**The large-deflection optimizer is sensitive to rounding.** Five runs
-that differ only by rounding-level changes (the compiled element kernel
-against the numpy one, which agree to 1e-14, and the filter radius moved
-by 1e-9 or 1e-6 of itself) end at 8.0, 7.9, 6.0, 5.9 and 3.8 mm of
-curl. All five reach the full stroke with no hinges, and each design reads
-the same on both solvers to 1e-10, so the spread is the optimizer's path
-(projection steps and sharpening retries are discrete decisions), not the
-check. Run it from a few starts and keep the best; making the path itself
-stable is open.
+**Repeatability.** The large-deflection optimizer used to be sensitive to
+rounding: eight runs that differ only by rounding-level changes (the
+filter radius moved by 1e-9 to 1e-6 of itself) ended at 3.8 to 7.9 mm of
+curl (median 5.9). Two causes, measured on 2026-11-03:
+
+- **Which equilibrium Newton found.** Each iteration used to start Newton
+  at the full stroke from the last design's answer. Near a snap there is
+  more than one equilibrium there, and which one Newton landed on flipped
+  on rounding: on the same iteration-4 design the eroded realization read
+  8.9 mm in one run and 8.2 mm in the other. The optimizer now follows each
+  design's load path up from rest (`follow_path=True`, the default; four
+  fixed load levels, each seeded with the last design's increment), so it
+  sees the branch the part actually takes, the one the stroke check finds.
+  Runs now agree to every printed digit for 26 iterations instead of 3, and
+  on the textbook inverter two runs give 3.523 and 3.523 (were 3.523 and
+  3.471). It costs about 2x per iteration on the inverter, nothing
+  measurable on the finger.
+- **Which optimum the path ends in.** After that, the sharpening steps,
+  sharpening refusals and backtracks are still yes/no decisions, and the
+  designs drift apart from about iteration 30. Every run ends on the same
+  topology; the 5.5 vs 8 mm difference is grey detail on one thin top
+  member that thresholding keeps or drops. `settle=True` (default) shrinks
+  the MMA move limit once the projection is at its sharpest, so the run
+  converges instead of wandering until the plateau test stops it.
+
+With both, the same eight runs give **5.5 to 8.0 mm** (median 5.9, mean
+6.4; was 3.8-7.9, mean 6.0): the bad tail is gone, the spread is still
+2.5 mm. `starts=4` runs four starts (uniform, and three nudged by a
+seeded 1e-6 per cell) and keeps the one whose thresholded design does best
+on the large-deflection check; over four runs it delivered 5.7, 5.8, 5.9
+and 7.7 mm, at 4x the time. Every result carries
+`history[-1]["thresholdedOutput"]`, the thresholded design's output on the
+optimizer's own (plain hex8) model; it ranks designs in nearly the same
+order as the stroke check, reading about 1 mm higher.
+
+What did not help: doubling beta a little every iteration instead of
+every `beta_every` (the eroded design disconnects as it sharpens: 3.5-6.8
+mm), sharpening to beta 32 or 64 (less grey, 5.1-7.2 and 1.6-4.2 mm),
+starts with a visible ripple (+-0.05 on the density: 3.2-5.3 mm).
+Sharpening slower (`beta_every=20`) reaches higher, 8.3-10.3 mm in four of
+eight runs, but two runs failed to reach the stroke and two had one-node
+hinges; with `starts` it may be the better recipe, untested.
 
 Three things made it work, all now in `mechanism_nl.py`:
 

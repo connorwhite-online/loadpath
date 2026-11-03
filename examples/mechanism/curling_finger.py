@@ -45,6 +45,7 @@ def finger():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="curling-finger-out")
+    ap.add_argument("--starts", type=int, default=1, help="optimizer starts; the best thresholded design is kept")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     t0 = time.time()
@@ -57,7 +58,8 @@ def main():
         # a stiff actuator spring makes the force-driven linear optimum the stroke-driven one
         "linear design": optimize_mechanism(dom, NU, MechanismOptions(k_in=100 * E, **base)),
         "nonlinear design": optimize_mechanism_nonlinear(dom, NU, MechanismOptions(beta_every=10, max_iterations=160,
-                                                                                   **base), stroke=STROKE),
+                                                                                   **base), stroke=STROKE,
+                                                          starts=a.starts),
     }
     rows, grids = {}, {}
     for name, r in designs.items():
