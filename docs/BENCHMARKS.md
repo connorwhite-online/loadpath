@@ -485,35 +485,37 @@ four elements through the thickness), which reads beam theory to within 0.1%.
 "peak" is the largest von Mises over 30-70% of the length, each divided
 pointwise by beam theory, voxel over CalculiX: under 1 is the unsafe
 direction. "stiffness" is CalculiX's load-point displacement over the voxel
-one. `im` is the default element (Wilson's incompatible modes), `plain` the
-trilinear hex8 it replaced (LOADPATH_HEX8=plain). Run 2026-11-02, 23 s.
+one (over 1: the voxel model is stiffer). `im` is the default element
+(Wilson's incompatible modes), `plain` the trilinear hex8 it replaced
+(LOADPATH_HEX8=plain), `cut` the cut-cell model (`loadpath/cutcell.py`,
+verify's `resolution.cutCells`). Run 2026-11-03, about 30 s.
 
-| load | cells thick | angle | im peak / CalculiX | im stiffness / CalculiX | plain peak / CalculiX | plain stiffness / CalculiX |
-|---|---|---|---|---|---|---|
-| bending | 1 | 0 | 1.00 | 0.97 | 0.62 | 1.55 |
-| bending | 1 | 30 | 0.08 | 0.00 | 0.14 | 0.00 |
-| bending | 1 | 45 | 0.19 | 0.00 | 0.06 | 0.00 |
-| bending | 2 | 0 | 1.01 | 0.97 | 0.84 | 1.12 |
-| bending | 2 | 30 | 1.28 | 0.50 | 0.83 | 0.59 |
-| bending | 2 | 45 | 0.75 | 0.99 | 0.65 | 1.02 |
-| bending | 3 | 0 | 1.00 | 0.98 | 0.91 | 1.05 |
-| bending | 3 | 30 | 1.25 | 0.73 | 0.97 | 0.78 |
-| bending | 3 | 45 | 0.98 | 0.76 | 0.88 | 0.77 |
-| bending | 5 | 0 | 1.00 | 0.99 | 0.96 | 1.01 |
-| bending | 5 | 30 | 1.01 | 0.82 | 1.04 | 0.85 |
-| bending | 5 | 45 | 0.93 | 0.93 | 0.89 | 0.93 |
-| tension | 1 | 0 | 1.00 | 0.99 | 1.00 | 0.99 |
-| tension | 1 | 30 | 2.46 | 0.00 | 7.48 | 0.00 |
-| tension | 1 | 45 | 1.41 | 0.69 | 1.41 | 0.69 |
-| tension | 2 | 0 | 1.00 | 0.99 | 1.00 | 0.99 |
-| tension | 2 | 30 | 1.71 | 0.72 | 1.73 | 0.75 |
-| tension | 2 | 45 | 0.94 | 1.02 | 0.94 | 1.02 |
-| tension | 3 | 0 | 1.00 | 0.99 | 1.00 | 0.99 |
-| tension | 3 | 30 | 1.95 | 0.75 | 2.06 | 0.77 |
-| tension | 3 | 45 | 1.06 | 0.92 | 1.06 | 0.92 |
-| tension | 5 | 0 | 1.00 | 0.99 | 1.00 | 1.00 |
-| tension | 5 | 30 | 1.33 | 0.93 | 1.48 | 0.94 |
-| tension | 5 | 45 | 1.01 | 0.98 | 1.01 | 0.98 |
+| load | cells thick | angle | cut peak / CalculiX | cut stiffness / CalculiX | im peak / CalculiX | im stiffness / CalculiX | plain peak / CalculiX | plain stiffness / CalculiX |
+|---|---|---|---|---|---|---|---|---|
+| bending | 1 | 0 | 1.02 | 0.95 | 1.00 | 0.97 | 0.62 | 1.55 |
+| bending | 1 | 30 | 0.86 | 1.47 | 0.08 | 0.00 | 0.14 | 0.00 |
+| bending | 1 | 45 | 0.61 | 2.17 | 0.19 | 0.00 | 0.06 | 0.00 |
+| bending | 2 | 0 | 1.02 | 0.95 | 1.01 | 0.97 | 0.84 | 1.12 |
+| bending | 2 | 30 | 1.06 | 1.10 | 1.28 | 0.50 | 0.83 | 0.59 |
+| bending | 2 | 45 | 0.86 | 1.34 | 0.75 | 0.99 | 0.65 | 1.02 |
+| bending | 3 | 0 | 1.01 | 0.97 | 1.00 | 0.98 | 0.91 | 1.05 |
+| bending | 3 | 30 | 1.07 | 1.03 | 1.25 | 0.73 | 0.97 | 0.78 |
+| bending | 3 | 45 | 1.02 | 1.07 | 0.98 | 0.76 | 0.88 | 0.77 |
+| bending | 5 | 0 | 1.01 | 0.98 | 1.00 | 0.99 | 0.96 | 1.01 |
+| bending | 5 | 30 | 1.09 | 1.00 | 1.01 | 0.82 | 1.04 | 0.85 |
+| bending | 5 | 45 | 1.06 | 0.98 | 0.93 | 0.93 | 0.89 | 0.93 |
+| tension | 1 | 0 | 1.00 | 0.98 | 1.00 | 0.99 | 1.00 | 0.99 |
+| tension | 1 | 30 | 1.25 | 0.93 | 2.46 | 0.00 | 7.48 | 0.00 |
+| tension | 1 | 45 | 0.98 | 1.02 | 1.41 | 0.69 | 1.41 | 0.69 |
+| tension | 2 | 0 | 1.00 | 0.98 | 1.00 | 0.99 | 1.00 | 0.99 |
+| tension | 2 | 30 | 1.05 | 0.96 | 1.71 | 0.72 | 1.73 | 0.75 |
+| tension | 2 | 45 | 0.95 | 1.02 | 0.94 | 1.02 | 0.94 | 1.02 |
+| tension | 3 | 0 | 1.00 | 0.99 | 1.00 | 0.99 | 1.00 | 0.99 |
+| tension | 3 | 30 | 1.17 | 0.97 | 1.95 | 0.75 | 2.06 | 0.77 |
+| tension | 3 | 45 | 1.05 | 0.98 | 1.06 | 0.92 | 1.06 | 0.92 |
+| tension | 5 | 0 | 1.00 | 0.99 | 1.00 | 0.99 | 1.00 | 1.00 |
+| tension | 5 | 30 | 1.15 | 0.99 | 1.33 | 0.93 | 1.48 | 0.94 |
+| tension | 5 | 45 | 1.02 | 0.98 | 1.01 | 0.98 | 1.01 | 0.98 |
 
 - Grid-aligned members are exact with the incompatible modes at every
   thickness (the plain hex8 read bending stress 38/16/9/4% low at 1/2/3/5
@@ -521,9 +523,23 @@ trilinear hex8 it replaced (LOADPATH_HEX8=plain). Run 2026-11-02, 23 s.
   since 2026-11-02: a column one cell thick buckles at 1.00x Euler's load
   (plain: 1.54x, unsafe).
 - Angled members are a geometry problem, not an element one: the staircase
-  of whole cells is not the strip. A 1-cell strip at 30/45 degrees is cells
-  touching only along edges (no load path, the rows read ~0); at 2 cells and
-  45 degrees the staircase still reads bending 25% low, at 5 cells 7% low.
-  The optimizer's minimum member (1.4 mm, about 1.5 cells or more) keeps
-  designs out of the first; the tet confirm (crosscheck.py) reads the
-  delivered surface and covers the rest for safety-factor picks.
+  of whole cells is not the strip, so a member's thickness rounds to whole
+  cells. Two cells at 30 degrees read 1.28x (stiffness 0.50), at 45
+  degrees 0.75x; tension at 30 degrees up to 1.95x. A 1-cell strip at 30/45
+  degrees is cells touching only along edges (no load path, the rows read
+  ~0).
+- Cut cells (each cell's stiffness integrated over its solid share on a 4x
+  finer sub-grid, stress fitted on the true surface) read 0.95-1.09 in
+  bending and 0.95-1.17 in tension from 2 cells up, except two cells at 45
+  degrees (0.86): two cells across a diagonal strip are too few for a
+  trilinear cell to bend in. On a 2.5x finer grid, which verify's
+  thin-member submodels use, that case reads 0.97-1.01, and every 1.5-2
+  cell case 0.97-1.06 (the staircase there: 0.67-1.47).
+- On the eval parts (150k cells, the tet confirm's grid), against the P2
+  tet peak: whole cells read 1.22-1.49x on the arm link, bell crank, wall
+  bracket and GRIP wrist yoke, cut cells 0.93-1.12x; on the hook and MBB
+  beam both read ~1.65x (the tet peak's contact band leaves out what both
+  voxel models see). Verification takes 2-4x as long. The plate with a
+  hole (Peterson 81 MPa) reads 79-86 cut, 78-93 whole, over 0.7-1.4 mm cells.
+- Cut cells are opt-in (`resolution.cutCells`, or LOADPATH_CUT_CELLS=1)
+  until the eval suite has been run with them.

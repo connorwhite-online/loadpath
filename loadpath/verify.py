@@ -209,6 +209,9 @@ def nodal_stress(stiff, u, modulus, thermal=None):
     before the stress is formed."""
     from .fem import CORNERS, elastic_c, hex8_b
 
+    cg = getattr(stiff, "cutgrid", None)
+    if cg is not None:
+        return cg.nodal_stress(u, modulus, thermal)
     mesh = stiff.mesh
     c = elastic_c(1.0, stiff.nu)
     element = getattr(stiff, "element", None)
@@ -488,7 +491,8 @@ def _user_edges(study: Study, band: float):
 _MESH_QUERY = threading.Lock()
 
 
-def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None, edges=None):
+def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None, edges=None,
+                   cut=False):
     """Re-solve a small box around a global hotspot at a finer pitch, driven by
     the global displacement field on the box's cut faces (classic FE
     submodeling). Voxel stress converges only with about 8 cells across a
@@ -497,11 +501,18 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     from scipy.spatial import cKDTree
 
     lo, hi = center - half, center + half
+    cgrid = None
     with _MESH_QUERY:
-        solid, origin = voxelize(mesh, pitch, box=(lo, hi))
+        if cut:
+            from .cutcell import cut_from_mesh
+
+            cgrid = cut_from_mesh(mesh, pitch, study.elastic(mat), box=(lo, hi))
+            solid, origin = cgrid.solid_grid()
+        else:
+            solid, origin = voxelize(mesh, pitch, box=(lo, hi))
     if solid.sum() < 64:
         return None
-    sm = HexMesh(np.argwhere(solid), pitch, origin)
+    sm = cgrid.mesh if cgrid is not None else HexMesh(np.argwhere(solid), pitch, origin)
     blo = origin
     bhi = origin + np.asarray(solid.shape) * pitch
     eps = 0.25 * pitch
@@ -521,7 +532,7 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     up = (w[..., None] * ug).sum(axis=1).ravel()
     pd = np.repeat(driven, 3)
     st = Stiffness(sm, study.elastic(mat), np.zeros(sm.n_dof, bool))
-    k = st.assemble(np.full(sm.n_elem, mat.E)).tocsr()
+    k = (cgrid.assemble(st, mat.E) if cgrid is not None else st.assemble(np.full(sm.n_elem, mat.E))).tocsr()
     free = ~pd
     kff = k[free][:, free]
     rhs = -(k[free][:, pd] @ up)
@@ -548,7 +559,7 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     us = np.zeros(sm.n_dof)
     us[pd] = up
     us[free] = uf
-    vm = nodal_von_mises(st, us, mat.E)
+    vm = von_mises(cgrid.nodal_stress(us, mat.E)) if cgrid is not None else nodal_von_mises(st, us, mat.E)
     if case is not None and fp.any():
         # over the global grid's reach: a finer staircase is no smoother
         vm = _smooth_wetted(sm.node_xyz, vm, np.abs(fp.reshape(-1, 3)).sum(axis=1) > 0, hm.pitch)
@@ -629,9 +640,77 @@ def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
     return total
 
 
+def use_cut_cells(study, cut_cells=None) -> bool:
+    """Whether verification analyzes cut cells: the argument, else
+    LOADPATH_CUT_CELLS (1/0), else the study's resolution.cutCells."""
+    import os
+
+    if cut_cells is not None:
+        return bool(cut_cells)
+    env = os.environ.get("LOADPATH_CUT_CELLS", "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    if env in ("0", "false", "no", "off"):
+        return False
+    return bool((getattr(study, "raw", None) or {}).get("resolution", {}).get("cutCells", False))
+
+
+def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs):
+    """Solve the cut-cell model (cutcell.CutGrid) for each right-hand side:
+    the shared-matrix cells as usual, the cut cells' own matrices added
+    (assembled), or as the multigrid's extra operator, which its Galerkin
+    coarsening carries down exactly. Returns (stiffness object with
+    .cutgrid, displacements)."""
+    from .simp import _use_mg
+
+    hm = cg.mesh
+    if _use_mg(hm.n_elem):
+        from .mg import GridElasticity
+
+        extra = cg.cut_operator(moduli)
+        if springs is not None:
+            extra = (extra + e_mat * springs).tocsr()
+        stiff = GridElasticity(hm, nu, fixed, springs=extra, rtol=1e-6, maxiter=3000)
+        stiff.set_moduli(cg.full_moduli(moduli))
+    else:
+        stiff = Stiffness(hm, nu, fixed)
+        k = cg.assemble(stiff, moduli)
+        if springs is not None:
+            k = (k + e_mat * springs).tocsr()
+        solver = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
+        stiff.cutgrid = cg
+        return stiff, solver.solve_many(k, rhs)
+    stiff.cutgrid = cg
+    return stiff, stiff.solve_many(rhs)
+
+
+# cells through a member below which it gets a submodel (cut cells)
+_THIN_CELLS = 3.0
+
+
+def _thin_spots(hm, solid, origin, pitch, vm, body, peak, radius, taken, count=3):
+    """Hotspots on members under _THIN_CELLS cells thick reading at least
+    0.8 of the peak, at least 2 * radius from each other and from `taken`."""
+    edt = ndimage.distance_transform_edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1]
+    # a cell's member thickness: twice the largest distance to void nearby
+    thick = 2.0 * ndimage.maximum_filter(edt, size=5) - 0.5
+    thin_el = thick[tuple(hm.elem_ijk.T)] < _THIN_CELLS
+    thin = np.zeros(hm.n_nodes, bool)
+    thin[hm.enode[thin_el].ravel()] = True
+    cand = body & thin & (vm >= 0.8 * peak)
+    out = []
+    for i in np.argsort(-np.where(cand, vm, -1.0)):
+        if not cand[i] or len(out) >= count:
+            break
+        x = hm.node_xyz[i]
+        if all(np.linalg.norm(x - y) >= 2 * radius for y in list(taken) + out):
+            out.append(x)
+    return out
+
+
 def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
                 contact_band: float | None = None, refine: int = 3, fields: bool = False,
-                fractional: bool = False) -> dict:
+                fractional: bool = False, cut_cells: bool | None = None) -> dict:
     """Analyze a finished part (trimesh) against the study. Returns a JSON-able
     report. `contact_band` (mm) is how far from applied loads and supports
     stress is left out of the peak; it defaults to 1.5 analysis cells, and the
@@ -647,7 +726,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     the full modulus), so the readings move smoothly with the geometry
     rather than in whole-cell steps: for searches and live previews, whose
     neighbouring candidates must compare fairly; the delivered check is
-    whole cells."""
+    whole cells. `cut_cells` (default: the study's resolution.cutCells, or
+    LOADPATH_CUT_CELLS=1) analyzes the true boundary inside each cell
+    (cutcell.py): sub-cell stiffness, stress read on the surface, and
+    finer submodels on members under 3 cells thick; member thickness no
+    longer rounds to whole cells."""
     from .shapes import manifold_from_trimesh
 
     t0 = time.time()
@@ -703,7 +786,17 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         thin = min(t for _, t in study.shells)
         pitch = min(pitch, max(thin / _SHELL_CELLS, (vol / _SHELL_MAX_CELLS) ** (1.0 / 3.0)))
     share = None
-    if fractional:
+    cut = use_cut_cells(study, cut_cells) and not fractional
+    cg = None
+    if cut:
+        from .cutcell import cut_from_mesh
+
+        cg = cut_from_mesh(mesh, pitch, study.elastic(mat))
+        solid, origin = cg.solid_grid()
+        share = np.zeros(solid.shape)
+        share[tuple(cg.mesh.elem_ijk.T)] = cg.fill
+        report["cutCells"] = int(cg.cut.sum())
+    elif fractional:
         share, origin = voxelize(mesh, pitch, fractional=True)
         # a sliver under a twentieth of a cell adds nothing but conditioning
         solid = share >= 0.05
@@ -727,6 +820,9 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     if not keep_el.all():
         hm = HexMesh(elem_ijk[keep_el], pitch, origin)
         bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
+    if cg is not None:
+        cg = cg.restrict(keep_el)
+        hm = cg.mesh
     support_nodes, fixed = bc.support_nodes, bc.fixed
     kept_ijk = elem_ijk if keep_el.all() else elem_ijk[keep_el]
     fill = None if share is None else share[tuple(kept_ijk.T)]
@@ -775,6 +871,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     from .simp import _use_mg
 
     def solve(moduli, rhs):
+        if cg is not None:
+            return _solve_cut(cg, study.elastic(mat), fixed, bc.springs, mat.E, moduli, rhs)
         if fill is not None:
             # a part-filled cell is that share as stiff; its stress stays
             # the material's (nodal_stress at the full modulus)
@@ -866,10 +964,15 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         if refine and body.any():
             half = max(8.0 * pitch, 6.0)
             spots = list(_hotspots(hm.node_xyz, vm, body, peak, half, count=refine))
+            if cg is not None:
+                # members under 3 cells thick read up to ~15% low even cut
+                # (two cells across a diagonal strip are too few to bend
+                # in): the highest of them get a submodel too
+                spots += _thin_spots(hm, solid, origin, pitch, vm, body, peak, half, spots, count=refine)
 
             def sub(c, u=u, case=case, half=half, contact=contact):
                 return _submodel_peak(study, mesh, hm, u, c, half, pitch / 2.5, mat,
-                                      hm.node_xyz[contact], band, case, edges=edges)
+                                      hm.node_xyz[contact], band, case, edges=edges, cut=cg is not None)
             if len(spots) > 1:
                 # independent boxes, on threads (the solves release the GIL;
                 # amg_solver sets up one at a time, so the same numbers)

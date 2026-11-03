@@ -14,6 +14,7 @@ over a window away from the clamp and the load (30-70% of the length),
 divided pointwise by beam theory (6 F (s_F - s) / (w t^2), or F / (w t)).
 `ratio` is voxel / CalculiX on that peak: under 1 is the unsafe direction.
 `stiffness` is voxel / CalculiX on the load-point displacement.
+"cut" is the cut-cell model (cutcell.py, verify's resolution.cutCells).
 
     python -m loadpath.benchmarks.beams [--quick] [--out beams.json]
 """
@@ -73,23 +74,25 @@ class Strip:
         return 0.3 * self.L, 0.7 * self.L
 
 
-def voxel(strip: Strip, load: str, element: str | None = None) -> dict:
-    """The production voxel model of the strip (pitch 1)."""
+def voxel(strip: Strip, load: str, element: str | None = None, pitch: float = 1.0) -> dict:
+    """The production voxel model of the strip at `pitch` (cells; the strip
+    is t cells thick at pitch 1)."""
     lo3 = np.array([-strip.c, -strip.t / 2, 0.0])
     hi3 = np.array([strip.L, strip.t / 2, W])
     corners = strip.world(*np.array(np.meshgrid(*zip(lo3, hi3))).reshape(3, -1))
-    origin = np.floor(corners.min(0)) - 1.0
+    h = float(pitch)
+    origin = (np.floor(corners.min(0) / h) - 1.0) * h
     origin[2] = 0.0
-    dims = np.ceil(corners.max(0) - origin).astype(int) + 1
-    dims[2] = int(round(W))
+    dims = np.ceil((corners.max(0) - origin) / h).astype(int) + 1
+    dims[2] = int(round(W / h))
     ijk = np.argwhere(np.ones(dims, bool))
-    centres = origin + ijk + 0.5
+    centres = origin + (ijk + 0.5) * h
     ijk = ijk[strip.inside(centres)]
-    mesh = HexMesh(ijk, 1.0, origin)
+    mesh = HexMesh(ijk, h, origin)
     s_node = strip.local(mesh.node_xyz)[0]
     fixed = np.repeat(s_node < 0, 3)
     # end load: a uniform body force over the cells of the end zone
-    s_cell = strip.local(mesh.origin + mesh.elem_ijk + 0.5)[0]
+    s_cell = strip.local(mesh.origin + (mesh.elem_ijk + 0.5) * h)[0]
     zone = s_cell > strip.L - ZONE
     wn = np.bincount(mesh.enode[zone].ravel(), minlength=mesh.n_nodes) / (8.0 * zone.sum())
     f = (F * wn[:, None] * strip.direction(load)[None]).ravel()
@@ -106,6 +109,47 @@ def voxel(strip: Strip, load: str, element: str | None = None) -> dict:
     win = (s_node >= lo) & (s_node <= hi)
     return {"peak": float(np.max(vm[win] / strip.beam(load, s_node[win], s_f))),
             "displacement": float(f @ u) / F, "cells": int(mesh.n_elem), "element": st.element}
+
+
+def cut(strip: Strip, load: str, pitch: float = 1.0, n: int = 4) -> dict:
+    """The cut-cell model (cutcell.py) of the strip: sub-cells from the
+    exact strip, the stress read at the surface near it."""
+    from ..cutcell import CutGrid
+
+    h = float(pitch)
+    lo3 = np.array([-strip.c, -strip.t / 2, 0.0])
+    hi3 = np.array([strip.L, strip.t / 2, W])
+    corners = strip.world(*np.array(np.meshgrid(*zip(lo3, hi3))).reshape(3, -1))
+    origin = (np.floor(corners.min(0) / h) - 1.0) * h
+    origin[2] = 0.0
+    dims = np.ceil((corners.max(0) - origin) / h).astype(int) + 1
+    dims[2] = int(round(W / h))
+    fd = dims * n
+    g = [origin[a] + (np.arange(fd[a]) + 0.5) * h / n for a in range(3)]
+    pts = np.stack(np.meshgrid(*g, indexing="ij"), -1).reshape(-1, 3)
+    fine = strip.inside(pts).reshape(fd)
+    cg = CutGrid(fine, n, origin, h, NU)
+    mesh = cg.mesh
+    s_node = strip.local(mesh.node_xyz)[0]
+    fixed = np.repeat(s_node < 0, 3)
+    s_cell = strip.local(mesh.origin + (mesh.elem_ijk + 0.5) * h)[0]
+    zone = s_cell > strip.L - ZONE
+    wz = np.where(zone, cg.fill, 0.0)
+    wn = np.zeros(mesh.n_nodes)
+    np.add.at(wn, mesh.enode.ravel(), np.repeat(wz / 8.0, 8))
+    wn /= wz.sum()
+    f = (F * wn[:, None] * strip.direction(load)[None]).ravel()
+    s_f = float((s_cell * wz).sum() / wz.sum())
+    st = Stiffness(mesh, NU, fixed)
+    k = cg.assemble(st, E)
+    u = np.zeros(mesh.n_dof)
+    free = ~fixed
+    u[free] = spsolve(k[free][:, free].tocsc(), f[free])
+    vm = von_mises(cg.nodal_stress(u, E))
+    lo, hi = strip.window
+    win = (s_node >= lo) & (s_node <= hi)
+    return {"peak": float(np.max(vm[win] / strip.beam(load, s_node[win], s_f))),
+            "displacement": float(f @ u) / F, "cells": int(mesh.n_elem), "cutCells": int(cg.cut.sum())}
 
 
 # C3D20 node order on the doubled grid: corners, bottom edges, top edges, verticals
@@ -175,7 +219,7 @@ def calculix(strip: Strip, load: str, through: int = 4, along: float = 0.5) -> d
             "displacement": d, "elements": int(len(conn))}
 
 
-def run(thick=(1, 2, 3, 5), angles=(0, 30, 45), loads=("bending", "tension"), elements=("im", "plain")):
+def run(thick=(1, 2, 3, 5), angles=(0, 30, 45), loads=("bending", "tension"), elements=("cut", "im", "plain")):
     rows = []
     for load in loads:
         for t in thick:
@@ -184,7 +228,7 @@ def run(thick=(1, 2, 3, 5), angles=(0, 30, 45), loads=("bending", "tension"), el
                 ref = calculix(strip, load)
                 row = {"load": load, "t": t, "theta": th, "calculix": ref}
                 for el in elements:
-                    v = voxel(strip, load, el)
+                    v = cut(strip, load) if el == "cut" else voxel(strip, load, el)
                     v["ratio"] = v["peak"] / ref["peak"]
                     v["stiffness"] = ref["displacement"] / v["displacement"]
                     row[el] = v
@@ -194,7 +238,7 @@ def run(thick=(1, 2, 3, 5), angles=(0, 30, 45), loads=("bending", "tension"), el
     return rows
 
 
-def table(rows, elements=("im", "plain")) -> str:
+def table(rows, elements=("cut", "im", "plain")) -> str:
     head = "| load | cells thick | angle | " + " | ".join(
         f"{el} peak / CalculiX | {el} stiffness / CalculiX" for el in elements) + " |"
     out = [head, "|" + "---|" * (3 + 2 * len(elements))]

@@ -743,6 +743,14 @@ STUDY_SCHEMA = {
                                                          "made of one-cell walls can come out several "
                                                          "times softer than the optimizer's model (the "
                                                          "camera boom: 16x)."},
+                                      "cutCells": {
+                                          "type": "boolean",
+                                          "description": "Verify on cut cells: each cell the part's surface "
+                                                         "cuts gets the stiffness of its solid share, stress is "
+                                                         "read on the true surface, and members under 3 cells "
+                                                         "thick get a finer submodel. Member thickness then no "
+                                                         "longer rounds to whole cells (a 2-cell member at 45 "
+                                                         "degrees read bending 25% low). Off by default."},
                                       "pitchStarts": {
                                           "oneOf": [{"type": "integer", "minimum": 1, "maximum": 5},
                                                     {"const": "auto"}],
