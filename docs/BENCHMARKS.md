@@ -469,3 +469,61 @@ At equal volume loadpath's output is within 1-2% of the reference's: +2.0% on
 the inverter and +0.9% on the gripper, black and white. The robust
 (eroded/dilated) option gives up 3-4% for designs with no one-node hinges.
 Full table and the TPU gripper in [MECHANISMS.md](MECHANISMS.md).
+
+## Thin members against CalculiX
+
+```
+python -m loadpath.benchmarks.beams [--quick] [--out beams.json]
+```
+
+[`loadpath/benchmarks/beams.py`](../loadpath/benchmarks/beams.py): strips 1, 2,
+3 and 5 cells thick, at 0, 30 and 45 degrees to the voxel grid, clamped at
+one end, under a tip shear (bending) or a tip pull (tension). The voxel model
+is the production one (cells whose centre is inside the strip, `fem.Stiffness`,
+`verify.nodal_stress`); the reference is CalculiX on the exact strip (C3D20,
+four elements through the thickness), which reads beam theory to within 0.1%.
+"peak" is the largest von Mises over 30-70% of the length, each divided
+pointwise by beam theory, voxel over CalculiX: under 1 is the unsafe
+direction. "stiffness" is CalculiX's load-point displacement over the voxel
+one. `im` is the default element (Wilson's incompatible modes), `plain` the
+trilinear hex8 it replaced (LOADPATH_HEX8=plain). Run 2026-11-02, 23 s.
+
+| load | cells thick | angle | im peak / CalculiX | im stiffness / CalculiX | plain peak / CalculiX | plain stiffness / CalculiX |
+|---|---|---|---|---|---|---|
+| bending | 1 | 0 | 1.00 | 0.97 | 0.62 | 1.55 |
+| bending | 1 | 30 | 0.08 | 0.00 | 0.14 | 0.00 |
+| bending | 1 | 45 | 0.19 | 0.00 | 0.06 | 0.00 |
+| bending | 2 | 0 | 1.01 | 0.97 | 0.84 | 1.12 |
+| bending | 2 | 30 | 1.28 | 0.50 | 0.83 | 0.59 |
+| bending | 2 | 45 | 0.75 | 0.99 | 0.65 | 1.02 |
+| bending | 3 | 0 | 1.00 | 0.98 | 0.91 | 1.05 |
+| bending | 3 | 30 | 1.25 | 0.73 | 0.97 | 0.78 |
+| bending | 3 | 45 | 0.98 | 0.76 | 0.88 | 0.77 |
+| bending | 5 | 0 | 1.00 | 0.99 | 0.96 | 1.01 |
+| bending | 5 | 30 | 1.01 | 0.82 | 1.04 | 0.85 |
+| bending | 5 | 45 | 0.93 | 0.93 | 0.89 | 0.93 |
+| tension | 1 | 0 | 1.00 | 0.99 | 1.00 | 0.99 |
+| tension | 1 | 30 | 2.46 | 0.00 | 7.48 | 0.00 |
+| tension | 1 | 45 | 1.41 | 0.69 | 1.41 | 0.69 |
+| tension | 2 | 0 | 1.00 | 0.99 | 1.00 | 0.99 |
+| tension | 2 | 30 | 1.71 | 0.72 | 1.73 | 0.75 |
+| tension | 2 | 45 | 0.94 | 1.02 | 0.94 | 1.02 |
+| tension | 3 | 0 | 1.00 | 0.99 | 1.00 | 0.99 |
+| tension | 3 | 30 | 1.95 | 0.75 | 2.06 | 0.77 |
+| tension | 3 | 45 | 1.06 | 0.92 | 1.06 | 0.92 |
+| tension | 5 | 0 | 1.00 | 0.99 | 1.00 | 1.00 |
+| tension | 5 | 30 | 1.33 | 0.93 | 1.48 | 0.94 |
+| tension | 5 | 45 | 1.01 | 0.98 | 1.01 | 0.98 |
+
+- Grid-aligned members are exact with the incompatible modes at every
+  thickness (the plain hex8 read bending stress 38/16/9/4% low at 1/2/3/5
+  cells). Large deflection and buckling (nonlinear.py) use the same element
+  since 2026-11-02: a column one cell thick buckles at 1.00x Euler's load
+  (plain: 1.54x, unsafe).
+- Angled members are a geometry problem, not an element one: the staircase
+  of whole cells is not the strip. A 1-cell strip at 30/45 degrees is cells
+  touching only along edges (no load path, the rows read ~0); at 2 cells and
+  45 degrees the staircase still reads bending 25% low, at 5 cells 7% low.
+  The optimizer's minimum member (1.4 mm, about 1.5 cells or more) keeps
+  designs out of the first; the tet confirm (crosscheck.py) reads the
+  delivered surface and covers the rest for safety-factor picks.

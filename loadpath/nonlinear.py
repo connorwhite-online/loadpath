@@ -27,12 +27,13 @@ design from mechanism.py: the solid cells of the result, the real input
 force, and the output's travel compared with what the linear model
 promised.
 
-Linear hexahedra are stiff in bending (shear locking), and more so with few
-cells across a member (fem.py's linear analysis condenses incompatible
-bubble modes to remove it; this total-Lagrangian element is still the plain
-trilinear one, and its linear comparisons here use the plain element too): about 3-4 cells across a flexure keeps the error to
-a few percent of beam theory; one or two cells overestimate its stiffness
-badly. Validation against the elastica and Euler's column is in
+Plain linear hexahedra are stiff in bending (shear locking): one or two
+cells across a flexure overestimate its stiffness badly. As in fem.py, the
+element carries Wilson's nine incompatible bubble modes, here as an enhanced
+displacement gradient (Simo-Armero) condensed element by element at each
+Newton iteration, which removes the locking; at small strain it is fem.py's
+linear element exactly. `element="plain"` (or LOADPATH_HEX8=plain) gives the
+old trilinear element. mechanism_nl.py's optimizer still uses the plain one. Validation against the elastica and Euler's column is in
 tests/test_nonlinear.py.
 
 Units as everywhere in loadpath: mm, N, MPa.
@@ -45,7 +46,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 
-from .fem import CORNERS, HexMesh, Solver, Stiffness, von_mises
+from .fem import CORNERS, HexMesh, Solver, Stiffness, _hex8_parts, hex8_element, von_mises
 
 __all__ = ["NonlinearResult", "BucklingResult", "Tendon", "nodes_near", "solve_nonlinear", "linear_buckling", "stroke_mechanism",
            "solid_submesh", "verify_mechanism"]
@@ -85,6 +86,13 @@ _I3 = np.eye(3)
 # Products of shape function gradients at each Gauss point, for the tangent
 # as one matrix product: W[g][(l, n), (a, b)] = dN_a/dX_l dN_b/dX_n (unit cube).
 _W = np.stack([np.einsum("al,bn->lnab", g, g).reshape(9, 64) for g in _GAUSS])
+# The incompatible-mode element: three more "nodes" whose rows are the
+# gradients of the bubbles 1 - xi_m^2 on the unit cube (-4 xi_m along axis m;
+# fem._b_bubble's modes), so their amplitudes alpha (3 modes x 3 components)
+# enter F like nodal displacements.
+_GAUSS_IM = [np.vstack([dn, np.diag(-4.0 * np.array(p))]) for dn, p in
+             zip(_GAUSS, [(a, b, c) for a in (-_G, _G) for b in (-_G, _G) for c in (-_G, _G)])]
+_W_IM = np.stack([np.einsum("al,bn->lnab", g, g).reshape(9, 121) for g in _GAUSS_IM])
 
 
 def _material(F, nu, kind):
@@ -109,24 +117,25 @@ def _material(F, nu, kind):
     return S, A
 
 
-def _element(ue, h, nu, kind, tangent):
-    """Internal force (m, 24) and tangent (m, 24, 24) at unit modulus for
-    elements with nodal displacements ue (m, 8, 3), and the smallest volume
-    ratio J seen at a Gauss point (<= 0 means an element turned inside out).
+def _gauss_terms(ux, grads, wmat, h, nu, kind, tangent):
+    """Internal force (m, 3n) and tangent (m, 3n, 3n) at unit modulus for
+    elements with generalized displacements ux (m, n, 3), whose deformation
+    gradient at Gauss point g is I + sum_a ux_a (x) grads[g][a] / h, and the
+    smallest volume ratio J seen at a Gauss point.
 
-    With P = F S the first Piola-Kirchhoff stress, f_ai = sum_g w P_il dN_al,
-    and the tangent is K_aibj = sum_g w dN_al Q_iljn dN_bn with
+    With P = F S the first Piola-Kirchhoff stress, f_ai = sum_g w P_il G_al,
+    and the tangent is K_aibj = sum_g w G_al Q_iljn G_bn with
     Q_iljn = F_ik A_klpn F_jp + S_ln delta_ij (material + geometric): a
-    (m*9, 9) x (9, 64) matrix product per Gauss point instead of 24x24 products
-    per element (all eight stacked into one)."""
-    m = len(ue)
+    (m*9, 9) x (9, n^2) matrix product per Gauss point instead of 3n x 3n
+    products per element (all eight stacked into one)."""
+    m, n = ux.shape[:2]
     w = h ** 3 / 8.0
-    fint = np.zeros((m, 8, 3))
+    fint = np.zeros((m, n, 3))
     qall = np.empty((m, 9, 8, 9)) if tangent else None
     jmin = np.inf
-    for g, dn0 in enumerate(_GAUSS):
+    for g, dn0 in enumerate(grads):
         dn = dn0 / h
-        F = _I3 + np.einsum("mai,aj->mij", ue, dn)
+        F = _I3 + np.einsum("mai,aj->mij", ux, dn)
         jmin = min(jmin, float(np.linalg.det(F).min()))
         S, A = _material(F, nu, kind)
         P = F @ S
@@ -138,27 +147,67 @@ def _element(ue, h, nu, kind, tangent):
             qall[:, :, g, :] = Q.reshape(m, 9, 9)
     kt = None
     if tangent:
-        kq = qall.reshape(m * 9, 72) @ (_W.reshape(72, 64) * (w / h ** 2))
-        kt = kq.reshape(m, 3, 3, 8, 8).transpose(0, 3, 1, 4, 2).reshape(m, 24, 24)
-    return fint.reshape(m, 24), kt, jmin
+        kq = qall.reshape(m * 9, 72) @ (wmat.reshape(72, n * n) * (w / h ** 2))
+        kt = kq.reshape(m, 3, 3, n, n).transpose(0, 3, 1, 4, 2).reshape(m, 3 * n, 3 * n)
+    return fint.reshape(m, 3 * n), kt, jmin
 
 
-def _assemble(stiff, u, mod, nu, kind, tangent=True):
+def _element(ue, h, nu, kind, tangent, alpha=None):
+    """Internal force (m, 24) and tangent (m, 24, 24) at unit modulus for
+    elements with nodal displacements ue (m, 8, 3), and the smallest volume
+    ratio J seen at a Gauss point (<= 0 means an element turned inside out).
+
+    alpha None: the plain trilinear hexahedron. Otherwise (m, 3, 3), the
+    amplitudes of the nine incompatible modes (fem.hex8_element's bubbles,
+    here as an enhanced displacement gradient, Simo-Armero): the element
+    takes one local Newton step on them, condenses them out, and returns
+    (fint, kt, jmin, alpha_new, R_alpha (m, 9)). fint is the condensed
+    residual R_u - K_ua K_aa^-1 R_a, i.e. R_u at alpha_new to first order,
+    so the global Newton on u stays quadratic. At u = 0 the condensed
+    tangent is fem.py's linear incompatible-mode element exactly."""
+    if alpha is None:
+        return _gauss_terms(ue, _GAUSS, _W, h, nu, kind, tangent)
+    m = len(ue)
+    ux = np.concatenate([ue, alpha], axis=1)               # (m, 11, 3)
+    fx, kx, jmin = _gauss_terms(ux, _GAUSS_IM, _W_IM, h, nu, kind, True)
+    ru, ra = fx[:, :24], fx[:, 24:]
+    kua, kaa = kx[:, :24, 24:], kx[:, 24:, 24:]
+    sol = np.linalg.solve(kaa, np.concatenate([ra[:, :, None], kua.transpose(0, 2, 1)], axis=2))
+    da, kaa_kau = sol[:, :, 0], sol[:, :, 1:]
+    fint = ru - np.einsum("mij,mj->mi", kua, da)
+    kt = kx[:, :24, :24] - kua @ kaa_kau if tangent else None
+    alpha_new = alpha - da.reshape(m, 3, 3)
+    return fint, kt, jmin, alpha_new, ra
+
+
+def _assemble(stiff, u, mod, nu, kind, tangent=True, alpha=None):
+    """Global internal force and tangent; with alpha (n_elem, 3, 3), the
+    incompatible-mode element, also (alpha_new, |R_alpha|) with R_alpha
+    weighted by the element moduli as the forces are."""
     mesh = stiff.mesh
     fint = np.zeros(mesh.n_dof)
     data = np.zeros(stiff.nnz) if tangent else None
     jmin = np.inf
+    a_new = None if alpha is None else np.empty_like(alpha)
+    ra2 = 0.0
     for s in range(0, mesh.n_elem, _CHUNK):
         el = np.arange(s, min(s + _CHUNK, mesh.n_elem))
         edof = mesh.edof[el]
-        fe, ke, j = _element(u[edof].reshape(-1, 8, 3), mesh.pitch, nu, kind, tangent)
-        jmin = min(jmin, j)
+        ue = u[edof].reshape(-1, 8, 3)
         me = mod[el]
+        if alpha is None:
+            fe, ke, j = _element(ue, mesh.pitch, nu, kind, tangent)
+        else:
+            fe, ke, j, a_new[el], ra = _element(ue, mesh.pitch, nu, kind, tangent, alpha[el])
+            ra2 += float(((ra * me[:, None]) ** 2).sum())
+        jmin = min(jmin, j)
         np.add.at(fint, edof.ravel(), (fe * me[:, None]).ravel())
         if tangent:
             stiff.add_elements(data, ke * me[:, None, None], el)
     k = stiff.finish(data) if tangent else None
-    return fint, k, jmin
+    if alpha is None:
+        return fint, k, jmin
+    return fint, k, jmin, a_new, np.sqrt(ra2)
 
 
 def _splu(k):
@@ -300,7 +349,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                     max_step: float = 0.25, min_step: float = 1e-4, rtol: float = 1e-7, max_newton: int = 25,
                     springs: np.ndarray | None = None, tendons: list | None = None, stability: bool = True,
                     probes: dict | None = None,
-                    on_step=None) -> NonlinearResult:
+                    on_step=None, element: str | None = None) -> NonlinearResult:
     """Geometrically nonlinear static solve.
 
     modulus: E, scalar or per element (MPa). fixed: bool per dof, held at 0.
@@ -320,6 +369,10 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     along that mode and finds the stable state nearby, as a real part would
     (a print is never perfectly straight).
 
+    element: "im" (fem.hex8_element's default) or "plain". The incompatible
+    modes take bending without shear locking, so one or two cells across a
+    flexure no longer read it too stiff.
+
     Each history entry has the load factor, Newton iterations, the probes,
     with prescribed dofs the reaction there (the force the actuator pushes
     with, N, as a 3-vector summed over the prescribed nodes), and with
@@ -333,8 +386,11 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     pd, pv = (np.zeros(0, np.int64), np.zeros(0)) if prescribed is None else \
         (np.asarray(prescribed[0], np.int64), np.asarray(prescribed[1], float))
     cons[pd] = True
-    stiff = Stiffness(mesh, nu, cons, element="plain")
+    element = element or hex8_element()
+    stiff = Stiffness(mesh, nu, cons, element=element)
     lin = _Linear(mesh)
+    # incompatible-mode amplitudes per element at the last converged state
+    alpha = np.zeros((mesh.n_elem, 3, 3)) if element == "im" else None
     probes = probes or {}
     pnodes = np.unique(pd // 3)
     size = float(np.linalg.norm(np.ptp(mesh.node_xyz, axis=0)))
@@ -354,10 +410,15 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     for t in tendons:
         t._setup(mesh)
 
-    def newton(v, target):
+    def newton(v, target, a=None):
         rnorm0 = None
+        a = alpha if a is None else a
         for its in range(1, max_newton + 1):
-            fint, k, jmin = _assemble(stiff, v, mod, nu, material)
+            ra = 0.0
+            if a is None:
+                fint, k, jmin = _assemble(stiff, v, mod, nu, material)
+            else:
+                fint, k, jmin, a, ra = _assemble(stiff, v, mod, nu, material, alpha=a)
             if not np.isfinite(jmin) or jmin <= 0:
                 return None
             if spr is not None:
@@ -372,9 +433,9 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             r = fext - fint
             r[cons] = 0.0
             ref = max(np.linalg.norm(fext), np.linalg.norm(fint[pd]) if len(pd) else 0.0, 1e-30)
-            rnorm = np.linalg.norm(r)
+            rnorm = np.hypot(np.linalg.norm(r), ra)
             if rnorm <= rtol * ref:
-                return v, its, fint, k
+                return v, its, fint, k, a
             if rnorm0 is None:
                 rnorm0 = rnorm
             elif its > 6 and rnorm > rnorm0:
@@ -415,7 +476,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                 break
             dlam *= 0.5
             continue
-        v, its, fint, k = out
+        v, its, fint, k, a_conv = out
         rec = {"loadFactor": target, "newton": its}
         if stability:
             lmin, phi = lin.lowest_mode(k)
@@ -450,7 +511,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                                 found = o, l2
                                 break
                     if found is not None:
-                        (v, its2, fint, k), l2 = found
+                        (v, its2, fint, k, a_conv), l2 = found
                         rec["newton"] += its2
                         rec["branchSwitch"] = True
                         rec["lowestEigenvalue"] = l2
@@ -459,6 +520,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                     rec["unstable"] = True
         du_prev, dlam_prev = (None if rec.get("branchSwitch") else v - u), dlam
         u, lam = v, target
+        alpha = a_conv
         for name, wv in probes.items():
             rec[name] = float(wv @ u)
         if len(pd):
@@ -490,36 +552,49 @@ class BucklingResult:
 
 def _geometric(stiff, u, mod, nu):
     """Geometric stiffness of the linear stresses in displacement u (fixed
-    dofs cleared, zero on their diagonal)."""
+    dofs cleared, zero on their diagonal). With the incompatible-mode
+    element the bubbles carry their linear amplitudes (R u) both in the
+    stresses and in the mode shapes: Kg = T^T Kg_ext T, T = [I; R]."""
     mesh = stiff.mesh
     h, w = mesh.pitch, mesh.pitch ** 3 / 8.0
     lam, mu = _lame(nu)
+    im = getattr(stiff, "element", "plain") == "im"
+    grads, wmat, n = (_GAUSS_IM, _W_IM, 11) if im else (_GAUSS, _W, 8)
+    if im:
+        r = _hex8_parts(nu, "im")[1]                       # (9, 24): amplitudes 3*mode + component
+        t = np.vstack([np.eye(24), r])                     # (33, 24)
     data = np.zeros(stiff.nnz)
     for s in range(0, mesh.n_elem, _CHUNK):
         el = np.arange(s, min(s + _CHUNK, mesh.n_elem))
         m = len(el)
-        ue = u[mesh.edof[el]].reshape(m, 8, 3)
-        kq = np.zeros((m, 64))
-        for g, dn0 in enumerate(_GAUSS):
-            grad = np.einsum("mai,aj->mij", ue, dn0 / h)
+        ue = u[mesh.edof[el]].reshape(m, 24)
+        ux = (ue @ t.T if im else ue).reshape(m, n, 3)
+        kq = np.zeros((m, n * n))
+        for g, dn0 in enumerate(grads):
+            grad = np.einsum("mai,aj->mij", ux, dn0 / h)
             eps = 0.5 * (grad + grad.transpose(0, 2, 1))
             sig = (lam * np.trace(eps, axis1=1, axis2=2)[:, None, None] * _I3 + 2 * mu * eps) * mod[el, None, None]
-            kq += (w / h ** 2) * (sig.reshape(m, 9) @ _W[g])
-        kg = np.einsum("mab,ij->maibj", kq.reshape(m, 8, 8), _I3).reshape(m, 24, 24)
+            kq += (w / h ** 2) * (sig.reshape(m, 9) @ wmat[g])
+        kg = np.einsum("mab,ij->maibj", kq.reshape(m, n, n), _I3).reshape(m, 3 * n, 3 * n)
+        if im:
+            kg = t.T @ kg @ t
         stiff.add_elements(data, kg, el)
     return stiff.finish(data, diag=0.0)
 
 
 def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force: np.ndarray,
-                    n_modes: int = 3, springs: np.ndarray | None = None) -> BucklingResult:
+                    n_modes: int = 3, springs: np.ndarray | None = None,
+                    element: str | None = None) -> BucklingResult:
     """Smallest positive load factors lambda at which lambda * force buckles
     the part (linear eigenvalue buckling: exact for a perfect column, an
     upper bound for real parts with imperfections; take a margin of 2-3 on
     printed slender members). Below 1, the load as given buckles it."""
     mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,)).copy()
-    # the plain hex8, as solve_nonlinear's element, so the load factor and
-    # the post-buckling path it seeds are one model's
-    stiff = Stiffness(mesh, nu, fixed, element="plain")
+    # solve_nonlinear's element (incompatible modes by default), so the load
+    # factor and the post-buckling path it seeds are one model's; the plain
+    # hex8 shear-locks, which put the load of a column one / two cells thick
+    # 54% / 14% above Euler's (incompatible modes: within 0.3%)
+    stiff = Stiffness(mesh, nu, fixed, element=element)
     k = stiff.assemble(mod)
     if springs is not None:
         k = (k + sp.diags(np.where(fixed, 0.0, springs))).tocsr()
@@ -611,7 +686,7 @@ def verify_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, input
     sd = _spring_diag(f, k_in, sub.n_dof) + _spring_diag(lo, k_out, sub.n_dof)
     sd[fx] = 0.0
     # the linear answer on the nonlinear element's own small-strain limit
-    stiff = Stiffness(sub, nu, fx, element="plain")
+    stiff = Stiffness(sub, nu, fx)
     k = (stiff.assemble(np.full(sub.n_elem, modulus)) + sp.diags(sd)).tocsr()
     ul = _Linear(sub).solve(k, np.where(fx, 0.0, f))
     report["linearOutput"] = float(lw @ ul)
@@ -678,8 +753,8 @@ def stroke_mechanism(domain, xphys: np.ndarray, modulus: float, nu: float, strok
     # linear answer on the same mesh: K u = 0 with the input moved
     cons = fx.copy()
     cons[pd] = True
-    stiff = Stiffness(sub, nu, cons, element="plain")
-    k_free = Stiffness(sub, nu, np.zeros(sub.n_dof, bool), element="plain").assemble(np.full(sub.n_elem, modulus))
+    stiff = Stiffness(sub, nu, cons)
+    k_free = Stiffness(sub, nu, np.zeros(sub.n_dof, bool)).assemble(np.full(sub.n_elem, modulus))
     kc = (stiff.assemble(np.full(sub.n_elem, modulus)) + sp.diags(np.where(cons, 0.0, sd))).tocsr()
     up = np.zeros(sub.n_dof)
     up[pd] = pv

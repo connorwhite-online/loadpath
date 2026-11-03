@@ -69,16 +69,47 @@ def test_tangent_matches_finite_differences():
         assert np.abs(kn - k[0]).max() < 1e-5 * np.abs(k).max(), kind
 
 
+def test_incompatible_mode_tangent_matches_finite_differences():
+    # the condensed tangent is the derivative of the condensed internal
+    # force (bubble amplitudes in local equilibrium), and at u = 0 it is
+    # fem.py's linear incompatible-mode element
+    from loadpath.fem import hex8_ke
+    h = 0.7
+    z = _element(np.zeros((1, 8, 3)), h, NU, "neo-hookean", True, np.zeros((1, 3, 3)))
+    assert np.allclose(z[1][0], hex8_ke(NU, "im") * h, atol=1e-14)
+    rng = np.random.default_rng(1)
+    for kind in ("neo-hookean", "svk"):
+        ue = rng.normal(size=(1, 8, 3)) * 0.1
+
+        def condensed(u, a, tangent):
+            for _ in range(30):
+                out = _element(u, h, NU, kind, tangent, a)
+                a = out[3]
+            return out, a
+
+        (f, k, _, _, ra), a = condensed(ue, np.zeros((1, 3, 3)), True)
+        assert np.abs(ra).max() < 1e-12
+        kn = np.zeros((24, 24))
+        for d in range(24):
+            du = np.zeros(24)
+            du[d] = 1e-6
+            fp = condensed(ue + du.reshape(1, 8, 3), a, False)[0][0][0]
+            fm = condensed(ue - du.reshape(1, 8, 3), a, False)[0][0][0]
+            kn[:, d] = (fp - fm) / 2e-6
+        assert np.abs(kn - k[0]).max() < 1e-6 * np.abs(k).max(), kind
+
+
 def test_small_load_matches_linear():
     m, fixed, tip = bar()
     f = tip_vector(m, tip, 1, 1e-3 * E * I / L ** 2)
-    st = Stiffness(m, NU, fixed, element="plain")   # the nonlinear element's own linear limit
     from scipy.sparse.linalg import spsolve
-    ul = spsolve(st.assemble(np.full(m.n_elem, E)).tocsc(), f)
-    r = solve_nonlinear(m, NU, E, fixed, f, steps=1)
-    assert r.converged
-    vl, vn = ul[3 * tip + 1].mean(), r.u[3 * tip + 1].mean()
-    assert abs(vn / vl - 1) < 1e-3, (vn, vl)
+    for element in ("im", "plain"):
+        st = Stiffness(m, NU, fixed, element=element)   # the nonlinear element's own linear limit
+        ul = spsolve(st.assemble(np.full(m.n_elem, E)).tocsc(), f)
+        r = solve_nonlinear(m, NU, E, fixed, f, steps=1, element=element)
+        assert r.converged
+        vl, vn = ul[3 * tip + 1].mean(), r.u[3 * tip + 1].mean()
+        assert abs(vn / vl - 1) < 1e-3, (element, vn, vl)
 
 
 def test_cantilever_large_deflection_matches_elastica():
@@ -86,21 +117,23 @@ def test_cantilever_large_deflection_matches_elastica():
     w_v = tip_vector(m, tip, 1, 1.0)
     w_u = tip_vector(m, tip, 0, 1.0)
     # linear FE at unit load: its ratio to beam theory is the element's
-    # bending error (shear locking, ~4% at four cells through the thickness)
-    st = Stiffness(m, NU, fixed, element="plain")   # the nonlinear element's own linear limit
+    # bending error (the plain hex8 shear-locked ~4% at four cells through
+    # the thickness; with the incompatible modes it is beam theory plus a
+    # little shear deflection)
+    st = Stiffness(m, NU, fixed)   # the nonlinear element's own linear limit
     from scipy.sparse.linalg import spsolve
     lin = spsolve(st.assemble(np.full(m.n_elem, E)).tocsc(), tip_vector(m, tip, 1, 1.0))[3 * tip + 1].mean()
     lock = lin / (L ** 3 / (3 * E * I))
-    assert 0.94 < lock <= 1.0, lock
+    assert 0.995 < lock <= 1.02, lock
     for alpha in (1.0, 3.0):
         P = alpha * E * I / L ** 2
         r = solve_nonlinear(m, NU, E, fixed, tip_vector(m, tip, 1, P), steps=4, probes={"v": w_v, "u": w_u})
         assert r.converged, r.message
         v, u = r.history[-1]["v"] / L, -r.history[-1]["u"] / L
         ua, va = elastica_tip(alpha)
-        # within the element's own bending error of the exact elastica ...
-        assert abs(v / va - 1) < 0.05, (alpha, v, va)
-        assert abs(u / ua - 1) < 0.08, (alpha, u, ua)
+        # within ~1% of the exact elastica (the plain element was 5-8% off) ...
+        assert abs(v / va - 1) < 0.015, (alpha, v, va)
+        assert abs(u / ua - 1) < 0.03, (alpha, u, ua)
         # ... and the nonlinear stiffening itself to about 3%
         assert abs((v / (lin * P / L)) / (va / (alpha / 3)) - 1) < 0.03, (alpha, v, va)
 
@@ -122,7 +155,7 @@ def test_column_buckles_at_euler_and_bends_like_the_elastica():
     m, fixed, tip = bar()
     pcr = np.pi ** 2 * E * I / (4 * L ** 2)
     b = linear_buckling(m, NU, E, fixed, tip_vector(m, tip, 0, -1.0), n_modes=2)
-    assert abs(b.factors[0] / pcr - 1) < 0.05, (b.factors, pcr)
+    assert abs(b.factors[0] / pcr - 1) < 0.02, (b.factors, pcr)
     # the mode is a sideways sway, largest at the tip
     mode = b.modes[0].reshape(-1, 3)
     assert np.abs(mode[tip, 1:]).max() > 0.9
@@ -144,6 +177,28 @@ def test_column_buckles_at_euler_and_bends_like_the_elastica():
         assert abs(got / sway - 1) < 0.03, (side, got, sway)
         assert r.history[-1]["lowestEigenvalue"] > 0
         assert side or any(h.get("branchSwitch") for h in r.history)
+
+
+def test_one_cell_strip_buckles_and_bends_like_beam_theory():
+    # one cell through the thickness: the plain hex8 shear-locked to 1.54x
+    # Euler's load and a tip deflection ~20% short of the elastica
+    Ls, t, b = 40, 1, 2
+    ijk = np.stack(np.meshgrid(np.arange(Ls), np.arange(t), np.arange(b), indexing="ij"), -1).reshape(-1, 3)
+    m = HexMesh(ijk, 1.0, np.zeros(3))
+    x = m.node_xyz
+    fixed = np.repeat(x[:, 0] < 1e-9, 3)
+    tip = np.nonzero(np.abs(x[:, 0] - Ls) < 1e-9)[0]
+    iy = b * t ** 3 / 12
+    pcr = np.pi ** 2 * E * iy / (4 * Ls ** 2)
+    got = linear_buckling(m, NU, E, fixed, tip_vector(m, tip, 0, -1.0), n_modes=1).factors[0]
+    assert abs(got / pcr - 1) < 0.01, got / pcr
+    assert linear_buckling(m, NU, E, fixed, tip_vector(m, tip, 0, -1.0), n_modes=1, element="plain").factors[0] > 1.4 * pcr
+    alpha = 3.0
+    r = solve_nonlinear(m, NU, E, fixed, tip_vector(m, tip, 1, alpha * E * iy / Ls ** 2), steps=4,
+                        probes={"v": tip_vector(m, tip, 1, 1.0)}, stability=False)
+    assert r.converged, r.message
+    va = elastica_tip(alpha)[1]
+    assert abs(r.history[-1]["v"] / Ls / va - 1) < 0.01, (r.history[-1]["v"] / Ls, va)
 
 
 def test_large_mesh_path_follows_a_perfect_column():
@@ -203,8 +258,8 @@ def test_tendon_curls_a_cantilever_into_an_arc():
     # rotation grows linearly along the beam (uniform curvature) ...
     rot = np.array([rotation(xs) for xs in (10, 20, 30, 40)])
     assert np.abs(rot / (rot[-1] * np.array([0.25, 0.5, 0.75, 1.0])) - 1).max() < 0.02, np.degrees(rot)
-    # ... to 90 degrees at the tip, less the element's ~4% bending error
-    assert abs(rot[-1] / theta - 0.965) < 0.02, np.degrees(rot[-1])
+    # ... to 90 degrees at the tip (the plain hex8 fell ~4% short)
+    assert abs(rot[-1] / theta - 1.0) < 0.01, np.degrees(rot[-1])
     # cable pulled in: the top fibre's shortening, bending plus compression
     travel = r.history[-1]["tendon0Travel"]
     expect = e * rot[-1] + tension * L / (E * T * B)

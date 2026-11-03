@@ -113,3 +113,20 @@ def test_multigrid_matches_assembled():
     g.set_moduli(np.full(mesh.n_elem, E))
     um = g.solve_many([f])[0]
     assert np.allclose(um, u, rtol=0, atol=1e-6 * np.abs(u).max())
+
+
+@pytest.mark.skipif(__import__("shutil").which("ccx") is None, reason="CalculiX (ccx) not installed")
+def test_thin_strips_match_calculix():
+    # loadpath/benchmarks/beams.py: grid-aligned strips one and three cells
+    # thick under a tip shear, peak bending stress against CalculiX on the
+    # exact strip (C3D20): the plain hex8 read the one-cell strip 38% low
+    from loadpath.benchmarks.beams import Strip, calculix, voxel
+
+    for t in (1, 3):
+        strip = Strip(t, 0)
+        ref = calculix(strip, "bending")
+        assert ref["peak"] == pytest.approx(1.0, abs=0.01)
+        im = voxel(strip, "bending", "im")
+        assert im["peak"] / ref["peak"] == pytest.approx(1.0, abs=0.02)
+        assert ref["displacement"] / im["displacement"] == pytest.approx(1.0, abs=0.04)
+    assert voxel(Strip(1, 0), "bending", "plain")["peak"] < 0.7
