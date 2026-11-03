@@ -41,9 +41,9 @@ to the delivered part, not to the optimizer's density field.
 
 ## Results
 
-Full tier, baseline saved at commit `d044a51` (2026-11-01), on a 4-core,
-15 GB cloud machine with two cases at a time. All 15 cases pass. Total
-compute time is about 4.3 hours.
+Full tier, baseline re-saved 2026-11-03 (main `6c97b57` plus the cast fix
+that ships with it), with tet confirms, on a 4-core, 15 GB cloud machine with
+two cases at a time. All 15 cases pass. Total compute time is about 5.8 hours.
 
 "Solid" is the design space filled solid: the mass of the envelope the
 part was allowed to occupy. It is an easy baseline. A part that is 90%
@@ -53,26 +53,34 @@ draw. For comparisons with real, conventionally designed parts, see the
 
 | Case | Mass | Solid envelope | SF (goal) | Deflection (limit) | What sets the size |
 | --- | --- | --- | --- | --- | --- |
-| arm-link | 54.2 g | 125.3 g | 10.5 (3) | 0.489 mm (0.5) | deflection |
-| arm-link-driven | 51.3 g | 124.5 g | 12.5 (3) | 0.362 mm (0.5) | search step* |
-| arm-link-cast | 67.8 g | 125.3 g | 20.5 (3) | 0.478 mm (0.5) | deflection, no undercuts |
-| arm-link-sandwich | 42.7 g | | 9.0 (3) | 0.438 mm (0.5) | fixed design (field graph) |
-| bell-crank | 22.0 g | 150.7 g | 3.01 (3) | 0.090 mm (0.1) | stress |
-| grip-turret | 142.1 g | 1651 g | 2.45 (2) | 0.767 mm | interfaces (see below) |
-| grip-upper-arm | 208.1 g | 1692 g | 5.83 (2) | 0.515 mm (0.54) | deflection |
-| grip-wrist-yoke | 22.0 g | 248.3 g | 4.34 (2) | 0.112 mm | search step* |
-| grip-wrist-link-mjf | 31.4 g | 773.5 g | 2.02 (2) | 0.938 mm | stress (layered, tet-checked) |
-| mbb-beam | 14.5 g | 65.4 g | 1.52 (1.5) | 2.93 mm | stress |
-| motor-mount | 27.6 g | 89.2 g | 4.07 | 0.431 mm (0.5) | fixed fraction (trade-off set) |
-| printed-hook | 27.4 g | 151.4 g | 2.79 (2.5) | 1.04 mm | stress, overhangs |
-| wall-bracket | 64.4 g | 419.2 g | 2.85 (2.5) | 0.199 mm (1.5) | stress |
-| wall-bracket-fasteners | 41.0 g | 421.6 g | 2.95 (2.5) | 0.552 mm (1.5) | stress |
+| arm-link | 55.3 g | 125.3 g | 8.92 (3) | 0.458 mm (0.5) | deflection |
+| arm-link-driven | 48.4 g | 124.5 g | 11.2 (3) | 0.437 mm (0.5) | search step* |
+| arm-link-cast | 67.8 g | 125.3 g | 20.1 (3) | 0.478 mm (0.5) | deflection, no undercuts |
+| arm-link-sandwich | 42.7 g | | 6.65 (3) | 0.432 mm (0.5) | fixed design (field graph) |
+| bell-crank | 23.4 g | 150.7 g | 3.22 (3) | 0.073 mm (0.1) | stress |
+| grip-turret | 140.4 g | 1651 g | 2.85 (2) | 0.729 mm | interfaces (see below) |
+| grip-upper-arm | 207.7 g | 1692 g | 7.33 (2) | 0.519 mm (0.54) | deflection |
+| grip-wrist-yoke | 17.3 g | 248.3 g | 3.88 (2) | 0.229 mm | search step* |
+| grip-wrist-link-mjf | 40.2 g | 773.5 g | 5.83 (2) | 0.490 mm | search step* (layered, tet-checked) |
+| mbb-beam | 13.8 g | 65.4 g | 1.51 (1.5) | 3.182 mm | stress |
+| motor-mount | 27.6 g | 89.2 g | 3.65 | 0.430 mm (0.5) | fixed fraction (trade-off set) |
+| printed-hook | 24.2 g | 151.4 g | 2.73 (2.5) | 1.240 mm | stress, overhangs |
+| wall-bracket | 26.9 g | 419.2 g | 2.85 (2.5) | 0.692 mm (1.5) | stress (constrained method)† |
+| wall-bracket-fasteners | 26.5 g | 421.6 g | 2.57 (2.5) | 0.566 mm (1.5) | stress (constrained method)† |
 | lpbf-intercooler-core | 131.8 g | | | | effectiveness 0.77 (0.7), 1.0 mm wall between fluids, 126 mm² flat ceiling (limit 200) |
 
 \* The search brackets in volume-fraction steps. The next lighter step
-(48.5 g for arm-link-driven, about 20 g for the yoke) did not meet the goal
-on the delivered mesh, so the lightest passing step is reported, with margin
-to spare.
+(45.0 g for arm-link-driven, about 16 g for the yoke, 36-37 g for the MJF
+wrist link) did not meet the goal on the delivered mesh, so the lightest
+passing step is reported, with margin to spare. The wrist link was 31.4 g on
+the Nov 1 baseline: the stem smoothing added on Nov 3 (`6c3c642`) costs it
+about 9% at its target, because its 1.8 mm members lose more of the mesh;
+with the smoothing off the same code gives 31.4 g again.
+
+† `goal.method: "auto"` now picks the constrained optimizer for these, which
+is why they dropped from 64 and 41 g. They are strong enough but not stable
+enough: linear buckling puts the ~25 g bracket at a load factor of 1.4-1.6
+against the 2.5 goal, and no buckling check runs in the evals yet.
 
 A high safety factor on a stiffness-bound part (the arm links, the upper
 arm) is expected: the deflection limit sizes the part, and stress is far
@@ -94,12 +102,8 @@ part's 98th percentile):
 | --- | --- | --- |
 | ![](../images/stress/bell-crank.png) | ![](../images/stress/grip-upper-arm.png) | ![](../images/stress/printed-hook.png) |
 
-Renders are from the run at `063c233`, the baseline before `d044a51`.
-Thirteen of the parts are the same in both. The MJF wrist link (41.0 g in
-the render, 31.4 g now) and the bell crank (23.8 g in the render, 22.0 g
-now) changed: the newer run checks layered (printed) parts on tetrahedra
-too, and tet meshes vary slightly from run to run. Every view and stress
-map is in [GALLERY.md](../GALLERY.md).
+Renders are from the same run as the table (three.js, smooth normals).
+Every view and stress map is in [GALLERY.md](../GALLERY.md).
 
 ## Limitations
 
@@ -107,7 +111,7 @@ map is in [GALLERY.md](../GALLERY.md).
   datasheet material values. No part in the suite has been printed and
   tested ([VALIDATION.md](../VALIDATION.md)).
 - **The turret's tet check disagrees with its voxel check.** The voxel
-  check reads SF 2.45. The tet check reads 1.2-1.4 at a wall beside a J1
+  check reads SF 2.85. The tet check reads 1.2-1.6 at a wall beside a J1
   bolt's driver access, below the goal of 2, and no heavier outcome fixed it.
   The case falls back to the voxel reading with a warning. About 76% of the
   turret's mass is fixed interface geometry, so the optimizer has little

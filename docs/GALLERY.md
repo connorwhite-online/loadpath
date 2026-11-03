@@ -1,14 +1,24 @@
 # Gallery
 
-Rendered 2026-11-01 from the tet-confirmed full baseline run (`063c233`) by `python docs/gallery.py`.
+Rendered 2026-11-03 from `6c97b57` by `python docs/gallery.py`.
 
 Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress maps colour worst-case von Mises stress against the part's own 98th percentile, to show the load paths, on the shape bent by the worst load case, exaggerated; the margin against the material is the SF. "Under envelope" compares each part with its design space filled solid, not with a conventionally designed part. All numbers are simulated ([VALIDATION.md](VALIDATION.md)).
 
+## arm-link
+
+55.3 g · 56% under envelope · SF 8.92 · pass
+
+<sub>deflection 0.458 mm · p5Member 1.46 mm · creaseLength 75.8 mm · volumeFraction 36% · 972 s</sub>
+
+![arm-link](images/cases/arm-link-views.png)
+
+![arm-link stress](images/stress/arm-link-views.png)
+
 ## arm-link-cast
 
-67.8 g · 46% under envelope · SF 20.85 · pass
+67.8 g · 46% under envelope · SF 20.11 · pass
 
-<sub>deflection 0.478 mm · p5Member 5.35 mm · creaseLength 0.0 mm · volumeFraction 45% · 494 s</sub>
+<sub>deflection 0.478 mm · p5Member 5.35 mm · creaseLength 0.0 mm · volumeFraction 45% · 387 s</sub>
 
 ![arm-link-cast](images/cases/arm-link-cast-views.png)
 
@@ -16,29 +26,19 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## arm-link-driven
 
-51.3 g · 59% under envelope · SF 12.50 · pass
+48.4 g · 61% under envelope · SF 11.17 · pass
 
-<sub>deflection 0.362 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 32% · 374 s</sub>
+<sub>deflection 0.437 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 28% · 793 s</sub>
 
 ![arm-link-driven](images/cases/arm-link-driven-views.png)
 
 ![arm-link-driven stress](images/stress/arm-link-driven-views.png)
 
-## arm-link
-
-54.2 g · 57% under envelope · SF 10.97 · pass
-
-<sub>deflection 0.489 mm · p5Member 1.46 mm · creaseLength 0.0 mm · volumeFraction 36% · 901 s</sub>
-
-![arm-link](images/cases/arm-link-views.png)
-
-![arm-link stress](images/stress/arm-link-views.png)
-
 ## bell-crank
 
-23.8 g · 84% under envelope · SF 4.90 · pass
+23.4 g · 84% under envelope · SF 3.22 · pass
 
-<sub>deflection 0.066 mm · p5Member 4.19 mm · creaseLength 0.0 mm · volumeFraction 7% · 374 s</sub>
+<sub>deflection 0.073 mm · p5Member 3.23 mm · creaseLength 0.0 mm · volumeFraction 6% · 532 s</sub>
 
 ![bell-crank](images/cases/bell-crank-views.png)
 
@@ -46,9 +46,9 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## grip-turret
 
-142.1 g · 91% under envelope · SF 2.45 · pass
+140.4 g · 91% under envelope · SF 2.85 · pass
 
-<sub>deflection 0.767 mm · p5Member 5.49 mm · creaseLength 32.7 mm · volumeFraction 2% · 1025 s</sub>
+<sub>deflection 0.729 mm · p5Member 5.49 mm · creaseLength 36.8 mm · volumeFraction 2% · 4248 s</sub>
 
 ![grip-turret](images/cases/grip-turret-views.png)
 
@@ -56,9 +56,9 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## grip-upper-arm
 
-208.1 g · 88% under envelope · SF 5.83 · pass
+207.7 g · 88% under envelope · SF 7.33 · pass
 
-<sub>deflection 0.515 mm · p5Member 4.96 mm · creaseLength 35.3 mm · volumeFraction 7% · 1383 s</sub>
+<sub>deflection 0.519 mm · p5Member 4.96 mm · creaseLength 18.8 mm · volumeFraction 7% · 1416 s</sub>
 
 ![grip-upper-arm](images/cases/grip-upper-arm-views.png)
 
@@ -66,9 +66,9 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## grip-wrist-link-mjf
 
-41.0 g · 95% under envelope · SF 3.71 · pass
+40.2 g · 95% under envelope · SF 5.83 · pass
 
-<sub>deflection 0.530 mm · p5Member 1.83 mm · creaseLength 0.5 mm · volumeFraction 6% · 2234 s</sub>
+<sub>deflection 0.490 mm · p5Member 1.83 mm · creaseLength 1.7 mm · volumeFraction 6% · 1669 s</sub>
 
 ![grip-wrist-link-mjf](images/cases/grip-wrist-link-mjf-views.png)
 
@@ -76,9 +76,9 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## grip-wrist-yoke
 
-22.0 g · 91% under envelope · SF 4.24 · pass
+17.3 g · 93% under envelope · SF 3.88 · pass
 
-<sub>deflection 0.112 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 8% · 810 s</sub>
+<sub>deflection 0.229 mm · p5Member 2.27 mm · creaseLength 1.1 mm · volumeFraction 6% · 1390 s</sub>
 
 ![grip-wrist-yoke](images/cases/grip-wrist-yoke-views.png)
 
@@ -86,9 +86,9 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## mbb-beam
 
-14.2 g · 78% under envelope · SF 1.51 · pass
+13.8 g · 79% under envelope · SF 1.51 · pass
 
-<sub>deflection 3.008 mm · p5Member 1.01 mm · creaseLength 0.0 mm · volumeFraction 23% · 1607 s</sub>
+<sub>deflection 3.182 mm · p5Member 1.01 mm · creaseLength 0.0 mm · volumeFraction 22% · 1856 s</sub>
 
 ![mbb-beam](images/cases/mbb-beam-views.png)
 
@@ -96,9 +96,9 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## motor-mount
 
-27.6 g · 69% under envelope · SF 4.07 · pass
+27.6 g · 69% under envelope · SF 3.65 · pass
 
-<sub>deflection 0.431 mm · p5Member 1.46 mm · creaseLength 0.0 mm · volumeFraction 30% · 129 s</sub>
+<sub>deflection 0.430 mm · p5Member 1.46 mm · creaseLength 0.0 mm · volumeFraction 30% · 148 s</sub>
 
 ![motor-mount](images/cases/motor-mount-views.png)
 
@@ -106,33 +106,33 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ## printed-hook
 
-27.4 g · 82% under envelope · SF 2.73 · pass
+24.2 g · 84% under envelope · SF 2.73 · pass
 
-<sub>deflection 1.041 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 18% · 2438 s</sub>
+<sub>deflection 1.240 mm · p5Member 3.41 mm · creaseLength 0.0 mm · volumeFraction 16% · 2856 s</sub>
 
 ![printed-hook](images/cases/printed-hook-views.png)
 
 ![printed-hook stress](images/stress/printed-hook-views.png)
 
-## wall-bracket-fasteners
-
-41.0 g · 90% under envelope · SF 2.89 · pass
-
-<sub>deflection 0.552 mm · p5Member 4.55 mm · creaseLength 0.0 mm · volumeFraction 6% · 790 s</sub>
-
-![wall-bracket-fasteners](images/cases/wall-bracket-fasteners-views.png)
-
-![wall-bracket-fasteners stress](images/stress/wall-bracket-fasteners-views.png)
-
 ## wall-bracket
 
-64.4 g · 85% under envelope · SF 2.75 · pass
+26.9 g · 94% under envelope · SF 2.85 · pass
 
-<sub>deflection 0.199 mm · p5Member 4.55 mm · creaseLength 0.0 mm · volumeFraction 11% · 381 s</sub>
+<sub>deflection 0.692 mm · p5Member 4.40 mm · creaseLength 4.6 mm · volumeFraction 2% · 1600 s</sub>
 
 ![wall-bracket](images/cases/wall-bracket-views.png)
 
 ![wall-bracket stress](images/stress/wall-bracket-views.png)
+
+## wall-bracket-fasteners
+
+26.5 g · 94% under envelope · SF 2.57 · pass
+
+<sub>deflection 0.566 mm · p5Member 4.40 mm · creaseLength 47.1 mm · volumeFraction 2% · 2114 s</sub>
+
+![wall-bracket-fasteners](images/cases/wall-bracket-fasteners-views.png)
+
+![wall-bracket-fasteners stress](images/stress/wall-bracket-fasteners-views.png)
 
 ## Heat exchangers
 

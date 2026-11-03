@@ -1160,3 +1160,22 @@ def test_reconstruct_smooths_the_staircase_off_a_tilted_member():
     assert ripple0 > 0.25, ripple0             # the staircase is there without it
     assert ripple1 < 0.4 * ripple0, (ripple0, ripple1)
     assert abs(r1 - r0) < 0.1, (r0, r1)        # same section
+
+
+def test_reconstruct_leaves_cast_parts_off_the_axial_pass(monkeypatch):
+    # Averaging along a tilted member's axis leans a cast part's walls off
+    # the draw: the cast arm link's undercut went 141 -> 630 mm^3 (limit 150).
+    from loadpath import reconstruct as R
+    calls = []
+    monkeypatch.setattr(R, "_axial_smooth", lambda fine, *a, **k: calls.append(1) or fine)
+    base = {"name": "slab", "designSpace": {"type": "box", "min": [0, 0, 0], "max": [40, 20, 10]},
+            "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 21, 11]}}],
+            "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [39.9, -1, -1],
+                                                              "max": [41, 21, 11]}, "force": [0, 0, -10]}]}],
+            "material": "pa12", "goal": {"volumeFraction": 0.3}, "resolution": {"pitch": 2.0}}
+    for extra, want in (({}, 1), ({"casting": {"draw": "+z"}}, 0)):
+        calls.clear()
+        s = study_from_dict({**base, **extra})
+        d = build_domain(s)
+        reconstruct(s, d, np.full(d.mesh.n_elem, 0.6))
+        assert len(calls) == want, (extra, calls)

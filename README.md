@@ -151,31 +151,31 @@ print(best.report["mass"], best.report["safetyFactor"])
 
 ## Examples
 
-The eval suite: robot-arm links, brackets, a bell crank and a hook, each optimized and then checked by a fresh analysis of the delivered mesh. "Under envelope" compares with the design space filled solid, not with a conventionally designed part. These are simulated results; see [docs/VALIDATION.md](docs/VALIDATION.md). Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
+The eval suite (15/15 passing): robot-arm links, brackets, a bell crank and a hook, each optimized and then checked by a fresh analysis of the delivered mesh. "Under envelope" compares with the design space filled solid, not with a conventionally designed part. These are simulated results; see [docs/VALIDATION.md](docs/VALIDATION.md). Blue arrows are loads, red is keep-out. Every view, stress map and number is in [docs/GALLERY.md](docs/GALLERY.md).
 
 <table>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>67.8 g · 46% under envelope · SF 20.85 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>51.3 g · 59% under envelope · SF 12.50 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>54.2 g · 57% under envelope · SF 10.97 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link.png" width="250"><br><b>arm-link</b><br><sub>55.3 g · 56% under envelope · SF 8.92 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-cast.png" width="250"><br><b>arm-link-cast</b><br><sub>67.8 g · 46% under envelope · SF 20.11 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/arm-link-driven.png" width="250"><br><b>arm-link-driven</b><br><sub>48.4 g · 61% under envelope · SF 11.17 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>23.8 g · 84% under envelope · SF 4.90 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>142.1 g · 91% under envelope · SF 2.45 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>208.1 g · 88% under envelope · SF 5.83 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>23.4 g · 84% under envelope · SF 3.22 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>140.4 g · 91% under envelope · SF 2.85 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>207.7 g · 88% under envelope · SF 7.33 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>41.0 g · 95% under envelope · SF 3.71 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>22.0 g · 91% under envelope · SF 4.24 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>14.2 g · 78% under envelope · SF 1.51 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>40.2 g · 95% under envelope · SF 5.83 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>17.3 g · 93% under envelope · SF 3.88 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>13.8 g · 79% under envelope · SF 1.51 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.6 g · 69% under envelope · SF 4.07 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>27.4 g · 82% under envelope · SF 2.73 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>41.0 g · 90% under envelope · SF 2.89 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/motor-mount.png" width="250"><br><b>motor-mount</b><br><sub>27.6 g · 69% under envelope · SF 3.65 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/printed-hook.png" width="250"><br><b>printed-hook</b><br><sub>24.2 g · 84% under envelope · SF 2.73 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>26.9 g · 94% under envelope · SF 2.85 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/wall-bracket.png" width="250"><br><b>wall-bracket</b><br><sub>64.4 g · 85% under envelope · SF 2.75 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/wall-bracket-fasteners.png" width="250"><br><b>wall-bracket-fasteners</b><br><sub>26.5 g · 94% under envelope · SF 2.57 · pass</sub></td>
 </tr>
 </table>
 
@@ -201,7 +201,7 @@ Made another way: the same arm link printed, cast (no undercuts along z), 3-axis
 
 ![manufacturing constraints](docs/images/manufacturing/arm-link.png)
 
-<sub>Rendered 2026-11-01 from the tet-confirmed full baseline run (`063c233`) by `python docs/gallery.py`.</sub>
+<sub>Rendered 2026-11-03 from `6c97b57` by `python docs/gallery.py`.</sub>
 
 <!-- gallery:end -->
 ## Limits

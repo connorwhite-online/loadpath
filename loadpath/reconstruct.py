@@ -635,6 +635,14 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         import copy
         o = copy.copy(o)
         o.close = max(1.0, 0.5 * float(study.min_member or 0.0))
+    if o.axial and getattr(study, "access", None) is not None:
+        # A cast or milled part's field is already shaped for its draw or
+        # cutter directions, and averaging it along a member's tilted axis
+        # leans those walls into undercuts: the cast arm link went from
+        # 141 to 630 mm^3 of undercut (limit 150) with it on.
+        import copy
+        o = copy.copy(o)
+        o.axial = False
     # Upsampling refines a coarse grid's staircase; a fine grid has none to
     # speak of, and 3x on 845k cells meant a 23M-cell field and 330 s of
     # meshing for 2M triangles. Cap the refined field near FINE_CELLS (eval

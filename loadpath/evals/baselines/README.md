@@ -7,3 +7,13 @@
 - **2026-11-03 (after 87ad5d4).** Re-saved from main with whole cells (cut cells off), 21/21 pass. Big moves vs the Nov 1 baseline (ab4bf9e), checked before saving:
   - The Nov 1 baseline was saved without a tet mesher, so every SF case was confirmed on voxels, which read safe-side heavy. With tet confirm the same ab4bf9e code gives mbb-beam 15.7 g, so most of mbb-beam (22.2 -> 14.3 g), grip-wrist-yoke (24.0 -> 17.2) and grip-turret (145 -> 138) is the confirm, not the optimizer.
   - wall-bracket (81.9 -> 23.0 g) and corpus-bracket-1 (139.9 -> 36.0) are df2521f, goal.method "auto" picking the constrained optimizer (search alone still gives 72.3 g wall bracket on both ab4bf9e and today's main). Both pass the tet confirm (wall bracket SF 3.40 vs goal 2.5). **Caveat:** the 23-24 g wall bracket buckles at a load factor of 1.43-1.61 (linear buckling, 1.2 mm grid), below the 2.5 goal; the 72 g search design reads 43.5. No buckling check runs in verify or the evals yet, so this baseline locks in a part that is strong enough but not stable enough.
+
+## full.json history
+
+- **2026-11-03 (main 6c97b57 plus the cast fix in this commit).** Re-saved with a tet mesher installed (pytetwild), 15/15 pass, two cases at a time, ~5 h wall on the 4-core box. Moves vs the Nov 1 baseline (massAtTarget):
+  - wall-bracket 61.4 -> 26.9 g and wall-bracket-fasteners 40.3 -> 26.5 g: goal.method "auto" now picks the constrained optimizer (df2521f). Same buckling caveat as coarse.json: the ~25 g brackets are strong enough but buckle below the 2.5 goal; no buckling check runs in the evals.
+  - grip-wrist-yoke -16%, printed-hook -11%, motor-mount -9%, arm-link-driven -7%, mbb-beam -5%: mostly the stem smoothing (6c3c642) and the tet confirm reaching layered parts; consistent with the coarse tier.
+  - grip-wrist-link-mjf +9% (31.3 -> 34.2 g; best outcome 31.4 -> 40.2 g): the stem smoothing. With it off (ReconstructOptions(axial=False)) the same code gives 31.4 g, the old number. With it on, the 0.0525 volume-fraction outcome reads SF 0.11 on voxels (1.20 off) and its retry splits into two bodies, so the search stops at 0.056. Thin (1.8 mm) MJF members lose more of the mesh with the axial pass. Open.
+  - bell-crank +6% (22.0 -> 23.4 g): within the ~3% run-to-run tet spread plus a search step; not chased.
+  - arm-link-cast: with the stem smoothing it failed its undercut check (630 mm^3 vs 150); reconstruct now skips the axial pass on cast/milled studies, back to 141 mm^3 and 50.7 g.
+  - grip-turret's tet cross-check still reads SF 1.58 at the J1 hub (voxel confirm 2.85; known, interfaces question open).
