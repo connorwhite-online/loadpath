@@ -1122,7 +1122,16 @@ _FIELD_OPS = {
                                                                                   "surface the cells follow"},
                                              "normalCell": {**_POS, "description": "conformal: mm cell through "
                                                                                    "the thickness (default the "
-                                                                                   "cell)"}},
+                                                                                   "cell)"},
+                                             "layerSmoothing": {"type": "number", "minimum": 0, "maximum": 1,
+                                                                "description": "conformal: round the layers where "
+                                                                               "the surface's distance folds "
+                                                                               "(its medial axis): the distance "
+                                                                               "is averaged over a sphere this "
+                                                                               "times the depth (capped at a "
+                                                                               "cell); exact at the skin; 0 "
+                                                                               "keeps the sharp fold (default "
+                                                                               "0)"}},
                               "required": ["type"], "additionalProperties": False}},
                    require_one=None),
     "transform": _op("transform", "Move, rotate or scale a field's input (translate, then rotate, then scale).",

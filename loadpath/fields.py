@@ -671,7 +671,8 @@ class _ConformalMap:
     in-plane cell (mm, a field grades it), `normal_cell` the cell through
     the thickness (mm; default the cell)."""
 
-    def __init__(self, surface_fn, cell_fn, lo, hi, axis=None, normal_cell=None, max_cells=40_000):
+    def __init__(self, surface_fn, cell_fn, lo, hi, axis=None, normal_cell=None, max_cells=40_000,
+                 layer_smoothing=0.0):
         # a phase needs only a few grid steps a cell (_phase_at unwraps
         # between nodes); the solve is a sparse LU, so the grid stays small
         lo = np.asarray(lo, float)
@@ -715,6 +716,7 @@ class _ConformalMap:
                                  lo, h) for t in (t1, t2)]
         self.lo, self.h, self.dims = lo, h, dims
         self.normal_cell = normal_cell
+        self.layer_smoothing = float(layer_smoothing)
         self.surface_fn = surface_fn
 
     def __call__(self, P, cell, surface=None, coherence=False):
@@ -725,11 +727,47 @@ class _ConformalMap:
         cell = np.broadcast_to(np.asarray(cell, float), (len(P),))
         both = [phi(P, coherence=True) for phi in self.phase]
         dist = np.asarray(self.surface_fn(P) if surface is None else surface, float)
+        dist = self._rounded_layers(P, dist, cell)
         cn = cell if self.normal_cell is None else self.normal_cell
         U = np.stack([b[0] for b in both] + [-dist / cn], axis=1)
         if coherence:
             return U, np.minimum(both[0][1], both[1][1])
         return U
+
+    # a symmetric stencil (6 axis + 8 diagonal unit directions): its mean
+    # of a linear function is the centre value, so it moves nothing where
+    # the distance is linear
+    _STENCIL = np.concatenate([np.vstack([np.eye(3), -np.eye(3)]),
+                               np.array([[a, b, c] for a in (-1, 1) for b in (-1, 1) for c in (-1, 1)]) / np.sqrt(3)])
+    _STENCIL_W = np.r_[np.full(6, 1 / 15), np.full(8, 9 / 120)]
+
+    def _rounded_layers(self, P, dist, cell):
+        """The surface distance with its folds rounded: the exact distance
+        kinks on the surface's medial axis (two faces of a box, the far
+        sides of a link's section), and a strut there meets its own mirror
+        image; near a corner the touch is tangential, so the part's void
+        surface pinches (a non-manifold edge no grid parts) and its STEP
+        export fails. The distance is replaced by its mean over a sphere of
+        radius `layer_smoothing` x depth (capped at a cell): exact at the
+        skin (radius 0) and wherever the distance is linear (one face in
+        reach), rounded where faces meet, so layers deeper in follow a
+        filleted offset of the surface instead of its sharp medial axis.
+        Opt in (frame "layerSmoothing"): it costs 14 more surface
+        evaluations a point, and the pinches it was meant for are parted by
+        the mesher's pinch splitter (ibrep.split_pinches) anyway."""
+        beta = self.layer_smoothing
+        if beta <= 0:
+            return dist
+        r = np.minimum(beta * np.maximum(-dist, 0.0), np.asarray(cell, float))
+        on = np.flatnonzero(r > 1e-6)
+        if not len(on):
+            return dist
+        S = self._STENCIL
+        Q = (P[on, None, :] + r[on, None, None] * S[None]).reshape(-1, 3)
+        avg = (np.asarray(self.surface_fn(Q), float).reshape(len(on), len(S)) * self._STENCIL_W).sum(1)
+        out = dist.copy()
+        out[on] = avg
+        return out
 
     @staticmethod
     def defect_fill(coh, lo=0.1, hi=0.35):
@@ -1765,7 +1803,8 @@ class FieldGraph:
         off = np.asarray(nd.spec.get("origin", (0, 0, 0)), float)
         surf = nd.refs["surface"]
         return _ConformalMap(lambda G: self.evaluate(G + off, surf), cell_fn, lo, hi, axis=frame.get("axis"),
-                             normal_cell=frame.get("normalCell"), max_cells=max_cells)
+                             normal_cell=frame.get("normalCell"), max_cells=max_cells,
+                             layer_smoothing=frame.get("layerSmoothing", 0.0))
 
     def _voronoi(self, nd):
         from .struts import VoronoiStruts

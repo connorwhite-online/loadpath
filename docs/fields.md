@@ -1232,11 +1232,26 @@ read (see Conformal lattice above) the same block reads 0.044 / 0.58 mm
 STEP to STL and 0.036 / 0.48 mm STL to STEP (p99 / max), -0.02% volume,
 18 min; the last spot is one phase defect's node, where the struts
 fatten into each other and leave pockets thinner than the patches.
-The same block without a skin does not export yet: its void surface has
-one non-manifold edge, on the box's medial plane near a corner, where the
-layer coordinate (the box's exact distance) folds and a strut's surface
-meets its own mirror image; it stays on every finer grid, so the void is
-dropped as open and OpenCascade's split fails.
+The same block without a skin does not export cleanly yet. Its void
+surface used to keep one edge shared by four quads (two sheets touching)
+that the pinch splitter could not part, so the void was dropped as open
+and OpenCascade's split failed; the splitter now retries such an edge
+with the other pairing (ibrep.manifold_nets), and the void closes
+(31.9k patches at 0.35 mm). The STEP then writes and reads back, but
+OpenCascade rejects it: 2070 free edges, nearly all within 0.06 mm of
+the box faces where the open void is cut, and the solid holds 156 mm³ of
+the STL's 516 (36 min). The conformal field there is not a true distance
+(10% of the void patches fold, against 4% on the skinned block), so the
+split's field-based choice of pieces disagrees with the patches along
+the faces. Not fixed.
+
+A conformal frame's `layerSmoothing` (0-1, default 0) rounds the layer
+coordinate where the surface's distance folds (its medial axis: the
+diagonal planes of a box): the distance is averaged over a sphere this
+times the depth, capped at a cell, so it stays exact at the skin. It was
+written for a pinch on the box's medial plane near a corner, which the
+splitter fix parts anyway, so it is opt-in (14 more surface evaluations
+a point).
 
 Pockets thinner than the patches can be lost: on an 8 mm BCC block under
 a skin (cell 4), wedges where the diagonal struts meet the skin at a

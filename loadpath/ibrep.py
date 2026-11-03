@@ -221,6 +221,22 @@ def nonmanifold(Q):
     return int((c != 2).sum())
 
 
+def _bad_edges(Q):
+    """The vertex pairs of edges not shared by exactly two quads."""
+    if not len(Q):
+        return np.zeros((0, 2), np.int64)
+    E = np.sort(np.concatenate([Q[:, [k, (k + 1) % 4]] for k in range(4)]), axis=1)
+    u, c = np.unique(E, axis=0, return_counts=True)
+    return u[c != 2]
+
+
+def _same_spot(V0, e, V, f, tol=1e-9):
+    """Whether edge e of mesh V0 and edge f of V are the same edge (the
+    split moves copies, never the first vertex)."""
+    return bool(np.allclose(np.sort(V0[e], axis=0), np.sort(V[f], axis=0), atol=tol) or
+                (set(map(int, e)) == set(map(int, f))))
+
+
 def manifold_nets(fam, lo, hi, tries=16, split=True):
     """surface_nets on a grid shifted until the mesh is a closed manifold
     (a cell the surface crosses in the ambiguous way marching cubes cannot
@@ -234,8 +250,20 @@ def manifold_nets(fam, lo, hi, tries=16, split=True):
         V, Q = surface_nets(fam, np.asarray(lo, float) - shift, np.asarray(hi, float) - shift + fam.h)
         bad = nonmanifold(Q)
         if bad and split:
-            V, Q = split_pinches(fam, V, Q)
+            V0, Q0 = V, Q
+            V, Q = split_pinches(fam, V0, Q0)
             bad = nonmanifold(Q)
+            if bad:
+                # the first pairing at an edge can join the sheets' fans
+                # again at its ends (each vertex one fan, the edge still
+                # four quads): try the other pairing at the edges left
+                left = _bad_edges(Q)
+                alt = {(int(min(e)), int(max(e))) for e in _bad_edges(Q0)
+                       if any(_same_spot(V0, e, V, f) for f in left)}
+                if alt:
+                    V2, Q2 = split_pinches(fam, V0, Q0, alternate=alt)
+                    if nonmanifold(Q2) < bad:
+                        V, Q, bad = V2, Q2, nonmanifold(Q2)
         if best is None or bad < best[0]:
             best = (bad, V, Q)
         if bad == 0:
@@ -244,7 +272,7 @@ def manifold_nets(fam, lo, hi, tries=16, split=True):
     return V, Q, bad
 
 
-def split_pinches(fam, V, Q):
+def split_pinches(fam, V, Q, alternate=()):
     """Pull a quad mesh apart where two sheets of the surface pinch together
     at a near-zero saddle (two struts' fillets that barely touch, a skin
     kissed by a fillet): one cell meets the surface twice and its one vertex
@@ -290,16 +318,25 @@ def split_pinches(fam, V, Q):
         # (0-1, 2-3, ...) or (1-2, 3-0, ...); take the one whose pairs sit
         # closer in angle (the same sheet)
         m = len(hs)
-        best = None
+        cands = []
         for sh in (0, 1):
             pairs = [(hs[(i + sh) % m], hs[(i + sh + 1) % m]) for i in range(0, m, 2)]
             if any((a[x] == lo_[x]) == (a[y] == lo_[y]) for x, y in pairs):
                 continue
-            gap = sum(np.linalg.norm(C[qid[x]] - C[qid[y]]) for x, y in pairs)
-            if best is None or gap < best[0]:
-                best = (gap, pairs)
-        if best is None:                                  # odd or unpaired: leave it
+            cands.append((sum(np.linalg.norm(C[qid[x]] - C[qid[y]]) for x, y in pairs), pairs))
+        if m == 4:
+            # the angular order round a short edge (its ends projected close
+            # together) can interleave the sheets: any pairing of the four
+            # whose halves run opposite ways is a candidate
+            for pairs in (((hs[0], hs[2]), (hs[1], hs[3])),):
+                if not any((a[x] == lo_[x]) == (a[y] == lo_[y]) for x, y in pairs):
+                    cands.append((sum(np.linalg.norm(C[qid[x]] - C[qid[y]]) for x, y in pairs), list(pairs)))
+        if not cands:                                     # odd or unpaired: leave it
             continue
+        cands.sort(key=lambda c: c[0])
+        # `alternate`: edges a first split left joined (manifold_nets asks
+        # again): the next candidate pairing
+        best = cands[1] if (int(lo_[hs[0]]), int(hi_[hs[0]])) in alternate and len(cands) > 1 else cands[0]
         for x, y in best[1]:
             partner[x], partner[y] = y, x
     # fans: at each vertex, quads joined across the paired edges at it
