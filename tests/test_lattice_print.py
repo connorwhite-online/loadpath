@@ -50,7 +50,13 @@ def test_held_out_bands():
     for src, s in res["leaveSourceOut"].items():
         assert 0.85 < s["median"] < 1.25, src
     assert res["strength"]["designed"]["max"] > 1.1           # the PLA Schwarz P miss
-    assert res["strength"]["asPrintedHeldOut"]["max"] < 0.9
+    assert res["strength"]["asPrintedHeldOut"]["max"] < 0.95
+    # struts: the stress reading holds with either strut paper held out
+    st = res["strainShare"]["strut"]
+    assert st["shipped"] == 0.0 and all(v["share"] == 0.0 and v["max"] < 0.95 for v in st["sourceOut"].values())
+    # FDM struts: tighter than the strain reading's 0.07-0.41x
+    fdm_struts = [p["asPrintedFirstYieldHeldOut"] for p in res["specimens"].values() if p["source"] == "guerrasilva2021"]
+    assert min(fdm_struts) > 0.15 and max(fdm_struts) < 0.8
 
 
 def test_factor_by_process():
@@ -157,6 +163,20 @@ def test_bench_as_printed_rows():
     e = np.array([r["asPrinted"]["E"] / r["measured"]["E"] for r in ap])
     assert np.median(np.exp(np.abs(np.log(e)))) < 1.3 and e.max() < 2.1 and e.min() > 0.55
     s = np.array([r["asPrinted"]["firstYield"] / r["measured"]["strength"] for r in ap])
-    assert s.max() < 0.9
+    assert s.max() < 0.95
     b = np.array([r["asPrinted"]["buckling"] / r["asPrinted"]["firstYield"] for r in ap])
     assert b.min() > 1.0
+
+
+def test_struts_read_the_stress_they_carry():
+    from loadpath.homogenized import homogenized_check
+
+    doc, st = _specimen("aa-kelvin-14")
+    base = homogenized_check(doc, st, cells=8000, contact_band=8.0, buckling=False)
+    doc, st = _specimen("aa-kelvin-14", process={"type": "sls"})
+    r = homogenized_check(doc, st, cells=8000, contact_band=8.0, buckling=False)
+    k = r["latticePrint"]["factor"][0]
+    assert k < 0.8
+    c0, c1 = base["cases"][0], r["cases"][0]
+    assert c1["deflection"] / c0["deflection"] > 0.85 / k
+    assert 0.9 < c1["peakStress"] / c0["peakStress"] < 1.1

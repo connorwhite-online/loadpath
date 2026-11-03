@@ -319,7 +319,8 @@ field. `check` reports every problem at once: fix them all, then check again.
   resin), strut or sheet cell and density, fitted to those tests and held
   out (median error 1.23x, worst 2x; report `latticePrint`). FDM gyroid at
   rho 0.2 reads 0.65 of the design, FDM struts ~0.4, SLS ~0.93. Its
-  first-yield reading then sits under every measured strength. It also
+  first-yield reading then sits under every measured strength (sheets
+  read strain-based, struts from the stress they carry). It also
   checks wall and strut buckling (`cases[].bucklingFactor`, `governs`).
   Still say a lattice part's deflection is +-20% (2x at worst) unless the
   material is calibrated on the printed gyroid coupon, whose measured

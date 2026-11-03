@@ -64,8 +64,8 @@ certified strength.
 | Lattice orientation optimization (`orient`, `loadpath lattice-orient`) | Cross-checked (against resolved geometry): **gains refuted without a skin** | Homogenized, skinless lattice bars read 7-23% lighter turned (`bench/lattice_orient_mass.py`). At full resolution (0.15 mm voxels, `bench/lattice_orient_confirm.py`) every one reverses: at its thinner wall the turned bar's peak is 3.2x (BCCz, claimed -23%), 2.2x (cubic in twist, -15%) and 1.3x (octet pull, -7%) the as-laid bar's. Cause: the free-surface knockdown reads square-cut cells at a bare face 1.5-2.8x conservative on the peak and bias-cut (turned) cells 0.8-1.1x, so the comparison favours turning. So the optimizers (`lattice-orient`, zones, `lattice-grade --orient`) keep bare-faced cells as laid by default and report `guard`; `--confirm resolved` checks a turn at full resolution (`resolved.resolved_check`) and keeps it only if it holds. One turn has held: a graded skinless cubic deep beam turned 45 degrees, within 4% of resolved (`bench/results/lattice-seams-deep-beam.json`). Under a skin the optimizer leaves the cells as laid anyway. |
 | Lattice wall grading (`loadpath lattice-grade`, density grid) | Simulation only | Fully stressed sizing to a target SF on the homogenized check: 25% (L-bracket) and 10% (deep beam) lighter than a uniform 2 mm wall under a 1 mm skin; 17-48% skinless (`bench/lattice_grade_mass.py`). Resolved check (0.2 mm voxels) of the graded skinned deep beam: compliance 2-6% above the homogenized reading, peak 12.5 MPa against 18.8-22.0 (conservative); the skinless rows are unconfirmed (see orientation row). Sizing-grid dependence: 8k-cell sizing read SF 0.161 on 8k cells, 0.144 on 30k. |
 | Printed lattice stiffness (33 published compression tests) | Matched published experiment (fitted, held out) | Read as designed, the homogenized check is 1.0-4.1x stiffer than the prints (median error 1.68x). The as-printed factor (`lattice_print.py`, default whenever the study names a process) is fitted to the same 33 tests by process group, strut or sheet, and density; held out one specimen at a time the median error is 1.23x (worst 2.04x), and with a whole paper held out its specimens read a median 0.92-1.17x of the measurement ([below](#as-printed-lattice-stiffness)). |
-| Printed lattice strength (first yield) | Matched published experiment | With the as-printed factor the first-yield reading is under the measured first peak, plateau or yield on all 33 specimens (0.07-0.82x, factor held out). Read as designed it was under on 32 (0.18-0.91x) and over on FDM PLA Schwarz P (1.19x). The prints fail at about the strain the design predicts for first yield, not the stress, so the check reads wall stress from the strain of the softer lattice ([below](#as-printed-lattice-stiffness)). |
-| Lattice wall and strut buckling | Analytic (unit cell), not tested | Periodic unit-cell eigenvalue buckling (`lattice_buckling.py`): a simple cubic strut cell reads Euler's clamped column within 2% on one cell and the pinned column on a 2-cell block. The homogenized check compares each lattice cell's largest compressive macro stress with half its walls' perfect buckling stress at the as-printed stiffness. On all 33 tests it reads at least 1.2x above first yield (perfect TPMS sheets at rho 0.15-0.3 buckle at 1.5-8x the solid's yield strain), so the knockdown of one half is a margin, not a fit. |
+| Printed lattice strength (first yield) | Matched published experiment | With the as-printed factor the first-yield reading is under the measured first peak, plateau or yield on all 33 specimens (0.18-0.92x, factor held out). Read as designed it was under on 32 and over on FDM PLA Schwarz P (1.19x). Sheet prints fail at about the strain the design predicts for first yield, so sheets read wall stress from the strain of the softer lattice; strut lattices read from the stress they carry, a rule chosen and held out a paper at a time ([below](#strength-of-printed-lattices)). |
+| Lattice wall and strut buckling | Analytic (unit cell), not tested | Periodic unit-cell eigenvalue buckling (`lattice_buckling.py`): a simple cubic strut cell reads Euler's clamped column within 2% on one cell and the pinned column on a 2-cell block. The homogenized check compares each lattice cell's largest compressive macro stress with half its walls' perfect buckling stress at the as-printed stiffness. On all 33 tests it reads at least 1.1x above first yield (perfect TPMS sheets at rho 0.15-0.3 buckle at 1.5-8x the solid's yield strain), so the knockdown of one half is a margin, not a fit. |
 | Lattice crush and impact | Simulation only | Elastic-compensation collapse of a unit cell, fitted within 6% of its own solves (`impact.CRUSH_DATA`); Gibson-Ashby densification. Not tested. |
 | Exact bores and interfaces | Analytic | Keep-outs and preserved shapes are cut with exact mesh booleans; intrusion and loss are measured on every delivered part and are zero to rounding. |
 
@@ -171,17 +171,39 @@ octet) did not improve the held-out error and are left out.
 The held-out homogenized checks themselves (`bench/published_experiments.py`,
 `asPrinted` rows: the specimen re-checked with the factor fitted without it)
 give the same: modulus a median 0.96x of the measurement (0.61-2.04x, median error
-1.23x), first yield 0.07-0.82x of the measured strength, and the buckling
-check's stress 1.2x or more above first yield on every specimen, so it
+1.23x), first yield 0.18-0.92x of the measured strength, and the buckling
+check's stress 1.1x or more above first yield on every specimen, so it
 never governs on these tests.
 
-Strength: the check reads the walls' stress from the strain the softer
-lattice takes, as it does for the free-surface knockdown, so a pure lattice
-reads first yield k times lower than designed. On the 33 tests that puts
-every reading under the measurement: 0.07-0.82x held out (Schwarz P in FDM
-PLA, the old miss, is the 0.82). It is conservative where the papers report
-a plateau after yielding (FDM struts 0.07-0.41x), which is the price of a
-single rule that holds on all of them.
+#### Strength of printed lattices
+
+A softer print can mean two things for its walls' stress. If the walls are
+thinner or defective, each carries more stress than the design says at the
+same load, and the right reading is the strain the softer lattice takes
+(a pure lattice then reads first yield k times lower). If the softness is in
+the joints, layer bonds or the test, the walls carry the stress the design
+says. `lattice_print.STRAIN_SHARE` picks per cell family, as the least
+share of the strain reading that keeps every specimen's first-yield reading
+at or under 0.95 of its measured strength (k held out), and each choice is
+held out a paper at a time (`bench/lattice_print_fit.py`, `strainShare` in
+its results):
+
+| Family | Shipped | All data chooses | One paper held out: share chosen by the others, what the held-out paper reads |
+| --- | --- | --- | --- |
+| Strut | stress (0) | 0 | Abou-Ali out: 0, reads 0.65-0.91x. Guerra Silva out: 0, reads 0.18-0.78x |
+| Sheet | strain (1) | 0.7 | Abou-Ali out: 0.7, reads 0.45-0.77x. Shevchenko out: 0, and its PLA Schwarz P reads 1.19x (unsafe) |
+
+Struts pass the paper-out test both ways: on the stress reading FDM strut
+lattices read 0.18-0.78x of their measured plateau instead of 0.07-0.41x
+on the strain reading, 2.5x tighter at the median (0.37 against 0.15), still under every
+measurement. The tightest strut is the SLS PA11 octet at 0.91x (its resolved
+solve reads 1.09-1.15x, so do not swap in a resolved first yield there).
+Sheets do not pass it: only Shevchenko's PLA Schwarz P asks for the strain
+reading, so the sheet rule rests on that paper and on the physical reading
+(the PLA print was 2.4x softer than the same geometry in SLS PA12 and
+failed at the same strain). Sheets ship the full strain reading rather than
+the 0.7 the data would allow, so that one specimen reads 0.82x, not 0.93x.
+All 33 together, in the re-run checks: sheets 0.37-0.82x, struts 0.18-0.92x.
 
 What the factor is not: a property of your printer. It is the average of
 three labs' prints, testing and material cards, with about 1.2x scatter

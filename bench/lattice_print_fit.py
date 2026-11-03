@@ -29,13 +29,46 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from loadpath.lattice_print import fit, fit_rows, print_factor  # noqa: E402
+from loadpath.lattice_print import STRAIN_SHARE, fit, fit_rows, print_factor  # noqa: E402
 
 GROUP_KIND = {"fdm": "fdm", "sls": "sls", "resin": "dlp"}
 
 
 def factor(fit_, r):
     return float(print_factor(GROUP_KIND[r["group"]], r["type"], r["rho"], fit_)[0])
+
+
+def share(r):
+    return STRAIN_SHARE["strut" if r["strut"] else "sheet"]
+
+
+SAFE = 0.95
+SHARES = [round(0.1 * i, 1) for i in range(11)]
+
+
+def choose_share(rows, k_of):
+    """The least strain share that keeps every row's first-yield reading at
+    or under SAFE of its measured strength (1 if none does)."""
+    for a in SHARES:
+        if all(k_of[r["id"]] ** a * r["firstYield"] / r["strength"] <= SAFE for r in rows):
+            return a
+    return 1.0
+
+
+def strain_share_study(rows, per):
+    """Per family: the share each paper set would choose and what the
+    held-out paper then reads (bench output, docs/VALIDATION.md)."""
+    k_of = {r["id"]: per[r["id"]]["factorHeldOut"] for r in rows}
+    out = {}
+    for fam in ("sheet", "strut"):
+        fr = [r for r in rows if (fam == "strut") == r["strut"]]
+        ent = {"chosen": choose_share(fr, k_of), "shipped": STRAIN_SHARE[fam], "sourceOut": {}}
+        for src in sorted({r["source"] for r in fr}):
+            a = choose_share([r for r in fr if r["source"] != src], k_of)
+            got = [k_of[r["id"]] ** a * r["firstYield"] / r["strength"] for r in fr if r["source"] == src]
+            ent["sourceOut"][src] = {"share": a, **summary(got)}
+        out[fam] = ent
+    return out
 
 
 def summary(ratios):
@@ -58,7 +91,7 @@ def main(path=ROOT / "bench" / "results" / "published-experiments.json",
                         "factor": k_in, "asPrintedOverMeasured": k_in * r["E"] / r["Emeas"],
                         "factorHeldOut": k_loo, "heldOutOverMeasured": k_loo * r["E"] / r["Emeas"],
                         "firstYieldOverMeasured": r["firstYield"] / r["strength"],
-                        "asPrintedFirstYieldHeldOut": k_loo * r["firstYield"] / r["strength"]}
+                        "asPrintedFirstYieldHeldOut": k_loo ** share(r) * r["firstYield"] / r["strength"]}
     loso = {}
     for src in sorted({r["source"] for r in rows}):
         f = fit([r for r in rows if r["source"] != src])
@@ -80,6 +113,7 @@ def main(path=ROOT / "bench" / "results" / "published-experiments.json",
                      "asPrintedHeldOut": summary([p["asPrintedFirstYieldHeldOut"] for p in per.values()])},
         "specimens": per,
     }
+    res["strainShare"] = strain_share_study(rows, per)
     Path(out).write_text(json.dumps(res, indent=1))
     print(f"{'specimen':22s} {'designed':>8s} {'in':>6s} {'held':>6s} {'src-out':>7s} | strength held-out")
     for sid, p in per.items():
@@ -94,6 +128,11 @@ def main(path=ROOT / "bench" / "results" / "published-experiments.json",
         print(f"source out {src:16s} median {s['median']:.2f}, {s['min']:.2f}-{s['max']:.2f}")
     s = res["strength"]["asPrintedHeldOut"]
     print(f"strength (first yield / measured) as printed, held out: {s['min']:.2f}-{s['max']:.2f}")
+    for fam, e in res["strainShare"].items():
+        print(f"strain share {fam}: chosen {e['chosen']} (shipped {e['shipped']})", end="")
+        for src, v in e["sourceOut"].items():
+            print(f"; {src} out -> {v['share']}, reads {v['min']:.2f}-{v['max']:.2f}", end="")
+        print()
     print("PRINT_FIT =", json.dumps({**full, "intercept": {k: round(v, 5) for k, v in full["intercept"].items()},
                                      "strut": round(full["strut"], 5),
                                      "densitySlope": round(full["densitySlope"], 5)}))

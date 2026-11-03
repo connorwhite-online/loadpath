@@ -73,11 +73,11 @@
    "worstError": 5.606794565214989
   },
   "asPrintedHeldOut": {
-   "median": 0.36904851911303954,
-   "min": 0.07105324320320573,
-   "max": 0.8231562284602879,
-   "medianError": 2.709670810774071,
-   "worstError": 14.073952924852314
+   "median": 0.5082339233472029,
+   "min": 0.1783550277022956,
+   "max": 0.9145169426466452,
+   "medianError": 1.9675978994358556,
+   "worstError": 5.606794565214989
   }
  },
  "specimens": {
@@ -218,7 +218,7 @@
    "factorHeldOut": 0.39838093783263284,
    "heldOutOverMeasured": 0.6702232652637192,
    "firstYieldOverMeasured": 0.1783550277022956,
-   "asPrintedFirstYieldHeldOut": 0.07105324320320573,
+   "asPrintedFirstYieldHeldOut": 0.1783550277022956,
    "sourceHeldOutOverMeasured": 0.6481189960082099
   },
   "gs-002": {
@@ -232,7 +232,7 @@
    "factorHeldOut": 0.48133708218079496,
    "heldOutOverMeasured": 0.9383177153445417,
    "firstYieldOverMeasured": 0.2485045120020897,
-   "asPrintedFirstYieldHeldOut": 0.1196144367158482,
+   "asPrintedFirstYieldHeldOut": 0.2485045120020897,
    "sourceHeldOutOverMeasured": 0.9438579524169726
   },
   "gs-003": {
@@ -246,7 +246,7 @@
    "factorHeldOut": 0.4237737317837731,
    "heldOutOverMeasured": 0.9407176045229628,
    "firstYieldOverMeasured": 0.33911259667663674,
-   "asPrintedFirstYieldHeldOut": 0.14370701058854388,
+   "asPrintedFirstYieldHeldOut": 0.33911259667663674,
    "sourceHeldOutOverMeasured": 0.9042621884458907
   },
   "gs-004": {
@@ -260,7 +260,7 @@
    "factorHeldOut": 0.5359283446617957,
    "heldOutOverMeasured": 1.465086134144516,
    "firstYieldOverMeasured": 0.3545320943562231,
-   "asPrintedFirstYieldHeldOut": 0.1900037984578102,
+   "asPrintedFirstYieldHeldOut": 0.3545320943562231,
    "sourceHeldOutOverMeasured": 1.3927497980332115
   },
   "gs-005": {
@@ -274,7 +274,7 @@
    "factorHeldOut": 0.3554581342620173,
    "heldOutOverMeasured": 1.4649955380883788,
    "firstYieldOverMeasured": 0.30320620861796593,
-   "asPrintedFirstYieldHeldOut": 0.10777711321200215,
+   "asPrintedFirstYieldHeldOut": 0.30320620861796593,
    "sourceHeldOutOverMeasured": 1.2336705725929724
   },
   "gs-006": {
@@ -288,7 +288,7 @@
    "factorHeldOut": 0.39906862362473183,
    "heldOutOverMeasured": 1.2428893504694174,
    "firstYieldOverMeasured": 0.3388386858878142,
-   "asPrintedFirstYieldHeldOut": 0.13521988800806284,
+   "asPrintedFirstYieldHeldOut": 0.3388386858878142,
    "sourceHeldOutOverMeasured": 1.1466837992400085
   },
   "gs-007": {
@@ -302,7 +302,7 @@
    "factorHeldOut": 0.3495131211748726,
    "heldOutOverMeasured": 1.0692068795209557,
    "firstYieldOverMeasured": 0.3900212099287614,
-   "asPrintedFirstYieldHeldOut": 0.1363175304066016,
+   "asPrintedFirstYieldHeldOut": 0.3900212099287614,
    "sourceHeldOutOverMeasured": 0.952821673370482
   },
   "gs-008": {
@@ -316,7 +316,7 @@
    "factorHeldOut": 0.41485794856408725,
    "heldOutOverMeasured": 1.2158777937651486,
    "firstYieldOverMeasured": 0.42162043179206915,
-   "asPrintedFirstYieldHeldOut": 0.1749125874059625,
+   "asPrintedFirstYieldHeldOut": 0.42162043179206915,
    "sourceHeldOutOverMeasured": 1.138369246965893
   },
   "gs-009": {
@@ -330,7 +330,7 @@
    "factorHeldOut": 0.39695672084321937,
    "heldOutOverMeasured": 0.6297922491181731,
    "firstYieldOverMeasured": 0.33121039332361174,
-   "asPrintedFirstYieldHeldOut": 0.13147619164293384,
+   "asPrintedFirstYieldHeldOut": 0.33121039332361174,
    "sourceHeldOutOverMeasured": 0.6112064842946723
   },
   "gs-010": {
@@ -344,7 +344,7 @@
    "factorHeldOut": 0.455716475306607,
    "heldOutOverMeasured": 0.6057864603439121,
    "firstYieldOverMeasured": 0.34876291932572173,
-   "asPrintedFirstYieldHeldOut": 0.15893700831276045,
+   "asPrintedFirstYieldHeldOut": 0.34876291932572173,
    "sourceHeldOutOverMeasured": 0.6436219949263642
   },
   "gs-011": {
@@ -358,7 +358,7 @@
    "factorHeldOut": 0.41875039381095897,
    "heldOutOverMeasured": 0.7741998309849132,
    "firstYieldOverMeasured": 0.5134297848641981,
-   "asPrintedFirstYieldHeldOut": 0.2149989246061589,
+   "asPrintedFirstYieldHeldOut": 0.5134297848641981,
    "sourceHeldOutOverMeasured": 0.7531248475927886
   },
   "gs-012": {
@@ -372,7 +372,7 @@
    "factorHeldOut": 0.5649723522327011,
    "heldOutOverMeasured": 2.042084600160218,
    "firstYieldOverMeasured": 0.7302018363533944,
-   "asPrintedFirstYieldHeldOut": 0.41254384908921515,
+   "asPrintedFirstYieldHeldOut": 0.7302018363533944,
    "sourceHeldOutOverMeasured": 1.8414638931639873
   },
   "gs-013": {
@@ -386,7 +386,7 @@
    "factorHeldOut": 0.3275869407058996,
    "heldOutOverMeasured": 0.8321917138185992,
    "firstYieldOverMeasured": 0.3939951626255432,
-   "asPrintedFirstYieldHeldOut": 0.12906766997742508,
+   "asPrintedFirstYieldHeldOut": 0.3939951626255432,
    "sourceHeldOutOverMeasured": 0.760410609058868
   },
   "gs-014": {
@@ -400,7 +400,7 @@
    "factorHeldOut": 0.40214261405161195,
    "heldOutOverMeasured": 1.4104211148184982,
    "firstYieldOverMeasured": 0.7811055085699985,
-   "asPrintedFirstYieldHeldOut": 0.31411581106645303,
+   "asPrintedFirstYieldHeldOut": 0.7811055085699985,
    "sourceHeldOutOverMeasured": 1.2913010296712604
   },
   "gs-015": {
@@ -414,7 +414,7 @@
    "factorHeldOut": 0.34266766012658245,
    "heldOutOverMeasured": 0.9060681783988638,
    "firstYieldOverMeasured": 0.6605840669486557,
-   "asPrintedFirstYieldHeldOut": 0.22636079653819755,
+   "asPrintedFirstYieldHeldOut": 0.6605840669486557,
    "sourceHeldOutOverMeasured": 0.8235711527463692
   },
   "gs-016": {
@@ -428,7 +428,7 @@
    "factorHeldOut": 0.4036559680574074,
    "heldOutOverMeasured": 0.7558215063523386,
    "firstYieldOverMeasured": 0.6481900079810997,
-   "asPrintedFirstYieldHeldOut": 0.2616457651567494,
+   "asPrintedFirstYieldHeldOut": 0.6481900079810997,
    "sourceHeldOutOverMeasured": 0.7272781011196087
   },
   "aa-sheet-gyroid-10": {
@@ -498,7 +498,7 @@
    "factorHeldOut": 0.7231311759004839,
    "heldOutOverMeasured": 1.2330082397523687,
    "firstYieldOverMeasured": 0.9145169426466452,
-   "asPrintedFirstYieldHeldOut": 0.6613157121169839,
+   "asPrintedFirstYieldHeldOut": 0.9145169426466452,
    "sourceHeldOutOverMeasured": 1.2390040687486867
   },
   "aa-octet-25": {
@@ -512,7 +512,7 @@
    "factorHeldOut": 0.5996152434141196,
    "heldOutOverMeasured": 1.5340409244582458,
    "firstYieldOverMeasured": 0.8854102138049078,
-   "asPrintedFirstYieldHeldOut": 0.5309054608719774,
+   "asPrintedFirstYieldHeldOut": 0.8854102138049078,
    "sourceHeldOutOverMeasured": 1.5040477122068099
   },
   "aa-kelvin-14": {
@@ -526,7 +526,7 @@
    "factorHeldOut": 0.6280573650947538,
    "heldOutOverMeasured": 0.8063936166586974,
    "firstYieldOverMeasured": 0.7177713760479987,
-   "asPrintedFirstYieldHeldOut": 0.4508015991811417,
+   "asPrintedFirstYieldHeldOut": 0.7177713760479987,
    "sourceHeldOutOverMeasured": 0.8826635858665963
   },
   "aa-kelvin-25": {
@@ -540,8 +540,54 @@
    "factorHeldOut": 0.5204531519676251,
    "heldOutOverMeasured": 0.742958146963969,
    "firstYieldOverMeasured": 0.6516460616114307,
-   "asPrintedFirstYieldHeldOut": 0.3391512467329583,
+   "asPrintedFirstYieldHeldOut": 0.6516460616114307,
    "sourceHeldOutOverMeasured": 0.8419665719260933
+  }
+ },
+ "strainShare": {
+  "sheet": {
+   "chosen": 0.7,
+   "shipped": 1.0,
+   "sourceOut": {
+    "abouali2022": {
+     "share": 0.7,
+     "median": 0.6092645118546162,
+     "min": 0.4511054096146628,
+     "max": 0.7659324226185624,
+     "medianError": 1.641415770606883,
+     "worstError": 2.216776785838606
+    },
+    "shevchenko2023": {
+     "share": 0.0,
+     "median": 0.6728758544760561,
+     "min": 0.5599827035335838,
+     "max": 1.1940603122304496,
+     "medianError": 1.4861582464995173,
+     "worstError": 1.785769441966393
+    }
+   }
+  },
+  "strut": {
+   "chosen": 0.0,
+   "shipped": 0.0,
+   "sourceOut": {
+    "abouali2022": {
+     "share": 0.0,
+     "median": 0.8015907949264532,
+     "min": 0.6516460616114307,
+     "max": 0.9145169426466452,
+     "medianError": 1.2613106380236987,
+     "worstError": 1.5345753759750165
+    },
+    "guerrasilva2021": {
+     "share": 0.0,
+     "median": 0.3722766521424923,
+     "min": 0.1783550277022956,
+     "max": 0.7811055085699985,
+     "medianError": 2.6922911165773473,
+     "worstError": 5.606794565214989
+    }
+   }
   }
  }
 }

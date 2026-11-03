@@ -141,9 +141,9 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     the lattice's stiffness times the as-printed factor
     (lattice_print.print_factor for the study's process, or its
     process.latticeStiffness / calibrated card); a number sets it, False
-    reads the designed geometry. Wall stress is read from the strain the
-    softer lattice takes (the prints fail at the design's first-yield
-    strain, not its stress). The report's `latticePrint` says which.
+    reads the designed geometry. Sheet wall stress is read from the strain
+    the softer lattice takes, strut stress from the stress it carries
+    (lattice_print.STRAIN_SHARE). The report's `latticePrint` says which.
     `buckling` (default on where data/lattice_buckling.json has the cell):
     each lattice cell's largest compressive principal macro stress against
     its walls' buckling stress (lattice_buckling, times BUCKLING_KNOCKDOWN
@@ -283,12 +283,19 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     # stiffness only: the stress read below takes the cell's full tensor
     # times the (larger) strain the softer cell takes, so it errs high
     knock = 1.0 - float(free_surface) * exposed
-    # the print: softer than the designed walls (lattice_print). Like the
-    # free-surface knockdown, stiffness only: the walls' stress is read from
-    # the strain the softer lattice takes
+    # the print: softer than the designed walls (lattice_print). Sheets as
+    # the free-surface knockdown, stiffness only (wall stress from the strain
+    # the softer lattice takes); struts read from the stress they carry
     kp, print_info = _print_stiffness(study, kind, rho, as_printed) if lat is not None else (None, None)
+    wall_scale = None
     if kp is not None:
         knock = knock * kp
+        # sheets: wall stress from the softer lattice's strain (scale 1);
+        # struts: from the stress it carries (scale k). lattice_print.STRAIN_SHARE
+        from .lattice_print import strain_share
+
+        share = strain_share(kind)
+        wall_scale = None if share >= 1.0 else kp ** (1.0 - share)
     e_cell = mat.E * fill * (fs + fc * ec * knock)
     rhs = [bc.loads[ci] for ci in range(len(study.load_cases))]
     nu = study.elastic(mat)
@@ -361,6 +368,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
             se = von_mises(_center_stress(hm, nu, u, mat.E))
             s_lat = se * wall_k
         s_solid = np.where(fs > 0.05, se, 0.0)
+        if wall_scale is not None:
+            s_lat = s_lat * wall_scale
         s_wall = np.where(fc > 0.05, s_lat, 0.0)
         s = np.maximum(s_solid, s_wall)
         if lat is not None:

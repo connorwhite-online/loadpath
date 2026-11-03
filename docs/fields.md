@@ -464,8 +464,9 @@ tests ([VALIDATION.md](VALIDATION.md#as-printed-lattice-stiffness)). When the
 study names a process, the check multiplies the lattice's stiffness by an
 as-printed factor fitted to those tests (`lattice_print.print_factor`: FDM,
 SLS/MJF or resin, strut or sheet, density; about 0.65 for an FDM gyroid,
-0.4 for FDM struts, 0.93 for SLS sheets) and, as for free faces, reads wall
-stress from the larger strain. `process.latticeStiffness` (a number or
+0.4 for FDM struts, 0.93 for SLS sheets). Sheets, as for free faces, read
+wall stress from the larger strain; struts from the stress they carry
+(`lattice_print.STRAIN_SHARE`, [VALIDATION.md](VALIDATION.md#strength-of-printed-lattices)). `process.latticeStiffness` (a number or
 `"designed"`) or a calibrated card's measured lattice factor replaces it;
 `as_printed=False` turns it off. The report's `latticePrint` gives the
 factor and its basis.
