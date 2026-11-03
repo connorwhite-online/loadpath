@@ -267,8 +267,15 @@ def tpms_unit(kind, x, y, z):
     (cell units): value over gradient magnitude (floored at 0.3 k), in
     cell units."""
     k = 2.0 * np.pi
-    x, y, z = x * k, y * k, z * k
-    sx, cx, sy, cy, sz, cz = sin(x), cos(x), sin(y), cos(y), sin(z), cos(z)
+    return tpms_unit_trig(kind, [(sin(u * k), cos(u * k)) for u in (x, y, z)])
+
+
+def tpms_unit_trig(kind, trig):
+    """tpms_unit from each coordinate's (sin, cos) of 2 pi u instead of u:
+    a phase that wraps (a conformal frame's) is sampled continuously as its
+    sine and cosine, where an image of u itself jumps by a cycle."""
+    k = 2.0 * np.pi
+    (sx, cx), (sy, cy), (sz, cz) = trig
     if kind == "gyroid":
         f = sx * cy + sy * cz + sz * cx
         g = (cx * cy - sz * sx, cy * cz - sx * sy, cz * cx - sy * sz)
@@ -639,7 +646,12 @@ def lattice_from_graph(g, name, lo, hi, grid=None):
 
     images = {}
     cmin = cell0 or float(np.min(local_cell(_grid(lo, hi, 2.0)[0])))
-    h = float(grid or min(cmin / 6.0, 1.0))
+    # a conformal frame's phases turn faster than one cycle a cell where the
+    # pattern bends, and its layer coordinate kinks on the medial axis:
+    # interpolated at cell / 8 the part's inside/outside differs from the
+    # field over 2.7% of the volume (tube, box), at cell / 12 1.4%, cell / 16
+    # 0.9%; cell / 12 (8x the voxels of a graded cell's images)
+    h = float(grid or min(cmin / (12.0 if ftype == "conformal" else 6.0), 1.0))
     lo, hi = lo - h, hi + h       # a voxel of margin: clamped samples hold still past the outer voxel centres
     P, shape, size = _grid(lo, hi, h)
 
@@ -652,7 +664,34 @@ def lattice_from_graph(g, name, lo, hi, grid=None):
         images[f"{name}-{tag}"] = (q, off, span)
         return image(f"{name}-{tag}", lo, size), {"min": round(float(v.min()), 4), "max": round(float(v.max()), 4)}
 
-    if graded or ftype == "conformal":
+    if ftype == "conformal":
+        # the two in-plane coordinates are phases (mod 1): an image of the
+        # phase jumps by a cycle at every wrap and trilinear sampling
+        # smears it across a voxel, so ship each one's sine and cosine
+        # (renormalized after sampling) and the layer coordinate as is;
+        # the defect fill (solid nodes at phase defects) as its own image
+        memo = {}
+        U, cl = g.lattice_coords(nd, P, memo)
+        fill = memo.get(("_defect_fill", nd.name))
+        trig = []
+        for i in range(2):
+            se = field(f"s{i}", np.sin(2 * np.pi * U[:, i]), const_ok=False)[0]
+            ce = field(f"c{i}", np.cos(2 * np.pi * U[:, i]), const_ok=False)[0]
+            nrm = fmax(sqrt(se * se + ce * ce), 1e-3)
+            trig.append((se / nrm, ce / nrm))
+        u2 = field("u2", U[:, 2], const_ok=False)[0] * (2.0 * np.pi)
+        trig.append((sin(u2), cos(u2)))
+        cexp, cinfo = field("cell", cl)
+        d = tpms_unit_trig(tp, trig)
+        if fill is not None:
+            fexp, _ = field("fill", fill)
+            d = d * fexp
+        if "aspect" in s:
+            d = d * float(np.min(s["aspect"]))
+        d = d * cexp
+        out["cell"] = cinfo or round(cexp, 4)
+        out["coordinates"] = {"grid": h, "voxels": list(shape[::-1]), "phases": "sin/cos"}
+    elif graded:
         # the lattice's own coordinates (cell units) and its cell, as images
         U, cl = g.lattice_coords(nd, P)
         Ux = [field(f"u{i}", U[:, i], const_ok=False)[0] for i in range(3)]

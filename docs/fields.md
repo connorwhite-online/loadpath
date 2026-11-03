@@ -1078,9 +1078,15 @@ with every lattice kept as a lattice instead of its triangles
   written as an implicit function (about 50-90 nodes). What a field grades
   is sampled into 3D images (16-bit PNG stacks, `grid` mm, default the
   smaller of cell / 6 and 1 mm, one voxel of margin) the function reads:
-  the wall, an offset, and for a graded cell (warp grading) or a conformal
-  frame the lattice coordinates themselves, which are smooth, so the
-  surface stays within 0.05 mm of the field (0.015 mm p99);
+  the wall, an offset, and for a graded cell (warp grading) the lattice
+  coordinates themselves, which are smooth, so the surface stays within
+  0.05 mm of the field (0.015 mm p99). A conformal frame's two in-plane
+  coordinates are phases that wrap round every cell, so they go in as
+  their sine and cosine (renormalized after sampling), with the layer
+  coordinate and the defect fill (its solid nodes) as images of their
+  own, at cell / 12: the implicit and the field disagree on inside or
+  outside over ~1.4% of a conformal gyroid tube or box (images of the
+  raw phases, as before, got ~21% wrong);
 - a strut cell (cubic, BCC, octet, Kelvin, ...) is a beam lattice of the
   Beam Lattice extension, each strut a beam with its radius at each end
   from the thickness field. The same object carries the struts as
