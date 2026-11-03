@@ -1048,11 +1048,48 @@ within 0.087 mm, `trueSurface` 0.97. The arm link sandwich
 4374 patches, 3 cylinders, 2 planes, 7.5 MB, patches within 0.023 mm p99 /
 0.079 mm max, `trueSurface` 1.0, 5 minutes with the part.
 
-Smooth patches straight over a lattice were tried and are not practical:
+Smooth patches fitted over a lattice mesh were tried and are not practical (the field route below works):
 on the sandwich's gyroid, 18k patches that did not make a valid solid and
 missed by about a millimetre at the knife-edge junctions with the skin. A
 part's sealed voids (a skin round its core) are kept, as inner shells of
 the one solid.
+
+### The lattice itself in the STEP: `"lattice": "exact"`
+
+`"step": {"lattice": "exact"}` writes a skinned TPMS sheet lattice part as
+true CAD, lattice and all (loadpath/latticestep.py, ibrep.py). A sheet
+under a skin splits the inside into cavities, the channels on each side of
+the walls, so the part is the envelope (the part with the lattice solid,
+smooth patches and exact faces as above) less its cavities. Each cavity is
+bounded by one smooth level set, the part's own field with the lattice
+replaced by one side of its wall: wall side, skin inner face and the blend
+fillets between them are one surface with no crease, since a sheet's two
+sides never meet. So nothing is trimmed and nothing goes through a boolean:
+the level set is meshed by manifold surface nets (cell / 6 by default,
+`"latticeGrid"`), every quad becomes a bicubic patch on the true field
+(edges shared, so the patches sew exactly), and each closed shell is an
+inner shell of the one solid. A small cavity whose patches fold (a sliver
+pocket where the wall meets the skin) is meshed again on its own at half
+and quarter spacing. Drain bores are cut last, as plain cylinders. The
+file is read back and its volume checked (`readBack`).
+
+Measured on the arm link sandwich (`examples/fields/arm-link-sandwich.json`,
+gyroid cell 8 under a skin, STL at pitch 0.4: 755k triangles, 37.7 MB):
+
+| | patches | size | volume vs STL | distance to STL mean / p99 / max | re-open | time |
+| --- | --- | --- | --- | --- | --- | --- |
+| lattice exact | 4.6k envelope + 34.9k cavity | 64 MB | -0.015% | 0.005 / 0.069 / 0.47 mm | 39 s (OpenCascade) | 9 min |
+
+Valid in OpenCascade and the same volume read back. The worst points are
+tight inner skin corners. A coarser grid (`latticeGrid` 2.67) is about a
+quarter the size but misses those fillets by 0.5 mm p99. Not for strut or
+network lattices, or a lattice whose blend into the skin is not clipped by
+the envelope (the blend then bulges the outside, so the envelope is not
+the part's outside; clip it, as the GRIP SLS graphs do).
+
+The general route, patches on each surface trimmed along the creases where
+they meet, was tried first and not kept: 1-3% of trimmed faces failed at
+grazing creases.
 
 Study parts carry their plan too (`loadpath run study.json --step`): the
 keep-outs, preserved shapes and design space are exact, the organic body

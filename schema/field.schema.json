@@ -149,12 +149,24 @@
               "type": "integer",
               "minimum": 50,
               "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch, refined where it misses (default 2000)"
+            },
+            "lattice": {
+              "enum": [
+                "solid",
+                "exact"
+              ],
+              "description": "lattice parts: the lattice solid in the STEP (default; the lattice is in the STL/3MF) or \"exact\": a TPMS sheet lattice under a skin as smooth patches on its true walls, the part less its cavities (latticestep.py; one lattice node; ~2 KB a patch, cell / 6 patches)"
+            },
+            "latticeGrid": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "lattice \"exact\": patch size, mm (default cell / 6); coarser is smaller and misses tight fillets"
             }
           },
           "additionalProperties": false
         }
       ],
-      "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres where the graph's hard booleans use plain shapes, the rest faceted or smooth; with lattice nodes, the part with its lattices solid (drain bores included)"
+      "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres where the graph's hard booleans use plain shapes, the rest faceted or smooth; with lattice nodes, the part with its lattices solid (drain bores included) or, lattice \"exact\", the skinned TPMS lattice itself"
     },
     "lattice3mf": {
       "anyOf": [

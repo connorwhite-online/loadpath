@@ -1459,8 +1459,10 @@ class FieldGraph:
         form = s.get("form", "sheet")
         if form == "sheet":
             return np.abs(d) - 0.5 * t
-        if form == "network":
+        if form in ("network", "_plus"):
             return d - 0.5 * t
+        if form == "_minus":          # internal (latticestep): the sheet's other side, d < -t/2 empty
+            return -d - 0.5 * t
         raise ValueError(f"node {nd.name!r}: lattice form must be 'sheet' or 'network'")
 
     def _lattice_zones(self, nd, P, memo):
@@ -1590,8 +1592,10 @@ class FieldGraph:
             return d - 0.5 * t
         if form == "sheet":
             return np.abs(d) - 0.5 * t
-        if form == "network":
+        if form in ("network", "_plus"):
             return d - 0.5 * t
+        if form == "_minus":          # internal (latticestep): the sheet's other side, d < -t/2 empty
+            return -d - 0.5 * t
         raise ValueError(f"node {nd.name!r}: lattice form must be 'sheet' or 'network'")
 
     def _conformal(self, nd, max_cells=40_000):
@@ -2898,19 +2902,25 @@ def _lattice_variant(doc, g, solid, empty, base_dir, sources, meshes, progress, 
     gone: the envelope a STEP uses, one lattice's clip region, or the body
     beside the lattices. A drain bore is an exact cylinder through the
     skin, blind where its void is solid."""
+    return _lattice_variant_graph(doc, g, solid, empty, base_dir, sources, meshes, mesh_opts).mesh(progress=progress)
+
+
+def _lattice_variant_graph(doc, g, solid, empty, base_dir, sources, meshes, mesh_opts=None, extra=None):
+    """The FieldGraph behind _lattice_variant (and `extra` nodes added or
+    replacing nodes)."""
     full = expand_groups(doc)
     box = {"op": "shape", "shape": {"type": "box", "min": [-1e4] * 3, "max": [1e4] * 3}}
     nodes = {}
     for k, nd in g.nodes.items():
         nodes[k] = dict(box) if k in solid else {"op": "constant", "value": 1e3} if k in empty else nd.spec
+    nodes.update(extra or {})
     env = {**full, "nodes": nodes, "output": g.output}
     env.pop("drains", None)
     if mesh_opts:
         env["mesh"] = {**(env.get("mesh") or {}), **mesh_opts}
     pre = {k: (g._built[k], g.analyses.get(k)) for k, nd in g.nodes.items()
            if nd.op == "result" and k in g._built}
-    ge = FieldGraph(env, base_dir=base_dir, sources={**(sources or {}), **g.sources}, meshes=meshes).seed(pre)
-    return ge.mesh(progress=progress)
+    return FieldGraph(env, base_dir=base_dir, sources={**(sources or {}), **g.sources}, meshes=meshes).seed(pre)
 
 
 def _lattice_3mf(doc, g, lattices, out_dir, name, opts, base_dir, sources, meshes, progress):
@@ -3150,7 +3160,15 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
             opts = doc["step"] if isinstance(doc["step"], dict) else {}
             lat = [k for k, nd in g.nodes.items() if nd.op == "lattice"]
             try:
-                if lat:
+                if lat and opts.get("lattice") == "exact":
+                    from .latticestep import export_cavity_step
+
+                    st, _ = export_cavity_step(doc, g, out_dir, rep["name"], base_dir, sources, meshes,
+                                               h=opts.get("latticeGrid"),
+                                               surface=opts.get("surface", "smooth"), part_mesh=mesh,
+                                               progress=progress, faces=opts.get("faces"),
+                                               patches=opts.get("patches"))
+                elif lat:
                     st = _envelope_step(doc, g, mesh, lat, out_dir, rep["name"], opts, base_dir, sources, meshes, progress)
                 else:
                     st = export_step(mesh, os.path.join(out_dir, f"{rep['name']}.step"),

@@ -634,6 +634,30 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     return rep
 
 
+def write_step(shape, path, name=None):
+    """Write an OpenCascade shape to STEP (mm, AP214, no 2-D curves, points
+    compacted). Returns {path, bytes, seconds}."""
+    import time
+
+    from OCP.Interface import Interface_Static
+    from OCP.STEPControl import STEPControl_AsIs, STEPControl_Controller, STEPControl_Writer
+
+    t0 = time.time()
+    STEPControl_Controller.Init_s()
+    Interface_Static.SetCVal_s("write.step.unit", "MM")
+    Interface_Static.SetCVal_s("write.step.schema", "AP214IS")
+    Interface_Static.SetIVal_s("write.surfacecurve.mode", 0)
+    if name:
+        Interface_Static.SetCVal_s("write.step.product.name", str(name))
+    w = STEPControl_Writer()
+    w.Transfer(shape, STEPControl_AsIs)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    if int(w.Write(str(path))) != 1:
+        raise RuntimeError(f"OpenCascade could not write {path}")
+    _compact(path)
+    return {"path": str(path), "bytes": os.path.getsize(path), "writeSeconds": round(time.time() - t0, 1)}
+
+
 def _compact(path, decimals=POINT_DECIMALS):
     """Rewrite a STEP file smaller: points to `decimals` places (mm; 10 nm
     is a thousandth of the sewing tolerance) and each distinct point once.

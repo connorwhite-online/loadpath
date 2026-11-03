@@ -39,7 +39,8 @@ PyPI.
 - **CAD in and out**: a STEP or STL part becomes a draft study with its
   bores and bolt patterns found ([docs/IMPORT.md](docs/IMPORT.md)); results
   export as STL, 3MF, and STEP with exact planes and cylinders at the
-  interfaces.
+  interfaces; a skinned TPMS lattice part goes to STEP lattice and all, as
+  smooth patches on its true walls ([docs/fields.md](docs/fields.md#the-lattice-itself-in-the-step-lattice-exact)).
 - **Mesh checks without a study** (`loadpath.checks`): wall thickness,
   overhangs, trapped voids, fluid-network isolation, component fit.
 
