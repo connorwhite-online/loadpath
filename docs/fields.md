@@ -1218,6 +1218,12 @@ The report flags a solid more than 1.5% heavier than the STL
 not re-mesh finer on its own, since meshing those pockets finer made
 OpenCascade's solid check crash.
 
+Not yet: a full-size strut part. The arm link sandwich with a 12 mm octet
+core (cell 12, struts 2 mm, skin 1.2 mm; 42k void patches, 20 sealed voids,
+72 MB, about 90 minutes) writes, but reads back invalid and 24% heavier
+than the STL, so some of its voids are lost on the way out; not yet
+diagnosed.
+
 Not yet: an open **Voronoi** foam. Its void closes and the split takes 12
 s, but one envelope face comes out invalid: two void sheets cross the box
 face about 0.01 mm apart, so that face's outline folds over itself, and
