@@ -3195,14 +3195,15 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
             opts = doc["step"] if isinstance(doc["step"], dict) else {}
             lat = [k for k, nd in g.nodes.items() if nd.op == "lattice"]
             try:
-                if lat and opts.get("lattice") == "exact":
-                    from .latticestep import export_cavity_step
+                if lat and opts.get("lattice") in ("exact", "cavities"):
+                    from .latticestep import export_cavity_step, export_lattice_step
 
-                    st, _ = export_cavity_step(doc, g, out_dir, rep["name"], base_dir, sources, meshes,
-                                               h=opts.get("latticeGrid"),
-                                               surface=opts.get("surface", "smooth"), part_mesh=mesh,
-                                               progress=progress, faces=opts.get("faces"),
-                                               patches=opts.get("patches"))
+                    fn = export_cavity_step if opts["lattice"] == "cavities" else export_lattice_step
+                    st, _ = fn(doc, g, out_dir, rep["name"], base_dir, sources, meshes,
+                               h=opts.get("latticeGrid"),
+                               surface=opts.get("surface", "smooth"), part_mesh=mesh,
+                               progress=progress, faces=opts.get("faces"),
+                               patches=opts.get("patches"))
                 elif lat:
                     st = _envelope_step(doc, g, mesh, lat, out_dir, rep["name"], opts, base_dir, sources, meshes, progress)
                 else:

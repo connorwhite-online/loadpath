@@ -1314,19 +1314,24 @@ FIELD_SCHEMA = {
                                        "(experimental: CAD-friendlier, not smaller; falls back to facets when "
                                        "OpenCascade's booleans fail)"},
             "patches": {"type": "integer", "minimum": 50, "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch, refined where it misses (default 2000)"},
-            "lattice": {"enum": ["solid", "exact"],
+            "lattice": {"enum": ["solid", "exact", "cavities"],
                         "description": "lattice parts: the lattice solid in the STEP (default; the lattice is in "
-                                       "the STL/3MF) or \"exact\": a TPMS sheet lattice under a skin as smooth "
-                                       "patches on its true walls, the part less its cavities (latticestep.py; "
-                                       "one lattice node; ~2 KB a patch, cell / 6 patches)"},
+                                       "the STL/3MF) or \"exact\": every lattice as smooth patches on its true "
+                                       "surface, node blends and fillets included: strut cells (octet, bcc, "
+                                       "cubic, ...), Voronoi foams, TPMS sheets or networks; graded, conformal; "
+                                       "under a skin or open at the outside (latticestep.export_void_step: the "
+                                       "envelope less the void, sealed voids as inner shells, open pores cut in "
+                                       "one boolean; ~1 KB a patch). \"cavities\": the older route for one TPMS "
+                                       "sheet lattice under a closed skin (its two sides' cavities)"},
             "latticeGrid": {"type": "number", "exclusiveMinimum": 0,
-                            "description": "lattice \"exact\": patch size, mm (default cell / 6); coarser is "
-                                           "smaller and misses tight fillets"}},
+                            "description": "lattice \"exact\": patch size, mm (default the smaller of cell / 6 "
+                                           "and half the thinnest strut or wall); coarser is smaller and misses "
+                                           "tight fillets; much over half the thinnest strut can lose struts"}},
             "additionalProperties": False}],
                  "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres "
                                 "where the graph's hard booleans use plain shapes, the rest faceted or smooth; "
                                 "with lattice nodes, the part with its lattices solid (drain bores included) or, "
-                                "lattice \"exact\", the skinned TPMS lattice itself"},
+                                "lattice \"exact\", the lattice itself as smooth patches"},
         "lattice3mf": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
             "decimate": {"type": "number", "exclusiveMinimum": 0,
                          "description": "body and region meshes within this many mm of the surface (default 0.02)"},

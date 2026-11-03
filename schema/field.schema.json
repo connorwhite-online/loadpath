@@ -153,20 +153,21 @@
             "lattice": {
               "enum": [
                 "solid",
-                "exact"
+                "exact",
+                "cavities"
               ],
-              "description": "lattice parts: the lattice solid in the STEP (default; the lattice is in the STL/3MF) or \"exact\": a TPMS sheet lattice under a skin as smooth patches on its true walls, the part less its cavities (latticestep.py; one lattice node; ~2 KB a patch, cell / 6 patches)"
+              "description": "lattice parts: the lattice solid in the STEP (default; the lattice is in the STL/3MF) or \"exact\": every lattice as smooth patches on its true surface, node blends and fillets included: strut cells (octet, bcc, cubic, ...), Voronoi foams, TPMS sheets or networks; graded, conformal; under a skin or open at the outside (latticestep.export_void_step: the envelope less the void, sealed voids as inner shells, open pores cut in one boolean; ~1 KB a patch). \"cavities\": the older route for one TPMS sheet lattice under a closed skin (its two sides' cavities)"
             },
             "latticeGrid": {
               "type": "number",
               "exclusiveMinimum": 0,
-              "description": "lattice \"exact\": patch size, mm (default cell / 6); coarser is smaller and misses tight fillets"
+              "description": "lattice \"exact\": patch size, mm (default the smaller of cell / 6 and half the thinnest strut or wall); coarser is smaller and misses tight fillets; much over half the thinnest strut can lose struts"
             }
           },
           "additionalProperties": false
         }
       ],
-      "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres where the graph's hard booleans use plain shapes, the rest faceted or smooth; with lattice nodes, the part with its lattices solid (drain bores included) or, lattice \"exact\", the skinned TPMS lattice itself"
+      "description": "also write <name>.step (needs loadpath[step]): exact planes, cylinders and spheres where the graph's hard booleans use plain shapes, the rest faceted or smooth; with lattice nodes, the part with its lattices solid (drain bores included) or, lattice \"exact\", the lattice itself as smooth patches"
     },
     "lattice3mf": {
       "anyOf": [

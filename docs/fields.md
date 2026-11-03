@@ -1137,22 +1137,97 @@ the one solid.
 
 ### The lattice itself in the STEP: `"lattice": "exact"`
 
-`"step": {"lattice": "exact"}` writes a skinned TPMS sheet lattice part as
-true CAD, lattice and all (loadpath/latticestep.py, ibrep.py). A sheet
-under a skin splits the inside into cavities, the channels on each side of
-the walls, so the part is the envelope (the part with the lattice solid,
-smooth patches and exact faces as above) less its cavities. Each cavity is
-bounded by one smooth level set, the part's own field with the lattice
-replaced by one side of its wall: wall side, skin inner face and the blend
-fillets between them are one surface with no crease, since a sheet's two
-sides never meet. So nothing is trimmed and nothing goes through a boolean:
-the level set is meshed by manifold surface nets (cell / 6 by default,
+`"step": {"lattice": "exact"}` writes a lattice part as true CAD, lattice
+and all (loadpath/latticestep.py, ibrep.py): strut cells (octet, bcc, bccz,
+cubic, kelvin, ...), Voronoi foams, TPMS sheets or networks, graded, under a
+skin or open at the outside, node blends and lattice-to-body fillets
+included. Every surface is bicubic patches sitting on the part's true field
+(not fitted to the STL), so the STEP is closer to the design than the STL
+is: on the open cubic block below, the STL's facets are 0.0027 mm off the
+field on average and the STEP's patches 0.0008 mm. Two routes, picked by
+the part (`step.route` in the report):
+
+**cavities**, for one TPMS sheet lattice sealed under a skin. A sheet under
+a skin splits the inside into cavities, the channels on each side of the
+walls, so the part is the envelope (the part with the lattice solid, smooth
+patches and exact faces as above) less its cavities. Each cavity is bounded
+by one smooth level set, the part's own field with the lattice replaced by
+one side of its wall: wall side, skin inner face and the blend fillets
+between them are one surface with no crease, since a sheet's two sides
+never meet. So nothing is trimmed and nothing goes through a boolean: the
+level set is meshed by manifold surface nets (cell / 6 by default,
 `"latticeGrid"`), every quad becomes a bicubic patch on the true field
 (edges shared, so the patches sew exactly), and each closed shell is an
 inner shell of the one solid. A small cavity whose patches fold (a sliver
 pocket where the wall meets the skin) is meshed again on its own at half
 and quarter spacing. Drain bores are cut last, as plain cylinders. The
 file is read back and its volume checked (`readBack`).
+
+**void**, for everything else (`export_void_step`). The part is the
+envelope less its void, and the void is one smooth level set: inside the
+envelope the part's own field; outside it, what the envelope cut carried
+on (the raw lattice, so struts run on past the envelope and cross its
+surface instead of ending on it; over a skin or boss, solid, so no void
+face lies on the part's outside), capped two patches out. Void sealed
+inside the part goes in as inner shells, as above. Void that reaches the
+outside (an open lattice) is not cut with an OpenCascade boolean (on struts
+grazing a box face that took up to 26 minutes, or hung): the envelope and
+the void are split against each other (one general fuse), each piece is
+kept or dropped by the fields at a point inside it (OpenCascade's own
+classifier for slivers within a tenth of a patch of the other surface), and
+the kept pieces are sewn, 1e-4 mm first, looser only if a sliver left a
+hole. The patch grid is shifted off the envelope's flat faces so no row of
+patch corners lies in one. Patches are half the thinnest strut or wall (the 5th
+percentile of the thickness field, so graded struts set it where they are
+thin) or cell / 6, whichever is smaller. Where two sheets of the void
+nearly touch (a strut's fillet that just kisses the skin, a saddle within
+the grid's reach of zero) the mesher would join them through one vertex;
+those pinches are pulled apart (`ibrep.split_pinches`), and a void surface
+that still does not close is meshed again at 0.7x the spacing, twice at
+most. The report says whether every void went in (`complete`; `ok` =
+valid, read back, complete) and how far the STEP is from the STL both ways
+(`stlDistance`, points on each against the other).
+
+12 mm blocks (cell 6, struts 1 mm, node blend 0.4; 0.15 mm STL), void
+route, valid in OpenCascade and read back to the same volume unless noted:
+
+| block | patches | size | volume vs STL | STEP to STL p99 / max | STL to STEP p99 / max | time |
+| --- | --- | --- | --- | --- | --- | --- |
+| octet, open | 16.6k | 15.5 MB | +0.38% | 0.015 / 0.023 mm | 0.016 / 0.033 mm | 2.5 min |
+| BCC, open | 9.7k | 7.6 MB | +0.54% | 0.020 / 0.057 | 0.029 / 0.078 | 1.5 min |
+| BCCz, open | 10.8k | 8.7 MB | +0.54% | 0.018 / 0.053 | 0.024 / 0.073 | 1.2 min |
+| cubic, open | 8.9k | 3.1 MB | +0.77% | 0.017 / 0.025 | 0.023 / 0.029 | 0.9 min |
+| gyroid sheet 0.8 mm, open | 26.3k | 29.9 MB | -0.21% | 0.067 / 0.135 | 0.061 / 0.116 | 2.4 min |
+| octet graded 0.8-1.4 mm, open | 23.1k | 23.9 MB | +0.24% | 0.015 / 0.038 | 0.015 / 0.040 | 3.7 min |
+| octet under a 1.2 mm skin | 6.4k | 9.9 MB | -0.06% | 0.014 / 0.130 | 0.011 / 0.078 | 0.9 min |
+| Voronoi under a 1.2 mm skin | 4.3k | 6.5 MB | -0.01% | 0.026 / 0.191 | 0.013 / 0.215 | 3.8 min |
+| octet, conformal frame, under a skin | 12.7k | 20.0 MB | -0.02% | 0.17 / 0.59 | 0.19 / 0.68 | 7.9 min |
+
+The open blocks read 0.2-0.8% over the STL because the STL's facets are
+chords inside the struts' curve (thin cubic struts most). The conformal
+block is worse because the conformal frame's field itself jumps by up to
+about a millimetre at its phase seams (struts end abruptly there, in the
+STL too); the patches straddle the jumps.
+
+Pockets thinner than the patches can be lost: on an 8 mm BCC block under
+a skin (cell 4), wedges where the diagonal struts meet the skin at a
+shallow angle are about 0.2 mm³ each, and depending on where the grid
+falls up to 48 of them are missed (the STEP 2.4% heavier than the STL).
+The report flags a solid more than 1.5% heavier than the STL
+(`complete: false`, with a warning to set a finer `latticeGrid`); it does
+not re-mesh finer on its own, since meshing those pockets finer made
+OpenCascade's solid check crash.
+
+Not yet: an open **Voronoi** foam. Its void closes and the split takes 12
+s, but one envelope face comes out invalid: two void sheets cross the box
+face about 0.01 mm apart, so that face's outline folds over itself, and
+neither OpenCascade's ShapeFix nor two finer grids fix it. The report says
+`valid: false`, `ok: false` with a warning. Under a skin (no cut) it goes
+through. The Voronoi field was also fixed for this (struts.py): its blend
+smoothed over the pieces each strut is split into, which beaded every strut
+where its pieces join and stepped by up to 0.01 mm where a node's struts
+did not all fit in the 16 nearest pieces; it now takes each strut once,
+from the 32 nearest pieces.
 
 Measured on the arm link sandwich (`examples/fields/arm-link-sandwich.json`,
 gyroid cell 8 under a skin, STL at pitch 0.4: 755k triangles, 37.7 MB):
@@ -1171,14 +1246,14 @@ solid; that is most of its error. A finer grid there (`latticeGrid` 0.9,
 `faces` 60000) closed those cavities but the drain cut left the solid
 invalid (65 MB): the faceted envelope, not the cavities, is what to fix
 next for parts like it. A coarser grid (`latticeGrid` 2.67) is about a
-quarter the size but misses those fillets by 0.5 mm p99. Not for strut or
-network lattices, or a lattice whose blend into the skin is not clipped by
-the envelope (the blend then bulges the outside, so the envelope is not
-the part's outside; clip it, as the GRIP SLS graphs do).
+quarter the size but misses those fillets by 0.5 mm p99. Not for a lattice
+whose blend into the skin is not clipped by the envelope (the blend then
+bulges the outside, so the envelope is not the part's outside; clip it, as
+the GRIP SLS graphs do). `"lattice": "cavities"` forces this route.
 
-The general route, patches on each surface trimmed along the creases where
-they meet, was tried first and not kept: 1-3% of trimmed faces failed at
-grazing creases.
+A route with patches on each surface trimmed along the creases where they
+meet was tried first and not kept: 1-3% of trimmed faces failed at grazing
+creases.
 
 Study parts carry their plan too (`loadpath run study.json --step`): the
 keep-outs, preserved shapes and design space are exact, the organic body

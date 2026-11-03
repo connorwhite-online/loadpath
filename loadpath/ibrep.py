@@ -221,21 +221,142 @@ def nonmanifold(Q):
     return int((c != 2).sum())
 
 
-def manifold_nets(fam, lo, hi, tries=16):
+def manifold_nets(fam, lo, hi, tries=16, split=True):
     """surface_nets on a grid shifted until the mesh is a closed manifold
     (a cell the surface crosses in the ambiguous way marching cubes cannot
-    split moves off the grid), or the best of `tries` shifts."""
+    split moves off the grid), or the best of `tries` shifts; then (split)
+    each try's pinches (split_pinches) pulled apart first. Returns (V, Q,
+    non-manifold edges left)."""
     best = None
     rng = np.random.default_rng(7)
     for k in range(tries):
         shift = np.zeros(3) if k == 0 else rng.uniform(0, 1, 3) * fam.h
         V, Q = surface_nets(fam, np.asarray(lo, float) - shift, np.asarray(hi, float) - shift + fam.h)
         bad = nonmanifold(Q)
+        if bad and split:
+            V, Q = split_pinches(fam, V, Q)
+            bad = nonmanifold(Q)
         if best is None or bad < best[0]:
             best = (bad, V, Q)
         if bad == 0:
             break
-    return best[1], best[2], best[0]
+    bad, V, Q = best
+    return V, Q, bad
+
+
+def split_pinches(fam, V, Q):
+    """Pull a quad mesh apart where two sheets of the surface pinch together
+    at a near-zero saddle (two struts' fillets that barely touch, a skin
+    kissed by a fillet): one cell meets the surface twice and its one vertex
+    joins both, so a quad edge has four quads, or a vertex two separate
+    fans. Each such edge's quads are paired (one each way along the edge,
+    neighbours round it) and every vertex gets one copy per fan of its
+    quads; a copy is moved a little towards its own fan and back onto the
+    surface, so the sheets part by the width of the saddle. Returns (V, Q):
+    a manifold mesh (every edge two quads, every vertex one fan)."""
+    Q = np.array(Q, np.int64)
+    if not len(Q):
+        return V, Q
+    # directed edges: quad q, side k runs Q[q, k] -> Q[q, k+1]
+    a = Q.reshape(-1)
+    b = np.roll(Q, -1, axis=1).reshape(-1)
+    qid = np.repeat(np.arange(len(Q)), 4)
+    lo_, hi_ = np.minimum(a, b), np.maximum(a, b)
+    key = lo_ * (len(V) + 1) + hi_
+    _, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
+    many = np.flatnonzero(cnt > 2)
+    # pairs: half-edge index -> partner half-edge index (normal edges: the other one)
+    order = np.argsort(inv, kind="stable")
+    starts = np.r_[0, np.cumsum(cnt)[:-1]]
+    partner = -np.ones(len(a), np.int64)
+    two = np.flatnonzero(cnt == 2)
+    h0, h1 = order[starts[two]], order[starts[two] + 1]
+    partner[h0], partner[h1] = h1, h0
+    C = V[Q].mean(axis=1)
+    for e in many:
+        hs = order[starts[e]:starts[e] + cnt[e]]
+        va, vb = V[lo_[hs[0]]], V[hi_[hs[0]]]
+        ax = vb - va
+        ax /= max(np.linalg.norm(ax), 1e-12)
+        ref = np.cross(ax, [1.0, 0, 0])
+        if np.linalg.norm(ref) < 0.1:
+            ref = np.cross(ax, [0, 1.0, 0])
+        ref /= np.linalg.norm(ref)
+        ref2 = np.cross(ax, ref)
+        d = C[qid[hs]] - va
+        ang = np.arctan2(d @ ref2, d @ ref)
+        hs = hs[np.argsort(ang)]
+        # neighbours round the edge, one each way: two choices of pairing
+        # (0-1, 2-3, ...) or (1-2, 3-0, ...); take the one whose pairs sit
+        # closer in angle (the same sheet)
+        m = len(hs)
+        best = None
+        for sh in (0, 1):
+            pairs = [(hs[(i + sh) % m], hs[(i + sh + 1) % m]) for i in range(0, m, 2)]
+            if any((a[x] == lo_[x]) == (a[y] == lo_[y]) for x, y in pairs):
+                continue
+            gap = sum(np.linalg.norm(C[qid[x]] - C[qid[y]]) for x, y in pairs)
+            if best is None or gap < best[0]:
+                best = (gap, pairs)
+        if best is None:                                  # odd or unpaired: leave it
+            continue
+        for x, y in best[1]:
+            partner[x], partner[y] = y, x
+    # fans: at each vertex, quads joined across the paired edges at it
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+
+    # a corner (q, k) is vertex Q[q, k]; its two sides are half-edges k
+    # (leaving it) and k-1 (arriving); join the corner to the corner of
+    # the partner quad at the same vertex
+    corner = np.arange(len(a))
+    side_out = corner                                    # half-edge leaving corner
+    side_in = qid * 4 + (corner % 4 + 3) % 4            # half-edge arriving at corner
+    rows, cols = [], []
+    for hs_ in (side_out, side_in):
+        p = partner[hs_]
+        ok = p >= 0
+        # partner half-edge runs the other way: its corner at this vertex is
+        # its end (k+1) when hs_ leaves, its start when hs_ arrives
+        pq, pk = p[ok] // 4, p[ok] % 4
+        if hs_ is side_out:
+            pc = pq * 4 + (pk + 1) % 4
+        else:
+            pc = pq * 4 + pk
+        rows.append(corner[ok])
+        cols.append(pc)
+    rows, cols = np.concatenate(rows), np.concatenate(cols)
+    good = a[rows] == a[cols]
+    G = sp.coo_matrix((np.ones(good.sum()), (rows[good], cols[good])), shape=(len(a), len(a)))
+    _, lab = connected_components(G, directed=False)
+    # one vertex per (vertex, fan)
+    vk = a * (len(a) + 1) + lab
+    ufan, finv = np.unique(vk, return_inverse=True)
+    vert = ufan // (len(a) + 1)
+    first = np.zeros(len(V), bool)
+    newid = np.empty(len(ufan), np.int64)
+    extra = []
+    for i, v in enumerate(vert):
+        if not first[v]:
+            first[v] = True
+            newid[i] = v
+        else:
+            newid[i] = len(V) + len(extra)
+            extra.append(i)
+    Q2 = newid[finv].reshape(-1, 4)
+    if extra:
+        # each copy (and the vertex it came from) nudged towards its own fan
+        split_v = np.unique(vert[extra])
+        fans = np.flatnonzero(np.isin(vert, split_v))
+        cen = np.zeros((len(ufan), 3))
+        np.add.at(cen, finv, C[qid])
+        cen /= np.maximum(np.bincount(finv, minlength=len(ufan)), 1)[:, None]
+        P = V[vert[fans]] + 0.2 * (cen[fans] - V[vert[fans]])
+        P = _project(fam, P, step=0.1 * fam.h)
+        Vn = np.concatenate([V, np.zeros((len(extra), 3))])
+        Vn[newid[fans]] = P
+        V = Vn
+    return V, Q2
 
 
 _B = np.array([[comb(DEG, j) * x ** j * (1 - x) ** (DEG - j) for j in range(DEG + 1)]

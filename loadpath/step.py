@@ -531,9 +531,10 @@ def _smooth_shape(part, plan, patches, notes, degree=None):
     # the patches against the mesh; the exact faces are the truth there (a
     # mesh's facets sag off a big bore by more than the patches miss)
     back = shape_to_trimesh(_bezier_faces(solid), deflection=0.005, angle=0.05)
-    d = mesh_distance(part, back.sample(20000), cap=1.0)
-    rep["deviation"] = {"mean": round(float(d.mean()), 4), "p99": round(float(np.percentile(d, 99)), 4),
-                        "max": round(float(d.max()), 4)}
+    if len(back.faces):                       # a part of exact faces only has no patches to measure
+        d = mesh_distance(part, back.sample(20000), cap=1.0)
+        rep["deviation"] = {"mean": round(float(d.mean()), 4), "p99": round(float(np.percentile(d, 99)), 4),
+                            "max": round(float(d.max()), 4)}
     notes.append({"leaf": "smooth", **rep})
     return solid
 

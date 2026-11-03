@@ -457,24 +457,34 @@ class VoronoiStruts:
         L = np.linalg.norm(segs[:, 1] - segs[:, 0], axis=1)
         piece = 0.2 * cmin
         k = np.maximum(1, np.ceil(L / piece).astype(int))
-        A, B = [], []
+        A, B, E = [], [], []
         for n in np.unique(k):
-            sel = segs[k == n]
+            ids = np.flatnonzero(k == n)
+            sel = segs[ids]
             t = np.linspace(0, 1, n + 1)
             pa = sel[:, None, 0] + (sel[:, None, 1] - sel[:, None, 0]) * t[None, :-1, None]
             pb = sel[:, None, 0] + (sel[:, None, 1] - sel[:, None, 0]) * t[None, 1:, None]
             A.append(pa.reshape(-1, 3))
             B.append(pb.reshape(-1, 3))
+            E.append(np.repeat(ids, n))
         self.edges = segs
         self.A, self.B = np.concatenate(A), np.concatenate(B)
+        self.eid = np.concatenate(E)            # each piece's edge
         self.tree = cKDTree(0.5 * (self.A + self.B))
         self.piece = piece
         self.cell_min = cmin
 
-    def distance(self, P, blend=0.0, k=12):
+    def distance(self, P, blend=0.0, k=None):
+        """Distance to the nearest strut centreline; with `blend`, the
+        smooth minimum over struts, each strut once (its pieces' nearest:
+        smoothing over pieces beaded every strut where its pieces join)."""
         P = np.asarray(P, float)
         out = np.empty(len(P))
         blend = np.broadcast_to(np.asarray(blend, float), (len(P),))
+        if k is None:
+            # a blend reads every strut within it: 32 nearest pieces keep it
+            # continuous (16 left 0.01 mm steps where struts crowd a node)
+            k = 32 if np.any(blend > 0) else 12
         for i in range(0, len(P), _CHUNK):
             Q = P[i:i + _CHUNK]
             _, j = self.tree.query(Q, k=k)
@@ -485,7 +495,16 @@ class VoronoiStruts:
                         0, 1)
             D = np.linalg.norm(AP - t[..., None] * AB, axis=2)
             bl = blend[i:i + _CHUNK]
-            out[i:i + _CHUNK] = _smin_many(D, bl) if np.any(bl > 0) else D.min(axis=1)
+            if np.any(bl > 0):
+                o = np.argsort(D, axis=1)
+                D = np.take_along_axis(D, o, 1)
+                e = np.take_along_axis(self.eid[j], o, 1)
+                dup = np.zeros(D.shape, bool)
+                for c in range(1, D.shape[1]):
+                    dup[:, c] = (e[:, :c] == e[:, c:c + 1]).any(axis=1)
+                out[i:i + _CHUNK] = _smin_many(np.where(dup, 1e9, D), bl)
+            else:
+                out[i:i + _CHUNK] = D.min(axis=1)
         return out
 
 
