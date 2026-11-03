@@ -411,9 +411,11 @@ class _Gen:
         return self.g._resource(nd, lambda: shape_from_spec(nd.spec["shape"], self.g.base_dir))
 
     def _shape_ok(self, shp):
-        from .shapes import Boolean, Box, Cylinder, Shell, Sphere, Union
+        from .shapes import Boolean, Box, Cylinder, MeshShape, Shell, Sphere, Union
 
         if isinstance(shp, (Box, Cylinder, Sphere)):
+            return True
+        if type(shp) is MeshShape:
             return True
         if isinstance(shp, Union):
             return all(self._shape_ok(x) for x in shp.shapes)
@@ -556,7 +558,7 @@ class _Gen:
         return self.t(f"{cc} + {dc} * {u}")
 
     def _sdf(self, shp, f):
-        from .shapes import Boolean, Box, Cylinder, Shell, Sphere, Union
+        from .shapes import Boolean, Box, Cylinder, MeshShape, Shell, Sphere, Union
 
         x, y, z = self.frames[f]
         if isinstance(shp, Box):
@@ -606,6 +608,19 @@ class _Gen:
         if isinstance(shp, Shell):
             d = self.t(f"_mx({self._sdf(shp.outer, f)}, -{self._sdf(shp.inner, f)})")
             return d if shp.clip is None else self.t(f"_mx({d}, {self._sdf(shp.clip, f)})")
+        if type(shp) is MeshShape:
+            # its voxel distance grid, trilinear; past the grid the box distance
+            if shp._grid is None:
+                shp._build_grid()
+            dist, origin, pitch = shp._grid
+            G = self.grid(("meshshape", id(shp)), np.asarray(dist, np.float64))
+            n = dist.shape
+            co = [self.t(f"({p} - {self.c(origin[i])}) / {self.c(pitch)} - 0.5") for i, p in enumerate((x, y, z))]
+            inside = " and ".join(f"({co[i]} >= 0 and {co[i]} <= {self.c(n[i] - 1)})" for i in range(3))
+            lo, hi = shp.bounds()
+            q = [self.t(f"_mx(_mx({self.c(lo[i])} - {p}, {p} - {self.c(hi[i])}), 0.0)") for i, p in enumerate((x, y, z))]
+            far = f"_mx(np.sqrt({q[0]} * {q[0]} + {q[1]} * {q[1]} + {q[2]} * {q[2]}), {self.c(4 * pitch)})"
+            return self.t(f"_tri({G}, {co[0]}, {co[1]}, {co[2]}) if {inside} else {far}")
         raise AssertionError(type(shp))
 
     def _distance(self, nd, f):
@@ -858,6 +873,43 @@ class CompiledField:
         if n:
             self.kernel(P, self.C, self.TX, self.TY, X, bool(_SINGLE[0]), out, *self.grids)
         return out
+
+
+class CompiledShapes:
+    """min over (shape, sign) of sign * shape.sdf(P), compiled: the region a
+    sharp plan's extended field steers around (sharp._Extended.g)."""
+
+    def __init__(self, regions):
+        gen = _Gen(None)
+        out = None
+        for shp, sg in regions:
+            v = gen._sdf(shp, 0)
+            v = v if sg > 0 else gen.t(f"-{v}")
+            out = v if out is None else gen.t(f"_mn({out}, {v})")
+        self.C = np.asarray(gen.C, np.float64)
+        self.grids = gen.grids
+        self.kernel = _kernel(gen.source(out))
+        self._t = np.empty(0)
+
+    def __call__(self, P):
+        P = np.ascontiguousarray(np.asarray(P, np.float64).reshape(-1, 3))
+        out = np.empty(len(P))
+        if len(P):
+            self.kernel(P, self.C, self._t, self._t, np.empty((0, len(P))), False, out, *self.grids)
+        return out
+
+
+def compile_shapes(regions):
+    """CompiledShapes for [(shape, +1 | -1)], or None when a shape does not compile."""
+    if not available() or not regions:
+        return None
+    gen = _Gen(None)
+    if not all(gen._shape_ok(shp) for shp, _ in regions):
+        return None
+    try:
+        return CompiledShapes(regions)
+    except Exception:  # pragma: no cover
+        return None
 
 
 def compile_graph(g, name):

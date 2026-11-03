@@ -175,3 +175,18 @@ def test_mesh_distance_unchanged(monkeypatch):
         monkeypatch.setenv("LOADPATH_KNN", mode)
         vals.append(MeshField(m, band=6.0)(P))
     assert np.array_equal(vals[0], vals[1])
+
+
+def test_compiled_shapes_match():
+    """A sharp plan's don't-care region (sharp._Extended.g): primitives, a
+    union and a mesh shape's voxel distance, compiled, bit for bit."""
+    import trimesh
+
+    from loadpath.shapes import Box, Cylinder, MeshShape, Union
+
+    m = trimesh.creation.torus(major_radius=14, minor_radius=5, major_sections=48, minor_sections=24)
+    regions = [(Union([Cylinder([0, 0, -20], [0, 0, 20], 4), Cylinder([-30, 2, 0], [30, 2, 0], 2, 1),
+                       Box([-5, -5, 8], [5, 5, 12])]), 1), (MeshShape(m), -1)]
+    P = np.random.default_rng(5).uniform(-40, 40, (100_000, 3))
+    want = np.min([s * sh.sdf(P) for sh, s in regions], axis=0)
+    assert np.array_equal(fieldjit.compile_shapes(regions)(P), want)

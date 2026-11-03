@@ -241,6 +241,13 @@ class _Extended:
         return _chunk([self.field])
 
     def g(self, P):
+        if not hasattr(self, "_g"):
+            from . import fieldjit
+
+            # the same values, one compiled pass (fieldjit.CompiledShapes)
+            self._g = fieldjit.compile_shapes(self.regions)
+        if self._g is not None:
+            return self._g(P)
         return np.min([s * sh.sdf(P) for sh, s in self.regions], axis=0)
 
     def __call__(self, P):
