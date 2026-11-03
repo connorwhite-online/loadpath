@@ -541,5 +541,13 @@ verify's `resolution.cutCells`). Run 2026-11-03, about 30 s.
   beam both read ~1.65x (the tet peak's contact band leaves out what both
   voxel models see). Verification takes 2-4x as long. The plate with a
   hole (Peterson 81 MPa) reads 79-86 cut, 78-93 whole, over 0.7-1.4 mm cells.
-- Cut cells are opt-in (`resolution.cutCells`, or LOADPATH_CUT_CELLS=1)
-  until the eval suite has been run with them.
+- Cut cells are opt-in (`resolution.cutCells`, or LOADPATH_CUT_CELLS=1).
+  Coarse eval tier on 2026-11-03, cut against whole cells on the same main:
+  all cases pass either way; massAtTarget within noise (under 5%) except
+  the wrist yoke (cut 19.8 g, whole 17.2) and the hook (cut 25.8, whole
+  26.7); delivered mass lighter cut on the driven arm link (46.3 vs 50.0),
+  wrist yoke (21.1 vs 23.0) and hook (27.4 vs 28.2), heavier on the upper
+  arm (254.6 vs 250.1); cases take 1.1-1.9x as long. With the tet confirm
+  in the search the outcomes barely move, so whole cells stay the default;
+  cut cells are for checks without a tet mesher and for parts made of thin
+  members at angles to the grid.
