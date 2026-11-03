@@ -136,7 +136,7 @@ def _pieces(fam, lo, hi, levels=2, small=12):
                 continue
             sh2, new, nm = build(f2, a, b)
             new = [p for p in new if p["closed"] and (p["lo"] > a + h2).all() and (p["hi"] < b - h2).all()]
-            if nm or not new:
+            if not new:
                 continue                                # the finer mesh is no better: keep the coarse one
             pieces = [p for p in pieces if not any(p is x for x in inside)] + new
             if sh2 is not None:

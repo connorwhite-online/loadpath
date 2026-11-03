@@ -1121,10 +1121,18 @@ gyroid cell 8 under a skin, STL at pitch 0.4: 755k triangles, 37.7 MB):
 
 | | patches | size | volume vs STL | distance to STL mean / p99 / max | re-open | time |
 | --- | --- | --- | --- | --- | --- | --- |
-| lattice exact | 4.6k envelope + 34.9k cavity | 64 MB | -0.015% | 0.005 / 0.069 / 0.47 mm | 39 s (OpenCascade) | 9 min |
+| arm link sandwich | 4.6k envelope + 25.3k cavity | 48 MB | +0.22% | 0.005 / 0.068 / 0.57 mm | 29 s (OpenCascade) | 14 min |
+| GRIP wrist link, SLS (3 drain bores) | 38k envelope facets + 3.4k cavity | 37.5 MB (STL 34.6 MB) | -0.3% | 0.049 / 0.31 / 2.3 mm | 29 s | 23 min with the part |
 
-Valid in OpenCascade and the same volume read back. The worst points are
-tight inner skin corners. A coarser grid (`latticeGrid` 2.67) is about a
+Both valid in OpenCascade, same volume read back. On the arm link the worst
+points are tight inner skin corners, and one 17 mm³ loose wall fragment the
+solid check rejects is left out. The wrist link's envelope fell back to
+facets (`"faces": 40000`: its 587k-triangle body does not decimate to the
+default 20000), and two cavities whose meshes stay non-manifold are left
+solid; that is most of its error. A finer grid there (`latticeGrid` 0.9,
+`faces` 60000) closed those cavities but the drain cut left the solid
+invalid (65 MB): the faceted envelope, not the cavities, is what to fix
+next for parts like it. A coarser grid (`latticeGrid` 2.67) is about a
 quarter the size but misses those fillets by 0.5 mm p99. Not for strut or
 network lattices, or a lattice whose blend into the skin is not clipped by
 the envelope (the blend then bulges the outside, so the envelope is not
