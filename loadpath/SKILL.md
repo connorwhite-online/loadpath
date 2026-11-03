@@ -313,13 +313,18 @@ field. `check` reports every problem at once: fix them all, then check again.
   equal mass: SF 16 vs 9-13); pick struts for open, drainable cells, very
   low density, or FDM (`"aspect": [1, 1, 1.5]` BCC prints unsupported; the
   field report's `lattices` block gives the bridging strut length).
-- Printed lattices are softer than their design. Against 33 published
-  compression tests the homogenized check read the modulus 1.0-1.7x the
-  measurement (median) for SLS, resin and FDM PLA lattices and 2.2-2.8x for
-  FDM ABS/PC strut lattices; its first-yield strength erred safe on all but
-  one (thin flat Schwarz P walls in PLA buckle first). So budget about 2x
-  (FDM struts 3-4x) on a lattice part's predicted deflection, and say so in
-  what you report (docs/VALIDATION.md, `loadpath.validation`).
+- Printed lattices are softer than their design (33 published compression
+  tests: 1.0-4.1x). Name the study's `process` and the homogenized check
+  reads the print: an as-printed stiffness factor per process (FDM, SLS/MJF,
+  resin), strut or sheet cell and density, fitted to those tests and held
+  out (median error 1.23x, worst 2x; report `latticePrint`). FDM gyroid at
+  rho 0.2 reads 0.65 of the design, FDM struts ~0.4, SLS ~0.93. Its
+  first-yield reading then sits under every measured strength. It also
+  checks wall and strut buckling (`cases[].bucklingFactor`, `governs`).
+  Still say a lattice part's deflection is +-20% (2x at worst) unless the
+  material is calibrated on the printed gyroid coupon, whose measured
+  factor replaces the fit; `process.latticeStiffness` sets one by hand
+  (docs/VALIDATION.md, `loadpath.lattice_print`).
 - Don't use a lattice to make a part stiffer per gram: solid topology
   optimization wins that. Use one to stop an impact (a bumper, a hard stop, a
   drop pad): give a field graph an `impact` block (envelope, density node,

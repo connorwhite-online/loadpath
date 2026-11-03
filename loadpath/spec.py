@@ -206,6 +206,9 @@ class Process:
     min_hole: float | None = None      # mm
     # mm: longest unsupported bridge the printer manages (printcheck.BRIDGE_SPAN default)
     bridge_span: float | None = None
+    # lattice stiffness as printed over designed: None = the published-test
+    # fit (lattice_print.print_factor), a number, or "designed" (1)
+    lattice_stiffness: Any = None
 
 
 def _process(spec) -> Process | None:
@@ -237,12 +240,23 @@ def _process(spec) -> Process | None:
     span = spec.get("bridgeSpan")
     if span is not None and float(span) <= 0:
         raise ValueError("process.bridgeSpan is the longest bridge the printer prints cleanly, in mm, > 0")
+    lat_k = spec.get("latticeStiffness")
+    if lat_k is not None:
+        if isinstance(lat_k, str):
+            if lat_k.strip().lower() not in ("designed", "as-printed"):
+                raise ValueError('process.latticeStiffness is a factor in (0, 1.5], "as-printed" or "designed"')
+            lat_k = None if lat_k.strip().lower() == "as-printed" else "designed"
+        elif not 0.0 < float(lat_k) <= 1.5:
+            raise ValueError("process.latticeStiffness is the printed lattice's stiffness over the designed "
+                             "geometry's, in (0, 1.5]")
+        else:
+            lat_k = float(lat_k)
     return Process(kind, build, inter, float(spec.get("minFeature", base["minFeature"])),
                    bool(spec.get("overhangs", base["overhangs"])),
                    anisotropic=_anisotropic(spec.get("anisotropic", False)),
                    escape_hole=float(esc) if esc is not None else None,
                    min_hole=float(spec.get("minHole", base["minHole"])),
-                   bridge_span=float(span) if span is not None else None, **stiff)
+                   bridge_span=float(span) if span is not None else None, lattice_stiffness=lat_k, **stiff)
 
 
 def _drains(spec, process):
@@ -289,6 +303,10 @@ def _calibrated_process(process, mat_in, spec):
         process.interlayer = float(cp["interlayer"])
     if "stiffnessAcrossLayers" not in spec and cp.get("stiffnessAcrossLayers"):
         process.ez = float(cp["stiffnessAcrossLayers"])
+    # the gyroid coupon measured this printer's lattice against the model
+    lat = (card or {}).get("lattice") or {}
+    if "latticeStiffness" not in spec and lat.get("stiffnessFactor"):
+        process.lattice_stiffness = float(lat["stiffnessFactor"])
     return process
 
 

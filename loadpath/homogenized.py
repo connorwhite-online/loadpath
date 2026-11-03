@@ -83,6 +83,16 @@ FILL_MIN = 0.1
 # rising linearly to all of it one lattice cell in (free_surface_exposure)
 FREE_SURFACE_KNOCKDOWN = 0.5
 
+# printed walls and struts are wavy, porous and stair-stepped, and buckle
+# below a perfect lattice's eigenvalue. Not fitted: none of the 33 published
+# compression tests (docs/VALIDATION.md) reached its walls' perfect buckling
+# stress before first yield, so no test bounds it. Half is a conventional
+# margin for imperfect columns near where buckling and yield meet (Eurocode 3
+# buckling curves put real columns at 0.5-0.7 of Euler there); thin shells
+# lose more, but TPMS sheets at rho 0.15-0.3 buckle at 1.5-8x the solid's
+# yield strain, past first yield
+BUCKLING_KNOCKDOWN = 0.5
+
 # where a lattice roots into a skin or solid, each strut or sheet pulls on
 # the skin over a small patch, and the resolved skin peaks there above the
 # smooth stress the homogenized skin carries: a skinned tall-BCC beam read
@@ -105,7 +115,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
                       fields: bool = False, graph=None, solid_ok: bool = False,
                       contact_band: float | None = None, anisotropic: bool | None = None,
                       free_surface: float | None = None, skin_junction: float | None = None,
-                      sources: dict | None = None) -> dict:
+                      sources: dict | None = None, as_printed=None, buckling: bool | None = None) -> dict:
     """mass, safety factor (worst case) and deflection of the graph's part
     under `study` with its lattice homogenized (module docstring). Returns
     a verify_part-like dict: mass, volume, safetyFactor, cases (name,
@@ -126,7 +136,19 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     (lattice_tensors) instead of the scalar fits' worst direction. False
     gives the isotropic reading. The report says which (`latticeModel`).
     `skin_junction` (default SKIN_JUNCTION) scales the stress in cells
-    where the lattice meets a skin or solid. `sources`: in-memory fields
+    where the lattice meets a skin or solid.
+    `as_printed` (default: on; LOADPATH_LATTICE_AS_PRINTED=0 turns it off):
+    the lattice's stiffness times the as-printed factor
+    (lattice_print.print_factor for the study's process, or its
+    process.latticeStiffness / calibrated card); a number sets it, False
+    reads the designed geometry. Wall stress is read from the strain the
+    softer lattice takes (the prints fail at the design's first-yield
+    strain, not its stress). The report's `latticePrint` says which.
+    `buckling` (default on where data/lattice_buckling.json has the cell):
+    each lattice cell's largest compressive principal macro stress against
+    its walls' buckling stress (lattice_buckling, times BUCKLING_KNOCKDOWN
+    and the as-printed factor); a case's safetyFactor is the lesser of
+    yield and buckling, `governs` says which. `sources`: in-memory fields
     for the graph's `source` nodes (a sized density grid, lattice_grade)."""
     import time
 
@@ -261,6 +283,12 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     # stiffness only: the stress read below takes the cell's full tensor
     # times the (larger) strain the softer cell takes, so it errs high
     knock = 1.0 - float(free_surface) * exposed
+    # the print: softer than the designed walls (lattice_print). Like the
+    # free-surface knockdown, stiffness only: the walls' stress is read from
+    # the strain the softer lattice takes
+    kp, print_info = _print_stiffness(study, kind, rho, as_printed) if lat is not None else (None, None)
+    if kp is not None:
+        knock = knock * kp
     e_cell = mat.E * fill * (fs + fc * ec * knock)
     rhs = [bc.loads[ci] for ci in range(len(study.load_cases))]
     nu = study.elastic(mat)
@@ -307,6 +335,14 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     macro, bodies_mask = [], []
     junction_k = float(SKIN_JUNCTION if skin_junction is None else skin_junction)
     junction = (fs > 0.05) & (fc > 0.05)
+    buck_cap = None
+    if buckling is not False and aniso and aspect is None:
+        from .lattice_buckling import buckling_stress, has_buckling
+
+        if has_buckling(kind):
+            # the walls' buckling macro stress as printed: perfect-lattice
+            # table x knockdown x the cell's stiffness share (print, free face)
+            buck_cap = BUCKLING_KNOCKDOWN * buckling_stress(kind, rho) * mat.E * knock
     for ci, case in enumerate(study.load_cases):
         u = us[ci]
         if aniso:
@@ -337,11 +373,25 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         i = int(np.argmax(np.where(body, s, -1.0)))
         peak = float(s[i])
         sf = mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else np.inf
+        sf_yield, buck = sf, None
+        if buck_cap is not None:
+            # the macro stress the lattice carries (its stiffness share), its
+            # most compressive principal value
+            carried = mat.E * np.einsum("eab,eb->ea", c_lat, strain) * knock[:, None]
+            comp = np.maximum(-_min_principal(carried), 0.0)
+            use = np.where(body & (fc > 0.05), comp / np.maximum(buck_cap, 1e-30), 0.0)
+            j = int(np.argmax(use))
+            bf = float(1.0 / use[j]) if use[j] > 0 else np.inf
+            buck = {"bucklingFactor": bf, "bucklingAt": centers[j].tolist(),
+                    "compressiveStress": float(comp[j]), "bucklingStress": float(buck_cap[j])}
+            sf = min(sf, bf)
         disp = u.reshape(-1, 3)
         ln = bc.case_load_nodes[ci]
         defl = float(np.linalg.norm(disp[ln].mean(axis=0))) if ln.any() else 0.0
         worst = min(worst, sf)
-        cases.append({"name": case.name, "safetyFactor": sf, "deflection": defl, "peakStress": peak,
+        extra = {} if buck is None else {**buck, "yieldSafetyFactor": sf_yield,
+                                         "governs": "buckling" if buck["bucklingFactor"] < sf_yield else "yield"}
+        cases.append({**extra, "name": case.name, "safetyFactor": sf, "deflection": defl, "peakStress": peak,
                       "compliance": float(rhs[ci] @ u),
                       "peakAt": centers[i].tolist(), "inLattice": bool(s_wall[i] >= s_solid[i]),
                       "maxDisplacement": float(np.linalg.norm(disp, axis=1).max())})
@@ -351,6 +401,11 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
            "latticeDensity": [float(rho[fc > 0.05].min()), float(rho[fc > 0.05].max())] if (fc > 0.05).any()
            else None, "lattice": lat, "stressAllowance": STRESS_ALLOWANCE, "seconds": time.time() - t0,
            "latticeModel": None if lat is None else ("anisotropic" if aniso else "isotropic"),
+           "latticePrint": print_info,
+           "latticeBuckling": None if lat is None else (
+               {"knockdown": BUCKLING_KNOCKDOWN, "table": "data/lattice_buckling.json"} if buck_cap is not None
+               else "not checked (" + ("off" if buckling is False else "isotropic model" if not aniso
+                                       else "stretched cell" if aspect is not None else f"no table for {kind}") + ")"),
            # share of the lattice's volume within half a cell of a face it is
            # cut open by (no skin): homogenization reads it too stiff there
            "latticeExposed": float((fc * fill * (exposed > 0.5)).sum() / max((fc * fill).sum(), 1e-12))
@@ -376,6 +431,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
             "it is (skinless bars read 7-23% lighter turned were 1.3-3.2x weaker at full resolution, "
             "bench/results/lattice-orient-confirm.json). Add a skin or confirm with resolved.resolved_check "
             "(`loadpath resolved-check`).")
+    if print_info and print_info.get("note") and getattr(study, "process", None) is not None:
+        rep.setdefault("warnings", []).append(print_info["note"])
     if fields:
         rep["fields"] = {"centers": centers, "rho": rho, "fs": fs, "fc": fc, "fill": fill,
                          "knock": knock if lat is not None else None,
@@ -384,6 +441,52 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
                          "latticeStress": macro or None, "body": bodies_mask,
                          "frames": rot if aniso else None, "aspect": aspect, "kind": kind}
     return rep
+
+
+def _print_stiffness(study, kind, rho, as_printed):
+    """(per-cell as-printed stiffness factor or None, report entry)."""
+    import os
+
+    from .lattice_print import SOURCES, print_factor, process_group
+
+    proc = getattr(study, "process", None)
+    n = len(rho)
+
+    def const(k, basis):
+        return np.full(n, float(k)), {"factor": [float(k), float(k)], "basis": basis}
+
+    if as_printed is False or os.environ.get("LOADPATH_LATTICE_AS_PRINTED", "1").strip() in ("0", "false", "off"):
+        return None, {"factor": None, "basis": "designed geometry (as-printed factor off)"}
+    if as_printed is not None and as_printed is not True:
+        return const(as_printed, "given")
+    val = getattr(proc, "lattice_stiffness", None) if proc is not None else None
+    if val == "designed":
+        return None, {"factor": None, "basis": "designed geometry (process.latticeStiffness)"}
+    if val is not None:
+        return const(val, "process.latticeStiffness or the material's calibrated lattice coupon")
+    if proc is None:
+        return None, {"factor": None, "basis": "designed geometry (the study names no process)",
+                      "note": "no process given: the lattice is read as designed; printed lattices tested 1.0-4.1x "
+                              "softer (docs/VALIDATION.md). Name the process for the as-printed reading."}
+    k = print_factor(proc.kind, kind, rho)
+    if k is None:
+        return None, {"factor": None, "basis": f"designed geometry (no printed-lattice tests for {proc.kind})",
+                      "note": f"no published lattice tests for {proc.kind}: the lattice is read as designed, and "
+                              "polymer prints tested 1.0-4.1x softer than designed. Calibrate on a printed coupon."}
+    g = process_group(proc.kind)
+    return k, {"factor": [float(k.min()), float(k.max())], "group": g, "sources": SOURCES[g],
+               "basis": f"published compression tests ({g}{'' if g == proc.kind else ' data, for ' + proc.kind}; "
+                        "lattice_print.py)"}
+
+
+def _min_principal(v):
+    """Smallest principal value of Voigt stresses (tensor shears), (n, 6)."""
+    t = np.empty((len(v), 3, 3))
+    t[:, 0, 0], t[:, 1, 1], t[:, 2, 2] = v[:, 0], v[:, 1], v[:, 2]
+    t[:, 0, 1] = t[:, 1, 0] = v[:, 3]
+    t[:, 1, 2] = t[:, 2, 1] = v[:, 4]
+    t[:, 0, 2] = t[:, 2, 0] = v[:, 5]
+    return np.linalg.eigvalsh(t)[:, 0]
 
 
 def free_surface_exposure(e_ijk, dims, fs, fc, pitch, cell_mm):

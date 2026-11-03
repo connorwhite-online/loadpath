@@ -553,6 +553,12 @@ _PROCESS = {"anyOf": [
                         _VEC3], "description": "the direction layers stack: '+z', a vector, or 'auto'"},
                     "stiffnessAcrossLayers": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
                     "shearAcrossLayers": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                    "latticeStiffness": {"anyOf": [{"type": "number", "exclusiveMinimum": 0, "maximum": 1.5},
+                                                   {"enum": ["as-printed", "designed"]}],
+                                         "description": "printed lattice stiffness over the designed geometry's in "
+                                                        "the homogenized check: 'as-printed' (default: fitted to 33 "
+                                                        "published compression tests per process, lattice_print.py), "
+                                                        "'designed' (1), or a measured factor"},
                     "anisotropic": {"anyOf": [{"type": "boolean"}, {"const": "bond"}]},
                     "interlayer": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
                     "minFeature": _POS, "overhangs": {"type": "boolean"},

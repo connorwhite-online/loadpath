@@ -63,8 +63,9 @@ certified strength.
 | Anisotropic lattice tensors (stiffness and directional wall stress) | Cross-checked (against resolved geometry and CalculiX) | Eleven bars and beams of cubic, BCCz, octet and gyroid cells, straight and turned 45 degrees, with and without a skin, analysed homogenized and resolved on 0.15-0.25 mm voxels; CalculiX C3D8I on the same voxels agrees with the resolved solve to 1e-8. Skinned: stiffness within 5%, peak stress 1.07-1.89x with the skin-junction factor (1.25x where lattice meets skin, fitted to the tall BCC beam). Stretched (aspect) cells, three skinned beams: stiffness within 2%, peak stress 1.01-1.55x, except one pull reading 0.88x at the edge of a 6 mm contact band by the loaded block. Skinless lattices need the free-surface knockdown and one case (turned cubic in twist) still reads 0.64x ([fields.md](fields.md#lattices-are-read-anisotropic), `bench/lattice_aniso_validate.py`). Not tested on prints. |
 | Lattice orientation optimization (`orient`, `loadpath lattice-orient`) | Cross-checked (against resolved geometry): **gains refuted without a skin** | Homogenized, skinless lattice bars read 7-23% lighter turned (`bench/lattice_orient_mass.py`). At full resolution (0.15 mm voxels, `bench/lattice_orient_confirm.py`) every one reverses: at its thinner wall the turned bar's peak is 3.2x (BCCz, claimed -23%), 2.2x (cubic in twist, -15%) and 1.3x (octet pull, -7%) the as-laid bar's. Cause: the free-surface knockdown reads square-cut cells at a bare face 1.5-2.8x conservative on the peak and bias-cut (turned) cells 0.8-1.1x, so the comparison favours turning. So the optimizers (`lattice-orient`, zones, `lattice-grade --orient`) keep bare-faced cells as laid by default and report `guard`; `--confirm resolved` checks a turn at full resolution (`resolved.resolved_check`) and keeps it only if it holds. One turn has held: a graded skinless cubic deep beam turned 45 degrees, within 4% of resolved (`bench/results/lattice-seams-deep-beam.json`). Under a skin the optimizer leaves the cells as laid anyway. |
 | Lattice wall grading (`loadpath lattice-grade`, density grid) | Simulation only | Fully stressed sizing to a target SF on the homogenized check: 25% (L-bracket) and 10% (deep beam) lighter than a uniform 2 mm wall under a 1 mm skin; 17-48% skinless (`bench/lattice_grade_mass.py`). Resolved check (0.2 mm voxels) of the graded skinned deep beam: compliance 2-6% above the homogenized reading, peak 12.5 MPa against 18.8-22.0 (conservative); the skinless rows are unconfirmed (see orientation row). Sizing-grid dependence: 8k-cell sizing read SF 0.161 on 8k cells, 0.144 on 30k. |
-| Printed lattice stiffness (33 published compression tests) | Matched published experiment (misses) | The designed geometry reads stiffer than the prints: median 1.0-1.7x the measured modulus for SLS, resin and FDM PLA lattices, 2.2-2.8x (worst 4.1x) for FDM ABS and PC strut lattices. Two thin SLS sheets and one SLS Schwarz P read 0.70-0.88x. Deflections of lattice parts will be larger than predicted ([below](#printed-lattices-against-published-tests)). |
-| Printed lattice strength (first yield) | Matched published experiment | The homogenized check's first-yield stress is under the measured first peak, plateau or yield on 32 of 33 specimens (0.18-0.91x), so lattice safety factors err safe. The exception is FDM PLA Schwarz P, 1.19x: its flat walls buckle before they yield, and the check is linear ([below](#printed-lattices-against-published-tests)). |
+| Printed lattice stiffness (33 published compression tests) | Matched published experiment (fitted, held out) | Read as designed, the homogenized check is 1.0-4.1x stiffer than the prints (median error 1.68x). The as-printed factor (`lattice_print.py`, default whenever the study names a process) is fitted to the same 33 tests by process group, strut or sheet, and density; held out one specimen at a time the median error is 1.23x (worst 2.04x), and with a whole paper held out its specimens read a median 0.92-1.17x of the measurement ([below](#as-printed-lattice-stiffness)). |
+| Printed lattice strength (first yield) | Matched published experiment | With the as-printed factor the first-yield reading is under the measured first peak, plateau or yield on all 33 specimens (0.07-0.82x, factor held out). Read as designed it was under on 32 (0.18-0.91x) and over on FDM PLA Schwarz P (1.19x). The prints fail at about the strain the design predicts for first yield, not the stress, so the check reads wall stress from the strain of the softer lattice ([below](#as-printed-lattice-stiffness)). |
+| Lattice wall and strut buckling | Analytic (unit cell), not tested | Periodic unit-cell eigenvalue buckling (`lattice_buckling.py`): a simple cubic strut cell reads Euler's clamped column within 2% on one cell and the pinned column on a 2-cell block. The homogenized check compares each lattice cell's largest compressive macro stress with half its walls' perfect buckling stress at the as-printed stiffness. On all 33 tests it reads at least 1.2x above first yield (perfect TPMS sheets at rho 0.15-0.3 buckle at 1.5-8x the solid's yield strain), so the knockdown of one half is a margin, not a fit. |
 | Lattice crush and impact | Simulation only | Elastic-compensation collapse of a unit cell, fitted within 6% of its own solves (`impact.CRUSH_DATA`); Gibson-Ashby densification. Not tested. |
 | Exact bores and interfaces | Analytic | Keep-outs and preserved shapes are cut with exact mesh booleans; intrusion and loss are measured on every delivered part and are zero to rounding. |
 
@@ -80,7 +81,7 @@ bonded top and bottom, the top one held sideways and pushed down) and reads
 it three ways: the periodic unit-cell tables, the homogenized check of the
 specimen (what an agent gets for a lattice part), and a resolved voxel
 solve of the designed geometry (0.2 mm voxels, 0.3-2 million cells, matrix-free multigrid).
-Refining the resolved grid to 0.15 mm moves the gyroid specimen's modulus 0.1% and a 1 mm-strut diamond lattice's 8% (softer; first yield 13% lower), so the 0.2 mm strut readings carry about that much grid error. Nothing was fitted to these data. The data and their sources are in
+Refining the resolved grid to 0.15 mm moves the gyroid specimen's modulus 0.1% and a 1 mm-strut diamond lattice's 8% (softer; first yield 13% lower), so the 0.2 mm strut readings carry about that much grid error. The table below fits nothing to these data; the as-printed factor fitted to them afterwards, and held out, is [its own section](#as-printed-lattice-stiffness). The data and their sources are in
 `loadpath/data/published_experiments.json`, the results in
 `bench/results/published-experiments.json`, and the documented bands are
 pinned by `tests/test_published_experiments.py`.
@@ -112,16 +113,17 @@ What this shows, and what it does not:
   elsewhere: Cobian et al. 2024 (PA12 PBF, [data](https://zenodo.org/records/13747315))
   measured single struts of 0.5 mm reaching 20-50% of the 1.5 mm struts'
   tensile strength.
-- **What to do with it.** Treat a lattice part's predicted deflection as a
-  lower bound: allow about 2x for SLS, resin and FDM PLA sheet lattices,
-  and 3-4x for FDM strut lattices at 1-1.5 mm struts, unless the material
-  card is calibrated on printed lattice coupons (the gyroid coupon in the
-  calibration kit is that check, [CALIBRATION.md](CALIBRATION.md)).
-- **Strength errs safe, with one class of miss.** The linear first-yield
-  reading is a lower bound on a ductile lattice's first peak or plateau, as
-  it should be. Flat-walled Schwarz P in brittle FDM PLA failed at 0.84x the
-  first-yield reading, by wall buckling the linear check does not see; the
-  resolved solve reads 1.28x there. Resolved first yield is also over the
+- **What to do with it.** The homogenized check now reads the print, not
+  the design, whenever the study names a process (next section). Without a
+  process it reads the designed geometry and says so (`latticePrint`).
+- **Strength erred safe, with one class of miss.** Read as designed, the
+  linear first-yield reading was a lower bound on the measured first peak or
+  plateau on 32 of 33 specimens. The exception was Schwarz P in FDM PLA,
+  1.19x. It is not wall buckling: a perfect Schwarz P cell at that density
+  buckles under compression along z at about 5x its yield strain (`lattice_buckling.py`). The PLA
+  print is simply 2.4x softer than the same geometry in SLS PA12, and it
+  failed at the same strain. Reading wall stress from the as-printed strain
+  fixes it (next section). Resolved first yield is also over the
   measurement on a few strut lattices (octet SLS 1.09-1.15x, thin PC
   diamond 1.24x), so its tighter reading is not a safe substitute.
 - **Limits of the data.** Abou-Ali et al. published power-law fits over
@@ -131,6 +133,65 @@ What this shows, and what it does not:
   for ABS and PC. None of the papers state where the lattice phase sits at
   the cut faces. No study here tested a part loaded in bending, a skinned
   lattice, or a topology-optimized part.
+
+### As-printed lattice stiffness
+
+`loadpath/lattice_print.py` turns the gap above into a factor the
+homogenized check applies to the lattice's stiffness:
+
+    k = 1 / exp(a_process + b [strut cell] + c ln(rho / 0.2)),  capped at 1
+
+fitted by least squares on the log of designed over measured modulus of all
+33 specimens (`bench/lattice_print_fit.py`, results in
+`bench/results/lattice-print-fit.json`):
+
+| Term | Designed over printed | Fitted on |
+| --- | --- | --- |
+| FDM | 1.54x | Shevchenko 2023 PLA sheets, Guerra Silva 2021 ABS and PC struts |
+| SLS (MJF read the same; no MJF lattice tests found) | 1.08x | Shevchenko 2023 PA12 sheets, Abou-Ali 2022 PA11 sheets and struts |
+| Resin (LCD tested; SLA and DLP read the same) | 1.33x | Shevchenko 2023 LCD sheets |
+| Strut cells | x1.58 | both strut papers |
+| Density | x1.34 per e-fold of rho / 0.2 (rho clipped to the tested 0.1-0.4) | all |
+
+So an FDM gyroid at rho 0.2 is read at 0.65 of its designed stiffness, an
+FDM Kelvin lattice at 0.41, an SLS gyroid at 0.93. The density term says the
+prints stiffen more slowly with density than the design; the papers' denser
+lattices are the most over-read. Terms per cell type (Schwarz P, Kelvin,
+octet) did not improve the held-out error and are left out.
+
+| | Modulus over measured (median, range) | Median error | Worst |
+| --- | --- | --- | --- |
+| Designed geometry | 1.68, 0.70-4.12 | 1.68x | 4.12x |
+| As printed, fitted on all 33 | 0.97, 0.64-1.82 | 1.19x | 1.82x |
+| As printed, each specimen held out | 0.96, 0.61-2.04 | 1.23x | 2.04x |
+| Abou-Ali 2022 held out | 1.00, 0.77-1.50 | | |
+| Guerra Silva 2021 held out | 0.92, 0.61-1.84 | | |
+| Shevchenko 2023 held out (its resin keeps no process term) | 1.17, 0.68-1.43 | | |
+
+The held-out homogenized checks themselves (`bench/published_experiments.py`,
+`asPrinted` rows: the specimen re-checked with the factor fitted without it)
+give the same: modulus a median 0.96x of the measurement (0.61-2.04x, median error
+1.23x), first yield 0.07-0.82x of the measured strength, and the buckling
+check's stress 1.2x or more above first yield on every specimen, so it
+never governs on these tests.
+
+Strength: the check reads the walls' stress from the strain the softer
+lattice takes, as it does for the free-surface knockdown, so a pure lattice
+reads first yield k times lower than designed. On the 33 tests that puts
+every reading under the measurement: 0.07-0.82x held out (Schwarz P in FDM
+PLA, the old miss, is the 0.82). It is conservative where the papers report
+a plateau after yielding (FDM struts 0.07-0.41x), which is the price of a
+single rule that holds on all of them.
+
+What the factor is not: a property of your printer. It is the average of
+three labs' prints, testing and material cards, with about 1.2x scatter
+either way after the fit (2x at worst). For a lattice part that matters,
+print the gyroid coupon in the calibration kit: a calibrated card's
+measured `lattice.stiffnessFactor` replaces the fit
+([CALIBRATION.md](CALIBRATION.md)), and so does a study's
+`process.latticeStiffness` (a number, or `"designed"`). lpbf, jetting and
+volumetric have no printed-lattice tests here and read as designed, with a
+warning.
 
 No open dataset was found with both the geometry of a printed
 topology-optimized part and its measured stiffness or strength; published

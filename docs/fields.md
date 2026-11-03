@@ -458,6 +458,29 @@ the meshed part verified resolved reads 13.5): the gyroid's quartic stress
 surface reads combined and hydrostatic stress states the scalar factor
 missed.
 
+**As printed.** All of the above is the designed geometry, which reads
+1.0-4.1x stiffer than printed lattices measured in 33 published compression
+tests ([VALIDATION.md](VALIDATION.md#as-printed-lattice-stiffness)). When the
+study names a process, the check multiplies the lattice's stiffness by an
+as-printed factor fitted to those tests (`lattice_print.print_factor`: FDM,
+SLS/MJF or resin, strut or sheet, density; about 0.65 for an FDM gyroid,
+0.4 for FDM struts, 0.93 for SLS sheets) and, as for free faces, reads wall
+stress from the larger strain. `process.latticeStiffness` (a number or
+`"designed"`) or a calibrated card's measured lattice factor replaces it;
+`as_printed=False` turns it off. The report's `latticePrint` gives the
+factor and its basis.
+
+**Buckling.** Each lattice cell's most compressive principal macro stress
+is also compared with its walls' buckling stress: a perfect periodic
+lattice's eigenvalue buckling stress (`lattice_buckling.py`, tables per
+cell, density and direction, the least direction used), times 0.5 for
+imperfections (`BUCKLING_KNOCKDOWN`), times the cell's as-printed and
+free-face stiffness share. A case's `safetyFactor` is the lesser of the
+yield and buckling factors (`yieldSafetyFactor`, `bucklingFactor`,
+`governs`). Sheet TPMS at ordinary densities buckle far past yield; slender
+struts at low density (rho under about 0.1: perfect struts there buckle
+at 2-3% strain, halved for imperfections) are where it governs.
+
 **Stretched cells.** A lattice with `aspect` (say a tall BCC, [1, 1, 1.5],
 whose struts rise above 45 degrees and print on FDM without support) is read
 from its own tensors: the unit cell is solved in its stretched box (box

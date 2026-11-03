@@ -28,7 +28,7 @@ import numpy as np
 
 DATA_PATH = Path(__file__).parent / "data" / "published_experiments.json"
 
-__all__ = ["load_experiments", "measured", "lattice_thickness", "geometry_key", "specimen_model",
+__all__ = ["load_experiments", "measured", "lattice_thickness", "geometry_key", "specimen_model", "process_kind",
            "table_prediction"]
 
 
@@ -136,3 +136,10 @@ def specimen_model(spec: dict, mat: dict, plate: float = 2.0, stress: float = 1.
         "goal": {"safetyFactor": 1.0},
     }
     return doc, study, area, sz
+
+
+def process_kind(process: str) -> str:
+    """loadpath's process type for a specimen's process label ("SLS PA12",
+    "FDM ABS 0.25 mm", "LCD resin"): LCD is whole-layer vat exposure, dlp."""
+    word = str(process).split()[0].lower()
+    return {"lcd": "dlp"}.get(word, word)

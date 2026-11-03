@@ -49,16 +49,29 @@ from loadpath.validation import (geometry_key, load_experiments, measured, speci
 PLATE = 2.0
 
 
-def specimen_check(spec, mat, cells, knockdown=None):
+def specimen_check(spec, mat, cells, knockdown=None, as_printed=False):
     from loadpath.homogenized import homogenized_check
     from loadpath.spec import study_from_dict
 
     doc, sd, area, height = specimen_model(spec, mat, plate=PLATE)
     st = study_from_dict(sd)
     cell = float(spec["lattice"]["cell"])
-    r = homogenized_check(doc, st, cells=cells, contact_band=cell, free_surface=knockdown)
+    r = homogenized_check(doc, st, cells=cells, contact_band=cell, free_surface=knockdown, as_printed=as_printed)
     c = r["cases"][0]
-    return _reading(c["deflection"], c["peakStress"], mat, area, height, sd), r
+    out = _reading(c["deflection"], c["peakStress"], mat, area, height, sd)
+    if "bucklingFactor" in c:
+        # the applied stress at which the walls buckle (the check is linear)
+        out["buckling"] = c["bucklingFactor"] * abs(sd["loadCases"][0]["loads"][0]["force"][2]) / area
+    return out, r
+
+
+def held_out_factors():
+    """Each specimen's as-printed factor fitted without it
+    (bench/lattice_print_fit.py), or None before that has run."""
+    path = ROOT / "bench" / "results" / "lattice-print-fit.json"
+    if not path.exists():
+        return {}
+    return {k: v["factorHeldOut"] for k, v in json.loads(path.read_text())["specimens"].items()}
 
 
 def _reading(deflection, peak, mat, area, height, sd):
@@ -85,6 +98,22 @@ def resolved_check(spec, mat, pitch):
     return out
 
 
+def _as_printed(row, spec, mat, meas, held, cells):
+    """The homogenized check as an agent gets it for the specimen's process:
+    the as-printed factor (held out: fitted without this specimen) and the
+    buckling check."""
+    k = held.get(spec["id"])
+    if k is None:
+        return
+    ap, _ = specimen_check(spec, mat, cells, as_printed=k)
+    row["asPrinted"] = ap | {"factor": k}
+    line = (f"{spec['id']:22s} as printed (k {k:.2f}): E x{ap['E'] / meas['E']:.2f}, "
+            f"first yield x{ap['firstYield'] / meas['strength']:.2f}")
+    if "buckling" in ap:
+        line += f", buckling x{ap['buckling'] / meas['strength']:.2f}"
+    print(line, flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pitch", type=float, default=0.2, help="resolved voxel pitch (mm)")
@@ -92,6 +121,8 @@ def main():
     ap.add_argument("--only", default="", help="comma-separated id prefixes")
     ap.add_argument("--no-resolved", action="store_true")
     ap.add_argument("--reuse", action="store_true", help="keep resolved results already in --out")
+    ap.add_argument("--as-printed-only", action="store_true",
+                    help="only (re)run the as-printed reading (held-out factor, buckling) on rows already in --out")
     ap.add_argument("--out", default=str(ROOT / "bench" / "results" / "published-experiments.json"))
     a = ap.parse_args()
     data = load_experiments()
@@ -99,6 +130,7 @@ def main():
     results = json.loads(out_path.read_text()) if out_path.exists() else {}
     want = [p for p in a.only.split(",") if p]
     resolved_cache = {}
+    held = held_out_factors()
     for row in results.values() if a.reuse else ():
         if row.get("resolvedUnit"):
             resolved_cache[row["geometry"]] = row["resolvedUnit"]
@@ -107,6 +139,11 @@ def main():
             continue
         mat = data["materials"][spec["material"]]
         meas = measured(spec)
+        if a.as_printed_only and spec["id"] in results:
+            row = results[spec["id"]]
+            _as_printed(row, spec, mat, meas, held, a.cells)
+            out_path.write_text(json.dumps(results, indent=1, default=float))
+            continue
         row = {"source": spec["source"], "process": spec["process"], "lattice": spec["lattice"],
                "geometry": geometry_key(spec), "measured": meas, "material": mat}
         t0 = time.time()
@@ -132,6 +169,7 @@ def main():
         elif spec["id"] in results and "resolved" in results[spec["id"]]:
             row["resolved"] = results[spec["id"]]["resolved"]
             row["resolvedUnit"] = results[spec["id"]].get("resolvedUnit")
+        _as_printed(row, spec, mat, meas, held, a.cells)
         row["seconds"] = time.time() - t0
         results[spec["id"]] = row
         line = f"{spec['id']:22s} E meas {meas['E']:7.1f}"
