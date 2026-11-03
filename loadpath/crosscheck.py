@@ -77,11 +77,14 @@ def element_size(study: Study) -> float:
     return max(0.75, 0.5 * (study.min_member or 3.0))
 
 
-# Memory of a native P2 solve, measured on GRIP's upper arm (213 cm3):
-# about 10 V / h^3 tetrahedra at edge h, and 20 kB each (263k tets at
-# 2 mm: 5.3 GB; at the default 1.5 mm, 13 GB, past a 15 GB box).
+# Memory of a native P2 solve, measured on GRIP's upper arm (180 cm3):
+# about 10 V / h^3 tetrahedra at edge h, and 7 kB each with the matrix
+# assembled in place (520k tets at 1.5 mm: 3.8 GB peak, all three cases).
+# It was 20 kB a tet while assembly summed chunk matrices, held a second
+# free-dof copy and formed P^T K whole: the upper arm was coarsened to
+# 1.8 mm to fit a 15 GB box.
 _TETS_PER_VOLUME = 10.0
-_BYTES_PER_TET = 20_500
+_BYTES_PER_TET = 7_500
 
 
 def memory_budget() -> float:
@@ -161,6 +164,44 @@ def _tet_cache_dir():
 _COARSE_OUTSIDE = 8.0
 
 
+def _inside_grid(tri, axes):
+    """Which points of the grid axes[0] x axes[1] x axes[2] are inside the
+    closed triangle soup `tri` (n, 3, 3): one ray along +x per (y, z)
+    column, its crossings found in 2D, parity counted per grid x. (trimesh's
+    mesh.contains, without embree, ran past 14 GB on 7k points of the GRIP
+    wrist link and took the box down; this is a few seconds.) Columns are
+    nudged off the grid by a fraction of a micron, so a ray never grazes an
+    edge exactly."""
+    ax, ay, az = (np.asarray(a, float) for a in axes)
+    out = np.zeros((len(ax), len(ay), len(az)), bool)
+    ylo, yhi = tri[:, :, 1].min(1), tri[:, :, 1].max(1)
+    zlo, zhi = tri[:, :, 2].min(1), tri[:, :, 2].max(1)
+    a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
+    for j, y in enumerate(ay + 1.37e-4):
+        rows = np.flatnonzero((ylo <= y) & (yhi >= y))
+        if not len(rows):
+            continue
+        for k, z in enumerate(az + 2.91e-4):
+            t = rows[(zlo[rows] <= z) & (zhi[rows] >= z)]
+            if not len(t):
+                continue
+            # barycentrics of (y, z) in each triangle's y-z projection
+            ab, ac = b[t] - a[t], c[t] - a[t]
+            det = ab[:, 1] * ac[:, 2] - ab[:, 2] * ac[:, 1]
+            ok = np.abs(det) > 1e-15
+            det = np.where(ok, det, 1.0)
+            py, pz = y - a[t, 1], z - a[t, 2]
+            u = (py * ac[:, 2] - pz * ac[:, 1]) / det
+            w = (ab[:, 1] * pz - ab[:, 2] * py) / det
+            hit = ok & (u >= 0) & (w >= 0) & (u + w <= 1)
+            if not hit.any():
+                continue
+            xs = np.sort((a[t, 0] + u * ab[:, 0] + w * ac[:, 0])[hit])
+            # crossings beyond each grid x: odd = inside
+            out[:, j, k] = (len(xs) - np.searchsorted(xs, ax, side="right")) % 2 == 1
+    return out
+
+
 def _outside_coarse(mesh, v, size):
     """fTetWild's background sizing field: (points, tets, edge lengths) on
     a grid 4 elements apart, `size` inside the part and near it, growing
@@ -174,10 +215,9 @@ def _outside_coarse(mesh, v, size):
     axes = [np.arange(lo[i], hi[i] + h, h) for i in range(3)]
     n = [len(a) for a in axes]
     G = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
-    try:
-        inside = np.asarray(mesh.contains(G), bool)
-    except Exception:  # noqa: BLE001 - no inside test: mesh without the field
+    if not getattr(mesh, "is_watertight", True):
         return None
+    inside = _inside_grid(np.asarray(mesh.triangles, float), axes).ravel()
     surf = np.vstack([v, np.asarray(mesh.triangles_center)])
     d = np.where(inside, 0.0, cKDTree(surf).query(G)[0])
     # every grid cell the surface passes through, and its neighbours, stays
@@ -238,16 +278,19 @@ def _tetwild(mesh, size):
                 return z["pts"].astype(float), z["tets"].astype(np.int64)
         except (OSError, ValueError, KeyError):
             pass
-    # fTetWild leaves files (__tracked_surface.stl, _skipped.*) in the
-    # working directory: run it in a scratch one
-    cwd = os.getcwd()
-    with tempfile.TemporaryDirectory() as tmp:
-        os.chdir(tmp)
-        try:
-            bg = dict(zip(("bg_vertices", "bg_tets", "bg_values"), sizing)) if sizing is not None else {}
-            pts, tets = pytetwild.tetrahedralize(v, f, num_threads=os.cpu_count() or 1, **opts, **bg)
-        finally:
-            os.chdir(cwd)
+    bg = dict(zip(("bg_vertices", "bg_tets", "bg_values"), sizing)) if sizing is not None else {}
+    got = _tetwild_guarded(v, f, opts, bg)
+    if got is None and bg:
+        # fTetWild went past its memory limit with the sizing field: mesh
+        # at the plain edge everywhere (0.55 GB on the GRIP wrist link, 0.94
+        # GB on the upper arm). The result is kept under this key, so the
+        # surface goes straight to it next time.
+        opts["edge_length_abs"] = float(size)
+        got = _tetwild_guarded(v, f, opts, {})
+    if got is None:
+        raise MemoryError(f"fTetWild needed more than {_mesher_budget() / 1e9:.1f} GB "
+                          "(LOADPATH_TET_MESH_MEMORY sets the limit, in GB)")
+    pts, tets = got
     pts, tets = np.asarray(pts, float), np.asarray(tets, np.int64)
     x = pts[tets]
     neg = np.linalg.det(x[:, 1:] - x[:, :1]) < 0
@@ -261,6 +304,98 @@ def _tetwild(mesh, size):
         except OSError:
             pass
     return pts, tets
+
+
+def _mesher_budget() -> float:
+    """Bytes fTetWild may use before it is stopped: LOADPATH_TET_MESH_MEMORY
+    (GB), else 60% of the memory free now, at least 2 GB."""
+    env = os.environ.get("LOADPATH_TET_MESH_MEMORY")
+    if env:
+        return float(env) * 1e9
+    from .study import _available_bytes
+
+    return max(2e9, 0.6 * (_available_bytes() or 8e9))
+
+
+def _rss(pid: int) -> float | None:
+    """Resident bytes of process `pid` (Linux /proc, else ps), or None."""
+    try:
+        with open(f"/proc/{pid}/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return float(line.split()[1]) * 1024.0
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, timeout=5, check=False)
+        return float(out.stdout.strip()) * 1024.0 if out.stdout.strip() else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def _tetwild_main(work: str) -> None:
+    """Child process entry: mesh `work`/in.npz (v, f, bg_*) with the
+    options in `work`/opts.json, write `work`/out.npz (pts, tets)."""
+    import json
+
+    import pytetwild
+
+    with np.load(os.path.join(work, "in.npz")) as z:
+        arrays = {k: z[k] for k in z.files}
+    with open(os.path.join(work, "opts.json")) as fh:
+        opts = json.load(fh)
+    v, f = arrays.pop("v"), arrays.pop("f")
+    # fTetWild leaves files (__tracked_surface.stl, _skipped.*) in the
+    # working directory: run it in the scratch one
+    os.chdir(work)
+    pts, tets = pytetwild.tetrahedralize(v, f, num_threads=os.cpu_count() or 1, **opts, **arrays)
+    np.savez(os.path.join(work, "out.tmp.npz"), pts=np.asarray(pts, float), tets=np.asarray(tets, np.int64))
+    os.replace(os.path.join(work, "out.tmp.npz"), os.path.join(work, "out.npz"))
+
+
+def _tetwild_guarded(v, f, opts, bg):
+    """fTetWild in a child process under a memory limit (_mesher_budget):
+    (pts, tets), or None when it went past the limit and was stopped. A
+    mesher that runs away in-process takes the whole study (and on a
+    shared box, everything else) down with it; in a child it costs one
+    retry. (A plain subprocess, not
+    multiprocessing: spawning re-runs the caller's script without a
+    __main__ guard.)"""
+    import json
+    import sys
+
+    budget = _mesher_budget()
+    pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([pkg_parent] + [x for x in [os.environ.get("PYTHONPATH")] if x]))
+    with tempfile.TemporaryDirectory() as work:
+        np.savez(os.path.join(work, "in.npz"), v=v, f=f, **bg)
+        with open(os.path.join(work, "opts.json"), "w") as fh:
+            json.dump(opts, fh)
+        code = ("import sys; from loadpath.crosscheck import _tetwild_main; "
+                "_tetwild_main(sys.argv[1])")
+        with open(os.path.join(work, "log.txt"), "wb") as log:
+            proc = subprocess.Popen([sys.executable, "-c", code, work], env=env, stdout=log, stderr=subprocess.STDOUT)
+            try:
+                while True:
+                    try:
+                        proc.wait(0.5)
+                        break
+                    except subprocess.TimeoutExpired:
+                        pass
+                    r = _rss(proc.pid)
+                    if r is not None and r > budget:
+                        return None
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+        out = os.path.join(work, "out.npz")
+        if proc.returncode != 0 or not os.path.exists(out):
+            with open(os.path.join(work, "log.txt"), "rb") as fh:
+                err = fh.read().decode(errors="replace").strip().splitlines()[-3:]
+            raise RuntimeError(f"fTetWild exited with code {proc.returncode}: {' '.join(err)}")
+        with np.load(out) as z:
+            return z["pts"], z["tets"]
 
 
 def _tet_mesh_once(mesh, size, order, algo, size_at=None):
@@ -428,16 +563,104 @@ def _elastic(E, nu):
     return elastic_c(E, nu)
 
 
-def _assemble(nodes, conn, E, nu, chunk=20_000):
-    """Global stiffness, vectorized over elements in chunks (skfem's
-    assembly took 117 of 644 s on the wrist yoke)."""
+def _node_pattern(conn, n, chunk=200_000):
+    """Which nodes share an element: (indptr, indices) of the node graph,
+    each row sorted: the pattern of E^T E for the element-node incidence E,
+    summed over chunks of elements (a sort of every element's 100 node
+    pairs took 73 s on the upper arm; this, a few)."""
     import scipy.sparse as sp
+
+    g = None
+    m = conn.shape[1]
+    for s0 in range(0, len(conn), chunk):
+        cc = conn[s0:s0 + chunk]
+        e = sp.csr_matrix((np.ones(cc.size, np.float32), cc.ravel(), np.arange(0, cc.size + 1, m)),
+                          shape=(len(cc), n))
+        part = (e.T.tocsr() @ e).tocsr()
+        part.data[:] = 1.0
+        g = part if g is None else ((g + part).tocsr())
+        if g is not part:
+            g.data[:] = 1.0
+    g.sort_indices()
+    return g.indptr.astype(np.int64), g.indices.astype(np.int32)
+
+
+def _scatter(cc, ke, nptr, nind, data):
+    """Add element matrices `ke` (ne, 3m, 3m) on nodes `cc` (ne, m) into
+    `data` of the dof CSR expanded from the node graph (nptr, nind): row
+    3i+c starts at 9 nptr[i] + 3 deg(i) c, and holds node i's deg(i)
+    neighbours x 3 components."""
+    ne, m = cc.shape
+    for e in range(ne):
+        for a in range(m):
+            i = cc[e, a]
+            lo, hi = nptr[i], nptr[i + 1]
+            deg = hi - lo
+            for b in range(m):
+                j = cc[e, b]
+                l, h = lo, hi
+                while l < h:            # nind[lo:hi] is sorted
+                    mid = (l + h) >> 1
+                    if nind[mid] < j:
+                        l = mid + 1
+                    else:
+                        h = mid
+                off = 3 * (l - lo)
+                for ci in range(3):
+                    base = 9 * lo + 3 * deg * ci + off
+                    for cj in range(3):
+                        data[base + cj] += ke[e, 3 * a + ci, 3 * b + cj]
+
+
+def _eliminate(indptr, indices, data, fixed):
+    """Zero the rows and columns of held dofs in a CSR, unit diagonal on
+    theirs (in place, without a row index per entry)."""
+    for i in range(len(indptr) - 1):
+        fi = fixed[i]
+        for jj in range(indptr[i], indptr[i + 1]):
+            j = indices[jj]
+            if fi or fixed[j]:
+                data[jj] = 1.0 if (fi and j == i) else 0.0
+
+
+try:
+    import numba as _nb
+
+    _scatter = _nb.njit(cache=True, nogil=True)(_scatter)
+    _eliminate = _nb.njit(cache=True, nogil=True)(_eliminate)
+except ImportError:  # pragma: no cover - numba is a dependency
+    pass
+
+
+def _assemble(nodes, conn, E, nu, chunk=20_000, extra=()):
+    """Global stiffness, vectorized over elements in chunks (skfem's
+    assembly took 117 of 644 s on the wrist yoke), added straight into the
+    final CSR: its pattern comes first from the node graph, and each
+    chunk's element matrices are scattered into it. (Summing per-chunk COO
+    matrices held three to four copies of the matrix at once: 2.07 GB to
+    assemble a 0.48 GB matrix on the wrist link, past 15 GB on the upper
+    arm.) `extra`: (nodes (k,), blocks (k, 3, 3)) added on the diagonal
+    node blocks (pins)."""
+    import scipy.sparse as sp
+
     c = _elastic(E, nu)
-    n_dof = 3 * len(nodes)
-    # each chunk summed into CSR as it is made: the whole COO triplet list
-    # (900 entries per element, 24 bytes each) ran a 700k-element mesh out
-    # of 15 GB; summed pairwise so no entry is copied more than log(n) times
-    parts = []
+    n = len(nodes)
+    nptr, nind = _node_pattern(conn, n)
+    deg = np.diff(nptr)
+    # dof rows: node i's three rows, each 3 deg(i) long
+    row_len = np.repeat(3 * deg, 3)
+    indptr = np.zeros(3 * n + 1, np.int64)
+    np.cumsum(row_len, out=indptr[1:])
+    cols3 = (3 * nind[:, None].astype(np.int64) + np.arange(3)).ravel()       # per node row, 3 deg long
+    indices = np.empty(indptr[-1], np.int64 if indptr[-1] > np.iinfo(np.int32).max else np.int32)
+    for ci in range(3):
+        # row 3i+ci = node i's expanded columns; written per node in one go
+        pos = (9 * nptr[:-1] + 3 * deg * ci)
+        src = 3 * nptr[:-1]
+        idx = np.repeat(pos - src, 3 * deg) + np.arange(len(cols3))
+        indices[idx] = cols3
+    del cols3
+    data = np.zeros(len(indices))
     for s0 in range(0, len(conn), chunk):
         cc = conn[s0:s0 + chunk]
         vol, g = _grads(nodes, cc)
@@ -445,12 +668,15 @@ def _assemble(nodes, conn, E, nu, chunk=20_000):
         for q in _QUAD:
             b = _b_matrices(_shape_grads(g, q))
             ke += np.einsum("eki,kl,elj->eij", b, c, b, optimize=True) * (vol / 4.0)[:, None, None]
-        dof = (3 * cc[:, :, None] + np.arange(3)).reshape(len(cc), 30).astype(np.int32)
-        parts.append(sp.csr_matrix((ke.ravel(), (np.repeat(dof, 30, axis=1).ravel(), np.tile(dof, (1, 30)).ravel())),
-                                   shape=(n_dof, n_dof)))
-    while len(parts) > 1:
-        parts = [parts[i] + parts[i + 1] if i + 1 < len(parts) else parts[i] for i in range(0, len(parts), 2)]
-    return parts[0]
+        _scatter(np.ascontiguousarray(cc, np.int64), ke, nptr, nind, data)
+    for idx, blocks in extra:
+        idx = np.asarray(idx, np.int64)
+        _scatter(idx[:, None], np.ascontiguousarray(blocks, np.float64), nptr, nind, data)
+    if indices.dtype == np.int32 and indptr[-1] <= np.iinfo(np.int32).max:
+        indptr = indptr.astype(np.int32)
+    k = sp.csr_matrix((data, indices, indptr), shape=(3 * n, 3 * n))
+    k.has_sorted_indices = True
+    return k
 
 
 def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
@@ -460,20 +686,24 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     blocked smoothed-aggregation AMG with the six rigid-body modes.
     Aggregation AMG coarsens the quadratic system's edge nodes badly: on the
     wrist yoke it took 166 iterations directly and 82 this way (22 s vs 38 s
-    per case). `fixed_dof` marks held dofs; `springs` (or None) is added to
-    the stiffness (pins)."""
+    per case). `fixed_dof` marks held dofs; `springs` (or None; _pin_springs)
+    is added to the stiffness (pins)."""
     import scipy.sparse as sp
     import scipy.sparse.linalg as spla
     from pyamg.relaxation.relaxation import gauss_seidel
 
     from .fem import amg_solver
 
-    k = _assemble(nodes, conn, E, nu)
-    if springs is not None:
-        k = k + springs
+    k = _assemble(nodes, conn, E, nu, extra=springs or ())
     n = len(nodes)
-    free = np.nonzero(~fixed_dof)[0]
-    kff = k[free][:, free].tocsr().astype(np.float64)
+    # held dofs eliminated in place, not by slicing out the free block (a
+    # second copy of the matrix): their rows and columns zeroed and a unit
+    # diagonal. With zero load there, CG and the smoother keep them at zero,
+    # and every other dof sees exactly the free block.
+    kff = k
+    del k
+    _eliminate(kff.indptr, kff.indices, kff.data, fixed_dof)
+    free_mask = ~fixed_dof
     # P1 -> P2 prolongation: vertices copy, edge nodes average their ends
     nv = n_vertices
     rows, cols, vals = [], [], []
@@ -485,10 +715,19 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
             rows.append(3 * (nv + np.arange(len(edges))) + c)
             cols.append(3 * edges[:, e] + c)
             vals.append(np.full(len(edges), 0.5))
-    p = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(3 * n, 3 * nv))[free]
+    p = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(3 * n, 3 * nv))
+    p = (sp.diags(free_mask.astype(float)) @ p).tocsr()
+    p.eliminate_zeros()
     used = np.asarray(p.sum(axis=0)).ravel() > 0
     p = p[:, used].tocsr()
-    a1 = (p.T @ kff @ p).tocsr()
+    # the Galerkin product by blocks of rows: P^T K whole is about as big as
+    # K itself (2.5 GB more on the upper arm, the solve's peak)
+    a1 = None
+    step = max(1, -(-kff.shape[0] // 16))
+    for r0 in range(0, kff.shape[0], step):
+        part = (p[r0:r0 + step].T @ (kff[r0:r0 + step] @ p)).tocsr()
+        a1 = part if a1 is None else a1 + part
+    a1 = a1.tocsr()
     cn = np.nonzero(used)[0]
     blocked = a1.shape[0] % 3 == 0 and np.all(np.bincount(cn // 3, minlength=nv)[np.unique(cn // 3)] == 3)
     # seeded (fem.amg_solver): pyamg draws its setup from np.random
@@ -509,9 +748,9 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     def one(f):
         fn = np.zeros((n, 3))
         fn[: len(f)] = f
-        u = np.zeros(3 * n)
         # 1e-7 is six digits of stress; 1e-9 cost a third more iterations
-        u[free], _info = spla.cg(kff, fn.ravel()[free], M=m, rtol=1e-7, maxiter=2000)
+        u, _info = spla.cg(kff, np.where(free_mask, fn.ravel(), 0.0), M=m, rtol=1e-7, maxiter=2000)
+        u[fixed_dof] = 0.0
         return u.reshape(n, 3)
     fs = [f for _n, f, _ in loads]
     from . import amgfast
@@ -536,17 +775,10 @@ _PIN_STIFFNESS = 1e3
 
 
 def _pin_springs(blocks, e_h, n):
+    """Pin stiffness as (nodes, 3x3 blocks) for _assemble's `extra`, or None."""
     if not blocks:
         return None
-    import scipy.sparse as sp
-    rows, cols, vals = [], [], []
-    for idx, b in blocks:
-        for i in range(3):
-            for j in range(3):
-                rows.append(3 * idx + i)
-                cols.append(3 * idx + j)
-                vals.append(b[:, i, j] * _PIN_STIFFNESS * e_h)
-    return sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(3 * n, 3 * n))
+    return [(idx, b * (_PIN_STIFFNESS * e_h)) for idx, b in blocks]
 
 
 def _rigid_modes(xyz, comp):
@@ -564,32 +796,36 @@ def _rigid_modes(xyz, comp):
     return b
 
 
-def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices, normal=None):
+def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices, normal=None, chunk=50_000):
     """Von Mises at each vertex: the P2 field's stress at each element's own
     vertices, averaged over the elements sharing it. With `normal` (the
     build direction, unit), also the normal stress across the layers there,
     (vm, sn)."""
     c = _elastic(E, nu)
-    vol, g = _grads(nodes, conn)
-    ue = u.reshape(-1, 3)[conn].reshape(len(conn), 30)
     acc = np.zeros(n_vertices)
     acc_n = np.zeros(n_vertices)
     cnt = np.zeros(n_vertices)
-    for i in range(4):
-        lam = np.zeros(4)
-        lam[i] = 1.0
-        b = _b_matrices(_shape_grads(g, lam))
-        sig = np.einsum("kl,eli,ei->ek", c, b, ue, optimize=True)
-        sx, sy, sz, txy, tyz, tzx = sig.T
-        vm = np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2) + 3 * (txy ** 2 + tyz ** 2 + tzx ** 2))
-        np.add.at(acc, conn[:, i], vm)
-        if normal is not None:
-            n = normal
-            # n . sigma . n, as verify.py reads it (shear terms counted twice)
-            sn = (sx * n[0] ** 2 + sy * n[1] ** 2 + sz * n[2] ** 2
-                  + 2.0 * (txy * n[0] * n[1] + tyz * n[1] * n[2] + tzx * n[2] * n[0]))
-            np.add.at(acc_n, conn[:, i], sn)
-        np.add.at(cnt, conn[:, i], 1)
+    # in chunks: the strain matrices of every element at once are 1.4 kB
+    # each (0.7 GB on the upper arm)
+    for s0 in range(0, len(conn), chunk):
+        cc = conn[s0:s0 + chunk]
+        _vol, g = _grads(nodes, cc)
+        ue = u.reshape(-1, 3)[cc].reshape(len(cc), 30)
+        for i in range(4):
+            lam = np.zeros(4)
+            lam[i] = 1.0
+            b = _b_matrices(_shape_grads(g, lam))
+            sig = np.einsum("kl,eli,ei->ek", c, b, ue, optimize=True)
+            sx, sy, sz, txy, tyz, tzx = sig.T
+            vm = np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2) + 3 * (txy ** 2 + tyz ** 2 + tzx ** 2))
+            np.add.at(acc, cc[:, i], vm)
+            if normal is not None:
+                n = normal
+                # n . sigma . n, as verify.py reads it (shear terms counted twice)
+                sn = (sx * n[0] ** 2 + sy * n[1] ** 2 + sz * n[2] ** 2
+                      + 2.0 * (txy * n[0] * n[1] + tyz * n[1] * n[2] + tzx * n[2] * n[0]))
+                np.add.at(acc_n, cc[:, i], sn)
+            np.add.at(cnt, cc[:, i], 1)
     vm = acc / np.maximum(cnt, 1)
     if normal is None:
         return vm

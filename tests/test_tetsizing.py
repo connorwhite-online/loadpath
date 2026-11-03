@@ -57,5 +57,8 @@ def test_same_mesh_in_the_part(monkeypatch):
     old = stats(*cc._tetwild(mesh, size))
     assert new[1] == pytest.approx(mesh.volume, rel=0.01)
     assert new[1] == pytest.approx(old[1], rel=0.01)
-    assert new[0] == pytest.approx(old[0], rel=0.25)
+    # fTetWild is not reproducible: 18.8-19.4k sized vs 14.7-15.7k plain
+    # tets on this part across runs (both before and after it moved to a
+    # child process), so 0.25 failed about one run in two
+    assert new[0] == pytest.approx(old[0], rel=0.4)
     assert new[2] == pytest.approx(old[2], rel=0.1)
