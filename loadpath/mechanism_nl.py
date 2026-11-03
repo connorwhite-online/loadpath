@@ -46,7 +46,7 @@ import scipy.sparse as sp
 
 from .fem import Stiffness, hex8_ke
 from .mechanism import MechanismOptions, MechanismResult, _spring_diag
-from .nonlinear import _CENTER, _CHUNK, _element, _Linear
+from .nonlinear import _CENTER, _CHUNK, _GAUSS, _element, _Linear
 from .simp import E_MIN, PENALTY, _dproject, _extrude, _project, density_filter
 
 __all__ = ["optimize_mechanism_nonlinear", "nonlinear_response", "stroke_dofs", "RigidCylinder", "RigidObject", "Contacts", "ServoTendon",
@@ -329,13 +329,22 @@ class _Model:
         jmin = np.inf
         br = np.zeros((mesh.n_elem, 24)) if parts else None
         dbr = np.zeros((mesh.n_elem, 24)) if parts else None
-        chunks = [(v, idx[s:s + _CHUNK]) for v, idx in self.groups for s in range(0, len(idx), _CHUNK)]
+        from . import nlkernel
+        fast = nlkernel.available()
+        # the compiled kernel takes a whole group at once; the numpy element goes in chunks
+        chunks = [(v, idx) for v, idx in self.groups] if fast else \
+            [(v, idx[s:s + _CHUNK]) for v, idx in self.groups for s in range(0, len(idx), _CHUNK)]
         for nu, el in chunks:
             k0 = self.k0s[nu]
             edof = mesh.edof[el]
             ue = u[edof]
             g = gam[el]
-            fh, kh, _ = _element((g[:, None] * ue).reshape(-1, 8, 3), mesh.pitch, nu, self.kind, True)
+            if fast:
+                m = len(el)
+                fh, kh = nlkernel.elements((g[:, None] * ue).ravel(), np.arange(24 * m).reshape(m, 24), None,
+                                           np.ones(m), mesh.pitch, nu, self.kind, True, np.stack(_GAUSS))[:2]
+            else:
+                fh, kh, _ = _element((g[:, None] * ue).reshape(-1, 8, 3), mesh.pitch, nu, self.kind, True)
             # J of the solid cells only: void ones are linear and may not invert
             solid = g > 0.5
             if solid.any():
@@ -344,10 +353,18 @@ class _Model:
             ku = ue @ k0.T
             b = g[:, None] * fh + (1 - g ** 2)[:, None] * ku
             me = mod[el]
-            np.add.at(fint, edof.ravel(), (b * me[:, None]).ravel())
             if tangent:
-                ke = (g ** 2)[:, None, None] * kh + (1 - g ** 2)[:, None, None] * k0[None]
-                self.stiff.add_elements(data, ke * me[:, None, None], el)
+                ke = (g ** 2 * me)[:, None, None] * kh + ((1 - g ** 2) * me)[:, None, None] * k0[None]
+            if fast:
+                fe_, d_ = nlkernel.scatter(mesh.n_dof, self.stiff.nnz, self.stiff._slots if len(el) == mesh.n_elem else self.stiff._slots[:, el], edof,
+                                           b * me[:, None], ke if tangent else None, tangent)
+                fint += fe_
+                if tangent:
+                    data += d_
+            else:
+                np.add.at(fint, edof.ravel(), (b * me[:, None]).ravel())
+                if tangent:
+                    self.stiff.add_elements(data, ke, el)
             if parts:
                 br[el] = b
                 dbr[el] = fh + g[:, None] * np.einsum("mij,mj->mi", kh, ue) - 2 * g[:, None] * ku
@@ -575,9 +592,9 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
         ts = min(1.0, ts_ok * 1.25)
         real = None
         for tries in range(8):
-            for t, t0 in zip(tendons or [], full):
+            for t, tfull in zip(tendons or [], full):
                 if not isinstance(t, ServoTendon):
-                    t.tension = t0 * ts
+                    t.tension = tfull * ts
             xt = _extrude((h @ x) / hs, columns, design)
             try:
                 real, up = [], {}
@@ -653,9 +670,9 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
                 old = history[-11]["objective"]
                 if abs(obj - old) <= 2e-3 * abs(old):
                     break
-    for t, t0 in zip(tendons or [], full):
+    for t, tfull in zip(tendons or [], full):
         if not isinstance(t, ServoTendon):
-            t.tension = t0
+            t.tension = tfull
     if stopped:
         history[-1]["stopped"] = stopped
     if beta_cap < opts.beta_max:

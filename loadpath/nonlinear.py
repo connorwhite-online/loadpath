@@ -13,7 +13,9 @@ voxel hex mesh:
   both reduce to fem.py's linear element at small strain), and Newton's
   method on the residual with the full tangent (material + geometric
   stiffness). Load is applied in increments that grow when Newton converges
-  quickly and halve when it does not. Loads are dead (they keep their
+  quickly and halve when it does not; a Newton update that would turn a
+  cell inside out is halved instead of failing the step. Elements are
+  built by a compiled kernel on all cores (nlkernel.py). Loads are dead (they keep their
   direction as the part deforms). Supports can be pushed instead of loaded
   (`prescribed`), which follows a part through a snap-through that load
   control cannot pass, and reports the force it takes (`reaction`).
@@ -65,6 +67,15 @@ __all__ = ["NonlinearResult", "BucklingResult", "Tendon", "nodes_near", "solve_n
 # step that lands on an unstable state is cut back, and the stability check
 # runs LOBPCG with the multigrid preconditioner instead of shift-invert.
 DIRECT_MAX_DOF = 30_000
+# Step control. A step that converged in at most GROW_NEWTON iterations
+# (assemblies, the converged one included) lets the next one grow 1.5x.
+# A retry with line search (after plain Newton failed a contact step) that
+# has not halved its best residual in STALL_NEWTON iterations is chattering
+# (contacts switching on and off) and gives up the step: a shorter step is
+# cheaper than more iterations. (Plain Newton gets its full max_newton: a
+# contact plateau of ten or more iterations often ends in convergence.)
+GROW_NEWTON = 6
+STALL_NEWTON = 8
 _CHUNK = 1024   # elements per batch: big enough to vectorize, small enough to stay in cache
 _VOIGT = [(0, 0), (1, 1), (2, 2), (0, 1), (1, 2), (2, 0)]   # fem.py order: xx yy zz xy yz zx
 _VI = np.array([p[0] for p in _VOIGT])
@@ -185,14 +196,26 @@ def _element(ue, h, nu, kind, tangent, alpha=None):
     fint = ru - np.einsum("mij,mj->mi", kua, da)
     kt = kx[:, :24, :24] - kua @ kaa_kau if tangent else None
     alpha_new = alpha - da.reshape(m, 3, 3)
-    return fint, kt, jmin, alpha_new, ra
+    return fint, kt, jmin, alpha_new, ra, kaa_kau
 
 
-def _assemble(stiff, u, mod, nu, kind, tangent=True, alpha=None):
+def _assemble(stiff, u, mod, nu, kind, tangent=True, alpha=None, coupling=None):
     """Global internal force and tangent; with alpha (n_elem, 3, 3), the
     incompatible-mode element, also (alpha_new, |R_alpha|) with R_alpha
     weighted by the element moduli as the forces are."""
     mesh = stiff.mesh
+    from . import nlkernel
+    if nlkernel.available():
+        grads = np.stack(_GAUSS_IM if alpha is not None else _GAUSS)
+        fe, ke, jm, a_new, ra, cpl = nlkernel.elements(u, mesh.edof, alpha, mod, mesh.pitch, nu, kind, tangent, grads)
+        fint, data = nlkernel.scatter(mesh.n_dof, stiff.nnz, stiff._slots, mesh.edof, fe, ke, tangent)
+        k = stiff.finish(data) if tangent else None
+        jmin = float(jm.min()) if len(jm) else np.inf
+        if alpha is None:
+            return fint, k, jmin
+        if coupling is not None:
+            coupling[:] = cpl
+        return fint, k, jmin, a_new, float(np.sqrt(((ra * mod[:, None]) ** 2).sum()))
     fint = np.zeros(mesh.n_dof)
     data = np.zeros(stiff.nnz) if tangent else None
     jmin = np.inf
@@ -206,7 +229,9 @@ def _assemble(stiff, u, mod, nu, kind, tangent=True, alpha=None):
         if alpha is None:
             fe, ke, j = _element(ue, mesh.pitch, nu, kind, tangent)
         else:
-            fe, ke, j, a_new[el], ra = _element(ue, mesh.pitch, nu, kind, tangent, alpha[el])
+            fe, ke, j, a_new[el], ra, cpl = _element(ue, mesh.pitch, nu, kind, tangent, alpha[el])
+            if coupling is not None:
+                coupling[el] = cpl
             ra2 += float(((ra * me[:, None]) ** 2).sum())
         jmin = min(jmin, j)
         np.add.at(fint, edof.ravel(), (fe * me[:, None]).ravel())
@@ -242,7 +267,10 @@ class _Linear:
         if self.direct:
             lu = _splu(k)
             op = LinearOperator((n, n), matvec=lu.solve, dtype=float)
-            vals, vecs = eigsh(k, k=1, sigma=0.0, which="LM", OPinv=op, tol=1e-6)
+            # a fixed start vector: ARPACK's random one made the branch
+            # a perfect column takes (and so whether it found it) vary run to run
+            v0 = np.random.default_rng(0).standard_normal(n)
+            vals, vecs = eigsh(k, k=1, sigma=0.0, which="LM", OPinv=op, tol=1e-6, v0=v0)
             return float(vals[0]), vecs[:, 0]
         from scipy.sparse.linalg import lobpcg
         m = self.iter._precond(k)
@@ -485,14 +513,36 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     def newton(v, target, a=None, search=False):
         rnorm0 = None
         a = alpha if a is None else a
+        # K_aa^-1 K_au per element (incompatible modes), two buffers so a
+        # backtrack can still use the last good iterate's
+        bufs = None if a is None else [np.empty((mesh.n_elem, 9, 24)) for _ in range(2)]
+        cur, prev, cuts, best = 0, None, 0, None
+
+        def follow(a_lin, c, d):
+            # the bubbles follow the nodes: alpha += -K_aa^-1 K_au du
+            if c is None:
+                return a_lin
+            return a_lin - np.einsum("mij,mj->mi", c, d[mesh.edof]).reshape(-1, 3, 3)
+
         for its in range(1, max_newton + 1):
             ra = 0.0
+            cpl = None if bufs is None else bufs[cur]
             if a is None:
                 fint, k, jmin = _assemble(stiff, v, mod, nu, material)
+                a_lin = None
             else:
-                fint, k, jmin, a, ra = _assemble(stiff, v, mod, nu, material, alpha=a)
+                fint, k, jmin, a_lin, ra = _assemble(stiff, v, mod, nu, material, alpha=a, coupling=cpl)
             if not np.isfinite(jmin) or jmin <= 0:
-                return None
+                # the update turned a cell inside out: halve it (a damped
+                # Newton step), rather than give up the whole load step
+                if prev is None or cuts >= 8:
+                    return None
+                v0, a0, d, c0 = prev
+                d = 0.5 * d
+                prev = v0, a0, d, c0
+                v, a = v0 + d, follow(a0, c0, d)
+                cuts += 1
+                continue
             if spr is not None:
                 fint = fint + spr @ v
                 k = (k + spr).tocsr()
@@ -507,11 +557,15 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             ref = max(np.linalg.norm(fext), np.linalg.norm(fint[pd]) if len(pd) else 0.0, fscale)
             rnorm = np.hypot(np.linalg.norm(r), ra)
             if rnorm <= rtol * ref:
-                return v, its, fint, k, a
+                return v, its, fint, k, a_lin
             if rnorm0 is None:
                 rnorm0 = rnorm
             elif its > 6 and rnorm > rnorm0:
                 return None          # diverging
+            if best is None or rnorm < 0.5 * best[0]:
+                best = rnorm, its
+            elif search and its - best[1] >= STALL_NEWTON:
+                return None          # stalled (contact chatter): a shorter step is cheaper
             try:
                 d = lin.solve(k if lin.direct else sym(k), r)
             except RuntimeError:
@@ -528,11 +582,13 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                 # cycle: on a retry, backtrack a step that makes the
                 # residual worse
                 for _ in range(5):
-                    rt = trial(v + d, target, a)
+                    rt = trial(v + d, target, follow(a_lin, cpl, d) if a_lin is not None else None)
                     if rt is not None and rt < rnorm:
                         break
                     d *= 0.5
-            v = v + d
+            prev = v, a_lin, d, cpl
+            v, a = v + d, (follow(a_lin, cpl, d) if a_lin is not None else None)
+            cur = 1 - cur
         return None
 
     def trial(v, target, a):
@@ -655,7 +711,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
         history.append(rec)
         if on_step is not None:
             on_step(rec, u)
-        if rec["newton"] <= 5:
+        if rec["newton"] <= GROW_NEWTON:
             dlam = min(dlam * 1.5, max_step)
     vm, strain = _post(mesh, u, mod, nu, material)
     done = lam >= 1.0 - 1e-12

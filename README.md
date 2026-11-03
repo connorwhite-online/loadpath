@@ -78,7 +78,7 @@ and the limitations ([docs/case-studies/](docs/case-studies/)).
 | [GRIP robot arm](docs/case-studies/grip.md) | A load sweep over the arm's URDF found 3 of 5 links below SF 1; the regrown set meets SF 2 and is 18% smaller | GRIP's committed parts, made by an earlier loadpath with hand-written loads |
 | [Arm link cores](docs/case-studies/arm-link-cores.md) | 42.2 g box section for FDM, 36.8 g hollow link for SLS, both at 0.5 mm and SF 3 | 54.9 g solid web; 54.2 g free-form topology optimization |
 | [Liquid cold plate](docs/case-studies/cold-plate.md) | A die-graded gyroid ties streamline channels; channels filled with a graded gyroid run 7% cooler | Streamline channels and pin fins, equal metal and pressure drop |
-| [TPU finger](docs/case-studies/tpu-finger.md) | 8.7 mm of tip curl for a 5 mm pull; a tendon finger grips 9x harder | A linear-model design (0.7 mm, then the solve fails); a plain bar of equal volume |
+| [TPU finger](docs/case-studies/tpu-finger.md) | up to 8 mm of tip curl for a 5 mm pull; a tendon finger grips 8x harder | A linear-model design (2.5 mm, then the solve fails); a plain bar of equal volume |
 | [Benchmarks](docs/case-studies/benchmarks.md) | 1-5% less stiff than top88/top3d at equal material, in 57-60 iterations instead of 130-410 | Ports of top88 and top3d |
 
 ## Install

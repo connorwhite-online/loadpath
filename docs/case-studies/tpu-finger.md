@@ -44,34 +44,40 @@ works through its whole stroke.
 
 | | Linear design (baseline) | Large-deflection design |
 | --- | --- | --- |
-| Tip travel for a 5 mm pull | 0.7 mm (the solve stops at 0.75 mm of pull) | **8.7 mm** (full stroke) |
-| One-node hinges | 8 | **0** |
-| Pull force at 5 mm | | 7.1 N |
-| Peak strain | | 45% (TPU 95A elongation at break is past 400%) |
+| Tip travel for a 5 mm pull | 2.5 mm (the solve stops at 3.9 mm of pull) | **3.8-8.0 mm** over five runs (full stroke) |
+| One-node hinges | 1 | **0** |
+| Pull force at 5 mm | | 5.6-5.7 N |
+| Peak strain | | 34-35% (TPU 95A elongation at break is past 400%) |
 
 ![curling finger: linear design and large-deflection design](../images/mechanism/curling-finger.png)
 
-The linear design is a set of corner hinges. Under a real stroke they lock
-and the solve cannot follow it past 0.75 mm of pull. The design optimized
-on the large-deflection response curls its tip 8.7 mm for 5 mm of pull,
-through the whole stroke.
+The linear design hangs on a corner hinge. Under a real stroke it locks
+and the solve cannot follow it past 3.9 mm of pull. The design optimized
+on the large-deflection response curls its tip 3.8-8.0 mm for 5 mm of
+pull, through the whole stroke. The range is the optimizer's: runs that
+differ only by rounding land on different designs (re-measured
+2026-11-03; the figure is the first published run, 8.7 mm), so run it from
+a few starts and keep the best.
 
 **Tendon finger** (forces per mm of finger width; a 15 mm wide finger
 grips 15 times as much)
 
 | | Plain bar, same volume (baseline) | Optimized |
 | --- | --- | --- |
-| Grip force | 0.046 N | **0.42 N** (9x) |
-| Tendon tension at full wind | 2.27 N | 0.88 N |
-| Grip per newton of tendon pull | 0.02 | **0.48** |
+| Grip force | 0.046 N | **0.38 N** (8x) |
+| Tendon tension at full wind | 2.27 N | 0.84 N |
+| Grip per newton of tendon pull | 0.02 | **0.45** |
 | One-node hinges | 0 | 0 |
 
 ![tendon finger: plain bar and optimized finger](../images/mechanism/tendon-grip.png)
 
-The optimized finger is a lever, not a wrap. A diagonal strut from the top
-of the palm mount carries the tendon's pull into a knee that presses on the
-top of the cylinder, while the tip beyond it buckles up out of the way. The
-plain bar curls past the cylinder and touches it with one edge.
+The optimized finger pushes on the object rather than wrapping it. A
+hooked palm mount carries the tendon's pull into a finger that curls down
+and lays a curved belly on the top of the cylinder, with the tip turning
+back up past it. The plain bar curls past the cylinder and touches it with
+one edge. (Redesigned 2026-11-03 on the corrected grip gradient; the first
+design, optimized on a gradient that was wrong at held nodes, read 0.42 N
+and pressed with a single knee.)
 
 **What made the large-deflection optimizer work**, all in
 `mechanism_nl.py`: Newton steps are damped until no cell inverts; a

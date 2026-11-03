@@ -89,26 +89,30 @@ printed flat in TPU 95A as an 8 mm plate. The servo is stiff
 (400 N/mm through the horn), the workpiece soft (2 N/mm), and the stroke
 3 mm. All three designs are optimized for the same springs and volume, and
 then driven through the stroke by the nonlinear solver (`stroke_mechanism`,
-about 4 min in all):
+about 2 min in all):
 
 | | textbook code | loadpath | loadpath robust |
 |---|---|---|---|
 | one-node hinges | 7 | 1 | **0** |
-| free jaw travel per 3 mm stroke | 8.4 mm | 6.7 mm | 3.9 mm |
-| grip force on the workpiece at 3 mm | solver stopped at 0.6 mm (1.5 N) | **6.7 N** | 5.4 N |
-| actuator force for that | 4.8 N at 0.6 mm | 26 N | 25 N |
-| peak strain | 0.9% at 0.6 mm | 4.5% | 7.3% |
-| grip held for 1 min / 1 h / 1 day (relaxation) | n/a | 6.2 / 5.3 / 4.8 N | 5.0 / 4.2 / 3.8 N |
-| servo force for a 0.2 s close | n/a | 31 N | 30 N |
+| free jaw travel per 3 mm stroke | 9.1 mm | 7.9 mm | 4.6 mm |
+| grip force on the workpiece at 3 mm | 6.5 N | **6.6 N** | 5.8 N |
+| actuator force for that | 28 N | 31 N | 23 N |
+| peak strain | 5.4% | 6.2% | 6.1% |
+| grip held for 1 min / 1 h / 1 day (relaxation) | 6.1 / 5.2 / 4.7 N | 6.1 / 5.2 / 4.7 N | 5.3 / 4.6 / 4.1 N |
+| servo force for a 0.2 s close | 34 N | 38 N | 28 N |
 
 ![TPU gripper](images/mechanism/tpu-gripper.png)
 
 - **The textbook design is a mechanism of corner hinges.** With a stiff
   actuator it puts seven one-node hinges in its jaw linkage. They give it the
   biggest free travel, because a corner hinge costs almost no strain energy,
-  but they print as nothing. The large-deflection solve of the
-  gripping case inverts elements at those corners and stops at a fifth of
-  the stroke.
+  but they print as nothing: two cells joined at one node. The
+  large-deflection solve used to stop part way through its gripping
+  stroke (at 0.6 mm, later 2.2 mm), where a full Newton step turned a cell
+  at a hinge inside out. Newton steps are now damped (an update that
+  inverts a cell is halved), so it reaches the full stroke and grips
+  about as hard as loadpath's design; the hinges are still why not to
+  print it.
 - **loadpath's designs work through the full stroke.** The plain design
   grips harder (it keeps one corner hinge). The robust one has none, and it
   is the one to print.
@@ -157,21 +161,35 @@ pulling through the whole stroke, with no corner hinge.
 
 ## A TPU finger that curls
 
-`examples/mechanism/curling_finger.py` (about 20 min) designs a 40 x 10 mm
+`examples/mechanism/curling_finger.py` (about 3 min) designs a 40 x 10 mm
 TPU 95A finger, printed flat. It is clamped along the top half of its
 base. A tendon or servo horn pulls the bottom of the base 5 mm back, and
 the tip should curl down against a soft object (0.01 N/mm). Both designs
 use the robust option, and both are judged by driving them through the
-stroke with the nonlinear solver:
+stroke with the nonlinear solver (incompatible-mode element; numbers
+re-measured 2026-11-03):
 
 | | linear design | large-deflection design |
 |---|---|---|
-| tip travel for a 5 mm pull | 0.7 mm (solve stops at 0.75 mm of pull) | **8.7 mm** (full stroke) |
-| one-node hinges | 8 | **0** |
-| pull force at 5 mm | | 7.1 N |
-| peak strain | | 45% (TPU 95A breaks past 400%) |
+| tip travel for a 5 mm pull | 2.5 mm (solve stops at 3.9 mm of pull) | **3.8-8.0 mm** (full stroke; see below) |
+| one-node hinges | 1 | **0** |
+| pull force at 5 mm | | 5.6-5.7 N |
+| peak strain | | 34-35% (TPU 95A breaks past 400%) |
 
 ![curling finger](images/mechanism/curling-finger.png)
+
+(The figure is the first published run, 8.7 mm of curl with the plain
+hex8 check.)
+
+**The large-deflection optimizer is sensitive to rounding.** Five runs
+that differ only by rounding-level changes (the compiled element kernel
+against the numpy one, which agree to 1e-14, and the filter radius moved
+by 1e-9 or 1e-6 of itself) end at 8.0, 7.9, 6.0, 5.9 and 3.8 mm of
+curl. All five reach the full stroke with no hinges, and each design reads
+the same on both solvers to 1e-10, so the spread is the optimizer's path
+(projection steps and sharpening retries are discrete decisions), not the
+check. Run it from a few starts and keep the best; making the path itself
+stable is open.
 
 Three things made it work, all now in `mechanism_nl.py`:
 
@@ -218,7 +236,8 @@ check = tendon_grip(domain, r.xphys, E, nu, [ten], obj)     # thresholded, full 
   grip force is the sum of the normal forces, and its gradient (contact,
   tendon load stiffness and all) matches finite differences.
 
-`python examples/mechanism/tendon_grip.py` (about 25 min) designs a 50 x 10
+`python examples/mechanism/tendon_grip.py` (about 17 min;
+`tendon_grip_render.py` draws the figure) designs a 50 x 10
 mm TPU 95A finger, its base clamped to the palm. The tendon runs from the
 spool behind the palm through guides on the palm side to a knot at the
 tip. A 30 mm cylinder (a GRIP-sized handle) sits 1.5 mm below. The servo
@@ -227,19 +246,27 @@ winds in 8 mm of cable at 0.5 N/mm. Forces are per mm of finger width
 
 | | plain palm-side bar, same volume | optimized (robust) |
 |---|---|---|
-| grip force | 0.046 N | **0.42 N** (9x) |
-| tendon tension at full wind | 2.27 N | 0.88 N |
-| grip per newton of tendon pull | 0.02 | **0.48** |
+| grip force | 0.046 N | **0.38 N** (8x) |
+| tendon tension at full wind | 2.27 N | 0.84 N |
+| grip per newton of tendon pull | 0.02 | **0.45** |
+| nodes touching the cylinder | 2 | 6 |
 | one-node hinges | 0 | 0 |
 
 ![tendon grip](images/mechanism/tendon-grip.png)
 
-The bar curls its tip past the cylinder and touches it with one edge. The
-optimized finger is a lever: a diagonal strut from the top of the palm
-mount carries the tendon's pull down into a knee that presses on the top of
-the cylinder, while the tip beyond it buckles up out of the way. It does not
-wrap the object; it pushes on it, which is what "most normal force" asks
-for. Two things to know before printing it:
+These numbers are from the corrected gradient (see the contact section
+below: the tendon's and the contact's stiffness used to leak into the rows
+of held dofs, which every 2.5D plate has). The first version of this
+design, optimized on the wrong gradient, read 0.42 N at 0.88 N of pull
+and pressed with a knee while its tip buckled up out of the way. The
+redesign is a different shape: a hooked palm mount carries the tendon's
+pull into a finger that curls down and lays a curved belly on the top of
+the cylinder (six nodes touching, against one knee), with the tip turning
+back up past it. It grips 10% less per finger but spreads the force,
+which a printed part and the object both prefer. (One run: like the curling finger's, this optimizer's result moves run to run, so the 10% is within its spread.) The bar curls its tip
+past the cylinder and touches it with one edge. It pushes on the object
+rather than wrapping it, which is what "most normal force" asks for. Two
+things to know before printing it:
 
 - **It cut the middle guide free.** Printed, that guide would be a loose
   bead on the cable. Leave it out: the cable runs straight from the palm
@@ -298,7 +325,9 @@ points and guides, by tension or by servo stroke and stiffness), contact
 curls a 40 mm TPU finger 330 degrees with a servo-wound tendon until its
 tip lands on its own palm: without self contact the tip passes 2 mm into
 the palm; with it the palm takes 3.4 N and nothing sinks more than
-0.006 mm.
+0.006 mm. It takes about 28 s on a 4-core cloud box (76 s before the
+compiled element kernel, damped Newton steps and the step-control changes
+of 2026-11-03; same tip position to 1e-6 mm, same palm force to 0.02%).
 
 Validation (`tests/test_contact.py`, closed forms; 3D hex8 against beam
 theory):

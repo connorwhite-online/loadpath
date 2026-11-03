@@ -87,7 +87,7 @@ def test_incompatible_mode_tangent_matches_finite_differences():
                 a = out[3]
             return out, a
 
-        (f, k, _, _, ra), a = condensed(ue, np.zeros((1, 3, 3)), True)
+        (f, k, _, _, ra, _), a = condensed(ue, np.zeros((1, 3, 3)), True)
         assert np.abs(ra).max() < 1e-12
         kn = np.zeros((24, 24))
         for d in range(24):
@@ -474,7 +474,47 @@ def test_grip_with_a_stop_gradient_matches_finite_differences():
             assert abs(dj[e] - fd) <= 1e-4 * max(abs(fd), 1e-2 * np.abs(dj).max()), (type(obj).__name__, e, dj[e], fd)
 
 
+def test_compiled_kernel_matches_numpy_element():
+    # nlkernel (compiled, all cores) and the numpy element: same force,
+    # tangent, bubble update and coupling, plain and incompatible modes
+    import os
+
+    from loadpath import nlkernel
+    from loadpath.nonlinear import _assemble
+    if not nlkernel.available():
+        return
+    ijk = np.array([(i, j, k) for i in range(6) for j in range(2) for k in range(3)])
+    m = HexMesh(ijk, 0.7, np.zeros(3))
+    rng = np.random.default_rng(3)
+    u = 0.05 * rng.standard_normal(m.n_dof)
+    mod = rng.uniform(1, 30, m.n_elem)
+    al = 0.01 * rng.standard_normal((m.n_elem, 3, 3))
+    st = Stiffness(m, NU, np.zeros(m.n_dof, bool), element="im")
+    old = os.environ.get("LOADPATH_NLKERNEL")
+    try:
+        for kind in ("neo-hookean", "svk"):
+            for a in (None, al):
+                outs = []
+                for env in ("1", "0"):
+                    os.environ["LOADPATH_NLKERNEL"] = env
+                    c = None if a is None else np.zeros((m.n_elem, 9, 24))
+                    outs.append((_assemble(st, u, mod, NU, kind, alpha=a, coupling=c), c))
+                (o1, c1), (o0, c0) = outs
+                assert np.abs(o1[0] - o0[0]).max() < 1e-11 * np.abs(o0[0]).max()
+                assert abs(o1[1] - o0[1]).max() < 1e-11 * abs(o0[1]).max()
+                assert abs(o1[2] - o0[2]) < 1e-12
+                if a is not None:
+                    assert np.abs(o1[3] - o0[3]).max() < 1e-11 * np.abs(o0[3]).max()
+                    assert abs(o1[4] - o0[4]) < 1e-9 * o0[4]
+    finally:
+        if old is None:
+            os.environ.pop("LOADPATH_NLKERNEL", None)
+        else:
+            os.environ["LOADPATH_NLKERNEL"] = old
+
+
 TESTS = [
+    test_compiled_kernel_matches_numpy_element,
     test_tangent_matches_finite_differences,
     test_small_load_matches_linear,
     test_cantilever_large_deflection_matches_elastica,
