@@ -377,8 +377,12 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     stroke of cable through a compliant cable: displacement driven).
     contact: contact.RigidObstacle (a rigid plane, sphere, cylinder or box,
     fixed or moving with the load) and contact.SelfContact (the part's
-    surface on itself), frictionless penalty. Each step records each
-    contact's force, nodes touching and deepest penetration.
+    surface on itself), penalty, frictionless or with Coulomb friction
+    (`friction=mu`: sticks until the tangential force reaches mu times the
+    normal force, then slides; history dependent, updated at each converged
+    step). Each step records each contact's force, nodes touching and
+    deepest penetration, with friction the friction force and the nodes
+    sliding.
     springs:
     grounded linear springs, N/mm per dof (an actuator's compliance, a
     workpiece pushing back).
@@ -445,6 +449,38 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
         # is a far bigger approximation)
         max_newton = max(max_newton, 40)
         rtol = max(rtol, 1e-5)
+    # Coulomb friction's sliding tangent is not symmetric: the direct LU
+    # takes it as it is; CG and the stability check take its symmetric part
+    # (and so is self contact's, with the faces' turning in it)
+    def _unsym(c):
+        return getattr(c, "friction", 0.0) > 0 or getattr(c, "rotation", False)
+    asym = any(_unsym(c) for c in contact)
+
+    def sym(k):
+        return (0.5 * (k + k.T)).tocsr() if asym else k
+
+    def stab(k, v, target):
+        """The tangent for the stability check: with friction, without the
+        sliding force's growth with the normal force, and self contact's
+        without the faces' turning (both unsymmetric, and their symmetric
+        parts are indefinite: not a buckle)."""
+        if not asym:
+            return k
+        for c in contact:
+            if _unsym(c):
+                kf = c._load(v, target)[1]
+                c._symmetric = True
+                try:
+                    ks = c._load(v, target)[1]
+                finally:
+                    c._symmetric = False
+                k = k + keep_free @ (ks - kf) @ keep_free
+        return sym(k)
+
+    # the smallest force worth resolving: a strain of 1e-6 on one cell face
+    # (a part only carried along rigidly, e.g. towards a contact it has not
+    # reached yet, has no load to measure its residual against)
+    fscale = 1e-6 * float(mod.max()) * mesh.pitch ** 2
 
     def newton(v, target, a=None, search=False):
         rnorm0 = None
@@ -468,7 +504,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                 k = (k + keep_free @ kt @ keep_free).tocsr()
             r = fext - fint
             r[cons] = 0.0
-            ref = max(np.linalg.norm(fext), np.linalg.norm(fint[pd]) if len(pd) else 0.0, 1e-30)
+            ref = max(np.linalg.norm(fext), np.linalg.norm(fint[pd]) if len(pd) else 0.0, fscale)
             rnorm = np.hypot(np.linalg.norm(r), ra)
             if rnorm <= rtol * ref:
                 return v, its, fint, k, a
@@ -477,7 +513,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             elif its > 6 and rnorm > rnorm0:
                 return None          # diverging
             try:
-                d = lin.solve(k, r)
+                d = lin.solve(k if lin.direct else sym(k), r)
             except RuntimeError:
                 return None
             if not np.all(np.isfinite(d)):
@@ -522,6 +558,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     du_prev, dlam_prev = None, None
     history = []
     message = ""
+    touch_step = max(4 * min_step, 1.0 / 128)
     while lam < 1.0 - 1e-12:
         dlam = min(dlam, 1.0 - lam)
         target = lam + dlam
@@ -543,9 +580,24 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             dlam *= 0.5
             continue
         v, its, fint, k, a_conv = out
+        if asym and dlam > touch_step:
+            # friction: a contact that touches during a step measures its
+            # slip from the touch along a straight path through the step,
+            # which the part did not take (it moved rigidly up to the touch
+            # and deformed after; the stiff penalty turns the difference
+            # into a spurious stick force). When contacts carrying a good
+            # share of the load touched during the step, bisect towards the
+            # touch so the step that makes it is short.
+            for c in contact:
+                if getattr(c, "friction", 0.0) > 0:
+                    c._load(v, target)
+            share = max((c._early[0] for c in contact if getattr(c, "friction", 0.0) > 0), default=0.0)
+            if share > 0.25:
+                dlam = max(0.5 * dlam, touch_step)
+                continue
         rec = {"loadFactor": target, "newton": its}
         if stability:
-            lmin, phi = lin.lowest_mode(k)
+            lmin, phi = lin.lowest_mode(stab(k, v, target))
             rec["lowestEigenvalue"] = lmin
             tol = 1e-9 * abs(k.diagonal()).max()
             if lmin < -tol:
@@ -572,7 +624,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                     for sgn in (1.0, -1.0):
                         o = newton(v + sgn * amp * size * phi, target)
                         if o is not None:
-                            l2 = lin.lowest_mode(o[3])[0]
+                            l2 = lin.lowest_mode(stab(o[3], o[0], target))[0]
                             if l2 >= -tol:
                                 found = o, l2
                                 break
@@ -598,6 +650,8 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
         for i, c in enumerate(contact):
             info = c._load(u, lam)[2]
             rec[f"contact{i}"] = {k: v for k, v in info.items()}
+            if hasattr(c, "_commit"):
+                c._commit(u, lam)       # friction: where each contact sticks from here on
         history.append(rec)
         if on_step is not None:
             on_step(rec, u)
@@ -927,7 +981,7 @@ def large_deflection_report(graph, spec: dict, material) -> dict:
             tendons.append(Tendon(float(t["tension"]), path))
     contact = []
     cs = spec.get("contact") or {}
-    stiff = {k: cs[k] for k in ("stiffness",) if k in cs}
+    stiff = {k: cs[k] for k in ("stiffness", "friction") if k in cs}
     for ob in cs.get("obstacles", []):
         contact.append(obstacle_from_spec({**stiff, **ob}))
     if cs.get("self"):

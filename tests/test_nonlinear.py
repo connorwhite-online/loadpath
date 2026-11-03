@@ -434,6 +434,46 @@ def test_grip_on_any_obstacle_shape_gradient_matches_finite_differences():
         assert abs(dj[e] - fd) <= 1e-4 * max(abs(fd), 1e-2 * np.abs(dj).max()), (e, dj[e], fd)
 
 
+def test_grip_with_a_stop_gradient_matches_finite_differences():
+    # the finger gripping a sphere while it presses on a second object that
+    # only resists (mechanism_nl.Contacts: the stop counts for nothing),
+    # and a stop alone under the tip, where the tendon's knot nodes have a
+    # held direction (their stiffness used to leak into the held rows and
+    # threw the adjoint off at the tip cell)
+    from loadpath.benchmarks.mechanisms import MechProblem, mech_domain
+    from loadpath.benchmarks.problems import _nodes
+    from loadpath.contact import RigidObstacle
+    from loadpath.mechanism_nl import Contacts, RigidObject, ServoTendon, _Model, nonlinear_response
+    from loadpath.nonlinear import nodes_near
+    p = MechProblem(name="f", title="f", source="", dims=(16, 1, 4), volfrac=0.4, rmin=1.5,
+                    fixed=[(_nodes(0, 0, range(0, 5)), "xz")], sym=[], inp=(_nodes(16, 0, range(0, 2)), "x", -1.0),
+                    out=(_nodes(16, 0, range(0, 2)), "z", -1.0))
+    dom = mech_domain(p)
+    m = dom.mesh
+    ten = ServoTendon(path=[np.array([-2.0, 0.5, 0.5]), nodes_near(m, (8, 0.5, 0), 0.8),
+                            nodes_near(m, (16, 0.5, 0), 0.8)], stroke=2.0, stiffness=0.5)
+    grip = RigidObstacle("sphere", center=(13, 0.5, -4.6), radius=4.0)
+    for obj in (Contacts([grip, RigidObstacle("sphere", center=(8, 0.5, 7.4), radius=3.0)]),
+                RigidObject(RigidObstacle("sphere", center=(15, 0.5, -2.75), radius=2.0))):
+        model = _Model(m, 0.45, dom.fixed, np.zeros(0, int), np.zeros(0), np.zeros(m.n_dof), tendons=[ten],
+                       contact=obj)
+        rng = np.random.default_rng(2)
+        xp = np.clip(0.6 + 0.3 * rng.standard_normal(m.n_elem), 0.05, 1.0)
+        j, dj, u = nonlinear_response(model, xp, 26.0, None, steps=6)
+        assert j > 0.01
+        if isinstance(obj, Contacts):
+            stop = obj.forces(u, model.w)[1]
+            assert stop[2] > 0.05, stop          # the finger's back presses up on the stop
+        for e in (3, 20, 40, 60):
+            h = 1e-5
+            xa, xb = xp.copy(), xp.copy()
+            xa[e] += h
+            xb[e] -= h
+            fd = (nonlinear_response(model, xa, 26.0, None, u0=u)[0]
+                  - nonlinear_response(model, xb, 26.0, None, u0=u)[0]) / (2 * h)
+            assert abs(dj[e] - fd) <= 1e-4 * max(abs(fd), 1e-2 * np.abs(dj).max()), (type(obj).__name__, e, dj[e], fd)
+
+
 TESTS = [
     test_tangent_matches_finite_differences,
     test_small_load_matches_linear,
@@ -448,6 +488,7 @@ TESTS = [
     test_robust_mechanism_has_no_corner_hinges,
     test_nonlinear_mechanism_gradient_matches_finite_differences,
     test_tendon_grip_gradient_matches_finite_differences,
+    test_grip_with_a_stop_gradient_matches_finite_differences,
     test_grip_on_any_obstacle_shape_gradient_matches_finite_differences,
 ]
 

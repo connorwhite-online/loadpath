@@ -207,8 +207,9 @@ Made another way: the same arm link printed, cast (no undercuts along z), 3-axis
 ## Limits
 
 - Linear elastic, small deflection in the main check; large deflection and
-  buckling are separate analyses (`nonlinear.py`), with frictionless
-  contact (rigid obstacles and self contact) and tendons there only.
+  buckling are separate analyses (`nonlinear.py`), with contact (rigid
+  obstacles and self contact, optionally with Coulomb friction) and
+  tendons there only.
 - Printed layers are modelled as transversely isotropic stiffness plus a
   tension-across-layers strength check. Interlayer shear is not checked
   separately.

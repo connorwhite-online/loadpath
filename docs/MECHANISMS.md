@@ -262,13 +262,34 @@ takes `contact=[...]` next to its tendons (contact.py):
   fingers of one part meeting, a finger curling onto its own palm, a
   flexure gap closing. Clamped surfaces act only as the master side.
 
-Both are frictionless penalties (k = 20 E pitch per node, so a node
-sinks about F / (20 E h) under a force F) and each step reports each
-contact's force, the nodes touching and the deepest penetration. A
-`ServoTendon` (cable wound in by a servo) drives `solve_nonlinear` too.
-The optimizer's grip objective now takes any `RigidObstacle` shape (it is
-wrapped in a `mechanism_nl.RigidObject`; gradient checked against finite
-differences on a sphere).
+Both are penalties (k = 20 E pitch per node, so a node sinks about
+F / (20 E h) under a force F), frictionless by default; `friction=mu`
+adds Coulomb friction to either (`"friction"` in the field graph's
+`contact` block or on one obstacle). A contact sticks, held by a
+tangential penalty as stiff as the normal one, until its tangential force
+reaches mu times its normal force, then slides with mu p. Friction depends
+on the path: where each node sticks (or the friction it carried) is
+updated at each converged load step, and a load step in which contacts
+carrying much of the load first touch is bisected towards the touch, so
+the answer does not depend on how many steps the solve takes (the block
+drag below gives the same force with 4 or 128 steps). Each step reports
+each contact's force, the nodes touching and the deepest penetration, and
+with friction the friction force and the nodes sliding. A `ServoTendon`
+(cable wound in by a servo) drives `solve_nonlinear` too.
+
+The optimizer's grip objective takes any `RigidObstacle` shape (wrapped in
+a `mechanism_nl.RigidObject`) and several at once: `contact=[gripped,
+stop, ...]` (a `mechanism_nl.Contacts`; the first is gripped, the rest are
+objects the part may press on that count for nothing: a palm, an end stop,
+a neighbouring finger's envelope). `tendon_grip` reports the force on each.
+Gradients match finite differences to 1e-7 on a sphere grip, a grip plus a
+stop, and a stop under the tendon's knot. That last case found a bug in
+the grip gradient since it was written: the tendon's and the contact's
+stiffness leaked into the rows of held dofs, which the adjoint then
+zeroed, so the gradient was off (by more than 100% at the tip cell) wherever
+a tendon knot or a contact sat on a node with a held direction (every 2.5D
+plate problem holds y). Designs from the tendon-grip optimizer before
+this fix were optimized on a partly wrong gradient.
 
 Agents reach all of it from a field graph's `largeDeflection` block: the
 part, the clamp, dead loads, prescribed displacements, tendons (fixed
@@ -288,19 +309,59 @@ theory):
 | two fingers of one part pressed together (self contact) | force across, both tips' deflection | within 4% (R = (P - k g) / 2) |
 | ball driven 1 mm into a cantilever (moving obstacle) | force on the ball | within 3% (3 E I d / a^3) |
 | cantilever pressed onto a frictionless floor, tip 35% of its length down | floor reaction, how far the tip slid back, tip rotation | within 3%, 1%, 5% (elastica under P - R) |
+| block dragged over a rough floor, mu 0.3 (nu 0) | drag / normal force when sliding | 0.300 (mu) |
+| block dragged over a second block of the same part (self contact) | drag / normal force when sliding | within 1% of mu; short drag the same with 4 or 16 load steps |
+| the floor cantilever with mu 0.1 (slides back) | floor reaction, friction, tip x | within 0.2%, 1%, 0.02% (elastica under P - R and mu R along the beam) |
+| the floor cantilever with mu 0.4 | sticks where it landed | sticks; holds it with 0.125 R (a rigid corner would take 0.147 R; the voxel corner gives a little) |
+
+Against CalculiX 2.21 (`bench/contact_ccx.py`, the same voxel meshes as
+C3D8I, NLGEOM, surface-to-surface penalty contact with friction; CalculiX's
+rigid floor is a slab 1000 times stiffer; results in
+bench/results/contact_ccx.json):
+
+| case | quantity | loadpath | CalculiX | difference |
+|---|---|---|---|---|
+| block on a rough floor (mu 0.3, nu 0.3), drag 0.002 mm | normal force (N) | 0.2111 | 0.2089 | +1.0% |
+| | drag force (N) | 0.0025 | 0.0024 | +7.5% |
+| block on a rough floor (mu 0.3, nu 0.3), drag 0.01 mm | normal force (N) | 0.2110 | 0.2088 | +1.1% |
+| | drag force (N) | 0.0127 | 0.0118 | +7.4% |
+| block on a rough floor (mu 0.3, nu 0.3), drag 0.05 mm | normal force (N) | 0.2067 | 0.2035 | +1.6% |
+| | drag force (N) | 0.0552 | 0.0531 | +4.0% |
+| block on a block of the same part (mu 0.3, nu 0.0), drag 0.05 mm | normal force (N) | 0.1339 | 0.1329 | +0.8% |
+| | drag force (N) | 0.0052 | 0.0203 | -74.5% |
+| block on a block of the same part (mu 0.3, nu 0.0), drag 0.5 mm | normal force (N) | 0.1337 | 0.1324 | +1.0% |
+| | drag force (N) | 0.0398 | 0.0396 | +0.4% |
+| block on a block of the same part (mu 0.3, nu 0.3), drag 0.5 mm | normal force (N) | 0.1461 | 0.1433 | +1.9% |
+| | drag force (N) | 0.0397 | 0.0402 | -1.2% |
+| rough-floor cantilever, mu 0.1 | floor reaction (mN) | 1.5331 | 1.5326 | +0.0% |
+| | friction (mN) | 0.1521 | 0.1533 | -0.7% |
+| | tip x (mm) | 37.317 | 37.307 | +0.010 mm |
+| rough-floor cantilever, mu 0.4 | floor reaction (mN) | 1.5164 | 1.3510 | +12.2% |
+| | friction (mN) | 0.1878 | 0.5404 | -65.3% |
+| | tip x (mm) | 37.319 | 37.331 | -0.012 mm |
+
+Two rows disagree, and in both cases I think CalculiX is the one that's off:
+
+- **Short self-contact drag (0.05 mm, nu 0):** loadpath gives 0.0052 N and CalculiX gives 0.0203 N. After touch the blocks share only about 0.0045 mm of drag. Their shear compliance is at least 0.67 mm/N, so no more than about 0.0068 N can build up. Rerunning loadpath at 4 to 128 load steps gives the same 0.0052 N. CalculiX's surface-to-surface penalty seems to pick up tangential force during its approach increments. Once the blocks slide fully (0.5 mm), the two agree within 1.2%.
+- **Rough-floor cantilever, mu 0.4:** CalculiX slides (friction = 0.4 R). But the sliding closed-form solution would put the contact point at x = 36.852 mm, beyond where the tip lands (36.831 mm). That means the tip would move forward while friction pushes it forward, which is not admissible, so the tip must stick. loadpath sticks with H/R = 0.125, against 0.147 for a rigid corner; the voxel corner is softer. CalculiX 2.21 also fails this case now and then with "too many cutbacks". The bench records that error instead of a number.
 
 ## Not yet
 
-- **Friction**: all contact is frictionless. A gripper's hold against
-  pull-out is not modelled.
-- **The optimizer's contact is one rigid object**, fixed in space; no
-  second finger, no self contact inside the optimization (the check above
-  has both), and the cable does not touch the object (check its path on
-  the deformed shape).
+- **Friction in the optimizer**: the large-deflection check has Coulomb
+  friction; the optimizer's grip objective is still frictionless (a hold
+  against pull-out is not an objective yet).
+- **The optimizer's contacts are rigid objects**, fixed in space (any
+  number, one or more gripped); no self contact inside the optimization
+  (the check above has it), and the cable does not touch the object (check
+  its path on the deformed shape).
 - **Self contact is node-to-face on the voxel surface**: Newton converges
   linearly where faces rotate fast under contact (a tip edge landing on a
   surface), so such solves take a few times longer and can stop short of
-  the full load (the report says how far they got).
+  the full load (the report says how far they got). `SelfContact(rotation=
+  True)` puts the faces' turning in the tangent (tangent error on tilted
+  faces 25% -> 5%), but on the two-finger test it took 13 load steps and
+  10x the time instead of 4 steps, so it is off by default; the curling
+  finger's time is mostly its tendon-driven steps before any contact.
 - **Wrapping grasps:** maximizing the normal force gives a pressing
   finger. A finger that wraps would need the contact spread over the
   object (more nodes in contact, or a pull-out force objective).

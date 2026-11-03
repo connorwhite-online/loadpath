@@ -49,7 +49,7 @@ from .mechanism import MechanismOptions, MechanismResult, _spring_diag
 from .nonlinear import _CENTER, _CHUNK, _element, _Linear
 from .simp import E_MIN, PENALTY, _dproject, _extrude, _project, density_filter
 
-__all__ = ["optimize_mechanism_nonlinear", "nonlinear_response", "stroke_dofs", "RigidCylinder", "RigidObject", "ServoTendon",
+__all__ = ["optimize_mechanism_nonlinear", "nonlinear_response", "stroke_dofs", "RigidCylinder", "RigidObject", "Contacts", "ServoTendon",
            "tendon_grip"]
 
 GAMMA_ETA, GAMMA_BETA = 0.1, 100.0    # the solid/void step on the physical density
@@ -183,6 +183,14 @@ class RigidCylinder:
         np.add.at(dj, self.dofs.ravel(), ((w * dp)[:, None] * nrm).ravel())
         return float(w @ p), dj, p, nrm
 
+    def weight_terms(self, u, lam, grip):
+        """Per node, what d(objective)/d(contact weight) collects through
+        the adjoint lam: the pressure times (1 if it is the grip objective)
+        plus the adjoint's travel along the normal (the contact force in
+        the residual)."""
+        _, nrm, p, _, _ = self.state(u)
+        return p * ((1.0 if grip else 0.0) + np.einsum("ni,ni->n", lam[self.dofs], nrm))
+
 
 class RigidObject(RigidCylinder):
     """RigidCylinder's grip contact on any contact.RigidObstacle shape (a
@@ -229,6 +237,63 @@ class RigidObject(RigidCylinder):
         return f, k
 
 
+class Contacts:
+    """Several rigid objects at once for the optimizer: the one(s) the part
+    grips (summed into the grip objective) and others it may only press on
+    (a palm, an end stop, a neighbouring finger's envelope, a wall), which
+    resist like the gripped object but count for nothing. Each item is a
+    RigidCylinder, a RigidObject or a contact.RigidObstacle (wrapped in a
+    RigidObject); `grip` says which of them the grip force sums over
+    (default: the first only)."""
+
+    def __init__(self, items, grip=None, stiffness=50.0, smooth=0.05):
+        from .contact import RigidObstacle
+        self.items = [RigidObject(c, stiffness, smooth) if isinstance(c, RigidObstacle) else c for c in items]
+        if not self.items:
+            raise ValueError("Contacts: no objects")
+        g = [0] if grip is None else list(grip)
+        self.gripped = np.zeros(len(self.items), bool)
+        self.gripped[g] = True
+
+    def _setup(self, mesh):
+        for c in self.items:
+            c._setup(mesh)
+        self.dofs = self.items[0].dofs
+
+    def weights(self, xp):
+        return self.items[0].weights(xp)
+
+    def load(self, u, w, tangent=True):
+        f, k = None, None
+        for c in self.items:
+            fc, kc = c.load(u, w, tangent)
+            f = fc if f is None else f + fc
+            if tangent:
+                k = kc if k is None else k + kc
+        return f, k
+
+    def grip(self, u, w):
+        """Grip force on the gripped objects (N), its gradient, and the
+        pressure per node on them (summed); normals None."""
+        j, dj, p = 0.0, np.zeros(u.shape[0]), np.zeros(len(w))
+        for c, g in zip(self.items, self.gripped):
+            if g:
+                jc, djc, pc, _ = c.grip(u, w)
+                j, dj, p = j + jc, dj + djc, p + pc
+        return j, dj, p, None
+
+    def forces(self, u, w):
+        """The force on each object (N): what a stop or palm has to hold."""
+        out = []
+        for c in self.items:
+            _, nrm, p, _, _ = c.state(u)
+            out.append((-(w * p)[:, None] * nrm).sum(axis=0).tolist())
+        return out
+
+    def weight_terms(self, u, lam, grip):
+        return sum(c.weight_terms(u, lam, grip and g) for c, g in zip(self.items, self.gripped))
+
+
 class _Model:
     """Mixed linear/nonlinear assembly on one mesh, with the input prescribed."""
 
@@ -252,6 +317,7 @@ class _Model:
         cons[pd] = True
         self.cons, self.pd, self.pv = cons, pd, pv
         self.free = ~cons
+        self.keep = sp.diags(self.free.astype(float)).tocsr()
         self.stiff = Stiffness(mesh, nu, cons)
         self.springs = np.where(cons, 0.0, springs)
         self.lin = _Linear(mesh)
@@ -289,16 +355,21 @@ class _Model:
         k = None
         if tangent:
             k = self.stiff.finish(data) + sp.diags(self.springs)
+        # the tendons' and contacts' stiffness only on the free dofs: the
+        # held ones keep Stiffness's identity rows and columns (left in,
+        # they couple a held dof to the rest, and the adjoint, which zeroes
+        # the held dofs after the solve, came out wrong wherever a tendon
+        # knot or a contact sat on a node with a held direction)
         for t in self.tendons:             # the tendon pulls: an outside load, with its own stiffness
             ft, kt, _ = t._load(u, lam)     # (a ServoTendon's lam scales its stroke)
             fint -= ft
             if tangent:
-                k = k + kt
+                k = k + self.keep @ kt @ self.keep
         if self.contact is not None:
             fc, kc = self.contact.load(u, self.w, tangent)
             fint += fc
             if tangent:
-                k = k + kc
+                k = k + self.keep @ kc @ self.keep
         if tangent:
             k = k.tocsr()
         return fint, k, jmin, br, dbr
@@ -381,9 +452,7 @@ def nonlinear_response(model: _Model, xp, modulus, lvec, u0=None, steps=4, void_
     if dw is not None:
         # the contact weights depend on the density: the grip term itself
         # and the contact force in the residual
-        dist, nrm, p, _, _ = model.contact.state(u)
-        ln = np.einsum("ni,ni->n", lam[model.contact.dofs], nrm)
-        dj += dw.T @ (p * ((1.0 if lvec is None else 0.0) + ln))
+        dj += dw.T @ model.contact.weight_terms(u, lam, lvec is None)
     return j, dj, u
 
 
@@ -424,6 +493,8 @@ def tendon_grip(domain, xphys, modulus, nu, tendons, contact, threshold=0.5, ste
            "grip": j, "contactNodes": int((model.w * p > 0.01 * max(j, 1e-9)).sum()),
            "tendonTravel": [float(t._len0 - t._load(u, lam)[2]) for t in model.tendons], "history": history,
            "deformed": mesh.node_xyz + u.reshape(-1, 3), "solid": xp > 0.5}
+    if isinstance(contact, Contacts):
+        rep["forces"] = contact.forces(u, model.w)
     if not rep["converged"]:
         rep["message"] = "the solve stopped short of the full pull (the part snaps or wraps past the object)"
     return rep
@@ -444,6 +515,8 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     (the workpiece as a spring), or with `contact` (the object the part
     closes on: a RigidCylinder, a RigidObject, or a contact.RigidObstacle
     of any shape, which is wrapped in a RigidObject) the grip force on it.
+    Several objects: a Contacts (or a list, whose first item is gripped and
+    the rest are stops the part may press on but that count for nothing).
 
     k_in is ignored. nu and opts.modulus may be per element (a two-material
     part). output_displacement is the travel (mm) or the grip force (N)."""
@@ -461,6 +534,8 @@ def optimize_mechanism_nonlinear(domain, nu, opts: MechanismOptions, stroke: flo
     from .contact import RigidObstacle
     if isinstance(contact, RigidObstacle):
         contact = RigidObject(contact)
+    elif isinstance(contact, (list, tuple)):
+        contact = Contacts(contact)
     if contact is None:
         lo = domain.loads[opts.output_case]
         wts = np.abs(lo.reshape(-1, 3)).sum(axis=1) > 0

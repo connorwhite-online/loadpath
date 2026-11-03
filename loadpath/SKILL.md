@@ -340,8 +340,10 @@ field. `check` reports every problem at once: fix them all, then check again.
   `stroke` and `stiffness`), `contact` (`obstacles`: plane, sphere,
   cylinder, box, optionally `move`d; `"self": true` for the part on itself)
   and `probes`. It reports how far the load got, peak strain, travel,
-  tendon tension and each contact's force and penetration. Frictionless;
-  a self-contact solve where faces rotate fast can stop short and says so
+  tendon tension and each contact's force and penetration. Frictionless
+  unless `contact.friction` (or an obstacle's `friction`) sets a Coulomb
+  mu; then each contact also reports its friction force and the nodes
+  sliding. A self-contact solve where faces rotate fast can stop short and says so
   (`loadReached`). See docs/MECHANISMS.md.
 - A two-fluid heat exchanger is its own document (`loadpath_schema
   "heatExchanger"`): a core shape, a layout (`cross` or `counter`), cell and

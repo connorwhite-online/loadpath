@@ -1183,7 +1183,7 @@ _ND_WHERE = {"region": {"type": "string", "description": "solid node: the mesh n
              "radius": {**_POS, "description": "mm round `at` (default 1.5 cells)"}}
 _OBSTACLE = {
     "type": "object",
-    "description": "A rigid object the part may not enter (frictionless): plane (point, normal: the side the "
+    "description": "A rigid object the part may not enter (frictionless unless friction is set): plane (point, normal: the side the "
                    "part is on), sphere (center, radius), cylinder (center, axis, radius; infinitely long) or "
                    "box (min, max). inside: the part stays inside it instead (a socket, a tube). move: mm the "
                    "object travels at full load (an indenter, a jaw, a snap fit's catch).",
@@ -1192,7 +1192,11 @@ _OBSTACLE = {
                    "point": _VEC3, "normal": _VEC3, "center": _VEC3, "radius": _POS, "axis": _AXIS,
                    "min": _VEC3, "max": _VEC3, "inside": {"type": "boolean"},
                    "move": {**_VEC3, "description": "mm at full load"},
-                   "stiffness": {**_POS, "description": "penalty, x E x pitch N/mm per node (default 20)"}},
+                   "stiffness": {**_POS, "description": "penalty, x E x pitch N/mm per node (default 20)"},
+                   "friction": {"type": "number", "minimum": 0,
+                                "description": "Coulomb coefficient mu: sticks until the tangential force "
+                                               "reaches mu x the normal force, then slides (default: the "
+                                               "contact block's, else 0)"}},
     "required": ["type"],
     "additionalProperties": False,
 }
@@ -1238,7 +1242,11 @@ _LARGE_DEFLECTION = {
             "obstacles": {"type": "array", "items": _OBSTACLE},
             "self": {"type": "boolean", "description": "the part's surface on itself (fingers meeting, a "
                                                        "finger folding, a gap closing)"},
-            "stiffness": {**_POS, "description": "penalty for all, x E x pitch N/mm per node (default 20)"}},
+            "stiffness": {**_POS, "description": "penalty for all, x E x pitch N/mm per node (default 20)"},
+            "friction": {"type": "number", "minimum": 0,
+                         "description": "Coulomb coefficient for all contacts, the part on itself included "
+                                        "(default 0: frictionless). PLA on PLA ~0.3-0.5, TPU ~0.6-1, PTFE "
+                                        "~0.05-0.1."}},
                     "additionalProperties": False},
         "probes": {"type": "array", "items": {"type": "object", "properties": {
             **_ND_WHERE, "name": {"type": "string"},

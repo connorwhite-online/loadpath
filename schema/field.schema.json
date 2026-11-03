@@ -1095,7 +1095,7 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "description": "A rigid object the part may not enter (frictionless): plane (point, normal: the side the part is on), sphere (center, radius), cylinder (center, axis, radius; infinitely long) or box (min, max). inside: the part stays inside it instead (a socket, a tube). move: mm the object travels at full load (an indenter, a jaw, a snap fit's catch).",
+                "description": "A rigid object the part may not enter (frictionless unless friction is set): plane (point, normal: the side the part is on), sphere (center, radius), cylinder (center, axis, radius; infinitely long) or box (min, max). inside: the part stays inside it instead (a socket, a tube). move: mm the object travels at full load (an indenter, a jaw, a snap fit's catch).",
                 "properties": {
                   "type": {
                     "enum": [
@@ -1195,6 +1195,11 @@
                     "type": "number",
                     "exclusiveMinimum": 0,
                     "description": "penalty, x E x pitch N/mm per node (default 20)"
+                  },
+                  "friction": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Coulomb coefficient mu: sticks until the tangential force reaches mu x the normal force, then slides (default: the contact block's, else 0)"
                   }
                 },
                 "required": [
@@ -1211,6 +1216,11 @@
               "type": "number",
               "exclusiveMinimum": 0,
               "description": "penalty for all, x E x pitch N/mm per node (default 20)"
+            },
+            "friction": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Coulomb coefficient for all contacts, the part on itself included (default 0: frictionless). PLA on PLA ~0.3-0.5, TPU ~0.6-1, PTFE ~0.05-0.1."
             }
           },
           "additionalProperties": false
