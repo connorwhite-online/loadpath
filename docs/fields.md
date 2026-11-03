@@ -1232,6 +1232,11 @@ read (see Conformal lattice above) the same block reads 0.044 / 0.58 mm
 STEP to STL and 0.036 / 0.48 mm STL to STEP (p99 / max), -0.02% volume,
 18 min; the last spot is one phase defect's node, where the struts
 fatten into each other and leave pockets thinner than the patches.
+The same block without a skin does not export yet: its void surface has
+one non-manifold edge, on the box's medial plane near a corner, where the
+layer coordinate (the box's exact distance) folds and a strut's surface
+meets its own mirror image; it stays on every finer grid, so the void is
+dropped as open and OpenCascade's split fails.
 
 Pockets thinner than the patches can be lost: on an 8 mm BCC block under
 a skin (cell 4), wedges where the diagonal struts meet the skin at a
