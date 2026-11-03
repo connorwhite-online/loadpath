@@ -1250,6 +1250,47 @@ distances in double precision (~4x numpy, bit for bit) and a graded
 cell's warp lookup (~5x); `LOADPATH_FIELDOPS=numpy` turns them off. The
 arm link's organic leaf evaluates at 3.5M points/s on 4 cores (was 2.1M).
 
+### Compiled graphs
+
+Past those two ops, a graph evaluates as one compiled pass
+(`loadpath/fieldjit.py`): the whole graph under the node asked for becomes
+one numba loop over the points, each node a few scalar lines, instead of a
+dozen whole-array numpy passes per node, so the mesher's four threads stop
+waiting on memory. Numbers are kernel arguments, not code, so a tune's next
+candidate reuses the compiled kernel; a new graph structure compiles once
+(~2 s) into `~/.cache/loadpath/fieldjit` (`LOADPATH_FIELDJIT_CACHE`) and
+loads from there afterwards. Nodes it does not compile (an exact mesh
+distance, distance to points, strut, conformal, zoned or density-driven
+lattices, blend grading) run on numpy first and are read as inputs.
+`LOADPATH_FIELDJIT=0` turns it off.
+
+An exact mesh distance (`mesh` nodes, as the GRIP SLS links use for their
+v0.3 load path) spends its time finding each point's 12 nearest triangle
+centroids. `loadpath/knn.py` does that with a compiled k-d tree whose
+search starts from the previous point's neighbours (the mesher asks in
+order), same neighbours as scipy's in the same order (`LOADPATH_KNN=kdtree`
+keeps scipy's).
+
+The values are numpy's bit for bit (the same 4M points read the same on
+all three parts below), except where numpy hands a 3-vector dot product to
+BLAS or uses its own SIMD pow/exp/log (~1e-15 relative). The mesher's
+float32 lattice trig for grid sampling (`lattice.single_precision`) is
+libm's here and numpy's SIMD there, ~2e-6 mm apart; the meshes come out
+with the same triangles and vertices within 0.001 mm (bit-identical with
+that shortcut off). Measured on the 4-core cloud box (`bench/field_eval.py`,
+warm kernel cache, FE stress cached; old = `LOADPATH_FIELDJIT=0
+LOADPATH_KNN=kdtree`):
+
+| part, pitch | field eval, M points/s | field eval in meshing | meshing | peak RSS |
+|---|---|---|---|---|
+| arm link, graded gyroid (`arm-link-graded.json`), 0.3 mm | 6.1 -> 15.7 | 5.5 -> 1.9 s | 12.3 -> 9.3 s | 1.27 -> 1.14 GB |
+| arm link, graded box (`arm-link-box-graded.json`), 0.3 mm | 9.7 -> 36.6 | 2.1 -> 0.6 s | 6.0 -> 4.6 s | 0.87 -> 0.70 GB |
+| GRIP SLS wrist link (`examples/grip/sls.py`), 0.35 mm | 0.24 -> 0.51 | 123.5 -> 46.9 s | 170.7 -> 102.1 s | 2.27 -> 2.18 GB |
+
+On the arm links the field is now a fifth of the meshing time; the rest is
+the mesher's own bookkeeping (narrowband glue, relax, creases, booleans).
+On the GRIP links the mesh distance is still most of it.
+
 ### Evaluating on the GPU
 
 Once meshing is narrow-band, evaluating the graph is most of the time

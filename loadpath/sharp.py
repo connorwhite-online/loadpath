@@ -89,15 +89,36 @@ def _exact_leaf(g, name):
     return None
 
 
+def _chunk(fields):
+    """The points per thread task the fields' evaluators ask for (a compiled
+    graph's are small, narrowband.peval), when they all ask."""
+    cs = [getattr(f, "chunk", None) for f in fields]
+    return min(cs) if cs and all(cs) else None
+
+
+class _Combined:
+    """Hard boolean of field leaves: min / max of their values."""
+
+    def __init__(self, op, fields):
+        self.op, self.fields = op, fields
+
+    @property
+    def chunk(self):
+        return _chunk(self.fields)
+
+    def __call__(self, P):
+        if self.op == "union":
+            return np.min([f(P) for f in self.fields], axis=0)
+        if self.op == "intersect":
+            return np.max([f(P) for f in self.fields], axis=0)
+        first, rest = self.fields[0], self.fields[1:]
+        return np.max([first(P)] + [-f(P) for f in rest], axis=0)
+
+
 def _combine(op, fields):
     if len(fields) == 1:
         return fields[0]
-    if op == "union":
-        return lambda P: np.min([f(P) for f in fields], axis=0)
-    if op == "intersect":
-        return lambda P: np.max([f(P) for f in fields], axis=0)
-    first, rest = fields[0], fields[1:]
-    return lambda P: np.max([first(P)] + [-f(P) for f in rest], axis=0)
+    return _Combined(op, fields)
 
 
 def plan(g, name=None):
@@ -214,6 +235,10 @@ class _Extended:
         self.regions = regions
         self.eps = float(eps)
         self.core = float(core)
+
+    @property
+    def chunk(self):
+        return _chunk([self.field])
 
     def g(self, P):
         return np.min([s * sh.sdf(P) for sh, s in self.regions], axis=0)

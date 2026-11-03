@@ -67,6 +67,7 @@ def peval(field, P, chunk=_CHUNK):
     n = len(P)
     out = np.empty(n)
     nt = _threads()
+    chunk = getattr(field, "chunk", None) or chunk
     batch = getattr(field, "batch", None)
     if batch:
         nt, chunk = 1, batch

@@ -48,6 +48,7 @@ import ast
 import json
 import math
 import os
+import threading
 from dataclasses import dataclass
 
 import numpy as np
@@ -63,6 +64,7 @@ OPS = ("constant", "coordinate", "distance", "shape", "mesh", "result", "grid", 
 
 _CELL_BUDGET = 60_000_000
 _CHUNK = 1_000_000
+_JIT_CHUNK = 32_768        # points per thread task for a compiled field (narrowband.peval)
 
 
 # ---- expressions -----------------------------------------------------------
@@ -243,9 +245,16 @@ class MeshField:
 
     def _exact(self, P):
         k = min(self.k, len(self._tri))
-        _, cand = self._tree.query(P, k=k)
-        cand = cand.reshape(len(P), k)
-        from . import meshops
+        from . import knn, meshops
+
+        if knn.available():
+            # the same neighbours, compiled and warm-started (knn.py)
+            if getattr(self, "_knn", None) is None:
+                self._knn = knn.KDTree(self._tree.data)
+            cand = self._knn.query(P, k)
+        else:
+            _, cand = self._tree.query(P, k=k)
+            cand = cand.reshape(len(P), k)
 
         if meshops.available():
             # compiled, serial (field evaluation runs on peval's threads)
@@ -1118,7 +1127,13 @@ class FieldGraph:
         name = name or self.output
 
         def f(P):
-            return self.evaluate(P, name)
+            out = self.evaluate(P, name)
+            if not hasattr(f, "chunk"):
+                # compiled (fieldjit): no big temporaries per point, so the
+                # mesher's threads can split even a small batch (most calls
+                # are 50-500k points, which numpy's 250k chunks run serially)
+                f.chunk = _JIT_CHUNK if self.__dict__.get("_jit", {}).get(name) is not None else None
+            return out
         if self._torch_field() is not None and self._tf.batch:
             f.batch = self._tf.batch
         return f
@@ -1128,8 +1143,27 @@ class FieldGraph:
         if tf is not None:
             return tf(P, name)
         P = np.asarray(P, float).reshape(-1, 3)
+        cf = self._compiled(name or self.output)
+        if cf is not None:
+            return cf(P)
         memo = {}
         return np.broadcast_to(self._eval(name or self.output, P, memo), (len(P),)).astype(float)
+
+    def _compiled(self, name):
+        """fieldjit.CompiledField for the node (the whole graph under it as
+        one compiled pass), or None: numba missing, LOADPATH_FIELDJIT=0, or
+        the node itself does not compile."""
+        from . import fieldjit
+
+        if not fieldjit.available():
+            return None
+        cache = self.__dict__.setdefault("_jit", {})
+        if name in cache:
+            return cache[name]
+        with self.__dict__.setdefault("_jit_lock", threading.RLock()):
+            if name not in cache:
+                cache[name] = fieldjit.compile_graph(self, name)
+        return cache[name]
 
     def _torch_field(self):
         """fieldtorch.TorchField on the device LOADPATH_FIELD_DEVICE picks
