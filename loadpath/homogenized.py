@@ -21,7 +21,10 @@ material it holds on average, as lattice.py does for its own infill:
   stress A rho^-m times the stress it carries on average (lattice.SHEETS),
   the cell's modulus E (fs + fc C rho^n);
 - lattice cut open by a face with no skin over it keeps only part of its
-  stiffness within a cell of that face (FREE_SURFACE_KNOCKDOWN).
+  stiffness within a cell of that face, by how the face cuts the cells
+  (FACE_CUT: little cut square, much more on the bias for bending cells);
+  free_surface= gives one knockdown everywhere (FREE_SURFACE_KNOCKDOWN, the
+  old model).
 
 Safety factor and deflection are read as verify_part reads them: peaks
 outside a contact band round supports and loads, the stress allowance
@@ -93,6 +96,57 @@ FREE_SURFACE_KNOCKDOWN = 0.5
 # yield strain, past first yield
 BUCKLING_KNOCKDOWN = 0.5
 
+# how much stiffness a lattice keeps where a bare face (no skin) cuts it
+# depends on how the face cuts the cells. Cut square (the face on a cell
+# plane), struts and sheets run on along the face and carry load: the bars of
+# bench/results/lattice-face-cut.json, cut square, matched their resolved
+# compliance at knockdowns 0-0.3 (0.5, the old single value, read them up to
+# 2x too soft). Cut on the bias, every strut ends in a stub; how much that
+# costs depends on how the cell is braced: bending cells (cubic, BCCz)
+# lose nearly all of it, an octet's triangulated struts very little.
+# knockdown = square + (bias - square) * s, s = 0 cut square to 1 on the body
+# diagonal (face_alignment). Families with no validation take the worst.
+# per family (square, bias, stress): the knockdown cut square and on the
+# bias, and how much more the wall stress of a bias-cut cell at the face
+# reads (the cut struts' stubs: a turned BCCz bar's resolved peak sat on
+# them, 2.3x the homogenized reading). Families with no validation take
+# the bending cells' values (the most conservative).
+FACE_CUT = {"bending": (0.2, 1.4, 1.0), "stretch": (0.1, 0.5, 0.0), "sheet": (0.3, 0.5, 0.0)}
+_FACE_FAMILY = {"cubic": "bending", "bccz": "bending", "bcc": "bending", "kelvin": "bending",
+                "voronoi": "bending", "diamond-strut": "bending", "fcc": "stretch", "fccz": "stretch",
+                "octet": "stretch", "gyroid": "sheet", "diamond": "sheet", "schwarz-p": "sheet"}
+# cells whose face-cut reading holds turned against as laid at full
+# resolution: the orientation optimizer's turn of an octet bar in a pull
+# (-5% mass) was confirmed (resolved turned/as-laid peak 0.91). Bending
+# cells were not: re-optimized on this model, a BCCz L-bracket still read
+# -40% and came out 3.4x weaker (bench/results/lattice-orient-confirm-
+# facecut.json). lattice_orient.optimize_orientation lifts its bare-face
+# guard only for these
+FACE_CUT_VALIDATED = ("octet",)
+
+
+# alignment read as cut square: central differences of the envelope that
+# straddle an edge or a blend mix two faces' normals
+SQUARE_ALIGN = 0.95
+
+
+def _bias_share(align):
+    """0 for a face cut square to the cells, 1 on the body diagonal."""
+    return np.clip((SQUARE_ALIGN - np.asarray(align, float)) / (SQUARE_ALIGN - 1.0 / np.sqrt(3.0)), 0.0, 1.0)
+
+
+def face_cut_params(kind, face_cut=None):
+    p = tuple(face_cut) if face_cut is not None else FACE_CUT[_FACE_FAMILY.get(kind, "bending")]
+    return p + (0.0,) * (3 - len(p))
+
+
+def face_cut_knockdown(kind, align, face_cut=None):
+    """Per cell, the stiffness knockdown at a bare face for cells cut with
+    face_alignment `align`. `face_cut`: (square, bias[, stress]) to override."""
+    sq, bias, _ = face_cut_params(kind, face_cut)
+    return sq + (bias - sq) * _bias_share(align)
+
+
 # where a lattice roots into a skin or solid, each strut or sheet pulls on
 # the skin over a small patch, and the resolved skin peaks there above the
 # smooth stress the homogenized skin carries: a skinned tall-BCC beam read
@@ -115,7 +169,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
                       fields: bool = False, graph=None, solid_ok: bool = False,
                       contact_band: float | None = None, anisotropic: bool | None = None,
                       free_surface: float | None = None, skin_junction: float | None = None,
-                      sources: dict | None = None, as_printed=None, buckling: bool | None = None) -> dict:
+                      sources: dict | None = None, face_cut=None, as_printed=None, buckling: bool | None = None) -> dict:
     """mass, safety factor (worst case) and deflection of the graph's part
     under `study` with its lattice homogenized (module docstring). Returns
     a verify_part-like dict: mass, volume, safetyFactor, cases (name,
@@ -277,12 +331,28 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     else:
         cell_mm = np.broadcast_to(np.asarray(_field(g, lrefs.get("cell", 8.0), centers), float), (len(centers),))
         exposed = free_surface_exposure(e_ijk, dims, fs, fc, pitch, cell_mm)
+    # how square the bare face cuts the cells: 1 where its normal lies on a
+    # cell axis (struts and sheets run on along the face), down to 1/sqrt(3)
+    # on the bias (body diagonal: every strut ends in a stub)
+    rot = None
+    align = np.ones(len(e_ijk))
+    if lat is not None and (exposed > 0).any():
+        rot = lattice_frames(g, lat, centers, pitch, start=name) if has_tensors(kind, aspect) else None
+        align = face_alignment(e_ijk, dims, exposed, rot, field=lambda P: g_solid.evaluate(P, name),
+                               centers=centers, h=0.25 * pitch)
     ec = np.ones(len(rho)) if lat is None else sheet_modulus(kind, rho)
-    if free_surface is None:
-        free_surface = FREE_SURFACE_KNOCKDOWN
     # stiffness only: the stress read below takes the cell's full tensor
     # times the (larger) strain the softer cell takes, so it errs high
-    knock = 1.0 - float(free_surface) * exposed
+    if free_surface is not None or lat is None:
+        # one knockdown wherever a bare face cuts (the old model, and for fits)
+        k_cut = FREE_SURFACE_KNOCKDOWN if free_surface is None else float(free_surface)
+        face_model = "uniform"
+    else:
+        k_cut = face_cut_knockdown(kind, align, face_cut)
+        face_model = "cut-angle"
+    stub = face_cut_params(kind, face_cut)[2] if face_model == "cut-angle" else 0.0
+    stub_k = 1.0 + stub * _bias_share(align) * exposed if stub > 0 else None
+    knock = np.clip(1.0 - k_cut * exposed, 0.05, 1.0)
     # the print: softer than the designed walls (lattice_print). Sheets as
     # the free-surface knockdown, stiffness only (wall stress from the strain
     # the softer lattice takes); struts read from the stress they carry
@@ -305,7 +375,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         from .lattice_tensors import rotate_stiffness, stress_rotation, stress_surface, tensors_at
 
         c_lat, p_lat, q_lat, f_lat = tensors_at(kind, rho, aspect)
-        rot = lattice_frames(g, lat, centers, pitch, start=name)
+        if rot is None:
+            rot = lattice_frames(g, lat, centers, pitch, start=name)
         # stiffness into the part's axes; stresses go into the cell's
         # (stress_rotation) for its wall-stress surface
         t_rot = None
@@ -370,6 +441,8 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         s_solid = np.where(fs > 0.05, se, 0.0)
         if wall_scale is not None:
             s_lat = s_lat * wall_scale
+        if stub_k is not None:
+            s_lat = s_lat * stub_k
         s_wall = np.where(fc > 0.05, s_lat, 0.0)
         s = np.maximum(s_solid, s_wall)
         if lat is not None:
@@ -418,7 +491,11 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
            # share of the lattice's volume within half a cell of a face it is
            # cut open by (no skin): homogenization reads it too stiff there
            "latticeExposed": float((fc * fill * (exposed > 0.5)).sum() / max((fc * fill).sum(), 1e-12))
-           if lat is not None else None}
+           if lat is not None else None,
+           "faceCutModel": face_model if lat is not None else None,
+           # exposure-weighted mean of face_alignment (1: cut square)
+           "faceAlignment": float((fc * fill * exposed * align).sum() / max((fc * fill * exposed).sum(), 1e-12))
+           if lat is not None and (exposed > 0).any() else None}
     turned_exposed = None if lat is None else _turned_exposed(rot if aniso else None, fc * fill, exposed)
     rep["latticeTurnedExposed"] = turned_exposed
     zo = (lspec.get("orient") if lat is not None else None)
@@ -432,14 +509,15 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
         rep.setdefault("warnings", []).append(
             "zoned lattice with seam plates: the peak reads on the safe side but the stiffness about 20-25% "
             "high (a skinless graded zoned beam at full resolution); leave margin on deflection.")
-    elif turned_exposed is not None and turned_exposed > TURNED_EXPOSED_WARN:
+    elif turned_exposed is not None and turned_exposed > TURNED_EXPOSED_WARN and not (
+            face_model == "cut-angle" and kind in FACE_CUT_VALIDATED and aspect is None):
         rep.setdefault("warnings", []).append(
             f"{100 * turned_exposed:.0f}% of the lattice is turned cells cut open at a free face (no skin): "
-            "the free-surface knockdown reads square-cut cells 1.5-2.8x conservative and bias-cut (turned) ones "
-            "about right to 2.5x too stiff, so a turned design compared with the cells as laid looks better than "
-            "it is (skinless bars read 7-23% lighter turned were 1.3-3.2x weaker at full resolution, "
-            "bench/results/lattice-orient-confirm.json). Add a skin or confirm with resolved.resolved_check "
-            "(`loadpath resolved-check`).")
+            "the knockdown there follows the angle the face cuts the cells at (FACE_CUT), but for bending cells "
+            "(cubic, BCC, BCCz...) cut on the bias it still reads 0.5-2x off at full resolution: a BCCz "
+            "L-bracket turned on this model came out 3.4x weaker than the check said "
+            "(bench/results/lattice-orient-confirm-facecut.json). Add a skin or confirm with "
+            "resolved.resolved_check (`loadpath resolved-check`).")
     if print_info and print_info.get("note") and getattr(study, "process", None) is not None:
         rep.setdefault("warnings", []).append(print_info["note"])
     if fields:
@@ -515,6 +593,56 @@ def free_surface_exposure(e_ijk, dims, fs, fc, pitch, cell_mm):
     d_skin = ndimage.distance_transform_edt(~skin)[idx] * pitch if skin.any() else np.full(len(e_ijk), np.inf)
     e = np.clip(1.0 - d_out / np.maximum(cell_mm, 1e-9), 0.0, 1.0)
     return np.where((fc > 0.05) & (d_out < d_skin), e, 0.0)
+
+
+def face_alignment(e_ijk, dims, exposed, rot=None, field=None, centers=None, h=None):
+    """Per analysis cell, max_i |n . a_i|: n the outward normal of the
+    nearest outside face, a_i the lattice cell's axes there (rot's columns;
+    the part's axes if None). 1 for a face cut square to the cells, 1/sqrt(2)
+    on a face diagonal, 1/sqrt(3) on the body diagonal. Cells with no
+    exposure read 1. n is the gradient of `field` (the part's envelope, its
+    lattice filled: inside a box it is the nearest face's normal, square at
+    an edge) by central differences at `centers`; without it, of the grid's
+    distance to the outside (diagonal along edges)."""
+    from scipy import ndimage
+
+    hit = np.asarray(exposed) > 0
+    if field is not None:
+        # four points about the centre, the best aligned of them: a centre on
+        # an edge's bisector (a symmetric grid puts them there) mixes the two
+        # faces' normals, one step off it sees one face
+        P0 = np.asarray(centers, float)[hit]
+        best = np.zeros(len(P0))
+        for off in ((1.0, 0.6, 0.3), (-0.3, 1.0, -0.6), (0.6, -0.3, -1.0), (-1.0, -0.6, 0.3)):
+            P = P0 + 1.2 * h * np.asarray(off, float)
+            g = np.stack([np.asarray(field(P + h * e), float) - np.asarray(field(P - h * e), float)
+                          for e in np.eye(3)], 1)
+            g /= np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+            if rot is None:
+                a = np.abs(g).max(axis=1)
+            else:
+                R = np.asarray(rot, float)
+                a = np.abs(np.einsum("ei,eij->ej", g, R[hit]) if R.ndim == 3 else g @ R).max(axis=1)
+            best = np.maximum(best, a)
+        out = np.ones(len(e_ijk))
+        out[hit] = np.where(best > 0, best, 1.0)
+        return out
+    n = np.zeros((len(e_ijk), 3))
+    if True:
+        pad = 2
+        shape = tuple(int(v) + 2 * pad for v in dims)
+        inside = np.zeros(shape, bool)
+        idx = tuple((e_ijk + pad).T)
+        inside[idx] = True
+        dist = ndimage.gaussian_filter(ndimage.distance_transform_edt(inside), 1.0)
+        n = -np.stack([gr[idx] for gr in np.gradient(dist)], 1)
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+    if rot is None:
+        a = np.abs(n).max(axis=1)
+    else:
+        R = np.asarray(rot, float)
+        a = np.abs(np.einsum("ei,eij->ej", n, R) if R.ndim == 3 else n @ R).max(axis=1)
+    return np.where(hit & (np.linalg.norm(n, axis=1) > 0.5), a, 1.0)
 
 
 def _center_strain(hm, u):

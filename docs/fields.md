@@ -587,6 +587,36 @@ bisected to the same safety factor. All homogenized on 8k cells:
 > One skinless turn has held at full resolution: a graded cubic deep beam
 > turned 45 degrees (within 4%, `bench/results/lattice-seams-deep-beam.json`).
 
+**A knockdown that follows the cut.** Since then the check reads each
+bare-faced cell by the angle its face cuts it at (`homogenized.FACE_CUT`,
+`face_alignment`: 1 cut square, 1/sqrt(3) on the body diagonal) and by the
+cell's family. `bench/lattice_face_cut_fit.py` fits it on the 18 skinless
+designs that have full-resolution results (bars, beams, the pairs above, the
+L-bracket): cut square, every family keeps nearly all its stiffness
+(knockdown 0.1-0.3); cut on the bias, bending cells (cubic, BCC, BCCz)
+lose more than all of it within a cell (1.4, with the stubs' wall stress
+read up to 2x), an octet 0.5, sheets 0.5. Over the 18 the worst peak
+under-read went from 0.31x to 0.91x and the compliance range from
+0.40-2.0x to 0.62-2.0x (`bench/results/lattice-face-cut.json`).
+
+Re-optimized on it with the guard off (`lattice-orient-mass-facecut.json`,
+`lattice-zones-mass-facecut.json`), then checked at full resolution
+(`lattice-orient-confirm-facecut.json`, 0.2 mm):
+
+| part | homogenized gain | full resolution, turned / as laid |
+|---|---|---|
+| BCCz bar, bend + pull | 0% (keeps as laid) | |
+| simple cubic in twist | -1% | |
+| octet in a pull | -5% | peak 0.91: **confirmed** |
+| BCCz L-bracket, safety factor | -40% | peak 3.36: refuted |
+| BCCz L-bracket, stiffness | -44% | compliance 1.67: refuted |
+
+So the bending cells' bias cuts are still beyond the model (the turned
+bracket's peak read 0.53x of resolved), and only the octet's turn is
+trusted (`homogenized.FACE_CUT_VALIDATED`): `optimize_orientation` turns a
+bare-faced octet lattice without asking, and keeps the guard for every
+other cell, for zones and for `grade_lattice`.
+
 The control comes back unturned. The orientation is one rotation for the
 whole lattice; a cell that follows the stress from place to place (a
 conformal or stress-aligned frame) is the next step. Each analysis takes

@@ -47,7 +47,8 @@ P_NORM = 8.0          # the screen's soft maximum of the wall stress
 
 # a lattice with more than this share of its volume cut open at a bare face
 # (homogenized_check's latticeExposed) is not turned on the homogenized
-# reading alone. Cut square, its cells keep struts running along the face
+# reading alone, unless its cell is in homogenized.FACE_CUT_VALIDATED (one
+# direction only; zones and grading keep the guard). Cut square, its cells keep struts running along the face
 # and the free-surface knockdown reads them 1.5-2.8x conservative; turned,
 # they are cut on the bias into stubs and read about right or too stiff. So
 # the optimizer saw gains that a full-resolution check reverses: skinless
@@ -81,12 +82,15 @@ def confirm_turn(laid_doc, turned_doc, study, objective="safetyFactor", node=Non
     return {"confirmed": bool(ratio <= 1.0 + tolerance), "ratio": float(ratio), "measure": key, **rows}
 
 
-def _guard(confirm, exposed, turned, laid_doc, turned_doc, study, objective, node, base_dir, pitch=None):
+def _guard(confirm, exposed, turned, laid_doc, turned_doc, study, objective, node, base_dir, pitch=None,
+           validated=False):
     """None when the turn stands on the homogenized reading; else a dict
-    with "confirmed" (False/None: keep the cells as laid) and why."""
+    with "confirmed" (False/None: keep the cells as laid) and why.
+    `validated`: the cell's bare-face reading holds turned against as laid
+    (homogenized.FACE_CUT_VALIDATED), so "auto" trusts it."""
     if confirm not in ("auto", "resolved", "none"):
         raise ValueError("confirm is 'auto', 'resolved' or 'none'")
-    if confirm == "none" or not turned or exposed <= EXPOSED_LIMIT:
+    if confirm == "none" or not turned or exposed <= EXPOSED_LIMIT or (confirm == "auto" and validated):
         return None
     if confirm == "resolved":
         out = confirm_turn(laid_doc, turned_doc, study, objective, node=node, base_dir=base_dir, pitch=pitch)
@@ -97,8 +101,9 @@ def _guard(confirm, exposed, turned, laid_doc, turned_doc, study, objective, nod
         return out
     return {"confirmed": None, "latticeExposed": exposed,
             "reason": f"{100 * exposed:.0f}% of the lattice is cut open at bare faces (no skin), where the "
-                      "homogenized check misreads turned cells against square-cut ones (skinless bars it read "
-                      "7-23% lighter turned came out 1.3-3.2x weaker at full resolution), so the cells stay as "
+                      "homogenized check misreads turned cells of this kind against square-cut ones (skinless "
+                      "bars and an L-bracket it read 7-41% lighter turned came out 1.3-3.4x weaker at full "
+                      "resolution; only octet's turn has held), so the cells stay as "
                       "laid. Add a skin, or pass confirm='resolved' (--confirm resolved) to check the turn at "
                       "full resolution"}
 
@@ -258,7 +263,9 @@ def optimize_orientation(doc, study, node=None, base_dir=None, cells: int = 15_0
 
     `confirm`: a lattice cut open at bare faces (latticeExposed over
     EXPOSED_LIMIT) is misread turned against as laid, so with "auto" (the
-    default) its cells stay as laid and "guard" says why; "resolved" checks
+    default) its cells stay as laid and "guard" says why, unless the cell
+    is one whose bare-face reading was confirmed turned
+    (homogenized.FACE_CUT_VALIDATED: octet); "resolved" checks
     the turn against as laid at full resolution (confirm_turn, minutes;
     `resolved_pitch`, default resolved.default_pitch) and keeps it only if
     it holds; "none" trusts the homogenized reading."""
@@ -366,8 +373,11 @@ def optimize_orientation(doc, study, node=None, base_dir=None, cells: int = 15_0
     src = copy.deepcopy(doc) if "nodes" in doc and lat in doc["nodes"] else full
     out_doc = _with_orient(src, lat, np.array(best_key, float))
     zero = tuple(np.round(np.zeros(3), 2))
+    from .homogenized import FACE_CUT_VALIDATED
+
     guard = _guard(confirm, float(ref.get("latticeExposed") or 0.0), _turn_deg(best_key) > TURN_MIN_DEG,
-                   _with_orient(src, lat, np.zeros(3)), out_doc, study, objective, name, base_dir, resolved_pitch)
+                   _with_orient(src, lat, np.zeros(3)), out_doc, study, objective, name, base_dir, resolved_pitch,
+                   validated=kind in FACE_CUT_VALIDATED and aspect is None)
     candidate = None
     if guard is not None and not guard["confirmed"]:
         candidate, best_key = best, zero

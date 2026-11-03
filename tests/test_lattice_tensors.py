@@ -211,7 +211,7 @@ def test_orientation_screen_finds_the_stiff_axis():
     """A BCCz bar with its stiff z struts across the bar: the screen (macro
     stresses held) ranks the turn that lays z along the bar far above the
     cell as it lies; the full optimizer, a few analyses only, turns it and
-    the bar gets several times stiffer and stronger at the same wall."""
+    the bar gets several times stiffer (and stronger) at the same wall."""
     from loadpath.lattice_orient import optimize_orientation
     from loadpath.spec import study_from_dict
 
@@ -219,7 +219,9 @@ def test_orientation_screen_finds_the_stiff_axis():
     r = optimize_orientation(_bar("bccz", 1.1), st, cells=5000, full_checks=2, refine=0, confirm="none")
     assert r["guard"] is None
     assert abs(r["dominantStress"][0]) > 0.95                  # the bar's axis
-    assert r["best"]["safetyFactor"] > 1.8 * r["unrotated"]["safetyFactor"]
+    # (the bias-cut faces of a skinless bar cost the turned cells strength:
+    # FACE_CUT; the stiffness gain stands)
+    assert r["best"]["safetyFactor"] > 1.05 * r["unrotated"]["safetyFactor"]
     assert r["best"]["compliance"] < 0.4 * r["unrotated"]["compliance"]
     R = np.asarray(_rotation(r["orient"]))
     assert abs(R[0, 2]) > 0.85                                  # the cell's z on the bar's x
@@ -241,7 +243,7 @@ def test_orientation_keeps_bare_faced_cells_as_laid(monkeypatch):
     assert r["guard"] and r["guard"]["confirmed"] is None and "bare faces" in r["guard"]["reason"]
     assert r["orient"] == [0.0, 0.0, 0.0] and not any(r["doc"]["nodes"]["lat"].get("orient") or [])
     assert r["best"] == r["unrotated"]
-    assert r["candidate"]["safetyFactor"] > 1.8 * r["unrotated"]["safetyFactor"]
+    assert r["candidate"]["safetyFactor"] > r["unrotated"]["safetyFactor"]
 
     for turned_peak, kept in ((300.0, False), (50.0, True)):
         def fake(doc, study, **kw):
@@ -349,7 +351,7 @@ def test_zones_turn_each_arm_of_an_l_bracket_its_own_way():
 
     doc, sd, _ = case("l-bracket")
     r = optimize_zones(doc, study_from_dict(sd), zones=2, cells=5000, rounds=1, alternatives=1, confirm="none")
-    assert r["best"]["safetyFactor"] > 1.8 * r["unrotated"]["safetyFactor"]
+    assert r["best"]["safetyFactor"] > 1.5 * r["unrotated"]["safetyFactor"]
     zones = r["doc"]["nodes"]["lat"]["orient"]["zones"]
     arm_x = min(zones, key=lambda z: z["at"][2])           # the lower zone: the arm along x
     assert abs(_rotation(arm_x["rotate"])[0, 2]) > 0.7      # its cells' z laid along x
@@ -379,3 +381,36 @@ def test_graded_lattice_meets_the_target_lighter():
     assert node == {"op": "grid", "source": SOURCE}
     assert r["doc"]["nodes"][r["lattice"]]["density"] == r["densityNode"]
     assert "thickness" not in r["doc"]["nodes"][r["lattice"]]
+
+
+def test_face_cut_knockdown_follows_the_cut():
+    """The bare-face knockdown follows how the face cuts the cells: a box's
+    faces cut cells laid square read alignment 1 (the square knockdown,
+    corners and edges included), cells turned 45 degrees about z read
+    1/sqrt(2) on the x and y faces; bending cells lose far more cut on the
+    bias than an octet does. An octet's turn is trusted (FACE_CUT_VALIDATED),
+    a cubic's is guarded."""
+    from loadpath.homogenized import FACE_CUT, face_alignment, face_cut_knockdown
+    from loadpath.lattice_orient import _guard
+
+    box = np.array([[-6.0, -6, -6], [6, 6, 6]])
+
+    def field(P):
+        q = np.abs(P) - box[1]
+        return np.maximum(q.max(axis=1), -1e9)
+
+    g = np.stack(np.meshgrid(*[np.arange(12)] * 3, indexing="ij"), -1).reshape(-1, 3)
+    centers = -6 + (g + 0.5)
+    exposed = np.ones(len(g))
+    a = face_alignment(g, (12, 12, 12), exposed, None, field=field, centers=centers, h=0.25)
+    assert a.min() > 0.93
+    R = _rotation([0, 0, 45])
+    a = face_alignment(g, (12, 12, 12), exposed, R, field=field, centers=centers, h=0.25)
+    side = (np.abs(centers[:, 0]) > 5) & (np.abs(centers[:, 1]) < 3) & (np.abs(centers[:, 2]) < 3)
+    assert np.allclose(a[side], 1 / np.sqrt(2), atol=0.02)
+    sq, bias, _ = FACE_CUT["bending"]
+    assert face_cut_knockdown("cubic", [1.0])[0] == pytest.approx(sq)
+    assert face_cut_knockdown("cubic", [1 / np.sqrt(3)])[0] == pytest.approx(bias)
+    assert face_cut_knockdown("octet", [1 / np.sqrt(3)])[0] < 0.5 * bias
+    assert _guard("auto", 0.7, True, None, None, None, "safetyFactor", None, None, validated=True) is None
+    assert _guard("auto", 0.7, True, None, None, None, "safetyFactor", None, None)["confirmed"] is None

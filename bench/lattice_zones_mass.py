@@ -122,8 +122,10 @@ def main():
         ref = homogenized_check(doc, st, cells=a.cells)
         key = "safetyFactor" if ob == "safetyFactor" else "compliance"
         target = ref["safetyFactor"] if ob == "safetyFactor" else sum(c["compliance"] for c in ref["cases"])
-        uni = optimize_orientation(doc, st, cells=a.cells, refine=12, full_checks=3, objective=ob)
-        zon = optimize_zones(doc, st, zones=a.zones, cells=a.cells, objective=ob, start=uni["orient"])
+        uni = optimize_orientation(doc, st, cells=a.cells, refine=12, full_checks=3, objective=ob,
+                                   confirm="none")
+        zon = optimize_zones(doc, st, zones=a.zones, cells=a.cells, objective=ob, start=uni["orient"],
+                             confirm="none")
         w_u, r_u = wall_for(uni["doc"], st, target, a.cells, 0.3 * wall0, wall0, ob)
         w_z, r_z = wall_for(zon["doc"], st, target, a.cells, 0.3 * wall0, wall0, ob)
         row = {"objective": ob, "target": target, "wall": wall0, "massAsLaid": ref["mass"],

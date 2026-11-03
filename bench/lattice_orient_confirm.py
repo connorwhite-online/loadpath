@@ -39,17 +39,20 @@ from loadpath.spec import study_from_dict
 RES = ROOT / "bench" / "results"
 
 
+ORIENT_SRC, ZONES_SRC = "lattice-orient-mass.json", "lattice-zones-mass.json"
+
+
 def designs(name):
     """(doc as laid, doc turned, study dict, objective) from the mass
-    benches' saved results."""
+    benches' saved results (ORIENT_SRC, ZONES_SRC)."""
     if ":" in name:                                     # l-bracket:safetyFactor
         part, objective = name.split(":")
-        row = json.loads((RES / "lattice-zones-mass.json").read_text())[name]
+        row = json.loads((RES / ZONES_SRC).read_text())[name]
         doc, sd, _ = lzm.case(part)
         laid = lom.with_wall(doc, row["wall"])
         turned = lom.with_wall(doc, row["uniform"]["wall"], row["uniform"]["orient"])
         return laid, turned, sd, objective
-    row = json.loads((RES / "lattice-orient-mass.json").read_text())[name]
+    row = json.loads((RES / ORIENT_SRC).read_text())[name]
     doc, sd = lom.case(name)
     return (lom.with_wall(doc, row["wallAsLaid"]), lom.with_wall(doc, row["wallTurned"], row["orient"]),
             sd, "safetyFactor")
@@ -65,7 +68,11 @@ def main():
     ap.add_argument("--pitch", type=float, default=0.15)
     ap.add_argument("--cells", type=int, default=30000)
     ap.add_argument("--out", default=str(RES / "lattice-orient-confirm.json"))
+    ap.add_argument("--orient-source", default="lattice-orient-mass.json", help="results of bench/lattice_orient_mass.py")
+    ap.add_argument("--zones-source", default="lattice-zones-mass.json", help="results of bench/lattice_zones_mass.py")
     a = ap.parse_args()
+    global ORIENT_SRC, ZONES_SRC
+    ORIENT_SRC, ZONES_SRC = a.orient_source, a.zones_source
     out = json.loads(Path(a.out).read_text()) if Path(a.out).exists() else {}
     for name in a.cases.split(","):
         laid, turned, sd, objective = designs(name)

@@ -81,6 +81,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", default="bccz-bar,cubic-twist,octet-pull,cubic-bar")
     ap.add_argument("--cells", type=int, default=8000)
+    ap.add_argument("--confirm", default="none", help="optimize_orientation's bare-face guard: none (read the "
+                                                     "homogenized gain, the point of this bench) or auto")
     ap.add_argument("--out", default=str(ROOT / "bench" / "results" / "lattice-orient-mass.json"))
     a = ap.parse_args()
     out = json.loads(Path(a.out).read_text()) if Path(a.out).exists() else {}
@@ -90,7 +92,7 @@ def main():
         st = study_from_dict(sd)
         ref = homogenized_check(doc, st, cells=a.cells)
         target = ref["safetyFactor"]
-        opt = optimize_orientation(doc, st, cells=a.cells, refine=16, full_checks=3)
+        opt = optimize_orientation(doc, st, cells=a.cells, refine=16, full_checks=3, confirm=a.confirm)
         wall, rep = wall_for(doc, st, target, a.cells, opt["orient"])
         row = {"targetSF": target, "wallAsLaid": 2.0, "massAsLaid": ref["mass"],
                "orient": opt["orient"], "sfTurnedAtSameWall": opt["best"]["safetyFactor"],
