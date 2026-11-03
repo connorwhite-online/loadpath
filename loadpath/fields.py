@@ -711,23 +711,39 @@ class _ConformalMap:
         # the solid barely counts
         depth = np.maximum(-d, 0.0) / c
         wgt = np.where(d > 0, np.exp(-(d / h) ** 2) + 1e-3, np.exp(-depth / 1.5))
-        self.phase = [_stripe_phase(t / c[..., None], h, weight=wgt) for t in (t1, t2)]
+        self.phase = [_PhaseGrid(*_quiet_fill(*_stripe_phase(t / c[..., None], h, weight=wgt, amplitude=True)),
+                                 lo, h) for t in (t1, t2)]
         self.lo, self.h, self.dims = lo, h, dims
         self.normal_cell = normal_cell
         self.surface_fn = surface_fn
 
-    def __call__(self, P, cell, surface=None):
+    def __call__(self, P, cell, surface=None, coherence=False):
         """(N, 3) coordinates, period 1 a cell (the two tangent ones are
         phases, modulo 1). `surface` is the surface's distance at P when the
-        caller has it already."""
+        caller has it already. With `coherence`, also the lesser of the two
+        phases' coherence (_PhaseGrid), low round a defect."""
         cell = np.broadcast_to(np.asarray(cell, float), (len(P),))
-        out = [_phase_at(phi, self.lo, self.h, P) for phi in self.phase]
+        both = [phi(P, coherence=True) for phi in self.phase]
         dist = np.asarray(self.surface_fn(P) if surface is None else surface, float)
         cn = cell if self.normal_cell is None else self.normal_cell
-        return np.stack(out + [-dist / cn], axis=1)
+        U = np.stack([b[0] for b in both] + [-dist / cn], axis=1)
+        if coherence:
+            return U, np.minimum(both[0][1], both[1][1])
+        return U
+
+    @staticmethod
+    def defect_fill(coh, lo=0.1, hi=0.35):
+        """1 where the cells are regular, falling to 0 round a phase defect:
+        there the cells shrink to nothing (the phase winds round the defect
+        line), so strut and sheet distances pile into a knot of sub-mm
+        features that neither the mesher nor STEP patches resolve. The
+        lattice's unit distance is scaled by this, so a defect prints as a
+        small solid node, continuously, instead."""
+        q = np.clip((coh - lo) / (hi - lo), 0.0, 1.0)
+        return q * q * (3 - 2 * q)
 
 
-def _stripe_phase(T, h, weight=None):
+def _stripe_phase(T, h, weight=None, amplitude=False):
     """The phase (cycles, 0-1, on the grid) that advances by T . e h along
     every grid edge as nearly as it can: Knoeppel et al.'s stripe patterns,
     psi = exp(2 pi i phase) the lowest eigenvector of the connection
@@ -764,7 +780,113 @@ def _stripe_phase(T, h, weight=None):
     # so the factorization takes seconds
     psi0 = np.exp(2j * np.pi * _lsq_potential(T, h).ravel())
     _, vec = eigsh(L.tocsc(), k=1, sigma=-1e-6 * float(deg.mean()), which="LM", v0=psi0, tol=1e-8)
-    return (np.angle(vec[:, 0]) / (2 * np.pi) % 1.0).reshape(dims)
+    phase = (np.angle(vec[:, 0]) / (2 * np.pi) % 1.0).reshape(dims)
+    if not amplitude:
+        return phase
+    # how well the pattern follows the target at each node: the mean of
+    # its edges' misfits as phasors, 1 where every edge advances as
+    # asked, ~0.3 for noise (|psi| itself is no guide: the eigenvector
+    # concentrates in a few places and is round-off small elsewhere)
+    ph = phase.ravel()
+    e = np.exp(2j * np.pi * (ph[J] - ph[I] - W))
+    cnt = np.bincount(I, minlength=n) + np.bincount(J, minlength=n)
+    coh = np.abs(np.bincount(I, e.real, minlength=n) + np.bincount(J, e.real, minlength=n)
+                 + 1j * (np.bincount(I, e.imag, minlength=n) + np.bincount(J, e.imag, minlength=n)))
+    coh = (coh / np.maximum(cnt, 1)).reshape(dims)
+    return phase, coh, np.angle(psi0).reshape(dims) / (2 * np.pi) % 1.0
+
+
+def _quiet_fill(phase, amp, smooth, low=(0.3, 0.55)):
+    """The stripe pattern where it has amplitude, a smooth phase where it
+    has none. The eigenvector lives where the tangent field can be followed
+    (at the skin); where it cannot (deep inside, round the surface's medial
+    axis) |psi| decays to round-off and its angle is noise: continuous, but
+    cells a fraction of a millimetre across that neither the mesher nor the
+    STEP patches resolve (the STL and STEP of a 12 mm conformal block
+    differed by ~1 mm there). Below `low` the pattern's phasor is crossed
+    smoothly into the least-squares potential's (smooth everywhere, no
+    defects, sheared round loops), so the core holds whole, regular cells
+    and the change-over is a few defects in the crossing shell. Returns
+    (phase, amplitude) for _PhaseGrid."""
+    s = np.clip((amp - low[0]) / (low[1] - low[0]), 0.0, 1.0)
+    s = s * s * (3 - 2 * s)
+    z = s * np.exp(2j * np.pi * phase) + (1 - s) * np.exp(2j * np.pi * smooth)
+    return np.angle(z) / (2 * np.pi) % 1.0, np.clip(np.abs(z), 0.0, 1.0)
+
+
+class _PhaseGrid:
+    """A phase (cycles, mod 1) on a grid, read continuously everywhere but
+    at the pattern's own defects. Unwrapping the eight corners of a voxel
+    against one of them (_phase_at) is exact where the phase is nearly
+    linear, but two voxels that share a face unwrap against different
+    corners, so where the corners spread over a large part of a cycle (near
+    a defect, where the stripes bend hard, on the medial axis of the
+    surface) the two sides disagree by a whole cycle times a weight: the
+    lattice jumps by up to a cell's fraction at voxel faces, ~1 mm at a
+    4 mm cell. Here every corner predicts the phase at P from its own value
+    and gradient (phi_i + g_i . (P - x_i)), and the predictions are blended
+    as unit phasors, weighted trilinearly and by the pattern's amplitude:
+    each term is continuous in P and the trilinear weights of the corners
+    off a face vanish on it, so the angle of the sum is continuous across
+    faces, edges and corners; it is the exact linear phase wherever the
+    corners agree, and only where the sum vanishes (a defect line, where
+    the stripe pattern itself has a dislocation) has it no value."""
+
+    def __init__(self, phase, amp, lo, h):
+        self.phi = phase
+        self.lo = np.asarray(lo, float)
+        self.h = float(h)
+        g = []
+        for a in range(3):
+            d = np.zeros_like(phase)
+            n = phase.shape[a]
+            sl = lambda i, j: tuple(slice(i, j) if b == a else slice(None) for b in range(3))
+            if n >= 3:
+                fwd = np.diff(phase, axis=a)
+                fwd -= np.round(fwd)
+                # central differences inside, one-sided at the ends
+                d[sl(1, -1)] = 0.5 * (fwd[sl(0, -1)] + fwd[sl(1, None)])
+                d[sl(0, 1)] = fwd[sl(0, 1)]
+                d[sl(-1, None)] = fwd[sl(-1, None)]
+            elif n == 2:
+                fwd = np.diff(phase, axis=a)
+                fwd -= np.round(fwd)
+                d[:] = fwd
+            g.append(d / self.h)
+        self.grad = np.stack(g, -1)
+        self.amp = np.asarray(amp, float)
+
+    def __call__(self, P, coherence=False):
+        """The phase at P (cycles, not wrapped); with `coherence`, also how
+        far the corners agree (|sum of weighted phasors| / sum of weights:
+        1 where the phase is linear, -> 0 at a defect)."""
+        P = np.asarray(P, float)
+        dims = np.asarray(self.phi.shape)
+        x = np.clip((P - self.lo) / self.h, 0, dims - 1 - 1e-9)
+        i0 = np.floor(x).astype(int)
+        f = x - i0
+        i1 = np.minimum(i0 + 1, dims - 1)
+        acc = np.zeros(len(P), complex)
+        wsum = np.zeros(len(P))
+        base = None
+        for cx in (0, 1):
+            for cy in (0, 1):
+                for cz in (0, 1):
+                    ii = ((i1 if cx else i0)[:, 0], (i1 if cy else i0)[:, 1], (i1 if cz else i0)[:, 2])
+                    w = ((f[:, 0] if cx else 1 - f[:, 0]) * (f[:, 1] if cy else 1 - f[:, 1])
+                         * (f[:, 2] if cz else 1 - f[:, 2])) * self.amp[ii]
+                    xi = self.lo + np.stack(ii, 1) * self.h
+                    pred = self.phi[ii] + np.einsum("ij,ij->i", self.grad[ii], P - xi)
+                    if base is None:
+                        base = pred
+                    acc += w * np.exp(2j * np.pi * (pred - base))
+                    wsum += w
+        # the angle about the first corner's prediction: no wrap where the
+        # corners agree, so the value runs on smoothly past whole cycles
+        out = base + np.angle(acc) / (2 * np.pi)
+        if coherence:
+            return out, np.abs(acc) / np.maximum(wsum, 1e-300)
+        return out
 
 
 def _phase_at(phi, lo, h, P):
@@ -1554,7 +1676,8 @@ class FieldGraph:
         aspect = np.asarray(s.get("aspect", (1, 1, 1)), float)
         if ftype == "conformal":
             cmap = self._resource(nd, lambda: self._conformal(nd))
-            U = cmap(Q, cell, surface=self._val(r["surface"], P, memo))
+            U, coh = cmap(Q, cell, surface=self._val(r["surface"], P, memo), coherence=True)
+            memo[("_defect_fill", nd.name)] = _ConformalMap.defect_fill(coh)
         elif ftype in ("cylindrical", "spherical"):
             if isinstance(r.get("cell"), str):
                 raise ValueError(f"node {nd.name!r}: a {ftype} frame takes a constant cell; grade the struts' "
@@ -1604,6 +1727,9 @@ class FieldGraph:
                 d_c = tpms(_TPMS_KIND[kind], U, 1.0)
                 if "aspect" in s:
                     d_c = d_c * float(np.min(s["aspect"]))
+            fill = memo.pop(("_defect_fill", nd.name), None)
+            if fill is not None:
+                d_c = d_c * fill
             scale = cell
         d = d_c * scale
         if "offset" in r:

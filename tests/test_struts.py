@@ -96,6 +96,28 @@ def test_conformal_frame_fits_whole_cells_round_a_tube():
     assert np.allclose(U[:, 2], 0.5 / 6.0, atol=1e-6)
 
 
+def test_conformal_field_is_continuous_across_phase_grid_faces():
+    """The conformal frame's phases are read without seams: a step of
+    1 um never jumps the lattice field (before, two voxels of the phase grid
+    unwrapped against different corners and the struts jumped ~1 mm at
+    their shared face)."""
+    box = {"op": "shape", "shape": {"type": "box", "min": [0, 0, 0], "max": [12, 12, 12]}}
+    g = FieldGraph({"nodes": {"box": box,
+                              "lat": {"op": "lattice", "type": "octet", "cell": 4, "thickness": 0.8,
+                                      "frame": {"type": "conformal", "surface": "box"}},
+                              "part": {"op": "intersect", "inputs": ["lat", "box"]}}, "output": "part"})
+    rng = np.random.default_rng(1)
+    P = rng.uniform(0, 12, (60000, 3))
+    D = rng.normal(size=P.shape)
+    D /= np.linalg.norm(D, axis=1)[:, None]
+    f0 = g.evaluate(P, "lat")
+    j1 = np.abs(g.evaluate(P + 0.01 * D, "lat") - f0)
+    j2 = np.abs(g.evaluate(P + 0.001 * D, "lat") - f0)
+    # steep is fine (round a phase defect); a jump does not shrink with the step
+    jumps = (j1 > 0.05) & (j2 > 0.5 * j1)
+    assert not jumps.any(), (int(jumps.sum()), float(j2[jumps].max()))
+
+
 def test_overhangs_and_tall_cells():
     """Axis-aligned BCC struts rise 35.3 degrees: all bridge on FDM; a cell
     1.5x tall lifts them past 45 and the lattice prints unsupported."""

@@ -971,6 +971,20 @@ print on FDM without support.
   weighted towards the skin. A whole number of cells fits round at the skin
   (10 cells of 6 mm round a 20 mm tube); where fewer fit deeper in, the
   pattern puts a defect in the middle rather than shearing every cell.
+  The phases are read between grid nodes without seams: each node
+  predicts the phase from its own value and gradient and the predictions
+  are blended as unit phasors (weighted by the pattern's amplitude), so
+  the lattice is continuous everywhere but on the pattern's own defect
+  lines. (Unwrapping each grid voxel against one of its corners, as
+  before, let neighbouring voxels disagree: struts jumped up to ~1 mm at
+  voxel faces.) Where the stripe pattern cannot follow the surface at all
+  (deep inside, round the surface's medial axis) its phase is noise, so
+  it is crossed into a smooth least-squares phase there; and round each
+  phase defect, where the cells shrink to nothing, the lattice turns
+  into a small solid node (the unit distance fades to zero where the
+  phase's corners disagree), which costs 2-3% of the lattice's mass on a
+  block or a tube but leaves no knot of sub-millimetre features that
+  neither the mesher nor the STEP patches can resolve.
   `normalCell` sets the cell through the thickness.
 - **Strut overhangs (FDM)**: a strut flatter than 45 degrees prints as a
   bridge. The field report's `lattices` block measures it on the part, the
@@ -1201,13 +1215,17 @@ route, valid in OpenCascade and read back to the same volume unless noted:
 | octet graded 0.8-1.4 mm, open | 23.1k | 23.9 MB | +0.24% | 0.015 / 0.038 | 0.015 / 0.040 | 3.7 min |
 | octet under a 1.2 mm skin | 6.4k | 9.9 MB | -0.06% | 0.014 / 0.130 | 0.011 / 0.078 | 0.9 min |
 | Voronoi under a 1.2 mm skin | 4.3k | 6.5 MB | -0.01% | 0.026 / 0.191 | 0.013 / 0.215 | 3.8 min |
-| octet, conformal frame, under a skin | 12.7k | 20.0 MB | -0.02% | 0.17 / 0.59 | 0.19 / 0.68 | 7.9 min |
+| octet, conformal frame, under a skin (before the seam fix) | 12.7k | 20.0 MB | -0.02% | 0.17 / 0.59 | 0.19 / 0.68 | 7.9 min |
+| octet, conformal frame, under a skin | | 43.9 MB | -0.02% | 0.044 / 0.58 | 0.036 / 0.48 | 18 min |
 
 The open blocks read 0.2-0.8% over the STL because the STL's facets are
 chords inside the struts' curve (thin cubic struts most). The conformal
-block is worse because the conformal frame's field itself jumps by up to
-about a millimetre at its phase seams (struts end abruptly there, in the
-STL too); the patches straddle the jumps.
+block was worse because the conformal frame's field itself jumped by up
+to about a millimetre at its phase seams; with the continuous phase
+read (see Conformal lattice above) the same block reads 0.044 / 0.58 mm
+STEP to STL and 0.036 / 0.48 mm STL to STEP (p99 / max), -0.02% volume,
+18 min; the last spot is one phase defect's node, where the struts
+fatten into each other and leave pockets thinner than the patches.
 
 Pockets thinner than the patches can be lost: on an 8 mm BCC block under
 a skin (cell 4), wedges where the diagonal struts meet the skin at a
