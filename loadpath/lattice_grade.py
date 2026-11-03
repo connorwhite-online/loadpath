@@ -115,12 +115,17 @@ def _grid_of(centers, values, origin, pitch):
 
 def grade_lattice(doc, study, target_sf=None, wall_min=None, wall_max=None, cells: int = 15_000,
                   iterations: int = 12, orient=None, rounds: int = 2, base_dir=None, node=None,
-                  progress=None, n_rot: int = 800, seam: float = 1.0) -> dict:
+                  progress=None, n_rot: int = 800, seam: float = 1.0, confirm: str = "auto") -> dict:
     """Grade the graph's lattice wall to the stress (module docstring).
     Returns {"doc" (density as a grid node reading the in-memory source),
     "density": {"origin", "pitch", "values"}, "best" (the lightest analyzed
     design that met the target), "history", "orient", "seconds"}. `seam`:
-    zones only, mm of solid plate between zones (orient.seam; 0 for none)."""
+    zones only, mm of solid plate between zones (orient.seam; 0 for none).
+    `confirm`: with "auto" (default) a lattice cut open at bare faces
+    (latticeExposed over lattice_orient.EXPOSED_LIMIT) is graded but not
+    turned, and "guard" says why (lattice_orient.optimize_orientation);
+    "none" turns it on the homogenized reading. Check a turned graded
+    design yourself with resolved.resolved_check."""
     from scipy import ndimage
 
     from .fields import FieldGraph, expand_groups
@@ -239,6 +244,17 @@ def grade_lattice(doc, study, target_sf=None, wall_min=None, wall_max=None, cell
         return G, fl, allow
 
     G, fl, allow = run_sizing(G, fl, allow, "size")
+    guard = None
+    if orient:
+        from .lattice_orient import _guard
+
+        if confirm not in ("auto", "none"):
+            raise ValueError("grade_lattice confirm is 'auto' or 'none' (check a turned design with resolved_check)")
+        exposed = float(rep.get("latticeExposed") or 0.0)
+        guard = _guard(confirm, exposed, True, None, None, study, "safetyFactor", name, base_dir)
+        if guard is not None:
+            say({"stage": "lattice-grade-guard", "reason": guard["reason"]})
+            orient = None
     if orient:
         # zones start from the best single direction: one uniform round first
         k_z = 1 if orient == "uniform" else int(orient)
@@ -305,5 +321,5 @@ def grade_lattice(doc, study, target_sf=None, wall_min=None, wall_max=None, cell
             "density": None if best is None else {"origin": origin.tolist(), "pitch": pitch,
                                                   "values": best["values"]},
             "best": None if best is None else {k: v for k, v in best.items() if k != "values"},
-            "target": target, "densityLimits": [rho_min, rho_max], "history": history,
+            "target": target, "densityLimits": [rho_min, rho_max], "history": history, "guard": guard,
             "seconds": time.time() - t0}

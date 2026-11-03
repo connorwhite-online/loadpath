@@ -216,13 +216,68 @@ def test_orientation_screen_finds_the_stiff_axis():
     from loadpath.spec import study_from_dict
 
     st = study_from_dict(_STUDY)
-    r = optimize_orientation(_bar("bccz", 1.1), st, cells=5000, full_checks=2, refine=0)
+    r = optimize_orientation(_bar("bccz", 1.1), st, cells=5000, full_checks=2, refine=0, confirm="none")
+    assert r["guard"] is None
     assert abs(r["dominantStress"][0]) > 0.95                  # the bar's axis
     assert r["best"]["safetyFactor"] > 1.8 * r["unrotated"]["safetyFactor"]
     assert r["best"]["compliance"] < 0.4 * r["unrotated"]["compliance"]
     R = np.asarray(_rotation(r["orient"]))
     assert abs(R[0, 2]) > 0.85                                  # the cell's z on the bar's x
     assert r["doc"]["nodes"]["lat"]["orient"] == [round(x, 3) for x in r["orient"]]
+
+
+def test_orientation_keeps_bare_faced_cells_as_laid(monkeypatch):
+    """A skinless bar is cut open at its faces, where the homogenized check
+    misreads turned cells against square-cut ones: by default the optimizer
+    keeps the cells as laid and says why, the turn it found kept as the
+    candidate. With confirm="resolved" a full-resolution check decides: a
+    turn that comes out weaker (here faked) is refused, a stronger one kept."""
+    import loadpath.resolved as resolved
+    from loadpath.lattice_orient import optimize_orientation
+    from loadpath.spec import study_from_dict
+
+    st = study_from_dict(_STUDY)
+    r = optimize_orientation(_bar("bccz", 1.1), st, cells=5000, full_checks=2, refine=0)
+    assert r["guard"] and r["guard"]["confirmed"] is None and "bare faces" in r["guard"]["reason"]
+    assert r["orient"] == [0.0, 0.0, 0.0] and not any(r["doc"]["nodes"]["lat"].get("orient") or [])
+    assert r["best"] == r["unrotated"]
+    assert r["candidate"]["safetyFactor"] > 1.8 * r["unrotated"]["safetyFactor"]
+
+    for turned_peak, kept in ((300.0, False), (50.0, True)):
+        def fake(doc, study, **kw):
+            o = doc["nodes"]["lat"].get("orient")
+            p = turned_peak if o and any(o) else 100.0
+            return {"safetyFactor": 48.0 / p, "cases": [{"peakStress": p, "compliance": 1.0}], "mass": 1.0,
+                    "cells": 1, "pitch": 0.2, "seconds": 0.0}
+        monkeypatch.setattr(resolved, "resolved_check", fake)
+        r2 = optimize_orientation(_bar("bccz", 1.1), st, cells=5000, full_checks=2, refine=0, confirm="resolved")
+        assert r2["guard"]["confirmed"] is kept
+        assert r2["guard"]["ratio"] == pytest.approx(turned_peak / 100.0)
+        assert (r2["candidate"] is None) is kept
+        assert any(r2["orient"]) is kept
+
+
+def test_resolved_check_of_a_small_lattice_bar():
+    """resolved.resolved_check voxelizes the struts and solves them as they
+    are: mass matches the homogenized check's to a few percent and, under a
+    skin (the regime the tensors are validated in), so does the stiffness."""
+    from loadpath.homogenized import homogenized_check
+    from loadpath.resolved import default_pitch, resolved_check
+    from loadpath.spec import study_from_dict
+
+    doc = _bar("cubic", 1.6)
+    doc["nodes"]["skin"] = {"op": "shell", "input": "box", "thickness": 1.0}
+    doc["nodes"]["part"]["inputs"].append("skin")
+    sd = copy.deepcopy(_STUDY)
+    sd["loadCases"] = [c for c in sd["loadCases"] if c["name"] == "bend"] or sd["loadCases"][:1]
+    st = study_from_dict(sd)
+    assert default_pitch(doc) == pytest.approx(1.6 / 6)
+    r = resolved_check(doc, st, pitch=0.4)
+    hom = homogenized_check(doc, st, cells=6000)
+    assert r["mass"] == pytest.approx(hom["mass"], rel=0.08)
+    ratio = hom["cases"][0]["compliance"] / r["cases"][0]["compliance"]
+    assert 0.7 < ratio < 1.4
+    assert r["safetyFactor"] > 0 and r["cells"] > 1000
 
 
 def _rotation(deg):
@@ -293,7 +348,7 @@ def test_zones_turn_each_arm_of_an_l_bracket_its_own_way():
     from loadpath.spec import study_from_dict
 
     doc, sd, _ = case("l-bracket")
-    r = optimize_zones(doc, study_from_dict(sd), zones=2, cells=5000, rounds=1, alternatives=1)
+    r = optimize_zones(doc, study_from_dict(sd), zones=2, cells=5000, rounds=1, alternatives=1, confirm="none")
     assert r["best"]["safetyFactor"] > 1.8 * r["unrotated"]["safetyFactor"]
     zones = r["doc"]["nodes"]["lat"]["orient"]["zones"]
     arm_x = min(zones, key=lambda z: z["at"][2])           # the lower zone: the arm along x

@@ -371,9 +371,11 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     elif turned_exposed is not None and turned_exposed > TURNED_EXPOSED_WARN:
         rep.setdefault("warnings", []).append(
             f"{100 * turned_exposed:.0f}% of the lattice is turned cells cut open at a free face (no skin): "
-            "confirmed at full resolution on one graded cubic beam turned 45 degrees (within 4%), not yet across "
-            "cells and loads (a turned 2-cell cubic bar in twist read 1.6x too stiff). Add a skin or "
-            "confirm with a resolved check.")
+            "the free-surface knockdown reads square-cut cells 1.5-2.8x conservative and bias-cut (turned) ones "
+            "about right to 2.5x too stiff, so a turned design compared with the cells as laid looks better than "
+            "it is (skinless bars read 7-23% lighter turned were 1.3-3.2x weaker at full resolution, "
+            "bench/results/lattice-orient-confirm.json). Add a skin or confirm with resolved.resolved_check "
+            "(`loadpath resolved-check`).")
     if fields:
         rep["fields"] = {"centers": centers, "rho": rho, "fs": fs, "fc": fc, "fill": fill,
                          "knock": knock if lat is not None else None,

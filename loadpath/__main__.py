@@ -412,8 +412,21 @@ def main(argv=None):
                                                           "direction and turn each its own way (orient.zones)")
     lo_.add_argument("--seam", type=float, default=1.0, help="zones: mm solid plate between zones (orient.seam), "
                                                              "0 for cross-faded zones (unconfirmed, read too stiff)")
+    lo_.add_argument("--confirm", choices=["auto", "resolved", "none"], default="auto",
+                     help="a lattice cut open at bare faces: auto keeps its cells as laid (the homogenized check "
+                          "misreads turned against square-cut cells there), resolved checks the turn at full "
+                          "resolution (minutes), none trusts the homogenized reading")
+    lo_.add_argument("--resolved-pitch", type=float, help="mm voxels for --confirm resolved (default wall/6)")
     lo_.add_argument("--out", default="loadpath-lattice-orient")
     lo_.add_argument("--base-dir")
+    rc = sub.add_parser("resolved-check", help="full-resolution voxel FE of a field graph's part, lattice "
+                                               "struts and sheets resolved (the arbiter for homogenized readings)")
+    rc.add_argument("graph")
+    rc.add_argument("--study", help="study JSON or example:<name> (default: the graph's tune.study)")
+    rc.add_argument("--pitch", type=float, help="mm (default: the lattice wall / 6)")
+    rc.add_argument("--band", type=float, help="contact band, mm (default one lattice cell)")
+    rc.add_argument("--max-cells", type=int, default=4_000_000)
+    rc.add_argument("--base-dir")
     lg = sub.add_parser("lattice-grade", help="grade a field graph's lattice wall to the stress (fully stressed, "
                                               "on the anisotropic homogenized check), optionally turning its cells")
     lg.add_argument("graph")
@@ -421,6 +434,8 @@ def main(argv=None):
     lg.add_argument("--target-sf", type=float, help="safety factor to size to (default: the study's goal)")
     lg.add_argument("--orient", help="'uniform' (one direction) or N (zones) to turn the cells too")
     lg.add_argument("--seam", type=float, default=1.0, help="zones: mm solid plate between zones (0: none)")
+    lg.add_argument("--confirm", choices=["auto", "none"], default="auto",
+                    help="auto: a lattice cut open at bare faces is graded but not turned (unconfirmed there)")
     lg.add_argument("--wall-min", type=float, help="mm (default: the process's minimum feature, at least 0.6)")
     lg.add_argument("--wall-max", type=float, help="mm (default: density 0.6)")
     lg.add_argument("--cells", type=int, default=15000)
@@ -558,6 +573,8 @@ def main(argv=None):
         return _cores(args)
     if args.cmd == "lattice-orient":
         return _lattice_orient(args)
+    if args.cmd == "resolved-check":
+        return _resolved_check(args)
     if args.cmd == "lattice-grade":
         return _lattice_grade(args)
     if args.cmd == "orient":
@@ -981,10 +998,12 @@ def _lattice_orient(args):
         study = load_study(ref, base, doc.get("material"))
         if args.zones > 1:
             out = optimize_zones(doc, study, zones=args.zones, base_dir=base, cells=args.cells,
-                                 objective=args.objective, progress=_progress, seam=args.seam)
+                                 objective=args.objective, progress=_progress, seam=args.seam,
+                                 confirm=args.confirm, resolved_pitch=args.resolved_pitch)
         else:
             out = optimize_orientation(doc, study, base_dir=base, cells=args.cells, objective=args.objective,
-                                       refine=args.refine, progress=_progress)
+                                       refine=args.refine, progress=_progress, confirm=args.confirm,
+                                       resolved_pitch=args.resolved_pitch)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
@@ -995,6 +1014,27 @@ def _lattice_orient(args):
     summary = {"ok": True, **{k: v for k, v in out.items() if k not in ("doc", "history")},
                "oriented": path, "next": f"loadpath field {path} --base-dir {os.path.relpath(base)}"}
     _write_report(args.out, summary)
+    return 0
+
+
+def _resolved_check(args):
+    from .fields import load_study
+    from .resolved import resolved_check
+
+    doc = _load(args.graph)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.graph))
+    ref = args.study or (doc.get("tune") or {}).get("study")
+    if not ref:
+        print(json.dumps({"ok": False, "error": "give --study (or a tune.study in the graph)"}))
+        return 2
+    try:
+        study = load_study(ref, base, doc.get("material"))
+        rep = resolved_check(doc, study, pitch=args.pitch, base_dir=base, contact_band=args.band,
+                             max_cells=args.max_cells)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(json.dumps({"ok": True, **rep}, indent=1))
     return 0
 
 
@@ -1021,7 +1061,8 @@ def _lattice_grade(args):
     try:
         study = load_study(ref, base, doc.get("material"))
         out = grade_lattice(doc, study, target_sf=args.target_sf, wall_min=args.wall_min, wall_max=args.wall_max,
-                            cells=args.cells, orient=orient, base_dir=base, progress=_progress, seam=args.seam)
+                            cells=args.cells, orient=orient, base_dir=base, progress=_progress, seam=args.seam,
+                            confirm=args.confirm)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
@@ -1039,7 +1080,7 @@ def _lattice_grade(args):
     with open(path, "w") as fh:
         json.dump(g, fh, indent=1)
     summary = {"ok": True, "best": out["best"], "target": out["target"], "densityLimits": out["densityLimits"],
-               "graded": path, "density": npz, "seconds": out["seconds"],
+               "graded": path, "density": npz, "seconds": out["seconds"], "guard": out.get("guard"),
                "next": f"loadpath field {path} --base-dir {os.path.relpath(base)}"}
     _write_report(out_dir, summary)
     return 0

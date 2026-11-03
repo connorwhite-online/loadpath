@@ -34,7 +34,7 @@ import time
 
 import numpy as np
 
-__all__ = ["optimize_orientation", "optimize_zones", "screen_rotations", "dominant_directions"]
+__all__ = ["confirm_turn", "dominant_directions", "optimize_orientation", "optimize_zones", "screen_rotations"]
 
 # directions the cell's stiff axes are looked for along (cube axes, face
 # and body diagonals; with a stretched cell these are in its own axes)
@@ -44,6 +44,63 @@ _LATTICE_DIRS = np.array([(1, 0, 0), (0, 1, 0), (0, 0, 1),
 _LATTICE_DIRS /= np.linalg.norm(_LATTICE_DIRS, axis=1, keepdims=True)
 
 P_NORM = 8.0          # the screen's soft maximum of the wall stress
+
+# a lattice with more than this share of its volume cut open at a bare face
+# (homogenized_check's latticeExposed) is not turned on the homogenized
+# reading alone. Cut square, its cells keep struts running along the face
+# and the free-surface knockdown reads them 1.5-2.8x conservative; turned,
+# they are cut on the bias into stubs and read about right or too stiff. So
+# the optimizer saw gains that a full-resolution check reverses: skinless
+# bars claimed -23/-15/-7% mass and came out 3.2x/2.2x/1.3x weaker than as
+# laid at the same wall (bench/results/lattice-orient-confirm.json).
+EXPOSED_LIMIT = 0.1
+TURN_MIN_DEG = 5.0
+
+
+def _turn_deg(rv):
+    return float(np.linalg.norm(np.asarray(rv, float)))
+
+
+def confirm_turn(laid_doc, turned_doc, study, objective="safetyFactor", node=None, base_dir=None,
+                 pitch=None, sources=None, tolerance=0.02) -> dict:
+    """Both designs at full resolution (resolved.resolved_check): is the
+    turned one at least as strong (objective "safetyFactor": worst-case
+    peak) or as stiff ("stiffness": total compliance), within `tolerance`?
+    Returns {"confirmed", "asLaid", "turned" (worst peak / SF / compliance,
+    seconds), "ratio" (turned over as laid, of the peak or compliance)}."""
+    from .resolved import resolved_check
+
+    rows = {}
+    for tag, d in (("asLaid", laid_doc), ("turned", turned_doc)):
+        r = resolved_check(d, study, pitch=pitch, node=node, base_dir=base_dir, sources=sources)
+        rows[tag] = {"safetyFactor": r["safetyFactor"], "peakStress": max(c["peakStress"] for c in r["cases"]),
+                     "compliance": float(sum(c["compliance"] for c in r["cases"])), "mass": r["mass"],
+                     "cells": r["cells"], "pitch": r["pitch"], "seconds": r["seconds"]}
+    key = "peakStress" if objective == "safetyFactor" else "compliance"
+    ratio = rows["turned"][key] / max(rows["asLaid"][key], 1e-30)
+    return {"confirmed": bool(ratio <= 1.0 + tolerance), "ratio": float(ratio), "measure": key, **rows}
+
+
+def _guard(confirm, exposed, turned, laid_doc, turned_doc, study, objective, node, base_dir, pitch=None):
+    """None when the turn stands on the homogenized reading; else a dict
+    with "confirmed" (False/None: keep the cells as laid) and why."""
+    if confirm not in ("auto", "resolved", "none"):
+        raise ValueError("confirm is 'auto', 'resolved' or 'none'")
+    if confirm == "none" or not turned or exposed <= EXPOSED_LIMIT:
+        return None
+    if confirm == "resolved":
+        out = confirm_turn(laid_doc, turned_doc, study, objective, node=node, base_dir=base_dir, pitch=pitch)
+        out["latticeExposed"] = exposed
+        out["reason"] = (f"{100 * exposed:.0f}% of the lattice is cut open at bare faces; full-resolution check: "
+                         f"turned/as laid {out['measure']} {out['ratio']:.2f}"
+                         + ("" if out["confirmed"] else ", so the cells stay as laid"))
+        return out
+    return {"confirmed": None, "latticeExposed": exposed,
+            "reason": f"{100 * exposed:.0f}% of the lattice is cut open at bare faces (no skin), where the "
+                      "homogenized check misreads turned cells against square-cut ones (skinless bars it read "
+                      "7-23% lighter turned came out 1.3-3.2x weaker at full resolution), so the cells stay as "
+                      "laid. Add a skin, or pass confirm='resolved' (--confirm resolved) to check the turn at "
+                      "full resolution"}
 
 
 def _voigt_tensor(s):
@@ -188,7 +245,8 @@ def _rotvec_deg(R):
 
 
 def optimize_orientation(doc, study, node=None, base_dir=None, cells: int = 15_000, objective: str = "safetyFactor",
-                         full_checks: int = 4, refine: int = 24, progress=None) -> dict:
+                         full_checks: int = 4, refine: int = 24, progress=None, confirm: str = "auto",
+                         resolved_pitch: float | None = None) -> dict:
     """Turn the graph's lattice (its `orient`) for the best worst-case
     safety factor (objective "safetyFactor") or the least total compliance
     ("stiffness"), on homogenized analyses of `cells` cells (module
@@ -196,7 +254,14 @@ def optimize_orientation(doc, study, node=None, base_dir=None, cells: int = 15_0
     "orient" (degrees, rotation vector), "start", "best" (homogenized
     reports, trimmed), "screened", "evaluations", "history", "seconds"}.
     The lattice must be cartesian with a constant cell (orient's limits);
-    an orient it already has is the starting point."""
+    an orient it already has is the starting point.
+
+    `confirm`: a lattice cut open at bare faces (latticeExposed over
+    EXPOSED_LIMIT) is misread turned against as laid, so with "auto" (the
+    default) its cells stay as laid and "guard" says why; "resolved" checks
+    the turn against as laid at full resolution (confirm_turn, minutes;
+    `resolved_pitch`, default resolved.default_pitch) and keeps it only if
+    it holds; "none" trusts the homogenized reading."""
     from scipy.optimize import minimize
     from scipy.spatial.transform import Rotation
 
@@ -298,10 +363,20 @@ def optimize_orientation(doc, study, node=None, base_dir=None, cells: int = 15_0
                  options={"initial_simplex": simplex, "maxfev": refine, "xatol": 1.0, "fatol": 1e-3})
     best_key = min(cache, key=lambda k: cache[k][0])
     best = cache[best_key][1]
-    out_doc = _with_orient(copy.deepcopy(doc) if "nodes" in doc and lat in doc["nodes"] else full, lat,
-                           np.array(best_key, float))
+    src = copy.deepcopy(doc) if "nodes" in doc and lat in doc["nodes"] else full
+    out_doc = _with_orient(src, lat, np.array(best_key, float))
+    zero = tuple(np.round(np.zeros(3), 2))
+    guard = _guard(confirm, float(ref.get("latticeExposed") or 0.0), _turn_deg(best_key) > TURN_MIN_DEG,
+                   _with_orient(src, lat, np.zeros(3)), out_doc, study, objective, name, base_dir, resolved_pitch)
+    candidate = None
+    if guard is not None and not guard["confirmed"]:
+        candidate, best_key = best, zero
+        best = cache[zero][1]
+        out_doc = _with_orient(src, lat, np.zeros(3))
+        say({"stage": "lattice-orient-guard", "reason": guard["reason"]})
     return {"doc": out_doc, "orient": [float(x) for x in best_key], "lattice": lat, "objective": objective,
-            "start": start[1], "unrotated": cache[tuple(np.round(np.zeros(3), 2))][1], "best": best,
+            "guard": guard, "candidate": candidate,
+            "start": start[1], "unrotated": cache[zero][1], "best": best,
             "screened": int(len(R)), "dominantStress": dirs[:, 0].tolist(),
             "stressAnisotropy": float(strength[0] / max(strength.sum(), 1e-30)),
             "evaluations": len(history), "history": history, "seconds": time.time() - t0}
@@ -348,7 +423,7 @@ def stress_zones(centers, stresses, weights, k, spatial=1.0, seed=0):
 def optimize_zones(doc, study, zones: int = 3, node=None, base_dir=None, cells: int = 15_000,
                    objective: str = "safetyFactor", rounds: int = 2, alternatives: int = 2, blend=None,
                    progress=None, spatial: float = 1.0, uniform_refine: int = 8, zone_refine: int = 6,
-                   start=None, seam=1.0) -> dict:
+                   start=None, seam=1.0, confirm: str = "auto", resolved_pitch: float | None = None) -> dict:
     """Cell direction that follows the stress: the lattice split into
     `zones` zones (stress_zones), each turned on its own (orient.zones,
     cross-faded over `blend` mm, default one cell, where they meet). Each
@@ -361,7 +436,8 @@ def optimize_zones(doc, study, zones: int = 3, node=None, base_dir=None, cells: 
     run, for comparison) left to the caller. `seam` (mm, default 1): a
     solid plate between zones (orient.seam), which the zones' cells end on
     as on a skin; 0 for none (cross-faded zones, which read too stiff where
-    thin cells of two directions meet)."""
+    thin cells of two directions meet). `confirm`: as optimize_orientation;
+    a guarded result comes back with the cells as laid ("zones" None)."""
     from .fields import FieldGraph, expand_groups, zone_weights
     from .homogenized import homogenized_check, lattice_nodes
     from .lattice_tensors import has_tensors, tensors_at
@@ -425,7 +501,7 @@ def optimize_zones(doc, study, zones: int = 3, node=None, base_dir=None, cells: 
     # start from the best single direction (so zones can only gain on it)
     if start is None:
         uni = optimize_orientation(doc, study, node=node, base_dir=base_dir, cells=cells, objective=objective,
-                                   full_checks=2, refine=uniform_refine, progress=progress)
+                                   full_checks=2, refine=uniform_refine, progress=progress, confirm="none")
         start = uni["orient"]
         uniform = uni["best"]
     else:
@@ -488,7 +564,17 @@ def optimize_zones(doc, study, zones: int = 3, node=None, base_dir=None, cells: 
             minimize(f, x0, method="Nelder-Mead", options={
                 "initial_simplex": [x0] + [x0 + 10.0 * e for e in np.eye(3)], "maxfev": zone_refine})
     out_doc = doc_for(at, best[2])
-    return {"doc": out_doc, "lattice": lat, "objective": objective, "zones": out_doc["nodes"][lat]["orient"]["zones"],
+    zones_out = out_doc["nodes"][lat]["orient"]["zones"]
+    turned = max(_turn_deg(z["rotate"]) for z in zones_out) > TURN_MIN_DEG
+    guard = _guard(confirm, float(ref.get("latticeExposed") or 0.0), turned, base, out_doc, study, objective,
+                   name, base_dir, resolved_pitch)
+    candidate = None
+    if guard is not None and not guard["confirmed"]:
+        candidate, out_doc, zones_out = best[1], base, None
+        best = (None, {**unrot, "zones": None}, None)
+        say({"stage": "lattice-zones-guard", "reason": guard["reason"]})
+    return {"doc": out_doc, "lattice": lat, "objective": objective, "zones": zones_out,
+            "guard": guard, "candidate": candidate,
             "blend": blend, "unrotated": unrot, "uniform": uniform, "uniformOrient": list(map(float, start)),
             "best": best[1], "evaluations": len(history), "history": history, "seconds": time.time() - t0}
 

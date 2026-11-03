@@ -535,13 +535,33 @@ bisected to the same safety factor. All homogenized on 8k cells:
 | octet in a pull | 7.5 / 10.0 | 1.84 mm | -7% |
 | simple cubic, rods along the bar; bend + pull (control) | 0.52 / 0.52 | 2.00 mm | 0% |
 
-> **Caveat (skinless parts).** These bars have no skin, so the turned
-> cells are cut open on the bias at bare faces. One such case is confirmed
-> at full resolution (a graded cubic deep beam turned 45 degrees, within
-> 4%, "Where the zones' error came from" below); the bars in this table are
-> not yet, and a turned two-cell cubic bar in twist reads 1.6x too stiff.
-> The check reports `latticeTurnedExposed` (the share of the lattice turned
-> and cut open at a face) and warns above 10%.
+> **These gains do not hold at full resolution.** The bars have no skin,
+> so their cells are cut open at bare faces. `bench/lattice_orient_confirm.py`
+> voxelizes each pair (as laid at 2 mm, turned at its thinner wall) at
+> 0.15 mm and solves the struts as they are:
+>
+> | bar | homogenized, turned / as laid peak | resolved, turned / as laid peak |
+> |---|---|---|
+> | BCCz, bend + pull (-23%) | 0.96 | 3.23 |
+> | simple cubic in twist (-15%) | 0.98 | 2.23 |
+> | octet in a pull (-7%) | 0.99 | 1.34 |
+>
+> Each turned bar is weaker than the one it was meant to beat. The
+> homogenized check is not wrong the same way on both: the cells as laid
+> are cut square, so struts run on along each face and carry load, and the
+> free-surface knockdown (fitted to be safe) reads their peak 1.5-2.8x high;
+> turned, they are cut on the bias into stubs and read 0.8-1.1x. The
+> optimizer turns the cells because that error favours turning. So by
+> default (`confirm="auto"`) `optimize_orientation`, `optimize_zones` and
+> `grade_lattice` keep a lattice with more than 10% of its volume at a bare
+> face as laid and return a `guard` saying why (the turn found is in
+> `candidate`). `--confirm resolved` (`confirm="resolved"`) checks the turn
+> against as laid at full resolution (`resolved.resolved_check`, a few
+> minutes for a part this size; `loadpath resolved-check graph.json --study
+> study.json` runs it on its own) and keeps it only if the turned part is at
+> least as strong (stiff). `--confirm none` trusts the homogenized reading.
+> One skinless turn has held at full resolution: a graded cubic deep beam
+> turned 45 degrees (within 4%, `bench/results/lattice-seams-deep-beam.json`).
 
 The control comes back unturned. The orientation is one rotation for the
 whole lattice; a cell that follows the stress from place to place (a

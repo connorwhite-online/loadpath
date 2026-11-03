@@ -1,0 +1,283 @@
+{
+ "bccz-bar": {
+  "objective": "safetyFactor",
+  "asLaid": {
+   "wall": 2.0,
+   "orient": null,
+   "homMass": 3.865131796233358,
+   "resMass": 3.9010280399999995,
+   "homPeak": 59.39264257717568,
+   "resPeak": 21.385103145240226,
+   "homCompliance": 51.10371397246407,
+   "resCompliance": 34.57577128896,
+   "latticeTurnedExposed": 0.0,
+   "resCases": [
+    {
+     "name": "bend",
+     "deflection": 1.728788564447928,
+     "compliance": 34.57577128896,
+     "peak995": 16.845438874008234,
+     "cellPeak": 21.385103145240226,
+     "cellPeakAt": [
+      15.0,
+      1.6499999999999995,
+      4.35
+     ],
+     "cellPeakFaceDistance": 1.6500000000000004,
+     "innerCellPeak": 14.804566589279261
+    },
+    {
+     "name": "pull",
+     "deflection": 0.16805842406178095,
+     "compliance": 16.805842406178378,
+     "peak995": 10.734251617832332,
+     "cellPeak": 11.150357563375621,
+     "cellPeakAt": [
+      36.0,
+      4.65,
+      -4.65
+     ],
+     "cellPeakFaceDistance": 1.3499999999999996,
+     "innerCellPeak": 11.0638659953951
+    }
+   ],
+   "homCases": [
+    {
+     "name": "bend",
+     "compliance": 51.10371397246407,
+     "peakStress": 59.39264257717568
+    },
+    {
+     "name": "pull",
+     "compliance": 22.658825051716036,
+     "peakStress": 16.641834928142714
+    }
+   ],
+   "seconds": 283.18514108657837
+  },
+  "turned": {
+   "wall": 1.5625,
+   "orient": [
+    61.51,
+    -68.82,
+    -10.34
+   ],
+   "homMass": 2.9892838736382497,
+   "resMass": 2.97705567375,
+   "homPeak": 57.14736690100941,
+   "resPeak": 69.05178010231606,
+   "homCompliance": 48.338914175004305,
+   "resCompliance": 42.86325394928395,
+   "latticeTurnedExposed": 0.6841850991686829,
+   "resCases": [
+    {
+     "name": "bend",
+     "deflection": 2.14596780977444,
+     "compliance": 42.86325394928395,
+     "peak995": 23.17083360067027,
+     "cellPeak": 69.05178010231606,
+     "cellPeakAt": [
+      22.05,
+      3.5999999999999996,
+      6.0
+     ],
+     "cellPeakFaceDistance": 0.0,
+     "innerCellPeak": 32.80814893622802
+    },
+    {
+     "name": "pull",
+     "deflection": 0.4226045990261071,
+     "compliance": 18.903785900715526,
+     "peak995": 13.53962145016942,
+     "cellPeak": 46.79811642881274,
+     "cellPeakAt": [
+      22.05,
+      3.5999999999999996,
+      6.0
+     ],
+     "cellPeakFaceDistance": 0.0,
+     "innerCellPeak": 18.746391184439634
+    }
+   ],
+   "homCases": [
+    {
+     "name": "bend",
+     "compliance": 48.338914175004305,
+     "peakStress": 57.14736690100941
+    },
+    {
+     "name": "pull",
+     "compliance": 19.427086953274884,
+     "peakStress": 14.579830032372898
+    }
+   ],
+   "seconds": 1418.3951642513275
+  },
+  "homTurnedOverLaid": 0.9621960637085861,
+  "resTurnedOverLaid": 3.2289664273929493,
+  "massSavedClaimed": 0.2266023434048583,
+  "confirmed": false
+ },
+ "cubic-twist": {
+  "objective": "safetyFactor",
+  "asLaid": {
+   "wall": 2.0,
+   "orient": null,
+   "homMass": 2.382787980795287,
+   "resMass": 2.4333566399999995,
+   "homPeak": 917.6769883072305,
+   "resPeak": 403.7608337386855,
+   "homCompliance": 7855.141645499412,
+   "resCompliance": 3982.551441833068,
+   "latticeTurnedExposed": 0.0,
+   "resCases": [
+    {
+     "name": "twist",
+     "deflection": 1.9734702369111722e-10,
+     "compliance": 3982.551441833068,
+     "peak995": 349.96949397808163,
+     "cellPeak": 403.7608337386855,
+     "cellPeakAt": [
+      13.2,
+      4.949999999999999,
+      6.0
+     ],
+     "cellPeakFaceDistance": 0.0,
+     "innerCellPeak": 86.21478601124778
+    }
+   ],
+   "homCases": [
+    {
+     "name": "twist",
+     "compliance": 7855.141645499412,
+     "peakStress": 917.6769883072305
+    }
+   ],
+   "seconds": 110.29430103302002
+  },
+  "turned": {
+   "wall": 1.6406250000000002,
+   "orient": [
+    13.24,
+    -31.89,
+    -42.4
+   ],
+   "homMass": 2.0211233008872393,
+   "resMass": 2.0224250099999996,
+   "homPeak": 897.8405951926238,
+   "resPeak": 901.4334532207342,
+   "homCompliance": 6746.9524704574005,
+   "resCompliance": 16735.512259895382,
+   "latticeTurnedExposed": 0.6841850991686829,
+   "resCases": [
+    {
+     "name": "twist",
+     "deflection": 18.46095774044293,
+     "compliance": 16735.512259895382,
+     "peak995": 633.9261100446121,
+     "cellPeak": 901.4334532207342,
+     "cellPeakAt": [
+      31.2,
+      2.6999999999999993,
+      -5.7
+     ],
+     "cellPeakFaceDistance": 0.2999999999999998,
+     "innerCellPeak": 1068.671353833045
+    }
+   ],
+   "homCases": [
+    {
+     "name": "twist",
+     "compliance": 6746.9524704574005,
+     "peakStress": 897.8405951926238
+    }
+   ],
+   "seconds": 1033.6807663440704
+  },
+  "homTurnedOverLaid": 0.9783841227715676,
+  "resTurnedOverLaid": 2.232592609029887,
+  "massSavedClaimed": 0.15178214882019736,
+  "confirmed": false
+ },
+ "octet-pull": {
+  "objective": "safetyFactor",
+  "asLaid": {
+   "wall": 2.0,
+   "orient": null,
+   "homMass": 5.618789057083788,
+   "resMass": 5.681104559999999,
+   "homPeak": 5.384606303272091,
+   "resPeak": 3.6721598866710954,
+   "homCompliance": 4.468075225952893,
+   "resCompliance": 3.1069832766443524,
+   "latticeTurnedExposed": 0.0,
+   "resCases": [
+    {
+     "name": "pull",
+     "deflection": 0.031069832766443903,
+     "compliance": 3.1069832766443524,
+     "peak995": 3.6469367772549695,
+     "cellPeak": 3.6721598866710954,
+     "cellPeakAt": [
+      30.599999999999998,
+      4.049999999999999,
+      -5.4
+     ],
+     "cellPeakFaceDistance": 0.5999999999999996,
+     "innerCellPeak": 3.8424738969926735
+    }
+   ],
+   "homCases": [
+    {
+     "name": "pull",
+     "compliance": 4.468075225952893,
+     "peakStress": 5.384606303272091
+    }
+   ],
+   "seconds": 167.37674808502197
+  },
+  "turned": {
+   "wall": 1.8406250000000002,
+   "orient": [
+    -13.84,
+    33.41,
+    -43.54
+   ],
+   "homMass": 5.217686605863423,
+   "resMass": 5.196959797499999,
+   "homPeak": 5.326920217488478,
+   "resPeak": 4.930266860041289,
+   "homCompliance": 4.799514942753647,
+   "resCompliance": 3.742474530005871,
+   "latticeTurnedExposed": 0.6841850991686829,
+   "resCases": [
+    {
+     "name": "pull",
+     "deflection": 0.03755695925482754,
+     "compliance": 3.742474530005871,
+     "peak995": 3.320978281550521,
+     "cellPeak": 4.930266860041289,
+     "cellPeakAt": [
+      37.05,
+      6.0,
+      5.1
+     ],
+     "cellPeakFaceDistance": 0.0,
+     "innerCellPeak": 3.6023858544290306
+    }
+   ],
+   "homCases": [
+    {
+     "name": "pull",
+     "compliance": 4.799514942753647,
+     "peakStress": 5.326920217488478
+    }
+   ],
+   "seconds": 226.40223264694214
+  },
+  "homTurnedOverLaid": 0.9892868517149419,
+  "resTurnedOverLaid": 1.3426068069467147,
+  "massSavedClaimed": 0.07138592446617698,
+  "confirmed": false
+ }
+}
