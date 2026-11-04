@@ -68,7 +68,7 @@ def _factor(k: sp.csr_matrix):
     try:
         solver.factorize(a)
     except Exception:  # noqa: BLE001 - a zero pivot (a hinge in the live cells): pivoting LU
-        solver.free_memory()
+        solver.free_memory(everything=True)
         a = k.tocsr()
         a.sort_indices()
         solver = pypardiso.PyPardisoSolver()
@@ -82,7 +82,7 @@ def _factor(k: sp.csr_matrix):
         # every call to see whether it is factored already
         return solver._call_pardiso(a, np.asfortranarray(b) if b.ndim == 2 else np.ascontiguousarray(b))
 
-    return solve, solver.free_memory
+    return solve, lambda: solver.free_memory(everything=True)
 
 
 def _gauss_im():
