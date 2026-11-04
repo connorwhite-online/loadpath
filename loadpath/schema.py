@@ -747,7 +747,8 @@ STUDY_SCHEMA = {
                                       "keepThinMembers": {
                                           "type": "boolean",
                                           "description": "Mesh members one or two cells thick without "
-                                                         "thinning them (volume-keeping smoothing there). "
+                                                         "thinning them (volume-keeping smoothing there, "
+                                                         "and a debiased stem-smoothing average). "
                                                          "Off by default: the default rounding thins them, "
                                                          "which the searches are tuned to, but a design "
                                                          "made of one-cell walls can come out several "

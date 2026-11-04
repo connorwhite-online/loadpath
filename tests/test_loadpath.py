@@ -1162,6 +1162,34 @@ def test_reconstruct_smooths_the_staircase_off_a_tilted_member():
     assert abs(r1 - r0) < 0.1, (r0, r1)        # same section
 
 
+def test_axial_smoothing_keeps_thin_members():
+    # Averaging a round member's distance along a slightly-off axis reads
+    # every sample further out (the distance is convex), and one pass shrank
+    # thin members: a graded rod two cells across lost 15% of its volume.
+    # The debiased average (opt-in, ReconstructOptions(axial_debias=True) or
+    # resolution.keepThinMembers) keeps it.
+    from loadpath.reconstruct import ReconstructOptions
+    s = study_from_dict({
+        "name": "rod", "designSpace": {"type": "box", "min": [0, -20, -20], "max": [120, 20, 20]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -21, -21], "max": [0.01, 21, 21]}}],
+        "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [119.9, -21, -21],
+                                                          "max": [121, 21, 21]}, "force": [0, 0, -10]}]}],
+        "material": "pa12", "goal": {"volumeFraction": 0.1}, "resolution": {"pitch": 2.2}, "minMember": 1.6})
+    d = build_domain(s)
+    c = d.origin + (d.mesh.elem_ijk + 0.5) * d.pitch
+    p0, p1 = np.array([15.0, -8, -3]), np.array([105.0, 8, 4])
+    L = np.linalg.norm(p1 - p0)
+    a = (p1 - p0) / L
+    t = (c - p0) @ a
+    r = np.linalg.norm(c - p0 - t[:, None] * a, axis=1)
+    for radius in (1.6, 2.2):
+        x = np.clip(0.5 + (radius - r) / (1.2 * d.pitch), 0, 1) * ((t > 0) & (t < L))
+        v0 = reconstruct(s, d, x, ReconstructOptions(axial=False))[0].volume
+        v1 = reconstruct(s, d, x, ReconstructOptions(axial_debias=True))[0].volume
+        assert abs(v1 / v0 - 1) < 0.04, (radius, v0, v1)
+        assert reconstruct(s, d, x)[0].volume < 0.97 * v0     # the default one pass still shrinks them
+
+
 def test_reconstruct_leaves_cast_parts_off_the_axial_pass(monkeypatch):
     # Averaging along a tilted member's axis leans a cast part's walls off
     # the draw: the cast arm link's undercut went 141 -> 630 mm^3 (limit 150).

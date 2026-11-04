@@ -29,7 +29,7 @@ __all__ = ["reconstruct", "ReconstructOptions"]
 class ReconstructOptions:
     def __init__(self, upsample=3, smooth_sigma=0.9, level=0.5, max_triangles=250_000,
                  min_body_fraction=0.002, taubin_iterations=25, blend=None, blend_k=0.8, fillet=True, seat=True,
-                 close=None, axial=True):
+                 close=None, axial=True, axial_debias=None):
         self.upsample = upsample            # field refinement before meshing
         self.smooth_sigma = smooth_sigma    # in fine cells
         self.level = level
@@ -60,6 +60,9 @@ class ReconstructOptions:
         # (_axial_smooth): a member tilted a few degrees off the grid
         # otherwise keeps the grid's staircase as a row of bumps and necks.
         self.axial = axial
+        # Debias that average (see _axial_smooth) so thin members keep their
+        # volume; None follows resolution.keepThinMembers (off by default).
+        self.axial_debias = axial_debias
 
 
 def _smooth_max(a, b, k):
@@ -223,7 +226,7 @@ def _rod_axes(g, scale=AXIAL_SCALE, spread=AXIAL_SPREAD):
 
 
 def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_COHERENCE, rng=AXIAL_RANGE,
-                  reach=2.5, samples=21):
+                  reach=2.5, samples=21, debias=False):
     """Average the surface's position along the local member axis.
 
     A member tilted slightly off the grid is voxelized as a staircase: its
@@ -247,7 +250,30 @@ def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_C
     step (`rng` cells) count less, so a branch leaving the member, or the
     member's own end, is not smeared along it. Plates, blobs and junctions
     of several directions keep the field as it was; only voxels within a
-    cell and a half of the surface change."""
+    cell and a half of the surface change.
+
+    Averaging a round member's distance along a line that is not exactly
+    its axis is biased outward: the distance to a convex surface is convex,
+    so every sample off the axis reads further out than the point (about
+    offset^2 / 2r, so the thinner the member the worse), and the member
+    shrank. Thin members lost the most: a graded rod two cells across lost
+    15% of its volume, 1.5 cells 38%, and the MJF wrist link (sub-cell
+    struts on 2.44 mm cells) meshed 2-4% light at every density. The bias
+    is a steady offset where the staircase is a ripple, so the average is
+    taken twice and extrapolated back (2 A d - A A d, as Taubin's inflate
+    step undoes Laplacian shrinkage): the bias cancels to first order and
+    the ripple, already nearly gone after one pass, stays small. The rods
+    keep their volume to 0.5-2%.
+
+    It is opt-in (debias, on with resolution.keepThinMembers), like the
+    volume-keeping surface smoothing, and for the same reason: the shrinking
+    one-pass average reads better on the evals. Debiased on everywhere, the
+    full tier went mbb-beam 13.8 -> 15.0 g at target, motor-mount 19.8 ->
+    22.1, hook 23.9 -> 24.8, wrist yoke 16.7 -> 17.2: those parts verify
+    lighter with their thin members slightly shrunk. The wrist link went
+    34.2 -> 33.2 (31.4 with the pass off), but its verified SF swings 2-3x
+    between near-identical meshes of the same density (its peak sits on
+    sub-cell struts), so that case's 31 vs 34 g is mostly search noise."""
     g = np.asarray(coarse, float)
     T = _rod_axes(g)
     size = 2 * int(np.ceil(1.5 * upsample)) + 1
@@ -280,15 +306,25 @@ def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_C
     dist = _field_distance(fine, 1.0, 0.5)        # in fine cells
     i, j, k = fi.T
     d0 = dist[i, j, k]
-    num = np.zeros(len(fi))
-    den = np.zeros(len(fi))
     r2 = (rng * upsample) ** 2
-    for zk, gk in zip(z, gz):
-        dk = ndimage.map_coordinates(dist, base + (w * (zk * length * upsample)) * axis, order=1, mode="nearest")
-        wk = gk * np.exp(-0.5 * (dk - d0) ** 2 / r2)
-        num += wk * dk
-        den += wk
-    avg = num / den
+
+    def along(field, ref):
+        num = np.zeros(len(fi))
+        den = np.zeros(len(fi))
+        for zk, gk in zip(z, gz):
+            dk = ndimage.map_coordinates(field, base + (w * (zk * length * upsample)) * axis, order=1, mode="nearest")
+            wk = gk * np.exp(-0.5 * (dk - ref) ** 2 / r2)
+            num += wk * dk
+            den += wk
+        return num / den
+
+    avg = along(dist, d0)
+    if debias:
+        A = dist.copy()
+        A[i, j, k] = avg
+        avg2 = along(A, avg)
+        del A
+        avg = 2.0 * avg - avg2
     # move the field's 0.5 level by the change in distance, keeping its ramp
     grad = np.linalg.norm(np.stack(np.gradient(fine)), axis=0)[i, j, k]
     out = fine.copy()
@@ -330,7 +366,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     if flush and design and o.seat:
         fine = _seat_on_flush_faces(fine, domain, o.upsample, pad, flush, design, grid=sdfs)
     if o.axial:
-        fine = _axial_smooth(fine, grid, o.upsample)
+        fine = _axial_smooth(fine, grid, o.upsample, debias=bool(o.axial_debias))
     if o.smooth_sigma > 0:
         fine = ndimage.gaussian_filter(fine, o.smooth_sigma)
     if min_member:
@@ -635,6 +671,10 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         import copy
         o = copy.copy(o)
         o.close = max(1.0, 0.5 * float(study.min_member or 0.0))
+    if o.axial_debias is None:
+        import copy
+        o = copy.copy(o)
+        o.axial_debias = bool((getattr(study, "raw", None) or {}).get("resolution", {}).get("keepThinMembers", False))
     if o.axial and getattr(study, "access", None) is not None:
         # A cast or milled part's field is already shaped for its draw or
         # cutter directions, and averaging it along a member's tilted axis
