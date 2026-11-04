@@ -670,17 +670,20 @@ def lattice_from_graph(g, name, lo, hi, grid=None):
         # smears it across a voxel, so ship each one's sine and cosine
         # (renormalized after sampling) and the layer coordinate as is;
         # the defect fill (solid nodes at phase defects) as its own image
+        # (a frame field's layer coordinate is a phase too: all three)
         memo = {}
         U, cl = g.lattice_coords(nd, P, memo)
         fill = memo.get(("_defect_fill", nd.name))
+        nphase = 3 if (s.get("frame") or {}).get("frameField", True) else 2
         trig = []
-        for i in range(2):
+        for i in range(nphase):
             se = field(f"s{i}", np.sin(2 * np.pi * U[:, i]), const_ok=False)[0]
             ce = field(f"c{i}", np.cos(2 * np.pi * U[:, i]), const_ok=False)[0]
             nrm = fmax(sqrt(se * se + ce * ce), 1e-3)
             trig.append((se / nrm, ce / nrm))
-        u2 = field("u2", U[:, 2], const_ok=False)[0] * (2.0 * np.pi)
-        trig.append((sin(u2), cos(u2)))
+        if nphase == 2:
+            u2 = field("u2", U[:, 2], const_ok=False)[0] * (2.0 * np.pi)
+            trig.append((sin(u2), cos(u2)))
         cexp, cinfo = field("cell", cl)
         d = tpms_unit_trig(tp, trig)
         if fill is not None:

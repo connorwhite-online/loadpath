@@ -672,7 +672,7 @@ class _ConformalMap:
     the thickness (mm; default the cell)."""
 
     def __init__(self, surface_fn, cell_fn, lo, hi, axis=None, normal_cell=None, max_cells=40_000,
-                 layer_smoothing=0.0):
+                 layer_smoothing=0.0, frame_field=True):
         # a phase needs only a few grid steps a cell (_phase_at unwraps
         # between nodes); the solve is a sparse LU, so the grid stays small
         lo = np.asarray(lo, float)
@@ -694,6 +694,20 @@ class _ConformalMap:
         if axis is None:
             a = np.eye(3)[int(np.argmax(ext))]
             b = np.eye(3)[int(np.argsort(ext)[1])]
+            if frame_field:
+                # the part's own axes (the normals' principal directions),
+                # the ones nearest the box's: a box turned on the bed still
+                # gets cells square to its faces on every side
+                gm = np.linalg.norm(np.stack(np.gradient(d, h), -1), axis=-1)
+                on = (np.abs(d) < h) & (gm > 0.95)
+                if on.sum() > 10:
+                    N = np.einsum("ni,nj->ij", n[on], n[on])
+                    E = np.linalg.eigh(N)[1]
+                    ia = int(np.argmax(np.abs(E.T @ a)))
+                    a = E[:, ia] * np.sign(E[:, ia] @ a)
+                    rest = [k for k in range(3) if k != ia]
+                    ib = rest[int(np.argmax(np.abs(E[:, rest].T @ b)))]
+                    b = E[:, ib] * np.sign(E[:, ib] @ b or 1.0)
         else:
             a = np.asarray(_axis_vector(axis), float)
             b = np.eye(3)[int(np.argmin(np.abs(a)))]
@@ -712,8 +726,13 @@ class _ConformalMap:
         # the solid barely counts
         depth = np.maximum(-d, 0.0) / c
         wgt = np.where(d > 0, np.exp(-(d / h) ** 2) + 1e-3, np.exp(-depth / 1.5))
-        self.phase = [_PhaseGrid(*_quiet_fill(*_stripe_phase(t / c[..., None], h, weight=wgt, amplitude=True)),
-                                 lo, h) for t in (t1, t2)]
+        self.frame_field = bool(frame_field)
+        self.lo_grid = lo
+        if self.frame_field:
+            self.phase = self._frame_field_phases(d, n, t1, t2, a, c, h, wgt, normal_cell)
+        else:
+            self.phase = [_PhaseGrid(*_quiet_fill(*_stripe_phase(t / c[..., None], h, weight=wgt, amplitude=True)),
+                                     lo, h) for t in (t1, t2)]
         self.lo, self.h, self.dims = lo, h, dims
         self.normal_cell = normal_cell
         self.layer_smoothing = float(layer_smoothing)
@@ -726,6 +745,11 @@ class _ConformalMap:
         phases' coherence (_PhaseGrid), low round a defect."""
         cell = np.broadcast_to(np.asarray(cell, float), (len(P),))
         both = [phi(P, coherence=True) for phi in self.phase]
+        if self.frame_field:
+            U = np.stack([b[0] for b in both], axis=1)
+            if coherence:
+                return U, np.min([b[1] for b in both], axis=0)
+            return U
         dist = np.asarray(self.surface_fn(P) if surface is None else surface, float)
         dist = self._rounded_layers(P, dist, cell)
         cn = cell if self.normal_cell is None else self.normal_cell
@@ -733,6 +757,69 @@ class _ConformalMap:
         if coherence:
             return U, np.minimum(both[0][1], both[1][1])
         return U
+
+    def _frame_field_phases(self, d, n, t1, t2, a, c, h, wgt, normal_cell):
+        """Three phases that follow a 3D frame field, so the cells turn a
+        box's edges and corners. The two-stripe frame takes its layer
+        coordinate from the surface's distance, which is a different axis on
+        each face of a box: across an edge, the tangent that follows the
+        edge on one face is the layer direction on the next, so along every
+        edge and miter two of the three coordinates run parallel and the
+        cells shear (over 40% of a 12 mm box's cells; 6.7% of its open void
+        patches folded). Here every grid node carries an orthonormal frame,
+        defined up to the cube's symmetries (which axis is which, and their
+        signs): the surface normal (of the nearest skin point) and the
+        smoothest cross field on the layers (_cross_field). The frames are
+        labelled consistently by one synchronization solve
+        (_label_frames), so on a box the x faces' layer direction and the y
+        faces' along-edge direction are the same label, and both are just
+        the box's x. Each label gets a stripe pattern (_stripe_phase) pinned
+        near the skin to the distance over the cell where that label is the
+        normal (a layer of nodes on every face) and following the frame
+        elsewhere: on a box, the box's own straight cells, a whole number
+        between opposite faces."""
+        th = _cross_field(n, t1, t2, np.exp(-(d / c) ** 2))
+        c4, s4 = np.cos(th)[..., None], np.sin(th)[..., None]
+        t1, t2 = c4 * t1 + s4 * t2, c4 * t2 - s4 * t1
+        F = np.stack([n, t1, t2], -1)                      # columns: the frame's axes
+        gn = np.linalg.norm(np.stack(np.gradient(d, h), -1), axis=-1)
+        # where the distance's normal is muddled (its medial axis: a box's
+        # miters, the middle of a tube, where the two faces' normals average
+        # to a diagonal) the frame of the nearest clean node; outside the
+        # solid the nearest one inside, so an open lattice runs on straight
+        # past the faces instead of turning round the rounded distance
+        # beyond an edge
+        clean = (gn > 0.95) & (d < 0.05 * h)
+        if clean.any() and not clean.all():
+            idx = ndimage.distance_transform_edt(~clean, return_distances=False, return_indices=True)
+            F = F[tuple(idx)]
+        A = _label_frames(F, weight=np.exp(-(d / c) ** 2))
+        # order the labels: the layer direction last, the one along `a` first
+        band = np.exp(-(np.maximum(-d, 0) / c) ** 2) * (d < 0.5 * h)
+        al = np.abs(np.einsum("...ik,...i->...k", A, n))
+        layer = int(np.argmax((al * band[..., None]).reshape(-1, 3).sum(0)))
+        rest = [k for k in range(3) if k != layer]
+        along = np.abs(np.einsum("...ik,i->...k", A, a)).reshape(-1, 3).sum(0)
+        rest.sort(key=lambda k: -along[k])
+        A = A[..., rest + [layer]]
+        self.frames = A
+        out = []
+        for k in range(3):
+            ak = A[..., k]
+            s_k = np.einsum("...i,...i->...", ak, n)
+            ck = c if normal_cell is None else c + (float(normal_cell) - c) * s_k ** 2
+            # pin where this label is the normal: within about a cell of the
+            # skin (and on outside, where an open lattice runs past the
+            # faces), to phase = +-distance / cell, zero on the skin
+            q = np.clip((np.abs(s_k) - 0.85) / 0.1, 0, 1)
+            q = q * q * (3 - 2 * q) * (gn > 0.95)
+            dep = np.where(d < 0, -d / ck, 0.5 * d / ck)
+            alpha = q * np.clip((1.25 - dep) / 0.5, 0, 1)
+            target = np.sign(s_k) * d / ck
+            T = ak / ck[..., None]
+            out.append(_PhaseGrid(*_quiet_fill(*_stripe_phase(T, h, weight=wgt, amplitude=True,
+                                                              anchor=(alpha, target))), self.lo_grid, h))
+        return out
 
     # a symmetric stencil (6 axis + 8 diagonal unit directions): its mean
     # of a linear function is the centre value, so it moves nothing where
@@ -790,7 +877,7 @@ class _ConformalMap:
         return q * q * (3 - 2 * q)
 
 
-def _stripe_phase(T, h, weight=None, amplitude=False):
+def _stripe_phase(T, h, weight=None, amplitude=False, anchor=None):
     """The phase (cycles, 0-1, on the grid) that advances by T . e h along
     every grid edge as nearly as it can: Knoeppel et al.'s stripe patterns,
     psi = exp(2 pi i phase) the lowest eigenvector of the connection
@@ -826,7 +913,18 @@ def _stripe_phase(T, h, weight=None, amplitude=False):
     # shift-invert Lanczos on one sparse LU: the grid is a few steps a cell,
     # so the factorization takes seconds
     psi0 = np.exp(2j * np.pi * _lsq_potential(T, h).ravel())
-    _, vec = eigsh(L.tocsc(), k=1, sigma=-1e-6 * float(deg.mean()), which="LM", v0=psi0, tol=1e-8)
+    alpha = None if anchor is None else np.asarray(anchor[0], float).ravel()
+    if alpha is not None and alpha.max() > 0.5:
+        # pinned (phase = target where alpha > 0): one linear solve,
+        # (L + mu A) psi = mu A exp(2 pi i target), which also fixes the
+        # pattern's free global shift
+        from scipy.sparse.linalg import splu
+
+        mu = 4.0 * float(deg.mean())
+        rhs = mu * alpha * np.exp(2j * np.pi * np.asarray(anchor[1], float).ravel())
+        vec = splu((L + sp.diags(mu * alpha + 1e-9 * float(deg.mean()))).tocsc()).solve(rhs)[:, None]
+    else:
+        _, vec = eigsh(L.tocsc(), k=1, sigma=-1e-6 * float(deg.mean()), which="LM", v0=psi0, tol=1e-8)
     phase = (np.angle(vec[:, 0]) / (2 * np.pi) % 1.0).reshape(dims)
     if not amplitude:
         return phase
@@ -841,6 +939,155 @@ def _stripe_phase(T, h, weight=None, amplitude=False):
                  + 1j * (np.bincount(I, e.imag, minlength=n) + np.bincount(J, e.imag, minlength=n)))
     coh = (coh / np.maximum(cnt, 1)).reshape(dims)
     return phase, coh, np.angle(psi0).reshape(dims) / (2 * np.pi) % 1.0
+
+
+def _cross_field(n, t1, t2, weight=None):
+    """The smoothest field of tangent crosses (four directions 90 degrees
+    apart in the plane normal to n at every node), as its angle from t1
+    towards t2: Knoeppel et al.'s globally optimal direction fields, the
+    lowest eigenvector of the connection Laplacian on z = exp(4 i angle),
+    each grid edge carrying the turn between its ends' tangent bases once
+    the first's normal is rotated onto the second's (so a cross runs over a
+    box's edge onto the next face as that face's own square). Singular
+    points (a tube's end face, a sphere) go where they cost least. Edges
+    between opposed normals (across a medial axis) count for nothing."""
+    import scipy.sparse as sp
+    from scipy.sparse.linalg import eigsh
+
+    dims = n.shape[:3]
+    nn = int(np.prod(dims))
+    ids = np.arange(nn).reshape(dims)
+    N, T1, T2 = n.reshape(-1, 3), t1.reshape(-1, 3), t2.reshape(-1, 3)
+    wg = np.ones(nn) if weight is None else np.asarray(weight, float).ravel()
+    # no node cut off (an isolated node would be the lowest mode)
+    wg = np.maximum(wg, 1e-6 * float(wg.max()))
+    I, J, R, K = [], [], [], []
+    for ax in range(3):
+        sl0 = [slice(None)] * 3
+        sl1 = [slice(None)] * 3
+        sl0[ax] = slice(0, -1)
+        sl1[ax] = slice(1, None)
+        i, j = ids[tuple(sl0)].ravel(), ids[tuple(sl1)].ravel()
+        ni, nj = N[i], N[j]
+        cs = np.clip((ni * nj).sum(1), -1.0, 1.0)
+        # Rodrigues: the least rotation taking ni to nj, applied to t1_i
+        k = np.cross(ni, nj)
+        v = T1[i]
+        kv = np.cross(k, v)
+        rot = v + kv + np.cross(k, kv) / np.maximum(1.0 + cs, 1e-6)[:, None]
+        ang = np.arctan2((rot * T2[j]).sum(1), (rot * T1[j]).sum(1))
+        I.append(i)
+        J.append(j)
+        R.append(ang)
+        K.append(np.sqrt(wg[i] * wg[j]) * np.clip(cs, 0.0, 1.0))
+    I, J, R, K = np.concatenate(I), np.concatenate(J), np.concatenate(R), np.concatenate(K)
+    deg = np.bincount(I, K, minlength=nn) + np.bincount(J, K, minlength=nn)
+    rot = K * np.exp(4j * R)
+    L = sp.csr_matrix((np.concatenate([-rot, -np.conj(rot)]), (np.concatenate([J, I]), np.concatenate([I, J]))),
+                      shape=(nn, nn)) + sp.diags(deg.astype(complex) + 1e-9 * float(deg.mean()))
+    # against the nodes' weight (a mass matrix), so a node hardly tied to
+    # the rest is no cheap mode of its own
+    M = sp.diags(deg.astype(complex) + 1e-9 * float(deg.mean()))
+    _, vec = eigsh(L.tocsc(), k=1, M=M.tocsc(), sigma=-1e-6, which="LM", v0=np.ones(nn, complex), tol=1e-8)
+    z = vec[:, 0]
+    # the eigenvector's global phase turns every cross alike: pick the one
+    # nearest the reference bases (a box's own axes)
+    z = z * np.exp(-1j * np.angle((wg * z / np.maximum(np.abs(z), 1e-300)).sum()))
+    return (np.angle(z) / 4.0).reshape(dims)
+
+
+_PERMS = np.array([(0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)])
+
+
+def _match_frames(Fi, Fj):
+    """Fj's axes reordered and signed to match Fi's (both (..., 3, 3), axes
+    as columns), the cube's symmetry that brings them closest, and how well
+    they match (3 when the frames are the same up to that symmetry)."""
+    M = np.einsum("...ik,...il->...kl", Fi, Fj)          # M[k, l] = a_ik . a_jl
+    sc = np.stack([np.abs(M[..., 0, p[0]]) + np.abs(M[..., 1, p[1]]) + np.abs(M[..., 2, p[2]]) for p in _PERMS], -1)
+    best = np.argmax(sc, -1)
+    perm = _PERMS[best]                                   # (..., 3)
+    sgn = np.sign(np.take_along_axis(M, perm[..., :, None], -1)[..., 0])
+    sgn[sgn == 0] = 1.0
+    G = np.take_along_axis(Fj, np.broadcast_to(perm[..., None, :], Fj.shape), -1) * sgn[..., None, :]
+    return G, np.take_along_axis(sc, best[..., None], -1)[..., 0]
+
+
+def _polar(M):
+    """The rotation (or reflection) nearest M: U V^T of its SVD."""
+    U, _, Vt = np.linalg.svd(M)
+    return U @ Vt
+
+
+def _label_frames(F, weight=None):
+    """The frames (dims + (3, 3)) relabelled consistently: each one's axes
+    reordered and signed (a symmetry of the cube, R_i) so neighbours match
+    column to column. Choosing R_i is a synchronization problem: maximize
+    sum_ij w_ij tr((F_i R_i)^T F_j R_j) (Singer's synchronization). Its
+    spectral relaxation (the top three eigenvectors of the block matrix
+    w_ij P_ij^T, P_ij the symmetry that best matches j's axes to i's, whose
+    node blocks are R_i up to one global rotation) settles every node at
+    once, rounded to the nearest symmetry. Round a singular line whose loop permutes the
+    axes no labelling is consistent: the relaxation puts the mismatch where
+    the weight is least (deep inside, away from the skin), unlike growing
+    the labels over a tree, which leaves it wherever the fronts meet."""
+    import scipy.sparse as sp
+    from scipy.sparse.linalg import lobpcg
+
+    dims = F.shape[:3]
+    nn = int(np.prod(dims))
+    ids = np.arange(nn).reshape(dims)
+    Ff = F.reshape(-1, 3, 3)
+    wg = np.ones(nn) if weight is None else np.maximum(np.asarray(weight, float).ravel(), 1e-6)
+    rows, cols, vals = [], [], []
+    deg = np.zeros(nn)
+    kk, ll = np.meshgrid(np.arange(3), np.arange(3), indexing="ij")
+    for ax in range(3):
+        sl0 = [slice(None)] * 3
+        sl1 = [slice(None)] * 3
+        sl0[ax] = slice(0, -1)
+        sl1[ax] = slice(1, None)
+        i, j = ids[tuple(sl0)].ravel(), ids[tuple(sl1)].ravel()
+        w = np.sqrt(wg[i] * wg[j])
+        # the block is the symmetry that matches j's axes to i's (not the
+        # frames' own small turn, which the relaxation would undo by
+        # labelling every frame by the nearest world axis)
+        G, _ = _match_frames(Ff[i], Ff[j])
+        B = w[:, None, None] * np.einsum("nik,nil->nkl", G, Ff[j])       # P^T, where G = F_j P
+        r = (3 * i[:, None, None] + kk[None]).ravel()
+        c_ = (3 * j[:, None, None] + ll[None]).ravel()
+        rows += [r, c_]
+        cols += [c_, r]
+        vals += [B.ravel(), B.ravel()]
+        np.add.at(deg, i, w)
+        np.add.at(deg, j, w)
+    S = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(3 * nn, 3 * nn))
+    dm = np.repeat(1.0 / np.sqrt(np.maximum(deg, 1e-12)), 3)
+    S = sp.diags(dm) @ S @ sp.diags(dm)
+    # the top eigenvalue is threefold wherever the labels can agree (the
+    # global rotation), which a single-vector Krylov solve finds only once:
+    # a block solve (LOBPCG), started from the frames as they are labelled
+    X0 = np.tile(np.eye(3), (nn, 1)) / dm[:, None]
+    X0 = X0 + 1e-3 * np.random.default_rng(0).standard_normal(X0.shape) * float(np.abs(X0).mean())
+    import warnings
+
+    with warnings.catch_warnings():
+        # the rounding below needs the blocks to a few percent, not 1e-6
+        warnings.simplefilter("ignore", UserWarning)
+        _, V = lobpcg(S, X0, largest=True, tol=1e-4, maxiter=200)
+    V = (V * dm[:, None]).reshape(nn, 3, 3)          # node blocks ~ R_i Q
+    # the global rotation Q: the best-weighted node keeps its labels
+    Q = _polar(V[int(np.argmax(wg))])
+    M = np.swapaxes(V @ Q.T, 1, 2)                  # rows: labels, columns: the frame's axes
+    M /= np.maximum(np.linalg.norm(M, axis=(1, 2), keepdims=True), 1e-300)
+    # each block rounded to the nearest signed permutation
+    sc = np.stack([np.abs(M[:, 0, p[0]]) + np.abs(M[:, 1, p[1]]) + np.abs(M[:, 2, p[2]]) for p in _PERMS], -1)
+    perm = _PERMS[np.argmax(sc, -1)]
+    sgn = np.sign(np.take_along_axis(M, perm[:, :, None], -1)[..., 0])
+    sgn[sgn == 0] = 1.0
+    # R_i maps label k to the frame's axis perm[k] (sign sgn[k]): A_i = F_i R_i
+    A = np.take_along_axis(Ff, np.broadcast_to(perm[:, None, :], Ff.shape), -1) * sgn[:, None, :]
+    return A.reshape(dims + (3, 3))
 
 
 def _quiet_fill(phase, amp, smooth, low=(0.3, 0.55)):
@@ -1813,7 +2060,8 @@ class FieldGraph:
         surf = nd.refs["surface"]
         return _ConformalMap(lambda G: self.evaluate(G + off, surf), cell_fn, lo, hi, axis=frame.get("axis"),
                              normal_cell=frame.get("normalCell"), max_cells=max_cells,
-                             layer_smoothing=frame.get("layerSmoothing", 0.0))
+                             layer_smoothing=frame.get("layerSmoothing", 0.0),
+                             frame_field=frame.get("frameField", True))
 
     def _voronoi(self, nd):
         from .struts import VoronoiStruts

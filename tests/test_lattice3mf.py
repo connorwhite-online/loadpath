@@ -43,10 +43,20 @@ def test_conformal_phases_go_in_as_sine_and_cosine():
                               "part": {"op": "intersect", "inputs": ["core", "S"]}}, "output": "part"})
     lo, hi = g.bounds()
     lat = L.lattice_from_graph(g, "core", lo, hi)
-    assert {"core-s0", "core-c0", "core-s1", "core-c1", "core-u2"} <= set(lat["images"]), sorted(lat["images"])
-    assert "core-u0" not in lat["images"]
+    # the frame field: all three coordinates are phases
+    assert {"core-s0", "core-c0", "core-s1", "core-c1", "core-s2", "core-c2"} <= set(lat["images"]), \
+        sorted(lat["images"])
+    assert "core-u0" not in lat["images"] and "core-u2" not in lat["images"]
     P = np.random.default_rng(0).uniform(lo, hi, (20000, 3))
     P = P[g.evaluate(P, "S") < 0]
+    a, b = L.evaluate(lat["expr"], P, lat["images"]), g.evaluate(P, "core")
+    assert ((a < 0) != (b < 0)).mean() < 0.02, ((a < 0) != (b < 0)).mean()
+    # the two-stripe frame: the layer coordinate (exact depth) as is
+    g = FieldGraph({"nodes": {"S": tube, "core": {"op": "lattice", "type": "gyroid", "cell": 6, "thickness": 0.8,
+                                                  "frame": {"type": "conformal", "surface": "S", "frameField": False}},
+                              "part": {"op": "intersect", "inputs": ["core", "S"]}}, "output": "part"})
+    lat = L.lattice_from_graph(g, "core", lo, hi)
+    assert {"core-s0", "core-c0", "core-s1", "core-c1", "core-u2"} <= set(lat["images"]), sorted(lat["images"])
     a, b = L.evaluate(lat["expr"], P, lat["images"]), g.evaluate(P, "core")
     assert ((a < 0) != (b < 0)).mean() < 0.02, ((a < 0) != (b < 0)).mean()
 

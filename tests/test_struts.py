@@ -80,8 +80,10 @@ def test_strut_thickness_and_density_follow_fields():
 
 
 def test_conformal_frame_fits_whole_cells_round_a_tube():
-    """10 cells of 6 mm round a 20 mm tube at its skin (2 pi 9.5 / 6 =
-    9.95), and the layer coordinate is the depth over the cell."""
+    """Whole cells of about 6 mm round a 20 mm tube at its skin (2 pi 9.5 /
+    6 = 9.95; the frame field settles on 11, 5.4 mm, the two-stripe frame
+    on 10), and the layer coordinate is the depth over the cell (a phase in
+    the frame field, so up to a whole number of cells and its sign)."""
     g = FieldGraph({"nodes": {"tube": TUBE,
                               "lat": {"op": "lattice", "type": "octet", "cell": 6, "thickness": 1,
                                       "frame": {"type": "conformal", "surface": "tube"}},
@@ -92,8 +94,56 @@ def test_conformal_frame_fits_whole_cells_round_a_tube():
     U, cell = g.lattice_coords(nd, P)
     turns = [abs(np.unwrap(np.r_[U[:, k], U[0, k]] * 2 * np.pi)[-1] - np.unwrap(np.r_[U[:, k], U[0, k]] * 2 * np.pi)[0])
              / (2 * np.pi) for k in (0, 1)]
+    assert round(max(turns)) in (10, 11), turns
+    assert 5.4 < 2 * np.pi * 9.5 / round(max(turns)) < 6.6, turns
+    layer = np.abs(U[:, 2] - np.round(U[:, 2]))
+    assert np.allclose(layer, 0.5 / 6.0, atol=0.01), (layer.min(), layer.max())
+    # the two-stripe frame: exactly 10, the layer coordinate the exact depth
+    g2 = FieldGraph({"nodes": {"tube": TUBE,
+                               "lat": {"op": "lattice", "type": "octet", "cell": 6, "thickness": 1,
+                                       "frame": {"type": "conformal", "surface": "tube", "frameField": False}},
+                               "part": {"op": "intersect", "inputs": ["lat", "tube"]}}})
+    U, cell = g2.lattice_coords(g2.nodes["lat"], P)
+    turns = [abs(np.unwrap(np.r_[U[:, k], U[0, k]] * 2 * np.pi)[-1] - np.unwrap(np.r_[U[:, k], U[0, k]] * 2 * np.pi)[0])
+             / (2 * np.pi) for k in (0, 1)]
     assert round(max(turns)) == 10, turns
     assert np.allclose(U[:, 2], 0.5 / 6.0, atol=1e-6)
+
+
+def test_conformal_frame_field_turns_box_edges():
+    """The frame field turns the cells round a box's edges and corners: on
+    a box (here turned 30 degrees, so no world axis helps) the cells are
+    the box's own straight cells, a node layer on every face; the
+    two-stripe frame sheared over 40% of them along the edges and miters
+    (two of its three coordinates turn parallel there)."""
+    box = {"op": "transform", "input": {"op": "shape", "shape": {"type": "box", "min": [0, 0, 0], "max": [24, 18, 12]}},
+           "rotate": {"axis": "z", "degrees": 30, "center": [12, 9, 6]}}
+    out = {}
+    for ff in (True, False):
+        g = FieldGraph({"nodes": {"S": box,
+                                  "lat": {"op": "lattice", "type": "octet", "cell": 6, "thickness": 1,
+                                          "frame": {"type": "conformal", "surface": "S", "frameField": ff}},
+                                  "part": {"op": "intersect", "inputs": ["lat", "S"]}}, "output": "part"})
+        nd = g.nodes["lat"]
+        lo, hi = g.bounds()
+        P = np.random.default_rng(0).uniform(lo, hi, (30000, 3))
+        P = P[g.evaluate(P, "S") < 0]
+        e = 1e-3
+        J = np.stack([(g.lattice_coords(nd, P + e * d)[0] - g.lattice_coords(nd, P - e * d)[0]) / (2 * e)
+                      for d in np.eye(3)], 2) * 6.0
+        sv = np.linalg.svd(J, compute_uv=False)
+        out[ff] = float((sv[:, 2] / sv[:, 0] < 0.3).mean())
+        if ff:
+            # straight, unit cells along the box's own axes
+            R = np.array([[np.cos(np.pi / 6), -np.sin(np.pi / 6), 0], [np.sin(np.pi / 6), np.cos(np.pi / 6), 0], [0, 0, 1]])
+            JR = np.abs(J @ R)
+            assert np.percentile(np.abs(np.sort(JR.reshape(len(J), -1), 1)[:, -3:] - 1), 95) < 0.05
+            # a layer of nodes on the faces (the layer phase is whole there)
+            F = np.array([[0.0, 9.0, 6.0], [24.0, 9.0, 6.0], [12.0, 0.0, 6.0], [12.0, 9.0, 0.0], [12.0, 9.0, 12.0]])
+            F = (F - [12, 9, 6]) @ R.T + [12, 9, 6]
+            U, _ = g.lattice_coords(nd, F)
+            assert (np.abs(U - np.round(U)).min(1) < 0.02).all(), U
+    assert out[True] < 0.01 and out[False] > 0.2, out
 
 
 def test_conformal_field_is_continuous_across_phase_grid_faces():
