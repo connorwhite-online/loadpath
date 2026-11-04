@@ -42,6 +42,8 @@ __all__ = ["Limits", "optimize_constrained"]
 # density and the run converges onto the limit.
 _Q = 1.0
 _P = 8.0
+# iterations an inactive buckling constraint keeps its last reading
+BUCKLING_SKIP = 3
 STRESS_POINTS = "corners"     # where cell stress is sampled: "corners" or "center"
 _VM = np.array([
     [1.0, -0.5, -0.5, 0, 0, 0],
@@ -91,6 +93,7 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
         from .bucklingopt import BucklingModel
 
         buck = BucklingModel(domain, nu)
+    buck_last, buck_age = None, 0
 
     # Stress is not counted in cells where loads and supports are applied.
     contact = (domain.support_nodes | domain.load_nodes)[mesh.enode].any(axis=1)
@@ -228,12 +231,30 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
             # read it (bucklingopt.py): lambda_min >= limits.buckling as
             # limits.buckling * mu_ks - 1 <= 0
             # (at unit modulus the load factor is lambda / E)
-            for c, (mu_ks, dmu, _mus) in zip(buck_cases, buck.evaluate(xe, PENALTY, buck_cases)):
-                req = limits.buckling / limits.modulus
-                cons.append(req * mu_ks - 1.0)
-                grads.append(to_x(req * dmu))
-                record[f"buckling.{domain.case_names[c]}"] = limits.modulus / mu_ks if mu_ks > 0 else float("inf")
-            record["bucklingSeconds"] = buck.last.get("seconds")
+            # Far from the limit (load factor over twice the one asked)
+            # the last reading stands for up to BUCKLING_SKIP iterations:
+            # the eigensolve is most of an iteration on a big grid, and an
+            # inactive constraint's stale value and gradient do not steer.
+            req = limits.buckling / limits.modulus
+            if buck_last is None or buck_age >= BUCKLING_SKIP or max(v for v, _ in buck_last) > -0.5:
+                try:
+                    got = buck.evaluate(xe, PENALTY, buck_cases)
+                except Exception as exc:  # noqa: BLE001 - a failed eigensolve must not end the run
+                    got = None
+                    record["bucklingError"] = f"{type(exc).__name__}: {exc}"
+                if got is not None:
+                    buck_last = [(req * mu_ks - 1.0, to_x(req * dmu)) for mu_ks, dmu, _mus in got]
+                    record["bucklingSeconds"] = buck.last.get("seconds")
+                elif buck_last is None:
+                    # nothing read yet: inactive this iteration (verify still checks the part)
+                    buck_last = [(-1.0, np.zeros(n)) for _ in buck_cases]
+                buck_age = 0
+            else:
+                buck_age += 1
+            for c, (v, g) in zip(buck_cases, buck_last):
+                cons.append(v)
+                grads.append(g)
+                record[f"buckling.{domain.case_names[c]}"] = limits.buckling / (v + 1.0) if v > -1.0 else float("inf")
 
         f0 = 10.0 * float(xp[design].mean())
         df0 = ht @ (printed_grad(am_b, 10.0 * design / design.sum()) * dpb / hs)

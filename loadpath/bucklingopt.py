@@ -40,7 +40,7 @@ import time
 import numpy as np
 import scipy.sparse as sp
 from scipy import ndimage
-from scipy.sparse.linalg import LinearOperator, eigsh
+from scipy.sparse.linalg import LinearOperator, eigsh, lobpcg
 
 from .fem import HexMesh, Stiffness, _hex8_parts, hex8_element
 
@@ -50,27 +50,39 @@ _CONN26 = np.ones((3, 3, 3), bool)
 
 
 def _factor(k: sp.csr_matrix):
-    """A solve with K: PARDISO when available (10-30x SuperLU on 3D hex
-    meshes), else SuperLU."""
+    """A solve with K for one right-hand side or a block of them: PARDISO
+    when available (symmetric positive definite, upper triangle; 10-30x
+    SuperLU on 3D hex meshes, and a block of eight costs about two single
+    solves), else SuperLU."""
     try:
         import pypardiso
-
-        solver = pypardiso.PyPardisoSolver()
-        solver.set_matrix_type(11)      # real nonsymmetric pattern: robust; K is SPD
-        kc = k.tocsr()
-        solver.factorize(kc)
-
-        def solve(b):
-            return solver.solve(kc, np.ascontiguousarray(b))
-
-        solve.free = solver.free_memory
-        return solve
     except ImportError:
         from .nonlinear import _splu
 
         lu = _splu(k)
-        solve = lu.solve
-        return solve
+        return lu.solve, None
+    a = sp.triu(k, format="csr")
+    a.sort_indices()
+    solver = pypardiso.PyPardisoSolver()
+    solver.set_matrix_type(2)
+    try:
+        solver.factorize(a)
+    except Exception:  # noqa: BLE001 - a zero pivot (a hinge in the live cells): pivoting LU
+        solver.free_memory()
+        a = k.tocsr()
+        a.sort_indices()
+        solver = pypardiso.PyPardisoSolver()
+        solver.set_matrix_type(11)
+        solver.factorize(a)
+    solver.set_phase(33)
+
+    def solve(b):
+        b = np.asarray(b, float)
+        # straight to the solve phase: pypardiso.solve() hashes the matrix
+        # every call to see whether it is factored already
+        return solver._call_pardiso(a, np.asfortranarray(b) if b.ndim == 2 else np.ascontiguousarray(b))
+
+    return solve, solver.free_memory
 
 
 def _gauss_im():
@@ -130,6 +142,7 @@ class BucklingModel:
         self.support_touch = domain.support_nodes[mesh.enode].any(axis=1)
         self.anchor = self.support_touch | domain.load_nodes[mesh.enode].any(axis=1) | domain.preserve
         self._v0 = {}
+        self._mu0 = {}
         self.last = {}
 
     def interp(self, xe, p):
@@ -150,6 +163,55 @@ class BucklingModel:
         eg = xe ** p * f
         deg = p * xe ** (p - 1) * f + xe ** p * df
         return e, de, eg, deg
+
+    def _modes(self, c, a, k, minv, nm, fd, n_full):
+        """The nm largest mu of a phi = mu k phi, largest first. Warm
+        (LOBPCG from the last iteration's modes, preconditioned with the
+        factorization: a few block solves) when there are last modes,
+        else ARPACK in shift-invert-like mode 2 (tens of solves)."""
+        prev = self._v0.get(c)
+        if prev is not None:
+            p = nm + 2
+            x0 = prev[fd]
+            if x0.shape[1] < p:
+                x0 = np.hstack([x0, np.random.default_rng(c).standard_normal((len(fd), p - x0.shape[1]))])
+            try:
+                with np.errstate(all="ignore"):
+                    import warnings
+
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        # residuals to 0.3% of mu: the eigenvalues come out
+                        # good to about the square of that
+                        tol = 3e-3 * self._mu0.get(c, 1.0)
+                        mu, vec, res = lobpcg(a, x0, B=k, M=minv, largest=True, tol=tol, maxiter=25,
+                                              retResidualNormsHistory=True)
+                order = np.argsort(-mu)
+                mu, vec = mu[order], vec[:, order]
+                # converged on the wanted modes (relative to mu_max)?
+                r = np.asarray(res[-1])[order][:nm] if len(res) else np.full(nm, np.inf)
+                if mu[0] > 0 and np.all(np.isfinite(mu)) and np.all(r < 1e-2 * abs(mu[0])):
+                    self._mu0[c] = float(mu[0])
+                    self._store(c, vec, fd, n_full)
+                    self.last_method = "lobpcg"
+                    return mu[:nm], vec[:, :nm]
+            except Exception:  # noqa: BLE001 - fall back to ARPACK below
+                pass
+        try:
+            mu, vec = eigsh(a, k=nm, M=k, Minv=minv, which="LA", tol=1e-4, maxiter=2000)
+        except Exception:  # noqa: BLE001 - ARPACK did not converge: once more, looser
+            mu, vec = eigsh(a, k=nm, M=k, Minv=minv, which="LA", tol=1e-3, maxiter=5000)
+        order = np.argsort(-mu)
+        mu, vec = mu[order], vec[:, order]
+        self._store(c, vec, fd, n_full)
+        self._mu0[c] = float(mu[0])
+        self.last_method = "arpack"
+        return mu, vec
+
+    def _store(self, c, vec, fd, n_full):
+        full = np.zeros((n_full, vec.shape[1]))
+        full[fd] = vec
+        self._v0[c] = full
 
     def _live(self, xe):
         mesh = self.domain.mesh
@@ -182,9 +244,9 @@ class BucklingModel:
         if d.springs is not None:
             free = sp.diags((~fixed).astype(float))
             k = (k + free @ d.springs[fd][:, fd] @ free).tocsr()
-        solve = _factor(k)
+        solve, free_memory = _factor(k)
         ndof = sub.n_dof
-        minv = LinearOperator((ndof, ndof), matvec=solve, dtype=float)
+        minv = LinearOperator((ndof, ndof), matvec=solve, matmat=solve, dtype=float)
         ke = stiff.ke
         out = []
         for c in cases:
@@ -198,48 +260,39 @@ class BucklingModel:
 
             kg = _geometric(stiff, u, eg, self.nu)
             nm = min(self.n_modes, ndof - 2)
-            v0 = self._v0.get(c)
-            if v0 is not None and len(v0) != ndof:
-                v0 = None
-            try:
-                mu, vec = eigsh(-kg, k=nm, M=k, Minv=minv, which="LA", tol=1e-4, v0=v0, maxiter=2000)
-            except Exception:  # noqa: BLE001 - ARPACK did not converge: once more from scratch, looser
-                mu, vec = eigsh(-kg, k=nm, M=k, Minv=minv, which="LA", tol=1e-3, maxiter=5000)
-            order = np.argsort(-mu)
-            mu, vec = mu[order], vec[:, order]
-            self._v0[c] = vec[:, 0].copy()
+            mu, vec = self._modes(c, -kg, k, minv, nm, fd, mesh.n_dof)
             if mu[0] <= 0:
                 out.append((0.0, np.zeros(mesh.n_elem), mu))
                 continue
-            # normalize phi^T K phi = 1
-            phis = []
-            for i in range(nm):
-                ph = vec[:, i]
-                ph = ph / np.sqrt(max(float(ph @ (k @ ph)), 1e-300))
-                phis.append(ph)
-            ue = u[sub.edof]
-            parts = geometric_parts(ue, [ph[sub.edof] for ph in phis], mesh.pitch, self.nu)
             # KS over the modes, on mu / mu_max
+            mu = np.asarray(mu[:nm], float)
             mmax = float(mu[0])
             wts = np.exp(self.rho * (mu / mmax - 1.0))
             ks = mmax * (1.0 + np.log(wts.sum()) / self.rho)
             wts = wts / wts.sum()
+            use = [i for i in range(nm) if wts[i] >= 1e-6]
+            # modes normalized phi^T K phi = 1
+            phis = []
+            for i in use:
+                ph = vec[:, i]
+                phis.append(ph / np.sqrt(max(float(ph @ (k @ ph)), 1e-300)))
+            ue = u[sub.edof]
+            parts = geometric_parts(ue, [ph[sub.edof] for ph in phis], mesh.pitch, self.nu)
+            # the adjoints of every counted mode in one block solve
+            arhs = np.zeros((ndof, len(use)))
+            for j, (_, a_e) in enumerate(parts):
+                arhs[:, j] = np.bincount(sub.edof.ravel(), weights=(eg[:, None] * a_e).ravel(), minlength=ndof)
+            arhs[fixed] = 0.0
+            wsol = np.asarray(solve(arhs)).reshape(ndof, len(use))
             grad = np.zeros(mesh.n_elem)
-            ue_c = ue
-            for i in range(nm):
-                if wts[i] < 1e-6:
-                    continue
-                pe = phis[i][sub.edof]
-                g_e, a_e = parts[i]
+            for j, i in enumerate(use):
+                pe = phis[j][sub.edof]
+                g_e = parts[j][0]
                 kphi = np.einsum("mi,ij,mj->m", pe, ke, pe)
-                a = np.bincount(sub.edof.ravel(), weights=(eg[:, None] * a_e).ravel(), minlength=ndof)
-                a[fixed] = 0.0
-                wv = solve(a)
-                term = np.einsum("mi,ij,mj->m", wv[sub.edof], ke, ue_c)
-                dmu = -deg * g_e - mu[i] * de * kphi + de * term
-                grad[el] += wts[i] * dmu
+                term = np.einsum("mi,ij,mj->m", wsol[:, j][sub.edof], ke, ue)
+                grad[el] += wts[i] * (-deg * g_e - mu[i] * de * kphi + de * term)
             out.append((ks, grad, mu))
-        if hasattr(solve, "free"):
-            solve.free()
+        if free_memory is not None:
+            free_memory()
         self.last = {"cells": int(len(el)), "seconds": time.time() - t0}
         return out

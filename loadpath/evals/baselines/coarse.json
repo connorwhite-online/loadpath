@@ -952,53 +952,53 @@
   "tier": "coarse",
   "pass": true,
   "best": {
-   "volumeFraction": 0.04977463540758745,
-   "mass": 46.55762242088923,
-   "massReduction": 0.8889348356728504,
-   "safetyFactor": 2.5616504123924373,
-   "p5Member": 5.918073404101971,
-   "minMember": 2.9948737454941803,
+   "volumeFraction": 0.037451896694881096,
+   "mass": 27.634707506195614,
+   "massReduction": 0.9340762442170751,
+   "safetyFactor": 3.2192401408507973,
+   "p5Member": 3.6727254975203762,
+   "minMember": 1.8586030310652943,
    "creaseLength": 0.0,
-   "p5Thickness": 5.181188126856428,
-   "p1Thickness": 2.716807095059283,
-   "deflection": 0.38209814623984417,
+   "p5Thickness": 3.9060593940039663,
+   "p1Thickness": 2.6462271317352988,
+   "deflection": 0.512875528873661,
    "iterations": 30,
-   "optimizerSeconds": 15.563335180282593,
-   "bucklingFactor": 10.984707312852398
+   "optimizerSeconds": 89.355886220932,
+   "bucklingFactor": 4.97365332069838
   },
   "pareto": {
    "points": 3,
    "front": [
     [
-     46.55762242088923,
-     2.5616504123924373
+     23.17016808355814,
+     1.8787690173774718
     ],
     [
-     56.2470235422751,
-     5.020870730645482
+     27.634707506195614,
+     3.2192401408507973
     ],
     [
-     82.83256711134904,
-     7.879897244348531
+     34.930215728353815,
+     3.855997587057385
     ]
    ],
-   "solidMass": 419.1919464842348,
+   "solidMass": 419.1919464842346,
    "target": 2.5,
-   "massAtTarget": 46.55762242088923,
-   "bracketed": false,
-   "hypervolume": 1.7553252046147456
+   "massAtTarget": 25.239224375718756,
+   "bracketed": true,
+   "hypervolume": 1.444289329075539
   },
   "checks": [
    {
     "check": "safetyFactor",
-    "value": 2.5616504123924373,
+    "value": 3.2192401408507973,
     "op": ">=",
     "limit": 2.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 2.4832498795972213e-14,
+    "value": 1.13057332999612e-14,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -1026,13 +1026,13 @@
    },
    {
     "check": "buckling",
-    "value": 10.984707312852398,
+    "value": 4.97365332069838,
     "op": ">=",
     "limit": 2.5,
     "pass": true
    }
   ],
-  "seconds": 1826.042299747467
+  "seconds": 1367.2458419799805
  },
  {
   "case": "corpus-link-0",
@@ -1126,49 +1126,45 @@
   "tier": "coarse",
   "pass": true,
   "best": {
-   "volumeFraction": 0.06138965981675263,
-   "mass": 40.35205166678914,
-   "massReduction": 0.8890386721113892,
-   "safetyFactor": 3.8212640630174475,
+   "volumeFraction": 0.05211137060076374,
+   "mass": 36.80083134494466,
+   "massReduction": 0.8988039283068058,
+   "safetyFactor": 2.5649779422313745,
    "p5Member": 4.0360606678806885,
    "minMember": 1.7297402862345805,
    "creaseLength": 0.0,
-   "p5Thickness": 4.307477207681732,
-   "p1Thickness": 3.500548505325747,
-   "deflection": 0.5443965071225715,
+   "p5Thickness": 4.07723479895056,
+   "p1Thickness": 3.063918912878935,
+   "deflection": 0.684464313377165,
    "iterations": 30,
-   "optimizerSeconds": 89.88511776924133,
-   "bucklingFactor": 7.862377844327195
+   "optimizerSeconds": 114.18116998672485,
+   "bucklingFactor": 5.771358591489802
   },
   "pareto": {
-   "points": 2,
+   "points": 1,
    "front": [
     [
-     36.39119406272178,
-     0.04374249644772238
-    ],
-    [
-     40.35205166678914,
-     3.8212640630174475
+     36.80083134494466,
+     2.5649779422313745
     ]
    ],
-   "solidMass": 363.65869474180045,
+   "solidMass": 363.65869474180033,
    "target": 2.5,
-   "massAtTarget": 38.96666214120772,
-   "bracketed": true,
-   "hypervolume": 1.3590911832253232
+   "massAtTarget": 36.80083134494466,
+   "bracketed": false,
+   "hypervolume": 0.9221649001991467
   },
   "checks": [
    {
     "check": "safetyFactor",
-    "value": 3.8212640630174475,
+    "value": 2.5649779422313745,
     "op": ">=",
     "limit": 2.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": -2.013754647060183e-14,
+    "value": -2.8344876765824464e-14,
     "op": "<=",
     "limit": 2.0,
     "pass": true
@@ -1196,13 +1192,13 @@
    },
    {
     "check": "buckling",
-    "value": 7.862377844327195,
+    "value": 5.771358591489802,
     "op": ">=",
     "limit": 2.5,
     "pass": true
    }
   ],
-  "seconds": 2560.2236874103546
+  "seconds": 1527.340270280838
  },
  {
   "case": "corpus-tri-mount-2",

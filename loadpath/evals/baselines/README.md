@@ -8,7 +8,14 @@
   - The Nov 1 baseline was saved without a tet mesher, so every SF case was confirmed on voxels, which read safe-side heavy. With tet confirm the same ab4bf9e code gives mbb-beam 15.7 g, so most of mbb-beam (22.2 -> 14.3 g), grip-wrist-yoke (24.0 -> 17.2) and grip-turret (145 -> 138) is the confirm, not the optimizer.
   - wall-bracket (81.9 -> 23.0 g) and corpus-bracket-1 (139.9 -> 36.0) are df2521f, goal.method "auto" picking the constrained optimizer (search alone still gives 72.3 g wall bracket on both ab4bf9e and today's main). Both pass the tet confirm (wall bracket SF 3.40 vs goal 2.5). **Caveat:** the 23-24 g wall bracket buckles at a load factor of 1.43-1.61 (linear buckling, 1.2 mm grid), below the 2.5 goal; the 72 g search design reads 43.5. No buckling check runs in verify or the evals yet, so this baseline locks in a part that is strong enough but not stable enough.
 
+- **2026-11-04 (buckling in the constrained optimizer, bucklingopt.py).** wall-bracket and corpus-bracket-1 rows re-run and replaced (other cases do not reach the constrained method's buckling constraint; the full tier moved none of them): wall-bracket 46.6 -> 25.2 g massAtTarget (best 27.6 g, SF 3.22, buckling 4.97), corpus-bracket-1 39.0 -> 36.8 g (buckling 5.77).
+
 ## full.json history
+
+- **2026-11-04 (buckling in the constrained optimizer, bucklingopt.py).** First full re-save with the buckling check on, 15/15 pass, two cases at a time; wall-bracket and wall-bracket-fasteners rows are from reruns with the final code (faster eigensolve, PARDISO fallback on hinged designs). Moves vs 33ced02 (massAtTarget):
+  - wall-bracket 26.9 -> 27.4 g and wall-bracket-fasteners 26.5 -> 27.2 g, but now stable: the old ~26 g parts buckled at 1.4-1.6x for a 2.5 goal; the new ones read buckling 3.15 / 3.93 (tet SF 2.73 / 2.92). Without the optimizer constraint the check alone sent the wall bracket to 46.6 g (coarse) and 65.7 g (full, search part).
+  - printed-hook 23.9 -> 29.3 g (+23%): buckling governs it now (2.61 for 2.5, SF 3.58); it runs the search, not the constrained method.
+  - motor-mount +11% massAtTarget with the same best part (27.6 g, SF 3.65): the Pareto interpolation, not the design. mbb-beam +5.6% (buckling off): run-to-run tet spread.
 
 - **2026-11-03 (main 6c97b57 plus the cast fix in this commit).** Re-saved with a tet mesher installed (pytetwild), 15/15 pass, two cases at a time, ~5 h wall on the 4-core box. Moves vs the Nov 1 baseline (massAtTarget):
   - wall-bracket 61.4 -> 26.9 g and wall-bracket-fasteners 40.3 -> 26.5 g: goal.method "auto" now picks the constrained optimizer (df2521f). Same buckling caveat as coarse.json: the ~25 g brackets are strong enough but buckle below the 2.5 goal; no buckling check runs in the evals.

@@ -39,6 +39,10 @@ gpu = ["torch>=2.2"]
 # lattice-Boltzmann flow and heat transfer (flow.py)
 flow = ["numba>=0.59"]
 crosscheck = ["gmsh>=4.11", "pytetwild>=0.4", "pyvista>=0.44"]
+# PARDISO (Intel MKL, x86-64 only) for the buckling constraint's eigensolves
+# (bucklingopt.py) and the lattice buckling tables: 2-3x SuperLU's speed and a
+# fraction of its memory on 3D hex meshes; SuperLU is the fallback
+fast = ["pypardiso>=0.4"]
 # vision critic over interface close-ups (critic.py, evals --critic anthropic)
 critic = ["anthropic", "matplotlib>=3.8", "shapely>=2.0"]
 # STEP export with exact planes and cylinders (step.py): OpenCascade's Python bindings

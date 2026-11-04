@@ -1061,7 +1061,11 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
     # 2.9x the search on the yoke (2.5x cut it before its 16 g run); on the
     # wrist link it found no passing part in 90 minutes (the search: 24).
     # Past the budget the runs it has stand.
-    deadline = time.time() + max(600.0, _AUTO_BUDGET * r.seconds)
+    # The buckling constraint's eigensolve roughly doubles a constrained
+    # iteration on a full-size grid (10-25 s of 25-50 at 35k cells on the
+    # wall bracket), so it gets twice the time.
+    budget = _AUTO_BUDGET * (2.0 if goal.buckling and goal.safety_factor and _BUCKLING_IN_OPTIMIZER else 1.0)
+    deadline = time.time() + max(600.0, budget * r.seconds)
 
     def stop():
         return time.time() > deadline or (should_stop is not None and should_stop())
