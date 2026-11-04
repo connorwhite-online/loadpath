@@ -55,6 +55,16 @@ _MAX_CONSTRAINED_RUNS = 6
 # each run). LOADPATH_BUCKLING_OPT=0 leaves buckling to the check alone.
 _BUCKLING_IN_OPTIMIZER = os.environ.get("LOADPATH_BUCKLING_OPT", "1") != "0"
 _BUCKLING_START = 1.2
+# The search (volume fractions, simp.optimize) can hold buckling too: an
+# adaptive penalty on its step, turned on once a part's buckling factor is
+# under _BUCKLING_SEARCH_ON times the safety factor. OPT-IN
+# (LOADPATH_BUCKLING_SEARCH=1): on the full-tier printed hook, the one eval
+# part whose search buckling binds (2.61 for 2.5 at 29.3 g), it gave 29.8 g
+# (buckling 2.50, SF 3.22) in 1.8x the time; the lighter fractions failed on
+# stress (voxel SF 0.1-0.6 at 24-29 g), not buckling. MMA with buckling as a
+# hard constraint built weaker layouts still (SF 0.3-2.0 at 28-31 g).
+_BUCKLING_SEARCH = os.environ.get("LOADPATH_BUCKLING_SEARCH", "0") == "1"
+_BUCKLING_SEARCH_ON = 1.5
 # method auto: run the constrained method after the search when the search's
 # part idles (verify's stressUtilization, mean von Mises over the near peak,
 # under this) and is not deflection-bound. Search picks' utilization, and
@@ -1139,14 +1149,21 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                 setattr(ws, attr, lim / ratio)
                 warp.setdefault("deliveredOverOptimizer", {})[key] = round(ratio, 3)
 
+    goal_ = study.goal
+    buck_state = {"on": False, "kb": 1.0,
+                  "sf": goal_.safety_factor if (goal_.buckling and goal_.safety_factor and _BUCKLING_SEARCH
+                                                and study.gravity is None and study.thermal is None) else None}
+
     def attempt(vf: float, x0, beta0, replay=None) -> Outcome:
         def on_iter(rec, xp):
             emit({"stage": "optimize", "volumeFraction": vf, **rec}, xp)
 
         if replay is None:
+            breq = buck_state["sf"] * buck_state["kb"] if buck_state["on"] else None
             res = optimize(domain, study.elastic(design=True),
                            SimpOptions(volume_fraction=vf, filter_radius=radius,
                                        max_iterations=study.max_iterations, x0=x0, beta_start=beta0,
+                                       buckling=breq, buckling_modulus=study.material.E,
                                        **_making(study)),
                            on_iter=on_iter, should_stop=should_stop)
             x, xphys = res.x, res.xphys
@@ -1175,6 +1192,19 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
             mat = study.material
             report = {"mass": float(mesh.volume) * mat.density / 1000.0, "safetyFactor": 0.0,
                       "cases": [], "warnings": [f"verification failed: {exc}"]}
+        if buck_state["sf"] is not None and report.get("bucklingFactor") is not None:
+            # Buckling in the search (simp.optimize's buckling constraint):
+            # on from the first part whose buckling factor comes within
+            # _BUCKLING_SEARCH_ON of the safety factor, at sf * kb, kb the
+            # optimizer's own reading over the verified one (last run)
+            lv = report["bucklingFactor"]
+            lo = res.history[-1].get("buckling") if replay is None and res.history else None
+            if lo is not None and np.isfinite(lo) and lo > 0 and lv > 0:
+                kb = buck_state["kb"]
+                buck_state["kb"] = float(np.clip(lo / lv, 0.5 * kb, 2.0 * kb))
+                opt["bucklingFactor"] = float(lo)
+            if lv < _BUCKLING_SEARCH_ON * buck_state["sf"]:
+                buck_state["on"] = True
         making = manufacturing_report(study, domain, mesh)
         if making:
             report["manufacturing"] = making

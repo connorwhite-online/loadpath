@@ -245,54 +245,56 @@ class BucklingModel:
             free = sp.diags((~fixed).astype(float))
             k = (k + free @ d.springs[fd][:, fd] @ free).tocsr()
         solve, free_memory = _factor(k)
-        ndof = sub.n_dof
-        minv = LinearOperator((ndof, ndof), matvec=solve, matmat=solve, dtype=float)
-        ke = stiff.ke
-        out = []
-        for c in cases:
-            f = d.loads[c][fd].copy()
-            f[fixed] = 0.0
-            if not np.any(f):
-                out.append((0.0, np.zeros(mesh.n_elem), np.zeros(0)))
-                continue
-            u = solve(f)
-            from .nonlinear import _geometric
+        try:
+            ndof = sub.n_dof
+            minv = LinearOperator((ndof, ndof), matvec=solve, matmat=solve, dtype=float)
+            ke = stiff.ke
+            out = []
+            for c in cases:
+                f = d.loads[c][fd].copy()
+                f[fixed] = 0.0
+                if not np.any(f):
+                    out.append((0.0, np.zeros(mesh.n_elem), np.zeros(0)))
+                    continue
+                u = solve(f)
+                from .nonlinear import _geometric
 
-            kg = _geometric(stiff, u, eg, self.nu)
-            nm = min(self.n_modes, ndof - 2)
-            mu, vec = self._modes(c, -kg, k, minv, nm, fd, mesh.n_dof)
-            if mu[0] <= 0:
-                out.append((0.0, np.zeros(mesh.n_elem), mu))
-                continue
-            # KS over the modes, on mu / mu_max
-            mu = np.asarray(mu[:nm], float)
-            mmax = float(mu[0])
-            wts = np.exp(self.rho * (mu / mmax - 1.0))
-            ks = mmax * (1.0 + np.log(wts.sum()) / self.rho)
-            wts = wts / wts.sum()
-            use = [i for i in range(nm) if wts[i] >= 1e-6]
-            # modes normalized phi^T K phi = 1
-            phis = []
-            for i in use:
-                ph = vec[:, i]
-                phis.append(ph / np.sqrt(max(float(ph @ (k @ ph)), 1e-300)))
-            ue = u[sub.edof]
-            parts = geometric_parts(ue, [ph[sub.edof] for ph in phis], mesh.pitch, self.nu)
-            # the adjoints of every counted mode in one block solve
-            arhs = np.zeros((ndof, len(use)))
-            for j, (_, a_e) in enumerate(parts):
-                arhs[:, j] = np.bincount(sub.edof.ravel(), weights=(eg[:, None] * a_e).ravel(), minlength=ndof)
-            arhs[fixed] = 0.0
-            wsol = np.asarray(solve(arhs)).reshape(ndof, len(use))
-            grad = np.zeros(mesh.n_elem)
-            for j, i in enumerate(use):
-                pe = phis[j][sub.edof]
-                g_e = parts[j][0]
-                kphi = np.einsum("mi,ij,mj->m", pe, ke, pe)
-                term = np.einsum("mi,ij,mj->m", wsol[:, j][sub.edof], ke, ue)
-                grad[el] += wts[i] * (-deg * g_e - mu[i] * de * kphi + de * term)
-            out.append((ks, grad, mu))
-        if free_memory is not None:
-            free_memory()
+                kg = _geometric(stiff, u, eg, self.nu)
+                nm = min(self.n_modes, ndof - 2)
+                mu, vec = self._modes(c, -kg, k, minv, nm, fd, mesh.n_dof)
+                if mu[0] <= 0:
+                    out.append((0.0, np.zeros(mesh.n_elem), mu))
+                    continue
+                # KS over the modes, on mu / mu_max
+                mu = np.asarray(mu[:nm], float)
+                mmax = float(mu[0])
+                wts = np.exp(self.rho * (mu / mmax - 1.0))
+                ks = mmax * (1.0 + np.log(wts.sum()) / self.rho)
+                wts = wts / wts.sum()
+                use = [i for i in range(nm) if wts[i] >= 1e-6]
+                # modes normalized phi^T K phi = 1
+                phis = []
+                for i in use:
+                    ph = vec[:, i]
+                    phis.append(ph / np.sqrt(max(float(ph @ (k @ ph)), 1e-300)))
+                ue = u[sub.edof]
+                parts = geometric_parts(ue, [ph[sub.edof] for ph in phis], mesh.pitch, self.nu)
+                # the adjoints of every counted mode in one block solve
+                arhs = np.zeros((ndof, len(use)))
+                for j, (_, a_e) in enumerate(parts):
+                    arhs[:, j] = np.bincount(sub.edof.ravel(), weights=(eg[:, None] * a_e).ravel(), minlength=ndof)
+                arhs[fixed] = 0.0
+                wsol = np.asarray(solve(arhs)).reshape(ndof, len(use))
+                grad = np.zeros(mesh.n_elem)
+                for j, i in enumerate(use):
+                    pe = phis[j][sub.edof]
+                    g_e = parts[j][0]
+                    kphi = np.einsum("mi,ij,mj->m", pe, ke, pe)
+                    term = np.einsum("mi,ij,mj->m", wsol[:, j][sub.edof], ke, ue)
+                    grad[el] += wts[i] * (-deg * g_e - mu[i] * de * kphi + de * term)
+                out.append((ks, grad, mu))
+        finally:
+            if free_memory is not None:
+                free_memory()
         self.last = {"cells": int(len(el)), "seconds": time.time() - t0}
         return out

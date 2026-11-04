@@ -38,6 +38,12 @@ import os
 __all__ = ["SimpOptions", "SimpResult", "filter_radius", "density_filter", "optimize"]
 
 E_MIN = 1e-6
+# The search's buckling penalty acts on load cases whose buckling factor is
+# under 1 / (1 - BUCKLE_MMA) times the limit, from projection sharpness
+# BUCKLE_BETA on (a grey design reads far below its sharpened self: the hook
+# 0.65 at its first iteration, 4.7 at its last).
+BUCKLE_MMA = 0.15
+BUCKLE_BETA = 8.0
 PENALTY = 3.0
 # Cells below this density are left out of the linear solve (see _Analysis).
 ALIVE = 1e-3
@@ -347,6 +353,13 @@ class SimpOptions:
     deflate: tuple = ()
     deflate_weight: float = 0.05
     deflate_power: float = 2.0
+    # Linear buckling as a constraint (bucklingopt.py): the smallest load
+    # factor the eroded design may buckle at, or None; buckling_modulus (MPa)
+    # turns the unit-modulus model's factor into this one's. Off the limit
+    # (see BUCKLE_MMA) nothing changes; near it the compliance takes an
+    # adaptive buckling penalty the optimality criteria step on.
+    buckling: float | None = None
+    buckling_modulus: float = 1.0
 
 
 @dataclass
@@ -711,6 +724,12 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     heat_state = {}
     mma_s = None
     warp_state = {}
+    buck = None
+    if opts.buckling is not None and not robust and domain.gravity is None and heat is None:
+        from .bucklingopt import BucklingModel
+
+        buck = BucklingModel(domain, nu)
+    buck_last, buck_age, buck_nu = None, 0, 0.0
 
     ijk = tuple(mesh.elem_ijk.T)
     if opts.build_direction is not None:
@@ -890,6 +909,48 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 s_sh = float(np.max(dc[live] / dv[live]))
                 if s_sh > 0:
                     dc = dc - 1.05 * s_sh * dv - 1e-12
+        buck_rec = {}
+        if buck is not None and beta >= BUCKLE_BETA:
+            # (the eroded design, as stiffness reads it; an inactive reading
+            # stands for up to BUCKLING_SKIP iterations, see constrained.py)
+            from .constrained import BUCKLING_SKIP
+
+            req = opts.buckling / opts.buckling_modulus
+            if buck_last is None or buck_age >= BUCKLING_SKIP or max(v for v, _ in buck_last) > -0.5:
+                try:
+                    got = buck.evaluate(xe, PENALTY)
+                except Exception as exc:  # noqa: BLE001 - a failed eigensolve must not end the run
+                    got = None
+                    buck_rec["bucklingError"] = f"{type(exc).__name__}: {exc}"
+                if got is not None:
+                    buck_last = []
+                    for mu_ks, dmu, _mus in got:
+                        if mu_ks <= 0:
+                            continue
+                        g_b = ht @ (printed_grad(am_e, req * dmu) * dproj_e / hs)
+                        buck_last.append((req * mu_ks - 1.0, g_b))
+                    buck_rec["bucklingSeconds"] = buck.last.get("seconds")
+                buck_age = 0
+            else:
+                buck_age += 1
+            if buck_last:
+                worst_b = max(v for v, _ in buck_last)
+                buck_rec["buckling"] = opts.buckling / (worst_b + 1.0) if worst_b > -1.0 else float("inf")
+                # a penalty the optimality criteria can take (as the warp
+                # limits): compliance + nu c sum(max(g, 0)), nu raised while
+                # the design buckles under the limit and eased off over it.
+                # (MMA with buckling as a constraint built weaker layouts on
+                # the hook, SF 0.3-2.0 at 28-31 g against 3.4 at 32 g.)
+                if buck_age == 0:
+                    if worst_b > 0:
+                        buck_nu = min(max(buck_nu * 1.3, 0.2), 50.0)
+                    elif worst_b < -BUCKLE_MMA:
+                        buck_nu *= 0.8
+                if buck_nu > 0:
+                    for v, g in buck_last:
+                        if v > -BUCKLE_MMA:
+                            dc = dc + buck_nu * comp * g
+                buck_rec["bucklingWeight"] = buck_nu
         dc_raw = dc
         dc = np.minimum(dc, 0.0)
         if robust:
@@ -972,7 +1033,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             if domain.mirror:
                 x_new = _symmetrize(x_new, domain.mirror)
             x_new = _extrude(x_new, columns, design)
-        if swing_step:
+        if swing_step and "swing_max" in heat_state:
             swing_rec = {"swingPeak": float(heat_state["swing_max"]), "swingLimit": float(heat.swing_limit)}
         for _ in range(80 if not swing_step else 0):
             lm = np.sqrt(l1 * l2)
@@ -1006,8 +1067,9 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             rec["warpLift"] = warp_v["lift"]
             if domain.warp.max_distortion or domain.warp.max_lift:
                 rec["warpMultipliers"] = dict(warp_state["lam"])
-        if swing_step:
+        if swing_step and "swing_max" in heat_state:
             rec.update(swing_rec)
+        rec.update(buck_rec)
         if excess is not None:
             rec["maxMemberExcess"] = excess
             rec["maxMemberWeight"] = mu
