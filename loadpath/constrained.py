@@ -54,10 +54,12 @@ _VM = np.array([
 
 
 class Limits:
-    def __init__(self, stress: float | None, deflection: float | None, modulus: float):
+    def __init__(self, stress: float | None, deflection: float | None, modulus: float,
+                 buckling: float | None = None):
         self.stress = stress            # MPa, allowable peak von Mises
         self.deflection = deflection    # mm at the loads
         self.modulus = modulus          # MPa, to turn unit-E displacements into mm
+        self.buckling = buckling        # smallest load factor at which the design may buckle
 
 
 def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: Limits,
@@ -80,9 +82,15 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     force_mag = [float(np.linalg.norm(f.reshape(-1, 3).sum(axis=0))) for f in domain.loads]
     defl_cases = [c for c in range(cases) if limits.deflection is not None and force_mag[c] > 0]
     stress_cases = list(range(cases)) if limits.stress is not None else []
-    m = len(defl_cases) + len(stress_cases)
-    if m == 0:
+    buck_cases = [c for c in range(cases) if limits.buckling is not None and np.any(domain.loads[c])]
+    m = len(defl_cases) + len(stress_cases) + len(buck_cases)
+    if m == len(buck_cases):
         raise ValueError("optimize_constrained needs a stress or deflection limit")
+    buck = None
+    if buck_cases:
+        from .bucklingopt import BucklingModel
+
+        buck = BucklingModel(domain, nu)
 
     # Stress is not counted in cells where loads and supports are applied.
     contact = (domain.support_nodes | domain.load_nodes)[mesh.enode].any(axis=1)
@@ -214,6 +222,18 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                 cons.append(g - 1.0)
                 grads.append(to_x(g_xe))
                 record[f"stress.{domain.case_names[c]}"] = smax * limits.stress
+
+        if buck is not None:
+            # linear buckling of the eroded design, as stress and stiffness
+            # read it (bucklingopt.py): lambda_min >= limits.buckling as
+            # limits.buckling * mu_ks - 1 <= 0
+            # (at unit modulus the load factor is lambda / E)
+            for c, (mu_ks, dmu, _mus) in zip(buck_cases, buck.evaluate(xe, PENALTY, buck_cases)):
+                req = limits.buckling / limits.modulus
+                cons.append(req * mu_ks - 1.0)
+                grads.append(to_x(req * dmu))
+                record[f"buckling.{domain.case_names[c]}"] = limits.modulus / mu_ks if mu_ks > 0 else float("inf")
+            record["bucklingSeconds"] = buck.last.get("seconds")
 
         f0 = 10.0 * float(xp[design].mean())
         df0 = ht @ (printed_grad(am_b, 10.0 * design / design.sum()) * dpb / hs)

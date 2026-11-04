@@ -49,6 +49,12 @@ _COARSE_MIN_CELLS = 12_000
 _WARM_BETA = 4.0
 # runs of the constrained method's limit search (study.run, method constrained)
 _MAX_CONSTRAINED_RUNS = 6
+# goal.buckling in the constrained method: hold the design's buckling load
+# factor in the optimizer itself (bucklingopt.py), starting at the safety
+# factor times _BUCKLING_START (recalibrated against the verified part after
+# each run). LOADPATH_BUCKLING_OPT=0 leaves buckling to the check alone.
+_BUCKLING_IN_OPTIMIZER = os.environ.get("LOADPATH_BUCKLING_OPT", "1") != "0"
+_BUCKLING_START = 1.2
 # method auto: run the constrained method after the search when the search's
 # part idles (verify's stressUtilization, mean von Mises over the near peak,
 # under this) and is not deflection-bound. Search picks' utilization, and
@@ -1489,7 +1495,12 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
         opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                "achievedVolumeFraction": res.volume_fraction, "method": "constrained",
-               "limits": {"stress": limits.stress, "deflection": limits.deflection}}
+               "limits": {"stress": limits.stress, "deflection": limits.deflection,
+                          **({"buckling": limits.buckling} if limits.buckling is not None else {})}}
+        last = res.history[-1] if res.history else {}
+        bks = [v for kk, v in last.items() if kk.startswith("buckling.")]
+        if bks:
+            opt["bucklingFactor"] = float(min(bks))   # the optimizer's own reading, eroded grey design
         o = Outcome(res.volume_fraction, mesh, report, opt, rinfo)
         o.voxel_sf = report.get("safetyFactor")
         m = _margin(study, report)
@@ -1520,13 +1531,24 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         # and t is steered by that reading: the voxel one left the wall
         # brackets at SF 2.7-2.8 on voxels and 3.6 on tets for 2.5.
         tets = goal.safety_factor is not None and _confirm_on_tets(study, outcomes)
+        # Buckling (goal.buckling): the optimizer holds the design's smallest
+        # buckling load factor at sf * kb / t (bucklingopt.py), so t relaxes
+        # or tightens stress and stability together and the bisection below
+        # stays one-dimensional. kb is the optimizer's reading over the
+        # verified part's (the grey eroded design on the fine grid against
+        # the meshed part on the check's coarser grid), taken from the last
+        # run: the two differ by a factor that holds roughly steady from one
+        # design to the next.
+        sf_b = goal.safety_factor if (goal.buckling and goal.safety_factor and _BUCKLING_IN_OPTIMIZER) else None
+        kb = _BUCKLING_START
         fails = []
         t, t_pass, t_fail, x_pass = 1.0, None, None, None
         for _ in range(_MAX_CONSTRAINED_RUNS):
             if should_stop is not None and should_stop():
                 break
             limits = Limits(stress * t if stress is not None else None,
-                            goal.max_deflection * t if goal.max_deflection is not None else None, mat.E)
+                            goal.max_deflection * t if goal.max_deflection is not None else None, mat.E,
+                            buckling=sf_b * kb / t if sf_b is not None else None)
             try:
                 o = run_constrained(limits, x_pass)
             except (RuntimeError, ValueError) as exc:
@@ -1548,7 +1570,13 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
             r = o.report
             rs = r["safetyFactor"] / goal.safety_factor if goal.safety_factor else None
             rd = goal.max_deflection / max(c["deflection"] for c in r["cases"]) if goal.max_deflection else None
-            ratio = min(v for v in (rs, rd) if v is not None)
+            rb = None
+            if sf_b is not None and r.get("bucklingFactor") is not None:
+                rb = r["bucklingFactor"] / sf_b
+                lo = o.optimizer.get("bucklingFactor")
+                if lo is not None and np.isfinite(lo) and lo > 0:
+                    kb = float(np.clip(lo / r["bucklingFactor"], 0.5 * kb, 2.0 * kb))
+            ratio = min(v for v in (rs, rd, rb) if v is not None)
             if ratio >= 1.0:
                 if ratio < 1.12:
                     break
