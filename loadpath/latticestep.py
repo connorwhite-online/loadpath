@@ -453,39 +453,10 @@ def _shell_solid(sh, reverse=False):
     return BRepBuilderAPI_MakeSolid(s).Solid()
 
 
-BIG_SHELL = 8000      # faces: past this a whole-solid check is checked shell by shell
-
-
-def _faces(shape):
-    from OCP.TopAbs import TopAbs_FACE
-    from OCP.TopExp import TopExp_Explorer
-
-    ex = TopExp_Explorer(shape, TopAbs_FACE)
-    n = 0
-    while ex.More():
-        n += 1
-        ex.Next()
-    return n
-
-
 def _valid(shape, geom=True):
-    """BRepCheck validity. A solid with an inner shell of more than
-    BIG_SHELL faces is checked shell by shell (each as a solid of its own):
-    the whole-solid check classifies every shell against every other and
-    went past 12 GB on an arm link's 38k-patch void."""
-    from OCP.BRepCheck import BRepCheck_Analyzer
-    from OCP.TopAbs import TopAbs_SHELL
-    from OCP.TopExp import TopExp_Explorer
-    from OCP.TopoDS import TopoDS
+    from .step import shape_valid
 
-    shells = []
-    ex = TopExp_Explorer(shape, TopAbs_SHELL)
-    while ex.More():
-        shells.append(TopoDS.Shell(ex.Current()))
-        ex.Next()
-    if len(shells) < 2 or max(_faces(x) for x in shells) <= BIG_SHELL:
-        return bool(BRepCheck_Analyzer(shape, geom).IsValid())
-    return all(BRepCheck_Analyzer(_shell_solid(x), geom).IsValid() for x in shells)
+    return shape_valid(shape, geom)
 
 
 def _bop(kind, args, tools, fuzzy=None):
@@ -544,6 +515,28 @@ def _solid_of(shell):
 
     so = _shell_solid(shell)
     return so if _volume(so) > 0 else _shell_solid(shell, reverse=True)
+
+
+def _outward(shell, inward=False):
+    """The shell turned so it bounds positive volume (negative: `inward`,
+    as an inner shell of a solid)."""
+    from OCP.TopoDS import TopoDS
+
+    from .step import _volume
+
+    v = _volume(_shell_solid(shell))
+    return TopoDS.Shell(shell.Reversed()) if (v < 0) != inward else shell
+
+
+def _shell_vertex(shell):
+    """(3,) one vertex of the shell."""
+    from OCP.BRep import BRep_Tool
+    from OCP.TopAbs import TopAbs_VERTEX
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    p = BRep_Tool.Pnt_s(TopoDS.Vertex(TopExp_Explorer(shell, TopAbs_VERTEX).Current()))
+    return np.array([p.X(), p.Y(), p.Z()])
 
 
 def _inside_any(solids, P, tol=1e-6):
@@ -777,7 +770,7 @@ def _void_shells(fam, lo, hi, E_graph):
     t0 = time.time()
     pieces, sheets, nonman, refined = _pieces(fam, np.asarray(lo, float), np.asarray(hi, float))
     n = DEG + 1
-    out, open_, dev = [], 0, []
+    out, open_, dev, outside = [], 0, [], 0
     for p in pieces:
         sh, qs = p["sheet"], p["quads"]
         if not p["closed"]:
@@ -797,7 +790,13 @@ def _void_shells(fam, lo, hi, E_graph):
             open_ += 1
             continue
         V = sh.V[np.unique(sh.Q[qs])]
-        crosses = bool((E_graph.evaluate(V) > 0).any())
+        eV = E_graph.evaluate(V)
+        if (eV > 0.1 * fam.h).all():
+            # wholly outside the envelope (the cap band where E is a loose
+            # bound on the distance, as in a bore's end): the cut takes it all
+            outside += 1
+            continue
+        crosses = bool((eV > 0).any())
         # the quads' own winding says which side is void (sewing orients a
         # shell after whichever face it starts from, and a few patches on a
         # rough field can face the wrong way): their signed volume decides
@@ -816,7 +815,8 @@ def _void_shells(fam, lo, hi, E_graph):
             ex.Next()
     dev = np.concatenate(dev) if dev else np.zeros(1)
     rep = {"h": fam.h, "patches": int(sum(len(p["quads"]) for p in pieces)),
-           "components": len(pieces), "openComponents": open_, "refinedBoxes": refined,
+           "components": len(pieces), "openComponents": open_, "outsideComponents": outside,
+           "refinedBoxes": refined,
            "foldedPatches": int(sum(p["folds"] for p in pieces)), "nonManifoldEdges": int(nonman),
            "chordEdges": int(sum(s.wild_edges for s in sheets)), "coonsPatches": int(sum(s.wild_patches for s in sheets)),
            "patchDeviation": {"p99": round(float(np.percentile(dev, 99)), 4), "max": round(float(dev.max()), 4)},
@@ -925,15 +925,15 @@ def export_void_step(doc, g, out_dir, name, base_dir=None, sources=None, meshes=
         loose = [x for x in shells if not x["crosses"] and x["volume"] > 0]
         pores = [x for x in shells if x["crosses"] and x["volume"] < 0]
         plugs = [x for x in shells if x["crosses"] and x["volume"] > 0]
+        filled = []
         solid = envelope_with([x["shell"] for x in sealed])
         _log(progress, f"envelope with {len(sealed)} sealed voids; checking")
-        filled = []
         if sealed and not _valid(solid, False):
-            keep = []
+            keep, bad = [], []
             for x in sealed:
-                (keep if _valid(envelope_with([x["shell"]]), False) else filled).append(x)
+                (keep if _valid(envelope_with([x["shell"]]), False) else bad).append(x)
             solid = envelope_with([x["shell"] for x in keep])
-            filled = [round(-x["volume"], 2) for x in filled]
+            filled += [round(-x["volume"], 2) for x in bad]
             sealed = keep
         # open pores (void reaching out through the envelope) and any plugs (a
         # strut stub the envelope cut off, wrapped by a pore): the envelope split
@@ -943,18 +943,53 @@ def export_void_step(doc, g, out_dir, name, base_dir=None, sources=None, meshes=
             t1 = time.time()
             pieces, split = _split_cut(outs, [x["shell"] for x in pores + plugs], _bore_tools(bores), bores, env,
                                        fam, h)
-            bodies = []
-            for x in pieces:
-                so = _shell_solid(x)
-                v = _volume(so)
-                if v < 0:
-                    x = TopoDS.Shell(x.Reversed())
-                bodies.append((abs(v), x))
-            bodies.sort(key=lambda t: -t[0])
-            mk = BRepBuilderAPI_MakeSolid(bodies[0][1])
-            for x in sealed:
-                mk.Add(x["shell"])
-            solid = mk.Solid()
+            # the biggest shell is the part's outside; another one inside it
+            # (OpenCascade's classifier, a point on it) is a cavity, an inner
+            # shell: one of the envelope's the void did not touch (a cable
+            # channel) or one the split left whole. Outside it: a body of
+            # its own (a strut stub cut loose).
+            sized = sorted(((abs(_volume(_shell_solid(x))), x) for x in pieces), key=lambda t: -t[0])
+            main = _outward(sized[0][1])
+            main_solid = _shell_solid(main)
+            bodies, holes = [(sized[0][0], main)], []
+            for v, x in sized[1:]:
+                if _inside_any([main_solid], _shell_vertex(x)[None]).all():
+                    holes.append((v, _outward(x, inward=True)))
+                else:
+                    bodies.append((v, _outward(x)))
+            def with_inner(shells):
+                mk = BRepBuilderAPI_MakeSolid(bodies[0][1])
+                for x in shells:
+                    mk.Add(x)
+                return mk.Solid()
+
+            inner = [x["shell"] for x in sealed] + [x for _, x in holes]
+            solid = with_inner(inner)
+            if sealed and not _valid(solid, False):
+                # a sealed void that passed against the whole envelope can
+                # fail against the cut one (a pocket microns off a pore's
+                # face): checked one by one again, a failing one left solid
+                keep, bad = [], []
+                for x in sealed:
+                    (keep if _valid(with_inner([x["shell"]]), False) else bad).append(x)
+                solid = with_inner([x["shell"] for x in keep] + [x for _, x in holes])
+                if keep and not _valid(solid, False):
+                    # each passes alone, some pair does not: OpenCascade's
+                    # classifier calls one pocket inside another (a ray
+                    # grazing a patch edge of a small pocket); taken one at
+                    # a time, a pocket that breaks the solid is left solid
+                    base = [x for _, x in holes]
+                    took = []
+                    for x in sorted(keep, key=lambda y: y["volume"]):        # biggest first
+                        if _valid(with_inner(base + [y["shell"] for y in took] + [x["shell"]]), False):
+                            took.append(x)
+                        else:
+                            bad.append(x)
+                    keep = took
+                    solid = with_inner(base + [x["shell"] for x in keep])
+                filled += [round(-x["volume"], 2) for x in bad]
+                sealed = keep
+            split["cavities"] = len(holes)
             if len(bodies) > 1:
                 bb = BRep_Builder()
                 comp = TopoDS_Compound()
@@ -1013,11 +1048,24 @@ def export_void_step(doc, g, out_dir, name, base_dir=None, sources=None, meshes=
            "envelopeVolume": round(abs(_volume(outer)), 2)}
     if part_mesh is not None:
         rep["meshVolume"] = round(float(abs(part_mesh.volume)), 2)
-    rep.update(write_step(solid, os.path.join(out_dir, f"{name}.step"), name=name))
+    # the envelope's own file needed its faces' 2-D curves to read back
+    # valid (a sliver patch): so does the part, which has its faces
+    pcurves = bool(st.get("pcurves"))
+    rep.update(write_step(solid, os.path.join(out_dir, f"{name}.step"), name=name, pcurves=pcurves))
     t1 = time.time()
     back = read_step(rep["path"])
     rep["readBack"] = {"seconds": round(time.time() - t1, 1), "volume": round(abs(_volume(back)), 2),
                        "valid": _valid(back)}
+    if valid and not rep["readBack"]["valid"] and not pcurves:
+        _log(progress, "read back invalid without 2-D curves; writing them")
+        pcurves = True
+        rep.update(write_step(solid, rep["path"], name=name, pcurves=True))
+        t1 = time.time()
+        back = read_step(rep["path"])
+        rep["readBack"] = {"seconds": round(time.time() - t1, 1), "volume": round(abs(_volume(back)), 2),
+                           "valid": _valid(back)}
+    rep["pcurves"] = pcurves
+    del back                                 # a full-size part's re-read is gigabytes
     rep["readBack"]["ok"] = rep["readBack"]["valid"] and abs(rep["readBack"]["volume"] - rep["volume"]) < 1e-3 * rep["volume"]
     _log(progress, "read back; distance to the STL")
     if part_mesh is not None:
@@ -1043,14 +1091,28 @@ def export_void_step(doc, g, out_dir, name, base_dir=None, sources=None, meshes=
     return rep, solid
 
 
-def stl_distance(shape, mesh, n=40000, deflection=0.01):
+def stl_distance(shape, mesh, n=40000, deflection=None):
     """How far a B-rep and the printed mesh are apart (mm), both ways:
     points on the B-rep's faces to the mesh, points on the mesh to the
-    B-rep's tessellation (`deflection` mm). Mean, p99, max of each."""
+    B-rep's tessellation (`deflection` mm). Mean, p99, max of each.
+    The default deflection is 0.01 mm up to 20k faces, coarser past that
+    (to 0.03), and the angular limit loose so the chord sets it: 0.01 mm
+    and 0.1 rad on a full-size arm link's 46k patches was 34M triangles and
+    took over 13 GB."""
     from .sharp import mesh_distance
     from .step import shape_to_trimesh
 
-    t = shape_to_trimesh(shape, deflection=deflection, angle=0.1)
+    if deflection is None:
+        from OCP.TopAbs import TopAbs_FACE
+        from OCP.TopExp import TopExp_Explorer
+
+        nf, ex = 0, TopExp_Explorer(shape, TopAbs_FACE)
+        while ex.More():
+            nf += 1
+            ex.Next()
+        deflection = round(min(0.03, 0.01 * max(1.0, nf / 20000)), 4)
+
+    t = shape_to_trimesh(shape, deflection=deflection, angle=0.5)
     a = mesh_distance(mesh, t.sample(n), cap=2.0)
     b = mesh_distance(t, mesh.sample(n), cap=2.0)
 

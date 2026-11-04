@@ -551,12 +551,6 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     import time
 
     from OCP.BRepCheck import BRepCheck_Analyzer
-    from OCP.Interface import Interface_Static
-    from OCP.STEPControl import (
-        STEPControl_AsIs,
-        STEPControl_Controller,
-        STEPControl_Writer,
-    )
 
     from .sharp import Exact, Op, Organic, _leaves
 
@@ -602,19 +596,7 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
         if isinstance(lf, Exact):
             _planes(lf.shape, planes)
     rep = _faces_report(shape, planes)
-    STEPControl_Controller.Init_s()      # registers the write.* parameters before they are set
-    Interface_Static.SetCVal_s("write.step.unit", "MM")
-    Interface_Static.SetCVal_s("write.step.schema", "AP214IS")
-    # no 2-D curves on faces: readers rebuild them, and they were a quarter of the file
-    Interface_Static.SetIVal_s("write.surfacecurve.mode", 0)
-    if name:
-        Interface_Static.SetCVal_s("write.step.product.name", str(name))
-    w = STEPControl_Writer()
-    w.Transfer(shape, STEPControl_AsIs)
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    if int(w.Write(str(path))) != 1:
-        raise RuntimeError(f"OpenCascade could not write {path}")
-    _compact(path)
+    wrote = write_step(shape, path, name=name, verify=bool(check and valid))
     from OCP.TopAbs import TopAbs_SOLID
     from OCP.TopExp import TopExp_Explorer
 
@@ -625,6 +607,10 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
         ex.Next()
     rep.update({"path": str(path), "bytes": os.path.getsize(path), "solids": n, "valid": valid,
                 "volume": round(_volume(shape), 2), "seconds": round(time.time() - t0, 1)})
+    if "pcurves" in wrote:
+        rep["pcurves"] = wrote["pcurves"]
+        rep["readBackValid"] = wrote["readBackValid"]
+        rep["valid"] = bool(valid and wrote["readBackValid"])
     if mesh_volume is not None:
         rep["meshVolume"] = round(mesh_volume, 2)
     if dropped:
@@ -635,19 +621,28 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     return rep
 
 
-def write_step(shape, path, name=None):
-    """Write an OpenCascade shape to STEP (mm, AP214, no 2-D curves, points
-    compacted). Returns {path, bytes, seconds}."""
+def write_step(shape, path, name=None, pcurves=False, verify=False):
+    """Write an OpenCascade shape to STEP (mm, AP214, points compacted),
+    without the faces' 2-D curves unless `pcurves` (readers rebuild them,
+    and they are half the file). `verify` reads the file back and, if the
+    shape no longer passes OpenCascade's check (a reader projecting an edge
+    onto a sliver patch can fail where the writer's own 2-D curve was fine),
+    writes it again with the 2-D curves. Returns {path, bytes, writeSeconds}
+    (and with verify: pcurves, readBackValid)."""
     import time
 
     from OCP.Interface import Interface_Static
-    from OCP.STEPControl import STEPControl_AsIs, STEPControl_Controller, STEPControl_Writer
+    from OCP.STEPControl import (
+        STEPControl_AsIs,
+        STEPControl_Controller,
+        STEPControl_Writer,
+    )
 
     t0 = time.time()
-    STEPControl_Controller.Init_s()
+    STEPControl_Controller.Init_s()      # registers the write.* parameters before they are set
     Interface_Static.SetCVal_s("write.step.unit", "MM")
     Interface_Static.SetCVal_s("write.step.schema", "AP214IS")
-    Interface_Static.SetIVal_s("write.surfacecurve.mode", 0)
+    Interface_Static.SetIVal_s("write.surfacecurve.mode", 1 if pcurves else 0)
     if name:
         Interface_Static.SetCVal_s("write.step.product.name", str(name))
     w = STEPControl_Writer()
@@ -656,7 +651,46 @@ def write_step(shape, path, name=None):
     if int(w.Write(str(path))) != 1:
         raise RuntimeError(f"OpenCascade could not write {path}")
     _compact(path)
-    return {"path": str(path), "bytes": os.path.getsize(path), "writeSeconds": round(time.time() - t0, 1)}
+    out = {"path": str(path), "bytes": os.path.getsize(path), "writeSeconds": round(time.time() - t0, 1)}
+    if verify:
+        ok = shape_valid(read_step(path))
+        if not ok and not pcurves:
+            out = write_step(shape, path, name=name, pcurves=True, verify=True)
+            out["writeSeconds"] = round(time.time() - t0, 1)
+            return out
+        out.update({"pcurves": bool(pcurves), "readBackValid": bool(ok)})
+    return out
+
+
+BIG_SHELL = 8000      # faces: past this a whole-solid check is checked shell by shell
+
+
+def shape_valid(shape, geom=True):
+    """OpenCascade's check (BRepCheck). A solid with an inner shell of more
+    than BIG_SHELL faces is checked shell by shell (each as a solid of its
+    own): the whole-solid check classifies every shell against every other
+    and went past 12 GB on an arm link's 38k-patch void."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_SHELL
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    def nfaces(x):
+        ex, n = TopExp_Explorer(x, TopAbs_FACE), 0
+        while ex.More():
+            n += 1
+            ex.Next()
+        return n
+
+    shells = []
+    ex = TopExp_Explorer(shape, TopAbs_SHELL)
+    while ex.More():
+        shells.append(TopoDS.Shell(ex.Current()))
+        ex.Next()
+    if len(shells) < 2 or max(nfaces(x) for x in shells) <= BIG_SHELL:
+        return bool(BRepCheck_Analyzer(shape, geom).IsValid())
+    return all(BRepCheck_Analyzer(BRepBuilderAPI_MakeSolid(x).Solid(), geom).IsValid() for x in shells)
 
 
 def _compact(path, decimals=POINT_DECIMALS):
@@ -717,36 +751,56 @@ def read_step(path):
     return r.OneShape()
 
 
-def shape_to_trimesh(shape, deflection=0.002, angle=0.05):
+def shape_to_trimesh(shape, deflection=0.002, angle=0.05, chunk=2000):
     """Triangulate an OpenCascade shape finely (chord `deflection` mm) into a
     trimesh: how to measure a B-rep with the mesh tools."""
     import trimesh
-    from OCP.BRep import BRep_Tool
+    from OCP.BRep import BRep_Builder, BRep_Tool
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.BRepTools import BRepTools
     from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopLoc import TopLoc_Location
-    from OCP.TopoDS import TopoDS
+    from OCP.TopoDS import TopoDS, TopoDS_Compound
 
-    BRepMesh_IncrementalMesh(shape, deflection, False, angle, True)
-    V, F = [], []
-    off = 0
+    # in chunks of faces, each meshed (in parallel), read into numpy and its
+    # triangulation dropped: one mesh of a whole lattice part (46k patches,
+    # tens of millions of nodes) held at once went past 13 GB
+    faces = []
     ex = TopExp_Explorer(shape, TopAbs_FACE)
     while ex.More():
-        f = TopoDS.Face(ex.Current())
-        loc = TopLoc_Location()
-        tri = BRep_Tool.Triangulation_s(f, loc)
-        if tri is not None:
-            tr = loc.Transformation()
-            for i in range(1, tri.NbNodes() + 1):
-                p = tri.Node(i).Transformed(tr)
-                V.append((p.X(), p.Y(), p.Z()))
-            rev = f.Orientation() == TopAbs_REVERSED
-            for i in range(1, tri.NbTriangles() + 1):
-                a, b, c = tri.Triangle(i).Get()
-                F.append((off + a - 1, off + c - 1, off + b - 1) if rev else (off + a - 1, off + b - 1, off + c - 1))
-            off += tri.NbNodes()
+        faces.append(TopoDS.Face(ex.Current()))
         ex.Next()
-    m = trimesh.Trimesh(np.asarray(V, float), np.asarray(F, np.int64), process=True)
+    V, F = [], []
+    off = 0
+    bb = BRep_Builder()
+    for c0 in range(0, len(faces), chunk):
+        comp = TopoDS_Compound()
+        bb.MakeCompound(comp)
+        for f in faces[c0:c0 + chunk]:
+            bb.Add(comp, f)
+        BRepMesh_IncrementalMesh(comp, deflection, False, angle, True)
+        for f in faces[c0:c0 + chunk]:
+            loc = TopLoc_Location()
+            tri = BRep_Tool.Triangulation_s(f, loc)
+            if tri is None:
+                continue
+            tr = loc.Transformation()
+            nn, nt = tri.NbNodes(), tri.NbTriangles()
+            v = np.empty((nn, 3))
+            for i in range(nn):
+                p = tri.Node(i + 1).Transformed(tr)
+                v[i] = p.X(), p.Y(), p.Z()
+            t = np.empty((nt, 3), np.int64)
+            for i in range(nt):
+                t[i] = tri.Triangle(i + 1).Get()
+            if f.Orientation() == TopAbs_REVERSED:
+                t = t[:, [0, 2, 1]]
+            V.append(v)
+            F.append(t - 1 + off)
+            off += nn
+        BRepTools.Clean_s(comp)
+    m = trimesh.Trimesh(np.concatenate(V) if V else np.zeros((0, 3)),
+                        np.concatenate(F) if F else np.zeros((0, 3), np.int64), process=True)
     m.merge_vertices(digits_vertex=6)
     return m

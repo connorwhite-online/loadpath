@@ -1240,10 +1240,13 @@ with the other pairing (ibrep.manifold_nets), and the void closes
 (31.9k patches at 0.35 mm). The STEP then writes and reads back, but
 OpenCascade rejects it: 2070 free edges, nearly all within 0.06 mm of
 the box faces where the open void is cut, and the solid holds 156 mm³ of
-the STL's 516 (36 min). The conformal field there is not a true distance
-(10% of the void patches fold, against 4% on the skinned block), so the
-split's field-based choice of pieces disagrees with the patches along
-the faces. Not fixed.
+the STL's 516 (36 min). The cause is the conformal field, not the split: deep inside the box its
+gradient runs from 0 to 5 times a distance's (the frame's phases there
+come from the quiet fill, not the skin), so 8-13% of the void patches fold
+everywhere inside (none in the same block in a cartesian frame) and the cut
+breaks where they reach the faces. A layerSmoothing of 0.5 or C1 blending
+of the phase grid did not change that, and the lattice outside the box is
+smooth. Not fixed; the fix belongs in the conformal frame.
 
 A conformal frame's `layerSmoothing` (0-1, default 0) rounds the layer
 coordinate where the surface's distance folds (its medial axis: the
@@ -1262,11 +1265,37 @@ The report flags a solid more than 1.5% heavier than the STL
 not re-mesh finer on its own, since meshing those pockets finer made
 OpenCascade's solid check crash.
 
-Not yet: a full-size strut part. The arm link sandwich with a 12 mm octet
-core (cell 12, struts 2 mm, skin 1.2 mm; 42k void patches, 20 sealed voids,
-72 MB, about 90 minutes) writes, but reads back invalid and 24% heavier
-than the STL, so some of its voids are lost on the way out; not yet
-diagnosed.
+A full-size strut part: the arm link sandwich with a 12 mm octet core
+(cell 12, struts 2 mm, blend 0.4, skin 1.2 mm; patches 1 mm, 43.8k void
+patches, 50 sealed voids, about 25 minutes) is one valid solid in
+OpenCascade and reads back valid, 52 shells (outside, cable channel, 50
+voids), 0.33% over the STL, 147 MB. STEP to STL 0.008 / 0.14 / 0.52 mm
+(mean / p99 / max), STL to STEP 0.012 / 0.27 / 2.1 mm: the STL's far points
+are most likely pockets thinner than the 1 mm patches (the solid is a
+little heavier, under the 1.5% the report flags); a finer `latticeGrid`
+would catch more of them. Three things had made it invalid, none
+of them in the lattice's own patches:
+
+- where the envelope's field is a loose bound on the distance (inside a
+  bore's end, where the bore cylinder runs past the part), the cap band
+  outside the envelope closed small void bubbles that lie wholly outside
+  the part; they were taken for open pores and sent a skinned part through
+  the split. A void shell with every vertex outside the envelope is now
+  dropped (`void.outsideComponents`);
+- after the split, every sewn shell was turned to face out and the extra
+  ones written as solids of their own, so the cable channel (an inner
+  shell of the envelope) came out as a filled cylinder. Now the biggest
+  shell is the outside and a shell inside it is a cavity
+  (`split.cavities`); sealed voids are checked again against the cut solid;
+- a few sliver patches on the envelope (0.01 mm wide, at a bore's rim)
+  pass OpenCascade's check in memory but not once a reader rebuilds the
+  faces' 2-D curves, which the STEP leaves out to save space. `write_step`
+  can read the file back and write it again with the 2-D curves
+  (`export_step` does; the report says `pcurves`, `readBackValid`), and the
+  lattice part is written with them when its envelope needed them.
+
+`stl_distance` tessellates coarser past 10k faces (0.01 mm on the arm
+link's 46k patches took over 13 GB).
 
 Not yet: an open **Voronoi** foam. Its void closes and the split takes 12
 s, but one envelope face comes out invalid: two void sheets cross the box

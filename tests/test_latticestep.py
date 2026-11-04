@@ -132,6 +132,30 @@ def test_exact_skinned_strut_lattice():
         assert st["complete"] == (not heavy), st
 
 
+def test_open_lattice_keeps_a_sealed_hole_as_a_cavity():
+    """An open octet block round a sealed hole (a sphere with a 1 mm liner,
+    like the arm link's cable channel): the envelope's inner shell goes
+    through the split as a cavity of the one solid, not as a solid body of
+    its own (which filled the hole: the arm link read back invalid)."""
+    if not available():
+        print("  (skipped: no OpenCascade)")
+        return
+    doc = _block({"op": "lattice", "type": "octet", "cell": 4.0, "thickness": 0.9, "blend": 0.3})
+    n = doc["nodes"]
+    n["hole"] = {"op": "shape", "shape": {"type": "sphere", "center": [0, 0, 0], "r": 1.6}}
+    n["liner"] = {"op": "shell", "input": "hole", "side": "outside", "thickness": 1.0}
+    n["joined"] = {"op": "union", "inputs": ["fill", "liner"], "blend": 0.3}
+    n["part"] = {"op": "subtract", "inputs": [{"op": "intersect", "inputs": ["joined", "box"]}, "hole"]}
+    doc["step"] = {"lattice": "exact"}
+    with tempfile.TemporaryDirectory() as td:
+        mesh, rep = run_field(doc, out_dir=td, render=False)
+        st = rep["step"]
+        assert "error" not in st, st
+        assert st["split"]["cavities"] == 1 and st["split"]["bodies"] == 1, st["split"]
+        assert st["valid"] and st["readBack"]["ok"], st
+        assert abs(st["volume"] - mesh.volume) < 0.03 * mesh.volume, (st["volume"], mesh.volume)
+
+
 def test_cavities_needs_a_sheet_lattice():
     if not available():
         print("  (skipped: no OpenCascade)")
