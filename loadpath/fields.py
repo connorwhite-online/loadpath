@@ -770,13 +770,22 @@ class _ConformalMap:
         return out
 
     @staticmethod
-    def defect_fill(coh, lo=0.1, hi=0.35):
+    def defect_fill(coh, lo=0.1, hi=0.6):
         """1 where the cells are regular, falling to 0 round a phase defect:
         there the cells shrink to nothing (the phase winds round the defect
         line), so strut and sheet distances pile into a knot of sub-mm
         features that neither the mesher nor STEP patches resolve. The
         lattice's unit distance is scaled by this, so a defect prints as a
-        small solid node, continuously, instead."""
+        small solid node, continuously, instead.
+
+        The ramp reaches out to coherence 0.6: with it ending at 0.35, 70%
+        of the folded void patches of an open 12 mm conformal octet block
+        (cell 6) sat round defects (69% of patches folded below 0.35, 38%
+        at 0.35-0.6, 3.5% above 0.9, about what straight cells fold), and
+        its STEP failed where they met the faces. 0.1-0.6 halves the folds
+        (12% -> 6.7% on a corner of the block) for 7% more lattice mass on
+        that block, where defects fill much of the volume (a 2-cell box);
+        0.3-0.7 folds 5.9% for 17%, 0.5-0.9 6.6% for 46%."""
         q = np.clip((coh - lo) / (hi - lo), 0.0, 1.0)
         return q * q * (3 - 2 * q)
 
