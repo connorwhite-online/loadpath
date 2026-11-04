@@ -304,7 +304,7 @@ _GOAL = {
                                     "support included, as sliced (graded, with slicer.grade)."},
         "buckling": {"type": "boolean",
                      "description": "Whether the safety factor must hold against buckling too (default true): "
-                                    "the part's linear buckling load factor, on a grid of at most 20k cells, "
+                                    "the part's linear buckling load factor, on a grid of at most 12k cells, "
                                     "must reach safetyFactor. false still reports it (report.buckling)."},
     },
     "x-requireOne": [["volumeFraction"], ["safetyFactor"], ["maxDeflection"]],

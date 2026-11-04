@@ -712,10 +712,10 @@ def _thin_spots(hm, solid, origin, pitch, vm, body, peak, radius, taken, count=3
 # factors the stiffness once and solves with it every iteration, so the cost
 # grows fast with size: the 23 g wall bracket took 11 s at 5k cells, 17 s at
 # 21k and 144 s at 71k (5.7 GB). The coarse grid reads low, the safe side:
-# 1.44 / 1.37 at 5k / 21k cells against 1.81-1.83 at 42-71k.
-BUCKLING_CELLS = 20_000
-# A part this far under its stress safety factor fails anyway: no eigensolve.
-_BUCKLING_SKIP = 0.5
+# 1.44 / 1.54 / 1.37 at 5k / 11k / 21k cells against 1.81-1.83 at 42-71k.
+# The search verifies every outcome, so this is per outcome: at 20k cells
+# the arm link and turret spent 37-52 s each.
+BUCKLING_CELLS = 12_000
 
 
 def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float | None,
@@ -742,7 +742,7 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
     fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, bc.fixed) if bc.gravity is not None else None
     spreads = bc.spreads or [None] * len(study.load_cases)
     rhs, layout = expand(bc.loads, spreads, fg)
-    cases = []
+    forces = []
     for ci, case in enumerate(study.load_cases):
         idx, d = layout[ci], directions[ci]
         if len(idx) == 1:
@@ -751,31 +751,35 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
             f = sum(d[j] * rhs[i] for j, i in enumerate(idx[1:]))
             if idx[0] is not None:
                 f = f + rhs[idx[0]]
-        springs = mat.E * bc.springs if bc.springs is not None else None
-        # pieces no support holds would float: left out (a pin's springs hold)
-        hold = bc.fixed.copy()
-        if springs is not None:
-            hold |= np.asarray(abs(springs).sum(axis=1)).ravel() > 0
-        sub, el, _, vecs = solid_submesh(hm, np.ones(hm.n_elem, bool), hold, [f, bc.fixed.astype(float)])
-        if sub.n_elem == 0 or not np.any(vecs[0]):
-            cases.append({"name": case.name, "factor": None})
-            continue
-        fixed = vecs[1] > 0.5
+        forces.append(f)
+    springs = mat.E * bc.springs if bc.springs is not None else None
+    # pieces no support holds would float: left out (a pin's springs hold)
+    hold = bc.fixed.copy()
+    if springs is not None:
+        hold |= np.asarray(abs(springs).sum(axis=1)).ravel() > 0
+    sub, el, _, vecs = solid_submesh(hm, np.ones(hm.n_elem, bool), hold, [bc.fixed.astype(float)] + forces)
+    fixed, forces = vecs[0] > 0.5, vecs[1:]
+    loaded = [i for i, f in enumerate(forces) if np.any(f)]
+    cases = [{"name": c.name, "factor": None} for c in study.load_cases]
+    if sub.n_elem and loaded:
         ks = None
         if springs is not None:
             dofs = (3 * hm.node_id(sub.node_ijk)[:, None] + np.arange(3)).ravel()
             ks = springs[dofs][:, dofs].tocsr()
         try:
-            r = linear_buckling(sub, mat.nu, mat.E, fixed, vecs[0], n_modes=1,
-                                springs=ks, direct_max_dof=10 ** 6)
-            lam = float(r.factors[0])
-            mode = r.modes[0].reshape(-1, 3)
-            at = sub.node_xyz[int(np.argmax(np.linalg.norm(mode, axis=1)))].tolist()
+            # one factorization for every case; three to four digits of the
+            # factor are plenty (tol)
+            res = linear_buckling(sub, mat.nu, mat.E, fixed, [forces[i] for i in loaded], n_modes=1,
+                                  springs=ks, direct_max_dof=10 ** 6, tol=1e-5)
         except (RuntimeError, ValueError, ArithmeticError) as exc:
-            cases.append({"name": case.name, "factor": None, "error": str(exc)})
-            continue
-        cases.append({"name": case.name, "factor": lam if np.isfinite(lam) else None,
-                      **({"modeAt": at} if np.isfinite(lam) else {})})
+            for i in loaded:
+                cases[i]["error"] = str(exc)
+            res = []
+        for i, r in zip(loaded, res):
+            lam = float(r.factors[0])
+            if np.isfinite(lam):
+                mode = r.modes[0].reshape(-1, 3)
+                cases[i].update(factor=lam, modeAt=sub.node_xyz[int(np.argmax(np.linalg.norm(mode, axis=1)))].tolist())
     got = [c["factor"] for c in cases if c["factor"] is not None]
     return {"factor": min(got) if got else None, "cases": cases, "pitch": pb,
             "cells": int(hm.n_elem), "seconds": time.time() - t0}
@@ -1163,8 +1167,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     report["cases"] = cases
     report["safetyFactor"] = worst_sf
     goal_sf = study.goal.safety_factor
-    if goal_sf and not study.self_equilibrated and worst_sf >= _BUCKLING_SKIP * goal_sf:
-        # the safety factor holds against buckling too (study._margin)
+    if goal_sf and not study.self_equilibrated:
+        # the safety factor holds against buckling too (study._margin). Read
+        # for every part, however far under its stress safety factor: the
+        # tet confirm can lift a voxel reading 2.5x (the MBB beam, 0.78 to
+        # 1.97), and a part it lifts must not pass unchecked.
         try:
             bk = _buckling(study, mesh, vol, pitch, contact_band, worst_dirs)
         except (RuntimeError, ValueError, MemoryError) as exc:

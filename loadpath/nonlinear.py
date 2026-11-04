@@ -763,9 +763,9 @@ def _geometric(stiff, u, mod, nu):
     return stiff.finish(data, diag=0.0)
 
 
-def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force: np.ndarray,
+def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force,
                     n_modes: int = 3, springs=None, element: str | None = None,
-                    direct_max_dof: int | None = None) -> BucklingResult:
+                    direct_max_dof: int | None = None, tol: float = 1e-8):
     """Smallest positive load factors lambda at which lambda * force buckles
     the part (linear eigenvalue buckling: exact for a perfect column, an
     upper bound for real parts with imperfections; take a margin of 2-3 on
@@ -774,7 +774,9 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     `direct_max_dof` (default DIRECT_MAX_DOF) is the size up to which K is
     factored directly: the eigensolver solves with K every iteration, and a
     factorization pays for itself many times over (a 21k-cell bracket: 17 s
-    direct, 144 s CG + AMG)."""
+    direct, 144 s CG + AMG). A list of forces returns a list of results,
+    all on the one factorization. `tol` is the eigensolver's relative
+    tolerance."""
     mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,)).copy()
     # solve_nonlinear's element (incompatible modes by default), so the load
     # factor and the post-buckling path it seeds are one model's; the plain
@@ -793,26 +795,30 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     else:
         sol = Solver(mesh, rtol=1e-10, maxiter=3000)
         kinv = lambda r: sol.solve(k, r)  # noqa: E731
-    f = np.asarray(force, float).copy()
-    f[np.asarray(fixed, bool)] = 0.0
-    u = kinv(f)
-    kg = _geometric(stiff, u, mod, nu)
-    # K phi = lambda (-Kg) phi  <=>  (-Kg) phi = (1 / lambda) K phi: the
-    # largest positive 1/lambda are the smallest positive buckling loads.
     n = mesh.n_dof
     nm = min(n_modes, n - 2)
     minv = LinearOperator((n, n), matvec=kinv, dtype=float)
-    mu, vec = eigsh(-kg, k=nm, M=k, Minv=minv, which="LA", tol=1e-8)
-    order = np.argsort(-mu)
-    mu, vec = mu[order], vec[:, order]
-    pos = mu > 1e-12
-    factors = np.full(len(mu), np.inf)
-    factors[pos] = 1.0 / mu[pos]
-    modes = vec.T.copy()
-    for m in modes:
-        big = np.abs(m.reshape(-1, 3)).max() or 1.0
-        m /= big
-    return BucklingResult(factors=factors, modes=modes, u=u)
+    many = isinstance(force, (list, tuple))
+    out = []
+    for fv in (force if many else [force]):
+        f = np.asarray(fv, float).copy()
+        f[np.asarray(fixed, bool)] = 0.0
+        u = kinv(f)
+        kg = _geometric(stiff, u, mod, nu)
+        # K phi = lambda (-Kg) phi  <=>  (-Kg) phi = (1 / lambda) K phi: the
+        # largest positive 1/lambda are the smallest positive buckling loads.
+        mu, vec = eigsh(-kg, k=nm, M=k, Minv=minv, which="LA", tol=tol)
+        order = np.argsort(-mu)
+        mu, vec = mu[order], vec[:, order]
+        pos = mu > 1e-12
+        factors = np.full(len(mu), np.inf)
+        factors[pos] = 1.0 / mu[pos]
+        modes = vec.T.copy()
+        for m in modes:
+            big = np.abs(m.reshape(-1, 3)).max() or 1.0
+            m /= big
+        out.append(BucklingResult(factors=factors, modes=modes, u=u))
+    return out if many else out[0]
 
 
 def solid_submesh(mesh: HexMesh, keep: np.ndarray, fixed: np.ndarray, vectors: list):
