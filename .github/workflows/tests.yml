@@ -64,5 +64,5 @@ jobs:
         with:
           node-version: "22"
       - run: pip install -e ".[render]"
-      - run: npm install -g playwright && npx playwright install --with-deps chromium
+      - run: npm install -g playwright@1.64.1 && npx playwright install --with-deps chromium
       - run: NODE_PATH="$(npm root -g)" python tests/test_editor.py
