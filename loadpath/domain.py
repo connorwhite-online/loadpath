@@ -366,7 +366,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
                                  "forces cancel on the same grid nodes (a fastener's seat and face rings closer "
                                  "than a cell, or equal and opposite loads on one region). Lengthen the grip, "
                                  "use a finer pitch, or drop the case")
-            if case.name == "preload" and study.raw.get("fasteners"):
+            if case.name == "preload" and study.joints:
                 raise _HeldPreload(case.name)
             raise ValueError(f"load case {case.name!r} acts only on fixed nodes; "
                              "a load applied where the part is held does nothing: load a region the supports "

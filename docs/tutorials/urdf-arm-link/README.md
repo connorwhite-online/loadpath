@@ -168,7 +168,9 @@ The tests run these commands with `LOADPATH_QUICK=1` (or add `--quick`):
 outcomes searched, and `verify` on 20,000 cells. All four commands take
 about four minutes. The sweep is smaller, so the governing cases can come
 out as stalls instead of pushes, and the numbers move: read a quick run for
-direction.
+direction. On the quick grid the hand-loaded part can even read as passing
+the derived cases (SF about 2.2); it still sits inside the neighbours'
+sweeps, which is what the quick test holds it to.
 
 ## Make it yours
 

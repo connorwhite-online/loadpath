@@ -560,7 +560,6 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
         cc = F[idx, (j + 2) % 3]
         m = M[idx, j]
         out += [np.stack([a, m, cc], 1), np.stack([m, b, cc], 1)]
-        del r
     # two split edges: the lone corner and a quad
     idx = np.flatnonzero(c == 2)
     if len(idx):

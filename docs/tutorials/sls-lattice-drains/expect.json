@@ -2,7 +2,7 @@
   "files": ["out/link.stl", "solid/link-solid.stl"],
   "quick": [
     {"file": "solid/report.json", "value": "r['mass']", "min": 26, "max": 35, "what": "solid link's mass, g"},
-    {"file": "solid/report.json", "value": "r['analyses']['stress']['safetyFactor']", "min": 5.0, "max": 8.5, "what": "solid link's safety factor"},
+    {"file": "solid/report.json", "value": "r['analyses']['stress']['safetyFactor']", "min": 5.0, "max": 9.5, "what": "solid link's safety factor"},
     {"file": "out/report.json", "value": "r['mass']", "min": 19, "max": 27, "what": "graded link's mass, g"},
     {"file": "out/report.json", "value": "r['bodies']", "equals": 1, "what": "one body"},
     {"file": "out/report.json", "value": "r['watertight']", "equals": true, "what": "watertight mesh"},

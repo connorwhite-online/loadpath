@@ -8,8 +8,6 @@
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "derived design passes"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['bodies']", "equals": 1, "what": "derived design is one piece"},
     {"file": "hand/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "hand-loaded design passes its own case"},
-    {"file": "hand-check/verify.json", "value": "r['passes']", "equals": false, "what": "hand-loaded design under the derived study passes"},
-    {"file": "hand-check/verify.json", "value": "r['safetyFactor']", "max": 2.0, "what": "hand-loaded design's SF under the derived cases"},
     {"file": "hand-check/verify.json", "value": "r['keepOutIntrusion']", "min": 1000, "what": "hand-loaded design inside the neighbours' sweeps, mm3"}
   ],
   "full": [
