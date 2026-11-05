@@ -15,7 +15,10 @@ if it is right for the brief, not for whatever problem the agent wrote down:
            gold interface present, gold safety factor >= SF_SLACK x target in
            every gold load case, deflection where the brief asks, and the
            brief's mass limit (or, without one, at most half the solid
-           envelope's mass: exporting the design space is not a design)
+           envelope's mass: exporting the design space is not a design);
+           cast and milled briefs also read the gold study's mold or cutter
+           (maxUndercutVolume, maxUnderDraftedArea, maxToolUnreachableVolume,
+           maxMachiningMinutes off manufacture.report)
 
 Run:
     python -m loadpath.evals.briefs list
@@ -24,7 +27,11 @@ Run:
     python -m loadpath.evals.briefs score <id> part.stl
     python -m loadpath.evals.briefs run --out briefs-out/ [--jobs 4] [ids...]
         drives a headless agent (`claude -p`, loadpath MCP server + CLI) per
-        brief in its own empty folder, then scores what it left behind;
+        brief in its own empty folder, then scores what it left behind; an
+        agent that stops while its background run goes is resumed when the
+        run ends (a headless session gets no notification). Install the
+        agent's loadpath with [mcp,crosscheck,render], and on a 4-core box
+        use --jobs 2 --threads 1;
         writes briefs-out/scorecard.json and scorecard.md.
     python -m loadpath.evals.briefs table briefs-out/   # re-score / re-tabulate
 
@@ -55,6 +62,22 @@ MAX_MISSING = 30.0       # mm^3 of gold interface missing
 MAX_OUTSIDE = 100.0      # mm^3 of part outside the envelope
 MAX_SOLID_FRACTION = 0.5  # without a stated mass, at most half the solid envelope (no "export the box")
 VERIFY_CELLS = 40_000
+
+
+def _get(m, *keys):
+    for k in keys:
+        m = m.get(k) if isinstance(m, dict) else None
+    return m
+
+
+# cast and milled briefs: pass keys read off manufacture.report under the gold study
+MAKING = {
+    "maxUndercutVolume": lambda m: None if not m.get("access") else
+    m["access"]["undercutVolume"] - m["access"]["undercutInKeepOuts"],
+    "maxUnderDraftedArea": lambda m: _get(m, "draft", "underDraftedArea"),
+    "maxToolUnreachableVolume": lambda m: _get(m, "machining", "toolUnreachableVolume"),
+    "maxMachiningMinutes": lambda m: _get(m, "machining", "minutes", "total"),
+}
 
 PROMPT = """{brief}
 
@@ -182,6 +205,24 @@ def score(brief: dict, stl: str, max_cells: int = VERIFY_CELLS) -> dict:
         for c in row["cases"]:
             if c["deflection"] is not None and c["deflection"] > DEFLECTION_SLACK * dmax:
                 f.append(f"deflection {c['deflection']:.3f} > {dmax} mm in '{c['name']}'")
+    making = {k: want[k] for k in MAKING if want.get(k) is not None}
+    if making:
+        # cast or milled: the GOLD study's mold or cutter judges the part
+        try:
+            from ..domain import build_domain, choose_pitch
+            from ..manufacture import report as manufacturing_report
+
+            m = manufacturing_report(study, build_domain(study, pitch=choose_pitch(study)), mesh) or {}
+        except Exception as exc:  # noqa: BLE001
+            m = {}
+            f.append(f"manufacturing check failed: {str(exc)[:160]}")
+        for key, lim in making.items():
+            v = MAKING[key](m)
+            row[key[3].lower() + key[4:]] = None if v is None else round(float(v), 1)
+            if v is None:
+                f.append(f"no {key[3:]} reading under the gold study")
+            elif v > lim:
+                f.append(f"{key[3:]} {v:.0f} > {lim}")
     mmax = want.get("maxMass")
     row["solidFraction"] = round(rep["mass"] / rep["designSpaceMass"], 3) if rep.get("designSpaceMass") else None
     if mmax and rep["mass"] > MASS_SLACK * mmax:
@@ -238,34 +279,87 @@ def prepare(brief: dict, out: str, max_elements: int = 20000) -> tuple[str, str]
     return work, text
 
 
-# Headless agents get exactly the tools the task needs, not a blanket bypass.
-ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "mcp__loadpath", "Bash(loadpath:*)",
-                 "Bash(python -m loadpath:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)"]
+# Headless agents get the tools the task needs. Bash is whole: an agent's shell
+# work (redirects, a detached run, a quick python one-liner) is ordinary use,
+# and a narrow allowlist mostly measured the harness's permission prompts.
+ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "mcp__loadpath", "Bash", "Monitor", "ToolSearch"]
+
+RESUME = ("The background run you were waiting on has ended (loadpath status shows how). Carry on with the "
+          "brief from where you left off and leave the files it asks for.")
+
+
+def _live_runs(work: str) -> list[str]:
+    """--out folders under `work` whose run is still going (status.json with a live pid)."""
+    from ..__main__ import run_status
+
+    live = []
+    for st in glob.glob(os.path.join(work, "**", "status.json"), recursive=True):
+        try:
+            if run_status(os.path.dirname(st)).get("state") == "running":
+                live.append(os.path.dirname(st))
+        except (OSError, ValueError):
+            pass
+    return live
+
+
+def _session_id(transcript: str) -> str | None:
+    sid = None
+    try:
+        with open(transcript) as fh:
+            for line in fh:
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                sid = ev.get("session_id") or sid
+    except OSError:
+        pass
+    return sid
 
 
 def run_agent(brief: dict, out: str, agent: str = "claude", model: str | None = None, timeout: float = 3600,
-              max_elements: int = 20000, threads: int = 2) -> dict:
+              max_elements: int = 20000, threads: int = 2, resumes: int = 4) -> dict:
+    """One headless agent on one brief. A headless agent cannot be told when
+    its background run ends (an interactive one gets a notification), so
+    when it stops while a loadpath run it started is still going, the
+    harness waits for the run and resumes the same session, up to
+    `resumes` times: what the agent would have seen, not a hint."""
     work, text = prepare(brief, out, max_elements)
     cfg = os.path.join(out, f".{brief['id']}.mcp.json")
     _mcp_config(cfg)
     env = dict(os.environ, LOADPATH_HOME=os.path.join(out, f".{brief['id']}.jobs"))
     for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS"):
         env[k] = str(threads)
-    cmd = [agent, "-p", text, "--output-format", "stream-json", "--verbose", "--mcp-config", cfg,
-           "--allowedTools", *ALLOWED_TOOLS, "--max-turns", "150"]
+    base = ["--output-format", "stream-json", "--verbose", "--mcp-config", cfg,
+            "--allowedTools", *ALLOWED_TOOLS, "--max-turns", "150"]
     if model:
-        cmd += ["--model", model]
+        base += ["--model", model]
     t0 = time.time()
     status = "ok"
-    with open(os.path.join(work, ".transcript.jsonl"), "w") as tf, open(os.path.join(work, ".agent.err"), "w") as ef:
-        try:
-            subprocess.run(cmd, cwd=work, env=env, stdout=tf, stderr=ef, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            status = "timeout"
+    transcript = os.path.join(work, ".transcript.jsonl")
+    cmd = [agent, "-p", text, *base]
+    n_resumed = 0
+    while True:
+        left = timeout - (time.time() - t0)
+        with open(transcript, "a") as tf, open(os.path.join(work, ".agent.err"), "a") as ef:
+            try:
+                subprocess.run(cmd, cwd=work, env=env, stdout=tf, stderr=ef, timeout=max(left, 1))
+            except subprocess.TimeoutExpired:
+                status = "timeout"
+                break
+        if n_resumed >= resumes or not _live_runs(work):
+            break
+        while _live_runs(work) and time.time() - t0 < timeout:
+            time.sleep(15)
+        sid = _session_id(transcript)
+        if sid is None or time.time() - t0 >= timeout:
+            break
+        n_resumed += 1
+        cmd = [agent, "-p", RESUME, "--resume", sid, *base]
     seconds = time.time() - t0
     row = score_dir(brief, work)
     row.update(_tool_stats(os.path.join(work, ".transcript.jsonl")))
-    row.update({"seconds": round(seconds, 1), "agentStatus": status,
+    row.update({"seconds": round(seconds, 1), "agentStatus": status, "resumed": n_resumed,
                 "studyWritten": os.path.exists(os.path.join(work, "study.json")), "tags": brief.get("tags", [])})
     with open(os.path.join(work, "score.json"), "w") as fh:
         json.dump(row, fh, indent=1)

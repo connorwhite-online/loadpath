@@ -1,0 +1,130 @@
+{
+ "name": "cast-arm-link",
+ "description": "The arm link die-cast in A356-T6 aluminium in a two-part die opening along z: every hole runs straight along the draw, `casting.draft` builds 2 deg of draft into every wall (checked facet by facet in report.manufacturing.draft), and nothing undercuts the die. Use a library metal (a356-t6, 6061-t6, 7075-t6, 304) for cast and milled parts, not an AM card.",
+ "designSpace": [
+  {
+   "type": "box",
+   "min": [
+    -16,
+    -18,
+    -12
+   ],
+   "max": [
+    156,
+    18,
+    12
+   ]
+  }
+ ],
+ "preserve": [
+  {
+   "id": "shoulder-boss",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 24,
+    "r": 16
+   }
+  },
+  {
+   "id": "wrist-boss",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     140,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 24,
+    "r": 15
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "shoulder-bearing",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 30,
+    "r": 11
+   }
+  },
+  {
+   "id": "wrist-bearing",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     140,
+     0,
+     0
+    ],
+    "axis": "z",
+    "length": 30,
+    "r": 11
+   }
+  }
+ ],
+ "supports": [
+  {
+   "region": "shoulder-bearing"
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "payload",
+   "loads": [
+    {
+     "region": "wrist-bearing",
+     "force": [
+      0,
+      -40,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "side",
+   "loads": [
+    {
+     "region": "wrist-bearing",
+     "force": [
+      0,
+      0,
+      15
+     ]
+    }
+   ]
+  }
+ ],
+ "material": "a356-t6",
+ "goal": {
+  "safetyFactor": 3.0,
+  "maxDeflection": 0.5,
+  "volumeFraction": 0.3
+ },
+ "minMember": 3.0,
+ "symmetry": [
+  "z"
+ ],
+ "resolution": {
+  "maxElements": 20000
+ },
+ "casting": {
+  "draw": "+z",
+  "sides": 2,
+  "draft": 2
+ }
+}

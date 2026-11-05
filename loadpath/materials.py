@@ -81,6 +81,10 @@ _ALIASES = {
     "pa12gf": "pa12-gf", "pa 3200 gf": "pa12-gf", "pa3200gf": "pa12-gf",
     "tpu 88a": "tpu88a", "tpu-88a": "tpu88a", "sla": "resin", "standard resin": "resin", "tough resin": "resin-tough",
     "rigid resin": "resin-rigid",
+    "6061": "6061-t6", "al 6061": "6061-t6", "6061 aluminium": "6061-t6", "6061 aluminum": "6061-t6",
+    "7075": "7075-t6", "al 7075": "7075-t6", "a356": "a356-t6", "a356.0": "a356-t6",
+    "cast aluminium": "a356-t6", "cast aluminum": "a356-t6", "304 stainless": "304", "ss304": "304",
+    "304l": "304",
     "verowhite": "vero", "vero white": "vero", "agilus": "agilus30", "agilus 30": "agilus30",
 }
 

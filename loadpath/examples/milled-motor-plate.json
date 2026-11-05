@@ -1,0 +1,219 @@
+{
+ "name": "milled-motor-plate",
+ "description": "A motor plate machined from 6061-T6 on a 3-axis mill, cut from the top (+z) in one setup with a 6 mm smallest end mill: every pocket opens upward, no inside corner tighter than the cutter. Four M5 screws hold it down, the motor pulls 800 N on its centre boss. report.manufacturing.machining gives tool reach, setups and a rough time and cost; milling.rates overrides the shop rates.",
+ "designSpace": [
+  {
+   "type": "box",
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    120,
+    40,
+    12
+   ]
+  }
+ ],
+ "preserve": [
+  {
+   "id": "screw-bosses",
+   "shape": {
+    "type": "union",
+    "shapes": [
+     {
+      "type": "cylinder",
+      "center": [
+       8,
+       8,
+       6
+      ],
+      "axis": "z",
+      "length": 12,
+      "r": 6
+     },
+     {
+      "type": "cylinder",
+      "center": [
+       112,
+       8,
+       6
+      ],
+      "axis": "z",
+      "length": 12,
+      "r": 6
+     },
+     {
+      "type": "cylinder",
+      "center": [
+       8,
+       32,
+       6
+      ],
+      "axis": "z",
+      "length": 12,
+      "r": 6
+     },
+     {
+      "type": "cylinder",
+      "center": [
+       112,
+       32,
+       6
+      ],
+      "axis": "z",
+      "length": 12,
+      "r": 6
+     }
+    ]
+   }
+  },
+  {
+   "id": "motor-boss",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     60,
+     20,
+     6
+    ],
+    "axis": "z",
+    "length": 12,
+    "r": 11
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "m5",
+   "shape": {
+    "type": "union",
+    "shapes": [
+     {
+      "type": "cylinder",
+      "center": [
+       8,
+       8,
+       6
+      ],
+      "axis": "z",
+      "length": 16,
+      "r": 2.75
+     },
+     {
+      "type": "cylinder",
+      "center": [
+       112,
+       8,
+       6
+      ],
+      "axis": "z",
+      "length": 16,
+      "r": 2.75
+     },
+     {
+      "type": "cylinder",
+      "center": [
+       8,
+       32,
+       6
+      ],
+      "axis": "z",
+      "length": 16,
+      "r": 2.75
+     },
+     {
+      "type": "cylinder",
+      "center": [
+       112,
+       32,
+       6
+      ],
+      "axis": "z",
+      "length": 16,
+      "r": 2.75
+     }
+    ]
+   }
+  },
+  {
+   "id": "motor-bore",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     60,
+     20,
+     6
+    ],
+    "axis": "z",
+    "length": 16,
+    "r": 5
+   }
+  }
+ ],
+ "supports": [
+  {
+   "region": "m5"
+  },
+  {
+   "shape": {
+    "type": "box",
+    "min": [
+     0,
+     0,
+     -0.5
+    ],
+    "max": [
+     120,
+     40,
+     0.3
+    ]
+   },
+   "fix": "z"
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "pull",
+   "loads": [
+    {
+     "region": "motor-bore",
+     "force": [
+      0,
+      0,
+      800
+     ]
+    }
+   ]
+  },
+  {
+   "name": "torque-reaction",
+   "loads": [
+    {
+     "region": "motor-bore",
+     "moment": [
+      0,
+      0,
+      5000
+     ]
+    }
+   ]
+  }
+ ],
+ "material": "6061-t6",
+ "goal": {
+  "safetyFactor": 3,
+  "maxDeflection": 0.05
+ },
+ "milling": {
+  "axes": 3,
+  "directions": [
+   "+z"
+  ],
+  "toolDiameter": 6
+ },
+ "resolution": {
+  "maxElements": 20000
+ }
+}

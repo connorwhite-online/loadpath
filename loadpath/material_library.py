@@ -149,6 +149,11 @@ SOURCES = {
     "handbook": Source(
         "typical wrought/cast handbook value for the alloy (ASM Handbook class data)", "",
         "used where the AM datasheet gives none; AM parts sit within a few percent"),
+    "asm-handbook": Source(
+        "ASM Handbook Vol. 2 (nonferrous) and Vol. 1 (irons and steels), typical room-temperature properties "
+        "of the wrought or cast alloy and temper", "https://dl.asminternational.org/handbooks",
+        "typical values, not design minimums (MMPDS A-basis sits 5-10% lower): set strength from your "
+        "supplier's cert where it matters"),
     "polymer-handbook": Source(
         "typical value for the polymer family (J. E. Mark, Physical Properties of Polymers Handbook, "
         "2nd ed., Springer 2007)", "https://doi.org/10.1007/978-0-387-69002-5",
@@ -455,6 +460,45 @@ LIBRARY = {
                  conductivity=(17.8, "handbook", "W/(m K) at 100 C, 15-5 PH"),
                  cte=(10.8, "handbook", "um/(m K), 20-100 C, 15-5 PH"),
                  retention=([(23, 1.0), (300, 0.9), (500, 0.8)], "dma-estimate", _RET)),
+    # ------------------------------------------- wrought and cast (milled, cast)
+    # For `milling` and `casting` studies: bar, plate and castings, not AM.
+    "6061-t6": _c("6061-T6 aluminium, wrought bar or plate (typical values, ASM Handbook)", ("milling",),
+                  E=(68900, "asm-handbook", "tensile modulus"),
+                  nu=(0.33, "asm-handbook", "6061"),
+                  strength=(276, "asm-handbook", "tensile yield strength, T6 (MMPDS minimum 241 for plate)"),
+                  density=(2.70, "asm-handbook", "6061"),
+                  elongation=(12, "asm-handbook", "% at break, T6"),
+                  conductivity=(167, "asm-handbook", "W/(m K) at 25 C, T6"),
+                  specificHeat=(896, "asm-handbook", "J/(kg K)"),
+                  cte=(23.6, "asm-handbook", "um/(m K), 20-100 C")),
+    "7075-t6": _c("7075-T6 aluminium, wrought bar or plate (typical values, ASM Handbook)", ("milling",),
+                  E=(71700, "asm-handbook", "tensile modulus"),
+                  nu=(0.33, "asm-handbook", "7075"),
+                  strength=(503, "asm-handbook", "tensile yield strength, T6"),
+                  density=(2.81, "asm-handbook", "7075"),
+                  elongation=(11, "asm-handbook", "% at break, T6"),
+                  conductivity=(130, "asm-handbook", "W/(m K) at 25 C, T6"),
+                  specificHeat=(960, "asm-handbook", "J/(kg K)"),
+                  cte=(23.4, "asm-handbook", "um/(m K), 20-100 C")),
+    "a356-t6": _c("A356-T6 cast aluminium, sand or permanent mold (typical sand-cast values, ASM Handbook)",
+                  ("casting",),
+                  E=(72400, "asm-handbook", "tensile modulus"),
+                  nu=(0.33, "asm-handbook", "Al-Si casting alloys"),
+                  strength=(165, "asm-handbook", "tensile yield strength, sand cast T6 (permanent mold T6 185)"),
+                  density=(2.68, "asm-handbook", "A356"),
+                  elongation=(3.5, "asm-handbook", "% at break, sand cast T6"),
+                  conductivity=(151, "asm-handbook", "W/(m K) at 25 C, T6"),
+                  specificHeat=(963, "asm-handbook", "J/(kg K)"),
+                  cte=(21.4, "asm-handbook", "um/(m K), 20-100 C")),
+    "304": _c("304 stainless, wrought, annealed (typical values, ASM Handbook)", ("milling",),
+              E=(193000, "asm-handbook", "tensile modulus"),
+              nu=(0.29, "asm-handbook", "austenitic stainless"),
+              strength=(215, "asm-handbook", "tensile yield strength, annealed"),
+              density=(8.0, "asm-handbook", "304"),
+              elongation=(70, "asm-handbook", "% at break, annealed"),
+              conductivity=(16.2, "asm-handbook", "W/(m K) at 100 C"),
+              specificHeat=(500, "asm-handbook", "J/(kg K)"),
+              cte=(17.3, "asm-handbook", "um/(m K), 0-100 C")),
 }
 
 

@@ -124,8 +124,55 @@ def guarded(fn):
     return wrapper
 
 
-def guide() -> str:
-    return _read(os.path.join(_HERE, "SKILL.md")) + "\n\n---\n\n" + _read(os.path.join(_HERE, "README.md"))
+# guide topics: SKILL.md sections by heading, README.md sections by heading.
+# The default ("core") fits one MCP reply: the whole guide (~60k chars) came
+# back as "result exceeds maximum allowed tokens", saved to a file the agent
+# then had to page through.
+GUIDE_TOPICS = {
+    "core": ("SKILL.md", None),
+    "heat": ("SKILL.md", ["Heat, fatigue and creep"]),
+    "lattice": ("SKILL.md", ["Lattices and heat exchangers"]),
+    "multimaterial": ("SKILL.md", ["Multi-material parts"]),
+    "example": ("SKILL.md", ["A robot arm link, end to end"]),
+    "study": ("README.md", ["The study"]),
+    "report": ("README.md", ["Reading the report", "Limits"]),
+}
+_CORE_SKIP = {"Heat, fatigue and creep", "Lattices and heat exchangers", "Multi-material parts",
+              "A robot arm link, end to end"}
+
+
+def _sections(text: str) -> list[tuple[str, str]]:
+    """[(heading, text)] split on '## ' headings; the preamble has heading ''."""
+    import re
+
+    out, head, buf = [], "", []
+    for line in text.splitlines(keepends=True):
+        m = re.match(r"## (.+)", line)
+        if m:
+            out.append((head, "".join(buf)))
+            head, buf = m.group(1).strip(), []
+        buf.append(line)
+    out.append((head, "".join(buf)))
+    return out
+
+
+def guide(topic: str | None = None) -> str:
+    """The agent guide. topic None/"core": SKILL.md's workflow and the rules
+    every study needs; "heat", "lattice", "multimaterial", "example", "study"
+    (every study field), "report", or "all" (SKILL.md and README.md whole)."""
+    topic = (topic or "core").strip().lower()
+    if topic == "all":
+        return _read(os.path.join(_HERE, "SKILL.md")) + "\n\n---\n\n" + _read(os.path.join(_HERE, "README.md"))
+    if topic not in GUIDE_TOPICS:
+        raise ValueError(f"unknown guide topic {topic!r}: one of {sorted(GUIDE_TOPICS) + ['all']}")
+    fname, heads = GUIDE_TOPICS[topic]
+    secs = _sections(_read(os.path.join(_HERE, fname)))
+    if heads is None:
+        body = "".join(t for h, t in secs if h not in _CORE_SKIP)
+        more = ", ".join(f"'{k}'" for k in GUIDE_TOPICS if k != "core")
+        return (body.rstrip() + f"\n\n---\nMore in loadpath_guide(topic=...): {more}, or 'all'. "
+                "'study' is the reference for every study field (milling, casting, extrusion, fasteners...).\n")
+    return "".join(t for h, t in secs if h in heads)
 
 
 def check(study, base_dir: str | None = None) -> dict:
@@ -609,9 +656,15 @@ def serve():
         return out
 
     @tool
-    def loadpath_guide() -> str:
-        """How to write a study: the workflow, every field, a worked example. Read once per session."""
-        return guide()
+    def loadpath_guide(topic: str | None = None) -> str:
+        """How to turn a request into a study: the workflow and the rules every study needs. Read once per
+        session. topic for more: 'study' (every study field: milling, casting, fasteners...), 'lattice'
+        (lattices, TPMS, heat exchangers), 'heat' (heat, fatigue, creep), 'multimaterial', 'example'
+        (an arm link end to end), 'report', or 'all'."""
+        try:
+            return guide(topic)
+        except ValueError as exc:
+            return str(exc)
 
     @tool
     def loadpath_schema(kind: str = "study") -> dict:
@@ -645,11 +698,16 @@ def serve():
         return start(study, base_dir, lattice)
 
     @tool
-    def loadpath_status(job_id: str) -> list:
+    def loadpath_status(job_id: str, wait: float = 0) -> list:
         """A job's progress, or when done: its results and renders. For a study: every outcome (mass,
         safety factor and deflection per load case, pass/fail, keep-out and preserve checks, an
-        'attention' list of problems, STL path) and a render of the best one."""
+        'attention' list of problems, STL path) and a render of the best one.
+        wait: seconds to block while the job is still running (up to 540), so one call waits for it
+        instead of many polls; keep calling until status is not 'running'."""
         try:
+            t_end = time.time() + min(max(float(wait or 0), 0.0), 540.0)
+            while time.time() < t_end and _alive(job_id, _meta(_job_dir(job_id))):
+                time.sleep(min(5.0, max(0.1, t_end - time.time())))
             return _reply(*status(job_id))
         except ValueError as exc:
             return [json.dumps({"ok": False, "error": str(exc)})]

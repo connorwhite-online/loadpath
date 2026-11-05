@@ -1,0 +1,293 @@
+{
+ "id": "sensor-pod-gyroid-sls",
+ "kind": "lattice",
+ "brief": "The base of a sensor pod on my robot's mast, printed in SLS PA12. It is a 70 x 50 x 30 mm block\n(x = -35 to 35, y = -25 to 25, z = 0 to 30) that sits flat on the mast plate, held by four M4 screws\nalong Z through it at (+/-27, +/-17): 4.5 mm holes, with 10 mm of solid round each. The sensor\nscrews onto the top with two M3 heat-set inserts at (+/-15, 0): 4.2 mm holes from z = 24 to the top.\nKeep the outside exactly as it is, with a closed skin all round (it gets dyed and must look solid),\nbut make the inside a gyroid lattice, and make sure the powder can get out. The sensor is 0.5 kg\nand the mast takes knocks of up to 30 g, so design for 150 N on the inserts, down, along X or along\nY. Safety factor 2. It is 106 g solid; get it under 55 g.",
+ "attachments": [],
+ "tags": [
+  "sls",
+  "lattice",
+  "tpms",
+  "skin",
+  "drains"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     -35,
+     -25,
+     0
+    ],
+    "max": [
+     35,
+     25,
+     30
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "screw-bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        27,
+        17,
+        15
+       ],
+       "axis": "z",
+       "length": 30,
+       "r": 5
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -27,
+        17,
+        15
+       ],
+       "axis": "z",
+       "length": 30,
+       "r": 5
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        27,
+        -17,
+        15
+       ],
+       "axis": "z",
+       "length": 30,
+       "r": 5
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -27,
+        -17,
+        15
+       ],
+       "axis": "z",
+       "length": 30,
+       "r": 5
+      }
+     ]
+    }
+   },
+   {
+    "id": "insert-bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        15,
+        0,
+        26.5
+       ],
+       "axis": "z",
+       "length": 7,
+       "r": 4.6
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -15,
+        0,
+        26.5
+       ],
+       "axis": "z",
+       "length": 7,
+       "r": 4.6
+      }
+     ]
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m4",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        27,
+        17,
+        15
+       ],
+       "axis": "z",
+       "length": 40,
+       "r": 2.25
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -27,
+        17,
+        15
+       ],
+       "axis": "z",
+       "length": 40,
+       "r": 2.25
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        27,
+        -17,
+        15
+       ],
+       "axis": "z",
+       "length": 40,
+       "r": 2.25
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -27,
+        -17,
+        15
+       ],
+       "axis": "z",
+       "length": 40,
+       "r": 2.25
+      }
+     ]
+    }
+   },
+   {
+    "id": "inserts",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        15,
+        0,
+        28
+       ],
+       "axis": "z",
+       "length": 8,
+       "r": 2.1
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        -15,
+        0,
+        28
+       ],
+       "axis": "z",
+       "length": 8,
+       "r": 2.1
+      }
+     ]
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m4"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      -35,
+      -25,
+      -0.5
+     ],
+     "max": [
+      35,
+      25,
+      0.3
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "down",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       0,
+       0,
+       -150
+      ]
+     }
+    ]
+   },
+   {
+    "name": "along-x",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       150,
+       0,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "along-y",
+    "loads": [
+     {
+      "region": "inserts",
+      "force": [
+       0,
+       150,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+   "safetyFactor": 2
+  },
+  "name": "sensor-pod-gyroid-sls",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxMass": 55,
+  "cellular": {
+   "probe": {
+    "min": [
+     -30,
+     -20,
+     5
+    ],
+    "max": [
+     30,
+     20,
+     22
+    ]
+   },
+   "maxFill": 0.6,
+   "minWallsPer10mm": 0.6,
+   "minHull": 0.95
+  },
+  "drains": {
+   "maxEnclosed": 50
+  }
+ }
+}

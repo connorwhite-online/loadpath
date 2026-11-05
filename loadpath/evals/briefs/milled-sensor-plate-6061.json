@@ -1,0 +1,241 @@
+{
+ "id": "milled-sensor-plate-6061",
+ "brief": "A mounting plate for a sensor head on a robot arm, machined from 6061-T6 aluminium plate on a\n3-axis mill. The shop will only cut it from the top (+Z) in one setup, and their smallest end mill\nis 6 mm, so no pocket corner or slot can be tighter than that. The plate is 100 x 60 mm and 15 mm\nthick (x = 0 to 100, y = 0 to 60, z = 0 to 15) with its bottom face flat against the arm. It\nbolts down with four M5 screws along Z at (x, y) = (8, 8), (92, 8), (8, 52) and (92, 52): 5.5 mm\nholes, each in a 14 mm diameter boss the full thickness. The sensor bolts to a 24 mm diameter boss\nin the middle, (50, 30), full thickness, with an M8 hole (8.5 mm) through it. Loads at the sensor:\n8 kN pulling straight up along +Z, or 4 kN sideways along X. Safety factor 2.5, and it should not\nflex more than 0.05 mm. Make it as light as you can, and tell me roughly how long it takes to machine.",
+ "attachments": [],
+ "tags": [
+  "milling",
+  "metal",
+  "tool-reach",
+  "deflection"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0,
+     0,
+     0
+    ],
+    "max": [
+     100,
+     60,
+     15
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "corner-bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        8,
+        8,
+        7.5
+       ],
+       "axis": "z",
+       "length": 15,
+       "r": 7
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        92,
+        8,
+        7.5
+       ],
+       "axis": "z",
+       "length": 15,
+       "r": 7
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        8,
+        52,
+        7.5
+       ],
+       "axis": "z",
+       "length": 15,
+       "r": 7
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        92,
+        52,
+        7.5
+       ],
+       "axis": "z",
+       "length": 15,
+       "r": 7
+      }
+     ]
+    }
+   },
+   {
+    "id": "sensor-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      50,
+      30,
+      7.5
+     ],
+     "axis": "z",
+     "length": 15,
+     "r": 12
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "m5",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        8,
+        8,
+        7.5
+       ],
+       "axis": "z",
+       "length": 20,
+       "r": 2.75
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        92,
+        8,
+        7.5
+       ],
+       "axis": "z",
+       "length": 20,
+       "r": 2.75
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        8,
+        52,
+        7.5
+       ],
+       "axis": "z",
+       "length": 20,
+       "r": 2.75
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        92,
+        52,
+        7.5
+       ],
+       "axis": "z",
+       "length": 20,
+       "r": 2.75
+      }
+     ]
+    }
+   },
+   {
+    "id": "m8",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      50,
+      30,
+      7.5
+     ],
+     "axis": "z",
+     "length": 20,
+     "r": 4.25
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "m5"
+   },
+   {
+    "shape": {
+     "type": "box",
+     "min": [
+      0,
+      0,
+      -0.5
+     ],
+     "max": [
+      100,
+      60,
+      0.3
+     ]
+    },
+    "fix": "z"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "pull",
+    "loads": [
+     {
+      "region": "m8",
+      "force": [
+       0,
+       0,
+       8000
+      ]
+     }
+    ]
+   },
+   {
+    "name": "side",
+    "loads": [
+     {
+      "region": "m8",
+      "force": [
+       4000,
+       0,
+       0
+      ]
+     }
+    ]
+   }
+  ],
+  "material": {
+   "name": "6061-t6",
+   "E": 68900,
+   "nu": 0.33,
+   "strength": 276,
+   "density": 2.7
+  },
+  "goal": {
+   "safetyFactor": 2.5,
+   "maxDeflection": 0.05
+  },
+  "milling": {
+   "axes": 3,
+   "directions": [
+    "+z"
+   ],
+   "toolDiameter": 6
+  },
+  "name": "milled-sensor-plate-6061",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2.5,
+  "maxDeflection": 0.05,
+  "maxToolUnreachableVolume": 100,
+  "maxUndercutVolume": 150
+ }
+}

@@ -361,6 +361,10 @@ def main(argv=None):
     stp = sub.add_parser("status", help="is a background run still going? reads out/status.json and checks its "
                                         "process is alive (a killed run cannot update the file itself)")
     stp.add_argument("out", nargs="?", default="out", help="the run's --out folder (default out)")
+    stp.add_argument("--wait", type=float, metavar="SECONDS",
+                     help="block until the run ends or SECONDS pass, then print its status: one call that fits "
+                          "under an agent's tool timeout (say --wait 540), repeated until the state is not "
+                          "running. Exit code 0 done, 1 failed/killed/died, 3 still running")
     v = sub.add_parser("verify", help="check a finished part against a study: mass, SF per load case, keep-outs")
     v.add_argument("study")
     v.add_argument("part", help="the part's STL, or a `run` output folder (its best outcome)")
@@ -505,7 +509,9 @@ def main(argv=None):
     cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
     cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")
     cal.add_argument("--save", action="store_true", help="fit: also save the card to loadpath/calibrations/")
-    sub.add_parser("guide", help="print the agent guide (SKILL.md: how to turn a request into a study)")
+    gd = sub.add_parser("guide", help="print the agent guide (SKILL.md: how to turn a request into a study)")
+    gd.add_argument("topic", nargs="?", help="core, study (every field), lattice, heat, multimaterial, example, "
+                                             "report, or all (default: all of SKILL.md)")
     im = sub.add_parser("import", help="a STEP/STL part as a draft study: bores, bolt patterns and mounting "
                                        "faces found, interfaces preserved, a support and load suggested")
     im.add_argument("part", help="STEP (.step/.stp, needs loadpath[step]), STL, 3MF or OBJ, in mm")
@@ -615,8 +621,19 @@ def main(argv=None):
     if args.cmd == "assembly":
         return _assembly(args)
     if args.cmd == "status":
-        print(json.dumps(run_status(args.out), indent=1))
-        return 0
+        st = run_status(args.out)
+        if args.wait:
+            t0 = time.time()
+            t_end = t0 + args.wait
+            # a missing status.json gets 30 s to appear (a run just launched), not the whole wait
+            while (st.get("state") == "running" or st.get("state") == "none" and time.time() < t0 + 30) \
+                    and time.time() < t_end:
+                time.sleep(min(5.0, max(0.1, t_end - time.time())))
+                st = run_status(args.out)
+        print(json.dumps(st, indent=1))
+        if not args.wait:
+            return 0
+        return 0 if st.get("state") == "done" else 3 if st.get("state") in ("running", "none") else 1
     if args.cmd == "verify":
         return _verify(args)
     if args.cmd == "import":
@@ -624,6 +641,14 @@ def main(argv=None):
     if args.cmd == "buildsim":
         return _buildsim(args)
     if args.cmd == "guide":
+        if args.topic:
+            from .mcp_server import guide
+            try:
+                print(guide(args.topic))
+            except ValueError as exc:
+                print(exc, file=sys.stderr)
+                return 2
+            return 0
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKILL.md")) as fh:
             print(fh.read())
         return 0

@@ -213,8 +213,13 @@ buckling, printability) you can report to the user.
 8. `python -m loadpath run study.json --out out/`: run it in the background,
    detached from your shell (`setsid nohup loadpath run study.json --out out
    > run.log 2>&1 < /dev/null &`; a plain `nohup ... &` dies with the tool
-   call that started it), or the MCP `loadpath_start` job, and poll with
-   `loadpath status out`, never in a foreground call with a time limit. It
+   call that started it), or the MCP `loadpath_start` job, and wait with
+   `loadpath status out --wait 540` (it blocks until the run ends or 540 s
+   pass, so it fits under a 10-minute tool timeout; exit code 0 done, 1
+   failed, 3 still running: call it again) or `loadpath_status(job_id,
+   wait=540)`. Never run it in a foreground call with a time limit, and do
+   not end your turn while it runs unless something will wake you: a
+   one-shot agent that stops to "check back later" never comes back. It
    says `running` (with its `pid` and elapsed time), `done`, `failed`,
    `killed` (a signal), or `died` (the process is gone without a word: out of
    memory, or killed outright); each outcome is written to
@@ -286,6 +291,27 @@ buckling, printability) you can report to the user.
   `"search"` or `"constrained"` force one.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
   trade-off gallery for a person to choose from.
+
+## Cast and milled parts
+
+Not every part is printed. Leave `process` out and say how it is made:
+
+- **Cast or molded**: `"casting": {"draw": "+z", "sides": 2, "draft": 2}`. Nothing
+  may undercut the die along `draw`; `draft` (degrees, 1-3 die casting and
+  molding, 3-5 sand) is built into the delivered walls and read facet by facet
+  in `report.json` → `manufacturing.draft` (`underDraftedArea`, mm^2). Run
+  holes along the draw; a hole across it needs a side core and is an undercut.
+- **Milled**: `"milling": {"axes": 3, "directions": ["+z"], "toolDiameter": 6}`
+  (`axes: 5` cuts from all six sides, `2.5` puts pocket floors every `stepDown`).
+  Every void must be reachable by a cutter coming straight in from a listed
+  side; slots and inside corners narrower than the cutter are filled.
+  `manufacturing.machining` gives tool reach (`toolUnreachableVolume`),
+  setups and a rough time and cost (`minutes`, `cost`); quote them when asked
+  how long it takes. `milling.rates` overrides the shop rates.
+- **Material**: use a wrought or cast card, not an AM one: `6061-t6`,
+  `7075-t6`, `a356-t6` (cast), `304` (`loadpath materials` lists them with
+  sources); a custom `{E, nu, strength, density}` works for anything else.
+  The examples `cast-arm-link` and `milled-motor-plate` show both.
 
 ## Heat, fatigue and creep
 

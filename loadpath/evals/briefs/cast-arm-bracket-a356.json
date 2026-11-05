@@ -1,0 +1,179 @@
+{
+ "id": "cast-arm-bracket-a356",
+ "brief": "A bracket that carries the elbow joint of a small robot arm, cast in A356-T6 aluminium in a two-part\ndie that opens along Z. Every wall needs at least 2 degrees of draft and nothing may undercut the\ndie. Keep it inside x = 0 to 120, y = -20 to 20, z = 0 to 30. It bolts to the shoulder with two M6\nbolts along Z at (x, y) = (12, -12) and (12, 12): 6.6 mm holes through the full 30 mm height, each\nin a 16 mm diameter boss. At the other end an 8 mm steel pin along Z runs through a 20 mm diameter\nboss at (x, y) = (105, 0), full height. The pin carries 1200 N along -Y (the arm's weight and\npayload) and, in a separate case, 400 N along +Z. Safety factor 2, as light as you can make it\nbut under 150 g.",
+ "attachments": [],
+ "tags": [
+  "casting",
+  "draft",
+  "metal",
+  "mass"
+ ],
+ "gold": {
+  "designSpace": [
+   {
+    "type": "box",
+    "min": [
+     0,
+     -20,
+     0
+    ],
+    "max": [
+     120,
+     20,
+     30
+    ]
+   }
+  ],
+  "preserve": [
+   {
+    "id": "bolt-bosses",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        12,
+        -12,
+        15
+       ],
+       "axis": "z",
+       "length": 30,
+       "r": 8
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        12,
+        12,
+        15
+       ],
+       "axis": "z",
+       "length": 30,
+       "r": 8
+      }
+     ]
+    }
+   },
+   {
+    "id": "pin-boss",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      105,
+      0,
+      15
+     ],
+     "axis": "z",
+     "length": 30,
+     "r": 10
+    }
+   }
+  ],
+  "keepOut": [
+   {
+    "id": "bolts",
+    "shape": {
+     "type": "union",
+     "shapes": [
+      {
+       "type": "cylinder",
+       "center": [
+        12,
+        -12,
+        15
+       ],
+       "axis": "z",
+       "length": 40,
+       "r": 3.3
+      },
+      {
+       "type": "cylinder",
+       "center": [
+        12,
+        12,
+        15
+       ],
+       "axis": "z",
+       "length": 40,
+       "r": 3.3
+      }
+     ]
+    }
+   },
+   {
+    "id": "pin",
+    "shape": {
+     "type": "cylinder",
+     "center": [
+      105,
+      0,
+      15
+     ],
+     "axis": "z",
+     "length": 40,
+     "r": 4
+    }
+   }
+  ],
+  "supports": [
+   {
+    "region": "bolts"
+   }
+  ],
+  "loadCases": [
+   {
+    "name": "weight",
+    "loads": [
+     {
+      "region": "pin",
+      "force": [
+       0,
+       -1200,
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "name": "lift",
+    "loads": [
+     {
+      "region": "pin",
+      "force": [
+       0,
+       0,
+       400
+      ]
+     }
+    ]
+   }
+  ],
+  "material": {
+   "name": "a356-t6",
+   "E": 72400,
+   "nu": 0.33,
+   "strength": 165,
+   "density": 2.68
+  },
+  "goal": {
+   "safetyFactor": 2
+  },
+  "casting": {
+   "draw": "+z",
+   "sides": 2,
+   "draft": 2
+  },
+  "minMember": 3,
+  "name": "cast-arm-bracket-a356",
+  "resolution": {
+   "maxElements": 40000
+  }
+ },
+ "pass": {
+  "safetyFactor": 2,
+  "maxMass": 150,
+  "maxUndercutVolume": 150,
+  "maxUnderDraftedArea": 600
+ }
+}
