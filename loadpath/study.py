@@ -1938,3 +1938,18 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         info["recall"] = dict(memory.used)
     return StudyResult(study=study, domain=info, outcomes=outcomes, best=best,
                        seconds=time.time() - t0, warnings=list(domain.warnings))
+
+
+def _quick_limits():
+    """Quick mode's search limits (quick.study sets them in the process that
+    reads the study): a spawned worker (pitch starts, materials) imports this
+    module afresh, so it takes them from LOADPATH_QUICK here, or each worker
+    ran the full search and tet confirms."""
+    global _MAX_SEARCH_RUNS, _CONFIRM_RUNS
+    from . import quick
+    if quick.on():
+        _MAX_SEARCH_RUNS = min(_MAX_SEARCH_RUNS, quick.STUDY["searchRuns"])
+        _CONFIRM_RUNS = min(_CONFIRM_RUNS, quick.STUDY["confirmRuns"])
+
+
+_quick_limits()

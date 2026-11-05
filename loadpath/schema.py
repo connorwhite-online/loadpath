@@ -547,6 +547,8 @@ _BUILD_SIM = {"anyOf": [
                    "residual stress and distortion for lpbf (validated on NIST AM-Bench 2018), fdm warp and bed "
                    "peel (ABS/ASA/PETG...), sls/mjf differential shrink; optionally a pre-distorted STL."}
 
+_EXPLORE_METHODS = ["unrestricted", "fdm", "sls", "mjf", "sla", "dlp", "jetting", "volumetric", "lpbf", "cast", "milled-2.5axis",
+                    "milled-3axis", "milled-5axis"]
 _PROCESS_KINDS = ["fdm", "sls", "mjf", "sla", "dlp", "volumetric", "jetting", "lpbf"]
 _PROCESS = {"anyOf": [
     {"enum": _PROCESS_KINDS},
@@ -824,6 +826,41 @@ STUDY_SCHEMA = {
                                                              "the draw axis, mm (default: the widest section)"}},
                                "required": ["draw"], "additionalProperties": False}],
                     "description": "Cast or molded: no undercuts along the draw direction."},
+        "explore": {"type": "object", "properties": {
+                        "methods": {"type": "array", "minItems": 1, "items": {"enum": _EXPLORE_METHODS},
+                                    "description": "manufacturing methods to solve for (default fdm, mjf, sla, "
+                                                   "lpbf, cast, milled-3axis)"},
+                        "materials": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/material"},
+                                      "description": "library materials (or custom ones); each runs on every "
+                                                     "method its card says makes it (default: one per method)"},
+                        "routes": {"type": "array", "minItems": 1, "items": {
+                            "type": "object", "properties": {"method": {"enum": _EXPLORE_METHODS},
+                                                             "material": {"$ref": "#/$defs/material"}},
+                            "required": ["method", "material"], "additionalProperties": False},
+                                   "description": "method/material pairs outright (instead of methods x materials)"},
+                        "quantity": {"type": "integer", "minimum": 1,
+                                     "description": "parts ordered: tooling and set-ups are spread over them"},
+                        "rank": {"enum": ["mass", "cost", "leadTime"], "description": "ranking order (default mass)"},
+                        "draw": {"type": "string", "pattern": "^[+-]?[xyz]$",
+                                 "description": "cast: the mold's draw (default the design space's thinnest axis)"},
+                        "castSides": {"enum": [1, 2]},
+                        "millingDirections": {"type": "array", "minItems": 1,
+                                              "items": {"type": "string", "pattern": "^[+-]?[xyz]$"},
+                                              "description": "milled: sides the cutter comes from (default both "
+                                                             "ends of the thinnest axis; 5-axis all six)"},
+                        "toolDiameter": {**_POS, "description": "milled: smallest cutter, mm (default 6)"},
+                        "screen": {"type": "boolean", "description": "every route on the coarse grid first, "
+                                                                     "full runs only for the Pareto fronts and "
+                                                                     "top of the ranking"},
+                        "refineTop": {"type": "integer", "minimum": 0,
+                                      "description": "screen: also refine this many of the top-ranked (default 2)"},
+                        "shareDesigns": {"type": "boolean", "description": "routes of one method reuse each "
+                                                                           "other's designs (default true)"},
+                        "costs": {"type": "object", "description": "override costing.RATES: {method family: "
+                                                                   "{rate: value}}, materialPrice: {material: $/kg}"}},
+                    "additionalProperties": False,
+                    "description": "`loadpath explore`: solve the study once per manufacturing method and "
+                                   "material, with cost and lead time, ranked (explore.py). `run` ignores it."},
         "pattern": {"type": "object", "properties": {
                         "type": {"const": "circular"},
                         "axis": {"enum": ["x", "y", "z"]},

@@ -313,6 +313,26 @@ Not every part is printed. Leave `process` out and say how it is made:
   sources); a custom `{E, nu, strength, density}` works for anything else.
   The examples `cast-arm-link` and `milled-motor-plate` show both.
 
+## Comparing ways to make it (explore)
+
+When the user has not settled how the part is made, or asks what it would
+cost, `loadpath explore study.json --out out` (MCP `loadpath_explore`)
+solves the study once per manufacturing method and material, like Fusion's
+generative outcomes: by default fdm (PETG), mjf (PA12), sla (tough resin),
+lpbf (AlSi10Mg), cast (A356-T6, drawn along the thinnest axis) and
+milled-3axis (6061-T6, cut from both ends of the thinnest axis). Each route
+is a full verified run in its own folder; the report ranks them (`rank`:
+mass, cost or leadTime), names the lightest, cheapest and fastest passing
+route (`picks`), the Pareto fronts (`pareto.massCost`, `costLeadTime`) and
+which route is cheapest at 1, 10, 100 and 1000 parts (`crossover`). Narrow
+or widen it with `explore.methods`, `explore.materials` (each runs on every
+method its card makes) or explicit `explore.routes`; `quantity` spreads
+tooling and set-ups. `unitCost` and `leadDays` are service-bureau estimates
+(costing.py, about +-50%): say so, and offer a real quote for the route the
+user picks. `--plan` lists the routes without running them. It costs about
+one study per route (routes of one method share designs), so start with the
+methods that are plausible for the user.
+
 ## Heat, fatigue and creep
 
 - A part next to something hot (a stepper face at 70 C, a heated bed):

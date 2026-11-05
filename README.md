@@ -93,6 +93,11 @@ There is no GUI on purpose; it's a library.
   (trapped powder, escape holes, warp-prone panels), resin (supports, peel,
   suction cups) and powder-bed metal (internal ceilings, powder
   clean-outs), plus milling and casting constraints.
+- **Outcome exploration** (`loadpath explore`): one study solved once per
+  manufacturing method and material (FDM, SLS, MJF, resin, LPBF metal,
+  cast, 2.5/3/5-axis milled), each a full verified run, ranked by mass,
+  estimated cost and lead time with Pareto fronts and the cheapest method
+  at each order quantity.
 - **Field modelling**: a part as a graph of implicit fields, so skins,
   lattices (TPMS and strut) and fillets can be graded by stress or by
   distance ([docs/fields.md](docs/fields.md)).

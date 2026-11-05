@@ -14,6 +14,9 @@ Tools:
   voxel problem, without solving
 - loadpath_start: run a study as a background job (optionally with a
   lattice infill of the best outcome)
+- loadpath_explore: solve a study once per manufacturing method and
+  material (fdm, sls, mjf, sla, lpbf, cast, milled...) and rank the
+  outcomes by mass, cost and lead time
 - loadpath_lattice: fill a finished outcome with a stress-graded lattice
 - loadpath_heat_exchanger: design a two-fluid TPMS heat exchanger (a job)
 - loadpath_size_heat_exchanger: pick cell and wall for a duty (seconds)
@@ -227,6 +230,56 @@ def start(study, base_dir: str | None = None, lattice: dict | None = None) -> di
     return _spawn("study", v.get("name") or "study", {"study.json": study},
                   ["run", "{dir}/study.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()],
                   cells=v["cells"], warnings=v["warnings"], base_dir=base_dir or os.getcwd())
+
+
+def explore(study, base_dir: str | None = None, methods: list | None = None, materials: list | None = None,
+            quantity: int | None = None, rank: str | None = None, screen: bool | None = None) -> dict:
+    """Validate a study and solve it once per manufacturing method and
+    material (explore.py), as a background job."""
+    if isinstance(study, str):
+        study = json.loads(study)
+    opts = {k: v for k, v in (("methods", methods), ("materials", materials), ("quantity", quantity),
+                              ("rank", rank), ("screen", screen)) if v is not None}
+    study = {**study, "explore": {**(study.get("explore") or {}), **opts}}
+    v = check(study, base_dir)
+    if not v["ok"]:
+        return v
+    from .explore import plan
+    try:
+        p = plan(study, None, base_dir or os.getcwd())
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    out = _spawn("explore", v.get("name") or "study", {"study.json": study},
+                 ["explore", "{dir}/study.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()],
+                 cells=v["cells"], warnings=v["warnings"], base_dir=base_dir or os.getcwd())
+    out["routes"] = [r["id"] for r in p["routes"]]
+    if p["skipped"]:
+        out["skipped"] = p["skipped"]
+    out["next"] = (f"{len(p['routes'])} full studies: expect several times one study's time. " + _POLL_HINT)
+    return out
+
+
+def _explore_status(d, r):
+    keep = ("id", "passes", "mass", "safetyFactor", "safetyFactorMethod", "maxDeflection", "unitCost", "leadDays",
+            "governedBy", "stl", "render", "warnings", "error")
+    routes = [{k: x[k] for k in keep if x.get(k) is not None} for x in r.get("routes") or []]
+    info = {"status": "done", "kind": "explore", "quantity": r.get("quantity"), "rank": r.get("rank"),
+            "ranking": r.get("ranking"), "picks": r.get("picks"), "pareto": r.get("pareto"),
+            "crossover": r.get("crossover"), "routes": routes, "skipped": r.get("skipped"),
+            "notes": r.get("notes"), "report": os.path.join(d, "out", "report.json"),
+            "next": "Show the user the ranking and picks with the renders; every route's folder holds its own "
+                    "report.json, STL and render. Costs are estimates: offer a real quote (Materialize "
+                    "materialize_get_quote) for the route they pick; never order unasked."}
+    pngs = []
+    for rid in dict.fromkeys((r.get("picks") or {}).values()):
+        row = next((x for x in r.get("routes") or [] if x["id"] == rid), None)
+        if row and row.get("render"):
+            try:
+                with open(row["render"], "rb") as fh:
+                    pngs.append(fh.read())
+            except OSError:
+                pass
+    return info, pngs
 
 
 def lattice(job_id: str, outcome: int | None = None, options: dict | None = None) -> dict:
@@ -534,6 +587,8 @@ def status(job_id: str) -> tuple[dict, list]:
         r = json.load(fh)
     if kind == "study":
         info, pngs = _study_status(d, r)
+    elif kind == "explore":
+        info, pngs = _explore_status(d, r)
     elif kind == "lattice":
         info = {"status": "done", "kind": kind, "parent": meta.get("parent"), **r}
         pngs = [_png(d, r.get("render"))]
@@ -714,6 +769,18 @@ def serve():
             return _reply(*status(job_id))
         except ValueError as exc:
             return [json.dumps({"ok": False, "error": str(exc)})]
+
+    @tool
+    def loadpath_explore(study: dict | str, base_dir: str | None = None, methods: list | None = None,
+                         materials: list | None = None, quantity: int | None = None,
+                         rank: str | None = None, screen: bool | None = None) -> dict:
+        """Like Fusion's generative outcomes: solve one study for each manufacturing method and material
+        (methods: fdm, sls, mjf, sla, dlp, jetting, volumetric, lpbf, cast, milled-2.5axis, milled-3axis,
+        milled-5axis; default fdm, mjf, sla, lpbf, cast, milled-3axis, each in its usual material) and
+        rank them by mass, cost or leadTime with Pareto fronts. Each route is a full verified run plus a
+        cost and lead-time estimate at `quantity` parts. screen=true runs every route coarse first and the
+        full runs only for the Pareto fronts and top of the ranking. Starts a job; poll loadpath_status."""
+        return explore(study, base_dir, methods, materials, quantity, rank, screen)
 
     @tool
     def loadpath_lattice(job_id: str, outcome: int | None = None, options: dict | None = None) -> dict:

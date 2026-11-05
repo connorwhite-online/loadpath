@@ -483,6 +483,21 @@ def main(argv=None):
     co.add_argument("--out", default="loadpath-cores")
     co.add_argument("--process", help="comma-separated: fdm, sls, mjf (overrides the spec's processes)")
     co.add_argument("--base-dir")
+    ex = sub.add_parser("explore", help="one study, an outcome per manufacturing method and material (fdm, sls, "
+                                        "mjf, sla, lpbf, cast, milled...): mass, safety factor, cost and lead "
+                                        "time, ranked, with Pareto fronts")
+    ex.add_argument("study")
+    ex.add_argument("--out", default="loadpath-explore")
+    ex.add_argument("--methods", help="comma-separated (default: the study's explore.methods, else "
+                                      "fdm,mjf,sla,lpbf,cast,milled-3axis)")
+    ex.add_argument("--materials", help="comma-separated library names; each runs on every method that makes it")
+    ex.add_argument("--quantity", type=int, help="parts ordered: spreads tooling and set-up cost (default 1)")
+    ex.add_argument("--rank", choices=["mass", "cost", "leadTime"], help="order of the ranking (default mass)")
+    ex.add_argument("--jobs", type=int, help="methods run at once (default half the cores)")
+    ex.add_argument("--screen", action="store_true", help="every route on the coarse grid first, then full runs "
+                                                          "only for the Pareto fronts and the top of the ranking")
+    ex.add_argument("--plan", action="store_true", help="list the routes and their studies, run nothing")
+    ex.add_argument("--base-dir")
     ed = sub.add_parser("edit", help="edit a field graph in the browser: node graph, sliders, live GPU preview, run")
     ed.add_argument("graph")
     ed.add_argument("--html", help="write one self-contained editor page (every bake inside) instead of serving")
@@ -576,7 +591,7 @@ def main(argv=None):
     asm.add_argument("--cycles", default="", help="life cycles by sample kind, for fatigue: "
                      "dynamic=1e6,pose=1e6,push=1e4,stall=1e3 (stall:j2=... for one joint)")
     asm.add_argument("--out", default="loadpath-out")
-    for sp in (r, lt, h, fg, tu, ed, asm, v, bs):
+    for sp in (r, lt, h, fg, tu, ed, asm, v, bs, ex):
         sp.add_argument("--quick", action="store_true",
                         help="coarse grid, fewer iterations: a first look in a minute or two (quick.py)")
     args = p.parse_args(argv)
@@ -608,6 +623,8 @@ def main(argv=None):
         return _tune(args)
     if args.cmd == "cores":
         return _cores(args)
+    if args.cmd == "explore":
+        return _explore(args)
     if args.cmd == "lattice-orient":
         return _lattice_orient(args)
     if args.cmd == "resolved-check":
@@ -1153,6 +1170,43 @@ def _cores(args):
         return 2
     _write_report(args.out, {"ok": any(rep["winners"].values()), **rep})
     return 0 if all(rep["winners"].values()) else 1
+
+
+def _explore(args):
+    from .explore import explore, plan
+    from .schema import format_issues, lint
+
+    study = _load(args.study)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
+    opts = {}
+    if args.methods:
+        opts["methods"] = [m.strip() for m in args.methods.split(",") if m.strip()]
+    if args.materials:
+        opts["materials"] = [m.strip() for m in args.materials.split(",") if m.strip()]
+    for k in ("quantity", "rank"):
+        if getattr(args, k) is not None:
+            opts[k] = getattr(args, k)
+    if args.screen:
+        opts["screen"] = True
+    errors = [x for x in lint({**study, "explore": {**(study.get("explore") or {}), **opts}}, "study")
+              if x["level"] == "error"]
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+    try:
+        if args.plan:
+            p = plan(study, opts, base)
+            print(json.dumps({"ok": True, **p}, indent=1))
+            return 0
+        from . import quick
+        rep = explore(study, args.out, opts, base_dir=base, jobs=args.jobs, quick=quick.on(),
+                      progress=_progress)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(rep.pop("table"), file=sys.stderr)
+    _write_report(args.out, {"ok": bool(rep["picks"]), **rep})
+    return 0 if rep["picks"] else 1
 
 
 def _edit(args):

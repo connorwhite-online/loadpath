@@ -85,6 +85,8 @@ _ALIASES = {
     "7075": "7075-t6", "al 7075": "7075-t6", "a356": "a356-t6", "a356.0": "a356-t6",
     "cast aluminium": "a356-t6", "cast aluminum": "a356-t6", "304 stainless": "304", "ss304": "304",
     "304l": "304",
+    "6061t6": "6061-t6", "6061-t651": "6061-t6", "al6061": "6061-t6", "7075t6": "7075-t6",
+    "7075-t651": "7075-t6", "a356t6": "a356-t6",
     "verowhite": "vero", "vero white": "vero", "agilus": "agilus30", "agilus 30": "agilus30",
 }
 
