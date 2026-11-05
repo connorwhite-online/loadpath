@@ -1,17 +1,31 @@
 # loadpath
 
-Generative design and engineering checks for 3D printed parts, built to be
-driven by coding agents.
+Generative design for 3D printed parts, built to be driven by coding agents.
+Tell your agent what a part has to carry and where it mounts; loadpath grows
+the part with topology optimization, meshes it as a watertight printable
+solid with the interfaces cut exactly, and checks that mesh with a fresh
+finite element analysis. You get an STL, 3MF or STEP and a report: mass,
+safety factor, deflection, thinnest member, printability, pass or fail.
 
-You describe a part as JSON: the geometry it must keep (bores, mounting
-faces), the space it must leave empty, where it is held, the loads on it,
-the material and the process. loadpath runs topology optimization, meshes
-the result as a watertight part with the interfaces cut exactly, and checks
-that mesh with a fresh finite element analysis. It returns an STL and a JSON
-report: mass, safety factor and deflection per load case, thinnest member,
-printability, and pass or fail against your goal.
+## Point your agent at it
 
-Units are millimetres, newtons and megapascals. MIT licensed.
+```bash
+pip install "loadpath[mcp]"
+claude mcp add loadpath -- loadpath mcp   # any MCP client: {"command": "loadpath", "args": ["mcp"]}
+```
+
+Then ask in plain words:
+
+> Design a PETG bracket for a 10 kg shelf. It screws to the wall with two
+> M5 bolts 40 mm apart and the shelf sits 60 mm out. Safety factor 2,
+> printed on an FDM printer.
+
+The agent writes the study, checks it, runs it in the background and reads
+the report back. Its guide is [loadpath/SKILL.md](loadpath/SKILL.md) (the
+`loadpath_guide` tool returns it); the tools and the loop are in
+[docs/agents.md](docs/agents.md). The server runs locally and nothing
+leaves the machine. Units are millimetres, newtons and megapascals. MIT
+licensed.
 
 ## What it does
 
@@ -81,10 +95,9 @@ and the limitations ([docs/case-studies/](docs/case-studies/)).
 | [TPU finger](docs/case-studies/tpu-finger.md) | up to 8 mm of tip curl for a 5 mm pull; a tendon finger grips 8x harder | A linear-model design (2.5 mm, then the solve fails); a plain bar of equal volume |
 | [Benchmarks](docs/case-studies/benchmarks.md) | 1-5% less stiff than top88/top3d at equal material, in 57-60 iterations instead of 130-410 | Ports of top88 and top3d |
 
-## Install
+## Command line and Python
 
 ```bash
-pip install "loadpath[mcp]"
 loadpath examples shelf-bracket > bracket.json
 loadpath check bracket.json            # every problem at once, with suggestions
 loadpath run bracket.json --out out/   # optimize, mesh, verify, render
@@ -98,24 +111,12 @@ Optional extras: `crosscheck` (tetrahedral verification; recommended),
 numba), `gpu` (PyTorch for large grids on CUDA, Apple Silicon or CPU
 threads).
 
-## For agents
-
-```bash
-claude mcp add loadpath -- loadpath mcp          # or any MCP client: {"command": "loadpath", "args": ["mcp"]}
-```
-
-`loadpath mcp` is a local stdio MCP server; nothing leaves the machine.
 Studies are validated against a published JSON Schema
 ([`schema/`](schema/)), and `loadpath check` returns every problem at once
 with its JSON path, so an agent can fix a study in one round trip. Long
 solves run as background jobs the agent polls. Each finished outcome has an
 `attention` list of numbers to look at before trusting it, and renders a
 vision model can inspect.
-
-- [docs/agents.md](docs/agents.md): the MCP tools and the loop to follow.
-- [loadpath/SKILL.md](loadpath/SKILL.md): how to turn a part description
-  into a study, and what to check in the report. `loadpath_guide` returns
-  the same text.
 
 From Python:
 
