@@ -48,9 +48,6 @@ Units are millimetres, newtons and megapascals. MIT licensed.
 Read [docs/VALIDATION.md](docs/VALIDATION.md) before relying on a number.
 In short:
 
-- **Nothing has been physically tested yet.** A calibration kit of coupons
-  and a bench test are designed and waiting to be printed
-  ([docs/CALIBRATION.md](docs/CALIBRATION.md)).
 - **The solvers match analytic answers** in the test suite: beam
   deflection within 3-5%, stress at a hole within about 13%, Lamé pressure
   vessels within 5-11%, Poiseuille flow exactly.
@@ -59,6 +56,10 @@ In short:
   reads 24-49% higher stress than the tet check, so it errs safe.
 - **The optimizer is benchmarked**: 1-5% less stiff than top88 and top3d at
   equal material on three of their textbook problems, stiffer on the fourth.
+- **Printed lattices match published tests**: against 33 published
+  compression tests of printed lattices, the stiffness check has a median
+  error of 1.23x (held out) and the strength check stays under the measured
+  value on all 33.
 - **Warp prediction is fitted to measured data** (NIST AM-Bench 2018 for
   LPBF IN625, a published ABS study for FDM) and misses other alloys and
   materials by 30-60%.
