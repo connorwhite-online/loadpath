@@ -938,6 +938,25 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         # boss: the bell crank's).
         flush = flush + [r.shape for r in study.preserve]
     acc = getattr(study, "access", None)
+    if acc is not None and acc.kind == "milling":
+        # The stock face no cutter reaches (the bottom of a part milled from
+        # +z) stays flat stock: flush, so the mesh cannot round its edges
+        # into a sliver of undercut. A plate milled from +z with only its bolt
+        # holes held read 590-790 mm^3 unreachable, all at its bottom edges.
+        from .shapes import Box
+
+        lo, hi = (np.asarray(b, float) for b in study.bounds())
+        t = 0.5 * domain.pitch
+        for a in range(3):
+            signs = {sg for ax, sg in acc.directions if ax == a}
+            if len(signs) != 1:
+                continue
+            blo, bhi = lo.copy(), hi.copy()
+            if signs == {1}:      # cut from +a: the -a face is stock
+                blo[a], bhi[a] = lo[a] - t, lo[a] + t
+            else:
+                blo[a], bhi[a] = hi[a] - t, hi[a] + t
+            flush.append(Box(blo, bhi))
     draft = None
     if acc is not None and acc.kind == "casting" and acc.draft > 0:
         from .manufacture import symmetric_parting
