@@ -746,6 +746,18 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pb)
     if not bc.fixed.any() and bc.springs is None:
         return None
+    # Face connectivity, as the stress check has it: a piece that meets the
+    # rest only at a cell's edge or corner hangs on a hinge the stiffness
+    # cannot hold, and its rotation about it is a buckling mode at almost no
+    # load (the Ti64 arm link's factors of 0.003-0.01, the mode on a sliver
+    # that was all but cut loose). Such a piece is not part of the structure.
+    lbl, _ = ndimage.label(solid)
+    ijk = hm.elem_ijk
+    held_lbl = np.unique(lbl[tuple(ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
+    keep_el = np.isin(lbl[tuple(ijk.T)], held_lbl)
+    if not keep_el.all():
+        hm = HexMesh(ijk[keep_el], pb, origin)
+        bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pb)
     fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, bc.fixed) if bc.gravity is not None else None
     spreads = bc.spreads or [None] * len(study.load_cases)
     rhs, layout = expand(bc.loads, spreads, fg)

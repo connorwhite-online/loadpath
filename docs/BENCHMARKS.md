@@ -595,3 +595,75 @@ and on 0.9 mm tets as the reference. Safety factor, worst of the three cases:
   threshold for trying the constrained method is 0.19 on cut cells (0.15
   on whole); at 0.15 the coarse wrist yoke skipped it and came out 18.6 g
   against 14.1 (13.9 at 0.19).
+
+### Re-meshing one density: members held at minMember (2026-11-05)
+
+Why the table above swings 2-3x between near-identical meshes: the opening
+in `reconstruct._isosurface` leaves members about 2.4 mm across or more
+(minMember 3 mm on 0.81 mm fine cells), and the shrinking surface smoothing
+after marching cubes then took 1.2-1.7 mm off a thin strut's diameter. A
+straight rod on 2.44 mm cells drawn 4.4 mm across came out 3.7 mm unsmoothed
+and 2.0 mm smoothed; one drawn 3.6 mm came out 0.85. Now `_smooth_surface`
+pushes a vertex back out wherever the smoothing's net inward shift (averaged
+over a few rings, so the staircase still comes off) is more than the
+member's half-thickness over half the minimum allows: the 4.4 mm rod comes
+out 3.5 mm, and thick members smooth exactly as before.
+
+Four densities from a fresh full-tier `robot-wrist-link-mjf` search, each
+meshed three ways (stem smoothing off, the default one-pass, debiased),
+verified as the search verifies (cut cells, 60k cells). Safety factor, worst
+case, and p1 member thickness (shape diameter) of the worst of the three:
+
+| fraction | mass (old -> new) | SF off / one-pass / debiased, old | new | spread old -> new | p1 old -> new |
+|---|---|---|---|---|---|
+| 0.06 | 37.3-38.7 -> 38.9-40.1 g | 0.25 / 0.97 / 2.10 | 3.35 / 3.89 / 6.31 | 8.4x -> 1.9x | 1.83 -> 2.24 mm |
+| 0.045 | 30.9-32.4 -> 31.6-33.1 g | 1.79 / 2.17 / 0.67 | 2.55 / 2.38 / 2.73 | 3.2x -> 1.15x | 1.86 -> 2.41 mm |
+| 0.041 | 26.6-28.0 -> 27.6-28.9 g | 0.81 / 1.98 / 1.61 | 1.39 / 2.17 / 1.62 | 2.4x -> 1.6x | 2.08 -> 2.25 mm |
+| 0.041 (2nd) | 26.3-27.9 -> 27.2-28.8 g | 0.51 / 0.39 / 0.61 | 0.97 / 1.04 / 1.90 | 1.6x -> 2.0x | 1.85 -> 2.23 mm |
+
+- Every mesh reads stronger (worst SF of each density 1.7-13x higher) for
+  2.5-4% more mass; the 0.045 design's debiased mesh, the one whose 0.95 mm
+  sliver read SF 0.66 on 0.9 mm tets, now reads 2.73.
+- Letting the push go further, to bring the 2.4 mm members the opening
+  passes up to the full 3 mm, changed these readings by under 2%: dropped.
+- What is left: p1 is still ~2.2-2.7 mm, from the opening's discrete ball
+  being smaller than minMember on coarse fine grids; and the second 0.041
+  density still moves 2x, its peak moving between different struts.
+
+### Loaded pieces stay joined (2026-11-05)
+
+The Ti64 (LPBF) arm link at volume fraction 0.2-0.25 hung its wrist bearing
+on members the optimizer left grey (0.3-0.5) or about one 2.9 mm cell across
+(minMember 3). Three steps of reconstruct each cut them: the 0.5 level of the
+density, the minMember opening, and the rounding at the design-space
+boundary (it thins a member lying along the wall by about half a cell). The
+bearing came out a separate body, verification found its load on nothing,
+and the search climbed to 140-240 g at SF 60-180. Now:
+
+- `_bridge_pieces`: a loaded piece the 0.5 level leaves apart from the
+  supported material is joined to it along the optimizer's own grey route
+  (least missing density, cells at 0.15 or more), mirrored for symmetry.
+- `_keep_joints`, after the opening and after the boundary rounding: a thin
+  member that is all that joins two bodies (each at least 1% of the part)
+  stays, built out to minMember round its own ridge; one that joins nothing
+  (a fin) still goes. A 1.6 mm rod between two blocks comes out 2.9 mm
+  across.
+- The buckling check keeps only face-connected material, as the stress
+  check does: a piece meeting the rest at a cell's edge or corner turns on
+  a hinge at almost no load (buckling factors of 0.003-0.01).
+
+Ti64 arm link, coarse tier, same densities: vf 0.2 and 0.25 were two bodies
+(verification failed); now one body each, 118 g SF 1.46 and 148 g SF 1.34,
+buckling factor 19 and 14, deflection 2.2-5.5 mm against the 0.5 mm goal:
+honestly too weak, so the search goes up from a real reading.
+
+Left: the opening's discrete ball is smaller than minMember on coarse fine
+grids (it passes a 2.2 mm rod at minMember 3, which then keeps that size).
+
+Coarse gate with corpus (6) on these changes against `baselines/coarse.json`:
+18 of 19 pass. arm-link-cast fails its draft check (373 mm^2, limit 300) at
+65.0 g on today's main without them too. Wall bracket 27.3 g at target
+(main today 25.8, +5.8%: thin members kept at minMember weigh more on this
+buckling-governed bracket, within its 7.2% search spread); wrist yoke 17.4
+(main today 18.1; the 14.1 baseline no longer reproduces); corpus-bracket-4
+-17.7%, corpus-tri-mount-5 -13.5%; every other case within 5%.

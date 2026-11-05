@@ -1162,6 +1162,62 @@ def test_reconstruct_smooths_the_staircase_off_a_tilted_member():
     assert abs(r1 - r0) < 0.1, (r0, r1)        # same section
 
 
+def test_smoothing_keeps_members_at_the_minimum():
+    # The opening in reconstruct keeps members at about minMember, and the
+    # shrinking surface smoothing after it used to take 1.2-1.7 mm off a
+    # thin strut's diameter: a 4.4 mm rod on 2.44 mm cells (minMember 3)
+    # came out 2.0 mm across, and re-meshes of the robot arm's wrist link grew
+    # slivers a third of minMember that set its safety factor.
+    import trimesh
+    s = study_from_dict({
+        "name": "rod", "designSpace": {"type": "box", "min": [0, -20, -20], "max": [120, 20, 20]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -21, -21], "max": [0.01, 21, 21]}}],
+        "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [119.9, -21, -21],
+                                                          "max": [121, 21, 21]}, "force": [0, 0, -10]}]}],
+        "material": "pa12", "goal": {"volumeFraction": 0.1}, "resolution": {"pitch": 2.44}, "minMember": 3.0})
+    d = build_domain(s)
+    c = d.origin + (d.mesh.elem_ijk + 0.5) * d.pitch
+    p0, p1 = np.array([15.0, -8, -3]), np.array([105.0, 8, 4])
+    L = np.linalg.norm(p1 - p0)
+    a = (p1 - p0) / L
+    t = (c - p0) @ a
+    r = np.linalg.norm(c - p0 - t[:, None] * a, axis=1)
+    x = np.clip(0.5 + (2.2 - r) / d.pitch, 0.0, 1.0)
+    mesh, _ = reconstruct(s, d, x)
+    pts, _ = trimesh.sample.sample_surface(mesh, 50_000, seed=1)
+    t = (pts - p0) @ a
+    rr = np.linalg.norm(pts - p0 - t[:, None] * a, axis=1)
+    keep = (t > 20) & (t < L - 20) & (rr < 9)
+    assert 2.0 * np.median(rr[keep]) > 3.0, 2.0 * np.median(rr[keep])
+
+
+def test_reconstruct_keeps_a_thin_member_that_is_the_only_joint():
+    # A member under minMember that alone joins the loaded end to the held
+    # one used to go with the opening, leaving the load on a separate body
+    # (the Ti64 arm link's wrist bearing). It stays, built out to minMember;
+    # the same member hanging free still goes.
+    s = study_from_dict({
+        "name": "joint", "designSpace": {"type": "box", "min": [0, -20, -20], "max": [120, 20, 20]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -21, -21], "max": [0.01, 21, 21]}}],
+        "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [119.9, -21, -21],
+                                                          "max": [121, 21, 21]}, "force": [0, 0, -10]}]}],
+        "material": "pa12", "goal": {"volumeFraction": 0.1}, "resolution": {"pitch": 2.44}, "minMember": 3.0})
+    d = build_domain(s)
+    c = d.origin + (d.mesh.elem_ijk + 0.5) * d.pitch
+    ends = (c[:, 0] < 25) | (c[:, 0] > 95)
+    rod = np.linalg.norm(c[:, 1:], axis=1)
+    x = np.where(ends, 1.0, np.clip(0.5 + (0.8 - rod) / d.pitch, 0.0, 1.0))
+    mesh, info = reconstruct(s, d, x)
+    assert info["bodies"] == 1, info
+    g = np.mgrid[-4:4:0.1, -4:4:0.1].reshape(2, -1).T
+    area = mesh.contains(np.column_stack([np.full(len(g), 60.0), g])).sum() * 0.01
+    assert area > 0.8 * np.pi * 1.5 ** 2, area      # at least minMember across
+    # the same rod, joined to the held end only, is a fin: it goes
+    x2 = np.where(c[:, 0] > 95, 0.0, x)
+    mesh2, _ = reconstruct(s, d, x2)
+    assert mesh2.bounds[1][0] < 40, mesh2.bounds
+
+
 def test_axial_smoothing_keeps_thin_members():
     # Averaging a round member's distance along a slightly-off axis reads
     # every sample further out (the distance is convex), and one pass shrank

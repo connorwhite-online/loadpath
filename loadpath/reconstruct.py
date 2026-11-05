@@ -382,7 +382,8 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
             k = int(np.ceil(r))
             zz, yy, xx = np.mgrid[-k:k + 1, -k:k + 1, -k:k + 1]
             ball = (xx * xx + yy * yy + zz * zz) <= r * r
-            fine = ndimage.grey_opening(fine, footprint=ball)
+            opened = ndimage.grey_opening(fine, footprint=ball)
+            fine = _keep_joints(fine, opened, step_, float(min_member), o.level)
     step = domain.pitch / o.upsample
     # zoom(grid_mode=True) maps fine cell centers to coarse cell centers, so
     # fine index i sits at coarse-cell coordinate (i + 0.5) / upsample - 0.5.
@@ -421,7 +422,10 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
             # the rounding further out.
             dp = sdfs.min(preserve)
             env = np.maximum(env, np.clip(2.0 - dp / o.blend, 0.0, 1.0))
-        fine = _smooth_min(fine, env.reshape(fine.shape), 0.5)
+        rounded = _smooth_min(fine, env.reshape(fine.shape), 0.5)
+        # (it thins a member lying along the boundary by about half a cell:
+        # where one so thinned was all that joined two bodies, it stays)
+        fine = _keep_joints(fine, rounded, step, float(min_member), o.level) if min_member else rounded
     if preserve and o.blend > 0 and o.fillet:
         # (after the boundary rounding: a fillet made before it was rounded
         # away again where a member's top met a full-height boss, bell crank)
@@ -535,6 +539,16 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         mesh.invert()
     if parting is not None:
         mesh.metadata["parting"] = parting
+    if min_member and parting is None:
+        # Each vertex's member half-thickness (mm) on this field, before the
+        # mesh is smoothed: the deepest point inside within reach of it.
+        # _smooth_surface holds members to the minimum with it.
+        reach = int(np.ceil(0.5 * float(min_member) / step)) + 1
+        depth = np.clip(-_field_distance(fine, step, o.level), 0.0, None)
+        half = ndimage.maximum_filter(depth, size=2 * reach + 1)
+        ijk = np.rint((np.asarray(mesh.vertices) - origin) / step).astype(int)
+        ijk = np.clip(ijk, 0, np.array(fine.shape) - 1)
+        mesh.metadata["halfThickness"] = half[ijk[:, 0], ijk[:, 1], ijk[:, 2]]
     return mesh
 
 
@@ -654,7 +668,7 @@ def _drop_slivers(mesh):
 
 
 def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, keep_thin=False, lamb=0.5,
-                    nu=0.53):
+                    nu=0.53, min_member=None):
     """Smooth the isosurface: alternating steps v += f (L v - v), the first
     shrinking (lamb), the second shrinking on thick members and inflating
     (Taubin's) on members about two cells thick or less.
@@ -686,13 +700,182 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
         w = np.clip((half[ijk[:, 0], ijk[:, 1], ijk[:, 2]] - THIN[0]) / (THIN[1] - THIN[0]), 0.0, 1.0)[:, None]
     second = nu * (2.0 * w - 1.0)          # -nu thin (Taubin), +nu thick (as before)
     lap = trimesh.smoothing.laplacian_calculation(iso)
-    v = np.asarray(iso.vertices, float).copy()
+    v0 = np.asarray(iso.vertices, float).copy()
+    v = v0.copy()
     for k in range(iterations):
         v = v + (lamb if k % 2 == 0 else second) * (lap @ v - v)
+    half = iso.metadata.get("halfThickness") if min_member else None
     iso.vertices = v
+    if half is not None and len(half) == len(v):
+        # Never smooth a member below the minimum: shrinking smoothing takes
+        # 1.2-1.7 mm off a 3-4 mm strut's diameter (a rod the opening in
+        # _isosurface left 3.7 mm across came out 2.0, one left 2.4 came
+        # out 0.85), so a re-mesh of the same density grew slivers a third
+        # of minMember that set the part's safety factor (the robot arm's wrist link,
+        # 0.95 mm against a 3 mm minimum, SF 0.66 where its neighbours read
+        # 1.6-2.2). Where the smoothing's net inward shift (averaged over a
+        # few rings, so the staircase still comes off) is more than the
+        # member's half-thickness over half the minimum allows, the vertex
+        # goes back out by the difference: never past where it started, and
+        # members thick enough to spare it smooth exactly as before.
+        # (Letting it go further out, to make members the opening passed at
+        # 2.4 mm a full 3, changed the wrist link's readings by under 2%.)
+        allow = np.maximum(np.asarray(half, float) - 0.5 * float(min_member), 0.0)
+        n = np.asarray(iso.vertex_normals, float)
+        dn = np.einsum("ij,ij->i", v - v0, n)
+        for _ in range(HOLD_SPREAD):
+            dn = lap @ dn
+        back = np.maximum(-dn - allow, 0.0)
+        if back.any():
+            for _ in range(2):
+                back = lap @ back
+            iso.vertices = v + n * back[:, None]
 
 
+HOLD_SPREAD = 10     # averaging passes over the smoothing's shift before _smooth_surface holds a member
 THIN = (1.5, 2.5)    # member half-thickness (cells): Taubin below the first, shrinking above the second
+
+
+JOINT_BODY = 0.01    # a body the opening leaves is worth rejoining at this share of the part's volume
+
+
+def _keep_joints(before, opened, step: float, min_member: float, level: float = 0.5):
+    """The opening, except where it cuts the part in two: a member thinner
+    than the minimum that is the only thing joining two sizeable bodies (the
+    Ti64 arm link's wrist bearing hung on 2.9 mm members at a 3 mm minimum,
+    and with them opened away it was a separate body, its load on nothing)
+    is kept, built out to the minimum member round its own ridge. A thin
+    piece that joins nothing, a fin or a knife edge, still goes."""
+    solid = opened >= level
+    lab, n = ndimage.label(solid)
+    if n == 0:
+        return opened
+    size = np.bincount(lab.ravel())
+    size[0] = 0
+    big = size >= JOINT_BODY * size.sum()
+    if big.sum() < 2:
+        return opened
+    # everything the opening took or left in scraps: what joins the bodies
+    # can run through a scrap the opening left on its own
+    removed = (before >= level) & ~big[lab]
+    rl, rn = ndimage.label(removed)
+    if rn == 0:
+        return opened
+    # which sizeable bodies each removed piece touches
+    near = ndimage.binary_dilation(removed)
+    touch = near & big[lab]
+    # the removed piece beside each touching cell
+    owner = ndimage.grey_dilation(rl, size=(3, 3, 3))
+    pairs = np.unique(np.stack([owner[touch], lab[touch]], axis=1), axis=0)
+    pairs = pairs[pairs[:, 0] > 0]
+    if not len(pairs):
+        return opened
+    counts = np.bincount(pairs[:, 0], minlength=rn + 1)
+    joint = counts >= 2
+    if not joint.any():
+        return opened
+    neck = joint[rl]
+    # the neck's ridge, and a tube of the minimum member's radius round it
+    depth = ndimage.distance_transform_edt(before >= level)
+    ridge = neck & (depth >= ndimage.maximum_filter(depth, size=3))
+    if not ridge.any():
+        ridge = neck
+    d = ndimage.distance_transform_edt(~ridge) * step
+    tube = np.clip(level - (d - 0.5 * min_member) / (2.0 * step), 0.0, 1.0)
+    tube = np.where(ndimage.binary_dilation(neck, iterations=int(np.ceil(0.5 * min_member / step)) + 2), tube, 0.0)
+    return np.maximum(opened, np.maximum(np.where(neck, before, 0.0), tube))
+
+
+BRIDGE_FLOOR = 0.15   # lowest density a bridge (_bridge_pieces) may run through
+BRIDGE_SIDE = 0.6     # density given the cells beside a bridge's path
+
+
+def _bridge_pieces(domain: Domain, xphys: np.ndarray, level: float = 0.5):
+    """Densities with every loaded piece joined back to the supports, and a
+    note of what was added (None when nothing was cut off).
+
+    At low fractions the optimizer can hold a loaded boss on members it left
+    grey (0.2-0.5): the Ti64 arm link at 0.2-0.25 carried its wrist bearing
+    on cells that never reach 0.5, so the 0.5 surface left the bearing a
+    separate body, verification found the load on nothing, and the search
+    climbed to 140-240 g at SF 60-180. Here each loaded piece the 0.5 level
+    leaves apart from the supported material is joined to it along the path
+    of least missing density through cells at BRIDGE_FLOOR or more (the
+    optimizer's own grey route), raised to solid; the opening and the member
+    hold downstream size it to minMember. Mirrored for symmetric studies."""
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import dijkstra
+
+    x = np.asarray(xphys, float)
+    mesh = domain.mesh
+    ijk = mesh.elem_ijk
+    solid = x >= level
+    lut = np.full(domain.dims, -1, int)
+    lut[tuple(ijk.T)] = np.arange(len(x))
+    grid = np.zeros(domain.dims, bool)
+    grid[tuple(ijk[solid].T)] = True
+    lab, n = ndimage.label(grid)
+    el_lab = lab[tuple(ijk.T)]
+    sup_el = domain.support_nodes[mesh.enode].any(axis=1)
+    load_el = domain.load_nodes[mesh.enode].any(axis=1)
+    main = set(np.unique(el_lab[sup_el & solid]).tolist()) - {0}
+    if not main:
+        return x, None
+    loaded = set(np.unique(el_lab[load_el & solid]).tolist()) - {0}
+    cut = sorted(loaded - main)
+    # a load region with no solid at all next to it is cut off too
+    if not cut and not (load_el.any() and not (load_el & solid).any()):
+        return x, None
+    ok = x >= BRIDGE_FLOOR
+    # 6-neighbour graph over the cells a bridge may use; entering a cell
+    # costs its missing density (solid cells almost nothing)
+    rows, cols = [], []
+    for a in range(3):
+        off = np.zeros(3, int)
+        off[a] = 1
+        nb = ijk + off
+        inside = (nb < np.array(domain.dims)).all(axis=1)
+        j = np.full(len(x), -1)
+        j[inside] = lut[tuple(nb[inside].T)]
+        m = (j >= 0) & ok & np.where(j >= 0, ok[np.maximum(j, 0)], False)
+        rows += [np.nonzero(m)[0], j[m]]
+        cols += [j[m], np.nonzero(m)[0]]
+    r, c = np.concatenate(rows), np.concatenate(cols)
+    w = np.maximum(level - x[c], 0.0) + 1e-3
+    gph = csr_matrix((w, (r, c)), shape=(len(x), len(x)))
+    src = np.nonzero(np.isin(el_lab, list(main)) & solid)[0]
+    added = np.zeros(len(x), bool)
+    joined = 0
+    targets = [np.nonzero((el_lab == k) & solid)[0] for k in cut]
+    if not (load_el & solid).any():
+        targets.append(np.nonzero(load_el & ok)[0])
+    for tgt in targets:
+        if not len(tgt):
+            continue
+        dist, pred, _ = dijkstra(gph, indices=src, min_only=True, return_predecessors=True)
+        t = tgt[np.argmin(dist[tgt])]
+        if not np.isfinite(dist[t]):
+            continue
+        while t >= 0 and not added[t]:
+            added[t] = True
+            t = pred[t]
+        joined += 1
+        src = np.union1d(src, np.nonzero(added)[0])
+        src = np.union1d(src, tgt)
+    if not added.any():
+        return x, None
+    for _axis, mi in (domain.mirror or {}).items():
+        mm = mi[added]
+        added[mm[mm >= 0]] = True
+    out = x.copy()
+    out[added] = np.maximum(out[added], 1.0)
+    # one cell either side as well: a path one cell across is under most
+    # minimum members, and the opening would take it straight out again
+    g = np.zeros(domain.dims, bool)
+    g[tuple(ijk[added].T)] = True
+    side = ndimage.binary_dilation(g)[tuple(ijk.T)] & ~added
+    out[side] = np.maximum(out[side], BRIDGE_SIDE)
+    return out, {"pieces": joined, "cells": int((added & ~solid).sum())}
 
 
 def _bodies(man):
@@ -761,18 +944,21 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
 
         centre = domain.origin + 0.5 * np.asarray(domain.dims) * domain.pitch
         draft = (acc.draw[0], acc.draw[1], len(acc.directions), acc.draft, symmetric_parting(study, acc, centre))
+    xphys, bridged = _bridge_pieces(domain, xphys, o.level)
     iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
                       flush=flush, preserve=[r.shape for r in study.preserve], design=list(study.design_space),
                       draft=draft)
     parting = iso.metadata.get("parting")
     info = {"isoTriangles": int(len(iso.faces))}
+    if bridged:
+        info["bridged"] = bridged
     if o.taubin_iterations and draft is None:
         # (not on a drafted cast part: smoothing rounds the ledge where a
         # section steps in just past the parting plane down across it,
         # leaning those walls the wrong way for the other mold half; its
         # field was smoothed before the draft and meshes clean without)
         keep_thin = bool((getattr(study, "raw", None) or {}).get("resolution", {}).get("keepThinMembers", False))
-        _smooth_surface(iso, domain, xphys, o.taubin_iterations, keep_thin)
+        _smooth_surface(iso, domain, xphys, o.taubin_iterations, keep_thin, min_member=study.min_member)
     if study.preserve and o.fillet and o.blend > 0:
         _snap_to_flat_faces(iso, [r.shape for r in study.preserve], domain.pitch / o.upsample, o.blend)
     if len(iso.faces) > o.max_triangles:
