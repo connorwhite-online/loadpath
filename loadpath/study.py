@@ -1085,7 +1085,13 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
     # iteration on a full-size grid (10-25 s of 25-50 at 35k cells on the
     # wall bracket), so it gets twice the time.
     budget = _AUTO_BUDGET * (2.0 if goal.buckling and goal.safety_factor and _BUCKLING_IN_OPTIMIZER else 1.0)
-    deadline = time.time() + max(600.0, budget * r.seconds)
+    from . import quick
+    if quick.on():
+        # a first look: as long as the search took, with no ten-minute floor
+        # (the urdf tutorial's quick run spent 20 of its 30 CI minutes here)
+        deadline = time.time() + r.seconds
+    else:
+        deadline = time.time() + max(600.0, budget * r.seconds)
 
     def stop():
         return time.time() > deadline or (should_stop is not None and should_stop())
@@ -1103,6 +1109,11 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
         return r
     if fit is not None and fit.get("pitch"):
         cstudy = dataclasses.replace(cstudy, pitch=fit["pitch"])
+    if quick.on() and not study.pitch:
+        # and on the search's own coarse grid, not the 4x finer one a full
+        # run gives it
+        from .domain import choose_pitch
+        cstudy = dataclasses.replace(cstudy, pitch=max(choose_pitch(st), cstudy.pitch or 0.0))
     try:
         rc = _run_single(cstudy, on_progress, stop, fallback=False)
     except Exception as exc:  # noqa: BLE001 - the constrained run is a bonus: any failure keeps the search's part
