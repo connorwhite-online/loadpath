@@ -1,6 +1,8 @@
 name: publish
 
-# Pushing a version tag (git tag v0.1.0 && git push origin v0.1.0) builds the
+# Pushing a version tag (git tag v0.1.0 && git push origin v0.1.0), or running
+# this workflow by hand on main (Actions > publish > Run workflow, which then
+# creates the v<version> tag itself once the upload succeeds), builds the
 # sdist and wheel, checks the tag matches pyproject's version, smoke-tests the
 # wheel in a clean environment, and uploads to PyPI with trusted publishing
 # (OIDC: no API token stored anywhere). PyPI side: a trusted publisher for
@@ -9,23 +11,36 @@ name: publish
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Tag matches the package version
+        id: tag
         run: |
           v=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but pyproject says $v"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but pyproject says $v"; exit 1; }
+          else
+            test "$GITHUB_REF_NAME" = main || { echo "run by hand from main only"; exit 1; }
+            if git ls-remote --exit-code --tags origin "v$v"; then
+              echo "v$v is already tagged: bump the version in pyproject.toml"; exit 1
+            fi
+          fi
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
       # PyPI has no copy of docs/ or the images: point the README's relative
-      # links at GitHub, pinned to this tag
-      - run: python .github/scripts/pypi_readme.py README.md "$GITHUB_REF_NAME"
+      # links at GitHub, pinned to this tag (on a hand run the tag is created
+      # at this commit after the upload)
+      - run: python .github/scripts/pypi_readme.py README.md "${{ steps.tag.outputs.tag }}"
       - run: pip install build twine && python -m build && twine check --strict dist/*
       - name: Smoke-test the wheel outside the checkout
         run: |
@@ -51,3 +66,16 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # a hand run tags the commit it published
+  tag:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [build, pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git tag "${{ needs.build.outputs.tag }}" "$GITHUB_SHA"
+          git push origin "${{ needs.build.outputs.tag }}"
