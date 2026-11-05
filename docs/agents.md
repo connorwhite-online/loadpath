@@ -7,7 +7,7 @@ once, and long solves run as background jobs the agent polls.
 ## Connect
 
 ```bash
-pip install "loadpath[mcp] @ git+https://github.com/connorwhite-online/loadpath"
+pip install "loadpath[mcp]"
 ```
 
 ```json

@@ -57,7 +57,7 @@ Units are fixed: millimetres, newtons, megapascals, g/cm³.
 ## Quick start
 
 ```bash
-pip install "loadpath[render] @ git+https://github.com/connorwhite-online/loadpath"   # not on PyPI yet
+pip install "loadpath[render]"
 python -m loadpath check study.json          # validate, show the voxel problem
 python -m loadpath run study.json --out out  # optimize, mesh, verify, render
 ```

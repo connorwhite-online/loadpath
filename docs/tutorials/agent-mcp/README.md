@@ -19,7 +19,7 @@ MCP client session against `python -m loadpath mcp` and records them. About
 ## 1. Connect the agent
 
 ```sh
-pip install "loadpath[mcp] @ git+https://github.com/connorwhite-online/loadpath"
+pip install "loadpath[mcp]"
 claude mcp add loadpath -e LOADPATH_RECALL=1 -- loadpath mcp     # Claude Code
 ```
 

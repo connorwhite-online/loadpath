@@ -6,12 +6,12 @@ millimetres, newtons, megapascals.
 ## 1. Install
 
 ```bash
-pip install "loadpath[mcp] @ git+https://github.com/connorwhite-online/loadpath"
+pip install "loadpath[mcp]"
 loadpath --help
 ```
 
 (`[mcp]` adds the MCP server and the renderer; plain `loadpath` is the solver
-alone. It is not on PyPI yet.)
+alone.)
 
 ## 2. Start from an example
 

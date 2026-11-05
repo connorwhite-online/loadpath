@@ -11,8 +11,7 @@ that mesh with a fresh finite element analysis. It returns an STL and a JSON
 report: mass, safety factor and deflection per load case, thinnest member,
 printability, and pass or fail against your goal.
 
-Units are millimetres, newtons and megapascals. MIT licensed. Not yet on
-PyPI.
+Units are millimetres, newtons and megapascals. MIT licensed.
 
 ## What it does
 
@@ -84,7 +83,7 @@ and the limitations ([docs/case-studies/](docs/case-studies/)).
 ## Install
 
 ```bash
-pip install "loadpath[mcp] @ git+https://github.com/connorwhite-online/loadpath"
+pip install "loadpath[mcp]"
 loadpath examples shelf-bracket > bracket.json
 loadpath check bracket.json            # every problem at once, with suggestions
 loadpath run bracket.json --out out/   # optimize, mesh, verify, render
