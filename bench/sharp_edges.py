@@ -1,13 +1,13 @@
 """
 Edge accuracy before and after sharp meshing, and what STEP export keeps.
 
-    python bench/sharp_edges.py [--out out/sharp] [--only arm-link-solid,grip-turret] [--no-step]
+    python bench/sharp_edges.py [--out out/sharp] [--only arm-link-solid,robot-turret] [--no-step]
 
 Field parts (the arm link as a field graph, examples/fields): meshed with
 sharp=False (the whole field by marching cubes, as before) and sharp=True
 (hard booleans with plain shapes done exactly), measured with
 sharp.edge_accuracy against the graph's own exact field. Study parts (the
-arm-link example and the GRIP turret and wrist yoke eval cases, coarse
+arm-link example and the robot-arm turret and wrist yoke eval cases, coarse
 tier): the delivered STL and its STEP, measured against the study's
 keep-outs, preserved shapes and design space. Writes summary.json.
 """
@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT))
 from loadpath.sharp import edge_accuracy, plan, plan_refs, study_refs  # noqa: E402
 
 FIELD = {"arm-link-solid": ("solid", 0.4), "arm-link-graded": ("part", 0.3)}
-STUDIES = {"arm-link": "example:arm-link", "grip-turret": "grip-turret.json", "grip-wrist-yoke": "grip-wrist-yoke.json"}
+STUDIES = {"arm-link": "example:arm-link", "robot-turret": "robot-turret.json", "robot-wrist-yoke": "robot-wrist-yoke.json"}
 
 
 def _step(mesh, out, name, refs, solid=None, boundary=None):

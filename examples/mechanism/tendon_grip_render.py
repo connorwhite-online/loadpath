@@ -3,7 +3,7 @@ Render tendon_grip.py's result: each design deformed at full wind (blue)
 over its undeformed cells (grey), the object, and grip force against tendon
 tension.
 
-    python examples/mechanism/tendon_grip_render.py [--out tendon-grip-out/] [--png tendon-grip.png]
+    python examples/mechanism/tendon_grip_render.py [--out tendon-arm-out/] [--png tendon-grip.png]
 """
 import argparse
 import json
@@ -22,7 +22,7 @@ QUAD = [0, 1, 5, 4]          # the hex8 corners on the y = 0 face, in order arou
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="tendon-grip-out")
+    ap.add_argument("--out", default="tendon-arm-out")
     ap.add_argument("--png", default=None)
     a = ap.parse_args()
     s = json.load(open(os.path.join(a.out, "summary.json")))

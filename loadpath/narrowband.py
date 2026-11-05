@@ -29,7 +29,6 @@ is not, marches again with every block sampled.
 """
 from __future__ import annotations
 
-import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 

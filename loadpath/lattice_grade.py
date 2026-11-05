@@ -96,23 +96,6 @@ def _cell_stress(fl, mask, frames=None):
     return out
 
 
-def _grid_of(centers, values, origin, pitch):
-    """A dense grid (origin at the first cell centre) of per-cell values,
-    cells with none filled from their nearest neighbour."""
-    from scipy import ndimage
-
-    ijk = np.round((centers - origin) / pitch).astype(int)
-    dims = ijk.max(axis=0) + 1
-    grid = np.zeros(tuple(dims))
-    have = np.zeros(tuple(dims), bool)
-    grid[tuple(ijk.T)] = values
-    have[tuple(ijk.T)] = True
-    if not have.all():
-        idx = ndimage.distance_transform_edt(~have, return_distances=False, return_indices=True)
-        grid = grid[tuple(idx)]
-    return grid
-
-
 def grade_lattice(doc, study, target_sf=None, wall_min=None, wall_max=None, cells: int = 15_000,
                   iterations: int = 12, orient=None, rounds: int = 2, base_dir=None, node=None,
                   progress=None, n_rot: int = 800, seam: float = 1.0, confirm: str = "auto") -> dict:

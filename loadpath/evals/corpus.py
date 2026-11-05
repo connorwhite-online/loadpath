@@ -1,7 +1,7 @@
 """
-Procedurally generated eval cases, so tuning stops fitting GRIP.
+Procedurally generated eval cases, so tuning stops fitting the robot arm.
 
-Every hand-written case is a GRIP-like part, and a fix tuned on them can win
+Every hand-written case is a robot-arm part, and a fix tuned on them can win
 there and lose everywhere else without anyone noticing. A generated case is
 drawn from a seed: a family (link, bracket, tri-mount), random proportions,
 bore sizes, axis directions, load directions, material and target. The same

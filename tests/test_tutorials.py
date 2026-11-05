@@ -106,7 +106,7 @@ def run(name, tier="quick", keep=None):
     if os.path.exists(work):
         shutil.rmtree(work)
     shutil.copytree(src, work, ignore=shutil.ignore_patterns("images", "*.png"))
-    env = {**os.environ, "LOADPATH_NO_HINT": "1", "PYTHONPATH": f"{ROOT}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"}
+    env = {**os.environ, "PYTHONPATH": f"{ROOT}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"}
     if tier == "quick":
         env |= {"LOADPATH_QUICK": "1", "LOADPATH_NO_RENDER": "1"}
     failures = []

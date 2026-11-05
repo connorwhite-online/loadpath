@@ -292,14 +292,6 @@ def tpms_unit_trig(kind, trig):
     return f / fmax(sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * k, 0.3 * k)
 
 
-def tpms_expr(kind, cell, thickness, form="sheet", origin=(0, 0, 0)):
-    """Signed distance (mm, negative inside) of a TPMS sheet or network with
-    a constant cell, as an expression."""
-    c = float(cell)
-    U = [(POS[a] - float(o)) / c for a, o in zip("xyz", origin)]
-    return _wall(tpms_unit(kind, *U) * c, thickness, form)
-
-
 def _wall(d, thickness, form):
     half = 0.5 * thickness
     if form == "sheet":

@@ -40,7 +40,6 @@ Stiffness + Solver.
 """
 from __future__ import annotations
 
-import os
 
 import numpy as np
 import scipy.sparse as sp
@@ -307,16 +306,6 @@ class _Level:
             p = self.patch_ijk[sel]
             out[:, :, p[:, 0] - a, p[:, 1], p[:, 2]] += np.moveaxis(self.patch_k[sel].astype(np.float64), 0, -1)
         return out
-
-
-def _pad_even(a, axes_from=0, fill=0.0):
-    pad = [(0, 0)] * a.ndim
-    for i in range(3):
-        n = a.shape[axes_from + i]
-        pad[axes_from + i] = (0, n % 2)
-    if any(p[1] for p in pad):
-        return np.pad(a, pad, constant_values=fill)
-    return a
 
 
 def _prolong_rows(fine_nodes_ijk: np.ndarray, coarse_node_shape) -> sp.csr_matrix:

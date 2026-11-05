@@ -47,10 +47,6 @@ class Spread:
         d = np.asarray(d, float)
         return self.base + d[0] * self.basis[0] + d[1] * self.basis[1] + d[2] * self.basis[2]
 
-    def with_base(self, extra) -> "Spread":
-        return Spread(self.base + extra, self.basis, self.nominal, self.cos_half)
-
-
 def fibonacci_sphere(n: int) -> np.ndarray:
     i = np.arange(n) + 0.5
     z = 1.0 - 2.0 * i / n

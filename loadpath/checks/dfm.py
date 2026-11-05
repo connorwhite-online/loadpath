@@ -44,8 +44,8 @@ __all__ = ["check_dfm"]
 
 
 def _env(name, default):
-    """LOADPATH_<name>, falling back to the older CAD_<name>."""
-    return os.environ.get(f"LOADPATH_{name}", os.environ.get(f"CAD_{name}", default))
+    """The LOADPATH_<name> environment variable, else `default`."""
+    return os.environ.get(f"LOADPATH_{name}", default)
 
 
 _DEFAULT_MIN_WALL_MM = 1.5

@@ -1062,8 +1062,8 @@ active on each side, so every edge whose ends lie on different inputs'
 surfaces is split on the true intersection curve (Gauss-Newton on both
 inputs' zero levels), slivers and turned-over triangles near the crease are
 collapsed, and any crease vertex that would make the mesh cross itself goes
-back to where the plain mesh had it. Measured in
-`moonshots/round2/crease_bench.py` against the true curve, distance from the
+back to where the plain mesh had it. Measured against the true curve
+(a one-off benchmark, 2026-11), distance from the
 curve to the mesh (max / RMS, mm):
 
 | part | pitch | plain | creases |
@@ -1328,7 +1328,7 @@ gyroid cell 8 under a skin, STL at pitch 0.4: 755k triangles, 37.7 MB):
 | | patches | size | volume vs STL | distance to STL mean / p99 / max | re-open | time |
 | --- | --- | --- | --- | --- | --- | --- |
 | arm link sandwich | 4.6k envelope + 25.3k cavity | 48 MB | +0.22% | 0.005 / 0.068 / 0.57 mm | 29 s (OpenCascade) | 14 min |
-| GRIP wrist link, SLS (3 drain bores) | 38k envelope facets + 3.4k cavity | 37.5 MB (STL 34.6 MB) | -0.3% | 0.049 / 0.31 / 2.3 mm | 29 s | 23 min with the part |
+| The robot-arm wrist link, SLS (3 drain bores) | 38k envelope facets + 3.4k cavity | 37.5 MB (STL 34.6 MB) | -0.3% | 0.049 / 0.31 / 2.3 mm | 29 s | 23 min with the part |
 
 Both valid in OpenCascade, same volume read back. On the arm link the worst
 points are tight inner skin corners, and one 17 mm³ loose wall fragment the
@@ -1342,7 +1342,7 @@ next for parts like it. A coarser grid (`latticeGrid` 2.67) is about a
 quarter the size but misses those fillets by 0.5 mm p99. Not for a lattice
 whose blend into the skin is not clipped by the envelope (the blend then
 bulges the outside, so the envelope is not the part's outside; clip it, as
-the GRIP SLS graphs do). `"lattice": "cavities"` forces this route.
+The robot-arm SLS graphs do). `"lattice": "cavities"` forces this route.
 
 A route with patches on each surface trimmed along the creases where they
 meet was tried first and not kept: 1-3% of trimmed faces failed at grazing
@@ -1358,8 +1358,8 @@ the STL. Measured (bench/sharp_edges.py, coarse eval tier):
 | part | STEP faces | exact area | volume vs STL | size, time |
 | --- | --- | --- | --- | --- |
 | arm-link example | 13 cylinders, 6 planes, 13.2k facets | 22% | -0.02% | 33 MB, 24 s |
-| GRIP turret | 24 cylinders, 26 planes, 12.6k facets | 49% | -0.01% | 33 MB, 39 s (14 MB since 1568466) |
-| GRIP wrist yoke | 42 cylinders, 29 planes, 16.3k facets | 28% | -0.002% | 42 MB, 34 s |
+| The robot-arm turret | 24 cylinders, 26 planes, 12.6k facets | 49% | -0.01% | 33 MB, 39 s (14 MB since 1568466) |
+| The robot-arm wrist yoke | 42 cylinders, 29 planes, 16.3k facets | 28% | -0.002% | 42 MB, 34 s |
 | arm link field graph (solid) | 3 cylinders, 2 planes, 11.4k facets | 29% | -0.02% | 28 MB, 16 s (12.7 MB, 20 s since 8b54f5d) |
 
 `"step": {"surface": "smooth"}` (`export_step(..., surface="smooth")`)
@@ -1389,7 +1389,7 @@ it. Measured (re-read from the file):
 
 | part | STEP faces | deviation p99 / max | volume vs STL | size (facets) | time |
 | --- | --- | --- | --- | --- | --- |
-| GRIP turret | 3624 patches, 24 cylinders, 20 planes | 0.046 / 0.081 mm | -0.01% | 6.8 MB (14.4 MB) | 3.4 min |
+| The robot-arm turret | 3624 patches, 24 cylinders, 20 planes | 0.046 / 0.081 mm | -0.01% | 6.8 MB (14.4 MB) | 3.4 min |
 | arm link field graph (solid) | 2351 patches, 10 cylinders, 6 planes | 0.033 / 0.077 mm | -0.009% | 4.2 MB (12.7 MB) | 85 s |
 
 Needs `embreex` (in the `step` extra) for fast ray casts: seconds
@@ -1462,7 +1462,7 @@ distance, distance to points, strut, conformal, zoned or density-driven
 lattices, blend grading) run on numpy first and are read as inputs.
 `LOADPATH_FIELDJIT=0` turns it off.
 
-An exact mesh distance (`mesh` nodes, as the GRIP SLS links use for their
+An exact mesh distance (`mesh` nodes, as the robot-arm SLS links use for their
 v0.3 load path) spends its time finding each point's 12 nearest triangle
 centroids. `loadpath/knn.py` does that with a compiled k-d tree whose
 search starts from the previous point's neighbours (the mesher asks in
@@ -1483,7 +1483,7 @@ LOADPATH_KNN=kdtree`):
 |---|---|---|---|---|
 | arm link, graded gyroid (`arm-link-graded.json`), 0.3 mm | 6.1 -> 15.7 | 5.5 -> 1.9 s | 12.3 -> 9.3 s | 1.27 -> 1.14 GB |
 | arm link, graded box (`arm-link-box-graded.json`), 0.3 mm | 9.7 -> 36.6 | 2.1 -> 0.6 s | 6.0 -> 4.6 s | 0.87 -> 0.70 GB |
-| GRIP SLS wrist link (`examples/grip/sls.py`), 0.35 mm | 0.24 -> 0.51 | 123.5 -> 46.9 s | 170.7 -> 102.1 s | 2.27 -> 2.18 GB |
+| The robot-arm SLS wrist link (`examples/robot-arm/sls.py`), 0.35 mm | 0.24 -> 0.51 | 123.5 -> 46.9 s | 170.7 -> 102.1 s | 2.27 -> 2.18 GB |
 
 Two more pieces of meshing go through compiled kernels too. Sharp plans'
 keep-out regions (the don't-care field `sharp.py` extends into, its
@@ -1498,10 +1498,10 @@ above):
 |---|---|---|
 | arm link, graded gyroid, 0.3 mm | 12.3 -> 6.8 s | 1.27 -> 1.05 GB |
 | arm link, graded box, 0.3 mm | 6.0 -> 3.2 s | 0.87 -> 0.68 GB |
-| GRIP SLS wrist link, 0.35 mm | 170.7 -> 40.5 s | 2.27 -> 2.03 GB |
+| The robot-arm SLS wrist link, 0.35 mm | 170.7 -> 40.5 s | 2.27 -> 2.03 GB |
 
 On the arm links what is left is the mesher's own bookkeeping (relax ~2 s,
-narrowband glue ~1.5 s, manifold3d's constructor, unfolding). On the GRIP
+narrowband glue ~1.5 s, manifold3d's constructor, unfolding). On the robot-arm
 links it is the exact mesh distance's nearest-centroid query; skipping it
 where the result can't depend on it qualifies only ~6% of the points (the
 blend reaches deep), so that was left out.

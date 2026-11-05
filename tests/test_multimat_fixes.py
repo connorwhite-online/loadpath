@@ -150,7 +150,7 @@ def test_cli_run_writes_status_partial_and_progress(tmp_path):
     study = tmp_path / "pad.json"
     study.write_text(json.dumps(d))
     out = tmp_path / "out"
-    env = dict(os.environ, PYTHONPATH=os.path.abspath(ROOT), LOADPATH_NO_HINT="1", OMP_NUM_THREADS="2")
+    env = dict(os.environ, PYTHONPATH=os.path.abspath(ROOT), OMP_NUM_THREADS="2")
     env.pop("LOADPATH_PARTIAL_DIR", None)
     p = subprocess.run([sys.executable, "-m", "loadpath", "run", str(study), "--out", str(out),
                         "--3mf-coordinates", "study"], capture_output=True, text=True, env=env, timeout=900)
@@ -177,7 +177,7 @@ def test_cli_status_failed(tmp_path):
     study = tmp_path / "pad.json"
     study.write_text(json.dumps(d))
     out = tmp_path / "out"
-    env = dict(os.environ, PYTHONPATH=os.path.abspath(ROOT), LOADPATH_NO_HINT="1", OMP_NUM_THREADS="2")
+    env = dict(os.environ, PYTHONPATH=os.path.abspath(ROOT), OMP_NUM_THREADS="2")
     p = subprocess.run([sys.executable, "-m", "loadpath", "run", str(study), "--out", str(out)],
                        capture_output=True, text=True, env=env, timeout=600)
     assert p.returncode != 0

@@ -79,7 +79,6 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     ht = h.T.tocsr()
     eta_e = opts.eta + opts.erode
 
-    weights = np.asarray(domain.case_weights, float)
     cases = len(domain.loads)
     force_mag = [float(np.linalg.norm(f.reshape(-1, 3).sum(axis=0))) for f in domain.loads]
     defl_cases = [c for c in range(cases) if limits.deflection is not None and force_mag[c] > 0]
@@ -197,7 +196,7 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                 smax = max(float(sr.max()) for *_, sr in parts)
                 # the p-norm scaled by the peak, so a design that lets go
                 # (stress 1e40) does not overflow sr ** P to inf and hand
-                # MMA a NaN step (the GRIP upper arm)
+                # MMA a NaN step (the robot-arm upper arm)
                 sc = max(smax, 1e-30)
                 pm = sc * (sum(float(np.sum((sr / sc) ** _P)) for *_, sr in parts) / nc) ** (1.0 / _P)
                 kappa[c] = 0.5 * (kappa[c] + smax / max(pm, 1e-30)) if it > 1 else smax / max(pm, 1e-30)

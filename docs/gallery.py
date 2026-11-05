@@ -43,7 +43,7 @@ GALLERY = os.path.join(ROOT, "docs", "GALLERY.md")
 START, END = "<!-- gallery:start -->", "<!-- gallery:end -->"
 COLS = 3
 # Stress maps shown in the README (the rest are in docs/GALLERY.md).
-STRESS_PICKS = ["bell-crank", "printed-hook", "grip-upper-arm"]
+STRESS_PICKS = ["bell-crank", "printed-hook", "robot-upper-arm"]
 
 # The metal heat exchanger case whose internal ceilings the gallery shows.
 METAL_CASE = "lpbf-intercooler-core"
@@ -274,7 +274,7 @@ MFG_GALLERY = ("The `arm-link` eval case (SF 3, 0.5 mm at the wrist, PA12) with 
                "the cable channel along x is the one undercut left (it needs a side core), and the report says so "
                "(`manufacturing.access.undercutInKeepOuts`). maxMember 6 mm came out 6.8 mm thick at its "
                "thickest, under a 2 mm analysis cell over (the free part: 9.8 mm), and 2 g lighter.")
-MFG_YOKE = ("GRIP's wrist yoke in 6061-T6 aluminium at SF 2: free (38.4 g, SF 4.8) and 5-axis milled with a "
+MFG_YOKE = ("The robot arm's wrist yoke in 6061-T6 aluminium at SF 2: free (38.4 g, SF 4.8) and 5-axis milled with a "
             "4 mm cutter (38.8 g, SF 3.7): every void reachable from one of the six sides, no slot under 4 mm.")
 
 

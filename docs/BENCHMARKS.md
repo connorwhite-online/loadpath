@@ -1,6 +1,6 @@
 # Benchmarks
 
-How close does loadpath's optimizer get to the optimum? The GRIP evals ask
+How close does loadpath's optimizer get to the optimum? The robot-arm evals ask
 whether a part is good enough to print; this suite asks how loadpath compares
 with the published topology-optimization codes on the textbook problems, with
 the same supports, loads and amount of material, scored by one evaluator.
@@ -400,7 +400,7 @@ Fixed in this round:
    the schedule, cloud box) every case still passes, but stiffer is not
    lighter at a safety factor: mass at the target safety factor rose on all
    five small parts (MBB +3.6%, motor mount +4.2%, printed hook +13.6%, wall
-   bracket +3.4%, fastened wall bracket +1.8%), and the GRIP parts moved by
+   bracket +3.4%, fastened wall bracket +1.8%), and the robot-arm parts moved by
    search noise (turret -7%, upper arm, wrist link and yoke within 1%). The
    schedule trades a little stress for stiffness, and the safety-factor
    search pays for stress. It stays available as `beta_schedule` for
@@ -431,7 +431,7 @@ Open, as next work:
    built a solid part. For a deflection-bound part like this one the default
    search is lighter (55.4 g). The finer grid does not help the default
    search either: the wall bracket drops to 35.7 g (from 68.7 g) at 4.5x the
-   time, but the arm link gets heavier (60.5 g), the GRIP wrist yoke's solve
+   time, but the arm link gets heavier (60.5 g), the robot-arm wrist yoke's solve
    fails at 1.2 mm, and the wrist link did not finish in 90 minutes. So the
    default search and the evals keep their grids.
 
@@ -537,22 +537,22 @@ verify's `resolution.cutCells`). Run 2026-11-03, about 30 s.
   cell case 0.97-1.06 (the staircase there: 0.67-1.47).
 - On the eval parts (150k cells, the tet confirm's grid), against the P2
   tet peak: whole cells read 1.22-1.49x on the arm link, bell crank, wall
-  bracket and GRIP wrist yoke, cut cells 0.93-1.12x; on the hook and MBB
+  bracket and the robot-arm wrist yoke, cut cells 0.93-1.12x; on the hook and MBB
   beam both read ~1.65x (the tet peak's contact band leaves out what both
   voxel models see). Verification takes 2-4x as long. The plate with a
   hole (Peterson 81 MPa) reads 79-86 cut, 78-93 whole, over 0.7-1.4 mm cells.
 - Cut cells were opt-in until 2026-11-05 (coarse tier 2026-11-03: all pass
   either way, massAtTarget within noise but for the wrist yoke and hook).
-  They are the default now, after GRIP's MJF wrist link showed what whole
+  They are the default now, after the robot arm's MJF wrist link showed what whole
   cells do to struts under three cells thick (below). `resolution.cutCells:
   false` or LOADPATH_CUT_CELLS=0 goes back to whole cells; studies with a
   pressure load stay on whole cells (their wetted nodes come from the
   whole-cell staircase, and on the cut grid the thick sphere read 105 MPa
   for Lame's 21).
 
-### Sub-cell struts: GRIP's wrist link (2026-11-05)
+### Sub-cell struts: the robot arm's wrist link (2026-11-05)
 
-Four stored densities from the full-tier `grip-wrist-link-mjf` search
+Four stored densities from the full-tier `robot-wrist-link-mjf` search
 (volume fraction 0.045-0.06), each meshed three ways (stem smoothing off,
 the default one-pass, `axial_debias`): twelve near-identical meshes, verified
 as the search verifies (1.22 mm cells), on P2 tets at the confirm's 1.5 mm,

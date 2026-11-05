@@ -1,7 +1,7 @@
 """
 Graded lattice against solid topology optimization where lattices should win:
 stopping an impact. The case is end-stop.json: a tapered corner bumper for a
-GRIP-like robot base that has to stop the 5 kg robot falling 0.9 m (44 J)
+robot-arm robot base that has to stop the 5 kg robot falling 0.9 m (44 J)
 without putting more than 6 kN into the base.
 
     python examples/impact/end_stop.py [--out impact-out/] [--cells 40000]

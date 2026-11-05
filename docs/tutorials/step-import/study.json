@@ -1,6 +1,6 @@
 {
  "name": "elbow",
- "description": "GRIP-style shoulder bracket from elbow.step: held by its four M3 screws, carrying the shoulder shaft's bearing. Drafted by `loadpath import`, loads replaced with the real ones.",
+ "description": "robot-arm shoulder bracket from elbow.step: held by its four M3 screws, carrying the shoulder shaft's bearing. Drafted by `loadpath import`, loads replaced with the real ones.",
  "designSpace": [
   {
    "type": "mesh",

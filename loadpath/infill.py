@@ -231,7 +231,6 @@ def grade_infill(study: Study, mesh, verified: dict | None = None, opts: GradeOp
     grid = np.zeros(active.shape)
     best = None             # (fill, levels, se, defl, peak) of the sparsest passing pass
     short = 1.0
-    prev = lev
     for it in range(o.iterations):
         sig = (se * e_lv[rows, lev])[:, None]          # macro stress, MPa
         skin_s = sig / e_lv                              # strain-equivalent at each level
@@ -276,7 +275,6 @@ def grade_infill(study: Study, mesh, verified: dict | None = None, opts: GradeOp
         if 1.0 <= short < 1.06:
             break
         allow *= float(np.clip(short, 0.8, 0.99)) if short < 1.0 else float(np.clip(short, 1.0, 2.0)) ** 0.75
-        prev = lev
     if best is None:
         # nothing graded held the target: solid, as verified
         lev = np.full(hm.n_elem, solid_lv)

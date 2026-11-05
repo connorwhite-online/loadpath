@@ -33,12 +33,12 @@ effort (S: a day, M: a thread, L: several threads).
 7. **Ground truth.** What would prove this stage right or wrong? A
    reference solver, a published benchmark, a printed and broken part? Do we
    have it?
-8. **Human in the loop.** Where does Connor (or an agent) still have to look,
+8. **Human in the loop.** Where does a person (or an agent) still have to look,
    zoom, or judge by hand? Can that judgement become a metric?
 9. **Feedback speed.** How long from a change to knowing whether it helped?
    What would make that 10x shorter?
 10. **Coverage.** What cases is this tuned on? Would it hold on parts we have
-    never seen (not GRIP-like)?
+    never seen (not robot-arm)?
 
 A finding is worth a thread when the payoff is a number we report (mass,
 SF, time, pass rate) moving by 20% or more, or a whole class of parts
@@ -55,16 +55,16 @@ existing workstream that already owns it.
 | 1 | Verification, search | Safety factor is read from voxel stress, which the tet cross-check measured 24-49% conservative | Make the pick on accurate stress: tet/CalculiX confirm of the final pick, or a per-part voxel-to-tet correction, or body-fitted stress recovery at hotspots | H: 15-30% less mass at the same real SF on every part | M | done: `goal.confirm` tet (see stage notes) |
 | 2 | Objective | Mass is the cost | Print time, filament and support from a real slicer (Orca/Prusa CLI) as the cost the search minimizes and reports | H for FDM users: time, not grams, is what they pay | M | done: slicer.py, `goal.minimize` ([slicer.md](slicer.md)) |
 | 3 | Export, lattices | Infill and grading are geometry we mesh | FDM: emit 3MF with per-region slicer modifiers (infill density, walls) driven by the stress field, so the slicer grades it; meshed TPMS only where it pays | H: graded FDM parts with no million-triangle meshes, slicer-native | M | done: infill.py, `slicer.grade` ([slicer.md](slicer.md)) |
-| 4 | Ground truth | Material cards are datasheet numbers (now each cited to a named sheet, docs/materials.md); no part has been tested | Calibration loop: coupon generator + a tiny measurement format; printed GRIP yoke stiffness and break load feed material cards and the conservatism factor | H for trust; sets #1's correction | M (needs prints) | partly (Connor printing the yoke) |
-| 5 | Human QA | Defects are found by Connor zooming into renders | A vision-model critic on `render_interfaces` close-ups that files findings as eval metrics (creases, sawn faces, material over seats) | M-H: catches the class of bug numbers missed | S-M | done: loadpath/critic.py, `--critic` |
-| 6 | Evals | One ~2 h suite on 14 GRIP-like cases, pass/fail | Tiered: 5-min coarse smoke on every push, full suite nightly; Pareto (mass vs SF) score not pass/fail; a procedurally generated case corpus to stop tuning to GRIP | M-H: 20x faster feedback, less overfitting | M | done: `--tier coarse` (~7 min), pareto.py, corpus.py |
-| 7 | Inputs (loads) | Loads are exact vectors the agent writes by hand | Loads derived from the mechanism (URDF / joint torques / pose sweep, as GRIP's chain.py does ad hoc) and robust to direction and magnitude scatter (worst case over a cone) | H for robot parts: real loads are a pose envelope, not one vector | M | yes: assembly.py (`loadpath assembly`); GRIP's committed links drop from SF 2.7-4.2 to 0.6-2.1 under swept loads (examples/grip/README.md) |
+| 4 | Ground truth | Material cards are datasheet numbers (now each cited to a named sheet, docs/materials.md); no part has been tested | Calibration loop: coupon generator + a tiny measurement format; the printed robot-arm yoke's stiffness and break load feed material cards and the conservatism factor | H for trust; sets #1's correction | M (needs prints) | partly (a yoke print in progress) |
+| 5 | Human QA | Defects are found by a person zooming into renders | A vision-model critic on `render_interfaces` close-ups that files findings as eval metrics (creases, sawn faces, material over seats) | M-H: catches the class of bug numbers missed | S-M | done: loadpath/critic.py, `--critic` |
+| 6 | Evals | One ~2 h suite on 14 robot-arm cases, pass/fail | Tiered: 5-min coarse smoke on every push, full suite nightly; Pareto (mass vs SF) score not pass/fail; a procedurally generated case corpus to stop tuning to the robot arm | M-H: 20x faster feedback, less overfitting | M | done: `--tier coarse` (~7 min), pareto.py, corpus.py |
+| 7 | Inputs (loads) | Loads are exact vectors the agent writes by hand | Loads derived from the mechanism (URDF / joint torques / pose sweep, as the robot arm's chain.py does ad hoc) and robust to direction and magnitude scatter (worst case over a cone) | H for robot parts: real loads are a pose envelope, not one vector | M | yes: assembly.py (`loadpath assembly`); the robot arm's committed links drop from SF 2.7-4.2 to 0.6-2.1 under swept loads (examples/robot-arm/README.md) |
 | 8 | Inputs (design space) | The user draws the design space and keep-outs | Derive them: assembly envelope minus neighbours' swept volumes over the joint's range of motion, fastener access paths | M-H: removes the hardest manual step for agents | M | partly: assembly.swept_keepouts (neighbours' swept volumes); envelope and fastener access still by hand |
 | 9 | Optimizer | Gradient descent from a uniform start gives one topology | Several distinct topologies (multi-start, diversity penalty, different filter radii) for the agent to choose from, as Fusion does | M | S-M | partly (warm-start thread) |
 | 10 | Solver tolerance | Every inner solve converges to the same rtol | Inexact solves early (tolerance tied to the projection beta and the design change), tight only at the end | M: 1.5-3x optimizer time | S | fold into GPU / scale threads |
 | 11 | Hardware | CPU, float64 assembled AMG, 4 cores | GPU matrix-free, mixed precision | H | M-L | yes: GPU offload, scale to millions |
 | 12 | Representation | Voxel density -> isosurface -> mesh; delivered part differs from the optimized one | Optimize the implicit field itself | H | L | yes: smooth implicit fields, field-driven design |
-| 13 | Physics | Linear static, small strain | Nonlinear, buckling (done); modal / dynamic for robot links (stiffness at speed, resonance with servo control) | M for GRIP | M | new, lower priority |
+| 13 | Physics | Linear static, small strain | Nonlinear, buckling (done); modal / dynamic for robot links (stiffness at speed, resonance with servo control) | M for the robot arm | M | new, lower priority |
 | 14 | Heat exchangers | Correlations for h and dp | LBM flow | H | L | yes: flow sim |
 | 15 | Search | Outer search re-optimizes per volume fraction | MMA mass-minimization with stress constraints straight to the target (exists in constrained.py) as the default, outer search only to close the verified gap | M: fewer full optimizations | S-M | partly (outcome search thread) |
 | 16 | Orientation | Build direction chosen by coarse re-runs | Faster pick | M | S | yes: auto-orientation speed |
@@ -76,7 +76,7 @@ existing workstream that already owns it.
 ### Inputs and study authoring (spec.py, schema.py)
 
 The study assumes the author knows the loads, the design space and the
-material. For GRIP that knowledge lives in the GRIP repo (`chain.py`,
+material. For the arm that knowledge lives in the arm's repo (`chain.py`,
 `v3.py` derive loads from URDF statics at one reach pose with a 1.5x
 factor). A robot link actually sees an envelope of poses, accelerations and
 payload offsets, and the worst case for one member is rarely the worst case
@@ -123,7 +123,7 @@ print time as measured numbers rather than modelled ones.
 The delivered surface is an isosurface smoothed after the fact, so the part
 verified is not the part optimized and verify has to catch the difference.
 Owned by the implicit-field threads (#12). Crease and boundary-cut metrics
-came from Connor finding defects by eye; that loop is #5.
+came from a person finding defects by eye; that loop is #5.
 
 ### Verification and confirm (verify.py, crosscheck.py, study.py)
 
@@ -191,14 +191,14 @@ per case on average. What was learned:
   alone it gave 27.6 g and 28.0 g for the brackets at tet SF 3.65. Mass
   levels off near 26-28 g on both brackets (the next limit down read
   2.34-2.37), which looks like the minimum member, not the stress limit.
-  The search stays the default until the full suite (GRIP cases, arm
+  The search stays the default until the full suite (the robot-arm cases, arm
   links) is measured with `"method": "constrained"`; the hook is
   excluded (print direction).
 - Constrained vs search, all strength-bound evals (2026-11-01, one box,
   LOADPATH_WORKERS=1): the constrained method now takes a print direction
   (the AM filter), but wins only the wall brackets (68.7 -> 28.1 g, 35.5
   -> 26.5 g). The search is lighter on MBB (12.5 vs 15.6 g), hook (27.2 vs
-  37.9), bell crank (22.4 vs 24.8) and arm link (55.4 vs 59.6); on the GRIP
+  37.9), bell crank (22.4 vs 24.8) and arm link (55.4 vs 59.6); on the robot-arm
   yoke, wrist link and upper arm the constrained run's solve broke down
   (singular factor, or no convergence: a mechanism), and on the turret it
   never passed in 90 minutes (tets SF 0.93-1.24). So the search stays the
@@ -206,7 +206,7 @@ per case on average. What was learned:
   predicts. A constrained study that finds no passing design now falls
   back to the search on the search's own grid (the yoke: 21-24 g instead
   of an error).
-- Auto-selecting the method (2026-11-01). The GRIP crashes had two
+- Auto-selecting the method (2026-11-01). The arm crashes had two
   causes. Hinge-connected designs (live cells joined by an edge or corner)
   made the multigrid's coarse factor singular or stalled CG; the multigrid
   path now retries on the full grid with void at E_MIN, as the direct path
@@ -263,7 +263,7 @@ CAD users the missing output is something editable (#17).
 ### Agent and MCP workflow (mcp_server.py, tasks.py, SKILL.md)
 
 The agent writes a JSON study, starts a job, waits, reads a report. It never
-sees the part, so it cannot notice what Connor notices when he zooms in
+sees the part, so it cannot notice what a person notices when zooming in
 (#5). It also cannot cheaply ask "what if": every question is a full study.
 A coarse preview mode (seconds, one fixed volume fraction, no confirm)
 would let an agent iterate on the study itself before paying for the real
@@ -271,7 +271,7 @@ run; this pairs with the tiered evals (#6).
 
 ### Evals and development process (evals/, tests/)
 
-The suite is 14 cases, all GRIP-like by design, scored pass/fail, about two
+The suite is 14 cases, all robot-arm by design, scored pass/fail, about two
 hours on the cloud box at `--jobs 1`. A change is judged a few times a day
 at best, and a fix can be tuned to these cases without anyone noticing (#6).
 Pass/fail also hides progress: a case that goes from 2% to 15% lighter at
@@ -292,13 +292,13 @@ Not covered by any running thread, in order:
    meshed infill for FDM.
 3. **Loads and design space from the mechanism** (#7, #8). Pose sweep from
    URDF to governing load cases with direction scatter; design space and
-   keep-outs from the assembly and swept volumes. Move the GRIP-specific
+   keep-outs from the assembly and swept volumes. Move the robot-arm-specific
    logic into loadpath.
 4. **A vision critic and faster evals** (#5, #6). Model review of interface
    close-ups as a metric; a 5-minute coarse tier; Pareto scoring; a
    generated case corpus.
 5. **Physical calibration loop** (#4). Coupon generator, measurement
-   format, ingest into material cards and #1's correction. Needs Connor's
-   printer, so it should start with the yoke he is already printing.
-   Built (calibration.py, docs/CALIBRATION.md, examples/grip/yoke_test.py);
+   format, ingest into material cards and #1's correction. Needs the maintainer's
+   printer, so it should start with the yoke already being printed.
+   Built (calibration.py, docs/CALIBRATION.md, examples/robot-arm/yoke_test.py);
    waiting on the prints and measurements.

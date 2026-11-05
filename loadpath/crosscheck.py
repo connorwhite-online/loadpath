@@ -4,7 +4,7 @@ A second opinion on a delivered part, from an independent solver.
 verify.py analyses the part on the same kind of voxel grid the optimizer
 uses. That is fast and consistent, and it shares the optimizer's blind
 spots: a staircase boundary, stress that depends on where the grid falls on
-a fillet (GRIP's turret read SF 2.41 at 150k cells and 1.92 at 120k). This
+a fillet (the robot arm's turret read SF 2.41 at 150k cells and 1.92 at 120k). This
 module re-meshes the delivered surface into curved-edge (quadratic)
 tetrahedra that follow it exactly, applies the study's supports and loads,
 and solves linear elasticity with a separate code path:
@@ -51,7 +51,7 @@ def _tet_mesh(mesh, size, order=1, size_at=None, mesher=None):
     a fifth of the regular tet's quality, in about a minute.
 
     gmsh otherwise: on failure the surface is cleaned with manifold's
-    simplify at growing tolerances (0.05 mm moved nothing visible on the GRIP
+    simplify at growing tolerances (0.05 mm moved nothing visible on the robot-arm
     wrist yoke) and tried again."""
     mesher = mesher or ("tetwild" if _has_tetwild() and size_at is None and order == 1 else "gmsh")
     if mesher == "tetwild":
@@ -77,7 +77,7 @@ def element_size(study: Study) -> float:
     return max(0.75, 0.5 * (study.min_member or 3.0))
 
 
-# Memory of a native P2 solve, measured on GRIP's upper arm (180 cm3):
+# Memory of a native P2 solve, measured on the robot arm's upper arm (180 cm3):
 # about 10 V / h^3 tetrahedra at edge h, and 7 kB each with the matrix
 # assembled in place (520k tets at 1.5 mm: 3.8 GB peak, all three cases).
 # It was 20 kB a tet while assembly summed chunk matrices, held a second
@@ -156,7 +156,7 @@ def _tet_cache_dir():
 
 
 # fTetWild meshes the part's whole bounding box at the target edge and keeps
-# the inside: on GRIP's upper arm (13% of its box) it optimized ~2M tets to
+# the inside: on the robot arm's upper arm (13% of its box) it optimized ~2M tets to
 # keep 237k, 250 s of a 260 s mesh. Its global edge is set this many times
 # coarser, and a sizing field asks for `size` inside the part and within
 # 1.5 grid steps of its surface: the same mesh in the part (228k tets, mean
@@ -168,7 +168,7 @@ def _inside_grid(tri, axes):
     """Which points of the grid axes[0] x axes[1] x axes[2] are inside the
     closed triangle soup `tri` (n, 3, 3): one ray along +x per (y, z)
     column, its crossings found in 2D, parity counted per grid x. (trimesh's
-    mesh.contains, without embree, ran past 14 GB on 7k points of the GRIP
+    mesh.contains, without embree, ran past 14 GB on 7k points of the robot-arm
     wrist link and took the box down; this is a few seconds.) Columns are
     nudged off the grid by a fraction of a micron, so a ray never grazes an
     edge exactly."""
@@ -282,7 +282,7 @@ def _tetwild(mesh, size):
     got = _tetwild_guarded(v, f, opts, bg)
     if got is None and bg:
         # fTetWild went past its memory limit with the sizing field: mesh
-        # at the plain edge everywhere (0.55 GB on the GRIP wrist link, 0.94
+        # at the plain edge everywhere (0.55 GB on the robot-arm wrist link, 0.94
         # GB on the upper arm). The result is kept under this key, so the
         # surface goes straight to it next time.
         opts["edge_length_abs"] = float(size)

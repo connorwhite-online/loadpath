@@ -44,45 +44,45 @@ Regenerate with the commands at the top of [`gallery.py`](gallery.py). Stress ma
 
 ![bell-crank stress](images/stress/bell-crank-views.png)
 
-## grip-turret
+## robot-turret
 
 140.4 g · 91% under envelope · SF 2.85 · pass
 
 <sub>deflection 0.729 mm · p5Member 5.49 mm · creaseLength 36.8 mm · volumeFraction 2% · 4248 s</sub>
 
-![grip-turret](images/cases/grip-turret-views.png)
+![robot-turret](images/cases/robot-turret-views.png)
 
-![grip-turret stress](images/stress/grip-turret-views.png)
+![robot-turret stress](images/stress/robot-turret-views.png)
 
-## grip-upper-arm
+## robot-upper-arm
 
 207.7 g · 88% under envelope · SF 7.33 · pass
 
 <sub>deflection 0.519 mm · p5Member 4.96 mm · creaseLength 18.8 mm · volumeFraction 7% · 1416 s</sub>
 
-![grip-upper-arm](images/cases/grip-upper-arm-views.png)
+![robot-upper-arm](images/cases/robot-upper-arm-views.png)
 
-![grip-upper-arm stress](images/stress/grip-upper-arm-views.png)
+![robot-upper-arm stress](images/stress/robot-upper-arm-views.png)
 
-## grip-wrist-link-mjf
+## robot-wrist-link-mjf
 
 40.2 g · 95% under envelope · SF 5.83 · pass
 
 <sub>deflection 0.490 mm · p5Member 1.83 mm · creaseLength 1.7 mm · volumeFraction 6% · 1669 s</sub>
 
-![grip-wrist-link-mjf](images/cases/grip-wrist-link-mjf-views.png)
+![robot-wrist-link-mjf](images/cases/robot-wrist-link-mjf-views.png)
 
-![grip-wrist-link-mjf stress](images/stress/grip-wrist-link-mjf-views.png)
+![robot-wrist-link-mjf stress](images/stress/robot-wrist-link-mjf-views.png)
 
-## grip-wrist-yoke
+## robot-wrist-yoke
 
 17.3 g · 93% under envelope · SF 3.88 · pass
 
 <sub>deflection 0.229 mm · p5Member 2.27 mm · creaseLength 1.1 mm · volumeFraction 6% · 1390 s</sub>
 
-![grip-wrist-yoke](images/cases/grip-wrist-yoke-views.png)
+![robot-wrist-yoke](images/cases/robot-wrist-yoke-views.png)
 
-![grip-wrist-yoke stress](images/stress/grip-wrist-yoke-views.png)
+![robot-wrist-yoke stress](images/stress/robot-wrist-yoke-views.png)
 
 ## mbb-beam
 
@@ -160,6 +160,6 @@ The `arm-link` eval case (SF 3, 0.5 mm at the wrist, PA12) with each of loadpath
 
 ![arm link](images/manufacturing/arm-link.png)
 
-GRIP's wrist yoke in 6061-T6 aluminium at SF 2: free (38.4 g, SF 4.8) and 5-axis milled with a 4 mm cutter (38.8 g, SF 3.7): every void reachable from one of the six sides, no slot under 4 mm.
+The robot arm's wrist yoke in 6061-T6 aluminium at SF 2: free (38.4 g, SF 4.8) and 5-axis milled with a 4 mm cutter (38.8 g, SF 3.7): every void reachable from one of the six sides, no slot under 4 mm.
 
 ![wrist yoke](images/manufacturing/wrist-yoke.png)

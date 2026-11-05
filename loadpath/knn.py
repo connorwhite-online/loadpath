@@ -4,7 +4,7 @@ scipy's cKDTree.query(P, k), several times faster on the queries a mesher
 makes.
 
 MeshField reads a mesh's exact distance from the triangles behind the k=12
-nearest centroids of each point; on the GRIP links (500k triangles, a 10 mm
+nearest centroids of each point; on the robot-arm links (500k triangles, a 10 mm
 band) that query was ~80% of evaluating the whole field graph. This is a
 k-d tree (median splits on the widest axis, 16 points a leaf) searched
 depth first, nearer child first, in numba (nogil: peval's threads share
@@ -17,7 +17,7 @@ ball.
 The answer is the exact k nearest by squared distance, nearest first;
 centroids at exactly equal distances come in index order here and in the
 tree's own order in scipy, the only way the two can differ (none did over
-millions of GRIP and arm-link queries, tests/test_fieldjit.py).
+millions of the arm and arm-link queries, tests/test_fieldjit.py).
 
 `available()` is False without numba or with LOADPATH_KNN=kdtree.
 """

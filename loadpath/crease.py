@@ -44,8 +44,8 @@ extended field). Creases are on by default (mesh.creases).
 Where lattice walls meet a body at under ~45 degrees the material (or the
 gap) between them is thinner than one pitch for a pitch or more back from
 the true crease: that knife edge is not in the marching-cubes mesh at all,
-and no relax or snapping of its vertices brings it back (moonshots round 2,
-crease-aware relax tried 2026-10-31: same-side smoothing, own-leaf
+and no relax or snapping of its vertices brings it back (tried
+2026-10-31 as a crease-aware relax: same-side smoothing, own-leaf
 projection, a flip guard; none beat the plain relax before this pass).
 
 The split is decided per edge, so both triangles of an edge agree and the
@@ -195,24 +195,6 @@ class CreaseTree:
             cache[key] = fieldjit.compile_rows(g, [(lf.spec[0], lf.spec[1], lf.spec[2], lf.sign)
                                                    for lf in leaves])
         return cache[key]
-
-    @classmethod
-    def from_callables(cls, spec):
-        """A tree from nested tuples: ("min"|"max", [kids]) or a callable
-        P -> values (a leaf), ("neg", kid) to negate. For experiments."""
-        def build(s):
-            if callable(s):
-                return _Leaf(lambda P, memo, s=s: np.asarray(s(P), float), 1.0, f"leaf{id(s)}")
-            if s[0] == "neg":
-                return _negate(build(s[1]))
-            return _Node(s[0], [build(k) for k in s[1]])
-        tree = cls(build(spec))
-
-        def ev(P):
-            P = np.asarray(P, float).reshape(-1, 3)
-            return np.stack([lf.sign * lf.fn(P, {}) for lf in tree.leaves])
-        tree._evaluator = ev
-        return tree
 
     # -- evaluation --
 
@@ -573,7 +555,6 @@ def sharpen(V, F, tree, pitch, snap=0.25, reach=4.0, field=None, stats=None, lab
     idx = np.flatnonzero(c == 1)
     if len(idx):
         j = np.argmax(M[idx] >= 0, axis=1)
-        r = np.arange(len(idx))
         a = F[idx, j]
         b = F[idx, (j + 1) % 3]
         cc = F[idx, (j + 2) % 3]

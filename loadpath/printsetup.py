@@ -34,7 +34,7 @@ ROOM = 0.8            # a lift above this share of the limit counts as tight
 
 
 def _bed_candidates(material, setup, max_bed):
-    from .buildsim import BuildSetup, _fdm_params
+    from .buildsim import _fdm_params
     p = _fdm_params(dataclasses.replace(setup, material=material))
     base = p["bed"]
     # above Tg an amorphous first layer sags (elephant's foot), so stop

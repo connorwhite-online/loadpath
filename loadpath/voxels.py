@@ -76,7 +76,7 @@ def _crossings(tri, dims, origin, pitch, axis):
     axis in cells from voxel 0's centre, the sign of the triangle's projected
     area: which way it faces along the axis, up to the axis's handedness)."""
     u_ax, v_ax = [a for a in range(3) if a != axis]
-    nu, nv, nw = dims[u_ax], dims[v_ax], dims[axis]
+    nu, nv = dims[u_ax], dims[v_ax]
     ou = origin[u_ax] + _JITTER[0] * pitch
     ov = origin[v_ax] + _JITTER[1] * pitch
     ow = origin[axis]

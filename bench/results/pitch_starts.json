@@ -194,7 +194,7 @@
    "error": null
   },
   {
-   "case": "grip-turret",
+   "case": "robot-turret",
    "scale": 1.0,
    "pass": true,
    "massAtTarget": 156.09165229469738,
@@ -202,7 +202,7 @@
    "error": null
   },
   {
-   "case": "grip-turret",
+   "case": "robot-turret",
    "scale": 1.01,
    "pass": true,
    "massAtTarget": 145.3602841967285,
@@ -210,7 +210,7 @@
    "error": null
   },
   {
-   "case": "grip-turret",
+   "case": "robot-turret",
    "scale": 1.02,
    "pass": true,
    "massAtTarget": 167.01408429477493,
@@ -218,7 +218,7 @@
    "error": null
   },
   {
-   "case": "grip-turret",
+   "case": "robot-turret",
    "scale": 1.03,
    "pass": true,
    "massAtTarget": 178.8210443865418,
@@ -226,7 +226,7 @@
    "error": null
   },
   {
-   "case": "grip-turret",
+   "case": "robot-turret",
    "scale": 1.04,
    "pass": false,
    "massAtTarget": 156.52400180419374,
@@ -234,7 +234,7 @@
    "error": null
   },
   {
-   "case": "grip-turret",
+   "case": "robot-turret",
    "scale": 1.05,
    "pass": false,
    "massAtTarget": 157.53241676270778,
@@ -242,7 +242,7 @@
    "error": null
   },
   {
-   "case": "grip-upper-arm",
+   "case": "robot-upper-arm",
    "scale": 1.0,
    "pass": true,
    "massAtTarget": 192.3501479558316,
@@ -250,7 +250,7 @@
    "error": null
   },
   {
-   "case": "grip-upper-arm",
+   "case": "robot-upper-arm",
    "scale": 1.01,
    "pass": true,
    "massAtTarget": 239.94178750050037,
@@ -258,7 +258,7 @@
    "error": null
   },
   {
-   "case": "grip-upper-arm",
+   "case": "robot-upper-arm",
    "scale": 1.02,
    "pass": true,
    "massAtTarget": 230.0045004538312,
@@ -266,7 +266,7 @@
    "error": null
   },
   {
-   "case": "grip-upper-arm",
+   "case": "robot-upper-arm",
    "scale": 1.03,
    "pass": true,
    "massAtTarget": 225.10480088969365,
@@ -274,7 +274,7 @@
    "error": null
   },
   {
-   "case": "grip-upper-arm",
+   "case": "robot-upper-arm",
    "scale": 1.04,
    "pass": true,
    "massAtTarget": 228.1861469484587,
@@ -282,7 +282,7 @@
    "error": null
   },
   {
-   "case": "grip-upper-arm",
+   "case": "robot-upper-arm",
    "scale": 1.05,
    "pass": true,
    "massAtTarget": 240.42480241368736,
@@ -290,7 +290,7 @@
    "error": null
   },
   {
-   "case": "grip-wrist-yoke",
+   "case": "robot-wrist-yoke",
    "scale": 1.0,
    "pass": true,
    "massAtTarget": 22.69771715666421,
@@ -298,7 +298,7 @@
    "error": null
   },
   {
-   "case": "grip-wrist-yoke",
+   "case": "robot-wrist-yoke",
    "scale": 1.01,
    "pass": true,
    "massAtTarget": 27.787282129165124,
@@ -306,7 +306,7 @@
    "error": null
   },
   {
-   "case": "grip-wrist-yoke",
+   "case": "robot-wrist-yoke",
    "scale": 1.02,
    "pass": true,
    "massAtTarget": 28.8190767468485,
@@ -314,7 +314,7 @@
    "error": null
   },
   {
-   "case": "grip-wrist-yoke",
+   "case": "robot-wrist-yoke",
    "scale": 1.03,
    "pass": true,
    "massAtTarget": 23.588308813206503,
@@ -322,7 +322,7 @@
    "error": null
   },
   {
-   "case": "grip-wrist-yoke",
+   "case": "robot-wrist-yoke",
    "scale": 1.04,
    "pass": true,
    "massAtTarget": 24.793078312117274,
@@ -330,7 +330,7 @@
    "error": null
   },
   {
-   "case": "grip-wrist-yoke",
+   "case": "robot-wrist-yoke",
    "scale": 1.05,
    "pass": true,
    "massAtTarget": 21.69970268917333,
@@ -921,7 +921,7 @@
     }
    ]
   },
-  "grip-turret": {
+  "robot-turret": {
    "oneGrid": [
     {
      "pass": true,
@@ -951,7 +951,7 @@
     }
    ]
   },
-  "grip-upper-arm": {
+  "robot-upper-arm": {
    "oneGrid": [
     {
      "pass": true,
@@ -981,7 +981,7 @@
     }
    ]
   },
-  "grip-wrist-yoke": {
+  "robot-wrist-yoke": {
    "oneGrid": [
     {
      "pass": true,

@@ -1,7 +1,7 @@
 {
  "id": "elbow-stop-pad-tpu",
  "kind": "lattice",
- "brief": "My GRIP arm's elbow has a hard stop, and when the controller overshoots, the forearm slams into it.\nI want a TPU 95A pad, printed on my FDM printer (0.4 mm nozzle), to glue onto the stop. Worst case\nthe forearm arrives with about 1.2 kg of effective mass at 1 m/s, square onto the pad's top face.\nThe force on the stop has to stay under 220 N or the servo's gears are at risk, and the pad must not\nsquash more than 8 mm. It has a 30 x 30 mm footprint and can be at most 15 mm tall: put the stop face\nat z = 0, the pad centred on x = y = 0 and going up from there. Give it flat solid faces about 1 mm\nthick top and bottom, so it glues on and the forearm hits a surface rather than cell edges.",
+ "brief": "My robot arm's elbow has a hard stop, and when the controller overshoots, the forearm slams into it.\nI want a TPU 95A pad, printed on my FDM printer (0.4 mm nozzle), to glue onto the stop. Worst case\nthe forearm arrives with about 1.2 kg of effective mass at 1 m/s, square onto the pad's top face.\nThe force on the stop has to stay under 220 N or the servo's gears are at risk, and the pad must not\nsquash more than 8 mm. It has a 30 x 30 mm footprint and can be at most 15 mm tall: put the stop face\nat z = 0, the pad centred on x = y = 0 and going up from there. Give it flat solid faces about 1 mm\nthick top and bottom, so it glues on and the forearm hits a surface rather than cell edges.",
  "attachments": [],
  "tags": [
   "fdm",

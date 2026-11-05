@@ -737,7 +737,7 @@ def _run_budgeted(files: list, out: str, tier: str = "full", critic=None, spread
     expected peaks of everything running fit in 80% of the memory available (the
     container's limit, when it has one)
     (and no more at once than there are cores). The 4-core 15 GB cloud box ran
-    out of memory at a flat --jobs 2: two GRIP cases at their 150k-cell
+    out of memory at a flat --jobs 2: two robot-arm cases at their 150k-cell
     confirmation solves."""
     import multiprocessing as mp
     from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
@@ -827,7 +827,7 @@ def main(argv=None):
     os.makedirs(args.out, exist_ok=True)
     if args.jobs is None:
         # full: two at a time. With the AMG coarse-factor leak fixed (fem.py)
-        # a GRIP case peaks near 2 GB, and two ran the suite in 1 h 50 min
+        # a robot-arm case peaks near 2 GB, and two ran the suite in 1 h 50 min
         # against 2 h 30 min one at a time on the 4-core 15 GB box, the
         # box at 3.8 GB, every number the same as --jobs 1
         args.jobs = (os.cpu_count() or 1) if args.tier == "coarse" else min(2, os.cpu_count() or 1)

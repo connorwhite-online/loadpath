@@ -233,7 +233,7 @@ def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_C
     top and bottom step a cell at a time, a cell / tan(tilt) apart along it,
     so its section swings by about a cell, out of phase top and bottom. The
     isotropic upsample and blur below only round each step off, and the part
-    came out with a row of bumps and necks along every long stem (GRIP's
+    came out with a row of bumps and necks along every long stem (the robot arm's
     upper arm: +-0.6 mm on an 11 mm stem every 19 mm, about 9% less bending
     stiffness than the same mass at constant section, and the stress
     concentrated at every neck). The steps carry no design intent: the
@@ -342,7 +342,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     # Pad with void, so material that reaches the design space's boundary
     # rounds off just inside it: the exact intersection with the design
     # space then has nothing to cut, and no flat sawn-off faces appear where
-    # the box happened to end (GRIP's wrist yoke had several). Only where a
+    # the box happened to end (the robot arm's wrist yoke had several). Only where a
     # part must sit flush against something (`flush`: its supports, a wall)
     # is the edge replicated, so the material runs on through the boundary
     # and the intersection cuts it off flat there, on purpose (the printed
@@ -431,7 +431,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # back to a density with its 0.5 level on the blended surface. A
         # density-space smooth max (fillet=False, above) only bumps the
         # field by k/4 within a cell or two of the junction, so members still
-        # met bosses in a hard crease (GRIP's wrist yoke, QA 10/28). The
+        # met bosses in a hard crease (the robot arm's wrist yoke, QA 10/28). The
         # exact union in reconstruct() then adds the preserved shapes, which
         # the fillet meets tangentially, so it leaves no crease of its own.
         sd = sdfs.min(preserve).reshape(fine.shape)
@@ -449,7 +449,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # back. Where the body is convex or flat that returns it unchanged;
         # into a concave edge between two members it leaves a fillet of that
         # radius. Struts meeting at a sharp angle otherwise keep a crease the
-        # preserve fillet never sees (GRIP's upper arm, 51 mm of it once its
+        # preserve fillet never sees (the robot arm's upper arm, 51 mm of it once its
         # thrust disk was no longer pinned solid).
         grown = _field_distance(fine, step, o.level) - o.close < 0
         d2 = (ndimage.distance_transform_edt(~grown) - ndimage.distance_transform_edt(grown)) * step
@@ -571,7 +571,7 @@ def _snap_to_flat_faces(mesh, preserve, reach: float, spread: float):
     The density field resolves a millimetre at best, so where the body runs
     on flush with a boss's end face its surface lands a fraction of a
     millimetre off the face, and the exact union leaves the boss's rim
-    standing in a hairline step all round (GRIP's turret: 70 mm of crease
+    standing in a hairline step all round (the robot arm's turret: 70 mm of crease
     round its J1 hub's mating face, and the body half a millimetre proud of
     that face where the fillet had bulged past it). On the face's own
     footprint the surface goes onto the face's plane; past its edge the move
@@ -665,7 +665,7 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
     tuned to: true Taubin everywhere read worse (mass at target SF +3% to
     +10% on six full-tier cases, the wrist yoke failing on creases). But it
     is curvature flow, and members one or two cells thick shrink until they
-    nearly part: the GRIP wrist yoke's stress-constrained design at 15k
+    nearly part: the robot-arm wrist yoke's stress-constrained design at 15k
     cells lost 20% of its mesh volume (verified peak 33 -> 176 MPa) and the
     camera boom's two-cell walls came out one cell thick (16x softer).
     Capping each vertex's shift instead (0.1 / 0.25 cell) only halved the

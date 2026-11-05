@@ -510,7 +510,7 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres):
     Projection continuation freezes the layout once beta is high: a member
     the optimizer stopped needing can no longer shrink away (its gradient
     lives only in the thin transition band), and compliance does not notice
-    a strut that carries nothing. GRIP's wrist link came out with several
+    a strut that carries nothing. The robot arm's wrist link came out with several
     such tendrils hanging in free space. They are pure deadweight and look
     unfinished, so after the final solve, cells that carry essentially no
     energy in any case are removed, the design re-solved, and repeated,

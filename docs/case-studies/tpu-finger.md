@@ -92,8 +92,8 @@ cells, and thresholding it to a printable part drops the travel to
 - **Simulation only.** No finger has been printed and tested. A TPU creep
   coupon and crush coupons are in the calibration kit.
 - **2.5D plates.** Both fingers are designed as plates of uniform
-  thickness. The optimizer is 3D, but GRIP's actual tendon finger
-  (`examples/grip/finger.py`) has only the nonlinear analysis so far, not a
+  thickness. The optimizer is 3D, but the robot arm's actual tendon finger
+  (`examples/robot-arm/finger.py`) has only the nonlinear analysis so far, not a
   mechanism design. That analysis reads about 2x too stiff with three cells
   across its 2.2 mm flexure; a finer grid (`--pitch 0.55`) removes it.
 - **Contact is simplified.** One rigid, fixed cylinder; no friction; no

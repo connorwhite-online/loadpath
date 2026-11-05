@@ -192,7 +192,7 @@ def _spawn(kind: str, name: str, inputs: dict, argv: list, cells=None, warnings=
     for fname, doc in inputs.items():
         with open(os.path.join(d, fname), "w") as fh:
             json.dump(doc, fh, indent=1)
-    env = dict(os.environ, PYTHONUNBUFFERED="1", LOADPATH_NO_HINT="1")
+    env = dict(os.environ, PYTHONUNBUFFERED="1")
     env["PYTHONPATH"] = os.path.dirname(_HERE) + os.pathsep + env.get("PYTHONPATH", "")
     argv = [a.replace("{dir}", d) for a in argv]
     with open(os.path.join(d, "progress.jsonl"), "wb") as err, open(os.path.join(d, "stdout.json"), "wb") as out:
@@ -403,6 +403,9 @@ def check_printability(path: str, min_wall: float = 1.5, overhang_deg: float = 4
                                               slicer=slicer)
         except Exception as exc:  # noqa: BLE001 - the rest of the report stands
             report["processError"] = str(exc)
+    if report.get("ok"):
+        from .delivery import MAKE_IT
+        report["next"] = MAKE_IT
     return report
 
 

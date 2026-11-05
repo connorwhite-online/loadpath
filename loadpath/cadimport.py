@@ -5,7 +5,7 @@ interfaces found for you.
 Fusion's generative workspace asks you to click the faces a part bolts on
 by, the bores its shafts run in and the faces it must not grow over. Most of
 that is in the geometry already. `import_part` reads the part, heals it
-(real exports are often open shells: five of GRIP's link STEPs are), and
+(real exports are often open shells: five of the robot arm's link STEPs are), and
 finds:
 
 - bores: concave cylinders, merged across split faces and stacked with
@@ -45,13 +45,13 @@ __all__ = ["Part", "load_part", "detect_features", "suggest_setup", "summarize",
 
 STEP_EXT = (".step", ".stp")
 # mm chord error of the STEP tessellation: a tenth of the finest grid the
-# optimizer runs on, and coarse enough to tessellate a GRIP link in a second.
+# optimizer runs on, and coarse enough to tessellate a robot-arm link in a second.
 DEFAULT_TOLERANCE = 0.05
 # mm: through radius up to an M6 clearance hole (3.2) counts as a bolt
 BOLT_MAX_R = 3.6
 # mm: a plain bore narrower than this (a cable pass, a pilot hole) is kept
 # open but not ringed with preserved material unless it is loaded or holds:
-# a ring there forces a strut out to it (GRIP's yoke grew one to a 4 mm pass)
+# a ring there forces a strut out to it (the robot arm's yoke grew one to a 4 mm pass)
 SEAT_MIN_R = 5.0
 # rad: a cylinder whose faces together cover less than this is a fillet or a
 # slot end, not a hole

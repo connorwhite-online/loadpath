@@ -24,7 +24,7 @@ for this project (published tests of other people's prints are below, under
 [Printed lattices against published tests](#printed-lattices-against-published-tests)). A calibration kit is ready and waiting to be printed
 ([CALIBRATION.md](CALIBRATION.md)): stiffness and strength coupons along and
 across layers, a gyroid-core beam, TPU creep and crush coupons, PETG warp
-bars, and a bench test of the GRIP wrist yoke with a predicted rotation per
+bars, and a bench test of the robot-arm wrist yoke with a predicted rotation per
 kilogram. Until those numbers come back, treat every safety factor as an
 estimate for comparing designs and catching undersized parts, not as a
 certified strength.
@@ -53,7 +53,7 @@ certified strength.
 | The optimizer finds near-optimal layouts | Benchmarked | At equal material, 3-5% less stiff than top88 on the 2D MBB beam and L-bracket, 1.2% less stiff than top3d on its 3D cantilever, and stiffer than top3d's thresholded design on a 3D bridge. Most of the 2D gap is the cost of the minimum-member rule. The references are NumPy ports of the published MATLAB codes, not the originals ([case study](case-studies/benchmarks.md)). |
 | Compliant mechanisms | Benchmarked | Within 1-2% of a port of Sigmund's 99-line mechanism code on the force inverter and gripper ([MECHANISMS.md](MECHANISMS.md)). |
 | GE bracket challenge: 370 g at SF 1.06 | Simulation only | Level with the winning entries' ~80% reduction, but on an approximate, roomier envelope and checked only by loadpath's own analysis ([BENCHMARKS.md](BENCHMARKS.md)). |
-| Eval and GRIP part masses and safety factors | Simulation only, cross-checked solver | The numbers are model predictions under the stated loads. The solver behind them is cross-checked as above; the loads, material values and print quality are not ([eval case study](case-studies/evals.md), [GRIP](case-studies/grip.md)). |
+| Eval and robot-arm part masses and safety factors | Simulation only, cross-checked solver | The numbers are model predictions under the stated loads. The solver behind them is cross-checked as above; the loads, material values and print quality are not ([eval case study](case-studies/evals.md), [the robot arm](case-studies/robot-arm.md)). |
 | Run-to-run reproducibility | Measured on the model | Mass at the target safety factor moves 3.5-7% when the search starts from a different fraction, and 5% (median) when the grid pitch changes by 3%. Mass differences under about 5% are noise. |
 
 ## Fields, lattices and meshing
@@ -219,7 +219,7 @@ warning.
 
 No open dataset was found with both the geometry of a printed
 topology-optimized part and its measured stiffness or strength; published
-bracket tests give neither the STL nor enough to rebuild it. The GRIP wrist
+bracket tests give neither the STL nor enough to rebuild it. The robot-arm wrist
 yoke bench test in the calibration kit remains the planned check for a
 printed optimized part.
 

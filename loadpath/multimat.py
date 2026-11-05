@@ -73,8 +73,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import ndimage
 
-from .fem import CORNERS, HexMesh, Solver, Stiffness, _b_matrix
-from .materials import Material, material_from_spec
+from .fem import HexMesh, Solver, Stiffness, _b_matrix
+from .materials import material_from_spec
 
 __all__ = ["MultiMaterial", "Requirement", "parse_multimaterial", "optimize_multimaterial",
            "run_multimaterial", "verify_multimaterial", "split_bodies", "lame", "LameStiffness",
@@ -577,7 +577,6 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
     max_iterations = int(max_iterations or study.max_iterations)
     Es = np.array([m.E for m in mm.materials])
     lam_i, mu_i = lame(Es, np.array([m.nu for m in mm.materials]))
-    rho_i = np.array([m.density for m in mm.materials])
     e_max = Es.max()
     lam_min, mu_min = lame(E_FLOOR * e_max, 0.3)
     springs = e_max * domain.springs if domain.springs is not None else None
@@ -649,7 +648,7 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
     us = [None] * len(loads)
     c0 = None
     history = []
-    gamma, p0 = 0.0, None
+    gamma = 0.0
     # the cases a softness requirement reads, solved on the Voigt model
     req_idx = sorted({names.index(r.case) for r in mm.requirements} |
                      {names.index(r.relative_to) for r in mm.requirements if r.relative_to})
@@ -673,7 +672,6 @@ def optimize_multimaterial(study, domain, mm: MultiMaterial, volume_fraction: fl
     stage_b_start = None
     # iterations kept for the bond stage at the end
     stage_b = max_iterations - max(10, max_iterations // 5) if use_int else max_iterations
-    s_lag = None
     it = 0
     req_vals = {}
     for it in range(1, max_iterations + 1):

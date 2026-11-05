@@ -1,6 +1,6 @@
 {
-  "name": "grip-wrist-link",
-  "description": "A GRIP-style wrist link: bolted to a servo horn at one end, carrying the next joint's 22 mm bearing 110 mm out.",
+  "name": "robot-wrist-link",
+  "description": "A robot-arm wrist link: bolted to a servo horn at one end, carrying the next joint's 22 mm bearing 110 mm out.",
   "designSpace": [{"type": "box", "min": [-14, -16, -10], "max": [124, 16, 10]}],
   "fasteners": [
     {"id": "h1", "size": "M3", "seat": [8, 0, 10], "direction": "-z", "grip": 20, "end": "face"},

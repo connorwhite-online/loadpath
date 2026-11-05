@@ -9,12 +9,12 @@ safety factor, deflection, thinnest member, printability, pass or fail.
 
 <table>
 <tr>
-<td align="center" width="50%"><img src="docs/images/cases/grip-wrist-link-mjf-part.png" height="420"></td>
-<td align="center" width="50%"><img src="docs/images/stress/grip-wrist-link-mjf.png" height="420"></td>
+<td align="center" width="50%"><img src="docs/images/cases/robot-wrist-link-mjf-part.png" height="420"></td>
+<td align="center" width="50%"><img src="docs/images/stress/robot-wrist-link-mjf.png" height="420"></td>
 </tr>
 <tr>
-<td align="center" width="50%"><img src="docs/images/cases/grip-wrist-yoke-part.png" width="380"></td>
-<td align="center" width="50%"><img src="docs/images/stress/grip-wrist-yoke.png" width="380"></td>
+<td align="center" width="50%"><img src="docs/images/cases/robot-wrist-yoke-part.png" width="380"></td>
+<td align="center" width="50%"><img src="docs/images/stress/robot-wrist-yoke.png" width="380"></td>
 </tr>
 <tr>
 <td align="center" colspan="2"><sub>Two robot-arm parts as loadpath delivered them (left) and their stress from a fresh
@@ -141,7 +141,7 @@ and the limitations ([docs/case-studies/](docs/case-studies/)).
 | Case study | Result | Baseline |
 | --- | --- | --- |
 | [Eval suite](docs/case-studies/evals.md) | 15 of 15 parts meet their requirements on a fresh analysis of the delivered mesh | Each part's own requirements |
-| [GRIP robot arm](docs/case-studies/grip.md) | A load sweep over the arm's URDF found 3 of 5 links below SF 1; the regrown set meets SF 2 and is 18% smaller | GRIP's committed parts, made by an earlier loadpath with hand-written loads |
+| [Robot arm](docs/case-studies/robot-arm.md) | A load sweep over the arm's URDF found 3 of 5 links below SF 1; the regrown set meets SF 2 and is 18% smaller | The robot arm's committed parts, made by an earlier loadpath with hand-written loads |
 | [Arm link cores](docs/case-studies/arm-link-cores.md) | 42.2 g box section for FDM, 36.8 g hollow link for SLS, both at 0.5 mm and SF 3 | 54.9 g solid web; 54.2 g free-form topology optimization |
 | [Liquid cold plate](docs/case-studies/cold-plate.md) | A die-graded gyroid ties streamline channels; channels filled with a graded gyroid run 7% cooler | Streamline channels and pin fins, equal metal and pressure drop |
 | [TPU finger](docs/case-studies/tpu-finger.md) | up to 8 mm of tip curl for a 5 mm pull; a tendon finger grips 8x harder | A linear-model design (2.5 mm, then the solve fails); a plain bar of equal volume |
@@ -214,12 +214,12 @@ The eval suite (15/15 passing): robot-arm links, brackets, a bell crank and a ho
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/images/cases/bell-crank.png" width="250"><br><b>bell-crank</b><br><sub>23.4 g · 84% under envelope · SF 3.22 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-turret.png" width="250"><br><b>grip-turret</b><br><sub>140.4 g · 91% under envelope · SF 2.85 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-upper-arm.png" width="250"><br><b>grip-upper-arm</b><br><sub>207.7 g · 88% under envelope · SF 7.33 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/robot-turret.png" width="250"><br><b>robot-turret</b><br><sub>140.4 g · 91% under envelope · SF 2.85 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/robot-upper-arm.png" width="250"><br><b>robot-upper-arm</b><br><sub>207.7 g · 88% under envelope · SF 7.33 · pass</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-link-mjf.png" width="250"><br><b>grip-wrist-link-mjf</b><br><sub>40.2 g · 95% under envelope · SF 5.83 · pass</sub></td>
-<td align="center" valign="top"><img src="docs/images/cases/grip-wrist-yoke.png" width="250"><br><b>grip-wrist-yoke</b><br><sub>17.3 g · 93% under envelope · SF 3.88 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/robot-wrist-link-mjf.png" width="250"><br><b>robot-wrist-link-mjf</b><br><sub>40.2 g · 95% under envelope · SF 5.83 · pass</sub></td>
+<td align="center" valign="top"><img src="docs/images/cases/robot-wrist-yoke.png" width="250"><br><b>robot-wrist-yoke</b><br><sub>17.3 g · 93% under envelope · SF 3.88 · pass</sub></td>
 <td align="center" valign="top"><img src="docs/images/cases/mbb-beam.png" width="250"><br><b>mbb-beam</b><br><sub>13.8 g · 79% under envelope · SF 1.51 · pass</sub></td>
 </tr>
 <tr>
@@ -237,7 +237,7 @@ Where the load goes: von Mises stress, blue (none) to red (the part's 98th perce
 <table>
 <tr>
 <td align="center" valign="top"><img src="docs/images/stress/bell-crank.png" width="250"><br><sub>bell-crank</sub></td>
-<td align="center" valign="top"><img src="docs/images/stress/grip-upper-arm.png" width="250"><br><sub>grip-upper-arm</sub></td>
+<td align="center" valign="top"><img src="docs/images/stress/robot-upper-arm.png" width="250"><br><sub>robot-upper-arm</sub></td>
 <td align="center" valign="top"><img src="docs/images/stress/printed-hook.png" width="250"><br><sub>printed-hook</sub></td>
 </tr>
 </table>

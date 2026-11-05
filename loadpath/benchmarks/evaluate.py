@@ -100,7 +100,6 @@ class Evaluator:
             np.add.at(f, dof(nodes, c), v)
         self.fixed, self.f = fixed, f
         self.free = np.flatnonzero(~fixed)
-        ne = len(self.edof)
         self._rows = np.repeat(self.edof, self.edof.shape[1], axis=1).ravel()
         self._cols = np.tile(self.edof, (1, self.edof.shape[1])).ravel()
         self.active = p.active[self.cell]

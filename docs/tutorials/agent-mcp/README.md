@@ -5,7 +5,7 @@ MCP) designs a whole part with loadpath's MCP tools and nothing else: it
 finds a starting point, writes the study, lets `loadpath_check` catch its
 mistakes, runs the study as a background job, reads the report, tightens
 the goal when the report shows a problem, and checks the part it hands
-over. The part is a GRIP-style wrist link in SLS PA12: bolted to a servo
+over. The part is a robot-arm wrist link in SLS PA12: bolted to a servo
 horn by four M3 screws at one end, carrying the next joint's 22 mm bearing
 110 mm out, with a cable channel down the middle.
 
@@ -94,7 +94,7 @@ fixed):
 "material": "pa12", "process": "sls", "goal": {"safetyFactor": 2.0}, "minMember": 3.0
 ```
 
-The payload is GRIP's: 1 kg at the gripper, 70 mm past the bearing, with a
+The payload is the robot arm's: 1 kg at the gripper, 70 mm past the bearing, with a
 dynamic factor of 1.5; `mass` and `at` turn that into 14.7 N and its moment
 about the bearing, so the agent does no arithmetic. The first draft had
 `"keepout"` for `"keepOut"` and `"gravity": "down"`:
@@ -132,7 +132,7 @@ note is information.
 <- {"ok": true, "jobId": "6d4bc109f34b4502b5d5785fab4831e3", "kind": "study", "cells": 10862,
     "next": "Poll loadpath_status every 30-60 seconds; a study takes minutes."}
 -> loadpath_status {"job_id": "6d4bc109f34b4502b5d5785fab4831e3"}
-<- {"status": "running", "kind": "study", "name": "grip-wrist-link", "elapsedSeconds": 5,
+<- {"status": "running", "kind": "study", "name": "robot-wrist-link", "elapsedSeconds": 5,
     "latest": {"stage": "optimize", "volumeFraction": 0.3},
     "next": "Poll loadpath_status every 30-60 seconds; a study takes minutes."}
 ```
@@ -161,7 +161,7 @@ search is optimizing, meshing or verifying. 17 minutes later:
       {"outcome": 3, "volumeFraction": 0.262, "massGrams": 25.7, "safetyFactor": 7.49, "passes": true, ...},
       {"outcome": 4, "volumeFraction": 0.244, "massGrams": 24.5, "safetyFactor": 4.82, "passes": true, "bodies": 1,
        "start": "warm from 0.262", "attention": []}],
-    "best": 4, "stl": "jobs/6d4bc109.../out/grip-wrist-link-24.stl", "viewer": "jobs/6d4bc109.../out/viewer.html",
+    "best": 4, "stl": "jobs/6d4bc109.../out/robot-wrist-link-24.stl", "viewer": "jobs/6d4bc109.../out/viewer.html",
     "images": 1}
 ```
 
@@ -210,7 +210,7 @@ the limit it left out and starts the same study again:
        "start": "recalled 0.262", ...},
       {"outcome": 3, "volumeFraction": 0.281, "massGrams": 27.6, "safetyFactor": 8.06, "passes": true, "bodies": 1,
        "start": "warm from 0.300", "attention": []}],
-    "best": 3, "stl": "jobs/5a298f65.../out/grip-wrist-link-28.stl", ...}
+    "best": 3, "stl": "jobs/5a298f65.../out/robot-wrist-link-28.stl", ...}
 ```
 
 `governedBy` is now `maxDeflection`: the bearing moves 0.78 mm and the part
@@ -224,7 +224,7 @@ says which limit it missed.
 ### Check the part it hands over (call 12)
 
 ```text
--> loadpath_check_printability {"path": "jobs/5a298f65.../out/grip-wrist-link-28.stl", "process": "sls",
+-> loadpath_check_printability {"path": "jobs/5a298f65.../out/robot-wrist-link-28.stl", "process": "sls",
                                 "material": "pa12", "min_wall": 1.0}
 <- {"ok": true, "watertight": true, "wallP1Mm": 2.5, "trappedVoidCount": 0, "process": {"ok": true, "warnings": []}}
 ```
@@ -254,7 +254,7 @@ What the agent should look at before it tells anyone the part is done
   numbers are a first look, not the part to print;
 - the problem itself: the part is only as right as the loads. Here the
   1.5 dynamic factor, the 70 mm gripper offset and the 0.8 mm limit are
-  GRIP's; a different arm needs its own.
+  The robot arm's; a different arm needs its own.
 
 ## What you should see
 

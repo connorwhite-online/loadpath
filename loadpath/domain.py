@@ -146,7 +146,7 @@ def _region_nodes(study: Study, mesh: HexMesh, region: str | None, shape: Shape 
     # was (correctly) designed to start there, and a 0.6 mm verification
     # grid then found nothing at the wall to hold.
     # Only as a fallback: widening it everywhere clamped more of every bolt
-    # ring in verification and read the GRIP upper arm at SF 10 instead of 5.
+    # ring in verification and read the robot-arm upper arm at SF 10 instead of 5.
     tol = mesh.pitch * (1.0 if kind == "keepOut" else 0.5)
     d = shape.sdf(mesh.node_xyz)
     nodes = d <= tol

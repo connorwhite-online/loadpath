@@ -58,7 +58,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .lattice import SHEETS, relative_density, sheet_modulus, tpms
+from .lattice import relative_density, sheet_modulus, tpms
 
 __all__ = ["CRUSH", "CRUSH_DATA", "crush_law", "ELASTOMERS", "HYSTERESIS", "collapse_strength", "plateau_stress", "density_for_plateau", "densification_strain",
            "CrushCurve", "crush_curve", "layer_profile", "impact_response", "grade_for_impact", "solid_impact",

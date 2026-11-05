@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<!-- A four-axis desktop arm (GRIP-sized): base yaw, shoulder, elbow and wrist
+<!-- A four-axis desktop arm (robot-arm-sized): base yaw, shoulder, elbow and wrist
      pitch, 1 kg at the gripper. Metres, kg, N·m. At the home pose (every
      joint at 0) the upper arm stands straight up and the forearm reaches
      out along +x; the forearm sits between the upper arm's two cheek plates

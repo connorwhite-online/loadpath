@@ -2,7 +2,7 @@
 
 Lattices lose to solid topology optimization on stiffness per gram (a graded
 diamond/solid hybrid was 56% more compliant than solid TO at equal material on
-the arm link; see the moonshots round 1 write-up). They win where a solid can't
+the arm link). They win where a solid can't
 compete: stopping an impact at a force you choose. This page covers
 `loadpath/impact.py` (crush and impact), `loadpath/isolator.py` (lattice isolator feet), `loadpath/modal.py` (natural
 frequencies and damping) and the `impact` and `vibration` blocks of a field
@@ -10,7 +10,7 @@ graph.
 
 ## The case: a corner bumper for a falling robot
 
-`examples/impact/end-stop.json`: a tapered corner bumper for a GRIP-like robot
+`examples/impact/end-stop.json`: a tapered corner bumper for a robot-arm robot
 base. The 5 kg robot falls 0.9 m off a bench (4.2 m/s, 44 J) and the PA12 base
 behind the bumper must not take more than 6 kN. The envelope narrows from
 40 mm to 22 mm square over 20 mm. Cells are 12 mm so the thinnest SLS wall is
@@ -130,7 +130,7 @@ coupon is crushed. The report adds the energy that comes back as rebound
 (`HYSTERESIS`: TPU dissipates roughly 30%; rough).
 
 `examples/impact/knock-pad.json` and `knock_pad.py`: a TPU bumper on a
-GRIP-like forearm. 1.5 kg of arm swings into a hand or a fixture at 1 m/s
+robot-arm forearm. 1.5 kg of arm swings into a hand or a fixture at 1 m/s
 (0.75 J) under a 140 N limit, which is about the ISO/TS 15066 quasi-static
 contact limit for a hand. Taper 40 mm to 24 mm over 14 mm, 7 mm cells, 0.5 mm
 thinnest wall (one FDM line).
@@ -230,7 +230,7 @@ the per-foot stiffness (sum k = K for the target frequency, sum k x = K x_cg,
 closest to equal feet, within the printable density range), and
 `density_for_stiffness` turns it into densities.
 
-`examples/isolator/mount.py`: a 3.9 kg GRIP-like robot base (aluminium plate
+`examples/isolator/mount.py`: a 3.9 kg robot-arm robot base (aluminium plate
 and a column, CG 11 mm forward, 4 mm to the side, 77 mm up) on four
 20 x 20 x 40 mm TPU gyroid feet with 6.7 mm cells, tuned for a 35 Hz bounce
 at TPU's dynamic stiffness (1.53x the card's E at 35 Hz; see "TPU over time

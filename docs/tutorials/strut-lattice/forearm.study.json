@@ -1,6 +1,6 @@
 {
   "name": "forearm",
-  "description": "A GRIP-style forearm link between a 22 mm elbow bearing and a 16 mm wrist bearing, 120 mm apart: 1.5 kg at the wrist with a dynamic factor of 2 (30 N), the wrist servo's 1.5 N m reaction twisting the wrist boss, and a 15 N side knock. Elbow bearing held. PA12, SLS.",
+  "description": "A robot-arm forearm link between a 22 mm elbow bearing and a 16 mm wrist bearing, 120 mm apart: 1.5 kg at the wrist with a dynamic factor of 2 (30 N), the wrist servo's 1.5 N m reaction twisting the wrist boss, and a 15 N side knock. Elbow bearing held. PA12, SLS.",
   "designSpace": [{"type": "box", "min": [-17, -17, -12], "max": [133, 17, 12]}],
   "preserve": [
     {"id": "elbow-boss", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 24, "r": 16}},

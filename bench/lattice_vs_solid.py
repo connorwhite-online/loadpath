@@ -4,7 +4,7 @@ envelope kept whole with a solid skin over a stress-sized TPMS core.
 
     python bench/lattice_vs_solid.py [case] --out bench-out/ [--sf 3 5 8] [--kind gyroid]
 
-`case` is an eval case name (default arm-link, the GRIP-like upper-arm
+`case` is an eval case name (default arm-link, the robot-arm upper-arm
 link). Writes results.json, results.md and renders. Every number is the
 delivered mesh's own verification (verify_part), not the optimizer's.
 """

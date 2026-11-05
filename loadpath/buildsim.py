@@ -1050,7 +1050,6 @@ def compensate_mesh(mesh, setup: BuildSetup, pitch=None, build="+z", iterations=
     if refine:
         mesh = refine_mesh(mesh, pitch)
     r, v_nom = to_build_frame(mesh.vertices, build)
-    nominal = trimesh.Trimesh(v_nom, mesh.faces, process=False)
     from .voxels import mesh_solid
     cur = v_nom.copy()
     rounds = []

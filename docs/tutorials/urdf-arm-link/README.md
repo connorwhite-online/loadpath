@@ -1,6 +1,6 @@
 # A robot arm link, loaded by its own URDF
 
-You'll design the forearm of a small four-axis desktop arm (GRIP-sized: base
+You'll design the forearm of a small four-axis desktop arm (arm-sized: base
 yaw, shoulder, elbow, wrist pitch, 1 kg at the gripper) in SLS PA12 to a
 safety factor of 2, without writing its loads by hand. The arm's URDF
 already knows what the forearm carries: masses, joint ranges, speed and

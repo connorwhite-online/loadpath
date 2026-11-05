@@ -164,7 +164,7 @@ def test_margin_includes_durability_only_when_constrained():
 
 
 def test_filled_grade_reads_its_base_polymer_curve():
-    # GRIP's links are "pa12-gf": they used to fall through to the generic
+    # The robot arm's links are "pa12-gf": they used to fall through to the generic
     # FDM (PLA) curve, a third of PA12's fatigue strength
     from loadpath.durability import DURABILITY, durability_data
 

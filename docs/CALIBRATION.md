@@ -162,12 +162,12 @@ line gives at 10 s and the block's modulus at 10 s over the card's
 (`modulusFactor`). With the card saved, isolator tuning, creep sag and the
 impact-rate stiffening of the `impact` block all use your measured rate.
 
-## Part tests: the GRIP wrist yoke
+## Part tests: the robot-arm wrist yoke
 
 A part test checks the whole chain, not just the material: a finished part on
 a fixture with a known weight, its measured deflection against verify's.
-`examples/grip/yoke_test.py` builds one for the wrist yoke printed from
-GRIP's `generative/print/grip-wrist-yoke-PETG-FDM-v3.stl`:
+`examples/robot-arm/yoke_test.py` builds one for the wrist yoke printed from
+The robot arm's `generative/print/robot-wrist-yoke-PETG-FDM-v3.stl`:
 
 - `fixture-base.stl`: stands in for the J4 horn. A 25 mm plate gripped in a
   vise by its long edge, a 22 mm boss meeting the hub, four M2.5 pilot holes
@@ -194,6 +194,6 @@ design taught: a solid dummy bonded wherever it touched the yoke stiffened the
 cradle about 3x (a real servo bears only on the bosses), and a 15 mm plate
 gripped 55 mm out turned about as much as the yoke did.
 
-The printed yoke predates GRIP de445fd: its hub's underside sits about 2.5 mm
+The printed yoke predates the arm's repository at de445fd: its hub's underside sits about 2.5 mm
 below the study's hub, solid over where the J4 horn disc goes. The base's boss
 meets that underside, so the test runs on the part as printed.

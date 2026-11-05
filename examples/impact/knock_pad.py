@@ -1,5 +1,5 @@
 """
-Small knocks: a TPU bumper (knock-pad.json) for a GRIP-like forearm, 0.75 J
+Small knocks: a TPU bumper (knock-pad.json) for a robot-arm forearm, 0.75 J
 under a 140 N limit. TPU buckles and springs back, so impact.py uses the
 elastic crush law for it (crush_law). Compares the graded core with a
 uniform core and a solid TPU pad of the same mass and footprint.

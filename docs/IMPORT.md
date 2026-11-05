@@ -46,11 +46,11 @@ From a STEP file the surfaces are exact: OpenCascade says which faces are
 planes and cylinders, and their radii come out to the micron. From a mesh
 they are fitted: smooth patches whose normals lie square to one axis and whose
 points sit on a circle (fillets peeled off and trimmed), and coplanar facets
-no cylinder claimed. On GRIP's wrist yoke the two agree bore for bore.
+no cylinder claimed. On the robot arm's wrist yoke the two agree bore for bore.
 
 ## Healing
 
-Real exports are often not solids. Six of GRIP's 31 exported STEPs
+Real exports are often not solids. Six of the robot arm's 31 exported STEPs
 (forearm, upper arm, turret, wrist link, wrist yoke, gripper palm) are
 open shells: unsewn edges, or a face the exporter dropped. Sewing at 1e-3 mm
 runs first; whatever is still open is closed by fanning each boundary loop
@@ -90,11 +90,11 @@ designer drew.
 `<name>.features.json` beside the study has everything found, in mm, in the
 file's own frame.
 
-## GRIP's wrist yoke
+## The robot arm's wrist yoke
 
-`examples/grip/import_yoke.py --grip ../grip` imports GRIP's exported
+`examples/robot-arm/import_yoke.py --repo ../arm` imports the robot arm's exported
 `wrist_yoke.step`, keeps the drafted study, swaps the placeholder load for the
-yoke's three load cases from GRIP's hand-written study (rotated from the arm's
+yoke's three load cases from the robot arm's hand-written study (rotated from the arm's
 frame into the part's) and runs it.
 
 The import, in 2 s: 11 bores (the J5 socket, 61.7 mm; four counterbored M3

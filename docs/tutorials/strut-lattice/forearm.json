@@ -1,6 +1,6 @@
 {
   "name": "forearm",
-  "description": "A GRIP-style forearm link in PA12 SLS as a strut lattice: an octet lattice open on the flat faces, struts thickened where the solid link carries stress, a stress-graded rim round its edge and solid collars round the bearings.",
+  "description": "A robot-arm forearm link in PA12 SLS as a strut lattice: an octet lattice open on the flat faces, struts thickened where the solid link carries stress, a stress-graded rim round its edge and solid collars round the bearings.",
   "nodes": {
     "elbow": {"op": "shape", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 24, "r": 16}},
     "wrist": {"op": "shape", "shape": {"type": "cylinder", "center": [120, 0, 0], "axis": "z", "length": 20, "r": 12}},

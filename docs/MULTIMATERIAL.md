@@ -32,8 +32,8 @@ multi-material 3MF with an extruder per body.
 ```
 
 Examples: `loadpath/examples/bumpered-bracket.json` (a PETG shelf bracket
-with a TPU bumper on its nose) and `loadpath/examples/gripper-finger-mm.json`
-(a GRIP-like finger, stiff PETG core, soft TPU contact face). Run either with
+with a TPU bumper on its nose) and `loadpath/examples/robot-armper-finger-mm.json`
+(a robot-arm finger, stiff PETG core, soft TPU contact face). Run either with
 `python -m loadpath run <study> --out out/`.
 
 ### What the optimizer does

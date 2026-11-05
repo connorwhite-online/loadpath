@@ -1,11 +1,11 @@
 # Strut-lattice forearm: an octet core sized by stress (PA12, SLS)
 
-**What you'll make:** a forearm link in the style of
-[GRIP](https://github.com/connorwhite-online/grip)'s, a 22 mm elbow bearing
+**What you'll make:** a desktop robot arm's forearm
+link, a 22 mm elbow bearing
 and a 16 mm wrist bearing 120 mm apart, printed in PA12 on an SLS machine,
 filled with an octet strut lattice instead of solid. The solid link's own
 stress decides how thick the struts and the rim round the link's edge are,
-`loadpath tune` scales both until the lattice part just holds the GRIP goal
+`loadpath tune` scales both until the lattice part just holds the robot-arm goal
 of SF 2 (the lattice analyzed homogenized), and `loadpath field` meshes it
 and checks it: one body, no thin walls, powder drains. The part is 31%
 lighter than the solid link. About 12 minutes on 4 cores, 4 with `--quick`.

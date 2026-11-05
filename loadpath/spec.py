@@ -146,7 +146,7 @@ class Goal:
     # volumeFraction times RESTART_STARTS) and deliver the lightest confirmed
     # part. One search settles in the local optimum its start leads to: the
     # same study started at 0.8x and 1.25x delivered 68.7-80.6 g (wall
-    # bracket), 140.7-150.1 g (GRIP turret). For a final production part;
+    # bracket), 140.7-150.1 g (the robot-arm turret). For a final production part;
     # N times the time. See docs/study-format.md.
     restarts: int = 1
     # A safety factor holds against buckling too: the part's linear
@@ -684,7 +684,6 @@ def _mass_load(ld, f, m, region, shape, label, preserve, keep_out):
     x dynamic factor along gravity, and the moment of that force about the
     region's centre when the mass sits elsewhere ('at')."""
     from .am import build_vector
-    from .shapes import _vec
 
     mass, dyn = ld["mass"], ld.get("dynamic", 1.0)
     if not isinstance(mass, (int, float)) or mass <= 0:

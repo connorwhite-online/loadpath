@@ -180,7 +180,7 @@ def homogenized_check(doc, study, node=None, base_dir=None, cells: int = 30_000,
     of the peak; default the study's optimization cell (domain.choose_pitch),
     as the study runner's own check does, and never under 1.5 analysis cells.
     A band that shrinks with the grid lets a bolt-hole singularity govern a
-    fine confirm: a GRIP forearm read SF 4.7 on 60k cells and 1.3 on 2M,
+    fine confirm: a robot-arm forearm read SF 4.7 on 60k cells and 1.3 on 2M,
     1 mm from a J3 bolt the part is clamped by.
 
     `anisotropic` (default: on wherever lattice_tensors has the cell's

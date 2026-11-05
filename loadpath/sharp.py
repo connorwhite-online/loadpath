@@ -536,7 +536,7 @@ def edge_accuracy(mesh, refs, solid=None, boundary=None, spacing=0.25, tol=0.01,
             # the probes are a step off the surface: the closest triangles' side
             return mesh_distance(mesh, P, signed=True) < 0
     rows = {}
-    allP, allE, allEdge = [], [], []
+    allP, allE = [], []
     for shape, role in refs:
         P, N = surface_samples(shape, spacing)
         if not len(P):

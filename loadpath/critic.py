@@ -1,9 +1,9 @@
 """
 Vision critic: a model looks at the interface close-ups (render.render_interfaces)
-and files what it sees as findings, so the defects Connor used to find by
+and files what it sees as findings, so the defects a reviewer used to find by
 zooming in become numbers an eval can gate on.
 
-Why: GRIP's wrist yoke passed every metric with sawn-off faces, hard creases
+Why: The robot arm's wrist yoke passed every metric with sawn-off faces, hard creases
 at its bosses and material over its bolt seats (QA, 10/28). The crease and
 boundary-cut metrics came out of that, one bug class at a time. A critic
 reads the picture the way a person does and catches the next class before

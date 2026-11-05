@@ -105,7 +105,7 @@ def savoldi_medium(phi, area_density, dh, cell):
 
 def lbm_medium(phi, area_density, dh, cell):
     """The same form refitted to periodic gyroid-sheet cells run with LBM
-    (/mnt/project-files/flow/gyroid-cells.json: the 1KZ cooler's 39 BGK
+    (an intercooler project's 39 BGK
     points, loadpath.flow's TRT re-runs and its creeping-flow limit, f Re
     183 on the a10 air cell): K = 0.00932 phi^2.257 a^2, C_F = 0.0569
     phi^-2.283. Median ratio 0.99, 90% of points within 13% (the rest is the
@@ -250,7 +250,6 @@ def solve_flow(dom: PorousDomain, f: int, fluid, mass_flow: float, max_steps: in
     fluid = _fluid(fluid)
     m = dom.cells[f]
     h = dom.h
-    med = dom.media[f]
     rho, mu = fluid.rho, fluid.mu
     nu = mu / rho
     q = mass_flow / rho                                   # m^3/s
@@ -655,7 +654,6 @@ def summarize(dom, fluids, flows, heat, t_in):
     for f, name in enumerate(dom.names):
         fl = _fluid(fluids[f])
         flow = flows[f]
-        p = flow["p"]
         m = dom.cells[f]
         p_in = _mean_p(dom, f, flow, dom.inlet[f])
         core_in = _plenum_faces(dom, f, "in")
@@ -928,7 +926,7 @@ def box_domain(hx, voxel=None, closures="design"):
     calibrated local porosity finds on designed cores. The medium is the
     analytic sheet geometry (tpms_geometry). Ignores print shaping (roofs,
     closure), which the band stands in for."""
-    from .heatx import port_diameter, zones_for
+    from .heatx import port_diameter
     from .heatx_thermal import tpms_geometry
 
     if hx.layout != "cross" or hx.zones is not None:
@@ -936,7 +934,6 @@ def box_domain(hx, voxel=None, closures="design"):
     clo, chi = (np.asarray(b, float) for b in hx.core.bounds())
     ext = chi - clo
     a0, a1 = (int(a) if not isinstance(a, str) else "xyz".index(a) for a in hx.axes)
-    a2 = 3 - a0 - a1
     cap = hx.cap if hx.cap is not None else hx.wall + 1.0
     pd = [port_diameter(hx, 0), port_diameter(hx, 1)]
     if voxel is None:

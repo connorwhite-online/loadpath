@@ -66,7 +66,7 @@ def voxelize(mesh, pitch: float, box=None, fractional=False):
     ray_d = np.tile([0.0, 0.0, 1.0], (len(ray_o), 1))
     locs, ray_idx, _ = mesh.ray.intersects_location(ray_o, ray_d, multiple_hits=True)
     if len(ray_idx) == 0 and len(mesh.faces):
-        # A mesh handed back from a worker process (GRIP's turret) answered
+        # A mesh handed back from a worker process (the robot arm's turret) answered
         # no ray at all, where the same mesh saved and reloaded answers
         # 16,740: rebuild it fresh, with a fresh intersector, and ask again.
         import trimesh
@@ -157,7 +157,7 @@ def surface_thickness(mesh, samples: int = 6000, seed: int = 0, study: Study | N
     cast per sample, so it is for scoring a finished part, not every outcome.
     With the study, a ray that both enters and leaves on the user's own
     surfaces (preserved or keep-out) is left out: that thickness is the
-    study's, not the optimizer's (GRIP's wrist yoke: its J5 servo sits 1.9 mm
+    study's, not the optimizer's (the robot arm's wrist yoke: its J5 servo sits 1.9 mm
     above the J4 horn, so the preserved horn plate between them is 1.9 mm)."""
     import trimesh
 
@@ -265,7 +265,7 @@ def _boundary_cut_area(study: Study, mesh) -> float:
     """mm^2 of the part's surface lying flat on a face of a box design space,
     away from every support and preserved shape: organic material sawn off
     where the design box happened to end, not where anything mates. Zero on
-    a clean result (GRIP's wrist yoke QA, 10/28)."""
+    a clean result (the robot arm's wrist yoke QA, 10/28)."""
     from .shapes import Box
 
     boxes = [d for d in study.design_space if isinstance(d, Box)]
@@ -298,7 +298,7 @@ CREASE_ANGLE_DEG = 60.0
 def _creases(study: Study, mesh, angle_deg: float = CREASE_ANGLE_DEG) -> dict:
     """Sharp concave edges the optimizer made: where an organic member meets
     preserved geometry without a fillet, or two members meet in a notch.
-    GRIP's wrist yoke passed every number with hard creases at its bosses,
+    The robot arm's wrist yoke passed every number with hard creases at its bosses,
     found only by zooming in (QA, 10/28); this measures them. Edges lying on
     keep-out surfaces (a blind bore's floor) or between two faces of the
     user's own preserved geometry are the user's, and are left out.
@@ -338,7 +338,7 @@ def _closed_bores(study: Study, mesh) -> list:
     A fastener needs its whole path clear: the shank through the bore, and
     the head, washer and driver out past its end. A bore that stops inside
     material is a blind hole no screw can be driven through, the way the
-    wall bracket's screw holes came out capped (and GRIP's yoke had material
+    wall bracket's screw holes came out capped (and the robot arm's yoke had material
     over its bolt seats). The fix is in the study: extend the keep-out over
     the head and the driver's reach. Probes a short way past each end cap,
     on the axis and on a ring at 0.3 of the radius; an end is closed when
@@ -815,7 +815,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     it has a pressure load) analyzes the true boundary inside each cell
     (cutcell.py): sub-cell stiffness, stress read on the surface, and
     finer submodels on members under 3 cells thick; member thickness no
-    longer rounds to whole cells (GRIP's wrist link struts: whole cells
+    longer rounds to whole cells (the robot arm's wrist link struts: whole cells
     0.35-3.5x of fine tets, cut cells 0.74-1.13x; docs/BENCHMARKS.md)."""
     from .shapes import manifold_from_trimesh
 
@@ -893,7 +893,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
 
     # Face connectivity: cells that meet only at an edge or a corner share
     # two nodes or one, a hinge the stiffness matrix cannot hold, and CG
-    # never converges (GRIP's upper arm: 44 such islands of 4-6 cells at a
+    # never converges (the robot arm's upper arm: 44 such islands of 4-6 cells at a
     # 1.04 mm pitch stalled verification for over an hour).
     lbl, nlab = ndimage.label(solid)
     elem_ijk = np.argwhere(solid)

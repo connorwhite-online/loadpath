@@ -23,7 +23,7 @@ What the rating misses, and how it is put back:
   (`port_share`), as large as its face allows.
 - Plenums. The port turns into its plenum through a ring pi d around and
   `header` deep; a velocity head of that speed in and out is added. On
-  Connor's intercooler duty (0.143 kg/s charge air) a 6 mm plenum behind
+  an automotive intercooler duty (0.143 kg/s charge air) a 6 mm plenum behind
   a 47 mm port cost more than the core, so the header depth is swept too
   (6-20 mm) and pays for itself out of the envelope.
 

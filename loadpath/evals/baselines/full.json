@@ -863,7 +863,7 @@
   "seconds": 397.77227234840393
  },
  {
-  "case": "grip-turret",
+  "case": "robot-turret",
   "tier": "full",
   "pass": true,
   "best": {
@@ -982,7 +982,7 @@
   "seconds": 4629.051671504974
  },
  {
-  "case": "grip-upper-arm",
+  "case": "robot-upper-arm",
   "tier": "full",
   "pass": true,
   "best": {
@@ -1079,7 +1079,7 @@
   "seconds": 1383.4107236862183
  },
  {
-  "case": "grip-wrist-link-mjf",
+  "case": "robot-wrist-link-mjf",
   "tier": "full",
   "pass": true,
   "best": {
@@ -1198,7 +1198,7 @@
   "seconds": 1631.9229679107666
  },
  {
-  "case": "grip-wrist-yoke",
+  "case": "robot-wrist-yoke",
   "tier": "full",
   "pass": true,
   "best": {

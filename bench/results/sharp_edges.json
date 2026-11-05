@@ -295,7 +295,7 @@
    }
   }
  },
- "grip-turret": {
+ "robot-turret": {
   "kind": "study",
   "seconds": 50.1,
   "mass": 181.2,
@@ -341,7 +341,7 @@
    "exactArea": 19200.0,
    "facetedArea": 19892.9,
    "exactAreaFraction": 0.4911,
-   "path": "/tmp/claude-0/sharp/grip-turret.step",
+   "path": "/tmp/claude-0/sharp/robot-turret.step",
    "bytes": 33071899,
    "solids": 1,
    "valid": true,
@@ -392,7 +392,7 @@
    }
   }
  },
- "grip-wrist-yoke": {
+ "robot-wrist-yoke": {
   "kind": "study",
   "seconds": 65.2,
   "mass": 23.5,
@@ -438,7 +438,7 @@
    "exactArea": 2820.1,
    "facetedArea": 7379.6,
    "exactAreaFraction": 0.2765,
-   "path": "/tmp/claude-0/sharp/grip-wrist-yoke.step",
+   "path": "/tmp/claude-0/sharp/robot-wrist-yoke.step",
    "bytes": 41594783,
    "solids": 1,
    "valid": true,

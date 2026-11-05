@@ -22,10 +22,10 @@ process checks where the case has a process. The cases:
 | arm-link-cast | PA12 | SF 3, 0.5 mm | The same link with no undercuts along z (two-part mold). |
 | arm-link-sandwich | PA12 | SF 3, 0.5 mm, under 45 g | The link as a field graph: graded skin over a gyroid core. Must also reject a 38 g variant that deflects too much. |
 | bell-crank | AlSi10Mg, LPBF | SF 3, 0.1 mm | An aluminium linkage crank, 500 N on one arm. |
-| grip-turret | PA12-GF, SLS | SF 2, under 236 g | GRIP's turret: J1 bolt ring with driver access, J2 drive socket, motor and spring anchor. |
-| grip-upper-arm | PA12-GF, SLS | SF 2, 0.54 mm, under 214 g | GRIP's upper arm with drive sockets, motor, cable run and driver access. |
-| grip-wrist-yoke | PA12-GF, SLS | SF 2, under 26 g | GRIP's wrist yoke: a servo horn hub below and a servo cradle above. |
-| grip-wrist-link-mjf | PA12, MJF | SF 2, under 46 g | GRIP's wrist link in MJF, with powder-bed checks (walls, trapped powder, warp-prone panels). |
+| robot-turret | PA12-GF, SLS | SF 2, under 236 g | The robot arm's turret: J1 bolt ring with driver access, J2 drive socket, motor and spring anchor. |
+| robot-upper-arm | PA12-GF, SLS | SF 2, 0.54 mm, under 214 g | The robot arm's upper arm with drive sockets, motor, cable run and driver access. |
+| robot-wrist-yoke | PA12-GF, SLS | SF 2, under 26 g | The robot arm's wrist yoke: a servo horn hub below and a servo cradle above. |
+| robot-wrist-link-mjf | PA12, MJF | SF 2, under 46 g | The robot arm's wrist link in MJF, with powder-bed checks (walls, trapped powder, warp-prone panels). |
 | mbb-beam | PA12 | SF 1.5 | The textbook simply supported beam. |
 | motor-mount | PETG, FDM | three fixed volume fractions | A NEMA 17 bracket; the motor body is an STL keep-out. |
 | printed-hook | PETG, FDM upright | SF 2.5, no support | A wall hook carrying 300 N at 92 mm, printed without support. |
@@ -49,7 +49,7 @@ two cases at a time. All 15 cases pass. Total compute time is about 5.8 hours.
 part was allowed to occupy. It is an easy baseline. A part that is 90%
 lighter than its envelope is not 90% lighter than a part a person would
 draw. For comparisons with real, conventionally designed parts, see the
-[GRIP case study](grip.md) and the GE bracket in [benchmarks](benchmarks.md).
+[the robot-arm case study](robot-arm.md) and the GE bracket in [benchmarks](benchmarks.md).
 
 | Case | Mass | Solid envelope | SF (goal) | Deflection (limit) | What sets the size |
 | --- | --- | --- | --- | --- | --- |
@@ -58,10 +58,10 @@ draw. For comparisons with real, conventionally designed parts, see the
 | arm-link-cast | 67.8 g | 125.3 g | 20.1 (3) | 0.478 mm (0.5) | deflection, no undercuts |
 | arm-link-sandwich | 42.7 g | | 6.65 (3) | 0.432 mm (0.5) | fixed design (field graph) |
 | bell-crank | 23.4 g | 150.7 g | 3.22 (3) | 0.073 mm (0.1) | stress |
-| grip-turret | 140.4 g | 1651 g | 2.85 (2) | 0.729 mm | interfaces (see below) |
-| grip-upper-arm | 207.7 g | 1692 g | 7.33 (2) | 0.519 mm (0.54) | deflection |
-| grip-wrist-yoke | 17.3 g | 248.3 g | 3.88 (2) | 0.229 mm | search step* |
-| grip-wrist-link-mjf | 40.2 g | 773.5 g | 5.83 (2) | 0.490 mm | search step* (layered, tet-checked) |
+| robot-turret | 140.4 g | 1651 g | 2.85 (2) | 0.729 mm | interfaces (see below) |
+| robot-upper-arm | 207.7 g | 1692 g | 7.33 (2) | 0.519 mm (0.54) | deflection |
+| robot-wrist-yoke | 17.3 g | 248.3 g | 3.88 (2) | 0.229 mm | search step* |
+| robot-wrist-link-mjf | 40.2 g | 773.5 g | 5.83 (2) | 0.490 mm | search step* (layered, tet-checked) |
 | mbb-beam | 13.8 g | 65.4 g | 1.51 (1.5) | 3.182 mm | stress |
 | motor-mount | 27.6 g | 89.2 g | 3.65 | 0.430 mm (0.5) | fixed fraction (trade-off set) |
 | printed-hook | 24.2 g | 151.4 g | 2.73 (2.5) | 1.240 mm | stress, overhangs |
@@ -100,7 +100,7 @@ part's 98th percentile):
 
 | | | |
 | --- | --- | --- |
-| ![](../images/stress/bell-crank.png) | ![](../images/stress/grip-upper-arm.png) | ![](../images/stress/printed-hook.png) |
+| ![](../images/stress/bell-crank.png) | ![](../images/stress/robot-upper-arm.png) | ![](../images/stress/printed-hook.png) |
 
 Renders are from the same run as the table (three.js, smooth normals).
 Every view and stress map is in [GALLERY.md](../GALLERY.md).
@@ -122,7 +122,7 @@ Every view and stress map is in [GALLERY.md](../GALLERY.md).
   between runs are noise.
 - **Tet meshes are not deterministic.** fTetWild meshes change from run to
   run, which moves tet readings by about 3%.
-- **The suite is small and GRIP-heavy.** A generated corpus of brackets,
+- **The suite is small and robot-arm-heavy.** A generated corpus of brackets,
   links and three-point mounts (`--corpus N`) runs in the coarse tier to
   catch fixes that only help the hand-written cases.
 

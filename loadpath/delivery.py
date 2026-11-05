@@ -14,6 +14,12 @@ from __future__ import annotations
 _VF_CEILING = 0.7   # study._VF_MAX: the search never goes past it
 _VF_FLOOR = 0.02    # study._VF_MIN
 
+# Read by agents in report.json and MCP results, not printed to a terminal.
+MAKE_IT = ("To have it made: any print service that takes an STL or 3MF works. With the Materialize MCP "
+           "server connected, materialize_import_model then materialize_check_printability and "
+           "materialize_get_quote price it across materials and services, or materialize_create_project "
+           "hosts it as a page. Show the price and lead time and never order without the user's go-ahead.")
+
 
 def attention(o: dict, study: dict) -> list[str]:
     """What SKILL.md tells an agent to look for, already looked for."""
@@ -166,6 +172,8 @@ def delivery(summary: dict, study: dict) -> dict | None:
         if top >= _VF_CEILING - 1e-6:
             d["warnings"].insert(1, f"the search stopped at the volume-fraction ceiling ({_VF_CEILING:.0%} of the design "
                                     "space): more material is not allowed, so change the material, the design space or the loads")
+    if d["passes"]:
+        d["makeIt"] = MAKE_IT
     return d
 
 

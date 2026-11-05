@@ -410,7 +410,7 @@
   "seconds": 1265.0429465770721
  },
  {
-  "case": "grip-turret",
+  "case": "robot-turret",
   "tier": "coarse",
   "pass": true,
   "best": {
@@ -513,7 +513,7 @@
   "seconds": 4030.3214497566223
  },
  {
-  "case": "grip-upper-arm",
+  "case": "robot-upper-arm",
   "tier": "coarse",
   "pass": true,
   "best": {
@@ -589,7 +589,7 @@
   "seconds": 5785.947635412216
  },
  {
-  "case": "grip-wrist-link-mjf",
+  "case": "robot-wrist-link-mjf",
   "tier": "coarse",
   "pass": true,
   "skipped": "its pin-held mounts lose all material below ~10k cells (mechanism or empty load region)",
@@ -597,7 +597,7 @@
   "seconds": 0.0
  },
  {
-  "case": "grip-wrist-yoke",
+  "case": "robot-wrist-yoke",
   "tier": "coarse",
   "pass": true,
   "best": {

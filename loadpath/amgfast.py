@@ -5,7 +5,7 @@ sharing one AMG hierarchy: the sparse matrix products release the GIL,
 but pyamg's compiled Gauss-Seidel (amg_core.gauss_seidel,
 bsr_gauss_seidel and block_gauss_seidel, the V-cycle's smoothers and most
 of a solve's time) holds it, so the cases' smoothing ran one at a time:
-on the GRIP upper arm three cases took about as long as three solves.
+on the robot-arm upper arm three cases took about as long as three solves.
 
 These are the same loops (pyamg 5.x amg_core/relaxation.h: the same
 operations in the same order, so the same bits) as numba kernels that

@@ -40,9 +40,8 @@ from __future__ import annotations
 
 import numpy as np
 import scipy.sparse as sp
-from scipy import ndimage
 
-from .fem import CORNERS, HexMesh, Stiffness, _b_matrix, _hex8_parts, elastic_c
+from .fem import CORNERS, HexMesh, Stiffness, _hex8_parts, elastic_c
 
 __all__ = ["CutGrid", "SubcellRule", "MIN_FILL", "SUB"]
 
@@ -251,40 +250,6 @@ class CutGrid:
         return sp.csr_matrix((vals, (rows, cols)), shape=(m.n_dof, m.n_dof))
 
     # --- stress ---------------------------------------------------------------
-
-    def _element_stress(self, elems, xi, u, modulus, thermal=None):
-        """Stress (p, 6) of elements elems at natural points xi (p, 3)."""
-        m = self.mesh
-        c = elastic_c(1.0, self.nu)
-        out = np.empty((len(elems), 6))
-        pos = np.full(m.n_elem, -1, np.int64)
-        pos[self.cut_index] = np.arange(len(self.cut_index))
-        mod = np.broadcast_to(np.asarray(modulus, float), (m.n_elem,))
-        for s in range(0, len(elems), 50000):
-            sl = slice(s, s + 50000)
-            e = elems[sl]
-            ue = u[m.edof[e]]
-            eps = np.einsum("pij,pj->pi", b_nodes(xi[sl]), ue)
-            ba = b_bubbles(xi[sl])
-            k = pos[e]
-            isc = k >= 0
-            r = np.broadcast_to(self.r_full, (len(e), 9, 24)).copy()
-            r[isc] = self.r_cut[k[isc]]
-            if isc.any():
-                ba[isc] = ba[isc] - self.mbar_cut[k[isc]]
-            alpha = np.einsum("pij,pj->pi", r, ue)
-            eps = (eps + np.einsum("pij,pj->pi", ba, alpha)) / self.pitch
-            if thermal is not None:
-                eps[:, :3] -= np.asarray(thermal, float)[e][:, None]
-            out[sl] = (eps @ c.T) * mod[e][:, None]
-        return out
-
-    def _alpha(self, ue):
-        """Condensed bubble amplitudes (e, 9) for element displacements (e, 24)."""
-        alpha = ue @ self.r_full.T
-        if len(self.cut_index):
-            alpha[self.cut_index] = np.einsum("pij,pj->pi", self.r_cut, ue[self.cut_index])
-        return alpha
 
     def _samples(self, near, u, modulus, thermal=None):
         """Stress at the solid sample points of the elements in `near` (bool

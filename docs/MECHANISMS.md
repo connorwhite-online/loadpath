@@ -303,7 +303,7 @@ check = tendon_grip(domain, r.xphys, E, nu, [ten], obj)     # thresholded, full 
 `tendon_grip_render.py` draws the figure) designs a 50 x 10
 mm TPU 95A finger, its base clamped to the palm. The tendon runs from the
 spool behind the palm through guides on the palm side to a knot at the
-tip. A 30 mm cylinder (a GRIP-sized handle) sits 1.5 mm below. The servo
+tip. A 30 mm cylinder (a arm-sized handle) sits 1.5 mm below. The servo
 winds in 8 mm of cable at 0.5 N/mm. Forces are per mm of finger width
 (a 15 mm wide finger grips 15 times as much):
 
@@ -458,5 +458,5 @@ Two rows disagree, and in both cases I think CalculiX is the one that's off:
   finger. A finger that wraps would need the contact spread over the
   object (more nodes in contact, or a pull-out force objective).
 - **2.5D plates only** for the gripper above. The optimizer itself is 3D;
-  GRIP's tendon-driven TPU finger (examples/grip/finger.py) has the
+  The robot arm's tendon-driven TPU finger (examples/robot-arm/finger.py) has the
   nonlinear analysis but not yet a mechanism design.

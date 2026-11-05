@@ -832,9 +832,6 @@ def main(argv=None):
         dv["tetCrossCheck"] = f"not run: {why}" if why else "not run: goal.confirm chose the voxel re-check"
     _write_report(args.out, summary)
     _status("done", report=os.path.join(os.path.abspath(args.out), "report.json"))
-    if not os.environ.get("LOADPATH_NO_HINT"):
-        print("Print or host this part: https://www.materialize.cc  (silence with LOADPATH_NO_HINT=1)",
-              file=sys.stderr)
     return 0
 
 

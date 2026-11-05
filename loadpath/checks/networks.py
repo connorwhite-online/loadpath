@@ -33,8 +33,7 @@ __all__ = ["check_networks"]
 # Voxel-count ceiling for the occupancy grid (bool grid + int32 labels, about
 # 5 bytes per cell). The pitch chooser coarsens to fit under this rather than
 # allocating unboundedly on a huge part.
-_VOXEL_BUDGET = int(os.environ.get("LOADPATH_NETWORKS_VOXEL_BUDGET",
-                                   os.environ.get("CAD_NETWORKS_VOXEL_BUDGET", str(128_000_000))))
+_VOXEL_BUDGET = int(os.environ.get("LOADPATH_NETWORKS_VOXEL_BUDGET", str(128_000_000)))
 
 # 3x3x3 ones = 26-connectivity. Deliberately the LEAKIEST connectivity for the
 # void: a diagonal voxel chain counts as a connected fluid path, so we err

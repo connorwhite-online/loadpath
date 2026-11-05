@@ -151,7 +151,7 @@ def _b_matrix(xi, eta, zeta):
 # strains integrate to zero, so the patch test holds). The plain hex8
 # shear-locks in bending: on a grid-aligned cantilever it read the root
 # stress 38/16/9/4% low and the tip deflection 37/14/8/3% low at 1/2/3/5
-# cells through the depth (moonshots/round2, unsafe on thin members); with
+# cells through the depth (unsafe on thin members); with
 # the bubbles both are exact to under 1%. Same 24 dofs, same sparsity, so
 # every solver path (assembled AMG, matrix-free multigrid, torch) takes it
 # unchanged. LOADPATH_HEX8=plain switches back for A/B comparisons.
@@ -630,7 +630,7 @@ class Solver:
         """Solve several right-hand sides (load cases) against one matrix.
         The preconditioner is built once and the solves run on threads: the
         sparse kernels release the GIL, and so does the smoother since
-        amgfast (pyamg's own holds it); 3 GRIP upper-arm cases 1.35 -> 1.07 s."""
+        amgfast (pyamg's own holds it); 3 robot-arm upper-arm cases 1.35 -> 1.07 s."""
         x0s = x0s or [None] * len(fs)
         if len(fs) == 1:
             return [self.solve(k, fs[0], x0s[0])]
@@ -639,7 +639,7 @@ class Solver:
         m = self._precond(k)
         # pyamg factors the coarsest level (splu) lazily, on the first
         # V-cycle: started from threads, every case factored it at once and
-        # the extra factors stayed allocated (the GRIP wrist yoke's coarsest
+        # the extra factors stayed allocated (the robot-arm wrist yoke's coarsest
         # level is a 60-125 MB LU; resident memory grew ~0.5 GB per design,
         # 3 to 7 GB over a search). One cycle here factors it once.
         m.matvec(np.zeros(k.shape[0]))

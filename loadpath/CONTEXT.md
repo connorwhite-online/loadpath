@@ -1,6 +1,6 @@
 # loadpath: context for whoever picks this up
 
-State as of 2026-10-29. loadpath is an open-source, agent-native generative
+loadpath is an open-source, agent-native generative
 design library: topology optimization for printed parts, driven by
 constraints, keep-outs and loads, with its own verification and an eval loop.
 It is published at https://github.com/connorwhite-online/loadpath (MIT).
@@ -16,27 +16,14 @@ and later thermal / heat-exchanger design. Parts are almost always 3D printed:
 optimize for the hobbyist (FDM) without locking out SLS, MJF, resin or
 volumetric printing.
 
-## The test subject: GRIP
+## The test subject
 
-GRIP (connorwhite-online/grip, PR #1, branch `generative-redesign`, folder
-`generative/`) is an open-source 6-axis robot arm. It is the standing test
-subject: every library change should be exercised on it, and what goes wrong on
-it becomes an eval metric.
-
-- `chain.py` (v0.2) and `v3.py` (v0.3): write a loadpath study per link from the
-  joint layout, with loads from URDF statics (1 kg payload, reach pose, 1.5x
-  dynamic factor, the joint above at rated torque, a 20 N side push), run them,
-  feed masses back. `v3.py remesh` redraws parts from saved density fields
-  (`*.field.npz`) after a reconstruction change, in seconds.
-- v0.3 architecture (`architecture.py` trade study): NEMA 17 cycloidal drives
-  at J1-J3, a zero-free-length spring counterbalancing J2, Feetech bus servos
-  (STS3215/3250) at the wrist. Printed links 761 g shipped -> ~562 g.
-- `hand.py`: three-finger soft hand, one servo, tendon + balance plate, TPU
-  flexure fingers, optional pinned PA nails, generated palm. `finger_mechanism.py`
-  tries designing the finger as a compliant mechanism (experimental).
-- `sims.py`: stress maps of every link. `generative/print/`: print-ready files.
-- Connor is printing the FDM PETG wrist yoke (`print/grip-wrist-yoke-PETG-FDM-v3.stl`)
-  to validate it. Servo dimensions are from datasheets (marked VERIFY).
+Most hand-written eval cases are links of an open-source 6-axis printed robot
+arm (examples/robot-arm/): real interfaces (servo cradles, horn hubs,
+cycloidal-drive sockets with driver access) and loads derived from its URDF.
+A procedurally generated corpus (loadpath/evals/corpus.py) keeps tuning from
+fitting those parts alone. What goes wrong on a real part becomes an eval
+metric.
 
 ## Architecture (modules)
 
@@ -74,8 +61,8 @@ it becomes an eval metric.
 | `viewer.py`, `viewer.html` | interactive HTML viewer (three.js): stress / safety factor / displacement fields, deformation, section plane, compare, optimization playback, heat exchanger fluids |
 | `editor.py`, `editor.html` | browser editor for field graphs (`loadpath edit`): node graph, inspector sliders, the graph compiled to GLSL and raymarched live (numbers are uniforms), bakes (mesh / result / grid / cell warp) as 3D textures, local server for save, bake and run |
 | `preview.py` | the editor's live stress preview: the field sampled on a coarse grid (no mesh), surface cells at their filled share, matrix-free multigrid, a stress map as a 3D texture in about a second |
-| `assembly.py` | loads and design space from a mechanism: URDF reader, Newton-Euler over a pose / speed / acceleration / payload / push / stall sweep limited by each joint's rated effort, governing cases by greedy stress-envelope cover on the solid design space (six unit-wrench solves), neighbours' swept volumes as mesh keep-outs. `loadpath assembly`; GRIP comparison in examples/grip/derive.py |
-| `cadimport.py` | CAD in: STEP (OpenCascade, `loadpath[step]`) or STL/3MF/OBJ read and healed (open shells fanned closed; five of GRIP's link STEPs are open shells), bores (exact cylinders from the B-rep, fitted from a mesh; merged across split faces, coaxial steps as one bore, through or blind, bolt or bore), exposed flat faces with the bolts opening onto them, interfaces, a suggested support and placeholder load, `draft_study` (design space part/hull/box, rings and pads preserved cut to the part, mating faces cleared). `loadpath import`, MCP `loadpath_import_cad`; mesh shapes take .step paths. docs/IMPORT.md |
+| `assembly.py` | loads and design space from a mechanism: URDF reader, Newton-Euler over a pose / speed / acceleration / payload / push / stall sweep limited by each joint's rated effort, governing cases by greedy stress-envelope cover on the solid design space (six unit-wrench solves), neighbours' swept volumes as mesh keep-outs. `loadpath assembly`; the robot-arm comparison in examples/robot-arm/derive.py |
+| `cadimport.py` | CAD in: STEP (OpenCascade, `loadpath[step]`) or STL/3MF/OBJ read and healed (open shells fanned closed; five of the robot arm's link STEPs are open shells), bores (exact cylinders from the B-rep, fitted from a mesh; merged across split faces, coaxial steps as one bore, through or blind, bolt or bore), exposed flat faces with the bolts opening onto them, interfaces, a suggested support and placeholder load, `draft_study` (design space part/hull/box, rings and pads preserved cut to the part, mating faces cleared). `loadpath import`, MCP `loadpath_import_cad`; mesh shapes take .step paths. docs/IMPORT.md |
 | `mcp_server.py`, `__main__.py` | local MCP server and CLI |
 | `checks/` | checks on any mesh, no study needed: `check_dfm` (wall thickness, overhangs, trapped voids), `check_networks` (two-fluid isolation), `check_fit` (a board fits its enclosure), `fea_probe` (relative hotspot finder), `opening` |
 | `flow.py` | lattice-Boltzmann flow + heat (numba, optional `flow` extra): periodic TPMS cells for f and Nu (`cell_flow`), whole networks port to port with the pressure drop split by region and the core's flow sharing (`network_flow`, `exchanger_flow` for a heatx design beside its rating). TRT collisions: BGK's permeability moves with viscosity |
@@ -90,7 +77,7 @@ it becomes an eval metric.
 | `fieldops.py` | compiled hot field ops (numba, nogil so peval threads them): double-precision TPMS (bit for bit numpy's, ~4x) and the graded-cell warp lookup (~5x); `lattice.tpms` and `fields._CellWarp` use them, `LOADPATH_FIELDOPS=numpy` turns them off |
 | `fieldjit.py` | a field graph compiled to one numba kernel per node asked for: every node, point by point, in one pass (no whole-array temporaries), numbers passed as a parameter array so the kernel depends on the graph's structure only (a tune reuses it; cached on disk, `LOADPATH_FIELDJIT_CACHE`); nodes it does not compile (mesh distance, points, strut/conformal/zoned/density lattices, blend grading) run on numpy first and are read as inputs. `FieldGraph.evaluate` uses it; bit for bit numpy's but for BLAS 3-vector dots and numpy's SIMD pow/exp/log (~1e-15), and under `lattice.single_precision` libm float32 trig vs numpy's SIMD (~1e-6 mm). `LOADPATH_FIELDJIT=0` turns it off |
 | `knn.py` | compiled k-d tree whose search starts from the previous point's neighbours (mesher queries come in order): `MeshField`'s k=12 nearest centroids, same as cKDTree in the same order, ~2.7x faster on the mesher's queries; `LOADPATH_KNN=kdtree` keeps scipy's |
-| `amgfast.py` | pyamg's three Gauss-Seidel smoothers and scipy's BSR matrix product (pyamg setup, on all cores) (gauss_seidel, bsr_gauss_seidel, block_gauss_seidel) as GIL-free numba kernels, bit for bit pyamg's, so fem.Solver.solve_many's and crosscheck's load-case threads overlap; installed by fem.amg_solver, `LOADPATH_AMGFAST=0` keeps pyamg's. GRIP upper arm full eval 1528 -> 1140 s, same design |
+| `amgfast.py` | pyamg's three Gauss-Seidel smoothers and scipy's BSR matrix product (pyamg setup, on all cores) (gauss_seidel, bsr_gauss_seidel, block_gauss_seidel) as GIL-free numba kernels, bit for bit pyamg's, so fem.Solver.solve_many's and crosscheck's load-case threads overlap; installed by fem.amg_solver, `LOADPATH_AMGFAST=0` keeps pyamg's. The robot-arm upper arm full eval 1528 -> 1140 s, same design |
 | `femops.py` | compiled SIMP kernels, bit for bit numpy's: per-element strain energy (gather fused, ~16x) and Stiffness.assemble's scatter; `LOADPATH_FEMOPS=numpy` turns them off |
 | `decimate.py` | adaptive decimation of a field mesh against the field: shortest-first edge collapses in independent sets, each kept only if every reshaped triangle stays within `tol` of the surface and does not turn over; link condition keeps it watertight. `mesh.decimate` (mm), also per slab in `field_stl` with seams locked |
 | `drains.py` | drain / escape holes for a field graph's sealed voids (powder, resin): finds them on a grid of the field, fills specks, drills the process's hole at the calmest flat sites (stress from the graph's `result` node) on smooth-unioned bosses, relabels until nothing is sealed, then checks the powder path and processcheck's escape ball. Holes are graph nodes. run_field calls it when the graph has a `process` |
@@ -133,39 +120,11 @@ python tests/test_evals.py                      # pareto, tiers, corpus, critic
 python -m loadpath mcp                          # local MCP server
 ```
 
-GRIP (clone connorwhite-online/grip, branch `generative-redesign`), with
-loadpath on PYTHONPATH:
-
-```bash
-python generative/v3.py run --links forearm,wrist_yoke,wrist_link --jobs 3 --max-elements 120000
-python generative/v3.py remesh --links wrist_yoke   # after a reconstruct.py change, seconds
-python generative/sims.py                            # stress maps of every link
-python generative/hand.py fingers|studies|run        # the hand
-```
 
 Python API worth knowing: `run_study`, `verify_part(..., fields=True)`,
 `crosscheck(study, mesh, size=1.5)`, `render_interfaces(mesh, study, path)`,
 `render_stress(mesh, fields, path, strength, safety_factor=2)`,
 `optimize_mechanism(domain, nu, MechanismOptions(...))`.
-
-## Today's record (2026-10-28), in order
-
-1. GRIP v0.3 links regenerated around bus servos and the J2 spring; stress maps.
-2. Connor's QA of the wrist yoke: sawn-off faces, hard creases at bosses,
-   material over bolt seats. Fixed in reconstruction (boundary rounding,
-   fillets) and in the study (screw seats as keep-outs); interface close-ups
-   and `boundaryCutArea` added so these are caught without a human.
-3. Dead-end "tendrils" pruned; preserved boxes replaced by screw bosses (the
-   yoke went 41 -> 19-24 g).
-4. Three-finger soft hand (hand.py); compliant-mechanism optimizer; the fin-ray
-   finger experiment (finds some wrap, not yet better than the hinged finger:
-   parked).
-5. Manufacturing `process`; FDM PETG yoke designed per build direction (the
-   direction changed mass by half: 25.7 / 30.7 / 39.4 g).
-6. Independent cross-check: 644 -> ~100 s on the yoke with the same answer.
-   Decimating the surface first was 2x faster but under-read the peak by a
-   third (rejected); hotspot-adaptive refinement barely helped (off).
-7. Eval round 9 caught regressions from step 2; fixed. See the table below.
 
 ## Lessons that cost something to learn
 
@@ -174,7 +133,7 @@ Python API worth knowing: `run_study`, `verify_part(..., fields=True)`,
   needs a load path through it, or it comes out loose (the search now fails
   such results and says why).
 - **Look closely.** Whole-part renders and SF numbers missed sawn-off faces,
-  hard creases at bosses and material over bolt seats; Connor found them by
+  hard creases at bosses and material over bolt seats; a reviewer found them by
   zooming in. Run `render_interfaces` on every delivered part and turn each
   finding into a metric.
 - **Fastener seats are keep-outs**: head + washer + driver, from the face out.
@@ -182,47 +141,16 @@ Python API worth knowing: `run_study`, `verify_part(..., fields=True)`,
   resolutions; the fine-grid confirm and the tet cross-check exist because of
   it. The cross-check says the voxel solver is ~30% conservative on the yoke.
 - **Mechanism framing matters**: "curl as far as possible" gives a leaf spring.
-- **Linear only so far**: no large deflection (TPU fingers), contact, buckling.
 - **Run the eval suite after any reconstruction or boundary change.** Finish
-  fixes that looked right on GRIP thinned plates and starved support faces on
+  fixes that looked right on the arm thinned plates and starved support faces on
   other cases; only the suite showed it. Results move a little run to run
   (the search path depends on outcomes), so judge a change on the whole table.
 - **A support region holds the nodes inside it** (solid regions with nodes in
   them). Taking a node plane half a cell outside too let the optimizer hang
   the printed hook 0.75 mm off its wall.
 
-## Eval status (round 9f, 2026-10-28): 6 of 8 pass
+## Open problems
 
-| Case | Pass | Mass g | SF | p5 member mm | Note |
-| --- | --- | --- | --- | --- | --- |
-| arm-link-driven | yes | 48.1 | 11.9 | 3.41 | |
-| arm-link | yes | 57.8 | 13.5 | 3.44 | |
-| bell-crank | yes | 24.0 | 3.10 | 4.19 | |
-| grip-upper-arm | yes | 209.8 | 4.65 | 3.31 | |
-| mbb-beam | yes | 23.8 | 1.64 | 2.56 | 64% lighter (was 49%) |
-| motor-mount | yes | 25.8 | 2.73 | 3.41 | |
-| printed-hook | NO | 33.6 | 3.49 | 1.46 | thin wall plate |
-| wall-bracket | NO | 32.8 | 4.29 | 1.95 | thin seat |
-
-The two failures are one open problem: the grid is centered (for exact
-symmetry), so on a support face that is not a symmetry plane the first cell
-layer overhangs the design space by up to half a cell. The optimizer counts
-that overhang as material; the delivered part is cut at the real face, so the
-pad against the wall is thinner than designed. Aligning the grid to the face
-fixed the geometry but moved every case's search path (3 of 8 lost). Giving
-overhanging cells only the stiffness of the part of them that exists (round
-9i) left both failures unchanged and made the arm link 4.5 g heavier, so it
-was reverted too. Both are thin pads at a support face where the measured
-p5 member is exactly one or less than one cell (1.46, 1.95 mm at a 1.95 mm
-pitch): the next thing to try is a finer pitch near supports, or the
-reconstruction extruding the pad to the design face it bears on.
-
-## Next
-
-1. Validate the printed yoke against its predicted stiffness; feed the result back.
-2. Speed up tet meshing (the remaining cross-check time); try CalculiX in a server image (`apt install calculix-ccx`).
-3. Stronger, cleaner blends between preserved and organic geometry; crease and fastener-clearance metrics in the evals.
-4. Field-driven lattices (TPMS) graded by stress; then conduction (thermal) as a second physics.
-5. Nonlinear: large deflection for compliant parts, buckling.
-6. Point GRIP's `generative/` scripts at the published package (`pip install`
-   from the loadpath repository) instead of a Materialize checkout.
+Current gaps and their evidence are tracked in docs/VALIDATION.md (what each
+model has been checked against) and docs/assumption-audit.md (assumptions
+still standing). Physical validation of printed parts is the largest one.

@@ -38,7 +38,7 @@ from .verify import verify_part
 
 __all__ = ["Outcome", "StudyResult", "run_study", "design_at"]
 
-# Bounds for the safety-factor search. (A floor of 0.04 stopped GRIP's upper
+# Bounds for the safety-factor search. (A floor of 0.04 stopped the robot arm's upper
 # arm there with SF 5.4 against a goal of 2: large design spaces around
 # small parts end at a few percent.)
 _VF_MIN, _VF_MAX = 0.02, 0.7
@@ -70,7 +70,7 @@ _BUCKLING_SEARCH_ON = 1.5
 # under this) and is not deflection-bound. Search picks' utilization, and
 # tet-confirmed search / auto masses (2026-11-01): fastener bracket 0.10
 # (41.0 / 26.4 g), wall bracket 0.11 (64.4 / 26.6 g), where constrained wins;
-# MBB 0.19, bell crank 0.20 and GRIP yoke 0.21, where it found nothing
+# MBB 0.19, bell crank 0.20 and the robot-arm yoke 0.21, where it found nothing
 # lighter in 2-5x the search's time; hook 0.30 and arm link 0.33, where it
 # was 10-40% heavier.
 _AUTO_UTILIZATION = 0.15
@@ -84,7 +84,7 @@ _AUTO_UTILIZATION_CUT = 0.19
 _AUTO_BUDGET = 3.5
 # The pick of a safety-factor search is checked again on a grid this many
 # cells finer before it is delivered. The in-loop check resolves a fillet
-# only as well as its grid: GRIP's turret read SF 2.26 there and 1.65 at
+# only as well as its grid: the robot arm's turret read SF 2.26 there and 1.65 at
 # 120k cells, its peak at a corner the coarser grid had averaged away.
 _CONFIRM_CELLS = 150_000
 _CONFIRM_RUNS = 3
@@ -328,7 +328,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     except (RuntimeError, ValueError) as exc:
         # one outcome verification cannot solve (a piece the supports do
         # not hold) is a failed outcome, not a failed study: the search
-        # goes on past it (GRIP's wrist link died here)
+        # goes on past it (the robot arm's wrist link died here)
         mat = study.material
         report = {"mass": float(mesh.volume) * mat.density / 1000.0, "safetyFactor": 0.0,
                   "cases": [], "warnings": [f"verification failed: {exc}"]}
@@ -398,7 +398,7 @@ def _domain_info(d: Domain, radius: float) -> dict:
 
 
 # Peak memory of one worker, roughly, by the most cells it solves at once
-# (study._study_cells): GRIP's turret, a safety-factor search confirmed at
+# (study._study_cells): the robot arm's turret, a safety-factor search confirmed at
 # 150k cells, peaked at 8.4 GB.
 _RUN_BASE_BYTES = 0.6e9
 _RUN_CELL_BYTES = 55e3
@@ -502,7 +502,7 @@ def _meminfo_available() -> float | None:
 def _workers(n: int, cells: int | None = None) -> int:
     """Processes for independent outcomes: LOADPATH_WORKERS, else one per
     core, and no more than fit in the memory available when each solves
-    `cells` cells (the 4-core, 15 GB cloud box ran out at two GRIP cases at
+    `cells` cells (the 4-core, 15 GB cloud box ran out at two robot-arm cases at
     once). (This was half the cores, leaving room for the thread per load
     case each solve runs; but Gauss-Seidel holds the GIL, so those threads
     mostly take turns, and with one BLAS thread four arm-link directions
@@ -1061,7 +1061,7 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
     if goal.max_deflection and rep.get("cases") \
             and max(c.get("deflection") or 0.0 for c in rep["cases"]) >= 0.85 * goal.max_deflection \
             and (goal.safety_factor is None or (sf is not None and sf >= 1.3 * goal.safety_factor)):
-        # stiffness sets the mass (the arm link, the GRIP upper arm at SF
+        # stiffness sets the mass (the arm link, the robot-arm upper arm at SF
         # 11 for 2): the compliance search is already the right design
         choice["reason"] = "deflection-bound: the search's compliance design is the right one"
         r.choice = choice
@@ -1196,9 +1196,9 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
             report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
         except (RuntimeError, ValueError) as exc:
             # one outcome verification cannot solve (or a load pad the
-            # design let go of: GRIP's wrist link at 5% after 43 g at 6%) (a piece the supports do
+            # design let go of: the robot arm's wrist link at 5% after 43 g at 6%) (a piece the supports do
             # not hold) is a failed outcome, not a failed study: the search
-            # goes on past it (GRIP's wrist link died here)
+            # goes on past it (the robot arm's wrist link died here)
             mat = study.material
             report = {"mass": float(mesh.volume) * mat.density / 1000.0, "safetyFactor": 0.0,
                       "cases": [], "warnings": [f"verification failed: {exc}"]}
@@ -1292,7 +1292,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
             o.report["start"] = "cold"
         else:
             # Each fraction warm-starts from a design already found, which is
-            # what lets a stiffness-bound part follow its layout down (GRIP's
+            # what lets a stiffness-bound part follow its layout down (the robot arm's
             # upper arm: 7.0% passed warm at margin 1.06 and failed cold at
             # 0.68). From the nearest fraction above, never the last one run:
             # the wall bracket chained 0.150 -> 0.104 -> 0.127 -> 0.115 (up,
@@ -1311,7 +1311,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                 o.report["start"] = f"warm from {src.volume_fraction:.3f}"
             except RuntimeError:
                 # A carried layout can leave a support hanging on void
-                # (GRIP's wrist link: a pin-held idler with its material
+                # (the robot arm's wrist link: a pin-held idler with its material
                 # gone, so the stiffness solve never converged). Start this
                 # fraction afresh instead.
                 o = cold()
@@ -1466,7 +1466,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                 if name == "cold":
                     # a fraction the chain failed warm, between the floor
                     # and the pick, first: its own fresh layout is the one
-                    # the chain lost (GRIP's MJF wrist link: 5.25% warm from
+                    # the chain lost (the robot arm's MJF wrist link: 5.25% warm from
                     # 6% read tets 0.99, fresh 4.00 for 2, 37.2 g against
                     # 41.0; the midpoint, 4.2%, read 0.41)
                     fresh = [q.volume_fraction for q in outcomes
@@ -1600,7 +1600,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                 # (ValueError: the design let go of a load's region, which
                 # then touches no material in the verify)
                 # a run whose solve broke down (the design let go of a
-                # support: GRIP's yoke, wrist link and upper arm) is a
+                # support: the robot arm's yoke, wrist link and upper arm) is a
                 # failed run; one that fails first ends the constrained
                 # attempt, and the search below takes over
                 fails.append(f"t {t:.3g}: {exc}")
@@ -1644,7 +1644,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         if best is None and fallback:
             # Search instead, on the search's own grid: the constrained
             # method runs finer (minimum member 2.5 cells across), and the
-            # search on that grid broke down on the GRIP yoke too.
+            # search on that grid broke down on the robot-arm yoke too.
             import dataclasses
 
             why = ("the constrained method found no passing design"
@@ -1678,7 +1678,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                 lo_fail = (vf, m) if lo_fail is None or vf > lo_fail[0] else lo_fail
             # bracket closed to within 10% of the passing fraction (an
             # absolute 0.02 was 30% at the low fractions large design spaces
-            # end at: the GRIP upper arm stopped at 0.075 with 0.058 failing,
+            # end at: the robot-arm upper arm stopped at 0.075 with 0.058 failing,
             # 222 g where ~0.066 would have passed lighter)
             if hi_pass and lo_fail and hi_pass[0] - lo_fail[0] < max(0.005, 0.1 * hi_pass[0]):
                 break
@@ -1690,7 +1690,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                 # different layout: the arm link read 0.49 at 30% and 1.30 at
                 # 38%), so interpolating between brackets kept landing on the
                 # wrong side of a jump; halving the bracket always closes it.
-                (v1, m1), (v2, m2) = lo_fail, hi_pass
+                (v1, _), (v2, _) = lo_fail, hi_pass
                 nxt = 0.5 * (v1 + v2)
                 if memory is not None:
                     # any fraction inside the bracket closes it; a stored one is free
@@ -1706,7 +1706,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
             # A step under 0.005 stops an unbracketed search. A bracket is
             # left to the 10% rule above: its midpoint sits half the gap from
             # either end, and at low fractions that is under 0.005 while the
-            # gap is still worth closing (GRIP's MJF wrist link passed at 6%,
+            # gap is still worth closing (the robot arm's MJF wrist link passed at 6%,
             # SF 4.36 for 2, failed at 5.2%, and stopped there at 43.5 g
             # without trying 5.6%).
             if abs(nxt - vf) < 0.005 and not (hi_pass and lo_fail):
@@ -1754,7 +1754,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
                         # below target: the voxel grid missed a peak, so the
                         # calibration has nothing to step down on. Such a
                         # peak has sat in geometry the search cannot change
-                        # (GRIP's turret: SF 1.20 on the wall of a bolt's
+                        # (the robot arm's turret: SF 1.20 on the wall of a bolt's
                         # driver access, 1.3 mm from the bore that holds it,
                         # and three steps up to 0.24 left it at 230 g), so
                         # it is not stepped up on that reading either: the
@@ -1832,7 +1832,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         # passes, and the search steps up from it by the confirmed margin.
         # Once a pick confirms, bisect back down into the gap to the fraction
         # that failed confirmation while that gap is over 10%: the step up
-        # overshoots (GRIP's wrist yoke failed at 0.080 and confirmed at
+        # overshoots (the robot arm's wrist yoke failed at 0.080 and confirmed at
         # 0.102, 27.5 g, with SF 2 near 0.09).
         confirmed, conf_fail = set(), None
         for _ in range(2 * _CONFIRM_RUNS if voxel_confirm else 0):
@@ -1871,7 +1871,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         # The voxel-confirmed counterpart of layout_search: a fraction below
         # the pick that failed warm, carried down from the pick's layout, is
         # run once more from its own coarse layout. The warm chain can lose
-        # the layout on the way down: GRIP's MJF wrist link (no tet confirm,
+        # the layout on the way down: the robot arm's MJF wrist link (no tet confirm,
         # a layered process) read SF 1.42 at 5.25% warm from 6% (tets 1.16)
         # and 2.06 started fresh (tets 4.49), 37.2 g against the 41.0 g pick.
         # Each fresh design that passes is confirmed on the finer grid like

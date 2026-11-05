@@ -1086,8 +1086,6 @@ def optimize_thermomechanical(domain, nu: float, bc: ThermalBC, opts: ThermalOpt
     cell's (derated) stiffness, so it depends on the design, and its
     gradient (through density and through temperature) is in the
     sensitivities. `modulus` (MPa) defaults to the material's E."""
-    from .simp import E_MIN
-
     grid = grid_from_domain(domain)
     mesh = domain.mesh
     pres = grid.preserve.copy()

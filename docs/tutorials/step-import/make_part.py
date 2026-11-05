@@ -2,7 +2,7 @@
 How elbow.step was made (once; the STEP is committed, this is not part of
 the tutorial). Needs OpenCascade: pip install "loadpath[step]".
 
-A shoulder bracket of the kind GRIP's arm is built from: a 56 x 36 x 6 mm
+A shoulder bracket of the kind the robot arm's arm is built from: a 56 x 36 x 6 mm
 base held by four counterbored M3 screws, two each side of an 8 mm
 upright carrying a 16 mm bearing seat (a 688 bearing) whose axis runs
 along x, 36 mm up.

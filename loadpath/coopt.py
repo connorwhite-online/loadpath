@@ -38,9 +38,7 @@ so the study, the sweep settings and the solver stay the caller's.
 """
 from __future__ import annotations
 
-import copy
 import json
-import os
 import time
 from dataclasses import dataclass, field
 
@@ -162,15 +160,6 @@ class ArmModel:
                       "hardwareKg": round(float(self.hardware[n].mass), 4),
                       "comM": [round(float(v), 4) for v in b.com]}
         return out
-
-    def snapshot(self) -> dict:
-        return {n: _body_props(b) for n, b in self.robot.bodies.items()}
-
-    def restore(self, snap: dict):
-        for n, p in snap.items():
-            b = self.robot.bodies[n]
-            b.mass, b.com, b.inertia = p.mass, p.com.copy(), p.inertia.copy()
-
 
 # --------------------------------------------------------------------------- joint demand
 

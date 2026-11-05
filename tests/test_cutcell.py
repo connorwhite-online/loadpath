@@ -92,7 +92,7 @@ def test_verify_hole_with_cut_cells():
 
 
 def test_cut_cells_are_the_default_except_under_pressure():
-    # whole cells read GRIP's wrist link 0.35-3.5x off a 0.9 mm tet
+    # whole cells read the robot arm's wrist link 0.35-3.5x off a 0.9 mm tet
     # reference on its sub-cell struts, cut cells 0.89-1.13x: verification
     # uses cut cells unless the study says otherwise, or carries a
     # pressure (its wetted nodes come from the whole-cell staircase)

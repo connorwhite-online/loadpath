@@ -76,7 +76,7 @@ from scipy import ndimage
 
 from .lattice import tpms
 from .reconstruct import _smooth_union
-from .shapes import Box, Cylinder, Shape, shape_from_spec
+from .shapes import Cylinder, Shape, shape_from_spec
 
 __all__ = ["HeatExchangerSpec", "Zone", "design_heat_exchanger", "grid_plan", "heat_exchanger_from_spec",
            "zones_for"]
@@ -145,10 +145,6 @@ def port_diameter(hx, fluid: int) -> float:
     """The port bore of fluid 0 or 1 (mm)."""
     d = hx.port_diameter
     return float(d[fluid]) if isinstance(d, (tuple, list)) else float(d)
-
-
-def _max_port(hx) -> float:
-    return max(port_diameter(hx, 0), port_diameter(hx, 1))
 
 
 def _unit(v):
@@ -348,7 +344,6 @@ def _surface_zones(hx, zones, pitch, lo, hi, up=None):
                           for e in np.eye(3)]) / 2e-3
             nc = g / np.linalg.norm(g)
             c = c - hx.core.sdf(c[None])[0] * nc
-        i = tuple(np.clip(np.floor((c - lo) / pitch).astype(int), 0, dims - 1))
         mean_n = n[zk].sum(axis=0)
         mean_n /= np.linalg.norm(mean_n)
         info.append({"center": c, "normal": nc, "meanNormal": mean_n, "ellMax": float(vals[top].mean() - 0.5 * pitch),

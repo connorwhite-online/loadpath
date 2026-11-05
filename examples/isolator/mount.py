@@ -1,5 +1,5 @@
 """
-A TPU lattice vibration isolator: four gyroid feet under a GRIP-like robot
+A TPU lattice vibration isolator: four gyroid feet under a robot-arm robot
 base whose centre of gravity is off the middle of the footprint.
 
     python examples/isolator/mount.py [--out isolator-out/] [--pitch 2]

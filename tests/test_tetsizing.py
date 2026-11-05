@@ -11,7 +11,7 @@ from loadpath.shapes import trimesh_from_manifold
 
 
 def _part():
-    # a slender bracket in a mostly empty box, like the GRIP links
+    # a slender bracket in a mostly empty box, like the robot-arm links
     body = m3d.Manifold.cube((60, 8, 8)) + m3d.Manifold.cube((8, 8, 40))
     hole = m3d.Manifold.cylinder(20, 2.5, 2.5, 32).translate((30, 4, -5))
     return trimesh_from_manifold((body - hole).refine(4))

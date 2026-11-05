@@ -159,7 +159,7 @@ def render_interfaces(mesh, study, path, max_panels=16, cols=4, size=3.2, margin
     """Close-ups of every place the part meets the outside world: each
     preserved region and each keep-out the part touches, cropped to a box
     round it and shot from two sides. Whole-part renders show the layout and
-    hide the finish: GRIP's wrist yoke passed every number with sawn-off
+    hide the finish: the robot arm's wrist yoke passed every number with sawn-off
     faces, hard creases at its bosses and material over its bolt seats, all
     of them a few pixels in the overview (QA, 10/28). Look at these before
     calling a part done."""
@@ -311,124 +311,6 @@ def render_heat_exchanger(mesh, spaces, core, path, title=None, size=(5.0, 4.6),
     fig.savefig(path, facecolor="white")
     plt.close(fig)
     return path
-
-def render_internal_ceilings(variants, up, path, title=None, size=(5.0, 4.6), view=(30, -55), flat=20.0):
-    """One panel per variant (label, {fluid: space mesh}): the fluid spaces
-    seen from above, the top of each (where it meets metal above it, a
-    ceiling) red where it lies within `flat` degrees of level along `up`.
-    Inside a metal part nothing there can be supported."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
-    up = np.asarray(up, float) / np.linalg.norm(up)
-    meshes = [m for _, sp in variants for m in sp.values()]
-    lo = np.min([m.bounds[0] for m in meshes], axis=0)
-    hi = np.max([m.bounds[1] for m in meshes], axis=0)
-    span, mid = (hi - lo).max(), 0.5 * (lo + hi)
-    colors = [np.array([0.20, 0.45, 0.85]), np.array([0.92, 0.65, 0.25])]
-    red = np.array([0.85, 0.08, 0.08])
-    fig = plt.figure(figsize=(size[0] * len(variants), size[1]), dpi=110)
-    elev, azim = view
-    e, a = np.radians(elev), np.radians(azim)
-    view_dir = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
-    key = view_dir + np.array([0.3, -0.2, 0.6])
-    key /= np.linalg.norm(key)
-    for pi, (label, spaces) in enumerate(variants):
-        ax = fig.add_subplot(1, len(variants), pi + 1, projection="3d")
-        for i, m in enumerate(spaces.values()):
-            m = _decimate(m, 120_000)
-            n = m.face_normals
-            shade = np.clip(n @ key, 0, 1)
-            base = np.where((n @ up > np.cos(np.radians(flat)))[:, None], red[None], colors[i % 2][None])
-            col = np.clip(base * (0.35 + 0.65 * shade)[:, None], 0, 1)
-            ax.add_collection3d(Poly3DCollection(m.triangles, facecolors=col, edgecolor="none", linewidth=0))
-        ax.set_xlim(mid[0] - span / 2, mid[0] + span / 2)
-        ax.set_ylim(mid[1] - span / 2, mid[1] + span / 2)
-        ax.set_zlim(mid[2] - span / 2, mid[2] + span / 2)
-        ax.set_box_aspect((1, 1, 1), zoom=1.5)
-        ax.view_init(elev, azim)
-        ax.set_axis_off()
-        ax.set_title(label, fontsize=9)
-    if title:
-        fig.suptitle(title, fontsize=10)
-    fig.tight_layout()
-    fig.savefig(path, facecolor="white")
-    plt.close(fig)
-    return path
-
-
-def render_lattice(mesh, path, title=None, holes=(), size=(5.0, 4.6), view=(28, -55)):
-    """A lattice part: whole, cut open across its length and its height so
-    the core and its grading show, and a close-up of the first drain hole
-    (`holes` as lattice_infill's printability["drainHoles"])."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import trimesh
-    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
-    lo, hi = np.asarray(mesh.bounds)
-    mid = 0.5 * (lo + hi)
-    ext = hi - lo
-    long_ax = int(np.argmax(ext))
-    tall = [a for a in np.argsort(ext) if a != long_ax][0]
-    side = 3 - long_ax - tall
-    n_side, n_tall = np.zeros(3), np.zeros(3)
-    n_side[side] = 1.0
-    n_tall[tall] = -1.0
-    panels = [("part", mesh, None),
-              ("cut along its length", mesh.slice_plane(mid, n_side, cap=True), None),
-              ("cut through its height", mesh.slice_plane(mid, n_tall, cap=True), None)]
-    if holes:
-        h = holes[0]
-        c, nrm = np.asarray(h["at"]), np.asarray(h["normal"])
-        r = 4.0 * h["diameter"]
-        panels.append((f"drain hole {h['diameter']:g} mm, cut in half", mesh.slice_plane(c, _perp(nrm), cap=True),
-                       (c, r, nrm)))
-    fig = plt.figure(figsize=(size[0] * len(panels), size[1]), dpi=110)
-    grey = np.array([0.80, 0.80, 0.82])
-    for pi, (label, m, zoom) in enumerate(panels):
-        ax = fig.add_subplot(1, len(panels), pi + 1, projection="3d")
-        if zoom is not None:
-            c, r, nrm = zoom
-            keep = np.all(np.abs(m.triangles_center - c) < r, axis=1)
-            m = m.submesh([np.nonzero(keep)[0]], append=True) if keep.any() else m
-            # look at the cut face (it faces away from the kept side), a
-            # little from outside the part
-            v = -_perp(nrm) + 0.5 * nrm
-            v /= np.linalg.norm(v)
-            elev, azim = np.degrees(np.arcsin(np.clip(v[2], -1, 1))), np.degrees(np.arctan2(v[1], v[0]))
-            cen, span = c - nrm * 0.25 * r, 1.6 * r
-        else:
-            elev, azim = view
-            cen, span = mid, ext.max()
-        m = _decimate(m, 400_000)
-        # matplotlib paints back to front by face centre: the skin's long
-        # flat triangles would sort behind the lattice they cover
-        v, f = trimesh.remesh.subdivide_to_size(m.vertices, m.faces, max_edge=span / 60.0, max_iter=12)
-        m = trimesh.Trimesh(v, f, process=False)
-        e, a = np.radians(elev), np.radians(azim)
-        view_dir = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
-        key = view_dir + np.array([0.3, -0.2, 0.6])
-        key /= np.linalg.norm(key)
-        shade = np.clip(m.face_normals @ key, 0, 1)
-        col = np.clip(grey[None] * (0.30 + 0.70 * shade)[:, None], 0, 1)
-        ax.add_collection3d(Poly3DCollection(m.triangles, facecolors=col, edgecolor="none", linewidth=0))
-        for k in range(3):
-            getattr(ax, "set_" + "xyz"[k] + "lim")(cen[k] - span / 2, cen[k] + span / 2)
-        ax.set_box_aspect((1, 1, 1), zoom=1.5)
-        ax.view_init(elev, azim)
-        ax.set_axis_off()
-        ax.set_title(label, fontsize=9)
-    if title:
-        fig.suptitle(title, fontsize=10)
-    fig.tight_layout()
-    fig.savefig(path, facecolor="white")
-    plt.close(fig)
-    return path
-
 
 def _perp(n):
     """A unit vector across `n`: the plane that cuts a drain hole in half."""

@@ -1,6 +1,6 @@
 {
   "name": "arm-link-graded",
-  "description": "The arm-link example (a GRIP-style robot arm link between two 22 mm bearings) as a field-driven part: an organic envelope from smooth-unioned bosses and web, analyzed solid under the example's loads; its stress then drives the skin thickness and the gyroid wall, the gyroid cells grow away from the bearings, solid collars ring the bores, and the fillet where everything meets is larger near the bearings.",
+  "description": "The arm-link example (a robot-arm robot arm link between two 22 mm bearings) as a field-driven part: an organic envelope from smooth-unioned bosses and web, analyzed solid under the example's loads; its stress then drives the skin thickness and the gyroid wall, the gyroid cells grow away from the bearings, solid collars ring the bores, and the fillet where everything meets is larger near the bearings.",
   "nodes": {
     "shoulder": {"op": "shape", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 24, "r": 16}},
     "wrist": {"op": "shape", "shape": {"type": "cylinder", "center": [140, 0, 0], "axis": "z", "length": 24, "r": 15}},

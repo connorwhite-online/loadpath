@@ -517,7 +517,7 @@ def _tpms_distance(kind, P, cell, frame=None):
 
     kind = _TPMS_KIND.get(kind)
     if kind is None:
-        raise ValueError(f"lattice type must be one of gyroid, diamond, schwarz-p")
+        raise ValueError("lattice type must be one of gyroid, diamond, schwarz-p")
     Q, radius = _frame_points(P, frame)
     cell = np.broadcast_to(np.asarray(cell, float), (len(P),))
     if np.any(cell <= 0):
@@ -1204,27 +1204,6 @@ class _PhaseGrid:
         if coherence:
             return out, np.abs(acc) / np.maximum(wsum, 1e-300)
         return out
-
-
-def _phase_at(phi, lo, h, P):
-    """Trilinear interpolation of a phase grid (cycles, mod 1): the eight
-    corners are unwrapped against the first, so a phase that advances by
-    less than half a cycle a step interpolates exactly where it is linear."""
-    dims = np.asarray(phi.shape)
-    x = np.clip((P - lo) / h, 0, dims - 1 - 1e-9)
-    i0 = np.floor(x).astype(int)
-    f = x - i0
-    i1 = np.minimum(i0 + 1, dims - 1)
-    base = phi[i0[:, 0], i0[:, 1], i0[:, 2]]
-    out = np.zeros(len(P))
-    for cx in (0, 1):
-        for cy in (0, 1):
-            for cz in (0, 1):
-                v = phi[(i1 if cx else i0)[:, 0], (i1 if cy else i0)[:, 1], (i1 if cz else i0)[:, 2]] - base
-                v -= np.round(v)
-                out += ((f[:, 0] if cx else 1 - f[:, 0]) * (f[:, 1] if cy else 1 - f[:, 1])
-                        * (f[:, 2] if cz else 1 - f[:, 2])) * v
-    return base + out
 
 
 def _axis_vector(ax):

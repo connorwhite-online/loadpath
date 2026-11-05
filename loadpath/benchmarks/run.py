@@ -1,7 +1,7 @@
 """
 Benchmark suite: loadpath against the published topology-optimization codes
 on the textbook problems (problems.py), scored by one evaluator
-(evaluate.py). Separate from the GRIP evals: those ask "is this part good
+(evaluate.py). Separate from the robot-arm evals: those ask "is this part good
 enough to print", this asks "how close to the optimum does the optimizer get".
 
 For each problem:
@@ -40,7 +40,7 @@ from ..simp import SimpOptions, optimize
 from ..spec import study_from_dict
 from .evaluate import Evaluator, binarize
 from .problems import PROBLEMS, Problem
-from .reference import SOLVERS, load_reference, run_reference
+from .reference import load_reference, run_reference
 
 NU = 0.3
 VARIANTS = {

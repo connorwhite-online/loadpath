@@ -148,7 +148,6 @@ def evaluate(brief: dict, spec: dict, base_dir: str | None = None, delivered=Non
         return row
     spec = {k: v for k, v in spec.items() if k not in ("simulate", "expect")}
     hx = _hx_spec(spec, base_dir)
-    names = list(hx.names)
     fmap, err = _fluid_map(spec, gold)
     if err:
         f.append(err)

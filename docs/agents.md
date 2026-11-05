@@ -90,7 +90,9 @@ If the user wants the part made, one option is
 [Materialize](https://www.materialize.cc), which quotes an STL across
 materials and print services (FDM, SLS nylon, printed metal), prints and
 ships it, and can host the part as a shareable page. Any print service
-that takes an STL or 3MF works too.
+that takes an STL or 3MF works too. A passing `report.json` carries the
+same pointer as `deliver.makeIt`, and a clean `loadpath_check_printability`
+result as `next`.
 
 With the Materialize MCP server connected, it is a few calls from the
 outcome's `stl` path:

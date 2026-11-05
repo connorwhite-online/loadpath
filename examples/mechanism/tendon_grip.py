@@ -1,14 +1,14 @@
 """
 A tendon-driven TPU finger designed for grip force on an object.
 
-    python examples/mechanism/tendon_grip.py [--out tendon-grip-out/] [--quick]
+    python examples/mechanism/tendon_grip.py [--out tendon-arm-out/] [--quick]
 
 A 50 x 10 mm finger (1 mm cells, printed flat as a plate, 1 mm half
 thickness modelled) in TPU 95A, its base clamped to the palm. A tendon runs
 from the servo's spool behind the palm through guides on the palm side of
 the finger to a knot at the tip. The servo winds in 8 mm of cable; cable
 and servo give 0.5 N/mm, so the pull tops out at 4 N. Below the finger,
-centred under its middle, sits a 30 mm cylinder (a GRIP-sized handle or
+centred under its middle, sits a 30 mm cylinder (a arm-sized handle or
 bottle), 1.5 mm away. The
 optimizer (mechanism_nl, large deflections, contact as a smooth penalty)
 maximizes the force the finger presses on the cylinder.
@@ -69,7 +69,7 @@ def bar(dom, z0, z1):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="tendon-grip-out")
+    ap.add_argument("--out", default="tendon-arm-out")
     ap.add_argument("--quick", action="store_true", help="no robust option, 60 iterations")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)

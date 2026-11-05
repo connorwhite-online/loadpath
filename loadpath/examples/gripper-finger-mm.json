@@ -1,6 +1,6 @@
 {
   "name": "gripper-finger",
-  "description": "A GRIP-like gripper finger, 70 x 16 x 12 mm, pinned at its base, printed in PETG and TPU 95A on a two-material FDM printer. The 2.5 mm TPU contact pad is placed by a distance field from the gripping face; the optimizer designs the stiff core behind it and chooses the material of everything else. Grip: 20 N squeeze over the 40 mm face. Pull: the squeeze plus 10 N of friction along the face, the load that peels a pad off its core. Shows multiMaterial with an assigned pad and a shear-loaded bond.",
+  "description": "A robot-arm gripper finger, 70 x 16 x 12 mm, pinned at its base, printed in PETG and TPU 95A on a two-material FDM printer. The 2.5 mm TPU contact pad is placed by a distance field from the gripping face; the optimizer designs the stiff core behind it and chooses the material of everything else. Grip: 20 N squeeze over the 40 mm face. Pull: the squeeze plus 10 N of friction along the face, the load that peels a pad off its core. Shows multiMaterial with an assigned pad and a shear-loaded bond.",
   "designSpace": [
     {
       "type": "box",
