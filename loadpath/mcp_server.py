@@ -223,7 +223,8 @@ def start(study, base_dir: str | None = None, lattice: dict | None = None, time_
     `time_limit` (minutes): stop searching then and deliver the best
     outcome verified so far."""
     if isinstance(study, str):
-        study = json.loads(study)
+        from .tasks import read_doc
+        study, base_dir = read_doc(study, base_dir)
     if lattice is not None:
         study = {**study, "lattice": lattice}
     v = check(study, base_dir)
@@ -240,7 +241,8 @@ def explore(study, base_dir: str | None = None, methods: list | None = None, mat
     """Validate a study and solve it once per manufacturing method and
     material (explore.py), as a background job."""
     if isinstance(study, str):
-        study = json.loads(study)
+        from .tasks import read_doc
+        study, base_dir = read_doc(study, base_dir)
     opts = {k: v for k, v in (("methods", methods), ("materials", materials), ("quantity", quantity),
                               ("rank", rank), ("screen", screen)) if v is not None}
     study = {**study, "explore": {**(study.get("explore") or {}), **opts}}
@@ -314,7 +316,8 @@ def lattice(job_id: str, outcome: int | None = None, options: dict | None = None
 
 def heat_exchanger(spec, base_dir: str | None = None) -> dict:
     if isinstance(spec, str):
-        spec = json.loads(spec)
+        from .tasks import read_doc
+        spec, base_dir = read_doc(spec, base_dir)
     from .schema import lint
     issues = lint(spec, "heatExchanger")
     errors = [x for x in issues if x["level"] == "error"]
@@ -334,7 +337,8 @@ def heat_exchanger(spec, base_dir: str | None = None) -> dict:
 def field(graph, base_dir: str | None = None) -> dict:
     """Validate a field graph and mesh it in the background."""
     if isinstance(graph, str):
-        graph = json.loads(graph)
+        from .tasks import read_doc
+        graph, base_dir = read_doc(graph, base_dir)
     from .schema import format_issues, lint
     issues = lint(graph, "field")
     errors = [x for x in issues if x["level"] == "error"]
@@ -353,7 +357,8 @@ def size_heat_exchanger(spec, base_dir: str | None = None, max_pressure_drop: di
                         axes: str | None = None) -> dict:
     from .tasks import size_heat_exchanger as size
     if isinstance(spec, str):
-        spec = json.loads(spec)
+        from .tasks import read_doc
+        spec, base_dir = read_doc(spec, base_dir)
     try:
         return size(spec, base_dir or os.getcwd(), max_pressure_drop, min_wall, objective, min_effectiveness, splits,
                     axes)
@@ -747,14 +752,16 @@ def serve():
     @tool
     def loadpath_check(study: dict | str, base_dir: str | None = None) -> dict:
         """Validate a study without solving: every schema problem at once (with 'did you mean'), then
-        the voxel problem (cells, pitch, regions, warnings). base_dir resolves relative mesh paths
-        (default: the server's working directory)."""
+        the voxel problem (cells, pitch, regions, warnings). study: the object, its JSON text, or a path
+        to a .json file. base_dir resolves relative mesh paths (default: a study file's folder, else
+        the server's working directory)."""
         return check(study, base_dir)
 
     @tool
     def loadpath_start(study: dict | str, base_dir: str | None = None, lattice: dict | None = None,
                        time_limit: float | None = None) -> dict:
-        """Validate and start a study in the background; returns a jobId for loadpath_status.
+        """Validate and start a study (object, JSON text, or .json path) in the background; returns a
+        jobId for loadpath_status.
         lattice: optional lattice options ({} for defaults) to also fill the best outcome with a
         stress-graded TPMS lattice. time_limit: minutes; past it the search stops and delivers the
         best outcome verified so far (a safety-factor search takes 10 minutes to a few hours)."""

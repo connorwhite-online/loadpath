@@ -64,15 +64,34 @@ def document_kind(raw) -> str:
     return "study"
 
 
+def read_doc(raw, base_dir: str | None = None):
+    """(document, base_dir) for a tool argument that may be the document, its
+    JSON text, or a path to a .json file (agents pass all three; a path used
+    to fail as "not valid JSON"). A file's folder becomes the base_dir when
+    none is given. Raises json.JSONDecodeError for bad JSON text."""
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text.startswith(("{", "[")):
+            path = os.path.expanduser(text)
+            if base_dir and not os.path.isabs(path):
+                path = os.path.join(base_dir, path)
+            if os.path.isfile(path):
+                with open(path) as fh:
+                    return json.load(fh), base_dir or os.path.dirname(os.path.abspath(path))
+        return json.loads(raw), base_dir
+    return raw, base_dir
+
+
 def check_document(raw, base_dir: str | None = None) -> dict:
     """`loadpath check` on any document: a study (check_study), a heat
     exchanger (check_heat_exchanger), lattice options or a field graph
     (schema lint)."""
     if isinstance(raw, str):
         try:
-            raw = json.loads(raw)
+            raw, base_dir = read_doc(raw, base_dir)
         except json.JSONDecodeError as exc:
-            return {"ok": False, "error": f"not valid JSON: {exc}"}
+            return {"ok": False, "error": f"not valid JSON (pass the document, its JSON text, or a path to "
+                                         f"a .json file): {exc}"}
     kind = document_kind(raw)
     if kind == "heatExchanger":
         return check_heat_exchanger(raw, base_dir)
@@ -165,9 +184,10 @@ def check_study(raw, base_dir: str | None = None) -> dict:
 
     if isinstance(raw, str):
         try:
-            raw = json.loads(raw)
+            raw, base_dir = read_doc(raw, base_dir)
         except json.JSONDecodeError as exc:
-            return {"ok": False, "error": f"study is not valid JSON: {exc}"}
+            return {"ok": False, "error": f"study is not valid JSON (pass the study, its JSON text, or a "
+                                         f"path to a .json file): {exc}"}
     issues = lint(raw, "study")
     errors = [i for i in issues if i["level"] == "error"]
     if errors:
@@ -260,11 +280,14 @@ def verify_mesh(raw, path: str, base_dir: str | None = None, max_cells: int = 60
     from .study import _margin
     from .verify import verify_part
 
+    if isinstance(raw, str):
+        try:
+            raw, base_dir = read_doc(raw, base_dir)
+        except json.JSONDecodeError as exc:
+            return {"ok": False, "error": f"study is not valid JSON: {exc}"}
     checked = check_study(raw, base_dir)
     if not checked["ok"]:
         return checked
-    if isinstance(raw, str):
-        raw = json.loads(raw)
     full = path if base_dir is None or os.path.isabs(path) else os.path.join(base_dir, path)
     if not os.path.isfile(full):
         return {"ok": False, "error": f"no mesh at {full}"}
