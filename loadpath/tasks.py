@@ -203,6 +203,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     warnings += _preserve_cut(s)
     notes += _resting_supports(s)
     notes += _glued_faces(s)
+    warnings.extend(_split_shafts(s))
     w, n = _blind_bores(s)
     warnings += w
     notes += n
@@ -394,6 +395,75 @@ def _glued_faces(s) -> list[str]:
                        "washer-sized disc under each bolt instead, unless the face really is bonded")
     except Exception:  # noqa: BLE001 - a lint
         return out
+    return out
+
+
+def _split_shafts(s) -> list[str]:
+    """Keep-out cylinders on one axis (a shaft through two bosses written as
+    separate pieces) with design space between them that no keep-out
+    covers: the part may fill that gap and block the shaft. A turret's
+    shoulder shaft written as boss bores plus outer stubs left 3 mm at each
+    upright's inner face open, and the part closed over it (339 mm^3)."""
+    import numpy as np
+
+    out = []
+    try:
+        ds = list(s.design_space)
+        cyl = []
+        for k in s.keep_out:
+            for c in _leaves(k.shape):
+                if getattr(c, "kind", None) == "cylinder" and getattr(c, "r_inner", 0) <= 0:
+                    cyl.append((k, c))
+        seen = set()
+        for i, (ka, a) in enumerate(cyl):
+            for kb, b in cyl[i + 1:]:
+                if abs(abs(float(a.axis @ b.axis)) - 1.0) > 1e-3 or abs(a.r - b.r) > 0.2 * max(a.r, b.r):
+                    continue
+                d = b.p0 - a.p0
+                off = d - (d @ a.axis) * a.axis
+                if float(np.linalg.norm(off)) > 0.1 * min(a.r, b.r):
+                    continue
+                ta = sorted((0.0, float((a.p1 - a.p0) @ a.axis)))
+                tb = sorted((float((b.p0 - a.p0) @ a.axis), float((b.p1 - a.p0) @ a.axis)))
+                lo, hi = (ta[1], tb[0]) if ta[1] <= tb[0] else (tb[1], ta[0]) if tb[1] <= ta[0] else (None, None)
+                if lo is None or hi - lo < 1e-6:
+                    continue
+                between = False
+                for _, c in cyl:
+                    if c is a or c is b or abs(abs(float(a.axis @ c.axis)) - 1.0) > 1e-3:
+                        continue
+                    dc = c.p0 - a.p0
+                    if float(np.linalg.norm(dc - (dc @ a.axis) * a.axis)) > 0.1 * min(a.r, c.r):
+                        continue
+                    tc = sorted((float((c.p0 - a.p0) @ a.axis), float((c.p1 - a.p0) @ a.axis)))
+                    if tc[0] >= lo - 1e-6 and tc[1] <= hi + 1e-6:
+                        between = True      # report the neighbours, not every pair down the line
+                        break
+                if between:
+                    continue
+                ts = np.linspace(lo, hi, 25)[1:-1]
+                pts = a.p0[None, :] + ts[:, None] * a.axis[None, :]
+                inside = np.zeros(len(ts), bool)
+                for dsh in ds:
+                    inside |= dsh.sdf(pts) < 0
+                covered = np.zeros(len(ts), bool)
+                for k in s.keep_out:
+                    covered |= k.shape.sdf(pts) < 0
+                open_ = inside & ~covered
+                if not open_.any():
+                    continue
+                key = tuple(sorted((str(ka.id), str(kb.id))))
+                if key in seen:
+                    continue
+                seen.add(key)
+                g = pts[open_]
+                span = float(open_.sum()) * (hi - lo) / 24
+                out.append(f"keepOut {ka.id!r} and {kb.id!r} lie on one axis with {span:.0f}+ mm of design "
+                           f"space between them (near [{', '.join(f'{v:g}' for v in np.round(g[0], 1))}]) that no "
+                           "keep-out covers: the part may fill it and block a shaft through both. If one shaft "
+                           "or pin runs through them, make it one cylinder end to end")
+    except Exception:  # noqa: BLE001 - a lint
+        pass
     return out
 
 
