@@ -1,10 +1,10 @@
 # loadpath
 
-Generative design for 3D printed parts, built to be driven by coding agents.
-Tell your agent what a part has to carry and where it mounts; loadpath grows
-the part with topology optimization, meshes it as a watertight printable
-solid with the interfaces cut exactly, and checks that mesh with a fresh
-finite element analysis. You get an STL, 3MF or STEP and a report: mass,
+Generative design for 3D printed parts (and cast or milled ones), built to be
+driven by coding agents. Tell your agent what a part has to carry and where it
+mounts; loadpath grows the part with topology optimization, meshes it as a
+watertight solid with the interfaces cut exactly, and checks that mesh with a
+fresh finite element analysis. You get an STL, 3MF or STEP and a report: mass,
 safety factor, deflection, thinnest member, printability, pass or fail.
 
 <table>
