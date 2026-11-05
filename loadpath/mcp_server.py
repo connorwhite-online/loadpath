@@ -217,9 +217,11 @@ def _spawn(kind: str, name: str, inputs: dict, argv: list, cells=None, warnings=
     return out
 
 
-def start(study, base_dir: str | None = None, lattice: dict | None = None) -> dict:
+def start(study, base_dir: str | None = None, lattice: dict | None = None, time_limit: float | None = None) -> dict:
     """Validate and run a study in the background. `lattice` (options, or
-    {} for the defaults) also fills the best outcome with a lattice."""
+    {} for the defaults) also fills the best outcome with a lattice.
+    `time_limit` (minutes): stop searching then and deliver the best
+    outcome verified so far."""
     if isinstance(study, str):
         study = json.loads(study)
     if lattice is not None:
@@ -228,7 +230,8 @@ def start(study, base_dir: str | None = None, lattice: dict | None = None) -> di
     if not v["ok"]:
         return v
     return _spawn("study", v.get("name") or "study", {"study.json": study},
-                  ["run", "{dir}/study.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()],
+                  ["run", "{dir}/study.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd(),
+                   *(["--time-limit", str(float(time_limit))] if time_limit else [])],
                   cells=v["cells"], warnings=v["warnings"], base_dir=base_dir or os.getcwd())
 
 
@@ -749,11 +752,13 @@ def serve():
         return check(study, base_dir)
 
     @tool
-    def loadpath_start(study: dict | str, base_dir: str | None = None, lattice: dict | None = None) -> dict:
+    def loadpath_start(study: dict | str, base_dir: str | None = None, lattice: dict | None = None,
+                       time_limit: float | None = None) -> dict:
         """Validate and start a study in the background; returns a jobId for loadpath_status.
         lattice: optional lattice options ({} for defaults) to also fill the best outcome with a
-        stress-graded TPMS lattice."""
-        return start(study, base_dir, lattice)
+        stress-graded TPMS lattice. time_limit: minutes; past it the search stops and delivers the
+        best outcome verified so far (a safety-factor search takes 10 minutes to a few hours)."""
+        return start(study, base_dir, lattice, time_limit)
 
     @tool
     def loadpath_status(job_id: str, wait: float = 0) -> list:

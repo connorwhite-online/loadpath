@@ -1090,9 +1090,21 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
     def stop():
         return time.time() > deadline or (should_stop is not None and should_stop())
 
+    cstudy = dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained"))
+    fit = _constrained_fit(cstudy)
+    if fit is not None and fit.get("skip"):
+        # the bonus must not take the run down: a shelf bracket's 78k-cell
+        # constrained grid (4x maxElements) was OOM-killed at 6.3 GB on a
+        # shared 15 GB box, and the search's passing part went with it
+        choice["reason"] = fit["skip"]
+        if on_progress is not None:
+            on_progress({"stage": "warning", "message": fit["skip"]}, None)
+        r.choice = choice
+        return r
+    if fit is not None and fit.get("pitch"):
+        cstudy = dataclasses.replace(cstudy, pitch=fit["pitch"])
     try:
-        rc = _run_single(dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained")),
-                         on_progress, stop, fallback=False)
+        rc = _run_single(cstudy, on_progress, stop, fallback=False)
     except Exception as exc:  # noqa: BLE001 - the constrained run is a bonus: any failure keeps the search's part
         choice["reason"] = f"the constrained method failed ({exc})"
         r.choice = choice
@@ -1114,6 +1126,39 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
     r.choice = choice
     r.seconds += rc.seconds
     return r
+
+
+# the constrained method's peak over _run_bytes (MMA's history and the stress
+# aggregate's adjoints): 6.3 GB measured at 78k cells against 4.9 estimated
+_CONSTRAINED_MEMORY = 1.3
+
+
+def _constrained_fit(study: Study) -> dict | None:
+    """Whether goal.method auto's constrained run fits the free memory:
+    None (it fits, or nothing to go by), {"pitch": p} for a coarser grid
+    that fits, or {"skip": why} when even that would be under 1.5x the
+    search's cells (no finer than the search, so no point)."""
+    import dataclasses
+
+    if study.pitch:
+        return None
+    avail = _available_bytes()
+    if not avail:
+        return None
+    from .domain import build_domain, cell_cap, choose_pitch
+
+    p = choose_pitch(study)
+    n = build_domain(study, p).n_elem
+    budget = 0.85 * avail   # only near the edge: evals size these grids on purpose
+    if _CONSTRAINED_MEMORY * _run_bytes(n) <= budget:
+        return None
+    cells = (budget / _CONSTRAINED_MEMORY - _RUN_BASE_BYTES) / _RUN_CELL_BYTES
+    search_cells = cell_cap(dataclasses.replace(study, goal=dataclasses.replace(study.goal, method="search")))
+    if cells < 1.5 * search_cells:
+        return {"skip": f"the constrained method's {n}-cell grid needs about "
+                        f"{_CONSTRAINED_MEMORY * _run_bytes(n) / 1e9:.1f} GB and {avail / 1e9:.1f} GB is free: "
+                        "skipped, the search's part stands"}
+    return {"pitch": p * (n / cells) ** (1.0 / 3.0) * 1.01}
 
 
 def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool = True) -> StudyResult:
@@ -1815,6 +1860,16 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
             if not voxel_confirm and not (should_stop is not None and should_stop()):
                 layout_search(k)
             confirmed_ok = [i for i, q in enumerate(outcomes) if getattr(q, "tet_k", None) is not None and q.passes]
+            if not voxel_confirm and not confirmed_ok and should_stop is not None and should_stop() \
+                    and any(q.passes for q in outcomes):
+                # out of time (--time-limit) before any tet confirm: hand
+                # over the voxel-verified pass, marked as such, not nothing
+                for q in outcomes:
+                    q.report.setdefault("warnings", []).append(
+                        "the run stopped at its time limit before the tet re-check: this outcome is "
+                        "verified on voxels only (they read 10-40% high near sharp corners); "
+                        "`loadpath verify` it, or give the run more time")
+                voxel_confirm = True
             if not voxel_confirm:
                 # deliver only what the tet mesh confirmed; the rest keep
                 # their calibrated reading, for the record

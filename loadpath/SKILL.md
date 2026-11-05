@@ -219,8 +219,13 @@ buckling, printability) you can report to the user.
    failed, 3 still running: call it again) or `loadpath_status(job_id,
    wait=540)`. Never run it in a foreground call with a time limit, and do
    not end your turn while it runs unless something will wake you: a
-   one-shot agent that stops to "check back later" never comes back. It
-   says `running` (with its `pid` and elapsed time), `done`, `failed`,
+   one-shot agent that stops to "check back later" never comes back. A
+   safety-factor search takes 10 minutes to a few hours depending on how it
+   goes; if you have a deadline, say so: `loadpath run ... --time-limit 45`
+   (or `loadpath_start(..., time_limit=45)`) stops the search then and
+   delivers the best outcome verified so far, and while it runs `status`
+   shows `bestSoFar` (the lightest passing part yet, its STL in
+   `out/partial/`). It says `running` (with its `pid` and elapsed time), `done`, `failed`,
    `killed` (a signal), or `died` (the process is gone without a word: out of
    memory, or killed outright); each outcome is written to
    `out/partial/` (STL plus a line in `outcomes.jsonl`) as the search finds

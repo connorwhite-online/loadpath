@@ -415,6 +415,15 @@ def _blind_bores(s) -> tuple[list[str], list[str]]:
                                 "so the part can close over it and a shaft or pin may have no way in. Extend "
                                 "it past the design space on the side it is inserted from (or set "
                                 "\"bore\": false if that is on purpose)")
+                elif _centred_out(c, ds) is not None:
+                    # most of one half sticks out of the part and the other end stops inside:
+                    # nearly always `center` read as the cylinder's end, not its middle
+                    a, b, lo, hi = _centred_out(c, ds)
+                    warn.append(f"keepOut {k.id!r}: the cylinder along {ax} runs from {a} to {b} and "
+                                f"{lo:g} to {hi:g} mm of it is outside the design space, while its other end stops "
+                                "inside the part (a blind pocket). `center` is the cylinder's middle, not its end: "
+                                "to run it from the outside face through the part, move `center` by half the "
+                                "length or give `p0` and `p1`; if a blind pocket is meant, set \"bore\": false")
                 elif c.r >= 2.5:    # a blind tapped or insert hole is normal; a blind shaft seat is worth a look
                     note.append(f"keepOut {k.id!r}: the cylinder along {ax} ends inside the design space at "
                                 "one end, a blind pocket. If a shaft, pin or bearing passes through, extend "
@@ -423,6 +432,25 @@ def _blind_bores(s) -> tuple[list[str], list[str]]:
     except Exception:  # noqa: BLE001 - a lint
         pass
     return list(dict.fromkeys(warn)), list(dict.fromkeys(note))
+
+
+def _centred_out(c, ds):
+    """For a cylinder with one end open and one closed: (start, end, outside
+    from, outside to) when 40% or more of its length lies outside the design
+    space, else None. Points are printed as [x, y, z]."""
+    import numpy as np
+
+    ts = np.linspace(0.0, 1.0, 41)
+    pts = c.p0[None, :] + ts[:, None] * (c.p1 - c.p0)[None, :]
+    out = np.ones(len(ts), bool)
+    for d in ds:
+        out &= d.sdf(pts) >= 0
+    if out.mean() < 0.4 or out.all():
+        return None
+    length = float(np.linalg.norm(c.p1 - c.p0))
+    fmt = lambda p: "[" + ", ".join(f"{v:g}" for v in np.round(p, 2)) + "]"
+    t_out = ts[out]
+    return fmt(c.p0), fmt(c.p1), round(float(t_out.min()) * length, 1), round(float(t_out.max()) * length, 1)
 
 
 def _preserve_cut(s) -> list[str]:

@@ -316,8 +316,23 @@ def run_status(out: str) -> dict:
         st = json.load(fh)
     part = os.path.join(out, "partial", "outcomes.jsonl")
     if os.path.exists(part):
+        rows = []
         with open(part) as fh:
-            st["partialOutcomes"] = sum(1 for line in fh if line.strip())
+            for line in fh:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+        st["partialOutcomes"] = len(rows)
+        ok = [o for o in rows if o.get("passes") and o.get("mass") is not None]
+        if ok and st.get("state") != "done":
+            # the lightest verified passing part so far: what to hand over if
+            # the run has to stop (it may still get lighter, or fail its fine
+            # re-check: `loadpath verify` it before delivering)
+            b = min(ok, key=lambda o: o["mass"])
+            st["bestSoFar"] = {"stl": os.path.join(os.path.abspath(out), "partial", b.get("stl", "")),
+                               "mass": b["mass"], "safetyFactor": b.get("safetyFactor"),
+                               "volumeFraction": b.get("volumeFraction")}
     if st.get("state") == "running" and st.get("pid"):
         alive = True
         try:
@@ -355,6 +370,10 @@ def main(argv=None):
     r.add_argument("--3mf-coordinates", dest="mm_coordinates", choices=["bed", "study"], default="bed",
                    help="multiMaterial studies: the 3MF placed for printing (bed: build direction +z, on the bed "
                         "at 128,128; default) or in the study's coordinates (study), as the STLs are")
+    r.add_argument("--time-limit", type=float, metavar="MINUTES",
+                   help="stop searching after MINUTES and deliver the best outcome verified by then (or set "
+                        "LOADPATH_TIME_LIMIT): a run's length depends on how the search goes, an agent's "
+                        "time does not")
     r.add_argument("--recall", action="store_true",
                    help="start from what earlier runs on the same design space found (recall.py; "
                         "or set LOADPATH_RECALL=1)")
@@ -759,8 +778,21 @@ def main(argv=None):
         return (rec or _progress)(event, *rest)
 
     started = time.time()
+    limit = getattr(args, "time_limit", None) or float(os.environ.get("LOADPATH_TIME_LIMIT") or 0) or None
+    should_stop = None
+    if limit:
+        deadline = started + 60.0 * limit
+
+        def should_stop():
+            if time.time() < deadline:
+                return False
+            if not seen.get("timeUp"):
+                seen["timeUp"] = True
+                _progress({"stage": "warning", "message": f"time limit {limit:g} min reached: delivering the "
+                                                          "best outcome verified so far"}, None)
+            return True
     try:
-        result = run_study(study, on_progress=_tracked)
+        result = run_study(study, on_progress=_tracked, should_stop=should_stop)
     except BaseException as exc:
         _status("failed", error=f"{type(exc).__name__}: {exc}",
                 partial=os.environ.get("LOADPATH_PARTIAL_DIR"))
