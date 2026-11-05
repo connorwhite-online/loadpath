@@ -82,8 +82,15 @@ buckling, printability) you can report to the user.
    to ISO 4762 socket heads (M3 5.5, M4 7, M5 8.5 mm); give `head` for a
    washer or pan head. The head and driver keep-out is as wide as the seat
    ring (head + 2 x wall: M3 7.5, M4 9 mm); `counterbore` sets its diameter
-   when the user gives a counterbore or key clearance. Don't
-   draw a solid boss round a screw. A bolted foot: hold the bores sideways
+   when the user gives a counterbore or key clearance. Which part holds the
+   thread decides `end`: a screw through this part into a servo horn, a
+   motor face, a nut or any mating part's thread is `end: "face"` (this part
+   gets a clearance hole); `end: "thread"` or `"insert"` only when this part
+   is tapped or takes a heat-set insert. Servo horns and motor faces are
+   tapped, so the part bolted to them gets clearance holes. Don't
+   add a solid boss round a screw on your own (the fastener keeps what the
+   joint needs), but a boss the user describes ("a 12 mm boss, 5 mm thick")
+   is an interface: preserve it as given, alongside the fastener. A bolted foot: hold the bores sideways
    and the face's normal only on a washer-sized disc under each bolt; a
    slab over the whole face glues the part down, and a load that lifts or
    tips it then reads far too strong (a stepper bracket: SF 3.5 glued, 0.98
