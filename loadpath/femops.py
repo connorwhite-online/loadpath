@@ -54,6 +54,20 @@ if nb is not None:
                 for t in range(nb_):
                     data[slots[p, e, t]] += s * blks[p, t]
 
+    @nb.njit(cache=True)
+    def _scatter_serial(data, slots, blks, scale):
+        npair, ne, nb_ = slots.shape
+        for p in range(npair):
+            for e in range(ne):
+                s = scale[e]
+                for t in range(nb_):
+                    data[slots[p, e, t]] += s * blks[p, t]
+
+
+# below this many elements a parallel region per corner pair costs more than
+# it saves (64 thread launches; on a busy machine each can stall)
+_SERIAL_BELOW = 20_000
+
 
 def element_energy(u, v, edof, ke):
     """einsum("ij,jk,ik->i", u[edof], ke, v[edof]), bit for bit."""
@@ -66,5 +80,6 @@ def element_energy(u, v, edof, ke):
 
 def scatter(data, slots, blks, scale):
     """data[slots[p]] += scale[:, None] * blks[p] for p in order, in place."""
-    _scatter(data, slots, np.ascontiguousarray(blks, np.float64), np.ascontiguousarray(scale, np.float64))
+    run = _scatter_serial if slots.shape[1] < _SERIAL_BELOW else _scatter
+    run(data, slots, np.ascontiguousarray(blks, np.float64), np.ascontiguousarray(scale, np.float64))
     return data
