@@ -659,6 +659,7 @@ honestly too weak, so the search goes up from a real reading.
 
 Left: the opening's discrete ball is smaller than minMember on coarse fine
 grids (it passes a 2.2 mm rod at minMember 3, which then keeps that size).
+Fixed below (members at minMember or gone).
 
 Coarse gate with corpus (6) on these changes against `baselines/coarse.json`:
 18 of 19 pass. arm-link-cast fails its draft check (373 mm^2, limit 300) at
@@ -667,3 +668,55 @@ Coarse gate with corpus (6) on these changes against `baselines/coarse.json`:
 buckling-governed bracket, within its 7.2% search spread); wrist yoke 17.4
 (main today 18.1; the 14.1 baseline no longer reproduces); corpus-bracket-4
 -17.7%, corpus-tri-mount-5 -13.5%; every other case within 5%.
+
+### Members at minMember or gone (2026-11-05)
+
+The opening in `reconstruct._isosurface` was a grey opening with a voxel
+ball, and a voxel ball is only as wide as its whole cells reach: at
+minMember 3 on 0.81 mm fine cells it reached 1.15 mm across a rod and
+0.81 mm across a plate, so it passed 2.3 mm rods and 1.6 mm plates. A strut
+nearer the minimum came out necked (a 3.2 mm strut drawn on 2.44 mm cells:
+median 2.2 mm, thinnest 1.3) instead of whole or gone.
+
+`_hold_members` replaces it, in distance space: a sub-cell signed distance
+(the field's gradient next to the surface, a closest-point sweep further
+in), each point's member half-thickness as the deepest point within reach,
+then
+
+- members under 2/3 of minMember go, by an opening by that radius (what is
+  left keeps its own surface exactly);
+- members between 2/3 and 1 are built out to minMember.
+
+Building out first matters: an exact opening by minMember alone kept a
+tilted strut whose section wanders round the minimum (the analysis grid's
+staircase) as a string of beads, necked between them. A thin member that is
+the only joint between two bodies is still kept (`_keep_joints`).
+
+Synthetic struts beside a thick one, minMember 3, 2.44 mm cells, shape
+diameter (p1 of rays along the inward normal) of the delivered part:
+
+| strut drawn | before, axis-aligned / tilted | now, axis-aligned / tilted |
+|---|---|---|
+| 2.4 mm | gone / gone | gone / gone |
+| 2.8 mm | gone / gone | 3.23 / gone |
+| 3.2 mm | 2.11 / gone | 3.40 / a 3.0 mm stub |
+| 3.6 mm | 3.65 / gone | 3.68 / 3.04 |
+| 4.4 mm | 3.21 / 2.98 | 3.87 / 3.07 |
+
+Coarse tier (no corpus) against `baselines/coarse.json`: 12 of 13 pass;
+robot-wrist-yoke 18.2 g (main before this 18.1; the 14.1 baseline no longer
+reproduces), wall bracket 27.4 (27.3), bell crank 25.4 (+5.3%, at the noise
+line), every other case within 5%.
+
+**arm-link-cast draft on the coarse tier.** It failed its draft check
+(373 mm^2, limit 300) already at ab522de, the commit that added the check
+(the coarse baseline predates it), so it was never a regression. Two
+causes: coarse cells read walls shallower, so the draft reconstruct builds
+in over the request (`manufacture.DRAFT_MARGIN`, 1 deg) now grows with the
+fine cell past 0.55 mm (1.8 deg at the coarse tier's 0.97 mm; the full
+tier's 0.52 mm cells keep 1 deg); and material that ran on past the wrist
+boss to the design space's end wall (the fillet treats preserved shapes as
+flush faces) was cut off there with no draft at all, about half the area.
+The draft lean-in from the design space's walls now spares only the faces
+the part is held and loaded at. Same coarse densities: 233-253 -> 36-81
+mm^2 under draft, mass +0.1 g.

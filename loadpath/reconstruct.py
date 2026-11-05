@@ -102,6 +102,113 @@ def _field_distance(fine, step, level=0.5):
     return d
 
 
+SWEEPS = 3            # face-neighbour passes of _surface_distance's closest-point sweep
+MEMBER_FLOOR = 0.67   # share of minMember: thinner members go, thicker ones are built out to minMember
+OPEN_TOL = 0.25       # cells: how far past the part's surface _open and _thicken read it
+
+
+def _surface_distance(fine, step, level=0.5, reach=None):
+    """Signed distance (mm, negative inside) to the `level` surface, to a
+    fraction of a cell everywhere: the field's own gradient within a cell or
+    so of the surface, and further away the distance to the nearest of those
+    cells plus that cell's own distance. (_field_distance's transforms away
+    from the surface count whole cells: half a cell of error in a member's
+    depth. Its gradient band also reached the ridge of a member two cells
+    across, where the gradient vanishes and the linear reading ran deep.)"""
+    inside = fine >= level
+    grad = np.stack(np.gradient(fine, step))
+    g = np.linalg.norm(grad, axis=0)
+    lin = (level - fine) / np.maximum(g, 1e-6)
+    band = (np.abs(fine - level) < 0.3) & (g > 1e-6) & (np.abs(lin) < 0.75 * step)
+    if not band.any():
+        return _field_distance(fine, step, level)
+    _, idx = ndimage.distance_transform_edt(~band, return_indices=True)
+    # the surface point each band cell sees along its gradient, and the
+    # distance to the one nearest
+    shape = fine.shape
+    flat = np.ravel_multi_index(tuple(idx), shape).ravel()
+    del idx
+    # each band cell's surface point, along its gradient
+    bc = np.flatnonzero(band.ravel())
+    cs = np.stack(np.unravel_index(bc, shape), axis=1) * step
+    gb = np.stack([grad[a].ravel()[bc] for a in range(3)], axis=1)
+    cs += (lin.ravel()[bc] / np.maximum(g.ravel()[bc], 1e-6))[:, None] * gb
+    surf = np.zeros((fine.size, 3))
+    surf[bc] = cs
+    del cs, gb, grad
+    surf = surf.astype(np.float32)
+    sp = surf[flat]                 # the nearest band cell's surface point
+    del surf, flat
+    pts = (np.stack(np.unravel_index(np.arange(fine.size), shape), axis=1) * step).astype(np.float32)
+    best = ((sp - pts) ** 2).sum(axis=1)
+    # It is only near the nearest surface point (it always reads too far):
+    # take the nearest of the surface points the cell's neighbours see too,
+    # a closest-point sweep. (Any surface point is a fair candidate, so a
+    # neighbour index that wraps round a row does no harm.) Only within
+    # `reach` mm of the surface, if given.
+    sel = np.flatnonzero(~band.ravel() & (best < reach * reach)) if reach else np.flatnonzero(~band.ravel())
+    spl, ptl, bl = sp[sel], pts[sel], best[sel]
+    del pts
+    strides = np.array([shape[1] * shape[2], shape[2], 1])
+    offs = [s * int(st) for st in strides for s in (-1, 1)]
+    for _ in range(SWEEPS):
+        for off in offs:
+            cand = sp[np.clip(sel + off, 0, fine.size - 1)]
+            dc = ((cand - ptl) ** 2).sum(axis=1)
+            better = dc < bl
+            bl[better] = dc[better]
+            spl[better] = cand[better]
+        sp[sel] = spl
+    best[sel] = bl
+    dist = np.sqrt(best).reshape(shape)
+    return np.where(band, lin, np.where(inside, -dist, dist))
+
+
+def _hold_members(fine, step, min_member, level=0.5, floor=MEMBER_FLOOR, tol=OPEN_TOL):
+    """The field with every member at least `min_member` across, or gone.
+
+    Each point's member half-thickness h is the deepest point of the part
+    within reach of it (read on the grid's cells, so a member whose axis
+    falls between cells reads up to about half a cell thin, which only
+    builds it out further). Where h is under `floor` x half the minimum the
+    member goes, by an opening in distance space: the part's points at
+    least that deep, grown back out by as much, which leaves the rest
+    exactly as it was. Where h is between that and half the minimum the
+    surface moves out by the difference, to the minimum.
+
+    The voxel-ball grey opening this replaces had a ball no wider than its
+    whole cells reach (1.15 mm across a rod, 0.81 across a plate at minMember
+    3 on 0.81 mm cells), so it passed 2.3 mm rods and 1.6 mm plates, and a
+    strut nearer the minimum came out necked to 1.3-2.2 mm instead of whole.
+    An exact opening by the minimum alone met struts that wander round it
+    along their length (a tilted strut's staircase on the analysis grid) and
+    kept them as a string of beads, necked between; building out first
+    leaves it only the struts well under the minimum, which go whole."""
+    R = 0.5 * float(min_member)
+    width = 2.0 * step
+    d = _surface_distance(fine, step, level, reach=2.0 * R + step)
+    k = int(np.ceil(R / step)) + 1
+    h = ndimage.maximum_filter(-d, size=2 * k + 1)
+    target = R + tol * step
+    need = np.where((h >= floor * R) & (h < target), target - h, 0.0)
+    if need.any():
+        fine = np.maximum(fine, np.where(need > 0, np.clip(level - (d - need) / (2.0 * width), 0.0, 1.0), 0.0))
+        d = _surface_distance(fine, step, level, reach=2.0 * R + step)
+    r = floor * R
+    e = d + r                       # distance to the eroded surface
+    core = e <= 0.0
+    if not core.any():
+        return np.zeros_like(fine)
+    far, idx = ndimage.distance_transform_edt(~core, return_indices=True)
+    # from outside the core: to its nearest cell, plus that cell's own
+    # (sub-cell) distance to the core's surface
+    de = np.where(core, e, far * step + e[tuple(idx)])
+    del idx, far
+    # read `tol` cells past the opening's surface, so it never shaves a
+    # member it keeps
+    return np.minimum(fine, np.clip(level - (de - r - tol * step) / (2.0 * width), 0.0, 1.0))
+
+
 class _GridSDF:
     """The primitives' signed distances on one fine grid, each group (the
     flush faces, preserved shapes, design space, keep-outs) evaluated once
@@ -370,19 +477,15 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     if o.smooth_sigma > 0:
         fine = ndimage.gaussian_filter(fine, o.smooth_sigma)
     if min_member:
-        # Morphological opening with a ball of the minimum member's diameter:
-        # anything thinner than that cannot fit the ball and goes. Smoothing a
+        # Every member at the minimum or gone (_hold_members): a member well
+        # under it goes, one a little under is built out to it. Smoothing a
         # member that ends inside the design space tapers it to a knife edge,
         # and that sliver is both unprintable and a stress raiser that grew
         # with every refinement of the verification grid (14 -> 58 MPa on the
         # arm link at a flange tip).
         step_ = domain.pitch / o.upsample
-        r = 0.5 * float(min_member) / step_
-        if r >= 1.0:
-            k = int(np.ceil(r))
-            zz, yy, xx = np.mgrid[-k:k + 1, -k:k + 1, -k:k + 1]
-            ball = (xx * xx + yy * yy + zz * zz) <= r * r
-            opened = ndimage.grey_opening(fine, footprint=ball)
+        if 0.5 * float(min_member) >= step_:
+            opened = _hold_members(fine, step_, float(min_member), o.level)
             fine = _keep_joints(fine, opened, step_, float(min_member), o.level)
     step = domain.pitch / o.upsample
     # zoom(grid_mode=True) maps fine cell centers to coarse cell centers, so
@@ -473,7 +576,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         # gets are the drafted ones; it only adds material. Keep-outs and
         # preserved shapes stay exact (the booleans below): bores and
         # bosses are machined after casting or drafted in CAD.
-        from .manufacture import DRAFT_MARGIN, drafted_distance, parting_index
+        from .manufacture import DRAFT_MARGIN, DRAFT_MARGIN_STEP, drafted_distance, parting_index
 
         a, sgn, sides, angle, part_at = draft
         inside = fine >= o.level
@@ -487,8 +590,9 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
             p_idx = None
         dist = _field_distance(fine, step, o.level)
         # built DRAFT_MARGIN steeper than asked: meshing reads a wall's
-        # draft up to about half a degree shallow (manufacture.DRAFT_MARGIN)
-        angle = angle + DRAFT_MARGIN
+        # draft up to about half a degree shallow (manufacture.DRAFT_MARGIN),
+        # more on coarse cells
+        angle = angle + DRAFT_MARGIN * max(1.0, step / DRAFT_MARGIN_STEP)
         dd = drafted_distance(dist, a, sgn, sides, p_idx, step, angle)
         width = 2.0 * step
         fine = np.maximum(fine, np.clip(o.level - dd / (2.0 * width), 0.0, 1.0))
@@ -499,8 +603,13 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
             # at the faces the part is held and loaded at, which stay flush.
             env_d = drafted_distance(sdfs.min(design).reshape(fine.shape), a, sgn, sides, p_idx, step, angle,
                                      grow=False)
-            if flush:
-                near = (sdfs.min(flush) < 1.5 * domain.pitch).reshape(fine.shape)
+            # (only at the faces it is held and loaded at: material running
+            # on past a preserved boss to the space's wall, as the fillet
+            # lets it, came out a sawn-off face with no draft at all, 160
+            # mm^2 of the coarse cast arm link's 330 under draft)
+            held = [f for f in flush if not any(f is p for p in preserve)]
+            if held:
+                near = (sdfs.min(held) < 1.5 * domain.pitch).reshape(fine.shape)
                 env_d = np.where(near, -np.inf, env_d)
             fine = np.minimum(fine, np.clip(o.level - env_d / (2.0 * width), 0.0, 1.0))
     if keep_out:

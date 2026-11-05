@@ -113,6 +113,10 @@ STICKOUT_WARN = 4.0
 # extra draft reconstruct builds in so the meshed walls clear the request
 DRAFT_TOL = 0.5
 DRAFT_MARGIN = 1.0
+# ...at mesh cells up to this size (mm); coarser cells read walls shallower,
+# so the margin grows in proportion (the coarse eval tier's 0.97 mm cells
+# left the cast arm link 373 mm^2 under draft at 1 deg, against 300)
+DRAFT_MARGIN_STEP = 0.55
 
 
 def _label(d):

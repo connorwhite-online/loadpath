@@ -1191,6 +1191,46 @@ def test_smoothing_keeps_members_at_the_minimum():
     assert 2.0 * np.median(rr[keep]) > 3.0, 2.0 * np.median(rr[keep])
 
 
+def test_reconstruct_holds_tilted_struts_at_the_minimum_or_drops_them():
+    # A strut beside a thick one (so not the only joint), tilted off the
+    # grid so its section wanders along its length. The voxel-ball opening
+    # passed struts down to ~2.3 mm at minMember 3 and necked those near
+    # the minimum to 1.3-2.2 mm; now a strut comes out at least the
+    # minimum across, or not at all.
+    import trimesh
+    s = study_from_dict({
+        "name": "rod", "designSpace": {"type": "box", "min": [0, -20, -20], "max": [120, 20, 20]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -21, -21], "max": [0.01, 21, 21]}}],
+        "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [119.9, -21, -21],
+                                                          "max": [121, 21, 21]}, "force": [0, 0, -10]}]}],
+        "material": "pa12", "goal": {"volumeFraction": 0.1}, "resolution": {"pitch": 2.44}, "minMember": 3.0})
+    d = build_domain(s)
+    c = d.origin + (d.mesh.elem_ijk + 0.5) * d.pitch
+    p0, p1 = np.array([5.0, -8, -3]), np.array([115.0, 8, 4])
+    L = np.linalg.norm(p1 - p0)
+    a = (p1 - p0) / L
+
+    def axis_dist(q, o):
+        return np.linalg.norm(q - o - ((q - o) @ a)[:, None] * a, axis=1)
+
+    thick = np.clip(0.5 + (3.5 - axis_dist(c, p0 + [0, 10, 0])) / d.pitch, 0, 1)
+    ends = (c[:, 0] < 12) | (c[:, 0] > 108)
+    for D in (2.4, 3.6, 4.4):
+        x = np.maximum(thick, np.clip(0.5 + (D / 2 - axis_dist(c, p0)) / d.pitch, 0, 1))
+        mesh, _ = reconstruct(s, d, np.where(ends, 1.0, x))
+        pts, fi = trimesh.sample.sample_surface_even(mesh, 20000, seed=1)
+        t = (pts - p0) @ a
+        on = (t > 25) & (t < L - 25) & (axis_dist(pts, p0) < 4.5)
+        if D < 3.0:
+            assert on.sum() < 20, (D, on.sum())          # gone, whole
+            continue
+        n = mesh.face_normals[fi][on]
+        o = pts[on] - n * 1e-3
+        loc, ri, _ = mesh.ray.intersects_location(o, -n, multiple_hits=False)
+        sd = np.linalg.norm(loc - o[ri], axis=1)
+        assert np.percentile(sd, 1) > 2.85, (D, np.percentile(sd, 1))
+
+
 def test_reconstruct_keeps_a_thin_member_that_is_the_only_joint():
     # A member under minMember that alone joins the loaded end to the held
     # one used to go with the opening, leaving the load on a separate body
@@ -1223,14 +1263,15 @@ def test_axial_smoothing_keeps_thin_members():
     # every sample further out (the distance is convex), and one pass shrank
     # thin members: a graded rod two cells across lost 15% of its volume.
     # The debiased average (opt-in, ReconstructOptions(axial_debias=True) or
-    # resolution.keepThinMembers) keeps it.
+    # resolution.keepThinMembers) keeps it. (minMember under a fine cell, so
+    # the member hold stays out of it: it builds the 1.6 mm rod out.)
     from loadpath.reconstruct import ReconstructOptions
     s = study_from_dict({
         "name": "rod", "designSpace": {"type": "box", "min": [0, -20, -20], "max": [120, 20, 20]},
         "supports": [{"shape": {"type": "box", "min": [-1, -21, -21], "max": [0.01, 21, 21]}}],
         "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [119.9, -21, -21],
                                                           "max": [121, 21, 21]}, "force": [0, 0, -10]}]}],
-        "material": "pa12", "goal": {"volumeFraction": 0.1}, "resolution": {"pitch": 2.2}, "minMember": 1.6})
+        "material": "pa12", "goal": {"volumeFraction": 0.1}, "resolution": {"pitch": 2.2}, "minMember": 1.0})
     d = build_domain(s)
     c = d.origin + (d.mesh.elem_ijk + 0.5) * d.pitch
     p0, p1 = np.array([15.0, -8, -3]), np.array([105.0, 8, 4])
