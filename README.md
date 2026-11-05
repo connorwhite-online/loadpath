@@ -1,11 +1,14 @@
 # loadpath
 
 Generative design for 3D printed parts (and cast or milled ones), built to be
-driven by coding agents. Tell your agent what a part has to carry and where it
-mounts; loadpath grows the part with topology optimization, meshes it as a
-watertight solid with the interfaces cut exactly, and checks that mesh with a
-fresh finite element analysis. You get an STL, 3MF or STEP and a report: mass,
-safety factor, deflection, thinnest member, printability, pass or fail.
+driven by coding agents. Tell your agent what you want to build. It works out
+the engineering from there: where the part mounts, what it has to carry, which
+bores, bolt patterns and clearances must survive, and how it will be made.
+loadpath grows the part with topology optimization, meshes it as a watertight
+solid with the interfaces cut exactly, and checks that mesh with a fresh finite
+element analysis. You get an STL, 3MF or STEP and a report: mass, safety
+factor, deflection, thinnest member, whether every interface and clearance
+came through, printability, pass or fail.
 
 <table>
 <tr>
@@ -34,12 +37,20 @@ claude mcp add loadpath -- loadpath mcp   # any MCP client: {"command": "loadpat
 
 Then ask in plain words:
 
-> Design a PETG bracket for a 10 kg shelf. It screws to the wall with two
-> M5 bolts 40 mm apart and the shelf sits 60 mm out. Safety factor 2,
-> printed on an FDM printer.
+> I need a PETG bracket to hold a 10 kg shelf off the wall.
 
-The agent writes the study, checks it, runs it in the background and reads
-the report back. Its guide is [loadpath/SKILL.md](loadpath/SKILL.md) (the
+or hand it what you already have: a STEP of the part to lighten, a URDF of
+the arm the link goes in, a photo or sketch. The agent turns that into a
+study. It reads bores, bolt patterns and mounting faces out of CAD
+(`loadpath_import_cad`), derives joint loads from a URDF's masses and motor
+torques (`loadpath assembly`), sizes bolt clearance and driver paths from the
+fastener, and fills the gaps you didn't mention (screw size, spacing, a safety
+factor for the use) with stated assumptions you can correct. `loadpath_check`
+lints the setup before anything runs: missing or misspelled fields, a
+keep-out cutting into a mounting boss, a bore with no open end, a part glued
+down where it should be bolted. Then the agent runs it in the background and
+reads the report back, including whether every interface survived and every
+keep-out stayed clear. Its guide is [loadpath/SKILL.md](loadpath/SKILL.md) (the
 `loadpath_guide` tool returns it); the tools and the loop are in
 [docs/agents.md](docs/agents.md). The server runs locally and nothing
 leaves the machine. Units are millimetres, newtons and megapascals. MIT
@@ -58,8 +69,9 @@ The open tools each cover one of those:
 - **Commercial generative design** (Fusion, nTop) does the whole job, but
   it's built around a GUI, not an agent.
 
-loadpath is the layer in between. Your CAD defines the interfaces; loadpath
-takes those plus the loads, material and process, and returns a watertight
+loadpath is the layer in between. The agent pulls the interfaces from CAD
+(or from your description), works out the loads, material and process, and
+loadpath returns a watertight
 part checked by an analysis independent of the optimizer, with a JSON report
 an agent can act on. Its STEP output goes back into CAD.
 
@@ -75,8 +87,6 @@ Where it is strongest:
 - **Heat exchangers**: lattice-Boltzmann flow and conjugate heat transfer
   for gyroid cores and cold plates.
 
-Not yet: draft-angle and machining-time checks for cast and milled parts,
-or a ranked spread of outcomes across materials and processes by cost.
 There is no GUI on purpose; it's a library.
 
 ## What it does

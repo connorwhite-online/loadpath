@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loadpath"
-version = "0.1.4"
-description = "Generative design for printed parts: topology optimization from keep-outs, preserved geometry and loads, verified in real units."
+version = "0.1.5"
+description = "Agent-driven generative design for printed parts: describe what to build, get a topology-optimized part with its loads, interfaces and printability checked."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

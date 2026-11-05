@@ -1,7 +1,8 @@
 # loadpath
 
-Generative design for parts you are going to print. Describe what a part must
-keep, what it must avoid, where it is held and how hard it is pushed; loadpath
+Generative design for parts you are going to print. An agent turns a plain
+request into a study (what the part must keep, what it must avoid, where it is
+held and how hard it is pushed); loadpath
 removes material until only the load path is left, meshes the result as a
 watertight printable part with exact bores and faces, and then checks that part
 with a fresh finite element analysis in real units.

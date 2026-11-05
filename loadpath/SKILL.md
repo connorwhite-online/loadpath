@@ -1,14 +1,35 @@
 ---
 name: loadpath
-description: Lightweight a load-bearing part with topology optimization (generative design). Use when a part must keep certain features (bores, mounting faces, bosses), avoid certain volumes (bolt access, cables, mating parts), and carry known loads, and you want the lightest printable shape that does it with a stated safety factor. Produces watertight STLs plus a verified stress/mass report.
+description: Design a load-bearing part with topology optimization (generative design) from a plain request ("a bracket for a 10 kg shelf", "a lighter version of this STEP", "the forearm for this URDF"). You work out the interfaces to keep (bores, mounting faces, bosses), the volumes to leave empty (bolt access, cables, mating parts) and the loads, then get the lightest printable shape that holds a stated safety factor. Produces watertight STLs plus a verified stress/mass report.
 ---
 
 # loadpath: generative design for printed parts
 
-You describe the problem; the solver finds the shape. Do not model the
-organic geometry yourself. Your job is to get the **problem** right:
-what must be kept, what must stay empty, where the part is held, and what
-pushes on it. Everything is millimetres, newtons, MPa.
+The user says what they want to build; you work out the problem and the
+solver finds the shape. Do not model the organic geometry yourself. Your job
+is to get the **problem** right: what must be kept, what must stay empty,
+where the part is held, and what pushes on it. Everything is millimetres,
+newtons, MPa.
+
+Don't hand the user a questionnaire. Most of the problem is in what they
+already gave you or in the world:
+
+- **Interfaces** come from their CAD (`loadpath_import_cad` finds bores, bolt
+  patterns and mounting faces), from the parts it meets (a servo's or
+  bearing's datasheet dimensions, a standard bolt), or from the description.
+- **Loads** come from what the part does: the mass it holds times gravity
+  and a shock factor, a motor's stall torque, a URDF's masses and joint
+  limits (`loadpath assembly`), a hand push, a drop.
+- **Clearances** come from the fasteners (`fasteners` sizes the clearance
+  hole, head and driver path) and the mating parts and sweeps (keep-outs).
+- **Material, process and safety factor** come from how they'll make it and
+  what failure would cost.
+
+Pick a defensible reading, say each assumption in one line in your reply
+(screw size, where the load sits, the safety factor and why), and ask only
+for what you can't infer and would change the part. Then let `check` lint
+the setup and the report confirm every interface survived and every keep-out
+stayed clear.
 
 With the MCP server (`loadpath mcp`, see docs/agents.md) the same workflow is
 the tools `loadpath_check`, `loadpath_start` and `loadpath_status`; without

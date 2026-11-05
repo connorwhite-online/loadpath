@@ -2,8 +2,9 @@
 
 A wall bracket for a shelf, printed in PETG on an FDM printer. Two M5 screws
 hold it to the wall; the shelf sits on a 40 mm pad 100 mm out and puts 100 N
-on it (10 kg). You describe the interfaces and the loads, loadpath finds the
-lightest shape that holds a safety factor of 3, checks it on a finer grid,
+on it (10 kg). This tutorial writes the study by hand so you can see every
+piece; an agent writes the same file from "a PETG bracket for a 10 kg
+shelf". loadpath finds the lightest shape that holds a safety factor of 3, checks it on a finer grid,
 and picks the build direction that prints it best. About 15 minutes on 4
 cores, 2 minutes with `--quick`.
 

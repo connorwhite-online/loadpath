@@ -702,8 +702,10 @@ def serve():
         "loadpath",
         instructions=(
             "Generative design (topology optimization) for printed parts, plus lattice infills and two-fluid "
-            "TPMS heat exchangers. Describe the problem, not the geometry: design space, preserved interfaces, "
-            "keep-outs, fasteners, supports, load cases, material, process, goal. Units: mm, N, MPa. "
+            "TPMS heat exchangers. The user says what they want built; you work out the problem, not the geometry: "
+            "design space, preserved interfaces, keep-outs, fasteners, supports, load cases, material, process, "
+            "goal. Read interfaces from their CAD (loadpath_import_cad) and loads from what the part does; fill "
+            "gaps with stated assumptions instead of asking for numbers they don't have. Units: mm, N, MPa. "
             "Start with loadpath_guide (once) or loadpath_examples, validate with loadpath_check until it is "
             "ok with no warnings you can fix, then loadpath_start and poll loadpath_status. Read every "
             "outcome's attention list and look at the render before trusting a part. When a part passes, "
