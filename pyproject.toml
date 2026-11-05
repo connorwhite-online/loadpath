@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "loadpath"
 version = "0.1.0"
 description = "Generative design for printed parts: topology optimization from keep-outs, preserved geometry and loads, verified in real units."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26",
@@ -22,10 +23,23 @@ dependencies = [
 ]
 keywords = ["topology optimization", "generative design", "3d printing", "fea", "cad"]
 classifiers = [
-  "License :: OSI Approved :: MIT License",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Manufacturing",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Physics",
 ]
+
+[project.urls]
+Homepage = "https://github.com/connorwhite-online/loadpath"
+Documentation = "https://github.com/connorwhite-online/loadpath/tree/main/docs"
+Repository = "https://github.com/connorwhite-online/loadpath"
+Issues = "https://github.com/connorwhite-online/loadpath/issues"
 
 [project.optional-dependencies]
 render = ["matplotlib>=3.8", "shapely>=2.0", "fast_simplification>=0.1"]   # shapely: render_interfaces slices meshes; fast_simplification: decimation for renders and viewers
