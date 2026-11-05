@@ -1,6 +1,6 @@
 {
  "name": "arm-link-cast",
- "description": "The arm-link case cast (or molded) in a two-part mold opening along z: no undercuts along z, so every hole runs straight through. The 10 mm cable channel along x is the study's own undercut (it needs a side core) and is not counted against the part. Same goal: SF 3 and 0.5 mm at the wrist in PA12.",
+ "description": "The arm-link case cast (or molded) in a two-part mold opening along z: no undercuts along z, so every hole runs straight through. The 10 mm cable channel along x is the study's own undercut (it needs a side core) and is not counted against the part. Every wall carries 1.5 deg of draft off the mid-plane parting line. Same goal: SF 3 and 0.5 mm at the wrist in PA12.",
  "designSpace": [
   {
    "type": "box",
@@ -141,7 +141,8 @@
  },
  "casting": {
   "draw": "+z",
-  "sides": 2
+  "sides": 2,
+  "draft": 1.5
  },
  "expect": {
   "minMassReduction": 0.4,
@@ -152,6 +153,7 @@
   "bodies": 1,
   "minMemberAtLeast": 2.4,
   "maxMass": 75,
-  "maxUndercutVolume": 150
+  "maxUndercutVolume": 150,
+  "maxUnderDraftedArea": 300
  }
 }

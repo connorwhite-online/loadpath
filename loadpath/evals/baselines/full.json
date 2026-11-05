@@ -1,73 +1,39 @@
 [
  {
   "case": "arm-link-cast",
-  "tier": "full",
-  "pass": true,
-  "best": {
-   "volumeFraction": 0.44999999999999996,
-   "mass": 67.81409224572266,
-   "massReduction": 0.458902818715315,
-   "safetyFactor": 20.403580382380255,
-   "p5Member": 5.353863566213887,
-   "minMember": 4.1238850160664935,
-   "creaseLength": 0.0,
-   "p5Thickness": 4.7239935599598875,
-   "p1Thickness": 4.531318461442897,
-   "deflection": 0.4776468535937122,
-   "iterations": 38,
-   "optimizerSeconds": 53.354684352874756,
-   "bucklingFactor": 110.3704525010747
-  },
-  "pareto": {
-   "points": 3,
-   "front": [
-    [
-     50.74147711583434,
-     4.6258160846463285
-    ],
-    [
-     67.81409224572266,
-     20.403580382380255
-    ]
-   ],
-   "solidMass": 125.32701073163405,
-   "target": 3.0,
-   "massAtTarget": 50.74147711583434,
-   "bracketed": false,
-   "hypervolume": 1.1278555359953917
-  },
+  "seconds": 717.4712090492249,
   "checks": [
    {
     "check": "mass",
-    "value": 67.81409224572266,
+    "value": 67.42126821460282,
     "op": "<=",
     "limit": 75,
     "pass": true
    },
    {
     "check": "massReduction",
-    "value": 0.458902818715315,
+    "value": 0.4620372111246336,
     "op": ">=",
     "limit": 0.4,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 20.403580382380255,
+    "value": 20.774142165277908,
     "op": ">=",
     "limit": 3.0,
     "pass": true
    },
    {
     "check": "deflection",
-    "value": 0.4776468535937122,
+    "value": 0.4787097123055786,
     "op": "<=",
     "limit": 0.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 2.1347939759800046e-13,
+    "value": 1.2079226507921703e-13,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -88,27 +54,451 @@
    },
    {
     "check": "member",
-    "value": 4.7239935599598875,
+    "value": 4.870731474224091,
     "op": ">=",
     "limit": 2.4,
     "pass": true
    },
    {
     "check": "undercut",
-    "value": 140.8826250000002,
+    "value": 0.0,
     "op": "<=",
     "limit": 150,
     "pass": true
    },
    {
+    "check": "draft",
+    "value": 193.2219303188249,
+    "op": "<=",
+    "limit": 200,
+    "pass": true
+   },
+   {
     "check": "buckling",
-    "value": 110.3704525010747,
+    "value": 109.52103831988367,
     "op": ">=",
     "limit": 3.0,
     "pass": true
    }
   ],
-  "seconds": 480.17133140563965
+  "outcomes": 5,
+  "tier": "full",
+  "pareto": {
+   "points": 5,
+   "front": [
+    [
+     54.19404032593303,
+     10.706837064230912
+    ],
+    [
+     63.747115913763,
+     17.666884667188107
+    ],
+    [
+     67.42126821460282,
+     20.774142165277908
+    ]
+   ],
+   "solidMass": 125.32701073163403,
+   "target": 3.0,
+   "massAtTarget": 54.19404032593303,
+   "bracketed": false,
+   "hypervolume": 1.1351578560829136
+  },
+  "best": {
+   "volumeFraction": 0.4125,
+   "mass": 67.42126821460282,
+   "massReduction": 0.4620372111246336,
+   "safetyFactor": 20.774142165277908,
+   "p5Member": 5.343505835656661,
+   "minMember": 1.5542922808559074,
+   "creaseLength": 19.7748477006132,
+   "p5Thickness": 4.870731474224091,
+   "p1Thickness": 2.4582777579606288,
+   "deflection": 0.4787097123055786,
+   "iterations": 38,
+   "optimizerSeconds": 47.28282856941223,
+   "bucklingFactor": 109.52103831988367
+  },
+  "pass": true,
+  "trace": [
+   {
+    "material": "pa12",
+    "volumeFraction": 0.3,
+    "mass": 54.19404032593303,
+    "massReduction": 0.5675789280414568,
+    "safetyFactor": 10.706837064230912,
+    "bucklingFactor": 45.12471671643918,
+    "calibration": {
+     "tetOverVoxel": 1.0684327456958636,
+     "safetyFactor": 11.439535322254473
+    },
+    "minMember": 1.4625000000000001,
+    "overhangArea": null,
+    "keepOutIntrusion": 6.394884621840902e-14,
+    "preserveMissing": 0.0,
+    "bodies": 1,
+    "boundaryCutArea": 521.8878685880638,
+    "manufacturing": {
+     "access": {
+      "kind": "casting",
+      "directions": [
+       "+z",
+       "-z"
+      ],
+      "draw": "+z",
+      "sides": 2,
+      "draft": 1.5,
+      "undercutVolume": 1245.6990000000003,
+      "undercutInKeepOuts": 1245.6990000000003
+     },
+     "draft": {
+      "required": 1.5,
+      "parting": -3.552713678800501e-15,
+      "underDraftedArea": 161.78614192339813,
+      "undercutFacetArea": 15.731758880814217,
+      "interfaceUnderDraftedArea": 4242.072804754225,
+      "wallArea": 13301.513091623272,
+      "p1Draft": 0.8850253318278166,
+      "p5Draft": 1.696070172175611,
+      "underDraftedShare": 0.012162987835217347
+     }
+    },
+    "warnings": [
+     "the mesh lost 11% of the optimized solid cells (15% of the surface cells, 25% of the thin members): the meshed part is softer and weaker than the design the optimizer found, so the outcome search goes heavier than the design needs. The verified numbers are the ones that hold."
+    ],
+    "margin": 0.48343509351437414,
+    "passes": false,
+    "start": "cold",
+    "alternative": null,
+    "optimizer": {
+     "iterations": 43,
+     "converged": true,
+     "seconds": 116.80388402938843,
+     "compliance": 64268.1863648465,
+     "caseCompliance": [
+      37173.06567431297,
+      27095.120690533528
+     ],
+     "achievedVolumeFraction": 0.30381800708786694
+    },
+    "reconstruction": {
+     "isoTriangles": 135264,
+     "bodies": 1,
+     "droppedFragmentVolume": 0.0,
+     "parting": -3.552713678800501e-15,
+     "triangles": 109772,
+     "volume": 53657.46566924063,
+     "watertight": true
+    }
+   },
+   {
+    "material": "pa12",
+    "volumeFraction": 0.6,
+    "mass": 84.60911410013956,
+    "massReduction": 0.32489322448362523,
+    "safetyFactor": 19.133842944476292,
+    "bucklingFactor": 192.42001705472452,
+    "calibration": {
+     "tetOverVoxel": 1.0684327456958636,
+     "safetyFactor": 20.443224352880232
+    },
+    "minMember": 1.676509814799819,
+    "overhangArea": null,
+    "keepOutIntrusion": 1.1368683772161603e-13,
+    "preserveMissing": 0.0,
+    "bodies": 1,
+    "boundaryCutArea": 2098.000125100223,
+    "manufacturing": {
+     "access": {
+      "kind": "casting",
+      "directions": [
+       "+z",
+       "-z"
+      ],
+      "draw": "+z",
+      "sides": 2,
+      "draft": 1.5,
+      "undercutVolume": 2179.9732500000005,
+      "undercutInKeepOuts": 2179.9732500000005
+     },
+     "draft": {
+      "required": 1.5,
+      "parting": -3.552713678800501e-15,
+      "underDraftedArea": 144.6035085059625,
+      "undercutFacetArea": 12.482315406374358,
+      "interfaceUnderDraftedArea": 4945.230346364916,
+      "wallArea": 12945.987282437789,
+      "p1Draft": 0.9148160368391477,
+      "p5Draft": 1.881532664496193,
+      "underDraftedShare": 0.011169755179825344
+     }
+    },
+    "warnings": [
+     "the mesh lost 10% of the optimized solid cells (22% of the surface cells, 24% of the thin members): the meshed part is softer and weaker than the design the optimizer found, so the outcome search goes heavier than the design needs. The verified numbers are the ones that hold.",
+     "the part closes over 1 bore end(s) (cable-channel p1): no fastener goes through, so it does not pass. Extend the keep-out over the head and the driver's reach if this repeats."
+    ],
+    "margin": 1.4717749602251564,
+    "passes": false,
+    "start": "warm from 0.300",
+    "alternative": null,
+    "optimizer": {
+     "iterations": 42,
+     "converged": true,
+     "seconds": 65.82647061347961,
+     "compliance": 30256.94386227721,
+     "caseCompliance": [
+      21197.146040792697,
+      9059.797821484513
+     ],
+     "achievedVolumeFraction": 0.5938481989442107
+    },
+    "reconstruction": {
+     "isoTriangles": 144064,
+     "bodies": 1,
+     "droppedFragmentVolume": 0.0,
+     "parting": -3.552713678800501e-15,
+     "triangles": 117640,
+     "volume": 83771.40009914807,
+     "watertight": true
+    }
+   },
+   {
+    "material": "pa12",
+    "volumeFraction": 0.44999999999999996,
+    "mass": 71.07572375718374,
+    "massReduction": 0.4328778501756495,
+    "safetyFactor": 19.350506957098077,
+    "bucklingFactor": 121.50071973936936,
+    "calibration": {
+     "tetOverVoxel": 1.0684327456958636,
+     "safetyFactor": 20.674715278779207
+    },
+    "minMember": 1.5818822317105545,
+    "overhangArea": null,
+    "keepOutIntrusion": 1.2079226507921703e-13,
+    "preserveMissing": 0.0,
+    "bodies": 1,
+    "boundaryCutArea": 1136.5054893625584,
+    "manufacturing": {
+     "access": {
+      "kind": "casting",
+      "directions": [
+       "+z",
+       "-z"
+      ],
+      "draw": "+z",
+      "sides": 2,
+      "draft": 1.5,
+      "undercutVolume": 1527.4642500000004,
+      "undercutInKeepOuts": 1527.4642500000004
+     },
+     "draft": {
+      "required": 1.5,
+      "parting": -3.552713678800501e-15,
+      "underDraftedArea": 175.940540810225,
+      "undercutFacetArea": 11.185819543621227,
+      "interfaceUnderDraftedArea": 4567.985445562281,
+      "wallArea": 13771.297406955535,
+      "p1Draft": 0.7763093168920552,
+      "p5Draft": 1.7783672518904403,
+      "underDraftedShare": 0.012775887094077416
+     }
+    },
+    "warnings": [],
+    "margin": 1.1576728676905113,
+    "passes": false,
+    "start": "warm from 0.600",
+    "alternative": null,
+    "optimizer": {
+     "iterations": 38,
+     "converged": true,
+     "seconds": 54.11810612678528,
+     "compliance": 36976.20578583484,
+     "caseCompliance": [
+      25329.854452482694,
+      11646.351333352146
+     ],
+     "achievedVolumeFraction": 0.45617237120957727
+    },
+    "reconstruction": {
+     "isoTriangles": 142412,
+     "bodies": 1,
+     "droppedFragmentVolume": 0.0,
+     "parting": -3.552713678800501e-15,
+     "triangles": 116202,
+     "volume": 70372.0037199839,
+     "watertight": true
+    }
+   },
+   {
+    "material": "pa12",
+    "volumeFraction": 0.375,
+    "mass": 63.747115913763,
+    "massReduction": 0.49135373498801194,
+    "safetyFactor": 17.666884667188107,
+    "bucklingFactor": 84.23806597264117,
+    "calibration": {
+     "tetOverVoxel": 1.0684327456958636,
+     "safetyFactor": 18.87587809285594
+    },
+    "minMember": 1.5255293398026994,
+    "overhangArea": null,
+    "keepOutIntrusion": 1.2079226507921703e-13,
+    "preserveMissing": 0.0,
+    "bodies": 1,
+    "boundaryCutArea": 654.1900766161907,
+    "manufacturing": {
+     "access": {
+      "kind": "casting",
+      "directions": [
+       "+z",
+       "-z"
+      ],
+      "draw": "+z",
+      "sides": 2,
+      "draft": 1.5,
+      "undercutVolume": 1342.0923750000004,
+      "undercutInKeepOuts": 1342.0923750000004
+     },
+     "draft": {
+      "required": 1.5,
+      "parting": -3.552713678800501e-15,
+      "underDraftedArea": 147.13841728925138,
+      "undercutFacetArea": 10.65266466065242,
+      "interfaceUnderDraftedArea": 4374.414491164197,
+      "wallArea": 14189.79306918594,
+      "p1Draft": 0.978838866551607,
+      "p5Draft": 1.7472093371985797,
+      "underDraftedShare": 0.010369313813939404
+     }
+    },
+    "warnings": [],
+    "margin": 0.9231483937304484,
+    "passes": false,
+    "start": "warm from 0.450",
+    "alternative": null,
+    "optimizer": {
+     "iterations": 43,
+     "converged": true,
+     "seconds": 56.888126850128174,
+     "compliance": 45433.646884930364,
+     "caseCompliance": [
+      30638.730677351778,
+      14794.916207578586
+     ],
+     "achievedVolumeFraction": 0.3827238166753354
+    },
+    "reconstruction": {
+     "isoTriangles": 141580,
+     "bodies": 1,
+     "droppedFragmentVolume": 0.0,
+     "parting": -3.552713678800501e-15,
+     "triangles": 115654,
+     "volume": 63115.95635026039,
+     "watertight": true
+    }
+   },
+   {
+    "material": "pa12",
+    "volumeFraction": 0.4125,
+    "mass": 67.42126821460282,
+    "massReduction": 0.4620372111246336,
+    "safetyFactor": 20.774142165277908,
+    "voxelSafetyFactor": 19.44356558610326,
+    "bucklingFactor": 109.52103831988367,
+    "confirm": {
+     "method": "tet",
+     "safetyFactor": 20.774142165277908,
+     "margin": 1.0444743174143727,
+     "voxelSafetyFactor": 19.44356558610326,
+     "tetOverVoxel": 1.0684327456958636,
+     "elementSize": 1.5,
+     "contactBand": 3.0,
+     "nodes": 41510,
+     "elements": 201669,
+     "seconds": 61.97548174858093,
+     "cases": [
+      {
+       "name": "payload",
+       "peakStress": 1.947403752403812,
+       "peakAt": [
+        20.487725914464928,
+        17.597677608046627,
+        8.925483546079118
+       ],
+       "deflection": 0.38496156286275207
+      },
+      {
+       "name": "side",
+       "peakStress": 2.0929028271615078,
+       "peakAt": [
+        25.70720219674805,
+        -12.049429913844772,
+        11.013318662181348
+       ],
+       "deflection": 0.4842552098598987
+      }
+     ]
+    },
+    "minMember": 1.5542922808559074,
+    "overhangArea": null,
+    "keepOutIntrusion": 1.2079226507921703e-13,
+    "preserveMissing": 0.0,
+    "bodies": 1,
+    "boundaryCutArea": 901.5069615986064,
+    "manufacturing": {
+     "access": {
+      "kind": "casting",
+      "directions": [
+       "+z",
+       "-z"
+      ],
+      "draw": "+z",
+      "sides": 2,
+      "draft": 1.5,
+      "undercutVolume": 1334.6775000000005,
+      "undercutInKeepOuts": 1334.6775000000005
+     },
+     "draft": {
+      "required": 1.5,
+      "parting": -3.552713678800501e-15,
+      "underDraftedArea": 193.2219303188249,
+      "undercutFacetArea": 11.970431867318702,
+      "interfaceUnderDraftedArea": 4454.588097434338,
+      "wallArea": 13996.185782086908,
+      "p1Draft": 0.6784924090804783,
+      "p5Draft": 1.7308681482751707,
+      "underDraftedShare": 0.013805327631912473
+     }
+    },
+    "warnings": [],
+    "margin": 1.0444743174143727,
+    "passes": true,
+    "start": "warm from 0.450",
+    "alternative": null,
+    "optimizer": {
+     "iterations": 38,
+     "converged": true,
+     "seconds": 47.28282856941223,
+     "compliance": 40535.91875088966,
+     "caseCompliance": [
+      27651.407280520623,
+      12884.51147036903
+     ],
+     "achievedVolumeFraction": 0.419720161567928
+    },
+    "reconstruction": {
+     "isoTriangles": 141576,
+     "bodies": 1,
+     "droppedFragmentVolume": 0.0,
+     "parting": -3.552713678800501e-15,
+     "triangles": 115540,
+     "volume": 66753.73090554735,
+     "watertight": true
+    }
+   }
+  ]
  },
  {
   "case": "arm-link-driven",

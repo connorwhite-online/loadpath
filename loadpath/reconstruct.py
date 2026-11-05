@@ -333,7 +333,7 @@ def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_C
 
 
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
-                flush=(), preserve=(), design=()):
+                flush=(), preserve=(), design=(), draft=None):
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -460,6 +460,45 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         if design:
             closed = np.minimum(closed, env.reshape(fine.shape))
         fine = np.maximum(fine, closed)
+    parting = None
+    if draft is not None:
+        # Draft for a cast or molded part (manufacture.drafted_distance):
+        # every wall leans in by the draft angle going away from the
+        # parting plane, so each mold half pulls clear. Done on the smooth
+        # field, after every rounding and fillet, so the walls the mesh
+        # gets are the drafted ones; it only adds material. Keep-outs and
+        # preserved shapes stay exact (the booleans below): bores and
+        # bosses are machined after casting or drafted in CAD.
+        from .manufacture import DRAFT_MARGIN, drafted_distance, parting_index
+
+        a, sgn, sides, angle, part_at = draft
+        inside = fine >= o.level
+        if sides == 2:
+            if part_at is None:
+                p_idx = parting_index(inside, a)
+            else:
+                p_idx = int(round((part_at - origin[a]) / step))
+            parting = float(origin[a] + p_idx * step)
+        else:
+            p_idx = None
+        dist = _field_distance(fine, step, o.level)
+        # built DRAFT_MARGIN steeper than asked: meshing reads a wall's
+        # draft up to about half a degree shallow (manufacture.DRAFT_MARGIN)
+        angle = angle + DRAFT_MARGIN
+        dd = drafted_distance(dist, a, sgn, sides, p_idx, step, angle)
+        width = 2.0 * step
+        fine = np.maximum(fine, np.clip(o.level - dd / (2.0 * width), 0.0, 1.0))
+        if design:
+            # The design space is a hard limit, so where the part runs
+            # along its walls the draft leans in from them instead (the
+            # space's largest drafted subset, which only removes), except
+            # at the faces the part is held and loaded at, which stay flush.
+            env_d = drafted_distance(sdfs.min(design).reshape(fine.shape), a, sgn, sides, p_idx, step, angle,
+                                     grow=False)
+            if flush:
+                near = (sdfs.min(flush) < 1.5 * domain.pitch).reshape(fine.shape)
+                env_d = np.where(near, -np.inf, env_d)
+            fine = np.minimum(fine, np.clip(o.level - env_d / (2.0 * width), 0.0, 1.0))
     if keep_out:
         # Fade the field to zero at every keep-out surface. Smoothing and
         # upsampling otherwise carry material across a keep-out (a cable
@@ -494,6 +533,8 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
     if mesh.volume < 0:
         mesh.invert()
+    if parting is not None:
+        mesh.metadata["parting"] = parting
     return mesh
 
 
@@ -713,10 +754,23 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         # fraction of a millimetre proud of it (a lip round every full-height
         # boss: the bell crank's).
         flush = flush + [r.shape for r in study.preserve]
+    acc = getattr(study, "access", None)
+    draft = None
+    if acc is not None and acc.kind == "casting" and acc.draft > 0:
+        from .manufacture import symmetric_parting
+
+        centre = domain.origin + 0.5 * np.asarray(domain.dims) * domain.pitch
+        draft = (acc.draw[0], acc.draw[1], len(acc.directions), acc.draft, symmetric_parting(study, acc, centre))
     iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
-                      flush=flush, preserve=[r.shape for r in study.preserve], design=list(study.design_space))
+                      flush=flush, preserve=[r.shape for r in study.preserve], design=list(study.design_space),
+                      draft=draft)
+    parting = iso.metadata.get("parting")
     info = {"isoTriangles": int(len(iso.faces))}
-    if o.taubin_iterations:
+    if o.taubin_iterations and draft is None:
+        # (not on a drafted cast part: smoothing rounds the ledge where a
+        # section steps in just past the parting plane down across it,
+        # leaning those walls the wrong way for the other mold half; its
+        # field was smoothed before the draft and meshes clean without)
         keep_thin = bool((getattr(study, "raw", None) or {}).get("resolution", {}).get("keepThinMembers", False))
         _smooth_surface(iso, domain, xphys, o.taubin_iterations, keep_thin)
     if study.preserve and o.fillet and o.blend > 0:
@@ -790,6 +844,9 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     info["droppedFragmentVolume"] = float(dropped)
 
     mesh = _drop_slivers(trimesh_from_manifold(part))
+    if parting is not None:
+        mesh.metadata["parting"] = parting
+        info["parting"] = parting
     _attach_plan(mesh, study, organic_raw)
     info["triangles"] = int(len(mesh.faces))
     info["volume"] = float(mesh.volume)

@@ -176,6 +176,7 @@ class Outcome:
             **({"durability": r["durability"]} if "durability" in r else {}),
             **({"print": {k: v for k, v in r["print"].items() if k != "bridgeList"}} if "print" in r else {}),
             **({"process": r["process"]} if "process" in r else {}),
+            **({"manufacturing": r["manufacturing"]} if "manufacturing" in r else {}),
             **({"slicer": r["slicer"]} if "slicer" in r else {}),
             **({"buildSim": r["buildSim"]} if "buildSim" in r else {}),
             **({"graded": r["graded"]} if "graded" in r else {}),
@@ -334,6 +335,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     making = manufacturing_report(study, domain, mesh)
     if making:
         report["manufacturing"] = making
+        report.setdefault("warnings", []).extend(making.get("warnings", []))
     if res.warp:
         report["warp"] = res.warp
     o.report = report
@@ -1216,6 +1218,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         making = manufacturing_report(study, domain, mesh)
         if making:
             report["manufacturing"] = making
+            report.setdefault("warnings", []).extend(making.get("warnings", []))
         fid = mesh_fidelity(domain, xphys, mesh)
         if fid is not None:
             report["meshFidelity"] = fid

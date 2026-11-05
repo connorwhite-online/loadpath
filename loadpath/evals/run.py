@@ -22,6 +22,9 @@ variants must miss a limit: run_field_case):
       "maxClosedBores": 0,        # bore ends the part closes over (verify._closed_bores)
       "maxUndercutVolume": 150,   # mm^3 a cast/milled part's mold or cutter cannot reach,
                                   # outside keep-outs (report.manufacturing.access)
+      "maxUnderDraftedArea": 50,  # mm^2 of cast wall under casting.draft (report.manufacturing.draft)
+      "maxToolUnreachableVolume": 50,  # mm^3 of void a milled part's smallest cutter cannot reach
+      "maxMachiningMinutes": 90,  # machining estimate (report.manufacturing.machining)
       "minProcessWall": 0.8,      # mm, 1st-percentile wall (SLS/MJF/SLA/DLP: processcheck)
       "maxTrappedVolume": 1,      # mm^3 of powder or resin that cannot get out
       "maxWarpSpan": 100,         # mm, longest thin flat panel (SLS/MJF)
@@ -108,6 +111,11 @@ CHECKS = {
     # cast or milled: mm^3 of void no mold half or cutter reaches, outside the
     # keep-outs (an undercut keep-out is the study's own, and needs a core)
     "undercut": ("maxUndercutVolume", lambda o: _undercut(o), "<="),
+    # cast: mm^2 of wall with less than casting.draft (manufacture.draft_report)
+    "draft": ("maxUnderDraftedArea", lambda o: _making(o, "draft", "underDraftedArea"), "<="),
+    # milled: void the smallest cutter cannot reach, and the machining estimate
+    "toolReach": ("maxToolUnreachableVolume", lambda o: _making(o, "machining", "toolUnreachableVolume"), "<="),
+    "machiningMinutes": ("maxMachiningMinutes", lambda o: _making(o, "machining", "minutes", "total"), "<="),
 }
 
 
@@ -197,6 +205,13 @@ def _case_expect(name):
 def _undercut(o):
     a = (o.get("manufacturing") or {}).get("access")
     return None if a is None else a["undercutVolume"] - a["undercutInKeepOuts"]
+
+
+def _making(o, *keys):
+    v = o.get("manufacturing")
+    for k in keys:
+        v = v.get(k) if isinstance(v, dict) else None
+    return v
 
 
 def _proc(o, *keys):

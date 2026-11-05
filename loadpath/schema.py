@@ -793,7 +793,19 @@ STUDY_SCHEMA = {
                                                       "all six for 5-axis)"},
                         "toolDiameter": {**_POS, "description": "mm, smallest cutter: narrower slots and "
                                                                 "tighter inside corners are filled"},
-                        "stepDown": {**_POS, "description": "mm between 2.5-axis pocket floors (default 2)"}},
+                        "stepDown": {**_POS, "description": "mm between 2.5-axis pocket floors (default 2)"},
+                        "rates": {"type": "object", "properties": {
+                                      k: {"type": "number", "minimum": 0, "description": d} for k, d in (
+                                          ("roughingRate", "cm^3/min removed with a 10 mm end mill"),
+                                          ("finishFeed", "mm/min finishing feed"),
+                                          ("stepover", "mm between finishing passes (default cutter / 10)"),
+                                          ("stockPerKg", "$ per kg of stock"),
+                                          ("machinePerHour", "$ per machine hour"),
+                                          ("perSetup", "$ per setup (fixture, probing)"),
+                                          ("stockMargin", "mm of stock past the part on every side"))},
+                                  "additionalProperties": False,
+                                  "description": "Overrides for the machining time and cost estimate "
+                                                 "(defaults per material family)."}},
                     "additionalProperties": False,
                     "description": "The part is machined: every void reachable by a cutter coming straight in."},
         "casting": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"},
@@ -802,7 +814,14 @@ STUDY_SCHEMA = {
                                            "description": "the direction the mold opens"},
                                   "sides": {"enum": [1, 2], "description": "2 (default): halves pull both ways "
                                                                            "along the draw; 1: one half pulls off "
-                                                                           "a flat parting plane"}},
+                                                                           "a flat parting plane"},
+                                  "draft": {"type": "number", "minimum": 0, "maximum": 15,
+                                            "description": "degrees of draft on every wall (1-3 die casting and "
+                                                           "molding, 3-5 sand): applied to the delivered part "
+                                                           "and checked facet by facet"},
+                                  "parting": {"type": "number",
+                                              "description": "two-sided: the parting plane's coordinate along "
+                                                             "the draw axis, mm (default: the widest section)"}},
                                "required": ["draw"], "additionalProperties": False}],
                     "description": "Cast or molded: no undercuts along the draw direction."},
         "pattern": {"type": "object", "properties": {

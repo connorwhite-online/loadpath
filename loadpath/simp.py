@@ -45,6 +45,8 @@ E_MIN = 1e-6
 BUCKLE_MMA = 0.15
 BUCKLE_BETA = 8.0
 PENALTY = 3.0
+# iterations between refreshes of the in-loop cutter fill (SimpOptions.tool_fill)
+TOOL_FILL_EVERY = 5
 # Cells below this density are left out of the linear solve (see _Analysis).
 ALIVE = 1e-3
 # ...but only once the design has emptied out enough for it to pay.
@@ -334,6 +336,10 @@ class SimpOptions:
     access: object = None
     pattern: object = None
     max_member: float | None = None
+    # Count the cutter's fill (milling toolDiameter / stepDown) inside the
+    # loop once the projection is sharp (see tool_fill in simp); False
+    # leaves it to delivery alone. LOADPATH_TOOL_FILL=0 turns it off.
+    tool_fill: bool = field(default_factory=lambda: os.environ.get("LOADPATH_TOOL_FILL", "1") != "0")
     # A warm start is already a design; restarting projection at beta 1
     # would blur it back to grey before sharpening it again.
     beta_start: float = 1.0
@@ -732,6 +738,15 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     buck_last, buck_age, buck_nu = None, 0, 0.0
 
     ijk = tuple(mesh.elem_ijk.T)
+    # The cutter's own fill (manufacture.machinable: slots narrower than the
+    # cutter, inside corners tighter than its radius, 2.5-axis floors),
+    # held as passive solid once the projection is sharp and refreshed
+    # every TOOL_FILL_EVERY iterations: the volume it adds is counted, so
+    # the optimizer takes it from elsewhere instead of finding it added at
+    # delivery. Passive (no gradient), so it cannot pull the design apart
+    # the way a differentiable fill did (manufacture.py).
+    tool_fill = {"mask": None, "on": bool(opts.access is not None and opts.tool_fill
+                                         and (opts.access.tool_radius or opts.access.step))}
     if opts.build_direction is not None:
         from .am import AMFilter
 
@@ -753,9 +768,14 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         am_v = AccessFilter(domain.dims, dirs, track=False)
 
         def printed(am, v):
-            return am.forward(domain.full_grid(v))[ijk]
+            out = am.forward(domain.full_grid(v))[ijk]
+            m = tool_fill["mask"]
+            return out if m is None else np.where(m, 1.0, out)
 
         def printed_grad(am, g):
+            m = tool_fill["mask"]
+            if m is not None:
+                g = np.where(m, 0.0, g)
             return am.backward(domain.full_grid(g))[ijk]
     else:
         am_b = am_e = am_v = None
@@ -790,6 +810,14 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     for it in range(1, opts.max_iterations + 1):
         if should_stop is not None and should_stop():
             break
+        if tool_fill["on"] and beta >= opts.beta_max and since_beta % TOOL_FILL_EVERY == 0:
+            tool_fill["mask"] = None
+            _, xraw = physical(x, beta)
+            blocked = machinable(domain.full_grid(xraw) > 0.5, opts.access, domain.pitch)[ijk]
+            m = blocked & design & (xraw <= 0.5)
+            if void is not None:
+                m &= ~void
+            tool_fill["mask"] = m if m.any() else None
         xt, xp = physical(x, beta, am_b)
         xe = eroded(xt, beta)
         e = E_MIN + xe ** PENALTY * (1 - E_MIN)

@@ -187,6 +187,26 @@ def _assembly(args):
     return 0
 
 
+def _making_summary(m: dict) -> dict:
+    """The headline numbers of a manufacturing report (manufacture.report)."""
+    out = {}
+    a = m.get("access")
+    if a:
+        out["undercutVolume"] = a["undercutVolume"] - a["undercutInKeepOuts"]
+    d = m.get("draft")
+    if d:
+        out["draft"] = {k: d.get(k) for k in ("required", "underDraftedArea", "underDraftedShare", "p5Draft",
+                                              "parting")}
+    mc = m.get("machining")
+    if mc:
+        out["machining"] = {"minutes": round(mc["minutes"]["total"], 1), "cost": round(mc["cost"]["total"], 2),
+                            "setups": mc["setups"], "toolUnreachableVolume": mc["toolUnreachableVolume"],
+                            "maxStickoutToDiameter": round(mc["maxStickoutToDiameter"], 2)}
+    if m.get("maxMember"):
+        out["maxMember"] = m["maxMember"]
+    return out
+
+
 def _verify(args):
     """A finished part (an STL, or a run's folder: its best outcome) checked
     against a study: the same check `run` gives its outcomes."""
@@ -229,6 +249,16 @@ def _verify(args):
     asked = args.cells is not None
     rep = verify_part(study, mesh, max_cells=quick.verify_cells(args.cells if asked else 60_000),
                       min_pitch=None if asked else 0.5 * pitch, contact_band=pitch)
+    if study.access is not None or study.pattern is not None or study.max_member is not None:
+        # draft, undercuts, tool reach and the machining estimate, on the
+        # study's own design grid (manufacture.report)
+        from .domain import build_domain
+        from .manufacture import report as manufacturing_report
+
+        making = manufacturing_report(study, build_domain(study, pitch=pitch), mesh)
+        if making:
+            rep["manufacturing"] = making
+            rep.setdefault("warnings", []).extend(making.get("warnings", []))
     m = _margin(study, rep)
     summary = {"ok": True, "part": part, "study": args.study, "mass": rep["mass"],
                "safetyFactor": rep.get("safetyFactor"), "margin": m,
@@ -236,6 +266,7 @@ def _verify(args):
                "safetyFactorMethod": "voxel", "analysisPitch": rep.get("analysisPitch"),
                "keepOutIntrusion": rep.get("keepOutIntrusion"), "preserveMissing": rep.get("preserveMissing"),
                "bodies": rep.get("bodies"),
+               **({"manufacturing": _making_summary(rep["manufacturing"])} if rep.get("manufacturing") else {}),
                **({"durabilitySafetyFactor": rep["durability"].get("safetyFactor")}
                   if isinstance(rep.get("durability"), dict) else {}),
                "warnings": list(rep.get("warnings") or []),

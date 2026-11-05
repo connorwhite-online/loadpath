@@ -15,8 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
 from loadpath.domain import build_domain
-from loadpath.manufacture import (AXIS_DIRECTIONS, Access, AccessFilter, MaxMember, machinable,
-                                  member_thickness, tie_groups)
+from loadpath.manufacture import (AXIS_DIRECTIONS, Access, AccessFilter, MaxMember, draft_report,
+                                  drafted_distance, machinable, machining_report, member_thickness,
+                                  parse_casting, tie_groups)
 from loadpath.simp import SimpOptions, filter_radius, optimize
 from loadpath.spec import study_from_dict
 
@@ -97,6 +98,9 @@ def test_spec_and_errors():
     assert s.access.step == 2.0
     for bad, word in (({"milling": {"axes": 4}}, "axes"),
                       ({"casting": {"draw": "+z", "sides": 3}}, "sides"),
+                      ({"casting": {"draw": "+z", "draft": 20}}, "draft"),
+                      ({"casting": {"draw": "+z", "sides": 1, "parting": 0}}, "parting"),
+                      ({"milling": {"rates": {"speed": 3}}}, "rates"),
                       ({"casting": "+z", "milling": {}}, "not both"),
                       ({"casting": "+z", "printDirection": "+z"}, "overhang"),
                       ({"maxMember": 3.0}, "twice minMember"),
@@ -168,6 +172,91 @@ def test_max_member_thins_the_beam():
     assert c_lim < 1.3 * c_free, out
 
 
+def test_drafted_distance_leans_walls_in():
+    # a cylinder r 8, 16 tall: 3 deg of draft off the mid-plane widens it by
+    # h tan 3 at the parting plane and not at all at the end faces
+    step = 0.5
+    z = np.arange(-20, 21) * step
+    x = np.arange(-30, 31) * step
+    X, Y, Z = np.meshgrid(x, x, z, indexing="ij")
+    d = np.maximum(np.sqrt(X ** 2 + Y ** 2) - 8, np.abs(Z) - 8)
+    t = np.tan(np.radians(3.0))
+    dd = drafted_distance(d, 2, 1, 2, 20, step, 3.0)
+    assert (dd <= d + 1e-12).all()                       # only adds
+    assert abs(dd[46, 30, 20] + 8 * t) < 0.02            # at r = 8 on the parting plane
+    assert abs(dd[46, 30, 36]) < 1e-9                    # at the end face
+    one = drafted_distance(d, 2, 1, 1, None, step, 3.0)  # one half pulling +z: widest at the bottom
+    assert abs(one[46, 30, 4] + 16 * t) < 0.03
+
+
+class _Bare:
+    preserve = ()
+    keep_out = ()
+
+
+def test_draft_report_reads_facets():
+    import trimesh
+
+    box = trimesh.creation.box((20, 20, 10))
+    cast = parse_casting({"draw": "+z", "draft": 2.0})
+    r = draft_report(_Bare, box, cast, 1.0)
+    assert r["underDraftedShare"] > 0.95, r              # straight walls: no draft
+    # a frustum leaning in 4 deg both ways from the mid-plane passes
+    t = np.tan(np.radians(4.0))
+    ring = []
+    for zz, rr in ((-5, 10 - 5 * t), (0, 10.0), (5, 10 - 5 * t)):
+        for a in np.linspace(0, 2 * np.pi, 48, endpoint=False):
+            ring.append([rr * np.cos(a), rr * np.sin(a), zz])
+    hull = trimesh.convex.convex_hull(np.array(ring))
+    r = draft_report(_Bare, hull, parse_casting({"draw": "+z", "draft": 2.0, "parting": 0.0}), 1.0)
+    assert r["underDraftedArea"] < 1e-6 and r["p1Draft"] > 3.5, r
+    r = draft_report(_Bare, hull, parse_casting({"draw": "+z", "draft": 6.0, "parting": 0.0}), 1.0)
+    assert r["underDraftedShare"] > 0.95, r
+
+
+def test_draft_applied_on_delivery():
+    from loadpath.reconstruct import reconstruct
+
+    out = []
+    for draft in (0.0, 3.0):
+        s, d, res = _run({"casting": {"draw": "+z", "sides": 2, "draft": draft}}, iters=30)
+        mesh, info = reconstruct(s, d, res.xphys)
+        r = draft_report(s, mesh, parse_casting({"draw": "+z", "draft": 3.0}), d.pitch)
+        out.append((r["underDraftedShare"], float(mesh.volume)))
+    (bare, v0), (drafted, v1) = out
+    assert bare > 0.3 and drafted < 0.1 * bare, out
+    # draft only adds: 4 deg (3 asked + the build margin) on 2-3 mm members up to 12 mm off
+    # the parting plane is a lot of them
+    assert v0 < v1 < 1.35 * v0, out
+
+
+def test_machining_report_reach_and_time():
+    import trimesh
+    from types import SimpleNamespace
+
+    from loadpath.materials import MATERIALS
+    from loadpath.verify import voxelize
+
+    # a 40 x 40 x 20 block with a 20 mm pocket and a 3 mm slot from the top
+    block = trimesh.creation.box((40, 40, 20))
+    pocket = trimesh.creation.box((20, 20, 10), transform=trimesh.transformations.translation_matrix([0, 0, 5.01]))
+    slot = trimesh.creation.box((3, 30, 10), transform=trimesh.transformations.translation_matrix([15, 0, 5.01]))
+    part = block.difference(pocket).difference(slot)
+    st = SimpleNamespace(material=MATERIALS["alsi10mg"], preserve=(), keep_out=())
+    solid, _ = voxelize(part, 1.0, box=(np.full(3, -21.0), np.full(3, 21.0)))
+    keep = np.zeros(solid.shape, bool)
+    six = Access("milling", [(2, 1)], axes=3, tool_radius=3.0)
+    r = machining_report(st, part, solid, six, 1.0, keep, np.full(3, -21.0))
+    assert r["family"] == "aluminium" and r["setups"] == 1 and r["directionsUsed"] == ["+z"]
+    # the 3 mm slot (900 mm^3) is too narrow for 6 mm, and the pocket keeps r 3 corners
+    assert 900 < r["toolUnreachableVolume"] < 1250, r
+    assert r["minutes"]["total"] > 0 and r["cost"]["total"] > r["cost"]["setups"]
+    two = Access("milling", [(2, 1)], axes=3, tool_radius=1.0)
+    r2 = machining_report(st, part, solid, two, 1.0, keep, np.full(3, -21.0))
+    assert r2["toolUnreachableVolume"] < 0.2 * r["toolUnreachableVolume"], r2
+    assert r2["minutes"]["finishing"] > r["minutes"]["finishing"]   # a smaller cutter takes longer passes
+
+
 TESTS = [
     test_access_filter_gradient,
     test_machinable_access_tool_and_floors,
@@ -176,6 +265,10 @@ TESTS = [
     test_milling_with_cutter_from_top,
     test_circular_pattern_ties_sectors,
     test_max_member_thins_the_beam,
+    test_drafted_distance_leans_walls_in,
+    test_draft_report_reads_facets,
+    test_draft_applied_on_delivery,
+    test_machining_report_reach_and_time,
 ]
 
 
