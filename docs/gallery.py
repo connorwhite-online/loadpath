@@ -134,6 +134,11 @@ def render_case(row, evals, stress):
     s = Scene(panel_size=(600, 520))
     _study_panel(s, study, mesh, VIEWS[0])
     out["thumb"] = _crop(s.render(os.path.join(IMAGES, "cases", f"{name}.png")))
+    # the bare part, no keep-outs or arrows: paired with its stress map at the
+    # top of the README
+    s = Scene(panel_size=(600, 520))
+    _study_panel(s, None, mesh, VIEWS[0])
+    out["part"] = _crop(s.render(os.path.join(IMAGES, "cases", f"{name}-part.png")))
     s = Scene(title, panel_size=(520, 460))
     for v in VIEWS:
         _study_panel(s, study, mesh, v)

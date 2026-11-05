@@ -9,18 +9,19 @@ safety factor, deflection, thinnest member, printability, pass or fail.
 
 <table>
 <tr>
-<td align="center" width="50%"><img src="docs/images/cases/printed-hook.png" width="380"></td>
-<td align="center" width="50%"><img src="docs/images/stress/printed-hook.png" width="380"></td>
+<td align="center" width="50%"><img src="docs/images/cases/grip-wrist-link-mjf-part.png" height="420"></td>
+<td align="center" width="50%"><img src="docs/images/stress/grip-wrist-link-mjf.png" height="420"></td>
 </tr>
 <tr>
-<td align="center" width="50%"><img src="docs/images/cases/bell-crank.png" width="380"></td>
-<td align="center" width="50%"><img src="docs/images/stress/bell-crank.png" width="380"></td>
+<td align="center" width="50%"><img src="docs/images/cases/grip-wrist-yoke-part.png" width="380"></td>
+<td align="center" width="50%"><img src="docs/images/stress/grip-wrist-yoke.png" width="380"></td>
 </tr>
 <tr>
-<td align="center" colspan="2"><sub>Left, the part loadpath delivered (blue: load, red: kept bore). Right, its
-stress from a fresh analysis of that mesh, blue (none) to red (the part's 98th percentile), on the shape bent by
-the worst load case. Top: a 300 N wall hook printed upright without supports, 24.2 g, SF 2.73. Bottom: a 500 N
-aluminium bell crank (LPBF), 23.4 g, SF 3.22. More in <a href="#examples">Examples</a>.</sub></td>
+<td align="center" colspan="2"><sub>Two robot-arm parts as loadpath delivered them (left) and their stress from a fresh
+analysis of that mesh (right), blue (none) to red (the part's 98th percentile), on the shape bent by the worst
+load case. Top: a wrist link between two servos, MJF nylon, 40.2 g, safety factor 5.8. Bottom: a servo cradle
+held only at its eight screw bosses, glass-filled SLS nylon, 17.3 g, safety factor 3.9. More in
+<a href="#examples">Examples</a>.</sub></td>
 </tr>
 </table>
 
