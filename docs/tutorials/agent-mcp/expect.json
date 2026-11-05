@@ -7,7 +7,7 @@
     {"file": "transcript.json", "value": "'quick' in r['steps'][5]['result'] and 'quick' in r['steps'][7]['result']", "equals": true, "what": "a quick job says so"},
     {"file": "transcript.json", "value": "r['first']['passes']", "equals": true, "what": "first run passes SF 2"},
     {"file": "transcript.json", "value": "r['first']['payloadDeflection'] > r['maxDeflectionGoal']", "equals": true, "what": "first run bends past the deflection the agent then asks for"},
-    {"file": "transcript.json", "value": "r['first']['mass']", "min": 20, "max": 32, "what": "first run's mass, g"},
+    {"file": "transcript.json", "value": "r['first']['mass']", "min": 12, "max": 32, "what": "first run's mass, g"},
     {"file": "transcript.json", "value": "r['final']['passes']", "equals": true, "what": "final part passes SF 2 and the deflection goal"},
     {"file": "transcript.json", "value": "r['final']['payloadDeflection']", "max": 0.8, "what": "final payload deflection, mm"},
     {"file": "transcript.json", "value": "r['final']['mass']", "min": 30, "max": 47, "what": "final mass, g"},

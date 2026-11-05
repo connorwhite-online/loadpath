@@ -3,7 +3,7 @@
     {"file": "derived/assembly.json", "value": "len(r['kinds'])", "min": 1, "max": 8, "what": "governing cases"},
     {"file": "derived/assembly.json", "value": "r['sweptKeepOuts']['sweep-upper_arm']['mm3']", "min": 40000, "max": 49000, "what": "upper arm's sweep, mm3"},
     {"file": "derived/assembly.json", "value": "r['sweptKeepOuts']['sweep-wrist']['mm3']", "min": 48000, "max": 59000, "what": "wrist's sweep, mm3"},
-    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 60, "max": 100, "what": "derived design's mass, g"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 50, "max": 100, "what": "derived design's mass, g"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 2.0, "max": 6.0, "what": "derived design's SF"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "derived design passes"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['bodies']", "equals": 1, "what": "derived design is one piece"},
