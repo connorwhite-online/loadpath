@@ -261,16 +261,20 @@ class _Linear:
             return _splu(k).solve(r)
         return self.iter.solve(k, r)
 
-    def lowest_mode(self, k):
-        """Smallest eigenvalue of a (symmetric) tangent and its mode."""
+    def lowest_mode(self, k, n_modes=1):
+        """Smallest eigenvalue of a (symmetric) tangent and its mode (with
+        n_modes > 1, direct only: the smallest few, ascending)."""
         n = k.shape[0]
         if self.direct:
             lu = _splu(k)
             op = LinearOperator((n, n), matvec=lu.solve, dtype=float)
             # a fixed start vector: ARPACK's random one made the branch
-            # a perfect column takes (and so whether it found it) vary run to run
+            # a perfect column takes vary run to run
             v0 = np.random.default_rng(0).standard_normal(n)
-            vals, vecs = eigsh(k, k=1, sigma=0.0, which="LM", OPinv=op, tol=1e-6, v0=v0)
+            vals, vecs = eigsh(k, k=n_modes, sigma=0.0, which="LM", OPinv=op, tol=1e-6, v0=v0)
+            o = np.argsort(vals)
+            if n_modes > 1:
+                return vals[o], vecs[:, o]
             return float(vals[0]), vecs[:, 0]
         from scipy.sparse.linalg import lobpcg
         m = self.iter._precond(k)
@@ -510,8 +514,19 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     # reached yet, has no load to measure its residual against)
     fscale = 1e-6 * float(mod.max()) * mesh.pitch ** 2
 
-    def newton(v, target, a=None, search=False):
+    def newton(v, target, a=None, search=False, hold=None):
+        # hold = {"phi": (n, m) modes, "ref": state, "t": (m,) travels}: the
+        # bordered system of a displacement-controlled step along modes.
+        # Unknown forces phi @ mu hold the travel along each mode, phi^T (v -
+        # ref) = phi^T phi t (direct solver only). mu comes back in
+        # hold["mu"], and hold["free"] says whether it is below the
+        # tolerance (the held state stands on its own).
         rnorm0 = None
+        if hold is not None:
+            hphi = np.where(cons[:, None], 0.0, hold["phi"])
+            gram = hphi.T @ hphi
+            want = gram @ hold["t"]
+            mu = np.zeros(hphi.shape[1])
         a = alpha if a is None else a
         # K_aa^-1 K_au per element (incompatible modes), two buffers so a
         # backtrack can still use the last good iterate's
@@ -555,8 +570,14 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             r = fext - fint
             r[cons] = 0.0
             ref = max(np.linalg.norm(fext), np.linalg.norm(fint[pd]) if len(pd) else 0.0, fscale)
+            if hold is not None:
+                held = hphi @ mu
+                r = r + held
+                gap = hphi.T @ (v - hold["ref"]) - want
             rnorm = np.hypot(np.linalg.norm(r), ra)
-            if rnorm <= rtol * ref:
+            if rnorm <= rtol * ref and (hold is None or np.abs(gap).max() <= 1e-6 * np.abs(want).max()):
+                if hold is not None:
+                    hold["mu"], hold["free"] = mu, np.hypot(np.linalg.norm(held), ra) <= rtol * ref
                 return v, its, fint, k, a_lin
             if rnorm0 is None:
                 rnorm0 = rnorm
@@ -567,14 +588,21 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             elif search and its - best[1] >= STALL_NEWTON:
                 return None          # stalled (contact chatter): a shorter step is cheaper
             try:
-                d = lin.solve(k if lin.direct else sym(k), r)
-            except RuntimeError:
+                if hold is None:
+                    d = lin.solve(k if lin.direct else sym(k), r)
+                else:
+                    # K d - phi dmu = r, phi^T d = -gap, on one factorization
+                    x = _splu(k).solve(np.column_stack([r, hphi]))
+                    dmu = np.linalg.solve(hphi.T @ x[:, 1:], -gap - hphi.T @ x[:, 0])
+                    d = x[:, 0] + x[:, 1:] @ dmu
+                    mu = mu + dmu
+            except (RuntimeError, np.linalg.LinAlgError):
                 return None
             if not np.all(np.isfinite(d)):
                 return None
             d[cons] = 0.0
             big = np.abs(d).max()
-            if big > cap:
+            if big > cap and hold is None:
                 d *= cap / big
             if search:
                 # contact switches on and off between iterations, and its
@@ -608,6 +636,94 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
         r = fext - fint
         r[cons] = 0.0
         return float(np.hypot(np.linalg.norm(r), ra))
+
+    def walk_off(v0, a0, k0, target, tol):
+        """Leave the unstable equilibrium v0 at the same load: walk along the
+        unstable mode with its travel held (a bordered Newton per amplitude,
+        well posed where the tangent is singular) until the force that
+        holds it changes sign, then home in on the amplitude where that
+        force vanishes: there the part stands on its own on the stable
+        branch. Other unstable modes (the second sway direction of a
+        symmetric section) are held at zero travel, since a section that can
+        turn its plane of bending freely has a singular tangent on the
+        buckled branch too, and an unheld Newton wanders around it. This
+        replaces guessing a kick and letting a free Newton settle, which fell
+        back onto the unstable branch or diverged depending on the round-off
+        in the mode. Returns (newton result, lowest eigenvalue, Newton
+        iterations) or None."""
+        vals, vecs = lin.lowest_mode(k0, n_modes=3)
+        modes = vecs[:, (vals < -tol) | (vals - vals[0] <= 1e-3 * abs(vals[0]))]
+        if modes.shape[1] > 1:
+            # Tied modes (a square or round section sways any way): which
+            # mix the eigensolver returns is round-off. Walk along the mix
+            # that moves most along one axis, a mirror plane of a symmetric
+            # part, where the buckled state is an exact equilibrium (between
+            # mirror planes the mesh's slight preference turns the bending
+            # plane), and hold the rest at zero.
+            from scipy.linalg import eigh
+            gram = modes.T @ modes
+            best = None
+            for c in range(3):
+                mc = modes[c::3]
+                g, y = eigh(mc.T @ mc, gram)
+                if best is None or g[-1] > best[0] + 1e-9:
+                    best = g[-1], y[:, ::-1]
+            modes = modes @ best[1]
+        # largest travel +1 (the eigensolver's sign is round-off too)
+        modes = modes / modes[np.abs(modes).argmax(axis=0), np.arange(modes.shape[1])]
+        total = 0
+        for sgn in (1.0, -1.0):
+            hold = {"phi": modes * np.r_[sgn, np.ones(modes.shape[1] - 1)], "ref": v0}
+            run = np.r_[1.0, np.zeros(modes.shape[1] - 1)]
+            pts = []                                  # [travel, mu along the mode, v, a, mu used]
+            w, a, t_prev = v0, a0, 0.0
+            for t in size * np.array([0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64]):
+                hold["t"] = t * run
+                o = newton(w + (t - t_prev) * hold["phi"][:, 0], target, a=a, hold=hold)
+                if o is None:
+                    break
+                total += o[1]
+                pts.append([t, hold["mu"][0], o[0], o[4], hold["mu"][0]])
+                w, a, t_prev = o[0], o[4], t
+                if pts[0][1] * pts[-1][1] < 0:
+                    break
+            if len(pts) < 2 or pts[0][1] * pts[-1][1] >= 0:
+                continue
+            # Illinois regula falsi on mu(t) = 0 between the last two
+            # amplitudes, down to the solver's own tolerance
+            lo, hi = pts[-2], pts[-1]
+            side, o = 0, None
+            for _ in range(30):
+                t = lo[0] + (hi[0] - lo[0]) * lo[4] / (lo[4] - hi[4])
+                q = (t - lo[0]) / (hi[0] - lo[0])
+                hold["t"] = t * run
+                o = newton(lo[2] + q * (hi[2] - lo[2]), target, a=lo[3] if q < 0.5 else hi[3], hold=hold)
+                if o is None:
+                    break
+                total += o[1]
+                if hold["free"]:
+                    break
+                mid = [t, hold["mu"][0], o[0], o[4], hold["mu"][0]]
+                if mid[1] * lo[1] > 0:
+                    lo = mid
+                    if side == -1:
+                        hi[4] *= 0.5
+                    side = -1
+                else:
+                    hi = mid
+                    if side == 1:
+                        lo[4] *= 0.5
+                    side = 1
+            if o is not None and not hold["free"]:
+                # the other modes still hold it (no mirror plane): let go
+                o = newton(o[0], target, a=o[4])
+                total += 0 if o is None else o[1]
+            if o is None:
+                continue
+            l2 = lin.lowest_mode(stab(o[3], o[0], target))[0]
+            if l2 >= -tol:
+                return o, l2, total
+        return None
 
     u = np.zeros(n)
     lam, dlam = 0.0, min(1.0 / steps, max_step)
@@ -660,8 +776,8 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                 # An unstable equilibrium. First creep up on it: with any
                 # imperfection the stable path bends away smoothly and small
                 # steps follow it. At the bifurcation itself (a perfect
-                # part), kick along the unstable mode until Newton lands on
-                # a stable state. CG can't solve with an indefinite tangent,
+                # part), walk along the unstable mode to a stable state
+                # (walk_off). CG can't solve with an indefinite tangent,
                 # so on large meshes seed a small imperfection instead (a
                 # force along the unstable mode, 0.1% of the load) and
                 # redo the step from the last stable state.
@@ -675,7 +791,16 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                     dlam *= 0.5
                     continue
                 phi = phi / np.abs(phi).max()
-                for amp in ((0.01, 0.03, 0.1, 0.3) if lin.direct else ()):
+                walked = walk_off(v, a_conv, stab(k, v, target), target, tol) if lin.direct else None
+                if walked is not None:
+                    (v, _, fint, k, a_conv), l2, its2 = walked
+                    rec["newton"] += its2
+                    rec["branchSwitch"] = True
+                    rec["lowestEigenvalue"] = l2
+                # nowhere for the held walk to stand (a limit point rather
+                # than a bifurcation, say): kick along the mode and let
+                # Newton settle
+                for amp in ((0.01, 0.03, 0.1, 0.3) if lin.direct and walked is None else ()):
                     found = None
                     for sgn in (1.0, -1.0):
                         o = newton(v + sgn * amp * size * phi, target)
@@ -691,7 +816,8 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                         rec["lowestEigenvalue"] = l2
                         break
                 else:
-                    rec["unstable"] = True
+                    if walked is None:
+                        rec["unstable"] = True
         du_prev, dlam_prev = (None if rec.get("branchSwitch") else v - u), dlam
         u, lam = v, target
         alpha = a_conv

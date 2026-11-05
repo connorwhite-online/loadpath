@@ -177,6 +177,11 @@ def test_column_buckles_at_euler_and_bends_like_the_elastica():
         assert abs(got / sway - 1) < 0.03, (side, got, sway)
         assert r.history[-1]["lowestEigenvalue"] > 0
         assert side or any(h.get("branchSwitch") for h in r.history)
+        # and leaves it at the first unstable step, never carrying on along
+        # the straight branch (kicks used to fall back onto it or diverge,
+        # depending on round-off in the eigensolver's mix of the two tied
+        # sway modes)
+        assert side or not any(h.get("unstable") for h in r.history)
 
 
 def test_one_cell_strip_buckles_and_bends_like_beam_theory():
