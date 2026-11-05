@@ -719,4 +719,6 @@ boss to the design space's end wall (the fillet treats preserved shapes as
 flush faces) was cut off there with no draft at all, about half the area.
 The draft lean-in from the design space's walls now spares only the faces
 the part is held and loaded at. Same coarse densities: 233-253 -> 36-81
-mm^2 under draft, mass +0.1 g.
+mm^2 under draft, mass +0.1 g. The coarse case now passes: 209 mm^2, 50.6 g
+at target (53.2 before). Its crease length went 23 -> 95 mm (the drafted
+end wall now meets the wrist boss in an edge; the case has no crease limit).
