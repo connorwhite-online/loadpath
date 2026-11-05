@@ -610,6 +610,8 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     if "pcurves" in wrote:
         rep["pcurves"] = wrote["pcurves"]
         rep["readBackValid"] = wrote["readBackValid"]
+        if not wrote["roundedPoints"]:
+            rep["roundedPoints"] = False
         rep["valid"] = bool(valid and wrote["readBackValid"])
     if mesh_volume is not None:
         rep["meshVolume"] = round(mesh_volume, 2)
@@ -621,14 +623,57 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     return rep
 
 
-def write_step(shape, path, name=None, pcurves=False, verify=False):
-    """Write an OpenCascade shape to STEP (mm, AP214, points compacted),
-    without the faces' 2-D curves unless `pcurves` (readers rebuild them,
-    and they are half the file). `verify` reads the file back and, if the
-    shape no longer passes OpenCascade's check (a reader projecting an edge
-    onto a sliver patch can fail where the writer's own 2-D curve was fine),
-    writes it again with the 2-D curves. Returns {path, bytes, writeSeconds}
-    (and with verify: pcurves, readBackValid)."""
+def write_step(shape, path, name=None, pcurves=False, verify=False, decimals=POINT_DECIMALS):
+    """Write an OpenCascade shape to STEP (mm, AP214), without the faces'
+    2-D curves unless `pcurves` (readers rebuild them, and they are half the
+    file), points rounded to `decimals` places (None: as OpenCascade writes
+    them) and each written once. `verify` reads the file back and, if the
+    shape no longer passes OpenCascade's check or comes back as a different
+    number of solids, writes it again: with the 2-D curves (a reader
+    projecting an edge onto a sliver patch can fail where the writer's own
+    2-D curve was fine), then with the points unrounded (the step-import
+    tutorial's bracket: booleans of facets against the bolt bores leave
+    edges a few nm long, and rounding to 10 nm folded the bore faces), then
+    both. The first that reads back valid is kept; if none does, the first.
+    Returns {path, bytes, writeSeconds} (and with verify: pcurves,
+    roundedPoints, readBackValid)."""
+    import time
+
+    t0 = time.time()
+    tries = [(pcurves, decimals)]
+    if verify:
+        tries += [t for t in [(True, decimals), (pcurves, None), (True, None)] if t not in tries]
+    want = _count(shape, "solid") if verify else None
+    for pc, dec in tries:
+        out = _write_step(shape, path, name, pc, dec)
+        if not verify:
+            return out
+        back = read_step(path)
+        ok = bool(shape_valid(back) and _count(back, "solid") == want)
+        out.update({"pcurves": bool(pc), "roundedPoints": dec is not None, "readBackValid": ok})
+        if ok:
+            break
+    else:
+        if len(tries) > 1:
+            out = _write_step(shape, path, name, *tries[0])
+            out.update({"pcurves": bool(tries[0][0]), "roundedPoints": tries[0][1] is not None,
+                        "readBackValid": False})
+    out["writeSeconds"] = round(time.time() - t0, 1)
+    return out
+
+
+def _count(shape, kind):
+    from OCP.TopAbs import TopAbs_SOLID
+    from OCP.TopExp import TopExp_Explorer
+
+    ex, n = TopExp_Explorer(shape, {"solid": TopAbs_SOLID}[kind]), 0
+    while ex.More():
+        n += 1
+        ex.Next()
+    return n
+
+
+def _write_step(shape, path, name, pcurves, decimals):
     import time
 
     from OCP.Interface import Interface_Static
@@ -650,16 +695,8 @@ def write_step(shape, path, name=None, pcurves=False, verify=False):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     if int(w.Write(str(path))) != 1:
         raise RuntimeError(f"OpenCascade could not write {path}")
-    _compact(path)
-    out = {"path": str(path), "bytes": os.path.getsize(path), "writeSeconds": round(time.time() - t0, 1)}
-    if verify:
-        ok = shape_valid(read_step(path))
-        if not ok and not pcurves:
-            out = write_step(shape, path, name=name, pcurves=True, verify=True)
-            out["writeSeconds"] = round(time.time() - t0, 1)
-            return out
-        out.update({"pcurves": bool(pcurves), "readBackValid": bool(ok)})
-    return out
+    _compact(path, decimals)
+    return {"path": str(path), "bytes": os.path.getsize(path), "writeSeconds": round(time.time() - t0, 1)}
 
 
 BIG_SHELL = 8000      # faces: past this a whole-solid check is checked shell by shell
@@ -697,7 +734,8 @@ def _compact(path, decimals=POINT_DECIMALS):
     """Rewrite a STEP file smaller: points to `decimals` places (mm; 10 nm
     is a thousandth of the sewing tolerance) and each distinct point once.
     Three quarters of a smooth STEP file is points, and a patch's edge poles
-    are the same points as its edge curve's and its neighbour's."""
+    are the same points as its edge curve's and its neighbour's. `decimals`
+    None leaves the numbers as written and merges identical points only."""
     import re
 
     with open(path) as fh:
@@ -711,6 +749,8 @@ def _compact(path, decimals=POINT_DECIMALS):
     point = re.compile(r"#(\d+)\s*=\s*CARTESIAN_POINT\('([^']*)',\((.*)\)\)\s*;\s*$", re.DOTALL)
 
     def short(x):
+        if decimals is None:
+            return x
         t = f"{float(x):.{decimals}f}".rstrip("0")
         return "0." if t in ("-0.", "0.") else t
 

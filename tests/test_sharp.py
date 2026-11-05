@@ -229,11 +229,34 @@ def test_smooth_step_keeps_sealed_voids():
         assert BRepCheck_Analyzer(back).IsValid() and abs(_volume(back) / m.volume - 1) < 0.002, _volume(back)
 
 
+def test_write_step_keeps_points_unrounded_when_rounding_breaks_the_part():
+    """Points are rounded to 10 nm in the file; a part with features finer
+    than that (a 4 nm thick box here; a few-nm edge where facets meet a
+    bolt bore in the step-import tutorial) reads back invalid rounded, so
+    write_step(verify=True) writes it again unrounded."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
+    from loadpath.step import write_step
+
+    box = BRepPrimAPI_MakeBox(gp_Pnt(0.3, 0.3, 0.3), gp_Pnt(1.3, 1.3, 0.300004)).Shape()
+    plain = BRepPrimAPI_MakeBox(gp_Pnt(0.3, 0.3, 0.3), gp_Pnt(1.3, 1.3, 1.3)).Shape()
+    with tempfile.TemporaryDirectory() as td:
+        w = write_step(box, os.path.join(td, "thin.step"), verify=True)
+        assert w["readBackValid"] and not w["roundedPoints"], w
+        w = write_step(plain, os.path.join(td, "cube.step"), verify=True)
+        assert w["readBackValid"] and w["roundedPoints"] and not w["pcurves"], w
+
+
 TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact_where_the_field_rounds_it,
          test_mesh_distance_matches_trimesh, test_step_keeps_the_bore_a_cylinder,
          test_study_part_exports_exact_interfaces, test_run_field_reports_edges_and_writes_step,
          test_collapse_keeps_holes, test_step_smooth_patches,
-         test_smooth_step_keeps_the_bore_exact, test_smooth_step_keeps_sealed_voids]
+         test_smooth_step_keeps_the_bore_exact, test_smooth_step_keeps_sealed_voids,
+         test_write_step_keeps_points_unrounded_when_rounding_breaks_the_part]
 
 
 def main():
