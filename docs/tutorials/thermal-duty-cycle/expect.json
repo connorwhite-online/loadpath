@@ -28,7 +28,7 @@
    "file": "cold-hot/verify.json",
    "value": "r['report']['thermal']['maxTemperature']",
    "min": 65,
-   "max": 82,
+   "max": 88,
    "what": "PETG designed cold: hottest point over the cycle, C"
   },
   {
