@@ -741,6 +741,17 @@ def _split_cut(outer, voids, bore_solids, bores, env, fam, h):
                     "splitSeconds": round(t_split, 1), "seconds": round(time.time() - t0, 1)}
 
 
+def _translated(shells, v):
+    """Copies of the shells moved by v (mm)."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCP.gp import gp_Trsf, gp_Vec
+    from OCP.TopoDS import TopoDS
+
+    tr = gp_Trsf()
+    tr.SetTranslation(gp_Vec(*map(float, v)))
+    return [TopoDS.Shell(BRepBuilderAPI_Transform(x, tr, True).Shape()) for x in shells]
+
+
 def _bore_tools(bores):
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
     from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
@@ -943,6 +954,24 @@ def export_void_step(doc, g, out_dir, name, base_dir=None, sources=None, meshes=
             t1 = time.time()
             pieces, split = _split_cut(outs, [x["shell"] for x in pores + plugs], _bore_tools(bores), bores, env,
                                        fam, h)
+            if split["freeEdges"]:
+                # the void crossing the envelope's faces microns from its
+                # edges or from another crossing (a lattice whose nodes lie on
+                # the faces: a conformal frame lays a layer on every face):
+                # the general fuse leaves wedge pieces there that the fields
+                # cannot classify, so the sewing keeps holes (39 free edges
+                # on an open 12 mm conformal octet block). The envelope moved
+                # a fiftieth of a patch, in no symmetric direction, parts
+                # those coincidences; the part moves less than its patches'
+                # own deviation from the field.
+                nudge = h * np.array([0.026, 0.022, 0.014])
+                outs_n = _translated(outs, nudge)
+                p2, s2 = _split_cut(outs_n, [x["shell"] for x in pores + plugs], _bore_tools(bores), bores, env,
+                                    fam, h)
+                if s2["freeEdges"] < split["freeEdges"]:
+                    s2["envelopeNudge"] = [round(float(x), 4) for x in nudge]
+                    s2["freeEdgesBeforeNudge"] = split["freeEdges"]
+                    pieces, split = p2, s2
             # the biggest shell is the part's outside; another one inside it
             # (OpenCascade's classifier, a point on it) is a cavity, an inner
             # shell: one of the envelope's the void did not touch (a cable
@@ -1015,9 +1044,11 @@ def export_void_step(doc, g, out_dir, name, base_dir=None, sources=None, meshes=
         return solid, sealed, filled, split, pores, plugs, loose, valid
 
     tries = []
+    nudge = 0
+    best = None
     for attempt in range(3):
         _log(progress, f"void patches at h {h:.3f} mm")
-        j = _grid_shift(lo, hi, h)
+        j = (_grid_shift(lo, hi, h) + nudge * 0.11 * h * np.array([1.0, 0.618, 0.382])) % h
         shells, vrep = _void_shells(fam, lo - cap - j, hi + cap, env)
         _log(progress, f"{vrep['patches']} patches, {len(shells)} shells, {vrep['openComponents']} open, "
                        f"{vrep['seconds']} s")
@@ -1033,7 +1064,21 @@ def export_void_step(doc, g, out_dir, name, base_dir=None, sources=None, meshes=
         # (a face the split leaves invalid, two void sheets crossing the
         # envelope's face microns apart so its wire folds, is not retried: on
         # the open Voronoi block two finer grids failed the same way)
-        solid, sealed, filled, split, pores, plugs, loose, valid = assemble(shells)
+        got = assemble(shells)
+        filled_now = sum(got[2])
+        if best is None or (got[7], -filled_now) > (best[0][7], -sum(best[0][2])):
+            best = (got, shells, vrep)
+        if filled_now > 0.01 * abs(_volume(outer)) and not last:
+            # a big sealed cavity OpenCascade rejects (its patches fold where
+            # struts meet a skin at a crease, which grid placement makes or
+            # breaks: a 12 mm skinned conformal block's main cavity, 639 of
+            # its 1728 mm^3, failed on one placement and passed on two
+            # others) is meshed again on a grid moved a ninth of a patch
+            # (small pockets left solid are not worth another meshing)
+            tries.append({"grid": round(h, 4), "filledCavities": round(float(filled_now), 2)})
+            nudge += 1
+            continue
+        (solid, sealed, filled, split, pores, plugs, loose, valid), shells, vrep = best
         # (nor are pockets thinner than the patch size, a wedge where a strut
         # meets a skin at a shallow angle, that fall between grid nodes: the
         # solid reads heavier than the STL and the report says so. Meshing
