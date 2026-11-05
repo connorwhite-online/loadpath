@@ -330,7 +330,9 @@ def _row(route: dict, res: dict, quantity: int, rates: dict | None) -> dict:
         sides = 2 if mill.get("axes") == 5 else len(mill.get("directions") or []) or 1
         c = costing.estimate(route["method"], route["material"], mesh, mass=dv.get("mass"), quantity=quantity,
                              build=build, milling_sides=sides, milling_axes=mill.get("axes", 3),
-                             print_seconds=secs, rates=rates)
+                             print_seconds=secs, rates=rates,
+                             machining=((best.get("manufacturing") or {}).get("machining")
+                                        if isinstance(best, dict) else None))
         row["cost"] = c
         row["unitCost"] = c["unitCost"]
         row["leadDays"] = c["leadDays"]

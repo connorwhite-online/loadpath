@@ -134,11 +134,13 @@ def _geometry(mesh, build=None) -> dict:
 
 def estimate(method: str, material: str, mesh=None, *, mass: float | None = None, quantity: int = 1,
              build=None, milling_sides: int = 1, milling_axes: float = 3, print_seconds: float | None = None,
-             rates: dict | None = None, geometry: dict | None = None) -> dict:
+             rates: dict | None = None, geometry: dict | None = None, machining: dict | None = None) -> dict:
     """{"unitCost", "orderCost", "fixedCost", "machineHours", "leadDays",
     "breakdown", ...} for `quantity` parts of `mesh` made by `method` in
     `material`. `mass` (g) is the verified mass; `print_seconds` the
-    slicer's print time when there is one (FDM)."""
+    slicer's print time when there is one (FDM); `machining` the
+    outcome's manufacture.machining_report (milled), whose cutter-path
+    minutes and set-ups replace the volume/area estimate."""
     fam = method_family(method)
     if fam == "milled" and str(method).lower().startswith("milled-"):
         milling_axes = float(str(method).lower()[7:].replace("axis", "") or milling_axes)
@@ -194,12 +196,17 @@ def estimate(method: str, material: str, mesh=None, *, mass: float | None = None
         density = (mass / g["volume"]) if mass and g["volume"] > 0 else 2.7
         removed = max(0.0, stock_cm3 - g["volume"])
         hours = removed / r["roughCm3PerMinute"] / 60.0 + g["surface"] / r["finishCm2PerMinute"] / 60.0
+        if machining and (machining.get("minutes") or {}).get("total") is not None:
+            hours = float(machining["minutes"]["total"]) / 60.0
+            milling_sides = int(machining.get("setups") or milling_sides)
         key = "2.5" if float(milling_axes) == 2.5 else str(int(float(milling_axes)))
         rate = r["machinePerHour"][key] if isinstance(r["machinePerHour"], dict) else float(r["machinePerHour"])
         fixed = r["programming"] + r["setupPerSide"] * max(1, int(milling_sides))
         parts = {"stock": stock_cm3 * density / 1000.0 * price, "machine": hours * rate}
         note = (f"stock {ext[0]:.0f} x {ext[1]:.0f} x {ext[2]:.0f} mm; programming and {milling_sides} "
                 "fixture set-up(s) paid once per order")
+        if machining and (machining.get("minutes") or {}).get("total") is not None:
+            note += "; machine hours and set-ups from the part's machining report (cutter reach per direction)"
         if float(milling_axes) == 5:
             note += "; 5-axis reaches every side from 2 set-ups (3+2 positioning)"
     unit_var = float(sum(parts.values()))
