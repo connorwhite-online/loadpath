@@ -673,7 +673,7 @@ class _ConformalMap:
 
     def __init__(self, surface_fn, cell_fn, lo, hi, axis=None, normal_cell=None, max_cells=40_000,
                  layer_smoothing=0.0, frame_field=True):
-        # a phase needs only a few grid steps a cell (_phase_at unwraps
+        # a phase needs only a few grid steps a cell (phases unwrap
         # between nodes); the solve is a sparse LU, so the grid stays small
         lo = np.asarray(lo, float)
         hi = np.asarray(hi, float)
@@ -1134,7 +1134,7 @@ def _quiet_fill(phase, amp, smooth, low=(0.3, 0.55)):
 class _PhaseGrid:
     """A phase (cycles, mod 1) on a grid, read continuously everywhere but
     at the pattern's own defects. Unwrapping the eight corners of a voxel
-    against one of them (_phase_at) is exact where the phase is nearly
+    against one of them is exact where the phase is nearly
     linear, but two voxels that share a face unwrap against different
     corners, so where the corners spread over a large part of a cycle (near
     a defect, where the stripes bend hard, on the medial axis of the
