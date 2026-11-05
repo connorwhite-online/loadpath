@@ -225,7 +225,7 @@ per case on average. What was learned:
   are deflection-bound (0.48 of 0.5 mm; 0.50 of 0.54 mm at SF 11 for 2),
   where the compliance design is already right. So `goal.method` now
   defaults to `auto`: the search (with its restarts and pitch starts), then
-  the constrained method when utilization is under 0.15 and the part is not
+  the constrained method when utilization is under 0.15 (0.19 on cut cells, verify's default) and the part is not
   deflection-bound, time-boxed to 3.5x the search, keeping the lighter part
   (`methodChoice` in the result; any constrained failure keeps the search's
   part). Tet-confirmed, against the full baseline on 063c233: wall bracket

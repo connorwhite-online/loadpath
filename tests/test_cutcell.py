@@ -89,3 +89,28 @@ def test_verify_hole_with_cut_cells():
     assert rep["cutCells"] > 0
     assert 74 < c["peakStress"] < 88, c["peakStress"]
     assert abs(c["peakAt"][0] - 60) < 2.5 and 3.5 < abs(c["peakAt"][1]) < 6.5, c["peakAt"]
+
+
+def test_cut_cells_are_the_default_except_under_pressure():
+    # whole cells read GRIP's wrist link 0.35-3.5x off a 0.9 mm tet
+    # reference on its sub-cell struts, cut cells 0.89-1.13x: verification
+    # uses cut cells unless the study says otherwise, or carries a
+    # pressure (its wetted nodes come from the whole-cell staircase)
+    from loadpath.spec import study_from_dict
+    from loadpath.verify import use_cut_cells
+
+    base = {
+        "designSpace": {"type": "box", "min": [0, 0, 0], "max": [40, 10, 10]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.5, 11, 11]}}],
+        "material": "petg", "goal": {"volumeFraction": 0.5},
+    }
+    force = {"loads": [{"shape": {"type": "box", "min": [39, -1, -1], "max": [41, 11, 11]}, "force": [0, 0, -10]}]}
+    assert use_cut_cells(study_from_dict(base | force))
+    assert not use_cut_cells(study_from_dict(base | force | {"resolution": {"cutCells": False}}))
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_pressure import _sphere_vessel
+
+    assert not use_cut_cells(study_from_dict(_sphere_vessel()))

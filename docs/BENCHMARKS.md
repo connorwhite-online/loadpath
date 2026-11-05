@@ -541,13 +541,57 @@ verify's `resolution.cutCells`). Run 2026-11-03, about 30 s.
   beam both read ~1.65x (the tet peak's contact band leaves out what both
   voxel models see). Verification takes 2-4x as long. The plate with a
   hole (Peterson 81 MPa) reads 79-86 cut, 78-93 whole, over 0.7-1.4 mm cells.
-- Cut cells are opt-in (`resolution.cutCells`, or LOADPATH_CUT_CELLS=1).
-  Coarse eval tier on 2026-11-03, cut against whole cells on the same main:
-  all cases pass either way; massAtTarget within noise (under 5%) except
-  the wrist yoke (cut 19.8 g, whole 17.2) and the hook (cut 25.8, whole
-  26.7); delivered mass lighter cut on the driven arm link (46.3 vs 50.0),
-  wrist yoke (21.1 vs 23.0) and hook (27.4 vs 28.2), heavier on the upper
-  arm (254.6 vs 250.1); cases take 1.1-1.9x as long. With the tet confirm
-  in the search the outcomes barely move, so whole cells stay the default;
-  cut cells are for checks without a tet mesher and for parts made of thin
-  members at angles to the grid.
+- Cut cells were opt-in until 2026-11-05 (coarse tier 2026-11-03: all pass
+  either way, massAtTarget within noise but for the wrist yoke and hook).
+  They are the default now, after GRIP's MJF wrist link showed what whole
+  cells do to struts under three cells thick (below). `resolution.cutCells:
+  false` or LOADPATH_CUT_CELLS=0 goes back to whole cells; studies with a
+  pressure load stay on whole cells (their wetted nodes come from the
+  whole-cell staircase, and on the cut grid the thick sphere read 105 MPa
+  for Lame's 21).
+
+### Sub-cell struts: GRIP's wrist link (2026-11-05)
+
+Four stored densities from the full-tier `grip-wrist-link-mjf` search
+(volume fraction 0.045-0.06), each meshed three ways (stem smoothing off,
+the default one-pass, `axial_debias`): twelve near-identical meshes, verified
+as the search verifies (1.22 mm cells), on P2 tets at the confirm's 1.5 mm,
+and on 0.9 mm tets as the reference. Safety factor, worst of the three cases:
+
+| fraction | mesh | whole cells | cut cells | tets 1.5 mm | tets 0.9 mm |
+|---|---|---|---|---|---|
+| 0.045 | off | 1.02 | 1.78 | 1.55 | 1.57 |
+| 0.045 | one-pass | 0.75 | 2.19 | 2.20 | 2.17 |
+| 0.045 | debiased | 2.28 | 0.67 | 0.99 | 0.66 |
+| 0.0525 | off | 1.54 | 3.70 | 4.40 | 4.14 |
+| 0.0525 | one-pass | 2.80 | 3.68 | - | - |
+| 0.0525 | debiased | 3.18 | 5.05 | 5.19 | - |
+| 0.0562 | off | 3.71 | 5.41 | 5.70 | - |
+| 0.0562 | one-pass | 3.59 | 4.76 | 6.46 | - |
+| 0.0562 | debiased | 3.04 | 6.02 | 7.93 | - |
+| 0.06 | off | 4.34 | 6.73 | 6.50 | - |
+| 0.06 | one-pass | 5.48 | 5.86 | 7.26 | - |
+| 0.06 | debiased | 4.71 | 6.72 | 6.14 | - |
+
+(The 0.0525 one-pass mesh's tet solves did not converge, SF ~1e-5.)
+
+- Against the best tet reading of each mesh, whole cells read 0.35-3.5x and
+  cut cells 0.74-1.13x. Whole cells put the three 0.045 meshes in the wrong
+  order: the debiased mesh grows a 0.95 mm sliver strut (the study's
+  minMember is 3 mm) that 0.9 mm tets and cut cells both read at SF 0.66,
+  and whole cells, which see a cell or none there, at 2.28, a false pass.
+  The 1.5 mm tets (the confirm's) read it 0.99.
+- So the 2-3x spread between re-meshes is partly real: smoothing variants
+  of one density make different struts. Cut cells follow the reference's
+  spread (3.3x on the 0.045 design, 1.2-1.4x on the others) instead of
+  adding their own. That reconstruct can leave struts a third of minMember
+  is its own problem.
+- Also tried: whole-cell solve with cut-cell submodels where the peak sits
+  on a member under 3 cells thick. It read 1.29 where the reference is
+  2.17: the whole-cell displacements that drive the submodel's faces are
+  wrong near such a member already.
+- Cut cells read stressUtilization 7-16% higher than whole cells (the
+  staircase's spurious corner peaks are gone), so goal.method auto's
+  threshold for trying the constrained method is 0.19 on cut cells (0.15
+  on whole); at 0.15 the coarse wrist yoke skipped it and came out 18.6 g
+  against 14.1 (13.9 at 0.19).

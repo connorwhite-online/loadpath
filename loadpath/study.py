@@ -74,6 +74,12 @@ _BUCKLING_SEARCH_ON = 1.5
 # lighter in 2-5x the search's time; hook 0.30 and arm link 0.33, where it
 # was 10-40% heavier.
 _AUTO_UTILIZATION = 0.15
+# Cut cells (verify's default since 2026-11-05) read the surface stress
+# without the staircase's spurious corner peaks, so the same part reads
+# utilization 7-16% higher (wrist yoke 0.168 -> 0.184, motor mount 0.160 ->
+# 0.186, hook 0.328 -> 0.350): at 0.15 the yoke skipped the constrained
+# method and came out 18.6 g against 14.1; at 0.19, 13.9.
+_AUTO_UTILIZATION_CUT = 0.19
 # and gives it at most this many times the search's own time
 _AUTO_BUDGET = 3.5
 # The pick of a safety-factor search is checked again on a grid this many
@@ -1058,8 +1064,10 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
         choice["reason"] = "deflection-bound: the search's compliance design is the right one"
         r.choice = choice
         return r
-    if u >= _AUTO_UTILIZATION:
-        choice["reason"] = f"stress utilization {u:.2f} >= {_AUTO_UTILIZATION}: the search part is worked evenly"
+    from .verify import use_cut_cells
+    limit = _AUTO_UTILIZATION_CUT if use_cut_cells(study) else _AUTO_UTILIZATION
+    if u >= limit:
+        choice["reason"] = f"stress utilization {u:.2f} >= {limit}: the search part is worked evenly"
         r.choice = choice
         return r
     if should_stop is not None and should_stop():

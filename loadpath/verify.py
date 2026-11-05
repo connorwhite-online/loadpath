@@ -642,7 +642,8 @@ def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
 
 def use_cut_cells(study, cut_cells=None) -> bool:
     """Whether verification analyzes cut cells: the argument, else
-    LOADPATH_CUT_CELLS (1/0), else the study's resolution.cutCells."""
+    LOADPATH_CUT_CELLS (1/0), else the study's resolution.cutCells, else
+    yes unless the study carries a pressure."""
     import os
 
     if cut_cells is not None:
@@ -652,7 +653,13 @@ def use_cut_cells(study, cut_cells=None) -> bool:
         return True
     if env in ("0", "false", "no", "off"):
         return False
-    return bool((getattr(study, "raw", None) or {}).get("resolution", {}).get("cutCells", False))
+    asked = (getattr(study, "raw", None) or {}).get("resolution", {}).get("cutCells")
+    if asked is not None:
+        return bool(asked)
+    # Default on, but not under pressure: a pressure's wetted nodes come
+    # from the whole-cell staircase, and on a cut grid they sit off the
+    # true wall (the thick sphere read Lame's 21 MPa as 105).
+    return not any(ld.pressure for case in getattr(study, "load_cases", ()) for ld in case.loads)
 
 
 def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs):
@@ -803,11 +810,13 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     the full modulus), so the readings move smoothly with the geometry
     rather than in whole-cell steps: for searches and live previews, whose
     neighbouring candidates must compare fairly; the delivered check is
-    whole cells. `cut_cells` (default: the study's resolution.cutCells, or
-    LOADPATH_CUT_CELLS=1) analyzes the true boundary inside each cell
+    whole cells. `cut_cells` (default: use_cut_cells, which is on unless
+    the study says resolution.cutCells false, LOADPATH_CUT_CELLS=0, or
+    it has a pressure load) analyzes the true boundary inside each cell
     (cutcell.py): sub-cell stiffness, stress read on the surface, and
     finer submodels on members under 3 cells thick; member thickness no
-    longer rounds to whole cells."""
+    longer rounds to whole cells (GRIP's wrist link struts: whole cells
+    0.35-3.5x of fine tets, cut cells 0.74-1.13x; docs/BENCHMARKS.md)."""
     from .shapes import manifold_from_trimesh
 
     t0 = time.time()

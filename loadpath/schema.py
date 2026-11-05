@@ -761,7 +761,11 @@ STUDY_SCHEMA = {
                                                          "read on the true surface, and members under 3 cells "
                                                          "thick get a finer submodel. Member thickness then no "
                                                          "longer rounds to whole cells (a 2-cell member at 45 "
-                                                         "degrees read bending 25% low). Off by default."},
+                                                         "degrees read bending 25% low), and a sub-cell strut "
+                                                         "is seen at its true thickness (GRIP's wrist link: "
+                                                         "whole cells read SF 2.28 where 0.9 mm tets read "
+                                                         "0.66, cut cells 0.67). On by default, except for "
+                                                         "studies with pressure loads; false for whole cells."},
                                       "pitchStarts": {
                                           "oneOf": [{"type": "integer", "minimum": 1, "maximum": 5},
                                                     {"const": "auto"}],
