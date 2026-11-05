@@ -643,7 +643,7 @@ def _preserve_missing(pres_eff, part, mesh, samples: int = 400) -> float:
 def use_cut_cells(study, cut_cells=None) -> bool:
     """Whether verification analyzes cut cells: the argument, else
     LOADPATH_CUT_CELLS (1/0), else the study's resolution.cutCells, else
-    yes unless the study carries a pressure."""
+    yes unless the study carries a pressure or a thermal block."""
     import os
 
     if cut_cells is not None:
@@ -658,7 +658,12 @@ def use_cut_cells(study, cut_cells=None) -> bool:
         return bool(asked)
     # Default on, but not under pressure: a pressure's wetted nodes come
     # from the whole-cell staircase, and on a cut grid they sit off the
-    # true wall (the thick sphere read Lame's 21 MPa as 105).
+    # true wall (the thick sphere read Lame's 21 MPa as 105). Nor with a
+    # thermal block: the expansion load is assembled on whole cells, and on
+    # a cut grid the part-filled cells take a whole cell's push (the duty
+    # cycle motor mount read SF 0.34 where whole cells read 8.6).
+    if getattr(study, "thermal", None) is not None:
+        return False
     return not any(ld.pressure for case in getattr(study, "load_cases", ()) for ld in case.loads)
 
 

@@ -114,3 +114,6 @@ def test_cut_cells_are_the_default_except_under_pressure():
     from test_pressure import _sphere_vessel
 
     assert not use_cut_cells(study_from_dict(_sphere_vessel()))
+    # nor with a thermal block (the expansion load is assembled on whole cells)
+    assert not use_cut_cells(study_from_dict(base | force | {"thermal": {"ambient": 25, "heat": [
+        {"shape": {"type": "box", "min": [39, -1, -1], "max": [41, 11, 11]}, "watts": 1.0}]}}))
