@@ -16,6 +16,18 @@ it, use the CLI below. Start from the nearest example (`loadpath_examples` /
 `loadpath examples`) rather than a blank page; `loadpath_schema` gives every
 field. `check` reports every problem at once: fix them all, then check again.
 
+## When to use it
+
+Use loadpath when the shape should come from the loads: brackets, links,
+mounts and housings around fixed interfaces, lattice-filled or graded parts,
+compliant mechanisms, heat exchangers and cold plates. Draw parts whose shape
+is set by function rather than load (enclosures, cosmetic covers, gears,
+threads) in CAD instead. loadpath doesn't replace CAD: model the interfaces
+there, let loadpath grow the material between them, and bring the result
+back as STEP or STL. Its edge over drawing the part yourself is that every
+result comes with an independent check (safety factor, deflection,
+buckling, printability) you can report to the user.
+
 ## Workflow
 
 1. **Model the interfaces exactly** (in build123d, CadQuery, or by hand):

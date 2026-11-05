@@ -45,6 +45,40 @@ the report back. Its guide is [loadpath/SKILL.md](loadpath/SKILL.md) (the
 leaves the machine. Units are millimetres, newtons and megapascals. MIT
 licensed.
 
+## Where it fits
+
+A designed part needs a shape, the loads it carries, and a way to make it.
+The open tools each cover one of those:
+
+- **Topology optimization codes** (top88, top3d, ToPy, FEniCS scripts) are
+  research solvers. They stop at a density field on a grid: no printable
+  part, and nothing checks the result.
+- **Script CAD** (CadQuery, build123d, OpenSCAD) and AI CAD tools draw exact
+  geometry but don't know the loads.
+- **Commercial generative design** (Fusion, nTop) does the whole job, but
+  it's built around a GUI, not an agent.
+
+loadpath is the layer in between. Your CAD defines the interfaces; loadpath
+takes those plus the loads, material and process, and returns a watertight
+part checked by an analysis independent of the optimizer, with a JSON report
+an agent can act on. Its STEP output goes back into CAD.
+
+Where it is strongest:
+
+- **The analysis behind the shape**: buckling, fatigue and creep,
+  large-deflection compliant mechanisms, loads of unknown direction, thermal
+  loads and print warp, all checked on the delivered mesh.
+- **Implicit modelling**: field graphs, graded and conformal lattices (TPMS,
+  strut, Voronoi), blends, and exact STEP of lattice parts.
+- **Process awareness**: FDM, SLS, MJF, resin and powder-bed metal rules,
+  plus casting and milling constraints.
+- **Heat exchangers**: lattice-Boltzmann flow and conjugate heat transfer
+  for gyroid cores and cold plates.
+
+Not yet: draft-angle and machining-time checks for cast and milled parts,
+or a ranked spread of outcomes across materials and processes by cost.
+There is no GUI on purpose; it's a library.
+
 ## What it does
 
 - **Topology optimization** on a voxel grid (SIMP with a density filter,
