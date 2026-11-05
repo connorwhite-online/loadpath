@@ -1948,7 +1948,10 @@ def _quick_limits():
     global _MAX_SEARCH_RUNS, _CONFIRM_RUNS
     from . import quick
     if quick.on():
-        _MAX_SEARCH_RUNS = min(_MAX_SEARCH_RUNS, quick.STUDY["searchRuns"])
+        # LOADPATH_QUICK_SEARCH_RUNS: a screen that wants the coarse search to
+        # close in on the answer (explore.py) rather than stop at a loose bracket
+        runs = int(os.environ.get("LOADPATH_QUICK_SEARCH_RUNS") or quick.STUDY["searchRuns"])
+        _MAX_SEARCH_RUNS = min(_MAX_SEARCH_RUNS, runs)
         _CONFIRM_RUNS = min(_CONFIRM_RUNS, quick.STUDY["confirmRuns"])
 
 

@@ -52,7 +52,9 @@ the same folder is read back, not run again.
 
 `screen: true` (`--screen`) runs every route on the coarse grid first
 (quick.py) and the full runs only for the routes on a Pareto front or in the
-top `refineTop` (2) of the ranking; the rest stay in the report with their
+top `refineTop` (2) of the ranking, and any whose coarse pick still had more
+than SCREEN_MARGIN over its goal (the coarse grid could not go lighter, as
+thin metal members do); the rest stay in the report with their
 coarse numbers, marked `screenedOnly`. Methods differ by far more than the
 coarse grid's few to tens of percent, so the screen keeps the right ones.
 
@@ -104,6 +106,12 @@ DEFAULT_MATERIALS = {
 }
 RANKS = ("mass", "cost", "leadTime")
 TOOL_DIAMETER = 6.0
+# the screen's coarse search runs per route
+SCREEN_SEARCH_RUNS = 5
+# a screened route whose pick still has this much margin over its goal is
+# refined whatever its rank: the coarse grid could not go lighter (thin metal
+# members break on it: the arm link's Ti64 screen stopped at 225 g, margin 42)
+SCREEN_MARGIN = 1.3
 # keys a route sets or that only make sense for some methods
 _ROUTE_KEYS = ("explore", "material", "materials", "process", "casting", "milling", "printDirection")
 
@@ -256,7 +264,9 @@ def _run_route(route: dict, folder: str, base_dir: str, quick: bool, env: dict, 
         route = {**route, "study": {**route["study"], "goal": {**(route["study"].get("goal") or {}),
                                                                 "confirm": "voxel"}}}
     os.makedirs(rdir, exist_ok=True)
-    key = _digest({"study": route["study"], "quick": quick})
+    key = _digest({"study": route["study"], "quick": quick,
+                   "env": {k: env.get(k) for k in ("LOADPATH_PITCH_STARTS", "LOADPATH_QUICK_SEARCH_RUNS",
+                                                   "LOADPATH_CONFIRM_CELLS")}})
     rep_path = os.path.join(out, "report.json")
     stamp = os.path.join(rdir, "digest")
     if os.path.exists(rep_path) and os.path.exists(stamp) and open(stamp).read().strip() == key:
@@ -304,6 +314,9 @@ def _row(route: dict, res: dict, quantity: int, rates: dict | None) -> dict:
                 "safetyFactor": dv.get("governingSafetyFactor", dv.get("safetyFactor")),
                 "safetyFactorMethod": dv.get("safetyFactorMethod"), "maxDeflection": dv.get("maxDeflection"),
                 "governedBy": dv.get("governedBy"), "volumeFraction": dv.get("volumeFraction")})
+    outs = rep.get("outcomes") or []
+    if dv.get("outcome") is not None and dv["outcome"] < len(outs) and outs[dv["outcome"]].get("margin"):
+        row["margin"] = outs[dv["outcome"]]["margin"]
     for k in ("stl", "render"):
         if dv.get(k):
             row[k] = os.path.join(res["dir"], os.path.basename(dv[k]))
@@ -389,6 +402,9 @@ def explore(study: dict, out_dir: str, explore_opts: dict | None = None, base_di
         if coarse:
             # a screen: one grid per route (resolution.pitchStarts' extra grids triple the time)
             e.setdefault("LOADPATH_PITCH_STARTS", "1")
+            # five coarse runs (quick's 3 end at a loose bracket: the arm link's
+            # MJF screen stopped at margin 1.5, 20% heavy)
+            e.setdefault("LOADPATH_QUICK_SEARCH_RUNS", str(SCREEN_SEARCH_RUNS))
         _emit(progress, {"stage": "plan", "routes": [r["id"] for r in rs], "jobs": n, "quick": coarse,
                          "skipped": p["skipped"]})
         results: dict[str, dict] = {}
@@ -412,9 +428,13 @@ def explore(study: dict, out_dir: str, explore_opts: dict | None = None, base_di
         keep = set(_front(sp, "mass", "unitCost")) | set(_front(sp, "unitCost", "leadDays"))
         keep |= {r["id"] for r in sorted(sp, key=lambda r: r.get(key) if r.get(key) is not None else big)
                  [:int(opts.get("refineTop", 2))]}
+        # an upper bound, not an answer: the coarse search ended well over the goal
+        loose = {r["id"] for r in sp if (r.get("margin") or 1.0) > SCREEN_MARGIN
+                 and r.get("governedBy") != "volumeFraction floor"}
+        keep |= loose
         if not sp:      # nothing passed coarse: run the strongest routes properly
             keep = {r["id"] for r in sorted(srows, key=lambda r: -(r.get("safetyFactor") or 0))[:2]}
-        screened = {"routes": len(srows), "refined": sorted(keep)}
+        screened = {"routes": len(srows), "refined": sorted(keep), "loose": sorted(loose & keep)}
         rows = run_all([r for r in routes if r["id"] in keep], folder, False)
         for r in srows:
             if r["id"] not in keep:

@@ -56,7 +56,8 @@ def study(d: dict) -> dict:
     d["resolution"] = res
     d["maxIterations"] = min(int(d.get("maxIterations", 120)), STUDY["maxIterations"])
     from . import study as st
-    st._MAX_SEARCH_RUNS = min(st._MAX_SEARCH_RUNS, STUDY["searchRuns"])
+    st._MAX_SEARCH_RUNS = min(st._MAX_SEARCH_RUNS, int(os.environ.get("LOADPATH_QUICK_SEARCH_RUNS")
+                                                        or STUDY["searchRuns"]))
     st._CONFIRM_RUNS = min(st._CONFIRM_RUNS, STUDY["confirmRuns"])
     return d
 
