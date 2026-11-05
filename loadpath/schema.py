@@ -1124,13 +1124,16 @@ _FIELD_OPS = {
                                              "normalCell": {**_POS, "description": "conformal: mm cell through "
                                                                                    "the thickness (default the "
                                                                                    "cell)"},
-                                             "frameField": {"type": "boolean",
-                                                            "description": "conformal: cells follow a 3D frame "
-                                                                           "field, turning a box's edges and "
-                                                                           "corners (default true); false: two "
-                                                                           "stripe patterns along the surface "
-                                                                           "and the surface's distance as the "
-                                                                           "layer coordinate"},
+                                             "frameField": {"enum": [True, False, "auto"],
+                                                            "description": "conformal: true, cells follow a 3D "
+                                                                           "frame field, turning a box's edges "
+                                                                           "and corners; false, two stripe "
+                                                                           "patterns along the surface and the "
+                                                                           "surface's distance as the layer "
+                                                                           "coordinate (exact layers); auto "
+                                                                           "(default), whichever shears fewer "
+                                                                           "cells in the first cell under the "
+                                                                           "skin"},
                                              "layerSmoothing": {"type": "number", "minimum": 0, "maximum": 1,
                                                                 "description": "conformal: round the layers where "
                                                                                "the surface's distance folds "

@@ -86,7 +86,7 @@ def test_conformal_frame_fits_whole_cells_round_a_tube():
     the frame field, so up to a whole number of cells and its sign)."""
     g = FieldGraph({"nodes": {"tube": TUBE,
                               "lat": {"op": "lattice", "type": "octet", "cell": 6, "thickness": 1,
-                                      "frame": {"type": "conformal", "surface": "tube"}},
+                                      "frame": {"type": "conformal", "surface": "tube", "frameField": True}},
                               "part": {"op": "intersect", "inputs": ["lat", "tube"]}}})
     nd = g.nodes["lat"]
     th = np.linspace(0, 2 * np.pi, 400, endpoint=False)
@@ -144,6 +144,12 @@ def test_conformal_frame_field_turns_box_edges():
             U, _ = g.lattice_coords(nd, F)
             assert (np.abs(U - np.round(U)).min(1) < 0.02).all(), U
     assert out[True] < 0.01 and out[False] > 0.2, out
+    # by default (auto) the frame with fewer sheared cells under the skin
+    g = FieldGraph({"nodes": {"S": box, "lat": {"op": "lattice", "type": "octet", "cell": 6, "thickness": 1,
+                                                "frame": {"type": "conformal", "surface": "S"}},
+                              "part": {"op": "intersect", "inputs": ["lat", "S"]}}, "output": "part"})
+    m = g._resource(g.nodes["lat"], lambda: g._conformal(g.nodes["lat"]))
+    assert m.frame_field and m.shear_scores["frameField"] < 0.01 < m.shear_scores["stripes"], m.shear_scores
 
 
 def test_conformal_field_is_continuous_across_phase_grid_faces():

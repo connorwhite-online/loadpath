@@ -821,6 +821,29 @@ class _ConformalMap:
                                                               anchor=(alpha, target))), self.lo_grid, h))
         return out
 
+    def skin_shear(self, cell_fn, n=6000, seed=0):
+        """The fraction of sheared cells (smallest over largest singular
+        value of the coordinates' Jacobian, in cells, under 0.3) in the first
+        cell under the skin: what the frame is judged by."""
+        hi = self.lo + (self.dims - 1) * self.h
+        rng = np.random.default_rng(seed)
+        got = []
+        for _ in range(8):
+            P = rng.uniform(self.lo, hi, (8 * n, 3))
+            c = np.asarray(cell_fn(P), float)
+            d = np.asarray(self.surface_fn(P), float)
+            got.append(P[(d < 0) & (d > -c)])
+            if sum(len(x) for x in got) >= n:
+                break
+        P = np.concatenate(got)[:n]
+        if not len(P):
+            return 0.0
+        c = np.asarray(cell_fn(P), float)
+        e = 1e-3
+        J = np.stack([(self(P + e * v, c) - self(P - e * v, c)) / (2 * e) for v in np.eye(3)], 2) * c[:, None, None]
+        sv = np.linalg.svd(J, compute_uv=False)
+        return float((sv[:, 2] / np.maximum(sv[:, 0], 1e-12) < 0.3).mean())
+
     # a symmetric stencil (6 axis + 8 diagonal unit directions): its mean
     # of a linear function is the centre value, so it moves nothing where
     # the distance is linear
@@ -2058,10 +2081,27 @@ class FieldGraph:
         cell_fn, lo, hi = self._warp_domain(nd)
         off = np.asarray(nd.spec.get("origin", (0, 0, 0)), float)
         surf = nd.refs["surface"]
-        return _ConformalMap(lambda G: self.evaluate(G + off, surf), cell_fn, lo, hi, axis=frame.get("axis"),
-                             normal_cell=frame.get("normalCell"), max_cells=max_cells,
-                             layer_smoothing=frame.get("layerSmoothing", 0.0),
-                             frame_field=frame.get("frameField", True))
+        mode = frame.get("frameField", "auto")
+
+        def build(ff):
+            return _ConformalMap(lambda G: self.evaluate(G + off, surf), cell_fn, lo, hi, axis=frame.get("axis"),
+                                 normal_cell=frame.get("normalCell"), max_cells=max_cells,
+                                 layer_smoothing=frame.get("layerSmoothing", 0.0), frame_field=ff)
+
+        if mode != "auto":
+            return build(bool(mode))
+        # auto: the frame field turns a box's edges and corners (sheared
+        # cells 13-46% -> 0.1% on boxes, turned, rounded or slabs), but on a
+        # rounded part its cross field puts singular points on flat faces
+        # the two stripes ran straight across (the tutorial forearm's skin:
+        # 10% sheared with stripes, 14% with the field). Both are built and
+        # the one with fewer sheared cells in the first cell under the skin
+        # is kept
+        maps = [build(True), build(False)]
+        scores = [m.skin_shear(cell_fn) for m in maps]
+        best = maps[int(np.argmin([sc + (0.01 if k else 0.0) for k, sc in enumerate(scores)]))]
+        best.shear_scores = {"frameField": round(scores[0], 4), "stripes": round(scores[1], 4)}
+        return best
 
     def _voronoi(self, nd):
         from .struts import VoronoiStruts

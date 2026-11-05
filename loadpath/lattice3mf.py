@@ -674,7 +674,7 @@ def lattice_from_graph(g, name, lo, hi, grid=None):
         memo = {}
         U, cl = g.lattice_coords(nd, P, memo)
         fill = memo.get(("_defect_fill", nd.name))
-        nphase = 3 if (s.get("frame") or {}).get("frameField", True) else 2
+        nphase = 3 if g._resource(nd, lambda: g._conformal(nd)).frame_field else 2
         trig = []
         for i in range(nphase):
             se = field(f"s{i}", np.sin(2 * np.pi * U[:, i]), const_ok=False)[0]

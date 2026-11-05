@@ -39,7 +39,7 @@ def test_conformal_phases_go_in_as_sine_and_cosine():
     implicit matches the field to about a percent of the volume."""
     tube = {"op": "shape", "shape": {"type": "cylinder", "center": [20, 0, 0], "axis": "x", "length": 40, "r": 10}}
     g = FieldGraph({"nodes": {"S": tube, "core": {"op": "lattice", "type": "gyroid", "cell": 6, "thickness": 0.8,
-                                                  "frame": {"type": "conformal", "surface": "S"}},
+                                                  "frame": {"type": "conformal", "surface": "S", "frameField": True}},
                               "part": {"op": "intersect", "inputs": ["core", "S"]}}, "output": "part"})
     lo, hi = g.bounds()
     lat = L.lattice_from_graph(g, "core", lo, hi)

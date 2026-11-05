@@ -971,6 +971,20 @@ print on FDM without support.
   weighted towards the skin. A whole number of cells fits round at the skin
   (10 cells of 6 mm round a 20 mm tube); where fewer fit deeper in, the
   pattern puts a defect in the middle rather than shearing every cell.
+  That frame cannot turn a box's edges (the layer direction of one face is
+  the along-edge direction of the next, so two coordinates run parallel
+  along every edge: over 40% of a 12 mm box's cells sheared), so there is a
+  second one, a 3D frame field (`"frameField": true`): every grid node
+  carries the nearest skin's normal and the smoothest cross field on the
+  layers, the frames' axes are labelled by one synchronization solve over
+  the cube's symmetries, and each axis gets a stripe pattern pinned to the
+  distance near the faces where it is the normal. On boxes (turned,
+  rounded, slabs) that is the box's own straight cells with a node layer on
+  every face (0.1% sheared), and the open conformal octet block exports a
+  valid STEP. On rounded parts its cross field puts singular points on flat
+  faces the stripes ran straight across, so the default (`"auto"`) builds
+  both and keeps the one that shears fewer cells in the first cell under
+  the skin (the tutorial forearm keeps the stripes).
   The phases are read between grid nodes without seams: each node
   predicts the phase from its own value and gradient and the predictions
   are blended as unit phasors (weighted by the pattern's amplitude), so
