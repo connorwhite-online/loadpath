@@ -49,17 +49,18 @@ __all__ = ["BucklingModel", "geometric_parts"]
 _CONN26 = np.ones((3, 3, 3), bool)
 
 
-def _factor(k: sp.csr_matrix):
+def _factor(k: sp.csr_matrix, node_ijk=None):
     """A solve with K for one right-hand side or a block of them: PARDISO
     when available (symmetric positive definite, upper triangle; 10-30x
     SuperLU on 3D hex meshes, and a block of eight costs about two single
-    solves), else SuperLU."""
+    solves), else SuperLU in nested-dissection order (node_ijk, the grid
+    nodes the dofs belong to; nonlinear._splu)."""
     try:
         import pypardiso
     except ImportError:
         from .nonlinear import _splu
 
-        lu = _splu(k)
+        lu = _splu(k, node_ijk)
         return lu.solve, None
     a = sp.triu(k, format="csr")
     a.sort_indices()
@@ -244,7 +245,7 @@ class BucklingModel:
         if d.springs is not None:
             free = sp.diags((~fixed).astype(float))
             k = (k + free @ d.springs[fd][:, fd] @ free).tocsr()
-        solve, free_memory = _factor(k)
+        solve, free_memory = _factor(k, sub.node_ijk)
         try:
             ndof = sub.n_dof
             minv = LinearOperator((ndof, ndof), matvec=solve, matmat=solve, dtype=float)
