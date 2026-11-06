@@ -202,7 +202,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     notes = []
     warnings += _preserve_cut(s)
     notes += _resting_supports(s)
-    notes += _glued_faces(s)
+    notes += _glued_faces(s, warnings)
     warnings.extend(_split_shafts(s))
     w, n = _blind_bores(s)
     warnings += w
@@ -359,7 +359,7 @@ def _resting_supports(s) -> list[str]:
     return out
 
 
-def _glued_faces(s) -> list[str]:
+def _glued_faces(s, warnings_=None) -> list[str]:
     """A support on a thin slab under a whole face, holding the face's normal,
     in a study with bolts through that face: the part is held down
     everywhere, as if glued to the plate, while a bolted foot is held only
@@ -370,9 +370,9 @@ def _glued_faces(s) -> list[str]:
     import numpy as np
 
     out = []
+    if warnings_ is None:
+        warnings_ = out
     try:
-        if not s.joints:
-            return out
         lo, hi = s.bounds()
         ext = np.maximum(hi - lo, 1e-9)
         for sp in s.supports:
@@ -387,7 +387,31 @@ def _glued_faces(s) -> list[str]:
             if np.prod(np.clip(size[others], 0, None)) < 0.4 * np.prod(ext[others]):
                 continue
             axis = "xyz"[thin]
-            if not any(abs(np.asarray(j.get("axis", (0, 0, 0)), float)[thin]) > 0.9 for j in s.joints):
+            fastened = any(abs(np.asarray(j.get("axis", (0, 0, 0)), float)[thin]) > 0.9 for j in (s.joints or []))
+            bolted = fastened
+            # plain bolt-hole keep-outs through that face count too (a plate
+            # milled from +z held at four M5 holes and its glued bottom)
+            for k in s.keep_out:
+                for c in _leaves(k.shape):
+                    if getattr(c, "kind", None) == "cylinder" and abs(float(c.axis[thin])) > 0.9 \
+                            and min(c.p0[thin], c.p1[thin]) <= sh.hi[thin] and max(c.p0[thin], c.p1[thin]) >= sh.lo[thin]:
+                        bolted = True
+            if not bolted:
+                continue
+            # does a load pull the part off that face? (the face is at the
+            # low end of the axis: a pull is a + force; at the high end a -)
+            sign = 1.0 if sh.hi[thin] - lo[thin] < hi[thin] - sh.lo[thin] else -1.0
+            lifts = [c.name for c in s.load_cases
+                     if sum(sign * float(np.asarray(ld.force, float)[thin]) for ld in c.loads
+                            if getattr(ld, "force", None) is not None) > 0]
+            if lifts:
+                warnings_.append(f"supports: a slab over the whole {axis} face holds it in {axis} everywhere, "
+                                 f"so load case {lifts[0]!r}, which pulls the part off that face, is reacted by "
+                                 "the face as if it were glued down: far too strong and stiff. A bolted part "
+                                 f"is held only under its bolts (the plate pushes, it cannot pull): hold {axis} "
+                                 "on a washer-sized disc under each bolt, or on the bolt bores alone")
+                continue
+            if not fastened:
                 continue
             out.append(f"supports: a slab over the whole {axis} face holds it in {axis} everywhere, as if glued "
                        f"to what it sits on. A part bolted down is held only under its bolts (the plate pushes, "

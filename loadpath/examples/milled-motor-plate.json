@@ -1,6 +1,6 @@
 {
  "name": "milled-motor-plate",
- "description": "A motor plate machined from 6061-T6 on a 3-axis mill, cut from the top (+z) in one setup with a 6 mm smallest end mill: every pocket opens upward, no inside corner tighter than the cutter. Four M5 screws hold it down, the motor pulls 800 N on its centre boss. report.manufacturing.machining gives tool reach, setups and a rough time and cost; milling.rates overrides the shop rates.",
+ "description": "A motor plate machined from 6061-T6 on a 3-axis mill, cut from the top (+z) in one setup with a 6 mm smallest end mill: every pocket opens upward, no inside corner tighter than the cutter. Four M5 screws hold it down (held at their bores only: the plate it sits on pushes, it cannot hold the 800 N pull), the motor pulls 800 N on its centre boss. report.manufacturing.machining gives tool reach, setups and a rough time and cost; milling.rates overrides the shop rates.",
  "designSpace": [
   {
    "type": "box",
@@ -155,22 +155,6 @@
  "supports": [
   {
    "region": "m5"
-  },
-  {
-   "shape": {
-    "type": "box",
-    "min": [
-     0,
-     0,
-     -0.5
-    ],
-    "max": [
-     120,
-     40,
-     0.3
-    ]
-   },
-   "fix": "z"
   }
  ],
  "loadCases": [
