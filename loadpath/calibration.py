@@ -22,6 +22,14 @@ The coupons (each STL sits on the bed in its print orientation):
         (the process's `interlayer`)
   L-GY  cantilever with a gyroid sheet core -> how a printed lattice compares
         with the homogenized model lattice.py uses (SHEETS)
+  H-XY  a plate with a row of 12 numbered holes drawn 0.05 mm apart, printed
+        flat (holes along the build), and a drill bit of known size: the
+        first hole the bit's shank passes reads the printer's hole bias
+        (fits.py) to +-0.025 mm with no calipers -> process.holeBias
+  H-Z   the same ladder printed on its long edge (holes across the layers,
+        where FDM hole tops sag) -> process.holeBiasAcross
+  H-PEG pegs drawn at H-XY's first four sizes: the smallest hole each goes
+        into reads the clearance a printed pin needs in a printed hole
   X-20, X-30 ... (with crush=True) gyroid crush blocks at two densities,
         squashed under growing weight -> the crush plateau impact.py
         predicts (CRUSH), its density exponent, and the densification
@@ -49,7 +57,8 @@ import numpy as np
 
 from .materials import Material, material_from_spec
 
-__all__ = ["Coupon", "coupon_kit", "crush_coupons", "creep_coupons", "fit_creep", "write_kit", "fit", "fit_crush", "measurement_template",
+__all__ = ["Coupon", "coupon_kit", "crush_coupons", "creep_coupons", "fit_creep", "hole_coupons", "fit_holes",
+           "write_kit", "fit", "fit_crush", "measurement_template",
            "part_prediction", "rigid_motion", "CALIBRATION_DIR", "load_card", "list_cards", "crush_factor"]
 
 G = 9.81                                  # N per kg
@@ -70,6 +79,13 @@ _LOADS_KG = (0.2, 0.5, 1.0)
 # process minimum
 _CRUSH = {"densities": (0.2, 0.3), "plan": 2, "tall": 2, "plate": 2.0, "kind": "gyroid", "lever": 15.0}
 _CRUSH_ELASTIC = {"densities": (0.25, 0.4), "plan": 2, "tall": 2, "plate": 1.5, "kind": "gyroid", "lever": 1.0}
+# hole-fit coupons: a plate with a row of holes drawn 0.05 mm apart round a
+# gauge of known size (a drill bit's smooth shank), one printed flat (holes
+# along the build) and one on its edge (holes across the layers), and a strip
+# of pegs drawn at the plate's first sizes. Go/no-go: no calipers needed.
+_HOLE = {"gauge": 5.0, "holes": 12, "step": 0.05, "below": 0.25, "pitch": 9.0, "width": 15.0,
+         "thickness": 5.0, "margin": 6.0, "holeY": 10.0, "digit": 4.0, "seg": 0.8, "depth": 0.8,
+         "digitY": 3.5, "chamfer": 0.4, "pegs": 4, "pegHeight": 8.0, "pegBase": 3.0}
 # elastomer creep block: the low-density crush block, 3 cells tall, held at
 # half its buckling load for a week (viscoelastic.py's creep law)
 _CREEP = {"rho": 0.25, "tall": 3, "loadShare": 0.5, "readMinutes": (1, 10, 60, 600, 1440, 4320, 10080)}
@@ -266,10 +282,12 @@ def _lattice_compliance(E_star, c=_LAT, nu_star=0.35):
 # ---------------------------------------------------------------- the kit
 
 def coupon_kit(material="petg", process="fdm", loads_kg=_LOADS_KG, interlayer=None,
-               stiffness_across=None, crush=False) -> list:
+               stiffness_across=None, crush=False, holes=True, hole_gauge=None) -> list:
     """The coupons for one material, each with what to measure and what the
     starting card predicts. FDM by default; for powder or resin the same
-    coupons read the (small) anisotropy of those processes."""
+    coupons read the (small) anisotropy of those processes. `holes` adds
+    the go/no-go hole-fit coupons (hole_coupons), sized round a gauge of
+    `hole_gauge` mm (default a 5 mm drill bit)."""
     from .am import _LAYER_STIFFNESS
     from .spec import PROCESSES
 
@@ -332,10 +350,276 @@ def coupon_kit(material="petg", process="fdm", loads_kg=_LOADS_KG, interlayer=No
                    "relativeDensity": round(rho, 3), "Estar": round(e_star, 1)},
         geometry={k: lc[k] for k in ("block", "width", "height", "core", "end", "cell", "wall", "kind")}
         | {"solidVolume": _lattice_solid_volume(lc), "coreVolume": lc["core"] * lc["width"] * lc["height"]}))
+    if holes:
+        kit.extend(hole_coupons(material, process, gauge=hole_gauge))
     if crush:
         kit.extend(crush_coupons(material, process))
         kit.extend(creep_coupons(material, process))
     return kit
+
+
+# ---------------------------------------------------------------- hole fits
+
+# seven-segment digits engraved beside each hole: segments a (top), b, c
+# (right, top to bottom), d (bottom), e, f (left, bottom to top), g (middle)
+_SEGMENTS = {"0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc", "5": "afgcd",
+             "6": "afgedc", "7": "abc", "8": "abcdefg", "9": "abcdfg"}
+
+
+def _digits_cut(text, cx, cy, z_top, h=_HOLE):
+    """Boxes to subtract from a face at z = z_top: `text` in seven-segment
+    digits centred on (cx, cy), h["digit"] mm tall, read from +z."""
+    H, s, dep = h["digit"], h["seg"], h["depth"]
+    W = 0.55 * H
+    gap = 0.6
+    total = len(text) * W + (len(text) - 1) * gap
+    cut = None
+    for i, ch in enumerate(text):
+        x0 = cx - total / 2 + i * (W + gap)
+        y0 = cy - H / 2
+        boxes = {"a": ([x0, y0 + H - s], [x0 + W, y0 + H]), "g": ([x0, y0 + (H - s) / 2], [x0 + W, y0 + (H + s) / 2]),
+                 "d": ([x0, y0], [x0 + W, y0 + s]),
+                 "b": ([x0 + W - s, y0 + H / 2], [x0 + W, y0 + H]), "c": ([x0 + W - s, y0], [x0 + W, y0 + H / 2]),
+                 "f": ([x0, y0 + H / 2], [x0 + s, y0 + H]), "e": ([x0, y0], [x0 + s, y0 + H / 2])}
+        for seg in _SEGMENTS[ch]:
+            lo, hi = boxes[seg]
+            b = _box([lo[0], lo[1], z_top - dep], [hi[0], hi[1], z_top + 1.0])
+            cut = b if cut is None else cut + b
+    return cut
+
+
+def _hole_ladder(bias, gauge, h=_HOLE):
+    """Drawn diameters, h["step"] apart, that put the gauge's go/no-go
+    change near the middle of the row for a process whose holes print
+    `bias` mm off (as built minus drawn)."""
+    start = round((gauge - bias - h["below"]) / h["step"]) * h["step"]
+    return [round(start + i * h["step"], 3) for i in range(h["holes"])]
+
+
+def _hole_plate(drawn, chamfer=True, h=_HOLE):
+    """The plate, flat on the bed: holes along z, numbered 1.. from -x,
+    each with a small chamfer on the bed side (FDM's squashed first layer
+    would otherwise close the hole's bottom edge)."""
+    import manifold3d as m3d
+    n = len(drawn)
+    L = 2 * h["margin"] + (n - 1) * h["pitch"]
+    T = h["thickness"]
+    plate = _box([0, 0, 0], [L, h["width"], T])
+    for i, d in enumerate(drawn):
+        x = h["margin"] + i * h["pitch"]
+        r = d / 2
+        plate = plate - _cyl_z(x, h["holeY"], -1.0, T + 1.0, r, n=180)
+        if chamfer and h["chamfer"] > 0:
+            c = h["chamfer"]
+            cone = m3d.Manifold.cylinder(c + 1.0, r + c + 1.0, r, 180).translate([x, h["holeY"], -1.0])
+            plate = plate - cone
+        plate = plate - _digits_cut(str(i + 1), x, h["digitY"], T, h)
+    return plate, L
+
+
+def _peg_strip(drawn, h=_HOLE):
+    """Pegs standing on a numbered strip: the pegs print with their axis
+    along the build, like the flat plate's holes."""
+    n = len(drawn)
+    L = 2 * h["margin"] + (n - 1) * h["pitch"]
+    B = h["pegBase"]
+    strip = _box([0, 0, 0], [L, h["width"], B])
+    for i, d in enumerate(drawn):
+        x = h["margin"] + i * h["pitch"]
+        strip = strip + _cyl_z(x, h["holeY"], B - 0.01, B + h["pegHeight"], d / 2, n=180)
+        strip = strip - _digits_cut(str(i + 1), x, h["digitY"], B, h)
+    return strip, L
+
+
+def _on_edge(man):
+    """Stand the plate on its long edge: rotate about x so the holes run
+    across the layers (along y)."""
+    man = man.rotate([90.0, 0.0, 0.0])
+    lo = np.asarray(man.bounding_box()[:3])
+    return man.translate(list(-lo))
+
+
+def _predicted_first(drawn, bias, gauge):
+    """1-based number of the first hole the gauge passes, at `bias`."""
+    for i, d in enumerate(drawn):
+        if d + bias >= gauge - 1e-9:
+            return i + 1
+    return None
+
+
+def hole_coupons(material="petg", process="fdm", gauge=None) -> list:
+    """Go/no-go hole-fit coupons: H-XY (plate printed flat, holes along the
+    build), H-Z (the plate on its edge, holes across the layers) and H-PEG
+    (pegs drawn at H-XY's first sizes). The holes step 0.05 mm round a
+    gauge of known diameter, the smooth shank of a drill bit by default,
+    so the first hole it passes reads the printer's hole bias to +-0.025 mm
+    with no calipers. The pegs in H-XY's holes read the clearance a printed
+    pin needs in a printed hole. Bias goes to process.holeBias and
+    holeBiasAcross (fits.py)."""
+    from .fits import HOLES
+    from .impact import ELASTOMERS
+
+    mat = material_from_spec(material)
+    h = _HOLE
+    D = float(gauge if gauge is not None else h["gauge"])
+    holes = HOLES.get(process, HOLES["fdm"])
+    stretch = mat.name in ELASTOMERS
+    go = ("Push the bit's smooth shank (the plain end, not the flutes) into each hole by hand from the numbered "
+          "face. Go: it passes all the way through with finger pressure, no twisting or hammering. No-go: it "
+          "stops, or needs forcing. Never force it: a forced hole is spoiled for the rest of the test. ")
+    if stretch:
+        go += ("TPU stretches, so count a hole as go only if the shank slides through without the hole "
+               "visibly stretching or the coupon bending. ")
+    go += ("Write true (go) or false (no-go) for each hole in order, 1 first. If you print two, give one "
+           "list per copy.")
+    out = []
+    ladders = {}
+    for cid, title, bias, where in (("H-XY", "hole ladder, printed flat", holes["bias"], "along the build"),
+                                    ("H-Z", "hole ladder, printed on its long edge", holes["biasAcross"],
+                                     "across the layers")):
+        drawn = _hole_ladder(bias, D, h)
+        ladders[cid] = drawn
+        man, L = _hole_plate(drawn, chamfer=(cid == "H-XY"), h=h)
+        if cid == "H-Z":
+            man = _on_edge(man)
+        m = _to_trimesh(man)
+        first = _predicted_first(drawn, bias, D)
+        out.append(Coupon(
+            cid, title, m,
+            test=(f"Needs a {D:g} mm drill bit (or any smooth rod of known size: a dowel pin, a bearing's "
+                  "shaft; write its size in gaugeDiameter). " + go),
+            measure={"gauge": f"{D:g} mm drill bit shank", "gaugeDiameter": D, "drawn": drawn,
+                     "go": [None] * len(drawn), "smallestGo": None},
+            predicted={"massG": round(float(m.volume) * mat.density / 1000, 2), "firstGo": first,
+                       "bias": bias, "stressing": where,
+                       "note": "design-guide bias (fits.HOLES), not this printer's"},
+            geometry={"drawn": drawn, "gauge": D, "step": h["step"], "pitch": h["pitch"],
+                      "thickness": h["thickness"], "length": L, "orientation": where}))
+    pegs = ladders["H-XY"][:h["pegs"]]
+    man, L = _peg_strip(pegs, h)
+    m = _to_trimesh(man)
+    # a peg prints about its drawn size (FDM perimeters squash out a little,
+    # powder sinters on): assume 0 until measured
+    hx = ladders["H-XY"]
+    enters = [_predicted_first(hx, holes["bias"], p) for p in pegs]
+    out.append(Coupon(
+        "H-PEG", "pegs, printed standing", m,
+        test=("After H-XY: for each peg, find the smallest H-XY hole it slides into by hand, all the way "
+              "(as for the bit: no forcing, try from the numbered face). Write that hole's number per peg, "
+              "or null if it fits none. This reads the clearance a printed pin needs in a printed hole."),
+        measure={"drawn": pegs, "entersHole": [None] * len(pegs)},
+        predicted={"massG": round(float(m.volume) * mat.density / 1000, 2), "entersHole": enters,
+                   "note": "assumes pegs print at their drawn size and H-XY holes at the design-guide bias"},
+        geometry={"drawn": pegs, "height": h["pegHeight"], "pitch": h["pitch"], "length": L,
+                  "holes": "H-XY"}))
+    return out
+
+
+def _go_threshold(pairs):
+    """The drawn diameter at which a hole starts to pass the gauge, from
+    (drawn, went) pairs: the cut between no-go below and go above that
+    misreads fewest holes (scatter leaves a mixed zone; the middle of the
+    best cuts is taken). Returns (threshold, half-width of what it could
+    be, a note) with threshold None when every hole read the same."""
+    pairs = sorted((float(d), bool(g)) for d, g in pairs)
+    ds = sorted({d for d, _ in pairs})
+    if not ds:
+        return None, None, "no readings"
+    if all(g for _, g in pairs):
+        return None, None, f"every hole passed: the gauge fits even {ds[0]:.2f} mm (the ladder is too big)"
+    if not any(g for _, g in pairs):
+        return None, None, f"no hole passed: the gauge is over {ds[-1]:.2f} mm as built (the ladder is too small)"
+    cuts = [ds[0] - 1.0] + [0.5 * (a + b) for a, b in zip(ds, ds[1:])] + [ds[-1] + 1.0]
+    errs = [sum((d < c and g) or (d > c and not g) for d, g in pairs) for c in cuts]
+    best = min(errs)
+    good = [c for c, e in zip(cuts, errs) if e == best]
+    t = float(np.mean(good))
+    # the cut is known to within the gap round it
+    i = int(np.argmin([abs(c - t) for c in cuts]))
+    lo = ds[i - 1] if i > 0 else ds[0]
+    hi = ds[i] if i < len(ds) else ds[-1]
+    half = 0.5 * (max(good) - min(good)) + 0.5 * (hi - lo)
+    note = None
+    if best:
+        note = f"{best} hole(s) out of order: the printer's scatter is about the width of the mixed zone"
+    return t, half, note
+
+
+def _go_pairs(e):
+    """(drawn, went) pairs from a filled-in H-XY / H-Z entry: `go` as one
+    list or a list per copy, or just the smallest hole that passed."""
+    drawn = e.get("drawn") or []
+    rows = e.get("go")
+    pairs = []
+    if rows and isinstance(rows[0], list):
+        lists = rows
+    else:
+        lists = [rows or []]
+    for row in lists:
+        for d, g in zip(drawn, row):
+            if g is not None:
+                pairs.append((d, bool(g)))
+    if not pairs and e.get("smallestGo"):
+        k = int(e["smallestGo"])
+        pairs = [(d, i + 1 >= k) for i, d in enumerate(drawn)]
+    return pairs
+
+
+def fit_holes(coupons: dict) -> dict | None:
+    """The printer's hole bias from filled-in H-XY / H-Z go/no-go readings
+    (as built minus drawn diameter: the gauge's diameter minus the drawn
+    size at which holes start to pass it), and from H-PEG the drawn
+    clearance a printed peg needs to slide into a printed hole, and the
+    pegs' own bias. None when no hole coupon was read."""
+    out, ev = {}, {}
+    for cid, key in (("H-XY", "bias"), ("H-Z", "biasAcross")):
+        e = coupons.get(cid) or {}
+        pairs = _go_pairs(e)
+        if not pairs:
+            continue
+        D = float(e.get("gaugeDiameter") or _HOLE["gauge"])
+        t, half, note = _go_threshold(pairs)
+        row = {"gaugeDiameter": D, "readings": len(pairs)}
+        if t is None:
+            row["note"] = note
+        else:
+            row.update(threshold=round(t, 3), bias=round(D - t, 3), resolution=round(half, 3))
+            if note:
+                row["note"] = note
+            out[key] = round(D - t, 3)
+        ev[cid] = row
+    e = coupons.get("H-PEG") or {}
+    hx = (coupons.get("H-XY") or {}).get("drawn")
+    cl = []
+    if hx and e.get("drawn") and any(v is not None for v in e.get("entersHole") or []):
+        pev = []
+        for p, j in zip(e["drawn"], e.get("entersHole") or []):
+            if j is None:
+                continue
+            j = int(j)
+            if j <= 0 or j > len(hx):
+                pev.append({"peg": p, "note": "fits no hole"})
+                continue
+            # it went into hole j and not j-1: the cut sits between them
+            t = 0.5 * (hx[j - 2] + hx[j - 1]) if j > 1 else None
+            if t is None:
+                pev.append({"peg": p, "entersHole": j, "note": "entered the smallest hole: clearance at most "
+                                                               f"{hx[0] - p:.2f} mm"})
+                continue
+            cl.append(t - p)
+            pev.append({"peg": p, "entersHole": j, "clearance": round(t - p, 3)})
+        ev["H-PEG"] = {"pegs": pev}
+        if cl:
+            c = float(np.mean(cl))
+            out["printedSlipClearance"] = round(c, 3)
+            if "bias" in out:
+                # hole built = drawn + b_h; peg built = drawn + b_p; slip at
+                # built hole = built peg: b_p = c + b_h
+                out["pegBias"] = round(c + out["bias"], 3)
+    if not ev:
+        return None
+    out["evidence"] = ev
+    return out
 
 
 def _crush_spec(mat, process):
@@ -752,6 +1036,17 @@ def fit(measurements: dict, predictions: dict | None = None, name: str | None = 
         process["stiffnessAcrossLayers"] = round(float(min(ez, 1.0)), 3)
     else:
         kept.append(f"stiffnessAcrossLayers (no F-Z points; default {_LAYER_STIFFNESS.get(proc, (1.0,))[0]})")
+    holes = fit_holes(co)
+    if holes is not None:
+        if "bias" in holes:
+            process["holeBias"] = holes["bias"]
+        if "biasAcross" in holes:
+            process["holeBiasAcross"] = holes["biasAcross"]
+            if "bias" not in holes:
+                process["holeBias"] = holes["biasAcross"]
+                kept.append("hole bias along the build (no H-XY readings; H-Z's used for both)")
+    if "holeBias" not in process and any(k.startswith("H-") for k in co):
+        kept.append("hole bias (no H-XY or H-Z go/no-go readings; fits.py's design-guide default)")
     crush = fit_crush(co, mat, base, proc)
     creep = fit_creep(co, base, proc)
     if creep is None and any(k.startswith("K-") for k in co):
@@ -770,6 +1065,7 @@ def fit(measurements: dict, predictions: dict | None = None, name: str | None = 
         "lattice": lat,
         "crush": crush,
         "creep": creep,
+        "holes": holes,
         "parts": parts,
         # a part's measured stiffness over verify's, both at the calibrated
         # modulus: what the voxel model, bonded joints and slicer fill miss

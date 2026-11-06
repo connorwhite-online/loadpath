@@ -8,9 +8,10 @@ and nothing in the evals is a physical measurement (finding #4 in
 closes that loop with coupons you can test at home and a fit that writes a
 calibrated card.
 
-You need a kitchen scale, calipers, a few weights you can hang (water
-bottles weighed on the scale are fine), a ruler, and a luggage scale with a
-max-hold for the break tests.
+You need a kitchen scale, a few weights you can hang (water bottles weighed
+on the scale are fine), a ruler, a luggage scale with a max-hold for the
+break tests, and a 5 mm drill bit for the hole-fit coupons. Calipers help
+but are optional: without them the fit uses the coupons' designed sizes.
 
 ## 1. Print the kit
 
@@ -25,6 +26,9 @@ python -m loadpath calibrate kit --material petg --out calibration/
 | T-XY | flat, two copies | pull to break with a luggage scale | tensile strength |
 | T-Z | standing, two copies | the same | strength across layers (`interlayer`) |
 | L-GY | flat | cantilever with a gyroid core | how a printed lattice compares with `lattice.SHEETS` |
+| H-XY | flat | push a 5 mm drill bit's shank through 12 numbered holes, write go / no-go | hole bias along the build (`holeBias`) |
+| H-Z | on its long edge | the same | hole bias across the layers (`holeBiasAcross`) |
+| H-PEG | standing | the smallest H-XY hole each peg goes into | the drawn clearance a printed pin needs in a printed hole |
 | X-.. (with `--crush`) | either | crush under growing weight | the lattice crush plateau for impact.py (see below) |
 | K-25 (with `--crush`, TPU only) | upright | a dead weight for a week, read the height | TPU creep rate for viscoelastic.py (see below) |
 
@@ -45,6 +49,31 @@ the modulus. Measure each beam's width and thickness with calipers: the
 modulus goes as 1/thickness³, so 0.1 mm on a 5 mm beam is 6%. A break that
 starts at a hole or a taper instead of the gauge is flagged (it reads low).
 
+### Hole fits (go / no-go, no calipers)
+
+A printed hole is not the hole that was drawn (fits.py: FDM holes come out a
+few tenths small, more across the layers; powder sinters onto SLS walls).
+The H coupons measure your printer's error with a drill bit, whose shank is
+ground to a few hundredths of a millimetre. H-XY's holes are drawn 0.05 mm
+apart round the bit's size (the starting guess puts the change near hole
+6); push the smooth shank into each hole by hand from the numbered face and
+write `true` (it passes all the way through with finger pressure) or
+`false` (it stops, or needs forcing; never force it) in `go`, hole 1 first.
+`smallestGo` (the first hole that passed) is enough on its own. The bias is
+the bit's diameter minus the drawn size at which holes start to pass it,
+good to +-0.025 mm; print two copies and give a list per copy to see the
+scatter (holes out of order are counted and noted). With a different bit or
+pin, set `gaugeDiameter`, or make the kit round it with
+`calibrate kit --hole-gauge 4.76` (a 3/16" bit) so the change stays inside
+the row. For TPU count a hole as go only if the shank slides through
+without stretching it.
+
+H-PEG's pegs are drawn at H-XY's first four sizes. For each, write the
+number of the smallest H-XY hole it slides into (`entersHole`): that gives
+`holes.printedSlipClearance`, the drawn hole-minus-peg clearance a printed
+pin needs to slide in a printed hole (hinges, print-in-place), and with
+H-XY the pegs' own bias.
+
 ## 3. Fit
 
 ```bash
@@ -56,7 +85,8 @@ The fit uses closed-form beam theory, not the voxel model, so the card is
 measured independently of the solver it feeds. It writes a card with:
 
 - `material`: E, strength, density, pasteable into any study as a custom material;
-- `process`: `interlayer` and `stiffnessAcrossLayers` for that printer;
+- `process`: `interlayer` and `stiffnessAcrossLayers` for that printer, and `holeBias` / `holeBiasAcross` from the hole coupons (every fitted hole in a study on this card is then drawn for them, fits.py);
+- `holes`: the hole-fit evidence, `printedSlipClearance` and `pegBias`;
 - `lattice.stiffnessFactor`: printed gyroid stiffness over the homogenized model, at the density that actually printed (wall-width error taken out);
 - `parts` and `modelFactor.stiffness`: for each part test, measured stiffness over verify's prediction at the calibrated modulus: what the voxel model, bonded joints and slicer fill still miss;
 - `kept`: what had no measurement and stayed at the starting card.

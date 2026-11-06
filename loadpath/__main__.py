@@ -73,7 +73,7 @@ def _write_report(out_dir, summary):
 def _calibrate(args):
     from . import calibration as cal
     if args.action == "kit":
-        kit = cal.coupon_kit(args.material, args.process, crush=args.crush)
+        kit = cal.coupon_kit(args.material, args.process, crush=args.crush, hole_gauge=args.hole_gauge)
         paths = cal.write_kit(kit, args.out, args.material, args.process)
         print(json.dumps({"ok": True, "files": paths,
                           "coupons": {c.id: {"title": c.title, "test": c.test, "predicted": c.predicted}
@@ -539,6 +539,8 @@ def main(argv=None):
     cal.add_argument("--material", default="petg", help="kit: the starting card")
     cal.add_argument("--process", default="fdm")
     cal.add_argument("--crush", action="store_true", help="kit: add gyroid crush blocks (impact.py's crush law)")
+    cal.add_argument("--hole-gauge", type=float, default=None,
+                     help="kit: diameter (mm) of the drill bit or pin used on the hole-fit coupons (default 5)")
     cal.add_argument("--out", default="calibration", help="kit: folder for the STLs; fit: folder for the card")
     cal.add_argument("--predictions", help="fit: the kit's predictions.json (adds part-test model factors)")
     cal.add_argument("--name", help="fit: the card's name, usable as a study's material once saved")

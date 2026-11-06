@@ -31,7 +31,7 @@ def _kit():
 
 def test_kit_meshes_are_printable():
     kit = _kit()
-    assert [c.id for c in kit] == ["F-XY", "F-Z", "T-XY", "T-Z", "L-GY"]
+    assert [c.id for c in kit] == ["F-XY", "F-Z", "T-XY", "T-Z", "L-GY", "H-XY", "H-Z", "H-PEG"]
     for c in kit:
         assert c.mesh.is_watertight, c.id
         assert len(c.mesh.split()) == 1, c.id
@@ -92,6 +92,8 @@ def _synthetic(E_scale=0.8, s_scale=1.1, inter=0.5, ez=0.9, dens=1.25, lat_facto
     # a part 25% softer than its prediction (made at the starting E)
     pred = {"parts": {"bracket": {"mmPerKg": 0.4, "E": petg.E, "massG": 30.0}}}
     m["parts"]["bracket"]["points"] = [[kg, 0.4 * petg.E / E / 0.75 * kg] for kg in (0.5, 1, 2)]
+    holes = _hole_readings(_kit(), -0.2, -0.35, 0.0)["coupons"]
+    co.update({k: v for k, v in holes.items() if k.startswith("H-")})
     return m, pred
 
 
@@ -166,7 +168,8 @@ def test_write_kit_and_cli_fit():
         for cid in ("F-XY", "F-Z", "T-XY", "T-Z", "L-GY"):
             assert os.path.getsize(paths[cid]) > 1000
         tmpl = json.load(open(paths["measurements"]))
-        assert set(tmpl["coupons"]) == {"F-XY", "F-Z", "T-XY", "T-Z", "L-GY"}
+        assert set(tmpl["coupons"]) == {"F-XY", "F-Z", "T-XY", "T-Z", "L-GY", "H-XY", "H-Z", "H-PEG"}
+        assert tmpl["coupons"]["H-XY"]["go"] == [None] * 12
         m, _ = _synthetic()
         mp = os.path.join(d, "filled.json")
         json.dump(m, open(mp, "w"))
@@ -267,6 +270,104 @@ def test_creep_fit_recovers_the_rate_and_the_card_uses_it():
             assert float(creep_factor(mat, 3600.0)) > float(creep_factor(tpu, 3600.0))
         finally:
             calibration.CALIBRATION_DIR = old
+
+
+def _hole_readings(kit, b_xy, b_z, b_peg, scatter=0.0, copies=1, seed=3):
+    """Go/no-go readings a printer whose holes print b_xy / b_z off (as built
+    minus drawn) and pegs b_peg off would give with the 5 mm bit."""
+    rng = np.random.default_rng(seed)
+    m = cal.measurement_template(kit, "petg", "fdm")
+    co = m["coupons"]
+    for cid, b in (("H-XY", b_xy), ("H-Z", b_z)):
+        D = co[cid]["gaugeDiameter"]
+        rows = [[bool(d + b + scatter * rng.normal() >= D) for d in co[cid]["drawn"]] for _ in range(copies)]
+        co[cid]["go"] = rows if copies > 1 else rows[0]
+    hx = co["H-XY"]["drawn"]
+    co["H-PEG"]["entersHole"] = [next((j + 1 for j, h in enumerate(hx) if h + b_xy >= p + b_peg), None)
+                                 for p in co["H-PEG"]["drawn"]]
+    return m
+
+
+def test_hole_coupons_are_go_no_go_ladders():
+    by = {c.id: c for c in _kit()}
+    for cid in ("H-XY", "H-Z", "H-PEG"):
+        c = by[cid]
+        assert c.mesh.is_watertight and len(c.mesh.split()) == 1, cid
+        assert abs(c.mesh.bounds[0]).max() < 1e-6, cid
+    xy, z = by["H-XY"].geometry["drawn"], by["H-Z"].geometry["drawn"]
+    assert np.allclose(np.diff(xy), 0.05) and len(xy) == 12
+    # the default bias puts the bit's change in the middle of each row
+    assert 4 <= by["H-XY"].predicted["firstGo"] <= 8 and 4 <= by["H-Z"].predicted["firstGo"] <= 8
+    # the edge plate's holes run across the layers (horizontal), sized for the bigger sag
+    assert by["H-Z"].mesh.extents[2] > by["H-Z"].mesh.extents[1] and z[0] > xy[0]
+    # the holes are cut round (no faceting that shrinks them): the plate's
+    # volume is the box less the drawn holes, chamfers and digits
+    g = by["H-XY"].geometry
+    box = g["length"] * 15.0 * g["thickness"]
+    holes = sum(np.pi * d * d / 4 for d in xy) * g["thickness"]
+    assert 0 < box - holes - by["H-XY"].mesh.volume < 0.06 * box
+    assert by["H-PEG"].geometry["drawn"] == xy[:4]
+
+
+def test_hole_fit_recovers_the_bias():
+    kit = _kit()
+    m = _hole_readings(kit, -0.27, -0.41, 0.06)
+    card = cal.fit(m)
+    h = card["holes"]
+    assert abs(h["bias"] + 0.27) <= 0.026, h
+    assert abs(h["biasAcross"] + 0.41) <= 0.026, h
+    assert card["process"]["holeBias"] == h["bias"] and card["process"]["holeBiasAcross"] == h["biasAcross"]
+    assert h["evidence"]["H-XY"]["resolution"] <= 0.026
+    # printed peg in printed hole: the drawn clearance is b_peg - b_hole
+    assert abs(h["printedSlipClearance"] - 0.33) <= 0.026, h
+    assert abs(h["pegBias"] - 0.06) <= 0.05, h
+    # scattered readings from two copies still land within a step, and say so
+    m = _hole_readings(kit, -0.22, -0.35, 0.0, scatter=0.04, copies=2)
+    h = cal.fit_holes(m["coupons"])
+    assert abs(h["bias"] + 0.22) <= 0.05 and abs(h["biasAcross"] + 0.35) <= 0.05, h
+    # the smallest hole that passed is enough
+    co = {"H-XY": {"gaugeDiameter": 5.0, "drawn": kit[5].geometry["drawn"], "go": [None] * 12, "smallestGo": 7}}
+    h = cal.fit_holes(co)
+    assert abs(h["bias"] - (5.0 - 0.5 * (co["H-XY"]["drawn"][5] + co["H-XY"]["drawn"][6]))) < 1e-9
+    # every hole passed: no number, a note to re-print a smaller ladder
+    co["H-XY"].update(go=[True] * 12, smallestGo=None)
+    h = cal.fit_holes(co)
+    assert "bias" not in h and "too big" in h["evidence"]["H-XY"]["note"]
+    # no hole readings at all: the default is kept and said so
+    m = cal.measurement_template(kit, "petg", "fdm")
+    card = cal.fit(m)
+    assert card["holes"] is None and any("hole bias" in k for k in card["kept"])
+
+
+def test_card_hole_bias_reaches_fits():
+    from loadpath.fits import expand_fits
+    kit = _kit()
+    card = cal.fit(_hole_readings(kit, -0.12, -0.30, 0.0), name="petg-hole-test")
+    lug = {"designSpace": {"type": "box", "min": [0, -15, -4], "max": [60, 15, 4]},
+           "keepOut": [{"id": "pin", "shape": {"type": "cylinder", "center": [48, 0, 0], "axis": "z",
+                                               "length": 12, "r": 4}, "fit": "slip"}],
+           "material": "petg-hole-test", "process": "fdm"}
+    with tempfile.TemporaryDirectory() as d:
+        old = cal.CALIBRATION_DIR
+        cal.CALIBRATION_DIR = d
+        try:
+            with open(os.path.join(d, "petg-hole-test.json"), "w") as fh:
+                json.dump(card, fh)
+            r = expand_fits(json.loads(json.dumps(lug)))["_fits"][0]
+            assert abs(r["bias"] - card["process"]["holeBias"]) < 1e-9, r
+            lug["keepOut"][0]["shape"]["axis"] = "x"
+            r = expand_fits(json.loads(json.dumps(lug)))["_fits"][0]
+            assert abs(r["bias"] - card["process"]["holeBiasAcross"]) < 1e-9, r
+            # the study's own number wins
+            lug["process"] = {"type": "fdm", "holeBias": -0.05}
+            r = expand_fits(json.loads(json.dumps(lug)))["_fits"][0]
+            assert abs(r["bias"] + 0.05) < 1e-9, r
+            # a card made on another process does not apply
+            lug["process"] = "sls"
+            r = expand_fits(json.loads(json.dumps(lug)))["_fits"][0]
+            assert abs(r["bias"] + 0.175) < 1e-9, r   # SLS default, build direction unknown
+        finally:
+            cal.CALIBRATION_DIR = old
 
 
 def test_rigid_motion_fit():

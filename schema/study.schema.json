@@ -830,6 +830,10 @@
               "type": "number",
               "description": "mm: as-built minus drawn hole diameter on this printer, measured (default per process in fits.py: FDM -0.2 along the build, -0.35 across; SLS -0.15; MJF -0.1; resin -0.05; LPBF -0.1/-0.2)"
             },
+            "holeBiasAcross": {
+              "type": "number",
+              "description": "mm: as holeBias, for holes whose axis runs across the layers (default: holeBias when given, else per process). The calibration kit's H-Z coupon measures it"
+            },
             "holeTolerance": {
               "type": "number",
               "exclusiveMinimum": 0,

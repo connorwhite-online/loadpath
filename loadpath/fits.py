@@ -56,7 +56,10 @@ cast undersize and machined. The numbers in HOLES are conservative design
 guide ranges (Hubs/Protolabs process guides, the HP MJF and Formlabs
 datasheets, typical LPBF and ISO 8062 casting tolerances), not measurements
 of any one machine: the first fit off a new printer is worth a test hole,
-and process.holeBias / process.holeTolerance take the measured values.
+and process.holeBias (holeBiasAcross for holes across the layers) and
+process.holeTolerance take the measured values. calibration.hole_coupons
+prints a go/no-go hole ladder that measures them with a drill bit, and a
+calibrated card's holeBias applies to every study that uses that card.
 """
 from __future__ import annotations
 
@@ -192,8 +195,14 @@ def _process_of(d: dict):
     if kind not in HOLES:
         return None, None, None
     holes = dict(HOLES[kind])
-    if p.get("holeBias") is not None:
-        holes["bias"] = holes["biasAcross"] = float(p["holeBias"])
+    card = _card_process(d, kind)
+    bias = p.get("holeBias", card.get("holeBias"))
+    across = p.get("holeBiasAcross", card.get("holeBiasAcross") if p.get("holeBias") is None else None)
+    if bias is not None:
+        holes["bias"] = holes["biasAcross"] = float(bias)
+        holes["calibrated"] = True
+    if across is not None:
+        holes["biasAcross"] = float(across)
         holes["calibrated"] = True
     if p.get("holeTolerance") is not None:
         holes["tol"], holes["tolPerMm"], holes["repeat"] = float(p["holeTolerance"]), 0.0, 1.0
@@ -211,6 +220,22 @@ def _process_of(d: dict):
     elif build is not None:
         build = np.asarray(build, float) / np.linalg.norm(build)
     return kind, build, holes
+
+
+def _card_process(d: dict, kind: str) -> dict:
+    """A calibrated card's process values (calibration.py: the hole-fit
+    coupons measure holeBias / holeBiasAcross) when the study's material
+    names a saved card made on this process; {} otherwise."""
+    m = d.get("material")
+    if not isinstance(m, str):
+        return {}
+    try:
+        from .calibration import load_card
+        card = load_card(m) or {}
+    except Exception:  # noqa: BLE001  (a bad card must not sink a run)
+        return {}
+    cp = card.get("process") or {}
+    return cp if str(cp.get("type", "")).lower() == kind else {}
 
 
 def _family(d: dict) -> str:
@@ -506,9 +531,9 @@ def _instruction(r: dict) -> str:
     if v == "holds":
         return f"{name}: prints to fit as drawn ({_mm(r['designed'])} mm in the file)"
     if v == "tune":
-        return (f"{name}: holds once the printer's hole size is tuned: print the part (or a test ring) and "
-                f"measure; if the hole is not {_mm(lo)}-{_mm(hi)} mm set process.holeBias to the measured "
-                "minus the drawn diameter")
+        return (f"{name}: holds once the printer's hole size is tuned: print the calibration kit's hole "
+                f"ladder (loadpath calibrate kit, H-XY / H-Z) or the part and check the hole is "
+                f"{_mm(lo)}-{_mm(hi)} mm; set process.holeBias to the measured minus the drawn diameter")
     if v in ("ream", "machine"):
         tool = "ream or drill" if v == "ream" else "bore or ream"
         return f"{name}: {tool} to {_mm(lo)}-{_mm(hi)} mm after {'printing' if v == 'ream' else 'roughing'} " \

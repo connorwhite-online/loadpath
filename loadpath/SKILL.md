@@ -90,9 +90,12 @@ buckling, printability) you can report to the user.
    `process` (or `milling`/`casting`) every other bore is held at its drawn
    size. Plastic fits are wider than ISO; metal ones are ISO 286 (H7/p6,
    H7/k6, H7/g6, H8/f7). Read `deliver.fits` and pass its `instruction`
-   lines on: "ream to 21.82-21.94 mm" or "print a test ring and set
+   lines on: "ream to 21.82-21.94 mm" or "print the kit's hole ladder and set
    process.holeBias" is something the user does after printing. A measured
-   `process.holeBias` (as-built minus drawn diameter) replaces the default.
+   `process.holeBias` (as-built minus drawn diameter; `holeBiasAcross` for
+   holes across the layers) replaces the default. To measure it, the
+   calibration kit's H-XY / H-Z coupons are a numbered hole ladder read
+   go/no-go with a drill bit (no calipers); a calibrated card carries it.
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and
