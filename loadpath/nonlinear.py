@@ -916,8 +916,12 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force,
             k = (k + free @ springs @ free).tocsr()
         else:
             k = (k + sp.diags(np.where(fixed, 0.0, springs))).tocsr()
+    free_memory = None
     if mesh.n_dof <= (DIRECT_MAX_DOF if direct_max_dof is None else direct_max_dof):
-        kinv = _splu(k).solve
+        # PARDISO when pypardiso is installed (loadpath[fast]), else SuperLU
+        from .bucklingopt import _factor
+
+        kinv, free_memory = _factor(k)
     else:
         sol = Solver(mesh, rtol=1e-10, maxiter=3000)
         kinv = lambda r: sol.solve(k, r)  # noqa: E731
@@ -944,6 +948,8 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force,
             big = np.abs(m.reshape(-1, 3)).max() or 1.0
             m /= big
         out.append(BucklingResult(factors=factors, modes=modes, u=u))
+    if free_memory is not None:
+        free_memory()
     return out if many else out[0]
 
 

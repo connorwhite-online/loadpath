@@ -35,3 +35,17 @@ def test_assemble_and_energy_match_numpy(monkeypatch):
         np.testing.assert_array_equal(a.indices, b.indices)
     np.testing.assert_array_equal(e1, e0)
     np.testing.assert_array_equal(f1, f0)
+
+
+def test_gather_assembly_matches_scatter(monkeypatch):
+    # the second assemble onward runs the one-pass gather (femops.gather_plan)
+    monkeypatch.setattr(femops, "_SERIAL_BELOW", 0)
+    mesh, st, rng = _stiff()
+    for _ in range(3):
+        scale = 1e-9 + rng.random(mesh.n_elem) ** 3
+        k = st.assemble(scale)
+        ref = femops.scatter(np.zeros(st.nnz), st._slots, st._blks, scale)
+        ref *= st._keep
+        ref[st._diag_fixed] = 1.0
+        np.testing.assert_array_equal(k.data, ref)
+    assert st._plan is not None

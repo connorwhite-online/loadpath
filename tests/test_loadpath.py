@@ -1304,3 +1304,13 @@ def test_reconstruct_leaves_cast_parts_off_the_axial_pass(monkeypatch):
         d = build_domain(s)
         reconstruct(s, d, np.full(d.mesh.n_elem, 0.6))
         assert len(calls) == want, (extra, calls)
+
+
+def test_constrained_box_waits_for_min_runs():
+    import time as _t
+    from loadpath import study as S
+    past = _t.time() - 10.0
+    assert not S._box_over(past, 100.0, S._AUTO_MIN_RUNS - 1)   # over the box, too few parts
+    assert S._box_over(past, 100.0, S._AUTO_MIN_RUNS)
+    assert S._box_over(past, 5.0, 0)                            # past twice the box: stop anyway
+    assert not S._box_over(_t.time() + 60.0, 60.0, 10)          # inside the box

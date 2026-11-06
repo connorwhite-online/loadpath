@@ -52,7 +52,11 @@ gpu = ["torch>=2.2"]
 # a tool, not part of loadpath's own code) is the fallback mesher
 # lattice-Boltzmann flow and heat transfer (flow.py)
 flow = ["numba>=0.59"]
-crosscheck = ["gmsh>=4.11", "pytetwild>=0.4", "pyvista>=0.44"]
+# (and PARDISO on x86-64, as in `fast`: the buckling check and the constrained
+# method's buckling factorizations; SuperLU ran a wall-bracket search out of
+# a 15 GB box)
+crosscheck = ["gmsh>=4.11", "pytetwild>=0.4", "pyvista>=0.44",
+              "pypardiso>=0.4; platform_machine == 'x86_64' or platform_machine == 'AMD64'"]
 # PARDISO (Intel MKL, x86-64 only) for the buckling constraint's eigensolves
 # (bucklingopt.py) and the lattice buckling tables: 2-3x SuperLU's speed and a
 # fraction of its memory on 3D hex meshes; SuperLU is the fallback

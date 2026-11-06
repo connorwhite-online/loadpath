@@ -199,7 +199,9 @@ def _run_all(jobs, workers):
         return [_candidate(j) for j in jobs]
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
-    with ProcessPoolExecutor(min(workers, len(jobs)), mp_context=mp.get_context("spawn")) as ex:
+    from .study import _share_cores
+    n = min(workers, len(jobs))
+    with _share_cores(n), ProcessPoolExecutor(n, mp_context=mp.get_context("spawn")) as ex:
         return list(ex.map(_candidate, jobs))
 
 

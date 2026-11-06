@@ -421,6 +421,8 @@ class Stiffness:
         # runs over all 64 in one call)
         self._slots = np.empty((64, mesh.n_elem, 9), idx_t)
         self._blks = np.empty((64, 9))
+        self._plan = None   # femops.gather_plan, from the second assemble
+        self._assembled = False
         self._pairs = []
         for a in range(8):
             na = enode[:, a]
@@ -451,7 +453,16 @@ class Stiffness:
         from . import femops
 
         if femops.available():
-            femops.scatter(data, self._slots, self._blks, scale)
+            # a layout assembled once (a verify) scatters directly; one
+            # assembled again (the optimizer, every iteration) builds the
+            # gather plan once and assembles in one parallel pass after
+            if self._plan is None and self._assembled and self.mesh.n_elem >= femops._SERIAL_BELOW:
+                self._plan = femops.gather_plan(self._slots, self.nnz)
+            if self._plan is not None:
+                femops.scatter_gather(data, self._plan, self._blks, scale, self.mesh.n_elem)
+            else:
+                femops.scatter(data, self._slots, self._blks, scale)
+            self._assembled = True
         else:
             s = np.asarray(scale, float)[:, None]
             for slots, blk in self._pairs:

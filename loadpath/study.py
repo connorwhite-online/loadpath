@@ -23,6 +23,7 @@ the current one divided by the margin.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from dataclasses import dataclass, field
@@ -82,6 +83,17 @@ _AUTO_UTILIZATION = 0.15
 _AUTO_UTILIZATION_CUT = 0.19
 # and gives it at most this many times the search's own time
 _AUTO_BUDGET = 3.5
+# ... but no less than this many finished parts (up to twice the box): the
+# box is wall time, so a faster search shortened it while the constrained
+# run did not speed up as much; the coarse wrist yoke's run stopped after 2
+# parts and delivered the search's 19.2 g against 13.3-14.0 g from 5
+_AUTO_MIN_RUNS = 4
+
+
+def _box_over(deadline: float, box: float, done: int) -> bool:
+    """Whether the constrained run's time box is over, `done` parts in."""
+    now = time.time()
+    return now > deadline and (done >= _AUTO_MIN_RUNS or now > deadline + box)
 # The pick of a safety-factor search is checked again on a grid this many
 # cells finer before it is delivered. The in-loop check resolves a fillet
 # only as well as its grid: the robot arm's turret read SF 2.26 there and 1.65 at
@@ -571,6 +583,33 @@ def _study_cells(st: Study) -> int:
     return max(cell_cap(st), _CONFIRM_CELLS if search else 60_000)
 
 
+@contextlib.contextmanager
+def _share_cores(workers: int):
+    """Worker processes started inside this split this process's cores
+    between them: LOADPATH_THREADS (numba kernels, field evaluation) is set
+    to its current value (else the core count) // workers. Each worker
+    otherwise ran a thread per core: three pitch starts on 4 cores ran 12
+    threads, and a compiled kernel's barriers then waited on threads the OS
+    had parked (an arm-link stiffness assembly 0.6 s against 0.05 s on one
+    thread). Workers also start no background tet checks (_TetPrefetch):
+    with every core taken, a mesher per worker only competes for them."""
+    if workers <= 1:
+        yield
+        return
+    saved = {k: os.environ.get(k) for k in ("LOADPATH_THREADS", "LOADPATH_TET_PREFETCH")}
+    have = int(saved["LOADPATH_THREADS"] or (os.cpu_count() or 1))
+    os.environ["LOADPATH_THREADS"] = str(max(1, have // workers))
+    os.environ["LOADPATH_TET_PREFETCH"] = "0"
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def _parallel(studies: list, on_progress, should_stop) -> list:
     """Run independent single-goal studies, in processes when it helps.
     Progress inside a worker is not streamed; each finished outcome is."""
@@ -581,7 +620,7 @@ def _parallel(studies: list, on_progress, should_stop) -> list:
     from concurrent.futures import ProcessPoolExecutor
 
     results = [None] * len(studies)
-    with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as ex:
+    with _share_cores(workers), ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as ex:
         futs = {ex.submit(_solve_alone, s): i for i, s in enumerate(studies)}
         from concurrent.futures import as_completed
         for f in as_completed(futs):
@@ -1050,6 +1089,19 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
 
     goal = study.goal
     st = dataclasses.replace(study, goal=dataclasses.replace(goal, method="search"))
+    cst = dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained"))
+    spec = _Speculative(cst) if _Speculative.wanted(study, st) else None
+    try:
+        return _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search)
+    finally:
+        if spec is not None:
+            spec.cancel()
+
+
+def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> StudyResult:
+    import dataclasses
+
+    goal = study.goal
     # `search` runs the search side (run_study: restarts and pitch starts)
     r = search(st) if search is not None else _run_single(st, on_progress, should_stop)
     choice = {"method": "search"}
@@ -1095,12 +1147,21 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
     if quick.on():
         # a first look: as long as the search took, with no ten-minute floor
         # (the urdf tutorial's quick run spent 20 of its 30 CI minutes here)
-        deadline = time.time() + r.seconds
+        box = r.seconds
     else:
-        deadline = time.time() + max(600.0, budget * r.seconds)
+        box = max(600.0, budget * r.seconds)
+    deadline = time.time() + box
+    done = [0]
+
+    def progress(event, x):
+        if event.get("stage") == "outcome":
+            done[0] += 1
+        if on_progress is not None:
+            on_progress(event, x)
 
     def stop():
-        return time.time() > deadline or (should_stop is not None and should_stop())
+        over = time.time() > deadline if quick.on() else _box_over(deadline, box, done[0])
+        return over or (should_stop is not None and should_stop())
 
     cstudy = dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained"))
     fit = _constrained_fit(cstudy)
@@ -1121,7 +1182,13 @@ def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> 
         from .domain import choose_pitch
         cstudy = dataclasses.replace(cstudy, pitch=max(choose_pitch(st), cstudy.pitch or 0.0))
     try:
-        rc = _run_single(cstudy, on_progress, stop, fallback=False)
+        if spec is not None:
+            # running since the search started (on cstudy: wanted() takes no
+            # quick run and no grid made coarser for memory): the same time
+            # box, from its start
+            rc = spec.finish(box, on_progress, should_stop)
+        else:
+            rc = _run_single(cstudy, progress, stop, fallback=False)
     except Exception as exc:  # noqa: BLE001 - the constrained run is a bonus: any failure keeps the search's part
         choice["reason"] = f"the constrained method failed ({exc})"
         r.choice = choice
@@ -1178,9 +1245,312 @@ def _constrained_fit(study: Study) -> dict | None:
     return {"pitch": p * (n / cells) ** (1.0 / 3.0) * 1.01}
 
 
+def _constrained_main(work: str) -> None:
+    """Child process entry (_Speculative): the constrained method on the
+    study in `work`/in.pkl, its progress events to `work`/events.jsonl,
+    stopping at the epoch time in `work`/deadline (once written) or when
+    `work`/stop appears; writes `work`/out.pkl ("ok", StudyResult) or
+    ("error", exc)."""
+    import json
+    import pickle
+
+    with open(os.path.join(work, "in.pkl"), "rb") as fh:
+        study = pickle.load(fh)
+    events = open(os.path.join(work, "events.jsonl"), "a")
+
+    done = [0]
+
+    def note(event, _x=None):
+        if event.get("stage") == "outcome":
+            done[0] += 1
+        try:
+            events.write(json.dumps(event, default=float) + "\n")
+            events.flush()
+        except (TypeError, ValueError, OSError):
+            pass
+
+    def stop():
+        if os.path.exists(os.path.join(work, "stop")):
+            return True
+        try:
+            with open(os.path.join(work, "deadline")) as fh:
+                deadline, box = (float(x) for x in fh.read().split())
+            return _box_over(deadline, box, done[0])
+        except (OSError, ValueError):
+            return False
+
+    try:
+        out = ("ok", _run_single(study, note, stop, fallback=False))
+        for o in out[1].outcomes:
+            o.xphys = None   # not needed back; the pickle stays small
+    except Exception as exc:  # noqa: BLE001 - raised again in the search's process
+        out = ("error", exc)
+    with open(os.path.join(work, "out.tmp.pkl"), "wb") as fh:
+        pickle.dump(out, fh)
+    os.replace(os.path.join(work, "out.tmp.pkl"), os.path.join(work, "out.pkl"))
+
+
+class _Speculative:
+    """goal.method auto's constrained run, started beside the search rather
+    than after it. Whether it runs at all depends on the search's pick (its
+    stress utilization), but it does not start from anything the search
+    finds, and the search of a single grid keeps about one core of four
+    busy: on the robot-arm turret the constrained method ran 50+ minutes
+    after a 17-minute search. Started together, it has the search's time
+    in hand; dropped (killed) when the pick says it does not apply. Its
+    time box is the same, counted from its own start. Only where a core is
+    free for it: one grid (pitch starts run a process each), at least 3
+    cores and LOADPATH_THREADS (when set) at least 3, and memory to spare.
+    LOADPATH_SPECULATE=0 turns it off."""
+
+    def __init__(self, study: Study):
+        import pickle
+        import subprocess
+        import sys
+        import tempfile
+
+        self.work = tempfile.mkdtemp(prefix="loadpath-constrained-")
+        self.t0 = time.time()
+        self.read = 0
+        with open(os.path.join(self.work, "in.pkl"), "wb") as fh:
+            pickle.dump(study, fh)
+        cores = os.cpu_count() or 1
+        pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = dict(os.environ, LOADPATH_THREADS=str(max(1, cores // 2)), LOADPATH_SPECULATE="0",
+                   PYTHONPATH=os.pathsep.join([pkg_parent] + [x for x in [os.environ.get("PYTHONPATH")] if x]))
+        code = "import sys; from loadpath.study import _constrained_main; _constrained_main(sys.argv[1])"
+        with open(os.path.join(self.work, "log.txt"), "wb") as log:
+            self.proc = subprocess.Popen([sys.executable, "-c", code, self.work], env=env, stdout=log,
+                                         stderr=subprocess.STDOUT, start_new_session=True)
+
+    @staticmethod
+    def wanted(study: Study, st: Study) -> bool:
+        from . import quick
+        if os.environ.get("LOADPATH_SPECULATE", "1") == "0" or not _constrained_applies(study) or quick.on():
+            return False
+        cores = os.cpu_count() or 1
+        env = os.environ.get("LOADPATH_THREADS")
+        if cores < 3 or (env and int(env) < 3):
+            return False
+        if pitch_starts(st) > 1 or len(study.materials or [study.material]) > 1:
+            return False
+        import dataclasses
+        cst = dataclasses.replace(study, goal=dataclasses.replace(study.goal, method="constrained"))
+        if _constrained_fit(cst) is not None:
+            return False   # its grid is made coarser to fit, or it is skipped
+        avail = _available_bytes()
+        return avail is None or avail > 2 * _run_bytes(_study_cells(study))
+
+    def _replay(self, on_progress) -> None:
+        import json
+
+        try:
+            with open(os.path.join(self.work, "events.jsonl")) as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            return
+        for line in lines[self.read:]:
+            self.read += 1
+            if on_progress is not None:
+                try:
+                    on_progress(json.loads(line), None)
+                except ValueError:
+                    pass
+
+    def finish(self, seconds: float, on_progress=None, should_stop=None) -> StudyResult:
+        """Its result, time-boxed to `seconds` from its start (raising what
+        it raised)."""
+        import pickle
+
+        with open(os.path.join(self.work, "deadline.tmp"), "w") as fh:
+            fh.write(f"{self.t0 + seconds!r} {seconds!r}")
+        os.replace(os.path.join(self.work, "deadline.tmp"), os.path.join(self.work, "deadline"))
+        try:
+            while self.proc.poll() is None:
+                self._replay(on_progress)
+                if should_stop is not None and should_stop():
+                    open(os.path.join(self.work, "stop"), "w").close()
+                try:
+                    self.proc.wait(1.0)
+                except Exception:  # noqa: BLE001 - subprocess.TimeoutExpired
+                    pass
+            self._replay(on_progress)
+            try:
+                with open(os.path.join(self.work, "out.pkl"), "rb") as fh:
+                    kind, val = pickle.load(fh)
+            except (OSError, EOFError, pickle.UnpicklingError):
+                raise RuntimeError(f"the constrained run's process exited with code {self.proc.returncode}")
+        finally:
+            self.cancel()
+        if kind == "error":
+            raise val
+        return val
+
+    def cancel(self) -> None:
+        import shutil
+        import signal
+
+        if self.proc.poll() is None:
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            except (AttributeError, OSError):
+                self.proc.kill()
+            self.proc.wait()
+        shutil.rmtree(self.work, ignore_errors=True)
+
+
+def _prefetch_main(work: str) -> None:
+    """Child process entry (_TetPrefetch): cross-check the outcome in
+    `work`/in.pkl, write `work`/out.pkl ("ok", result) or ("error", exc)."""
+    import pickle
+
+    import trimesh
+
+    from .crosscheck import crosscheck
+
+    with open(os.path.join(work, "in.pkl"), "rb") as fh:
+        study, v, f, band = pickle.load(fh)
+    try:
+        out = ("ok", crosscheck(study, trimesh.Trimesh(v, f, process=False), contact_band=band))
+    except Exception as exc:  # noqa: BLE001 - raised again in the search's process
+        out = ("error", exc)
+    with open(os.path.join(work, "out.tmp.pkl"), "wb") as fh:
+        pickle.dump(out, fh)
+    os.replace(os.path.join(work, "out.tmp.pkl"), os.path.join(work, "out.pkl"))
+
+
+class _TetPrefetch:
+    """Tet cross-checks of outcomes the search may confirm later, started in
+    a background process as each outcome comes out, while the search
+    optimizes the next fraction. The search confirms its picks only once
+    its fraction loop ends (the MBB beam's first part, at 30%, was
+    confirmed five optimizations later), and the optimizer keeps about one
+    core of four busy, so the mesher and the quadratic solve, a fifth to
+    a quarter of a search, ran on cores that sat idle. Same function, same
+    inputs (fTetWild's mesh is cached by surface in either process), so
+    the same readings; an outcome never prefetched is checked inline as
+    before. One at a time, the lightest passing part's: a lighter one
+    that passes stops the heavier one's check. Only where a core is free
+    (LOADPATH_THREADS, when set, at least 2). A plain subprocess,
+    not multiprocessing: spawning re-runs a caller's script that has no
+    __main__ guard. LOADPATH_TET_PREFETCH=0 turns it off."""
+
+    def __init__(self):
+        self.jobs = []      # [outcome, work dir, Popen or None (queued)]
+        # only with a core to spare: not in a pitch start's worker
+        # (study._share_cores) or an eval case on one core (evals --jobs)
+        cores = int(os.environ.get("LOADPATH_THREADS") or (os.cpu_count() or 1))
+        self.on = os.environ.get("LOADPATH_TET_PREFETCH", "1") != "0" and cores >= 2
+
+    def submit(self, study: Study, o, band: float) -> None:
+        if not self.on or getattr(o, "mesh", None) is None or any(j[0] is o for j in self.jobs):
+            return
+        avail = _available_bytes()
+        if avail is not None and avail < 3e9:
+            return   # not with the memory for a second solve
+        import pickle
+        import tempfile
+
+        work = tempfile.mkdtemp(prefix="loadpath-tets-")
+        with open(os.path.join(work, "in.pkl"), "wb") as fh:
+            pickle.dump((study, np.asarray(o.mesh.vertices, np.float64), np.asarray(o.mesh.faces, np.int64),
+                         float(band)), fh)
+        self.jobs.append([o, work, None])
+        self._start()
+
+    def drop(self, o) -> None:
+        """Forget `o`'s job (stopping it if it runs): a lighter part passed."""
+        for j in list(self.jobs):
+            if j[0] is o:
+                self._remove(j)
+
+    def _start(self) -> None:
+        """Start the newest queued job when none is running."""
+        if any(j[2] is not None and j[2].poll() is None for j in self.jobs):
+            return
+        queued = [j for j in self.jobs if j[2] is None]
+        if not queued:
+            return
+        import subprocess
+        import sys
+
+        j = queued[-1]
+        # the cores the search leaves: it keeps about one busy
+        threads = max(1, int(os.environ.get("LOADPATH_THREADS") or (os.cpu_count() or 1)) - 1)
+        pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = dict(os.environ, LOADPATH_THREADS=str(threads),
+                   PYTHONPATH=os.pathsep.join([pkg_parent] + [x for x in [os.environ.get("PYTHONPATH")] if x]))
+        code = "import sys; from loadpath.study import _prefetch_main; _prefetch_main(sys.argv[1])"
+        log = open(os.path.join(j[1], "log.txt"), "wb")
+        try:
+            j[2] = subprocess.Popen([sys.executable, "-c", code, j[1]], env=env, stdout=log,
+                                    stderr=subprocess.STDOUT, start_new_session=True)
+        except OSError:
+            self.on = False
+            self._remove(j)
+        finally:
+            log.close()
+
+    def take(self, o) -> dict | None:
+        """The prefetched cross-check of `o` (raising what it raised), or
+        None when there is none: queued or not prefetched, it is checked
+        inline (and a queued job is dropped)."""
+        import pickle
+
+        j = next((j for j in self.jobs if j[0] is o), None)
+        if j is None:
+            return None
+        if j[2] is None:
+            self._remove(j)
+            return None
+        j[2].wait()
+        out = os.path.join(j[1], "out.pkl")
+        try:
+            with open(out, "rb") as fh:
+                kind, val = pickle.load(fh)
+        except (OSError, EOFError, pickle.UnpicklingError):
+            kind, val = None, None   # the child died (memory): check inline
+        self._remove(j)
+        self._start()
+        if kind == "error":
+            raise val
+        return val if kind == "ok" else None
+
+    def _remove(self, j) -> None:
+        import shutil
+
+        p = j[2]
+        if p is not None and p.poll() is None:
+            self._kill(p)
+        shutil.rmtree(j[1], ignore_errors=True)
+        self.jobs.remove(j)
+
+    @staticmethod
+    def _kill(p) -> None:
+        import signal
+
+        try:
+            os.killpg(p.pid, signal.SIGKILL)   # with fTetWild's own child
+        except (AttributeError, OSError):
+            p.kill()
+        p.wait()
+
+    def close(self) -> None:
+        for j in list(self.jobs):
+            self._remove(j)
+
+
 def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool = True) -> StudyResult:
     if study.goal.method == "auto":
         return _run_auto(study, on_progress, should_stop)
+    prefetch = _TetPrefetch()
+    try:
+        return _search(study, on_progress, should_stop, fallback, prefetch)
+    finally:
+        prefetch.close()
+
+
+def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _TetPrefetch) -> StudyResult:
     t0 = time.time()
 
     def emit(event, field_=None):
@@ -1396,7 +1766,28 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         started = True
         emit({"stage": "outcome", **o.summary()})
         _save_partial(o)
+        prefetch_tets(o)
         return o
+
+    tets_planned = []
+
+    def prefetch_tets(o: Outcome) -> None:
+        """Start `o`'s tet cross-check in the background (_TetPrefetch) when
+        the search may confirm it: it passes as read now, in one piece."""
+        if not tets_planned:
+            tets_planned.append(bool(prefetch.on and study.goal.safety_factor is not None
+                                     and study.goal.method != "constrained" and _confirm_on_tets(study, [])))
+        if not tets_planned[0] or not o.passes or not o.voxel_sf or o.report.get("bodies", 1) > 1 \
+                or getattr(o, "tet_k", None) is not None:
+            return
+        from .crosscheck import element_size
+
+        # a lighter passing part is the likelier pick: heavier ones' checks
+        # stop (they are checked inline if they are picked after all)
+        for q in outcomes:
+            if q.volume_fraction > o.volume_fraction:
+                prefetch.drop(q)
+        prefetch.submit(study, o, max(2.0 * element_size(study), 1.5 * domain.pitch))
 
     def _confirm(o: Outcome) -> float:
         # a replayed design's mesh is the one confirmed before: rescale that reading
@@ -1449,7 +1840,9 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
         # MPa at its real peak mid-span beyond the band.)
         band = max(2.0 * element_size(study), 1.5 * domain.pitch)
         try:
-            cc = crosscheck(study, o.mesh, contact_band=band)
+            cc = prefetch.take(o)
+            if cc is None:
+                cc = crosscheck(study, o.mesh, contact_band=band)
         except Exception as exc:  # noqa: BLE001 - a mesher or solver failure means: confirm on voxels instead
             o.report.setdefault("warnings", []).append(f"tetrahedral confirmation failed: {exc}")
             return None
@@ -1578,6 +1971,7 @@ def _run_single(study: Study, on_progress=None, should_stop=None, fallback: bool
             m = _margin(study, {**r, "safetyFactor": o.voxel_sf * k})
         r["margin"] = m
         o.passes = bool(m >= 1.0) and _whole(r)
+        prefetch_tets(o)
 
     def run_constrained(limits, x0) -> Outcome:
         from .constrained import optimize_constrained

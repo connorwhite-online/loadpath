@@ -291,9 +291,11 @@ Made another way: the same arm link printed, cast (no undercuts along z), 3-axis
   (`loadpath calibrate`).
 - Results depend on the grid: mass at a target safety factor moves about
   5% with small changes of grid size or starting point.
-- Pure Python with NumPy and SciPy. A 40,000-cell study takes a few minutes
-  on one laptop core; a safety-factor search runs several of those, and the
-  larger eval parts take 15-60 minutes on four cores.
+- Pure Python with NumPy, SciPy and numba kernels. A 40,000-cell study takes
+  a few minutes; a safety-factor search runs several of those and confirms
+  its pick on a tetrahedral mesh, so the larger eval parts take 15-60
+  minutes on four cores. The search uses idle cores for the next step's
+  checks ([wall time](docs/BENCHMARKS.md#wall-time-where-a-runs-minutes-go-2026-11-06)).
 
 ## Tests
 

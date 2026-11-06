@@ -290,6 +290,66 @@ What it says:
   air heat sink results above used the conservative form, which balances
   globally by construction.
 
+## Wall time: where a run's minutes go (2026-11-06)
+
+An agent waits on `loadpath run` (or `loadpath_start` and polling), so the
+wall time of one study matters as much as the mass it finds. Profiled on the
+4-core, 15 GB cloud box (py-spy over full-tier MBB beam and printed hook,
+stage timestamps on the arm link, wrist yoke and turret), a safety-factor
+search spends its time in the optimizer (about 40%), fTetWild's tet mesh for
+the confirm (about 20%), the voxel verify after every outcome (20-25%) and
+the quadratic tet solve (about 7%). Two things wasted the rest:
+
+- **Cores fighting each other.** Every worker process ran one compiled-kernel
+  thread per core, so three pitch starts on four cores ran twelve threads, and
+  a kernel's barriers waited on threads the OS had parked: one arm-link
+  stiffness assembly took 0.6 s against 0.05 s on one thread. Worker
+  processes now split the cores (`LOADPATH_THREADS` = cores / workers, also
+  for `evals --jobs`), and the assembly is one parallel pass over the matrix
+  instead of 64 (same bits).
+- **Cores sitting idle.** A one-grid search (larger parts; small ones run
+  three pitch starts, one process each) keeps about one core of four
+  busy. The tet cross-check of each passing outcome now starts in a
+  background process while the search optimizes the next fraction (the
+  search confirms its picks only after its fraction loop, so the confirm is
+  often ready when asked for); the buckling check runs beside the verify's
+  stress solve; CSR matrix-vector products run on every core (same bits);
+  and goal.method auto starts its constrained run beside the search instead
+  of after it, killing it when the search's part says it does not apply.
+  The constrained method's buckling factorizations at 150k+ cells were the
+  turret's long pole: PARDISO (now part of `loadpath[crosscheck]` on x86-64)
+  replaces SuperLU there and in the buckling check, and SuperLU ran the wall
+  bracket's constrained run out of the 15 GB box.
+
+Old code (8b79a82) against new, same box, no tet cache, one case at a time
+the way an agent runs it (full tier):
+
+| Case | Old s | New s | Mass old / new g |
+| --- | --- | --- | --- |
+| MBB beam | 2640 | 2014 | 15.6 / 15.7 |
+| Printed hook | 1756 | 1790 | 29.4 / 29.4 |
+| Robot-arm wrist yoke | 714 | 585 | 17.3 / 17.3 |
+| Wall bracket | out of memory at 30 min | 1887 | - / 27.3 |
+
+The coarse eval tier (four cases at once, so no idle cores to borrow) went
+from 37,676 to 35,739 case-seconds, with the turret 3301 -> 2307 s, the upper
+arm 6247 -> 5417 s and the wall bracket 2919 -> 2389 s; 15 of its 20 cases
+came out at the same mass. The ones that moved are cases known to be noisy
+from run to run, and the wrist yoke shows why. Its search reads its parts'
+stress on fTetWild meshes, and fTetWild is not repeatable, so the search
+picks a different fraction from run to run. Given the old run's tet meshes
+(its tet cache), the new code found the same 15 search parts, to the last
+digit. That pick then decides whether goal.method auto runs the constrained
+method. The old code gave 13.3, 13.4, 13.6 and 19.3 g over four runs; the
+new code gave 13.3, 13.3, 14.0, 14.1 g and five runs at 17.7-19.4 g. One
+real bug showed up along the way. The constrained run's time box is wall
+time, a multiple of the search's. A faster search, or a busy box, left it
+2 parts (19.3 g old, 19.2 g new, against 13-14 g from 5 parts). It now
+always finishes 4 parts, stopping at twice the box at most. What is left: fTetWild itself (100+ s a confirm
+on the arm link; a 70% lighter input surface saved 15%), the verify's cut-cell
+solve, and the optimizer's Gauss-Seidel, which runs on one core per load case.
+`LOADPATH_TET_PREFETCH=0` and `LOADPATH_SPECULATE=0` turn the background work off.
+
 ## Pitch sensitivity: one grid is a sample
 
 A safety-factor search's answer moves a lot with sub-percent changes of the

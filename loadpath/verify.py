@@ -1138,6 +1138,18 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     def solve(moduli, rhs):
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)
 
+    # The buckling check (below) needs the stress solve only for a force of
+    # unknown direction (its worst direction): otherwise it runs on a
+    # thread beside the stress solve (its own grid and factorization, a
+    # fifth of a verify on the arm link).
+    goal_sf = study.goal.safety_factor
+    early_bk = None
+    if goal_sf and not study.self_equilibrated and all(len(layout[ci]) == 1 for ci in range(len(study.load_cases))):
+        from concurrent.futures import ThreadPoolExecutor
+
+        _bk_pool = ThreadPoolExecutor(1)
+        early_bk = _bk_pool.submit(_buckling, study, mesh.copy(), vol, pitch, contact_band, [None] * len(study.load_cases))
+        _bk_pool.shutdown(wait=False)
     stiff, displacements = solve(moduli, rhs)
     cold = None
     if study.thermal is not None and heat.cold is not None:
@@ -1322,14 +1334,14 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         })
     report["cases"] = cases
     report["safetyFactor"] = worst_sf
-    goal_sf = study.goal.safety_factor
     if goal_sf and not study.self_equilibrated:
         # the safety factor holds against buckling too (study._margin). Read
         # for every part, however far under its stress safety factor: the
         # tet confirm can lift a voxel reading 2.5x (the MBB beam, 0.78 to
         # 1.97), and a part it lifts must not pass unchecked.
         try:
-            bk = _buckling(study, mesh, vol, pitch, contact_band, worst_dirs)
+            bk = early_bk.result() if early_bk is not None else \
+                _buckling(study, mesh, vol, pitch, contact_band, worst_dirs)
         except (RuntimeError, ValueError, MemoryError) as exc:
             bk = None
             report.setdefault("warnings", []).append(f"buckling check failed: {exc}")

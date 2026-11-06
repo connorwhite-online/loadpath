@@ -211,6 +211,46 @@ if nb is not None:
                                 Cx[o] = dot
 
 
+if nb is not None:
+
+    @nb.njit(cache=True, parallel=True)
+    def _csr_mv(Ap, Aj, Ax, x, y):
+        n = y.size
+        nch = 64
+        step = (n + nch - 1) // nch
+        for c in nb.prange(nch):
+            for i in range(c * step, min(n, (c + 1) * step)):
+                acc = 0.0
+                for jj in range(Ap[i], Ap[i + 1]):
+                    acc += Ax[jj] * x[Aj[jj]]
+                y[i] = acc
+
+
+_MATVEC_MIN = 200_000     # nonzeros below which scipy's own matvec is as quick
+
+
+def _csr_matvec(self, other, _orig=None):
+    """scipy's CSR @ vector (csr_matvec) on numba's threads, row by row in
+    the same order, so the same bits. CG and the V-cycle's residuals (a
+    quarter of an optimizer iteration) ran on one core of four."""
+    if (self.format != "csr" or self.ndim != 2 or self.nnz < _MATVEC_MIN or self.data.dtype != np.float64
+            or other.dtype != np.float64 or other.ndim != 1):
+        return _orig(self, other)
+    y = np.empty(self.shape[0])
+    _csr_mv(_u(self.indptr), _u(self.indices), self.data, np.ascontiguousarray(other), y)
+    return y
+
+
+_SCIPY_CS_MATVEC = None
+
+
+def _csr_matvec_method(self, other):
+    return _csr_matvec(self, other, _orig=_SCIPY_CS_MATVEC)
+
+
+_csr_matvec_method._loadpath = True
+
+
 def _u(a):
     """An index array viewed unsigned (they are never negative)."""
     return a.view(np.uint32 if a.dtype.itemsize == 4 else np.uint64)
@@ -322,5 +362,12 @@ def install():
     if not getattr(orig, "_loadpath", False):
         _SCIPY_BSR_MATMUL = orig
         _bsr._bsr_base._matmul_sparse = _bsr_matmul_method
+    global _SCIPY_CS_MATVEC
+    from scipy.sparse import _compressed
+
+    orig = _compressed._cs_matrix._matmul_vector
+    if not getattr(orig, "_loadpath", False) and os.environ.get("LOADPATH_MATVEC", "1") != "0":
+        _SCIPY_CS_MATVEC = orig
+        _compressed._cs_matrix._matmul_vector = _csr_matvec_method
     _INSTALLED = True
     return True

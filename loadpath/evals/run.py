@@ -844,6 +844,9 @@ def main(argv=None):
             # core's worth of BLAS threads ran 3-10x slower than one at a time
             for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
                 os.environ.setdefault(v, "1")
+            # and the compiled kernels' threads split between the cases
+            # (study._share_cores)
+            os.environ.setdefault("LOADPATH_THREADS", str(max(1, (os.cpu_count() or 1) // int(args.jobs))))
         rows = _run_isolated(files, args.out, args.tier, args.critic, int(args.jobs), args.spread)
     md = _md(rows)
     if no_tets:
