@@ -167,6 +167,10 @@ class Outcome:
             **({"tetCheck": r["tetCheck"]} if "tetCheck" in r else {}),
             "cases": r.get("cases"),
             "minMember": r.get("minMember"),
+            # the grid the outcome was verified on: `loadpath orient` reads
+            # its across-layer stress on the same one
+            **({"analysis": {"pitch": r["analysisPitch"], "contactBand": r["contactBand"]}}
+               if "analysisPitch" in r and "contactBand" in r else {}),
             "overhangArea": r.get("overhangArea"),
             "keepOutIntrusion": r.get("keepOutIntrusion"),
             "preserveMissing": r.get("preserveMissing"),

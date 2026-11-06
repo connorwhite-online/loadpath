@@ -2,7 +2,7 @@
   "files": ["out/best.stl", "out/*.3mf", "bracket.3mf"],
   "quick": [
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['passes']", "equals": true, "what": "best outcome meets SF 3"},
-    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 25, "max": 60, "what": "best outcome's mass, g (coarse grid: 28-30 g or ~45 g depending on the machine)"},
+    {"file": "out/report.json", "value": "r['outcomes'][r['best']]['mass']", "min": 25, "max": 60, "what": "best outcome's mass, g (coarse grid: 28-30 g; which of its three grids 1% apart delivers varies with the CPU's floating point, and a box with the tet mesher confirms on tets and can land heavier)"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['safetyFactor']", "min": 3.0, "what": "best outcome's safety factor"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['bodies']", "equals": 1, "what": "one connected body"},
     {"file": "out/report.json", "value": "r['outcomes'][r['best']]['keepOutIntrusion']", "max": 1.0, "what": "screw keep-out intrusion, mm^3"},

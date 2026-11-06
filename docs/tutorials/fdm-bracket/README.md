@@ -106,8 +106,13 @@ in tension and the lower one in compression, both working:
 loadpath orient out/best.stl --study bracket.json --3mf bracket.3mf > orient.json
 ```
 
-Every axis direction is ranked by support volume, bed contact and the
-across-layer stress under the study's loads. `+z` (flat, as designed) wins.
+Every axis direction, and each way the part can rest on a flat face, is
+ranked by support volume, bed contact and the across-layer stress under the
+study's loads. That stress is read exactly as the run's verification reads
+it: on the grid `out/report.json` says the part was verified on, with cut
+cells, the same contact band and each direction's layered stiffness, so the
+direction the part was designed for reads here what its report reads. `+z`
+(flat, as designed) wins.
 `bracket.3mf` is stood that way with PETG settings, ready for the slicer
 (see [slicer.md](../../slicer.md) for print time and graded infill).
 

@@ -1305,6 +1305,28 @@ def _buildsim(args):
     return 0
 
 
+def _verified_grid(mesh_path):
+    """The analysis grid a run verified this STL on ({pitch, contactBand}),
+    from the report.json beside it (best.stl is the report's best outcome),
+    or None."""
+    folder = os.path.dirname(os.path.abspath(mesh_path))
+    rep = os.path.join(folder, "report.json")
+    if not os.path.exists(rep):
+        return None
+    try:
+        r = _load(rep)
+        outs = r.get("outcomes") or []
+        name = os.path.basename(mesh_path)
+        if name == "best.stl" and r.get("best") is not None:
+            o = outs[r["best"]]
+        else:
+            o = next((q for q in outs if os.path.basename(q.get("stl") or "") == name), None)
+        g = (o or {}).get("analysis")
+        return g if g and g.get("pitch") and g.get("contactBand") else None
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
 def _orient(args):
     import trimesh
 
@@ -1316,7 +1338,9 @@ def _orient(args):
     if args.study:
         with open(args.study) as fh:
             study = study_from_dict(json.load(fh), base_dir=os.path.dirname(os.path.abspath(args.study)))
-    rows = rank_orientations(mesh, study, process=args.process)
+    grid = _verified_grid(args.mesh) if study is not None else None
+    rows = rank_orientations(mesh, study, process=args.process,
+                             **({"analysis_pitch": grid["pitch"], "contact_band": grid["contactBand"]} if grid else {}))
     out = [{k: v for k, v in r.items() if k != "build"} for r in rows]
     for r in out:
         r["print"] = {k: v for k, v in r["print"].items() if k != "bridgeList"}

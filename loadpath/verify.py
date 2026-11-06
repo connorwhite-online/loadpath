@@ -809,6 +809,212 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
             "cells": int(hm.n_elem), "seconds": time.time() - t0}
 
 
+def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=None, contact_band=None,
+                   cut_cells=None, fractional: bool = False, nu=None):
+    """The grid a finished part is analyzed on (verify_part's, and the
+    across-layer readings behind orient.rank_orientations, so the two read
+    the same part the same way): the pitch, the cells (cut cells unless the
+    study turns them off), the boundary conditions, pieces no support holds
+    left out, and the contact band stress is read beyond. `nu` is the
+    elasticity the cut cells are built for (default study.elastic)."""
+    from types import SimpleNamespace
+
+    mat = study.material
+    pitch = (vol / max_cells) ** (1.0 / 3.0)
+    if min_pitch:
+        pitch = max(pitch, min_pitch)
+    if study.shells:
+        # A wall voxelizes to a whole number of cells, so at two or three
+        # cells through it reads up to a cell thick or thin: bending stress
+        # goes as 1/t^2, and a plenum's 2 mm wall read 2.4 mm and 30% under
+        # its stress at 0.8 mm cells. Four cells through the thinnest wall or
+        # skin, within a cell budget.
+        thin = min(t for _, t in study.shells)
+        pitch = min(pitch, max(thin / _SHELL_CELLS, (vol / _SHELL_MAX_CELLS) ** (1.0 / 3.0)))
+    share = None
+    cut = use_cut_cells(study, cut_cells) and not fractional
+    cg = None
+    if cut:
+        from .cutcell import cut_from_mesh
+
+        cg = cut_from_mesh(mesh, pitch, study.elastic(mat) if nu is None else nu)
+        solid, origin = cg.solid_grid()
+        share = np.zeros(solid.shape)
+        share[tuple(cg.mesh.elem_ijk.T)] = cg.fill
+    elif fractional:
+        share, origin = voxelize(mesh, pitch, fractional=True)
+        # a sliver under a twentieth of a cell adds nothing but conditioning
+        solid = share >= 0.05
+    else:
+        solid, origin = voxelize(mesh, pitch)
+
+    # Face connectivity: cells that meet only at an edge or a corner share
+    # two nodes or one, a hinge the stiffness matrix cannot hold, and CG
+    # never converges (the robot arm's upper arm: 44 such islands of 4-6 cells at a
+    # 1.04 mm pitch stalled verification for over an hour).
+    lbl, nlab = ndimage.label(solid)
+    elem_ijk = np.argwhere(solid)
+    hm = HexMesh(elem_ijk, pitch, origin)
+    bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
+    # Material not connected to a support would float; it is reported as a
+    # separate body and left out of the stress analysis.
+    supported_lbls = np.unique(lbl[tuple(elem_ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
+    keep_el = np.isin(lbl[tuple(elem_ijk.T)], supported_lbls)
+    if not keep_el.all():
+        hm = HexMesh(elem_ijk[keep_el], pitch, origin)
+        bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
+    cut_count = None
+    if cg is not None:
+        cut_count = int(cg.cut.sum())
+        cg = cg.restrict(keep_el)
+        hm = cg.mesh
+    kept_ijk = elem_ijk if keep_el.all() else elem_ijk[keep_el]
+    fill = None if share is None else share[tuple(kept_ijk.T)]
+    band = max(1.5 * pitch, contact_band or 0.0)
+    edges = _user_edges(study, band)
+    on_edge = edges(hm.node_xyz) if edges is not None else None
+    return SimpleNamespace(pitch=pitch, cg=cg, solid=solid, origin=origin, share=share, hm=hm, bc=bc, fill=fill,
+                           band=band, edges=edges, on_edge=on_edge, cut_count=cut_count, keep_el=keep_el)
+
+
+def _solve_grid(study: Study, g, nu, moduli, rhs):
+    """Solve the analysis grid `g` (_analysis_grid) with elasticity `nu` for
+    each right-hand side: (stiffness object for nodal_stress, displacements)."""
+    from .simp import _use_mg
+
+    mat = study.material
+    hm, bc, fixed = g.hm, g.bc, g.bc.fixed
+    if g.cg is not None:
+        return _solve_cut(g.cg, nu, fixed, bc.springs, mat.E, moduli, rhs)
+    if g.fill is not None:
+        # a part-filled cell is that share as stiff; its stress stays
+        # the material's (nodal_stress at the full modulus)
+        moduli = np.broadcast_to(moduli, (hm.n_elem,)) * g.fill
+    if _use_mg(hm.n_elem):
+        # From simp.MG_MIN_CELLS up, matrix-free multigrid (as the optimizer
+        # uses): no assembled matrix, a fraction of the memory and time. It
+        # raises RuntimeError on non-convergence like Solver does. It also
+        # carries .mesh and .nu, which is all the stress recovery reads.
+        from .mg import GridElasticity
+
+        stiff = GridElasticity(hm, nu, fixed, springs=mat.E * bc.springs if bc.springs is not None else None,
+                               rtol=1e-6, maxiter=3000)
+        stiff.set_moduli(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
+        return stiff, stiff.solve_many(rhs)
+    stiff = Stiffness(hm, nu, fixed)
+    k = stiff.assemble(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
+    if bc.springs is not None:
+        k = (k + mat.E * bc.springs).tocsr()
+    # 1e-6 is three-plus significant figures of stress; 1e-7 cost a third
+    # more iterations. All cases share one multigrid hierarchy and run on
+    # threads.
+    solver = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
+    return stiff, solver.solve_many(k, rhs)
+
+
+def _layer_tension(sig, n, body, g_node=None):
+    """The tension pulling layers apart (stress normal to layers stacked
+    along unit `n`) at its worst node of `body`: (stress, strength
+    retention there, node). With g_node (hot parts) worst means stress over
+    retention."""
+    sn = sig[:, :3] @ (n * n) + 2.0 * (sig[:, 3] * n[0] * n[1] + sig[:, 4] * n[1] * n[2] + sig[:, 5] * n[2] * n[0])
+    tens = np.where(body, np.maximum(sn, 0.0), 0.0)
+    ti = int(np.argmax(tens if g_node is None else tens / np.maximum(g_node, 1e-3)))
+    return float(tens[ti]), (1.0 if g_node is None else float(g_node[ti])), ti
+
+
+def interlayer_readings(study: Study, mesh, builds, max_cells: int = 60_000, min_pitch: float | None = None,
+                        contact_band: float | None = None, cut_cells: bool | None = None) -> list[dict]:
+    """The across-layer bond check verify_part makes for the study's own
+    build direction, made for each of `builds` (build directions) on the
+    same analysis: the same grid, cut cells, contact band and load
+    directions, with the layered stiffness of each direction (one solve per
+    distinct layer axis: +z and -z stack the same layers). Per direction:
+    {"interlayerStress": worst over the cases (MPa), "interlayerSafetyFactor",
+    "cases": [{name, interlayerStress, at}]}. The study's own direction
+    reads exactly what its verification reads (thermal studies excepted:
+    this is the cold, mechanical reading).
+
+    orient.rank_orientations used to read this from one isotropic solve on
+    a plain voxel grid with its own, narrower contact band: on a coarse
+    wall bracket that read the stair-stepped corner where an arm meets a
+    screw boss at 9.0 MPa across the layers (SF 1.7 printed flat) against
+    verify's 4.1 MPa (SF 3.9) and the tet cross-check's 2.7 MPa, and
+    recommended tilting a part that holds flat."""
+    import dataclasses
+
+    from .am import build_vector, parse_build_direction
+    from .directions import expand, worst_stress_direction
+    from .shapes import manifold_from_trimesh
+
+    builds = [parse_build_direction(b) if isinstance(b, (str, list)) else b for b in builds]
+    mat = study.material
+    proc = study.process
+    vol = float(manifold_from_trimesh(mesh).volume())
+    vecs = [np.asarray(build_vector(b), float) for b in builds]
+
+    def elastic_for(b):
+        if proc is None:
+            return mat.nu
+        return dataclasses.replace(study, process=dataclasses.replace(
+            proc, build=b)).elastic(mat)
+
+    g = _analysis_grid(study, mesh, vol, max_cells, min_pitch, contact_band, cut_cells, nu=mat.nu)
+    hm, bc = g.hm, g.bc
+    fg = gravity_force(hm, np.ones(hm.n_elem) if g.fill is None else g.fill, bc.gravity, bc.fixed) \
+        if bc.gravity is not None else None
+    spreads = bc.spreads or [None] * len(study.load_cases)
+    rhs, layout = expand(bc.loads, spreads, fg)
+    from scipy.spatial import cKDTree
+
+    bodies = []
+    for ci in range(len(study.load_cases)):
+        contact = bc.support_nodes | bc.case_load_nodes[ci]
+        near = cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1, distance_upper_bound=g.band)[0] < np.inf
+        if g.on_edge is not None:
+            near |= g.on_edge
+        bodies.append(~near)
+    solved = {}
+    out = []
+    for b, n in zip(builds, vecs):
+        nu = elastic_for(b)
+        key = ("layered", tuple(np.round(n * np.sign(n[np.argmax(np.abs(n))]), 9)),
+               nu.ez, nu.gz) if not isinstance(nu, float) else ("iso",)
+        if key not in solved:
+            gg = g
+            if g.cg is not None and not isinstance(nu, float):
+                # the cut cells' matrices carry the elasticity: rebuild them
+                # for this direction's layers on the same sub-cell grid
+                from types import SimpleNamespace
+
+                from .cutcell import CutGrid
+                c0 = g.cg
+                cg = CutGrid(c0._fine, c0.n, c0.origin, c0.pitch, nu).restrict(g.keep_el)
+                gg = SimpleNamespace(**{**vars(g), "cg": cg})
+            solved[key] = _solve_grid(study, gg, nu, mat.E, rhs)
+        stiff, disp = solved[key]
+        cases, worst = [], 0.0
+        for ci, case in enumerate(study.load_cases):
+            idx = layout[ci]
+            if len(idx) == 1:
+                u = disp[idx[0]]
+            else:
+                s0 = nodal_stress(stiff, disp[idx[0]], mat.E) if idx[0] is not None else None
+                sb = [nodal_stress(stiff, disp[i], mat.E) for i in idx[1:]]
+                direction, _ = worst_stress_direction(spreads[ci], s0, sb, bodies[ci])
+                u = sum(direction[j] * disp[i] for j, i in enumerate(idx[1:]))
+                if idx[0] is not None:
+                    u = u + disp[idx[0]]
+            t, _, ti = _layer_tension(nodal_stress(stiff, u, mat.E), n, bodies[ci])
+            cases.append({"name": case.name, "interlayerStress": t, "at": hm.node_xyz[ti].tolist()})
+            worst = max(worst, t)
+        ratio = proc.interlayer if proc is not None else 1.0
+        out.append({"interlayerStress": worst, "cases": cases,
+                    "interlayerSafetyFactor": (ratio * mat.strength / (worst * STRESS_ALLOWANCE)
+                                               if worst > 0 else float("inf"))})
+    return out
+
+
 def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
                 contact_band: float | None = None, refine: int = 3, fields: bool = False,
                 fractional: bool = False, cut_cells: bool | None = None) -> dict:
@@ -882,63 +1088,15 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         report["print"] = check_print(mesh, build, process=proc.kind if proc is not None else "fdm",
                                       material=mat, bridge_span=getattr(proc, "bridge_span", None))
 
-    pitch = (vol / max_cells) ** (1.0 / 3.0)
-    if min_pitch:
-        pitch = max(pitch, min_pitch)
-    if study.shells:
-        # A wall voxelizes to a whole number of cells, so at two or three
-        # cells through it reads up to a cell thick or thin: bending stress
-        # goes as 1/t^2, and a plenum's 2 mm wall read 2.4 mm and 30% under
-        # its stress at 0.8 mm cells. Four cells through the thinnest wall or
-        # skin, within a cell budget.
-        thin = min(t for _, t in study.shells)
-        pitch = min(pitch, max(thin / _SHELL_CELLS, (vol / _SHELL_MAX_CELLS) ** (1.0 / 3.0)))
-    share = None
-    cut = use_cut_cells(study, cut_cells) and not fractional
-    cg = None
-    if cut:
-        from .cutcell import cut_from_mesh
-
-        cg = cut_from_mesh(mesh, pitch, study.elastic(mat))
-        solid, origin = cg.solid_grid()
-        share = np.zeros(solid.shape)
-        share[tuple(cg.mesh.elem_ijk.T)] = cg.fill
-        report["cutCells"] = int(cg.cut.sum())
-    elif fractional:
-        share, origin = voxelize(mesh, pitch, fractional=True)
-        # a sliver under a twentieth of a cell adds nothing but conditioning
-        solid = share >= 0.05
-    else:
-        solid, origin = voxelize(mesh, pitch)
+    g = _analysis_grid(study, mesh, vol, max_cells, min_pitch, contact_band, cut_cells, fractional)
+    pitch, cg, solid, origin, share = g.pitch, g.cg, g.solid, g.origin, g.share
+    hm, bc, fill, band, edges, on_edge = g.hm, g.bc, g.fill, g.band, g.edges, g.on_edge
+    support_nodes, fixed = bc.support_nodes, bc.fixed
+    if cg is not None:
+        report["cutCells"] = g.cut_count
     report["analysisPitch"] = pitch
     report["minMember"], report["p5Member"] = _thickness(solid if share is None else share >= 0.5, pitch)
-
-    # Face connectivity: cells that meet only at an edge or a corner share
-    # two nodes or one, a hinge the stiffness matrix cannot hold, and CG
-    # never converges (the robot arm's upper arm: 44 such islands of 4-6 cells at a
-    # 1.04 mm pitch stalled verification for over an hour).
-    lbl, nlab = ndimage.label(solid)
-    elem_ijk = np.argwhere(solid)
-    hm = HexMesh(elem_ijk, pitch, origin)
-    bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
-    # Material not connected to a support would float; it is reported as a
-    # separate body above and left out of the stress analysis.
-    supported_lbls = np.unique(lbl[tuple(elem_ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
-    keep_el = np.isin(lbl[tuple(elem_ijk.T)], supported_lbls)
-    if not keep_el.all():
-        hm = HexMesh(elem_ijk[keep_el], pitch, origin)
-        bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * (contact_band or 0.0) + 0.5 * pitch)
-    if cg is not None:
-        cg = cg.restrict(keep_el)
-        hm = cg.mesh
-    support_nodes, fixed = bc.support_nodes, bc.fixed
-    kept_ijk = elem_ijk if keep_el.all() else elem_ijk[keep_el]
-    fill = None if share is None else share[tuple(kept_ijk.T)]
-
-    band = max(1.5 * pitch, contact_band or 0.0)
     report["contactBand"] = band
-    edges = _user_edges(study, band)
-    on_edge = edges(hm.node_xyz) if edges is not None else None
     fg = gravity_force(hm, np.ones(hm.n_elem) if fill is None else fill, bc.gravity, fixed) if bc.gravity is not None else None
     # Heat (the study's thermal block): the part's own temperature, solved on
     # the part as delivered; each cell's modulus derated by it, the
@@ -976,36 +1134,9 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     from .directions import expand, worst_stress_direction
     spreads = bc.spreads or [None] * len(study.load_cases)
     rhs, layout = expand(bc.loads, spreads, fg)
-    from .simp import _use_mg
 
     def solve(moduli, rhs):
-        if cg is not None:
-            return _solve_cut(cg, study.elastic(mat), fixed, bc.springs, mat.E, moduli, rhs)
-        if fill is not None:
-            # a part-filled cell is that share as stiff; its stress stays
-            # the material's (nodal_stress at the full modulus)
-            moduli = np.broadcast_to(moduli, (hm.n_elem,)) * fill
-        if _use_mg(hm.n_elem):
-            # From simp.MG_MIN_CELLS up, matrix-free multigrid (as the optimizer
-            # uses): no assembled matrix, a fraction of the memory and time. It
-            # raises RuntimeError on non-convergence like Solver does. It also
-            # carries .mesh and .nu, which is all the stress recovery reads.
-            from .mg import GridElasticity
-
-            stiff = GridElasticity(hm, study.elastic(mat), fixed,
-                                   springs=mat.E * bc.springs if bc.springs is not None else None,
-                                   rtol=1e-6, maxiter=3000)
-            stiff.set_moduli(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
-            return stiff, stiff.solve_many(rhs)
-        stiff = Stiffness(hm, study.elastic(mat), fixed)
-        k = stiff.assemble(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
-        if bc.springs is not None:
-            k = (k + mat.E * bc.springs).tocsr()
-        # 1e-6 is three-plus significant figures of stress; 1e-7 cost a third
-        # more iterations. All cases share one multigrid hierarchy and run on
-        # threads.
-        solver = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
-        return stiff, solver.solve_many(k, rhs)
+        return _solve_grid(study, g, study.elastic(mat), moduli, rhs)
 
     stiff, displacements = solve(moduli, rhs)
     cold = None
@@ -1134,14 +1265,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             # strength, a fraction of the in-plane one.
             from .am import build_vector
 
-            nb = build_vector(proc.build)
             sig = nodal_stress(stiff, u, moduli, eps)
-            sn = sig[:, :3] @ (nb * nb) + 2.0 * (sig[:, 3] * nb[0] * nb[1] + sig[:, 4] * nb[1] * nb[2]
-                                               + sig[:, 5] * nb[2] * nb[0])
-            tens = np.where(body, np.maximum(sn, 0.0), 0.0)
-            ti = int(np.argmax(tens if g_node is None else tens / np.maximum(g_node, 1e-3)))
-            inter = float(tens[ti])
-            k_in = 1.0 if g_node is None else float(g_node[ti])
+            inter, k_in, _ = _layer_tension(sig, build_vector(proc.build), body, g_node)
             sf_inter = k_in * proc.interlayer * mat.strength / (inter * STRESS_ALLOWANCE) if inter > 0 else np.inf
             sf = min(sf, sf_inter)
         cyc_row = {}

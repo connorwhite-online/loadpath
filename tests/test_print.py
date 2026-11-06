@@ -233,6 +233,39 @@ def test_rank_orientations_reads_interlayer_tension():
     assert rows[0]["direction"] == "+z"
 
 
+def test_rank_orientations_reads_what_verify_reads():
+    """orient's across-layer reading for the direction a part was verified
+    in is verify's own (same grid, cut cells, contact band, layered
+    stiffness): it used to solve isotropically on a plain voxel grid with a
+    narrower band and read a coarse wall bracket's boss corner 2.2x high,
+    recommending a tilt for a part that holds printed flat."""
+    from loadpath.domain import choose_pitch
+    from loadpath.orient import rank_orientations
+    from loadpath.verify import verify_part
+
+    study = study_from_dict({
+        "designSpace": {"type": "box", "min": [0, 0, 0], "max": [60, 10, 10]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.1, 11, 11]}}],
+        "loadCases": [{"name": "tip", "loads": [{"shape": {"type": "box", "min": [59.9, -1, -1],
+                                                           "max": [61, 11, 11]}, "force": [0, 6, -40]}]},
+                      {"name": "side", "loads": [{"shape": {"type": "box", "min": [59.9, -1, -1],
+                                                            "max": [61, 11, 11]}, "force": [0, 30, 0]}]}],
+        "material": "petg", "process": {"type": "fdm", "buildDirection": "+y"}, "goal": {"safetyFactor": 2}})
+    mesh = _box((0, 0, 0), (60, 10, 10))
+    design = choose_pitch(study)
+    rep = verify_part(study, mesh, max_cells=6000, min_pitch=0.5 * design, contact_band=design, refine=0)
+    want = max(c["interlayerStress"] for c in rep["cases"])
+    rows = rank_orientations(mesh, study, candidates=["+y", "-y", "+z"], stress_cells=6000)
+    by = {r["direction"]: r for r in rows}
+    assert abs(by["+y"]["interlayerStress"] - want) <= 1e-6 * want, (by["+y"]["interlayerStress"], want)
+    # -y stacks the same layers: the same reading
+    assert abs(by["-y"]["interlayerStress"] - want) <= 1e-6 * want
+    # pinned to the grid a run verified on, the same again
+    rows = rank_orientations(mesh, study, candidates=["+y"], analysis_pitch=rep["analysisPitch"],
+                             contact_band=rep["contactBand"])
+    assert abs(rows[0]["interlayerStress"] - want) <= 1e-6 * want
+
+
 def test_choose_build_direction_halves_and_shares():
     """The orientation search by successive halving: every direction half
     way and checked cheaply, only the leaders finished. A flat lug pulled in

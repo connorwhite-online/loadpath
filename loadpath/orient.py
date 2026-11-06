@@ -28,7 +28,8 @@ rank_orientations(mesh, study=None)
     After designing, or for any mesh. Tries the six axis directions and the
     part's own large flat faces (convex hull facets, the ways it can rest on
     the bed), slices each (printcheck.check_print) and, given the study, reads
-    the interlayer tension each direction would see from one stress solve.
+    the interlayer tension each direction would see, read as verify reads
+    it (verify.interlayer_readings).
     Ranks by: meets the interlayer safety factor, then support volume,
     height and bed risk.
 """
@@ -73,49 +74,6 @@ def _cost(pc: dict) -> float:
     return float(c)
 
 
-def _stress_nodes(study, mesh, max_cells=60_000):
-    """Nodal stress tensors of the delivered part, per load case, from one
-    isotropic voxel solve (as verify_part runs it)."""
-    from scipy import ndimage
-
-    from .domain import boundary_conditions, gravity_force
-    from .fem import HexMesh, Solver, Stiffness
-    from .verify import nodal_stress, voxelize
-
-    mat = study.material
-    vol = float(np.prod(mesh.extents))
-    pitch = (vol / max_cells) ** (1.0 / 3.0)
-    solid, origin = voxelize(mesh, pitch)
-    lbl, _ = ndimage.label(solid, structure=np.ones((3, 3, 3), bool))
-    ijk = np.argwhere(solid)
-    hm = HexMesh(ijk, pitch, origin)
-    bc = boundary_conditions(study, hm, check_loads=False, tol_floor=pitch)
-    keep_lbl = np.unique(lbl[tuple(ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
-    keep = np.isin(lbl[tuple(ijk.T)], keep_lbl)
-    if not keep.all():
-        hm = HexMesh(ijk[keep], pitch, origin)
-        bc = boundary_conditions(study, hm, check_loads=False, tol_floor=pitch)
-    st = Stiffness(hm, mat.nu, bc.fixed)
-    k = st.assemble(np.full(hm.n_elem, mat.E))
-    if bc.springs is not None:
-        k = (k + mat.E * bc.springs).tocsr()
-    fg = gravity_force(hm, np.ones(hm.n_elem), bc.gravity, bc.fixed) if bc.gravity is not None else 0.0
-    us = Solver(hm, rtol=1e-6, maxiter=3000).solve_many(k, [f + fg for f in bc.loads])
-    from scipy.spatial import cKDTree
-    contact = np.zeros(hm.n_nodes, bool)
-    contact |= bc.support_nodes
-    for ln in bc.case_load_nodes:
-        contact |= ln
-    band = 2.0 * pitch
-    body = cKDTree(hm.node_xyz[contact]).query(hm.node_xyz, k=1, distance_upper_bound=band)[0] == np.inf
-    return [nodal_stress(st, u, mat.E)[body] for u in us]
-
-
-def _normal_stress(sig, n):
-    return (sig[:, :3] @ (n * n)
-            + 2.0 * (sig[:, 3] * n[0] * n[1] + sig[:, 4] * n[1] * n[2] + sig[:, 5] * n[2] * n[0]))
-
-
 def _facet_directions(mesh, count=8, min_area_frac=0.03):
     """Build directions that put a large flat face of the convex hull on the
     bed (up = minus that face's outward normal)."""
@@ -142,18 +100,30 @@ def _same(a, b):
 
 def rank_orientations(mesh, study=None, candidates=None, process: str = "fdm", interlayer: float | None = None,
                       safety_factor: float | None = None, pitch: float | None = None,
-                      stress_cells: int = 60_000) -> list[dict]:
+                      stress_cells: int = 60_000, contact_band: float | None = None,
+                      analysis_pitch: float | None = None) -> list[dict]:
     """Every candidate build direction with its print check, interlayer
     reading and cost, best first. `study` (optional) supplies loads,
     material, interlayer ratio and goal; without it only printability is
-    ranked."""
+    ranked.
+
+    The interlayer reading is verify's own (verify.interlayer_readings): the
+    same analysis grid (stress_cells, no finer than half the study's design
+    cell), cut cells, contact band (`contact_band`, default the design cell,
+    as `loadpath verify` and the run use) and each direction's layered
+    stiffness, so the direction a part was designed and verified for reads
+    here what its report reads. `analysis_pitch` pins the grid to the one an
+    outcome was verified on (its report's analysis.pitch): a corner's
+    stress moves with how the grid falls on it (the coarse wall bracket's
+    boss corner read 4.0 and 5.2 MPa across the layers on grids 1% apart),
+    so only the same grid reads the same number."""
     cands = list(candidates) if candidates is not None else AXIS_DIRECTIONS + _facet_directions(mesh)
     uniq = []
     for c in cands:
         c = parse_build_direction(c) if not isinstance(c, tuple) or len(c) not in (2, 3) else c
         if not any(_same(c, u) for u in uniq):
             uniq.append(c)
-    sigs = None
+    readings = None
     mat = None
     if study is not None:
         mat = study.material
@@ -162,20 +132,33 @@ def rank_orientations(mesh, study=None, candidates=None, process: str = "fdm", i
             process = proc.kind
             interlayer = proc.interlayer if interlayer is None else interlayer
         safety_factor = safety_factor or study.goal.safety_factor
-        if study.load_cases:
-            sigs = _stress_nodes(study, mesh, stress_cells)
-    from .verify import STRESS_ALLOWANCE
+        if study.load_cases and proc is not None and interlayer is not None and interlayer < 1.0:
+            import dataclasses as _dc
+
+            from . import quick
+            from .domain import choose_pitch
+            from .verify import interlayer_readings
+
+            design = choose_pitch(study)
+            band = design if contact_band is None else contact_band
+            st = study
+            if proc is not None and proc.interlayer != interlayer:
+                st = _dc.replace(study, process=_dc.replace(proc, interlayer=interlayer))
+            if analysis_pitch:
+                cells, floor = 10 ** 9, float(analysis_pitch)
+            else:
+                cells, floor = quick.verify_cells(stress_cells), 0.5 * design
+            readings = interlayer_readings(st, mesh, uniq, max_cells=cells, min_pitch=floor, contact_band=band)
 
     rows = []
-    for c in uniq:
+    for k, c in enumerate(uniq):
         pc = check_print(mesh, c, process=process, pitch=pitch, material=mat)
         row = {"direction": direction_label(c), "build": c, "cost": _cost(pc), "print": pc}
-        if sigs is not None and interlayer is not None and interlayer < 1.0:
-            n = build_vector(c)
-            tens = max(float(np.maximum(_normal_stress(s, n), 0.0).max(initial=0.0)) for s in sigs)
-            row["interlayerStress"] = tens
-            row["interlayerSafetyFactor"] = (interlayer * mat.strength / (tens * STRESS_ALLOWANCE)
-                                             if tens > 0 else float("inf"))
+        if readings is not None:
+            r = readings[k]
+            row["interlayerStress"] = r["interlayerStress"]
+            row["interlayerSafetyFactor"] = r["interlayerSafetyFactor"]
+            row["interlayerCases"] = r["cases"]
         rows.append(row)
     sf_ok = [r.get("interlayerSafetyFactor", np.inf) >= (safety_factor or 0.0) for r in rows]
     for r, ok in zip(rows, sf_ok):
