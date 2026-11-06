@@ -387,6 +387,26 @@ motor mount (0.20) all sit within 0.04 of it. Moving it would change which
 method runs on several cases and how long they take, so it is left at 0.19
 here and the baseline records the 18.3 g yoke.
 
+**Probe band (after 05a4346).** Between 0.19 and 0.28
+(`study._AUTO_PROBE_UTILIZATION`) goal.method auto now runs the constrained
+method as a probe: same time box, but it stops as soon as one of its parts
+fails the target while weighing at least 0.97x the search's passing part
+(the bisection only adds material to a failing part, so it cannot come out
+lighter; a tet-confirmed margin decides over the voxel reading). The
+scorecard's methodChoice carries `probe: true`. Coarse tier, fresh tet
+cache, against the 05a4346 baseline:
+
+| Case | Utilization | massAtTarget | Time s (baseline) | Probe |
+| --- | --- | --- | --- | --- |
+| Wrist yoke | 0.23 | 15.0 g (18.3), -18% | 1744 (1597) | constrained 15.9 g beats search 18.3 g |
+| Turret | 0.24 | 123.3 g (125.6), -1.8% | 2466 (2694) | ran the box, 134.8 g, search kept |
+| corpus-link-3 | 0.26 | 29.0 g, 0% | 1401 (1449) | stopped early: a 29.8 g part failed |
+| MBB beam | 0.17 this run | 14.2 g, +1.6% | 950 (985) | below the cut: full constrained run, search kept |
+| Motor mount | 0.20 | 18.8 g, 0% | 50 | no passing search part to compare |
+
+Cases above 0.28 (bell crank 0.32, corpus-tri-mount-2 0.30) or below 0.19
+behave as before.
+
 **Spread.** Two runs of e8c55b5, each with an empty tet cache (fTetWild does
 not give the same mesh twice, and a warm cache hides that: two runs of
 c7f1a59 sharing one cache matched to the gram on every search case), 21/21

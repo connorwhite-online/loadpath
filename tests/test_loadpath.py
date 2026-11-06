@@ -1314,3 +1314,20 @@ def test_constrained_box_waits_for_min_runs():
     assert S._box_over(past, 100.0, S._AUTO_MIN_RUNS)
     assert S._box_over(past, 5.0, 0)                            # past twice the box: stop anyway
     assert not S._box_over(_t.time() + 60.0, 60.0, 10)          # inside the box
+
+
+def test_constrained_probe_stops_on_heavy_failing_part():
+    from types import SimpleNamespace
+    from loadpath import study as S
+    goal = SimpleNamespace(safety_factor=2.0, buckling=True, max_deflection=None)
+    heavy = 18.3 * S._PROBE_HEAVY + 0.1
+    assert S._probe_beaten(goal, {"mass": heavy, "safetyFactor": 1.6}, 18.3)        # fails, heavy: stop
+    assert not S._probe_beaten(goal, {"mass": 14.0, "safetyFactor": 1.6}, 18.3)     # fails but lighter
+    assert not S._probe_beaten(goal, {"mass": heavy, "safetyFactor": 2.4}, 18.3)    # heavy but passes
+    assert S._probe_beaten(goal, {"mass": heavy, "safetyFactor": 2.4, "bucklingFactor": 1.5}, 18.3)
+    # a tet-confirmed margin decides over the voxel reading
+    assert not S._probe_beaten(goal, {"mass": heavy, "safetyFactor": 1.6}, 18.3, margin=1.1)
+    assert S._probe_beaten(goal, {"mass": heavy, "safetyFactor": 2.4}, 18.3, margin=0.9)
+    dg = SimpleNamespace(safety_factor=None, buckling=False, max_deflection=0.5)
+    assert S._probe_beaten(dg, {"mass": heavy, "cases": [{"deflection": 0.6}]}, 18.3)
+    assert S._AUTO_UTILIZATION_CUT < S._AUTO_PROBE_UTILIZATION

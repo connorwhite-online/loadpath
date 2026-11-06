@@ -81,6 +81,18 @@ _AUTO_UTILIZATION = 0.15
 # 0.186, hook 0.328 -> 0.350): at 0.15 the yoke skipped the constrained
 # method and came out 18.6 g against 14.1; at 0.19, 13.9.
 _AUTO_UTILIZATION_CUT = 0.19
+# Between that cut and this one the constrained method still runs, as a
+# probe: utilization alone does not say whether it wins there. The minMember
+# fixes (fa17ad8, d1b2b2c) took the coarse wrist yoke's search part from
+# 0.166 to 0.226 and it was delivered at 18.3 g, while the constrained method
+# finds 13.5 g on it; MBB (0.20), corpus-link-0 (0.19) and the motor mount
+# (0.20) sit as close to the cut. A probe stops as soon as one of its parts
+# fails on the target while weighing at least _PROBE_HEAVY times the search's
+# part: the bisection only adds material to a failing part, so it cannot come
+# out lighter. Above this, the hook (0.30-0.35) and arm link (0.33) came out
+# 10-40% heavier constrained, so it is not tried.
+_AUTO_PROBE_UTILIZATION = 0.28
+_PROBE_HEAVY = 0.97
 # and gives it at most this many times the search's own time
 _AUTO_BUDGET = 3.5
 # ... but no less than this many finished parts (up to twice the box): the
@@ -1082,8 +1094,9 @@ def _constrained_applies(study: Study) -> bool:
 
 def _run_auto(study: Study, on_progress=None, should_stop=None, search=None) -> StudyResult:
     """goal.method auto: the search, then the constrained method only when the
-    search's part idles (stressUtilization under _AUTO_UTILIZATION), keeping
-    the lighter passing part. The constrained method costs about as much as
+    search's part idles (stressUtilization under _AUTO_UTILIZATION), or as
+    a probe that stops once it cannot win (under _AUTO_PROBE_UTILIZATION),
+    keeping the lighter passing part. The constrained method costs about as much as
     the search again, so it runs only where it tends to win."""
     import dataclasses
 
@@ -1126,15 +1139,18 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
         return r
     from .verify import use_cut_cells
     limit = _AUTO_UTILIZATION_CUT if use_cut_cells(study) else _AUTO_UTILIZATION
-    if u >= limit:
-        choice["reason"] = f"stress utilization {u:.2f} >= {limit}: the search part is worked evenly"
+    probe = u >= limit
+    if u >= _AUTO_PROBE_UTILIZATION:
+        choice["reason"] = (f"stress utilization {u:.2f} >= {_AUTO_PROBE_UTILIZATION}: "
+                            "the search part is worked evenly")
         r.choice = choice
         return r
     if should_stop is not None and should_stop():
         r.choice = choice
         return r
     if on_progress is not None:
-        on_progress({"stage": "method", "method": "constrained", "stressUtilization": u}, None)
+        on_progress({"stage": "method", "method": "constrained", "stressUtilization": u,
+                     **({"probe": True} if probe else {})}, None)
     # time box: the constrained method runs on a finer grid and took about
     # 2.9x the search on the yoke (2.5x cut it before its 16 g run); on the
     # wrist link it found no passing part in 90 minutes (the search: 24).
@@ -1152,16 +1168,40 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
         box = max(600.0, budget * r.seconds)
     deadline = time.time() + box
     done = [0]
+    beaten = [None]   # a probe's failing part at or over the search's mass
+    ms = pick.report["mass"]
+
+    pending = [None, False]   # a probe's last part, awaiting its tet confirm
+
+    def judge(event, margin=None):
+        if beaten[0] is None and _probe_beaten(goal, event, ms, margin):
+            beaten[0] = event.get("mass")
 
     def progress(event, x):
-        if event.get("stage") == "outcome":
+        stage = event.get("stage")
+        if probe:
+            if stage == "confirm" and pending[0] is not None:
+                pending[1] = True
+            elif stage == "confirmed" and pending[0] is not None:
+                # the tet reading stands over the voxel one (it lifts a
+                # voxel safety factor by up to 2.5x)
+                judge(pending[0], event.get("margin"))
+                pending[0] = None
+            elif pending[0] is not None and not pending[1]:
+                judge(pending[0])
+                pending[0] = None
+        if stage == "outcome":
             done[0] += 1
+            pending[0], pending[1] = event, False
         if on_progress is not None:
             on_progress(event, x)
 
+    def user_stop():
+        return beaten[0] is not None or (should_stop is not None and should_stop())
+
     def stop():
         over = time.time() > deadline if quick.on() else _box_over(deadline, box, done[0])
-        return over or (should_stop is not None and should_stop())
+        return over or user_stop()
 
     cstudy = dataclasses.replace(study, goal=dataclasses.replace(goal, method="constrained"))
     fit = _constrained_fit(cstudy)
@@ -1186,30 +1226,58 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
             # running since the search started (on cstudy: wanted() takes no
             # quick run and no grid made coarser for memory): the same time
             # box, from its start
-            rc = spec.finish(box, on_progress, should_stop)
+            rc = spec.finish(box, progress, user_stop)
         else:
             rc = _run_single(cstudy, progress, stop, fallback=False)
     except Exception as exc:  # noqa: BLE001 - the constrained run is a bonus: any failure keeps the search's part
         choice["reason"] = f"the constrained method failed ({exc})"
         r.choice = choice
         return r
-    ms, mc = pick.report["mass"], None
+    mc = None
     if rc.best is not None and rc.outcomes[rc.best].passes:
         mc = rc.outcomes[rc.best].report["mass"]
     choice.update({"searchMass": ms, "constrainedMass": mc})
     if mc is not None and mc < ms:
+        if probe:
+            choice["probe"] = True
         choice["method"] = "constrained"
         choice["reason"] = (f"stress utilization {u:.2f}: constrained {mc:.1f} g against "
                             f"search {ms:.1f} g")
         rc.choice = choice
         rc.seconds += r.seconds
         return rc
+    if probe:
+        choice["probe"] = True
     choice["reason"] = (f"stress utilization {u:.2f}: constrained "
                         + (f"{mc:.1f} g" if mc is not None else "found no passing part")
-                        + f" against search {ms:.1f} g")
+                        + f" against search {ms:.1f} g"
+                        + (f" (probe stopped: a {beaten[0]:.1f} g part failed)" if beaten[0] is not None else ""))
     r.choice = choice
     r.seconds += rc.seconds
     return r
+
+
+def _probe_beaten(goal, event: dict, search_mass: float, margin: float | None = None) -> bool:
+    """Whether a constrained part (its outcome event) fails the target while
+    weighing at least _PROBE_HEAVY times the search's passing part: then the
+    constrained method cannot beat the search here (the next parts only
+    add material to pass). `margin`, when given, is the part's tet-confirmed
+    margin and decides alone."""
+    m = event.get("mass")
+    if m is None or m < _PROBE_HEAVY * search_mass:
+        return False
+    if margin is not None:
+        return margin < 1.0
+    sf = event.get("safetyFactor")
+    if goal.safety_factor and sf is not None and sf < goal.safety_factor:
+        return True
+    bk = event.get("bucklingFactor")
+    if goal.buckling and goal.safety_factor and bk is not None and bk < goal.safety_factor:
+        return True
+    if goal.max_deflection and event.get("cases"):
+        d = max((c.get("deflection") or 0.0) for c in event["cases"])
+        return d > goal.max_deflection
+    return False
 
 
 # the constrained method's peak over _run_bytes (MMA's history and the stress
