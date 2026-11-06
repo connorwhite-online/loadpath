@@ -3645,6 +3645,16 @@ def run_field(doc, out_dir=None, base_dir=None, sources=None, meshes=None, progr
                                surface=opts.get("surface", "smooth"), part_mesh=mesh,
                                progress=progress, faces=opts.get("faces"),
                                patches=opts.get("patches"))
+                elif lat and opts.get("lattice") == "mesh":     # the printed part's facets, every tunnel kept
+                    import trimesh as _tm
+
+                    plain = _tm.Trimesh(mesh.vertices, mesh.faces, process=False)   # no plan: one surface
+                    st = export_step(plain, os.path.join(out_dir, f"{rep['name']}.step"),
+                                     faces=int(opts.get("faces", DEFAULT_FACES)), name=rep["name"],
+                                     tolerance=opts.get("tolerance"))
+                    st["lattice"] = {"export": "mesh", "lattices": lat,
+                                     "note": "the printed part as facets, lattice and all (within "
+                                             "`tolerance` mm of the STL, tunnels kept)"}
                 elif lat:
                     st = _envelope_step(doc, g, mesh, lat, out_dir, rep["name"], opts, base_dir, sources, meshes, progress)
                 else:

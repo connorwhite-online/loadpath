@@ -101,6 +101,22 @@ def _calibrate(args):
     return 0
 
 
+def _step(args):
+    import trimesh
+
+    from . import step as stp
+
+    m = trimesh.load(args.part, force="mesh")
+    out = args.out or os.path.splitext(args.part)[0] + ".step"
+    name = os.path.splitext(os.path.basename(args.part))[0]
+    rep = stp.export_step(m, out, faces=args.faces or stp.DEFAULT_FACES, name=name, surface=args.surface,
+                          tolerance=args.tolerance)
+    rep.pop("shape", None)
+    rep["volumeError"] = round(rep["volume"] / rep["meshVolume"] - 1, 5) if rep.get("meshVolume") else None
+    print(json.dumps(rep, indent=1))
+    return 0 if rep["valid"] and rep["solids"] == 1 else 1
+
+
 def _import(args):
     from .cadimport import import_part
 
@@ -585,6 +601,15 @@ def main(argv=None):
     bs.add_argument("--nominal", help="the design the printed shape is compared with (default: the part itself; "
                     "give the design when simulating a compensated part)")
     bs.add_argument("--out", default="loadpath-buildsim")
+    sx = sub.add_parser("step", help="a closed STL/3MF/OBJ part as a STEP solid (needs loadpath[step]); a part "
+                                     "with a gyroid or other TPMS core keeps every tunnel")
+    sx.add_argument("part", help="STL, 3MF or OBJ, in mm, closed")
+    sx.add_argument("--out", help="STEP path (default: the part's name with .step)")
+    sx.add_argument("--faces", type=int, default=None, help="facet budget (default 20000); a TPMS core goes over "
+                    "it rather than lose a tunnel")
+    sx.add_argument("--tolerance", type=float, default=None,
+                    help="mm the facets may move to keep a TPMS core's tunnels (default 0.05)")
+    sx.add_argument("--surface", choices=["facets", "smooth"], default="facets")
     asm = sub.add_parser("assembly",help="derive a part's load cases and neighbour keep-outs from a URDF")
     asm.add_argument("urdf")
     asm.add_argument("--link", required=True, help="the URDF link the study designs")
@@ -676,6 +701,8 @@ def main(argv=None):
         return _verify(args)
     if args.cmd == "import":
         return _import(args)
+    if args.cmd == "step":
+        return _step(args)
     if args.cmd == "buildsim":
         return _buildsim(args)
     if args.cmd == "guide":

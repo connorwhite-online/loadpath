@@ -126,7 +126,10 @@ There is no GUI on purpose; it's a library.
   bores and bolt patterns found ([docs/IMPORT.md](docs/IMPORT.md)); results
   export as STL, 3MF, and STEP with exact planes and cylinders at the
   interfaces; a lattice part (strut cells, TPMS, graded, skinned or open)
-  goes to STEP lattice and all, as smooth patches on its true surface ([docs/fields.md](docs/fields.md#the-lattice-itself-in-the-step-lattice-exact)).
+  goes to STEP lattice and all, as smooth patches on its true surface ([docs/fields.md](docs/fields.md#the-lattice-itself-in-the-step-lattice-exact)),
+  and any closed STL, gyroid-cored and drained ones included, becomes one
+  valid STEP solid with every tunnel kept (`loadpath step part.stl`, a
+  minute for a 500k-triangle link).
 - **Mesh checks without a study** (`loadpath.checks`): wall thickness,
   overhangs, trapped voids, fluid-network isolation, component fit.
 

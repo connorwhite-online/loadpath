@@ -52,7 +52,8 @@ compliant mechanisms, heat exchangers and cold plates. Draw parts whose shape
 is set by function rather than load (enclosures, cosmetic covers, gears,
 threads) in CAD instead. loadpath doesn't replace CAD: model the interfaces
 there, let loadpath grow the material between them, and bring the result
-back as STEP or STL. Its edge over drawing the part yourself is that every
+back as STEP or STL (`loadpath step part.stl` turns any closed STL, a
+gyroid-cored one too, into one STEP solid). Its edge over drawing the part yourself is that every
 result comes with an independent check (safety factor, deflection,
 buckling, printability) you can report to the user.
 

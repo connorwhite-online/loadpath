@@ -1424,7 +1424,10 @@ FIELD_SCHEMA = {
                                        "(experimental: CAD-friendlier, not smaller; falls back to facets when "
                                        "OpenCascade's booleans fail)"},
             "patches": {"type": "integer", "minimum": 50, "description": "surface \"smooth\": organic triangles of the patch layout, two to a patch, refined where it misses (default 2000)"},
-            "lattice": {"enum": ["solid", "exact", "cavities"],
+            "tolerance": {"type": "number", "exclusiveMinimum": 0,
+                          "description": "mm the facets may move where an organic region keeps a TPMS core's "
+                                         "tunnels over the face budget rather than close them (default 0.05)"},
+            "lattice": {"enum": ["solid", "exact", "cavities", "mesh"],
                         "description": "lattice parts: the lattice solid in the STEP (default; the lattice is in "
                                        "the STL/3MF) or \"exact\": every lattice as smooth patches on its true "
                                        "surface, node blends and fillets included: strut cells (octet, bcc, "
@@ -1432,7 +1435,10 @@ FIELD_SCHEMA = {
                                        "under a skin or open at the outside (latticestep.export_void_step: the "
                                        "envelope less the void, sealed voids as inner shells, open pores cut in "
                                        "one boolean; ~1 KB a patch). \"cavities\": the older route for one TPMS "
-                                       "sheet lattice under a closed skin (its two sides' cavities)"},
+                                       "sheet lattice under a closed skin (its two sides' cavities). \"mesh\": "
+                                       "the printed part's own mesh as facets, lattice and all, simplified "
+                                       "within `tolerance` with every tunnel kept (fast: a minute or two for a "
+                                       "skinned, drained gyroid link)"},
             "latticeGrid": {"type": "number", "exclusiveMinimum": 0,
                             "description": "lattice \"exact\": patch size, mm (default the smaller of cell / 6 "
                                            "and half the thinnest strut or wall); coarser is smaller and misses "

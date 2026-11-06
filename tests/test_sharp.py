@@ -251,12 +251,76 @@ def test_write_step_keeps_points_unrounded_when_rounding_breaks_the_part():
         assert w["readBackValid"] and w["roundedPoints"] and not w["pcurves"], w
 
 
+# A skinned gyroid cube with a bore through it: the core is open to the
+# bore, so the part is one closed surface with tens of tunnels (the
+# robot-arm SLS links, drained, are this at full size).
+GYROID_BLOCK = {"nodes": {
+    "box": {"op": "shape", "shape": {"type": "box", "min": [-7, -7, -7], "max": [7, 7, 7]}},
+    "skin": {"op": "shell", "input": "box", "thickness": 1.0},
+    "core": {"op": "lattice", "type": "gyroid", "cell": 6.0, "thickness": 0.8},
+    "fill": {"op": "intersect", "inputs": ["core", "box"]},
+    "joined": {"op": "union", "inputs": ["skin", "fill"]},
+    "bore": {"op": "shape", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 20, "r": 2.5}},
+    "part": {"op": "subtract", "inputs": ["joined", "bore"]}}, "output": "part", "name": "gyroid-block"}
+
+
+def test_step_keeps_a_gyroid_cores_tunnels():
+    """A TPMS core open to the outside does not decimate to a small face
+    budget without closing tunnels or tearing; the STEP goes over the
+    budget instead, within TOPOLOGY_TOL, one valid solid of the STL's
+    volume and genus (was: 'does not decimate' after hours on the SLS links).
+    Also through a field graph's `"step": {"lattice": "mesh"}`."""
+    from loadpath.step import _decimate
+
+    import trimesh
+
+    m = FieldGraph(GYROID_BLOCK).mesh(pitch=0.6)
+    m = trimesh.Trimesh(m.vertices, m.faces, process=False)     # the STL as handed over (no CSG plan)
+    assert m.is_watertight and m.euler_number < -10, (m.is_watertight, m.euler_number)
+    d = _decimate(m, 4000)
+    assert d.is_watertight and d.euler_number == m.euler_number and len(d.faces) > 4000, \
+        (len(d.faces), d.euler_number, m.euler_number)
+    assert len(d.split(only_watertight=False)) == 1
+    assert abs(d.volume / m.volume - 1) < 0.01, d.volume / m.volume
+    if not available():
+        print("  (OpenCascade not installed: skipped the STEP)")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        doc = {**GYROID_BLOCK, "mesh": {"pitch": 0.6}, "check": False, "step": {"lattice": "mesh", "faces": 4000}}
+        _, rep = run_field(doc, td, render=False)
+        st = rep["step"]
+        assert st["readBackValid"] and abs(st["volume"] / st["meshVolume"] - 1) < 0.01, st
+        assert st["decimated"][0]["deviation"]["p99"] < 0.1, st["decimated"]
+        assert st.get("valid") and st["solids"] == 1 and st["lattice"]["export"] == "mesh", st
+
+
+def test_flip_needles_removes_zero_area_faces():
+    """A square pyramid whose front face is split at the middle of its base
+    edge, closed by a zero-area triangle (M on A-B): the flip leaves every
+    face with area and the same volume."""
+    import trimesh
+
+    from loadpath.step import _flip_needles
+
+    A, B, C, D, M, P = range(6)
+    V = np.array([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0], [1, 0, 0], [1, 1, 1]], float)
+    F = np.array([[A, M, P], [M, B, P], [M, A, B], [A, C, B], [A, D, C], [B, C, P], [C, D, P], [D, A, P]])
+    m = trimesh.Trimesh(V, F, process=False)
+    if m.volume < 0:
+        m = trimesh.Trimesh(V, F[:, ::-1], process=False)
+    assert m.is_watertight and m.is_winding_consistent and m.area_faces.min() == 0
+    out = _flip_needles(m)
+    assert out.is_watertight and out.is_winding_consistent and out.area_faces.min() > 0.1, out.area_faces
+    assert abs(out.volume - m.volume) < 1e-9
+
+
 TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact_where_the_field_rounds_it,
          test_mesh_distance_matches_trimesh, test_step_keeps_the_bore_a_cylinder,
          test_study_part_exports_exact_interfaces, test_run_field_reports_edges_and_writes_step,
          test_collapse_keeps_holes, test_step_smooth_patches,
          test_smooth_step_keeps_the_bore_exact, test_smooth_step_keeps_sealed_voids,
-         test_write_step_keeps_points_unrounded_when_rounding_breaks_the_part]
+         test_write_step_keeps_points_unrounded_when_rounding_breaks_the_part,
+         test_step_keeps_a_gyroid_cores_tunnels, test_flip_needles_removes_zero_area_faces]
 
 
 def main():

@@ -29,6 +29,7 @@ DEFAULT_FACES = 20_000      # organic facets in the B-rep: ~14 MB of STEP, ~20 s
 FUZZY = 1e-4                # boolean fuzz (mm): facets snapped onto exact faces
 POINT_DECIMALS = 5          # mm places for written points (10 nm)
 DEFAULT_PATCHES = 2000      # surface="smooth": organic triangles to start the patch layout from (refined where it misses)
+TOPOLOGY_TOL = 0.05         # mm: how far facets may move when a TPMS-cored body must keep every tunnel (_keep_topology)
 
 
 def available():
@@ -238,27 +239,168 @@ def _fast(mesh, faces):
 
 def _decimate(mesh, faces):
     """`mesh` cut down to about `faces` triangles, still closed. A lattice
-    does not decimate (its walls collapse first): past 4x the budget that is
-    an error, not a STEP file of millions of faces."""
+    or TPMS core does not decimate to a budget (its walls collapse first):
+    it is simplified within TOPOLOGY_TOL instead, every tunnel kept, over the
+    budget up to 25x; past that (or not a manifold) it is an error, not a
+    STEP file of millions of faces."""
     if len(mesh.faces) <= faces:
         return mesh
     try:
-        out = _fast(mesh, faces)
-        if out.is_watertight and abs(out.volume) > 0.9 * abs(mesh.volume):
+        out = _flip_needles(_drop_specks(_fast(mesh, faces)))
+        if (out.is_watertight and abs(out.volume) > 0.9 * abs(mesh.volume)
+                and out.euler_number == mesh.euler_number       # no tunnel closed, no sliver body left
+                and _deviation(mesh, out, 2000)["mean"] <= 4 * TOPOLOGY_TOL):   # nor walls folded flat
             return out
     except Exception:  # noqa: BLE001 - decimation is best-effort
         pass
     import trimesh
 
-    if len(mesh.faces) <= 20 * faces and mesh.is_watertight and mesh.is_winding_consistent:   # tore: coarsen carefully
-        V, F, _ = _collapse(mesh.vertices, mesh.faces, int(faces))
+    kept = _keep_topology(mesh, faces)         # seconds; within TOPOLOGY_TOL of the surface
+    if kept is not None and len(kept.faces) <= 1.5 * faces:
+        return kept
+    if kept is None and len(mesh.faces) <= 20 * faces and mesh.is_watertight and mesh.is_winding_consistent:
+        V, F, _ = _collapse(mesh.vertices, mesh.faces, int(faces))      # tore: coarsen carefully
         out = trimesh.Trimesh(V, F, process=False)
         if len(out.faces) <= 1.5 * faces and out.is_watertight:
             return out
+    if kept is not None:
+        # a TPMS core's tunnels: over the budget rather than closed up or
+        # torn. Quadric decimation from the simplified surface, at twice the
+        # budget and up, often keeps them all in fewer faces than the
+        # tolerance alone leaves (the upper arm link: 368k -> 160k).
+        n = 2 * faces
+        while n < 0.6 * len(kept.faces):
+            try:
+                out = _flip_needles(_drop_specks(_fast(kept, n)))
+                if (out.is_watertight and out.euler_number == kept.euler_number
+                        and abs(out.volume) > 0.995 * abs(kept.volume)):
+                    return out
+            except Exception:  # noqa: BLE001 - best-effort
+                pass
+            n *= 2
+        return kept
     if len(mesh.faces) > 4 * faces:
         raise ValueError(f"an organic region of {len(mesh.faces)} triangles does not decimate to {faces} and stay "
-                         "closed (a lattice?): raise the STEP face budget, or hand over the STL for it")
+                         f"closed within {TOPOLOGY_TOL} mm (a lattice?): raise the STEP face budget, or hand over "
+                         "the STL for it")
     return mesh
+
+
+def _flip_needles(mesh, rel=1e-10):
+    """`mesh` with its zero-area triangles (three vertices on a line, which
+    quadric decimation can leave) flipped away: the edge opposite the
+    middle vertex is swapped with its neighbour's, so no face is flat to
+    nothing. OpenCascade reads a solid with one such face as invalid, and
+    ShapeFix then leaves a shell, not a solid."""
+    import trimesh
+
+    F = np.array(mesh.faces, np.int64)
+    V = np.asarray(mesh.vertices, float)
+
+    def areas(idx):
+        t = V[F[idx]]
+        return np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1) / 2
+
+    a = areas(np.arange(len(F)))
+    eps = rel * max(float(np.median(a)), 1e-12) * 1e4
+    t = V[F]
+    L = np.linalg.norm(t[:, [1, 2, 0]] - t, axis=2).max(1)
+    bad = np.flatnonzero((a <= eps) | (a <= 1e-4 * L * L))       # flat to nothing, or a cap (angle ~180)
+    if not len(bad):
+        return mesh
+    edge_face = {}
+    for i, f in enumerate(F):
+        for k in range(3):
+            edge_face[(int(f[k]), int(f[(k + 1) % 3]))] = i
+    for i in bad:
+        f = F[i]
+        L = [np.linalg.norm(V[f[(k + 1) % 3]] - V[f[k]]) for k in range(3)]
+        k = int(np.argmax(L))
+        a_, b_, c_ = int(f[k]), int(f[(k + 1) % 3]), int(f[(k + 2) % 3])
+        j = edge_face.get((b_, a_))
+        if j is None:
+            continue
+        g = [int(x) for x in F[j]]
+        d_ = [x for x in g if x not in (a_, b_)]
+        if len(d_) != 1 or d_[0] == c_:
+            continue
+        d_ = d_[0]
+        if (c_, d_) in edge_face or (d_, c_) in edge_face:       # the flip would make an edge twice
+            continue
+        new = np.array([[c_, a_, d_], [c_, d_, b_]])
+        old = F[[i, j]].copy()
+        F[i], F[j] = new
+        tt = V[F[[i, j]]]
+        if (areas(np.array([i, j])) <= np.maximum(eps, 1e-4 * np.linalg.norm(tt[:, [1, 2, 0]] - tt, axis=2).max(1)
+                                                   ** 2)).any():
+            F[i], F[j] = old
+            continue
+        for e in ((a_, b_), (b_, a_)):
+            edge_face.pop(e, None)
+        for idx in (i, j):
+            for k in range(3):
+                edge_face[(int(F[idx][k]), int(F[idx][(k + 1) % 3]))] = idx
+    return trimesh.Trimesh(V, F, process=False)
+
+
+def _drop_specks(mesh, share=1e-5):
+    """`mesh` without the bodies under `share` of its volume: the folded
+    zero-volume slivers decimation leaves, each a solid of its own in a
+    STEP file."""
+    import trimesh
+
+    lab = trimesh.graph.connected_component_labels(mesh.face_adjacency, node_count=len(mesh.faces))
+    if lab.max() == 0:
+        return mesh
+    F = np.asarray(mesh.faces)
+    tri = mesh.vertices[F]
+    v = np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])) / 6.0
+    vol = np.bincount(lab, weights=v)
+    keep = np.abs(vol) >= share * abs(vol.sum())
+    if keep.all():
+        return mesh
+    out = trimesh.Trimesh(mesh.vertices, F[keep[lab]], process=False)
+    out.remove_unreferenced_vertices()
+    return out
+
+
+def _keep_topology(mesh, faces, tol=None, limit=25):
+    """`mesh` simplified by manifold3d (edge collapses that keep it
+    manifold, every vertex within `tol` mm of the surface) at the finest
+    tolerance that meets the `faces` budget, else at `tol` whatever it
+    costs: a part with a gyroid or other TPMS core open to its outside (a
+    skinned, drained link) is one surface with tens of tunnels, which
+    quadric decimation tears and edge collapse to the budget closes. Specks
+    the collapses leave (under 1e-5 of the volume) are dropped. None when
+    even `tol` leaves more than `limit` x `faces` triangles."""
+    import manifold3d as m3d
+    import trimesh
+
+    from .shapes import manifold_from_trimesh, trimesh_from_manifold
+
+    tol = TOPOLOGY_TOL if tol is None else float(tol)
+    try:
+        M = manifold_from_trimesh(mesh)
+    except Exception:  # noqa: BLE001 - not a manifold: nothing to keep
+        return None
+    if M.status() != m3d.Error.NoError or M.is_empty():
+        return None
+    best = None
+    for t in (tol / 16, tol / 8, tol / 4, tol / 2, tol):
+        best = M.simplify(t)
+        if best.num_tri() <= faces:
+            break
+    if best.num_tri() > limit * faces:
+        return None
+    pieces = best.decompose()
+    if len(pieces) > 1:
+        total = sum(p.volume() for p in pieces)
+        keep = [p for p in pieces if p.volume() >= 1e-5 * total]
+        best = m3d.Manifold.batch_boolean(keep, m3d.OpType.Add) if len(keep) > 1 else keep[0]
+    out = trimesh_from_manifold(best)
+    out = _flip_needles(trimesh.Trimesh(np.array(out.vertices, np.float64), np.array(out.faces, np.int64),
+                                        process=False))
+    return out if out.is_watertight else None
 
 
 def _organic_budget(plan, faces):
@@ -540,13 +682,22 @@ def _smooth_shape(part, plan, patches, notes, degree=None):
 
 
 def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=True, surface="facets",
-                patches=DEFAULT_PATCHES, degree=None):
+                patches=DEFAULT_PATCHES, degree=None, tolerance=None):
     """Write `part` (a trimesh from a field graph or a study, or a CSG plan)
     to a STEP file at `path`. `faces` is the budget of organic facets; the
     exact shapes cost a handful of faces each. Returns a report: faces by
     type, the share of the area that is exact geometry, solids, volume (and
     the STL's, to compare), what decimating the organic surface cost, and
-    the file's size."""
+    the file's size. `tolerance` (mm, default TOPOLOGY_TOL) bounds how far
+    facets move where a TPMS core's tunnels keep an organic region over its
+    budget."""
+    global TOPOLOGY_TOL
+    if tolerance is not None:
+        saved, TOPOLOGY_TOL = TOPOLOGY_TOL, float(tolerance)
+        try:
+            return export_step(part, path, faces, name, unify, check, surface, patches, degree)
+        finally:
+            TOPOLOGY_TOL = saved
     _need()
     import time
 

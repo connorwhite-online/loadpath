@@ -1148,7 +1148,8 @@ face per triangle, decimated first to `"step": {"faces": 20000}` (about
 which readers rebuild and which were over half of it). The report gives the faces by type, the
 share of the area on exact geometry, the volume against the STL's, and what
 decimating cost (`decimated[].deviation`, mm). A lattice does not decimate
-to a useful size, so for a graph with `lattice` nodes the STEP file is the
+to a useful size (a TPMS core open to the outside keeps its tunnels over
+the budget instead, below), so for a graph with `lattice` nodes the STEP file is the
 part with every lattice solid: a sandwich's skin, bosses, bores and faces
 exactly as printed, which is all an assembly mates against or checks for
 interference, while the STL carries the lattice. `step.lattice` in the
@@ -1168,6 +1169,37 @@ on the sandwich's gyroid, 18k patches that did not make a valid solid and
 missed by about a millimetre at the knife-edge junctions with the skin. A
 part's sealed voids (a skin round its core) are kept, as inner shells of
 the one solid.
+
+### A TPMS-cored mesh as one STEP solid: `loadpath step`, `"lattice": "mesh"`
+
+A skinned part whose gyroid (or other TPMS) core is open to the outside
+through drain holes or cut keep-outs is one closed surface with tens of
+tunnels. Decimating it to the face budget either tears it (quadric
+decimation) or closes tunnels and pinches walls together, which used to
+end in "does not decimate" after the part had been built. Now an organic
+region that will not decimate to its budget with its topology intact is
+simplified by manifold3d within `"tolerance"` (default 0.05 mm, every
+vertex that close to the surface), then quadric-decimated from there at
+twice the budget and up for as long as the genus holds; it goes over the
+budget rather than lose a tunnel (up to 25x). Folded zero-volume slivers
+and zero-area or 180-degree facets the decimation leaves are dropped or
+flipped, since OpenCascade reads one of them as a second solid or an
+invalid one.
+
+`loadpath step part.stl` does this for any closed STL, 3MF or OBJ
+(`--faces`, `--tolerance`; exit 1 unless the result is one valid solid),
+and a field graph's `"step": {"lattice": "mesh"}` does it for the printed
+part, lattice and all. Measured on the robot-arm SLS links (PA12, skin over
+a gyroid core, drained):
+
+| part | STL | STEP faces | size | volume vs STL | deviation mean / p99 | time |
+| --- | --- | --- | --- | --- | --- | --- |
+| wrist link (genus 24) | 495k triangles | 17.3k | 15 MB | -0.30% | 0.020 / 0.081 mm | 28 s |
+| upper arm (genus 96) | 1.63M triangles | 160k | 143 MB | -0.15% | 0.016 / 0.062 mm | 5.3 min |
+
+Both are one solid, valid in OpenCascade in memory and on reading the file
+back. The facets are not the design's true surface (`"lattice": "exact"`
+is); they are the STL's, within the tolerance.
 
 ### The lattice itself in the STEP: `"lattice": "exact"`
 
