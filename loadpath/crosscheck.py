@@ -1051,8 +1051,19 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=No
                 i, c = np.nonzero(f)
                 np.savetxt(fh, np.column_stack([i + 1, c + 1, f[i, c]]), fmt="%d,%d,%.12g")
                 fh.write("*NODE FILE\nU\n*NODE FILE\nS\n*END STEP\n")
+        # One thread unless LOADPATH_CCX_THREADS asks for more: the packaged
+        # CalculiX (2.21, SPOOLES) on several threads returned a different
+        # answer run to run on the same deck (a propped cantilever's
+        # deflection 0.0975 / 0.0963 / 0.0943 mm, its peak stress 1.23 or
+        # 2.07 MPa; 2 runs in 6 off), and single-threaded the same every
+        # time (8 of 8). The cross-check is a second opinion: it has to be
+        # repeatable before it is fast.
         env = dict(os.environ)
-        env.setdefault("OMP_NUM_THREADS", str(os.cpu_count() or 1))
+        threads = os.environ.get("LOADPATH_CCX_THREADS", "1")
+        env["OMP_NUM_THREADS"] = threads
+        env["CCX_NPROC_EQUATION_SOLVER"] = threads
+        env["CCX_NPROC_STIFFNESS"] = threads
+        env["CCX_NPROC_RESULTS"] = threads
         run = subprocess.run([exe, "job"], cwd=tmp, capture_output=True, text=True, timeout=7200, env=env)
         if run.returncode != 0 or not os.path.exists(deck + ".frd"):
             raise RuntimeError(f"CalculiX failed: {(run.stdout + run.stderr)[-2000:]}")
