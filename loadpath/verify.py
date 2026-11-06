@@ -347,6 +347,7 @@ def _closed_bores(study: Study, mesh) -> list:
     from .shapes import Cylinder
 
     out = []
+    rng = np.random.default_rng(0)
     for r in study.keep_out:
         if not r.bore:
             continue
@@ -365,7 +366,9 @@ def _closed_bores(study: Study, mesh) -> list:
                                 for t in np.linspace(0, 2 * np.pi, 6, endpoint=False)]
         for end, cap, out_dir in (("p0", sh.p0, -a), ("p1", sh.p1, a)):
             probes = np.array([cap + d * out_dir + o for d in (1.5, 3.0) for o in ring])
-            inside = mesh.contains(probes)
+            # ray parity (_inside): trimesh's contains (no embree) took
+            # 4-5 s a verify on the wrist yoke for these few dozen points
+            inside = _inside(mesh, probes, rng)
             if inside.mean() > 0.5:
                 out.append({"id": r.id, "end": end, "at": cap.round(2).tolist()})
     return out

@@ -231,8 +231,44 @@ class _GridSDF:
     def min(self, shapes):
         key = tuple(id(s) for s in shapes)
         if key not in self._min:
-            self._min[key] = _min_sdf(shapes, self.pts)
+            self._min[key] = _shared_min(tuple(shapes), self.shape, self.origin, self.step, lambda: self.pts)
         return self._min[key]
+
+
+# The same primitives on the same fine grid, across outcomes: every
+# outcome of a search meshes on its study's one design grid, so the
+# preserved shapes', keep-outs' and design space's distances repeat. They
+# were 6 s of each outcome's meshing on the wrist yoke (Cylinder.sdf on
+# a few million points). Kept by the shapes themselves (held here, so
+# their ids stay theirs) and the grid; least recently used first out past
+# _SDF_CACHE_BYTES. The values are the ones _min_sdf gives.
+_SDF_CACHE: "OrderedDict" = None
+_SDF_CACHE_BYTES = 200e6
+_SDF_LOCK = None
+
+
+def _shared_min(shapes, shape, origin, step, pts):
+    global _SDF_CACHE, _SDF_LOCK
+    import threading
+    from collections import OrderedDict
+
+    if _SDF_CACHE is None:
+        _SDF_CACHE, _SDF_LOCK = OrderedDict(), threading.Lock()
+    key = (tuple(id(s) for s in shapes), tuple(shape), tuple(np.asarray(origin, float).tolist()), float(step))
+    with _SDF_LOCK:
+        hit = _SDF_CACHE.get(key)
+        if hit is not None and all(a is b for a, b in zip(hit[0], shapes)):
+            _SDF_CACHE.move_to_end(key)
+            return hit[1]
+    val = _min_sdf(shapes, pts())
+    val.setflags(write=False)
+    with _SDF_LOCK:
+        _SDF_CACHE[key] = (shapes, val)
+        total = sum(v[1].nbytes for v in _SDF_CACHE.values())
+        while total > _SDF_CACHE_BYTES and len(_SDF_CACHE) > 1:
+            _, (_, old) = _SDF_CACHE.popitem(last=False)
+            total -= old.nbytes
+    return val
 
 
 def _min_sdf(shapes, pts):

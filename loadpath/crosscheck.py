@@ -161,7 +161,19 @@ def _tet_cache_dir():
 # coarser, and a sizing field asks for `size` inside the part and within
 # 1.5 grid steps of its surface: the same mesh in the part (228k tets, mean
 # edge 1.94 vs 1.91 mm, worst-element energy 17 vs 19) in 87 s.
+#
+# The sizing grid's spacing (times `size`), how many of its steps from the
+# surface stay at `size` (sqrt(3) covers every corner of a grid cube the
+# surface passes through), and how fast the edge grows beyond that (mm per
+# mm). At 4 steps, 1.5 of them and 0.5 mm/mm, a band 9 mm thick round the
+# robot-arm wrist yoke stayed fine, and in its open frame that was most of
+# the box: fTetWild's last pass refined to 908k tets to keep 55k. At 2
+# steps, 1.75 and 1.0 the band is 5 mm and the mesh takes 47 s, not 64 s,
+# with the same tets inside the part (55k).
 _COARSE_OUTSIDE = 8.0
+_BG_SPACING = 2.0
+_BG_NEAR = 1.75
+_BG_GROWTH = 1.0
 
 
 def _inside_grid(tri, axes):
@@ -210,7 +222,7 @@ def _outside_coarse(mesh, v, size):
     fails (a mesh that is not watertight)."""
     from scipy.spatial import cKDTree
 
-    h = 4.0 * size
+    h = _BG_SPACING * size
     lo, hi = v.min(0) - 2.0 * h, v.max(0) + 2.0 * h
     axes = [np.arange(lo[i], hi[i] + h, h) for i in range(3)]
     n = [len(a) for a in axes]
@@ -222,8 +234,8 @@ def _outside_coarse(mesh, v, size):
     d = np.where(inside, 0.0, cKDTree(surf).query(G)[0])
     # every grid cell the surface passes through, and its neighbours, stays
     # at `size` at all 8 corners, so no element at the surface is coarser
-    near = 1.5 * h
-    val = np.minimum(size + 0.5 * np.maximum(d - near, 0.0), _COARSE_OUTSIDE * size)
+    near = _BG_NEAR * h
+    val = np.minimum(size + _BG_GROWTH * np.maximum(d - near, 0.0), _COARSE_OUTSIDE * size)
     # each grid cube as six tetrahedra around its main diagonal (Kuhn)
     i, j, k = np.meshgrid(*(np.arange(m - 1) for m in n), indexing="ij")
     base = (i * n[1] + j) * n[2] + k

@@ -428,6 +428,73 @@ landing anywhere in the measured range does not flag. A flag on
 corpus-bracket-1, -bracket-4 or -tri-mount-5 alone needs a rerun before it
 is read as a regression.
 
+## Meshing and verify: follow-up (2026-11-06)
+
+A second pass at the three leftovers above (fTetWild, the verify, the
+optimizer's smoother), measured on the wrist yoke and then on six
+tet-confirmed full-tier cases against main on the same box (`--jobs 2`).
+
+Kept, all in the check path, none in the optimizer:
+
+- **fTetWild's sizing field.** The background grid ran 4 elements apart and
+  held the target edge within 1.5 grid steps (9 mm on the yoke) of the
+  surface, growing 0.5 mm per mm beyond. In an open frame that band is most
+  of the box: fTetWild's last pass refined to 908k tets to keep 55k. Now 2
+  elements apart, 1.75 steps (5 mm) and 1 mm per mm: the yoke's mesh takes
+  47 s instead of 64 s, with the same 55k tets inside the part.
+- **The closed-bore probe** used trimesh's `contains` (no embree): 4.5 s
+  a verify on the yoke for a few dozen points. Ray parity (`verify._inside`)
+  takes 1 s and gives the same answers.
+- **Primitive distances on the meshing grid** (preserved shapes, keep-outs,
+  design space) are the same for every outcome of a study, and are now kept
+  between outcomes (`reconstruct._shared_min`, 200 MB, least recently used
+  out first): about 6 s an outcome on the yoke, the same values.
+
+| Case | Main s (tet s) | New s (tet s) | Mass main / new g |
+| --- | --- | --- | --- |
+| MBB beam | 3008 (474) | 1709 (175) | 15.7 / 14.3 |
+| Printed hook | 6141 (152) | 1594 (135) | 32.4 / 30.8 |
+| Robot-arm upper arm | 1366 (429) | 1495 (362) | 204.3 / 204.3 |
+| Robot-arm wrist yoke | 997 (225) | 1051 (214) | 17.6 / 17.6 |
+| Bell crank | 245 (63) | 213 (46) | 22.5 / 22.5 |
+| Motor mount | 112 (-) | 114 (-) | 28.0 / 28.0 |
+
+The tet checks are 10-60% faster. The whole-case times move far more than
+that, both ways, because the search goes down a different path when a tet
+reading moves (the hook and the MBB beam picked different fractions); read
+those as noise.
+
+Tried and dropped:
+
+- **A strength threshold in the optimizer's multigrid** (pyamg `theta`
+  0.05, against 0). With every connection counted strong, a gray design's
+  solid cells aggregate with the near-void ones beside them, and the yoke's
+  first reduced solves took 75-103 CG iterations; with the threshold they
+  took 14. But on larger grids the hierarchy got far more expensive (the
+  motor mount's first outcome 64 s against 15, the upper arm's outcomes
+  about 2x) and the printed hook's solve stalled at 800 iterations. The
+  full tier summed 29.8k case-seconds against main's 20.3k.
+- **Running the constrained method to its 4 parts just over the
+  utilization cut** (0.19-0.25), to stop the coarse yoke landing at 13-14 g
+  or 18-19 g by which side of 0.19 its search part falls. The turret sits in
+  that band too: 928 s became 9082 s, for no lighter part. (The probe band
+  of 890458b, above, landed meanwhile: it stops at the first failing part
+  near the search's mass, which is what keeps the turret's cost down.)
+- fTetWild epsilon 2e-3 (30% faster, but its envelope moves the surface),
+  `num_opt_iter` 10 and `stop_energy` 100 (no real gain).
+
+Why the yoke wanders: the tet check's peak sits at the edge of the
+horn hub's support band (z 537.9) and reads +-10% from one fTetWild mesh of
+the same surface to the next (SF 3.24-3.93 over four meshes). That moves the
+search's tet calibration, its pick, and the pick's stress utilization around
+goal.method auto's cut. Fixing it means reading that peak in a way that does
+not ride the support's singular field, not meshing faster.
+
+Open: the full-tier wrist yoke fails on main (aa5e0c7) as well as here,
+the same part both times (17.6 g, p5 member 0.86 mm, 303 mm of crease):
+the pick at 0.057, warm-started, comes out with a thin sheet and spikes,
+while the same fraction started cold meshes clean (17.2 g, no crease).
+
 ## Pitch sensitivity: one grid is a sample
 
 A safety-factor search's answer moves a lot with sub-percent changes of the
