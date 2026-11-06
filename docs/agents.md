@@ -53,7 +53,12 @@ resolve against; it defaults to the server's working directory.
    envelope the part may fill, how it is held, what pushes on it and how
    hard (mass × 9.81 × a dynamic factor), the material and the printer.
    Start from the nearest `loadpath_examples` document rather than a blank
-   page. Bolted joints go in `fasteners`, not as drawn bosses.
+   page. Bolted joints go in `fasteners`, not as drawn bosses. A hole
+   something goes into gets a `fit` on its keep-out (press for a bearing,
+   slip for a locating pin, clearance for a turning shaft), drawn at the
+   mating part's diameter: loadpath sizes the hole for the process, and
+   `deliver.fits` says what it will measure as built and what to do if a
+   printer can't hold it (tune `process.holeBias`, or ream).
 2. **`loadpath_check` until it is clean.** It returns all problems at once,
    so fix them all before checking again. Read the warnings: a `minMember`
    under the grid's resolution, a load that touches nothing.

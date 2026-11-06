@@ -22,6 +22,13 @@ already gave you or in the world:
   limits (`loadpath assembly`), a hand push, a drop.
 - **Clearances** come from the fasteners (`fasteners` sizes the clearance
   hole, head and driver path) and the mating parts and sweeps (keep-outs).
+- **Fits and tolerances** come from what goes in each hole: a bearing
+  presses in, a locating pin slips, a shaft turns, a bolt passes. Draw the
+  keep-out at the mating part's diameter and give it a `fit`; loadpath
+  redraws the hole for the process (FDM holes print a few tenths small,
+  powder closes SLS and MJF holes) and the report says what each hole will
+  measure as built and whether the fit holds, needs a tuned printer, or
+  needs a reamer.
 - **Material, process and safety factor** come from how they'll make it and
   what failure would cost.
 
@@ -75,6 +82,17 @@ buckling, printability) you can report to the user.
    Anything inserted (a shaft, pin, bearing, cable) needs its keep-out to
    run past the design space on the side it goes in from, or the part may
    close over it; `check` warns about a bore with no open end.
+   Give every hole something goes into a `fit` on its keep-out, drawn at
+   the mating part's diameter: `press` (a bearing's outer ring, a dowel
+   pin), `transition`, `slip` (a locating pin, a shaft you take out),
+   `clearance` (a shaft that turns, a hinge pin). Fastener holes get ISO 273
+   `normal` by default (`fit: "close"` or `"loose"` on the fastener). With a
+   `process` (or `milling`/`casting`) every other bore is held at its drawn
+   size. Plastic fits are wider than ISO; metal ones are ISO 286 (H7/p6,
+   H7/k6, H7/g6, H8/f7). Read `deliver.fits` and pass its `instruction`
+   lines on: "ream to 21.82-21.94 mm" or "print a test ring and set
+   process.holeBias" is something the user does after printing. A measured
+   `process.holeBias` (as-built minus drawn diameter) replaces the default.
    Bolted joints go in `fasteners` (size, seat point, direction, grip, and
    whether the far end clamps on a face or engages a thread or insert): it
    preserves only the bearing rings or the thread sleeve, keeps the bore and

@@ -860,6 +860,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     report["boundaryCutArea"] = _boundary_cut_area(study, mesh)
     report.update(_creases(study, mesh))
     report["closedBores"] = _closed_bores(study, mesh)
+    if getattr(study, "fits", None):
+        # bearing seats, pins and bolt holes: the hole in the file, the band
+        # it prints to, and whether the fit holds (fits.py)
+        from .fits import fits_report
+        report["fits"] = fits_report(study, mesh)
     # decompose() lists each enclosed cavity too, as a negative volume
     pieces = [b.volume() for b in part.decompose()]
     report["bodies"] = sum(1 for v in pieces if v > 0)

@@ -49,6 +49,9 @@ def attention(o: dict, study: dict) -> list[str]:
         out.append(f"p5Member {p5:.2f} mm is under minMember {mm} mm: raise the resolution")
     if o.get("closedBores"):
         out.append(f"closed bores: {o['closedBores']}")
+    if o.get("fits"):
+        from .fits import fit_warnings
+        out.extend(fit_warnings(o["fits"]))
     dur = o.get("durability") or {}
     if dur.get("safetyFactor") is not None and dur["safetyFactor"] < dur.get("target", 1.5):
         out.append(f"durability safety factor {dur['safetyFactor']:.2f} (fatigue/creep) is under "
@@ -129,6 +132,11 @@ def delivery(summary: dict, study: dict) -> dict | None:
         "p5Member": _p5(o),
         **({"durabilitySafetyFactor": o["durability"].get("safetyFactor")} if o.get("durability") else {}),
         **{k: o[k] for k in ("bodies", "keepOutIntrusion", "preserveMissing") if o.get(k) is not None},
+        # every fitted hole: drawn size, predicted as-built band, verdict, what to do
+        **({"fits": [{k: f.get(k) for k in ("id", "fit", "mate", "designed", "measured", "asBuilt",
+                                             "clearanceAsBuilt", "window", "verdict", "instruction")}
+                     for f in o["fits"] if f.get("fit") != "nominal" or f.get("verdict") != "holds"]}
+           if o.get("fits") else {}),
         **({"process": o["process"]} if o.get("process") else {}),
         **({"print": {k: v for k, v in o["print"].items() if k != "warnings"}} if o.get("print") else {}),
         "warnings": warn,

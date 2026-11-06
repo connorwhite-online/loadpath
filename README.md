@@ -8,7 +8,8 @@ loadpath grows the part with topology optimization, meshes it as a watertight
 solid with the interfaces cut exactly, and checks that mesh with a fresh finite
 element analysis. You get an STL, 3MF or STEP and a report: mass, safety
 factor, deflection, thinnest member, whether every interface and clearance
-came through, printability, pass or fail.
+came through, what each bearing seat, pin hole and bolt hole will measure as
+built and whether its fit holds, printability, pass or fail.
 
 <table>
 <tr>
@@ -44,13 +45,16 @@ the arm the link goes in, a photo or sketch. The agent turns that into a
 study. It reads bores, bolt patterns and mounting faces out of CAD
 (`loadpath_import_cad`), derives joint loads from a URDF's masses and motor
 torques (`loadpath assembly`), sizes bolt clearance and driver paths from the
-fastener, and fills the gaps you didn't mention (screw size, spacing, a safety
-factor for the use) with stated assumptions you can correct. `loadpath_check`
+fastener, picks the fit each hole needs (a bearing presses in, a locating pin
+slips, a shaft turns, a bolt passes) and draws the hole for the process so it
+prints to that fit, and fills the gaps you didn't mention (screw size,
+spacing, a safety factor for the use) with stated assumptions you can correct. `loadpath_check`
 lints the setup before anything runs: missing or misspelled fields, a
 keep-out cutting into a mounting boss, a bore with no open end, a part glued
 down where it should be bolted. Then the agent runs it in the background and
-reads the report back, including whether every interface survived and every
-keep-out stayed clear. Its guide is [loadpath/SKILL.md](loadpath/SKILL.md) (the
+reads the report back, including whether every interface survived, every
+keep-out stayed clear, and every hole will fit what goes in it (or needs a
+reamer). Its guide is [loadpath/SKILL.md](loadpath/SKILL.md) (the
 `loadpath_guide` tool returns it); the tools and the loop are in
 [docs/agents.md](docs/agents.md). The server runs locally and nothing
 leaves the machine. Units are millimetres, newtons and megapascals. MIT
@@ -83,7 +87,9 @@ Where it is strongest:
 - **Implicit modelling**: field graphs, graded and conformal lattices (TPMS,
   strut, Voronoi), blends, and exact STEP of lattice parts.
 - **Process awareness**: FDM, SLS, MJF, resin and powder-bed metal rules,
-  plus casting and milling constraints.
+  plus casting and milling constraints, and hole fits: each bearing seat,
+  pin hole and bolt hole drawn for how that process prints holes, with its
+  as-built size checked on the delivered mesh.
 - **Heat exchangers**: lattice-Boltzmann flow and conjugate heat transfer
   for gyroid cores and cold plates.
 

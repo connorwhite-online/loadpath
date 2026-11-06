@@ -172,6 +172,8 @@ class Outcome:
             "preserveMissing": r.get("preserveMissing"),
             "bodies": r.get("bodies"),
             "boundaryCutArea": r.get("boundaryCutArea"),
+            **({"closedBores": r["closedBores"]} if r.get("closedBores") else {}),
+            **({"fits": r["fits"]} if r.get("fits") else {}),
             **({"thermal": r["thermal"]} if "thermal" in r else {}),
             **({"durability": r["durability"]} if "durability" in r else {}),
             **({"print": {k: v for k, v in r["print"].items() if k != "bridgeList"}} if "print" in r else {}),

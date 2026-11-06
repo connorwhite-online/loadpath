@@ -126,7 +126,22 @@ _KEEP_OUT = {
                                            "(false for a pressurized cavity)."},
                    "wall": {**_POS, "description": "mm of material kept round it, pinned solid: a duct's or a "
                                                    "plenum's skin, with only what is behind it designed (ribs). "
-                                                   "A pressurized keep-out gets minMember if not set."}},
+                                                   "A pressurized keep-out gets minMember if not set."},
+                   "fit": {"enum": ["press", "transition", "slip", "clearance", "close", "normal", "loose",
+                                    "nominal", "none"],
+                           "description": "A cylindrical bore's fit against the part that goes in it (fits.py): "
+                                          "press (a bearing's outer ring, a dowel pin), transition, slip (a "
+                                          "locating pin, a removable shaft), clearance (a shaft turning in it), "
+                                          "close/normal/loose (bolt holes, ISO 273), nominal (hold the drawn "
+                                          "diameter: the default for every bore once the process is known), none "
+                                          "(no allowance). The hole is redrawn for the process's hole bias and "
+                                          "report fits gives the as-built band and whether the fit holds."},
+                   "mate": {**_POS, "description": "Diameter of the mating part, mm (default the cylinder's: draw "
+                                                   "the keep-out at the bearing's or pin's size)."},
+                   "finish": {"enum": ["auto", "as-built", "ream"],
+                              "description": "auto (default): ream when the process cannot hold the fit as "
+                                             "printed (the hole is drawn undersize for the reamer); as-built: "
+                                             "keep the printed hole; ream: always."}},
     "required": ["shape"],
     "additionalProperties": False,
 }
@@ -263,6 +278,9 @@ _FASTENER = {
         "ring": {**_POS, "description": "Seat and face ring thickness along the screw, mm (default 40% of the "
                                         "diameter, at least 2). Bosses a brief asks for go in preserve."},
         "sleeveWall": {**_POS, "description": "end 'thread': wall of the sleeve round the tap, mm."},
+        "fit": {"enum": ["close", "normal", "loose", "nominal"],
+                "description": "The clearance hole: ISO 273 fine (close), medium (normal, the default) or "
+                               "coarse (loose), drawn for the process's hole bias; nominal holds a given hole."},
         "driver": {"type": "number", "minimum": 0,
                    "description": "Length of the head and driver keep-out back from the seat, mm (default 60). "
                                   "Shorten it where it would cut through another interface."},
@@ -573,7 +591,12 @@ _PROCESS = {"anyOf": [
                     "bridgeSpan": {**_POS, "description": "mm: longest unsupported bridge the printer prints cleanly "
                                    "(default: 15 FDM, 5 resin, 2 LPBF); longer spans count as needing support"},
                     "escapeHole": {**_POS, "description": "mm: smallest powder escape / resin drain hole "
-                                                          "(default SLS 4, MJF 5, SLA/DLP 3.5)"}},
+                                                          "(default SLS 4, MJF 5, SLA/DLP 3.5)"},
+                    "holeBias": {"type": "number", "description": "mm: as-built minus drawn hole diameter on "
+                                 "this printer, measured (default per process in fits.py: FDM -0.2 along the "
+                                 "build, -0.35 across; SLS -0.15; MJF -0.1; resin -0.05; LPBF -0.1/-0.2)"},
+                    "holeTolerance": {**_POS, "description": "mm: +- scatter of a hole's as-built diameter on "
+                                      "this printer, measured (default per process, growing with diameter)"}},
      "required": ["type"], "additionalProperties": False},
 ], "description": "How it is made: sets a minimum member, overhang control (FDM, LPBF metal) and the layer-bond check. "
                   "lpbf = laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L). sls/mjf (PA12, PA11, PA12-GB, TPU) "

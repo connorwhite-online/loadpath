@@ -22,7 +22,9 @@ cylinder.
                                     # this part at the seat (no head or driver path to keep clear)
       "threadLength": 8,            # end = "thread": engagement length past the grip
       "insert": 6.4,                # optional: heat-set insert or nut OD; else a tapped hole
-      "preload": 600                # N; default from the seat's bearing area
+      "preload": 600,               # N; default from the seat's bearing area
+      "fit": "normal"               # the clearance hole: "close", "normal" (ISO 273 medium, the
+                                    # default) or "loose"; drawn for the process (fits.py)
     }]
 
 A screw driven from the mating part into this one is `"headOn": "mating"`,
@@ -147,7 +149,13 @@ def expand_fasteners(d: dict) -> dict:
         driver = float(f.get("driver", max(60.0, _exit_distance(d, seat, -a) + 2.0)))
         end = seat + a * grip
         r_ring = 0.5 * head + wall
-        keep_out.append({"id": f"{fid}-bore", "shape": _tube(seat - a * 1.0, end + a * 2.0, 0.5 * hole)})
+        # the clearance hole's fit (fits.py): ISO 273 medium unless set, or the
+        # given hole held as drawn
+        fit = f.get("fit", "nominal" if "hole" in f else "normal")
+        bore = {"id": f"{fid}-bore", "shape": _tube(seat - a * 1.0, end + a * 2.0, 0.5 * hole), "fit": fit}
+        if fit in ("close", "normal", "loose"):
+            bore.update({"mate": nominal, "_size": size})
+        keep_out.append(bore)
         if head_on == "this":
             # as wide as the seat ring: a head path narrower than the ring
             # leaves a sub-millimetre lip of ring standing round it
@@ -155,7 +163,7 @@ def expand_fasteners(d: dict) -> dict:
             if cb is not None and float(cb) <= head:
                 raise ValueError(f"{label}.counterbore ({float(cb):g} mm) must be wider than the head ({head:g} mm)")
             r_head = 0.5 * float(cb) if cb is not None else max(0.5 * head + 0.5, r_ring)
-            keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, r_head)})
+            keep_out.append({"id": f"{fid}-head", "shape": _tube(seat, seat - a * driver, r_head), "fit": "none"})
         preserve.append({"id": f"{fid}-seat", "shape": _tube(seat, seat + a * ring, r_ring, 0.5 * hole)})
         far = None
         if end_kind == "face":

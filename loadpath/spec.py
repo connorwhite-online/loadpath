@@ -574,6 +574,9 @@ class Study:
     # Build-process simulation of the delivered part (buildsim.py): a
     # buildsim.BuildSetup plus {"compensate": bool, "cells": int}, or None
     build_sim: Any = None
+    # fits.py rows: each fitted bore (bearing seat, pin, bolt hole) with the
+    # hole drawn for the process and the window it must print to
+    fits: list = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -794,6 +797,11 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     d = quick.study(d)
     d = expand_fasteners(d)
     d = _expand_planar(d)
+    from .fits import expand_fits
+    d = expand_fits(d)
+    # kept in raw: a study re-parsed from its raw (orientation, explore)
+    # is not compensated twice
+    fits = d.get("_fits") or []
     joints = d.pop("_joints", []) if isinstance(d.get("_joints"), list) else []
     ds = d.get("designSpace")
     if isinstance(ds, dict):
@@ -1060,6 +1068,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         min_hole=float(min_hole) if min_hole is not None else None,
         drains=_drains(d.get("drains", "auto"), process),
         build_sim=_build_sim(d.get("buildSim"), process, d.get("material")),
+        fits=fits,
         raw=d,
     )
     if d.get("multiMaterial") is not None:
