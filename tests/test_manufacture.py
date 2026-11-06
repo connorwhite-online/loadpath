@@ -257,6 +257,37 @@ def test_machining_report_reach_and_time():
     assert r2["minutes"]["finishing"] > r["minutes"]["finishing"]   # a smaller cutter takes longer passes
 
 
+
+def test_unmachinable_voids_filled_on_delivery():
+    """A pocket opening downward cannot be cut from +z; delivery fills it
+    (and the sealed sliver round it), leaving the through hole a keep-out."""
+    import manifold3d as m3d
+    import trimesh
+
+    from loadpath.manufacture import report
+    from loadpath.reconstruct import _fill_unmachinable
+    from loadpath.shapes import manifold_from_trimesh, trimesh_from_manifold
+    from loadpath.sharp import exact_manifold
+
+    s = study_from_dict({**BEAM, "designSpace": {"type": "box", "min": [0, 0, 0], "max": [30, 20, 10]},
+                         "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 21, 11]}}],
+                         "loads": [{"shape": {"type": "box", "min": [28, -1, -1], "max": [31, 21, 11]},
+                                    "force": [0, 0, -100]}],
+                         "milling": {"axes": 3, "directions": ["+z"], "toolDiameter": 2}})
+    d = build_domain(s)
+    block = trimesh.creation.box(extents=[30, 20, 10]); block.apply_translation([15, 10, 5])
+    pocket = trimesh.creation.box(extents=[8, 6, 5.2]); pocket.apply_translation([15, 10, 2.5])
+    part = manifold_from_trimesh(block) - manifold_from_trimesh(pocket)
+    before = report(s, d, trimesh_from_manifold(part))["machining"]["toolUnreachableVolume"]
+    env = m3d.Manifold.batch_boolean([exact_manifold(sh) for sh in s.design_space], m3d.OpType.Add)
+    out, filled = _fill_unmachinable(part, s, d, env)
+    mesh = trimesh_from_manifold(out)
+    after = report(s, d, mesh)["machining"]["toolUnreachableVolume"]
+    assert before > 150 and filled > 150, (before, filled)
+    assert after == 0.0, after
+    assert len(out.decompose()) == 1 and mesh.is_watertight
+    assert mesh.volume <= 30 * 20 * 10 + 1e-6
+
 TESTS = [
     test_access_filter_gradient,
     test_machinable_access_tool_and_floors,
@@ -269,6 +300,7 @@ TESTS = [
     test_draft_report_reads_facets,
     test_draft_applied_on_delivery,
     test_machining_report_reach_and_time,
+    test_unmachinable_voids_filled_on_delivery,
 ]
 
 

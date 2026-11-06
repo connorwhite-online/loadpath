@@ -244,6 +244,79 @@ def _min_sdf(shapes, pts):
     return out
 
 
+
+def _fill_unmachinable(part, study, domain, envelope):
+    """Fill the void a milled part's cutter cannot reach, on the design grid.
+
+    The optimizer's field honours milling access, but meshing (upsampling,
+    smoothing, the flush trims) moves the surface by a fraction of a cell,
+    and every such step that leans a wall out or tightens a corner under the
+    tool radius is a pocket the shop cannot cut: a plate milled from +z came
+    out with 760 mm^3 unreachable (limit ~100), most of it along its bottom
+    edges. Filling those cells (the morphological closing the cutter itself
+    would leave) makes the delivered part machinable as measured by
+    `manufacture.report`, which voxelizes the same grid. Returns (part,
+    filled volume in mm^3); only ever adds material, inside the design space.
+    """
+    import manifold3d as m3d
+
+    from .manufacture import _reach_by_direction
+    from .verify import voxelize
+
+    acc = study.access
+    pitch = float(domain.pitch)
+    lo = np.asarray(domain.origin, float)
+    hi = lo + np.asarray(domain.dims) * pitch
+    mesh = trimesh_from_manifold(part)
+    solid, _ = voxelize(mesh, pitch, box=(lo, hi))
+    cut = np.zeros_like(solid)
+    for c in _reach_by_direction(solid, acc, pitch, acc.tool_radius or 0.0):
+        cut |= c
+    b = np.asarray(mesh.bounds, float)
+    ctr = [lo[i] + (np.arange(solid.shape[i]) + 0.5) * pitch for i in range(3)]
+    inb = [(c > b[0][i]) & (c < b[1][i]) for i, c in enumerate(ctr)]
+    stock = inb[0][:, None, None] & inb[1][None, :, None] & inb[2][None, None, :]
+    fill = ~solid & ~cut & stock
+    if not fill.any():
+        return part, 0.0
+    pts = np.stack(np.meshgrid(*ctr, indexing="ij"), -1).reshape(-1, 3)
+    inside = np.zeros(solid.size, bool)
+    for sh in study.design_space:
+        inside |= sh.contains(pts)
+    fill &= inside.reshape(solid.shape)
+    if study.keep_out:
+        keep = np.zeros(solid.size, bool)
+        for r in study.keep_out:
+            keep |= r.shape.contains(pts)
+        fill &= ~ndimage.binary_dilation(keep.reshape(solid.shape), iterations=1)
+    n = int(fill.sum())
+    if n == 0:
+        return part, 0.0
+    # one box per run of filled cells along x, a hair oversize so the
+    # boxes fuse with each other and the part
+    eps = 1e-3 * pitch
+    boxes = []
+    for j, k in zip(*np.nonzero(fill.any(axis=0))):
+        col = np.concatenate(([False], fill[:, j, k], [False]))
+        edges = np.flatnonzero(col[1:] != col[:-1])
+        for i0, i1 in zip(edges[::2], edges[1::2]):
+            a = lo + np.array([i0, j, k], float) * pitch - eps
+            size = np.array([(i1 - i0) * pitch, pitch, pitch]) + 2 * eps
+            boxes.append(m3d.Manifold.cube(size.tolist()).translate(a.tolist()))
+    filler = m3d.Manifold.batch_boolean(boxes, m3d.OpType.Add) ^ envelope
+    out = m3d.Manifold.batch_boolean([part, filler], m3d.OpType.Add)
+    # A box meets the organic surface a fraction of a cell off, which can
+    # seal a sliver of air inside (decompose lists it as a body of negative
+    # volume) and leave zero-volume scraps. A milled part has no enclosed
+    # void, so rebuild it from its solid bodies: that fills them.
+    bodies = out.decompose()
+    total = max(b.volume() for b in bodies)
+    solid_bodies = [b for b in bodies if b.volume() > 1e-3 * total]
+    if len(solid_bodies) != len(bodies):
+        out = (m3d.Manifold.batch_boolean(solid_bodies, m3d.OpType.Add)
+               if len(solid_bodies) > 1 else solid_bodies[0])
+    return out, float(n * pitch ** 3)
+
 def _seat_on_flush_faces(fine, domain: Domain, upsample: int, pad: int, flush, design, grid=None):
     """Move material at a flush face (a wall the part is held against) onto
     the face itself.
@@ -1128,6 +1201,10 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     if study.preserve:
         pres = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
         part = part + pres
+    if acc is not None and acc.kind == "milling":
+        part, filled = _fill_unmachinable(part, study, domain, envelope)
+        if filled:
+            info["unmachinableFilled"] = filled
     if study.keep_out:
         ko = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.keep_out], m3d.OpType.Add)
         part = part - ko
