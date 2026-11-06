@@ -567,6 +567,11 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None, spre
                     gate_critic(row, raw.get("expect", {}))
                 elif critic == "agent":
                     row["criticPending"] = f"{name}.critic-request.md"
+        if getattr(result, "choice", None):
+            # goal.method auto: which method delivered, and why (stress
+            # utilization, constrained vs search mass, a skipped or
+            # time-boxed constrained stage)
+            row["methodChoice"] = result.choice
         row["trace"] = [o.summary() for o in result.outcomes]
         for t in row["trace"]:
             t.pop("cases", None)
@@ -861,7 +866,8 @@ def main(argv=None):
     with open(os.path.join(args.out, "scorecard.md"), "w") as fh:
         fh.write(md)
     if args.save_baseline:
-        keep = ("case", "tier", "pass", "skipped", "best", "pareto", "checks", "seconds", "error", "spread")
+        keep = ("case", "tier", "pass", "skipped", "best", "pareto", "checks", "seconds", "error", "spread",
+                "methodChoice")
         with open(args.save_baseline, "w") as fh:
             json.dump(_jsonable([{k: r[k] for k in keep if k in r} for r in rows]), fh, indent=1)
     print(md)

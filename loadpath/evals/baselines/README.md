@@ -9,6 +9,13 @@
   - wall-bracket (81.9 -> 23.0 g) and corpus-bracket-1 (139.9 -> 36.0) are df2521f, goal.method "auto" picking the constrained optimizer (search alone still gives 72.3 g wall bracket on both ab4bf9e and today's main). Both pass the tet confirm (wall bracket SF 3.40 vs goal 2.5). **Caveat:** the 23-24 g wall bracket buckles at a load factor of 1.43-1.61 (linear buckling, 1.2 mm grid), below the 2.5 goal; the 72 g search design reads 43.5. No buckling check runs in verify or the evals yet, so this baseline locks in a part that is strong enough but not stable enough.
 
 - **2026-11-04 (buckling in the constrained optimizer, bucklingopt.py).** wall-bracket and corpus-bracket-1 rows re-run and replaced (other cases do not reach the constrained method's buckling constraint; the full tier moved none of them): wall-bracket 46.6 -> 25.2 g massAtTarget (best 27.6 g, SF 3.22, buckling 4.97), corpus-bracket-1 39.0 -> 36.8 g (buckling 5.77).
+- **2026-11-06 (e8c55b5, re-saved).** Two coarse runs of e8c55b5, each with an empty tet cache, 21/21 pass both; each row is taken from the run with the heavier massAtTarget, so a run inside the measured spread does not flag. Rows now carry `methodChoice` (which method goal.method auto delivered, the search part's stress utilization, and why). Moves vs the Nov 3-4 rows, each traced by re-running the case on the commits between (docs/BENCHMARKS.md, "Coarse eval tier: how far a run moves on its own"):
+  - bell-crank 24.1 -> 25.8 g and wall-bracket 25.2 -> 27.2 g: the minMember reconstruct fixes (fa17ad8, d1b2b2c), intended.
+  - mbb-beam 13.3 -> 14.0 g: the old row did not reproduce on its own commit (14.7 g there).
+  - robot-wrist-yoke 14.1 -> 18.3 g: the same fixes raised its search part's stress utilization 0.166 -> 0.226, past goal.method auto's 0.19 cut, so the constrained method (13.5 g with the cut at 0.25) no longer runs. A lost gain, not a broken part; the cut is left at 0.19 for now.
+  - printed-hook 28.1 -> 25.4 g: goal.method auto now runs the constrained method on it (search part's utilization 0.32 -> 0.16-0.17).
+  - corpus-bracket-4 48.1 -> 40.1 g, corpus-tri-mount-5 77.2 -> 68.9 g: constrained runs that vary 13-17% run to run on these two; corpus-bracket-1 7%. A flag on these alone needs a rerun.
+  - Search cases move 0-2.5% between cold-cache runs.
 
 ## full.json history
 
