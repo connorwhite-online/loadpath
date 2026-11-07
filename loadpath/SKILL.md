@@ -446,6 +446,20 @@ change the exterior yourself: relay `skinReview.summary` and those
 options to the designer and let them choose. `limitedBy == "interior"`
 needs no designer: re-run finer or longer. See docs/SWITCH.md.
 
+**Any exterior first goes through `loadpath exterior SRC --out dir`
+(MCP `loadpath_exterior`; docs/EXTERIOR.md).** A designer's STEP or mesh,
+an AI-generated or scanned mesh (a Tripo/Meshy GLB: open, double-walled,
+debris, unit scale, Y-up), an SDF function or build123d object
+(`file.py:name`), or an `.npz` SDF grid: out comes one watertight skin and
+a report. Give `size` (the real longest extent, mm) for a generated mesh:
+it has no units. Read `wrap.patched` (new surface made up over holes) and
+`capacity.thinRegions` (too thin for anything but skin) and tell the
+designer; never reshape the exterior. Then lay out the parts from what the
+device does, against the room inside (the generated-exterior tutorial's
+`layout.py` reads the button off the shape and checks every part's room),
+and hand them to `handoff`. Handoff takes the same sources directly, as a
+path or `{path, size, up}`.
+
 **Start from the designer's CAD with `loadpath handoff brief.json --out
 dir` (MCP `loadpath_handoff`; `loadpath schema handoff`).** The brief is
 the exterior, the openings in it (an underside a flap closes: no skin is

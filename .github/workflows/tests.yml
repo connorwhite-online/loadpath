@@ -47,14 +47,14 @@ jobs:
       fail-fast: false
       matrix:
         tutorial: [fdm-bracket, sls-lattice-drains, heat-exchanger, impact-bumper, field-editor, urdf-arm-link,
-                   step-import, lpbf-buildsim, thermal-duty-cycle, strut-lattice, agent-mcp]
+                   step-import, lpbf-buildsim, thermal-duty-cycle, strut-lattice, agent-mcp, generated-exterior]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e ".[render,flow,mcp,step]"
+      - run: pip install -e ".[render,flow,mcp,step,exterior]"
       - run: python tests/test_tutorials.py ${{ matrix.tutorial }}
 
   # the field editor: its server, and its GPU preview against fields.py in

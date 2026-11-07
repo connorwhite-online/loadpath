@@ -633,6 +633,8 @@ def _buried(out, pts, p):
     from scipy import ndimage
     from .verify import voxelize
     sol, org = voxelize(out, p)
+    sol = np.pad(sol, 1)          # the grid's border is outside, not more solid
+    org = org - p
     d = ndimage.distance_transform_edt(sol) * p
     k = np.floor((pts - org) / p).astype(int)
     ok = np.all((k >= 0) & (k < np.asarray(sol.shape)), axis=1)

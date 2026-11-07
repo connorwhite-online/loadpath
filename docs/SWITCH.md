@@ -77,7 +77,7 @@ written on log F so that a factor of two weighs the same at 100 gf and at
 | `F_i <= max_i` | the ceiling: any gradient over the area (`field.max: [centre, rim]`) |
 | `F_i >= min_i` | the floor: a resting thumb does not fire it |
 | `d_i <= maxTravel` | crispness |
-| skin travel over `clearance` <= gap | the skin does not reach the board (KS over nodes and presses) |
+| skin travel over `clearance` <= gap | the skin does not reach the board (KS over nodes and presses), each press at its fire force or at its window's limit if it fires beyond it (a press over a rigid part barely moves the plunger) |
 | mean deflection under each `hold` case <= limit | squeeze, drop: the rim keeps its shape |
 
 ## What it does on the touch pad

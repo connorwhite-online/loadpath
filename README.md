@@ -68,8 +68,8 @@ The open tools each cover one of those:
 - **Topology optimization codes** (top88, top3d, ToPy, FEniCS scripts) are
   research solvers. They stop at a density field on a grid: no printable
   part, and nothing checks the result.
-- **Script CAD** (CadQuery, build123d, OpenSCAD) and AI CAD tools draw exact
-  geometry but don't know the loads.
+- **Script CAD** (CadQuery, build123d, OpenSCAD), SDF libraries, AI CAD
+  tools and 3D generators draw the shape but don't know the loads.
 - **Commercial generative design** (Fusion, nTop) does the whole job, but
   it's built around a GUI, not an agent.
 
@@ -98,6 +98,19 @@ Where it is strongest:
   order, and reads the study off the geometry: each part's way in (a board
   that has to slide back before it drops out included), the plunger over
   the switch, what the switch stands on, and a clearance per component.
+- **Any exterior in**: you or your agent draw the shape, loadpath makes
+  everything inside it work. A designer's STEP, a mesh, an SDF function
+  (numpy, the `sdf` package, libfive style), a build123d part, or a mesh
+  from a 3D generator such as Tripo or Meshy (holes, double walls, flipped
+  patches, debris, unit scale) all go through one intake,
+  `loadpath exterior`, which wraps a broken mesh into one closed skin on the
+  generator's own triangles and says how much room is inside
+  ([docs/EXTERIOR.md](docs/EXTERIOR.md)). In the
+  [tutorial](docs/tutorials/generated-exterior/), an agent reads a
+  paragraph about a camera shutter remote, finds the button in a generated
+  pebble, lays out the board and battery, and gets the click it asked for
+  without touching the exterior. Interiors go back out as SDF grids
+  (`loadpath sdf`).
 - **Implicit modelling**: field graphs, graded and conformal lattices (TPMS,
   strut, Voronoi), blends, and exact STEP of lattice parts.
 - **Process awareness**: FDM, SLS, MJF, resin and powder-bed metal rules,
@@ -223,10 +236,10 @@ print(best.report["mass"], best.report["safetyFactor"])
 ## Documentation
 
 - [Quickstart](docs/quickstart.md): install to a checked part.
-- [Tutorials](docs/tutorials/): eleven end-to-end workflows, each run by CI
+- [Tutorials](docs/tutorials/): twelve end-to-end workflows, each run by CI
   (an FDM bracket to 3MF, an SLS lattice with drain holes, a metal heat
   exchanger, an impact bumper, a STEP part round trip, LPBF distortion
-  compensation, and more).
+  compensation, a working part inside a generated mesh, and more).
 - [Reference](loadpath/README.md): the method, every study field, the
   report, the limits.
 - [Validation](docs/VALIDATION.md): what each model has been checked
@@ -236,7 +249,8 @@ print(best.report["mass"], best.report["safetyFactor"])
   [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
   [CAD import](docs/IMPORT.md), [slicer](docs/slicer.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
-  [mechanisms](docs/MECHANISMS.md), [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md).
+  [mechanisms](docs/MECHANISMS.md), [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md),
+  [any exterior in](docs/EXTERIOR.md).
 
 <!-- gallery:start -->
 

@@ -488,6 +488,25 @@ def import_cad(path: str, out_dir: str | None = None, base_dir: str | None = Non
     return {"ok": True, "baseDir": out, **r}
 
 
+def exterior(path: str, out_dir: str | None = None, base_dir: str | None = None, size: float | None = None,
+             scale: float | None = None, up: str | None = None, place: str | None = None,
+             pitch: float | None = None, skin: float | None = 1.0, keep: str = "largest") -> dict:
+    """Any exterior through the intake (exterior.py): a clean watertight
+    skin written to out_dir/exterior.stl, and the report."""
+    from .exterior import load_exterior
+    full = path if os.path.isabs(path.partition(".py:")[0]) else os.path.join(base_dir or os.getcwd(), path)
+    try:
+        e = load_exterior(full, size=size, scale=scale, up=up, place=place, pitch=pitch, skin=skin, keep=keep)
+    except (ValueError, RuntimeError) as exc:
+        return {"ok": False, "error": str(exc)}
+    out = os.path.abspath(out_dir if out_dir and os.path.isabs(out_dir) else
+                          os.path.join(base_dir or os.getcwd(), out_dir or "exterior"))
+    stl = e.save(out)
+    r = dict(e.report)
+    r.pop("droppedBodies", None) if len(r.get("droppedBodies", [])) > 5 else None
+    return {"ok": bool(r["result"]["watertight"]), "stl": stl, "report": os.path.join(out, "exterior.json"), **r}
+
+
 _AXES = {"+x": (1, 0, 0), "-x": (-1, 0, 0), "+y": (0, 1, 0), "-y": (0, -1, 0), "+z": (0, 0, 1), "-z": (0, 0, -1)}
 
 
@@ -1042,6 +1061,23 @@ def serve():
         component's frame (origin at board centre, z up). Solves the placement in the cavity and
         reports cavity, bosses and each port cutout as ok / not / null (could not check)."""
         return check_component_fit(path, components, base_dir)
+
+    @tool
+    def loadpath_exterior(path: str, out_dir: str | None = None, base_dir: str | None = None,
+                          size: float | None = None, scale: float | None = None, up: str | None = None,
+                          place: str | None = None, pitch: float | None = None, skin: float | None = 1.0,
+                          keep: str = "largest") -> dict:
+        """Any exterior in, one clean watertight skin out (out_dir/exterior.stl, default ./exterior): a
+        designer's STEP, a mesh, an AI-generated or scanned mesh (Tripo/Meshy GLB: open, self-intersecting,
+        double-walled, debris, unit scale, Y-up), an .npz SDF grid, or file.py[:name] (an SDF function of
+        (N, 3) points or a build123d/CadQuery object). size: the real longest extent in mm (generated meshes
+        have no units); up: the source's up axis (default +y for GLB). The report: what was wrong
+        (defects), how far the wrap moved the surface (wrap.onSource), where holes were patched
+        (wrap.patched), debris dropped, and the room inside once a `skin` mm wall is in (capacity:
+        cavityVolume, thinRegions too thin for anything but skin). Never redesign the exterior: relay
+        patched holes and thin regions to the designer. Use the STL as loadpath_handoff's exterior, or
+        give handoff {path, size, up} directly. Seconds to a minute."""
+        return exterior(path, out_dir, base_dir, size, scale, up, place, pitch, skin, keep)
 
     @tool
     def loadpath_import_cad(path: str, out_dir: str | None = None, base_dir: str | None = None,

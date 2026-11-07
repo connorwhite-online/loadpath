@@ -1,0 +1,24 @@
+{
+  "files": ["generated.glb", "exterior/exterior.stl", "brief.json", "parts/switch.stl", "handoff/*.study.json",
+            "handoff/switch/shutter-remote.stl"],
+  "quick": [
+    {"file": "exterior.json", "value": "[r['ok'], r['wrapped']]", "equals": [true, true], "what": "the generated mesh was wrapped into one closed skin"},
+    {"file": "exterior/exterior.json", "value": "[r['defects']['watertight'], r['defects']['bodies'] >= 5]", "equals": [false, true], "what": "the source was open and in pieces"},
+    {"file": "exterior.json", "value": "max(abs(r['extents'][0] - 78.6), abs(r['extents'][1] - 47.5), abs(r['extents'][2] - 19.0))", "max": 0.3, "what": "extents off 78.6 x 47.5 x 19.0 mm"},
+    {"file": "exterior.json", "value": "r['onSourceP95']", "max": 0.1, "what": "surface moved, p95 mm"},
+    {"file": "exterior/exterior.json", "value": "len(r['droppedBodies'])", "min": 4, "what": "debris dropped"},
+    {"file": "exterior/exterior.json", "value": "any(t['center'][0] < -30 for t in r['capacity']['thinRegions'][:3])", "equals": true, "what": "the lanyard loop is reported thin"},
+    {"file": "layout.json", "value": "abs(r['button']['at'][0] - 15.3) + abs(r['button']['at'][1])", "max": 0.5, "what": "button found off the shape, mm from where it was drawn"},
+    {"file": "handoff/handoff.json", "value": "[r['assembly']['components']['door']['insertFrom'], r['lint']]", "equals": ["-z", []], "what": "the door goes in from below; study lints clean"},
+    {"file": "handoff/switch/report.json", "value": "r['watertight']", "equals": true, "what": "delivered part closed"},
+    {"file": "handoff/switch/report.json", "value": "r['inWindow']", "min": 8, "what": "press windows met (of 9), design"},
+    {"file": "handoff/switch/report.json", "value": "r['mass']", "min": 4, "max": 12, "what": "mass, g"}
+  ],
+  "full": [
+    {"file": "exterior.json", "value": "[r['ok'], r['wrapped']]", "equals": [true, true], "what": "the generated mesh was wrapped into one closed skin"},
+    {"file": "exterior.json", "value": "r['onSourceP95']", "max": 0.1, "what": "surface moved, p95 mm"},
+    {"file": "layout.json", "value": "abs(r['button']['at'][0] - 15.3) + abs(r['button']['at'][1])", "max": 0.5, "what": "button found off the shape"},
+    {"file": "handoff/switch/report.json", "value": "r['watertight']", "equals": true, "what": "delivered part closed"},
+    {"file": "handoff/switch/report.json", "value": "r['inWindow']", "min": 8, "what": "press windows met (of 9), design"}
+  ]
+}

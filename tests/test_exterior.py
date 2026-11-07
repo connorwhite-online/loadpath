@@ -17,7 +17,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "examples" / "exterior"))
+sys.path.insert(0, str(ROOT / "docs" / "tutorials" / "generated-exterior"))
 
 from loadpath.exterior import _Dist, load_exterior, save_sdf  # noqa: E402
 from loadpath.schema import lint  # noqa: E402
@@ -27,7 +27,7 @@ _DIR = tempfile.mkdtemp()
 
 
 def _standin():
-    """The broken stand-in (examples/exterior/generated_standin.py) at a
+    """The broken stand-in (docs/tutorials/generated-exterior/generated_standin.py) at a
     coarse pitch, and the true shape in the frame the intake puts it in."""
     import generated_standin as gs
     clean = gs.clean_mesh(pitch=0.6)

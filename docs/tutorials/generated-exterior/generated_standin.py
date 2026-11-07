@@ -35,6 +35,8 @@ def pebble_sdf(P):
     n = 2.6
     r = (np.abs(x / (L / 2)) ** n + np.abs(y / (W / 2)) ** n) ** (1 / n)
     d = (np.sqrt(r ** 2 + (zz / (H / 2)) ** 2) - 1.0) * min(W, H) / 2 * 0.95
+    # a flat to sit on
+    d = -_smin(-d, P[:, 2] - 3.6, 1.5)
     # grip ridges along both long sides
     side = np.clip((np.abs(y) - (W / 2 - 6)) / 6, 0, 1) * np.clip(1 - np.abs(x) / 26, 0, 1)
     d += 0.35 * side * np.sin(x * 2 * np.pi / 3.2)

@@ -808,8 +808,15 @@ def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float
     if prob.clr_dofs is not None:
         # displacement along the press direction at the clearance nodes,
         # under each press at its fire force (the switch's reaction would
-        # lift them a little: conservative)
-        clr_q = [spec.press_sign * u[prob.clr_dofs] * Fi for u, Fi in zip(U, F)]
+        # lift them a little: conservative), or at its window's limit when
+        # it fires beyond it: a press over a rigid part (a cell, a boss)
+        # barely moves the plunger, so its fire force runs to millions of N,
+        # and what the skin must clear is the hand at the window, not that
+        cap = np.array([p.max if p.max is not None else (p.min if p.min is not None else np.inf)
+                        for p in spec.presses], float)
+        Fc = np.minimum(F, cap)
+        out["clearanceForce"] = Fc
+        clr_q = [spec.press_sign * u[prob.clr_dofs] * Fi for u, Fi in zip(U, Fc)]
         out["clearanceMax"] = float(max(q.max() for q in clr_q))
         out["clearance"] = clearance_rows(spec, prob, clr_q)
     if not grads:
@@ -844,7 +851,7 @@ def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float
         for i in range(nP):
             r = np.zeros(mesh.n_dof)
             wi = w[i * n:(i + 1) * n]
-            r[prob.clr_dofs] = wi * F[i] * spec.press_sign / prob.clr_gap
+            r[prob.clr_dofs] = wi * Fc[i] * spec.press_sign / prob.clr_gap
             adj.append(r)
         mus = solves.solve(adj, "clr")
         g = np.zeros(mesh.n_elem)
@@ -853,7 +860,8 @@ def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float
             mu = np.asarray(mus[i]) / modulus
             g += dpair(mu, U[i])
             zi = spec.press_sign * U[i][prob.clr_dofs] / prob.clr_gap
-            g += float(wi @ zi) * dF[i]
+            if F[i] < cap[i]:       # capped: the force is fixed, only the skin's give moves
+                g += float(wi @ zi) * dF[i]
         G["clearance"] = g
     return out, G
 
@@ -1265,7 +1273,14 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
         mod_sub = emod[el]
         k = Stiffness(sub, nu, fx_flat).assemble(mod_sub)
         sv = Solver(sub, rtol=1e-8)
-        u, lam = sv.solve_many(k, [f, l])
+        try:
+            u, lam = sv.solve_many(k, [f, l])
+        except RuntimeError as exc:
+            # a sliver held on only by floored skin cells: the linear
+            # reading (cut cells) stands for this press
+            out.append({"press": int(i), "at": spec.presses[i].at.tolist(),
+                        "error": f"linear solve on the solid part failed: {exc}"})
+            continue
         a, c = float(l @ u), float(l @ lam)
         f_lin = (target + spec.trigger * c) / max(a, 1e-12)
 

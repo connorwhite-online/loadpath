@@ -1,6 +1,6 @@
 # Tutorials
 
-Eleven workflows end to end, each in its own folder with the input files, the
+Twelve workflows end to end, each in its own folder with the input files, the
 commands, the numbers you should get and renders of the result. Run the
 commands from inside the tutorial's folder.
 
@@ -17,6 +17,7 @@ commands from inside the tutorial's folder.
 | [Thermal duty cycle](thermal-duty-cycle/) | NEMA 17 motor mount that cycles hot, checked for thermal fatigue | PETG designed cold fails thermal-cycling fatigue (SF 1.25 vs 1.5); PA-CF designed with the heat passes at 12.9 g |
 | [Strut lattice](strut-lattice/) | PA12 SLS forearm: octet core and rim graded by stress, tuned, meshed | 32.6 g, 31% lighter than solid at SF 2.3; drained, one body |
 | [Agent via MCP](agent-mcp/) | an agent designs a wrist link using only loadpath's MCP tools | 12 real MCP calls; 27.6 g, SF 8.1, 0.78 mm against a 0.8 mm limit |
+| [Generated exterior](generated-exterior/) | the inside of a Bluetooth shutter remote whose outside came from a 3D generator: mesh wrapped, parts laid out from a description, push pad designed | 9 of 9 press windows (quick grid); exterior kept to 0.02 mm (p95) |
 
 ## Mistakes the tutorials steer around
 
