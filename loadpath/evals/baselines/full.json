@@ -1891,21 +1891,21 @@
   "checks": [
    {
     "check": "in window (design)",
-    "value": 13,
+    "value": 8,
     "op": ">=",
-    "limit": 12,
+    "limit": 8,
     "pass": true
    },
    {
     "check": "in window (delivered mesh)",
-    "value": 12,
+    "value": 10,
     "op": ">=",
-    "limit": 10,
+    "limit": 8,
     "pass": true
    },
    {
     "check": "volume mm^3",
-    "value": 8070.091177880771,
+    "value": 7756.285028450545,
     "op": "<=",
     "limit": 9000,
     "pass": true
@@ -1918,18 +1918,25 @@
     "pass": true
    },
    {
+    "check": "large-deflection presses converged",
+    "value": 8,
+    "op": ">=",
+    "limit": 8,
+    "pass": true
+   },
+   {
     "check": "hold squeeze mm (delivered mesh)",
-    "value": 0.09205617732507854,
+    "value": 0.049585503486668764,
     "op": "<=",
     "limit": 0.3,
     "pass": true
    }
   ],
   "best": {
-   "mass": 8.87710029566885,
-   "volume": 8070.091177880771,
-   "inWindow": 13,
-   "deliveredInWindow": 12
+   "mass": 8.5319135312956,
+   "volume": 7756.285028450545,
+   "inWindow": 8,
+   "deliveredInWindow": 10
   },
   "presses": [
    {
@@ -1937,129 +1944,143 @@
      0.0,
      0.0
     ],
-    "forceGf": 141.1059177300275,
-    "thresholdedForceGf": 140.67498891074678,
-    "deliveredForceGf": 120.82527631283925
+    "forceGf": 160.493266561831,
+    "thresholdedForceGf": 162.4574516368152,
+    "deliveredForceGf": 151.23300108346658,
+    "nonlinearForceGf": 191.8932935032609
    },
    {
     "at": [
      0.0,
      -7.0
     ],
-    "forceGf": 199.9976378961105,
-    "thresholdedForceGf": 198.7116066951273,
-    "deliveredForceGf": 184.9322822664438
+    "forceGf": 197.3098247713951,
+    "thresholdedForceGf": 199.5562116778315,
+    "deliveredForceGf": 184.2887884371096,
+    "nonlinearForceGf": 271.30619519875734
    },
    {
     "at": [
      0.0,
      -13.0
     ],
-    "forceGf": 291.089352304572,
-    "thresholdedForceGf": 288.11331694245615,
-    "deliveredForceGf": 293.5762946478535
+    "forceGf": 297.9444263056946,
+    "thresholdedForceGf": 300.04085300385896,
+    "deliveredForceGf": 283.3886966713252,
+    "nonlinearForceGf": 427.9394192485371
    },
    {
     "at": [
      7.0,
      -5.0
     ],
-    "forceGf": 182.10930786824446,
-    "thresholdedForceGf": 181.92676873883732,
-    "deliveredForceGf": 166.70364927990414
+    "forceGf": 202.2503211083641,
+    "thresholdedForceGf": 203.3855489944869,
+    "deliveredForceGf": 191.27088654144586,
+    "nonlinearForceGf": 292.1892545233744
    },
    {
     "at": [
      12.0,
      -9.0
     ],
-    "forceGf": 302.4099384776011,
-    "thresholdedForceGf": 304.29075955133595,
-    "deliveredForceGf": 316.3348678354926
+    "forceGf": 377.96939396449346,
+    "thresholdedForceGf": 377.49954016896584,
+    "deliveredForceGf": 376.48960880397146,
+    "nonlinearForceGf": 579.9782766778947
    },
    {
     "at": [
      11.0,
      0.0
     ],
-    "forceGf": 202.85619612203038,
-    "thresholdedForceGf": 201.9915074653262,
-    "deliveredForceGf": 190.83948668503263
+    "forceGf": 233.1495051777395,
+    "thresholdedForceGf": 232.63199738257222,
+    "deliveredForceGf": 225.46539714352332,
+    "nonlinearForceGf": 349.3843033308776
    },
    {
     "at": [
      14.0,
      6.0
     ],
-    "forceGf": 303.1969492772547,
-    "thresholdedForceGf": 299.7883366565617,
-    "deliveredForceGf": 293.18701246305534
+    "forceGf": 323.97181326390944,
+    "thresholdedForceGf": 322.92896620987693,
+    "deliveredForceGf": 327.7650903453519,
+    "nonlinearForceGf": null
    },
    {
     "at": [
      8.0,
      11.0
     ],
-    "forceGf": 204.23688370828881,
-    "thresholdedForceGf": 202.84116112581597,
-    "deliveredForceGf": 168.4126229113459
+    "forceGf": 201.79149650126695,
+    "thresholdedForceGf": 202.66878544739924,
+    "deliveredForceGf": 204.37329557392582,
+    "nonlinearForceGf": 341.02134853667604
    },
    {
     "at": [
      0.0,
      12.0
     ],
-    "forceGf": 167.02327827843882,
-    "thresholdedForceGf": 166.5717203900521,
-    "deliveredForceGf": 128.6135002354591
+    "forceGf": 172.48851704725013,
+    "thresholdedForceGf": 173.6348399162766,
+    "deliveredForceGf": 175.2920303900091,
+    "nonlinearForceGf": 273.09910211122275
    },
    {
     "at": [
      -7.0,
      -5.0
     ],
-    "forceGf": 199.98589860472396,
-    "thresholdedForceGf": 200.02969469068645,
-    "deliveredForceGf": 189.3127427566619
+    "forceGf": 214.1799541308766,
+    "thresholdedForceGf": 215.1349159229139,
+    "deliveredForceGf": 205.7724546821746,
+    "nonlinearForceGf": null
    },
    {
     "at": [
      -12.0,
      -9.0
     ],
-    "forceGf": 321.10548490146044,
-    "thresholdedForceGf": 322.064006245587,
-    "deliveredForceGf": 350.9193721759213
+    "forceGf": 415.0425709278162,
+    "thresholdedForceGf": 414.0304067473477,
+    "deliveredForceGf": 407.5435508330513,
+    "nonlinearForceGf": null
    },
    {
     "at": [
      -11.0,
      0.0
     ],
-    "forceGf": 213.42390692686442,
-    "thresholdedForceGf": 213.53496235917677,
-    "deliveredForceGf": 210.56597340334844
+    "forceGf": 263.97144745819566,
+    "thresholdedForceGf": 263.95988792030613,
+    "deliveredForceGf": 257.7462068030908,
+    "nonlinearForceGf": null
    },
    {
     "at": [
      -14.0,
      6.0
     ],
-    "forceGf": 302.4524617443123,
-    "thresholdedForceGf": 301.2687742554834,
-    "deliveredForceGf": 303.55727722038495
+    "forceGf": 359.961401888657,
+    "thresholdedForceGf": 359.58786217541154,
+    "deliveredForceGf": 363.0675066253054,
+    "nonlinearForceGf": null
    },
    {
     "at": [
      -8.0,
      11.0
     ],
-    "forceGf": 206.8261514160614,
-    "thresholdedForceGf": 206.17035377079847,
-    "deliveredForceGf": 183.78482310947476
+    "forceGf": 204.327853390462,
+    "thresholdedForceGf": 205.21049021616636,
+    "deliveredForceGf": 206.71779446160028,
+    "nonlinearForceGf": null
    }
   ],
   "pass": true,
-  "seconds": 494.2440388202667
+  "seconds": 5622.05304813385
  }
 ]
