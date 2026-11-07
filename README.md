@@ -98,6 +98,11 @@ Where it is strongest:
   order, and reads the study off the geometry: each part's way in (a board
   that has to slide back before it drops out included), the plunger over
   the switch, what the switch stands on, and a clearance per component.
+  `loadpath split` makes the product buildable in two parts. It finds a
+  parting line where every part can go in and the cover comes off cleanly,
+  then puts the joints inside the skin: an alignment lip, snap fits sized
+  to the material's strain limit, and screw posts if the designer allows
+  holes in one face ([docs/SHELLS.md](docs/SHELLS.md)).
 - **Any exterior in**: you or your agent draw the shape, loadpath makes
   everything inside it work. A designer's STEP, a mesh, an SDF function
   (numpy, the `sdf` package, libfive style), a build123d part, or a mesh
@@ -250,7 +255,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [CAD import](docs/IMPORT.md), [slicer](docs/slicer.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
   [mechanisms](docs/MECHANISMS.md), [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md),
-  [any exterior in](docs/EXTERIOR.md).
+  [any exterior in](docs/EXTERIOR.md), [split shells](docs/SHELLS.md).
 
 <!-- gallery:start -->
 
