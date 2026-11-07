@@ -564,7 +564,7 @@ def test_auto_method_keeps_the_lighter():
         assert calls == ["search", "constrained"] and r.choice["method"] == "constrained", r.choice
         assert r.outcomes[r.best].report["mass"] == 20.0
         calls.clear()
-        U = [0.3]
+        U = [0.36]   # past the probe's outer band
         r = ST._run_single(s)
         assert calls == ["search"] and r.choice["method"] == "search", r.choice
     finally:
@@ -1345,6 +1345,9 @@ def test_constrained_probe_settles_once_it_wins():
     assert not S._probe_settled(True, 0.0, deadline, 2, now=2780.0)   # a third part fits
     assert S._probe_settled(True, 0.0, deadline, 3, now=4021.0)       # a fourth does not
     assert not S._probe_settled(False, 0.0, deadline, 3, now=4021.0)  # nothing won yet: the box rules
+    assert not S._probe_settled(True, 0.0, 600.0, 1, now=1900.0)      # past the box, but one part
+    assert S._probe_settled(True, 0.0, 600.0, 2, now=4500.0)
+    assert S._AUTO_PROBE_UTILIZATION < S._AUTO_PROBE_OUTER
 
 
 def test_malformed_warm_outcome_is_flagged():

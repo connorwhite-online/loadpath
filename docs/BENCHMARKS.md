@@ -541,6 +541,52 @@ the code). Speculation did not start on the yoke run (its memory or grid
 rule), so the constrained run went after the search on one core while
 three sat idle; running two bisection steps at once is the next lever.
 
+**Two parts at once, and the 0.28 edge (after 7f8ee1e).** Tried and
+dropped: running the constrained method's limits two at a time on threads.
+In a bench two optimizer runs on the yoke's 119k cells took 1.14x one's
+time, but in the probe the pair's buckling factorizations, taken at the
+same time, took the process to 13.9 GB (out of memory on the 15 GB box);
+taking turns on them, a pair's iterations ran 1.6x a single one's (51 s
+against 31). Worse, the gain did not come: both parts of a pair start from
+the same passing design, and the yoke's mass comes from each part
+warm-starting from the last (17.6, then 15.6, 14.4 g), not from the limit
+(t 1.5 and 2.2 from the same start: 14.9 and 15.0 g; t 1.5 beside the first
+part, before buckling was calibrated: 16.9 g). Full-tier yoke with pairs:
+14.9 g in 4248 s, against 14.8 g in 4520 s one part at a time.
+
+Kept:
+
+- `_PROBE_ROUNDS = 2`: a probe that holds a winning part always runs its
+  second (up to the box's hard stop at twice the box). The box is 3.5x the
+  search's time, which ran 540-1400 s on the same yoke, while its parts run
+  1150-2400 s each: on a 540 s search the old rule stopped at the first
+  part (17.6 g).
+- An outer band, 0.28-0.34 (`_AUTO_PROBE_OUTER`): the probe runs one part
+  and goes on only if it is promising (passes lighter than the search, or
+  with margin 1.3 under 1.1x the search's mass; the yoke's first part:
+  17.6 g against 17.2-18.1, tet margin 1.6-2.7). The yoke's search part
+  read 0.24 on fresh tet meshes and 0.30 on 7f8ee1e's run, different picks
+  (18.1 g and 17.2 g), so the edge at 0.28 decided its method at random.
+  Now both sides run the probe, and the probe only replaces the search's
+  part with a lighter passing one, so a case wandering across 0.34 changes
+  its run time, not its mass. methodChoice carries `probeOuter`.
+
+Full tier, 2 jobs (the yoke alone), against full.json:
+
+| Case | massAtTarget | Time s (before) | What happened |
+| --- | --- | --- | --- |
+| Wrist yoke | 14.8 g (16.7; search 18.1) | 4520 (1411 search-only; 7464 on e796a1b) | probe, two parts: 17.6, 14.8 g |
+| Bell crank | 22.6 g, -3.6% | ~1040 (398) | constrained parts 26.0 g, 22.7 g (failed); search kept |
+| MBB beam | 15.0 g, +3.3% | ~2090 (2518) | probe stopped: a 17.0 g part failed |
+| Printed hook | 31.1 g, +6.2% | ~3370 (1873) | outer band: one 38.8 g part, not promising; search kept |
+| corpus-link-0 | 27.4 g | ~1530 | probe; search kept |
+
+The hook's +6.2% is its search part (the probe did not replace it); the
+1500 s its constrained part took is the outer band's cost where it does not
+win. The turret (0.15) and corpus-bracket-1 (below 0.19) run the full
+constrained stage, which this does not touch; both were still running at
+the 2 h limit and are not in the table.
+
 ## Pitch sensitivity: one grid is a sample
 
 A safety-factor search's answer moves a lot with sub-percent changes of the

@@ -92,6 +92,26 @@ _AUTO_UTILIZATION_CUT = 0.19
 # out lighter. Above this, the hook (0.30-0.35) and arm link (0.33) came out
 # 10-40% heavier constrained, so it is not tried.
 _AUTO_PROBE_UTILIZATION = 0.28
+# ... and up to this one it runs a single part and goes on only if that
+# part is promising: the full-tier wrist yoke's search part read 0.30 on
+# one run and 0.24 on others (fresh tet meshes), so a hard edge at 0.28
+# skipped a 2-3 g gain at random. The hook (0.30-0.35) and bell crank
+# (0.32) pay a constrained part or two (full tier: +1500 s, +640 s).
+_AUTO_PROBE_OUTER = 0.34
+# "promising" there: a part that passes lighter than the search's, or with
+# this margin to spare under this times its mass (the yoke's first
+# constrained part: 17.6 g against 17.2-18.1, tet margin 1.6-2.7; its later
+# parts reached 14.2-15.1 g)
+_PROBE_ROOM = 1.3
+_PROBE_NEAR = 1.1
+# A winning probe runs at least this many parts (up to the box's hard stop,
+# twice the box): the box follows the search's time (3.5x), the parts do
+# not (1150-2400 s each on the full-tier yoke, with a search of 540-1400
+# s), and each part warm-starts from the last passing one, which is where
+# the gain comes from: 17.6 then 14.8-15.6 g. (Two parts at once on
+# threads, from the same start, both came out near 15 g in 1.6x a part's
+# time: not kept.)
+_PROBE_ROUNDS = 2
 _PROBE_HEAVY = 0.97
 # and gives it at most this many times the search's own time
 _AUTO_BUDGET = 3.5
@@ -1169,8 +1189,9 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     from .verify import use_cut_cells
     limit = _AUTO_UTILIZATION_CUT if use_cut_cells(study) else _AUTO_UTILIZATION
     probe = u >= limit
-    if u >= _AUTO_PROBE_UTILIZATION:
-        choice["reason"] = (f"stress utilization {u:.2f} >= {_AUTO_PROBE_UTILIZATION}: "
+    outer = u >= _AUTO_PROBE_UTILIZATION
+    if u >= _AUTO_PROBE_OUTER:
+        choice["reason"] = (f"stress utilization {u:.2f} >= {_AUTO_PROBE_OUTER}: "
                             "the search part is worked evenly")
         r.choice = choice
         return r
@@ -1203,6 +1224,7 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     done = [0]
     beaten = [None]   # a probe's failing part at or over the search's mass
     won = [False]     # a probe's passing part lighter than the search's
+    promising = [False]   # ... or one near its mass with room to lighten
     settled = [False]
     ms = pick.report["mass"]
 
@@ -1212,6 +1234,9 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
         if beaten[0] is None and _probe_beaten(goal, event, ms, margin):
             beaten[0] = event.get("mass")
         won[0] = won[0] or _probe_won(event, ms, margin)
+        mg = margin if margin is not None else event.get("margin")
+        promising[0] = promising[0] or won[0] or (
+            mg is not None and mg >= _PROBE_ROOM and (event.get("mass") or np.inf) < _PROBE_NEAR * ms)
         # judged between parts (after the tet confirm): stop here rather
         # than cut the next part short at the deadline
         if not quick.on() and _probe_settled(won[0], start, deadline, done[0]):
@@ -1237,7 +1262,14 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
             on_progress(event, x)
 
     def user_stop():
-        return beaten[0] is not None or settled[0] or (should_stop is not None and should_stop())
+        if probe and pending[0] is not None and not pending[1]:
+            # the last part, with no tet confirm under way: judge it now,
+            # not at the next event (the next part would start first)
+            judge(pending[0])
+            pending[0] = None
+        # past the outer band: one part, kept going only if it is promising
+        short = outer and done[0] >= 1 and pending[0] is None and not promising[0]
+        return beaten[0] is not None or settled[0] or short or (should_stop is not None and should_stop())
 
     def stop():
         over = time.time() > deadline if quick.on() else _box_over(deadline, box, done[0])
@@ -1282,6 +1314,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
             choice["probe"] = True
         if settled[0]:
             choice["probeSettled"] = True
+        if outer:
+            choice["probeOuter"] = True
         choice["method"] = "constrained"
         choice["reason"] = (f"stress utilization {u:.2f}: constrained {mc:.1f} g against "
                             f"search {ms:.1f} g")
@@ -1296,6 +1330,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
                         + (f" (probe stopped: a {beaten[0]:.1f} g part failed)" if beaten[0] is not None else ""))
     if settled[0]:
         choice["probeSettled"] = True
+    if outer:
+        choice["probeOuter"] = True
     r.choice = choice
     r.seconds += rc.seconds
     return r
@@ -1312,9 +1348,10 @@ def _probe_won(event: dict, search_mass: float, margin: float | None = None) -> 
 
 def _probe_settled(won: bool, start: float, deadline: float, done: int, now: float | None = None) -> bool:
     """Whether a probe that has run `done` parts since `start` should stop
-    before its next one: it already holds a winning part (`won`) and another
-    part, at the mean time of those so far, would end past the deadline."""
-    if not won or done < 1:
+    before its next one: it already holds a winning part (`won`), has run
+    _PROBE_ROUNDS parts, and another, at the mean time of those so far,
+    would end past the deadline."""
+    if not won or done < _PROBE_ROUNDS:
         return False
     now = time.time() if now is None else now
     return now + (now - start) / done > deadline
