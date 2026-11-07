@@ -227,6 +227,14 @@ Optional extras: `crosscheck` (tetrahedral verification; recommended),
 numba), `gpu` (PyTorch for large grids on CUDA, Apple Silicon or CPU
 threads).
 
+Threads: `LOADPATH_THREADS` caps the threads one run uses (numba kernels,
+field evaluation, load cases side by side; `1` runs everything on one
+thread), and `LOADPATH_WORKERS` caps the processes that verify outcomes in
+parallel. On macOS, pip's numba has no thread-safe threading layer until
+`brew install libomp` (or `pip install tbb`); without one it falls back to
+`workqueue`, and loadpath then solves load cases one after another instead
+of side by side. `loadpath check` reports the layer (`threadingLayer`).
+
 Studies are validated against a published JSON Schema
 ([`schema/`](schema/)), and `loadpath check` returns every problem at once
 with its JSON path, so an agent can fix a study in one round trip. Long

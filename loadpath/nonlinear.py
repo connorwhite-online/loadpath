@@ -108,6 +108,25 @@ def _lame(nu):
     return nu / ((1 + nu) * (1 - 2 * nu)), 1.0 / (2 * (1 + nu))   # at E = 1
 
 
+def _linear_stress(eps, nu):
+    """Stress (m, 3, 3) of symmetric strains eps (m, 3, 3) at unit modulus:
+    isotropic for a Poisson's ratio, transversely isotropic for a
+    fem.Layered (FDM parts; _lame alone can't take one)."""
+    from .fem import Layered
+
+    if isinstance(nu, Layered):
+        c = nu.c()
+        v = np.stack([eps[:, 0, 0], eps[:, 1, 1], eps[:, 2, 2],
+                      2 * eps[:, 0, 1], 2 * eps[:, 1, 2], 2 * eps[:, 2, 0]], axis=1)
+        sv = v @ c.T
+        s = np.empty_like(eps)
+        for a, (i, j) in enumerate(((0, 0), (1, 1), (2, 2), (0, 1), (1, 2), (2, 0))):
+            s[:, i, j] = s[:, j, i] = sv[:, a]
+        return s
+    lam, mu = _lame(nu)
+    return lam * np.trace(eps, axis1=1, axis2=2)[:, None, None] * _I3 + 2 * mu * eps
+
+
 _I3 = np.eye(3)
 # Products of shape function gradients at each Gauss point, for the tangent
 # as one matrix product: W[g][(l, n), (a, b)] = dN_a/dX_l dN_b/dX_n (unit cube).
@@ -1060,7 +1079,6 @@ def _geometric(stiff, u, mod, nu):
     stresses and in the mode shapes: Kg = T^T Kg_ext T, T = [I; R]."""
     mesh = stiff.mesh
     h, w = mesh.pitch, mesh.pitch ** 3 / 8.0
-    lam, mu = _lame(nu)
     im = getattr(stiff, "element", "plain") == "im"
     grads, wmat, n = (_GAUSS_IM, _W_IM, 11) if im else (_GAUSS, _W, 8)
     if im:
@@ -1076,7 +1094,7 @@ def _geometric(stiff, u, mod, nu):
         for g, dn0 in enumerate(grads):
             grad = np.einsum("mai,aj->mij", ux, dn0 / h)
             eps = 0.5 * (grad + grad.transpose(0, 2, 1))
-            sig = (lam * np.trace(eps, axis1=1, axis2=2)[:, None, None] * _I3 + 2 * mu * eps) * mod[el, None, None]
+            sig = _linear_stress(eps, nu) * mod[el, None, None]
             kq += (w / h ** 2) * (sig.reshape(m, 9) @ wmat[g])
         kg = np.einsum("mab,ij->maibj", kq.reshape(m, n, n), _I3).reshape(m, 3 * n, 3 * n)
         if im:

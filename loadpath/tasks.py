@@ -250,8 +250,16 @@ def check_study(raw, base_dir: str | None = None) -> dict:
     if avail and mem * 1e9 > 0.8 * avail:
         warnings.append(f"this run needs about {mem:.1f} GB at its peak and {avail / 1e9:.1f} GB is free: "
                         "lower resolution.maxElements, or set LOADPATH_CONFIRM_CELLS for the confirm stage")
+    from .pools import threading_layer
+
+    layer = threading_layer()
+    if layer == "workqueue" and len(s.load_cases) > 1:
+        warnings.append(f"numba's threading layer is workqueue, which aborts when two threads run kernels at "
+                        f"once, so the {len(s.load_cases)} load cases solve one after another (slower). "
+                        "Install a thread-safe layer: `brew install libomp` on macOS (omp), or "
+                        "`pip install tbb` (tbb)")
     return jsonable({
-        "ok": True, "name": s.name, "pitch": d.pitch, "peakMemoryGB": round(mem, 1), "cells": d.n_elem, "dims": list(d.dims),
+        "ok": True, "name": s.name, "pitch": d.pitch, "threadingLayer": layer, "peakMemoryGB": round(mem, 1), "cells": d.n_elem, "dims": list(d.dims),
         "preservedCells": int(d.preserve.sum()), "filterRadius": filter_radius(d, s.length_scale, s.min_hole),
         "supportNodes": int(d.support_nodes.sum()), "loadNodes": int(d.load_nodes.sum()),
         "regions": [r.id for r in s.preserve] + [r.id for r in s.keep_out],

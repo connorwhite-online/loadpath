@@ -1,0 +1,12 @@
+{
+  "name": "two-case-bracket",
+  "designSpace": {"type": "box", "min": [0, 0, 0], "max": [60, 12, 20]},
+  "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 13, 21]}}],
+  "loadCases": [
+    {"name": "down", "loads": [{"shape": {"type": "box", "min": [59.99, -1, -1], "max": [61, 13, 21]}, "force": [0, 0, -80]}]},
+    {"name": "side", "loads": [{"shape": {"type": "box", "min": [59.99, -1, -1], "max": [61, 13, 21]}, "force": [0, 40, 0]}]}
+  ],
+  "material": "petg",
+  "goal": {"volumeFraction": 0.35},
+  "resolution": {"pitch": 2.0}
+}

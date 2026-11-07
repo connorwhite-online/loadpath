@@ -1148,9 +1148,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     goal_sf = study.goal.safety_factor
     early_bk = None
     if goal_sf and not study.self_equilibrated and all(len(layout[ci]) == 1 for ci in range(len(study.load_cases))):
-        from concurrent.futures import ThreadPoolExecutor
+        from .pools import pool
 
-        _bk_pool = ThreadPoolExecutor(1)
+        # (pool(2): a real thread only where numba's layer takes two at once;
+        # otherwise the check runs here, before the stress solve)
+        _bk_pool = pool(2)
         early_bk = _bk_pool.submit(_buckling, study, mesh.copy(), vol, pitch, contact_band, [None] * len(study.load_cases))
         _bk_pool.shutdown(wait=False)
     stiff, displacements = solve(moduli, rhs)
@@ -1232,9 +1234,9 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             if len(spots) > 1:
                 # independent boxes, on threads (the solves release the GIL;
                 # amg_solver sets up one at a time, so the same numbers)
-                from concurrent.futures import ThreadPoolExecutor
+                from .pools import pool
 
-                with ThreadPoolExecutor(min(len(spots), 3)) as ex:
+                with pool(min(len(spots), 3)) as ex:
                     subs = list(ex.map(sub, spots))
             else:
                 subs = [sub(c) for c in spots]

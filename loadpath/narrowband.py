@@ -41,6 +41,13 @@ _CHUNK = 250_000        # field samples per thread task
 
 
 def _threads():
+    # one thread under numba's workqueue layer: fields call parallel kernels
+    # (meshops' nearest-triangle search), and workqueue aborts the process
+    # when two Python threads enter one at once (pools.py)
+    from .pools import threadsafe
+
+    if not threadsafe():
+        return 1
     env = os.environ.get("LOADPATH_THREADS")
     if env:
         return max(1, int(env))

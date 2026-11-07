@@ -337,6 +337,11 @@ buckling, printability) you can report to the user.
   or gravity or pressure loads: those are confirmed on a finer voxel grid,
   `deliver.tetCrossCheck` says why. That fine re-check is the memory peak
   `check` reports (`peakMemoryGB`); `LOADPATH_CONFIRM_CELLS=60000` lowers it.
+  `check` also reports numba's `threadingLayer`: on `workqueue` (pip numba
+  on macOS without `brew install libomp`) load cases solve one after
+  another, which is safe but slower; it warns when the study has several.
+  `LOADPATH_THREADS=1` keeps a run on one thread, `LOADPATH_WORKERS` caps
+  its processes.
   `goal.method` (default `auto`) picks the optimizer: the volume-fraction
   search first, then the stress-constrained method (MMA, finer grid) when
   the search's part idles (`stressUtilization`, mean over near-peak von

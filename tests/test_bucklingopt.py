@@ -45,3 +45,19 @@ def test_sensitivities_match_finite_differences():
         xm[e] -= h
         fd = (bm.evaluate(xp, 3.0)[0][0] - bm.evaluate(xm, 3.0)[0][0]) / (2 * h)
         assert abs(g[e] - fd) < 0.01 * abs(fd) + 1e-12, (e, g[e], fd)
+
+
+def test_layered_material():
+    """FDM studies pass a fem.Layered for nu: the constraint took the Lame
+    constants of it and failed every iteration ('int' + 'Layered'), so the
+    buckling constraint never ran for layered parts. Isotropic layers read
+    the same factor as the plain Poisson's ratio; weak layers read lower."""
+    from loadpath.fem import Layered
+
+    d = _domain()
+    x = np.ones(d.n_elem)
+    (iso, _, _), = BucklingModel(d, 0.3).evaluate(x, 3.0)
+    (lay, _, _), = BucklingModel(d, Layered(0.3)).evaluate(x, 3.0)
+    assert abs(lay - iso) < 1e-6 * abs(iso), (lay, iso)
+    (soft, _, _), = BucklingModel(d, Layered(0.3, ez=0.6, gz=0.6, normal=(1, 0, 0))).evaluate(x, 3.0)
+    assert np.isfinite(soft)

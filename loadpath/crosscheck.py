@@ -774,9 +774,9 @@ def _solve(nodes, conn, E, nu, fixed_dof, springs, loads, n_vertices, edges):
     # CG, so the same numbers; one cycle first factors the coarsest level
     # once (pyamg does it lazily, and each thread would make its own)
     precond(np.zeros(kff.shape[0]))
-    from concurrent.futures import ThreadPoolExecutor
+    from .pools import pool
 
-    with ThreadPoolExecutor(min(len(fs), 4)) as ex:
+    with pool(min(len(fs), 4)) as ex:   # serial under numba's workqueue layer
         return list(ex.map(one, fs))
 
 

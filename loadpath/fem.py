@@ -641,11 +641,13 @@ class Solver:
         """Solve several right-hand sides (load cases) against one matrix.
         The preconditioner is built once and the solves run on threads: the
         sparse kernels release the GIL, and so does the smoother since
-        amgfast (pyamg's own holds it); 3 robot-arm upper-arm cases 1.35 -> 1.07 s."""
+        amgfast (pyamg's own holds it); 3 robot-arm upper-arm cases 1.35 -> 1.07 s.
+        One after another under numba's workqueue threading layer, or with
+        LOADPATH_THREADS=1 (pools.pool)."""
         x0s = x0s or [None] * len(fs)
         if len(fs) == 1:
             return [self.solve(k, fs[0], x0s[0])]
-        from concurrent.futures import ThreadPoolExecutor
+        from .pools import pool
 
         m = self._precond(k)
         # pyamg factors the coarsest level (splu) lazily, on the first
@@ -663,7 +665,8 @@ class Solver:
             u, info = cg(k, fs[i], x0=x0s[i], rtol=self.rtol, maxiter=maxiter, M=m, callback=cb)
             return u, info
 
-        with ThreadPoolExecutor(min(len(fs), 4)) as ex:
+        # (serial under numba's workqueue layer, which aborts on two threads: pools.py)
+        with pool(min(len(fs), 4)) as ex:
             res = list(ex.map(one, range(len(fs))))
         out = []
         for i, (u, info) in enumerate(res):

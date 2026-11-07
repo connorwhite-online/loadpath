@@ -36,9 +36,34 @@ jobs:
       - run: python tests/test_enclosure.py
       - run: python tests/test_feel.py
       - run: python tests/test_cooling.py
+      - run: pip install pytest && python -m pytest -q tests/test_pools.py tests/test_bucklingopt.py
       # libigl (the exterior extra) last: the steps above check the paths without it
       - run: pip install -e ".[exterior]" && python tests/test_exterior.py
       - run: pip install pytest lxml && python -m pytest -q tests/test_materials.py tests/test_preview.py tests/test_interfaces.py tests/test_multimat.py tests/test_interlock.py tests/test_threemf_multi.py tests/test_voxelprint.py tests/test_field_materials.py tests/test_published_experiments.py tests/test_fieldjit.py tests/test_print.py tests/test_mixed_lu.py
+
+  # macOS arm64 with pip's numba and no libomp or tbb: numba falls back to
+  # its workqueue threading layer, which aborts the process (SIGABRT, no
+  # traceback) when two Python threads run parallel kernels at once.
+  # loadpath then runs load cases serially (pools.py); this job holds it to
+  # that with a two-load-case run. NUMBA_THREADING_LAYER pins workqueue in
+  # case the runner image ever ships libomp.
+  macos-workqueue:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      NUMBA_THREADING_LAYER: workqueue
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e . pytest
+      - name: numba's threading layer without the pin
+        run: env -u NUMBA_THREADING_LAYER python -c "from loadpath.pools import threading_layer; print(threading_layer())"
+      - run: python -m pytest -q tests/test_pools.py
+      - run: python -m loadpath check tests/data/two-case-bracket.json
+      - run: python -m loadpath run tests/data/two-case-bracket.json --quick --no-render --viewer none --out out
 
   # docs/tutorials/: each tutorial's commands, run in quick mode (coarse grid)
   # and held to its expect.json, so the docs can't drift from the code

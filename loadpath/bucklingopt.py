@@ -97,9 +97,8 @@ def geometric_parts(ue, phis, h, nu):
     g (m,) = phi_e^T kg_e(u_e) phi_e and a (m, 24) = d g / d u_e, at unit
     stress modulus. kg_e is nonlinear._geometric's element matrix (the
     bubbles' linear amplitudes in both the stresses and the modes)."""
-    from .nonlinear import _lame
+    from .nonlinear import _linear_stress
 
-    lam, mu = _lame(nu)
     grads = _gauss_im()
     r = _hex8_parts(nu, hex8_element())[1]
     im = r is not None and len(grads[0]) == 11
@@ -117,8 +116,7 @@ def geometric_parts(ue, phis, h, nu):
             dn = dn0 / h
             gp = np.einsum("mak,ai->mki", px, dn)              # d phi_k / d x_i
             hh = np.einsum("mki,mkj->mij", gp, gp)
-            s = 2 * mu * hh
-            s[:, [0, 1, 2], [0, 1, 2]] += lam * np.trace(hh, axis1=1, axis2=2)[:, None]
+            s = _linear_stress(hh, nu)
             gu = np.einsum("mai,aj->mij", ux, dn)              # d u_i / d x_j
             g += w * np.einsum("mij,mij->m", gu, s)
             da += w * np.einsum("aj,mij->mai", dn, s)
