@@ -136,6 +136,118 @@ class OrientedBox(Shape):
                 "axes": self.R[:2].tolist()}
 
 
+class HeightField(Shape):
+    """One side of a surface that is a height over a plane: the points
+    with n.x below (or above) h(u, v), h sampled on a square grid in the
+    plane's (u, v) = (e1.x, e2.x) and bilinear between samples, held at the
+    edge value past the grid. A stepped or design-line-following parting
+    surface (shells.py): any such surface parts along n.
+
+    {"type": "heightfield", "normal": [..], "axes": [[e1], [e2]],
+     "origin": [u0, v0], "step": d, "heights": [[h(u0, v0), h(u0, v0 + d),
+     ..], ..], "side": "below" | "above", "offset"?: mm, "depth": mm}
+
+    `offset` moves the surface along n. `depth` bounds the region: how
+    far it reaches past the surface. The distance is the height gap over
+    sqrt(1 + |grad h|^2): exact on a plane, close where the surface tilts
+    smoothly, an overestimate beside a steep step."""
+
+    kind = "heightfield"
+
+    def __init__(self, normal, axes, origin, step, heights, side="below", offset=0.0, depth=1000.0):
+        n = np.asarray(normal, float)
+        self.n = n / np.linalg.norm(n)
+        ax = np.asarray(axes, float)
+        e1 = ax[0] - (ax[0] @ self.n) * self.n
+        e1 /= np.linalg.norm(e1)
+        e2 = np.cross(self.n, e1)
+        if ax[1] @ e2 < 0:
+            e2 = -e2
+        self.e1, self.e2 = e1, e2
+        self.origin = np.asarray(origin, float).reshape(2)
+        self.step = float(step)
+        self.H = np.atleast_2d(np.asarray(heights, float))
+        if self.H.shape[0] < 2 or self.H.shape[1] < 2:
+            raise ValueError("heightfield heights need at least a 2 x 2 grid")
+        if side not in ("below", "above"):
+            raise ValueError("heightfield side is 'below' or 'above'")
+        self.side = side
+        self.offset = float(offset)
+        self.depth = float(depth)
+        gy, gx = np.gradient(self.H, self.step)
+        self._G = (gy, gx)
+
+    def _interp(self, P, F):
+        uv = np.stack([P @ self.e1, P @ self.e2], -1)
+        f = (uv - self.origin) / self.step
+        nu, nv = self.H.shape
+        fi = np.clip(f[..., 0], 0.0, nu - 1.000001)
+        fj = np.clip(f[..., 1], 0.0, nv - 1.000001)
+        i, j = np.floor(fi).astype(int), np.floor(fj).astype(int)
+        a, b = fi - i, fj - j
+        return ((1 - a) * (1 - b) * F[i, j] + a * (1 - b) * F[i + 1, j] + (1 - a) * b * F[i, j + 1]
+                + a * b * F[i + 1, j + 1])
+
+    def height(self, P):
+        return self._interp(np.asarray(P, float), self.H) + self.offset
+
+    def sdf(self, p):
+        P = np.asarray(p, float)
+        gap = P @ self.n - self.height(P)
+        g2 = self._interp(P, self._G[0]) ** 2 + self._interp(P, self._G[1]) ** 2
+        d = gap / np.sqrt(1.0 + g2)
+        d = d if self.side == "below" else -d
+        # bounded: `depth` past the surface
+        far = (-gap - self.depth) if self.side == "below" else (gap - self.depth)
+        return np.maximum(d, far)
+
+    def _corners(self):
+        nu, nv = self.H.shape
+        u = self.origin[0] + np.array([0.0, (nu - 1) * self.step])
+        v = self.origin[1] + np.array([0.0, (nv - 1) * self.step])
+        lo_h, hi_h = float(self.H.min()) + self.offset, float(self.H.max()) + self.offset
+        hs = (lo_h - self.depth, hi_h) if self.side == "below" else (lo_h, hi_h + self.depth)
+        return np.array([uu * self.e1 + vv * self.e2 + hh * self.n for uu in u for vv in v for hh in hs])
+
+    def bounds(self):
+        c = self._corners()
+        return c.min(axis=0), c.max(axis=0)
+
+    def to_manifold(self):
+        import manifold3d as m3d
+        nu, nv = self.H.shape
+        U = self.origin[0] + np.arange(nu) * self.step
+        V = self.origin[1] + np.arange(nv) * self.step
+        top = self.H + self.offset
+        far = (top.min() - self.depth) if self.side == "below" else (top.max() + self.depth)
+        uu, vv = np.meshgrid(U, V, indexing="ij")
+        surf = uu[..., None] * self.e1 + vv[..., None] * self.e2 + top[..., None] * self.n
+        flat = uu[..., None] * self.e1 + vv[..., None] * self.e2 + far * self.n
+        verts = np.concatenate([surf.reshape(-1, 3), flat.reshape(-1, 3)])
+        off = nu * nv
+        idx = np.arange(off).reshape(nu, nv)
+        tris = []
+        a, b, c, d = idx[:-1, :-1].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel(), idx[:-1, 1:].ravel()
+        tris += [np.stack([a, b, c], 1), np.stack([a, c, d], 1)]
+        tris += [np.stack([a, c, b], 1) + off, np.stack([a, d, c], 1) + off]
+        ring = np.concatenate([idx[:, 0], idx[-1, 1:], idx[-2::-1, -1], idx[0, -2:0:-1]])
+        r1 = np.roll(ring, -1)
+        tris += [np.stack([ring, ring + off, r1], 1), np.stack([r1, ring + off, r1 + off], 1)]
+        F = np.concatenate(tris).astype(np.uint32)
+        mesh = m3d.Mesh(vert_properties=np.asarray(verts, np.float32), tri_verts=F)
+        man = m3d.Manifold(mesh)
+        if man.is_empty() or man.volume() <= 0:
+            mesh = m3d.Mesh(vert_properties=np.asarray(verts, np.float32), tri_verts=F[:, ::-1].copy())
+            man = m3d.Manifold(mesh)
+        return man
+
+    def to_spec(self):
+        return {"type": "heightfield", "normal": self.n.tolist(), "axes": [self.e1.tolist(), self.e2.tolist()],
+                "origin": self.origin.tolist(), "step": self.step,
+                "heights": np.round(self.H, 4).tolist(), "side": self.side, "offset": self.offset,
+                "depth": self.depth}
+
+
 class Cylinder(Shape):
     """Flat-capped cylinder from p0 to p1 with radius r. With `rInner` it is a
     tube (a bearing boss, a bolt collar): material between rInner and r.
@@ -882,6 +994,9 @@ def _shape(spec, base_dir):
         return Cylinder(c - half, c + half, spec["r"], r_inner)
     if kind == "sphere":
         return Sphere(spec["center"], spec["r"])
+    if kind == "heightfield":
+        return HeightField(spec["normal"], spec["axes"], spec["origin"], spec["step"], spec["heights"],
+                           spec.get("side", "below"), spec.get("offset", 0.0), spec.get("depth", 1000.0))
     if kind == "union":
         parts = spec.get("shapes")
         if not isinstance(parts, list) or not parts:

@@ -533,7 +533,11 @@ candidate, `snaps.strain` against `snaps.allowable` (an FDM beam bent
 across layers gets a warning: print the halves on their sides, or use
 SLS), and `warnings` for joints that did not fit. `shells.verify_snap`
 reads a hook's strain on cut cells, and `shells.check_closed` checks the
-built halves for overlap. `snaps.allowableBasis` says whether the
+built halves for overlap. A cut need not be flat across an axis:
+`normal` a vector tilts it, `steps` [{at, where}] climbs over part of the
+product, and `seam: {points}` follows a parting line the designer drew on
+the exterior (`cut.surface` in split.json is the surface it used).
+`snaps.allowableBasis` says whether the
 allowance was measured (a calibration card fitted from the kit's S-XY /
 S-Z snap ladders) or is the house rule. See docs/SHELLS.md.
 

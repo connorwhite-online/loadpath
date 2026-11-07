@@ -33,6 +33,13 @@ def delivered(run_dir: str) -> str:
     return stls[-1]
 
 
+def _against(normal):
+    """The opposite direction: '+z' -> '-z', a vector negated."""
+    if isinstance(normal, str):
+        return ("-" if normal.startswith("+") else "+") + normal.lstrip("+-")
+    return [-float(x) for x in normal]
+
+
 def main(argv=None):
     import trimesh
 
@@ -61,8 +68,7 @@ def main(argv=None):
     hooks = [g["hook"] for g in rep.get("snapsGeometry") or [] if (rep["snaps"] or {}).get("hookOn") == "cover"]
     # hooks on the base: take them out of the base instead
     if (rep.get("snaps") or {}).get("hookOn") == "base":
-        out = check_closed(C, B, "-" + rep["cut"]["normal"][1] if rep["cut"]["normal"][0] == "+"
-                           else "+" + rep["cut"]["normal"][1], hooks=[g["hook"] for g in rep["snapsGeometry"]])
+        out = check_closed(C, B, _against(rep["cut"]["normal"]), hooks=[g["hook"] for g in rep["snapsGeometry"]])
     else:
         out = check_closed(B, C, rep["cut"]["normal"], hooks=hooks)
     res = {"meshes": meshes, "closed": out, "volume": {"base": round(float(B.volume), 1),

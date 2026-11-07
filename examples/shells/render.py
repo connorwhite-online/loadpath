@@ -30,8 +30,12 @@ def main(argv=None):
     argv = argv or sys.argv[1:]
     d, out = argv[0], argv[1]
     rep = json.load(open(os.path.join(d, "split.json")))
-    a = "xyz".index(rep["cut"]["normal"][1])
-    sg = 1 if rep["cut"]["normal"][0] == "+" else -1
+    nrm = rep["cut"]["normal"]
+    if isinstance(nrm, str):
+        a, sg = "xyz".index(nrm[1]), (1 if nrm[0] == "+" else -1)
+    else:
+        a = int(np.argmax(np.abs(nrm)))
+        sg = 1 if nrm[a] > 0 else -1
     hook_on = (rep.get("snaps") or {}).get("hookOn")
     halves = {s: trimesh.load(os.path.join(d, f"run-{s}", "best.stl"), force="mesh") for s in ("base", "cover")}
     # the cover turned over (about the axis across), its open face up
@@ -43,7 +47,9 @@ def main(argv=None):
     def tm(spec):
         return trimesh_from_manifold(shape_from_spec(spec).to_manifold())
 
-    s = Scene(f"split at {rep['cut']['normal'][1]} = {rep['cut']['at']:g} mm: base and cover, open faces up")
+    title = (f"split at {nrm[1]} = {rep['cut']['at']:g} mm" if isinstance(nrm, str) and rep["cut"].get("at") is not None
+             else f"split along {rep['cut'].get('label', 'the parting line')}")
+    s = Scene(f"{title}: base and cover, open faces up")
     up_view = (52, -60) if sg > 0 else (-52, -60)
     for side in ("base", "cover"):
         p = s.panel(side, view=up_view)

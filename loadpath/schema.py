@@ -69,6 +69,25 @@ _SHAPES = {
         "required": ["type", "center", "r"],
         "additionalProperties": False,
     },
+    "heightfield": {
+        "type": "object",
+        "description": "One side of a surface given as heights over a plane: the points whose n.x is below "
+                       "(or above) h(u, v), h on a square grid in the plane's axes, bilinear between "
+                       "samples. A stepped or curved parting surface (loadpath split writes these).",
+        "properties": {"type": {"const": "heightfield"}, "normal": _VEC3,
+                       "axes": {"type": "array", "items": _VEC3, "minItems": 2, "maxItems": 2,
+                                "description": "the plane's u and v axes"},
+                       "origin": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
+                                  "description": "(u, v) of heights[0][0]"},
+                       "step": _POS,
+                       "heights": {"type": "array", "items": {"type": "array", "items": {"type": "number"}},
+                                   "description": "heights[i][j] = h(u0 + i step, v0 + j step) along normal"},
+                       "side": {"enum": ["below", "above"]},
+                       "offset": {"type": "number", "description": "moves the surface along normal (mm)"},
+                       "depth": _POS},
+        "required": ["type", "normal", "axes", "origin", "step", "heights"],
+        "additionalProperties": False,
+    },
     "mesh": {
         "type": "object",
         "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder (or a STEP file, "
@@ -113,11 +132,12 @@ _SHAPES = {
     },
 }
 _SHAPE_TYPES = {"box": "box", "cylinder": "cylinder", "tube": "cylinder", "sphere": "sphere",
-                "mesh": "mesh", "sdf": "sdf", "union": "union", "intersect": "intersect", "subtract": "subtract"}
+                "mesh": "mesh", "sdf": "sdf", "heightfield": "heightfield", "union": "union", "intersect": "intersect", "subtract": "subtract"}
 
 _SHAPE = {
-    "title": "a shape object (box, cylinder, tube, sphere, mesh, sdf, union, intersect, subtract)",
-    "description": "A shape: box, cylinder (tube), sphere, mesh, sdf, union, intersect or subtract. Units mm.",
+    "title": "a shape object (box, cylinder, tube, sphere, heightfield, mesh, sdf, union, intersect, subtract)",
+    "description": "A shape: box, cylinder (tube), sphere, heightfield, mesh, sdf, union, intersect or subtract. "
+                   "Units mm.",
     "oneOf": [{"$ref": f"#/$defs/{k}"} for k in _SHAPES],
     "x-discriminator": {"property": "type", "mapping": {k: f"#/$defs/{v}" for k, v in _SHAPE_TYPES.items()}},
 }
@@ -1000,10 +1020,28 @@ _FEEL = {
 }
 
 _SPLIT_PROPS = {
-    "normal": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, {"const": "auto"}],
-               "description": "the axis the cut is across, signed toward the cover (it comes off that way); "
-                              "'auto' (default) tries x, y and z and makes the half holding the components the base"},
-    "at": {"type": "number", "description": "the cut's level along that axis (mm); omitted: searched"},
+    "normal": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, {"const": "auto"}, _VEC3],
+               "description": "the way the cover comes off: an axis like '+z', a vector (an angled cut), or "
+                              "'auto' (default: tries x, y and z and makes the half holding the components the "
+                              "base; with a seam, the seam's own plane)"},
+    "at": {"type": "number", "description": "the cut's level along that normal (mm; n.x = at for a vector); "
+                                            "omitted: searched"},
+    "steps": {"type": "array", "items": {"type": "object", "properties": {
+        "at": {"type": "number", "description": "the cut's level over this step (mm, as `at`)"},
+        "where": {"$ref": "#/$defs/shape",
+                  "description": "where the step is: the cut takes this level wherever a line along the "
+                                 "normal passes through this shape"}},
+        "required": ["at", "where"], "additionalProperties": False},
+        "description": "a stepped parting line: the cut sits at `at`, and steps to each step's level over its "
+                       "`where` (needs normal and at)"},
+    "stepWidth": {**_POS, "description": "mm the cut takes to climb a step (default 0.5)"},
+    "seam": {"type": "object", "properties": {
+        "points": {"type": "array", "items": _VEC3, "minItems": 3,
+                   "description": "the parting line on the exterior, in order round the part (closed)"}},
+        "required": ["points"], "additionalProperties": False,
+        "description": "a parting line that follows the designer's line on the exterior: the cut passes "
+                       "through these points and is smooth inside (it is never seen). Any line the cover can "
+                       "lift off from along the normal"},
     "avoid": {"type": "array", "items": {"$ref": "#/$defs/shape"},
               "description": "surfaces the seam must not cross (the designer's A surfaces)"},
     "componentsIn": {"type": "object", "additionalProperties": {"enum": ["base", "cover"]},
@@ -1092,7 +1130,10 @@ STUDY_SCHEMA = {
                          "description": "where the exterior opens into the interior (an underside a flap "
                                         "closes, a port): no skin inside them. The exterior's solid ends at an "
                                         "opening's inner end, and a skin lining that would be a membrane across "
-                                        "the cavity behind it"}},
+                                        "the cavity behind it"},
+                     "of": {"anyOf": [{"$ref": "#/$defs/shape"}, {"type": "array", "items": {"$ref": "#/$defs/shape"}}],
+                            "description": "the exterior the skin lines when the design space is only part of it "
+                                           "(a split half): the skin follows it and stops at the cut"}},
                      "required": ["thickness"], "additionalProperties": False}],
                  "description": "Skin-and-rib: mm of the design space's outer surface kept as a solid wall; "
                                 "the optimizer designs the ribs behind it."},

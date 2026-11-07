@@ -58,8 +58,18 @@ def _axis_vec(side) -> np.ndarray:
     return d / np.linalg.norm(d)
 
 
-def _axis_name(d) -> str:
+def _nearest_axis(d) -> str:
     k = int(np.argmax(np.abs(d)))
+    return ("+" if d[k] > 0 else "-") + "xyz"[k]
+
+
+def _axis_name(d):
+    """'+z' for an axis direction; any other direction stays a vector (an
+    angled cut's lift)."""
+    d = np.asarray(d, float)
+    k = int(np.argmax(np.abs(d)))
+    if abs(d[k]) < 1 - 1e-6:
+        return np.round(d / np.linalg.norm(d), 6).tolist()
     return ("+" if d[k] > 0 else "-") + "xyz"[k]
 
 
@@ -367,7 +377,7 @@ def handoff(brief: dict, base_dir: str | None = None) -> dict:
     for o in b.get("openings") or []:
         o = {"shape": o} if not isinstance(o, dict) else dict(o)
         o["shape"] = _shape_spec(o["shape"], base_dir)
-        o.setdefault("inward", _axis_name(-pdir))
+        o.setdefault("inward", _nearest_axis(-pdir))
         o.setdefault("depth", round(float(sk["thickness"]) + 0.2, 3))
         ops.append(o)
     if ops:
@@ -466,7 +476,7 @@ def handoff(brief: dict, base_dir: str | None = None) -> dict:
     sw_block = {k: v for k, v in press.items()
                 if k not in ("component", "gap", "plungerRadius", "columnClearance", "bearsOn", "trigger", "travel",
                              "clearance", "clearanceMargin", "clearanceRegion")}
-    output = {"region": "plunger", "direction": _axis_name(pdir), "gap": gap,
+    output = {"region": "plunger", "direction": _nearest_axis(pdir), "gap": gap,
               "trigger": press.get("trigger", 0.0), "travel": press.get("travel", 0.0)}
     bears = press.get("bearsOn", next((c["id"] for c in comps if c.get("role") == "seat"), None))
     if bears:

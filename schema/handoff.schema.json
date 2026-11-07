@@ -725,6 +725,85 @@
       ],
       "additionalProperties": false
     },
+    "heightfield": {
+      "type": "object",
+      "description": "One side of a surface given as heights over a plane: the points whose n.x is below (or above) h(u, v), h on a square grid in the plane's axes, bilinear between samples. A stepped or curved parting surface (loadpath split writes these).",
+      "properties": {
+        "type": {
+          "const": "heightfield"
+        },
+        "normal": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "axes": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "[x, y, z]"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "the plane's u and v axes"
+        },
+        "origin": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "(u, v) of heights[0][0]"
+        },
+        "step": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "heights": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "description": "heights[i][j] = h(u0 + i step, v0 + j step) along normal"
+        },
+        "side": {
+          "enum": [
+            "below",
+            "above"
+          ]
+        },
+        "offset": {
+          "type": "number",
+          "description": "moves the surface along normal (mm)"
+        },
+        "depth": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "normal",
+        "axes",
+        "origin",
+        "step",
+        "heights"
+      ],
+      "additionalProperties": false
+    },
     "mesh": {
       "type": "object",
       "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder (or a STEP file, .step/.stp, tessellated and healed; needs loadpath[step]), or inline stlBase64.",
@@ -833,8 +912,8 @@
       "additionalProperties": false
     },
     "shape": {
-      "title": "a shape object (box, cylinder, tube, sphere, mesh, sdf, union, intersect, subtract)",
-      "description": "A shape: box, cylinder (tube), sphere, mesh, sdf, union, intersect or subtract. Units mm.",
+      "title": "a shape object (box, cylinder, tube, sphere, heightfield, mesh, sdf, union, intersect, subtract)",
+      "description": "A shape: box, cylinder (tube), sphere, heightfield, mesh, sdf, union, intersect or subtract. Units mm.",
       "oneOf": [
         {
           "$ref": "#/$defs/box"
@@ -844,6 +923,9 @@
         },
         {
           "$ref": "#/$defs/sphere"
+        },
+        {
+          "$ref": "#/$defs/heightfield"
         },
         {
           "$ref": "#/$defs/mesh"
@@ -870,6 +952,7 @@
           "sphere": "#/$defs/sphere",
           "mesh": "#/$defs/mesh",
           "sdf": "#/$defs/sdf",
+          "heightfield": "#/$defs/heightfield",
           "union": "#/$defs/union",
           "intersect": "#/$defs/intersect",
           "subtract": "#/$defs/subtract"

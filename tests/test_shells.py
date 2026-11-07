@@ -191,6 +191,70 @@ def test_verify_snap_on_cut_cells():
 TESTS = [test_snap_numbers, test_oriented_box, test_split_given_cut_with_snaps, test_screws_and_holes,
          test_search_avoids_and_tall_parts, test_verify_snap_on_cut_cells]
 
+def _box_outline(a):
+    """Where a ray from the box's centre at angle a leaves its 60 x 40 outline."""
+    d = np.array([math.cos(a), math.sin(a)])
+    k = min(30 / abs(d[0]) if abs(d[0]) > 1e-9 else 1e9, 20 / abs(d[1]) if abs(d[1]) > 1e-9 else 1e9)
+    return d * k
+
+
+def _halves_partition(r, n=20000):
+    from loadpath.shapes import shape_from_spec
+    B = shape_from_spec(r["studies"]["base"]["designSpace"], _DIR)
+    C = shape_from_spec(r["studies"]["cover"]["designSpace"], _DIR)
+    P = np.random.default_rng(0).uniform([-30, -20, 0], [30, 20, 20], (n, 3))
+    b, c = B.sdf(P) < 0, C.sdf(P) < 0
+    return int((b & c).sum()), int((~b & ~c).sum())
+
+
+def test_angled_stepped_and_seam_cuts():
+    """Cuts that are not flat axis planes: a tilted plane, a parting line
+    that steps up over one end, and one through a saddle-shaped line drawn
+    on the exterior. Each half pair fills the exterior exactly once, the
+    cover lifts off along the normal, the snaps sit where the seam runs
+    level, and the half studies lint clean."""
+    from loadpath.shapes import shape_from_spec
+    st = product()
+    ang = np.linspace(0, 2 * np.pi, 64, endpoint=False)
+    saddle = [[*_box_outline(a), 11 + 2.0 * math.cos(2 * a)] for a in ang]
+    cases = {
+        "angled": {"normal": [0, 0.15, 1], "at": 11.0},
+        "steps": {"normal": "+z", "at": 9.0,
+                  "steps": [{"at": 13.0, "where": {"type": "box", "min": [8, -25, -5], "max": [40, 25, 30]}}]},
+        "seam": {"seam": {"points": saddle}},
+    }
+    for k, sp in cases.items():
+        out = tempfile.mkdtemp()
+        r = apply_split(st, {**sp, "snaps": {}}, out_dir=out, base_dir=_DIR)
+        rep = r["report"]
+        assert rep["cut"]["ok"], (k, rep["cut"])
+        assert rep["lint"] == {"base": [], "cover": []}, (k, rep["lint"])
+        assert _halves_partition(r) == (0, 0), k
+        assert rep["snaps"]["count"] >= 2 and rep["lip"], (k, rep["snaps"], rep["lip"])
+        assert rep["assembly"]["componentsIn"] == {"board": "base"}, k
+        # the skin lines the exterior, not the cut
+        for side in ("base", "cover"):
+            assert r["studies"][side]["skin"].get("of") is not None
+        if k == "angled":
+            n = np.array(rep["cut"]["normal"])
+            assert abs(n @ np.array([0, 0.15, 1]) / np.linalg.norm([0, 0.15, 1]) - 1) < 1e-6
+            assert rep["assembly"]["paths"]["board"]["insertFrom"] is not None
+        if k == "steps":
+            assert rep["cut"]["levels"] == [9.0, 13.0], rep["cut"]
+            surf = shape_from_spec(rep["cut"]["surface"])
+            assert abs(surf.height(np.array([[-20.0, 0, 0]]))[0] - 9.0) < 1e-6
+            assert abs(surf.height(np.array([[20.0, 0, 0]]))[0] - 13.0) < 1e-6
+            # no snap on the step's climb
+            for g in rep["snaps"]["sites"]:
+                assert abs(g["at"][0] - 8.0) > 3.0, g
+        if k == "seam":
+            assert rep["cut"]["normal"] == "+z", rep["cut"]     # a saddle's best plane is level
+            surf = shape_from_spec(rep["cut"]["surface"])
+            assert np.abs(surf.sdf(np.array(saddle))).max() < 0.05
+            lv = rep["cut"]["levels"]
+            assert lv[0] < 9.2 and lv[1] > 12.8, lv
+
+
 if __name__ == "__main__":
     bad = 0
     for t in TESTS:

@@ -6,6 +6,7 @@ read from outside the repository.
 
     python examples/shells/handheld.py --out /tmp/handheld            # the study, split
     python examples/shells/handheld.py --out /tmp/handheld --screws   # with screws through the underside
+    python examples/shells/handheld.py --out /tmp/handheld --seam     # a parting line that sweeps up toward the back
 """
 from __future__ import annotations
 
@@ -63,18 +64,46 @@ def build(out: str) -> dict:
     return study
 
 
+def seam_line(study_dir: str, n: int = 96):
+    """A designer's parting line on the exterior: low along the front, it
+    sweeps up toward the back (z = 8 at x = -48 to z = 15 at x = +48, an
+    S-curve), traced round the hull by walking out from the middle at each
+    angle to where the exterior ends."""
+    from loadpath.shapes import shape_from_spec
+    ext = shape_from_spec({"type": "mesh", "path": "exterior.stl"}, study_dir)
+
+    def height(x):
+        return 11.5 + 3.5 * np.tanh(x / 22.0)
+
+    pts = []
+    for a in np.linspace(0.0, 2 * np.pi, n, endpoint=False):
+        d = np.array([np.cos(a), np.sin(a), 0.0])
+        z = 11.5
+        for _ in range(4):
+            ts = np.arange(0.0, 80.0, 0.05)
+            P = np.array([0.0, 0.0, z]) + ts[:, None] * d
+            k = int(np.argmax(ext.sdf(P) > 0))
+            p = P[k]
+            z = height(p[0])
+        pts.append([round(float(p[0]), 3), round(float(p[1]), 3), round(float(z), 3)])
+    return pts
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="handheld-split")
     ap.add_argument("--screws", action="store_true", help="screws up through the underside, as well as snaps")
     ap.add_argument("--normal", default="auto")
     ap.add_argument("--at", type=float)
+    ap.add_argument("--seam", action="store_true", help="split along a designer's line sweeping up toward the back")
     args = ap.parse_args(argv)
     from loadpath.shells import run_split
     study = build(args.out)
     split = {"normal": args.normal, "lip": {"height": 2.0, "width": 1.2}}
     if args.at is not None:
         split["at"] = args.at
+    if args.seam:
+        split["seam"] = {"points": seam_line(args.out)}
     if args.screws:
         split["screws"] = {"from": "-z", "size": "M2", "count": 4}
         split["snaps"] = {"count": 2}

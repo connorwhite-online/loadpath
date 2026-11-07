@@ -9,7 +9,13 @@ has to pull off the other without hooking it (no undercut across the seam);
 every component has to go into its half with the other half off, and the
 cover has to come down over the components already in place. `apply_split`
 checks all of that for a given cut, or tries cuts across each axis and
-picks the shortest seam that passes.
+picks the shortest seam that passes. A cut need not be a flat axis plane:
+it can be tilted (`normal` a vector), step up over part of the product
+(`steps`), or follow a parting line the designer drew on the exterior
+(`seam`). Any surface that is a height over the plane across the lift
+direction parts cleanly along it, so that is the general cut: the seam
+line is kept where it was drawn, and inside, where nobody sees it, the
+surface runs smoothly between.
 
 Then the joints, every one inside the skin (the exterior is never changed;
 a screw needs a hole, so screws come in only through a face the designer
@@ -41,6 +47,8 @@ holes the exterior gets (only where the designer allowed them).
     "split": {
       "normal": "+z",                  # the cover comes off toward +z; "auto" (or no normal) tries x, y, z
       "at": 14.0,                      # the cut's level along that axis; omitted: searched
+      "steps": [{"at": 18, "where": shape}],  # or: the cut climbs to 18 over `where` (needs normal and at)
+      "seam": {"points": [[x, y, z], ...]},   # or: through a line drawn on the exterior (normal: its plane)
       "avoid": [shape, ...],           # surfaces the seam must not cross (the designer's A surfaces)
       "componentsIn": {"battery": "base"},   # which half holds a component (default: where most of it is)
       "clearance": 0.2,                # mm between mating faces (lip, snaps)
@@ -243,29 +251,313 @@ def _exterior(study: dict, base_dir):
     return (shapes[0] if len(shapes) == 1 else Union(shapes)), specs
 
 
-def _contours(ext, a: int, at: float, level: float, step: float = 0.2) -> list[np.ndarray]:
+class _Cut:
+    """The parting surface. The cover is where n.x > h(u, v), h a height
+    over the plane (u, v) = (e1.x, e2.x) across the lift direction n: the
+    cover lifts off along n, and any surface that is a height over that
+    plane parts along it. A plane has one height (an axis cut, or an
+    angled one); a stepped parting line and one that follows a seam the
+    designer drew carry h on a grid."""
+
+    def __init__(self, n, h0=0.0, grid=None, e1=None, kind="plane", axis=None, at=None):
+        n = np.asarray(n, float)
+        self.n = n / np.linalg.norm(n)
+        self.axis = axis
+        if axis is not None:
+            b, c = [i for i in range(3) if i != axis[0]]
+            self.e1, self.e2 = _unit(b, 1), _unit(c, 1)
+        else:
+            if e1 is None:
+                k = int(np.argmin(np.abs(self.n)))
+                e1 = np.cross(self.n, _unit(k, 1))
+            e1 = np.asarray(e1, float) - (np.asarray(e1, float) @ self.n) * self.n
+            self.e1 = e1 / np.linalg.norm(e1)
+            self.e2 = np.cross(self.n, self.e1)
+        self.h0 = float(h0)
+        self.grid = grid                   # (origin (u0, v0), step, H) or None
+        self.kind = kind
+        self.at = at
+
+    @classmethod
+    def plane_axis(cls, a, sg, at):
+        return cls(_unit(a, sg), sg * float(at), axis=(a, sg), at=round(float(at), 3))
+
+    @classmethod
+    def plane(cls, n, at):
+        n = np.asarray(n, float)
+        n = n / np.linalg.norm(n)
+        k = int(np.argmax(np.abs(n)))
+        if abs(n[k]) > 1 - 1e-9:
+            sg = 1 if n[k] > 0 else -1
+            return cls.plane_axis(k, sg, sg * float(at))
+        return cls(n, float(at), at=round(float(at), 3))
+
+    @property
+    def planar(self):
+        return self.grid is None
+
+    def flipped(self):
+        g = None
+        if self.grid is not None:
+            o, st, H = self.grid
+            g = (o, st, -H)
+        c = _Cut(-self.n, -self.h0, g, e1=self.e1, kind=self.kind,
+                 axis=None if self.axis is None else (self.axis[0], -self.axis[1]), at=self.at)
+        c.e1, c.e2 = self.e1, self.e2
+        return c
+
+    def uv(self, P):
+        P = np.asarray(P, float)
+        return P @ self.e1, P @ self.e2
+
+    def h(self, P):
+        P = np.asarray(P, float)
+        if self.grid is None:
+            return np.full(P.shape[:-1], self.h0)
+        o, st, H = self.grid
+        u, v = self.uv(P)
+        fi = np.clip((u - o[0]) / st, 0.0, H.shape[0] - 1.000001)
+        fj = np.clip((v - o[1]) / st, 0.0, H.shape[1] - 1.000001)
+        i, j = np.floor(fi).astype(int), np.floor(fj).astype(int)
+        a, b = fi - i, fj - j
+        return ((1 - a) * (1 - b) * H[i, j] + a * (1 - b) * H[i + 1, j] + (1 - a) * b * H[i, j + 1]
+                + a * b * H[i + 1, j + 1])
+
+    def phi(self, P):
+        """Height above the surface along n: > 0 on the cover's side."""
+        P = np.asarray(P, float)
+        return P @ self.n - self.h(P)
+
+    def point(self, u, v, S=0.0):
+        """The world point at (u, v), S below the surface along -n."""
+        u, v, S = np.broadcast_arrays(np.asarray(u, float), np.asarray(v, float), np.asarray(S, float))
+        base = u[..., None] * self.e1 + v[..., None] * self.e2
+        return base + (self.h(base) - S)[..., None] * self.n
+
+    def name(self, sign=1):
+        """The direction sign * n: '+z' for an axis, else a vector."""
+        if self.axis is not None:
+            return _name(self.axis[0], sign * self.axis[1])
+        return _r(sign * self.n, 6)
+
+    def label(self):
+        if self.axis is not None and self.planar:
+            return f"{'xyz'[self.axis[0]]} = {self.at:g}"
+        if self.planar:
+            return f"the plane n.x = {self.at:g}, n = {_r(self.n, 3)}"
+        return "a stepped parting line" if self.kind == "steps" else "the seam line drawn on the exterior"
+
+    def footprint(self, ext, pad=1.0):
+        lo, hi = ext.bounds()
+        C = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+        u, v = C @ self.e1, C @ self.e2
+        w = C @ self.n
+        return (u.min() - pad, u.max() + pad), (v.min() - pad, v.max() + pad), (w.min(), w.max())
+
+    def half_spec(self, ext, side, offset=0.0, pad=5.0):
+        """The half's region as a shape spec: below the surface (base) or
+        above it (cover), `offset` mm along n."""
+        lo, hi = ext.bounds()
+        lo, hi = lo - pad, hi + pad
+        if self.axis is not None and self.planar:
+            a, sg = self.axis
+            at = self.at + sg * offset
+            if (side == "cover") == (sg > 0):
+                lo[a] = at
+            else:
+                hi[a] = at
+            return {"type": "box", "min": _r(lo), "max": _r(hi)}
+        (u0, u1), (v0, v1), (w0, w1) = self.footprint(ext, pad)
+        R = float(np.linalg.norm(hi - lo)) + pad
+        if self.planar:
+            c = 0.5 * (u0 + u1) * self.e1 + 0.5 * (v0 + v1) * self.e2 + (self.h0 + offset) * self.n
+            c = c + (0.5 * R if side == "cover" else -0.5 * R) * self.n
+            return {"type": "box", "center": _r(c), "size": _r([u1 - u0, v1 - v0, R]),
+                    "axes": [_r(self.e1, 9), _r(self.e2, 9)]}
+        o, st, H = self.grid
+        return {"type": "heightfield", "normal": _r(self.n, 9), "axes": [_r(self.e1, 9), _r(self.e2, 9)],
+                "origin": _r(o), "step": st, "heights": np.round(H, 4).tolist(),
+                "side": "above" if side == "cover" else "below", "offset": float(offset), "depth": round(R, 2)}
+
+    def band_spec(self, ext, side, width):
+        """A slice `width` mm thick against the surface on one side: where
+        a cover sits on the base's rim."""
+        if side == "cover":
+            return {"type": "intersect", "shapes": [self.half_spec(ext, "cover"),
+                                                    self.half_spec(ext, "base", offset=width)]}
+        return {"type": "intersect", "shapes": [self.half_spec(ext, "base"),
+                                                self.half_spec(ext, "cover", offset=-width)]}
+
+    def report(self):
+        out = {"normal": self.name(), "kind": self.kind}
+        if self.planar:
+            out["at"] = self.at
+        else:
+            o, st, H = self.grid
+            out["levels"] = [round(float(H.min()), 3), round(float(H.max()), 3)]
+        return out
+
+
+def _smoothstep(x):
+    x = np.clip(x, 0.0, 1.0)
+    return x * x * (3 - 2 * x)
+
+
+def _grid_for(cut, ext, step=None):
+    (u0, u1), (v0, v1), _ = cut.footprint(ext, pad=2.0)
+    st = float(step or max(0.5, max(u1 - u0, v1 - v0) / 400.0))
+    nu, nv = int(np.ceil((u1 - u0) / st)) + 1, int(np.ceil((v1 - v0) / st)) + 1
+    return np.array([u0, v0]), st, nu, nv
+
+
+def _stepped_cut(ext, n_spec, at, steps, width, base_dir):
+    """A plane at `at` that climbs to each step's level over its `where`."""
+    from scipy import ndimage
+
+    from .shapes import shape_from_spec
+
+    base = _cut_plane(n_spec, at)
+    o, st, nu, nv = _grid_for(base, ext)
+    U = o[0] + np.arange(nu) * st
+    V = o[1] + np.arange(nv) * st
+    H = np.full((nu, nv), base.h0)
+    _, _, (w0, w1) = base.footprint(ext, 0.0)
+    S = np.arange(w0, w1 + 0.5, 0.5)
+    uu, vv = np.meshgrid(U, V, indexing="ij")
+    for k, stp in enumerate(steps):
+        sh = shape_from_spec(stp["where"], base_dir)
+        lvl = _cut_plane(n_spec, float(stp["at"])).h0
+        mask = np.zeros((nu, nv), bool)
+        for s in S:
+            P = uu[..., None] * base.e1 + vv[..., None] * base.e2 + s * base.n
+            mask |= (sh.sdf(P.reshape(-1, 3)) <= 0).reshape(nu, nv)
+        if not mask.any():
+            raise ValueError(f"split.steps[{k}].where does not cross the part along the normal")
+        d = (ndimage.distance_transform_edt(mask) - ndimage.distance_transform_edt(~mask)) * st
+        wgt = _smoothstep(d / max(width, st) + 0.5)
+        H = H + wgt * (lvl - H)
+    return _Cut(base.n, base.h0, (o, st, H), kind="steps", axis=base.axis, at=base.at)
+
+
+def _seam_cut(ext, n_spec, points):
+    """The surface through a parting line drawn on the exterior: h at the
+    line's points, smooth (harmonic) in between and past it."""
+    from scipy.sparse import coo_matrix, identity
+    from scipy.sparse.linalg import spsolve
+
+    P = np.asarray(points, float)
+    if P.ndim != 2 or P.shape[1] != 3 or len(P) < 3:
+        raise ValueError("split.seam.points is a list of [x, y, z] round the part, at least 3")
+    if n_spec in (None, "auto"):
+        c = P - P.mean(axis=0)
+        n = np.linalg.svd(c, full_matrices=False)[2][-1]
+        n = n if n[int(np.argmax(np.abs(n)))] > 0 else -n
+        k0 = int(np.argmax(np.abs(n)))
+        if abs(n[k0]) > math.cos(math.radians(15.0)):
+            # within 15 degrees of an axis: lift straight along it (a line
+            # that rises toward one end is not a reason to tilt the tool)
+            n = _unit(k0, 1)
+    else:
+        n = _vec_of(n_spec)
+    k = int(np.argmax(np.abs(n)))
+    axis = (k, 1 if n[k] > 0 else -1) if abs(n[k]) > 1 - 1e-9 else None
+    cut = _Cut(n, 0.0, axis=axis)
+    o, st, nu, nv = _grid_for(cut, ext)
+    # the line, closed, every quarter cell
+    Q = np.vstack([P, P[:1]])
+    q, _, _ = _resample(Q, 0.25 * st)
+    u, v = cut.uv(q)
+    i = np.clip(np.rint((u - o[0]) / st).astype(int), 0, nu - 1)
+    j = np.clip(np.rint((v - o[1]) / st).astype(int), 0, nv - 1)
+    fix = {}
+    for ii, jj, hh in zip(i, j, q @ cut.n):
+        fix.setdefault((ii, jj), []).append(hh)
+    N = nu * nv
+    idx = np.arange(N).reshape(nu, nv)
+    rows, cols, vals = [], [], []
+    for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        a = idx[max(0, -di):nu - max(0, di), max(0, -dj):nv - max(0, dj)].ravel()
+        b = idx[max(0, di):nu + min(0, di), max(0, dj):nv + min(0, dj)].ravel()
+        rows += [a, a]
+        cols += [b, a]
+        vals += [-np.ones(len(a)), np.ones(len(a))]
+    L = coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(N, N)).tocsr()
+    rhs = np.zeros(N)
+    fixed = np.zeros(N, bool)
+    for (ii, jj), hs in fix.items():
+        fixed[idx[ii, jj]] = True
+        rhs[idx[ii, jj]] = float(np.mean(hs))
+    D = identity(N, format="csr").multiply(fixed[:, None]).tocsr()
+    A = L.multiply((~fixed)[:, None]).tocsr() + D
+    H = spsolve(A.tocsc(), rhs).reshape(nu, nv)
+    c = _Cut(n, 0.0, (o, st, H), kind="seam", axis=axis)
+    c.e1, c.e2 = cut.e1, cut.e2
+    c.seam_points = P
+    return c
+
+
+def _vec_of(spec):
+    if isinstance(spec, str):
+        a, sg = _axis(spec)
+        return _unit(a, sg)
+    v = np.asarray(spec, float)
+    if v.shape != (3,) or not np.linalg.norm(v) > 0:
+        raise ValueError(f"split.normal is an axis like '+z', a vector or 'auto', got {spec!r}")
+    return v / np.linalg.norm(v)
+
+
+def _cut_plane(n_spec, at):
+    if isinstance(n_spec, str):
+        a, sg = _axis(n_spec)
+        return _Cut.plane_axis(a, sg, at)
+    return _Cut.plane(_vec_of(n_spec), at)
+
+
+def _inside(ext, step=1.5):
+    """Points inside the exterior on a grid (cached on it): how deep each
+    half runs along a cut's normal."""
+    got = getattr(ext, "_lp_inside", None)
+    if got is not None:
+        return got
+    lo, hi = ext.bounds()
+    st = max(step, float(np.max(hi - lo)) / 80.0)
+    ax = [np.arange(lo[i] + 0.5 * st, hi[i], st) for i in range(3)]
+    G = np.stack(np.meshgrid(*ax, indexing="ij"), -1).reshape(-1, 3)
+    P = G[ext.sdf(G) < 0]
+    try:
+        ext._lp_inside = P
+    except AttributeError:
+        pass
+    return P
+
+
+def _depths(ext, cut):
+    if cut.axis is not None and cut.planar:
+        lo, hi = ext.bounds()
+        a, sg = cut.axis
+        lo_n, hi_n = (lo[a], hi[a]) if sg > 0 else (-hi[a], -lo[a])
+        atn = sg * cut.at
+        return atn - lo_n, hi_n - atn
+    f = cut.phi(_inside(ext))
+    return float(max(0.0, -f.min())), float(max(0.0, f.max()))
+
+
+def _contours(ext, cut, level: float, step: float = 0.2) -> list[np.ndarray]:
     """Closed curves where the exterior's signed distance is `level` on the
-    plane x_a = at, as (n, 3) arrays."""
+    cut surface, as (n, 3) arrays."""
     from skimage import measure
 
-    lo, hi = ext.bounds()
-    b, c = [i for i in range(3) if i != a]
-    ub = np.arange(lo[b] - 1.0, hi[b] + 1.0 + step, step)
-    uc = np.arange(lo[c] - 1.0, hi[c] + 1.0 + step, step)
-    G = np.zeros((len(ub), len(uc), 3))
-    G[..., a] = at
-    G[..., b] = ub[:, None]
-    G[..., c] = uc[None, :]
+    (u0, u1), (v0, v1), _ = cut.footprint(ext, pad=1.0)
+    ub = np.arange(u0, u1 + step, step)
+    uc = np.arange(v0, v1 + step, step)
+    UU, VV = np.meshgrid(ub, uc, indexing="ij")
+    G = cut.point(UU, VV)
     F = ext.sdf(G.reshape(-1, 3)).reshape(len(ub), len(uc))
     out = []
     for cnt in measure.find_contours(F, level):
         if len(cnt) < 8:
             continue
-        p = np.zeros((len(cnt), 3))
-        p[:, a] = at
-        p[:, b] = ub[0] + cnt[:, 0] * step
-        p[:, c] = uc[0] + cnt[:, 1] * step
-        out.append(p)
+        out.append(cut.point(ub[0] + cnt[:, 0] * step, uc[0] + cnt[:, 1] * step))
     return out
 
 
@@ -273,9 +565,11 @@ def _length(p: np.ndarray) -> float:
     return float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
 
 
-def seam_length(ext, a: int, at: float) -> float:
-    """mm of seam: the exterior's outline on the cut."""
-    return float(sum(_length(c) for c in _contours(ext, a, at, 0.0)))
+def seam_length(ext, a, at=None) -> float:
+    """mm of seam: the exterior's outline on the cut (an axis and a level,
+    or a cut surface)."""
+    cut = a if isinstance(a, _Cut) else _Cut.plane_axis(int(a), 1, float(at))
+    return float(sum(_length(c) for c in _contours(ext, cut, 0.0)))
 
 
 def _resample(p: np.ndarray, ds: float):
@@ -296,31 +590,19 @@ def _grad(ext, p, h=0.1):
     return g
 
 
-def _half_box(ext, a, sg, at, side: str, pad=5.0):
-    from .shapes import Box
-
-    lo, hi = ext.bounds()
-    lo, hi = lo - pad, hi + pad
-    if (side == "cover") == (sg > 0):
-        lo[a] = at
-    else:
-        hi[a] = at
-    return Box(lo, hi)
-
-
-def _half_skin(ext, skin: dict, a, sg, at, side):
-    """(half design space, the half's skin shape, the skin dict) with the
-    skin left off the cut face."""
-    from .shapes import Boolean
+def _half_skin(ext, skin: dict, cut, side):
+    """(half design space, the half's skin shape, the skin dict, the half
+    region): the skin lines the whole exterior and stops at the cut."""
+    from .shapes import Boolean, shape_from_spec
     from .spec import _skin
 
-    box = _half_box(ext, a, sg, at, side)
-    ds = Boolean("intersect", [ext, box])
-    cut = _name(a, sg if side == "base" else -sg)       # the half's face on the cut
+    region = shape_from_spec(cut.half_spec(ext, side))
+    ds = Boolean("intersect", [ext, region])
     sk = dict(skin)
-    sk["open"] = list(dict.fromkeys(list(sk.get("open") or []) + [cut]))
-    _t, shape = _skin(sk, [ds])
-    return ds, shape, sk, box
+    sk.pop("of", None)
+    _t, shape = _skin(sk, [ext])
+    shape = Boolean("intersect", [shape, region])
+    return ds, shape, sk, region
 
 
 def _samples(shape, step, cap=6000):
@@ -332,7 +614,7 @@ def _samples(shape, step, cap=6000):
 # the cut
 
 
-def _assign(comps, a, sg, at, given):
+def _assign(comps, cut, given):
     """Which half holds each component: given, or where most of it is."""
     out = {}
     for c in comps:
@@ -340,7 +622,7 @@ def _assign(comps, a, sg, at, given):
             out[c["id"]] = given[c["id"]]
             continue
         P = _samples(c["shape"], 0.6, 3000)
-        up = float(np.mean(sg * (P[:, a] - at) > 0))
+        up = float(np.mean(cut.phi(P) > 0))
         out[c["id"]] = "cover" if up > 0.5 else "base"
     for c in comps:      # a part installed on another goes with it
         p = c.get("installedOn")
@@ -349,14 +631,14 @@ def _assign(comps, a, sg, at, given):
     return out
 
 
-def _check_cut(ext, skin, t, comps, a, sg, at, given, tol, avoid, order):
+def _check_cut(ext, skin, t, comps, cut, given, tol, avoid, order):
     """Everything about one cut: seam, separation, assembly in each half."""
     from .handoff import _Obstacles, _path_check, assembly_paths
 
-    n = _unit(a, sg)
+    n = cut.n
     lo, hi = ext.bounds()
-    rec = {"normal": _name(a, sg), "at": round(float(at), 3)}
-    curves = _contours(ext, a, at, 0.0)
+    rec = {**cut.report(), "_cut": cut}
+    curves = _contours(ext, cut, 0.0)
     rec["seam"] = round(float(sum(_length(c) for c in curves)), 1)
     if not curves:
         rec.update(ok=False, why="the cut misses the exterior")
@@ -367,35 +649,31 @@ def _check_cut(ext, skin, t, comps, a, sg, at, given, tol, avoid, order):
         if hit:
             rec.update(ok=False, why=f"the seam crosses avoid[{hit}]")
             return rec
-    where = _assign(comps, a, sg, at, given)
+    where = _assign(comps, cut, given)
     rec["componentsIn"] = where
     halves = {}
     for side in ("base", "cover"):
-        ds, sh, sk, box = _half_skin(ext, skin, a, sg, at, side)
-        halves[side] = (ds, sh, sk, box)
-    # Two halves of one solid cut by a plane always part along its normal;
-    # what can hook is a component. The cover lifts off along +n with its
-    # components: they must not catch on the base's components, and the
-    # cover's skin must not catch on a base component standing up past the
-    # cut (a connector tucked under the cover's wall).
+        halves[side] = _half_skin(ext, skin, cut, side)
+    # Two halves of one solid cut by a surface that is a height over the
+    # plane across n always part along n; what can hook is a component. The
+    # cover lifts off along +n with its components: they must not catch on
+    # the base's components, and the cover's skin must not catch on a base
+    # component standing up past the cut (a connector tucked under the
+    # cover's wall).
     base_c = [c for c in comps if where[c["id"]] == "base"]
     cov_c = [c for c in comps if where[c["id"]] == "cover"]
     mov = [_samples(c["shape"], 0.5, 3000) for c in cov_c]
     tall = []
     for c in base_c:
-        clo, chi = c["shape"].bounds()
-        if sg * ((chi if sg > 0 else clo)[a] - at) > 0:
+        if (cut.phi(_samples(c["shape"], 0.8, 1500)) > 0).any():
             tall.append(c)
     if tall:
         sk_pts = _samples(halves["cover"][1], min(0.5, 0.6 * t), 20000)
+        su, sv = cut.uv(sk_pts)
         keep = np.zeros(len(sk_pts), bool)
         for c in tall:
-            clo, chi = c["shape"].bounds()
-            m = np.ones(len(sk_pts), bool)
-            for i in range(3):
-                if i != a:
-                    m &= (sk_pts[:, i] > clo[i] - 1.0) & (sk_pts[:, i] < chi[i] + 1.0)
-            keep |= m
+            cu, cv = cut.uv(_samples(c["shape"], 0.8, 1500))
+            keep |= ((su > cu.min() - 1.0) & (su < cu.max() + 1.0) & (sv > cv.min() - 1.0) & (sv < cv.max() + 1.0))
         if keep.any():
             mov.append(sk_pts[keep])
     ok = True
@@ -404,7 +682,7 @@ def _check_cut(ext, skin, t, comps, a, sg, at, given, tol, avoid, order):
         ok, pen, who, at_pt, dist = _path_check(np.vstack(mov), obs, [(n, None)], lo - 1, hi + 1, tol, step=0.5)
     rec["separates"] = bool(ok)
     if not ok:
-        rec.update(ok=False, why=f"the cover catches on {who} lifting off along {_name(a, sg)} "
+        rec.update(ok=False, why=f"the cover catches on {who} lifting off along {cut.name()} "
                                  f"({pen:.2f} mm deep at {_r(at_pt, 2)}, after {dist:.1f} mm)")
         return rec
     rec["paths"] = {}
@@ -412,7 +690,7 @@ def _check_cut(ext, skin, t, comps, a, sg, at, given, tol, avoid, order):
         mine = [c for c in comps if where[c["id"]] == side]
         if not mine:
             continue
-        hint = _name(a, sg if side == "base" else -sg)       # in through the cut
+        hint = cut.name(1 if side == "base" else -1)       # in through the cut
         cl = [{**c, "insertFrom": c.get("insertFrom") or hint} for c in mine]
         ids = [c["id"] for c in mine]
         od = [i for i in order if i in ids] + [i for i in ids if i not in order]
@@ -424,64 +702,69 @@ def _check_cut(ext, skin, t, comps, a, sg, at, given, tol, avoid, order):
     if blocked:
         rec.update(ok=False, why=f"no way in for {blocked} with the other half off")
         return rec
-    # depth of each half along the normal
-    lo_n, hi_n = (lo[a], hi[a]) if sg > 0 else (-hi[a], -lo[a])
-    atn = sg * at
-    rec["depth"] = {"base": round(atn - lo_n, 2), "cover": round(hi_n - atn, 2)}
+    db, dc = _depths(ext, cut)
+    rec["depth"] = {"base": round(db, 2), "cover": round(dc, 2)}
     rec["ok"] = True
     return rec
 
 
 def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=None, min_depth=6.0):
     lo, hi = ext.bounds()
-    axes = [_axis(normal)] if normal not in (None, "auto") else [(a, 1) for a in range(3)]
+    if normal in (None, "auto"):
+        dirs = [_unit(a, 1) for a in range(3)]
+    else:
+        dirs = [_vec_of(normal)]
     cands = []
-    for a, sg in axes:
-        span = hi[a] - lo[a]
+    for d in dirs:
+        base = _Cut.plane(d, 0.0)
+        _, _, (w0, w1) = base.footprint(ext, 0.0)
+        span = w1 - w0
         if levels is not None:
             lv = list(levels)
         else:
             m = min(min_depth, 0.3 * span)
             k = int(np.clip(round(span / 3.0), 5, 12))
-            lv = list(np.linspace(lo[a] + m, hi[a] - m, k))
+            lv = [base.h0 + x for x in np.linspace(w0 + m, w1 - m, k)]
+            if base.axis is not None:
+                lv = [base.axis[1] * x for x in lv]          # levels are coordinates on an axis
         for at in lv:
-            cands.append((seam_length(ext, a, float(at)), a, sg, round(float(at), 3)))
-    cands.sort()
+            c = _cut_plane(base.name() if base.axis is not None else d, round(float(at), 3))
+            cands.append((seam_length(ext, c), c))
     samples = {c["id"]: _samples(c["shape"], 0.8, 600) for c in comps}
 
-    def score(seam, a, sg, at):
+    def score(seam, cut):
         """mm, lower is better: the seam's length, plus four times how far
         each component travels to go in (a battery dropped 8 mm into a tray
         beats one slid 60 mm down a tube), plus 20 for each component
         standing across the cut and 10 per mm a half is too shallow for a
         joint. A rule of thumb; give `at` to overrule it."""
-        where = _assign(comps, a, sg, at, given)
+        where = _assign(comps, cut, given)
         travel, cross = 0.0, 0
         for c in comps:
-            sd = sg * (samples[c["id"]][:, a] - at)
+            sd = cut.phi(samples[c["id"]])
             cross += int((sd > 0).any() and (sd < 0).any())
             travel += max(0.0, float(-sd.min())) if where[c["id"]] == "base" else max(0.0, float(sd.max()))
-        lo_n, hi_n = (lo[a], hi[a]) if sg > 0 else (-hi[a], -lo[a])
-        depth = (sg * at - lo_n, hi_n - sg * at)
+        depth = _depths(ext, cut)
         shallow = sum(max(0.0, min_depth - d) for d in depth)
         return round(seam + 4.0 * travel + 20.0 * cross + 10.0 * shallow, 1), round(travel, 1)
 
-    pre = sorted((score(seam, a, sg, at) + (seam, a, sg, at)) for seam, a, sg, at in cands)
+    pre = sorted(((*score(seam, c), seam, i, c) for i, (seam, c) in enumerate(cands)), key=lambda x: x[:4])
     rows, best, n_ok = [], np.inf, 0
-    for sc_, travel, seam, a, sg, at in pre:
+    for sc_, travel, seam, _i, c in pre:
         # the best four that work are all checked: apply_split tries each for
         # room for its joints
         if sc_ >= best and n_ok >= 4:
-            rows.append({"normal": _name(a, sg), "at": at, "seam": round(seam, 1), "travel": travel,
-                         "score": sc_, "ok": None, "why": "not checked: scores worse than a cut that works"})
+            rows.append({**c.report(), "seam": round(seam, 1), "travel": travel,
+                         "score": sc_, "ok": None, "why": "not checked: scores worse than a cut that works",
+                         "_cut": c})
             continue
-        r = _check_cut(ext, skin, t, comps, a, sg, at, given, tol, avoid, order)
+        r = _check_cut(ext, skin, t, comps, c, given, tol, avoid, order)
         if normal in (None, "auto") and r.get("ok"):
             # the half with the components is the base (the cover is the
             # lid that comes off): flip the normal if they sit in the other
             w = r.get("componentsIn") or {}
             if sum(v == "cover" for v in w.values()) > sum(v == "base" for v in w.values()):
-                r2 = _check_cut(ext, skin, t, comps, a, -sg, at, given, tol, avoid, order)
+                r2 = _check_cut(ext, skin, t, comps, c.flipped(), given, tol, avoid, order)
                 if r2.get("ok"):
                     r = r2
         r["travel"], r["score"] = travel, sc_
@@ -500,16 +783,16 @@ def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=N
 # joints
 
 
-def _site_frames(ext, a, sg, at, t):
+def _site_frames(ext, cut, t):
     """Points on the inner wall at the cut (o), inward (u) and along the
     wall (w), every 0.5 mm along the longest inner outline; arc length s and
     the outline's length."""
-    curves = _contours(ext, a, at, -t, step=0.15)
+    curves = _contours(ext, cut, -t, step=0.15)
     if not curves:
         raise ValueError("the skin fills the cut: nothing inside the wall at this level")
     c = max(curves, key=_length)
     o, s, total = _resample(c, 0.5)
-    n = _unit(a, sg)
+    n = cut.n
     g = _grad(ext, o)
     g -= np.outer(g @ n, n)
     u = -g / np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-9)
@@ -650,56 +933,55 @@ def _ray_exit(ext, p, d, reach, step=0.1):
     return float(ts[out[0]]) if len(out) else None
 
 
-def _lip_mesh(ext, a, sg, at, t, c, w, h, root, gaps: list, room: bool, step=0.15):
+def _lip_mesh(ext, cut, t, c, w, h, root, gaps: list, room: bool, step=0.15):
     """The lip (room=False: base preserve) or the room the cover keeps
     clear round it (room=True), as a closed mesh: a band following the
-    inner wall, marching cubes over the slab on a fine grid, the gaps (local
+    inner wall, marching cubes on a fine grid in the cut's own (u, v, S)
+    coordinates (S down from the cut surface along -n), the gaps (local
     boxes) cut out."""
     import trimesh
     from skimage import measure
 
     from .shapes import shape_from_spec
 
-    lo, hi = ext.bounds()
     if room:
         s0, s1 = -(h + c), 0.05            # S: down into the base (S < 0 is the cover side)
         din, dout = t - 0.05, t + 2 * c + w
     else:
         s0, s1 = -h, root
         din, dout = t + c, t + c + w
-    zlo, zhi = (at - sg * s1, at - sg * s0)
-    zlo, zhi = min(zlo, zhi), max(zlo, zhi)
     pad = 2 * step
-    glo, ghi = lo.copy() - pad, hi.copy() + pad
-    glo[a], ghi[a] = zlo - pad, zhi + pad
-    axes = [np.arange(glo[i], ghi[i] + step, step) for i in range(3)]
-    dims = [len(x) for x in axes]
-    pts = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
-    F = np.empty(len(pts))
+    (u0, u1), (v0, v1), _ = cut.footprint(ext, pad=pad)
+    U = np.arange(u0, u1 + step, step)
+    V = np.arange(v0, v1 + step, step)
+    Sx = np.arange(s0 - pad, s1 + pad + step, step)
+    dims = (len(U), len(V), len(Sx))
+    F = np.empty(dims)
     gap_shapes = [shape_from_spec(g) for g in gaps]
-    for i in range(0, len(pts), 2_000_000):
-        q = pts[i:i + 2_000_000]
+    rows = max(1, 2_000_000 // (len(V) * len(Sx)))
+    for i0 in range(0, len(U), rows):
+        uu, vv, ss = np.meshgrid(U[i0:i0 + rows], V, Sx, indexing="ij")
+        q = cut.point(uu, vv, ss).reshape(-1, 3)
+        S = ss.ravel()
         d = ext.sdf(q)
         f = np.maximum(d + din, -(d + dout))
         if not room:
             # below the cut the lip runs into the base's skin, so it is one
             # piece with it
-            S = -sg * (q[:, a] - at)
             f = np.where(S > 0, np.maximum(d + (t - 0.3), -(d + dout)), f)
-        S = -sg * (q[:, a] - at)
         f = np.maximum(f, np.maximum(s0 - S, S - s1))
         for gs in gap_shapes:
             glo_, ghi_ = gs.bounds()
             m_ = (f < 2 * step) & np.all((q >= glo_ - 2 * step) & (q <= ghi_ + 2 * step), axis=1)
             if m_.any():
                 f[m_] = np.maximum(f[m_], -gs.sdf(q[m_]))
-        F[i:i + 2_000_000] = f
-    F = F.reshape(dims)
+        F[i0:i0 + rows] = f.reshape(uu.shape)
     F[[0, -1], :, :] = F[:, [0, -1], :] = F[:, :, [0, -1]] = step
     if F.min() >= 0:
         return None
     verts, faces, _, _ = measure.marching_cubes(F, 0.0, spacing=(step, step, step))
-    mesh = trimesh.Trimesh(verts + glo, faces[:, ::-1], process=True)
+    world = cut.point(U[0] + verts[:, 0], V[0] + verts[:, 1], Sx[0] + verts[:, 2])
+    mesh = trimesh.Trimesh(world, faces[:, ::-1], process=True)
     if mesh.volume < 0:
         mesh.invert()
     # through manifold: marching cubes leaves pinched vertices where the band
@@ -736,14 +1018,47 @@ def _components_from(study, components, base_dir):
     return out
 
 
-def _region_side(spec, a, sg, at, base_dir):
+def _desk(ext, cut):
+    """A thin slab under the base's far face, across the lift direction."""
+    lo, hi = ext.bounds()
+    if cut.axis is not None:
+        a, sg = cut.axis
+        slo, shi = lo - 1.0, hi + 1.0
+        if sg > 0:
+            slo[a], shi[a] = lo[a] - 0.5, lo[a] + 0.3
+        else:
+            slo[a], shi[a] = hi[a] - 0.3, hi[a] + 0.5
+        return {"type": "box", "min": _r(slo), "max": _r(shi)}
+    (u0, u1), (v0, v1), _ = cut.footprint(ext, 1.0)
+    low = float((_inside(ext) @ cut.n).min()) - 0.75
+    c = 0.5 * (u0 + u1) * cut.e1 + 0.5 * (v0 + v1) * cut.e2 + (low + 0.1) * cut.n
+    return {"type": "box", "center": _r(c), "size": _r([u1 - u0, v1 - v0, 0.8]),
+            "axes": [_r(cut.e1, 9), _r(cut.e2, 9)]}
+
+
+def _rim(ext, cut, side, width=0.4):
+    """The half's slice against the cut, `width` thick: where the cover
+    sits on the base."""
+    if cut.axis is not None and cut.planar:
+        lo, hi = ext.bounds()
+        a, sg = cut.axis
+        at = cut.at
+        rlo, rhi = lo - 1.0, hi + 1.0
+        if side == "cover":
+            rlo[a], rhi[a] = (at, at + width) if sg > 0 else (at - width, at)
+        else:
+            rlo[a], rhi[a] = (at - width, at) if sg > 0 else (at, at + width)
+        return {"type": "box", "min": _r(rlo), "max": _r(rhi)}
+    return cut.band_spec(ext, side, width)
+
+
+def _region_side(spec, cut, base_dir):
     from .shapes import shape_from_spec
     try:
         P = _samples(shape_from_spec(spec, base_dir), 0.6, 2000)
     except Exception:  # noqa: BLE001
         return "both"
-    s = sg * (P[:, a] - at)
-    up = float(np.mean(s > 0))
+    up = float(np.mean(cut.phi(P) > 0))
     return "cover" if up > 0.95 else "base" if up < 0.05 else "both"
 
 
@@ -790,9 +1105,26 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         # screws go in through the base's far face: the cut is across that axis
         fa_, fs_ = _axis(sv_["from"])
         normal = _name(fa_, -fs_)
-    if split.get("at") is not None and normal not in (None, "auto"):
-        a, sg = _axis(normal)
-        cut = _check_cut(ext, skin, t, comps, a, sg, float(split["at"]), given, tol, avoid, order)
+    given_cut = None
+    if split.get("seam"):
+        seam = split["seam"]
+        given_cut = _seam_cut(ext, normal, seam.get("points") if isinstance(seam, dict) else seam)
+    elif split.get("steps"):
+        if normal in (None, "auto") or split.get("at") is None:
+            raise ValueError("split.steps needs normal and at: the cut's level away from the steps")
+        given_cut = _stepped_cut(ext, normal, float(split["at"]), split["steps"],
+                                 float(split.get("stepWidth", 0.5)), base_dir)
+    elif split.get("at") is not None and normal not in (None, "auto"):
+        given_cut = _cut_plane(normal, float(split["at"]))
+    if given_cut is not None:
+        cut = _check_cut(ext, skin, t, comps, given_cut, given, tol, avoid, order)
+        if normal in (None, "auto") and cut.get("ok"):
+            # a seam's own plane: the half holding the components is the base
+            w_ = cut.get("componentsIn") or {}
+            if sum(v == "cover" for v in w_.values()) > sum(v == "base" for v in w_.values()):
+                c2 = _check_cut(ext, skin, t, comps, given_cut.flipped(), given, tol, avoid, order)
+                if c2.get("ok"):
+                    cut = c2
         rows = [cut]
         how = "as given"
         if not cut.get("ok"):
@@ -808,13 +1140,12 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         """Place the screws and snaps for a cut; returns what the rest needs."""
         warnings = []
         r_ring = r_sleeve = 0.0
-        a, sg = _axis(cut["normal"])
-        at = float(cut["at"])
-        n = _unit(a, sg)
-        where = cut.get("componentsIn") or _assign(comps, a, sg, at, given)
+        C = cut["_cut"]
+        n = C.n
+        where = cut.get("componentsIn") or _assign(comps, C, given)
 
         # the sites round the inner wall
-        o, u, w, s, total = _site_frames(ext, a, sg, at, t)
+        o, u, w, s, total = _site_frames(ext, C, t)
         frames = [_Frame(o[i], u[i], w[i], n) for i in range(len(o))]
         c_fit = float(split.get("clearance", 0.25 if pkind == "fdm" else 0.2))
         margin = float(split.get("margin", 0.5))
@@ -830,10 +1161,9 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             if not sc.get("from"):
                 raise ValueError("split.screws.from names the face the screws go in through (e.g. '-z'): a screw "
                                  "needs a hole in the exterior, and only the designer can say where one may go")
-            fa, fsg = _axis(sc["from"])
-            if fa != a or fsg != -sg:
-                raise ValueError(f"split.screws.from must be the base's far face, {_name(a, -sg)}, for a cut along "
-                                 f"{_name(a, sg)}")
+            if float(_vec_of(sc["from"]) @ -n) < 0.7:
+                raise ValueError(f"split.screws.from must be the base's far face, toward {C.name(-1)}, for a cut "
+                                 f"lifting off toward {C.name()}")
             size = sc.get("size", "M2")
             if size not in METRIC:
                 raise ValueError(f"split.screws.size must be one of {sorted(METRIC)}")
@@ -905,16 +1235,16 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                 seat = bottom + (head_h + 0.3) * n
                 grip = float((cpt - seat) @ n)
                 screws.append({"id": sid, "site": int(i), "at": _r(cpt, 3), "size": size, "inset": round(ins_used, 2),
-                               "base": {"id": sid, "size": size, "seat": _r(seat), "direction": _name(a, sg),
+                               "base": {"id": sid, "size": size, "seat": _r(seat), "direction": C.name(),
                                         "grip": round(grip, 3), "end": "face", "headOn": "this",
                                         "counterbore": round(2 * r_pocket, 3), "fit": fit},
-                               "cover": {"id": sid, "size": size, "seat": _r(cpt), "direction": _name(a, sg),
+                               "cover": {"id": sid, "size": size, "seat": _r(cpt), "direction": C.name(),
                                          "grip": 0.0, "end": "thread", "headOn": "mating",
                                          "threadLength": round(tl, 3),
                                          **({"insert": float(insert)} if insert else {})},
-                               "hole": {"face": _name(a, -sg), "at": _r(bottom, 3), "diameter": round(2 * r_pocket, 2),
+                               "hole": {"face": sc["from"], "at": _r(bottom, 3), "diameter": round(2 * r_pocket, 2),
                                         "depth": round(head_h + 0.3, 2)}})
-                exterior_changes.append({"what": f"{sid} counterbore", "face": _name(a, -sg), "at": _r(bottom, 2),
+                exterior_changes.append({"what": f"{sid} counterbore", "face": sc["from"], "at": _r(bottom, 2),
                                          "diameter": round(2 * r_pocket, 2), "depth": round(head_h + 0.3, 2),
                                          "allowedBy": "split.screws.from"})
                 taken.append(i)
@@ -951,6 +1281,12 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                     upn = _ray_exit(ext, f.p(y + c_fit + tb, 0.0, 0.0), f.n, 200.0)
                     if dn is None or dn < depth_need + t + 0.3 or upn is None or upn < S["root"] + t:
                         continue
+                    if not C.planar:
+                        # the seam runs level across the hook (not on a step's climb)
+                        hw_ = 0.5 * b + 1.0 + c_fit
+                        span = C.h(np.stack([f.o + k_ * hw_ * f.w for k_ in (-1.0, 0.0, 1.0)]))
+                        if float(np.ptp(span)) > 0.25:
+                            continue
                     prof = _wall_profile(ext, f, t, Sl)
                     if not np.isfinite(prof).all():
                         continue
@@ -1042,7 +1378,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         else:
             snap_summary = None
 
-        return {"a": a, "sg": sg, "at": at, "n": n, "where": where, "frames": frames, "c_fit": c_fit,
+        return {"cut": C, "n": n, "where": where, "frames": frames, "c_fit": c_fit,
                 "screws": screws, "snaps": snaps, "snap_summary": snap_summary,
                 "exterior_changes": exterior_changes, "r_ring": r_ring, "r_sleeve": r_sleeve,
                 "warnings": warnings, "placed": len(screws) + len(snaps)}
@@ -1059,7 +1395,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             if J2["placed"] > J["placed"]:
                 J, cut = J2, r
         cut["chosenFor"] = "joints placed" if cut is not ranked[0] else "score"
-    a, sg, at, where, frames = J["a"], J["sg"], J["at"], J["where"], J["frames"]
+    C, where, frames = J["cut"], J["where"], J["frames"]
     c_fit, screws, snaps, snap_summary = J["c_fit"], J["screws"], J["snaps"], J["snap_summary"]
     exterior_changes, r_ring = J["exterior_changes"], J["r_ring"]
     warnings += J["warnings"]
@@ -1084,8 +1420,8 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             f = frames[sn["site"]]
             half = 0.5 * snap_summary["width"] + c_fit + 0.5
             gaps.append(f.box((-2.0, 12.0), (-half, half), (-lh - 2, lroot + 2)))
-        m_lip = _lip_mesh(ext, a, sg, at, t, c_fit, lw, lh, lroot, gaps, room=False)
-        m_room = _lip_mesh(ext, a, sg, at, t, c_fit, lw, lh, lroot, gaps, room=True)
+        m_lip = _lip_mesh(ext, C, t, c_fit, lw, lh, lroot, gaps, room=False)
+        m_room = _lip_mesh(ext, C, t, c_fit, lw, lh, lroot, gaps, room=True)
         if m_lip is None or m_room is None:
             warnings.append("the lip does not fit inside the wall at this cut; left off")
         else:
@@ -1098,31 +1434,31 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
     studies = {}
     transferred = []
     for side in ("base", "cover"):
-        box = _half_box(ext, a, sg, at, side)
-        cutface = _name(a, sg if side == "base" else -sg)
+        region_spec = C.half_spec(ext, side)
+        region = shape_from_spec(region_spec)
+        ext_spec = copy.deepcopy(ext_specs[0]) if len(ext_specs) == 1 else {"type": "union", "shapes": ext_specs}
         sk = dict(skin)
-        sk["open"] = list(dict.fromkeys(list(sk.get("open") or []) + [cutface]))
+        # the skin lines the whole exterior and stops at the cut
+        sk["of"] = copy.deepcopy(ext_spec)
         h = {k: copy.deepcopy(v) for k, v in study.items()
              if k not in ("designSpace", "skin", "preserve", "keepOut", "supports", "loadCases", "fasteners",
                           "name", "description")}
         h["name"] = f"{study.get('name', 'part')}-{side}"
-        h["description"] = (f"{side} of {study.get('name', 'the part')}, split at {_name(a, sg)[1]} = {at:g} "
-                            f"(loadpath split); the cover comes off toward {_name(a, sg)}")
-        h["designSpace"] = {"type": "intersect", "shapes": [copy.deepcopy(ext_specs[0]) if len(ext_specs) == 1
-                                                            else {"type": "union", "shapes": ext_specs},
-                                                            box.to_spec()]}
+        h["description"] = (f"{side} of {study.get('name', 'the part')}, split along {C.label()} "
+                            f"(loadpath split); the cover comes off toward {C.name()}")
+        h["designSpace"] = {"type": "intersect", "shapes": [ext_spec, region_spec]}
         h["skin"] = sk
         pres, keep, sup, fast = [], [], [], []
         ids = set()
         for p in study.get("preserve") or []:
-            side_p = _region_side(p["shape"], a, sg, at, base_dir)
+            side_p = _region_side(p["shape"], C, base_dir)
             if side_p in (side, "both"):
                 pres.append(copy.deepcopy(p))
                 ids.add(p.get("id"))
         for k in study.get("keepOut") or []:
             k2 = copy.deepcopy(k)
             cid = k2.get("id")
-            through = _name(a, sg if side == "base" else -sg)      # out through this half's cut face
+            through = C.name(1 if side == "base" else -1)      # out through this half's cut face
             if cid in comp_ids:
                 mine = where.get(cid) == side
                 path = (cut.get("paths") or {}).get(cid, {}).get("insertFrom") if mine else None
@@ -1136,7 +1472,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                 mine = where.get(c["id"]) == side
                 path = (cut.get("paths") or {}).get(c["id"], {}).get("insertFrom") if mine else None
                 keep.append({"id": c["id"], "shape": c["spec"], "bore": False,
-                             "insertFrom": path or _name(a, sg if side == "base" else -sg)})
+                             "insertFrom": path or C.name(1 if side == "base" else -1)})
         if lip is not None:
             if side == "base":
                 pres.append({"id": "lip", "shape": {"type": "mesh", "path": "cad/lip.stl"}})
@@ -1173,10 +1509,10 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             if "region" in it:
                 return it["region"] in region_ids
             try:
-                lo_s, hi_s = shape_from_spec(it["shape"], base_dir).bounds()
+                P_ = _samples(shape_from_spec(it["shape"], base_dir), 0.8, 800)
             except Exception:  # noqa: BLE001
                 return True
-            return bool(np.all(lo_s <= box.hi) and np.all(hi_s >= box.lo))
+            return bool((region.sdf(P_) <= 0.3).any())
 
         for su in study.get("supports") or []:
             if mine_target(su):
@@ -1186,26 +1522,17 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             loads = [copy.deepcopy(ld) for ld in lc.get("loads") or [] if mine_target(ld)]
             if loads:
                 lcs.append({**copy.deepcopy(lc), "loads": loads})
-        lo, hi = ext.bounds()
         if not sup:
             if side == "base":
                 # stands on its far face (a desk)
-                slo, shi = lo - 1.0, hi + 1.0
-                if sg > 0:
-                    slo[a], shi[a] = lo[a] - 0.5, lo[a] + 0.3
-                else:
-                    slo[a], shi[a] = hi[a] - 0.3, hi[a] + 0.5
+                sup = [{"shape": _desk(ext, C)}]
             else:
                 # sits on the base along its rim
-                slo, shi = lo - 1.0, hi + 1.0
-                slo[a], shi[a] = (at, at + 0.4) if sg > 0 else (at - 0.4, at)
-            sup = [{"shape": {"type": "box", "min": _r(slo), "max": _r(shi)}}]
+                sup = [{"shape": _rim(ext, C, "cover")}]
         if side == "base":
             # what the cover carries comes into the base along the seam: each
             # case acting only on the cover, its resultant on the base's rim
-            rim_lo, rim_hi = lo - 1.0, hi + 1.0
-            rim_lo[a], rim_hi[a] = (at - 0.4, at) if sg > 0 else (at, at + 0.4)
-            rim = {"type": "box", "min": _r(rim_lo), "max": _r(rim_hi)}
+            rim = _rim(ext, C, "base")
             have = {lc.get("name") for lc in lcs}
             for lc in study.get("loadCases") or []:
                 if lc.get("name") in have:
@@ -1231,13 +1558,16 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
 
     from .schema import lint
     lint_rows = {side: [x for x in lint(st, "study") if x["level"] == "error"] for side, st in studies.items()}
-    report = {"cut": {**{k: v for k, v in cut.items() if k != "paths"}, "how": how},
-              "candidates": [{k: v for k, v in r.items() if k in ("normal", "at", "seam", "travel", "score", "ok",
+    report = {"cut": {**{k: v for k, v in cut.items() if k != "paths" and not k.startswith("_")}, "how": how,
+                      "label": C.label(),
+                      **({"surface": C.half_spec(ext, "base")} if not C.planar else {})},
+              "candidates": [{k: v for k, v in r.items() if k in ("normal", "at", "kind", "levels", "seam", "travel",
+                                                                  "score", "ok",
                                                                   "why", "depth")}
                              for r in rows],
               "assembly": {"componentsIn": where, "paths": cut.get("paths") or {},
                            "order": "the base's components in order with the cover off; then the cover comes "
-                                    f"down along {_name(a, -sg)}"},
+                                    f"down along {C.name(-1)}"},
               "lip": lip, "screws": [{k: v for k, v in sc.items() if k not in ("base", "cover", "site")}
                                      for sc in screws],
               "snaps": None if snap_summary is None else {**snap_summary,
@@ -1343,7 +1673,7 @@ def verify_snap(snap: dict, material, pitch: float | None = None, deflection: fl
             "held": "the root block's cover side; the cover itself taken as rigid (reads the beam a little stiff)"}
 
 
-def check_closed(base_mesh, cover_mesh, normal: str, hooks: list | None = None, step: float = 0.5,
+def check_closed(base_mesh, cover_mesh, normal, hooks: list | None = None, step: float = 0.5,
                  travel: float | None = None) -> dict:
     """The built halves together: overlap where they sit closed (should be
     nothing), and the cover lifting off along `normal` with its snap hooks
@@ -1353,8 +1683,7 @@ def check_closed(base_mesh, cover_mesh, normal: str, hooks: list | None = None, 
 
     from .shapes import manifold_from_trimesh, shape_from_spec
 
-    a, sg = _axis(normal)
-    n = _unit(a, sg)
+    n = _vec_of(normal)
     B = manifold_from_trimesh(base_mesh)
     C = manifold_from_trimesh(cover_mesh)
     closed = float((B ^ C).volume())
@@ -1363,7 +1692,8 @@ def check_closed(base_mesh, cover_mesh, normal: str, hooks: list | None = None, 
         C = C - H
     lo, hi = np.asarray(cover_mesh.bounds)
     blo, bhi = np.asarray(base_mesh.bounds)
-    travel = float(travel or (bhi[a] - blo[a]) + (hi[a] - lo[a]))
+    ext_n = lambda a_, b_: float(np.abs(n) @ (np.asarray(b_) - np.asarray(a_)))  # noqa: E731
+    travel = float(travel or ext_n(blo, bhi) + ext_n(lo, hi))
     worst, at = 0.0, 0.0
     for d in np.arange(step, travel + step, step):
         v = float((B ^ C.translate(tuple(d * n))).volume())

@@ -48,6 +48,40 @@ first one with room for all of them wins. On the handheld, z = 6.0 had the
 shortest seam, but the bottom edge's 9 mm round leaves no straight wall
 for a snap there. The search moved to 7.75, where six snaps fit.
 
+### Cuts that are not flat
+
+A product's parting line is rarely one flat level all the way round. It
+dips under a button, climbs over a handle, or follows a crease the
+designer drew. Three forms cover that:
+
+```json
+"split": {"normal": [0, 0.15, 1], "at": 11}                  // a tilted plane: n.x = 11
+"split": {"normal": "+z", "at": 9,
+          "steps": [{"at": 13, "where": {"type": "box", ...}}]}  // 9 mm, up to 13 over one end
+"split": {"seam": {"points": [[x, y, z], ...]}}               // through a line drawn on the exterior
+```
+
+The cover lifts off along `normal`. Any surface that is a height over the
+plane across that direction parts cleanly along it, because nothing on
+either side reaches under the other. That is the general cut: a height
+field over that plane. A step climbs over `stepWidth` (0.5 mm), so the
+seam's riser is nearly parallel to the lift. A `seam` is kept exactly
+where it was drawn on the outside. Inside, where nobody sees it, the
+surface runs smoothly between those points (a harmonic fill). Without a
+`normal` a seam lifts along its own best plane, or straight along an axis
+when that plane is within 15 degrees of it. A line that rises toward one
+end is no reason to tilt the tool. The halves' design spaces are the
+exterior on each side of that surface (a `heightfield` shape). Each half's
+skin lines the whole exterior and stops at the cut (`skin.of`), so it is
+never drawn across the seam. Snaps go only where the seam runs level
+across the hook: a hook on a step's riser would straddle the two halves.
+The lip follows the seam up and down.
+
+<img src="images/shells/handheld-seam.png" width="820">
+
+*The handheld again, split along a line that sweeps from 8 mm at the front
+up to 15 mm at the back.*
+
 A cut passes when:
 
 - **every component goes into its half with the other half off.** The
@@ -129,9 +163,13 @@ length and the barb sits further out.
 
 ## What it does not do yet
 
-- **Only flat cuts across x, y or z.** A stepped or curved parting line
-  is not supported. Give the closest plane, or use `avoid` to keep the
-  seam off the surfaces that matter.
+- **The search only tries flat cuts across x, y and z.** A tilted,
+  stepped or drawn parting line is taken as given and checked, not
+  searched for.
+- **A parting surface has to be a height over the lift plane.** A seam
+  that doubles back on itself along the lift direction (an undercut
+  parting line, which needs side actions in a mould too) is not
+  supported.
 - **Snap allowances are a house rule until measured.** They come from
   the material card's elongation. The calibration kit's S coupons
   ([CALIBRATION.md](CALIBRATION.md#snap-fits-a-ladder-no-measuring))

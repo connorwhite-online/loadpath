@@ -713,8 +713,10 @@ _FACES = {f"{s}{a}": (i, 1 if s == "+" else -1) for i, a in enumerate("xyz") for
 
 def _skin(v, design, base_dir=None):
     """Top-level `skin`: a thickness (mm) or {thickness, open: ['-z', ..],
-    openings: [{shape, inward?, depth?}]}. Returns (thickness, the skin
-    shape).
+    openings: [{shape, inward?, depth?}], of?}. Returns (thickness, the
+    skin shape). `of` (a shape, or a list as designSpace) is the exterior
+    the skin lines when the design space is only part of it: a split
+    half's skin follows the whole exterior and stops at the cut.
 
     `openings` are where the exterior opens into the interior (an
     underside a flap closes, a port). The exterior's solid ends at an
@@ -739,6 +741,14 @@ def _skin(v, design, base_dir=None):
             raise ValueError(f"skin.open entries are design-space faces like '-z' or '+x', got {f!r}")
         faces.append(_FACES[key])
     ds = design[0] if len(design) == 1 else Union(design)
+    part = ds
+    if v.get("of") is not None:
+        # the design space is part of a larger exterior (a split half): the
+        # skin lines that exterior and stops where the design space does,
+        # so it is not drawn across the cut
+        of = v["of"]
+        of_shapes = [shape_from_spec(x, base_dir) for x in (of if isinstance(of, list) else [of])]
+        ds = of_shapes[0] if len(of_shapes) == 1 else Union(of_shapes)
     inner = shrink(ds, float(t), faces)
     holes = []
     for j, o in enumerate(v.get("openings") or []):
@@ -750,6 +760,9 @@ def _skin(v, design, base_dir=None):
         holes.append(sh)
     if holes:
         inner = Union([inner] + holes)
+    if part is not ds:
+        from .shapes import Boolean
+        return float(t), Boolean("intersect", [Shell(ds, inner), part])
     return float(t), Shell(ds, inner)
 
 
