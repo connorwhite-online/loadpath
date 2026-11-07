@@ -861,8 +861,9 @@ def _attach_plan(mesh, study, organic):
 PINCH_R = 0.08
 
 
-def _fill_pinches(part, rounds: int = 3):
-    """Join bodies that touch along an edge or at a point. manifold3d keeps
+def _fill_pinches(part, rounds: int = 6):
+    """Join bodies that touch along an edge or at a point (balls PINCH_R, then 1.5x larger each round a
+    contact is left). manifold3d keeps
     such a contact on separate vertices, so the part is closed in memory,
     but an STL has no topology and every reader welds the two by position:
     a non-manifold edge, and a slicer or printability check reads the file
@@ -872,7 +873,9 @@ def _fill_pinches(part, rounds: int = 3):
     import manifold3d as m3d
 
     total = 0
-    for _ in range(rounds):
+    for k in range(rounds):
+        # a ball can leave a contact of its own: each round a size larger
+        r = PINCH_R * 1.5 ** k
         m = trimesh_from_manifold(part)
         # as an STL stores it: float32, then welded by position
         m.vertices = m.vertices.astype(np.float32).astype(float)
@@ -888,9 +891,9 @@ def _fill_pinches(part, rounds: int = 3):
         # one ball per cluster of pinched edges a ball apart
         keep = []
         for q in mids:
-            if not keep or np.min(np.linalg.norm(np.asarray(keep) - q, axis=1)) > PINCH_R:
+            if not keep or np.min(np.linalg.norm(np.asarray(keep) - q, axis=1)) > r:
                 keep.append(q)
-        balls = [m3d.Manifold.sphere(PINCH_R, 12).translate(tuple(map(float, q))) for q in keep]
+        balls = [m3d.Manifold.sphere(r, 12).translate(tuple(map(float, q))) for q in keep]
         part = m3d.Manifold.batch_boolean([part] + balls, m3d.OpType.Add)
         total += len(keep)
     return part, total
