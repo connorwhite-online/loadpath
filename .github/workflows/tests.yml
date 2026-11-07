@@ -33,6 +33,7 @@ jobs:
       - run: python tests/test_switch_lattice.py
       - run: python tests/test_handoff.py
       - run: python tests/test_shells.py
+      - run: python tests/test_enclosure.py
       - run: python tests/test_feel.py
       # libigl (the exterior extra) last: the steps above check the paths without it
       - run: pip install -e ".[exterior]" && python tests/test_exterior.py

@@ -330,6 +330,26 @@ def split(study, split_block: dict | None = None, base_dir: str | None = None) -
     return out
 
 
+def enclosure(brief, base_dir: str | None = None, run: bool = False) -> dict:
+    """Validate an enclosure brief (enclosure.py) and place, path and
+    compile it as a background job; run: then design it and check the
+    delivered part (exterior untouched, load cases verified)."""
+    if isinstance(brief, str):
+        from .tasks import read_doc
+        brief, base_dir = read_doc(brief, base_dir)
+    from .schema import format_issues, lint
+    errors = [x for x in lint(brief, "enclosure") if x["level"] == "error"]
+    if errors:
+        return {"ok": False, "error": format_issues(errors)}
+    args = ["enclosure", "{dir}/brief.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
+    if run:
+        args.append("--run")
+    out = _spawn("enclosure", brief.get("name") or "enclosure", {"brief.json": brief}, args,
+                 base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def feel(study, base_dir: str | None = None, pitches: list | None = None) -> dict:
     """Validate a study with a `feel` block and design its interior
     (feel.py) as a background job."""
@@ -963,6 +983,20 @@ def serve():
         out/split.json (the cut, paths, each joint's numbers, exteriorChanges). Starts a job; poll
         loadpath_status, then run each half."""
         return split(study, split_block, base_dir)
+
+    @tool
+    def loadpath_enclosure(brief: dict | str, base_dir: str | None = None, run: bool = False) -> dict:
+        """A product from its outside in: the designer's exterior (kept as a skin, never edited) and a
+        list of components (CAD paths, shapes or sizes, with masses and watts) in
+        (loadpath_schema('enclosure')). Places each component inside the shell unless given (quarter-turn
+        orientations; rules: against a side, alignTo an opening, under a press point, near another part,
+        a centre of mass), keeps only positions each part can be assembled into, finds every part's way
+        in (up to four straight legs, checked exactly), puts a cradle under each massed part clear of
+        every path, and writes a study with drop cases on each face, squeezes, presses, heat, and any
+        switch or feel block. run: then design it and check the delivered part (the exterior untouched
+        on the meshes, every load case verified on the part). Starts a job; poll loadpath_status; the
+        study is out/<name>.study.json, the report out/enclosure.json, checks out/checks.json."""
+        return enclosure(brief, base_dir, run)
 
     @tool
     def loadpath_feel(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:

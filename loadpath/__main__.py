@@ -414,7 +414,7 @@ def main(argv=None):
     c.add_argument("--base-dir")
     s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
     s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field",
-                                                                "handoff", "split"])
+                                                                "handoff", "split", "enclosure"])
     e = sub.add_parser("examples", help="list the packaged examples, or print one")
     e.add_argument("name", nargs="?")
     lt = sub.add_parser("lattice", help="fill a finished part with a stress-graded TPMS lattice")
@@ -573,6 +573,17 @@ def main(argv=None):
     spl.add_argument("--split", help="the split block as a JSON file, instead of the study's own")
     spl.add_argument("--out", default="loadpath-split")
     spl.add_argument("--base-dir", help="where the study's relative paths start (default: its folder)")
+    en = sub.add_parser("enclosure", help="a product from its outside in: the designer's exterior fixed, the "
+                                          "components placed inside it (or as given), their assembly paths, "
+                                          "mounts, drops, squeezes, heat, a push pad or feel targets; a study "
+                                          "out, and with --run the designed part, the exterior checked untouched")
+    en.add_argument("brief", help="the enclosure brief (`loadpath schema enclosure`)")
+    en.add_argument("--out", default="loadpath-enclosure")
+    en.add_argument("--run", action="store_true", help="then design it (run, switch or feel) and check the part")
+    en.add_argument("--pitches", help="with --run on a switch/feel study: comma-separated mm")
+    en.add_argument("--iterations", help="with --run on a switch/feel study: comma-separated, per pitch")
+    en.add_argument("--time-limit", type=float, metavar="MINUTES", help="with --run: as `run --time-limit`")
+    en.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
     fe = sub.add_parser("feel", help="design the inside of a fixed exterior for how it feels: grip squeeze, drop "
                                      "cushioning, vibration isolation of a part inside (the study's feel block; "
                                      "with a switch block too, the click force with them)")
@@ -701,7 +712,7 @@ def main(argv=None):
     asm.add_argument("--cycles", default="", help="life cycles by sample kind, for fatigue: "
                      "dynamic=1e6,pose=1e6,push=1e4,stall=1e3 (stall:j2=... for one joint)")
     asm.add_argument("--out", default="loadpath-out")
-    for sp in (r, lt, h, fg, tu, ed, asm, v, bs, ex):
+    for sp in (r, lt, h, fg, tu, ed, asm, v, bs, ex, en):
         sp.add_argument("--quick", action="store_true",
                         help="coarse grid, fewer iterations: a first look in a minute or two (quick.py)")
     args = p.parse_args(argv)
@@ -745,6 +756,8 @@ def main(argv=None):
         return _sdf(args)
     if args.cmd == "split":
         return _split(args)
+    if args.cmd == "enclosure":
+        return _enclosure(args)
     if args.cmd == "explore":
         return _explore(args)
     if args.cmd == "lattice-orient":
@@ -1490,6 +1503,49 @@ def _sdf(args):
         return 2
     print(json.dumps({"ok": True, **r}, default=float))
     return 0
+def _enclosure(args):
+    from .enclosure import run_enclosure
+    from .schema import format_issues, lint
+
+    doc = _load(args.brief)
+    errors = [x for x in lint(doc, "enclosure") if x["level"] == "error"]
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+    try:
+        r = run_enclosure(args.brief, args.out, base_dir=args.base_dir, on_progress=_progress)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    rep = r["report"]
+    out = {"ok": not rep["lint"], "study": r["studyPath"], "report": os.path.join(args.out, "enclosure.json"),
+           "placement": {k: {"centre": v["centre"], "roomToSkin": v["roomToSkin"], "auto": v["auto"]}
+                         for k, v in rep["placement"]["components"].items()},
+           "assembly": {k: v.get("insertFrom") for k, v in rep["assembly"]["components"].items()},
+           "loadCases": rep["loadCases"], "warnings": rep["warnings"],
+           **({"lint": rep["lint"]} if rep["lint"] else {})}
+    print(json.dumps(out, default=float))
+    if not (args.run and out["ok"]):
+        return 0 if out["ok"] else 2
+    from .enclosure import check_delivered
+    study = r["study"]
+    sp = r["studyPath"]
+    design = os.path.join(args.out, "design")
+    pitches = args.pitches
+    if study.get("feel") or study.get("switch"):
+        ns = argparse.Namespace(study=sp, base_dir=None, out=design, pitches=pitches, iterations=args.iterations,
+                                nonlinear=None, skin_review=False, lattice=None, no_modal=False)
+        code = _feel(ns) if study.get("feel") else _switch(ns)
+    else:
+        argv = ["run", sp, "--out", design, "--viewer", "none"] + \
+            (["--time-limit", str(args.time_limit)] if args.time_limit else []) + \
+            (["--quick"] if getattr(args, "quick", False) else [])
+        code = main(argv)
+    chk = check_delivered(sp, design, quick=getattr(args, "quick", False), on_progress=_progress)
+    json.dump(chk, open(os.path.join(args.out, "checks.json"), "w"), indent=1, default=float)
+    print(json.dumps({"ok": chk["ok"], "checks": os.path.join(args.out, "checks.json"), "part": chk.get("part"),
+                      "exterior": chk.get("exterior"), "summary": chk.get("summary")}, default=float))
+    return 0 if chk["ok"] and code in (0, None) else 1
 
 
 def _feel(args):

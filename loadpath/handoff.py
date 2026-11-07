@@ -183,7 +183,9 @@ def assembly_paths(components: list, order: list, fixed: list, exit_bounds, tol:
 
     def pts(cid):
         if cid not in pts_cache:
-            pts_cache[cid] = _samples(byid[cid]["shape"])
+            # a caller may hand over its own points (surface samples of a placed part)
+            given = byid[cid].get("points")
+            pts_cache[cid] = np.asarray(given, float) if given is not None else _samples(byid[cid]["shape"])
         return pts_cache[cid]
 
     lo, hi = exit_bounds

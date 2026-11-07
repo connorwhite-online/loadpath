@@ -454,11 +454,42 @@ debris, unit scale, Y-up), an SDF function or build123d object
 a report. Give `size` (the real longest extent, mm) for a generated mesh:
 it has no units. Read `wrap.patched` (new surface made up over holes) and
 `capacity.thinRegions` (too thin for anything but skin) and tell the
-designer; never reshape the exterior. Then lay out the parts from what the
-device does, against the room inside (the generated-exterior tutorial's
-`layout.py` reads the button off the shape and checks every part's room),
-and hand them to `handoff`. Handoff takes the same sources directly, as a
+designer; never reshape the exterior. Then let `loadpath enclosure` (below)
+place the parts from what the device does, or lay them out yourself
+against the room inside (the generated-exterior tutorial's `layout.py`
+reads the button off the shape and checks every part's room) and hand them
+to `handoff` or `enclosure` as given. Handoff takes the same sources directly, as a
 path or `{path, size, up}`.
+
+**Any product inside a designer's exterior: `loadpath enclosure brief.json
+--out dir [--run]` (MCP `loadpath_enclosure`; `loadpath schema
+enclosure`).** Use it whenever the outside is fixed (a rendering, a
+surfacing model) and the inside is yours, not only for push pads. The
+brief is the exterior, its `openings` (ports, doors; draw each just
+through the skin), the designer's `fixed` geometry, and the `components`:
+CAD or a `size` box, `mass` (kg), `watts`, and where it goes. Leave
+placement to loadpath when the designer did not draw it (`place: "auto"`,
+the default for a `size` or any rule): `rotate` (any, an axis, none),
+`against` a side (a battery on the floor), `alignTo {opening, face,
+recess}` (a USB-C out through its port), `under {at, direction, gap}` (a
+switch under a press point), `near` other parts, and
+`placement.centerOfMass`. Parts fitted to another (`installedOn`) are
+drawn in that part's frame and move with it. The `assembly` order
+matters: each part's position is kept only if it can still get there past
+the skin and the parts that went in before it, and its way in (up to four
+straight legs) is checked exactly and swept clear as its keep-out. Each
+massed part gets a preserved cradle (`mount`) on a side that is in no
+other part's way in. `loads`: `drop {g, faces}` (each part's mass at g
+toward the face it lands on, the floor's reaction on that face), `squeeze
+{axis, force}`, `press {at, face, force}`, plus `loadCases`, `switch`
+(as in handoff) and `feel` blocks. `split` hands the study to shells.py
+(one study per half). Read `enclosure.json` before running: a part with
+no place or no way in is in `warnings`; tell the designer what would fix
+it (an opening, a smaller part, a different order), never edit the
+exterior. `--run` designs it and writes `checks.json`: the exterior read
+against the delivered surface (`exterior.untouched`, max proud, coverage)
+and every load case verified on the delivered part. See
+docs/ENCLOSURE.md.
 
 **Start from the designer's CAD with `loadpath handoff brief.json --out
 dir` (MCP `loadpath_handoff`; `loadpath schema handoff`).** The brief is

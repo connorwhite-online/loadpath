@@ -84,9 +84,17 @@ Where it is strongest:
 - **The analysis behind the shape**: buckling, fatigue and creep,
   large-deflection compliant mechanisms, loads of unknown direction, thermal
   loads and print warp, all checked on the delivered mesh.
-- **Inside an industrial design**: the designer's exterior kept as a thin
-  cosmetic skin, every component's assembly path kept clear, and everything
-  invisible designed for how the product should feel: a push pad that fires
+- **Inside an industrial design**: a designer can stop at the outside.
+  `loadpath enclosure` takes the exterior and a list of what goes in it (a
+  battery, a board and its connector, a motor, with masses), places each
+  part inside the shell by rules an agent can state (on the floor, out
+  through its port, under a press point, near the board), keeps only
+  places each part can actually be assembled into in order, and designs
+  everything invisible around them for drops, squeezes and presses, with
+  the exterior checked untouched on the delivered part
+  ([docs/ENCLOSURE.md](docs/ENCLOSURE.md)). The designer's exterior is kept
+  as a thin cosmetic skin, every component's assembly path kept clear, and
+  the inside can be designed for how the product should feel too: a push pad that fires
   its switch at a chosen force anywhere on the touch area, a grip that gives
   just so much under a squeeze, a capsule or board cushioned for a fall,
   and handling vibration kept off a microphone capsule, with the least
@@ -254,8 +262,9 @@ print(best.report["mass"], best.report["safetyFactor"])
   [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
   [CAD import](docs/IMPORT.md), [slicer](docs/slicer.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
-  [mechanisms](docs/MECHANISMS.md), [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md),
-  [any exterior in](docs/EXTERIOR.md), [split shells](docs/SHELLS.md).
+  [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
+  [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [any exterior in](docs/EXTERIOR.md),
+  [split shells](docs/SHELLS.md).
 
 <!-- gallery:start -->
 

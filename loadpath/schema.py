@@ -2004,12 +2004,130 @@ HANDOFF_SCHEMA = {
     "$defs": {**_SHAPES, "shape": _SHAPE},
 }
 
+_FACE_LIST = {"type": "array", "items": _AXIS}
+_SQUEEZE = {"type": "object", "properties": {
+    "name": {"type": "string"}, "axis": {"type": "string", "pattern": "^[+-]?[xyz]$"},
+    "force": {"type": "number", "exclusiveMinimum": 0, "description": "N, each side"},
+    "radius": _POS, "at": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}},
+    "required": ["force"], "additionalProperties": False}
+_PRESS = {"type": "object", "properties": {
+    "name": {"type": "string"}, "face": _AXIS,
+    "at": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 3,
+           "description": "a point on the exterior, or its two coordinates across the face"},
+    "force": {"type": "number", "exclusiveMinimum": 0}, "radius": _POS},
+    "required": ["at", "force"], "additionalProperties": False}
+ENCLOSURE_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "loadpath enclosure brief",
+    "description": "`loadpath enclosure`: a product from its outside in (enclosure.py). The designer's exterior is "
+                   "fixed (kept as the study's skin, never edited); the components are placed inside it "
+                   "(placement.py) or taken as given, each gets its assembly path, a mount, and its share of the "
+                   "loads (drops, squeezes, presses, heat, a push pad, feel targets); the interior is designed.",
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"}, "description": {"type": "string"},
+        "exterior": {**_HANDOFF_SHAPE, "description": "the designer's exterior surfacing, a closed solid"},
+        "skin": {"anyOf": [_POS, {"type": "object"}], "description": "the skin kept of the exterior (default 1.0 "
+                                                                     "mm; as a study's skin)"},
+        "openings": {"type": "array", "items": {"anyOf": [_HANDOFF_SHAPE, {"type": "object", "properties": {
+            "id": {"type": "string"}, "shape": _HANDOFF_SHAPE, "inward": _AXIS, "depth": _POS},
+            "required": ["shape"], "additionalProperties": False}]},
+            "description": "where the exterior opens into the interior (a port, a door): no skin across them, a "
+                           "component may reach into one (alignTo), and assembly paths come in through them. "
+                           "inward defaults to the axis toward the exterior's centre"},
+        "fixed": {"type": "array", "items": {"type": "object", "properties": {
+            "id": {"type": "string"}, "shape": _HANDOFF_SHAPE}, "required": ["shape"],
+            "additionalProperties": False}, "description": "the designer's own internal geometry, kept as drawn"},
+        "components": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "shape": {**_HANDOFF_SHAPE, "description": "its CAD: in product coordinates when place is given, "
+                                                       "in its own frame when placed"},
+            "size": {"type": "array", "items": _POS, "minItems": 3, "maxItems": 3,
+                     "description": "or a box this size (mm), centred on its own origin"},
+            "center": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                       "description": "with size: the box's centre in its own frame (a part on a board)"},
+            "mass": {"type": "number", "minimum": 0, "description": "kg: carried through its mount in drops"},
+            "watts": {"type": "number", "minimum": 0, "description": "W of heat it gives off"},
+            "maxTemp": {"type": "number", "description": "C it must stay under (for a cooling block)"},
+            "place": {"enum": ["auto", "given"], "description": "auto: placed by the agent; given: as drawn. "
+                                                                "Default auto when it has size or any placement "
+                                                                "rule, given otherwise"},
+            "rotate": {"anyOf": [{"enum": ["any", "none", "x", "y", "z"]}, {"type": "array"}],
+                       "description": "quarter turns it may take: any (24), about one axis (4), none"},
+            "against": {**_AXIS, "description": "pushed to that side of the cavity (a battery on the floor)"},
+            "alignTo": {"type": "object", "properties": {
+                "opening": {"type": "string"}, "face": _AXIS,
+                "recess": {"type": "number", "minimum": 0, "description": "mm short of the exterior (default 0.3)"}},
+                "required": ["opening"], "additionalProperties": False,
+                "description": "its face (in its own frame) out through an opening, on the opening's axis"},
+            "under": {"type": "object", "properties": {
+                "at": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+                "direction": _AXIS, "face": _AXIS, "gap": {"type": "number", "minimum": 0}},
+                "required": ["at"], "additionalProperties": False,
+                "description": "its face on the line through `at` along `direction` (the press), `gap` under "
+                               "the skin (a switch under a press point)"},
+            "near": {"type": "array", "items": {"type": "string"}, "description": "components to keep it close to"},
+            "margin": {"type": "number", "minimum": 0, "description": "mm of room kept round it (default "
+                                                                      "placement.margin)"},
+            "installedOn": {"type": "string", "description": "fitted to another component first and placed and "
+                                                             "assembled with it; its CAD in that one's frame"},
+            "mount": {"anyOf": [{"type": "boolean"}, {"enum": ["cradle"]}, {"type": "object", "properties": {
+                "type": {"enum": ["cradle"]}, "side": _AXIS, "thickness": _POS}, "additionalProperties": False}],
+                "description": "how it is held: a preserved cradle under its face on `side` (default the "
+                               "`against` side, else its nearest wall); false for none. Its group's mass is "
+                               "carried through it"},
+            "role": {"enum": ["switch", "seat", "part"], "description": "with a switch block (see handoff)"},
+            "external": {"type": "boolean", "description": "put on from outside (a door, a plug): no path search"},
+            "insertFrom": {"description": "a hint for its assembly path, tried first"},
+            "fixed": {"type": "boolean", "description": "take insertFrom as given"},
+            "clearance": {"type": "boolean"},
+            "pathTolerance": {"type": "number", "minimum": 0}},
+            "x-requireOne": [["shape"], ["size"]], "additionalProperties": False}},
+        "assembly": {"type": "array", "items": {"type": "string"}, "description": "order the components go in"},
+        "placement": {"type": "object", "properties": {
+            "pitch": _POS, "beam": {"type": "integer", "minimum": 1, "maximum": 8},
+            "margin": {"type": "number", "minimum": 0, "description": "mm round every part (default 0.5)"},
+            "centerOfMass": {"type": "object", "properties": {
+                "target": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+                "low": _AXIS, "weight": _POS}, "additionalProperties": False},
+            "centerWeight": {"type": "number", "minimum": 0},
+            "assemblyAware": {"type": "boolean", "description": "keep only positions each part can still be "
+                                                                "assembled into (default true)"}},
+            "additionalProperties": False},
+        "loads": {"type": "object", "properties": {
+            "drop": {"type": "object", "properties": {
+                "g": {"type": "number", "exclusiveMinimum": 0, "description": "design deceleration in g (default 50)"},
+                "faces": _FACE_LIST, "contactDepth": _POS}, "additionalProperties": False,
+                "description": "a drop onto each face: every component's mass x g toward it, through its mount, "
+                               "the floor's reaction on that face of the exterior"},
+            "squeeze": {"anyOf": [_SQUEEZE, {"type": "array", "items": _SQUEEZE}],
+                        "description": "a hand squeezing across an axis"},
+            "press": {"anyOf": [_PRESS, {"type": "array", "items": _PRESS}],
+                      "description": "a finger or a weight on the exterior, held by the far face"}},
+            "additionalProperties": False},
+        "rest": {**_AXIS, "description": "the side it is held by for the analysis (default -z): a small patch of "
+                                         "the exterior there"},
+        "supportRadius": _POS, "supports": {"type": "array"}, "keepOut": {"type": "array"},
+        "loadCases": {"type": "array", "description": "more load cases, as in a study"},
+        "switch": {"type": "object", "description": "a push pad, as in a handoff brief"},
+        "feel": {"type": "object", "description": "feel targets, as in a study"},
+        "thermal": {"type": "object"}, "cooling": {"type": "object"}, "split": {"type": "object"},
+        "pathTolerance": {"type": "number", "minimum": 0}, "maxSlide": _POS,
+        "material": {"type": "string"}, "minMember": _POS, "process": {}, "goal": {"type": "object"},
+        "resolution": {"type": "object"}, "maxIterations": {"type": "integer"}, "printDirection": {},
+        "drains": {}},
+    "required": ["exterior", "components"],
+    "additionalProperties": False,
+    "$defs": {**_SHAPES, "shape": _SHAPE},
+}
+
 SCHEMAS = {"study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
-           "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA, "split": SPLIT_SCHEMA}
+           "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA, "split": SPLIT_SCHEMA,
+           "enclosure": ENCLOSURE_SCHEMA}
 
 
 def schema(kind: str = "study") -> dict:
-    """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff' or 'split'."""
+    """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff', 'split' or 'enclosure'."""
     if kind not in SCHEMAS:
         raise ValueError(f"schema kind must be one of {sorted(SCHEMAS)}")
     return copy.deepcopy(SCHEMAS[kind])
