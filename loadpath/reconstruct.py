@@ -861,7 +861,7 @@ def _attach_plan(mesh, study, organic):
 PINCH_R = 0.08
 
 
-def _fill_pinches(part, rounds: int = 6):
+def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
     """Join bodies that touch along an edge or at a point (balls PINCH_R, then 1.5x larger each round a
     contact is left). manifold3d keeps
     such a contact on separate vertices, so the part is closed in memory,
@@ -869,7 +869,12 @@ def _fill_pinches(part, rounds: int = 6):
     a non-manifold edge, and a slicer or printability check reads the file
     as not watertight (the touch microphone's pad: 26 edges where the exact
     skin met the optimized interior along a line). A ball of PINCH_R mm at
-    each such edge unites the two into a neck. Returns (part, count)."""
+    each such edge unites the two into a neck. `clip` (a manifold) bounds
+    the balls: the envelope less the keep-outs, so a neck never puts
+    material in a keep-out or proud of a preserved skin. A contact on a
+    keep-out's face (`keep_out`) cannot be filled there, so it is opened
+    instead: the ball is cut away, all but what `hold` (the preserved
+    shapes) keeps. Returns (part, count)."""
     import manifold3d as m3d
 
     total = 0
@@ -894,6 +899,14 @@ def _fill_pinches(part, rounds: int = 6):
             if not keep or np.min(np.linalg.norm(np.asarray(keep) - q, axis=1)) > r:
                 keep.append(q)
         balls = [m3d.Manifold.sphere(r, 12).translate(tuple(map(float, q))) for q in keep]
+        if keep_out is not None:
+            at_ko = [b for b in balls if (b ^ keep_out).volume() > 1e-9]
+            balls = [b for b in balls if (b ^ keep_out).volume() <= 1e-9]
+            if at_ko:
+                cut = m3d.Manifold.batch_boolean(at_ko, m3d.OpType.Add)
+                part = part - (cut - hold if hold is not None else cut)
+        if clip is not None and balls:
+            balls = [m3d.Manifold.batch_boolean(balls, m3d.OpType.Add) ^ clip]
         part = m3d.Manifold.batch_boolean([part] + balls, m3d.OpType.Add)
         total += len(keep)
     return part, total
@@ -1326,7 +1339,13 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     info["bodies"] = len(kept)
     info["droppedFragmentVolume"] = float(dropped)
 
-    part, pinches = _fill_pinches(part)
+    clip, ko_all, hold = envelope, None, None
+    if study.keep_out:
+        ko_all = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.keep_out], m3d.OpType.Add)
+        clip = envelope - ko_all
+    if study.preserve:
+        hold = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
+    part, pinches = _fill_pinches(part, clip=clip, keep_out=ko_all, hold=hold)
     if pinches:
         info["pinchesFilled"] = pinches
     mesh = _drop_slivers(trimesh_from_manifold(part))
