@@ -134,6 +134,35 @@ Every joint sits inside the skin.
   the wall, or step in to where the face is flat enough for the
   counterbore. Each hole is listed in `exteriorChanges` for the designer.
 
+## Tolerances
+
+A printed face is not where it was drawn. The process's band (fits.py's
+numbers, which a calibration card replaces with your printer's) moves
+every joint face, so each joint is sized against a stack-up, and
+`split.json` reports it under `tolerance`:
+
+- **Clearances.** The lip's gap and the snaps' side gaps have two faces,
+  each off by up to half the process band at the part's size (+-0.17 mm a
+  face for SLS on the 96 mm handheld). The gap is widened until it still
+  clears by root sum square (RSS), and then drawn wider again by the
+  process's gap bias, since printed walls grow into gaps as they do into
+  holes. On the handheld that gives 0.29 mm as built, drawn at 0.44 mm.
+- **Snap catch.** How far the barb overlaps the ledge is the undercut
+  less the gap. It moves with the hook's face, the ledge's face, the
+  barb's own size, and how far the lip lets the halves shift. The
+  undercut is set so 0.35 mm of catch is left by RSS (1.03 mm on the
+  handheld, instead of a flat 0.8). The beam is sized for the most it
+  bends, so the strain check uses the RSS deflection, not the drawn one,
+  and the report gives the worst-case strain as well (5.3% against a 5%
+  allowance on the handheld).
+- **Worst case.** Each stack-up says whether it holds at worst case, by
+  RSS only, or only on a tuned printer (one that holds its repeatability,
+  about a third of the band). `"stackup": "worst"` sizes every joint for
+  all faces at their limits at once, which means wider gaps, deeper
+  undercuts and longer beams.
+- **Screw bores** go through fits.py like every other hole: drawn for the
+  process's bias, with the fit checked against its band.
+
 Each half gets the study's supports and loads that act on it. A load case
 that acts only on the cover reaches the base as `<case>-through-seam`, the
 same force on the base's rim. Each half also gets a `snap-pull` case that

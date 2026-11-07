@@ -208,6 +208,47 @@ def _measured_snap(card: dict, across_layers: bool, repeated: bool) -> dict | No
     return out
 
 
+def joint_tolerance(holes: dict | None, build, n, size: float) -> dict:
+    """How far a printed joint face may sit from where it is drawn, for a
+    process (fits.HOLES, or a calibrated card's numbers through
+    fits._process_of): `face` (+- mm, half the process's size band at the
+    part's size: what each face of a lip or snap may be off by), `bias`
+    (how much a drawn gap closes: printed walls grow into gaps as they do
+    into holes) and `repeat` (the share of the band a tuned printer
+    holds). A gap's faces run along n, so the hole bias that applies is
+    the one for holes along n: along the build or across it."""
+    if not holes:
+        return {"face": 0.0, "bias": 0.0, "repeat": 1.0, "basis": "no process: tolerances not checked"}
+    n = np.asarray(n, float)
+    across = build is not None and abs(float(np.asarray(build, float) @ n)) < 0.7
+    bias = float(holes["biasAcross"] if across else holes["bias"])
+    e = 0.5 * (float(holes["tol"]) + float(holes.get("tolPerMm", 0.0)) * float(size))
+    return {"face": e, "bias": abs(bias), "repeat": float(holes.get("repeat", 1.0)),
+            "across": bool(across), "calibrated": bool(holes.get("calibrated")),
+            "basis": (f"+-{e:.3f} mm a face (half the process band at {size:.0f} mm), gaps drawn "
+                      f"{abs(bias):.2f} mm wider for the {'across-layer' if across else 'along-build'} bias"
+                      + (" (calibrated)" if holes.get("calibrated") else " (design-guide numbers, fits.HOLES)"))}
+
+
+def _stack(nominal: float, parts: dict) -> dict:
+    """A gap or an overlap and what moves it: worst case (every
+    contributor at its limit) and root sum square."""
+    vals = [abs(float(v)) for v in parts.values()]
+    worst, rss = float(sum(vals)), float(math.sqrt(sum(v * v for v in vals)))
+    return {"nominal": round(nominal, 3), "worst": round(nominal - worst, 3), "rss": round(nominal - rss, 3),
+            "contributors": {k: round(abs(float(v)), 3) for k, v in parts.items()}}
+
+
+def _verdict(st: dict, repeat: float) -> str:
+    if st["worst"] >= 0:
+        return "holds at worst case"
+    if st["rss"] >= 0:
+        tuned = st["nominal"] - repeat * (st["nominal"] - st["worst"])
+        return ("holds by RSS; at worst case it needs a tuned printer" if tuned >= 0
+                else "holds by RSS only: worst case closes it even on a tuned printer")
+    return "fails by RSS: widen it"
+
+
 def snap_cantilever(L: float, t: float, b: float, y: float, E: float, lead_deg: float = 30.0,
                     return_deg: float = 90.0, mu: float = 0.3) -> dict:
     """A constant-section rectangular cantilever snap (the resin makers'
@@ -1147,7 +1188,24 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         # the sites round the inner wall
         o, u, w, s, total = _site_frames(ext, C, t)
         frames = [_Frame(o[i], u[i], w[i], n) for i in range(len(o))]
-        c_fit = float(split.get("clearance", 0.25 if pkind == "fdm" else 0.2))
+        # clearances: wide enough that two faces, each off by the process's
+        # band, still clear by RSS; drawn wider by the gap bias
+        size = float(np.max(np.subtract(*ext.bounds()[::-1])))
+        tolj = joint_tolerance(_holes, build, n, size)
+        c_base = 0.25 if pkind == "fdm" else 0.2
+        worst_case = split.get("stackup", "rss") == "worst"
+        if split.get("stackup", "rss") not in ("rss", "worst"):
+            raise ValueError("split.stackup is 'rss' (default) or 'worst'")
+        k2 = 2.0 if worst_case else math.sqrt(2)
+        c_target = float(split["clearance"]) if split.get("clearance") is not None else \
+            max(c_base, round(k2 * tolj["face"] + 0.05, 2))
+        c_fit = c_target + tolj["bias"]
+        gap_stack = _stack(c_target, {"thisFace": tolj["face"], "otherFace": tolj["face"]})
+        gap_stack["drawn"] = round(c_fit, 3)
+        gap_stack["holds"] = _verdict(gap_stack, tolj["repeat"])
+        if gap_stack["rss"] < 0:
+            warnings.append(f"split.clearance {c_target:g} mm is under the process's RSS band "
+                            f"({math.sqrt(2) * tolj['face']:.2f} mm): the lip and snaps may bind")
         margin = float(split.get("margin", 0.5))
 
         # screws
@@ -1259,11 +1317,32 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             allow = snap_allowable(study.get("material", "pla"), pkind, across_layers=across,
                                    repeated=bool(sv.get("repeated", False)))
             E = allow["E"]
-            y = float(sv.get("undercut", 0.8))
+            # the barb's catch on the ledge (undercut less the gap) moves with
+            # the hook's and the ledge's faces, the barb's own size, and how
+            # far the lip lets the halves shift: size the beam for the most
+            # it bends (RSS) and the undercut for the least it catches
+            # the lip locates the halves to its clearance (without one the
+            # snaps' own side gaps do, which are the same)
+            band = {"hookFace": tolj["face"], "ledgeFace": tolj["face"], "lipPlay": c_target,
+                    "barbSize": 0.5 * (float((_holes or {}).get("tol", 0.0))
+                                       + float((_holes or {}).get("tolPerMm", 0.0)) * 1.0)}
+            rss_u = sum(band.values()) if worst_case else math.sqrt(sum(v * v for v in band.values()))
+            y_min = c_target + rss_u + 0.35
+            y = float(sv.get("undercut", max(0.8, round(y_min, 2))))
+            band["barbSize"] = 0.5 * (float((_holes or {}).get("tol", 0.0)) + float((_holes or {}).get("tolPerMm", 0.0)) * y)
+            catch = _stack(y - c_target, band)
+            catch["holds"] = ("catches at worst case" if catch["worst"] > 0.1 else
+                              "catches by RSS; at worst case it may slip: a larger undercut, or a tuned printer"
+                              if catch["rss"] > 0.1 else "may not catch: increase the undercut")
+            if catch["rss"] <= 0.1:
+                warnings.append(f"snap undercut {y:g} mm leaves {catch['rss']:.2f} mm of catch by RSS after the "
+                                "process band and the lip's play: increase split.snaps.undercut")
+            defl = (y - c_target) + (catch["nominal"] - catch["worst" if worst_case else "rss"])
+            defl_worst = (y - c_target) + (catch["nominal"] - catch["worst"])
             tb = float(sv.get("thickness", max(min_member, 1.2)))
             b = float(sv.get("width", 6.0))
             lead = float(sv.get("leadAngle", 30.0))
-            L_req = math.sqrt(1.5 * tb * y / allow["strain"]) * 1.1
+            L_req = math.sqrt(1.5 * tb * defl / allow["strain"]) * 1.1
             L = float(sv.get("length", max(L_req, 4.0)))
             S = {"thickness": tb, "width": b, "undercut": y, "clearance": c_fit, "length": L, "leadAngle": lead,
                  "ledge": float(sv.get("ledge", max(1.5, min_member))), "root": float(sv.get("root", 2.0)),
@@ -1348,7 +1427,8 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                 warnings.append("no room for a snap along the inner wall at this cut (depth, a curving wall, or "
                                 "components in the way)")
                 pick = []
-            calc = snap_cantilever(L, tb, b, y, E, lead, float(sv.get("returnAngle", 90.0)))
+            calc = snap_cantilever(L, tb, b, defl, E, lead, float(sv.get("returnAngle", 90.0)))
+            worst_strain = 1.5 * tb * defl_worst / L ** 2
             if allow.get("pushFactor"):
                 # the card's snap ladder pushed this much of the formula's force
                 calc = {**calc, **{k: None if calc[k] is None else calc[k] * allow["pushFactor"]
@@ -1360,7 +1440,8 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                               "shift": round(snap_walls[i]["shift"], 3)})
                 taken.append(i)
             snap_summary = {"count": len(pick), "hookOn": best_side, "length": round(L, 2), "thickness": tb, "width": b, "undercut": y,
-                            "deflection": y, "leadAngle": lead, "returnAngle": float(sv.get("returnAngle", 90.0)),
+                            "deflection": round(defl, 3), "deflectionWorst": round(defl_worst, 3),
+                            "strainWorst": round(worst_strain, 5), "catch": catch, "leadAngle": lead, "returnAngle": float(sv.get("returnAngle", 90.0)),
                             "barbHeight": round(g0["hb"], 2), "strain": round(calc["strain"], 5),
                             "allowable": round(allow["strain"], 5), "allowableBasis": allow["basis"],
                             "acrossLayers": across, "ok": calc["strain"] <= allow["strain"] * 1.0001,
@@ -1378,7 +1459,9 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         else:
             snap_summary = None
 
-        return {"cut": C, "n": n, "where": where, "frames": frames, "c_fit": c_fit,
+        return {"tolerance": {**tolj, "clearance": gap_stack,
+                              "snapCatch": snap_summary.get("catch") if snap_summary else None},
+                "cut": C, "n": n, "where": where, "frames": frames, "c_fit": c_fit,
                 "screws": screws, "snaps": snaps, "snap_summary": snap_summary,
                 "exterior_changes": exterior_changes, "r_ring": r_ring, "r_sleeve": r_sleeve,
                 "warnings": warnings, "placed": len(screws) + len(snaps)}
@@ -1427,7 +1510,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
         else:
             m_lip.export(os.path.join(cad, "lip.stl"))
             m_room.export(os.path.join(cad, "lip-room.stl"))
-            lip = {"height": lh, "width": lw, "clearance": c_fit, "gaps": len(gaps),
+            lip = {"height": lh, "width": lw, "clearance": round(c_fit, 3), "gaps": len(gaps),
                    "volume": round(float(m_lip.volume), 1)}
 
     # the two studies
@@ -1574,7 +1657,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                                                           "sites": [{"id": sn["id"], "at": sn["at"],
                                                                      "inward": sn["inward"], "hookOn": sn["hookOn"]}
                                                                     for sn in snaps]},
-              "exteriorChanges": exterior_changes, "clearance": c_fit,
+              "exteriorChanges": exterior_changes, "clearance": round(c_fit, 3), "tolerance": J["tolerance"],
               "loadsThroughSeam": transferred, "warnings": warnings, "lint": lint_rows,
               "seconds": round(time.time() - t0, 1)}
     report["snapsGeometry"] = [{"id": sn["id"], **{k: v for k, v in sn["shapes"].items() if k != "geom"}}

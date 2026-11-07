@@ -1049,8 +1049,13 @@ _SPLIT_PROPS = {
     "assembly": {"type": "array", "items": {"type": "string"},
                  "description": "component ids in the order they go in (default: as listed)"},
     "clearance": {"type": "number", "minimum": 0,
-                  "description": "mm between mating faces of the lip and the snaps (default 0.2; FDM 0.25)"},
+                  "description": "mm between mating faces of the lip and the snaps as built (default: 0.2, FDM 0.25, or "
+                                 "wider where the process band needs it); drawn wider by the process's gap bias"},
     "margin": {"type": "number", "minimum": 0, "description": "mm from any component to a joint (default 0.5)"},
+    "stackup": {"enum": ["rss", "worst"],
+                "description": "how the joints are sized against the process's tolerance band (fits.HOLES, or a "
+                               "calibrated card): 'rss' (default, root sum square) or 'worst' (every face at its "
+                               "limit at once); the report gives both"},
     "pathTolerance": {"type": "number", "minimum": 0,
                       "description": "mm of interference allowed on a component's way in (default 0.25)"},
     "lip": {"anyOf": [{"const": False}, {"type": "object", "properties": {

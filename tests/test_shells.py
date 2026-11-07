@@ -255,6 +255,40 @@ def test_angled_stepped_and_seam_cuts():
             assert lv[0] < 9.2 and lv[1] > 12.8, lv
 
 
+def test_tolerance_stackups():
+    """Joint clearances and snap catch against the process's band: the
+    lip/snap gap is drawn wider by the gap bias and clears by RSS; the
+    undercut keeps catch after both faces, the barb's size and the lip's
+    play; 'worst' sizes for every face at its limit; a tighter process
+    (a resin printer's band) needs less."""
+    from loadpath.shells import joint_tolerance, _stack
+    st = _stack(0.3, {"a": 0.1, "b": 0.1})
+    assert st["worst"] == 0.1 and abs(st["rss"] - (0.3 - 0.1414)) < 1e-3
+    from loadpath.fits import HOLES
+    e = joint_tolerance(HOLES["sls"], None, [0, 0, 1], 60.0)
+    assert abs(e["face"] - 0.5 * (0.15 + 0.002 * 60)) < 1e-9 and e["bias"] == 0.15
+    fdm = joint_tolerance(HOLES["fdm"], [0, 0, 1], [1, 0, 0], 60.0)
+    assert fdm["across"] and fdm["bias"] == 0.35
+    out = tempfile.mkdtemp()
+    r = apply_split(product(), {"normal": "+z", "at": 12.0, "snaps": {"count": 4}}, out_dir=out, base_dir=_DIR)
+    tol = r["report"]["tolerance"]
+    cl, catch = tol["clearance"], tol["snapCatch"]
+    assert cl["rss"] >= 0 and abs(cl["drawn"] - cl["nominal"] - tol["bias"]) < 1e-6, cl
+    assert catch["rss"] > 0.3, catch
+    sn = r["report"]["snaps"]
+    assert sn["strain"] <= sn["allowable"] + 1e-9 and sn["strainWorst"] > sn["strain"]
+    r2 = apply_split(product(), {"normal": "+z", "at": 12.0, "snaps": {"count": 4}, "stackup": "worst"},
+                     out_dir=tempfile.mkdtemp(), base_dir=_DIR)
+    t2 = r2["report"]["tolerance"]
+    assert t2["clearance"]["worst"] >= 0 and t2["snapCatch"]["worst"] > 0.3, t2
+    assert r2["report"]["snaps"]["strainWorst"] <= r2["report"]["snaps"]["allowable"] + 1e-9
+    resin = {**product(), "material": "resin-tough", "process": {"type": "sla"}}
+    r3 = apply_split(resin, {"normal": "+z", "at": 12.0, "snaps": {"count": 4}}, out_dir=tempfile.mkdtemp(),
+                     base_dir=_DIR)
+    t3 = r3["report"]["tolerance"]
+    assert t3["face"] < tol["face"] and t3["clearance"]["drawn"] < cl["drawn"], (t3, tol)
+
+
 if __name__ == "__main__":
     bad = 0
     for t in TESTS:
