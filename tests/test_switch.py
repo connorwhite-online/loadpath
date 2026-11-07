@@ -175,10 +175,17 @@ def test_skin_review_names_where_the_skin_alone_misses():
     # the centre is under its floor with no interior: the interior's to fix
     centre = next(m for m in rv["misses"] if m["press"] == 0)
     assert centre["side"] == "under" and centre["limitedBy"] == "interior"
-    whole = rv["skinThickness"]
-    assert whole["reached"] and whole["toThickness"] < 1.0
+    whole = rv["wholeSkin"]
+    assert whole["toThickness"] < 1.0
     assert all(f <= 600 * 1.02 for f in whole["forcesGf"][1:])
-    assert "designer" in rv["summary"]
+    # the thickness is read again on cut cells, and only that reading counts
+    assert whole["cutCell"]["thickness"] == whole["toThickness"]
+    assert whole["reached"] == whole["cutCellReached"]
+    assert "designer" in rv["estimateSummary"]
+    # on cut cells (the converged reading) the 1 mm skin's rim fires at about
+    # 430 gf: under 600, so the exterior rules nothing out after all
+    over = rv["grid"]["check"]["bareSkin"]["overFine"]
+    assert not over and "rules nothing out" in rv["summary"], rv["summary"]
     # 1.5 mm cells against a 1 mm skin: coarse, so the bare skin is read
     # again on finer cells and the review says whether it held
     g = rv["grid"]
@@ -186,7 +193,7 @@ def test_skin_review_names_where_the_skin_alone_misses():
     assert len(g["check"]["bareSkin"]["fineGf"]) == 5
     assert rv["trusted"] == g["check"]["converged"]
     if not rv["trusted"]:
-        assert rv["summary"].startswith("Grid too coarse")
+        assert rv["summary"].startswith("On ") and rv["estimateSummary"]
     # a 1 mm skin on 1.5 mm cells is mostly split across cells: read as cut
     # cells, not soft (LOADPATH_SKIN_MODEL=floor: the review says it is)
     assert g["splitSkinShare"] > 0.5 and rv["skinModel"]["model"] == "cut"
@@ -195,7 +202,7 @@ def test_skin_review_names_where_the_skin_alone_misses():
     # printable, and the summary falls back on the ceiling
     rv2 = skin_preflight(study_from_dict(pad(field=doc["switch"]["field"])), 1.5)
     assert rv2["minWall"] == 1.0 and rv2["skinAtMinWall"]
-    assert "raise the ceiling" in rv2["summary"], rv2["summary"]
+    assert "raise the ceiling" in rv2["estimateSummary"], rv2["estimateSummary"]
     # scaling the skin by 1 is the design itself
     d, fl = sw._thin_skin(st, build_domain(st, 1.5))
     x = np.maximum(np.random.default_rng(0).uniform(0, 1, d.n_elem), fl)

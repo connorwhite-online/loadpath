@@ -32,7 +32,7 @@ the rim, or accepting a higher ceiling there.
     brings it into its window, for a few radii. Each one lists the presses
     the change pushes out of their own windows and whether the thickness is
     at or over the process's minimum wall.
-  * `skinThickness`: one thickness for the whole skin that clears every
+  * `wholeSkin`: one thickness for the whole skin that clears every
     skin-limited miss, with the same side effects listed.
 
 The interior is held fixed in every suggestion. A re-run with the
@@ -243,7 +243,7 @@ def _where(domain, G_i, base, phi, xp, axis):
 
 
 def skin_review(study, domain, spec, xphys, floor, nu=None, modulus=None, label: str = "design",
-                radii=RADII, suggest: bool = True) -> dict:
+                radii=RADII, suggest: bool = True, delivered=None) -> dict:
     """The skin review of a design (see the module docstring). `xphys` is the
     design's density on `domain` (preserve included, thin-skin cells at or
     above `floor`); pass the bare skin as `xphys` for a preflight. Returns a
@@ -386,8 +386,8 @@ def skin_review(study, domain, spec, xphys, floor, nu=None, modulus=None, label:
         if limited:
             group = [k["press"] for k in limited]
             j = max(limited, key=lambda k: abs(k["byPercent"]))["press"]
-            row = {"kind": "skinThickness", "forPresses": group, **option(mask_all, j, limited[0]["side"], group)}
-            out["skinThickness"] = row
+            row = {"kind": "wholeSkin", "forPresses": group, **option(mask_all, j, limited[0]["side"], group)}
+            out["wholeSkin"] = row
     n_sk = len(limited)
     if n_sk:
         parts = []
@@ -412,7 +412,7 @@ def skin_review(study, domain, spec, xphys, floor, nu=None, modulus=None, label:
                 txt += f". No local skin change found, so {tgt['text']}"
             parts.append(txt)
         more = f" ({n_sk - 3} more listed under misses)" if n_sk > 3 else ""
-        whole = out.get("skinThickness") or {}
+        whole = out.get("wholeSkin") or {}
         tail = ""
         if whole.get("reached"):
             se = whole.get("sideEffects") or []
@@ -420,7 +420,7 @@ def skin_review(study, domain, spec, xphys, floor, nu=None, modulus=None, label:
                     (f"(under the {wall:g} mm minimum wall), " if whole.get("printable") is False else "") +
                     ("with no other press leaving its window." if not se else
                      f"but {len(se)} other press{'es' if len(se) > 1 else ''} would leave "
-                     f"{'their' if len(se) > 1 else 'its'} window (skinThickness.sideEffects)."))
+                     f"{'their' if len(se) > 1 else 'its'} window (wholeSkin.sideEffects)."))
         out["summary"] = (("The bare skin alone" if design_is_bare else "The fixed skin") +
                           f" is over the ceiling at {n_sk} press{'es' if n_sk > 1 else ''}{more}: " +
                           "; ".join(parts) + "." + tail + " This is the designer's call: loadpath does not change "
@@ -432,6 +432,22 @@ def skin_review(study, domain, spec, xphys, floor, nu=None, modulus=None, label:
                           " Nothing for the designer.")
     else:
         out["summary"] = "Every press is in its window; the exterior needs nothing."
+        if out["skinOnlyOver"] and not design_is_bare:
+            at = [out["skinOnly"][i]["at"] for i in out["skinOnlyOver"]]
+            out["summary"] = ("Every press is in its window, but the bare skin alone is over its ceiling at "
+                              f"{len(at)} of them ({', '.join(str(a) for a in at)}): the interior carries those, "
+                              "and they are the first to miss if the skin reads stiffer than modelled.")
+    if delivered is not None:
+        # the delivered mesh read back: misses the design does not have come
+        # from meshing the interior, not from the exterior
+        dl = [{"press": i, "at": [_r(v) for v in p.at], "forceGf": _r(f / gf), "verdict": _verdict(f, p)}
+              for i, (p, f) in enumerate(zip(presses, delivered)) if _verdict(f, p) != "in"
+              and _verdict(F[i], p) == "in"]
+        out["deliveredOnly"] = dl
+        if dl:
+            out["summary"] += (f" The delivered mesh misses {len(dl)} press{'es' if len(dl) > 1 else ''} the design "
+                               "meets (deliveredOnly): that is the meshed interior, not the exterior, and nothing "
+                               "for the designer.")
     out["skinLimited"] = n_sk
     out["misses"] = misses
     out["solves"] = reader.calls
@@ -487,48 +503,95 @@ def grid_resolution(study, pitch: float, floor=None) -> dict:
             "cellsAcrossSkin": _r(skin_t / pitch, 2) if skin_t else None,
             "cellsAcrossMember": _r(member / pitch, 2) if member else None,
             "coarse": bool(thin is not None and pitch > COARSE * thin + 1e-9),
-            "checkPitch": round(COARSE * thin, 3) if thin else None}
+            # cut cells converge from about two per skin thickness
+            "checkPitch": round(0.5 * thin, 3) if thin else None,
+            "needsCheck": bool((thin is not None and pitch > COARSE * thin + 1e-9) or split is not None)}
+
+
+def _with_skin(study, thickness: float):
+    """The study with its skin at another thickness (a copy; the study
+    itself is untouched)."""
+    import copy
+    import dataclasses
+
+    from .spec import _skin
+
+    raw = copy.deepcopy(study.raw)
+    sk = raw.get("skin")
+    sk = dict(sk) if isinstance(sk, dict) else {"thickness": sk}
+    sk["thickness"] = float(thickness)
+    raw["skin"] = sk
+    _, shape = _skin(sk, study.design_space)
+    pres = [dataclasses.replace(r, shape=shape) if r.id == "skin" else r for r in study.preserve]
+    shells = [(rid, float(thickness) if rid == "skin" else t) for rid, t in study.shells]
+    return dataclasses.replace(study, raw=raw, preserve=pres, shells=shells)
+
+
+def bare_skin_mesh(study, pitch: float):
+    """The bare skin and every other preserve as one mesh (nothing designed)."""
+    from .domain import build_domain
+    from .reconstruct import reconstruct
+
+    dom = build_domain(study, pitch)
+    mesh, _ = reconstruct(study, dom, np.zeros(dom.n_elem))
+    return mesh
 
 
 def grid_check(study, pitch: float, fine: float, coarse_forces, part=None, coarse_part=None) -> dict:
-    """Re-read the bare skin (and, given `part`, the delivered mesh) on a
-    finer grid, the way a drawn part is read (its volume share per cell over
-    the skin's floor), and compare with the coarse grid's forces press by
-    press. coarse_forces: the bare skin's forces on the coarse grid (N);
-    coarse_part: the part's (N, e.g. the delivered mesh's read-back)."""
+    """Re-read the bare skin (and, given `part`, the delivered mesh) on cut
+    cells at `fine` (switch_lattice.readback: the mesh itself, each cell the
+    surface cuts integrated over its solid part, so a 1.0 mm skin is 1.0 mm
+    on any grid; it converges on the touch microphone's bare skin, under 3%
+    between 0.5 and 0.33 mm), and compare with the design grid's forces
+    press by press. coarse_forces: the bare skin's forces on the design grid
+    (N); coarse_part: the part's (N, e.g. the delivered mesh's read-back)."""
     import time
 
-    from .domain import _fraction, build_domain
-    from .shapes import MeshShape
-    from .switch import GF, _thin_skin, fire_forces, switch_from_study
+    from .switch import GF
+    from .switch_lattice import readback
 
     t0 = time.time()
-    nu = study.elastic(design=True)
-    E = float(study.material.E)
-    dom, floor = _thin_skin(study, build_domain(study, fine))
-    spec = switch_from_study(study, dom)
-    bare = np.maximum(dom.preserve.astype(float), floor)
-    rows = {"bareSkin": (coarse_forces, fire_forces(dom, nu, spec, np.maximum(bare, 1e-9), E)["forces"])}
+    rb = readback(study, bare_skin_mesh(study, pitch), fine)
+    spec_presses = None
+    rows = {"bareSkin": (coarse_forces, np.asarray(rb["forceGf"]) * GF)}
     if part is not None and coarse_part is not None:
-        drawn = _fraction([MeshShape(part)], dom.mesh.elem_centers(), dom.pitch)
-        rows["part"] = (coarse_part, fire_forces(dom, nu, spec, np.maximum(np.maximum(drawn, floor), 1e-9),
-                                                 E)["forces"])
-    out = {"pitch": float(pitch), "finePitch": float(dom.pitch)}
+        rows["part"] = (coarse_part, np.asarray(readback(study, part, fine)["forceGf"]) * GF)
+    from .domain import build_domain
+    from .switch import switch_from_study
+    spec_presses = switch_from_study(study, build_domain(study, pitch)).presses
+    out = {"pitch": float(pitch), "finePitch": float(rb["pitch"]), "method": "cut cells (switch_lattice.readback)",
+           "at": [[_r(v) for v in p.at] for p in spec_presses],
+           "maxGf": [_r(p.max / GF) if p.max else None for p in spec_presses],
+           "minGf": [_r(p.min / GF) if p.min else None for p in spec_presses]}
     converged = True
     for name, (fc, ff) in rows.items():
         fc, ff = np.asarray(fc, float), np.asarray(ff, float)
         change = ff / np.maximum(fc, 1e-12) - 1.0
-        flips = [i for i, p in enumerate(spec.presses) if _verdict(fc[i], p) != _verdict(ff[i], p)]
+        flips = [i for i, p in enumerate(spec_presses) if _verdict(fc[i], p) != _verdict(ff[i], p)]
         ok = bool(np.abs(change).max() <= GRID_TOL and not flips)
         converged &= ok
         out[name] = {"coarseGf": [_r(v / GF) for v in fc], "fineGf": [_r(v / GF) for v in ff],
                      "maxChangePercent": _r(100 * float(np.abs(change).max())),
                      "verdictChanged": flips, "inWindowFine": int(sum(_verdict(v, p) == "in"
-                                                                       for v, p in zip(ff, spec.presses))),
+                                                                       for v, p in zip(ff, spec_presses))),
+                     "overFine": [i for i, (v, p) in enumerate(zip(ff, spec_presses)) if _verdict(v, p) == "over"],
                      "converged": ok}
     out["converged"] = bool(converged)
     out["seconds"] = round(time.time() - t0, 1)
     return out
+
+
+def verify_skin_thickness(study, pitch: float, thickness: float, fine: float) -> dict:
+    """The bare skin at another thickness, read on cut cells: what a whole-
+    skin change really does (the thin-skin floor's estimate of it can be far
+    off: on the touch microphone it put every corner in window at 0.5 mm,
+    where cut cells read 312-383 gf at 0.65 mm)."""
+    from .switch_lattice import readback
+
+    st = _with_skin(study, thickness)
+    rb = readback(st, bare_skin_mesh(st, pitch), fine)
+    return {"thickness": float(thickness), "pitch": rb["pitch"], "forceGf": [_r(v) for v in rb["forceGf"]],
+            "inWindow": rb["inWindow"], "seconds": rb["seconds"]}
 
 
 def note_grid(review: dict, res: dict, check: dict | None) -> dict:
@@ -539,11 +602,11 @@ def note_grid(review: dict, res: dict, check: dict | None) -> dict:
     if check and not check["converged"]:
         worst = max((v for k, v in check.items() if isinstance(v, dict)), key=lambda v: v["maxChangePercent"])
         what = "the part" if "part" in check and not check["part"]["converged"] else "the bare skin"
-        warn = (f"Grid too coarse: on {check['finePitch']:g} mm cells {what} reads up to "
+        warn = (f"Not converged: read on {check['finePitch']:g} mm cut cells, {what} reads up to "
                 f"{worst['maxChangePercent']:g}% different from {check['pitch']:g} mm cells"
                 + (f", and {len(worst['verdictChanged'])} press(es) change verdict" if worst["verdictChanged"] else "")
-                + ". Treat every number below as unconverged and re-run finer (switch.pitches ending at "
-                  f"{check['finePitch']:g} or less) before showing the designer.")
+                + ". Quote the cut-cell forces (grid.check) and treat the rest below as estimates; re-run "
+                  "finer before showing the designer a design-based number.")
     elif res["coarse"] and not check:
         warn = (f"Coarse grid: {res['cellsAcrossSkin']} cells across the skin and {res['cellsAcrossMember']} across "
                 f"the thinnest member at {res['pitch']:g} mm, unchecked. Confirm on {res['checkPitch']:g} mm cells "
@@ -562,6 +625,45 @@ def note_grid(review: dict, res: dict, check: dict | None) -> dict:
                 "thin-skin model reads it soft (20-35% on a flat test skin): forces the skin carries may be higher "
                 "than shown, so a skin-limited miss is at least this large.")
         review["skinModel"] = {"model": "floor", "splitSkinShare": split, "readsSoft": True, "note": soft}
+    if check:
+        # The cut-cell reading is the one to quote: lead with it, and keep the
+        # design grid's account (and its local suggestions) as an estimate.
+        review["estimateSummary"] = review["summary"]
+        review["trusted"] = bool(check["converged"])
+        b = check["bareSkin"]
+        over = b["overFine"]
+        if over:
+            rows = []
+            for i in over:
+                f, mx = b["fineGf"][i], check["maxGf"][i]
+                rows.append(f"{check['at'][i]} {f:g} gf ({100 * (f / mx - 1):.0f}% over {mx:g})")
+            head = (f"On {check['finePitch']:g} mm cut cells the bare skin alone is over its ceiling at "
+                    f"{len(over)} press{'es' if len(over) > 1 else ''}: " + ", ".join(rows) + ".")
+            review["cutCellSkinLimited"] = over
+            review["cutCellTargets"] = [{"press": i, "at": check["at"][i], "fromGf": check["maxGf"][i],
+                                         "toGf": float(np.ceil(b["fineGf"][i] / 5.0) * 5.0)} for i in over]
+            whole = review.get("wholeSkin") or {}
+            v = whole.get("cutCell")
+            if v:
+                fv = [v["forceGf"][i] for i in over]
+                head += (f" A {v['thickness']:g} mm skin everywhere " +
+                         ("brings them in" if whole.get("cutCellReached") else
+                          f"still reads {min(fv):g}-{max(fv):g} gf there, so thinning the skin is not the lever")
+                         + " (cut cells).")
+            head += (" Raising those ceilings to what the skin gives (cutCellTargets) or changing the surfacing "
+                     "there is the designer's call; loadpath does not change the exterior.")
+        else:
+            head = (f"On {check['finePitch']:g} mm cut cells the bare skin is under every ceiling: the exterior "
+                    "rules nothing out.")
+        if "part" in check:
+            pt = check["part"]
+            head += (f" The delivered part reads {pt['inWindowFine']} of {len(pt['fineGf'])} presses in window on "
+                     "cut cells.")
+        if not check["converged"]:
+            head += (f" The design grid ({check['pitch']:g} mm) reads up to {check['bareSkin']['maxChangePercent']:g}% "
+                     "off, so the estimates under misses are indicative only.")
+        review["summary"] = head
+        return review
     if warn:
         review["trusted"] = False
         review["summary"] = warn + " " + review["summary"]
@@ -588,11 +690,38 @@ def skin_preflight(study, pitch: float | None = None) -> dict:
     opts = review_options(study) or {"radii": RADII}
     rep = skin_review(study, domain, spec, bare, floor, label="bare skin", radii=opts["radii"])
     rep["pitch"] = domain.pitch
-    res = grid_resolution(study, domain.pitch, floor)
+    F = [r["forceGf"] * _gf() for r in rep["skinOnly"]]
+    return finish_review(study, rep, domain.pitch, floor, opts, F)
+
+
+def finish_review(study, review: dict, pitch: float, floor, opts: dict, bare_forces, part=None,
+                  part_forces=None, on_progress=None) -> dict:
+    """Check a review's numbers where the design grid cannot be trusted:
+    read the bare skin (and the delivered part) on cut cells, read a
+    whole-skin suggestion's thickness on cut cells too, and put the verdict
+    on the review (note_grid)."""
+    res = grid_resolution(study, pitch, floor)
+    gc = opts.get("gridCheck", "auto")
+    num = isinstance(gc, (int, float)) and not isinstance(gc, bool)
     check = None
-    if opts["gridCheck"] is not False and (res["coarse"] or isinstance(opts["gridCheck"], (int, float))):
-        fine = float(opts["gridCheck"]) if isinstance(opts["gridCheck"], (int, float)) and \
-            not isinstance(opts["gridCheck"], bool) else res["checkPitch"]
-        F = [r["forceGf"] * _gf() for r in rep["skinOnly"]]
-        check = grid_check(study, domain.pitch, fine, F)
-    return note_grid(rep, res, check)
+    if gc is not False and (res["needsCheck"] or num):
+        fine = float(gc) if num else res["checkPitch"]
+        if on_progress is not None:
+            on_progress({"stage": "verify", "check": f"cut-cell read-back on {fine:g} mm cells"})
+        check = grid_check(study, pitch, fine, bare_forces, part, part_forces)
+        whole = review.get("wholeSkin") or {}
+        if whole.get("toThickness"):
+            v = verify_skin_thickness(study, pitch, whole["toThickness"], fine)
+            whole["cutCell"] = v
+            idx = whole.get("forPresses") or []
+            presses = _presses(study, pitch)
+            whole["cutCellReached"] = all(_verdict(v["forceGf"][i] * _gf(), presses[i]) == "in" for i in idx)
+            if not whole["cutCellReached"]:
+                whole["reached"] = False
+    return note_grid(review, res, check)
+
+
+def _presses(study, pitch):
+    from .domain import build_domain
+    from .switch import switch_from_study
+    return switch_from_study(study, build_domain(study, pitch)).presses

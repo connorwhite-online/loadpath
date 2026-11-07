@@ -424,17 +424,21 @@ converge on thin-skin designs yet). Read the skin alone first:
 `loadpath switch study.json --skin-review` (minutes) lists the
 presses the bare skin already puts over their ceilings. Structure inside
 can carry such a press to the plunger and pull it down, but only so far
-(the touch microphone's corner: about 390 gf on the bare skin on every
-grid, ceiling 300). Check `skinReview.trusted` first: on a grid coarser
-than 0.75x the skin or minMember the review re-reads the bare skin and the
-delivered part on finer cells, and when they move it is false and the
-summary starts "Grid too coarse". Then nothing in it goes to the designer
-until a finer run agrees (the touch microphone's 1 mm design met 13 of 14
-windows and 1 of 14 on 0.75 mm cells). Every switch report's `skinReview` says which misses the
+(the touch microphone's corner: 476 gf on the bare skin read on cut
+cells, 426 with the best interior so far, ceiling 300; a skin half as
+thick still reads 422). Quote `skinReview.summary`, which leads with the cut-cell reading
+(`grid.check`: the bare skin and the delivered part read on the mesh
+itself on 0.5 mm cells; the design grid's thin-skin model can be 20-35% off,
+and a 1 mm design met 13 of 14 windows that read 1 of 14 on finer cells).
+`cutCellSkinLimited` and `cutCellTargets` are the presses the bare skin
+alone puts over their ceilings and the ceilings it meets; `wholeSkin.cutCell`
+is a whole-skin thickness read the same way. The design grid's account and
+its local suggestions are in `estimateSummary` and `misses`, which are
+estimates. Every switch report's `skinReview` says which misses the
 skin decides (`misses[].limitedBy == "skin"`), where (`where`: the
 stiffest skin, often the fold into a wall), and what would fix each one:
 `target` (the ceiling the design meets), `localSkin` (a thickness within
-a radius), `skinThickness` (one for the whole skin), each with the presses
+a radius), `wholeSkin` (one thickness for the whole skin, read again on cut cells), each with the presses
 it would push out of window and whether it clears the minimum wall. Never
 change the exterior yourself: relay `skinReview.summary` and those
 options to the designer and let them choose. `limitedBy == "interior"`

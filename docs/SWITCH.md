@@ -168,8 +168,8 @@ fixed exterior is the designer's, and loadpath never edits it. What it
 can do is say where the skin is the problem, by how much, and what change
 would fix it. Every `loadpath switch` report carries that as
 `skinReview`, and `loadpath switch study.json --skin-review` reads the
-bare skin alone before anything is designed (2 minutes on 1 mm cells, 17
-on 0.7 mm for the touch microphone, most of it the suggestions).
+bare skin alone before anything is designed (3 minutes for the touch
+microphone on 1 mm cells, its cut-cell read included).
 
 For each press, the review gives:
 
@@ -190,7 +190,7 @@ For each press, the review gives:
 - **suggestions**, each read back through the same model with the interior
   held as designed: `target` (the ceiling the design meets as it is),
   `localSkin` (the thickness within 4 and 8 mm of the press, and round
-  the stiffest skin, that brings it into window), and `skinThickness`
+  the stiffest skin, that brings it into window), and `wholeSkin`
   (one thickness for the whole skin). Each one lists any other press it
   pushes out of its window and whether the thickness is at or over the
   minimum wall (`skinReview.minWall`; by default the process's or the
@@ -202,30 +202,38 @@ Thinning is modelled as a lower density in the skin cells, which bends
 like the thinner skin (as in the thin-skin floor above), so treat the
 thickness as an estimate to confirm with that re-run.
 
-**The grid has to be fine enough to trust.** On cells as thick as the
-skin and the thinnest member, the optimizer can find a design that meets
-the map on its own grid and on no other. The touch microphone on 1 mm
-cells (a 1.0 mm skin, 1.0 mm members) did exactly that: 13 of 14 presses
-in window at 1 mm, and 1 of 14 when the same delivered part is read on
-0.75 mm cells (205-626 gf). So whenever the pitch is over 0.75 times the
-skin or `minMember`, the review reads the bare skin and the delivered
-part again on cells of that size (`skinReview.grid.check`, under a minute
-on the touch microphone). When a press moves more than 10% or changes
-verdict, the summary starts with "Grid too coarse", `trusted` is false,
-and none of the numbers should reach a designer until a finer run
-(`pitches: [1.0, 0.7]`) agrees. `skinReview.gridCheck` sets the finer
-pitch, or false skips the check.
+**Quote the cut-cell numbers.** The review reads the bare skin, and the
+delivered part when there is one, again on the mesh itself. This is
+`switch_lattice.readback`: the mesh itself on 0.5 mm cells, each cell the
+surface cuts integrated over its solid part, so a 1.0 mm skin is 1.0 mm on
+any grid. It runs whenever the skin is thinner than two cells or the grid
+is over 0.75 times the skin or `minMember` (`skinReview.grid.check`, about a
+minute on the touch microphone). The summary then leads with the cut-cell
+reading. The design grid's own account, with its local suggestions,
+moves to `estimateSummary`, and `trusted` says whether the two agree
+within 10%. A whole-skin suggestion is read again on cut cells at its
+thickness (`wholeSkin.cutCell`), and only that reading counts.
+`skinReview.gridCheck` sets the cut-cell pitch, or false skips the check.
 
-On the touch microphone, the bare skin's fire force at five presses (ceilings 300 gf, centre 150):
+Why: the design grid's skin model has been wrong before, in both
+directions, and the optimizer can meet the map on one grid and on no
+other. The touch microphone's 1 mm design met 13 of 14 presses at 1 mm
+and 1 of 14 when its delivered part was read on 0.75 mm cells. A
+converged reading of the bare skin is cheap, so the review always says
+what it is.
 
-| cells | (-12, -9) | (12, -9) | (14, 6) | (-14, 6) | centre |
+The touch microphone's bare skin, in gf (ceilings 300 at the rim, 150 at
+the centre):
+
+| reading | (-12, -9) | (-14, 6) | (12, -9) | (14, 6) | centre |
 |---|---|---|---|---|---|
-| 1.0 mm | 388 gf | 354 | 309 | 304 | 96 |
-| 0.75 mm | 384 | 332 | 309 | 323 | 117 |
-| 0.7 mm | 389 | 341 | 311 | 338 | 103 |
-| 0.5 mm, whole cells (skin ~30% too thick) | 565 | 503 | 479 | 487 | 154 |
+| floored, 1.0 mm | 388 | 304 | 354 | 309 | 96 |
+| floored, 0.7 mm | 389 | 338 | 341 | 311 | 103 |
+| whole cells, 0.5 mm (30% too thick) | 565 | 487 | 503 | 479 | 154 |
+| **cut cells, 0.5 mm** | **476** | **421** | **391** | **388** | **128** |
+| cut cells, 0.5 mm, a 0.5 mm skin everywhere | 422 | 365 | 308 | 343 | 82 |
 
-The table above is the density floor, which this section replaced. A floor
+The floored rows are the density floor that cut cells replaced. A floor
 reads a skin soft where it splits across two cell layers: on the flat
 1.0 mm skin of the test pad, 0.25 mm whole cells fire the centre at
 230 gf, and floored 0.75-0.9 mm cells gave 175-185 gf. On 0.5 mm cells the
@@ -241,14 +249,19 @@ cut cells at 0.33 mm (`switch_lattice.readback`) gives 131 and 397-486.
 The review reports `skinModel.model` and the share of skin in split
 cells. `LOADPATH_SKIN_MODEL=floor` brings back the floor for comparison.
 
-The corner at (-12, -9) is the exterior's problem either way: at least
-about 390 gf on the bare 1.0 mm skin against a 300 gf ceiling. The stiffest skin
-there is the fold into the side wall, at about (-15, -9), and on the bare
-skin a 0.60 mm skin within 9 mm of it would bring the corner in (0.7 mm
-cells), under the 1.0 mm rule this product uses. How much less change an
-interior needs comes from a design that holds on a fine grid; the 1 mm
-design's own suggestions (0.80 mm locally, 0.90 mm overall) are withdrawn
-with it. `"skinReview": false` in the switch block turns the review off.
+What the review tells the designer, from the cut-cell rows: the bare
+1.0 mm skin is over its ceiling at the four rim presses by 29-59%, and
+5% over at (-11, 0). Thinning the skin is not the lever. Even half the
+skin leaves the corners at 308-422 gf and drops the centre under its
+100 gf floor, because a press that far from the plunger moves it little,
+whatever the skin. What is left is the designer's call: raise those
+ceilings to what the skin gives (`cutCellTargets`: 395, 390, 480, 285
+and 425 gf), or change the surfacing at the rim. An interior can help a
+little by carrying a corner press to the plunger: the touch-mic thread's
+0.7 mm design reads 426 gf at (-12, -9) on cut cells, against 476 for the
+bare skin. The 1 mm design's suggestions (0.80 mm locally, 0.90 mm
+overall) are withdrawn. `"skinReview": false` in the switch block turns
+the review off.
 
 ## A graded lattice instead of ribs
 
