@@ -198,7 +198,18 @@ The eval case is `touch-mic-feel`:
 | **pad and feel, design** | **0.47 mm** | **1910 g, 0.79 mm** | **338 Hz** | 10 of 14 | |
 | **pad and feel, delivered** | **0.40 mm** | 2850 g, 0.53 mm | **351 Hz; modes pass** | 9 of 14 | 10.6 cm^3 |
 
-The feel targets cost the click map. Holding the board's bounce over
+**Read again on 0.7 mm cells** (the delivered mesh, 2026-11-07, after the
+push-pad thread found that 1 mm push-pad designs do not hold at 0.7 mm):
+the feel readings hold. Pinch 31.8 N/mm (0.31 mm, in window), board bounce
+89 / 89 / 33 N/mm (all over the 26 N/mm floor), and the face-down drop
+305 N/mm, out of window as at 0.5 mm. The click map does not hold: 0 of 14
+presses in window, 254 gf at the centre and 320-690 gf elsewhere, 1.7-2.3x
+the 1 mm reading. Treat the press numbers in the table above as a 1 mm
+reading only; the push pad needs designing on a finer grid
+([SWITCH.md](SWITCH.md)) before the click and feel trade-off below can be
+read as real.
+
+The feel targets cost the click map (on the 1 mm reading). Holding the board's bounce over
 335 Hz takes stiff material between the rails and the top skin, and that
 stiffens the corners of the touch area (up to 448 gf delivered against a
 300 gf ceiling). The drop meets its window on the design and misses on the
