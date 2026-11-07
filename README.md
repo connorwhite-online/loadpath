@@ -316,15 +316,13 @@ and neither did loadpath's first 1 mm ribs, which had read 13 of 14 on
 their own grid, so
 loadpath now closes that loop: it reads each round's mesh back and
 corrects the targets by the error. With the skin read as cut cells inside the
-optimizer too, a 1.0 → 0.7 mm run's ribs hit 9 of 14 delivered in 7.8
-cm^3 on the first round, as many as the bare skin allows. Corrected over
-rounds, ribs and a graded BCC strut lattice both hit 8 of 14, the lattice in 7.0 cm^3 against the drawn 9.7
-with nothing in the assembly paths, and the four misses are the rim
-presses the 1.0 mm skin alone puts over 300 gf: a call for the designer,
-which the report makes with numbers. Written by `loadpath handoff` from
-the product's CAD alone, the study does as well from a quick 1 mm run:
-10 of 14 delivered (0.5 mm cut cells) in 7.4 cm^3, with the skin kept clear
-of every part on the board.
+optimizer and offset exactly from the designer's surface, a 1.0 → 0.7 mm
+run hits 10 of 14 delivered in 7.06 cm^3 against the drawn 9.7, as many as
+the bare skin allows, with the squeeze held, every board part kept clear
+and nothing in the assembly paths. The four misses are the rim presses the
+1.0 mm skin alone puts over 300 gf: a call for the designer, which the
+report makes with numbers. The study is written by `loadpath handoff` from
+the product's CAD alone.
 It runs in the eval suite as `touch-mic-pad`. ([docs/SWITCH.md](docs/SWITCH.md))
 
 <img src="docs/images/switch/touch-mic-forces.png" width="760">
