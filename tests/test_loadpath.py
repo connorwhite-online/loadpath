@@ -1331,3 +1331,14 @@ def test_constrained_probe_stops_on_heavy_failing_part():
     dg = SimpleNamespace(safety_factor=None, buckling=False, max_deflection=0.5)
     assert S._probe_beaten(dg, {"mass": heavy, "cases": [{"deflection": 0.6}]}, 18.3)
     assert S._AUTO_UTILIZATION_CUT < S._AUTO_PROBE_UTILIZATION
+
+
+def test_malformed_warm_outcome_is_flagged():
+    from types import SimpleNamespace
+    from loadpath import study as S
+    st = SimpleNamespace(min_member=3.0)
+    assert S._malformed(st, {"p5Member": 1.46, "creaseLength": 303.0})       # the full-tier yoke's warm pick
+    assert S._malformed(st, {"p5Member": 2.8, "creaseLength": 303.0})
+    assert S._malformed(st, {"p5Member": 1.46, "creaseLength": 0.0})
+    assert S._malformed(st, {"p5Member": 1.97, "creaseLength": 124.0}) is None   # coarse clean parts
+    assert S._malformed(SimpleNamespace(min_member=None), {"p5Member": 0.5}) is None

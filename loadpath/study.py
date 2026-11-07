@@ -290,6 +290,26 @@ def _whole(report: dict) -> bool:
     return report.get("bodies", 1) <= 1 and not report.get("closedBores")
 
 
+# A warm-started outcome is rerun cold when it meshes into members under
+# this share of minMember (verify's p5 member, a voxel ridge reading that
+# under-reads by up to ~30% on coarse grids: clean parts read 0.65-2.0 x
+# minMember) or leaves more crease than this, mm (clean parts 0-125).
+_MALFORMED_MEMBER = 0.55
+_MALFORMED_CREASE = 200.0
+
+
+def _malformed(study: Study, report: dict) -> str | None:
+    """Why an outcome's mesh is not the kind of part the study asks for
+    (members far under minMember, a long crease), or None."""
+    p5 = report.get("p5Member")
+    if study.min_member and p5 is not None and p5 < _MALFORMED_MEMBER * float(study.min_member):
+        return f"with members of {p5:.2f} mm for minMember {float(study.min_member):g}"
+    crease = report.get("creaseLength")
+    if crease is not None and crease > _MALFORMED_CREASE:
+        return f"with {crease:.0f} mm of crease"
+    return None
+
+
 def _warp_delivered(study: Study, mesh) -> dict | None:
     """The as-built measures of the delivered part (buildsim.simulate_part
     at buildSim.cells, on the plate or bed at the end of the build, as the
@@ -1806,17 +1826,36 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             above = [q for q in outcomes if q.x is not None and q.volume_fraction > vf]
             src = (min(above, key=lambda q: q.volume_fraction) if above else
                    max((q for q in outcomes if q.x is not None), key=lambda q: q.volume_fraction))
+            ran_cold = False
             try:
                 o = attempt(vf, src.x, _WARM_BETA)
                 o.report["start"] = f"warm from {src.volume_fraction:.3f}"
             except RuntimeError:
+                ran_cold = True
                 # A carried layout can leave a support hanging on void
                 # (the robot arm's wrist link: a pin-held idler with its material
                 # gone, so the stiffness solve never converged). Start this
                 # fraction afresh instead.
                 o = cold()
                 o.report["start"] = "cold (the warm start did not solve)"
-            if big and len(outcomes) == 1 and vf < outcomes[0].volume_fraction \
+            else:
+                why = _malformed(study, o.report)
+                if why and not (should_stop is not None and should_stop()):
+                    # A carried layout can also come out as a thin sheet
+                    # with spikes: the full-tier wrist yoke's pick at 5.7%
+                    # warm from 6% read p5 member 1.46 mm for minMember 3
+                    # and 303 mm of crease, while the same fraction started
+                    # cold meshed clean (17.2 g, no crease). Run it cold too
+                    # and keep the clean one.
+                    c = cold()
+                    ran_cold = True
+                    c.report["start"] = f"cold (the warm start came out {why})"
+                    if not _malformed(study, c.report) or \
+                            (c.report.get("margin") or 0.0) > (o.report.get("margin") or 0.0):
+                        o, c = c, o
+                    o.report["alternative"] = {k: c.report.get(k) for k in
+                                               ("start", "mass", "safetyFactor", "margin")} | {"passes": c.passes}
+            if not ran_cold and big and len(outcomes) == 1 and vf < outcomes[0].volume_fraction \
                     and "recalled" not in str(outcomes[0].report.get("start")) \
                     and not (should_stop is not None and should_stop()):
                 # ...but carried from a fraction well above, the layout can

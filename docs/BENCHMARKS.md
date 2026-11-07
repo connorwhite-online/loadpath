@@ -490,10 +490,20 @@ search's tet calibration, its pick, and the pick's stress utilization around
 goal.method auto's cut. Fixing it means reading that peak in a way that does
 not ride the support's singular field, not meshing faster.
 
-Open: the full-tier wrist yoke fails on main (aa5e0c7) as well as here,
-the same part both times (17.6 g, p5 member 0.86 mm, 303 mm of crease):
-the pick at 0.057, warm-started, comes out with a thin sheet and spikes,
-while the same fraction started cold meshes clean (17.2 g, no crease).
+The full-tier wrist yoke failed on main (aa5e0c7) as well as here, the
+same part both times (17.6 g, p5 member 0.86 mm, 303 mm of crease): the
+pick at 0.057, warm-started, came out with a thin sheet and spikes, while
+the same fraction started cold meshes clean (17.2 g, no crease). Fixed:
+a warm-started outcome whose verify reads p5 member under 0.55x minMember
+or more than 200 mm of crease (`study._malformed`; clean parts read
+0.65-2.0x and 0-125 mm) is run cold too and the clean one kept. Full tier,
+search only: the cold rerun fired once (members 1.46 mm for minMember 3)
+and the yoke passes every check at 17.2 g (p5 ray 3.07 mm, crease 0),
+772 s. With goal.method auto the probe band delivers 13.9 g (constrained,
+passes every check, -16.8% against full.json) but takes 7464 s against
+1411: the buckling-doubled 7x time box. Coarse arm link, arm-link-driven,
+bell crank, motor mount, upper arm, corpus-link-0: the rerun never fired,
+massAtTarget within 0.3%; coarse yoke 14.2 g.
 
 ## Pitch sensitivity: one grid is a sample
 
