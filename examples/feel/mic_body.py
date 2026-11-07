@@ -1,7 +1,10 @@
 """
 Feel targets inside a fixed exterior: a handheld microphone body.
 
-    python examples/feel/mic_body.py --out mic-out [--pitches 1.0] [--baseline]
+    python examples/feel/mic_body.py --out mic-out [--pitches 1.0,0.7 --iterations 120,60] [--baseline]
+
+The passing design in docs/FEEL.md was made with LOADPATH_SKIN_MODEL=floor
+(the cut-cell skin model stalls on the drop at 0.7 mm; see there).
 
 A generic stick microphone, 24 mm across and 60 mm long, in SLS TPU 88A:
 the exterior is industrial design, kept as a 1.0 mm skin, open at the
@@ -83,6 +86,7 @@ def main():
     ap.add_argument("--pitches", default="1.0")
     ap.add_argument("--iterations", default=None)
     ap.add_argument("--baseline", action="store_true")
+    ap.add_argument("--move-sharp", type=float, default=None, help="feel.moveSharp (default 0.03)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     from loadpath.domain import build_domain
@@ -92,6 +96,8 @@ def main():
 
     pitches = [float(p) for p in a.pitches.split(",")]
     doc = study(pitches[0])
+    if a.move_sharp:
+        doc["feel"]["moveSharp"] = a.move_sharp
     json.dump(doc, open(os.path.join(a.out, "mic-body.study.json"), "w"), indent=1)
     st = study_from_dict(doc)
     if a.baseline:

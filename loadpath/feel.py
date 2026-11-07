@@ -604,6 +604,7 @@ def check_isolation_modal(study, prob: FeelProblem, ti: int, xp: np.ndarray, n_m
 
 
 MODAL_MIN_PITCH = 0.5
+CUT_MIN_PITCH = 0.5
 
 
 def run_feel(study, out_dir: str, pitches=None, iterations=None, on_progress=None, modal: bool = True,
@@ -654,7 +655,10 @@ def run_feel(study, out_dir: str, pitches=None, iterations=None, on_progress=Non
                 # members (docs/SWITCH.md); this one is what `delivered` is.
                 if on_progress is not None:
                     on_progress({"stage": "verify", "check": f"feel targets on cut cells at {vp:g} mm"})
-                cut_rows, info = feel_readings_cut(study, mesh, vp)
+                # (no finer than CUT_MIN_PITCH: 0.5 and 0.35 mm agreed within
+                # 1% on the microphone body; 0.35 inside a finished run was
+                # killed for memory)
+                cut_rows, info = feel_readings_cut(study, mesh, max(vp, CUT_MIN_PITCH))
                 for row, rc in zip(rows, cut_rows):
                     row["deliveredDensity"], row["deliveredDensityOk"] = row["delivered"], row["deliveredOk"]
                     row["delivered"], row["deliveredOk"] = rc["directions"], rc["ok"]

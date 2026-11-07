@@ -134,12 +134,23 @@ here) and read the delivered mesh back on a grid of half the design pitch
 ## Checks on the result
 
 - **Thresholded**: the same readings on the black-and-white design.
-- **Delivered**: the STL read back on the half-pitch grid
-  (`delivered`, `deliveredOk`, `verifyPitch`).
+- **Delivered**: the STL read back on its own cut cells (`delivered`,
+  `deliveredOk`, `cutCells`), as push pads are ([SWITCH.md](SWITCH.md)):
+  each cell the surface cuts is integrated over its solid part, so a 1 mm
+  skin or member is 1 mm whatever the grid. The grid is half the design
+  pitch, no finer than 0.5 mm. Holds and loads go on the part's own cells
+  that are at least half full. The older reading, the mesh's fill per cell
+  as a density at E x^3 (`deliveredDensity`, `verifyPitch`), stays in the
+  report; it does not settle as the grid refines (the 1 mm microphone
+  body's head read 89, 78 and 67 N/mm on cut cells at 1, 0.5 and 0.33 mm,
+  and 56 as a density), so it no longer decides `deliveredOk`.
+  `feel.cutCells: false` goes back to it.
 - **Modes** (isolate targets): the delivered part's modes with the part as
   a point mass on its mount and the structure's own mass, the hand's nodes
   the shaken base; the transmissibility at `band`, or the worst
-  amplification up to `upTo`, by modal superposition (`modal`).
+  amplification up to `upTo`, by modal superposition (`modal`). Modes are
+  read on a grid no finer than 0.5 mm: at 0.35 mm the shift-invert factor
+  took 14 GB.
 
 ## A handheld microphone body
 
@@ -152,9 +163,9 @@ ring mount; its cable path and a board both slide in from the bottom
 3 mm of travel, and handling noise from 500 Hz up reaches the capsule at
 under half.
 
-![the microphone body cut along its axis and across the capsule mount](images/feel/mic-body-sections.png)
+![the microphone body designed on 1 mm then 0.7 mm cells, cut along its axis and across the capsule mount](images/feel/mic-body-sections.png)
 
-| design (1 mm cells; delivered read at 0.5 mm) | grip at 20 N | head drop, 4 g capsule | capsule mount, x / y / z |
+| design (1 mm cells; delivered read as a density at 0.5 mm) | grip at 20 N | head drop, 4 g capsule | capsule mount, x / y / z |
 |---|---|---|---|
 | window | 0.3-1.0 mm (20-67 N/mm) | under 1500 g and 3 mm (8.7-44 N/mm) | 1.6-13 N/mm: under half from 500 Hz up |
 | bare skin | 1.19 mm: too soft | the capsule is not held at all | not held |
@@ -169,11 +180,41 @@ to come up the whole tube and through the posts to reach it. Grip and
 isolation are met on the delivered mesh, modes included. The drop is not:
 the posts that hold the capsule still enough in three directions make the
 head 13% too stiff for 1500 g (1690 g at 1.2 mm of travel). On 1 mm cells
-the optimizer could not find a hanger that does both; whether a finer
-grid (`pitches: [1.0, 0.7]`) can is the next run.
+the optimizer could not find a hanger that does both; a finer grid does
+(below).
 
 120 iterations, 2085 s on 4 cores shared with another run (about 15 minutes
 alone), then 3 minutes of read-back and modes at 0.5 mm.
+
+**1 mm, then 0.7 mm cells** (`--pitches 1.0,0.7 --iterations 120,60`)
+closes the drop. Read on cut cells, the delivered part meets all three
+targets, and the head drop reads the same on 0.5 and 0.35 mm cells:
+
+| 1.0 then 0.7 mm (cut-cell read at 0.5 mm) | grip at 20 N | head drop, 4 g capsule | capsule mount, x / y / z |
+|---|---|---|---|
+| the 1 mm design above, read on cut cells | 0.36 mm | 2000 g, 1.0 mm: misses | 11.2 / 7.9 / 10.6 N/mm |
+| **design, 0.7 mm** | **0.72 mm** | **970 g** | **4.3 / 2.6 / 5.6 N/mm** |
+| **delivered mesh** | **0.37 mm (0.32 at 0.35 mm)** | **1360 g, 1.5 mm (1362 g at 0.35 mm)** | **8.7 / 4.7 / 9.1 N/mm; modes 134-221 Hz, 0.29 / 0.22 / 0.30 at 500 Hz** |
+
+5.6 cm^3 of TPU. The grip sits near its floor of 0.3 mm on the delivered
+mesh (stiffer than the design reads), so a designer wanting a softer
+handle should open the window downward. About 40 minutes on 4 cores
+(PARDISO; see below).
+
+That run used the thin-skin density floor. Since then push pads read thin
+skins as cut cells in the optimizer too ([SWITCH.md](SWITCH.md)), and the
+same run on that model stalls at 0.7 mm: the drop ceiling stays 2.4x over
+on the dilated design through 120 iterations at 0.7 mm (with `moveSharp`
+0.05 too), and the delivered head reads 2000-2500 g. Until that is
+understood, `LOADPATH_SKIN_MODEL=floor` reproduces the passing design;
+the cut-cell read-back is what says whether a design passes either way.
+The passing part is in the project files (`feel/mic-body-0.7/`).
+
+Speed: each feel target group factors its own system, twice with robust
+reads, so the microphone body solves six systems of ~90k dofs an
+iteration. On SuperLU's minimum degree that was 524 s an iteration on a
+0.7 mm grid; `switch._Solves` now factors with PARDISO wherever
+`pypardiso` is installed (22 s, same numbers to every digit printed).
 
 ## On a real product: the touch microphone
 
@@ -221,6 +262,26 @@ skins; the honest reading is the delivered one. Whether to trade some
 click-map accuracy for a board that does not ring is the designer's
 call; the report gives both. 22 minutes on 4 shared cores.
 
+**1 mm, then 0.7 mm cells** (60 + 60 iterations, cut-cell skin, 58
+minutes), read on cut cells at 0.5 mm: the drop gets closer but still
+misses, and the board bounce now misses by a little.
+
+| touch-mic, cut-cell read at 0.5 mm | pinch | face-down drop | board bounce x / y / z | presses in window |
+|---|---|---|---|---|
+| bare skin, base and rails (0.7 mm) | 0.43 mm | 1550 g: in window | 63 / 46 / 12 N/mm | |
+| 1 mm design above | 0.29 mm | 3020 g: misses | 93 / 86 / 31 N/mm | |
+| **1.0 then 0.7 mm, design** | **0.38 mm** | **1960 g: in window** | 90 / 60 / 25 N/mm | 8 of 14 |
+| **1.0 then 0.7 mm, delivered** | **0.48 mm** | 2530 g: misses | 89 / 69 / 24 N/mm (z under its 26 floor) | **9 of 14** (155-431 gf) |
+
+The bare part drops inside its window, so the drop is not the exterior's
+limit: the interior the click map and the bounce floor need is what makes
+the face-down fall too stiff. The bounce wants material between the rails
+and the top skin, and so does the click; the drop wants that path soft.
+On this exterior the three pull against each other, and which to give is
+the designer's call (a lower drop height or a softer board bounce floor
+would each let the others pass). Part and report in the project files
+(`feel/touch-mic-0.7/`).
+
 ## Limits
 
 - Linear and quasi-static: the drop is an elastic spring (no crush, no
@@ -229,5 +290,9 @@ call; the report gives both. 22 minutes on 4 shared cores.
   (viscoelastic.py: about 1.5x at 35 Hz); feel windows are read at the
   material card's modulus.
 - A hold is clamped in all three directions; a hand is softer than that.
-- The read-back is a voxel model of the mesh at half the pitch, not a tet
-  model. For a part that matters, `loadpath verify` on the STL.
+- The read-back is a cut-cell model of the mesh, not a tet model. For a
+  part that matters, `loadpath verify` on the STL.
+- A `face` hold or load takes the outermost node of every column: on a
+  round handle that includes the flanks, where pinch and hold come close,
+  and the grip reading moves with the grid (54-67 N/mm at 0.7-0.35 mm on
+  the microphone body).

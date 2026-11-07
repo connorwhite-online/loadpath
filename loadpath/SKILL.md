@@ -481,9 +481,11 @@ No supports or load cases are needed. A `switch` block in the same study
 is designed with it. Read the bare skin first (`examples/feel/mic_body.py
 --baseline` shows how): a target the exterior and preserved parts already
 miss cannot be met from inside. The report gives each target on the
-design, `thresholded`, `delivered` (the STL read back at `verifyPitch`,
-half the design pitch) and, for isolate, `modal`. Report the delivered
-reading. See docs/FEEL.md.
+design, `thresholded`, `delivered` (the STL read back on its own cut
+cells, half the design pitch and no finer than 0.5 mm) and, for isolate,
+`modal`. Report the delivered reading. Design on `pitches: [1.0, 0.7]`
+when a 1 mm design misses on the delivered reading (it closed the
+microphone body's drop). See docs/FEEL.md.
 
 ## Heat, fatigue and creep
 

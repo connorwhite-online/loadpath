@@ -290,11 +290,11 @@ which the report makes with numbers. It runs in the eval suite as
 fall hits what is inside, and how much handling noise reaches a microphone
 capsule are each a stiffness window between where the product is held and
 where the load comes in, and `loadpath feel` designs the interior for them
-together. A generic stick microphone in SLS TPU: a 6.3 g interior hangs
-the 4 g capsule from the head so a 20 N grip gives 0.64 mm and handling
-noise from 500 Hz up reaches it at under half (its modes checked on the
-delivered mesh); a 1 m fall on the head still hits it at 1690 g against a
-1500 g target, and the report says so.
+together. A generic stick microphone in SLS TPU, designed on 1 mm then
+0.7 mm cells: short posts and one strut hang the 4 g capsule from the head
+so a 1 m fall on the head hits it at 1360 g (target 1500), handling noise
+from 500 Hz up reaches it at under a third, and a 20 N grip gives 0.37 mm,
+all read on the delivered mesh's own cut cells, modes included.
 ([docs/FEEL.md](docs/FEEL.md))
 
 <img src="docs/images/feel/mic-body-sections.png" width="760">
