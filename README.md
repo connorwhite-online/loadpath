@@ -84,6 +84,11 @@ Where it is strongest:
 - **The analysis behind the shape**: buckling, fatigue and creep,
   large-deflection compliant mechanisms, loads of unknown direction, thermal
   loads and print warp, all checked on the delivered mesh.
+- **Inside an industrial design**: the designer's exterior kept as a thin
+  cosmetic skin, every component's assembly path kept clear, and everything
+  invisible designed for how the product should feel: a push pad that fires
+  its switch at a chosen force anywhere on the touch area, with the least
+  material ([docs/SWITCH.md](docs/SWITCH.md)).
 - **Implicit modelling**: field graphs, graded and conformal lattices (TPMS,
   strut, Voronoi), blends, and exact STEP of lattice parts.
 - **Process awareness**: FDM, SLS, MJF, resin and powder-bed metal rules,
@@ -222,7 +227,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
   [CAD import](docs/IMPORT.md), [slicer](docs/slicer.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
-  [mechanisms](docs/MECHANISMS.md).
+  [mechanisms](docs/MECHANISMS.md), [push pads](docs/SWITCH.md).
 
 <!-- gallery:start -->
 

@@ -264,6 +264,26 @@ def explore(study, base_dir: str | None = None, methods: list | None = None, mat
     return out
 
 
+def switch(study, base_dir: str | None = None, pitches: list | None = None) -> dict:
+    """Validate a study with a `switch` block and design its push pad
+    (switch.py) as a background job."""
+    if isinstance(study, str):
+        from .tasks import read_doc
+        study, base_dir = read_doc(study, base_dir)
+    if not (study or {}).get("switch"):
+        return {"ok": False, "error": "the study needs a switch block (see loadpath_schema('study'), $.switch)"}
+    v = check(study, base_dir)
+    if not v["ok"]:
+        return v
+    args = ["switch", "{dir}/study.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
+    if pitches:
+        args += ["--pitches", ",".join(str(float(p)) for p in pitches)]
+    out = _spawn("switch", v.get("name") or "study", {"study.json": study}, args,
+                 cells=v["cells"], warnings=v["warnings"], base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def _explore_status(d, r):
     keep = ("id", "passes", "mass", "safetyFactor", "safetyFactorMethod", "maxDeflection", "unitCost", "leadDays",
             "governedBy", "stl", "render", "warnings", "error")
@@ -597,6 +617,14 @@ def status(job_id: str) -> tuple[dict, list]:
         info, pngs = _study_status(d, r)
     elif kind == "explore":
         info, pngs = _explore_status(d, r)
+    elif kind == "switch":
+        info = {"status": "done", "kind": kind, **{k: r.get(k) for k in (
+            "passes", "presses", "volume", "mass", "mesh", "watertight", "levels", "hold", "clearanceMax",
+            "nonlinear", "seconds")}, "report": report,
+            "next": "Show the user each press point's fire force against its window (forceGf linear, "
+                    "thresholdedForceGf as printed, nonlinearForceGf with large deflection). A ceiling the skin "
+                    "alone already exceeds cannot be met by adding material inside."}
+        pngs = []
     elif kind == "lattice":
         info = {"status": "done", "kind": kind, "parent": meta.get("parent"), **r}
         pngs = [_png(d, r.get("render"))]
@@ -797,6 +825,17 @@ def serve():
         cost and lead-time estimate at `quantity` parts. screen=true runs every route coarse first and the
         full runs only for the Pareto fronts and top of the ranking. Starts a job; poll loadpath_status."""
         return explore(study, base_dir, methods, materials, quantity, rank, screen)
+
+    @tool
+    def loadpath_switch(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:
+        """Design everything inside a fixed exterior so a press anywhere on a touch area fires a switch
+        at a chosen force, with the least material: a study with a thin `skin` of the exterior mesh,
+        components as keepOuts (`insertFrom` keeps their assembly paths clear) and a `switch` block
+        (plunger output with gap, trigger force and travel; press points or a radial field of force
+        windows; skin clearance; hold cases). pitches: coarse to fine grids in mm (start [1.0]).
+        Reports each press's fire force linear, as printed and with large deflection, and the part's
+        STL. Starts a job; poll loadpath_status."""
+        return switch(study, base_dir, pitches)
 
     @tool
     def loadpath_lattice(job_id: str, outcome: int | None = None, options: dict | None = None) -> dict:

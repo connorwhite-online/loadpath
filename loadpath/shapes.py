@@ -20,7 +20,8 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = [
-    "Box", "Cylinder", "Sphere", "MeshShape", "Union", "Offset", "Shell", "grow", "shrink", "shape_from_spec",
+    "Box", "Cylinder", "Sphere", "MeshShape", "Union", "Offset", "Shell", "Sweep", "grow", "shrink", "sweep",
+    "shape_from_spec",
     "manifold_from_trimesh", "trimesh_from_manifold",
 ]
 
@@ -476,6 +477,77 @@ def shrink(shape: Shape, t: float, open=()) -> Shape:
             raise ValueError(f"a {t:g} mm skin fills the whole sphere; make it thinner")
         return Sphere(shape.center, shape.r - t)
     return Offset(shape, -t, open)
+
+
+class Sweep(Shape):
+    """The space a shape passes through moving `length` mm along `direction`
+    from where it is drawn: a component's assembly path (a board slid in from
+    below, a switch dropped onto it, a driver reaching a screw). As a
+    keep-out it keeps generated structure out of the way of assembly, not
+    only of the component's final place.
+
+    Boxes and cylinders moving along an axis of their own are swept exactly
+    (`sweep` returns a longer box or cylinder); anything else is the union of
+    copies a fraction of a millimetre apart, so a curved shape moving
+    sideways reads as a slightly scalloped slot."""
+
+    kind = "sweep"
+
+    def __init__(self, base: Shape, direction, length: float, step: float | None = None):
+        d = np.asarray(direction, float)
+        self.base = base
+        self.direction = d / np.linalg.norm(d)
+        self.length = float(length)
+        n = max(int(np.ceil(self.length / (step or max(self.length / 200.0, 0.1)))), 1)
+        self.offsets = np.linspace(0.0, self.length, n + 1)
+
+    def sdf(self, p):
+        p = np.asarray(p, float)
+        out = None
+        for t in self.offsets:
+            v = self.base.sdf(p - t * self.direction)
+            out = v if out is None else np.minimum(out, v)
+        return out
+
+    def bounds(self):
+        lo, hi = self.base.bounds()
+        end = self.length * self.direction
+        return np.minimum(lo, lo + end), np.maximum(hi, hi + end)
+
+    def to_manifold(self):
+        import manifold3d as m3d
+        base = self.base.to_manifold()
+        # consecutive copies' hulls: exact for a convex shape
+        mans = [m3d.Manifold.batch_hull([base.translate(tuple(a * self.direction)),
+                                         base.translate(tuple(b * self.direction))])
+                for a, b in zip(self.offsets[:-1], self.offsets[1:])] if _convex(self.base) else \
+            [base.translate(tuple(t * self.direction)) for t in self.offsets]
+        return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
+
+    def to_spec(self):
+        raise ValueError("a sweep is derived from a keep-out's insertFrom and has no JSON form of its own")
+
+
+def _convex(shape) -> bool:
+    return isinstance(shape, (Box, Sphere)) or (isinstance(shape, Cylinder) and shape.r_inner == 0)
+
+
+def sweep(shape: Shape, direction, length: float) -> Shape:
+    """`shape` swept `length` mm along `direction` (see Sweep). Exact boxes
+    and cylinders where the motion is along one of their own axes."""
+    d = np.asarray(direction, float)
+    d = d / np.linalg.norm(d)
+    end = length * d
+    k = int(np.argmax(np.abs(d)))
+    if isinstance(shape, Box) and abs(d[k]) > 1 - 1e-12:
+        return Box(np.minimum(shape.lo, shape.lo + end), np.maximum(shape.hi, shape.hi + end))
+    if isinstance(shape, Cylinder) and abs(abs(float(shape.axis @ d)) - 1.0) < 1e-12:
+        if float(shape.axis @ d) > 0:
+            return Cylinder(shape.p0, shape.p1 + end, shape.r, shape.r_inner)
+        return Cylinder(shape.p0 + end, shape.p1, shape.r, shape.r_inner)
+    if isinstance(shape, Union):
+        return Union([sweep(s, d, length) for s in shape.shapes])
+    return Sweep(shape, d, length)
 
 
 def shape_from_spec(spec, base_dir=None) -> Shape:

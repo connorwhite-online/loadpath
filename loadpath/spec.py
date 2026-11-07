@@ -622,7 +622,7 @@ class Study:
         return np.min(los, axis=0), np.max(his, axis=0)
 
 
-def _regions(items, label, base_dir):
+def _regions(items, label, base_dir, bounds=None):
     out, seen = [], set()
     for i, item in enumerate(items or []):
         if not isinstance(item, dict) or "shape" not in item:
@@ -634,9 +634,44 @@ def _regions(items, label, base_dir):
         wall = item.get("wall")
         if wall is not None and not (isinstance(wall, (int, float)) and wall > 0):
             raise ValueError(f"{label}[{i}].wall is a thickness in mm (> 0)")
-        out.append(Region(rid, shape_from_spec(item["shape"], base_dir), bool(item.get("bore", True)),
+        shape = shape_from_spec(item["shape"], base_dir)
+        if item.get("insertFrom") is not None:
+            if label != "keepOut":
+                raise ValueError(f"{label}[{i}].insertFrom: only a keep-out has an assembly path")
+            if bounds is None:
+                raise ValueError(f"{label}[{i}].insertFrom needs the design space")
+            shape = _assembly_path(shape, item["insertFrom"], bounds, f"{label}[{i}].insertFrom")
+        out.append(Region(rid, shape, bool(item.get("bore", True)) and item.get("insertFrom") is None,
                           float(wall) if wall is not None else None))
     return out
+
+
+def _assembly_path(shape, side, bounds, label):
+    """A keep-out swept out of the design space toward `side` (an axis like
+    '-z', or a vector): the way the component (or a tool) comes in."""
+    from .shapes import sweep
+
+    if isinstance(side, str):
+        key = side.strip().lower()
+        key = key if key[:1] in "+-" else "+" + key
+        if key not in _FACES:
+            raise ValueError(f"{label} is a side like '-z' or a vector, got {side!r}")
+        a, sg = _FACES[key]
+        d = np.zeros(3)
+        d[a] = sg
+    else:
+        d = np.asarray(side, float)
+        if d.shape != (3,) or not np.linalg.norm(d) > 0:
+            raise ValueError(f"{label} is a side like '-z' or a nonzero vector [x, y, z]")
+        d = d / np.linalg.norm(d)
+    lo, hi = bounds
+    slo, shi = shape.bounds()
+
+    def corners(a, b):
+        return np.array([[x, y, z] for x in (a[0], b[0]) for y in (a[1], b[1]) for z in (a[2], b[2])])
+
+    length = float((corners(lo, hi) @ d).max() - (corners(slo, shi) @ d).min()) + 1.0
+    return sweep(shape, d, max(length, 0.0))
 
 
 _FACES = {f"{s}{a}": (i, 1 if s == "+" else -1) for i, a in enumerate("xyz") for s in "+-"}
@@ -810,7 +845,9 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError("designSpace is required: one shape or a list of shapes")
     design_space = [shape_from_spec(s, base_dir) for s in ds]
     preserve = _regions(d.get("preserve"), "preserve", base_dir)
-    keep_out = _regions(d.get("keepOut"), "keepOut", base_dir)
+    ds_lo = np.min([s.bounds()[0] for s in design_space], axis=0)
+    ds_hi = np.max([s.bounds()[1] for s in design_space], axis=0)
+    keep_out = _regions(d.get("keepOut"), "keepOut", base_dir, bounds=(ds_lo, ds_hi))
     clash = {r.id for r in preserve} & {r.id for r in keep_out}
     if clash:
         raise ValueError(f"region ids must be unique across preserve and keepOut: {sorted(clash)}")

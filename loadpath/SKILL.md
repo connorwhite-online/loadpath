@@ -388,6 +388,32 @@ user picks. `--plan` lists the routes without running them. It costs about
 one study per route (routes of one method share designs), so start with the
 methods that are plausible for the user.
 
+## Inside a designer's exterior (push pads, switches)
+
+When the user hands over industrial-design surfacing and the inside is
+free: the exterior mesh is the `designSpace` (`{"type": "mesh", "path":
+...}`), `skin: {"thickness": 0.7, "open": ["-z"]}` keeps a thin cosmetic
+layer of it (the SLS minimum is about 0.7-0.8 mm; open the side the
+components go in from), and every component is a `keepOut` with
+`"insertFrom": "-z"` (the side it comes in from, or a vector): the keep-out
+is swept out of the part so no rib blocks assembly. Give tool access the
+same way (a cylinder for a driver, `insertFrom` its side).
+
+For a push pad over a switch, add a `switch` block and run
+`loadpath switch study.json --out out`: `output` is the plunger (a
+preserve id, stroke `direction`, `gap` to the stem, the switch's
+`trigger` force and own `travel`), `field` (or `presses`) gives each press
+point's force window (`max` may be `[centre, rim]`, a radial gradient;
+`min` is the floor a resting thumb must not reach; `"unit": "gf"`),
+`clearance` caps the skin's travel toward the board, `hold` caps the
+mean deflection under a load case (a side squeeze, a drop). Start coarse
+(`pitches: [1.0]`) to see whether the windows can be met at all, then
+refine (`[1.0, 0.7, 0.5]`). The report gives each press's linear,
+thresholded and large-deflection fire force (`nonlinearForceGf`; TPU
+stiffens as it bows). If the skin alone already fires above a ceiling,
+nothing added inside can fix it: thin the skin, or raise the ceiling.
+See docs/SWITCH.md.
+
 ## Heat, fatigue and creep
 
 - A part next to something hot (a stepper face at 70 C, a heated bed):

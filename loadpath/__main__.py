@@ -518,6 +518,15 @@ def main(argv=None):
     co.add_argument("--out", default="loadpath-cores")
     co.add_argument("--process", help="comma-separated: fdm, sls, mjf (overrides the spec's processes)")
     co.add_argument("--base-dir")
+    sw = sub.add_parser("switch", help="a target-force push pad: minimize the volume inside a fixed exterior so "
+                                       "a press anywhere on the touch area fires a switch at a chosen force "
+                                       "(the study's switch block)")
+    sw.add_argument("study")
+    sw.add_argument("--out", default="loadpath-switch")
+    sw.add_argument("--pitches", help="comma-separated mm, coarse to fine (default: switch.pitches)")
+    sw.add_argument("--iterations", help="comma-separated, per pitch")
+    sw.add_argument("--no-nonlinear", action="store_true", help="skip the large-deflection fire-force check")
+    sw.add_argument("--base-dir")
     ex = sub.add_parser("explore", help="one study, an outcome per manufacturing method and material (fdm, sls, "
                                         "mjf, sla, lpbf, cast, milled...): mass, safety factor, cost and lead "
                                         "time, ranked, with Pareto fronts")
@@ -669,6 +678,8 @@ def main(argv=None):
         return _tune(args)
     if args.cmd == "cores":
         return _cores(args)
+    if args.cmd == "switch":
+        return _switch(args)
     if args.cmd == "explore":
         return _explore(args)
     if args.cmd == "lattice-orient":
@@ -1268,6 +1279,32 @@ def _explore(args):
     print(rep.pop("table"), file=sys.stderr)
     _write_report(args.out, {"ok": bool(rep["picks"]), **rep})
     return 0 if rep["picks"] else 1
+
+
+def _switch(args):
+    from .schema import format_issues, lint
+    from .spec import study_from_dict
+    from .switch import run_switch
+
+    doc = _load(args.study)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
+    errors = [x for x in lint(doc, "study") if x["level"] == "error"]
+    if not doc.get("switch"):
+        errors.append({"level": "error", "path": "$.switch", "message": "the study needs a switch block"})
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+    try:
+        st = study_from_dict(doc, base)
+        pitches = [float(v) for v in args.pitches.split(",")] if args.pitches else None
+        its = [int(v) for v in args.iterations.split(",")] if args.iterations else None
+        rep = run_switch(st, args.out, pitches=pitches, iterations=its, nonlinear=False if args.no_nonlinear else None,
+                         on_progress=_progress)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    _write_report(args.out, {"ok": rep["passes"], **rep})
+    return 0 if rep["passes"] else 1
 
 
 def _edit(args):

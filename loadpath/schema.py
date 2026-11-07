@@ -138,6 +138,12 @@ _KEEP_OUT = {
                                           "report fits gives the as-built band and whether the fit holds."},
                    "mate": {**_POS, "description": "Diameter of the mating part, mm (default the cylinder's: draw "
                                                    "the keep-out at the bearing's or pin's size)."},
+                   "insertFrom": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, _VEC3],
+                                  "description": "Assembly path: the side the component (or a tool) comes in "
+                                                 "from, like '-z', or a vector. The keep-out is swept out of the "
+                                                 "design space that way, so nothing generated blocks putting "
+                                                 "the part together (a board slid in from below, a driver "
+                                                 "reaching a screw)."},
                    "finish": {"enum": ["auto", "as-built", "ream"],
                               "description": "auto (default): ream when the process cannot hold the fit as "
                                              "printed (the hole is drawn undersize for the reamer); as-built: "
@@ -711,6 +717,59 @@ _MULTI_MATERIAL = {
     "additionalProperties": False,
 }
 
+_FORCE = {"type": "number", "exclusiveMinimum": 0}
+_SWITCH = {
+    "type": "object",
+    "description": "`loadpath switch`: a target-force push pad (switch.py). Minimize volume so a press anywhere on "
+                   "the touch area fires a switch under the output at a chosen force: a ceiling (any gradient) "
+                   "and a floor per press point, with optional press travel, skin clearance and hold cases. Pair "
+                   "it with `skin` so the exterior is kept as a thin cosmetic layer and the rest is design "
+                   "space. `run` ignores it.",
+    "properties": {
+        "unit": {"enum": ["N", "gf"], "description": "force unit of max/min/trigger (default N)"},
+        "output": {"type": "object", "properties": {
+            "region": {"type": "string", "description": "the plunger face: a preserve id"},
+            "shape": {"$ref": "#/$defs/shape"},
+            "direction": {"type": "string", "pattern": "^[+-]?[xyz]$", "description": "stroke (default -z)"},
+            "gap": {"type": "number", "minimum": 0, "description": "mm, plunger to switch stem at rest"},
+            "trigger": {"type": "number", "minimum": 0, "description": "the switch's operating force"},
+            "travel": {"type": "number", "minimum": 0, "description": "mm, the switch's own travel to the click"}},
+            "additionalProperties": False},
+        "presses": {"type": "array", "items": {"type": "object", "properties": {
+            "at": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 3},
+            "max": _FORCE, "min": _FORCE}, "required": ["at"], "additionalProperties": False}},
+        "field": {"type": "object", "properties": {
+            "center": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+            "radius": _POS,
+            "rings": {"type": "integer", "minimum": 1}, "perRing": {"type": "integer", "minimum": 1},
+            "max": {"anyOf": [_FORCE, {"type": "array", "items": _FORCE, "minItems": 2, "maxItems": 2}],
+                    "description": "one value, or [at the centre, at the radius]: a radial gradient"},
+            "min": {"anyOf": [_FORCE, {"type": "array", "items": _FORCE, "minItems": 2, "maxItems": 2}]}},
+            "required": ["center", "radius"], "additionalProperties": False,
+            "description": "press points on rings round a centre, with a radial force gradient"},
+        "pressDirection": {"type": "string", "pattern": "^[+-]?[xyz]$", "description": "default: the output's"},
+        "pressRadius": {**_POS, "description": "mm, the fingertip disc (default 1)"},
+        "maxTravel": {**_POS, "description": "mm of press travel at the click (crispness)"},
+        "clearance": {"type": "object", "properties": {
+            "region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"},
+            "gap": {**_POS, "description": "mm the region may move along the press at the fire force"}},
+            "required": ["gap"], "additionalProperties": False},
+        "hold": {"type": "array", "items": {"type": "object", "properties": {
+            "case": {"type": "string", "description": "a load case name"},
+            "maxDeflection": {**_POS, "description": "mm, force-weighted mean travel under the case"}},
+            "required": ["case", "maxDeflection"], "additionalProperties": False},
+            "description": "load cases (squeeze, drop) whose deflection is capped: the shape holds"},
+        "pitches": {"type": "array", "items": _POS, "minItems": 1,
+                    "description": "coarse to fine grids, mm; each starts from the last one's design"},
+        "iterations": {"anyOf": [{"type": "integer", "minimum": 1},
+                                 {"type": "array", "items": {"type": "integer", "minimum": 1}}]},
+        "nonlinear": {"type": "boolean", "description": "re-read each press with large deflections and the "
+                                                        "stem as a rigid obstacle (default true)"}},
+    "required": ["output"],
+    "x-requireOne": [["presses"], ["field"]],
+    "additionalProperties": False,
+}
+
 STUDY_SCHEMA = {
     "$schema": _DIALECT,
     "$id": "https://github.com/connorwhite-online/loadpath/schema/study.schema.json",
@@ -887,6 +946,7 @@ STUDY_SCHEMA = {
                     "additionalProperties": False,
                     "description": "`loadpath explore`: solve the study once per manufacturing method and "
                                    "material, with cost and lead time, ranked (explore.py). `run` ignores it."},
+        "switch": _SWITCH,
         "pattern": {"type": "object", "properties": {
                         "type": {"const": "circular"},
                         "axis": {"enum": ["x", "y", "z"]},
