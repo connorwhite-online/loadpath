@@ -43,8 +43,12 @@ _SIGNED_AXIS = {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$", "descrip
 _SHAPES = {
     "box": {
         "type": "object",
-        "description": "Axis-aligned box: min/max corners, or center/size.",
-        "properties": {"type": {"const": "box"}, "min": _VEC3, "max": _VEC3, "center": _VEC3, "size": _VEC3},
+        "description": "Box: min/max corners, or center/size (axis-aligned), or center/size/axes (turned: "
+                       "size along the two axes given and their cross product).",
+        "properties": {"type": {"const": "box"}, "min": _VEC3, "max": _VEC3, "center": _VEC3, "size": _VEC3,
+                       "axes": {"type": "array", "items": _VEC3, "minItems": 2, "maxItems": 2,
+                                "description": "the box's x and y axes as vectors (its z is their cross "
+                                               "product); with center and size"}},
         "required": ["type"],
         "x-requireOne": [["min", "max"], ["center", "size"]],
         "additionalProperties": False,
@@ -939,6 +943,66 @@ _FEEL = {
     "additionalProperties": False,
 }
 
+_SPLIT_PROPS = {
+    "normal": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, {"const": "auto"}],
+               "description": "the axis the cut is across, signed toward the cover (it comes off that way); "
+                              "'auto' (default) tries x, y and z and makes the half holding the components the base"},
+    "at": {"type": "number", "description": "the cut's level along that axis (mm); omitted: searched"},
+    "avoid": {"type": "array", "items": {"$ref": "#/$defs/shape"},
+              "description": "surfaces the seam must not cross (the designer's A surfaces)"},
+    "componentsIn": {"type": "object", "additionalProperties": {"enum": ["base", "cover"]},
+                     "description": "which half holds a component (default: the one most of it is in)"},
+    "assembly": {"type": "array", "items": {"type": "string"},
+                 "description": "component ids in the order they go in (default: as listed)"},
+    "clearance": {"type": "number", "minimum": 0,
+                  "description": "mm between mating faces of the lip and the snaps (default 0.2; FDM 0.25)"},
+    "margin": {"type": "number", "minimum": 0, "description": "mm from any component to a joint (default 0.5)"},
+    "pathTolerance": {"type": "number", "minimum": 0,
+                      "description": "mm of interference allowed on a component's way in (default 0.25)"},
+    "lip": {"anyOf": [{"const": False}, {"type": "object", "properties": {
+        "height": _POS, "width": _POS, "root": _POS}, "additionalProperties": False}],
+        "description": "the alignment lip: a tongue on the base standing up inside the cover's wall (height "
+                       "default 2 mm, width default max(minMember, 1.2)); false: none"},
+    "screws": {"anyOf": [{"const": False}, {"type": "object", "properties": {
+        "from": {"type": "string", "pattern": "^[+-]?[xyz]$",
+                 "description": "the base's far face the screws go in through: the designer allows the holes"},
+        "size": {"enum": ["M2", "M2.5", "M3", "M4", "M5", "M6", "M8", "M10"]},
+        "count": {"anyOf": [{"type": "integer", "minimum": 1}, {"const": "auto"}]},
+        "insert": {**_POS, "description": "heat-set insert OD (mm); else a tapped hole"},
+        "threadLength": _POS, "headHeight": _POS,
+        "fit": {"enum": ["close", "normal", "loose"], "description": "the clearance hole (fits.py)"}},
+        "required": ["from"], "additionalProperties": False}],
+        "description": "screw posts: a bore up through the base, the head in a counterbore inside the exterior, "
+                       "a thread in the cover; each hole is reported in exteriorChanges. Default: none"},
+    "snaps": {"anyOf": [{"const": False}, {"type": "object", "properties": {
+        "count": {"anyOf": [{"type": "integer", "minimum": 1}, {"const": "auto"}]},
+        "on": {"enum": ["auto", "cover", "base"], "description": "the half the hooks hang from"},
+        "width": _POS, "thickness": _POS, "length": _POS, "undercut": _POS,
+        "leadAngle": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 90},
+        "returnAngle": {"type": "number", "exclusiveMinimum": 0, "maximum": 90,
+                        "description": "90 (default): holds until it breaks; lower: comes apart at `pull` N"},
+        "ledge": _POS, "root": _POS, "room": _POS, "maxShift": _POS,
+        "repeated": {"type": "boolean", "description": "opened and closed often: 60% of the strain allowance"},
+        "pull": _POS},
+        "additionalProperties": False}],
+        "description": "cantilever snaps, sized so the strain as the barb passes the ledge is within the "
+                       "material's allowance. Default: on (auto count) when there are no screws"},
+}
+
+SPLIT_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "loadpath split block",
+    "description": "`loadpath split` (shells.py): the study's exterior cut into a base and a cover, with an "
+                   "alignment lip, screw posts and snap fits inside the skin. The cut is checked (or searched): "
+                   "every component goes into its half with the other off, the cover comes down over them, and "
+                   "the seam misses `avoid`. Out: a study per half and split.json. The exterior is never changed "
+                   "except for screw holes through the face named in screws.from.",
+    "type": "object",
+    "properties": _SPLIT_PROPS,
+    "additionalProperties": False,
+    "$defs": {**_SHAPES, "shape": _SHAPE},
+}
+
 STUDY_SCHEMA = {
     "$schema": _DIALECT,
     "$id": "https://github.com/connorwhite-online/loadpath/schema/study.schema.json",
@@ -1127,6 +1191,10 @@ STUDY_SCHEMA = {
                                    "material, with cost and lead time, ranked (explore.py). `run` ignores it."},
         "switch": _SWITCH,
         "feel": _FEEL,
+        "split": {"type": "object", "properties": _SPLIT_PROPS, "additionalProperties": False,
+                  "description": "`loadpath split`: cut the exterior into a base and a cover with a lip, screw "
+                                 "posts and snaps inside the skin (shells.py; `loadpath schema split`). `run` "
+                                 "refuses a study that still has one: split it first and run each half"},
         "pattern": {"type": "object", "properties": {
                         "type": {"const": "circular"},
                         "axis": {"enum": ["x", "y", "z"]},
@@ -1937,11 +2005,11 @@ HANDOFF_SCHEMA = {
 }
 
 SCHEMAS = {"study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
-           "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA}
+           "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA, "split": SPLIT_SCHEMA}
 
 
 def schema(kind: str = "study") -> dict:
-    """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field' or 'handoff'."""
+    """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff' or 'split'."""
     if kind not in SCHEMAS:
         raise ValueError(f"schema kind must be one of {sorted(SCHEMAS)}")
     return copy.deepcopy(SCHEMAS[kind])

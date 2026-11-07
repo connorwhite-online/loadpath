@@ -91,6 +91,51 @@ class Box(Shape):
         return {"type": "box", "min": self.lo.tolist(), "max": self.hi.tolist()}
 
 
+class OrientedBox(Shape):
+    """A box turned to any frame: {"type": "box", "center": [..], "size":
+    [..], "axes": [[x axis], [y axis]]}, size measured along the two given
+    axes and their cross product. A snap-fit hook on a curved wall, a rib
+    across a seam: features that follow a surface, not the grid."""
+
+    kind = "box"
+
+    def __init__(self, center, size, axes):
+        self.center = _vec(center, name="box center")
+        self.size = _vec(size, name="box size")
+        if np.any(self.size <= 0):
+            raise ValueError(f"box size {self.size.tolist()} must be positive")
+        ax = np.asarray(axes, float)
+        if ax.shape != (2, 3):
+            raise ValueError("box axes are two direction vectors [[x], [y]]; the third is their cross product")
+        e0 = ax[0] / np.linalg.norm(ax[0])
+        e1 = ax[1] - (ax[1] @ e0) * e0
+        if np.linalg.norm(e1) < 1e-9:
+            raise ValueError("box axes must not be parallel")
+        e1 = e1 / np.linalg.norm(e1)
+        self.R = np.stack([e0, e1, np.cross(e0, e1)])      # rows: the box's axes in world coordinates
+
+    def sdf(self, p):
+        p = np.asarray(p, float)
+        q = np.abs((p - self.center) @ self.R.T) - 0.5 * self.size
+        outside = np.linalg.norm(np.maximum(q, 0.0), axis=-1)
+        return outside + np.minimum(q.max(axis=-1), 0.0)
+
+    def bounds(self):
+        ext = np.abs(self.R.T) @ (0.5 * self.size)
+        return self.center - ext, self.center + ext
+
+    def to_manifold(self):
+        import manifold3d as m3d
+        m = np.zeros((3, 4))
+        m[:, :3] = self.R.T
+        m[:, 3] = self.center
+        return m3d.Manifold.cube(tuple(self.size), center=True).transform(m)
+
+    def to_spec(self):
+        return {"type": "box", "center": self.center.tolist(), "size": self.size.tolist(),
+                "axes": self.R[:2].tolist()}
+
+
 class Cylinder(Shape):
     """Flat-capped cylinder from p0 to p1 with radius r. With `rInner` it is a
     tube (a bearing boss, a bolt collar): material between rInner and r.
@@ -614,6 +659,8 @@ def grow(shape: Shape, t: float) -> Shape:
     (a little more than a true offset at their edges, never less)."""
     if isinstance(shape, Box):
         return Box(shape.lo - t, shape.hi + t)
+    if isinstance(shape, OrientedBox):
+        return OrientedBox(shape.center, shape.size + 2 * t, shape.R[:2])
     if isinstance(shape, Cylinder):
         a = shape.axis
         return Cylinder(shape.p0 - t * a, shape.p1 + t * a, shape.r + t, max(shape.r_inner - t, 0.0))
@@ -819,6 +866,8 @@ def _shape(spec, base_dir):
     if kind == "box":
         if "min" in spec:
             return Box(spec["min"], spec["max"])
+        if spec.get("axes") is not None:
+            return OrientedBox(spec["center"], spec["size"], spec["axes"])
         c, s = _vec(spec["center"], name="box center"), _vec(spec["size"], name="box size")
         return Box(c - s / 2, c + s / 2)
     if kind in ("cylinder", "tube"):

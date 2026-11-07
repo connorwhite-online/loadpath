@@ -538,7 +538,7 @@
   "$defs": {
     "box": {
       "type": "object",
-      "description": "Axis-aligned box: min/max corners, or center/size.",
+      "description": "Box: min/max corners, or center/size (axis-aligned), or center/size/axes (turned: size along the two axes given and their cross product).",
       "properties": {
         "type": {
           "const": "box"
@@ -578,6 +578,21 @@
           "minItems": 3,
           "maxItems": 3,
           "description": "[x, y, z]"
+        },
+        "axes": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "[x, y, z]"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "the box's x and y axes as vectors (its z is their cross product); with center and size"
         }
       },
       "required": [

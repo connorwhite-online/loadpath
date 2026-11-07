@@ -414,7 +414,7 @@ def main(argv=None):
     c.add_argument("--base-dir")
     s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
     s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field",
-                                                                "handoff"])
+                                                                "handoff", "split"])
     e = sub.add_parser("examples", help="list the packaged examples, or print one")
     e.add_argument("name", nargs="?")
     lt = sub.add_parser("lattice", help="fill a finished part with a stress-graded TPMS lattice")
@@ -566,6 +566,13 @@ def main(argv=None):
     sd.add_argument("source")
     sd.add_argument("--out", help="the .npz (default <source>.sdf.npz)")
     sd.add_argument("--pitch", type=float, help="mm (default longest extent / 256)")
+    spl = sub.add_parser("split", help="cut a study's exterior into a base and a cover that go together round "
+                                       "its components: the cut checked or searched, an alignment lip, screw "
+                                       "posts and snap fits inside the skin; a study per half")
+    spl.add_argument("study", help="a study with a skin and a split block (`loadpath schema split`)")
+    spl.add_argument("--split", help="the split block as a JSON file, instead of the study's own")
+    spl.add_argument("--out", default="loadpath-split")
+    spl.add_argument("--base-dir", help="where the study's relative paths start (default: its folder)")
     fe = sub.add_parser("feel", help="design the inside of a fixed exterior for how it feels: grip squeeze, drop "
                                      "cushioning, vibration isolation of a part inside (the study's feel block; "
                                      "with a switch block too, the click force with them)")
@@ -736,6 +743,8 @@ def main(argv=None):
         return _exterior(args)
     if args.cmd == "sdf":
         return _sdf(args)
+    if args.cmd == "split":
+        return _split(args)
     if args.cmd == "explore":
         return _explore(args)
     if args.cmd == "lattice-orient":
@@ -1380,6 +1389,36 @@ def _switch(args):
         return 2
     _write_report(args.out, {"ok": rep["passes"], **rep})
     return 0 if rep["passes"] else 1
+
+
+def _split(args):
+    from .schema import format_issues, lint
+    from .shells import run_split
+
+    doc = _load(args.study)
+    split = _load(args.split) if args.split else doc.get("split")
+    if not isinstance(split, dict):
+        print(json.dumps({"ok": False, "error": "no split block: give the study one, or --split split.json"}))
+        return 2
+    errors = [x for x in lint(split, "split") if x["level"] == "error"]
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+    try:
+        r = run_split(args.study, args.out, split=split, base_dir=args.base_dir)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    rep = r["report"]
+    ok = not any(rep["lint"].values())
+    out = {"ok": ok, "studies": r["studyPaths"], "report": os.path.join(args.out, "split.json"),
+           "cut": {k: rep["cut"].get(k) for k in ("normal", "at", "seam", "how")},
+           "componentsIn": rep["assembly"]["componentsIn"],
+           "screws": len(rep["screws"]), "snaps": (rep["snaps"] or {}).get("count", 0),
+           "snapStrain": None if not rep["snaps"] else [rep["snaps"]["strain"], rep["snaps"]["allowable"]],
+           "exteriorChanges": rep["exteriorChanges"], "warnings": rep["warnings"]}
+    print(json.dumps(out, default=float))
+    return 0 if ok else 2
 
 
 def _handoff(args):

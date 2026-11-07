@@ -468,6 +468,28 @@ component (each skin node's own room to the part under it, less
 snap bead's interference. Check `handoff.json` before running; `--run`
 designs it straight away.
 
+**A product built in two parts: `loadpath split study.json --out dir`
+(MCP `loadpath_split`; `loadpath schema split`).** The study is the whole
+product (exterior as designSpace, a `skin`, components as keep-outs with
+insertFrom) plus a `split` block. Give `normal` and `at` when the designer
+drew the parting line; otherwise it searches cuts across x, y and z and
+picks the short seam where components drop in a short way, then the one
+with room for joints. It checks that every component goes into its half
+with the other off and that the cover lifts off without catching on
+anything. `avoid` lists the designer's A surfaces the seam must not
+cross. The joints go inside the skin and the exterior is never changed:
+an alignment `lip`, cantilever `snaps` sized to the material's strain
+allowance (hooks hang from either half and step in where the wall curves),
+and `screws` only if the designer names the face holes may go through
+(`screws.from`). Every hole is listed in `split.json` `exteriorChanges`,
+so show those to the designer. It writes one study per half; run each
+one. Check `split.json` before running: `cut.why` on any rejected
+candidate, `snaps.strain` against `snaps.allowable` (an FDM beam bent
+across layers gets a warning: print the halves on their sides, or use
+SLS), and `warnings` for joints that did not fit. `shells.verify_snap`
+reads a hook's strain on cut cells, and `shells.check_closed` checks the
+built halves for overlap. See docs/SHELLS.md.
+
 A graded lattice instead of ribs: add `switch.lattice` (`type`, `cell`,
 `mode: "where-needed"`) or `--lattice bcc:4:where-needed`. Under a thin
 TPU skin only strut cells are soft enough (a 1.0 mm-walled gyroid is a

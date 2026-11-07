@@ -1,0 +1,582 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "loadpath split block",
+  "description": "`loadpath split` (shells.py): the study's exterior cut into a base and a cover, with an alignment lip, screw posts and snap fits inside the skin. The cut is checked (or searched): every component goes into its half with the other off, the cover comes down over them, and the seam misses `avoid`. Out: a study per half and split.json. The exterior is never changed except for screw holes through the face named in screws.from.",
+  "type": "object",
+  "properties": {
+    "normal": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[+-]?[xyz]$"
+        },
+        {
+          "const": "auto"
+        }
+      ],
+      "description": "the axis the cut is across, signed toward the cover (it comes off that way); 'auto' (default) tries x, y and z and makes the half holding the components the base"
+    },
+    "at": {
+      "type": "number",
+      "description": "the cut's level along that axis (mm); omitted: searched"
+    },
+    "avoid": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/shape"
+      },
+      "description": "surfaces the seam must not cross (the designer's A surfaces)"
+    },
+    "componentsIn": {
+      "type": "object",
+      "additionalProperties": {
+        "enum": [
+          "base",
+          "cover"
+        ]
+      },
+      "description": "which half holds a component (default: the one most of it is in)"
+    },
+    "assembly": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "component ids in the order they go in (default: as listed)"
+    },
+    "clearance": {
+      "type": "number",
+      "minimum": 0,
+      "description": "mm between mating faces of the lip and the snaps (default 0.2; FDM 0.25)"
+    },
+    "margin": {
+      "type": "number",
+      "minimum": 0,
+      "description": "mm from any component to a joint (default 0.5)"
+    },
+    "pathTolerance": {
+      "type": "number",
+      "minimum": 0,
+      "description": "mm of interference allowed on a component's way in (default 0.25)"
+    },
+    "lip": {
+      "anyOf": [
+        {
+          "const": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "root": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "the alignment lip: a tongue on the base standing up inside the cover's wall (height default 2 mm, width default max(minMember, 1.2)); false: none"
+    },
+    "screws": {
+      "anyOf": [
+        {
+          "const": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "pattern": "^[+-]?[xyz]$",
+              "description": "the base's far face the screws go in through: the designer allows the holes"
+            },
+            "size": {
+              "enum": [
+                "M2",
+                "M2.5",
+                "M3",
+                "M4",
+                "M5",
+                "M6",
+                "M8",
+                "M10"
+              ]
+            },
+            "count": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "const": "auto"
+                }
+              ]
+            },
+            "insert": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "heat-set insert OD (mm); else a tapped hole"
+            },
+            "threadLength": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "headHeight": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "fit": {
+              "enum": [
+                "close",
+                "normal",
+                "loose"
+              ],
+              "description": "the clearance hole (fits.py)"
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "screw posts: a bore up through the base, the head in a counterbore inside the exterior, a thread in the cover; each hole is reported in exteriorChanges. Default: none"
+    },
+    "snaps": {
+      "anyOf": [
+        {
+          "const": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "const": "auto"
+                }
+              ]
+            },
+            "on": {
+              "enum": [
+                "auto",
+                "cover",
+                "base"
+              ],
+              "description": "the half the hooks hang from"
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "thickness": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "length": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "undercut": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "leadAngle": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 90
+            },
+            "returnAngle": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 90,
+              "description": "90 (default): holds until it breaks; lower: comes apart at `pull` N"
+            },
+            "ledge": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "root": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "room": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "maxShift": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "repeated": {
+              "type": "boolean",
+              "description": "opened and closed often: 60% of the strain allowance"
+            },
+            "pull": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "cantilever snaps, sized so the strain as the barb passes the ledge is within the material's allowance. Default: on (auto count) when there are no screws"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "box": {
+      "type": "object",
+      "description": "Box: min/max corners, or center/size (axis-aligned), or center/size/axes (turned: size along the two axes given and their cross product).",
+      "properties": {
+        "type": {
+          "const": "box"
+        },
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "max": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "axes": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "[x, y, z]"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "the box's x and y axes as vectors (its z is their cross product); with center and size"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "min",
+          "max"
+        ],
+        [
+          "center",
+          "size"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "cylinder": {
+      "type": "object",
+      "description": "Cylinder or tube: end points p0/p1, or center/axis/length; radius r, optional rInner.",
+      "properties": {
+        "type": {
+          "enum": [
+            "cylinder",
+            "tube"
+          ]
+        },
+        "p0": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "p1": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "'x', 'y', 'z' or a direction vector"
+        },
+        "length": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rInner": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "r"
+      ],
+      "x-requireOne": [
+        [
+          "p0",
+          "p1"
+        ],
+        [
+          "center",
+          "length"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "sphere": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "sphere"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "center",
+        "r"
+      ],
+      "additionalProperties": false
+    },
+    "mesh": {
+      "type": "object",
+      "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder (or a STEP file, .step/.stp, tessellated and healed; needs loadpath[step]), or inline stlBase64.",
+      "properties": {
+        "type": {
+          "const": "mesh"
+        },
+        "path": {
+          "type": "string"
+        },
+        "stlBase64": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "path"
+        ],
+        [
+          "stlBase64"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "sdf": {
+      "type": "object",
+      "description": "A sampled signed distance field: an .npz (distance, origin, pitch; mm, negative inside) relative to the study's folder, as loadpath.exterior.save_sdf writes it. How an SDF tool's shape (libfive, the sdf package, a field graph) comes in.",
+      "properties": {
+        "type": {
+          "const": "sdf"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "union": {
+      "type": "object",
+      "description": "Several shapes acting as one region (a servo's four screw bosses).",
+      "properties": {
+        "type": {
+          "const": "union"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "intersect": {
+      "type": "object",
+      "description": "Where all the shapes overlap: a half ring is a tube intersected with a box.",
+      "properties": {
+        "type": {
+          "const": "intersect"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 2
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "subtract": {
+      "type": "object",
+      "description": "The first shape with the others cut away: a ring with a gap is a tube minus a box.",
+      "properties": {
+        "type": {
+          "const": "subtract"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 2
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "shape": {
+      "title": "a shape object (box, cylinder, tube, sphere, mesh, sdf, union, intersect, subtract)",
+      "description": "A shape: box, cylinder (tube), sphere, mesh, sdf, union, intersect or subtract. Units mm.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/box"
+        },
+        {
+          "$ref": "#/$defs/cylinder"
+        },
+        {
+          "$ref": "#/$defs/sphere"
+        },
+        {
+          "$ref": "#/$defs/mesh"
+        },
+        {
+          "$ref": "#/$defs/sdf"
+        },
+        {
+          "$ref": "#/$defs/union"
+        },
+        {
+          "$ref": "#/$defs/intersect"
+        },
+        {
+          "$ref": "#/$defs/subtract"
+        }
+      ],
+      "x-discriminator": {
+        "property": "type",
+        "mapping": {
+          "box": "#/$defs/box",
+          "cylinder": "#/$defs/cylinder",
+          "tube": "#/$defs/cylinder",
+          "sphere": "#/$defs/sphere",
+          "mesh": "#/$defs/mesh",
+          "sdf": "#/$defs/sdf",
+          "union": "#/$defs/union",
+          "intersect": "#/$defs/intersect",
+          "subtract": "#/$defs/subtract"
+        }
+      }
+    }
+  }
+}

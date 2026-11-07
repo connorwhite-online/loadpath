@@ -309,6 +309,27 @@ def handoff(brief, base_dir: str | None = None, run: bool = False, pitches: list
     return out
 
 
+def split(study, split_block: dict | None = None, base_dir: str | None = None) -> dict:
+    """Cut a study's exterior into a base and a cover (shells.py) as a
+    background job: the cut's checks and the lip mesh take a minute."""
+    if isinstance(study, str):
+        from .tasks import read_doc
+        study, base_dir = read_doc(study, base_dir)
+    from .schema import format_issues, lint
+    block = split_block if split_block is not None else study.get("split")
+    if not isinstance(block, dict):
+        return {"ok": False, "error": "no split block: give the study one, or split_block"}
+    errors = [x for x in lint(block, "split") if x["level"] == "error"]
+    if errors:
+        return {"ok": False, "error": format_issues(errors)}
+    study = {**study, "split": block}
+    args = ["split", "{dir}/study.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
+    out = _spawn("split", study.get("name") or "split", {"study.json": study}, args,
+                 base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def feel(study, base_dir: str | None = None, pitches: list | None = None) -> dict:
     """Validate a study with a `feel` block and design its interior
     (feel.py) as a background job."""
@@ -911,6 +932,18 @@ def serve():
         changed. run: then design it, as loadpath_switch. Starts a job; poll loadpath_status, the
         study is out/<name>.study.json and the report out/handoff.json."""
         return handoff(brief, base_dir, run, pitches)
+
+    @tool
+    def loadpath_split(study: dict | str, split_block: dict | None = None, base_dir: str | None = None) -> dict:
+        """Cut a study's fixed exterior into a base and a cover that go together round its components
+        (loadpath_schema('split')): the cut given or searched across x, y, z (shortest seam where every
+        component goes into its half with the other off and the cover comes down over them, missing the
+        designer's avoid surfaces), then an alignment lip, screw posts (only through a face the designer
+        names in screws.from; each hole reported) and cantilever snaps sized to the material's strain
+        allowance, all inside the skin. Out: out/<name>-base.study.json, out/<name>-cover.study.json and
+        out/split.json (the cut, paths, each joint's numbers, exteriorChanges). Starts a job; poll
+        loadpath_status, then run each half."""
+        return split(study, split_block, base_dir)
 
     @tool
     def loadpath_feel(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:

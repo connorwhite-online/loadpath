@@ -891,6 +891,9 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     # is not compensated twice
     fits = d.get("_fits") or []
     joints = d.pop("_joints", []) if isinstance(d.get("_joints"), list) else []
+    if d.get("split") is not None:
+        raise ValueError("this study has a split block: it is two parts. `loadpath split study.json --out dir` "
+                         "writes a study per half (MCP loadpath_split); run those")
     ds = d.get("designSpace")
     if isinstance(ds, dict):
         ds = [ds]
