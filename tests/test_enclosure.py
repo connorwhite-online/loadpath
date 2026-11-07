@@ -18,7 +18,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from loadpath.enclosure import enclosure, exterior_check  # noqa: E402
+from loadpath.enclosure import enclosure, exterior_check, paths_into_skin  # noqa: E402
 from loadpath.placement import insertion_path, place, rotations  # noqa: E402
 from loadpath.schema import lint  # noqa: E402
 
@@ -134,6 +134,9 @@ def test_enclosure_study():
     assert st["thermal"]["heat"] == [{"region": "board", "watts": 0.2}]
     assert st["skin"]["thickness"] == 1.0 and len(st["skin"]["openings"]) == 2
     assert os.path.exists(os.path.join(out, "cad", "battery.stl"))
+    # no way in notches the skin: the keep-outs are cut from everything
+    notch = paths_into_skin(st, out)
+    assert notch and all(v <= 0.05 for v in notch.values()), notch
     json.dumps(rep, default=float)
 
 

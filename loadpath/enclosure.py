@@ -527,11 +527,12 @@ def _way_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, hint=None) -> di
         if not legs:
             legs = [(r["legs"][-1][0], None)]
         lg = [(d, L) for d, L in legs[:-1]] + [(legs[-1][0], None)]
+        lg = _settle_legs(pts, obstacles, lg, exit_bounds, pitch)
         ok, pen, _, where, dist = _path_check(pts, _Pen(obstacles), lg, exit_bounds[0], exit_bounds[1], tol)
         if len(lg) == 1:
             ins = _axis_name(lg[0][0])
         else:
-            ins = [{"toward": _axis_name(d), "length": round(float(L) + 0.2, 2)} for d, L in lg[:-1]] + \
+            ins = [{"toward": _axis_name(d), "length": round(float(L), 2)} for d, L in lg[:-1]] + \
                 [_axis_name(lg[-1][0])]
         rec = {"insertFrom": ins, "legs": len(lg), "worstPenetration": round(float(pen), 3)}
         if ok:
@@ -539,6 +540,45 @@ def _way_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, hint=None) -> di
         last = {"insertFrom": None, "closest": ins, "worstPenetration": round(float(pen), 3),
                 "at": _r(where, 2), "after": round(dist, 2)}
     return last or {"insertFrom": None}
+
+
+def _settle_legs(pts, obstacles, lg, exit_bounds, pitch):
+    """The grid's legs come in whole cells; each turning leg is slid within
+    a cell either way to where the whole path keeps the most room (the
+    least penetration, checked exactly). The path is written as the part's
+    keep-out, which is cut from everything, the skin included: a leg that
+    stops a hair short of an opening's rim would notch the rim on the way
+    out."""
+    from .handoff import _path_check
+
+    if len(lg) < 2:
+        return lg
+
+    def worst(legs):
+        return _path_check(pts, _Pen(obstacles), legs, exit_bounds[0], exit_bounds[1], np.inf, step=0.2)[1]
+
+    best = list(lg)
+    w = worst(best)
+    deltas = np.linspace(-pitch, pitch, 9)
+    for _ in range(2):
+        for i in range(len(best) - 1):
+            d, L = best[i]
+            for dl in deltas:
+                if dl == 0 or L + dl <= 0:
+                    continue
+                trial = best[:i] + [(d, L + dl)] + best[i + 1:]
+                wt = worst(trial)
+                if wt < w - 1e-6:
+                    best, w = trial, wt
+            # keep the turn mid-way between the lengths that stay this clear
+            d, L = best[i]
+            ok = [L + dl for dl in np.linspace(-pitch, pitch, 17)
+                  if L + dl > 0 and worst(best[:i] + [(d, L + dl)] + best[i + 1:]) <= w + 1e-6]
+            if ok:
+                mid = best[:i] + [(d, 0.5 * (min(ok) + max(ok)))] + best[i + 1:]
+                if worst(mid) <= w + 1e-6:
+                    best = mid
+    return best
 
 
 class _GroupShape:
@@ -738,10 +778,33 @@ def run_enclosure(brief_path: str, out_dir: str, base_dir: str | None = None, on
                 json.dump(hs, open(hp, "w"), indent=1)
                 r["split"][half] = hp
             r["report"]["split"] = sr["report"]
+    r["report"]["pathsIntoSkin"] = paths_into_skin(study, out_dir)
+    bad = {k: v for k, v in r["report"]["pathsIntoSkin"].items() if v > 0.05}
+    if bad:
+        r["report"]["warnings"].append(
+            f"ways in cut into the skin (mm^3, the keep-out wins): {bad}")
     json.dump(r["report"], open(os.path.join(out_dir, "enclosure.json"), "w"), indent=1, default=float)
     r["study"] = study
     r["studyPath"] = sp
     return r
+
+
+def paths_into_skin(study: dict, base_dir: str) -> dict:
+    """Volume (mm^3) each keep-out with a way in shares with the skin. A
+    keep-out is cut from everything, so any overlap is a notch in the
+    exterior's skin; the way in is chosen to leave none."""
+    from .sharp import exact_manifold
+    from .spec import study_from_dict
+
+    study = json.loads(json.dumps(study))
+    _localize(study, base_dir)
+    st = study_from_dict(study, base_dir=base_dir)
+    skin = [exact_manifold(r.shape) for r in st.preserve if r.id == "skin"]
+    if not skin:
+        return {}
+    ins = {k["id"] for k in study.get("keepOut") or [] if k.get("insertFrom") is not None}
+    return {r.id: round(float((exact_manifold(r.shape) ^ skin[0]).volume()), 3)
+            for r in st.keep_out if r.id in ins}
 
 
 def _delivered(design_dir: str, name: str):
