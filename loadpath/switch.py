@@ -804,6 +804,25 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
     rep["mesh"] = path
     rep["mass"] = float(mesh.volume * study.material.density / 1000.0)
     rep["watertight"] = bool(mesh.is_watertight)
+    if mesh.is_watertight:
+        # The delivered mesh read back the way a drawn part is: its volume
+        # share in each cell (the skin floor under it), the same fire forces.
+        # Smoothing and the exact joins move material by a fraction of a
+        # cell, and on 1 mm cells that is a few percent of force.
+        from .domain import _fraction
+        from .shapes import MeshShape
+        if on_progress is not None:
+            on_progress({"stage": "verify", "check": "delivered mesh fire force"})
+        drawn = _fraction([MeshShape(mesh)], r.domain.mesh.elem_centers(), r.domain.pitch)
+        fd = fire_forces(r.domain, nu, spec, np.maximum(np.maximum(drawn, r.floor), 1e-9), modulus)
+        for p, f in zip(rep["presses"], fd["forces"]):
+            p["deliveredForceGf"] = float(f / GF)
+            p["deliveredOk"] = bool((p["max"] is None or f <= p["max"] * 1.02) and
+                                    (p["min"] is None or f >= p["min"] * 0.98))
+        rep["deliveredHold"] = [float(v) for v in fd["hold"]]
+        rep["deliveredClearanceMax"] = fd.get("clearanceMax")
+    rep["inWindow"] = sum(bool(p["ok"]) for p in rep["presses"])
+    rep["deliveredInWindow"] = sum(bool(p.get("deliveredOk")) for p in rep["presses"])
     if nonlinear is None:
         nonlinear = bool((study.raw.get("switch") or {}).get("nonlinear", False))
     np.save(os.path.join(out_dir, "xphys.npy"), r.xphys)

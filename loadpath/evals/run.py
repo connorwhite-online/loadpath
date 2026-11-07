@@ -504,6 +504,56 @@ def run_field_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
     return _jsonable(row)
 
 
+def run_switch_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
+    """A push-pad case (a `switch` block): `loadpath switch` on the study,
+    held to `expect`: presses in their windows on the design (minInWindow)
+    and read back from the delivered mesh (minDeliveredInWindow), the part's
+    volume (maxVolume, mm^3), each hold case on the delivered mesh, and a
+    watertight mesh. The coarse tier runs expect.coarse.iterations (default
+    40) on the same grid."""
+    from ..__main__ import _jsonable
+    from ..spec import study_from_dict
+    from ..switch import run_switch
+
+    name = raw.get("name")
+    expect = raw.get("expect", {})
+    t0 = time.time()
+    row = {"case": name, "kind": "switch", "tier": tier, "checks": []}
+    try:
+        doc = {k: v for k, v in raw.items() if k != "expect"}
+        st = study_from_dict(doc, base_dir=base)
+        its = None
+        if tier == "coarse":
+            its = [int((expect.get("coarse") or {}).get("iterations", 40))]
+        rep = run_switch(st, os.path.join(out, name), iterations=its, nonlinear=False)
+        vol = float(rep["mass"] / st.material.density * 1000.0)
+        row["best"] = {"mass": rep["mass"], "volume": vol, "inWindow": rep["inWindow"],
+                       "deliveredInWindow": rep["deliveredInWindow"]}
+        row["presses"] = [{k: p.get(k) for k in ("at", "forceGf", "thresholdedForceGf", "deliveredForceGf")}
+                          for p in rep["presses"]]
+        checks = [("in window (design)", rep["inWindow"], ">=", expect.get("minInWindow")),
+                  ("in window (delivered mesh)", rep["deliveredInWindow"], ">=", expect.get("minDeliveredInWindow")),
+                  ("volume mm^3", vol, "<=", expect.get("maxVolume")),
+                  ("watertight", bool(rep["watertight"]), "==", True)]
+        for h, v in zip((st.raw.get("switch") or {}).get("hold") or [], rep.get("deliveredHold") or []):
+            checks.append((f"hold {h['case']} mm (delivered mesh)", v, "<=", h["maxDeflection"]))
+        ok = True
+        for check, v, op, limit in checks:
+            if limit is None:
+                continue
+            passed = bool(v == limit) if op == "==" else _cmp(v, op, limit)
+            ok &= passed
+            row["checks"].append({"check": check, "value": v, "op": op, "limit": limit, "pass": passed})
+        row["pass"] = bool(ok)
+    except Exception as exc:  # noqa: BLE001 - a crashing case is a failing case
+        import traceback
+        row.update({"pass": False, "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()})
+    row["seconds"] = time.time() - t0
+    print(json.dumps(_jsonable({k: row.get(k) for k in ("case", "pass", "best", "error")})),
+          file=sys.stderr, flush=True)
+    return _jsonable(row)
+
+
 # --spread: the search started this much lower and higher than the case's own
 # goal.volumeFraction (one extra full search each)
 SPREAD_STARTS = (0.8, 1.25)
@@ -536,6 +586,9 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None, spre
     if "graph" in raw:
         print(f"== {name} ({tier})", file=sys.stderr, flush=True)
         return run_field_case(raw, base, out, tier)
+    if "switch" in raw:
+        print(f"== {name} ({tier})", file=sys.stderr, flush=True)
+        return run_switch_case(raw, base, out, tier)
     raw = apply_tier(raw, tier)
     print(f"== {name} ({tier})", file=sys.stderr, flush=True)
     if "core" in raw:
