@@ -138,7 +138,16 @@ _KEEP_OUT = {
                                           "report fits gives the as-built band and whether the fit holds."},
                    "mate": {**_POS, "description": "Diameter of the mating part, mm (default the cylinder's: draw "
                                                    "the keep-out at the bearing's or pin's size)."},
-                   "insertFrom": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, _VEC3],
+                   "insertFrom": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, _VEC3, {
+                                      "type": "array", "minItems": 1, "description": "a path of legs as the part "
+                                      "leaves its place: every leg but the last with a length; the last goes on "
+                                      "out of the design space unless it has one too",
+                                      "items": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, {
+                                          "type": "object", "properties": {
+                                              "toward": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"},
+                                                                   _VEC3]},
+                                              "length": _POS}, "required": ["toward"],
+                                          "additionalProperties": False}]}}],
                                   "description": "Assembly path: the side the component (or a tool) comes in "
                                                  "from, like '-z', or a vector. The keep-out is swept out of the "
                                                  "design space that way, so nothing generated blocks putting "
@@ -718,6 +727,19 @@ _MULTI_MATERIAL = {
 }
 
 _FORCE = {"type": "number", "exclusiveMinimum": 0}
+_SWITCH_CLEARANCE = {
+    "type": "object",
+    "description": "a fixed gap for a region ({region | shape, gap}), or the room to a component measured per node "
+                   "along the press ({component, margin}; region/shape then limit which nodes count)",
+    "properties": {
+        "id": {"type": "string", "description": "name in the report (default the component or region)"},
+        "region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"},
+        "gap": {**_POS, "description": "mm the region may move along the press at the fire force"},
+        "component": {"anyOf": [{"type": "string", "description": "a keepOut id: its shape before any insertFrom "
+                                                                  "sweep"}, {"$ref": "#/$defs/shape"}]},
+        "margin": {"type": "number", "minimum": 0, "description": "mm kept clear of the component (default 0.1)"},
+        "reach": {**_POS, "description": "mm, how far below a node to look for the component (default 10)"}},
+    "additionalProperties": False}
 _SWITCH = {
     "type": "object",
     "description": "`loadpath switch`: a target-force push pad (switch.py). Minimize volume so a press anywhere on "
@@ -733,7 +755,26 @@ _SWITCH = {
             "direction": {"type": "string", "pattern": "^[+-]?[xyz]$", "description": "stroke (default -z)"},
             "gap": {"type": "number", "minimum": 0, "description": "mm, plunger to switch stem at rest"},
             "trigger": {"type": "number", "minimum": 0, "description": "the switch's operating force"},
-            "travel": {"type": "number", "minimum": 0, "description": "mm, the switch's own travel to the click"}},
+            "travel": {"type": "number", "minimum": 0, "description": "mm, the switch's own travel to the click"},
+            "bearsOn": {"type": "object", "description": "what the switch body sits on, so its give counts in the "
+                                                         "fire force (default: rigid ground). region/shape: the "
+                                                         "seat in this mesh (a preserved flap or boss): the "
+                                                         "closure is the plunger's travel less the seat's. part: a "
+                                                         "separate fixed part (a flap standing on the desk), its "
+                                                         "seat's compliance solved on its own on cut cells. "
+                                                         "compliance: a measured one, mm/N. Any may be combined",
+                        "properties": {
+                            "region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"},
+                            "part": {"type": "object", "properties": {
+                                "shape": {"$ref": "#/$defs/shape"},
+                                "seat": {"$ref": "#/$defs/shape", "description": "where the switch body sits"},
+                                "supports": {"type": "array", "items": {"$ref": "#/$defs/shape"}, "minItems": 1,
+                                             "description": "where the part is held (its foot on the desk)"},
+                                "material": {"type": "string", "description": "default the study's"},
+                                "pitch": {**_POS, "description": "mm cut-cell grid (default 0.4)"}},
+                                "required": ["shape", "seat", "supports"], "additionalProperties": False},
+                            "compliance": {"type": "number", "minimum": 0, "description": "mm/N, measured"}},
+                        "additionalProperties": False}},
             "additionalProperties": False},
         "presses": {"type": "array", "items": {"type": "object", "properties": {
             "at": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 3},
@@ -750,10 +791,11 @@ _SWITCH = {
         "pressDirection": {"type": "string", "pattern": "^[+-]?[xyz]$", "description": "default: the output's"},
         "pressRadius": {**_POS, "description": "mm, the fingertip disc (default 1)"},
         "maxTravel": {**_POS, "description": "mm of press travel at the click (crispness)"},
-        "clearance": {"type": "object", "properties": {
-            "region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"},
-            "gap": {**_POS, "description": "mm the region may move along the press at the fire force"}},
-            "required": ["gap"], "additionalProperties": False},
+        "clearance": {"anyOf": [{"$ref": "#/$defs/switchClearance"},
+                                {"type": "array", "items": {"$ref": "#/$defs/switchClearance"}, "minItems": 1}],
+                      "description": "how far the skin and interior may move toward what is under them at the fire "
+                                     "force: one entry, or one per component (each node gets the room to the "
+                                     "component under it)"},
         "hold": {"type": "array", "items": {"type": "object", "properties": {
             "case": {"type": "string", "description": "a load case name"},
             "maxDeflection": {**_POS, "description": "mm, force-weighted mean travel under the case"}},
@@ -911,7 +953,17 @@ STUDY_SCHEMA = {
                      "thickness": _POS,
                      "open": {"type": "array", "items": {"type": "string", "pattern": "^[+-]?[xyz]$"},
                               "description": "design-space faces left without skin, like '-z' (where ribs "
-                                             "stand on a cover's inside)"}},
+                                             "stand on a cover's inside)"},
+                     "openings": {"type": "array", "items": {"type": "object", "properties": {
+                         "shape": {"$ref": "#/$defs/shape"},
+                         "inward": {"type": "string", "pattern": "^[+-]?[xyz]$",
+                                    "description": "the way into the part (default +z)"},
+                         "depth": {**_POS, "description": "mm the opening is swept inward (a skin and a bit)"}},
+                         "required": ["shape"], "additionalProperties": False},
+                         "description": "where the exterior opens into the interior (an underside a flap "
+                                        "closes, a port): no skin inside them. The exterior's solid ends at an "
+                                        "opening's inner end, and a skin lining that would be a membrane across "
+                                        "the cavity behind it"}},
                      "required": ["thickness"], "additionalProperties": False}],
                  "description": "Skin-and-rib: mm of the design space's outer surface kept as a solid wall; "
                                 "the optimizer designs the ribs behind it."},
@@ -1091,6 +1143,7 @@ STUDY_SCHEMA = {
     "x-requireOne": [["loadCases"], ["loads"], ["feel"]],
     "additionalProperties": False,
     "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "keepOut": _KEEP_OUT, "support": _SUPPORT,
+              "switchClearance": _SWITCH_CLEARANCE,
               "load": _LOAD, "loadCase": _LOAD_CASE, "material": _ONE_MATERIAL, "fastener": _FASTENER, "goal": _GOAL},
 }
 
@@ -1784,12 +1837,81 @@ FIELD_SCHEMA = {
     "$defs": {**_SHAPES, "shape": _SHAPE, "node": _NODE, **{f"op-{k}": v for k, v in _FIELD_OPS.items()}},
 }
 
+
+_HANDOFF_SHAPE = {"anyOf": [{"type": "string", "description": "a mesh path (STL/3MF/OBJ) or a STEP file"},
+                            {"$ref": "#/$defs/shape"}]}
+_AXIS = {"type": "string", "pattern": "^[+-]?[xyz]$"}
+HANDOFF_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "loadpath handoff brief",
+    "description": "`loadpath handoff`: the designer's exterior and component CAD in, a push-pad study out "
+                   "(handoff.py). Keep-outs per component with a clearance per component, insertFrom found from "
+                   "the assembly order, supports from what the part stands on, the plunger and its seat from the "
+                   "switch's geometry. The exterior is never changed.",
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"}, "description": {"type": "string"},
+        "exterior": {**_HANDOFF_SHAPE, "description": "the designer's exterior surfacing, a closed solid"},
+        "skin": {"anyOf": [_POS, {"type": "object"}], "description": "the skin kept of the exterior (as a study's "
+                                                                     "skin; default 1.0 mm)"},
+        "openings": {"type": "array", "items": {"anyOf": [_HANDOFF_SHAPE, {"type": "object", "properties": {
+            "shape": _HANDOFF_SHAPE, "inward": _AXIS, "depth": _POS}, "required": ["shape"],
+            "additionalProperties": False}]},
+            "description": "where the exterior opens into the interior: no skin across their inner ends "
+                           "(skin.openings, swept a skin and 0.2 mm inward by default)"},
+        "fixed": {"type": "array", "items": {"type": "object", "properties": {
+            "id": {"type": "string"}, "shape": _HANDOFF_SHAPE}, "required": ["shape"],
+            "additionalProperties": False},
+            "description": "the designer's own internal geometry, kept as drawn (rails, a base ring): preserved, "
+                           "and in the way of every assembly path"},
+        "components": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {
+            "id": {"type": "string"}, "shape": _HANDOFF_SHAPE,
+            "role": {"enum": ["switch", "seat", "part"], "description": "switch: the plunger is read off it; "
+                                                                        "seat: what the switch bears on"},
+            "installedOn": {"type": "string", "description": "a component it is fitted to first and travels with "
+                                                             "(a switch on a flap, a connector on a board)"},
+            "insertFrom": {"description": "a hint, tried first; with fixed: true taken as given (an axis, a "
+                                          "vector or a path of legs, as keepOut.insertFrom)"},
+            "fixed": {"type": "boolean", "description": "take insertFrom as given, no search"},
+            "external": {"type": "boolean", "description": "comes from outside after the part is closed (a "
+                                                           "plug): no clearance entry"},
+            "clearance": {"type": "boolean", "description": "a clearance entry for it (default true, except "
+                                                            "the switch, its seat and external parts)"},
+            "pathTolerance": {"type": "number", "minimum": 0, "description": "mm of interference allowed on its "
+                                                                             "way in (a snap bead's reach)"}},
+            "required": ["shape"], "additionalProperties": False}},
+        "assembly": {"type": "array", "items": {"type": "string"},
+                     "description": "component ids in the order they go in (default: as listed); components "
+                                    "installedOn another travel with it"},
+        "switch": {"type": "object", "description": "the switch block of the study, with: component (the "
+                                                    "switch's id), gap (plunger to actuator, default 0.4 mm), "
+                                                    "trigger, travel, plungerRadius (default the actuator's), "
+                                                    "columnClearance (default 1 mm round the plunger), bearsOn "
+                                                    "(a seat component; default the one with role seat), "
+                                                    "clearanceMargin (default 0.2 mm), clearanceRegion (the nodes "
+                                                    "held to their room, default 'skin'; null for every node), and "
+                                                    "the presses, field, "
+                                                    "hold, unit... as in a study"},
+        "rest": {**_AXIS, "description": "the side it stands on (default the press direction): supports there"},
+        "restDepth": {**_POS, "description": "mm of the exterior's far side held (default 0.3)"},
+        "supports": {"type": "array", "description": "supports as given instead"},
+        "keepOut": {"type": "array", "description": "the designer's own clear zones, as given"},
+        "pathTolerance": {"type": "number", "minimum": 0, "description": "mm of interference allowed on a way "
+                                                                         "in (crush ribs, a lip; default 0.25)"},
+        "maxSlide": {**_POS, "description": "mm, longest first leg of a two-leg path (default 12)"},
+        "material": {"type": "string"}, "minMember": _POS, "process": {}, "goal": {"type": "object"},
+        "resolution": {"type": "object"}, "loadCases": {"type": "array"}},
+    "required": ["exterior", "components", "switch"],
+    "additionalProperties": False,
+    "$defs": {**_SHAPES, "shape": _SHAPE},
+}
+
 SCHEMAS = {"study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
-           "field": FIELD_SCHEMA}
+           "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA}
 
 
 def schema(kind: str = "study") -> dict:
-    """A copy of one schema: 'study', 'heatExchanger', 'lattice' or 'field'."""
+    """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field' or 'handoff'."""
     if kind not in SCHEMAS:
         raise ValueError(f"schema kind must be one of {sorted(SCHEMAS)}")
     return copy.deepcopy(SCHEMAS[kind])

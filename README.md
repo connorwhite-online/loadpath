@@ -93,7 +93,11 @@ Where it is strongest:
   material ([docs/FEEL.md](docs/FEEL.md)). Where the exterior itself rules a target out, the report says
   where and by how much, and what skin or target change would fix it, for
   the designer to decide; loadpath never edits the exterior
-  ([docs/SWITCH.md](docs/SWITCH.md)).
+  ([docs/SWITCH.md](docs/SWITCH.md)). `loadpath handoff` starts from what
+  a designer hands over, the exterior and the component CAD in assembly
+  order, and reads the study off the geometry: each part's way in (a board
+  that has to slide back before it drops out included), the plunger over
+  the switch, what the switch stands on, and a clearance per component.
 - **Implicit modelling**: field graphs, graded and conformal lattices (TPMS,
   strut, Voronoi), blends, and exact STEP of lattice parts.
 - **Process awareness**: FDM, SLS, MJF, resin and powder-bed metal rules,
@@ -281,8 +285,11 @@ cm^3 on the first round, as many as the bare skin allows. Corrected over
 rounds, ribs and a graded BCC strut lattice both hit 8 of 14, the lattice in 7.0 cm^3 against the drawn 9.7
 with nothing in the assembly paths, and the four misses are the rim
 presses the 1.0 mm skin alone puts over 300 gf: a call for the designer,
-which the report makes with numbers. It runs in the eval suite as
-`touch-mic-pad`. ([docs/SWITCH.md](docs/SWITCH.md))
+which the report makes with numbers. Written by `loadpath handoff` from
+the product's CAD alone, the study does as well from a quick 1 mm run:
+10 of 14 delivered (0.5 mm cut cells) in 7.4 cm^3, with the skin kept clear
+of every part on the board.
+It runs in the eval suite as `touch-mic-pad`. ([docs/SWITCH.md](docs/SWITCH.md))
 
 <img src="docs/images/switch/touch-mic-forces.png" width="760">
 

@@ -487,13 +487,16 @@ def readback(study, mesh, pitch: float = 0.5, n: int = 4) -> dict:
     U, lam, UH = sol[:nP], sol[nP], sol[nP + 1:]
     a = np.array([prob.l @ u for u in U])
     c = float(prob.l @ lam)
-    F = (spec.gap + spec.travel + spec.trigger * c) / np.maximum(a, 1e-12)
+    F = (spec.stroke + spec.trigger * c) / np.maximum(a, 1e-12)
     out = {"pitch": dom.pitch, "cells": int(sub.n_elem), "cutCells": int(cg.cut.sum()),
            "forceGf": (F / GF).tolist(),
            "inWindow": int(sum(_ok(f, p.min, p.max) for f, p in zip(F, spec.presses))),
            "hold": [float(f @ u) / max(nf, 1e-30) for (f, nf, _), u in zip(prob.hold, UH)]}
     if prob.clr_dofs is not None:
-        out["clearanceMax"] = float(max((spec.press_sign * u[prob.clr_dofs] * Fi).max() for u, Fi in zip(U, F)))
+        from .switch import clearance_rows
+        clr_q = [spec.press_sign * u[prob.clr_dofs] * Fi for u, Fi in zip(U, F)]
+        out["clearanceMax"] = float(max(q.max() for q in clr_q))
+        out["clearance"] = clearance_rows(spec, prob, clr_q)
     out["seconds"] = round(time.time() - t0, 1)
     return out
 

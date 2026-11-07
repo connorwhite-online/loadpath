@@ -63,7 +63,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .domain import Domain
+from .domain import Domain, _region_nodes
 from .fem import hex8_ke
 
 __all__ = ["Press", "SwitchSpec", "SwitchResult", "switch_from_study", "fire_forces", "optimize_switch",
@@ -107,6 +107,25 @@ class SwitchSpec:
     clearance_nodes: np.ndarray | None = None
     clearance: float | None = None    # mm the clearance nodes may move along the press direction
     hold: list = field(default_factory=list)    # [(case index, max mean deflection mm)]
+    # what the switch body bears on (see _bears_on): nodes in this mesh (the
+    # stem's reaction pushes them along the stroke, and the plunger has to
+    # close on them), and/or the compliance of a separate fixed part under
+    # the switch, mm/N, whose give the plunger has to take up too
+    base_nodes: np.ndarray | None = None
+    base_compliance: float = 0.0
+    base_info: dict = field(default_factory=dict)
+    # per clearance node: the room it has (mm) and which entry it belongs to
+    # (see _clearance); `clearance` stays the smallest of them
+    clearance_gap: np.ndarray | None = None
+    clearance_entry: np.ndarray | None = None
+    clearance_entries: list = field(default_factory=list)
+
+    @property
+    def stroke(self) -> float:
+        """How far the plunger closes on the switch's seat at the click: the
+        gap, the switch's own travel, and the give of a separate part the
+        switch bears on under the trigger force."""
+        return self.gap + self.travel + self.trigger * self.base_compliance
 
 
 @dataclass
@@ -212,6 +231,244 @@ def _press_list(block: dict, unit: str) -> list[Press]:
     return out
 
 
+def _shape(spec, study):
+    from .shapes import shape_from_spec
+    return shape_from_spec(spec, getattr(study, "base_dir", None))
+
+
+def _first_hit(shape, pts: np.ndarray, direction: np.ndarray, reach: float, step: float):
+    """Distance along `direction` from each point to `shape` (first point
+    with sdf <= 0), within `reach`; inf where the ray misses, 0 where the
+    point is already inside. Marched at `step`, then bisected."""
+    hit = np.full(len(pts), np.inf)
+    d0 = shape.sdf(pts)
+    hit[d0 <= 0] = 0.0
+    todo = np.flatnonzero(d0 > 0)
+    lo = np.zeros(len(pts))
+    t = 0.0
+    while len(todo) and t < reach:
+        t1 = min(t + step, reach)
+        d = shape.sdf(pts[todo] + t1 * direction)
+        got = d <= 0
+        idx = todo[got]
+        lo[idx] = t
+        hit[idx] = t1
+        todo = todo[~got]
+        t = t1
+    idx = np.flatnonzero(np.isfinite(hit) & (hit > 0))
+    a, b = lo[idx], hit[idx].copy()
+    for _ in range(6):
+        m = 0.5 * (a + b)
+        inside = shape.sdf(pts[idx] + m[:, None] * direction) <= 0
+        b = np.where(inside, m, b)
+        a = np.where(inside, a, m)
+    hit[idx] = b
+    return hit
+
+
+def _clearance(study, domain: Domain, clr, pax: int, psg: int):
+    """The `clearance` block: one entry or a list. Each entry is either
+
+    - {region | shape, gap}: those nodes may move `gap` mm along the press
+      (the first form: one gap for the whole region), or
+    - {component, margin, region?, shape?, reach?, id?}: a component under
+      the skin (a keepOut id, its shape before any insertFrom sweep, or a
+      shape of its own). Each node whose line along the press direction
+      meets the component within `reach` (default 10 mm) gets its own room:
+      the distance to it, less `margin` (default 0.1 mm). A region or
+      shape limits which nodes count. Nodes that already rest on the
+      component (room under margin + 0.05 mm: a rail on the board's edge, a
+      boss under it) carry it by design and are left out.
+
+    Returns (nodes, smallest gap, gap per node, entry per node, entries)."""
+    if not clr:
+        return None, None, None, None, []
+    items = clr if isinstance(clr, list) else [clr]
+    mesh = domain.mesh
+    nn = len(mesh.node_xyz)
+    gap = np.full(nn, np.inf)
+    entry = np.full(nn, -1)
+    entries = []
+    dirv = np.zeros(3)
+    dirv[pax] = psg
+    raw_keep = {k.get("id"): k for k in (study.raw.get("keepOut") or [])}
+    for k, it in enumerate(items):
+        label = f"switch.clearance[{k}]" if isinstance(clr, list) else "switch.clearance"
+        filt = None
+        if it.get("region") or it.get("shape"):
+            cs = _shape(it["shape"], study) if "shape" in it else None
+            filt = _region_nodes(study, mesh, it.get("region"), cs, label)
+        if "gap" in it:
+            if filt is None:
+                raise ValueError(f"{label}: a fixed gap needs a region or shape")
+            g = np.where(filt, float(it["gap"]), np.inf)
+            rec = {"id": it.get("id") or it.get("region") or f"clearance-{k}", "gap": float(it["gap"])}
+        else:
+            comp = it.get("component")
+            if comp is None:
+                raise ValueError(f"{label}: give a gap, or a component to measure the room to")
+            if isinstance(comp, str):
+                if comp not in raw_keep:
+                    raise ValueError(f"{label}.component: no keepOut {comp!r}; keepOuts: {sorted(raw_keep)}")
+                cshape = _shape(raw_keep[comp]["shape"], study)
+                cid = it.get("id") or comp
+            else:
+                cshape = _shape(comp, study)
+                cid = it.get("id") or f"component-{k}"
+            margin = float(it.get("margin", 0.1))
+            reach = float(it.get("reach", 10.0))
+            cand = np.flatnonzero(filt if filt is not None else np.ones(nn, bool))
+            cand = cand[~domain.fixed[3 * cand + pax]]
+            room = _first_hit(cshape, mesh.node_xyz[cand], dirv, reach, min(0.1, mesh.pitch / 5))
+            seen = np.isfinite(room)
+            touching = seen & (room <= margin + 0.05)
+            use = seen & ~touching
+            g = np.full(nn, np.inf)
+            g[cand[use]] = room[use] - margin
+            rec = {"id": cid, "margin": margin, "skippedTouching": int(touching.sum())}
+        nodes = np.isfinite(g)
+        if not nodes.any():
+            # nothing of the part within reach over it: nothing to hold
+            # (a thinner skin read in the skin review can lift every node
+            # out of reach)
+            rec.update({"nodes": 0, "minGap": None})
+            entries.append(rec)
+            continue
+        rec.update({"nodes": int(nodes.sum()), "minGap": float(g[nodes].min())})
+        better = g < gap
+        gap[better] = g[better]
+        entry[better] = k
+        entries.append(rec)
+    nodes = np.isfinite(gap)
+    if not nodes.any():
+        return None, None, None, None, entries
+    return nodes, float(gap[nodes].min()), np.where(nodes, gap, np.nan), entry, entries
+
+
+_PART_CACHE: dict = {}
+
+
+def part_compliance(study, part: dict, axis: int, sign: int, pitch: float | None = None) -> dict:
+    """The give of a separate fixed part the switch bears on: mean travel
+    along the stroke of its seat per newton on it, solved on the part
+    alone as cut cells (switch_lattice.readback's method, so a 1.2 mm plate
+    is 1.2 mm on any grid). part = {shape, seat (shape), supports: [shape,
+    ...], material? (default the study's), pitch? (default 0.4 mm)}. The
+    part is held at its supports only: anything else that couples it to
+    the body (a snap bead, a press fit) is left out, which reads it as
+    loose as it can be."""
+    import json as _json
+
+    from scipy import ndimage
+
+    from .bucklingopt import _factor
+    from .cutcell import CutGrid, scan_voxelize
+    from .domain import build_domain
+    from .fem import Stiffness
+    from .spec import study_from_dict
+
+    pitch = float(pitch or part.get("pitch", 0.4))
+    key = (_json.dumps(part, sort_keys=True, default=str), axis, sign, pitch, getattr(study, "base_dir", None))
+    if key in _PART_CACHE:
+        return _PART_CACHE[key]
+    t0 = time.time()
+    mat = part.get("material") or study.raw.get("material")
+    doc = {"name": "bears-on", "designSpace": part["shape"],
+           "preserve": [{"id": "part", "shape": part["shape"]}],
+           "supports": [{"shape": s} for s in part["supports"]],
+           "loadCases": [{"name": "seat", "loads": [{"shape": part["seat"], "force": [0.0, 0.0, -1.0]}]}],
+           "material": mat, "resolution": {"pitch": pitch}}
+    mini = study_from_dict(doc, getattr(study, "base_dir", None))
+    shape = mini.design_space[0]
+    dom = build_domain(mini, pitch)
+    seat_shape = _shape(part["seat"], mini)
+    seat = _region_nodes(mini, dom.mesh, None, seat_shape, "bearsOn.part.seat")
+    import trimesh
+    man = shape.to_manifold().to_mesh()
+    tm = trimesh.Trimesh(np.asarray(man.vert_properties)[:, :3], np.asarray(man.tri_verts), process=False)
+    nu = mini.elastic(design=True)
+    E = float(mini.material.E)
+    n = 4
+    dims = np.asarray(dom.dims)
+    fine = scan_voxelize(tm, dom.pitch / n, dom.origin, dims * n)
+    cg = CutGrid(fine, n, dom.origin, dom.pitch, nu)
+    lut = np.full(tuple(dims), -1, np.int64)
+    lut[tuple(dom.mesh.elem_ijk.T)] = np.arange(dom.n_elem)
+    ijk = cg.mesh.elem_ijk
+    inb = np.all(ijk < dims, axis=1)
+    el = np.full(len(ijk), -1, np.int64)
+    el[inb] = lut[tuple(ijk[inb].T)]
+    keep = el >= 0
+    g = np.zeros(tuple(dims), bool)
+    g[tuple(ijk[keep].T)] = True
+    lbl, _ = ndimage.label(g, structure=np.ones((3, 3, 3), bool))
+    touch = dom.support_nodes[dom.mesh.enode].any(axis=1)
+    held = np.unique(lbl[tuple(dom.mesh.elem_ijk[touch].T)])
+    keep &= np.isin(lbl[tuple(np.minimum(ijk, dims - 1).T)], held[held > 0])
+    cg = cg.restrict(keep)
+    sub = cg.mesh
+    nodes = dom.mesh.node_id(sub.node_ijk)
+    dofs = (3 * nodes[:, None] + np.arange(3)).ravel()
+    fixed = dom.fixed[dofs]
+    free = np.flatnonzero(~fixed)
+    k = cg.assemble(Stiffness(sub, nu, fixed), 1.0)
+    present = np.zeros(len(dom.mesh.node_xyz), bool)
+    present[nodes] = True
+    seat &= present
+    if not seat.any():
+        raise ValueError("bearsOn.part.seat touches no material of the part")
+    m = _unit_load(seat, axis, sign, dom.mesh.n_dof, dom.fixed)
+    solve, release = _factor(k[free][:, free].tocsr())
+    x = np.asarray(solve(m[dofs][free])).ravel() / E
+    if release is not None:
+        release()
+    u = np.zeros(dom.mesh.n_dof)
+    u[dofs[free]] = x
+    c = float(m @ u)
+    out = {"compliance": c, "pitch": dom.pitch, "cells": int(sub.n_elem), "seatNodes": int(seat.sum()),
+           "material": mini.material.name if hasattr(mini.material, "name") else mat,
+           "seconds": round(time.time() - t0, 1),
+           "held": "at its supports only: a snap bead or press fit to the body is left out"}
+    _PART_CACHE[key] = out
+    return out
+
+
+def _bears_on(study, domain: Domain, bo, axis: int, sign: int, out_nodes: np.ndarray):
+    """`output.bearsOn`: what the switch body sits on, so its give counts.
+
+    The stem pushes the plunger back with the trigger force, and the
+    switch body pushes whatever it sits on down with the same force. Up to
+    now that was rigid ground. bearsOn = {region | shape} names the seat in
+    this mesh (a preserved flap, a boss): the closure that fires the switch
+    is then the plunger's travel less the seat's, r = l - m in place of l in
+    every formula (F = (g + s + T r.K^-1 r) / r.K^-1 f), and the reaction
+    loads both. bearsOn = {part: {...}} is a separate fixed part (a flap that
+    closes the underside and stands on the desk): its seat's compliance c_b
+    comes from its own solve (part_compliance), and the plunger has to go
+    T c_b further: g + s + T (c + c_b). bearsOn = {compliance: mm/N} takes a
+    measured one. Any of these may be combined."""
+    if not bo:
+        return None, 0.0, {}
+    info = {}
+    nodes = None
+    if bo.get("region") or bo.get("shape"):
+        bs = _shape(bo["shape"], study) if "shape" in bo else None
+        nodes = _region_nodes(study, domain.mesh, bo.get("region"), bs, "switch.output.bearsOn")
+        if (nodes & out_nodes).any():
+            raise ValueError("switch.output.bearsOn: the seat shares nodes with the plunger face")
+        info["seatNodes"] = int(nodes.sum())
+    c = 0.0
+    if bo.get("part"):
+        pc = part_compliance(study, bo["part"], axis, sign)
+        c += pc["compliance"]
+        info["part"] = pc
+    if bo.get("compliance") is not None:
+        c += float(bo["compliance"])
+        info["measuredCompliance"] = float(bo["compliance"])
+    info["compliance"] = c
+    return nodes, c, info
+
+
 def switch_from_study(study, domain: Domain) -> SwitchSpec:
     """The study's `switch` block on this domain's mesh."""
     from .domain import _region_nodes
@@ -227,23 +484,22 @@ def switch_from_study(study, domain: Domain) -> SwitchSpec:
     axis, sign = _axis(o.get("direction", "-z"))
     pax, psg = _axis(b.get("pressDirection", o.get("direction", "-z")))
     presses = _press_list(b, unit)
-    clr = b.get("clearance")
-    cn, cg = None, None
-    if clr:
-        cs = shape_from_spec(clr["shape"]) if "shape" in clr else None
-        cn = _region_nodes(study, domain.mesh, clr.get("region"), cs, "switch.clearance")
-        cg = float(clr["gap"])
+    cn, cg, cgap, cent, centries = _clearance(study, domain, b.get("clearance"), pax, psg)
     hold = []
     for h in b.get("hold") or []:
         name = h["case"]
         if name not in domain.case_names:
             raise ValueError(f"switch.hold: unknown load case {name!r}; cases: {domain.case_names}")
         hold.append((domain.case_names.index(name), float(h["maxDeflection"])))
+    trig = _force(o.get("trigger", 0.0), unit)
+    bn, bc, binfo = _bears_on(study, domain, o.get("bearsOn"), axis, sign, out_nodes)
     return SwitchSpec(output_nodes=out_nodes, axis=axis, sign=sign, gap=float(o.get("gap", 0.0)),
-                      trigger=_force(o.get("trigger", 0.0), unit), travel=float(o.get("travel", 0.0)),
+                      trigger=trig, travel=float(o.get("travel", 0.0)),
                       presses=presses, press_axis=pax, press_sign=psg,
                       press_radius=float(b.get("pressRadius", 1.0)),
-                      max_travel=b.get("maxTravel"), clearance_nodes=cn, clearance=cg, hold=hold)
+                      max_travel=b.get("maxTravel"), clearance_nodes=cn, clearance=cg, hold=hold,
+                      base_nodes=bn, base_compliance=bc, base_info=binfo,
+                      clearance_gap=cgap, clearance_entry=cent, clearance_entries=centries)
 
 
 # ---------------------------------------------------------------------------
@@ -306,8 +562,24 @@ class _Solves:
         keep = np.unique(el[alive & self.support_touch])
         return alive & np.isin(el, keep[keep > 0])
 
+    def release(self):
+        """Free the last PARDISO factor (MKL holds it outside Python: the
+        skin review's dozens of refactors of the touch microphone ran a
+        15 GB box out of memory before this)."""
+        rel = getattr(self, "_release", None)
+        self._release = None
+        if rel is not None:
+            rel()
+
+    def __del__(self):
+        try:
+            self.release()
+        except Exception:  # noqa: BLE001 - interpreter shutdown
+            pass
+
     def factor(self, xp: np.ndarray):
         """Set up the reduced system for density xp (unit modulus)."""
+        self.release()
         import scipy.sparse as sp
         from scipy.sparse.linalg import splu
 
@@ -435,6 +707,8 @@ class _Problem:
     weights: list         # press weights (f_i itself, for the press travel)
     hold: list            # [(force vector, |F|, limit)]
     clr_dofs: np.ndarray | None
+    clr_gap: np.ndarray | None = None     # mm of room per clearance dof
+    clr_entry: np.ndarray | None = None   # clearance entry per clearance dof
 
 
 def _problem(domain: Domain, spec: SwitchSpec) -> _Problem:
@@ -446,17 +720,30 @@ def _problem(domain: Domain, spec: SwitchSpec) -> _Problem:
     l = _unit_load(spec.output_nodes, spec.axis, spec.sign, mesh.n_dof, domain.fixed)
     if not np.abs(l).sum():
         raise ValueError("switch.output: every plunger node is held by a support")
+    if spec.base_nodes is not None:
+        # the switch's seat in this mesh: the closure is the plunger's
+        # travel less the seat's, and the stem's reaction loads both
+        m = _unit_load(spec.base_nodes, spec.axis, spec.sign, mesh.n_dof, domain.fixed)
+        l = l - m
     hold = []
     for ci, lim in spec.hold:
         f = domain.loads[ci]
         # force-weighted mean travel along each nodal force: f . u / sum |f_node|
         # (a squeeze's two sides cancel in the net force)
         hold.append((f, float(np.linalg.norm(f.reshape(-1, 3), axis=1).sum()), lim))
-    cd = None
+    cd, cg, ce = None, None, None
     if spec.clearance_nodes is not None:
-        cd = 3 * np.flatnonzero(spec.clearance_nodes) + spec.press_axis
-        cd = cd[~domain.fixed[cd]]
-    return _Problem(spec, loads, l, loads, hold, cd)
+        nodes = np.flatnonzero(spec.clearance_nodes)
+        cd = 3 * nodes + spec.press_axis
+        keep = ~domain.fixed[cd]
+        cd = cd[keep]
+        if spec.clearance_gap is not None:
+            cg = spec.clearance_gap[nodes[keep]]
+            ce = spec.clearance_entry[nodes[keep]]
+        else:
+            cg = np.full(len(cd), float(spec.clearance))
+            ce = np.zeros(len(cd), int)
+    return _Problem(spec, loads, l, loads, hold, cd, cg, ce)
 
 
 def _modulus(xp, E_MIN, PENALTY):
@@ -510,7 +797,7 @@ def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float
     a = np.array([prob.l @ u for u in U])
     b = np.array([f @ u for f, u in zip(prob.loads, U)])
     c = float(prob.l @ lam)
-    N = spec.gap + spec.travel + spec.trigger * c
+    N = spec.stroke + spec.trigger * c
     a_safe = np.maximum(a, 1e-12)
     F = N / a_safe
     d = b * F - a * spec.trigger
@@ -524,6 +811,7 @@ def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float
         # lift them a little: conservative)
         clr_q = [spec.press_sign * u[prob.clr_dofs] * Fi for u, Fi in zip(U, F)]
         out["clearanceMax"] = float(max(q.max() for q in clr_q))
+        out["clearance"] = clearance_rows(spec, prob, clr_q)
     if not grads:
         return out, None
     dpair = _dpair(domain, nu, xp, modulus, solves)
@@ -544,7 +832,7 @@ def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float
     if clr_q is not None:
         # KS over every press and node of q / gap
         rho = 40.0
-        qs = np.concatenate(clr_q) / spec.clearance
+        qs = np.concatenate([q / prob.clr_gap for q in clr_q])
         m = qs.max()
         w = np.exp(rho * (qs - m))
         ks = m + np.log(w.sum()) / rho
@@ -556,7 +844,7 @@ def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float
         for i in range(nP):
             r = np.zeros(mesh.n_dof)
             wi = w[i * n:(i + 1) * n]
-            r[prob.clr_dofs] = wi * F[i] * spec.press_sign / spec.clearance
+            r[prob.clr_dofs] = wi * F[i] * spec.press_sign / prob.clr_gap
             adj.append(r)
         mus = solves.solve(adj, "clr")
         g = np.zeros(mesh.n_elem)
@@ -564,10 +852,32 @@ def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float
             wi = w[i * n:(i + 1) * n]
             mu = np.asarray(mus[i]) / modulus
             g += dpair(mu, U[i])
-            zi = spec.press_sign * U[i][prob.clr_dofs] / spec.clearance
+            zi = spec.press_sign * U[i][prob.clr_dofs] / prob.clr_gap
             g += float(wi @ zi) * dF[i]
         G["clearance"] = g
     return out, G
+
+
+def clearance_rows(spec: SwitchSpec, prob: _Problem, clr_q: list) -> list[dict]:
+    """Per clearance entry: the most any of its nodes moves toward what is
+    under it at a press's fire force, its room there, and the worst share of
+    room used (over 1: it touches)."""
+    rows = []
+    q = np.stack(clr_q)                     # presses x dofs
+    ratio = q / prob.clr_gap
+    names = spec.clearance_entries or [{"id": "clearance"}]
+    for k, rec in enumerate(names):
+        sel = prob.clr_entry == k
+        if not sel.any():
+            rows.append({"id": rec.get("id"), "nodes": 0, "ok": True})
+            continue
+        r = ratio[:, sel]
+        i, j = np.unravel_index(int(np.argmax(r)), r.shape)
+        rows.append({"id": rec.get("id"), "nodes": int(sel.sum()), "minGap": float(prob.clr_gap[sel].min()),
+                     "maxTravel": float(q[:, sel].max()), "worstShare": float(r[i, j]),
+                     "worstAtPress": int(i), "worstTravel": float(q[:, sel][i, j]),
+                     "worstGap": float(prob.clr_gap[sel][j]), "ok": bool(r.max() <= 1.0)})
+    return rows
 
 
 def fire_forces(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray, modulus: float) -> dict:
@@ -576,7 +886,8 @@ def fire_forces(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray, modulus
     prob = _problem(domain, spec)
     out, _ = _evaluate(domain, nu, prob, np.asarray(xphys, float), modulus, _Solves(domain, nu), grads=False)
     return {"forces": out["F"], "travel": out["travel"], "plungerCompliance": out["c"],
-            "hold": out["hold"], **({"clearanceMax": out["clearanceMax"]} if "clearanceMax" in out else {})}
+            "hold": out["hold"], **({"clearanceMax": out["clearanceMax"], "clearance": out["clearance"]}
+                                    if "clearanceMax" in out else {})}
 
 
 # ---------------------------------------------------------------------------
@@ -880,6 +1191,9 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
            "plungerCompliance": out["c"], "hold": out["hold"].tolist()}
     if "clearanceMax" in out:
         rep["clearanceMax"] = out["clearanceMax"]
+        rep["clearance"] = out["clearance"]
+    if spec.base_info:
+        rep["bearsOn"] = {**spec.base_info, "giveAtTrigger": spec.trigger * spec.base_compliance}
     return SwitchResult(x=x, xphys=xp, domain=prev_dom, floor=floor, forces=out["F"], travel=out["travel"],
                         volume=float(xp[~prev_dom.preserve].mean()), iterations=it_total, seconds=time.time() - t0,
                         history=history, levels=levels, report=rep)
@@ -929,7 +1243,7 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
         thin = (floor > 0) & (xphys >= THIN_KEEP)
         keep = (keep & ~(floor > 0)) | thin
         emod[thin] = modulus * np.minimum(xphys[thin], 1.0) ** 3
-    target = spec.gap + spec.travel
+    target = spec.stroke
     # With cut-cell skin cells (domain.skin) the Newton solve still reads
     # them at E x^3 (it takes one modulus per cell): its large-deflection
     # ratio is applied to the cut-cell linear reading
@@ -1110,6 +1424,8 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
                                         (p["min"] is None or f >= p["min"] * 0.98))
             rep["deliveredHold"] = [float(v) for v in fd["hold"]]
             rep["deliveredClearanceMax"] = fd.get("clearanceMax")
+            if fd.get("clearance") is not None:
+                rep["deliveredClearance"] = fd["clearance"]
             rep["deliveredReadback"] = {"method": "cut cells", "pitch": fd["pitch"], "seconds": fd["seconds"]}
     else:
         delivered = None

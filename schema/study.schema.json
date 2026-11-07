@@ -74,6 +74,32 @@
                 "pattern": "^[+-]?[xyz]$"
               },
               "description": "design-space faces left without skin, like '-z' (where ribs stand on a cover's inside)"
+            },
+            "openings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "shape": {
+                    "$ref": "#/$defs/shape"
+                  },
+                  "inward": {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$",
+                    "description": "the way into the part (default +z)"
+                  },
+                  "depth": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "mm the opening is swept inward (a skin and a bit)"
+                  }
+                },
+                "required": [
+                  "shape"
+                ],
+                "additionalProperties": false
+              },
+              "description": "where the exterior opens into the interior (an underside a flap closes, a port): no skin inside them. The exterior's solid ends at an opening's inner end, and a skin lining that would be a membrane across the cavity behind it"
             }
           },
           "required": [
@@ -722,6 +748,59 @@
               "type": "number",
               "minimum": 0,
               "description": "mm, the switch's own travel to the click"
+            },
+            "bearsOn": {
+              "type": "object",
+              "description": "what the switch body sits on, so its give counts in the fire force (default: rigid ground). region/shape: the seat in this mesh (a preserved flap or boss): the closure is the plunger's travel less the seat's. part: a separate fixed part (a flap standing on the desk), its seat's compliance solved on its own on cut cells. compliance: a measured one, mm/N. Any may be combined",
+              "properties": {
+                "region": {
+                  "type": "string"
+                },
+                "shape": {
+                  "$ref": "#/$defs/shape"
+                },
+                "part": {
+                  "type": "object",
+                  "properties": {
+                    "shape": {
+                      "$ref": "#/$defs/shape"
+                    },
+                    "seat": {
+                      "$ref": "#/$defs/shape",
+                      "description": "where the switch body sits"
+                    },
+                    "supports": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/shape"
+                      },
+                      "minItems": 1,
+                      "description": "where the part is held (its foot on the desk)"
+                    },
+                    "material": {
+                      "type": "string",
+                      "description": "default the study's"
+                    },
+                    "pitch": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "description": "mm cut-cell grid (default 0.4)"
+                    }
+                  },
+                  "required": [
+                    "shape",
+                    "seat",
+                    "supports"
+                  ],
+                  "additionalProperties": false
+                },
+                "compliance": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "mm/N, measured"
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -836,24 +915,19 @@
           "description": "mm of press travel at the click (crispness)"
         },
         "clearance": {
-          "type": "object",
-          "properties": {
-            "region": {
-              "type": "string"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/switchClearance"
             },
-            "shape": {
-              "$ref": "#/$defs/shape"
-            },
-            "gap": {
-              "type": "number",
-              "exclusiveMinimum": 0,
-              "description": "mm the region may move along the press at the fire force"
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/switchClearance"
+              },
+              "minItems": 1
             }
-          },
-          "required": [
-            "gap"
           ],
-          "additionalProperties": false
+          "description": "how far the skin and interior may move toward what is under them at the fire force: one entry, or one per component (each node gets the room to the component under it)"
         },
         "hold": {
           "type": "array",
@@ -2623,6 +2697,49 @@
               "minItems": 3,
               "maxItems": 3,
               "description": "[x, y, z]"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "description": "a path of legs as the part leaves its place: every leg but the last with a length; the last goes on out of the design space unless it has one too",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "toward": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[+-]?[xyz]$"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "[x, y, z]"
+                          }
+                        ]
+                      },
+                      "length": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "toward"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
             }
           ],
           "description": "Assembly path: the side the component (or a tool) comes in from, like '-z', or a vector. The keep-out is swept out of the design space that way, so nothing generated blocks putting the part together (a board slid in from below, a driver reaching a screw)."
@@ -2678,6 +2795,49 @@
           "shape"
         ]
       ],
+      "additionalProperties": false
+    },
+    "switchClearance": {
+      "type": "object",
+      "description": "a fixed gap for a region ({region | shape, gap}), or the room to a component measured per node along the press ({component, margin}; region/shape then limit which nodes count)",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "name in the report (default the component or region)"
+        },
+        "region": {
+          "type": "string"
+        },
+        "shape": {
+          "$ref": "#/$defs/shape"
+        },
+        "gap": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm the region may move along the press at the fire force"
+        },
+        "component": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "a keepOut id: its shape before any insertFrom sweep"
+            },
+            {
+              "$ref": "#/$defs/shape"
+            }
+          ]
+        },
+        "margin": {
+          "type": "number",
+          "minimum": 0,
+          "description": "mm kept clear of the component (default 0.1)"
+        },
+        "reach": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm, how far below a node to look for the component (default 10)"
+        }
+      },
       "additionalProperties": false
     },
     "load": {

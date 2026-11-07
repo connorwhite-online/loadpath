@@ -287,6 +287,28 @@ def switch(study, base_dir: str | None = None, pitches: list | None = None, skin
     return out
 
 
+def handoff(brief, base_dir: str | None = None, run: bool = False, pitches: list | None = None) -> dict:
+    """Validate a designer's handoff brief (handoff.py) and build its
+    push-pad study as a background job (the assembly path search takes a
+    minute or two); run: then design it (loadpath switch)."""
+    if isinstance(brief, str):
+        from .tasks import read_doc
+        brief, base_dir = read_doc(brief, base_dir)
+    from .schema import format_issues, lint
+    errors = [x for x in lint(brief, "handoff") if x["level"] == "error"]
+    if errors:
+        return {"ok": False, "error": format_issues(errors)}
+    args = ["handoff", "{dir}/brief.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
+    if run:
+        args.append("--run")
+        if pitches:
+            args += ["--pitches", ",".join(str(float(p)) for p in pitches)]
+    out = _spawn("handoff", brief.get("name") or "handoff", {"brief.json": brief}, args,
+                 base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def feel(study, base_dir: str | None = None, pitches: list | None = None) -> dict:
     """Validate a study with a `feel` block and design its interior
     (feel.py) as a background job."""
@@ -875,6 +897,20 @@ def serve():
         exterior). skin_review_only: read the bare skin alone first (minutes), nothing designed.
         Starts a job; poll loadpath_status."""
         return switch(study, base_dir, pitches, skin_review_only)
+
+    @tool
+    def loadpath_handoff(brief: dict | str, base_dir: str | None = None, run: bool = False,
+                         pitches: list | None = None) -> dict:
+        """A designer's handoff to a push-pad study: the exterior surfacing and the component CAD
+        (STL/STEP paths or shapes) in, with the assembly order, the switch's trigger and travel, and the
+        press windows (loadpath_schema('handoff')). Out: a linted study with every component a keep-out,
+        a clearance per component (each node's own room to what is under it), insertFrom found from the
+        assembly order (one axis, or slide-then-drop; a part with no clear way in is reported blocked,
+        where it hits), supports where the part stands, the plunger tip read off the switch's actuator
+        and the part the switch bears on (its give counts in the click force). The exterior is never
+        changed. run: then design it, as loadpath_switch. Starts a job; poll loadpath_status, the
+        study is out/<name>.study.json and the report out/handoff.json."""
+        return handoff(brief, base_dir, run, pitches)
 
     @tool
     def loadpath_feel(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:

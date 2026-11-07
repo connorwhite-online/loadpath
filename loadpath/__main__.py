@@ -413,7 +413,8 @@ def main(argv=None):
     c.add_argument("study")
     c.add_argument("--base-dir")
     s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
-    s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field"])
+    s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field",
+                                                                "handoff"])
     e = sub.add_parser("examples", help="list the packaged examples, or print one")
     e.add_argument("name", nargs="?")
     lt = sub.add_parser("lattice", help="fill a finished part with a stress-graded TPMS lattice")
@@ -535,6 +536,15 @@ def main(argv=None):
     sw.add_argument("--lattice", help="a graded lattice instead of ribs: TYPE[:CELL_MM[:MODE]], e.g. "
                     "octet:5:where-needed (default: switch.lattice, if the study has one)")
     sw.add_argument("--base-dir")
+    ho = sub.add_parser("handoff", help="a designer's handoff: the exterior and the component CAD in, a push-pad "
+                                        "study out (keep-outs and clearance per component, insertFrom from the "
+                                        "assembly order, supports, the plunger and its seat); --run designs it")
+    ho.add_argument("brief", help="the handoff brief (`loadpath schema handoff`)")
+    ho.add_argument("--out", default="loadpath-handoff")
+    ho.add_argument("--run", action="store_true", help="then run `loadpath switch` on the study")
+    ho.add_argument("--pitches", help="with --run: comma-separated mm")
+    ho.add_argument("--iterations", help="with --run: comma-separated, per pitch")
+    ho.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
     fe = sub.add_parser("feel", help="design the inside of a fixed exterior for how it feels: grip squeeze, drop "
                                      "cushioning, vibration isolation of a part inside (the study's feel block; "
                                      "with a switch block too, the click force with them)")
@@ -699,6 +709,8 @@ def main(argv=None):
         return _switch(args)
     if args.cmd == "feel":
         return _feel(args)
+    if args.cmd == "handoff":
+        return _handoff(args)
     if args.cmd == "explore":
         return _explore(args)
     if args.cmd == "lattice-orient":
@@ -1343,6 +1355,33 @@ def _switch(args):
         return 2
     _write_report(args.out, {"ok": rep["passes"], **rep})
     return 0 if rep["passes"] else 1
+
+
+def _handoff(args):
+    from .handoff import run_handoff
+    from .schema import format_issues, lint
+
+    doc = _load(args.brief)
+    errors = [x for x in lint(doc, "handoff") if x["level"] == "error"]
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+    try:
+        r = run_handoff(args.brief, args.out, base_dir=args.base_dir)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    rep = r["report"]
+    out = {"ok": not rep["lint"], "study": r["studyPath"], "report": os.path.join(args.out, "handoff.json"),
+           "assembly": {k: v.get("insertFrom") for k, v in rep["assembly"]["components"].items()},
+           "plunger": {"tip": rep["plunger"]["tip"], "radius": rep["plunger"]["radius"]},
+           "warnings": rep["warnings"]}
+    print(json.dumps(out, default=float))
+    if args.run and out["ok"]:
+        args.study, args.base_dir, args.out = r["studyPath"], None, os.path.join(args.out, "switch")
+        args.nonlinear, args.skin_review, args.lattice = None, False, None
+        return _switch(args)
+    return 0 if out["ok"] else 2
 
 
 def _feel(args):

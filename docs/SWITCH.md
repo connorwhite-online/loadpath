@@ -151,10 +151,11 @@ volume share per cell, which turns thin ribs into soft hinges. Both are
 cut cells now (below). The optimizer's own reading of this design is 8 of
 14 on 0.7 mm cells, and the mesh read back on those cells gives 10 of 14.
 
-The clearance limit (1.4 mm of skin travel toward anything on the board)
-is not met by any design here, round 17 included. It is the smallest gap
-over the board (the USB-C receptacle) applied to the whole board. A
-clearance region per component would be the honest version.
+The clearance limit in those runs (1.4 mm of skin travel toward anything
+on the board) was not met by any design, round 17 included. It was the
+smallest gap over the board (the USB-C receptacle's) applied to the whole
+board. It is a clearance per component now (below), and every design
+since meets it.
 
 The run took 60 iterations on 1.0 mm cells and 60 on 0.7 mm cells, about
 50 minutes on 4 CPU cores. A press counts as in window within 2%.
@@ -166,9 +167,160 @@ the case is skipped where that is not set. It passes with at least 8
 presses in window on the design and 8 on the delivered mesh's cut-cell
 read-back, under 9.0 cm^3, a watertight mesh, and the squeeze held. The
 coarse tier (1.0 mm only, 40 iterations) gives 9 and 9 of 14 in 7.4 cm^3.
+Since the designer-handoff work the case also keeps no skin across the
+opening, bears the switch on the closed flap and holds a clearance per
+board part (below); its coarse tier now gives 9 and 8 of 14 in 7.2 cm^3,
+in 383 s (1403 s in the earlier run).
 Every `loadpath switch` report carries the read-back (`deliveredForceGf`,
 `deliveredInWindow`, `deliveredHold`). A shareable comparison sheet:
 https://claude.ai/artifact/DevY83gMUWnygXPb2Jkm5v.
+
+## From the designer's handoff
+
+Writing the study above meant reading the CAD for numbers: where the
+switch's actuator is, how far over it the plunger tip sits, which way the
+board goes in, what the part stands on. `loadpath handoff` reads them off
+the geometry. The brief is what a designer hands over: the exterior, its
+openings, their own internal geometry (rails, a base ring), each
+component's CAD (STL or STEP), the order they go in, and the switch's
+trigger force, travel and press windows (`loadpath schema handoff`).
+
+```json
+{"exterior": "outer.stl", "skin": 1.0, "openings": ["opening.stl"],
+ "fixed": [{"id": "base", "shape": "base.stl"}, {"id": "rails", "shape": "rails.stl"}],
+ "components": [
+   {"id": "pcb", "shape": "pcb.stl"},
+   {"id": "receptacle", "shape": "receptacle.stl", "installedOn": "pcb"},
+   {"id": "flap", "shape": "flap.stl", "role": "seat", "pathTolerance": 0.7},
+   {"id": "switch", "shape": "switch.stl", "role": "switch", "installedOn": "flap"},
+   {"id": "usb-plug", "shape": {...}, "external": true, "fixed": true, "insertFrom": "+y"}],
+ "assembly": ["pcb", "flap", "usb-plug"],
+ "switch": {"unit": "gf", "trigger": 65, "travel": 0.25, "gap": 0.4, "presses": [...]}}
+```
+
+```
+python -m loadpath handoff brief.json --out handoff/      # study + handoff.json
+python -m loadpath handoff brief.json --out handoff/ --run
+```
+
+What it writes, and how it finds each part (`handoff.json` says which):
+
+- **Keep-outs and their paths.** Every component is a keep-out. In
+  assembly order, each one (with everything installed on it) is moved out
+  of its place along each of the six axes, the designer's hint first, and
+  the first way that does not pass through the skin, the fixed geometry or
+  a component already in place is its `insertFrom`. When no single axis
+  is clear, a slide then a drop: the shortest first leg after which some
+  other axis is clear. `insertFrom` takes such a path as a list of legs.
+  Fixed material is counted less every component's place (each keep-out
+  cuts it from the part), and up to `pathTolerance` (0.25 mm, for crush
+  ribs and lips) of interference is allowed. A component with no way in is
+  not given one: it is reported `blocked`, with what it hits and where,
+  for the designer.
+- **Supports**: a slab on the side the part stands on (`rest`, by default
+  the press direction).
+- **The plunger**: the switch's highest cap is its actuator (its axis and
+  radius from the cap's vertices); the tip is `gap` over it and runs up
+  into the skin, preserved; the column from the switch body up to the tip
+  is kept clear, 1 mm wider than the plunger.
+- **What the switch bears on** (`role: "seat"`): `switch.output.bearsOn`,
+  the seat under the switch's footprint and the part held where it stands
+  (below).
+- **A clearance per component** under the skin (below), 0.2 mm margin.
+- **Openings**: no skin is kept across an opening's inner end
+  (`skin.openings`). The exterior solid ends there, and a skin lining it is
+  a membrane across the cavity behind. The touch microphone's first
+  studies had one: their delivered parts carry a 0.3-0.4 mm sheet at
+  z 4.3-4.6 mm across the board bay over the flap, where the flap's fence
+  and plug have to go.
+
+Paths are translations. A part that really goes in tilted gets a longer
+straight path than it needs (a little less design space); give its own
+path with `"fixed": true` when that matters. The study is self-contained:
+the meshes are copied into `cad/` beside it.
+
+On the touch microphone (round 17's CAD, the parts extracted from its
+OpenSCAD source: `touch_mic.py --handoff`), in under 2 minutes:
+
+- the board, with its receptacle and chip, cannot drop straight out: its
+  far end sits in a slot over the base ring. It slides back 8.5 mm, then
+  drops out through the opening;
+- the flap, carrying the switch, closes from below (its snap bead runs
+  0.22 mm into the base on the way, inside its 0.7 mm allowance);
+- the plunger tip lands at z 8.1, 0.4 mm over the actuator's top at 7.7,
+  on its axis, as drawn; the actuator reads 3.5 mm across;
+- the USB-C plug's path is the designer's (`fixed`).
+
+Designed from that study (1 mm cells, 40 iterations, 150 s to optimize;
+the designer's own clear zone over the board passed through as a keep-out):
+
+| | in window | force to click | clearance used (worst) | squeeze | volume |
+|---|---|---|---|---|---|
+| design (1 mm) | 9 of 14 | 150 gf centre, 412-430 gf at the rim corners | pcb 71%, receptacle 41%, chip 93% | 0.06 mm | 7.4 cm^3 |
+| delivered mesh, cut cells 0.5 mm | 10 of 14 | | pcb 68%, receptacle 41%, chip 88% (1 mm read) | 0.06 mm | |
+
+The misses are the rim presses the bare skin already puts over their
+ceilings (`skinReview`), as with the hand-written study. That study, with
+the same three changes (no skin across the opening, the switch bearing on
+the flap, a clearance per board part), passes its coarse eval tier with 9
+of 14 on the design and 8 delivered, 7.2 cm^3, in 383 s. The handoff's
+study, written from the CAD alone, does as well.
+
+## What the switch stands on
+
+The stem pushes the plunger back with the trigger force, and the switch
+pushes what it stands on down with the same force. The model above took
+that as rigid ground. `switch.output.bearsOn` counts its give:
+
+- `{"region": id}` (or `shape`): the switch's seat in this mesh, a
+  preserved flap or boss. The closure that fires the switch is the
+  plunger's travel less the seat's: with m the seat's mean travel along the
+  stroke, r = l - m takes the place of l in every formula, F = (g + s + T
+  r.K^-1 r) / r.K^-1 f, and the reaction loads both;
+- `{"part": {shape, seat, supports}}`: a separate part (a flap that closes
+  the underside and stands on the desk), solved on its own on cut cells
+  (`switch.part_compliance`) for its seat's compliance c_b. The plunger
+  has to go T c_b further: F = (g + s + T (c + c_b)) / a. It is held at its
+  supports only, so a snap bead or press fit to the body is left out;
+- `{"compliance": mm/N}`: a measured one.
+
+On the touch microphone the switch stands in a pocket on the flap, and
+the flap stands on a foot on the desk right under it, so every link is in
+compression. Its seat gives 0.23-0.47 um per newton (0.4 and 0.5 mm cut
+cells): 0.15-0.3 um at the click, against 0.65 mm of stroke. Joined to the
+body at its rim instead, the bare skin's forces move 0-3% (the rim corner
+(-12, -9): 510 to 523 gf on 1 mm cells). On this product the flap does not
+matter; the report gives `bearsOn.giveAtTrigger` so a softer seat (a
+switch on a board spanning two rails) shows.
+
+## A clearance per component
+
+`switch.clearance` was one region and one gap. It is now one entry per
+component, and each node gets its own room:
+
+```json
+"clearance": [{"component": "pcb", "margin": 0.2, "region": "skin"},
+              {"component": "receptacle", "margin": 0.2, "region": "skin"}]
+```
+
+`component` is a keep-out id (its shape before any assembly sweep) or a
+shape. For every node whose line along the press meets the component
+within `reach` (10 mm), the room is that distance less `margin`; `region`
+limits which nodes count. Nodes already resting on it (a rail on the
+board's edge) are left out. The constraint is the same KS over nodes and
+presses, of travel over each node's own room, and the report lists each
+component's worst share of its room (`clearance`, `deliveredClearance`).
+
+The skin by default: with every node counted, interior material over the
+board had to hold to the room of the first grid plane above it (0.4 mm),
+and the optimizer could not place any. Keep space over a part clear with a
+keep-out instead, as a designer would.
+
+On the touch microphone's bare skin (1 mm cells), the old single 1.4 mm
+gap reads 2.7 times over (3.8 mm of travel over the chip). Per component
+the bare skin uses 90% of its room over the board, 83% over the
+receptacle, and 109% over the chip (a press at (0, 12), right over it,
+bottoms the bare skin on it). Every design since meets all three.
 
 ## When the exterior decides: feedback for the designer
 
@@ -459,9 +611,15 @@ drops onto it, a driver reaches a screw. As a plain keep-out, the
 component's final place stays empty, but a rib could still grow across
 the way it has to come in. With `insertFrom`, the whole path stays empty.
 Boxes and cylinders moving along one of their own axes are swept exactly.
-Anything else is swept as a union of copies a fraction of a millimetre
-apart. A swept keep-out is a clearance, not a bore, so it may end against
-material.
+A mesh moving along an axis is swept on its own distance grid (its
+occupancy run along the axis, then one distance transform); anything else
+is swept as a union of copies a fraction of a millimetre apart. A swept
+keep-out is a clearance, not a bore, so it may end against material.
+
+A path of legs, as the part leaves its place: `"insertFrom": [{"toward":
+"-y", "length": 8.5}, "-z"]` slides it back 8.5 mm and then drops it out.
+Every leg but the last has a length; the last goes on out of the design
+space. `loadpath handoff` finds these from the assembly order (above).
 
 ## Limits
 

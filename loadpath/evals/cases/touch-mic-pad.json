@@ -1,12 +1,22 @@
 {
  "name": "touch-mic-pad",
- "description": "Push pad of a touch microphone (SLS TPU 88A, real product CAD, round 17 surfacing): exterior kept as a 1.0 mm skin, board/switch/USB-C paths clear, interior designed for a fire-force map (150 gf centre to 300 gf at 14 mm, 100 gf floor). Round 17's drawn interior reads 6 of 14 windows (129-1436 gf), 9.7 cm^3; the bare skin 9 of 14.",
+ "description": "Push pad of a touch microphone (SLS TPU 88A, real product CAD, round 17 surfacing): exterior kept as a 1.0 mm skin, board/switch/USB-C paths clear, no skin across the underside opening, the switch bearing on the closed flap (its give counted), a clearance per board part, interior designed for a fire-force map (150 gf centre to 300 gf at 14 mm, 100 gf floor). Round 17's drawn interior reads 6 of 14 windows (129-1436 gf), 9.7 cm^3; the bare skin 9 of 14.",
  "designSpace": {
   "type": "mesh",
   "path": "touch-mic-outer.stl"
  },
  "skin": {
-  "thickness": 1.0
+  "thickness": 1.0,
+  "openings": [
+   {
+    "shape": {
+     "type": "mesh",
+     "path": "touch-mic-opening.stl"
+    },
+    "inward": "+z",
+    "depth": 1.2
+   }
+  ]
  },
  "preserve": [
   {
@@ -192,7 +202,43 @@
    "direction": "-z",
    "gap": 0.4,
    "trigger": 65,
-   "travel": 0.25
+   "travel": 0.25,
+   "bearsOn": {
+    "part": {
+     "shape": {
+      "type": "mesh",
+      "path": "touch-mic-flap.stl"
+     },
+     "seat": {
+      "type": "box",
+      "min": [
+       -3.3,
+       -3.0,
+       2.6
+      ],
+      "max": [
+       3.3,
+       3.0,
+       2.8
+      ]
+     },
+     "supports": [
+      {
+       "type": "box",
+       "min": [
+        -30,
+        -35,
+        -0.5
+       ],
+       "max": [
+        30,
+        35,
+        0.31
+       ]
+      }
+     ]
+    }
+   }
   },
   "presses": [
    {
@@ -309,25 +355,58 @@
    }
   ],
   "pressRadius": 1.0,
-  "clearance": {
-   "region": "board",
-   "gap": 1.4
-  },
+  "clearance": [
+   {
+    "component": {
+     "type": "mesh",
+     "path": "touch-mic-pcb.stl"
+    },
+    "id": "pcb",
+    "margin": 0.2,
+    "region": "skin"
+   },
+   {
+    "component": {
+     "type": "mesh",
+     "path": "touch-mic-receptacle.stl"
+    },
+    "id": "receptacle",
+    "margin": 0.2,
+    "region": "skin"
+   },
+   {
+    "component": {
+     "type": "mesh",
+     "path": "touch-mic-chip.stl"
+    },
+    "id": "chip",
+    "margin": 0.2,
+    "region": "skin"
+   }
+  ],
   "hold": [
    {
     "case": "squeeze",
     "maxDeflection": 0.3
    }
   ],
-  "pitches": [1.0, 0.7],
-  "iterations": [60, 60]
+  "pitches": [
+   1.0,
+   0.7
+  ],
+  "iterations": [
+   60,
+   60
+  ]
  },
  "expect": {
   "minInWindow": 8,
   "minDeliveredInWindow": 8,
   "maxVolume": 9000,
   "coarse": {
-   "pitches": [1.0],
+   "pitches": [
+    1.0
+   ],
    "iterations": 40
   }
  },
@@ -338,7 +417,12 @@
    "touch-mic-base.stl",
    "touch-mic-bay.stl",
    "touch-mic-opening.stl",
-   "touch-mic-boardspace.stl"
+   "touch-mic-boardspace.stl",
+   "touch-mic-flap.stl",
+   "touch-mic-switch.stl",
+   "touch-mic-pcb.stl",
+   "touch-mic-receptacle.stl",
+   "touch-mic-chip.stl"
   ],
   "make": "python examples/switch/touch_mic.py --touch-mic <touch-mic checkout> --out <dir> --stl-only"
  }

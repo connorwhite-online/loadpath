@@ -1,0 +1,539 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "loadpath handoff brief",
+  "description": "`loadpath handoff`: the designer's exterior and component CAD in, a push-pad study out (handoff.py). Keep-outs per component with a clearance per component, insertFrom found from the assembly order, supports from what the part stands on, the plunger and its seat from the switch's geometry. The exterior is never changed.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "exterior": {
+      "anyOf": [
+        {
+          "type": "string",
+          "description": "a mesh path (STL/3MF/OBJ) or a STEP file"
+        },
+        {
+          "$ref": "#/$defs/shape"
+        }
+      ],
+      "description": "the designer's exterior surfacing, a closed solid"
+    },
+    "skin": {
+      "anyOf": [
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        {
+          "type": "object"
+        }
+      ],
+      "description": "the skin kept of the exterior (as a study's skin; default 1.0 mm)"
+    },
+    "openings": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "a mesh path (STL/3MF/OBJ) or a STEP file"
+              },
+              {
+                "$ref": "#/$defs/shape"
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "shape": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "a mesh path (STL/3MF/OBJ) or a STEP file"
+                  },
+                  {
+                    "$ref": "#/$defs/shape"
+                  }
+                ]
+              },
+              "inward": {
+                "type": "string",
+                "pattern": "^[+-]?[xyz]$"
+              },
+              "depth": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "shape"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "description": "where the exterior opens into the interior: no skin across their inner ends (skin.openings, swept a skin and 0.2 mm inward by default)"
+    },
+    "fixed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "a mesh path (STL/3MF/OBJ) or a STEP file"
+              },
+              {
+                "$ref": "#/$defs/shape"
+              }
+            ]
+          }
+        },
+        "required": [
+          "shape"
+        ],
+        "additionalProperties": false
+      },
+      "description": "the designer's own internal geometry, kept as drawn (rails, a base ring): preserved, and in the way of every assembly path"
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "a mesh path (STL/3MF/OBJ) or a STEP file"
+              },
+              {
+                "$ref": "#/$defs/shape"
+              }
+            ]
+          },
+          "role": {
+            "enum": [
+              "switch",
+              "seat",
+              "part"
+            ],
+            "description": "switch: the plunger is read off it; seat: what the switch bears on"
+          },
+          "installedOn": {
+            "type": "string",
+            "description": "a component it is fitted to first and travels with (a switch on a flap, a connector on a board)"
+          },
+          "insertFrom": {
+            "description": "a hint, tried first; with fixed: true taken as given (an axis, a vector or a path of legs, as keepOut.insertFrom)"
+          },
+          "fixed": {
+            "type": "boolean",
+            "description": "take insertFrom as given, no search"
+          },
+          "external": {
+            "type": "boolean",
+            "description": "comes from outside after the part is closed (a plug): no clearance entry"
+          },
+          "clearance": {
+            "type": "boolean",
+            "description": "a clearance entry for it (default true, except the switch, its seat and external parts)"
+          },
+          "pathTolerance": {
+            "type": "number",
+            "minimum": 0,
+            "description": "mm of interference allowed on its way in (a snap bead's reach)"
+          }
+        },
+        "required": [
+          "shape"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "assembly": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "component ids in the order they go in (default: as listed); components installedOn another travel with it"
+    },
+    "switch": {
+      "type": "object",
+      "description": "the switch block of the study, with: component (the switch's id), gap (plunger to actuator, default 0.4 mm), trigger, travel, plungerRadius (default the actuator's), columnClearance (default 1 mm round the plunger), bearsOn (a seat component; default the one with role seat), clearanceMargin (default 0.2 mm), clearanceRegion (the nodes held to their room, default 'skin'; null for every node), and the presses, field, hold, unit... as in a study"
+    },
+    "rest": {
+      "type": "string",
+      "pattern": "^[+-]?[xyz]$",
+      "description": "the side it stands on (default the press direction): supports there"
+    },
+    "restDepth": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "mm of the exterior's far side held (default 0.3)"
+    },
+    "supports": {
+      "type": "array",
+      "description": "supports as given instead"
+    },
+    "keepOut": {
+      "type": "array",
+      "description": "the designer's own clear zones, as given"
+    },
+    "pathTolerance": {
+      "type": "number",
+      "minimum": 0,
+      "description": "mm of interference allowed on a way in (crush ribs, a lip; default 0.25)"
+    },
+    "maxSlide": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "mm, longest first leg of a two-leg path (default 12)"
+    },
+    "material": {
+      "type": "string"
+    },
+    "minMember": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "process": {},
+    "goal": {
+      "type": "object"
+    },
+    "resolution": {
+      "type": "object"
+    },
+    "loadCases": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "exterior",
+    "components",
+    "switch"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "box": {
+      "type": "object",
+      "description": "Axis-aligned box: min/max corners, or center/size.",
+      "properties": {
+        "type": {
+          "const": "box"
+        },
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "max": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "min",
+          "max"
+        ],
+        [
+          "center",
+          "size"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "cylinder": {
+      "type": "object",
+      "description": "Cylinder or tube: end points p0/p1, or center/axis/length; radius r, optional rInner.",
+      "properties": {
+        "type": {
+          "enum": [
+            "cylinder",
+            "tube"
+          ]
+        },
+        "p0": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "p1": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "'x', 'y', 'z' or a direction vector"
+        },
+        "length": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rInner": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "r"
+      ],
+      "x-requireOne": [
+        [
+          "p0",
+          "p1"
+        ],
+        [
+          "center",
+          "length"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "sphere": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "sphere"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "r": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "center",
+        "r"
+      ],
+      "additionalProperties": false
+    },
+    "mesh": {
+      "type": "object",
+      "description": "A closed mesh: an STL/3MF/OBJ path relative to the study's folder (or a STEP file, .step/.stp, tessellated and healed; needs loadpath[step]), or inline stlBase64.",
+      "properties": {
+        "type": {
+          "const": "mesh"
+        },
+        "path": {
+          "type": "string"
+        },
+        "stlBase64": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "x-requireOne": [
+        [
+          "path"
+        ],
+        [
+          "stlBase64"
+        ]
+      ],
+      "additionalProperties": false
+    },
+    "union": {
+      "type": "object",
+      "description": "Several shapes acting as one region (a servo's four screw bosses).",
+      "properties": {
+        "type": {
+          "const": "union"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "intersect": {
+      "type": "object",
+      "description": "Where all the shapes overlap: a half ring is a tube intersected with a box.",
+      "properties": {
+        "type": {
+          "const": "intersect"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 2
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "subtract": {
+      "type": "object",
+      "description": "The first shape with the others cut away: a ring with a gap is a tube minus a box.",
+      "properties": {
+        "type": {
+          "const": "subtract"
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shape"
+          },
+          "minItems": 2
+        }
+      },
+      "required": [
+        "type",
+        "shapes"
+      ],
+      "additionalProperties": false
+    },
+    "shape": {
+      "title": "a shape object (box, cylinder, tube, sphere, mesh, union, intersect, subtract)",
+      "description": "A shape: box, cylinder (tube), sphere, mesh, union, intersect or subtract. Units mm.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/box"
+        },
+        {
+          "$ref": "#/$defs/cylinder"
+        },
+        {
+          "$ref": "#/$defs/sphere"
+        },
+        {
+          "$ref": "#/$defs/mesh"
+        },
+        {
+          "$ref": "#/$defs/union"
+        },
+        {
+          "$ref": "#/$defs/intersect"
+        },
+        {
+          "$ref": "#/$defs/subtract"
+        }
+      ],
+      "x-discriminator": {
+        "property": "type",
+        "mapping": {
+          "box": "#/$defs/box",
+          "cylinder": "#/$defs/cylinder",
+          "tube": "#/$defs/cylinder",
+          "sphere": "#/$defs/sphere",
+          "mesh": "#/$defs/mesh",
+          "union": "#/$defs/union",
+          "intersect": "#/$defs/intersect",
+          "subtract": "#/$defs/subtract"
+        }
+      }
+    }
+  }
+}

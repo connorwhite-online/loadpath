@@ -58,8 +58,16 @@ if (which == "bay") board_bay();
 if (which == "body") body();
 if (which == "opening") translate([0, 0, -2]) linear_extrude(ledge_z + 2.5) plan2(hole_d - 0.5);
 if (which == "boardspace") intersection() { cavity(); translate([-bx, board_y0 - 1.8, -1]) cube([2 * bx, 60, H + 2]); }
+if (which == "flap") flap_closed(strap = false);
+if (which == "switch") dummy_switch();
+if (which == "pcb") translate([-board_w / 2, board_y0, board_z0]) cube([board_w, board_l, board_t]);
+if (which == "receptacle") translate([0, board_y1 + conn_over - 7.35, board_z1 + conn_h / 2])
+    rotate([-90, 0, 0]) hull() for (s = [-1, 1]) translate([s * (8.94 - 3.26) / 2, 0, 0]) cylinder(h = 7.35, d = 3.26, $fn = 24);
+if (which == "chip") translate([-4, board_y0 + 4, board_z1]) cube([8, 8, 1.0]);
 """
-PARTS = ("outer", "base", "bay", "body", "opening", "boardspace")
+PARTS = ("outer", "base", "bay", "body", "opening", "boardspace", "flap", "switch", "pcb", "receptacle", "chip")
+# what the study reads from a case folder (LOADPATH_TOUCH_MIC_STL)
+CASE = ("outer", "base", "bay", "opening", "boardspace", "flap", "switch", "pcb", "receptacle", "chip")
 
 # round 17's numbers (body.scad echo): actuator top 7.7, cone tip 8.1, skin
 # top at the dish centre 9.6, USB-C centre z 6.6 at y 27.8
@@ -96,8 +104,20 @@ def target(x, y):
     return 150 + 150 * r
 
 
+# the flap stands on the desk on a foot under the switch; the switch sits
+# in a pocket on it, its body's underside at z 2.7
+SEAT = {"type": "box", "min": [-3.3, -3.0, 2.6], "max": [3.3, 3.0, 2.8]}
+DESK = {"type": "box", "min": [-30, -35, -0.5], "max": [30, 35, 0.31]}
+
+
 def study(paths: dict, pitch: float = 1.0) -> dict:
-    return {
+    """The push pad's study, as written by hand from the CAD. With the
+    flap's, the board parts' STLs in `paths` (the default since the
+    designer-handoff work): the switch bears on the closed flap, whose give
+    counts, and each part on the board has its own clearance. `handoff`
+    below writes the same thing from the CAD with `loadpath handoff`."""
+    full = all(k in paths for k in ("flap", "pcb", "receptacle", "chip"))
+    doc = {
         "name": "touch-mic",
         "description": "Touch microphone push pad (round 17 surfacing): interior designed for a fire-force map.",
         "designSpace": {"type": "mesh", "path": paths["outer"]},
@@ -134,6 +154,49 @@ def study(paths: dict, pitch: float = 1.0) -> dict:
             "hold": [{"case": "squeeze", "maxDeflection": 0.3}],
         },
     }
+    if full:
+        # no skin across the opening's inner end: round 17's exterior
+        # solid ends there, and a skin lining it was a 0.4 mm membrane
+        # across the board bay in the first studies' parts
+        doc["skin"] = {"thickness": 1.0, "openings": [{"shape": {"type": "mesh", "path": paths["opening"]},
+                                                       "inward": "+z", "depth": 1.2}]}
+        doc["switch"]["output"]["bearsOn"] = {"part": {"shape": {"type": "mesh", "path": paths["flap"]},
+                                                       "seat": SEAT, "supports": [DESK]}}
+        doc["switch"]["clearance"] = [{"component": {"type": "mesh", "path": paths[k]}, "id": k, "margin": 0.2,
+                                       "region": "skin"} for k in ("pcb", "receptacle", "chip")]
+    return doc
+
+
+def brief(paths: dict) -> dict:
+    """The designer's handoff for the same product: the exterior, the
+    base and rails as drawn, the components and the assembly order. The
+    board goes in first, then the flap with the switch in its pocket
+    (its snap bead reaches 0.6 mm past its edge), then the USB-C plug from
+    outside. `loadpath handoff` finds the paths, the plunger and the rest."""
+    s = study(paths)
+    return {
+        "name": "touch-mic-handoff",
+        "description": "Touch microphone push pad (round 17 surfacing) from the designer's handoff.",
+        "exterior": paths["outer"], "skin": 1.0, "openings": [paths["opening"]],
+        "material": "tpu88a", "minMember": 1.0,
+        "fixed": [{"id": "base", "shape": paths["base"]}, {"id": "rails", "shape": paths["bay"]}],
+        "components": [
+            {"id": "pcb", "shape": paths["pcb"]},
+            {"id": "receptacle", "shape": paths["receptacle"], "installedOn": "pcb"},
+            {"id": "chip", "shape": paths["chip"], "installedOn": "pcb"},
+            {"id": "flap", "shape": paths["flap"], "role": "seat", "insertFrom": "-z", "pathTolerance": 0.7},
+            {"id": "switch", "shape": paths["switch"], "role": "switch", "installedOn": "flap"},
+            {"id": "usb-plug", "external": True, "fixed": True, "insertFrom": "+y", "clearance": False,
+             "shape": {"type": "box", "min": [-6.0, USB_Y - 3.0, USB_Z - 3.0], "max": [6.0, USB_Y + 1.0, USB_Z + 3.0]}}],
+        "assembly": ["pcb", "flap", "usb-plug"],
+        # the designer's clear zone: nothing grows over the board
+        "keepOut": [{"id": "board-bay", "bore": False, "shape": {"type": "mesh", "path": paths["boardspace"]}}],
+        "switch": {"unit": "gf", "trigger": 65, "travel": 0.25, "gap": 0.4, "plungerRadius": 1.6,
+                   "presses": s["switch"]["presses"], "pressRadius": 1.0,
+                   "hold": [{"case": "squeeze", "maxDeflection": 0.3}]},
+        "loadCases": s["loadCases"],
+        "goal": {"volumeFraction": 0.2},
+    }
 
 
 def main():
@@ -143,6 +206,8 @@ def main():
     ap.add_argument("--pitches", default="1.0")
     ap.add_argument("--iterations", default=None)
     ap.add_argument("--baseline", action="store_true")
+    ap.add_argument("--handoff", action="store_true",
+                    help="write the designer's handoff brief and build its study with `loadpath handoff`")
     ap.add_argument("--stl-only", action="store_true",
                     help="write the touch-mic-pad eval case's STLs into --out (point LOADPATH_TOUCH_MIC_STL at it)")
     a = ap.parse_args()
@@ -157,7 +222,7 @@ def main():
     paths = geometry(a.touch_mic, a.out)
     if a.stl_only:
         from loadpath.shapes import manifold_from_trimesh
-        for w in ("outer", "base", "bay", "opening", "boardspace"):
+        for w in CASE:
             m = trimesh.load(paths[w], force="mesh")
             if w in ("outer", "base"):
                 # within 0.01 mm of the extract, a third of the triangles
@@ -165,6 +230,15 @@ def main():
                 m = trimesh.Trimesh(o.vert_properties[:, :3], o.tri_verts)
             m.export(os.path.join(a.out, f"touch-mic-{w}.stl"))
         print(os.path.abspath(a.out))
+        return
+    if a.handoff:
+        from loadpath.handoff import run_handoff
+        bp = os.path.join(a.out, "touch-mic.brief.json")
+        json.dump(brief(paths), open(bp, "w"), indent=1)
+        r = run_handoff(bp, os.path.join(a.out, "handoff"))
+        print(json.dumps({"study": r["studyPath"], "assembly": {k: v.get("insertFrom") for k, v in
+                                                                  r["report"]["assembly"]["components"].items()},
+                          "warnings": r["report"]["warnings"]}, default=float))
         return
     pitches = [float(p) for p in a.pitches.split(",")]
     doc = study(paths, pitches[0])

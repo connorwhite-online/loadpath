@@ -501,8 +501,66 @@ class Sweep(Shape):
         n = max(int(np.ceil(self.length / (step or max(self.length / 200.0, 0.1)))), 1)
         self.offsets = np.linspace(0.0, self.length, n + 1)
 
+        self._grid = None
+
+    def _mesh_base(self):
+        """(MeshShape, offset) when the base is a mesh, maybe moved."""
+        b, off = self.base, np.zeros(3)
+        if isinstance(b, Moved):
+            b, off = b.base, b.offset
+        return (b, off) if isinstance(b, MeshShape) else (None, None)
+
+    def _build_grid(self):
+        """A mesh swept along an axis: its distance grid's occupancy smeared
+        along the axis, then a distance transform, once. Evaluating ~200
+        shifted copies point by point instead took 14 GB and minutes in the
+        delivered mesh's isosurface (a board's two-leg path on the touch
+        microphone)."""
+        from scipy import ndimage
+        m, off = self._mesh_base()
+        if m._grid is None:
+            m._build_grid()
+        dist, origin, pitch = m._grid
+        k = int(np.argmax(np.abs(self.direction)))
+        n = int(round(self.length / pitch))
+        solid = dist <= 0
+        pad = [(0, 0)] * 3
+        sg = 1 if self.direction[k] > 0 else -1
+        pad[k] = (0, n) if sg > 0 else (n, 0)
+        solid = np.pad(solid, pad)
+        org = origin.astype(float).copy() + off
+        if sg < 0:
+            org[k] -= n * pitch
+        # a cell is in the sweep if the base covered it from up to n cells
+        # back along the motion: a sliding window along the axis
+        c = np.cumsum(solid.astype(np.int32), axis=k)
+        c = np.concatenate([np.zeros_like(np.take(c, [0], axis=k)), c], axis=k)
+        N = solid.shape[k]
+        idx = np.arange(N)
+        if sg > 0:
+            hi_i, lo_i = idx + 1, np.maximum(idx - n, 0)
+        else:
+            hi_i, lo_i = np.minimum(idx + n + 1, N), idx
+        swept = (np.take(c, hi_i, axis=k) - np.take(c, lo_i, axis=k)) > 0
+        d = (ndimage.distance_transform_edt(~swept) - ndimage.distance_transform_edt(swept)) * pitch
+        d -= 0.5 * pitch * np.sign(d)
+        self._grid = (d, org, pitch)
+
     def sdf(self, p):
         p = np.asarray(p, float)
+        m, _ = self._mesh_base()
+        if m is not None and np.max(np.abs(self.direction)) > 1 - 1e-9:
+            from scipy import ndimage
+            if self._grid is None:
+                self._build_grid()
+            dist, origin, pitch = self._grid
+            p = p.reshape(-1, 3)
+            coords = ((p - origin) / pitch - 0.5).T
+            inside = np.all((coords >= 0) & (coords <= (np.asarray(dist.shape)[:, None] - 1)), axis=0)
+            out = ndimage.map_coordinates(dist, coords, order=1, mode="nearest")
+            lo, hi = self.bounds()
+            q = np.maximum(np.maximum(lo - p, p - hi), 0.0)
+            return np.where(inside, out, np.maximum(np.linalg.norm(q, axis=1), 4 * pitch))
         out = None
         for t in self.offsets:
             v = self.base.sdf(p - t * self.direction)
@@ -526,6 +584,32 @@ class Sweep(Shape):
 
     def to_spec(self):
         raise ValueError("a sweep is derived from a keep-out's insertFrom and has no JSON form of its own")
+
+
+class Moved(Shape):
+    """A shape moved by an offset (a leg of a multi-leg assembly path)."""
+
+    kind = "moved"
+
+    def __init__(self, base: Shape, offset):
+        self.base = base
+        self.offset = np.asarray(offset, float)
+
+    def sdf(self, p):
+        return self.base.sdf(np.asarray(p, float) - self.offset)
+
+    def contains(self, p):
+        return self.sdf(p) <= 0.0
+
+    def bounds(self):
+        lo, hi = self.base.bounds()
+        return lo + self.offset, hi + self.offset
+
+    def to_manifold(self):
+        return self.base.to_manifold().translate(tuple(self.offset))
+
+    def to_spec(self):
+        raise ValueError("a moved shape is derived from a keep-out's insertFrom path and has no JSON form of its own")
 
 
 def _convex(shape) -> bool:

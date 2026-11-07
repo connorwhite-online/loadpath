@@ -250,6 +250,106 @@ def test_large_deflection_fire_force_converges_on_a_thin_skin():
         assert 0.8 < row["nonlinearOverLinear"] < 2.0, row
 
 
+def seated(**switch):
+    """The pad with the switch standing on a soft column (a flap's seat):
+    a preserved 4 x 4 mm TPU post from the bottom support up to the stem,
+    a component (a 3 mm tall connector) on the board, and the board itself
+    as a keep-out."""
+    d = pad(**switch)
+    d["keepOut"] = [{"id": "board", "bore": False, "shape": {"type": "box", "min": [-9, -9, -1], "max": [9, 9, 0.6]}},
+                    {"id": "connector", "bore": False, "insertFrom": "-z",
+                     "shape": {"type": "box", "min": [4, -3, -1], "max": [9, 3, 3.0]}},
+                    {"id": "stem", "bore": False, "insertFrom": "-z",
+                     "shape": {"type": "box", "min": [-2, -2, 1.5], "max": [2, 2, 2.5]}}]
+    d["preserve"].append({"id": "seat", "shape": {"type": "box", "min": [-2, -2, 0], "max": [2, 2, 1.5]}})
+    return d
+
+
+def test_bears_on_a_seat_in_the_mesh():
+    """With bearsOn naming the switch's seat, the closure is the plunger's
+    travel less the seat's: F = (g + s + T r.K^-1 r) / r.K^-1 f with
+    r = l - m, checked by solving the press and the reaction on both. A
+    seat that gives makes every press fire harder than on rigid ground."""
+    st0 = study_from_dict(seated())
+    out = dict(seated()["switch"]["output"], bearsOn={"region": "seat"})
+    st = study_from_dict(seated(output=out))
+    d = build_domain(st, 1.0)
+    spec = sw.switch_from_study(st, d)
+    assert spec.base_nodes is not None and spec.base_nodes.sum() > 4
+    prob = sw._problem(d, spec)
+    nu, E = st.elastic(design=True), float(st.material.E)
+    xp = np.full(d.n_elem, 0.4)
+    xp[d.preserve] = 1.0
+    r = sw.fire_forces(d, nu, spec, xp, E)
+    sv = sw._Solves(d, nu, rtol=1e-12)
+    sv.factor(xp)
+    F = r["forces"][0]
+    u = np.asarray(sv.solve([F * prob.loads[0] - spec.trigger * prob.l])[0]) / E
+    assert abs(prob.l @ u - spec.stroke) < 1e-6 * spec.stroke, (prob.l @ u, spec.stroke)
+    r0 = sw.fire_forces(d, nu, sw.switch_from_study(st0, d), xp, E)
+    assert (r["forces"] > r0["forces"]).all(), (r["forces"] / sw.GF, r0["forces"] / sw.GF)
+
+
+def test_bears_on_a_separate_part():
+    """A separate part under the switch (a flap on the desk): its seat's
+    compliance comes from its own cut-cell solve, close to h / (E A) for a
+    block in compression, and the plunger has to take up T c_b more."""
+    block = {"type": "box", "min": [-2, -2, -4], "max": [2, 2, -2]}
+    part = {"shape": block, "seat": {"type": "box", "min": [-2.5, -2.5, -2.1], "max": [2.5, 2.5, -1.9]},
+            "supports": [{"type": "box", "min": [-3, -3, -4.2], "max": [3, 3, -3.95]}], "pitch": 0.5}
+    st = study_from_dict(pad())
+    E = float(st.material.E)
+    pc = sw.part_compliance(st, part, 2, -1)
+    ref = 2.0 / (E * 16.0)
+    assert 0.6 * ref < pc["compliance"] < 1.4 * ref, (pc["compliance"], ref)
+    out = dict(pad()["switch"]["output"], bearsOn={"part": part})
+    st2 = study_from_dict(pad(output=out))
+    d = build_domain(st2, 1.5)
+    spec = sw.switch_from_study(st2, d)
+    assert abs(spec.stroke - (spec.gap + spec.travel + spec.trigger * pc["compliance"])) < 1e-12
+    nu = st.elastic(design=True)
+    xp = np.ones(d.n_elem)
+    f1 = sw.fire_forces(d, nu, spec, xp, E)
+    f0 = sw.fire_forces(d, nu, sw.switch_from_study(st, d), xp, E)
+    a = (spec.gap + spec.travel + spec.trigger * f0["plungerCompliance"]) / f0["forces"]
+    assert np.allclose(f1["forces"] - f0["forces"], spec.trigger * pc["compliance"] / a, rtol=1e-6)
+
+
+def test_clearance_per_component():
+    """A clearance entry per component: each node over the connector gets
+    the room to it (the skin's underside at z 5 over a top at z 3, less the
+    margin), not the whole board's smallest gap; nodes over the bare
+    board get theirs."""
+    clr = [{"component": "connector", "margin": 0.2}, {"component": "board", "margin": 0.2, "region": "skin"}]
+    st = study_from_dict(seated(clearance=clr))
+    d = build_domain(st, 1.0)
+    spec = sw.switch_from_study(st, d)
+    rows = {e["id"]: e for e in spec.clearance_entries}
+    assert set(rows) == {"connector", "board"}, rows
+    over = spec.clearance_nodes & (spec.clearance_entry == 0)
+    z = d.mesh.node_xyz[over, 2]
+    assert np.allclose(spec.clearance_gap[over], z - 3.0 - 0.2, atol=0.02), (z, spec.clearance_gap[over])
+    assert rows["board"]["minGap"] > rows["connector"]["minGap"] + 1.0
+    # gradients of the clearance KS with a room per node
+    prob = sw._problem(d, spec)
+    nu, E = st.elastic(design=True), float(st.material.E)
+    rng = np.random.default_rng(2)
+    xp = rng.uniform(0.3, 0.9, d.n_elem)
+    xp[d.preserve] = 1.0
+    sv = sw._Solves(d, nu, rtol=1e-12)
+    out, G = sw._evaluate(d, nu, prob, xp, E, sv)
+    assert {r["id"] for r in out["clearance"]} == {"connector", "board"}
+    for e in rng.choice(np.flatnonzero(~d.preserve), 3, replace=False):
+        h = 1e-5
+        x2 = xp.copy()
+        x2[e] += h
+        o2, _ = sw._evaluate(d, nu, prob, x2, E, sv, grads=True)
+        fd = (o2["clearanceKS"] - out["clearanceKS"]) / h
+        assert abs(fd - G["clearance"][e]) <= 1e-3 * abs(G["clearance"][e]) + 1e-9, (e, fd, G["clearance"][e])
+    assert not lint(seated(clearance=clr, output=dict(pad()["switch"]["output"], bearsOn={"region": "seat"})),
+                    "study")
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

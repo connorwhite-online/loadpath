@@ -578,6 +578,9 @@ class Study:
     # hole drawn for the process and the window it must print to
     fits: list = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+    # where the study's relative mesh paths start (blocks read later:
+    # switch.output.bearsOn, switch.clearance, skin.openings)
+    base_dir: str | None = None
 
     @property
     def length_scale(self) -> float:
@@ -648,9 +651,47 @@ def _regions(items, label, base_dir, bounds=None):
 
 def _assembly_path(shape, side, bounds, label):
     """A keep-out swept out of the design space toward `side` (an axis like
-    '-z', or a vector): the way the component (or a tool) comes in."""
-    from .shapes import sweep
+    '-z', or a vector): the way the component (or a tool) comes in.
 
+    Or a path of legs, as the component leaves its place: [{toward, length},
+    ..., {toward}], each leg an axis or vector, every one but the last with
+    a length (mm); the last goes on out of the design space unless it has a
+    length too (an opening's mouth, swept a skin's depth inward). A board whose
+    end sits in a slot in the wall slides back out of it, then drops out
+    through the opening: [{"toward": "-y", "length": 3.5}, "-z"]."""
+    from .shapes import Moved, Union, sweep
+
+    if isinstance(side, list):
+        if not side:
+            raise ValueError(f"{label}: an empty path")
+        parts, cur, at = [], shape, np.zeros(3)
+        for j, leg in enumerate(side):
+            leg = {"toward": leg} if not isinstance(leg, dict) else leg
+            if "toward" not in leg:
+                raise ValueError(f"{label}[{j}] is {{toward, length}} or an axis")
+            last = j == len(side) - 1
+            if last and leg.get("length") is None:
+                parts.append(_assembly_path(cur, leg["toward"], bounds, f"{label}[{j}]"))
+                break
+            if not isinstance(leg.get("length"), (int, float)) or leg["length"] <= 0:
+                raise ValueError(f"{label}[{j}].length: mm along this leg (> 0); only the last leg may have none")
+            d = _leg_direction(leg["toward"], f"{label}[{j}]")
+            parts.append(sweep(cur, d, float(leg["length"])))
+            at = at + float(leg["length"]) * d
+            cur = Moved(shape, at)
+        return Union(parts)
+    d = _leg_direction(side, label)
+    lo, hi = bounds
+    slo, shi = shape.bounds()
+
+    def corners(a, b):
+        return np.array([[x, y, z] for x in (a[0], b[0]) for y in (a[1], b[1]) for z in (a[2], b[2])])
+
+    length = float((corners(lo, hi) @ d).max() - (corners(slo, shi) @ d).min()) + 1.0
+    return sweep(shape, d, max(length, 0.0))
+
+
+def _leg_direction(side, label):
     if isinstance(side, str):
         key = side.strip().lower()
         key = key if key[:1] in "+-" else "+" + key
@@ -664,23 +705,24 @@ def _assembly_path(shape, side, bounds, label):
         if d.shape != (3,) or not np.linalg.norm(d) > 0:
             raise ValueError(f"{label} is a side like '-z' or a nonzero vector [x, y, z]")
         d = d / np.linalg.norm(d)
-    lo, hi = bounds
-    slo, shi = shape.bounds()
-
-    def corners(a, b):
-        return np.array([[x, y, z] for x in (a[0], b[0]) for y in (a[1], b[1]) for z in (a[2], b[2])])
-
-    length = float((corners(lo, hi) @ d).max() - (corners(slo, shi) @ d).min()) + 1.0
-    return sweep(shape, d, max(length, 0.0))
+    return d
 
 
 _FACES = {f"{s}{a}": (i, 1 if s == "+" else -1) for i, a in enumerate("xyz") for s in "+-"}
 
 
-def _skin(v, design):
-    """Top-level `skin`: a thickness (mm) or {thickness, open: ['-z', ..]}.
-    Returns (thickness, the skin shape)."""
-    from .shapes import Shell, Union, shrink
+def _skin(v, design, base_dir=None):
+    """Top-level `skin`: a thickness (mm) or {thickness, open: ['-z', ..],
+    openings: [{shape, inward?, depth?}]}. Returns (thickness, the skin
+    shape).
+
+    `openings` are where the exterior opens into the interior (an
+    underside a flap closes, a port). The exterior's solid ends at an
+    opening's inner end, so the skin would line that end too: a membrane a
+    skin thick across the cavity behind it (the touch microphone's first
+    study had one, 0.4 mm thick, across its board bay). The skin is not
+    kept inside an opening, swept `depth` mm `inward` when given."""
+    from .shapes import Shell, Union, shrink, sweep
 
     if isinstance(v, (int, float)):
         v = {"thickness": v}
@@ -697,7 +739,18 @@ def _skin(v, design):
             raise ValueError(f"skin.open entries are design-space faces like '-z' or '+x', got {f!r}")
         faces.append(_FACES[key])
     ds = design[0] if len(design) == 1 else Union(design)
-    return float(t), Shell(ds, shrink(ds, float(t), faces))
+    inner = shrink(ds, float(t), faces)
+    holes = []
+    for j, o in enumerate(v.get("openings") or []):
+        if not isinstance(o, dict) or "shape" not in o:
+            raise ValueError(f"skin.openings[{j}] is {{shape, inward?, depth?}}")
+        sh = shape_from_spec(o["shape"], base_dir)
+        if o.get("depth") is not None:
+            sh = sweep(sh, _leg_direction(o.get("inward", "+z"), f"skin.openings[{j}].inward"), float(o["depth"]))
+        holes.append(sh)
+    if holes:
+        inner = Union([inner] + holes)
+    return float(t), Shell(ds, inner)
 
 
 def _target(item, label, base_dir):
@@ -1056,7 +1109,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             # a pressure vessel's cavity is closed on purpose
             r.bore = r.bore and r.id not in pressurized
     if d.get("skin") is not None:
-        t, shape = _skin(d["skin"], design_space)
+        t, shape = _skin(d["skin"], design_space, base_dir)
         if "skin" in taken:
             raise ValueError("region id 'skin' is taken; it names the design space's skin")
         preserve.append(Region("skin", shape))
@@ -1117,4 +1170,6 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         st.multi_material = parse_multimaterial(d["multiMaterial"], st, base_dir)
         if "material" not in d:
             st.material = st.materials[0] = st.multi_material.materials[0]
+    # mesh paths in blocks read later (switch.output.bearsOn, switch.clearance)
+    st.base_dir = base_dir
     return st

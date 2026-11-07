@@ -414,7 +414,9 @@ preserve id, stroke `direction`, `gap` to the stem, the switch's
 `trigger` force and own `travel`), `field` (or `presses`) gives each press
 point's force window (`max` may be `[centre, rim]`, a radial gradient;
 `min` is the floor a resting thumb must not reach; `"unit": "gf"`),
-`clearance` caps the skin's travel toward the board, `hold` caps the
+`clearance` caps the skin's travel toward the board (one entry per
+component with `component` and `margin` gives each node its own room),
+`output.bearsOn` counts the give of what the switch sits on, `hold` caps the
 mean deflection under a load case (a side squeeze, a drop). Start coarse
 (`pitches: [1.0]`) to see whether the windows can be met at all, then
 refine (`[1.0, 0.7, 0.5]`). The report gives each press's linear and
@@ -443,6 +445,28 @@ it would push out of window and whether it clears the minimum wall. Never
 change the exterior yourself: relay `skinReview.summary` and those
 options to the designer and let them choose. `limitedBy == "interior"`
 needs no designer: re-run finer or longer. See docs/SWITCH.md.
+
+**Start from the designer's CAD with `loadpath handoff brief.json --out
+dir` (MCP `loadpath_handoff`; `loadpath schema handoff`).** The brief is
+the exterior, the openings in it (an underside a flap closes: no skin is
+kept across an opening's inner end, which would otherwise be a membrane a
+skin thick across the cavity), the designer's own internal geometry
+(`fixed`: rails, a base ring), each component's CAD (STL or STEP; `role:
+"switch"` for the switch, `"seat"` for what it sits on, `installedOn` for
+parts fitted to another first, `external` for a plug), the `assembly`
+order, and the switch's trigger, travel, gap and press windows. It writes
+a self-contained study (meshes copied into `dir/cad/`) and `handoff.json`
+saying how each value was found: `insertFrom` per component from the
+assembly order (one axis, or slide then drop; a part with no clear way in
+is reported `blocked`, with what it hits: tell the designer, do not
+invent a path), the plunger tip `gap` over the switch's actuator read off
+its geometry, the supports where it stands, `switch.output.bearsOn` (the
+seat part's give, solved on its own) and one `switch.clearance` entry per
+component (each skin node's own room to the part under it, less
+`margin`). Paths are translations only: if the real one tilts, give it as
+`insertFrom` with `fixed: true`. `pathTolerance` on a component allows a
+snap bead's interference. Check `handoff.json` before running; `--run`
+designs it straight away.
 
 A graded lattice instead of ribs: add `switch.lattice` (`type`, `cell`,
 `mode: "where-needed"`) or `--lattice bcc:4:where-needed`. Under a thin

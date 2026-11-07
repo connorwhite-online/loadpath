@@ -521,7 +521,7 @@ def _with_skin(study, thickness: float):
     sk = dict(sk) if isinstance(sk, dict) else {"thickness": sk}
     sk["thickness"] = float(thickness)
     raw["skin"] = sk
-    _, shape = _skin(sk, study.design_space)
+    _, shape = _skin(sk, study.design_space, getattr(study, "base_dir", None))
     pres = [dataclasses.replace(r, shape=shape) if r.id == "skin" else r for r in study.preserve]
     shells = [(rid, float(thickness) if rid == "skin" else t) for rid, t in study.shells]
     return dataclasses.replace(study, raw=raw, preserve=pres, shells=shells)
