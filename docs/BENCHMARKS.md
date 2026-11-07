@@ -505,6 +505,42 @@ passes every check, -16.8% against full.json) but takes 7464 s against
 bell crank, motor mount, upper arm, corpus-link-0: the rerun never fired,
 massAtTarget within 0.3%; coarse yoke 14.2 g.
 
+**Capping the probe's time (after e796a1b).** The 7464 s came from the time
+box, not from parts the yoke needed. Run alone on the full-tier yoke, the
+constrained method puts out a part about every 1300 s on one core (the
+multigrid solves are ~90% of its time; buckling is not the cost): 17.6 g at
+1313 s, 15.6 g at 2780 s, 14.4 g at 4021 s, 14.2 g at 5413 s, all passing on
+tets (margins 1.45-1.66). After the third part the gain is under 2% a part.
+Two changes, for probes only (the band 0.19-0.28; below 0.19 nothing moves):
+
+- the box is the plain 3.5x the search's time, not doubled for buckling;
+- once the probe holds a passing part lighter than the search's, it starts
+  no part that, at the mean time of its parts so far, would end past the
+  box (`study._probe_settled`, judged after the tet confirm, so no part is
+  cut short). Without a winning part the box and its 4-part floor stand.
+  The scorecard's methodChoice carries `probeSettled: true` when it fires.
+
+Full tier, 4-core box, against full.json and the e796a1b run:
+
+| Case | Utilization | massAtTarget | Time s (before) | What happened |
+| --- | --- | --- | --- | --- |
+| Wrist yoke, alone | 0.30, probe forced on | 15.1 g (13.9; search 17.2) | 3357 (7464) | settled after 2 parts |
+| MBB beam | 0.21 | 15.0 g, +3.0% (noise) | 2409 (2518) | probe stopped: a 17.0 g part failed |
+| corpus-link-0 | 0.20 | 27.2 g (search 27.4) | 1593 | probe ran its bisection out inside the box |
+| Turret | 0.15 this run | 140.9 g, +0.3% | 5126 (4629) | below the cut: full constrained run, search kept |
+| Motor mount | 0.22 | 20.7 g, -5.7% | 102 (117) | no passing search part to compare |
+| corpus-link-3 | 0.34 | 29.2 g | 1033 | above the band: search only |
+
+The yoke keeps 2.1 g of the 3.3 g the probe found before (15.1 against the
+search's 17.2 g) in 45% of the time. A third part would have given 14.4 g at
+about 4700 s. The yoke's search part read utilization 0.30 on this commit's
+first run (0.23 on e796a1b's), from one fTetWild mesh to the next, so the
+probe never ran there: the yoke row above forces the band to 0.40 for the
+run (`study._AUTO_PROBE_UTILIZATION`, patched from a sitecustomize, not in
+the code). Speculation did not start on the yoke run (its memory or grid
+rule), so the constrained run went after the search on one core while
+three sat idle; running two bisection steps at once is the next lever.
+
 ## Pitch sensitivity: one grid is a sample
 
 A safety-factor search's answer moves a lot with sub-percent changes of the

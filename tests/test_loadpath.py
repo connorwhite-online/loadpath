@@ -1333,6 +1333,20 @@ def test_constrained_probe_stops_on_heavy_failing_part():
     assert S._AUTO_UTILIZATION_CUT < S._AUTO_PROBE_UTILIZATION
 
 
+def test_constrained_probe_settles_once_it_wins():
+    from loadpath import study as S
+    # the full-tier wrist yoke's probe: parts at 1313, 2780 and 4021 s, the
+    # search 1411 s, its part 17.2 g; the probe's box 3.5x the search
+    deadline = S._AUTO_BUDGET * 1411.0
+    assert S._probe_won({"mass": 15.6, "margin": 0.95}, 17.2, margin=1.66)   # tet margin decides
+    assert not S._probe_won({"mass": 15.6, "margin": 1.2}, 17.2, margin=0.9)
+    assert not S._probe_won({"mass": 17.6, "margin": 1.6}, 17.2)              # passes, but heavier
+    assert S._probe_won({"mass": 14.4, "margin": 1.45}, 17.2)
+    assert not S._probe_settled(True, 0.0, deadline, 2, now=2780.0)   # a third part fits
+    assert S._probe_settled(True, 0.0, deadline, 3, now=4021.0)       # a fourth does not
+    assert not S._probe_settled(False, 0.0, deadline, 3, now=4021.0)  # nothing won yet: the box rules
+
+
 def test_malformed_warm_outcome_is_flagged():
     from types import SimpleNamespace
     from loadpath import study as S

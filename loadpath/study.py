@@ -102,6 +102,15 @@ _AUTO_BUDGET = 3.5
 _AUTO_MIN_RUNS = 4
 
 
+# A probe (the band above) gets the plain _AUTO_BUDGET, not the buckling
+# one's doubling, and once it holds a passing part lighter than the search's
+# it starts no part it cannot finish inside its box (_probe_settled): the
+# full-tier wrist yoke's probe ran 7464 s for 13.9 g under the doubled box;
+# its parts land about 1300 s apart (17.6, 15.6, 14.4, 14.2 g), so most of
+# the gain over the search's 17.2 g is in by the second or third. Capped:
+# 15.1 g in 3357 s.
+
+
 def _box_over(deadline: float, box: float, done: int) -> bool:
     """Whether the constrained run's time box is over, `done` parts in."""
     now = time.time()
@@ -1178,7 +1187,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     # The buckling constraint's eigensolve roughly doubles a constrained
     # iteration on a full-size grid (10-25 s of 25-50 at 35k cells on the
     # wall bracket), so it gets twice the time.
-    budget = _AUTO_BUDGET * (2.0 if goal.buckling and goal.safety_factor and _BUCKLING_IN_OPTIMIZER else 1.0)
+    budget = _AUTO_BUDGET * (2.0 if goal.buckling and goal.safety_factor and _BUCKLING_IN_OPTIMIZER
+                             and not probe else 1.0)
     from . import quick
     if quick.on():
         # a first look: as long as the search took, with no ten-minute floor
@@ -1186,9 +1196,14 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
         box = r.seconds
     else:
         box = max(600.0, budget * r.seconds)
-    deadline = time.time() + box
+    # the box runs from the constrained run's own start (a speculative one
+    # started beside the search)
+    start = spec.t0 if spec is not None else time.time()
+    deadline = start + box
     done = [0]
     beaten = [None]   # a probe's failing part at or over the search's mass
+    won = [False]     # a probe's passing part lighter than the search's
+    settled = [False]
     ms = pick.report["mass"]
 
     pending = [None, False]   # a probe's last part, awaiting its tet confirm
@@ -1196,6 +1211,11 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     def judge(event, margin=None):
         if beaten[0] is None and _probe_beaten(goal, event, ms, margin):
             beaten[0] = event.get("mass")
+        won[0] = won[0] or _probe_won(event, ms, margin)
+        # judged between parts (after the tet confirm): stop here rather
+        # than cut the next part short at the deadline
+        if not quick.on() and _probe_settled(won[0], start, deadline, done[0]):
+            settled[0] = True
 
     def progress(event, x):
         stage = event.get("stage")
@@ -1217,7 +1237,7 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
             on_progress(event, x)
 
     def user_stop():
-        return beaten[0] is not None or (should_stop is not None and should_stop())
+        return beaten[0] is not None or settled[0] or (should_stop is not None and should_stop())
 
     def stop():
         over = time.time() > deadline if quick.on() else _box_over(deadline, box, done[0])
@@ -1260,6 +1280,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     if mc is not None and mc < ms:
         if probe:
             choice["probe"] = True
+        if settled[0]:
+            choice["probeSettled"] = True
         choice["method"] = "constrained"
         choice["reason"] = (f"stress utilization {u:.2f}: constrained {mc:.1f} g against "
                             f"search {ms:.1f} g")
@@ -1272,9 +1294,30 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
                         + (f"{mc:.1f} g" if mc is not None else "found no passing part")
                         + f" against search {ms:.1f} g"
                         + (f" (probe stopped: a {beaten[0]:.1f} g part failed)" if beaten[0] is not None else ""))
+    if settled[0]:
+        choice["probeSettled"] = True
     r.choice = choice
     r.seconds += rc.seconds
     return r
+
+
+def _probe_won(event: dict, search_mass: float, margin: float | None = None) -> bool:
+    """Whether a constrained part (its outcome event) passes while weighing
+    less than the search's part. `margin`, when given, is its tet-confirmed
+    margin and decides over the voxel one."""
+    m = event.get("mass")
+    mg = margin if margin is not None else event.get("margin")
+    return m is not None and mg is not None and m < search_mass and mg >= 1.0
+
+
+def _probe_settled(won: bool, start: float, deadline: float, done: int, now: float | None = None) -> bool:
+    """Whether a probe that has run `done` parts since `start` should stop
+    before its next one: it already holds a winning part (`won`) and another
+    part, at the mean time of those so far, would end past the deadline."""
+    if not won or done < 1:
+        return False
+    now = time.time() if now is None else now
+    return now + (now - start) / done > deadline
 
 
 def _probe_beaten(goal, event: dict, search_mass: float, margin: float | None = None) -> bool:

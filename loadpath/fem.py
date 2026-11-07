@@ -653,7 +653,7 @@ class Solver:
         # the extra factors stayed allocated (the robot-arm wrist yoke's coarsest
         # level is a 60-125 MB LU; resident memory grew ~0.5 GB per design,
         # 3 to 7 GB over a search). One cycle here factors it once.
-        m.matvec(np.zeros(k.shape[0]))
+        m @ np.zeros(k.shape[0])   # (a LinearOperator or, for Jacobi, a sparse matrix: scipy 1.18 sparse has no matvec)
         maxiter = self._maxiter()
         counts = [0] * len(fs)
 

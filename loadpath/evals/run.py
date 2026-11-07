@@ -638,9 +638,10 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None, spre
         study = study_from_dict(raw, base_dir=base)
         result = run_study(study, on_progress=lambda e, _x: (
             print(json.dumps(_jsonable({k: v for k, v in e.items()
-                                        if k in ("stage", "volumeFraction", "safetyFactor", "mass")}
-                                       | {"case": name})),
-                  file=sys.stderr, flush=True) if e.get("stage") in ("outcome",) else None))
+                                        if k in ("stage", "volumeFraction", "safetyFactor", "mass", "method",
+                                                 "bucklingFactor", "margin")}
+                                       | {"case": name, "t": round(time.time() - t0)})),
+                  file=sys.stderr, flush=True) if e.get("stage") in ("outcome", "method", "confirmed") else None))
         row = score_case(raw, result, time.time() - t0, study, tier)
         if result.best is not None or result.outcomes:
             o = result.outcomes[result.best if result.best is not None else -1]
