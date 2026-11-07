@@ -440,6 +440,18 @@ change the exterior yourself: relay `skinReview.summary` and those
 options to the designer and let them choose. `limitedBy == "interior"`
 needs no designer: re-run finer or longer. See docs/SWITCH.md.
 
+A graded lattice instead of ribs: add `switch.lattice` (`type`, `cell`,
+`mode: "where-needed"`) or `--lattice bcc:4:where-needed`. Under a thin
+TPU skin only strut cells are soft enough (a 1.0 mm-walled gyroid is a
+third to half solid). Each round is read back on the printable mesh with
+cut cells (`switch_lattice.readback`, also good for ribs or a drawn part:
+`examples/switch/touch_mic_lattice.py --readback part.stl`) and the
+windows are divided by that reading's error for the next round. Quote the
+read-back (0.33 mm) to a designer, not the design model: on the touch
+microphone the 1 mm model read the skin ~30% soft, and ribs that met 13
+of 14 there met 0 of 14 on their mesh. The report also gives powder escape
+and the material added inside each keep-out and its path.
+
 ## Designing for feel (grip, drop, handling noise)
 
 Inside the same kind of exterior, a `feel` block designs for how the

@@ -782,7 +782,31 @@ _SWITCH = {
             "description": "report skinReview (default true): every press the fixed exterior keeps out of its "
                            "window, where, by how much, and the skin thickness, local skin change or target "
                            "change that would fix it. Suggestions only: the exterior is never edited. "
-                           "`loadpath switch --skin-review` reads the bare skin alone, before designing"}},
+                           "`loadpath switch --skin-review` reads the bare skin alone, before designing"},
+        "lattice": {"type": "object", "description": "a graded lattice inside the skin instead of ribs "
+                                                     "(switch_lattice.py, `loadpath switch --lattice`): one cell "
+                                                     "size, its wall or strut graded per cell to hit each window, "
+                                                     "then read back on the printable mesh (cut cells) and the "
+                                                     "windows corrected by that reading for the next round",
+                    "properties": {
+                        "type": {"type": "string", "description": "a TPMS sheet (gyroid, diamond, schwarz-p) or a "
+                                                                  "strut cell (octet, bcc, kelvin, ...)"},
+                        "cell": {**_POS, "description": "mm, the lattice period (default 6)"},
+                        "wallMin": {**_POS, "description": "mm, thinnest wall or strut (default minMember)"},
+                        "wallMax": {**_POS, "description": "mm, thickest (default 0.4 cell)"},
+                        "mode": {"enum": ["fill", "where-needed"],
+                                 "description": "fill: lattice in the whole interior, only its density graded; "
+                                                "where-needed: also where there is lattice at all (default fill)"},
+                        "gradeRadius": {**_POS, "description": "mm, how fast the density may vary (default half "
+                                                               "a cell)"},
+                        "regionRadius": {**_POS, "description": "mm, where-needed's presence filter (default 0.75 "
+                                                                "cell, so a lattice region is about a cell across)"},
+                        "rounds": {"type": "integer", "minimum": 1,
+                                   "description": "optimize / read back / correct rounds (default 2)"},
+                        "readbackPitch": {**_POS, "description": "mm grid of each round's read-back (default 0.5)"},
+                        "finalPitch": {**_POS, "description": "mm grid of the final read-back (default "
+                                                              "readbackPitch)"}},
+                    "additionalProperties": False}},
     "required": ["output"],
     "x-requireOne": [["presses"], ["field"]],
     "additionalProperties": False,

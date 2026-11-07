@@ -532,6 +532,8 @@ def main(argv=None):
                     help="read the bare skin only, in seconds, before designing anything: which presses the fixed "
                          "exterior alone puts over their ceilings, where, and what the designer could change "
                          "(report skinReview; nothing is optimized or edited)")
+    sw.add_argument("--lattice", help="a graded lattice instead of ribs: TYPE[:CELL_MM[:MODE]], e.g. "
+                    "octet:5:where-needed (default: switch.lattice, if the study has one)")
     sw.add_argument("--base-dir")
     fe = sub.add_parser("feel", help="design the inside of a fixed exterior for how it feels: grip squeeze, drop "
                                      "cushioning, vibration isolation of a part inside (the study's feel block; "
@@ -1312,6 +1314,14 @@ def _switch(args):
         print(json.dumps({"ok": False, "error": format_issues(errors)}))
         return 2
     try:
+        if args.lattice:
+            parts = args.lattice.split(":")
+            lb = dict(doc["switch"].get("lattice") or {}, type=parts[0])
+            if len(parts) > 1:
+                lb["cell"] = float(parts[1])
+            if len(parts) > 2:
+                lb["mode"] = parts[2]
+            doc = {**doc, "switch": {**doc["switch"], "lattice": lb}}
         st = study_from_dict(doc, base)
         pitches = [float(v) for v in args.pitches.split(",")] if args.pitches else None
         its = [int(v) for v in args.iterations.split(",")] if args.iterations else None
@@ -1320,6 +1330,12 @@ def _switch(args):
             sr = skin_preflight(st, pitches[0] if pitches else None)
             _write_report(args.out, {"ok": sr["skinLimited"] == 0, "name": st.name, "skinReview": sr})
             return 0 if sr["skinLimited"] == 0 else 1
+        if doc["switch"].get("lattice"):
+            from .switch_lattice import run_switch_lattice
+            rep = run_switch_lattice(st, args.out, iterations=its[0] if its else 80, on_progress=_progress)
+            rep["passes"] = rep["inWindow"] == len(rep["finalReadback"]["forceGf"])
+            _write_report(args.out, {"ok": rep["passes"], **rep})
+            return 0 if rep["passes"] else 1
         rep = run_switch(st, args.out, pitches=pitches, iterations=its, nonlinear=args.nonlinear,
                          on_progress=_progress)
     except ValueError as exc:

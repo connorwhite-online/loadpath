@@ -11,14 +11,14 @@ import sys
 
 import numpy as np
 
-# categorical slots 1-3 of the dataviz reference palette, in fixed order;
+# categorical slots 1-4 of the dataviz reference palette, in fixed order;
 # markers differ too, so identity is never color alone
-COLORS = ["#2a78d6", "#eb6834", "#1baf7a"]
-MARKERS = ["o", "s", "D"]
+COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
+MARKERS = ["o", "s", "D", "^"]
 INK, MUTED, SURFACE = "#0b0b0b", "#52514e", "#fcfcfb"
 
 
-def chart(doc, rows, out, title):
+def chart(doc, rows, out, title, ylim=(70, 2000)):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -39,7 +39,7 @@ def chart(doc, rows, out, title):
         ax.scatter(x + off, f, s=34, marker=MARKERS[k], color=COLORS[k], edgecolor=SURFACE, linewidth=1.2,
                    zorder=3, label=label)
     ax.set_yscale("log")
-    ax.set_ylim(70, 2000)
+    ax.set_ylim(*ylim)
     ticks = [100, 150, 200, 300, 500, 1000, 1500]
     ax.set_yticks(ticks)
     ax.set_yticklabels([str(t) for t in ticks])
@@ -54,7 +54,7 @@ def chart(doc, rows, out, title):
     for s in ax.spines.values():
         s.set_visible(False)
     ax.set_title(title, loc="left", color=INK, fontsize=11)
-    ax.legend(frameon=False, fontsize=8, ncol=n + 1, loc="upper left", labelcolor=INK)
+    ax.legend(frameon=False, fontsize=8, ncol=min(n + 1, 3), loc="upper left", labelcolor=INK)
     fig.tight_layout()
     fig.savefig(out, facecolor=SURFACE)
     return out

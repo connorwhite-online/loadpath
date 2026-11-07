@@ -271,10 +271,15 @@ designer's surfacing kept as a 1.0 mm SLS TPU skin, the board, switch and
 USB-C plug paths kept clear, and the interior designed so a press anywhere
 on the touch area clicks at 150 gf at the centre rising to 300 gf at the
 rim. The drawn interior hits 6 of 14 press windows (up to 1436 gf at a
-corner); loadpath's design hits 13 of 14, and its delivered mesh, read
-back, 11 of 14 with the rest 3-17% over, in 15% less material. It runs in
-the eval suite as `touch-mic-pad`.
-([docs/SWITCH.md](docs/SWITCH.md))
+corner); loadpath's 1 mm design hits 13 of 14. Read back on the printable
+mesh itself (cut cells, 0.33 mm) the first delivered ribs hit none, so
+loadpath now closes that loop: it reads each round's mesh back and
+corrects the targets by the error. Corrected, ribs and a graded BCC strut
+lattice both hit 8 of 14, the lattice in 7.0 cm^3 against the drawn 9.7
+with nothing in the assembly paths, and the four misses are the rim
+presses the 1.0 mm skin alone puts over 300 gf: a call for the designer,
+which the report makes with numbers. It runs in the eval suite as
+`touch-mic-pad`. ([docs/SWITCH.md](docs/SWITCH.md))
 
 <img src="docs/images/switch/touch-mic-forces.png" width="760">
 

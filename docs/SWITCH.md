@@ -248,6 +248,100 @@ interior needs comes from a design that holds on a fine grid; the 1 mm
 design's own suggestions (0.80 mm locally, 0.90 mm overall) are withdrawn
 with it. `"skinReview": false` in the switch block turns the review off.
 
+## A graded lattice instead of ribs
+
+`loadpath switch` grows ribs. With a `lattice` block (or `--lattice
+octet:5:where-needed`), it fills the interior with one lattice instead,
+a TPMS sheet or a strut cell of one size, and grades only how thick its
+walls or struts are, cell by cell, to hit each press window
+(`switch_lattice.py`). `mode: "fill"` puts lattice everywhere inside the
+skin; `"where-needed"` also decides where there is lattice at all, in
+regions about a cell across.
+
+```json
+"switch": {..., "lattice": {"type": "bcc", "cell": 4, "mode": "where-needed", "rounds": 3}}
+```
+
+The optimizer works on the lattice's homogenized modulus on the same 1 mm
+grid as the ribs. A lattice under a push pad's skin is one or two cells
+deep, where homogenization is a guess, so every round is **read back on
+the printable mesh**: the exact lattice joined to the designer's skin,
+solved with cut cells (each cell the surface cuts integrated over its
+solid part, `readback`), at 0.5 mm. Each press's window is then divided by
+how far that reading was off, and the next round optimizes for that. The
+part comes with a powder check (no void a 1 mm ball cannot leave, and the
+largest ball that rolls out of every room) and the material it added
+inside each keep-out and its assembly path.
+
+On the touch microphone (round 17's exterior, 1.0 mm SLS TPU skin, struts
+and walls at least 1.0 mm), every design here read back the same way,
+cut cells at 0.33 mm:
+
+| design | in window | force / ceiling, median and worst | spread | part | added to assembly paths |
+|---|---|---|---|---|---|
+| round 17 as drawn (1 mm model, no mesh here) | 6 of 14 | 1.17, 4.79 | 0.66 | 9.7 cm^3 | |
+| bare skin, base, rails and plunger tip | 9 of 14 | 0.91, 1.62 | 0.25 | 6.9 cm^3 | 0 |
+| ribs as `loadpath switch` delivers them | **0 of 14** | 1.97, 3.64 | 0.30 | 8.2 cm^3 | 1.9 mm^3 (board) |
+| ribs, read-back corrected (best of 3 rounds) | 8 of 14 | 0.97, 1.55 | 0.23 | 7.5 cm^3 | 0.9 mm^3 (board) |
+| **graded BCC 4 mm lattice, corrected** | **8 of 14** | 0.96, 1.66 | 0.23 | **7.0 cm^3** | **0** |
+| graded octet 5 mm, first round | 1 of 14 | 1.36, 1.82 | 0.18 | 7.3 cm^3 | 0 |
+
+Spread is the coefficient of variation of force over ceiling across the
+14 presses: how even the feel is against the map. A 4 mm ball rolls out of
+every one of these parts (the underside is open to the board bay).
+
+![ribs and lattices, from below and in two sections](images/switch/touch-mic-lattice-sections.png)
+
+![force to click on the printable mesh: bare skin, ribs, the BCC lattice](images/switch/touch-mic-lattice-forces.png)
+
+What this says:
+
+- **A lattice that fills the interior is far too stiff.** At their
+  thinnest printable wall (1.0 mm) a 6 mm gyroid is 45% solid and an 8 mm
+  one 36%; filled, the corners need 7 kgf. Even the softest strut cell
+  (BCC 8 mm, 7.5% solid) graded over the whole interior meets 5 of 14 on
+  the design model. Strut cells, which bend, are the only lattices soft
+  enough for a TPU push pad; sheets are a perforated solid at this scale.
+- **The homogenized design does not survive the read-back.** The first
+  round's octet met 14 of 14 on its own model and 1 of 14 on the mesh;
+  the first BCC round 12 and 2. The 1 mm model reads this curved 1.0 mm
+  skin about 30% soft, the same thing the skin review above found from
+  the other side. The ribs fail the same check harder: their delivered
+  mesh, which reads 11 of 14 through the 1 mm grid, reads 0 of 14 on cut
+  cells.
+- **Corrected, ribs and lattice tie, and neither beats the bare skin.**
+  With the windows divided by the read-back error, both settle at 8 of 14
+  with the same evenness. The lattice does it with 0.5 cm^3 less material
+  and adds nothing inside the board, switch or plug paths (the ribs'
+  smoothing leaks 0.9 mm^3 into the board space). The octet's second round
+  removed every strut: on this exterior, the best interior is almost none.
+  The bare skin's 9 of 14 is the ceiling, because the four rim presses at
+  (+-12, -9) and (+-14, 6) need 397-486 gf from the skin alone against
+  300, and any interior only adds to that. That is the designer's call
+  (a thinner skin at the rim folds, or higher rim ceilings), which the
+  skin review already points at.
+
+A lattice will earn its place under a skin soft enough to need stiffening
+everywhere, or where a press must be carried a long way to the plunger.
+On this exterior the skin is already doing all of it.
+
+The read-back on cut cells converges: the bare skin moves under 3%
+between 0.5 and 0.33 mm (131 / 128 gf centre, 486 / 476 at the worst
+corner). Designs with 1 mm members inside still stiffen a little from 0.5
+to 0.33 mm (BCC centre 136 to 143 after correction, ribs 215 to 272 as
+delivered), so a 0.33 mm reading is the one to quote, and a miss there is
+at least that large; 0.25 mm did not fit in 15 GB. Reading a cell's filled
+share as a density (E ~ x^3 or E ~ x) instead did not converge at all on
+ribs, and pressing on the design grid's outermost cells (which the part
+may barely touch) lost the load: the read-back presses the outermost node
+of cells at least half full.
+
+Run it: `examples/switch/touch_mic_lattice.py --stl <case STLs> --type bcc
+--cell 4` (about 40 minutes for three rounds on 4 cores), and
+`--readback part.stl` reads any delivered mesh the same way. The
+corrected ribs come from the same loop around `run_switch`
+(windows divided by `corrected_windows`).
+
 ## Three things that had to change
 
 **A thin skin on a coarse grid.** Preserved cells are whole cells, so a
