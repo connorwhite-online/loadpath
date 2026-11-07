@@ -89,7 +89,11 @@ def study(ext: str, pitch: float = 1.0, vents: bool = False, press: bool = False
         pad = {"type": "box", "min": [-15, -12, 0], "max": [15, 12, 10]}
         doc["feel"] = {"targets": [
             {"kind": "squeeze", "name": "panel", "hold": {"face": "-z"}, "press": {"face": "+z", "shape": pad},
-             "direction": "-z", "force": 20, "travel": {"max": 0.1}}]}
+             "direction": "-z", "force": 20, "travel": {"max": 0.1}}],
+            # read on the design itself, not its eroded twin: at 0.7 mm the
+            # eroded design's solves ran the 15 GB box out of memory once the
+            # projection sharpened (the delivered read-back checks the panel)
+            "robust": False}
     if vents:
         doc["cooling"]["gravity"] = "-y"
         doc["cooling"]["vents"] = [

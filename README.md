@@ -98,7 +98,9 @@ Where it is strongest:
   its switch at a chosen force anywhere on the touch area, a grip that gives
   just so much under a squeeze, a capsule or board cushioned for a fall,
   and handling vibration kept off a microphone capsule, with the least
-  material ([docs/FEEL.md](docs/FEEL.md)). Where the exterior itself rules a target out, the report says
+  material ([docs/FEEL.md](docs/FEEL.md)), and around the heat the
+  electronics make: each chip under its temperature limit and the outside
+  under the touch limit for how it is held ([docs/COOLING.md](docs/COOLING.md)). Where the exterior itself rules a target out, the report says
   where and by how much, and what skin or target change would fix it, for
   the designer to decide; loadpath never edits the exterior
   ([docs/SWITCH.md](docs/SWITCH.md)). `loadpath handoff` starts from what
@@ -271,7 +273,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [CAD import](docs/IMPORT.md), [slicer](docs/slicer.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
-  [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [any exterior in](docs/EXTERIOR.md),
+  [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
   [split shells](docs/SHELLS.md).
 
 <!-- gallery:start -->
@@ -339,6 +341,19 @@ all read on the delivered mesh's own cut cells, modes included.
 ([docs/FEEL.md](docs/FEEL.md))
 
 <img src="docs/images/feel/mic-body-sections.png" width="760">
+
+**Designed around the heat.** A processor has a temperature it must stay
+under, a battery a lower one, and the surface a hand holds a touch limit
+(48 C held, after IEC 62368-1). `loadpath cooling` gives each component its
+watts and limit and designs the interior to meet all of them with the least
+material, together with any feel target. A generic 120 x 64 x 16 mm
+handheld in MJF PA 12 with a 1.5 W processor: bare, the processor reads
+92 C and the skin over it 51 C; designed on 0.7 mm cells, pads off the
+chips spread into a thin liner under the skin over the board, 17% of the
+inside, and the delivered mesh reads 66 C and 47.9 C.
+([docs/COOLING.md](docs/COOLING.md))
+
+<img src="docs/images/cooling/handheld-sections.png" width="760">
 
 Where the load goes: von Mises stress, blue (none) to red (the part's 98th percentile), on the part bent by its worst load case:
 

@@ -534,7 +534,11 @@ class _Solves:
     ALIVE = 0.02
     DIRECT_DOFS = 600_000
     MMD_DOFS = 120_000
-    PARDISO_DOFS = 400_000
+    # PARDISO up to DIRECT_DOFS: a grey 0.7 mm handheld interior (cooling
+    # and a back-panel press, 469k dofs) took 94 s and 6.6 GB on the
+    # single-precision fallback and 20 s and 4.8 GB on PARDISO; further on
+    # into the run the fallback ran a 15 GB box out of memory
+    PARDISO_DOFS = 600_000
 
     def __init__(self, domain: Domain, nu, rtol: float = 1e-8):
         from scipy import ndimage  # noqa: F401
