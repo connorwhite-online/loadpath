@@ -82,7 +82,8 @@ Every joint sits inside the skin.
   the material's strain at yield, or 30% of its strain at break when only
   that is published, capped at 5%. An FDM beam bent across its layers
   gets less, and so does a snap meant to be opened often. The allowance is
-  a house rule, not a measured value, so treat it as a start. The hooks
+  a house rule until a calibration card with snap readings (the kit's S
+  coupons) replaces it. The hooks
   hang from whichever half has straight wall for them. Where the wall
   curves in below the cut, the hook steps in and its ledge and root reach
   out to the wall. The other half keeps clear the room the beam bends
@@ -131,8 +132,10 @@ length and the barb sits further out.
 - **Only flat cuts across x, y or z.** A stepped or curved parting line
   is not supported. Give the closest plane, or use `avoid` to keep the
   seam off the surfaces that matter.
-- **Snap allowances are not measured.** They come from the material
-  cards' elongation, so a snap coupon on the calibration sheet is the
-  next step.
+- **Snap allowances are a house rule until measured.** They come from
+  the material card's elongation. The calibration kit's S coupons
+  ([CALIBRATION.md](CALIBRATION.md#snap-fits-a-ladder-no-measuring))
+  measure them on your printer, and a card fitted from them replaces the
+  rule.
 - **A screw boss's thread is only modelled as preload.** Pull-out
   strength of a thread in plastic is not checked.

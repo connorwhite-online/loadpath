@@ -31,10 +31,13 @@ def _kit():
 
 def test_kit_meshes_are_printable():
     kit = _kit()
-    assert [c.id for c in kit] == ["F-XY", "F-Z", "T-XY", "T-Z", "L-GY", "H-XY", "H-Z", "H-PEG"]
+    assert [c.id for c in kit] == ["F-XY", "F-Z", "T-XY", "T-Z", "L-GY", "H-XY", "H-Z", "H-PEG",
+                                   "S-KEEP", "S-XY", "S-Z"]
     for c in kit:
         assert c.mesh.is_watertight, c.id
-        assert len(c.mesh.split()) == 1, c.id
+        # the snap ladders are a row of separate plugs
+        bodies = len(c.geometry["lengths"]) if c.id in ("S-XY", "S-Z") else 1
+        assert len(c.mesh.split()) == bodies, c.id
         assert abs(c.mesh.bounds[0]).max() < 1e-6, f"{c.id} not on the bed"
         assert c.mesh.bounds[1].max() <= 180, f"{c.id} does not fit a 180 mm bed"
     by = {c.id: c for c in kit}
@@ -94,6 +97,9 @@ def _synthetic(E_scale=0.8, s_scale=1.1, inter=0.5, ez=0.9, dens=1.25, lat_facto
     m["parts"]["bracket"]["points"] = [[kg, 0.4 * petg.E / E / 0.75 * kg] for kg in (0.5, 1, 2)]
     holes = _hole_readings(_kit(), -0.2, -0.35, 0.0)["coupons"]
     co.update({k: v for k, v in holes.items() if k.startswith("H-")})
+    for cid in ("S-XY", "S-Z"):       # every snap plug closes clean
+        n = len(co[cid]["strains"])
+        co[cid].update(closes=[True] * n, marked=[False] * n, held10=[True] * n)
     return m, pred
 
 
@@ -110,6 +116,9 @@ def test_fit_recovers_a_known_card():
     assert abs(card["lattice"]["stiffnessFactor"] - 0.7) < 0.03, card["lattice"]
     assert abs(card["modelFactor"]["stiffness"] - 0.75) < 0.01, card["modelFactor"]
     assert card["kept"] == []
+    # every plug clean: the top of the ladder, flagged as a lower bound
+    assert card["snaps"]["strain"] == m["coupons"]["S-XY"]["strains"][-1]
+    assert "at least" in card["snaps"]["evidence"]["S-XY"]["note"]
     assert abs(card["evidence"]["F-XY"]["offsetMm"] - 0.05) < 1e-6
     # the same part read with a laser 3 m away
     pred["parts"]["bracket"]["laserSpotMmPerKgPerM"] = 2.0
@@ -168,7 +177,8 @@ def test_write_kit_and_cli_fit():
         for cid in ("F-XY", "F-Z", "T-XY", "T-Z", "L-GY"):
             assert os.path.getsize(paths[cid]) > 1000
         tmpl = json.load(open(paths["measurements"]))
-        assert set(tmpl["coupons"]) == {"F-XY", "F-Z", "T-XY", "T-Z", "L-GY", "H-XY", "H-Z", "H-PEG"}
+        assert set(tmpl["coupons"]) == {"F-XY", "F-Z", "T-XY", "T-Z", "L-GY", "H-XY", "H-Z", "H-PEG",
+                                       "S-KEEP", "S-XY", "S-Z"}
         assert tmpl["coupons"]["H-XY"]["go"] == [None] * 12
         m, _ = _synthetic()
         mp = os.path.join(d, "filled.json")
@@ -366,6 +376,69 @@ def test_card_hole_bias_reaches_fits():
             lug["process"] = "sls"
             r = expand_fits(json.loads(json.dumps(lug)))["_fits"][0]
             assert abs(r["bias"] + 0.175) < 1e-9, r   # SLS default, build direction unknown
+        finally:
+            cal.CALIBRATION_DIR = old
+
+
+def test_snap_ladder_and_fit():
+    """The plugs step the strain round the house rule, seat in the keeper
+    with no overlap and bend each beam by the undercut on the way in; a
+    printer whose PETG marks above 4.5% (3% over ten closings) and pushes
+    at half the formula's force is read back, and its card replaces the
+    house rule in shells.snap_allowable."""
+    from loadpath.shells import snap_allowable, snap_cantilever
+    by = {c.id: c for c in _kit()}
+    xy, z = by["S-XY"], by["S-Z"]
+    house = snap_allowable("petg", "fdm")["strain"]
+    eps = xy.predicted["strains"]
+    assert eps == sorted(eps) and eps[0] < house < eps[-1], (eps, house)
+    assert z.predicted["allowable"] < xy.predicted["allowable"]
+    assert z.mesh.extents[2] > xy.mesh.extents[2]      # standing
+    g = xy.geometry
+    for L, e in zip(g["lengths"], eps):
+        assert abs(1.5 * g["thickness"] * g["deflection"] / L ** 2 - e) < 1e-4
+    # seated: no overlap; part way in: the barbs push into the ledge
+    s = cal._SNAP
+    plug, geo = cal._snap_plug(g["lengths"][0])
+    shoulder = geo["return"] - s["plate"] - s["seat"]
+    keeper = cal._box([shoulder, -20, -10], [shoulder + s["plate"], 20, 20]) - cal._box(
+        [shoulder - 1, -(s["a"] + s["gap"]), -s["gap"]], [shoulder + s["plate"] + 1, s["a"] + s["gap"],
+                                                           s["width"] + s["gap"]])
+    assert (plug ^ keeper).volume() < 1e-6
+    assert (plug.translate([-0.4, 0, 0]) ^ keeper).volume() > 1.0
+
+    m = cal.measurement_template(_kit(), "petg", "fdm")
+    E = material_from_spec("petg").E
+    for cid, lim, rep in (("S-XY", 0.045, 0.03), ("S-Z", 0.02, 0.012)):
+        e = m["coupons"][cid]
+        L = by[cid].geometry["lengths"]
+        e["closes"] = [True] * len(L)
+        e["marked"] = [x > lim for x in e["strains"]]
+        e["held10"] = [x <= rep for x in e["strains"]]
+        e["pushKg"] = [0.5 * 2 * snap_cantilever(l, s["t"], s["width"], s["y"] - s["gap"], E, s["lead"], 90.0,
+                                                 s["mu"])["push"] / 9.81 for l in L]
+    card = cal.fit(m, name="petg-snap-test")
+    sn = card["snaps"]
+    want = {k: max(x for x in by[c].predicted["strains"] if x <= v)
+            for k, c, v in (("strain", "S-XY", 0.045), ("strainAcross", "S-Z", 0.02),
+                            ("strainRepeated", "S-XY", 0.03), ("strainRepeatedAcross", "S-Z", 0.012))}
+    for k, v in want.items():
+        assert sn[k] == v, (k, sn[k], v)
+    assert abs(sn["pushFactor"] - 0.5) < 0.01, sn
+    card["material"]["E"] = E                            # no F-XY points: E kept
+    with tempfile.TemporaryDirectory() as d:
+        old = cal.CALIBRATION_DIR
+        cal.CALIBRATION_DIR = d
+        try:
+            with open(os.path.join(d, "petg-snap-test.json"), "w") as fh:
+                json.dump(card, fh)
+            a = snap_allowable("petg-snap-test", "fdm")
+            assert a.get("measured") and a["strain"] == want["strain"], a
+            assert snap_allowable("petg-snap-test", "fdm", across_layers=True)["strain"] == want["strainAcross"]
+            assert snap_allowable("petg-snap-test", "fdm", repeated=True)["strain"] == want["strainRepeated"]
+            # made on FDM: does not apply to SLS, which falls back to the base card's house rule
+            sls = snap_allowable("petg-snap-test", "sls")
+            assert not sls.get("measured") and abs(sls["strain"] - house) < 1e-9, sls
         finally:
             cal.CALIBRATION_DIR = old
 

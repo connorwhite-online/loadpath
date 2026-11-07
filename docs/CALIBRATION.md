@@ -29,6 +29,8 @@ python -m loadpath calibrate kit --material petg --out calibration/
 | H-XY | flat | push a 5 mm drill bit's shank through 12 numbered holes, write go / no-go | hole bias along the build (`holeBias`) |
 | H-Z | on its long edge | the same | hole bias across the layers (`holeBiasAcross`) |
 | H-PEG | standing | the smallest H-XY hole each peg goes into | the drawn clearance a printed pin needs in a printed hole |
+| S-XY + S-KEEP | flat | push 6 or 7 snap plugs, each bent harder, through the keeper; note which mark | the strain a snap may take along the layers, once and over ten closings, and the push |
+| S-Z | standing | the same | the same across the layers |
 | X-.. (with `--crush`) | either | crush under growing weight | the lattice crush plateau for impact.py (see below) |
 | K-25 (with `--crush`, TPU only) | upright | a dead weight for a week, read the height | TPU creep rate for viscoelastic.py (see below) |
 
@@ -74,6 +76,39 @@ number of the smallest H-XY hole it slides into (`entersHole`): that gives
 pin needs to slide in a printed hole (hinges, print-in-place), and with
 H-XY the pegs' own bias.
 
+### Snap fits (a ladder, no measuring)
+
+`loadpath split` sizes every snap so its beam stays under an allowance
+(shells.snap_allowable), and that allowance is a house rule taken from
+the card's elongation: 60% of the strain at yield, 30% of the strain at
+break, capped at 5%. The S coupons measure it instead. Each S-XY plug is
+a handle with two fingers whose barbs stand 1.1 mm proud; pushed through
+an S-KEEP hole with 0.1 mm clearance a side, every finger bends 1.0 mm.
+The fingers get shorter from plug 1 to the last, so the strain at their
+roots climbs, 1.5 t y / L^2, from well under the house rule to about three
+times it (PETG along the layers: 1.8, 2.5, 3.1, 4.0, 5.2, 6.7 and 8.9%,
+against a house rule of 3.1%).
+
+Set the keeper on a kitchen scale over a gap and push each plug in, plug
+1 first, until it clicks. For each, write `closes` (it clicked in),
+`marked` (a white haze at the finger roots, a crack, or a finger that
+stays bent once the plug is out) and `pushKg` (the peak on the scale;
+leave it null past the scale's range). Then close it nine more times and
+write `held10` (it still clicks in and holds). Stop at the first plug that
+breaks. The fit takes the last plug that closed clean, with every plug
+below it clean too, as `snaps.strain`, and the last that survived ten
+closings as `snaps.strainRepeated`; S-Z does the same across the layers.
+A ladder whose every plug closed clean says the allowance is at least its
+top step, and says so. `snaps.pushFactor` is the measured push over the
+beam formula's (cut cells read about half: the formula loads the beam at
+its free length and the barb sits further out). A card with these numbers
+replaces the house rule in every `loadpath split` on that card's process,
+and scales the reported push.
+
+The ladder steps 1.3x apart, wider than the print's own error: a hole
+that prints 0.1 mm small bends the fingers 1.05 mm instead of 1.0, 5% more
+strain.
+
 ## 3. Fit
 
 ```bash
@@ -87,6 +122,7 @@ measured independently of the solver it feeds. It writes a card with:
 - `material`: E, strength, density, pasteable into any study as a custom material;
 - `process`: `interlayer` and `stiffnessAcrossLayers` for that printer, and `holeBias` / `holeBiasAcross` from the hole coupons (every fitted hole in a study on this card is then drawn for them, fits.py);
 - `holes`: the hole-fit evidence, `printedSlipClearance` and `pegBias`;
+- `snaps`: the snap allowance along and across the layers, once and over ten closings, and the push factor (used by `loadpath split`);
 - `lattice.stiffnessFactor`: printed gyroid stiffness over the homogenized model, at the density that actually printed (wall-width error taken out);
 - `parts` and `modelFactor.stiffness`: for each part test, measured stiffness over verify's prediction at the calibrated modulus: what the voxel model, bonded joints and slicer fill still miss;
 - `kept`: what had no measurement and stayed at the starting card.

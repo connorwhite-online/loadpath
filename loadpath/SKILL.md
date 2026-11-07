@@ -533,7 +533,9 @@ candidate, `snaps.strain` against `snaps.allowable` (an FDM beam bent
 across layers gets a warning: print the halves on their sides, or use
 SLS), and `warnings` for joints that did not fit. `shells.verify_snap`
 reads a hook's strain on cut cells, and `shells.check_closed` checks the
-built halves for overlap. See docs/SHELLS.md.
+built halves for overlap. `snaps.allowableBasis` says whether the
+allowance was measured (a calibration card fitted from the kit's S-XY /
+S-Z snap ladders) or is the house rule. See docs/SHELLS.md.
 
 A graded lattice instead of ribs: add `switch.lattice` (`type`, `cell`,
 `mode: "where-needed"`) or `--lattice bcc:4:where-needed`. Under a thin

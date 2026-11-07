@@ -30,6 +30,12 @@ The coupons (each STL sits on the bed in its print orientation):
         where FDM hole tops sag) -> process.holeBiasAcross
   H-PEG pegs drawn at H-XY's first four sizes: the smallest hole each goes
         into reads the clearance a printed pin needs in a printed hole
+  S-XY  a ladder of two-finger snap plugs printed flat, each with shorter
+        fingers, pushed through the S-KEEP plate: the last one that closes
+        without whitening or cracking reads the strain a snap may take
+        along the layers (shells.snap_allowable), once and over ten
+        closings; a kitchen scale under the plate reads the push
+  S-Z   the same plugs printed standing: the strain across the layers
   X-20, X-30 ... (with crush=True) gyroid crush blocks at two densities,
         squashed under growing weight -> the crush plateau impact.py
         predicts (CRUSH), its density exponent, and the densification
@@ -57,7 +63,7 @@ import numpy as np
 
 from .materials import Material, material_from_spec
 
-__all__ = ["Coupon", "coupon_kit", "crush_coupons", "creep_coupons", "fit_creep", "hole_coupons", "fit_holes",
+__all__ = ["Coupon", "coupon_kit", "crush_coupons", "snap_coupons", "fit_snaps", "creep_coupons", "fit_creep", "hole_coupons", "fit_holes",
            "write_kit", "fit", "fit_crush", "measurement_template",
            "part_prediction", "rigid_motion", "CALIBRATION_DIR", "load_card", "list_cards", "crush_factor"]
 
@@ -88,6 +94,12 @@ _HOLE = {"gauge": 5.0, "holes": 12, "step": 0.05, "below": 0.25, "pitch": 9.0, "
          "digitY": 3.5, "chamfer": 0.4, "pegs": 4, "pegHeight": 8.0, "pegBase": 3.0}
 # elastomer creep block: the low-density crush block, 3 cells tall, held at
 # half its buckling load for a week (viscoelastic.py's creep law)
+# snap plugs: two fingers t thick, barbs y proud, pushed through a keeper
+# hole with `gap` clearance a side (so each beam bends y - gap); finger
+# length steps the strain over `ladder` x the house-rule allowance
+_SNAP = {"a": 3.5, "t": 1.6, "y": 1.1, "gap": 0.1, "width": 4.0, "plate": 3.0, "seat": 0.15, "flat": 0.6,
+         "lead": 30.0, "mu": 0.3, "back": 6.0, "pocket": 0.6, "shoulder": 5.0,
+         "ladder": (0.6, 0.8, 1.0, 1.3, 1.7, 2.2, 2.9)}
 _CREEP = {"rho": 0.25, "tall": 3, "loadShare": 0.5, "readMinutes": (1, 10, 60, 600, 1440, 4320, 10080)}
 
 
@@ -282,12 +294,13 @@ def _lattice_compliance(E_star, c=_LAT, nu_star=0.35):
 # ---------------------------------------------------------------- the kit
 
 def coupon_kit(material="petg", process="fdm", loads_kg=_LOADS_KG, interlayer=None,
-               stiffness_across=None, crush=False, holes=True, hole_gauge=None) -> list:
+               stiffness_across=None, crush=False, holes=True, hole_gauge=None, snaps=True) -> list:
     """The coupons for one material, each with what to measure and what the
     starting card predicts. FDM by default; for powder or resin the same
     coupons read the (small) anisotropy of those processes. `holes` adds
     the go/no-go hole-fit coupons (hole_coupons), sized round a gauge of
-    `hole_gauge` mm (default a 5 mm drill bit)."""
+    `hole_gauge` mm (default a 5 mm drill bit). `snaps` adds the snap-fit
+    ladders (snap_coupons)."""
     from .am import _LAYER_STIFFNESS
     from .spec import PROCESSES
 
@@ -352,6 +365,8 @@ def coupon_kit(material="petg", process="fdm", loads_kg=_LOADS_KG, interlayer=No
         | {"solidVolume": _lattice_solid_volume(lc), "coreVolume": lc["core"] * lc["width"] * lc["height"]}))
     if holes:
         kit.extend(hole_coupons(material, process, gauge=hole_gauge))
+    if snaps:
+        kit.extend(snap_coupons(material, process))
     if crush:
         kit.extend(crush_coupons(material, process))
         kit.extend(creep_coupons(material, process))
@@ -618,6 +633,226 @@ def fit_holes(coupons: dict) -> dict | None:
                 out["pegBias"] = round(c + out["bias"], 3)
     if not ev:
         return None
+    out["evidence"] = ev
+    return out
+
+
+# ---------------------------------------------------------------- snap fits
+
+def _snap_plug(L, s=None):
+    """A two-finger snap plug drawn along +x, extruded s["width"] in z: a
+    handle whose front face (x = 0) is the shoulder that stops on the
+    keeper plate, and two fingers rooted `L` behind their barbs' return
+    faces (inside a pocket in the handle, so L can change while the barb
+    sits where the plate needs it). The barbs face outward (+-y): they
+    lead in at s["lead"] degrees and catch the plate's far face square."""
+    import manifold3d as m3d
+    s = s or _SNAP
+    a, t, y, T, b = s["a"], s["t"], s["y"], s["plate"], s["width"]
+    x_ret = T + s["seat"]
+    x_root = x_ret - L
+    run = y / np.tan(np.radians(s["lead"]))
+    x_tip = x_ret + s["flat"] + run
+    back = x_root - s["back"]
+    pocket = a + s["pocket"]
+    hw = a + s["shoulder"]
+    polys = [
+        # handle, less the pocket the fingers bend in
+        [(back, -hw), (0.0, -hw), (0.0, -pocket), (x_root, -pocket), (x_root, pocket), (0.0, pocket),
+         (0.0, hw), (back, hw)],
+    ]
+    for sg in (1.0, -1.0):
+        # finger (rooted 0.3 mm into the pocket's back wall) and barb
+        f = [(x_root - 0.3, a - t), (x_tip, a - t), (x_tip, a), (x_ret + s["flat"], a + y), (x_ret, a + y),
+             (x_ret, a), (x_root - 0.3, a)]
+        polys.append([(x, sg * v) for x, v in f])
+    cs = None
+    for p in polys:
+        # NonZero fill: winding direction does not matter (the mirrored finger turns the other way)
+        c = m3d.CrossSection([p], m3d.FillRule.NonZero)
+        cs = c if cs is None else cs + c
+    man = cs.extrude(b)
+    return man.translate([-back, 0.0, 0.0]), {"root": x_root - back, "return": x_ret - back,
+                                              "tip": x_tip - back, "length": x_tip - back}
+
+
+def _snap_keeper(n, s=None):
+    """The keeper: a plate s["plate"] thick, flat on the bed, with `n`
+    numbered rectangular holes the plugs push through from the top face.
+    The hole's bottom edge is the ledge the barbs catch."""
+    s = s or _SNAP
+    h = dict(_HOLE)
+    hx = s["width"] + 2 * s["gap"]               # the plug's width (z when drawn) across the hole
+    hy = 2 * (s["a"] + s["gap"])
+    pitch = max(hx, hy) + 9.0
+    L = 2 * 8.0 + (n - 1) * pitch
+    W = hy + 16.0
+    T = s["plate"]
+    plate = _box([0, 0, 0], [L, W, T])
+    for i in range(n):
+        x = 8.0 + i * pitch
+        plate = plate - _box([x - hx / 2, W / 2 + 2.0 - hy / 2, -1.0], [x + hx / 2, W / 2 + 2.0 + hy / 2, T + 1.0])
+        plate = plate - _digits_cut(str(i + 1), x, 4.0, T, h | {"depth": 0.6})
+    return plate, {"length": L, "width": W, "holeX": hx, "holeY": hy, "pitch": pitch}
+
+
+def _snap_row(Ls, upright, s=None):
+    """The plugs side by side, flat (fingers in the bed plane: the beams
+    bend along the layers) or standing on their handles (fingers up: the
+    beams bend across the layers). Flat plugs carry their number on top."""
+    s = s or _SNAP
+    out, x0 = None, 0.0
+    h = dict(_HOLE)
+    hw = s["a"] + s["shoulder"]
+    for i, L in enumerate(Ls):
+        man, geo = _snap_plug(L, s)
+        if upright:
+            man = _rotate_upright(man).translate([x0, 0.0, 0.0])
+            x0 += s["width"] + 6.0
+        else:
+            man = man.translate([0.0, hw + x0, 0.0])
+            # the number on the handle, behind the pocket
+            man = man - _digits_cut(str(i + 1), max(geo["root"] / 2, 3.0), hw + x0, s["width"], h | {"digit": 3.0, "depth": 0.5})
+            x0 += 2 * hw + 4.0
+        out = man if out is None else out + man
+    return out
+
+
+def _snap_ladder(allow, s=None):
+    """Strains for one ladder: steps round the house-rule allowance, from
+    well under it to past where the material should mark, and the beam
+    length that gives each at the drawn deflection."""
+    s = s or _SNAP
+    d = s["y"] - s["gap"]
+    eps = [float(np.clip(allow * f, 0.004, 0.10)) for f in s["ladder"]]
+    eps = sorted(set(round(e, 4) for e in eps))
+    Ls = [round(float(np.sqrt(1.5 * s["t"] * d / e)), 2) for e in eps]
+    return [round(1.5 * s["t"] * d / L ** 2, 4) for L in Ls], Ls
+
+
+def snap_coupons(material="petg", process="fdm") -> list:
+    """Snap-fit coupons: a ladder of two-finger snap plugs whose fingers
+    get shorter, so each one bends its beams to a larger strain as the
+    barbs pass the same keeper hole. S-XY prints the plugs flat (beams
+    bend along the layers), S-Z standing (across the layers), S-KEEP is
+    the plate with the holes. Push each plug in once, then nine more
+    times: the last plug that closes without whitening or cracking reads
+    the strain a snap may take in this material and printer, which
+    shells.snap_allowable otherwise takes from the material card's
+    elongation (a house rule). A kitchen scale under the plate reads the
+    push, against shells.snap_cantilever's."""
+    from .shells import snap_allowable, snap_cantilever
+
+    mat = material_from_spec(material)
+    s = _SNAP
+    d = s["y"] - s["gap"]
+    out = []
+    keeper, kgeo = _snap_keeper(3, s)
+    km = _to_trimesh(keeper)
+    out.append(Coupon(
+        "S-KEEP", "snap keeper plate, printed flat", km,
+        test=("The plate the S-XY and S-Z plugs snap into. Print it flat (it is drawn that way) and use hole 1; "
+              "holes 2 and 3 are spares if a ledge chips."),
+        measure={"massG": None},
+        predicted={"massG": round(float(km.volume) * mat.density / 1000, 2)},
+        geometry={"thickness": s["plate"], **{k: round(v, 2) for k, v in kgeo.items()}}))
+    for cid, title, upright, across in (("S-XY", "snap plugs, printed flat", False, False),
+                                        ("S-Z", "snap plugs, printed standing", True, True)):
+        allow = snap_allowable(mat.name if mat.name else material, process, across_layers=across)
+        rep = snap_allowable(mat.name if mat.name else material, process, across_layers=across, repeated=True)
+        eps, Ls = _snap_ladder(allow["strain"], s)
+        m = _to_trimesh(_snap_row(Ls, upright, s))
+        push = []
+        for L in Ls:
+            c = snap_cantilever(L, s["t"], s["width"], d, float(mat.E), s["lead"], 90.0, s["mu"])
+            push.append(round(2 * c["push"] / G, 2))
+        order = ("Plugs are numbered 1 (longest fingers, least strain) to "
+                 f"{len(Ls)} (shortest, most strain)" + (" on the handle." if not upright else
+                                                          ": tell them apart by finger length."))
+        out.append(Coupon(
+            cid, title, m,
+            test=(order + " Set the S-KEEP plate on a kitchen scale over a gap (two books with a finger's "
+                  "width between them, so the fingers can come through underneath) and zero it. For each plug, "
+                  "1 first: push it straight into hole 1 from the numbered face, slowly, until it clicks and "
+                  "the handle sits on the plate. Note the highest reading on the scale as it goes (pushKg). "
+                  "Look at the fingers' roots in good light: a white haze (stress whitening), a crack, or a "
+                  "finger that stays bent after you pinch the barbs together and pull the plug back out is a "
+                  "mark. Then push it in and out nine more times (pinch the barbs to release it) and say if it "
+                  "still clicks in and holds. Stop the ladder at the first plug that breaks."),
+            measure={"strains": eps, "closes": [None] * len(eps), "marked": [None] * len(eps),
+                     "held10": [None] * len(eps), "pushKg": [None] * len(eps)},
+            predicted={"massG": round(float(m.volume) * mat.density / 1000, 2), "strains": eps,
+                       "pushKg": push, "allowable": round(allow["strain"], 4),
+                       "allowableRepeated": round(rep["strain"], 4), "basis": allow["basis"],
+                       "lastClean": max([i + 1 for i, e in enumerate(eps) if e <= allow["strain"] * 1.0001],
+                                        default=0),
+                       "stressing": "across the layers" if across else "along the layers",
+                       "note": ("allowance is the house rule (snap_allowable), not a measured value; the "
+                                "plugs above it are expected to mark somewhere between it and about twice it")},
+            geometry={"lengths": Ls, "thickness": s["t"], "width": s["width"], "undercut": s["y"],
+                      "clearance": s["gap"], "deflection": round(d, 3), "leadAngle": s["lead"], "mu": s["mu"],
+                      "plate": s["plate"]}))
+    return out
+
+
+def fit_snaps(coupons: dict, mat) -> dict | None:
+    """The snap allowance from filled-in S-XY / S-Z ladders: the highest
+    strain a plug reached with every plug below it closing clean (no
+    whitening, crack or set), once and over ten closings, and the measured
+    push over snap_cantilever's at the card's modulus."""
+    from .shells import snap_cantilever
+
+    s = _SNAP
+    out, ev = {}, {}
+    ratios = []
+    for cid, key in (("S-XY", ""), ("S-Z", "Across")):
+        e = coupons.get(cid) or {}
+        eps = list(e.get("strains") or [])
+        closes = list(e.get("closes") or [])
+        if not eps or not any(c is not None for c in closes):
+            continue
+        marked = list(e.get("marked") or [None] * len(eps))
+        held = list(e.get("held10") or [None] * len(eps))
+
+        def last_clean(ok):
+            last, above = None, None
+            for i, eps_i in enumerate(eps):
+                r = ok(i)
+                if r is None:
+                    break
+                if not r:
+                    above = eps_i
+                    break
+                last = eps_i
+            return last, above
+
+        once, once_above = last_clean(lambda i: None if i >= len(closes) or closes[i] is None
+                                      else bool(closes[i]) and not bool(marked[i] if i < len(marked) else False))
+        many, many_above = last_clean(lambda i: None if i >= len(held) or held[i] is None or closes[i] is None
+                                      else bool(closes[i]) and not bool(marked[i]) and bool(held[i]))
+        info = {"lastClean": once, "firstMarked": once_above}
+        if once is not None:
+            out[f"strain{key}"] = once
+            if once_above is None:
+                info["note"] = "every plug closed clean: the allowance is at least this"
+        elif once_above is not None:
+            info["note"] = f"plug 1 already marked: the allowance is under {100 * once_above:.2f}%"
+            out[f"strain{key}Below"] = once_above
+        if many is not None:
+            out[f"strainRepeated{key}"] = many
+            info["lastCleanRepeated"] = many
+        ev[cid] = info
+        geo_L = [float(np.sqrt(1.5 * s["t"] * (s["y"] - s["gap"]) / x)) for x in eps]
+        for i, kg in enumerate(e.get("pushKg") or []):
+            if kg and i < len(geo_L):
+                c = snap_cantilever(geo_L[i], s["t"], s["width"], s["y"] - s["gap"], float(mat.E), s["lead"],
+                                    90.0, s["mu"])
+                ratios.append(float(kg) * G / (2 * c["push"]))
+    if not out and not ratios:
+        return None
+    if ratios:
+        out["pushFactor"] = round(float(np.median(ratios)), 3)
+        ev["push"] = {"readings": len(ratios), "factors": [round(r, 3) for r in ratios]}
     out["evidence"] = ev
     return out
 
@@ -1049,6 +1284,9 @@ def fit(measurements: dict, predictions: dict | None = None, name: str | None = 
         kept.append("hole bias (no H-XY or H-Z go/no-go readings; fits.py's design-guide default)")
     crush = fit_crush(co, mat, base, proc)
     creep = fit_creep(co, base, proc)
+    snaps = fit_snaps(co, mat)
+    if snaps is None and any(k in co for k in ("S-XY", "S-Z")):
+        kept.append("snap allowance (no S-XY or S-Z readings; shells.snap_allowable's house rule)")
     if creep is None and any(k.startswith("K-") for k in co):
         kept.append("creep rate (no K- readings)")
     if crush is None and any(k.startswith("X-") for k in co):
@@ -1066,6 +1304,7 @@ def fit(measurements: dict, predictions: dict | None = None, name: str | None = 
         "crush": crush,
         "creep": creep,
         "holes": holes,
+        "snaps": snaps,
         "parts": parts,
         # a part's measured stiffness over verify's, both at the calibrated
         # modulus: what the voxel model, bonded joints and slicer fill miss

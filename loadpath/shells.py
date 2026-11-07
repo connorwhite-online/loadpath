@@ -121,6 +121,17 @@ def snap_allowable(material, process: str | None = None, across_layers: bool = F
 
     mat = material_from_spec(material[0] if isinstance(material, list) else material)
     name = str(getattr(mat, "name", "")).lower()
+    try:
+        from .calibration import load_card
+        cal = load_card(name) if name else None
+    except Exception:  # noqa: BLE001
+        cal = None
+    same = cal and (not process or (cal.get("process") or {}).get("type") in (None, process))
+    measured = _measured_snap(cal, across_layers, repeated) if same else None
+    if measured is not None:
+        return {**measured, "material": name, "E": float(mat.E), "strength": float(mat.strength)}
+    if cal and cal.get("basedOn"):
+        name = str(cal["basedOn"]).lower()
     card = LIBRARY.get(name) or {}
     el = (card.get("values") or {}).get("elongation")
     metal = float(mat.density) > 2.0
@@ -156,6 +167,37 @@ def snap_allowable(material, process: str | None = None, across_layers: bool = F
         basis.append("x0.6: opened and closed repeatedly")
     return {"strain": float(eps), "basis": "; ".join(basis), "material": name, "E": float(mat.E),
             "strength": float(mat.strength)}
+
+
+def _measured_snap(card: dict, across_layers: bool, repeated: bool) -> dict | None:
+    """The allowance a calibration card measured on its S-XY / S-Z snap
+    ladders (calibration.fit_snaps), or None when it has none for this
+    case. Across layers without an S-Z reading, S-XY's scales by the
+    card's interlayer factor; repeated without a ten-closing reading,
+    x0.6 as in the house rule."""
+    sn = card.get("snaps") or {}
+    key = "Across" if across_layers else ""
+    eps = sn.get(f"strain{key}")
+    basis = [f"measured on the {'S-Z' if across_layers else 'S-XY'} snap ladder ({card.get('name')})"]
+    if eps is None and across_layers and sn.get("strain") is not None:
+        f = float((card.get("process") or {}).get("interlayer", 1.0))
+        eps = float(sn["strain"]) * f
+        basis = [f"measured on the S-XY snap ladder ({card.get('name')}), x{f:g} across layers (card interlayer)"]
+    if eps is None:
+        return None
+    eps = float(eps)
+    if repeated:
+        r = sn.get(f"strainRepeated{key}")
+        if r is not None:
+            eps = min(eps, float(r))
+            basis.append("over ten closings")
+        else:
+            eps *= 0.6
+            basis.append("x0.6: opened and closed repeatedly (no ten-closing reading)")
+    out = {"strain": eps, "basis": "; ".join(basis), "measured": True}
+    if sn.get("pushFactor"):
+        out["pushFactor"] = float(sn["pushFactor"])
+    return out
 
 
 def snap_cantilever(L: float, t: float, b: float, y: float, E: float, lead_deg: float = 30.0,
@@ -971,6 +1013,10 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                                 "components in the way)")
                 pick = []
             calc = snap_cantilever(L, tb, b, y, E, lead, float(sv.get("returnAngle", 90.0)))
+            if allow.get("pushFactor"):
+                # the card's snap ladder pushed this much of the formula's force
+                calc = {**calc, **{k: None if calc[k] is None else calc[k] * allow["pushFactor"]
+                                   for k in ("push", "pull")}}
             for j, i in enumerate(pick):
                 sh = _snap_shapes(snap_frames[i], S, snap_walls[i])
                 snaps.append({"id": f"snap-{j + 1}", "site": int(i), "at": _r(frames[i].o, 3), "hookOn": best_side,
