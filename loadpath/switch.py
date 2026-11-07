@@ -265,7 +265,8 @@ class _Solves:
     LOADPATH_DEVICE)."""
 
     ALIVE = 0.02
-    DIRECT_DOFS = 120_000
+    DIRECT_DOFS = 600_000
+    MMD_DOFS = 120_000
 
     def __init__(self, domain: Domain, nu, rtol: float = 1e-8):
         from scipy import ndimage  # noqa: F401
@@ -294,6 +295,7 @@ class _Solves:
 
     def factor(self, xp: np.ndarray):
         """Set up the reduced system for density xp (unit modulus)."""
+        import scipy.sparse as sp
         from scipy.sparse.linalg import splu
 
         from .fem import HexMesh, Stiffness
@@ -310,12 +312,27 @@ class _Solves:
         fixed = d.fixed[dofs]
         free = np.flatnonzero(~fixed)
         self.dofs, self.free = dofs, free
+        self.dofs_fixed_local = np.flatnonzero(fixed)
         if len(free) <= self.DIRECT_DOFS:
             k = Stiffness(sub, self.nu, fixed).assemble(e)
             if d.springs is not None:
                 k = (k + d.springs[dofs][:, dofs]).tocsr()
-            a = k[free][:, free].tocsc()
-            self._lu = splu(a, permc_spec="MMD_AT_PLUS_A", options={"SymmetricMode": True})
+            if len(free) <= self.MMD_DOFS:
+                a = k[free][:, free].tocsc()
+                self._lu = splu(a, permc_spec="MMD_AT_PLUS_A", options={"SymmetricMode": True})
+                self._whole = False
+            else:
+                # nested dissection and a single precision factor refined by
+                # CG (nonlinear._MixedLU): minimum degree on the 0.7 mm
+                # touch-mic pad's 200k dofs would not fit, and multigrid on
+                # a mostly void design does not converge
+                from .nonlinear import _MixedLU
+                k = k.tocsr()
+                if fixed.any():
+                    keep = sp.diags((~fixed).astype(float))
+                    k = (keep @ k @ keep + sp.diags(fixed.astype(float))).tocsr()
+                self._lu = _MixedLU(k, sub.node_ijk)
+                self._whole = True
             self._mg = None
         else:
             from .mg import GridElasticity
@@ -329,12 +346,17 @@ class _Solves:
     def solve(self, fs: list, tag: str = "f") -> list:
         n = self.domain.mesh.n_dof
         if self._lu is not None:
-            b = np.stack([np.asarray(f)[self.dofs][self.free] for f in fs], axis=1)
+            idx = self.dofs if self._whole else self.dofs[self.free]
+            b = np.stack([np.asarray(f)[idx] for f in fs], axis=1)
+            if self._whole:
+                b[self.dofs_fixed_local] = 0.0
             x = self._lu.solve(b)
+            if x.ndim == 1:
+                x = x[:, None]
             out = []
             for j in range(len(fs)):
                 u = np.zeros(n)
-                u[self.dofs[self.free]] = x[:, j]
+                u[idx] = x[:, j]
                 out.append(u)
             return out
         out = self._mg.solve_many(fs, self.prev.get(tag))

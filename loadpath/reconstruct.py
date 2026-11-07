@@ -858,6 +858,44 @@ def _attach_plan(mesh, study, organic):
     attach_plan(mesh, p)
 
 
+PINCH_R = 0.08
+
+
+def _fill_pinches(part, rounds: int = 3):
+    """Join bodies that touch along an edge or at a point. manifold3d keeps
+    such a contact on separate vertices, so the part is closed in memory,
+    but an STL has no topology and every reader welds the two by position:
+    a non-manifold edge, and a slicer or printability check reads the file
+    as not watertight (the touch microphone's pad: 26 edges where the exact
+    skin met the optimized interior along a line). A ball of PINCH_R mm at
+    each such edge unites the two into a neck. Returns (part, count)."""
+    import manifold3d as m3d
+
+    total = 0
+    for _ in range(rounds):
+        m = trimesh_from_manifold(part)
+        # as an STL stores it: float32, then welded by position
+        m.vertices = m.vertices.astype(np.float32).astype(float)
+        m.merge_vertices()
+        e = m.edges_sorted
+        if not len(e):
+            break
+        u, inv, c = np.unique(e, axis=0, return_inverse=True, return_counts=True)
+        bad = u[c > 2]
+        if not len(bad):
+            break
+        mids = m.vertices[bad].mean(axis=1)
+        # one ball per cluster of pinched edges a ball apart
+        keep = []
+        for q in mids:
+            if not keep or np.min(np.linalg.norm(np.asarray(keep) - q, axis=1)) > PINCH_R:
+                keep.append(q)
+        balls = [m3d.Manifold.sphere(PINCH_R, 12).translate(tuple(map(float, q))) for q in keep]
+        part = m3d.Manifold.batch_boolean([part] + balls, m3d.OpType.Add)
+        total += len(keep)
+    return part, total
+
+
 def _drop_slivers(mesh):
     """Drop zero-volume shells (a pair of coincident triangles facing apart)
     that a boolean can leave on a flat face. manifold3d keeps them on vertices
@@ -1279,6 +1317,9 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     info["bodies"] = len(kept)
     info["droppedFragmentVolume"] = float(dropped)
 
+    part, pinches = _fill_pinches(part)
+    if pinches:
+        info["pinchesFilled"] = pinches
     mesh = _drop_slivers(trimesh_from_manifold(part))
     if parting is not None:
         mesh.metadata["parting"] = parting
