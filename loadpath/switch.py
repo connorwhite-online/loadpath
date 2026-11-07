@@ -1044,6 +1044,38 @@ def _thin_skin(study, domain: Domain):
     return dataclasses.replace(domain, preserve=pres, skin=cells), floor
 
 
+RELAX_MARGIN = 0.02
+
+
+def _relax_skin_limited(domain, nu, spec, floor, modulus):
+    """(spec the optimizer works to, the ceilings it raised) for a ceiling
+    the bare skin alone is over (skin, preserves, nothing designed).
+
+    No interior can bring such a press under its ceiling. Kept as it is,
+    the constraint stays violated all run and pulls the design: on the
+    touch microphone four rim corners over 300 gf on the bare skin had the
+    optimizer build a frame round the plunger. It brought the corners in by
+    a few percent and put the centre over its own ceiling, 9 of 14 against
+    the bare skin's 10. So the optimizer works to the bare skin's own force
+    there, plus RELAX_MARGIN: no worse than the skin. The report still
+    reads every press against its real window, and the skin review says
+    what the designer could change."""
+    import dataclasses
+    bare = np.maximum(np.maximum(domain.preserve.astype(float), floor), 1e-9)
+    f = fire_forces(domain, nu, spec, bare, modulus)["forces"]
+    presses, relaxed = [], []
+    for i, (p, fi) in enumerate(zip(spec.presses, f)):
+        if p.max is not None and fi > p.max * (1 + RELAX_MARGIN):
+            new = float(fi * (1 + RELAX_MARGIN))
+            relaxed.append({"press": i, "at": p.at.tolist(), "ceilingGf": p.max / GF, "bareSkinGf": float(fi / GF),
+                            "workedToGf": new / GF})
+            p = dataclasses.replace(p, max=new)
+        presses.append(p)
+    if not relaxed:
+        return spec, []
+    return dataclasses.replace(spec, presses=presses), relaxed
+
+
 def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_max: float = 16.0,
                     beta_every: int = 15, move: float = 0.1, on_iter=None, tol: float = 0.003,
                     providers=None, move_sharp: float | None = None) -> SwitchResult:
@@ -1080,9 +1112,13 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
     prev_dom, prev_x = None, None
     beta = 1.0
     it_total = 0
+    relaxed = []
     for li, pitch in enumerate(pitches):
         domain, floor = _thin_skin(study, build_domain(study, pitch))
         spec = switch_from_study(study, domain) if b else None
+        spec_target = spec
+        if spec is not None:
+            spec, relaxed = _relax_skin_limited(domain, nu, spec, floor, modulus)
         prob = _problem(domain, spec) if b else None
         provs = [make(study, domain, nu, modulus) for make in providers or []]
         mesh = domain.mesh
@@ -1195,8 +1231,10 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
     rep = {"presses": [{"at": p.at.tolist(), "max": p.max, "min": p.min, "force": float(f), "forceGf": float(f / GF),
                         "travel": float(d),
                         "ok": bool((p.max is None or f <= p.max * 1.02) and (p.min is None or f >= p.min * 0.98))}
-                       for p, f, d in zip(spec.presses, out["F"], out["travel"])],
+                       for p, f, d in zip(spec_target.presses, out["F"], out["travel"])],
            "plungerCompliance": out["c"], "hold": out["hold"].tolist()}
+    if relaxed:
+        rep["relaxedCeilings"] = relaxed
     if "clearanceMax" in out:
         rep["clearanceMax"] = out["clearanceMax"]
         rep["clearance"] = out["clearance"]
