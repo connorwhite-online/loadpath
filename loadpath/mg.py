@@ -9,7 +9,9 @@ top of that. Here nothing per cell is stored but the cell's modulus:
 - The fine operator is applied element by element on the dense node grid:
   gather the 8 corner displacements of every cell (8 slice copies), one GEMM
   with the shared 24x24 unit-cube stiffness, scale by the cell's modulus,
-  scatter back. ~100 ns per cell, ~16 bytes of state per cell.
+  scatter back. ~100 ns per cell, ~16 bytes of state per cell. mgops.py
+  runs this (and the smoother, CG updates and grid transfers) as compiled
+  kernels on all cores; the numpy tile path below is the fallback.
 - Coarse levels are exact Galerkin operators P^T A P built element by
   element. With trilinear prolongation on a grid coarsened by two, a fine
   cell's nodes interpolate only from the coarse cell that contains it, so
@@ -40,10 +42,10 @@ Stiffness + Solver.
 """
 from __future__ import annotations
 
-
 import numpy as np
 import scipy.sparse as sp
 
+from . import mgops as _mgops
 from .fem import CORNERS, hex8_element, hex8_ke, rigid_body_modes
 
 __all__ = ["GridElasticity", "prolong", "restrict"]
@@ -82,6 +84,9 @@ LMAX_SAFETY = 1.3
 def prolong(c: np.ndarray) -> np.ndarray:
     """Trilinear prolongation of a node-grid field (..., nx+1, ny+1, nz+1) to
     the grid with twice the cells (..., 2nx+1, 2ny+1, 2nz+1)."""
+    f = _mgops.prolong(c)
+    if f is not None:
+        return f
     out = c
     for ax in (-3, -2, -1):
         n = out.shape[ax]
@@ -105,6 +110,9 @@ def prolong(c: np.ndarray) -> np.ndarray:
 
 def restrict(f: np.ndarray) -> np.ndarray:
     """Transpose of `prolong`."""
+    c = _mgops.restrict(f)
+    if c is not None:
+        return c
     out = f
     for ax in (-3, -2, -1):
         n = (out.shape[ax] + 1) // 2
@@ -222,15 +230,43 @@ class _Level:
         kk = self.k[:, :, x0:x1, y0:y1, z0:z1].reshape(24, 24, -1)
         return np.einsum("ijn,jn->in", kk, flat).reshape((24,) + shp)
 
+    def _compiled(self, dtype):
+        """The level's cells and matrices as mgops takes them, in `dtype`
+        (cached; a level is rebuilt, not changed, when the moduli change)."""
+        cache = self.__dict__.setdefault("_ops", {})
+        key = np.dtype(dtype).str
+        if key not in cache:
+            if "cells" not in cache:
+                cache["cells"] = _mgops.Cells(self.active())
+            ijk = tuple(cache["cells"].cells.T)
+            if self.kind == "scaled":
+                cache[key] = (np.ascontiguousarray(self.ke, dtype), np.ascontiguousarray(self.e[ijk], dtype))
+            elif self.kind == "weights":
+                cache[key] = (np.ascontiguousarray(self.mcat.reshape(8, 24, 24), dtype),
+                              np.ascontiguousarray(self.w[(slice(None),) + ijk], dtype))
+            else:
+                cache[key] = (np.ascontiguousarray(self.k[(slice(None), slice(None)) + ijk], dtype), None)
+        return cache["cells"], cache[key]
+
     def apply_k(self, u):
         """Unmasked K u on the node grid."""
-        if self.tiles is None:
-            self.tiles = _tiles(self.active())
         out = np.zeros(self.node_shape, u.dtype)
-        for r in self.tiles:
-            buf = np.empty((24, r[1] - r[0], r[3] - r[2], r[5] - r[4]), u.dtype)
-            _gather(u, r, buf)
-            _scatter(self._cell_kernel(buf, r), r, out)
+        if _mgops.available():
+            cells, (a, b) = self._compiled(u.dtype)
+            u = np.ascontiguousarray(u)
+            if self.kind == "scaled":
+                _mgops.apply_scaled(u, a, b, cells, out)
+            elif self.kind == "weights":
+                _mgops.apply_weights(u, a, b, cells, out)
+            else:
+                _mgops.apply_explicit(u, a, cells, out)
+        else:
+            if self.tiles is None:
+                self.tiles = _tiles(self.active())
+            for r in self.tiles:
+                buf = np.empty((24, r[1] - r[0], r[3] - r[2], r[5] - r[4]), u.dtype)
+                _gather(u, r, buf)
+                _scatter(self._cell_kernel(buf, r), r, out)
         if self.patch_ijk is not None and len(self.patch_ijk):
             ue = self._patch_gather(u)
             fe = np.matmul(self.patch_k.astype(u.dtype, copy=False), ue[:, :, None])[:, :, 0]
@@ -261,6 +297,12 @@ class _Level:
     def apply(self, u):
         """The level's operator: identity on masked-out dofs."""
         m = self.mask.astype(u.dtype, copy=False)
+        if _mgops.available() and u.flags.c_contiguous and m.flags.c_contiguous:
+            um = np.empty_like(u)
+            _mgops._mul(u.reshape(-1), m.reshape(-1), um.reshape(-1))
+            out = self.apply_k(um)
+            _mgops._finish(out.reshape(-1), m.reshape(-1), u.reshape(-1))
+            return out
         out = self.apply_k(u * m)
         out *= m
         out += (1 - m) * u
@@ -669,12 +711,12 @@ class GridElasticity:
             v = (rng.random(lv.node_shape) - 0.5).astype(lv.dinv.dtype) * lv.mask
         lam = 1.0
         for _ in range(its):
-            nv = np.linalg.norm(v)
+            nv = _mgops.dot(v, v) ** 0.5
             if nv == 0:
                 return 2.0
             v /= nv
             av = lv.dinv * lv.apply(v) * lv.mask
-            lam = float(np.vdot(v, av))
+            lam = _mgops.dot(v, av)
             v = av
         self._lmax_vec[i] = v
         return LMAX_SAFETY * max(lam, 1e-12)
@@ -687,6 +729,26 @@ class GridElasticity:
         delta = 0.5 * (hi - lo)
         sigma = theta / delta
         rho = 1.0 / sigma
+        if _mgops.available():
+            dinv = lv.dinv.reshape(-1)
+            r = np.empty_like(b)
+            d = np.empty_like(b)
+            if x is None:
+                x = np.zeros_like(b)
+                r[...] = b
+                _mgops._mul(dinv, b.reshape(-1), d.reshape(-1))
+                d *= 1.0 / theta
+            else:
+                _mgops._residual_scaled(b.reshape(-1), lv.apply(x).reshape(-1), dinv, 1.0 / theta,
+                                        r.reshape(-1), d.reshape(-1))
+            for it in range(self.degree):
+                last = it + 1 == self.degree
+                ad = d if last else lv.apply(d)
+                rho_new = 1.0 / (2.0 * sigma - rho)
+                _mgops._cheb(x.reshape(-1), d.reshape(-1), r.reshape(-1), ad.reshape(-1), dinv,
+                             rho_new * rho, 2.0 * rho_new / delta, last)
+                rho = rho_new
+            return x
         r = b - lv.apply(x) if x is not None else b.copy()
         if x is None:
             x = np.zeros_like(b)
@@ -735,7 +797,7 @@ class GridElasticity:
         a = self.levels[0]
         m = a.mask
         x = np.zeros(a.node_shape) if x0 is None else x0.copy()
-        bnorm = float(np.linalg.norm(b))
+        bnorm = _mgops.dot(b, b) ** 0.5
         if bnorm == 0:
             return np.zeros_like(b), 0, True
         r = b.copy()
@@ -745,11 +807,11 @@ class GridElasticity:
             # a cut of the live cells the last displacement can start 8x
             # further off than zero does (35 CG iterations against 15).
             ax = a.apply(x)
-            xax = float(np.vdot(x, ax))
-            s = float(np.vdot(b, x)) / xax if xax > 0 else 0.0
+            xax = _mgops.dot(x, ax)
+            s = _mgops.dot(b, x) / xax if xax > 0 else 0.0
             if s > 0:
                 rs = b - s * ax
-                if np.linalg.norm(rs) < bnorm:
+                if _mgops.dot(rs, rs) ** 0.5 < bnorm:
                     x *= s
                     r = rs
                 else:
@@ -758,22 +820,31 @@ class GridElasticity:
                 x[:] = 0
         z = self.precondition(r)
         p = z.copy()
-        rz = float(np.vdot(r, z))
+        rz = _mgops.dot(r, z)
         tol = self.rtol * bnorm
+        fused = _mgops.available() and x.flags.c_contiguous and r.flags.c_contiguous
         for it in range(1, self.maxiter + 1):
             ap = a.apply(p)
-            pap = float(np.vdot(p, ap))
+            pap = _mgops.dot(p, ap)
             if pap <= 0:
                 return x, it, False
             alpha = rz / pap
-            x += alpha * p
-            r -= alpha * ap
-            if float(np.linalg.norm(r)) <= tol:
+            if fused:
+                rr = _mgops._cg_step(x.reshape(-1), r.reshape(-1), p.reshape(-1), ap.reshape(-1), alpha)
+                done = rr ** 0.5 <= tol
+            else:
+                x += alpha * p
+                r -= alpha * ap
+                done = _mgops.dot(r, r) ** 0.5 <= tol
+            if done:
                 return x, it, True
             z = self.precondition(r)
-            rz_new = float(np.vdot(r, z))
-            p *= rz_new / rz
-            p += z
+            rz_new = _mgops.dot(r, z)
+            if fused:
+                _mgops._xpby(z.reshape(-1), rz_new / rz, p.reshape(-1))
+            else:
+                p *= rz_new / rz
+                p += z
             rz = rz_new
         del m
         return x, self.maxiter, False

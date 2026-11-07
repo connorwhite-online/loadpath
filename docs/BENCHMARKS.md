@@ -587,6 +587,52 @@ win. The turret (0.15) and corpus-bracket-1 (below 0.19) run the full
 constrained stage, which this does not touch; both were still running at
 the 2 h limit and are not in the table.
 
+## Multigrid on all cores: one constrained trial part (2026-11-07)
+
+A constrained trial part (goal.method auto's probe, or `constrained`) is one
+optimizer run on the constrained grid (minMember / 2.5, 119k cells on the
+wrist yoke) plus its mesh and checks. Profiled on the 4-core cloud box, the
+optimizer was ~90% of a part and ran on one core: the matrix-free multigrid
+(mg.py) applied its operator tile by tile with numpy (720k tile calls in 15
+iterations, 75% of the time, half of it in slice copies), with the smoother's
+updates, the grid transfers and the dot products single-threaded around it.
+
+`mgops.py` moves all of that onto numba's threads. What mattered, in order:
+
+| Change | First 6 yoke iterations |
+| --- | --- |
+| numpy tiles (before) | 390 s |
+| compiled gather + BLAS product + compiled scatter | 257 s |
+| work buffers kept (fresh 20 MB arrays page-faulted) | 229 s |
+| one fused product pass with unsigned indices | 280 s |
+| ... and dot products off OpenBLAS | 148 s |
+
+Two traps worth knowing. numba wraps negative signed indices, a compare and
+branch on every load: a plain 24x24-by-cells product ran 1.2 GFLOP/s until
+the indices went through uint64 (as amgfast.py already does), then about
+BLAS's speed. And OpenBLAS's threads, woken by one `np.vdot` or
+`np.linalg.norm` in the CG loop, spin beside numba's through the next
+operator pass: the same kernels ran 280 s with them and 148 s without.
+
+Same design to rounding: the six iterations read the same stress to 7
+digits (sums in another order, not bit for bit). `LOADPATH_MGOPS=numpy`
+restores the numpy path. The CG iteration count (55-75 to rtol 1e-3 on
+gray designs) is unchanged; Chebyshev degree 4 cut it to ~45 but each
+iteration cost more, and the strict hierarchy was no better.
+
+Full tier, wrist yoke alone (`--jobs 1`), auto method's constrained probe:
+
+| | Mass at target | Constrained parts | Whole case |
+| --- | --- | --- | --- |
+| main 3109191 | 14.8 g | ~1300 s each | 4520 s |
+| mgops | 15.2 g (tet SF margin 1.93) | 878 s, 989 s | 2591 s |
+
+The yoke's constrained mass moves 13.9-15.1 g run to run on the same code
+(fTetWild, see above), so 15.2 against 14.8 g is within noise. Part times
+fell 1.3-1.5x, less than the optimizer's 2.6x: the rest of a part is
+reconstruct, verify and the tet check, mostly single-core, and they are
+the next lever.
+
 ## Pitch sensitivity: one grid is a sample
 
 A safety-factor search's answer moves a lot with sub-percent changes of the
