@@ -1,0 +1,432 @@
+{
+ "name": "touch-mic-feel",
+ "description": "Touch microphone (SLS TPU 88A, real product CAD, round 17 surfacing): the push pad's fire-force map together with three feel targets under the same fixed exterior: a 10 N pinch across the flanks gives 0.15-0.6 mm, a 0.75 m face-down drop keeps the 6 g board on its rails under 2000 g and 1.2 mm of travel, and the board's resonance stays over a 150 Hz handling band (it sits on rails moulded into the base, so it cannot be soft-mounted). Bare skin: 1.26 mm pinch, 1040 g / 1.45 mm drop, 172 Hz board bounce. First run (2026-11-07): feel 5/5 on the design, 4/5 delivered (the drop reads 2850 g at 0.5 mm), presses 10/14 design and 9/14 delivered, 10.6 cm^3.",
+ "designSpace": {
+  "type": "mesh",
+  "path": "touch-mic-outer.stl"
+ },
+ "skin": {
+  "thickness": 1.0
+ },
+ "preserve": [
+  {
+   "id": "base",
+   "shape": {
+    "type": "mesh",
+    "path": "touch-mic-base.stl"
+   }
+  },
+  {
+   "id": "rails",
+   "shape": {
+    "type": "mesh",
+    "path": "touch-mic-bay.stl"
+   }
+  },
+  {
+   "id": "tip",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0,
+     0,
+     8.1
+    ],
+    "p1": [
+     0,
+     0,
+     8.6
+    ],
+    "r": 1.6
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "opening",
+   "bore": false,
+   "shape": {
+    "type": "mesh",
+    "path": "touch-mic-opening.stl"
+   }
+  },
+  {
+   "id": "board",
+   "bore": false,
+   "shape": {
+    "type": "mesh",
+    "path": "touch-mic-boardspace.stl"
+   }
+  },
+  {
+   "id": "switch",
+   "bore": false,
+   "insertFrom": "-z",
+   "shape": {
+    "type": "box",
+    "min": [
+     -6.8,
+     -5.6,
+     0
+    ],
+    "max": [
+     6.8,
+     4.6,
+     7.0
+    ]
+   }
+  },
+  {
+   "id": "stem",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0,
+     0,
+     -1
+    ],
+    "p1": [
+     0,
+     0,
+     8.1
+    ],
+    "r": 2.7
+   }
+  },
+  {
+   "id": "usb-plug",
+   "bore": false,
+   "insertFrom": "+y",
+   "shape": {
+    "type": "box",
+    "min": [
+     -6.0,
+     24.84,
+     3.5999999999999996
+    ],
+    "max": [
+     6.0,
+     28.84,
+     9.6
+    ]
+   }
+  }
+ ],
+ "supports": [
+  {
+   "shape": {
+    "type": "box",
+    "min": [
+     -30,
+     -35,
+     -0.5
+    ],
+    "max": [
+     30,
+     35,
+     0.31
+    ]
+   }
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "squeeze",
+   "loads": [
+    {
+     "shape": {
+      "type": "box",
+      "min": [
+       23.0,
+       -8,
+       4.5
+      ],
+      "max": [
+       26,
+       8,
+       9
+      ]
+     },
+     "force": [
+      -2.5,
+      0,
+      0
+     ]
+    },
+    {
+     "shape": {
+      "type": "box",
+      "min": [
+       -26,
+       -8,
+       4.5
+      ],
+      "max": [
+       -23.0,
+       8,
+       9
+      ]
+     },
+     "force": [
+      2.5,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ ],
+ "material": "tpu88a",
+ "minMember": 1.0,
+ "goal": {
+  "volumeFraction": 0.2
+ },
+ "resolution": {
+  "pitch": 1.0
+ },
+ "switch": {
+  "unit": "gf",
+  "output": {
+   "region": "tip",
+   "direction": "-z",
+   "gap": 0.4,
+   "trigger": 65,
+   "travel": 0.25
+  },
+  "presses": [
+   {
+    "at": [
+     0,
+     0
+    ],
+    "max": 150.0,
+    "min": 100
+   },
+   {
+    "at": [
+     0,
+     -7
+    ],
+    "max": 225.0,
+    "min": 100
+   },
+   {
+    "at": [
+     0,
+     -13
+    ],
+    "max": 289.3,
+    "min": 100
+   },
+   {
+    "at": [
+     7,
+     -5
+    ],
+    "max": 242.2,
+    "min": 100
+   },
+   {
+    "at": [
+     12,
+     -9
+    ],
+    "max": 300.0,
+    "min": 100
+   },
+   {
+    "at": [
+     11,
+     0
+    ],
+    "max": 267.9,
+    "min": 100
+   },
+   {
+    "at": [
+     14,
+     6
+    ],
+    "max": 300.0,
+    "min": 100
+   },
+   {
+    "at": [
+     8,
+     11
+    ],
+    "max": 295.7,
+    "min": 100
+   },
+   {
+    "at": [
+     0,
+     12
+    ],
+    "max": 278.6,
+    "min": 100
+   },
+   {
+    "at": [
+     -7,
+     -5
+    ],
+    "max": 242.2,
+    "min": 100
+   },
+   {
+    "at": [
+     -12,
+     -9
+    ],
+    "max": 300.0,
+    "min": 100
+   },
+   {
+    "at": [
+     -11,
+     0
+    ],
+    "max": 267.9,
+    "min": 100
+   },
+   {
+    "at": [
+     -14,
+     6
+    ],
+    "max": 300.0,
+    "min": 100
+   },
+   {
+    "at": [
+     -8,
+     11
+    ],
+    "max": 295.7,
+    "min": 100
+   }
+  ],
+  "pressRadius": 1.0,
+  "clearance": {
+   "region": "board",
+   "gap": 1.4
+  },
+  "hold": [
+   {
+    "case": "squeeze",
+    "maxDeflection": 0.3
+   }
+  ],
+  "iterations": 80
+ },
+ "feel": {
+  "targets": [
+   {
+    "kind": "squeeze",
+    "name": "pinch",
+    "hold": {
+     "face": "-x",
+     "shape": {
+      "type": "box",
+      "min": [
+       -26,
+       -10,
+       4
+      ],
+      "max": [
+       -20,
+       10,
+       10
+      ]
+     }
+    },
+    "press": {
+     "face": "+x",
+     "shape": {
+      "type": "box",
+      "min": [
+       20,
+       -10,
+       4
+      ],
+      "max": [
+       26,
+       10,
+       10
+      ]
+     }
+    },
+    "direction": "-x",
+    "force": 10,
+    "travel": [
+     0.15,
+     0.6
+    ]
+   },
+   {
+    "kind": "drop",
+    "name": "face-down drop",
+    "lands": {
+     "face": "+z"
+    },
+    "mass": {
+     "region": "rails"
+    },
+    "kg": 0.006,
+    "height": 0.75,
+    "maxG": 2000,
+    "maxTravel": 1.2
+   },
+   {
+    "kind": "isolate",
+    "name": "handling noise",
+    "hold": {
+     "region": "skin",
+     "shape": {
+      "type": "box",
+      "min": [
+       -30,
+       -12,
+       3.7
+      ],
+      "max": [
+       30,
+       12,
+       13
+      ]
+     }
+    },
+    "mount": {
+     "region": "rails"
+    },
+    "kg": 0.006,
+    "upTo": 150,
+    "maxAmplification": 1.25
+   }
+  ]
+ },
+ "expect": {
+  "minInWindow": 9,
+  "minDeliveredInWindow": 8,
+  "maxVolume": 11500,
+  "coarse": {
+   "iterations": 40
+  },
+  "minFeelInWindow": 5,
+  "minFeelDeliveredInWindow": 4,
+  "minFeelModalOk": 3
+ },
+ "assets": {
+  "env": "LOADPATH_TOUCH_MIC_STL",
+  "files": [
+   "touch-mic-outer.stl",
+   "touch-mic-base.stl",
+   "touch-mic-bay.stl",
+   "touch-mic-opening.stl",
+   "touch-mic-boardspace.stl"
+  ],
+  "make": "python examples/switch/touch_mic.py --touch-mic <touch-mic checkout> --out <dir> --stl-only"
+ }
+}

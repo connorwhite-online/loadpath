@@ -287,6 +287,26 @@ def switch(study, base_dir: str | None = None, pitches: list | None = None, skin
     return out
 
 
+def feel(study, base_dir: str | None = None, pitches: list | None = None) -> dict:
+    """Validate a study with a `feel` block and design its interior
+    (feel.py) as a background job."""
+    if isinstance(study, str):
+        from .tasks import read_doc
+        study, base_dir = read_doc(study, base_dir)
+    if not (study or {}).get("feel"):
+        return {"ok": False, "error": "the study needs a feel block (see loadpath_schema('study'), $.feel)"}
+    v = check(study, base_dir)
+    if not v["ok"]:
+        return v
+    args = ["feel", "{dir}/study.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
+    if pitches:
+        args += ["--pitches", ",".join(str(float(p)) for p in pitches)]
+    out = _spawn("feel", v.get("name") or "study", {"study.json": study}, args,
+                 cells=v["cells"], warnings=v["warnings"], base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def _explore_status(d, r):
     keep = ("id", "passes", "mass", "safetyFactor", "safetyFactorMethod", "maxDeflection", "unitCost", "leadDays",
             "governedBy", "stl", "render", "warnings", "error")
@@ -631,6 +651,15 @@ def status(job_id: str) -> tuple[dict, list]:
                     "never change the exterior yourself. limitedBy 'interior' needs a finer or longer run, not "
                     "the designer."}
         pngs = []
+    elif kind == "feel":
+        info = {"status": "done", "kind": kind, **{k: r.get(k) for k in (
+            "passes", "feel", "feelOk", "feelDeliveredOk", "presses", "volume", "mass", "mesh", "watertight",
+            "levels", "seconds")}, "report": report,
+            "next": "Show the user each feel target's reading against its window (stiffness N/mm, and what it "
+                    "means: squeeze travel, drop peakG and travel, isolate frequency and transmissibility; "
+                    "delivered = read back from the STL; modal = the isolate check with modes). A window the "
+                    "exterior alone already misses cannot be met from inside."}
+        pngs = []
     elif kind == "lattice":
         info = {"status": "done", "kind": kind, "parent": meta.get("parent"), **r}
         pngs = [_png(d, r.get("render"))]
@@ -846,6 +875,19 @@ def serve():
         exterior). skin_review_only: read the bare skin alone first (minutes), nothing designed.
         Starts a job; poll loadpath_status."""
         return switch(study, base_dir, pitches, skin_review_only)
+
+    @tool
+    def loadpath_feel(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:
+        """Design everything inside a fixed exterior for how the product feels, with the least material:
+        a study with a thin `skin`, components as keepOuts (`insertFrom` keeps assembly paths clear) and
+        a `feel` block of targets, each a stiffness window: `squeeze` (a grip gives travel [min, max] mm
+        at force N between hold and press), `drop` (a part of kg on its mount, dropped height m onto a
+        face, sees under maxG and moves under maxTravel mm), `isolate` (handling vibration from the hand
+        reaches a part's mount at under maxTransmissibility from band Hz up). A `switch` block in the
+        same study is designed with it. No supports or load cases needed. Reports each target on the
+        design, as printed and read back from the STL, and a modal check of isolate targets. Starts a
+        job; poll loadpath_status."""
+        return feel(study, base_dir, pitches)
 
     @tool
     def loadpath_lattice(job_id: str, outcome: int | None = None, options: dict | None = None) -> dict:

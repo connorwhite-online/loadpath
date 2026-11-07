@@ -505,7 +505,8 @@ def run_field_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
 
 
 def run_switch_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
-    """A push-pad case (a `switch` block): `loadpath switch` on the study,
+    """A push-pad or feel case (a `switch` and/or `feel` block): `loadpath
+    switch` or `loadpath feel` on the study,
     held to `expect`: presses in their windows on the design (minInWindow)
     and read back from the delivered mesh (minDeliveredInWindow), the part's
     volume (maxVolume, mm^3), each hold case on the delivered mesh, and a
@@ -540,7 +541,11 @@ def run_switch_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
             its = [int((expect.get("coarse") or {}).get("iterations", 40))]
         # the large-deflection re-read on the full tier (about half a minute
         # a press on the touch microphone's 1 mm grid with PARDISO)
-        rep = run_switch(st, os.path.join(out, name), iterations=its, nonlinear=tier != "coarse")
+        if "feel" in doc:
+            from ..feel import run_feel
+            rep = run_feel(st, os.path.join(out, name), iterations=its, nonlinear=tier != "coarse")
+        else:
+            rep = run_switch(st, os.path.join(out, name), iterations=its, nonlinear=tier != "coarse")
         vol = float(rep["mass"] / st.material.density * 1000.0)
         row["best"] = {"mass": rep["mass"], "volume": vol, "inWindow": rep["inWindow"],
                        "deliveredInWindow": rep["deliveredInWindow"]}
@@ -555,6 +560,21 @@ def run_switch_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
             # and stopped short on thin TPU skins before PARDISO)
             nl_ok = sum(bool(n.get("converged")) for n in rep["nonlinear"])
             checks.append(("large-deflection presses converged", nl_ok, ">=", len(rep["nonlinear"])))
+        if "feel" in doc:
+            # feel targets: each direction of each target in its stiffness
+            # window, on the design and read back from the delivered mesh;
+            # an isolate target's modal check too
+            fr = rep["feel"]
+            n_ok = sum(d["ok"] for r in fr for d in r["directions"])
+            n_del = sum(d["ok"] for r in fr for d in (r.get("delivered") or []))
+            n_modal = sum(d["ok"] for r in fr for d in ((r.get("modal") or {}).get("directions") or []))
+            row["best"].update({"feelInWindow": n_ok, "feelDeliveredInWindow": n_del, "feelModalOk": n_modal})
+            row["feel"] = [{"name": r["name"], "stiffness": [d["stiffness"] for d in r["directions"]],
+                            "delivered": [d["stiffness"] for d in (r.get("delivered") or [])],
+                            "window": [r["minStiffness"], r["maxStiffness"]]} for r in fr]
+            checks += [("feel in window (design)", n_ok, ">=", expect.get("minFeelInWindow")),
+                       ("feel in window (delivered mesh)", n_del, ">=", expect.get("minFeelDeliveredInWindow")),
+                       ("isolation modal check", n_modal, ">=", expect.get("minFeelModalOk"))]
         for h, v in zip((st.raw.get("switch") or {}).get("hold") or [], rep.get("deliveredHold") or []):
             checks.append((f"hold {h['case']} mm (delivered mesh)", v, "<=", h["maxDeflection"]))
         ok = True
@@ -606,7 +626,7 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None, spre
     if "graph" in raw:
         print(f"== {name} ({tier})", file=sys.stderr, flush=True)
         return run_field_case(raw, base, out, tier)
-    if "switch" in raw:
+    if "switch" in raw or "feel" in raw:
         print(f"== {name} ({tier})", file=sys.stderr, flush=True)
         return run_switch_case(raw, base, out, tier)
     raw = apply_tier(raw, tier)

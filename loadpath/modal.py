@@ -32,6 +32,7 @@ N and mm gives seconds), kg for point masses, Hz out.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -51,9 +52,20 @@ LOSS_FACTOR = {
 }
 
 
+# Up to this many free dofs the eigensolve factors the reduced K with
+# scipy's own shift-invert; above it with bucklingopt._factor
+DIRECT_EIG_DOFS = 120_000
+
+
 def loss_factor(material) -> float:
     name = getattr(material, "name", str(material)).lower()
-    return LOSS_FACTOR.get(name, 0.02)
+    if name in LOSS_FACTOR:
+        return LOSS_FACTOR[name]
+    # grades of a family (tpu88a, tpu95a) damp like the family
+    for fam in sorted(LOSS_FACTOR, key=len, reverse=True):
+        if name.startswith(fam):
+            return LOSS_FACTOR[fam]
+    return 0.02
 
 
 @dataclass
@@ -102,8 +114,33 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
     kf = k[free][:, free].tocsc()
     mf = m[free]
     nm = min(n_modes, len(free) - 2)
-    if len(free) <= 120_000:
+    if len(free) <= DIRECT_EIG_DOFS:
         w, v = eigsh(kf, k=nm, M=sp.diags(mf).tocsc(), sigma=0.0, which="LM")
+    elif os.environ.get("LOADPATH_MODAL_LOBPCG") != "1":
+        # big models: shift-invert Lanczos with the factorization the push
+        # pad and buckling solves use (bucklingopt._factor: PARDISO, or a
+        # single precision LU in nested-dissection order refined by CG), on
+        # the whole system with the held dofs as identity rows, restricted to
+        # the free ones (zero mass on the held rows sent ARPACK to zeros).
+        # LOBPCG with AMG (below) took over ten minutes on a 150k-dof TPU
+        # suspension and warned of ill-conditioning all the way.
+        from scipy.sparse.linalg import LinearOperator
+
+        from .bucklingopt import _factor
+        solve, free_mem = _factor(k.tocsr(), mesh.node_ijk)
+
+        def inv(b):
+            # K_ff^-1 b: the whole system with zero load on the held dofs
+            full = np.zeros(mesh.n_dof)
+            full[free] = np.asarray(b).ravel()
+            return np.array(solve(full), dtype=float).ravel()[free]
+
+        op = LinearOperator(kf.shape, matvec=inv, dtype=float)
+        try:
+            w, v = eigsh(kf, k=nm, M=sp.diags(mf).tocsc(), sigma=0.0, which="LM", OPinv=op)
+        finally:
+            if free_mem is not None:
+                free_mem()
     else:
         # big models: LOBPCG on the mass-scaled operator with an AMG preconditioner
         from scipy.sparse.linalg import lobpcg

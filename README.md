@@ -87,8 +87,10 @@ Where it is strongest:
 - **Inside an industrial design**: the designer's exterior kept as a thin
   cosmetic skin, every component's assembly path kept clear, and everything
   invisible designed for how the product should feel: a push pad that fires
-  its switch at a chosen force anywhere on the touch area, with the least
-  material. Where the exterior itself rules a target out, the report says
+  its switch at a chosen force anywhere on the touch area, a grip that gives
+  just so much under a squeeze, a capsule or board cushioned for a fall,
+  and handling vibration kept off a microphone capsule, with the least
+  material ([docs/FEEL.md](docs/FEEL.md)). Where the exterior itself rules a target out, the report says
   where and by how much, and what skin or target change would fix it, for
   the designer to decide; loadpath never edits the exterior
   ([docs/SWITCH.md](docs/SWITCH.md)).
@@ -230,7 +232,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
   [CAD import](docs/IMPORT.md), [slicer](docs/slicer.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
-  [mechanisms](docs/MECHANISMS.md), [push pads](docs/SWITCH.md).
+  [mechanisms](docs/MECHANISMS.md), [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md).
 
 <!-- gallery:start -->
 
@@ -275,6 +277,19 @@ the eval suite as `touch-mic-pad`.
 ([docs/SWITCH.md](docs/SWITCH.md))
 
 <img src="docs/images/switch/touch-mic-forces.png" width="760">
+
+**Designed for feel.** Beyond the click: how much a grip gives, how hard a
+fall hits what is inside, and how much handling noise reaches a microphone
+capsule are each a stiffness window between where the product is held and
+where the load comes in, and `loadpath feel` designs the interior for them
+together. A generic stick microphone in SLS TPU: a 6.3 g interior hangs
+the 4 g capsule from the head so a 20 N grip gives 0.64 mm and handling
+noise from 500 Hz up reaches it at under half (its modes checked on the
+delivered mesh); a 1 m fall on the head still hits it at 1690 g against a
+1500 g target, and the report says so.
+([docs/FEEL.md](docs/FEEL.md))
+
+<img src="docs/images/feel/mic-body-sections.png" width="760">
 
 Where the load goes: von Mises stress, blue (none) to red (the part's 98th percentile), on the part bent by its worst load case:
 

@@ -788,6 +788,78 @@ _SWITCH = {
     "additionalProperties": False,
 }
 
+_DIRECTION = {"type": "string", "pattern": "^[+-]?[xyz]$"}
+_WHERE = {"type": "object", "properties": {
+    "region": {"type": "string", "description": "a preserve or keep-out id (`skin` is the exterior skin)"},
+    "shape": {"$ref": "#/$defs/shape"},
+    "face": {**_DIRECTION, "description": "the exterior facing this way: the outermost node of every column"}},
+    "additionalProperties": False,
+    "description": "where: a region, a shape, or an exterior face; a region or a face with a shape too is only "
+                   "the part of it inside the shape (the skin where the hand is)"}
+_RANGE = {"anyOf": [{"type": "array", "items": _POS, "minItems": 2, "maxItems": 2},
+                    {"type": "object", "properties": {"min": _POS, "max": _POS}, "additionalProperties": False}],
+          "description": "[min, max], or {min} / {max} for one side only"}
+_FEEL_TARGET = {"type": "object", "properties": {
+    "kind": {"enum": ["squeeze", "drop", "isolate"]},
+    "name": {"type": "string"},
+    "hold": {**_WHERE, "description": "squeeze, isolate: where the product is held (all three directions)"},
+    "press": {**_WHERE, "description": "squeeze: where the hand presses"},
+    "direction": {**_DIRECTION, "description": "squeeze: the press direction; drop: the fall direction "
+                                               "(default: toward the landing face)"},
+    "force": {**_POS, "description": "squeeze: N the hand presses with"},
+    "travel": {**_RANGE, "description": "squeeze: mm the grip gives at `force`, [min, max]"},
+    "stiffness": {**_RANGE, "description": "squeeze: N/mm, in place of force and travel"},
+    "lands": {**_WHERE, "description": "drop: where it lands (usually {face})"},
+    "mass": {**_WHERE, "description": "drop: the part to cushion (its mount)"},
+    "mount": {**_WHERE, "description": "isolate: the mount of the part to keep vibration from"},
+    "kg": {**_POS, "description": "drop, isolate: the part's mass"},
+    "height": {**_POS, "description": "drop: m"},
+    "maxG": {**_POS, "description": "drop: peak deceleration of the part, in g"},
+    "maxTravel": {**_POS, "description": "drop: mm the part may move before it hits something; isolate: mm "
+                                         "under a `shockG` knock"},
+    "band": {**_POS, "description": "isolate, soft mount: Hz, the lowest frequency to isolate"},
+    "upTo": {**_POS, "description": "isolate, stiff mount: Hz the handling band reaches; the part's resonance "
+                                    "is kept over it"},
+    "maxAmplification": {"type": "number", "exclusiveMinimum": 1,
+                         "description": "isolate with upTo: largest amplification in the band (default 1.25)"},
+    "maxTransmissibility": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1,
+                            "description": "isolate: at `band` and above (default 0.5)"},
+    "directions": {"type": "array", "items": {"enum": ["x", "y", "z"]}, "minItems": 1,
+                   "description": "isolate: default all three"},
+    "shockG": {**_POS, "description": "isolate: the knock `maxTravel` is read at, in g (default 1: its weight)"}},
+    "required": ["kind"],
+    "additionalProperties": False}
+_FEEL = {
+    "type": "object",
+    "description": "`loadpath feel`: design the inside of a fixed exterior for how it feels (feel.py). Minimum "
+                   "volume, with each target a stiffness window between where it is held and where the load "
+                   "comes in: `squeeze` (a grip gives `travel` mm at `force` N), `drop` (a part of `kg` "
+                   "dropped `height` m sees under `maxG` and moves under `maxTravel`), `isolate` (handling "
+                   "vibration from `band` Hz up reaches a part at under `maxTransmissibility`, a soft mount; or "
+                   "its resonance stays over a handling band `upTo` Hz, a stiff one). Pair it with "
+                   "`skin`; a `switch` block in the same study is designed together with it. A study with a "
+                   "feel block needs no supports or load cases. `run` ignores it.",
+    "properties": {
+        "targets": {"type": "array", "items": _FEEL_TARGET, "minItems": 1},
+        "lossFactor": {**_POS, "description": "material loss factor for isolate (default modal.LOSS_FACTOR)"},
+        "verifyPitch": {**_POS, "description": "mm grid the delivered mesh is read back on (default half the "
+                                               "design pitch: members one design cell thick)"},
+        "keepThinMembers": {"type": "boolean", "description": "mesh without thinning one-cell members (default "
+                                                             "true)"},
+        "moveSharp": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5,
+                      "description": "MMA move limit once the projection is fully sharp (default 0.03)"},
+        "robust": {"type": "boolean", "description": "read each floor on the eroded design and each ceiling on "
+                                                    "the dilated one, so the printed part meets both (default "
+                                                    "true; false: the blueprint alone, faster, can meet soft "
+                                                    "windows with grey cells that print as nothing)"},
+        "pitches": {"type": "array", "items": _POS, "minItems": 1,
+                    "description": "coarse to fine grids, mm (used when there is no switch block)"},
+        "iterations": {"anyOf": [{"type": "integer", "minimum": 1},
+                                 {"type": "array", "items": {"type": "integer", "minimum": 1}}]}},
+    "required": ["targets"],
+    "additionalProperties": False,
+}
+
 STUDY_SCHEMA = {
     "$schema": _DIALECT,
     "$id": "https://github.com/connorwhite-online/loadpath/schema/study.schema.json",
@@ -965,6 +1037,7 @@ STUDY_SCHEMA = {
                     "description": "`loadpath explore`: solve the study once per manufacturing method and "
                                    "material, with cost and lead time, ranked (explore.py). `run` ignores it."},
         "switch": _SWITCH,
+        "feel": _FEEL,
         "pattern": {"type": "object", "properties": {
                         "type": {"const": "circular"},
                         "axis": {"enum": ["x", "y", "z"]},
@@ -987,7 +1060,7 @@ STUDY_SCHEMA = {
                            "directory the environment variable `env` names; the case is skipped without it."},
     },
     "required": ["designSpace"],
-    "x-requireOne": [["loadCases"], ["loads"]],
+    "x-requireOne": [["loadCases"], ["loads"], ["feel"]],
     "additionalProperties": False,
     "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "keepOut": _KEEP_OUT, "support": _SUPPORT,
               "load": _LOAD, "loadCase": _LOAD_CASE, "material": _ONE_MATERIAL, "fastener": _FASTENER, "goal": _GOAL},
@@ -1858,7 +1931,7 @@ def lint(doc, kind: str = "study") -> list[dict]:
             FieldGraph(doc)
         except ValueError as exc:
             out.append(("error", "$.nodes", str(exc)))
-    if kind == "study" and isinstance(doc, dict) and not doc.get("supports"):
+    if kind == "study" and isinstance(doc, dict) and not doc.get("supports") and not doc.get("feel"):
         # beyond JSON Schema: supports are optional only for pressure vessels
         cases = doc.get("loadCases") or ([{"loads": doc["loads"]}] if isinstance(doc.get("loads"), list) else [])
         loads = [ld for c in cases if isinstance(c, dict) for ld in (c.get("loads") or [])]

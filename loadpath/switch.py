@@ -560,10 +560,25 @@ def _thin_skin(study, domain: Domain):
 
 
 def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_max: float = 16.0,
-                    beta_every: int = 15, move: float = 0.1, on_iter=None, tol: float = 0.003) -> SwitchResult:
+                    beta_every: int = 15, move: float = 0.1, on_iter=None, tol: float = 0.003,
+                    providers=None, move_sharp: float | None = None) -> SwitchResult:
     """Minimize volume subject to the study's `switch` block (see the module
     docstring), on each pitch in turn (coarse to fine). Returns the last
-    level's design, its fire forces and the per-level summaries."""
+    level's design, its fire forces and the per-level summaries.
+
+    providers: more constraints on the same design, each a factory
+    `make(study, domain, nu, modulus)` called once per grid that returns an
+    object with `m` (how many constraints) and `evaluate(xp, ctx)` -> a
+    list of (value, d value / d xp per element, name), feasible at value
+    <= 0, or (value, d value / d xt, name, "xt") for a provider that
+    projects the filtered design itself (ctx: xt, beta, floor, preserve). The
+    feel targets (feel.py) come in this way. With providers the study may
+    have no `switch` block at all.
+
+    move_sharp: the move limit once the projection is at full sharpness
+    (default: `move` throughout). At beta 16 a 0.1 step in x is nearly a
+    whole cell switching, and the microphone body's run ended still
+    swinging its drop stiffness 30% either side of the ceiling."""
     from .domain import build_domain
     from .mma import MMA
     from .simp import _dproject, _project, density_filter, filter_radius
@@ -582,8 +597,9 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
     it_total = 0
     for li, pitch in enumerate(pitches):
         domain, floor = _thin_skin(study, build_domain(study, pitch))
-        spec = switch_from_study(study, domain)
-        prob = _problem(domain, spec)
+        spec = switch_from_study(study, domain) if b else None
+        prob = _problem(domain, spec) if b else None
+        provs = [make(study, domain, nu, modulus) for make in providers or []]
         mesh = domain.mesh
         n = mesh.n_elem
         pres = domain.preserve
@@ -599,9 +615,11 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
             beta = max(1.0, beta / 2)
         x[pres] = 1.0
         x = np.maximum(x, floor)
-        nP = len(spec.presses)
-        m = sum(p.max is not None for p in spec.presses) + sum(p.min is not None for p in spec.presses) + \
-            (nP if spec.max_travel is not None else 0) + len(prob.hold) + (1 if prob.clr_dofs is not None else 0)
+        m = sum(pv.m for pv in provs)
+        if spec is not None:
+            nP = len(spec.presses)
+            m += sum(p.max is not None for p in spec.presses) + sum(p.min is not None for p in spec.presses) + \
+                (nP if spec.max_travel is not None else 0) + len(prob.hold) + (1 if prob.clr_dofs is not None else 0)
         mma = MMA(int(design.sum()), max(m, 1), xmin=0.0, xmax=1.0, move=move)
         since = 0
         nd = float(design.sum())
@@ -611,42 +629,57 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
             xp = _project(xt, beta, 0.5)
             xp[pres] = 1.0
             dp = _dproject(xt, beta, 0.5)
+            beta_seen = beta
+            if move_sharp is not None:
+                mma.move = move_sharp if beta >= beta_max else move
             held = floor > xp
             xp[held] = floor[held]
             dp = np.where(held, 0.0, dp)
-            out, G = _evaluate(domain, nu, prob, xp, modulus, solves)
-            F = out["F"]
             cons, dcons, names = [], [], []
 
-            def add(val, grad, name):
-                g = ht @ ((grad * dp) / hs)
+            def add(val, grad, name, wrt="xp"):
+                # grad is d val / d xp (the projected design), or with
+                # wrt="xt" already d val / d xt (the filtered one: a provider
+                # that projects xt its own way, feel.py's robust designs)
+                g = ht @ (((grad * dp) if wrt == "xp" else grad) / hs)
                 cons.append(val)
                 dcons.append(g[design])
                 names.append(name)
 
-            for i, p in enumerate(spec.presses):
-                if p.max is not None:
-                    add(float(np.log(F[i] / p.max)), G["logF"][i], f"max{i}")
-                if p.min is not None:
-                    add(float(np.log(p.min / F[i])), -G["logF"][i], f"min{i}")
-            if spec.max_travel is not None:
-                for i in range(nP):
-                    add(out["travel"][i] / spec.max_travel - 1.0, G["travel"][i] / spec.max_travel, f"travel{i}")
-            for k, (_, _, lim) in enumerate(prob.hold):
-                add(out["hold"][k] / lim - 1.0, G["hold"][k] / lim, f"hold{k}")
-            if G["clearance"] is not None:
-                add(out["clearanceKS"] - 1.0, G["clearance"], "clearance")
+            F = np.zeros(0)
+            if spec is not None:
+                out, G = _evaluate(domain, nu, prob, xp, modulus, solves)
+                F = out["F"]
+                for i, p in enumerate(spec.presses):
+                    if p.max is not None:
+                        add(float(np.log(F[i] / p.max)), G["logF"][i], f"max{i}")
+                    if p.min is not None:
+                        add(float(np.log(p.min / F[i])), -G["logF"][i], f"min{i}")
+                if spec.max_travel is not None:
+                    for i in range(nP):
+                        add(out["travel"][i] / spec.max_travel - 1.0, G["travel"][i] / spec.max_travel,
+                            f"travel{i}")
+                for k, (_, _, lim) in enumerate(prob.hold):
+                    add(out["hold"][k] / lim - 1.0, G["hold"][k] / lim, f"hold{k}")
+                if G["clearance"] is not None:
+                    add(out["clearanceKS"] - 1.0, G["clearance"], "clearance")
+            for pv in provs:
+                ctx = {"xt": xt, "beta": beta, "floor": floor, "preserve": pres}
+                for item in pv.evaluate(xp, ctx):
+                    add(float(item[0]), *item[1:])
             vol = float(xp[design].sum()) / nd
             dvol = (ht @ (dp / hs))[design] / nd
             if not cons:
                 cons, dcons = [vol - 1.0], [dvol * 0]
+            x_seen = x.copy()
             xn = x.copy()
             xn[design] = mma.update(x[design], vol * 10.0, dvol * 10.0, np.array(cons), np.array(dcons))
             change = float(np.abs(xn - x).max())
             x = xn
             worst = float(max(cons)) if cons else 0.0
+            worst_name = names[int(np.argmax(cons))] if names else None
             rec = {"level": li, "pitch": domain.pitch, "iteration": it, "volume": vol, "forces": F.tolist(),
-                   "worstViolation": worst, "beta": beta, "change": change, "seconds": round(time.time() - t0, 1)}
+                   "worstViolation": worst, "worst": worst_name, "beta": beta, "change": change, "seconds": round(time.time() - t0, 1)}
             history.append(rec)
             if on_iter is not None:
                 on_iter(rec, xp)
@@ -655,14 +688,25 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
                 beta, since = min(2 * beta, beta_max), 0
             elif beta >= beta_max and change < tol and worst < 0.01:
                 break
+        # The design read and returned is the last one the constraints were
+        # evaluated on: at the iteration cap the step after it has not been
+        # checked, and with thin suspensions at full sharpening one step can
+        # cut a member (the microphone body's capsule mount came loose so).
+        x, beta = x_seen, beta_seen
         xt = (h @ x) / hs
         xp = _project(xt, beta, 0.5)
         xp[pres] = 1.0
         xp = np.maximum(xp, floor)
-        out, _ = _evaluate(domain, nu, prob, xp, modulus, solves, grads=False)
+        out = {"F": np.zeros(0), "travel": np.zeros(0)}
+        if spec is not None:
+            out, _ = _evaluate(domain, nu, prob, xp, modulus, solves, grads=False)
         levels.append({"pitch": domain.pitch, "cells": int(n), "iterations": it, "volume": float(xp[design].mean()),
                        "forces": out["F"].tolist(), "seconds": round(time.time() - t0, 1)})
         prev_dom, prev_x = domain, x
+    if spec is None:
+        return SwitchResult(x=x, xphys=xp, domain=prev_dom, floor=floor, forces=out["F"], travel=out["travel"],
+                            volume=float(xp[~prev_dom.preserve].mean()), iterations=it_total,
+                            seconds=time.time() - t0, history=history, levels=levels, report={})
     rep = {"presses": [{"at": p.at.tolist(), "max": p.max, "min": p.min, "force": float(f), "forceGf": float(f / GF),
                         "travel": float(d),
                         "ok": bool((p.max is None or f <= p.max * 1.02) and (p.min is None or f >= p.min * 0.98))}
@@ -786,7 +830,7 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
     return out
 
 
-def _as_printed(xphys, floor):
+def _as_printed(xphys, floor, domain=None):
     """(field to mesh, black-and-white design to read) for a design whose
     thin-skin cells are floored at their skin share phi. In such a cell the
     skin itself is printed exactly (the delivered mesh joins the designer's
@@ -797,17 +841,42 @@ def _as_printed(xphys, floor):
     fire forces 1.6-1.8x the design's on the touch microphone."""
     fl = floor > 0
     extra = np.clip(np.where(fl, (xphys - floor) / np.maximum(1.0 - floor, 1e-9), xphys), 0.0, 1.0)
+    if domain is not None and fl.any():
+        # A member ending on the skin ends in the cell next to it: the
+        # thin-skin cell between carries it in the design (at x^3), but
+        # meshed by its own share above phi it is empty, and since the mesh
+        # is not run on into the skin the member stopped short of it. The
+        # microphone body's capsule suspension came out a second body,
+        # floating (2.5 N/mm read back for 50 designed). Each thin-skin cell
+        # beside a solid interior cell is meshed solid, so the member runs
+        # into the skin as it has to be printed.
+        from scipy import ndimage
+        g = np.zeros(domain.dims, bool)
+        ijk = domain.mesh.elem_ijk
+        g[tuple(ijk[(extra > 0.5) & ~fl & ~domain.preserve].T)] = True
+        g = ndimage.binary_dilation(g, structure=ndimage.generate_binary_structure(3, 1))
+        touch = fl & g[tuple(ijk.T)]
+        extra[touch] = 1.0
     solid = np.where(extra > 0.5, 1.0, np.where(fl, floor, 0.0))
     return extra, solid
 
 
 def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bool | None = None,
-               nonlinear_presses=None, on_progress=None) -> dict:
+               nonlinear_presses=None, on_progress=None, providers=None, readback=None,
+               mesh_options=None, optimize_options=None) -> dict:
     """Optimize, mesh and check a study's `switch` block. Writes
     <name>.stl (the delivered part: the exact exterior skin and preserves
     joined to the optimized interior) and returns the report: per press the
     target, the linear fire force on the design and, when nonlinear is
-    true (the default), the large-deflection one on the solid part."""
+    true (the default), the large-deflection one on the solid part.
+
+    providers: more constraints (see optimize_switch). readback:
+    `fn(domain, design, solid, delivered, floor, mesh)` -> dict merged into
+    the report, called with the design density, its black-and-white
+    reading, the delivered mesh read back on this grid (None when the mesh
+    is not watertight) and the mesh itself. mesh_options:
+    reconstruct.ReconstructOptions for the delivered mesh. feel.run_feel uses both; with them the study may have no
+    `switch` block."""
     import os
 
     from .reconstruct import reconstruct
@@ -818,20 +887,25 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
         if on_progress is not None:
             on_progress({"stage": "optimize", **rec})
 
-    r = optimize_switch(study, pitches=pitches, iterations=iterations, on_iter=note)
+    r = optimize_switch(study, pitches=pitches, iterations=iterations, on_iter=note, providers=providers,
+                        **(optimize_options or {}))
     rep = {"name": study.name, "pitches": [lv["pitch"] for lv in r.levels], "levels": r.levels,
            "volume": r.volume, "iterations": r.iterations, **r.report}
+    has_switch = bool(study.raw.get("switch"))
+    rep.setdefault("presses", [])
     nu = study.elastic(design=True)
     modulus = float(study.material.E)
-    spec = switch_from_study(study, r.domain)
+    spec = switch_from_study(study, r.domain) if has_switch else None
     # the same reading on the thresholded (as printed) design
-    extra, solid = _as_printed(r.xphys, r.floor)
-    ff = fire_forces(r.domain, nu, spec, np.maximum(solid, 1e-9), modulus)
-    for p, f in zip(rep["presses"], ff["forces"]):
-        p["thresholdedForceGf"] = float(f / GF)
+    extra, solid = _as_printed(r.xphys, r.floor, r.domain)
+    if has_switch:
+        ff = fire_forces(r.domain, nu, spec, np.maximum(solid, 1e-9), modulus)
+        for p, f in zip(rep["presses"], ff["forces"]):
+            p["thresholdedForceGf"] = float(f / GF)
     if on_progress is not None:
         on_progress({"stage": "mesh"})
-    mesh, info = reconstruct(study, r.domain, extra)
+    np.save(os.path.join(out_dir, "xphys.npy"), r.xphys)
+    mesh, info = reconstruct(study, r.domain, extra, mesh_options)
     path = os.path.join(out_dir, f"{study.name}.stl")
     mesh.export(path)
     rep["mesh"] = path
@@ -847,15 +921,23 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
         if on_progress is not None:
             on_progress({"stage": "verify", "check": "delivered mesh fire force"})
         drawn = _fraction([MeshShape(mesh)], r.domain.mesh.elem_centers(), r.domain.pitch)
-        fd = fire_forces(r.domain, nu, spec, np.maximum(np.maximum(drawn, r.floor), 1e-9), modulus)
-        for p, f in zip(rep["presses"], fd["forces"]):
-            p["deliveredForceGf"] = float(f / GF)
-            p["deliveredOk"] = bool((p["max"] is None or f <= p["max"] * 1.02) and
-                                    (p["min"] is None or f >= p["min"] * 0.98))
-        rep["deliveredHold"] = [float(v) for v in fd["hold"]]
-        rep["deliveredClearanceMax"] = fd.get("clearanceMax")
+        delivered = np.maximum(np.maximum(drawn, r.floor), 1e-9)
+        if has_switch:
+            fd = fire_forces(r.domain, nu, spec, delivered, modulus)
+            for p, f in zip(rep["presses"], fd["forces"]):
+                p["deliveredForceGf"] = float(f / GF)
+                p["deliveredOk"] = bool((p["max"] is None or f <= p["max"] * 1.02) and
+                                        (p["min"] is None or f >= p["min"] * 0.98))
+            rep["deliveredHold"] = [float(v) for v in fd["hold"]]
+            rep["deliveredClearanceMax"] = fd.get("clearanceMax")
+    else:
+        delivered = None
+    if readback is not None:
+        if on_progress is not None:
+            on_progress({"stage": "verify", "check": "feel targets"})
+        rep.update(readback(r.domain, r.xphys, np.maximum(solid, 1e-9), delivered, r.floor, mesh))
     from .skinreview import review_options, skin_review
-    opts = review_options(study)
+    opts = review_options(study) if has_switch else None
     if opts is not None:
         # Where the fixed exterior, not the interior, keeps a press out of its
         # window, and what the designer could change. Feedback only: the
@@ -882,8 +964,7 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
     rep["deliveredInWindow"] = sum(bool(p.get("deliveredOk")) for p in rep["presses"])
     if nonlinear is None:
         nonlinear = bool((study.raw.get("switch") or {}).get("nonlinear", True))
-    np.save(os.path.join(out_dir, "xphys.npy"), r.xphys)
-    if nonlinear:
+    if nonlinear and has_switch:
         if on_progress is not None:
             on_progress({"stage": "verify", "check": "nonlinear fire force"})
         # Large-deflection solves cost ~90 s a press on 6k solid cells (four

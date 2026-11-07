@@ -965,6 +965,306 @@
       ],
       "additionalProperties": false
     },
+    "feel": {
+      "type": "object",
+      "description": "`loadpath feel`: design the inside of a fixed exterior for how it feels (feel.py). Minimum volume, with each target a stiffness window between where it is held and where the load comes in: `squeeze` (a grip gives `travel` mm at `force` N), `drop` (a part of `kg` dropped `height` m sees under `maxG` and moves under `maxTravel`), `isolate` (handling vibration from `band` Hz up reaches a part at under `maxTransmissibility`, a soft mount; or its resonance stays over a handling band `upTo` Hz, a stiff one). Pair it with `skin`; a `switch` block in the same study is designed together with it. A study with a feel block needs no supports or load cases. `run` ignores it.",
+      "properties": {
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "squeeze",
+                  "drop",
+                  "isolate"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "hold": {
+                "type": "object",
+                "properties": {
+                  "region": {
+                    "type": "string",
+                    "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                  },
+                  "shape": {
+                    "$ref": "#/$defs/shape"
+                  },
+                  "face": {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$",
+                    "description": "the exterior facing this way: the outermost node of every column"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "squeeze, isolate: where the product is held (all three directions)"
+              },
+              "press": {
+                "type": "object",
+                "properties": {
+                  "region": {
+                    "type": "string",
+                    "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                  },
+                  "shape": {
+                    "$ref": "#/$defs/shape"
+                  },
+                  "face": {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$",
+                    "description": "the exterior facing this way: the outermost node of every column"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "squeeze: where the hand presses"
+              },
+              "direction": {
+                "type": "string",
+                "pattern": "^[+-]?[xyz]$",
+                "description": "squeeze: the press direction; drop: the fall direction (default: toward the landing face)"
+              },
+              "force": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "squeeze: N the hand presses with"
+              },
+              "travel": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "min": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "max": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ],
+                "description": "squeeze: mm the grip gives at `force`, [min, max]"
+              },
+              "stiffness": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "min": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "max": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ],
+                "description": "squeeze: N/mm, in place of force and travel"
+              },
+              "lands": {
+                "type": "object",
+                "properties": {
+                  "region": {
+                    "type": "string",
+                    "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                  },
+                  "shape": {
+                    "$ref": "#/$defs/shape"
+                  },
+                  "face": {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$",
+                    "description": "the exterior facing this way: the outermost node of every column"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "drop: where it lands (usually {face})"
+              },
+              "mass": {
+                "type": "object",
+                "properties": {
+                  "region": {
+                    "type": "string",
+                    "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                  },
+                  "shape": {
+                    "$ref": "#/$defs/shape"
+                  },
+                  "face": {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$",
+                    "description": "the exterior facing this way: the outermost node of every column"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "drop: the part to cushion (its mount)"
+              },
+              "mount": {
+                "type": "object",
+                "properties": {
+                  "region": {
+                    "type": "string",
+                    "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                  },
+                  "shape": {
+                    "$ref": "#/$defs/shape"
+                  },
+                  "face": {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$",
+                    "description": "the exterior facing this way: the outermost node of every column"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "isolate: the mount of the part to keep vibration from"
+              },
+              "kg": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "drop, isolate: the part's mass"
+              },
+              "height": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "drop: m"
+              },
+              "maxG": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "drop: peak deceleration of the part, in g"
+              },
+              "maxTravel": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "drop: mm the part may move before it hits something; isolate: mm under a `shockG` knock"
+              },
+              "band": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "isolate, soft mount: Hz, the lowest frequency to isolate"
+              },
+              "upTo": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "isolate, stiff mount: Hz the handling band reaches; the part's resonance is kept over it"
+              },
+              "maxAmplification": {
+                "type": "number",
+                "exclusiveMinimum": 1,
+                "description": "isolate with upTo: largest amplification in the band (default 1.25)"
+              },
+              "maxTransmissibility": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "exclusiveMaximum": 1,
+                "description": "isolate: at `band` and above (default 0.5)"
+              },
+              "directions": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                "minItems": 1,
+                "description": "isolate: default all three"
+              },
+              "shockG": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "isolate: the knock `maxTravel` is read at, in g (default 1: its weight)"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "lossFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "material loss factor for isolate (default modal.LOSS_FACTOR)"
+        },
+        "verifyPitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm grid the delivered mesh is read back on (default half the design pitch: members one design cell thick)"
+        },
+        "keepThinMembers": {
+          "type": "boolean",
+          "description": "mesh without thinning one-cell members (default true)"
+        },
+        "moveSharp": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 0.5,
+          "description": "MMA move limit once the projection is fully sharp (default 0.03)"
+        },
+        "robust": {
+          "type": "boolean",
+          "description": "read each floor on the eroded design and each ceiling on the dilated one, so the printed part meets both (default true; false: the blueprint alone, faster, can meet soft windows with grey cells that print as nothing)"
+        },
+        "pitches": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 1,
+          "description": "coarse to fine grids, mm (used when there is no switch block)"
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "targets"
+      ],
+      "additionalProperties": false
+    },
     "pattern": {
       "type": "object",
       "properties": {
@@ -1882,6 +2182,9 @@
     ],
     [
       "loads"
+    ],
+    [
+      "feel"
     ]
   ],
   "additionalProperties": false,

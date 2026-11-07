@@ -533,6 +533,15 @@ def main(argv=None):
                          "exterior alone puts over their ceilings, where, and what the designer could change "
                          "(report skinReview; nothing is optimized or edited)")
     sw.add_argument("--base-dir")
+    fe = sub.add_parser("feel", help="design the inside of a fixed exterior for how it feels: grip squeeze, drop "
+                                     "cushioning, vibration isolation of a part inside (the study's feel block; "
+                                     "with a switch block too, the click force with them)")
+    fe.add_argument("study")
+    fe.add_argument("--out", default="loadpath-feel")
+    fe.add_argument("--pitches", help="comma-separated mm, coarse to fine (default: switch.pitches or feel.pitches)")
+    fe.add_argument("--iterations", help="comma-separated, per pitch")
+    fe.add_argument("--no-modal", action="store_true", help="skip the modal check of isolate targets")
+    fe.add_argument("--base-dir")
     ex = sub.add_parser("explore", help="one study, an outcome per manufacturing method and material (fdm, sls, "
                                         "mjf, sla, lpbf, cast, milled...): mass, safety factor, cost and lead "
                                         "time, ranked, with Pareto fronts")
@@ -686,6 +695,8 @@ def main(argv=None):
         return _cores(args)
     if args.cmd == "switch":
         return _switch(args)
+    if args.cmd == "feel":
+        return _feel(args)
     if args.cmd == "explore":
         return _explore(args)
     if args.cmd == "lattice-orient":
@@ -1311,6 +1322,32 @@ def _switch(args):
             return 0 if sr["skinLimited"] == 0 else 1
         rep = run_switch(st, args.out, pitches=pitches, iterations=its, nonlinear=args.nonlinear,
                          on_progress=_progress)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    _write_report(args.out, {"ok": rep["passes"], **rep})
+    return 0 if rep["passes"] else 1
+
+
+def _feel(args):
+    from .feel import run_feel
+    from .schema import format_issues, lint
+    from .spec import study_from_dict
+
+    doc = _load(args.study)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
+    errors = [x for x in lint(doc, "study") if x["level"] == "error"]
+    if not doc.get("feel"):
+        errors.append({"level": "error", "path": "$.feel", "message": "the study needs a feel block"})
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+    try:
+        st = study_from_dict(doc, base)
+        pitches = [float(v) for v in args.pitches.split(",")] if args.pitches else None
+        its = [int(v) for v in args.iterations.split(",")] if args.iterations else None
+        rep = run_feel(st, args.out, pitches=pitches, iterations=its, on_progress=_progress,
+                       modal=not args.no_modal)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2

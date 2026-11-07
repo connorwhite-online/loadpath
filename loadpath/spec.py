@@ -590,7 +590,7 @@ class Study:
     @property
     def self_equilibrated(self) -> bool:
         """No supports: every load is a pressure, held by pressure.stabilize."""
-        return not self.supports
+        return not self.supports and not (self.raw or {}).get("feel")
 
     def elastic(self, material: Material | None = None, design: bool = False):
         """What the solver takes for `nu`: the material's Poisson's ratio, or
@@ -938,14 +938,17 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         if c.get("temperature") is not None:
             life["temperature"] = float(c["temperature"])
         cases.append(LoadCase(str(c.get("name") or f"case-{ci}"), loads, float(c.get("weight", 1.0)), **life))
-    if not cases:
+    # A `feel` block brings its own loads and holds (feel.py): a study that
+    # only asks for a feel needs neither load cases nor supports.
+    feel_only = bool(d.get("feel"))
+    if not cases and not feel_only:
         raise ValueError("at least one load case is required (loadCases: [{name, loads}])")
     pressurized = {ld.region for c in cases for ld in c.loads if ld.pressure}
     ko_ids = {r.id for r in keep_out}
     for rid in sorted(pressurized - ko_ids):
         raise ValueError(f"pressure on {rid!r}: a pressure acts in a keepOut (the fluid's volume); "
                          f"keepOut ids: {sorted(ko_ids)}")
-    if not supports and not all(ld.pressure for c in cases for ld in c.loads):
+    if not supports and not feel_only and not all(ld.pressure for c in cases for ld in c.loads):
         raise ValueError("at least one support is required (where the part is held); only a study whose "
                          "every load is a pressure may leave supports out")
     gravity = d.get("gravity")

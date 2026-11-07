@@ -440,6 +440,35 @@ change the exterior yourself: relay `skinReview.summary` and those
 options to the designer and let them choose. `limitedBy == "interior"`
 needs no designer: re-run finer or longer. See docs/SWITCH.md.
 
+## Designing for feel (grip, drop, handling noise)
+
+Inside the same kind of exterior, a `feel` block designs for how the
+product feels, and `loadpath feel study.json --out out` runs it (MCP:
+`loadpath_feel`). Each target is a stiffness window between where the
+product is held and where the load comes in; a location is a `region`
+(`skin` is the exterior skin), a `shape`, or an exterior `face` like
+`"-x"`, a region or face with a `shape` limited to it.
+
+- `squeeze`: `hold`, `press`, `direction`, `force` N and `travel: [min,
+  max]` mm. Ask the user what a firm grip should feel like.
+- `drop`: `lands` (a face), `mass` (the part's mount), `kg`, `height` m,
+  `maxG` (what the part survives) and `maxTravel` (the room it has).
+  These need maxTravel >= 2 height / maxG; a study that asks for less is
+  refused with that sentence, so tell the user the room the fall needs.
+- `isolate`: `hold` (where the hand is), `mount`, `kg`, and either `band`
+  (soft mount: isolate from band Hz up, `maxTransmissibility`) or `upTo`
+  (stiff mount: keep the resonance over a handling band up to upTo Hz).
+  A part on rails moulded into the base cannot be soft-mounted; use
+  `upTo`.
+
+No supports or load cases are needed. A `switch` block in the same study
+is designed with it. Read the bare skin first (`examples/feel/mic_body.py
+--baseline` shows how): a target the exterior and preserved parts already
+miss cannot be met from inside. The report gives each target on the
+design, `thresholded`, `delivered` (the STL read back at `verifyPitch`,
+half the design pitch) and, for isolate, `modal`. Report the delivered
+reading. See docs/FEEL.md.
+
 ## Heat, fatigue and creep
 
 - A part next to something hot (a stepper face at 70 C, a heated bed):
