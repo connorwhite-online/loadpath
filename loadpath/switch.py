@@ -1351,6 +1351,89 @@ def _as_printed(xphys, floor, domain=None):
     return extra, solid
 
 
+SKIN_LINING = True
+
+
+def _skin_lining(study, domain, extra):
+    """(extra, study) with the design's thickening of a thin skin moved out
+    of the field and into the skin itself.
+
+    Where the design adds a layer of cells right under the skin (and
+    nothing behind it), the field meshes it as blocks one cell thick:
+    smoothed, a skin 0.1-0.6 mm thicker that ripples cell by cell (the
+    0.7 mm touch-mic part). Those cells become a thickness field instead,
+    their solid share times the pitch averaged over a cell, and the skin's
+    inner surface is moved inward by it as one smooth surface
+    (shapes.Thickened). Members that run on into the skin keep their cells.
+    Returns the inputs unchanged when the skin is not a plain shrunk shell."""
+    import copy
+
+    from scipy import ndimage
+
+    from .shapes import Offset, Shell, Thickened, Union
+    reg = next((r for r in study.preserve if r.id == "skin"), None)
+    t = next((t for rid, t in study.shells if rid == "skin"), None)
+    if not SKIN_LINING or reg is None or t is None or not isinstance(reg.shape, Shell):
+        return extra, study
+    inner = reg.shape.inner
+    holes = []
+    if isinstance(inner, Union) and isinstance(inner.shapes[0], Offset):
+        inner, holes = inner.shapes[0], inner.shapes[1:]
+    if not isinstance(inner, Offset):
+        return extra, study
+    h = domain.pitch
+    c = domain.mesh.elem_centers()
+    depth = -inner.base.sdf(c)                      # below the exterior, mm
+    solid = (extra > 0.5) & ~domain.preserve
+    band = solid & (depth > t - 0.5 * h) & (depth < t + 1.0 * h)
+    if not band.any():
+        return extra, study
+    # a band cell with solid behind it (one cell further in) is a member's
+    # foot, not a lining
+    idx = np.flatnonzero(band)
+    e = 1e-3
+    grad = np.stack([(inner.base.sdf(c[idx] + e * d) - inner.base.sdf(c[idx] - e * d)) / (2 * e)
+                     for d in np.eye(3)], 1)
+    grad /= np.maximum(np.linalg.norm(grad, axis=1, keepdims=True), 1e-9)
+    behind = c[idx] - grad * h                       # one cell inward
+    ijk = np.floor((behind - domain.origin) / h).astype(int)
+    lut = -np.ones(domain.dims, int)
+    lut[tuple(domain.mesh.elem_ijk.T)] = np.arange(domain.n_elem)
+    ok = (ijk >= 0).all(1) & (ijk < np.array(domain.dims)).all(1)
+    nb = np.full(len(idx), -1)
+    nb[ok] = lut[tuple(ijk[ok].T)]
+    foot = (nb >= 0) & solid[np.maximum(nb, 0)]
+    lining = idx[~foot]
+    if not len(lining):
+        return extra, study
+    g = np.zeros(domain.dims)
+    g[tuple(domain.mesh.elem_ijk[lining].T)] = 1.0
+    w = np.zeros(domain.dims)
+    w[tuple(domain.mesh.elem_ijk[np.flatnonzero((depth > t - 0.5 * h) & (depth < t + 1.0 * h))].T)] = 1.0
+    gs, ws = ndimage.gaussian_filter(g, 1.0), ndimage.gaussian_filter(w, 1.0)
+    thick = np.where(ws > 1e-3, gs / np.maximum(ws, 1e-9), 0.0) * h
+    thick[gs < 0.05] = 0.0
+
+    def more(p):
+        q = (np.asarray(p, float) - domain.origin) / h - 0.5
+        return ndimage.map_coordinates(thick, q.T, order=1, mode="constant", cval=0.0)
+
+    new_inner = Thickened(inner, more)
+    if holes:
+        new_inner = Union([new_inner] + holes)
+    st = copy.copy(study)
+    st.preserve = [dataclasses_replace(r, shape=Shell(r.shape.outer, new_inner, r.shape.clip)) if r.id == "skin"
+                   else r for r in study.preserve]
+    out = np.array(extra, float)
+    out[lining] = 0.0
+    return out, st
+
+
+def dataclasses_replace(obj, **kw):
+    import dataclasses
+    return dataclasses.replace(obj, **kw)
+
+
 def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bool | None = None,
                nonlinear_presses=None, on_progress=None, providers=None, readback=None,
                mesh_options=None, optimize_options=None) -> dict:
@@ -1395,7 +1478,8 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
     if on_progress is not None:
         on_progress({"stage": "mesh"})
     np.save(os.path.join(out_dir, "xphys.npy"), r.xphys)
-    mesh, info = reconstruct(study, r.domain, extra, mesh_options)
+    mesh_field, mesh_study = _skin_lining(study, r.domain, extra)
+    mesh, info = reconstruct(mesh_study, r.domain, mesh_field, mesh_options)
     path = os.path.join(out_dir, f"{study.name}.stl")
     mesh.export(path)
     rep["mesh"] = path

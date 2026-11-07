@@ -224,6 +224,7 @@ class MeshShape(Shape):
         self.mesh = mesh
         self.path = path
         self._grid = None
+        self._band = 0.0
 
     def _build_grid(self):
         from scipy import ndimage
@@ -236,7 +237,49 @@ class MeshShape(Shape):
         origin = origin - pad * pitch
         dist = (ndimage.distance_transform_edt(~solid) - ndimage.distance_transform_edt(solid)) * pitch
         dist -= 0.5 * pitch * np.sign(dist)   # EDT is centre to centre; the surface is between
+        if self._band:
+            dist = self._exact_band(dist, origin, pitch, self._band)
         self._grid = (dist, origin, pitch)
+
+    def _exact_band(self, dist, origin, pitch, width):
+        """The grid's distances within `width` mm of the surface made exact
+        (closest point on the faces), cached on disk by mesh and grid. The
+        voxel distances are good to half a cell, 0.37 mm on the touch
+        microphone: a 1.0 mm skin offset from them printed 0.65-1.18 mm
+        thick, in ridges a cell apart. Interpolated between exact nodes the
+        error is about h^2 / 8R, a hundredth of a millimetre."""
+        import hashlib
+        import os
+        key = hashlib.sha1(np.ascontiguousarray(self.mesh.vertices, np.float64).tobytes()
+                           + np.ascontiguousarray(self.mesh.faces, np.int64).tobytes()
+                           + np.array([pitch, width, *origin, *dist.shape], float).tobytes()).hexdigest()[:20]
+        root = os.environ.get("LOADPATH_SDF_CACHE", os.path.join(os.path.expanduser("~"), ".cache", "loadpath", "sdf"))
+        path = os.path.join(root, key + ".npy")
+        try:
+            return np.load(path)
+        except (OSError, ValueError):
+            pass
+        band = np.abs(dist) <= width + pitch
+        idx = np.argwhere(band)
+        pts = origin + (idx + 0.5) * pitch
+        coarse = dist[band]
+        self._grid = (dist, origin, pitch)
+        exact = self.exact_sdf(pts, grid_sign=coarse)
+        out = dist.copy()
+        out[band] = exact
+        try:
+            os.makedirs(root, exist_ok=True)
+            np.save(path, out)
+        except OSError:
+            pass
+        return out
+
+    def exact_band(self, width: float):
+        """Ask for exact distances within `width` mm of the surface (an
+        offset surface that deep is traced on them). Rebuilds the grid."""
+        if width > self._band:
+            self._band = float(width)
+            self._grid = None
 
     def sdf(self, p):
         from scipy import ndimage
@@ -254,6 +297,30 @@ class MeshShape(Shape):
 
     def contains(self, p):
         return self.sdf(p) <= 0.0
+
+    def exact_sdf(self, p, chunk=20_000, grid_sign=None):
+        """Signed distance to the mesh itself (closest point on its faces),
+        for where half a grid cell matters: an offset surface 1 mm inside
+        this mesh, which the grid sdf put up to a sixth of a millimetre off,
+        in ridges a grid cell apart. Sign from the grid sdf, which is right
+        away from the surface, and from ray parity within a cell of it."""
+        from trimesh.proximity import closest_point
+        p = np.asarray(p, float).reshape(-1, 3)
+        out = np.empty(len(p))
+        if grid_sign is None:
+            g = self.sdf(p)
+        else:
+            g = np.asarray(grid_sign, float)
+        cell = self._grid[2] if self._grid is not None else float(np.max(self.mesh.extents)) / self._GRID_CELLS
+        for s in range(0, len(p), chunk):
+            q = p[s:s + chunk]
+            _, d, _ = closest_point(self.mesh, q)
+            sign = np.sign(g[s:s + chunk])
+            near = np.abs(g[s:s + chunk]) < 1.5 * cell
+            if near.any():
+                sign[near] = np.where(self.mesh.contains(q[near]), -1.0, 1.0)
+            out[s:s + chunk] = sign * d
+        return out
 
     def bounds(self):
         b = np.asarray(self.mesh.bounds, float)
@@ -360,6 +427,9 @@ class Offset(Shape):
         self.base = base
         self.offset = float(offset)
         self.open = [(int(a), int(np.sign(s))) for a, s in open]
+        if isinstance(base, MeshShape):
+            # its level set is traced on the grid sdf this deep
+            base.exact_band(abs(self.offset) + 0.5)
 
     def _clamp(self, p):
         if not self.open:
@@ -400,7 +470,8 @@ class Offset(Shape):
         axes = [origin[i] + np.arange(dims[i]) * step for i in range(3)]
         pts = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
         # the grid's own border counts as outside, so the surface closes
-        vals = self.sdf(pts).reshape(tuple(dims))
+        vals = self.sdf(pts)
+        vals = vals.reshape(tuple(dims))
         vals[[0, -1], :, :] = vals[:, [0, -1], :] = vals[:, :, [0, -1]] = step
         verts, faces, _, _ = measure.marching_cubes(vals, level=0.0, spacing=(step, step, step))
         mesh = trimesh.Trimesh(verts + origin, faces[:, ::-1], process=True)
@@ -410,6 +481,23 @@ class Offset(Shape):
 
     def to_spec(self):
         raise ValueError("an offset shape is derived from the study and has no JSON form of its own")
+
+
+class Thickened(Offset):
+    """An Offset shrunk further by a thickness field: sdf + extra(p), with
+    extra(p) >= 0 in mm (a callable on points). A skin's inner surface moved
+    inward where a design thickens the skin, as one smooth surface instead
+    of the cells the design grid gave it (switch._skin_lining)."""
+
+    kind = "thickened"
+
+    def __init__(self, base: Offset, extra):
+        super().__init__(base.base, base.offset, [(a, s) for a, s in base.open])
+        self._more = extra
+
+    def sdf(self, p):
+        p = np.asarray(p, float)
+        return super().sdf(p) + self._more(p)
 
 
 class Shell(Shape):
