@@ -538,16 +538,23 @@ def run_switch_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
         its = None
         if tier == "coarse":
             its = [int((expect.get("coarse") or {}).get("iterations", 40))]
-        rep = run_switch(st, os.path.join(out, name), iterations=its, nonlinear=False)
+        # the large-deflection re-read on the full tier (about half a minute
+        # a press on the touch microphone's 1 mm grid with PARDISO)
+        rep = run_switch(st, os.path.join(out, name), iterations=its, nonlinear=tier != "coarse")
         vol = float(rep["mass"] / st.material.density * 1000.0)
         row["best"] = {"mass": rep["mass"], "volume": vol, "inWindow": rep["inWindow"],
                        "deliveredInWindow": rep["deliveredInWindow"]}
-        row["presses"] = [{k: p.get(k) for k in ("at", "forceGf", "thresholdedForceGf", "deliveredForceGf")}
-                          for p in rep["presses"]]
+        row["presses"] = [{k: p.get(k) for k in ("at", "forceGf", "thresholdedForceGf", "deliveredForceGf",
+                                                 "nonlinearForceGf")} for p in rep["presses"]]
         checks = [("in window (design)", rep["inWindow"], ">=", expect.get("minInWindow")),
                   ("in window (delivered mesh)", rep["deliveredInWindow"], ">=", expect.get("minDeliveredInWindow")),
                   ("volume mm^3", vol, "<=", expect.get("maxVolume")),
                   ("watertight", bool(rep["watertight"]), "==", True)]
+        if "nonlinear" in rep:
+            # every large-deflection press solved to the click (it crawled
+            # and stopped short on thin TPU skins before PARDISO)
+            nl_ok = sum(bool(n.get("converged")) for n in rep["nonlinear"])
+            checks.append(("large-deflection presses converged", nl_ok, ">=", len(rep["nonlinear"])))
         for h, v in zip((st.raw.get("switch") or {}).get("hold") or [], rep.get("deliveredHold") or []):
             checks.append((f"hold {h['case']} mm (delivered mesh)", v, "<=", h["maxDeflection"]))
         ok = True

@@ -525,8 +525,9 @@ def main(argv=None):
     sw.add_argument("--out", default="loadpath-switch")
     sw.add_argument("--pitches", help="comma-separated mm, coarse to fine (default: switch.pitches)")
     sw.add_argument("--iterations", help="comma-separated, per pitch")
-    sw.add_argument("--nonlinear", action="store_true", help="also run the large-deflection fire-force check "
-                    "(experimental: slow, and it does not converge on thin-skin designs yet)")
+    sw.add_argument("--nonlinear", action=argparse.BooleanOptionalAction, default=None,
+                    help="the large-deflection fire-force check (default: switch.nonlinear, on unless the study "
+                    "turns it off); --no-nonlinear skips it")
     sw.add_argument("--skin-review", action="store_true",
                     help="read the bare skin only, in seconds, before designing anything: which presses the fixed "
                          "exterior alone puts over their ceilings, where, and what the designer could change "
@@ -1308,7 +1309,7 @@ def _switch(args):
             sr = skin_preflight(st, pitches[0] if pitches else None)
             _write_report(args.out, {"ok": sr["skinLimited"] == 0, "name": st.name, "skinReview": sr})
             return 0 if sr["skinLimited"] == 0 else 1
-        rep = run_switch(st, args.out, pitches=pitches, iterations=its, nonlinear=True if args.nonlinear else None,
+        rep = run_switch(st, args.out, pitches=pitches, iterations=its, nonlinear=args.nonlinear,
                          on_progress=_progress)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))

@@ -279,14 +279,21 @@ backed off one step.
 
 - **Thresholded reading.** The same linear fire forces on the black and
   white design, as it will print (`thresholdedForceGf`).
-- **Large deflection** (`check_fire_nonlinear`, `"nonlinear": true`;
-  off by default). TPU skins stiffen as they bow. For one press point per
-  distinct target, the solid cells are re-solved with a neo-Hookean
-  large-deflection model, the press and the stem's reaction at the
-  trigger force applied together, and secant steps find the press force
-  that brings the plunger to gap + travel. It is experimental: on a
-  thin-skin design (cells at modulus E x^3) the Newton solve crawls under
-  CG and has not converged yet, so it is not run unless asked for.
+- **Large deflection** (`check_fire_nonlinear`, on by default;
+  `"nonlinear": false` or `loadpath switch --no-nonlinear` skips it). TPU
+  skins stiffen as they bow. For one press point per distinct target, the
+  solid cells are re-solved with a neo-Hookean large-deflection model, the
+  press and the stem's reaction at the trigger force applied together, and
+  secant steps find the press force that brings the plunger to gap +
+  travel (each secant solve continues from the last converged one, a step
+  or two). Thin-skin cells under the threshold stay in at modulus E x^3.
+  Above 30k dofs the Newton steps factor the tangent with PARDISO
+  (`pypardiso`, in `loadpath[fast]` and `[crosscheck]`) up to 400k dofs:
+  CG with AMG struggled with the stiffness jump between a floored skin
+  and solid cells (2.5-8 s a solve, 3 min a press on the touch
+  microphone's 1 mm grid, a 0.7 mm grid hardly moving). With PARDISO a
+  press takes about 36 s at 1 mm (48k dofs) and 3 min at 0.7 mm (128k
+  dofs). Without PARDISO, above 30k dofs it falls back to CG.
 - **The delivered mesh** is the isosurface joined to the exact preserved
   geometry, so the cosmetic skin's outside is the designer's mesh
   unchanged.
@@ -305,7 +312,7 @@ material.
 
 ## Limits
 
-- The model is linear apart from the large-deflection check. Contact
+- The optimizer's model is linear; the large-deflection check reads the result. Contact
   between the plunger and the stem is modelled by its reaction at the
   click, not as an obstacle on the way there.
 - Press directions are along an axis (`pressDirection`). The fingertip

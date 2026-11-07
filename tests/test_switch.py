@@ -217,6 +217,24 @@ def test_run_switch_report_carries_the_skin_review():
         assert "skinReview" not in sw.run_switch(st2, out)
 
 
+def test_large_deflection_fire_force_converges_on_a_thin_skin():
+    """The bare 1 mm skin and plunger on 1.5 mm cells: the skin is a density
+    floor (cells at E x^3), the case the check crawled on and stopped short
+    of the click. Every press solves to the plunger's travel at the click,
+    near the linear reading at this small a bow."""
+    st = study_from_dict(pad())
+    dom, floor = sw._thin_skin(st, build_domain(st, 1.5))
+    spec = sw.switch_from_study(st, dom)
+    xphys = np.where(dom.preserve, 1.0, floor)
+    rows = sw.check_fire_nonlinear(dom, st.elastic(design=True), spec, xphys, float(st.material.E),
+                                   presses=[0, 1], floor=floor)
+    for row in rows:
+        assert "error" not in row, row
+        assert row["converged"], row
+        assert abs(row["plungerTravel"] / (spec.gap + spec.travel) - 1) <= 0.01, row
+        assert 0.8 < row["nonlinearOverLinear"] < 2.0, row
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

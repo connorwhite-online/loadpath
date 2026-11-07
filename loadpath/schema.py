@@ -764,8 +764,8 @@ _SWITCH = {
         "iterations": {"anyOf": [{"type": "integer", "minimum": 1},
                                  {"type": "array", "items": {"type": "integer", "minimum": 1}}]},
         "nonlinear": {"type": "boolean", "description": "re-read one press per distinct target with large "
-                                                        "deflections (default false: experimental, slow, and it does "
-                                                        "not converge on thin-skin designs yet)"},
+                                                        "deflections (default true; about half a minute a press on "
+                                                        "a 48k-dof push pad with PARDISO, loadpath[fast])"},
         "nonlinearPitch": {**_POS, "description": "mm grid of the large-deflection check (default the first "
                                                   "pitch); the design is read onto it"},
         "skinReview": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {

@@ -216,15 +216,56 @@ def test_large_mesh_path_follows_a_perfect_column():
     k = 0.5
     ratio = (2 * ellipk(k ** 2) / np.pi) ** 2
     sway = 2 * k / ellipk(k ** 2)
-    keep = nl.DIRECT_MAX_DOF
-    nl.DIRECT_MAX_DOF = 0
+    keep = nl.DIRECT_MAX_DOF, nl.PARDISO_MAX_DOF
+    nl.DIRECT_MAX_DOF = nl.PARDISO_MAX_DOF = 0
     try:
         r = solve_nonlinear(m, NU, E, fixed, tip_vector(m, tip, 0, -ratio * pcr), steps=10)
     finally:
-        nl.DIRECT_MAX_DOF = keep
+        nl.DIRECT_MAX_DOF, nl.PARDISO_MAX_DOF = keep
     assert r.converged and "imperfection" in r.message, r.message
     got = np.hypot(r.u[3 * tip + 1].mean(), r.u[3 * tip + 2].mean()) / L
     assert abs(got / sway - 1) < 0.03, (got, sway)
+
+
+def test_pardiso_takes_the_same_path_as_superlu():
+    # Above DIRECT_MAX_DOF, with pypardiso installed, the Newton steps and
+    # the stability check factor with PARDISO (direct, so the perfect
+    # column still walks off its unstable branch; no imperfection seeded).
+    # Forced here on the small bar: the same elastica, the same buckled
+    # sway as SuperLU.
+    import loadpath.nonlinear as nl
+    if not nl._have_pardiso():
+        print("     (skipped: pypardiso not installed)")
+        return
+    m, fixed, tip = bar()
+    pcr = linear_buckling(m, NU, E, fixed, tip_vector(m, tip, 0, -1.0), n_modes=1).factors[0]
+    loads = [tip_vector(m, tip, 1, 2.0 * E * I / L ** 2), tip_vector(m, tip, 0, -1.2 * pcr)]
+    ref = [solve_nonlinear(m, NU, E, fixed, f, steps=10) for f in loads]
+    keep = nl.DIRECT_MAX_DOF
+    nl.DIRECT_MAX_DOF = 0
+    try:
+        assert nl._Linear(m).pardiso
+        got = [solve_nonlinear(m, NU, E, fixed, f, steps=10) for f in loads]
+    finally:
+        nl.DIRECT_MAX_DOF = keep
+    for a, b in zip(ref, got):
+        assert b.converged and "imperfection" not in b.message, b.message
+        assert np.abs(a.u - b.u).max() <= 1e-6 * np.abs(a.u).max(), np.abs(a.u - b.u).max()
+    assert any(h.get("branchSwitch") for h in got[1].history)
+
+
+def test_warm_start_continues_to_the_same_state():
+    # elastic: from a converged state at one load to another takes a step or
+    # two and lands where the whole ramp from rest does
+    m, fixed, tip = bar()
+    f1 = tip_vector(m, tip, 1, 1.5 * E * I / L ** 2)
+    f2 = tip_vector(m, tip, 1, 2.2 * E * I / L ** 2)
+    a = solve_nonlinear(m, NU, E, fixed, f1, steps=8)
+    full = solve_nonlinear(m, NU, E, fixed, f2, steps=8)
+    warm = solve_nonlinear(m, NU, E, fixed, f2, steps=1, max_step=1.0, start=a)
+    assert warm.converged and np.allclose(warm.force, f2)
+    assert np.abs(warm.u - full.u).max() <= 1e-6 * np.abs(full.u).max(), np.abs(warm.u - full.u).max()
+    assert len(warm.history) < len(full.history), (len(warm.history), len(full.history))
 
 
 def test_tendon_curls_a_cantilever_into_an_arc():

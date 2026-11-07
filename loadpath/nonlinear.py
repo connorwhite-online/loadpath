@@ -67,6 +67,13 @@ __all__ = ["NonlinearResult", "BucklingResult", "Tendon", "nodes_near", "solve_n
 # step that lands on an unstable state is cut back, and the stability check
 # runs LOBPCG with the multigrid preconditioner instead of shift-invert.
 DIRECT_MAX_DOF = 30_000
+# With PARDISO (pypardiso, loadpath[fast] / [crosscheck]) the factorization
+# stays direct up to this size: its nested-dissection, threaded Cholesky
+# factors a 48k-dof push pad in ~1 s where CG + AMG took 2.5-8 s a solve
+# (a thin TPU skin at E x^3 next to solid cells is a hard contrast for
+# AMG), and a direct factor also gives the stability check shift-invert
+# and the branch switch (walk_off), which CG cannot do.
+PARDISO_MAX_DOF = 400_000
 # Step control. A step that converged in at most GROW_NEWTON iterations
 # (assemblies, the converged one included) lets the next one grow 1.5x.
 # A retry with line search (after plain Newton failed a contact step) that
@@ -349,17 +356,85 @@ def _splu(k, node_ijk=None):
     return splu(k.tocsc(), permc_spec="MMD_AT_PLUS_A", diag_pivot_thresh=0.0, options={"SymmetricMode": True})
 
 
+def _have_pardiso():
+    try:
+        import pypardiso  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+class _Pardiso:
+    """A PARDISO factorization of K (`.solve` takes one right-hand side or
+    a block). Symmetric K: Cholesky-type (real symmetric positive definite),
+    falling back to symmetric indefinite where a Newton tangent past a limit
+    point has a negative pivot; unsymmetric K (sliding friction): LU. The
+    factor's memory is released with the object."""
+
+    # Solver handles, reused: a new PyPardisoSolver looks for MKL with a
+    # recursive glob (0.4 s each, a third of a push pad's check when every
+    # Newton iteration made one)
+    _pool: list = []
+
+    def __init__(self, k, symmetric=True):
+        import pypardiso
+
+        self._s = None
+        s = _Pardiso._pool.pop() if _Pardiso._pool else pypardiso.PyPardisoSolver()
+        for mtype in ((2, -2) if symmetric else (11,)):
+            a = sp.triu(k, format="csr") if mtype != 11 else k.tocsr()
+            a.sort_indices()
+            s.set_matrix_type(mtype)
+            try:
+                s.factorize(a)
+            except Exception:  # noqa: BLE001 - not positive definite: try the next type
+                s.free_memory(everything=True)
+                continue
+            s.set_phase(33)
+            self._s, self._a = s, a
+            break
+        if self._s is None:
+            _Pardiso._pool.append(s)
+            raise RuntimeError("PARDISO could not factor the tangent")
+
+    def solve(self, b):
+        b = np.asarray(b, float)
+        # straight to the solve phase: pypardiso.solve() hashes the matrix
+        # every call to see whether it is factored already
+        x = self._s._call_pardiso(self._a, np.asfortranarray(b) if b.ndim == 2 else np.ascontiguousarray(b))
+        return np.asarray(x).reshape(b.shape)
+
+    def __del__(self):
+        if getattr(self, "_s", None) is not None:
+            try:
+                self._s.free_memory(everything=True)
+                _Pardiso._pool.append(self._s)
+            except Exception:  # noqa: BLE001 - interpreter shutdown
+                pass
+            self._s = None
+
+
 class _Linear:
-    """Direct factorization for small and medium problems, CG + AMG above
-    (the hierarchy is reused across Newton iterations until it goes stale)."""
+    """Direct factorization for small and medium problems (SuperLU, and
+    PARDISO above DIRECT_MAX_DOF up to PARDISO_MAX_DOF when installed), CG +
+    AMG above (the hierarchy is reused across Newton iterations until it
+    goes stale)."""
 
     def __init__(self, mesh):
-        self.direct = mesh.n_dof <= DIRECT_MAX_DOF
+        n = mesh.n_dof
+        self.pardiso = DIRECT_MAX_DOF < n <= PARDISO_MAX_DOF and _have_pardiso()
+        self.direct = n <= DIRECT_MAX_DOF or self.pardiso
         self.iter = None if self.direct else Solver(mesh, rtol=1e-9, maxiter=2000)
 
-    def solve(self, k, r):
+    def factor(self, k, symmetric=True):
+        """A direct factorization of k (`.solve`)."""
+        if self.pardiso:
+            return _Pardiso(k, symmetric)
+        return _splu(k)
+
+    def solve(self, k, r, symmetric=True):
         if self.direct:
-            return _splu(k).solve(r)
+            return self.factor(k, symmetric).solve(r)
         return self.iter.solve(k, r)
 
     def lowest_mode(self, k, n_modes=1):
@@ -367,7 +442,7 @@ class _Linear:
         n_modes > 1, direct only: the smallest few, ascending)."""
         n = k.shape[0]
         if self.direct:
-            lu = _splu(k)
+            lu = self.factor(k)
             op = LinearOperator((n, n), matvec=lu.solve, dtype=float)
             # a fixed start vector: ARPACK's random one made the branch
             # a perfect column takes vary run to run
@@ -397,6 +472,8 @@ class NonlinearResult:
     stress: np.ndarray | None = None   # element-center Cauchy von Mises, MPa
     strain: np.ndarray | None = None   # element-center largest principal stretch - 1
     message: str = ""
+    alpha: np.ndarray | None = None    # incompatible-mode amplitudes at u (a warm start's state)
+    force: np.ndarray | None = None    # the external force at u (the full load when converged)
 
 
 def _post(mesh, u, mod, nu, kind):
@@ -497,7 +574,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                     max_step: float = 0.25, min_step: float = 1e-4, rtol: float = 1e-7, max_newton: int = 25,
                     springs: np.ndarray | None = None, tendons: list | None = None, contact: list | None = None,
                     stability: bool = True, probes: dict | None = None,
-                    on_step=None, element: str | None = None) -> NonlinearResult:
+                    on_step=None, element: str | None = None, start: NonlinearResult | None = None) -> NonlinearResult:
     """Geometrically nonlinear static solve.
 
     modulus: E, scalar or per element (MPa). fixed: bool per dof, held at 0.
@@ -527,6 +604,12 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     along that mode and finds the stable state nearby, as a real part would
     (a print is never perfectly straight).
 
+    start: a converged result on the same mesh, material and supports to
+    continue from: the load goes from start's force to `force` (an elastic
+    solution does not depend on the path, so a nearby load takes a step or
+    two instead of the whole ramp from rest). Not with prescribed dofs,
+    tendons or contact (their state is not carried over).
+
     element: "im" (fem.hex8_element's default) or "plain". The incompatible
     modes take bending without shear locking, so one or two cells across a
     flexure no longer read it too stiff.
@@ -540,6 +623,13 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
     n = mesh.n_dof
     mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,)).copy()
     f = np.zeros(n) if force is None else np.asarray(force, float)
+    f0 = np.zeros(n)
+    if start is not None:
+        if prescribed is not None or tendons or contact:
+            raise ValueError("start: not with prescribed dofs, tendons or contact")
+        if not start.converged or start.force is None:
+            raise ValueError("start: needs a converged result")
+        f0 = np.asarray(start.force, float)
     cons = np.asarray(fixed, bool).copy()
     pd, pv = (np.zeros(0, np.int64), np.zeros(0)) if prescribed is None else \
         (np.asarray(prescribed[0], np.int64), np.asarray(prescribed[1], float))
@@ -662,7 +752,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             if spr is not None:
                 fint = fint + spr @ v
                 k = (k + spr).tocsr()
-            fext = target * f
+            fext = f0 + target * (f - f0)
             for t in loads:
                 ft, kt, _ = t._load(v, target)
                 fext = fext + ft
@@ -690,10 +780,10 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
                 return None          # stalled (contact chatter): a shorter step is cheaper
             try:
                 if hold is None:
-                    d = lin.solve(k if lin.direct else sym(k), r)
+                    d = lin.solve(k if lin.direct else sym(k), r, symmetric=not asym)
                 else:
                     # K d - phi dmu = r, phi^T d = -gap, on one factorization
-                    x = _splu(k).solve(np.column_stack([r, hphi]))
+                    x = lin.factor(k, symmetric=not asym).solve(np.column_stack([r, hphi]))
                     dmu = np.linalg.solve(hphi.T @ x[:, 1:], -gap - hphi.T @ x[:, 0])
                     d = x[:, 0] + x[:, 1:] @ dmu
                     mu = mu + dmu
@@ -731,7 +821,7 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
             return None
         if spr is not None:
             fint = fint + spr @ v
-        fext = target * f
+        fext = f0 + target * (f - f0)
         for t in loads:
             fext = fext + t._load(v, target)[0]
         r = fext - fint
@@ -827,6 +917,10 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
         return None
 
     u = np.zeros(n)
+    if start is not None:
+        u = np.asarray(start.u, float).copy()
+        if alpha is not None and start.alpha is not None:
+            alpha = start.alpha.copy()
     lam, dlam = 0.0, min(1.0 / steps, max_step)
     du_prev, dlam_prev = None, None
     history = []
@@ -948,7 +1042,8 @@ def solve_nonlinear(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force:
         message = (message + " " if message else "") + \
             "The part went unstable (buckled); a 0.1% imperfection along the buckling mode was added to follow it."
     return NonlinearResult(u=u, load_factor=lam, converged=done, history=history, stress=vm, strain=strain,
-                           message=message)
+                           message=message, alpha=None if alpha is None else alpha.copy(),
+                           force=f0 + lam * (f - f0))
 
 
 @dataclass

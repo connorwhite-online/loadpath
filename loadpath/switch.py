@@ -713,8 +713,16 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
         a, c = float(l @ u), float(l @ lam)
         f_lin = (target + spec.trigger * c) / max(a, 1e-12)
 
-        def tip(P):
-            r = solve_nonlinear(sub, nu, mod_sub, fx_flat, P * f - spec.trigger * l, material=material, steps=steps,
+        def tip(P, start=None):
+            load = P * f - spec.trigger * l
+            if start is not None:
+                # from the last converged press: a load 10-30% off takes a
+                # step or two, not the whole ramp (elastic: the same answer)
+                r = solve_nonlinear(sub, nu, mod_sub, fx_flat, load, material=material, steps=1, max_step=1.0,
+                                    probes={"tip": l}, start=start)
+                if r.converged:
+                    return float(l @ r.u), r
+            r = solve_nonlinear(sub, nu, mod_sub, fx_flat, load, material=material, steps=steps,
                                 probes={"tip": l})
             return float(l @ r.u), r
 
@@ -729,7 +737,7 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
         n_solves = 1
         while n_solves < max_solves:
             try:
-                t1, r1 = tip(P1)
+                t1, r1 = tip(P1, start=best[2] if best[2].converged else None)
             except (ValueError, np.linalg.LinAlgError, RuntimeError):
                 break
             n_solves += 1
@@ -773,8 +781,7 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
     <name>.stl (the delivered part: the exact exterior skin and preserves
     joined to the optimized interior) and returns the report: per press the
     target, the linear fire force on the design and, when nonlinear is
-    true, the large-deflection one on the solid part (experimental: on a
-    thin-skin design the Newton solve crawls and does not converge yet)."""
+    true (the default), the large-deflection one on the solid part."""
     import os
 
     from .reconstruct import reconstruct
@@ -848,7 +855,7 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
     rep["inWindow"] = sum(bool(p["ok"]) for p in rep["presses"])
     rep["deliveredInWindow"] = sum(bool(p.get("deliveredOk")) for p in rep["presses"])
     if nonlinear is None:
-        nonlinear = bool((study.raw.get("switch") or {}).get("nonlinear", False))
+        nonlinear = bool((study.raw.get("switch") or {}).get("nonlinear", True))
     np.save(os.path.join(out_dir, "xphys.npy"), r.xphys)
     if nonlinear:
         if on_progress is not None:
