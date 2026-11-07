@@ -881,7 +881,7 @@ def _fill_pinches(part, rounds: int = 3):
         if not len(e):
             break
         u, inv, c = np.unique(e, axis=0, return_inverse=True, return_counts=True)
-        bad = u[c > 2]
+        bad = u[(c > 2) | (c == 1)]   # kissing edges, and slits a weld opens
         if not len(bad):
             break
         mids = m.vertices[bad].mean(axis=1)

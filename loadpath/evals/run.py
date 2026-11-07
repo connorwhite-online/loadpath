@@ -536,16 +536,22 @@ def run_switch_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
     try:
         doc = {k: v for k, v in raw.items() if k not in ("expect", "assets")}
         st = study_from_dict(doc, base_dir=base)
-        its = None
+        its = pitches = None
         if tier == "coarse":
-            its = [int((expect.get("coarse") or {}).get("iterations", 40))]
+            # one short level (expect.coarse.pitches, else the study's
+            # first), held to expect.coarse's own limits where it sets them
+            co = expect.get("coarse") or {}
+            its = [int(co.get("iterations", 40))]
+            pitches = co.get("pitches")
+            expect = {**expect, **{k: v for k, v in co.items() if k.startswith(("min", "max"))}}
         # the large-deflection re-read on the full tier (about half a minute
         # a press on the touch microphone's 1 mm grid with PARDISO)
         if "feel" in doc:
             from ..feel import run_feel
             rep = run_feel(st, os.path.join(out, name), iterations=its, nonlinear=tier != "coarse")
         else:
-            rep = run_switch(st, os.path.join(out, name), iterations=its, nonlinear=tier != "coarse")
+            rep = run_switch(st, os.path.join(out, name), pitches=pitches, iterations=its,
+                             nonlinear=tier != "coarse")
         vol = float(rep["mass"] / st.material.density * 1000.0)
         row["best"] = {"mass": rep["mass"], "volume": vol, "inWindow": rep["inWindow"],
                        "deliveredInWindow": rep["deliveredInWindow"]}

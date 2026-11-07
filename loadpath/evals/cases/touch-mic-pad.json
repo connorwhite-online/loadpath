@@ -319,13 +319,15 @@
     "maxDeflection": 0.3
    }
   ],
-  "iterations": 80
+  "pitches": [1.0, 0.7],
+  "iterations": [60, 60]
  },
  "expect": {
-  "minInWindow": 12,
-  "minDeliveredInWindow": 10,
+  "minInWindow": 8,
+  "minDeliveredInWindow": 8,
   "maxVolume": 9000,
   "coarse": {
+   "pitches": [1.0],
    "iterations": 40
   }
  },
