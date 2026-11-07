@@ -420,12 +420,20 @@ mean deflection under a load case (a side squeeze, a drop). Start coarse
 refine (`[1.0, 0.7, 0.5]`). The report gives each press's linear and
 as-printed (thresholded) fire force; `"nonlinear": true` adds a
 large-deflection reading, which is experimental (slow, and it does not
-converge on thin-skin designs yet). Read the skin alone first
-(`examples/switch/touch_mic.py --baseline` shows how): where it already
-fires well above a ceiling, structure inside can carry the press to the
-plunger and pull it down, but only so far (the touch microphone's corner:
-391 gf on the skin, 323 optimized, ceiling 300). Past that, thin the skin
-or raise the ceiling. See docs/SWITCH.md.
+converge on thin-skin designs yet). Read the skin alone first:
+`loadpath switch study.json --skin-review` (about a minute) lists the
+presses the bare skin already puts over their ceilings. Structure inside
+can carry such a press to the plunger and pull it down, but only so far
+(the touch microphone's corner: 388 gf on the skin, 322 optimized,
+ceiling 300). Every switch report's `skinReview` says which misses the
+skin decides (`misses[].limitedBy == "skin"`), where (`where`: the
+stiffest skin, often the fold into a wall), and what would fix each one:
+`target` (the ceiling the design meets), `localSkin` (a thickness within
+a radius), `skinThickness` (one for the whole skin), each with the presses
+it would push out of window and whether it clears the minimum wall. Never
+change the exterior yourself: relay `skinReview.summary` and those
+options to the designer and let them choose. `limitedBy == "interior"`
+needs no designer: re-run finer or longer. See docs/SWITCH.md.
 
 ## Heat, fatigue and creep
 

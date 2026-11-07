@@ -141,6 +141,73 @@ def test_thin_skin_is_a_density_floor():
     assert not f2.any()
 
 
+def test_skin_review_names_where_the_skin_alone_misses():
+    """Ceilings of 600 gf at the outer presses, where the bare 1 mm skin
+    alone fires at about 665 gf: the review says the skin, not the
+    interior, decides those presses, by how much, and what the designer
+    could change. It changes nothing itself."""
+    import copy
+    import json
+
+    from loadpath.skinreview import _rescale, skin_preflight
+
+    doc = pad(field={"center": [0, 0], "radius": 6, "rings": 1, "perRing": 4, "max": [500, 600], "min": 400},
+              skinReview={"minWall": 0.6})
+    st = study_from_dict(doc)
+    raw0 = copy.deepcopy(st.raw)
+    rv = skin_preflight(st, 1.5)
+    json.dumps(rv)                         # agent-readable as it is
+    assert st.raw == raw0
+    assert rv["reading"] == "bare skin" and rv["minWall"] == 0.6
+    assert rv["skinLimited"] == 4, rv["summary"]
+    assert rv["skinOnlyOver"] == [1, 2, 3, 4]
+    rim = [m for m in rv["misses"] if m["limitedBy"] == "skin"]
+    for m in rim:
+        assert m["side"] == "over" and 5 < m["byPercent"] < 20, m
+        assert m["where"] and m["where"]["cells"] > 0
+        kinds = [s["kind"] for s in m["suggestions"]]
+        assert kinds[0] == "target" and m["suggestions"][0]["toGf"] >= m["forceGf"]
+        local = [s for s in m["suggestions"] if s["kind"] == "localSkin" and s["reached"]]
+        assert local, m["suggestions"]
+        for s in local:
+            assert s["toThickness"] < 1.0 and s["printable"]
+            assert s["forcesGf"][m["press"]] <= m["windowGf"][1] * 1.02
+    # the centre is under its floor with no interior: the interior's to fix
+    centre = next(m for m in rv["misses"] if m["press"] == 0)
+    assert centre["side"] == "under" and centre["limitedBy"] == "interior"
+    whole = rv["skinThickness"]
+    assert whole["reached"] and whole["toThickness"] < 1.0
+    assert all(f <= 600 * 1.02 for f in whole["forcesGf"][1:])
+    assert "designer" in rv["summary"]
+    # the default minimum wall for TPU powder is 1.0 mm: no thinner skin is
+    # printable, and the summary falls back on the ceiling
+    rv2 = skin_preflight(study_from_dict(pad(field=doc["switch"]["field"])), 1.5)
+    assert rv2["minWall"] == 1.0 and rv2["skinAtMinWall"]
+    assert "raise the ceiling" in rv2["summary"], rv2["summary"]
+    # scaling the skin by 1 is the design itself
+    d, fl = sw._thin_skin(st, build_domain(st, 1.5))
+    x = np.maximum(np.random.default_rng(0).uniform(0, 1, d.n_elem), fl)
+    from loadpath.skinreview import skin_cells
+    _, base = skin_cells(st, d, fl)
+    assert np.allclose(_rescale(x, base, base > 0, 1.0), x)
+
+
+def test_run_switch_report_carries_the_skin_review():
+    import json
+    import tempfile
+
+    st = study_from_dict(pad(pitches=[1.5], iterations=20))
+    with tempfile.TemporaryDirectory() as out:
+        rep = sw.run_switch(st, out)
+    sr = rep["skinReview"]
+    json.dumps(sr)
+    assert sr["reading"] == "design" and len(sr["skinOnly"]) == 5
+    assert sr["skinLimited"] == 0, sr["summary"]
+    st2 = study_from_dict(pad(pitches=[1.5], iterations=2, skinReview=False))
+    with tempfile.TemporaryDirectory() as out:
+        assert "skinReview" not in sw.run_switch(st2, out)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

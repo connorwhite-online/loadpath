@@ -821,6 +821,16 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
                                     (p["min"] is None or f >= p["min"] * 0.98))
         rep["deliveredHold"] = [float(v) for v in fd["hold"]]
         rep["deliveredClearanceMax"] = fd.get("clearanceMax")
+    from .skinreview import review_options, skin_review
+    opts = review_options(study)
+    if opts is not None:
+        # Where the fixed exterior, not the interior, keeps a press out of its
+        # window, and what the designer could change. Feedback only: the
+        # exterior is never edited.
+        if on_progress is not None:
+            on_progress({"stage": "verify", "check": "skin review"})
+        rep["skinReview"] = skin_review(study, r.domain, spec, r.xphys, r.floor, nu, modulus,
+                                        radii=opts["radii"])
     rep["inWindow"] = sum(bool(p["ok"]) for p in rep["presses"])
     rep["deliveredInWindow"] = sum(bool(p.get("deliveredOk")) for p in rep["presses"])
     if nonlinear is None:

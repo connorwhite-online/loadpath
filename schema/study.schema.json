@@ -910,6 +910,34 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "mm grid of the large-deflection check (default the first pitch); the design is read onto it"
+        },
+        "skinReview": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "minWall": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "mm, the thinnest skin the designer will accept (default: the process's or material's minimum wall, else minMember)"
+                },
+                "radii": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "minItems": 1,
+                  "description": "mm, the local skin changes tried round each press (default [4, 8])"
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "description": "report skinReview (default true): every press the fixed exterior keeps out of its window, where, by how much, and the skin thickness, local skin change or target change that would fix it. Suggestions only: the exterior is never edited. `loadpath switch --skin-review` reads the bare skin alone, before designing"
         }
       },
       "required": [
@@ -1809,6 +1837,28 @@
     "expect": {
       "type": "object",
       "description": "Eval-only pass criteria (loadpath.evals)."
+    },
+    "assets": {
+      "type": "object",
+      "properties": {
+        "env": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "make": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "additionalProperties": false,
+      "description": "Eval-only: geometry kept out of this repository (a product's own CAD), read from the directory the environment variable `env` names; the case is skipped without it."
     }
   },
   "required": [

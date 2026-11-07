@@ -264,9 +264,10 @@ def explore(study, base_dir: str | None = None, methods: list | None = None, mat
     return out
 
 
-def switch(study, base_dir: str | None = None, pitches: list | None = None) -> dict:
+def switch(study, base_dir: str | None = None, pitches: list | None = None, skin_review_only: bool = False) -> dict:
     """Validate a study with a `switch` block and design its push pad
-    (switch.py) as a background job."""
+    (switch.py) as a background job. skin_review_only: read the bare skin
+    alone (skinreview.py), nothing designed."""
     if isinstance(study, str):
         from .tasks import read_doc
         study, base_dir = read_doc(study, base_dir)
@@ -278,6 +279,8 @@ def switch(study, base_dir: str | None = None, pitches: list | None = None) -> d
     args = ["switch", "{dir}/study.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
     if pitches:
         args += ["--pitches", ",".join(str(float(p)) for p in pitches)]
+    if skin_review_only:
+        args.append("--skin-review")
     out = _spawn("switch", v.get("name") or "study", {"study.json": study}, args,
                  cells=v["cells"], warnings=v["warnings"], base_dir=base_dir or os.getcwd())
     out["next"] = _POLL_HINT
@@ -620,10 +623,13 @@ def status(job_id: str) -> tuple[dict, list]:
     elif kind == "switch":
         info = {"status": "done", "kind": kind, **{k: r.get(k) for k in (
             "passes", "presses", "volume", "mass", "mesh", "watertight", "levels", "hold", "clearanceMax",
-            "nonlinear", "seconds")}, "report": report,
+            "nonlinear", "seconds", "skinReview")}, "report": report,
             "next": "Show the user each press point's fire force against its window (forceGf linear, "
-                    "thresholdedForceGf as printed, nonlinearForceGf with large deflection). A ceiling the skin "
-                    "alone already exceeds cannot be met by adding material inside."}
+                    "thresholdedForceGf as printed, nonlinearForceGf with large deflection). skinReview lists the "
+                    "misses the fixed exterior decides (limitedBy 'skin'), where, and the target, local skin and "
+                    "whole-skin changes that would fix each: relay its summary and options to the designer and "
+                    "never change the exterior yourself. limitedBy 'interior' needs a finer or longer run, not "
+                    "the designer."}
         pngs = []
     elif kind == "lattice":
         info = {"status": "done", "kind": kind, "parent": meta.get("parent"), **r}
@@ -827,15 +833,19 @@ def serve():
         return explore(study, base_dir, methods, materials, quantity, rank, screen)
 
     @tool
-    def loadpath_switch(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:
+    def loadpath_switch(study: dict | str, base_dir: str | None = None, pitches: list | None = None,
+                        skin_review_only: bool = False) -> dict:
         """Design everything inside a fixed exterior so a press anywhere on a touch area fires a switch
         at a chosen force, with the least material: a study with a thin `skin` of the exterior mesh,
         components as keepOuts (`insertFrom` keeps their assembly paths clear) and a `switch` block
         (plunger output with gap, trigger force and travel; press points or a radial field of force
         windows; skin clearance; hold cases). pitches: coarse to fine grids in mm (start [1.0]).
-        Reports each press's fire force linear, as printed and with large deflection, and the part's
-        STL. Starts a job; poll loadpath_status."""
-        return switch(study, base_dir, pitches)
+        Reports each press's fire force linear, as printed and with large deflection, the part's
+        STL, and skinReview: the presses the fixed exterior itself keeps out of window, where, and the
+        skin or target change that would fix each, for the designer to decide (never edit the
+        exterior). skin_review_only: read the bare skin alone first (about a minute), nothing designed.
+        Starts a job; poll loadpath_status."""
+        return switch(study, base_dir, pitches, skin_review_only)
 
     @tool
     def loadpath_lattice(job_id: str, outcome: int | None = None, options: dict | None = None) -> dict:

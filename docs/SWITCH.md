@@ -135,8 +135,9 @@ take up to 4.8 times their ceiling. Loadpath's interior meets the map with
 alone needs 391 gf: the interior carries that press to the plunger and
 brings it down to 323, but a 1.0 mm skin there is too stiff to reach 300.
 That is a question for the designer (a thinner skin in that corner, or a
-higher ceiling), and the bare-skin reading (`--baseline`) is how to see it
-before running anything.
+higher ceiling). The report's `skinReview` says so with numbers, and
+`loadpath switch --skin-review` shows it before running anything (see
+"When the exterior decides" below).
 
 The delivered mesh reads a little stiffer at the corners than the design
 did: on 1 mm cells, smoothing and the exact joins to the skin move
@@ -159,6 +160,60 @@ watertight mesh, and the squeeze held on the delivered mesh. Every
 `loadpath switch` report now carries that read-back
 (`deliveredForceGf`, `deliveredInWindow`, `deliveredHold`). A
 shareable comparison sheet of this run: https://claude.ai/artifact/DevY83gMUWnygXPb2Jkm5v.
+
+## When the exterior decides: feedback for the designer
+
+Some presses are set by the skin, and no interior can fix them. The
+fixed exterior is the designer's, and loadpath never edits it. What it
+can do is say where the skin is the problem, by how much, and what change
+would fix it. Every `loadpath switch` report carries that as
+`skinReview`, and `loadpath switch study.json --skin-review` reads the
+bare skin alone in about a minute, before anything is designed.
+
+For each press, the review gives:
+
+- **skinOnly**: the bare skin's fire force against the press's window.
+  A bare skin under its floor is normal, because the interior's job is to
+  stiffen it. A bare skin over its ceiling is a risk: the interior can
+  carry part of the press to the plunger, but only so far.
+- **misses**: every press the design misses, which side and by how much
+  (gf and %), the bare skin's reading, and `limitedBy`. That is `skin`
+  when the bare skin alone is over the same ceiling, or `interior` when it
+  is not (then a finer pitch or more iterations fixes it, and the designer
+  needs to do nothing).
+- **where**: the skin cells that set that press's force, found from the
+  force's sensitivity to each cell (solves already done): their centroid
+  and extent. On the touch microphone this is the fold where the top turns
+  down into the side wall, 3-4 mm outboard of the finger, not the skin
+  under it.
+- **suggestions**, each read back through the same model with the interior
+  held as designed: `target` (the ceiling the design meets as it is),
+  `localSkin` (the thickness within 4 and 8 mm of the press, and round
+  the stiffest skin, that brings it into window), and `skinThickness`
+  (one thickness for the whole skin). Each one lists any other press it
+  pushes out of its window and whether the thickness is at or over the
+  minimum wall (`skinReview.minWall`; by default the process's or the
+  material's rule, 1.0 mm for TPU powder).
+
+With the interior held, a suggested change is enough but may not be the
+least: a re-run with the change re-optimizes the interior around it.
+Thinning is modelled as a lower density in the skin cells, which bends
+like the thinner skin (as in the thin-skin floor above), so treat the
+thickness as an estimate to confirm with that re-run.
+
+On the touch microphone (1 mm cells):
+
+| reading | skin-limited presses | what it says |
+|---|---|---|
+| bare skin (`--skin-review`, 102 s) | 3: (12, -9) 354 gf, (14, 6) 309 gf, (-12, -9) 388 gf, all over a 300 gf ceiling | thin the stiffest skin to 0.65, 0.85 and 0.60 mm, all under the 1.0 mm rule |
+| loadpath's design (40 s, 13 solves) | 1: (-12, -9) 322 gf, 7% over (the bare skin there: 388 gf) | raise that ceiling to 325 gf; or 0.80 mm within 9 mm of (-13, -6); or 0.90 mm everywhere, which puts all 14 presses in window |
+
+With an interior, much less of a change is needed than the bare skin
+suggests: the interior already takes the corner from 388 to 322 gf. The
+whole-skin 0.90 mm is over Materialize's 0.8 mm minimum for SLS TPU but
+under the 1.0 mm rule this product uses, so the choice is the designer's:
+accept 0.9 mm, or a 325 gf ceiling in that corner. `"skinReview": false`
+in the switch block turns the review off.
 
 ## Three things that had to change
 

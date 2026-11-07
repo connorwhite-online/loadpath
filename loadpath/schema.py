@@ -767,7 +767,17 @@ _SWITCH = {
                                                         "deflections (default false: experimental, slow, and it does "
                                                         "not converge on thin-skin designs yet)"},
         "nonlinearPitch": {**_POS, "description": "mm grid of the large-deflection check (default the first "
-                                                  "pitch); the design is read onto it"}},
+                                                  "pitch); the design is read onto it"},
+        "skinReview": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
+            "minWall": {**_POS, "description": "mm, the thinnest skin the designer will accept (default: the "
+                                               "process's or material's minimum wall, else minMember)"},
+            "radii": {"type": "array", "items": _POS, "minItems": 1,
+                      "description": "mm, the local skin changes tried round each press (default [4, 8])"}},
+            "additionalProperties": False}],
+            "description": "report skinReview (default true): every press the fixed exterior keeps out of its "
+                           "window, where, by how much, and the skin thickness, local skin change or target "
+                           "change that would fix it. Suggestions only: the exterior is never edited. "
+                           "`loadpath switch --skin-review` reads the bare skin alone, before designing"}},
     "required": ["output"],
     "x-requireOne": [["presses"], ["field"]],
     "additionalProperties": False,
@@ -965,6 +975,11 @@ STUDY_SCHEMA = {
                     "description": "Optional: fill the delivered part with a stress-graded TPMS lattice."},
         "multiMaterial": _MULTI_MATERIAL,
         "expect": {"type": "object", "description": "Eval-only pass criteria (loadpath.evals)."},
+        "assets": {"type": "object", "properties": {
+            "env": {"type": "string"}, "files": {"type": "array", "items": {"type": "string"}},
+            "make": {"type": "string"}}, "required": ["env"], "additionalProperties": False,
+            "description": "Eval-only: geometry kept out of this repository (a product's own CAD), read from the "
+                           "directory the environment variable `env` names; the case is skipped without it."},
     },
     "required": ["designSpace"],
     "x-requireOne": [["loadCases"], ["loads"]],

@@ -527,6 +527,10 @@ def main(argv=None):
     sw.add_argument("--iterations", help="comma-separated, per pitch")
     sw.add_argument("--nonlinear", action="store_true", help="also run the large-deflection fire-force check "
                     "(experimental: slow, and it does not converge on thin-skin designs yet)")
+    sw.add_argument("--skin-review", action="store_true",
+                    help="read the bare skin only, in seconds, before designing anything: which presses the fixed "
+                         "exterior alone puts over their ceilings, where, and what the designer could change "
+                         "(report skinReview; nothing is optimized or edited)")
     sw.add_argument("--base-dir")
     ex = sub.add_parser("explore", help="one study, an outcome per manufacturing method and material (fdm, sls, "
                                         "mjf, sla, lpbf, cast, milled...): mass, safety factor, cost and lead "
@@ -1299,6 +1303,11 @@ def _switch(args):
         st = study_from_dict(doc, base)
         pitches = [float(v) for v in args.pitches.split(",")] if args.pitches else None
         its = [int(v) for v in args.iterations.split(",")] if args.iterations else None
+        if args.skin_review:
+            from .skinreview import skin_preflight
+            sr = skin_preflight(st, pitches[0] if pitches else None)
+            _write_report(args.out, {"ok": sr["skinLimited"] == 0, "name": st.name, "skinReview": sr})
+            return 0 if sr["skinLimited"] == 0 else 1
         rep = run_switch(st, args.out, pitches=pitches, iterations=its, nonlinear=True if args.nonlinear else None,
                          on_progress=_progress)
     except ValueError as exc:

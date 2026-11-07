@@ -88,7 +88,10 @@ Where it is strongest:
   cosmetic skin, every component's assembly path kept clear, and everything
   invisible designed for how the product should feel: a push pad that fires
   its switch at a chosen force anywhere on the touch area, with the least
-  material ([docs/SWITCH.md](docs/SWITCH.md)).
+  material. Where the exterior itself rules a target out, the report says
+  where and by how much, and what skin or target change would fix it, for
+  the designer to decide; loadpath never edits the exterior
+  ([docs/SWITCH.md](docs/SWITCH.md)).
 - **Implicit modelling**: field graphs, graded and conformal lattices (TPMS,
   strut, Voronoi), blends, and exact STEP of lattice parts.
 - **Process awareness**: FDM, SLS, MJF, resin and powder-bed metal rules,
