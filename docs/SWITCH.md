@@ -122,44 +122,53 @@ review used, and the flanks holding under a squeeze.
 
 ![force to click at each press point: round 17, the bare skin, loadpath](images/switch/touch-mic-forces.png)
 
-| design (1 mm cells) | in window | force to click | squeeze | part |
+Every number here is the mesh read back on its own cut cells
+(`switch_lattice.readback`, 0.5 mm; the bare skin at 0.33 mm), which holds
+a 1.0 mm wall at 1.0 mm on any grid:
+
+| part | in window | force to click | squeeze | volume |
 |---|---|---|---|---|
-| round 17 as drawn | 6 of 14 | 129 gf centre, 292-1436 gf at the sides and corners | 0.05 mm | 9.7 cm^3 |
-| skin, base and rails only | 9 of 14 | 96 gf centre (under the floor), 307-391 at the corners | 0.10 mm | |
-| **loadpath, design** | **13 of 14** | 140 gf centre; 323 gf at one corner, the rest in window | 0.09 mm | |
-| **loadpath, delivered mesh** read back | 11 of 14 | 122 gf centre; the three misses 3-17% over a 300 gf ceiling | 0.09 mm | **8.2 cm^3** |
+| round 17 as drawn | 0 of 14 | 179 gf centre, 244-1272 gf elsewhere | 0.03 mm | 9.7 cm^3 |
+| skin, base and rails only | 9 of 14 | 131 gf centre, 397-486 gf at the four rim corners | | |
+| **loadpath, delivered mesh** (1.0 → 0.7 mm cells) | **9 of 14** | 159 gf centre, 380-427 gf at the four rim corners | 0.05 mm | **7.8 cm^3** |
 
 The drawn interior is stiff where the product wants it soft: the corners
-take up to 4.8 times their ceiling. Loadpath's interior meets the map with
-15% less material. The one design miss is a corner where the bare skin
-alone needs 391 gf: the interior carries that press to the plunger and
-brings it down to 323, but a 1.0 mm skin there is too stiff to reach 300.
-That is a question for the designer (a thinner skin in that corner, or a
-higher ceiling). The report's `skinReview` says so with numbers, and
-`loadpath switch --skin-review` shows it before running anything (see
-"When the exterior decides" below).
+take up to 4.2 times their ceiling. Loadpath's interior meets every press
+the exterior allows, with 20% less material and nothing in the assembly
+paths, except the centre, 6% over its 150 gf ceiling. The four rim corners
+are over 300 gf on the bare skin alone, so no interior can bring them in.
+That is the designer's call (a ceiling of about 400-490 gf there, or
+changed rim surfacing), and the report's `skinReview` makes it with numbers
+(see "When the exterior decides" below). On this exterior the skin decides
+the feel: the right interior is light, and it works mostly by carrying the
+press to the plunger rather than by stiffening.
 
-The delivered mesh reads a little stiffer at the corners than the design
-did: on 1 mm cells, smoothing and the exact joins to the skin move
-material by a fraction of a cell. Refining (`pitches: [1.0, 0.7]`) closes
-that gap at about three times the run time. The clearance limit (1.4 mm of
-skin travel toward anything on the board) is not met by any design here,
-round 17 included: it is the smallest gap over the board (the USB-C
-receptacle) applied to the whole board. A clearance region per component
-would be the honest version.
+Earlier versions of this section claimed 13 of 14 on 1 mm cells. That
+design read 0 of 14 on cut cells. Two models were wrong. A thin skin on
+coarse cells was read as a density floor, 20-35% soft wherever the skin
+split across two cell layers. And the delivered mesh was read back as its
+volume share per cell, which turns thin ribs into soft hinges. Both are
+cut cells now (below). The optimizer's own reading of this design is 8 of
+14 on 0.7 mm cells, and the mesh read back on those cells gives 10 of 14.
 
-The run took 80 iterations and 454 s on 4 CPU cores. A press counts as in
-window within 2%, on the design and on the delivered mesh alike.
+The clearance limit (1.4 mm of skin travel toward anything on the board)
+is not met by any design here, round 17 included. It is the smallest gap
+over the board (the USB-C receptacle) applied to the whole board. A
+clearance region per component would be the honest version.
+
+The run took 60 iterations on 1.0 mm cells and 60 on 0.7 mm cells, about
+50 minutes on 4 CPU cores. A press counts as in window within 2%.
 
 It is an eval case, `touch-mic-pad`. The product's CAD is not in this
 repository: `touch_mic.py --stl-only` writes the case's STLs from a
 touch-mic checkout, `LOADPATH_TOUCH_MIC_STL` points the suite at them, and
-the case is skipped where that is not set. It passes with at least 12 presses in window on the
-design, 10 read back from the delivered mesh, under 9.0 cm^3, a
-watertight mesh, and the squeeze held on the delivered mesh. Every
-`loadpath switch` report now carries that read-back
-(`deliveredForceGf`, `deliveredInWindow`, `deliveredHold`). A
-shareable comparison sheet of this run: https://claude.ai/artifact/DevY83gMUWnygXPb2Jkm5v.
+the case is skipped where that is not set. It passes with at least 8
+presses in window on the design and 8 on the delivered mesh's cut-cell
+read-back, under 9.0 cm^3, a watertight mesh, and the squeeze held. The
+coarse tier (1.0 mm only, 40 iterations) gives 9 and 9 of 14 in 7.4 cm^3.
+Every `loadpath switch` report carries the read-back (`deliveredForceGf`,
+`deliveredInWindow`, `deliveredHold`). A shareable comparison sheet:
+https://claude.ai/artifact/DevY83gMUWnygXPb2Jkm5v.
 
 ## When the exterior decides: feedback for the designer
 

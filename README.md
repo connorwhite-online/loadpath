@@ -270,12 +270,15 @@ The eval suite (15/15 passing): robot-arm links, brackets, a bell crank and a ho
 designer's surfacing kept as a 1.0 mm SLS TPU skin, the board, switch and
 USB-C plug paths kept clear, and the interior designed so a press anywhere
 on the touch area clicks at 150 gf at the centre rising to 300 gf at the
-rim. The drawn interior hits 6 of 14 press windows (up to 1436 gf at a
-corner); loadpath's 1 mm design hits 13 of 14. Read back on the printable
-mesh itself (cut cells, 0.33 mm) the first delivered ribs hit none, so
+rim. Read back on the printable mesh itself (cut cells, 0.33-0.5 mm), the
+drawn interior hits none of 14 press windows (up to 1272 gf at a corner),
+and neither did loadpath's first 1 mm ribs, which had read 13 of 14 on
+their own grid, so
 loadpath now closes that loop: it reads each round's mesh back and
-corrects the targets by the error. Corrected, ribs and a graded BCC strut
-lattice both hit 8 of 14, the lattice in 7.0 cm^3 against the drawn 9.7
+corrects the targets by the error. With the skin read as cut cells inside the
+optimizer too, a 1.0 → 0.7 mm run's ribs hit 9 of 14 delivered in 7.8
+cm^3 on the first round, as many as the bare skin allows. Corrected over
+rounds, ribs and a graded BCC strut lattice both hit 8 of 14, the lattice in 7.0 cm^3 against the drawn 9.7
 with nothing in the assembly paths, and the four misses are the rim
 presses the 1.0 mm skin alone puts over 300 gf: a call for the designer,
 which the report makes with numbers. It runs in the eval suite as
