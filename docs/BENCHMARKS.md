@@ -628,7 +628,16 @@ Full tier, wrist yoke alone (`--jobs 1`), auto method's constrained probe:
 | mgops | 15.2 g (tet SF margin 1.93) | 878 s, 989 s | 2591 s |
 
 The yoke's constrained mass moves 13.9-15.1 g run to run on the same code
-(fTetWild, see above), so 15.2 against 14.8 g is within noise. Part times
+(fTetWild, see above), so 15.2 against 14.8 g is within noise.
+
+The two cases that ran past the 2 h limit before now finish (each alone):
+
+| Case | Whole case | What happened |
+| --- | --- | --- |
+| robot-turret | 4718 s | search 140.9 g (utilization 0.15); 5 constrained parts, ~770 s each, best passing 163 g: search kept |
+| corpus-bracket-1 | 1867 s | constrained 46.5 g (massAtTarget 40.6) against search 144.7 g, two parts (~250 s each) |
+
+Part times
 fell 1.3-1.5x, less than the optimizer's 2.6x: the rest of a part is
 reconstruct, verify and the tet check, mostly single-core, and they are
 the next lever.
