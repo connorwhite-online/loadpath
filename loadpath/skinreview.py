@@ -455,14 +455,31 @@ COARSE = 0.75
 GRID_TOL = 0.10
 
 
-def grid_resolution(study, pitch: float) -> dict:
+# The thin-skin density floor (switch._thin_skin) bends like the true skin
+# only where the skin sits in one cell layer. Split across two, the per-cell
+# E ~ phi^3 adds two thin layers' bending instead of one solid layer's: the
+# test pad's flat 1.0 mm skin fires at 230 / 429 gf (centre / rim) on 0.25 mm
+# whole cells, 241 / 433 on 1.0 mm cells that hold it exactly, and 158-185 /
+# 278-322 floored on 0.75, 0.45 and 0.33 mm cells, 20-35% soft. A grid
+# check between two floored grids does not see that.
+SPLIT_SKIN = 0.9
+
+
+def grid_resolution(study, pitch: float, floor=None) -> dict:
     """Cells across the skin and across the thinnest member at this pitch,
-    and whether that is coarse (pitch > COARSE x the thinner of the two)."""
+    whether that is coarse (pitch > COARSE x the thinner of the two), and,
+    for a floored thin skin, the share of its volume in cells it only
+    partly fills (`splitSkinShare`: the floor reads that skin soft)."""
     skin_t = next((t for rid, t in study.shells if rid == "skin"), None)
     member = float(study.min_member) if study.min_member else None
     sizes = [v for v in (skin_t, member) if v]
     thin = min(sizes) if sizes else None
-    return {"pitch": float(pitch), "cellsAcrossSkin": _r(skin_t / pitch, 2) if skin_t else None,
+    split = None
+    if floor is not None and np.any(np.asarray(floor) > 0):
+        fl = np.asarray(floor, float)
+        split = _r(float(fl[(fl > 0) & (fl < SPLIT_SKIN)].sum() / fl.sum()), 2)
+    return {"pitch": float(pitch), "splitSkinShare": split,
+            "cellsAcrossSkin": _r(skin_t / pitch, 2) if skin_t else None,
             "cellsAcrossMember": _r(member / pitch, 2) if member else None,
             "coarse": bool(thin is not None and pitch > COARSE * thin + 1e-9),
             "checkPitch": round(COARSE * thin, 3) if thin else None}
@@ -526,11 +543,19 @@ def note_grid(review: dict, res: dict, check: dict | None) -> dict:
         warn = (f"Coarse grid: {res['cellsAcrossSkin']} cells across the skin and {res['cellsAcrossMember']} across "
                 f"the thinnest member at {res['pitch']:g} mm, unchecked. Confirm on {res['checkPitch']:g} mm cells "
                 "before showing the designer.")
+    soft = None
+    if res.get("splitSkinShare") is not None and res["splitSkinShare"] > 0.1:
+        soft = (f"{100 * res['splitSkinShare']:.0f}% of the skin sits in cells it only partly fills, where the "
+                "thin-skin model reads it soft (20-35% on a flat test skin): forces the skin carries may be higher "
+                "than shown, so a skin-limited miss is at least this large.")
+        review["skinModel"] = {"splitSkinShare": res["splitSkinShare"], "readsSoft": True, "note": soft}
     if warn:
         review["trusted"] = False
         review["summary"] = warn + " " + review["summary"]
     else:
         review["trusted"] = True
+    if soft:
+        review["summary"] += " " + soft
     return review
 
 
@@ -550,7 +575,7 @@ def skin_preflight(study, pitch: float | None = None) -> dict:
     opts = review_options(study) or {"radii": RADII}
     rep = skin_review(study, domain, spec, bare, floor, label="bare skin", radii=opts["radii"])
     rep["pitch"] = domain.pitch
-    res = grid_resolution(study, domain.pitch)
+    res = grid_resolution(study, domain.pitch, floor)
     check = None
     if opts["gridCheck"] is not False and (res["coarse"] or isinstance(opts["gridCheck"], (int, float))):
         fine = float(opts["gridCheck"]) if isinstance(opts["gridCheck"], (int, float)) and \

@@ -187,6 +187,9 @@ def test_skin_review_names_where_the_skin_alone_misses():
     assert rv["trusted"] == g["check"]["converged"]
     if not rv["trusted"]:
         assert rv["summary"].startswith("Grid too coarse")
+    # a 1 mm skin floored on 1.5 mm cells is mostly split across cells: the
+    # review says the skin reads soft
+    assert g["splitSkinShare"] > 0.5 and rv["skinModel"]["readsSoft"]
     # the default minimum wall for TPU powder is 1.0 mm: no thinner skin is
     # printable, and the summary falls back on the ceiling
     rv2 = skin_preflight(study_from_dict(pad(field=doc["switch"]["field"])), 1.5)

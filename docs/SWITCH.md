@@ -223,9 +223,24 @@ On the touch microphone, the bare skin's fire force at five presses (ceilings 30
 | 1.0 mm | 388 gf | 354 | 309 | 304 | 96 |
 | 0.75 mm | 384 | 332 | 309 | 323 | 117 |
 | 0.7 mm | 389 | 341 | 311 | 338 | 103 |
+| 0.5 mm, whole cells (skin ~30% too thick) | 565 | 503 | 479 | 487 | 154 |
 
-The corner at (-12, -9) is the exterior's problem on every grid: about
-390 gf on the bare 1.0 mm skin against a 300 gf ceiling. The stiffest skin
+Neither model of the skin is exact here, and they err in opposite
+directions. On 1.0, 0.75 and 0.7 mm cells the skin is a density floor, and
+a floor reads a skin soft where it splits across two cell layers. On the
+flat 1.0 mm skin of the test pad, 0.25 mm whole cells fire the centre at
+230 gf, 1.0 mm cells that hold the skin exactly give 241 gf, and floored
+0.75, 0.45 and 0.33 mm cells give 158-185 gf, 20-35% soft. On 0.5 mm
+cells the touch microphone's skin is whole cells instead (two per
+thickness), but on its curved surface those hold 4737 mm^3 against
+3647 mm^3 of skin, a skin about 1.3 mm thick: 565 gf at the corner and
+154 gf at the centre. The review reports the floor's share of split cells
+(`grid.splitSkinShare`, 0.6-0.77 on the touch microphone) and says when
+the skin reads soft (`skinModel`). A skin-limited miss read through the
+floor is then at least as large as shown.
+
+The corner at (-12, -9) is the exterior's problem either way: at least
+about 390 gf on the bare 1.0 mm skin against a 300 gf ceiling. The stiffest skin
 there is the fold into the side wall, at about (-15, -9), and on the bare
 skin a 0.60 mm skin within 9 mm of it would bring the corner in (0.7 mm
 cells), under the 1.0 mm rule this product uses. How much less change an

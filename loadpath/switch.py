@@ -844,7 +844,7 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
         # A coarse grid can meet a force map that a finer one does not: read
         # the bare skin and the delivered mesh again on finer cells.
         from .skinreview import grid_check, grid_resolution, note_grid
-        res = grid_resolution(study, r.domain.pitch)
+        res = grid_resolution(study, r.domain.pitch, r.floor)
         gc = opts["gridCheck"]
         check = None
         if gc is not False and (res["coarse"] or (isinstance(gc, (int, float)) and not isinstance(gc, bool))):
