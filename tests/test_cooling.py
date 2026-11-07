@@ -148,6 +148,32 @@ def test_run_meets_the_limits_with_a_grip():
     assert not bare["components"][0]["ok"], bare["components"]
 
 
+def test_closed_exterior_keeps_its_cavity():
+    # a liner grown under the whole skin (the spreader a cooling design
+    # makes) encloses the interior by itself: the delivered mesh must keep
+    # that cavity (it was meshed solid, the cavity's surface dropped as a
+    # body of negative volume)
+    from scipy import ndimage
+
+    from loadpath.reconstruct import reconstruct
+    from loadpath.switch import _as_printed
+    doc = box()
+    doc["designSpace"] = {"type": "sphere", "center": [0, 0, 6], "r": 14}
+    doc["keepOut"] = [{"id": "chip", "bore": False, "shape": {"type": "box", "min": [-4, -4, 2], "max": [4, 4, 4]}}]
+    doc["cooling"]["components"] = [{"region": "chip", "watts": 0.5, "maxTemp": 60}]
+    st, dom, fl = _dom(doc, 1.0)
+    g = np.zeros(dom.dims, bool)
+    ijk = dom.mesh.elem_ijk
+    g[tuple(ijk[dom.preserve | (fl > 0)].T)] = True
+    near = ndimage.binary_dilation(g, iterations=2)[tuple(ijk.T)]
+    x = np.maximum(np.where(near, 1.0, 0.0), np.maximum(dom.preserve.astype(float), fl))
+    ex, _ = _as_printed(x, fl, dom)
+    mesh, _ = reconstruct(st, dom, ex)
+    full = 4 / 3 * np.pi * 14 ** 3
+    # (meshed solid it was 11.4 of 11.5 cm^3; with its cavity 6.9)
+    assert mesh.is_watertight and mesh.volume < 0.75 * full, (mesh.volume, full)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

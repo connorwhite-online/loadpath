@@ -11,8 +11,8 @@ which conducts but must stay under 45 C (the usual charging limit for
 lithium cells). The
 device is held in the hand while it works, so no part of the outside may
 pass 48 C (plastic held 10 min to 8 h, after IEC 62368-1), in a 25 C room.
-The interior must also keep a 30 N squeeze across the width to under
-0.15 mm (it should not creak or flex in the hand).
+`--press` adds a structural target designed with the cooling: the back
+panel under a 20 N thumb press closes by no more than 0.1 mm.
 
 Everything else inside is design space. Bare, the parts sit in still air:
 the processor runs far over its limit and the skin over it is the hot spot.
@@ -54,11 +54,11 @@ def exterior(path: str) -> str:
     return path
 
 
-def study(ext: str, pitch: float = 1.0, vents: bool = False) -> dict:
+def study(ext: str, pitch: float = 1.0, vents: bool = False, press: bool = False) -> dict:
     doc = {
         "name": "handheld",
         "description": "Handheld device (MJF PA 12): exterior kept as a 1.5 mm skin; interior designed to carry "
-                       "the processor's heat out and spread it under the skin, with a grip-stiffness target.",
+                       "the processor's heat out and spread it under the skin.",
         "designSpace": {"type": "mesh", "path": ext},
         "skin": {"thickness": 1.5},
         "keepOut": [
@@ -82,10 +82,14 @@ def study(ext: str, pitch: float = 1.0, vents: bool = False) -> dict:
             "skin": {"contact": "held"},
             "iterations": 80,
         },
-        "feel": {"targets": [
-            {"kind": "squeeze", "name": "grip", "hold": {"face": "-y"}, "press": {"face": "+y"},
-             "direction": "-y", "force": 30, "travel": {"max": 0.15}}]},
     }
+    if press:
+        # the back panel under a thumb: 20 N in the middle of the +z face,
+        # held on the -z face, closes it by no more than 0.1 mm
+        pad = {"type": "box", "min": [-15, -12, 0], "max": [15, 12, 10]}
+        doc["feel"] = {"targets": [
+            {"kind": "squeeze", "name": "panel", "hold": {"face": "-z"}, "press": {"face": "+z", "shape": pad},
+             "direction": "-z", "force": 20, "travel": {"max": 0.1}}]}
     if vents:
         doc["cooling"]["gravity"] = "-y"
         doc["cooling"]["vents"] = [
@@ -111,7 +115,8 @@ def main():
     ap.add_argument("--verify", default=None, help="comma-separated mm grids for the delivered read-back")
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--vents", action="store_true")
-    ap.add_argument("--no-feel", action="store_true", help="cooling limits only")
+    ap.add_argument("--press", action="store_true", help="also a feel target: the back panel under a 20 N "
+                                                         "thumb press closes by no more than 0.1 mm")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     from loadpath.cooling import cooling_readings, run_cooling
@@ -121,9 +126,7 @@ def main():
 
     pitches = [float(p) for p in a.pitches.split(",")]
     ext = exterior(os.path.abspath(os.path.join(a.out, "exterior.stl")))
-    doc = study(ext, pitches[0], a.vents)
-    if a.no_feel:
-        del doc["feel"]
+    doc = study(ext, pitches[0], a.vents, a.press)
     json.dump(doc, open(os.path.join(a.out, "handheld.study.json"), "w"), indent=1)
     st = study_from_dict(doc)
     if a.baseline:

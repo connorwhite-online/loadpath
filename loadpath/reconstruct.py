@@ -1269,8 +1269,14 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         organic = manifold_from_trimesh(iso)
 
     total = organic.volume()
-    keep = [b for b in organic.decompose() if b.volume() >= o.min_body_fraction * total]
-    organic = m3d.Manifold.batch_boolean(keep, m3d.OpType.Add) if len(keep) > 1 else keep[0]
+    # Drop the small bodies by cutting them away, not by rebuilding from the
+    # big ones: decompose() lists an enclosed cavity's surface as a body of
+    # negative volume, and rebuilding without it filled the cavity. Inside a
+    # closed exterior (a handheld's skin, every rib joined to it) the whole
+    # interior is one such cavity: the part came out solid, 90 cm^3 for 17%.
+    small = [b for b in organic.decompose() if 0 < b.volume() < o.min_body_fraction * total]
+    if small:
+        organic = organic - (m3d.Manifold.batch_boolean(small, m3d.OpType.Add) if len(small) > 1 else small[0])
 
     # Trim to the design space (and preserved geometry) exactly: flat,
     # flush faces wherever the design reaches its boundary. Circles fine
