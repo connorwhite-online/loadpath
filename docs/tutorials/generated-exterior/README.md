@@ -111,13 +111,19 @@ the least material (`handoff/handoff.json`, then `handoff/switch/`):
 
 ![force to click at each press](images/forces.png)
 
-| | quick (1.8 mm cells) |
-|---|---|
-| press windows met, design | 9 of 9 |
-| button | 351 gf at the middle, 352-450 gf 5 mm out |
-| off the button | 1200 gf or more everywhere |
-| delivered mesh | one watertight body, 6.8 g of TPU 88A |
-| skin review | the bare 1.0 mm skin is 2% over the ceiling by the rim (460 gf): the exterior's own stiffness, for the designer |
+| | quick (1.8 mm cells) | full (1.04 mm cells, 8.5 min on 4 cores) |
+|---|---|---|
+| press windows met, design | 9 of 9 | 9 of 9 |
+| button, design | 351 gf at the middle, 352-450 gf 5 mm out | 311 gf at the middle, 345-423 gf 5 mm out |
+| off the button, design | 1200 gf or more everywhere | 1198 gf just behind the button, 1970-4150 gf elsewhere |
+| delivered mesh | one watertight body, 6.8 g of TPU 88A | one watertight body, 6.8 g of TPU 88A |
+| delivered, read on 0.5 mm cut cells | | 9 of 9: button 331-457 gf, elsewhere 1214 gf and up (the chart) |
+| skin review | the bare 1.0 mm skin is 2% over the ceiling by the rim (460 gf): the exterior's own stiffness, for the designer | the same: 460 gf on the rim side on 0.5 mm cells |
+
+The rim side of the button reads 457 gf delivered against the bare skin's
+460: the interior adds almost nothing there, the skin sets it. The press
+over the coin cell reads over 4 kgf: the cell carries the skin there,
+which is what "not in a pocket" wants.
 
 ## What the agent did and did not decide
 

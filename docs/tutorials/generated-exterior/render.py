@@ -103,19 +103,34 @@ def forces():
     import matplotlib.pyplot as plt
     rep = json.load(open(os.path.join(HERE, "handoff", "switch", "report.json")))
     pr = rep["presses"]
+    # the finest reading there is: the delivered part on 0.5 mm cut cells
+    # when the skin review ran that check, else on the design grid's
+    chk = rep.get("skinReview", {}).get("grid", {}).get("check", {}).get("part", {})
+    fine = chk.get("fineGf")
+    tol = 1.02      # the read-back's 2% band
     fig, ax = plt.subplots(figsize=(8.5, 3.4), dpi=150)
     for i, p in enumerate(pr):
         lo = p["min"] / 0.00980665 if p.get("min") else 0
         hi = p["max"] / 0.00980665 if p.get("max") else 3000
         ax.add_patch(plt.Rectangle((i - 0.35, lo), 0.7, hi - lo, color=(0.85, 0.9, 1.0)))
-        d = p.get("deliveredForceGf", p["forceGf"])
-        ok = p.get("deliveredOk", p["ok"])
-        ax.plot([i], [d], "o", color=(0.15, 0.6, 0.3) if ok else KEEP_OUT, ms=7)
+        if fine:
+            d = fine[i]
+            ok = (p.get("min") is None or d >= lo / tol) and (p.get("max") is None or d <= hi * tol)
+        else:
+            d = p.get("deliveredForceGf", p["forceGf"])
+            ok = p.get("deliveredOk", p["ok"])
+        col = (0.15, 0.6, 0.3) if ok else KEEP_OUT
+        if d > 2150:        # off the top: an arrow and the number
+            ax.annotate(f"{d:.0f}", (i, 2150), ha="center", va="top", fontsize=7, color=col)
+            ax.plot([i], [2180], "^", color=col, ms=7)
+        else:
+            ax.plot([i], [d], "o", color=col, ms=7)
     ax.set_xticks(range(len(pr)))
     ax.set_xticklabels(["button" if (p.get("max") is not None) else "elsewhere" for p in pr], fontsize=8)
     ax.set_ylim(0, 2200)
     ax.set_ylabel("force to click, gf")
-    ax.set_title("delivered part, read back on its own cut cells (dots) against each press window (bands)",
+    ax.set_title("delivered part, read back on its own cut cells (dots) against each press window (bands)"
+                 + (", 0.5 mm cells" if fine else ""),
                  fontsize=9)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)

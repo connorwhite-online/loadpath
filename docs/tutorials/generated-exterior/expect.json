@@ -19,6 +19,7 @@
     {"file": "exterior.json", "value": "r['onSourceP95']", "max": 0.1, "what": "surface moved, p95 mm"},
     {"file": "layout.json", "value": "abs(r['button']['at'][0] - 15.3) + abs(r['button']['at'][1])", "max": 0.5, "what": "button found off the shape"},
     {"file": "handoff/switch/report.json", "value": "r['watertight']", "equals": true, "what": "delivered part closed"},
-    {"file": "handoff/switch/report.json", "value": "r['inWindow']", "min": 8, "what": "press windows met (of 9), design"}
+    {"file": "handoff/switch/report.json", "value": "r['inWindow']", "min": 8, "what": "press windows met (of 9), design"},
+    {"file": "handoff/switch/report.json", "value": "r['mass']", "min": 4, "max": 12, "what": "mass, g"}
   ]
 }
