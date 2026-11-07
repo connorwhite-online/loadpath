@@ -690,9 +690,13 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
         # a sliver of skin in a cell (phi under ~0.2, modulus under 1% of E)
         # adds nothing but a near-singular element to the Newton solve: the
         # first version kept them and the solve broke down (NaN) or crawled
-        thin = (floor > 0) & ~keep & (xphys >= THIN_KEEP)
-        keep |= thin
-        emod[thin] = modulus * xphys[thin] ** 3
+        # Every floored cell is read at E x^3, like the linear reading: a
+        # cell more than half skin is still that share of a cell, not a
+        # solid one (thresholding it made the skin read 1.2-1.4x stiff on
+        # the touch microphone before any large deflection)
+        thin = (floor > 0) & (xphys >= THIN_KEEP)
+        keep = (keep & ~(floor > 0)) | thin
+        emod[thin] = modulus * np.minimum(xphys[thin], 1.0) ** 3
     target = spec.gap + spec.travel
     clr = np.zeros(domain.mesh.n_dof)
     if prob.clr_dofs is not None:
@@ -882,7 +886,14 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
                 if (p.max, p.min) not in seen:
                     seen.add((p.max, p.min))
                     nonlinear_presses.append(i)
-        nl = check_fire_nonlinear(dom_nl, nu, spec_nl, xp_nl, modulus, presses=nonlinear_presses, floor=floor_nl)
+        # read the design as printed (as thresholdedForceGf): a floored
+        # skin cell is its skin share phi plus whatever the optimizer added
+        # above it, so thresholding x itself made every cell more than half
+        # skin a whole solid cell, and the large-deflection forces 1.2-1.4x
+        # too stiff before any large deflection (touch microphone)
+        solid_nl = _as_printed(xp_nl, floor_nl)[1]
+        nl = check_fire_nonlinear(dom_nl, nu, spec_nl, solid_nl, modulus, presses=nonlinear_presses,
+                                  floor=floor_nl)
         for row in nl:
             if "nonlinear" in row:
                 p = rep["presses"][row["press"]]

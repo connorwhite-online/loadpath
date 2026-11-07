@@ -294,6 +294,16 @@ backed off one step.
   microphone's 1 mm grid, a 0.7 mm grid hardly moving). With PARDISO a
   press takes about 36 s at 1 mm (48k dofs) and 3 min at 0.7 mm (128k
   dofs). Without PARDISO, above 30k dofs it falls back to CG.
+  Floored skin cells are read at E x^3 like the linear reading, so the
+  check's own linear baseline matches `thresholdedForceGf` (within 1 gf on
+  the touch microphone); thresholding them made it 1.2-1.4x stiff before
+  any large deflection. On the touch microphone's 1 mm design, large
+  deflection raises the click force 6-26% (mean 14%): least at the centre
+  (140 -> 149 gf), most where the skin bows furthest at the outer ring
+  ((12, -9): 299 -> 376 gf; (14, 6): 302 -> 377 gf). 9 of 14 presses stay
+  in window (13 linear): the five on or near a ceiling go over it.
+  Designing to the linear ceilings leaves no room for this; a margin of
+  about 25% at the outer ring would.
 - **The delivered mesh** is the isosurface joined to the exact preserved
   geometry, so the cosmetic skin's outside is the designer's mesh
   unchanged.

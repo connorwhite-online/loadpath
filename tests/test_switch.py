@@ -228,8 +228,12 @@ def test_large_deflection_fire_force_converges_on_a_thin_skin():
     xphys = np.where(dom.preserve, 1.0, floor)
     rows = sw.check_fire_nonlinear(dom, st.elastic(design=True), spec, xphys, float(st.material.E),
                                    presses=[0, 1], floor=floor)
+    # its linear baseline is the linear reading of the same cells: skin
+    # cells more than half skin are that share of a cell, not solid ones
+    ff = sw.fire_forces(dom, st.elastic(design=True), spec, np.maximum(xphys, 1e-9), float(st.material.E))
     for row in rows:
         assert "error" not in row, row
+        assert abs(row["linear"] / ff["forces"][row["press"]] - 1) < 0.03, (row["linear"], ff["forces"])
         assert row["converged"], row
         assert abs(row["plungerTravel"] / (spec.gap + spec.travel) - 1) <= 0.01, row
         assert 0.8 < row["nonlinearOverLinear"] < 2.0, row
