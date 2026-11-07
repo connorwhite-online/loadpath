@@ -168,7 +168,8 @@ fixed exterior is the designer's, and loadpath never edits it. What it
 can do is say where the skin is the problem, by how much, and what change
 would fix it. Every `loadpath switch` report carries that as
 `skinReview`, and `loadpath switch study.json --skin-review` reads the
-bare skin alone in about a minute, before anything is designed.
+bare skin alone before anything is designed (2 minutes on 1 mm cells, 17
+on 0.7 mm for the touch microphone, most of it the suggestions).
 
 For each press, the review gives:
 
@@ -201,19 +202,36 @@ Thinning is modelled as a lower density in the skin cells, which bends
 like the thinner skin (as in the thin-skin floor above), so treat the
 thickness as an estimate to confirm with that re-run.
 
-On the touch microphone (1 mm cells):
+**The grid has to be fine enough to trust.** On cells as thick as the
+skin and the thinnest member, the optimizer can find a design that meets
+the map on its own grid and on no other. The touch microphone on 1 mm
+cells (a 1.0 mm skin, 1.0 mm members) did exactly that: 13 of 14 presses
+in window at 1 mm, and 1 of 14 when the same delivered part is read on
+0.75 mm cells (205-626 gf). So whenever the pitch is over 0.75 times the
+skin or `minMember`, the review reads the bare skin and the delivered
+part again on cells of that size (`skinReview.grid.check`, under a minute
+on the touch microphone). When a press moves more than 10% or changes
+verdict, the summary starts with "Grid too coarse", `trusted` is false,
+and none of the numbers should reach a designer until a finer run
+(`pitches: [1.0, 0.7]`) agrees. `skinReview.gridCheck` sets the finer
+pitch, or false skips the check.
 
-| reading | skin-limited presses | what it says |
-|---|---|---|
-| bare skin (`--skin-review`, 102 s) | 3: (12, -9) 354 gf, (14, 6) 309 gf, (-12, -9) 388 gf, all over a 300 gf ceiling | thin the stiffest skin to 0.65, 0.85 and 0.60 mm, all under the 1.0 mm rule |
-| loadpath's design (40 s, 13 solves) | 1: (-12, -9) 322 gf, 7% over (the bare skin there: 388 gf) | raise that ceiling to 325 gf; or 0.80 mm within 9 mm of (-13, -6); or 0.90 mm everywhere, which puts all 14 presses in window |
+On the touch microphone, the bare skin's fire force at five presses (ceilings 300 gf, centre 150):
 
-With an interior, much less of a change is needed than the bare skin
-suggests: the interior already takes the corner from 388 to 322 gf. The
-whole-skin 0.90 mm is over Materialize's 0.8 mm minimum for SLS TPU but
-under the 1.0 mm rule this product uses, so the choice is the designer's:
-accept 0.9 mm, or a 325 gf ceiling in that corner. `"skinReview": false`
-in the switch block turns the review off.
+| cells | (-12, -9) | (12, -9) | (14, 6) | (-14, 6) | centre |
+|---|---|---|---|---|---|
+| 1.0 mm | 388 gf | 354 | 309 | 304 | 96 |
+| 0.75 mm | 384 | 332 | 309 | 323 | 117 |
+| 0.7 mm | 389 | 341 | 311 | 338 | 103 |
+
+The corner at (-12, -9) is the exterior's problem on every grid: about
+390 gf on the bare 1.0 mm skin against a 300 gf ceiling. The stiffest skin
+there is the fold into the side wall, at about (-15, -9), and on the bare
+skin a 0.60 mm skin within 9 mm of it would bring the corner in (0.7 mm
+cells), under the 1.0 mm rule this product uses. How much less change an
+interior needs comes from a design that holds on a fine grid; the 1 mm
+design's own suggestions (0.80 mm locally, 0.90 mm overall) are withdrawn
+with it. `"skinReview": false` in the switch block turns the review off.
 
 ## Three things that had to change
 

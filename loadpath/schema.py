@@ -772,7 +772,12 @@ _SWITCH = {
             "minWall": {**_POS, "description": "mm, the thinnest skin the designer will accept (default: the "
                                                "process's or material's minimum wall, else minMember)"},
             "radii": {"type": "array", "items": _POS, "minItems": 1,
-                      "description": "mm, the local skin changes tried round each press (default [4, 8])"}},
+                      "description": "mm, the local skin changes tried round each press (default [4, 8])"},
+            "gridCheck": {"anyOf": [{"type": "boolean"}, _POS],
+                          "description": "re-read the bare skin and the delivered mesh on finer cells and say "
+                                         "whether the forces hold (skinReview.grid.check). Default: when the pitch "
+                                         "is over 0.75x the skin or minMember, on cells of that size; a number "
+                                         "sets the finer pitch, false skips it"}},
             "additionalProperties": False}],
             "description": "report skinReview (default true): every press the fixed exterior keeps out of its "
                            "window, where, by how much, and the skin thickness, local skin change or target "

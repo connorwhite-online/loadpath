@@ -421,11 +421,16 @@ refine (`[1.0, 0.7, 0.5]`). The report gives each press's linear and
 as-printed (thresholded) fire force; `"nonlinear": true` adds a
 large-deflection reading, which is experimental (slow, and it does not
 converge on thin-skin designs yet). Read the skin alone first:
-`loadpath switch study.json --skin-review` (about a minute) lists the
+`loadpath switch study.json --skin-review` (minutes) lists the
 presses the bare skin already puts over their ceilings. Structure inside
 can carry such a press to the plunger and pull it down, but only so far
-(the touch microphone's corner: 388 gf on the skin, 322 optimized,
-ceiling 300). Every switch report's `skinReview` says which misses the
+(the touch microphone's corner: about 390 gf on the bare skin on every
+grid, ceiling 300). Check `skinReview.trusted` first: on a grid coarser
+than 0.75x the skin or minMember the review re-reads the bare skin and the
+delivered part on finer cells, and when they move it is false and the
+summary starts "Grid too coarse". Then nothing in it goes to the designer
+until a finer run agrees (the touch microphone's 1 mm design met 13 of 14
+windows and 1 of 14 on 0.75 mm cells). Every switch report's `skinReview` says which misses the
 skin decides (`misses[].limitedBy == "skin"`), where (`where`: the
 stiffest skin, often the fold into a wall), and what would fix each one:
 `target` (the ceiling the design meets), `localSkin` (a thickness within

@@ -441,13 +441,104 @@ def review_options(study) -> dict | None:
     if b is False:
         return None
     b = b if isinstance(b, dict) else {}
-    return {"radii": tuple(float(r) for r in b.get("radii", RADII))}
+    return {"radii": tuple(float(r) for r in b.get("radii", RADII)), "gridCheck": b.get("gridCheck", "auto")}
+
+
+# A grid this coarse against the skin or the thinnest member reads forces it
+# cannot be trusted with: the touch microphone on 1 mm cells (a 1.0 mm skin,
+# 1.0 mm members) read round 17's centre at 129 gf, where 0.7 and 0.5 mm
+# cells agree on 177-181, and loadpath's 1 mm design, 13 of 14 in window
+# there, read 262-992 gf on 0.7 mm cells.
+COARSE = 0.75
+# A press whose force moves more than this between the grids, or changes
+# verdict, is not converged.
+GRID_TOL = 0.10
+
+
+def grid_resolution(study, pitch: float) -> dict:
+    """Cells across the skin and across the thinnest member at this pitch,
+    and whether that is coarse (pitch > COARSE x the thinner of the two)."""
+    skin_t = next((t for rid, t in study.shells if rid == "skin"), None)
+    member = float(study.min_member) if study.min_member else None
+    sizes = [v for v in (skin_t, member) if v]
+    thin = min(sizes) if sizes else None
+    return {"pitch": float(pitch), "cellsAcrossSkin": _r(skin_t / pitch, 2) if skin_t else None,
+            "cellsAcrossMember": _r(member / pitch, 2) if member else None,
+            "coarse": bool(thin is not None and pitch > COARSE * thin + 1e-9),
+            "checkPitch": round(COARSE * thin, 3) if thin else None}
+
+
+def grid_check(study, pitch: float, fine: float, coarse_forces, part=None, coarse_part=None) -> dict:
+    """Re-read the bare skin (and, given `part`, the delivered mesh) on a
+    finer grid, the way a drawn part is read (its volume share per cell over
+    the skin's floor), and compare with the coarse grid's forces press by
+    press. coarse_forces: the bare skin's forces on the coarse grid (N);
+    coarse_part: the part's (N, e.g. the delivered mesh's read-back)."""
+    import time
+
+    from .domain import _fraction, build_domain
+    from .shapes import MeshShape
+    from .switch import GF, _thin_skin, fire_forces, switch_from_study
+
+    t0 = time.time()
+    nu = study.elastic(design=True)
+    E = float(study.material.E)
+    dom, floor = _thin_skin(study, build_domain(study, fine))
+    spec = switch_from_study(study, dom)
+    bare = np.maximum(dom.preserve.astype(float), floor)
+    rows = {"bareSkin": (coarse_forces, fire_forces(dom, nu, spec, np.maximum(bare, 1e-9), E)["forces"])}
+    if part is not None and coarse_part is not None:
+        drawn = _fraction([MeshShape(part)], dom.mesh.elem_centers(), dom.pitch)
+        rows["part"] = (coarse_part, fire_forces(dom, nu, spec, np.maximum(np.maximum(drawn, floor), 1e-9),
+                                                 E)["forces"])
+    out = {"pitch": float(pitch), "finePitch": float(dom.pitch)}
+    converged = True
+    for name, (fc, ff) in rows.items():
+        fc, ff = np.asarray(fc, float), np.asarray(ff, float)
+        change = ff / np.maximum(fc, 1e-12) - 1.0
+        flips = [i for i, p in enumerate(spec.presses) if _verdict(fc[i], p) != _verdict(ff[i], p)]
+        ok = bool(np.abs(change).max() <= GRID_TOL and not flips)
+        converged &= ok
+        out[name] = {"coarseGf": [_r(v / GF) for v in fc], "fineGf": [_r(v / GF) for v in ff],
+                     "maxChangePercent": _r(100 * float(np.abs(change).max())),
+                     "verdictChanged": flips, "inWindowFine": int(sum(_verdict(v, p) == "in"
+                                                                       for v, p in zip(ff, spec.presses))),
+                     "converged": ok}
+    out["converged"] = bool(converged)
+    out["seconds"] = round(time.time() - t0, 1)
+    return out
+
+
+def note_grid(review: dict, res: dict, check: dict | None) -> dict:
+    """Put the grid's verdict on a review: `grid` (resolution and check) and,
+    when the grid is coarse, a warning at the head of the summary."""
+    review["grid"] = {**res, **({"check": check} if check else {})}
+    warn = None
+    if check and not check["converged"]:
+        worst = max((v for k, v in check.items() if isinstance(v, dict)), key=lambda v: v["maxChangePercent"])
+        what = "the part" if "part" in check and not check["part"]["converged"] else "the bare skin"
+        warn = (f"Grid too coarse: on {check['finePitch']:g} mm cells {what} reads up to "
+                f"{worst['maxChangePercent']:g}% different from {check['pitch']:g} mm cells"
+                + (f", and {len(worst['verdictChanged'])} press(es) change verdict" if worst["verdictChanged"] else "")
+                + ". Treat every number below as unconverged and re-run finer (switch.pitches ending at "
+                  f"{check['finePitch']:g} or less) before showing the designer.")
+    elif res["coarse"] and not check:
+        warn = (f"Coarse grid: {res['cellsAcrossSkin']} cells across the skin and {res['cellsAcrossMember']} across "
+                f"the thinnest member at {res['pitch']:g} mm, unchecked. Confirm on {res['checkPitch']:g} mm cells "
+                "before showing the designer.")
+    if warn:
+        review["trusted"] = False
+        review["summary"] = warn + " " + review["summary"]
+    else:
+        review["trusted"] = True
+    return review
 
 
 def skin_preflight(study, pitch: float | None = None) -> dict:
     """The skin review of the bare skin, before any interior is designed:
     which presses the exterior alone puts over their ceilings, where, and
-    what would bring them in. Seconds, where a design takes minutes."""
+    what would bring them in, and on a coarse grid whether the bare skin
+    holds on finer cells (grid_check)."""
     from .domain import build_domain
     from .switch import _thin_skin, switch_from_study
 
@@ -459,4 +550,11 @@ def skin_preflight(study, pitch: float | None = None) -> dict:
     opts = review_options(study) or {"radii": RADII}
     rep = skin_review(study, domain, spec, bare, floor, label="bare skin", radii=opts["radii"])
     rep["pitch"] = domain.pitch
-    return rep
+    res = grid_resolution(study, domain.pitch)
+    check = None
+    if opts["gridCheck"] is not False and (res["coarse"] or isinstance(opts["gridCheck"], (int, float))):
+        fine = float(opts["gridCheck"]) if isinstance(opts["gridCheck"], (int, float)) and \
+            not isinstance(opts["gridCheck"], bool) else res["checkPitch"]
+        F = [r["forceGf"] * _gf() for r in rep["skinOnly"]]
+        check = grid_check(study, domain.pitch, fine, F)
+    return note_grid(rep, res, check)

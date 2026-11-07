@@ -932,6 +932,18 @@
                   },
                   "minItems": 1,
                   "description": "mm, the local skin changes tried round each press (default [4, 8])"
+                },
+                "gridCheck": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  ],
+                  "description": "re-read the bare skin and the delivered mesh on finer cells and say whether the forces hold (skinReview.grid.check). Default: when the pitch is over 0.75x the skin or minMember, on cells of that size; a number sets the finer pitch, false skips it"
                 }
               },
               "additionalProperties": false

@@ -179,6 +179,14 @@ def test_skin_review_names_where_the_skin_alone_misses():
     assert whole["reached"] and whole["toThickness"] < 1.0
     assert all(f <= 600 * 1.02 for f in whole["forcesGf"][1:])
     assert "designer" in rv["summary"]
+    # 1.5 mm cells against a 1 mm skin: coarse, so the bare skin is read
+    # again on finer cells and the review says whether it held
+    g = rv["grid"]
+    assert g["coarse"] and g["check"]["finePitch"] < 1.5
+    assert len(g["check"]["bareSkin"]["fineGf"]) == 5
+    assert rv["trusted"] == g["check"]["converged"]
+    if not rv["trusted"]:
+        assert rv["summary"].startswith("Grid too coarse")
     # the default minimum wall for TPU powder is 1.0 mm: no thinner skin is
     # printable, and the summary falls back on the ceiling
     rv2 = skin_preflight(study_from_dict(pad(field=doc["switch"]["field"])), 1.5)
@@ -203,6 +211,7 @@ def test_run_switch_report_carries_the_skin_review():
     json.dumps(sr)
     assert sr["reading"] == "design" and len(sr["skinOnly"]) == 5
     assert sr["skinLimited"] == 0, sr["summary"]
+    assert "part" in sr["grid"]["check"] and len(sr["grid"]["check"]["part"]["fineGf"]) == 5
     st2 = study_from_dict(pad(pitches=[1.5], iterations=2, skinReview=False))
     with tempfile.TemporaryDirectory() as out:
         assert "skinReview" not in sw.run_switch(st2, out)

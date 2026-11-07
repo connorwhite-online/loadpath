@@ -829,8 +829,22 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
         # exterior is never edited.
         if on_progress is not None:
             on_progress({"stage": "verify", "check": "skin review"})
-        rep["skinReview"] = skin_review(study, r.domain, spec, r.xphys, r.floor, nu, modulus,
-                                        radii=opts["radii"])
+        sr = skin_review(study, r.domain, spec, r.xphys, r.floor, nu, modulus, radii=opts["radii"])
+        # A coarse grid can meet a force map that a finer one does not: read
+        # the bare skin and the delivered mesh again on finer cells.
+        from .skinreview import grid_check, grid_resolution, note_grid
+        res = grid_resolution(study, r.domain.pitch)
+        gc = opts["gridCheck"]
+        check = None
+        if gc is not False and (res["coarse"] or (isinstance(gc, (int, float)) and not isinstance(gc, bool))):
+            fine = float(gc) if isinstance(gc, (int, float)) and not isinstance(gc, bool) else res["checkPitch"]
+            if on_progress is not None:
+                on_progress({"stage": "verify", "check": f"grid check on {fine:g} mm cells"})
+            bare_c = [row["forceGf"] * GF for row in sr["skinOnly"]]
+            part_c = [p["deliveredForceGf"] * GF for p in rep["presses"]] if "deliveredForceGf" in \
+                rep["presses"][0] else None
+            check = grid_check(study, r.domain.pitch, fine, bare_c, mesh if part_c else None, part_c)
+        rep["skinReview"] = note_grid(sr, res, check)
     rep["inWindow"] = sum(bool(p["ok"]) for p in rep["presses"])
     rep["deliveredInWindow"] = sum(bool(p.get("deliveredOk")) for p in rep["presses"])
     if nonlinear is None:

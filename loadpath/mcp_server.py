@@ -843,7 +843,7 @@ def serve():
         Reports each press's fire force linear, as printed and with large deflection, the part's
         STL, and skinReview: the presses the fixed exterior itself keeps out of window, where, and the
         skin or target change that would fix each, for the designer to decide (never edit the
-        exterior). skin_review_only: read the bare skin alone first (about a minute), nothing designed.
+        exterior). skin_review_only: read the bare skin alone first (minutes), nothing designed.
         Starts a job; poll loadpath_status."""
         return switch(study, base_dir, pitches, skin_review_only)
 
