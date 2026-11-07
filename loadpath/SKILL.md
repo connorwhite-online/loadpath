@@ -392,12 +392,21 @@ methods that are plausible for the user.
 
 When the user hands over industrial-design surfacing and the inside is
 free: the exterior mesh is the `designSpace` (`{"type": "mesh", "path":
-...}`), `skin: {"thickness": 0.7, "open": ["-z"]}` keeps a thin cosmetic
-layer of it (the SLS minimum is about 0.7-0.8 mm; open the side the
-components go in from), and every component is a `keepOut` with
-`"insertFrom": "-z"` (the side it comes in from, or a vector): the keep-out
-is swept out of the part so no rib blocks assembly. Give tool access the
-same way (a cylinder for a driver, `insertFrom` its side).
+...}`), `skin: {"thickness": 1.0, "open": ["-z"]}` keeps a thin cosmetic
+layer of it (open the side the components go in from), and every
+component is a `keepOut` with `"insertFrom": "-z"` (the side it comes in
+from, or a vector): the keep-out is swept out of the part so no rib blocks
+assembly.
+
+Set the skin and `minMember` from the process, not from memory. With the
+Materialize MCP server connected, `materialize_list_materials` then
+`materialize_get_material` give the material's design limits (minimum
+wall, minimum detail, maximum size): SLS flexible TPU lists 0.8 mm walls
+and 0.3 mm detail. Use the larger of that and the user's own rule (many
+designers hold SLS TPU to 1.0 mm). Once the part is meshed,
+`materialize_check_printability` on the STL reports thin walls and other
+blockers; fix those before quoting. Give tool access the same way as
+components (a cylinder for a driver, `insertFrom` its side).
 
 For a push pad over a switch, add a `switch` block and run
 `loadpath switch study.json --out out`: `output` is the plunger (a
@@ -408,11 +417,15 @@ point's force window (`max` may be `[centre, rim]`, a radial gradient;
 `clearance` caps the skin's travel toward the board, `hold` caps the
 mean deflection under a load case (a side squeeze, a drop). Start coarse
 (`pitches: [1.0]`) to see whether the windows can be met at all, then
-refine (`[1.0, 0.7, 0.5]`). The report gives each press's linear,
-thresholded and large-deflection fire force (`nonlinearForceGf`; TPU
-stiffens as it bows). If the skin alone already fires above a ceiling,
-nothing added inside can fix it: thin the skin, or raise the ceiling.
-See docs/SWITCH.md.
+refine (`[1.0, 0.7, 0.5]`). The report gives each press's linear and
+as-printed (thresholded) fire force; `"nonlinear": true` adds a
+large-deflection reading, which is experimental (slow, and it does not
+converge on thin-skin designs yet). Read the skin alone first
+(`examples/switch/touch_mic.py --baseline` shows how): where it already
+fires well above a ceiling, structure inside can carry the press to the
+plunger and pull it down, but only so far (the touch microphone's corner:
+391 gf on the skin, 323 optimized, ceiling 300). Past that, thin the skin
+or raise the ceiling. See docs/SWITCH.md.
 
 ## Heat, fatigue and creep
 

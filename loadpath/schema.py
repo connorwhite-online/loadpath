@@ -763,8 +763,11 @@ _SWITCH = {
                     "description": "coarse to fine grids, mm; each starts from the last one's design"},
         "iterations": {"anyOf": [{"type": "integer", "minimum": 1},
                                  {"type": "array", "items": {"type": "integer", "minimum": 1}}]},
-        "nonlinear": {"type": "boolean", "description": "re-read each press with large deflections and the "
-                                                        "stem as a rigid obstacle (default true)"}},
+        "nonlinear": {"type": "boolean", "description": "re-read one press per distinct target with large "
+                                                        "deflections (default false: experimental, slow, and it does "
+                                                        "not converge on thin-skin designs yet)"},
+        "nonlinearPitch": {**_POS, "description": "mm grid of the large-deflection check (default the first "
+                                                  "pitch); the design is read onto it"}},
     "required": ["output"],
     "x-requireOne": [["presses"], ["field"]],
     "additionalProperties": False,

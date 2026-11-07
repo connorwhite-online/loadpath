@@ -1154,7 +1154,10 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         # level with the shape's own end face instead of leaving the end a
         # fraction of a millimetre proud of it (a lip round every full-height
         # boss: the bell crank's).
-        flush = flush + [r.shape for r in study.preserve]
+        # Not the design space's skin: it wraps the whole exterior, and as a
+        # flush face it seats the field outward everywhere and fills the
+        # interior (a push pad's 7.8 cm^3 interior meshed as 17 cm^3).
+        flush = flush + [r.shape for r in study.preserve if r.id != "skin"]
     acc = getattr(study, "access", None)
     if acc is not None and acc.kind == "milling":
         # The stock face no cutter reaches (the bottom of a part milled from
@@ -1182,8 +1185,14 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         centre = domain.origin + 0.5 * np.asarray(domain.dims) * domain.pitch
         draft = (acc.draw[0], acc.draw[1], len(acc.directions), acc.draft, symmetric_parting(study, acc, centre))
     xphys, bridged = _bridge_pieces(domain, xphys, o.level)
+    # The field is filleted and run on into preserved shapes (below), but not
+    # into the design space's skin: it wraps the whole exterior, so a 3 mm
+    # fillet to it lines every inside corner, and the run-on near it fills
+    # the cavity outright (a push pad's 7.8 cm^3 interior meshed as 16.9).
+    # The exact union afterwards still adds the skin itself.
+    inner = [r.shape for r in study.preserve if r.id != "skin"]
     iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
-                      flush=flush, preserve=[r.shape for r in study.preserve], design=list(study.design_space),
+                      flush=flush, preserve=inner, design=list(study.design_space),
                       draft=draft)
     parting = iso.metadata.get("parting")
     info = {"isoTriangles": int(len(iso.faces))}

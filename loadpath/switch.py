@@ -53,7 +53,7 @@ right-hand sides with one hierarchy and runs on a GPU with LOADPATH_DEVICE.
 
 This is a linear model: TPU skins stiffen as they bow, and the plunger
 meets the stem in contact. `check_fire_nonlinear` re-reads each press with
-large deflections and the stem as a rigid obstacle.
+large deflections, the stem's reaction applied at the click.
 """
 from __future__ import annotations
 
@@ -653,6 +653,9 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
                         history=history, levels=levels, report=rep)
 
 
+THIN_KEEP = 0.2
+
+
 def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray, modulus: float,
                          presses=None, threshold: float = 0.5, steps: int = 8, material: str = "neo-hookean",
                          tol: float = 0.01, max_solves: int = 5, floor: np.ndarray | None = None) -> list[dict]:
@@ -684,7 +687,10 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
     keep = xphys > threshold
     emod = np.full(len(xphys), float(modulus))
     if floor is not None:
-        thin = (floor > 0) & ~keep & (xphys > 0.02)
+        # a sliver of skin in a cell (phi under ~0.2, modulus under 1% of E)
+        # adds nothing but a near-singular element to the Newton solve: the
+        # first version kept them and the solve broke down (NaN) or crawled
+        thin = (floor > 0) & ~keep & (xphys >= THIN_KEEP)
         keep |= thin
         emod[thin] = modulus * xphys[thin] ** 3
     target = spec.gap + spec.travel
@@ -712,12 +718,20 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
                                 probes={"tip": l})
             return float(l @ r.u), r
 
-        P0, (t0, r0) = f_lin, tip(f_lin)
+        try:
+            P0, (t0, r0) = f_lin, tip(f_lin)
+        except (ValueError, np.linalg.LinAlgError, RuntimeError) as exc:
+            out.append({"press": int(i), "at": spec.presses[i].at.tolist(), "linear": f_lin,
+                        "error": f"large-deflection solve failed: {exc}"})
+            continue
         P1 = P0 * target / t0 if t0 > 0 else 1.5 * P0
         best = (P0, t0, r0)
         n_solves = 1
         while n_solves < max_solves:
-            t1, r1 = tip(P1)
+            try:
+                t1, r1 = tip(P1)
+            except (ValueError, np.linalg.LinAlgError, RuntimeError):
+                break
             n_solves += 1
             best = (P1, t1, r1)
             if abs(t1 - target) <= tol * target or not r1.converged:
@@ -738,13 +752,29 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
     return out
 
 
+def _as_printed(xphys, floor):
+    """(field to mesh, black-and-white design to read) for a design whose
+    thin-skin cells are floored at their skin share phi. In such a cell the
+    skin itself is printed exactly (the delivered mesh joins the designer's
+    skin), and only the material the optimizer added above phi is structure
+    of its own: its share of the rest of the cell, (x - phi) / (1 - phi).
+    Thresholding x itself instead made every cell more than half skin a
+    whole solid cell: a 0.57 mm skin share read as 1 mm, and the as-printed
+    fire forces 1.6-1.8x the design's on the touch microphone."""
+    fl = floor > 0
+    extra = np.clip(np.where(fl, (xphys - floor) / np.maximum(1.0 - floor, 1e-9), xphys), 0.0, 1.0)
+    solid = np.where(extra > 0.5, 1.0, np.where(fl, floor, 0.0))
+    return extra, solid
+
+
 def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bool | None = None,
                nonlinear_presses=None, on_progress=None) -> dict:
     """Optimize, mesh and check a study's `switch` block. Writes
     <name>.stl (the delivered part: the exact exterior skin and preserves
     joined to the optimized interior) and returns the report: per press the
-    target, the linear fire force on the design and, unless nonlinear is
-    false, the large-deflection one on the solid part."""
+    target, the linear fire force on the design and, when nonlinear is
+    true, the large-deflection one on the solid part (experimental: on a
+    thin-skin design the Newton solve crawls and does not converge yet)."""
     import os
 
     from .reconstruct import reconstruct
@@ -762,23 +792,39 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
     modulus = float(study.material.E)
     spec = switch_from_study(study, r.domain)
     # the same reading on the thresholded (as printed) design
-    solid = np.where(r.xphys > 0.5, 1.0, np.where(r.floor > 0, r.floor, 0.0))
+    extra, solid = _as_printed(r.xphys, r.floor)
     ff = fire_forces(r.domain, nu, spec, np.maximum(solid, 1e-9), modulus)
     for p, f in zip(rep["presses"], ff["forces"]):
         p["thresholdedForceGf"] = float(f / GF)
     if on_progress is not None:
         on_progress({"stage": "mesh"})
-    mesh, info = reconstruct(study, r.domain, r.xphys)
+    mesh, info = reconstruct(study, r.domain, extra)
     path = os.path.join(out_dir, f"{study.name}.stl")
     mesh.export(path)
     rep["mesh"] = path
     rep["mass"] = float(mesh.volume * study.material.density / 1000.0)
     rep["watertight"] = bool(mesh.is_watertight)
     if nonlinear is None:
-        nonlinear = bool((study.raw.get("switch") or {}).get("nonlinear", True))
+        nonlinear = bool((study.raw.get("switch") or {}).get("nonlinear", False))
+    np.save(os.path.join(out_dir, "xphys.npy"), r.xphys)
     if nonlinear:
         if on_progress is not None:
             on_progress({"stage": "verify", "check": "nonlinear fire force"})
+        # Large-deflection solves cost ~90 s a press on 6k solid cells (four
+        # cores); on the finest grid they took longer than the optimization.
+        # The check runs on nonlinearPitch (default the first, coarsest
+        # pitch), the design read onto it.
+        from .domain import build_domain
+        b = study.raw.get("switch") or {}
+        p_nl = float(b.get("nonlinearPitch") or rep["pitches"][0])
+        dom_nl, xp_nl, floor_nl, spec_nl = r.domain, r.xphys, r.floor, spec
+        if abs(p_nl - r.domain.pitch) > 1e-9:
+            dom_nl, floor_nl = _thin_skin(study, build_domain(study, p_nl))
+            xp_nl = np.clip(_interp_design(r.domain, r.xphys, dom_nl), 0.0, 1.0)
+            xp_nl[dom_nl.preserve] = 1.0
+            xp_nl = np.maximum(xp_nl, floor_nl)
+            spec_nl = switch_from_study(study, dom_nl)
+        rep["nonlinearPitch"] = dom_nl.pitch
         if nonlinear_presses is None:
             # one press per distinct target (the centre, one per ring of a field)
             seen, nonlinear_presses = set(), []
@@ -786,7 +832,7 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
                 if (p.max, p.min) not in seen:
                     seen.add((p.max, p.min))
                     nonlinear_presses.append(i)
-        nl = check_fire_nonlinear(r.domain, nu, spec, r.xphys, modulus, presses=nonlinear_presses, floor=r.floor)
+        nl = check_fire_nonlinear(dom_nl, nu, spec_nl, xp_nl, modulus, presses=nonlinear_presses, floor=floor_nl)
         for row in nl:
             if "nonlinear" in row:
                 p = rep["presses"][row["press"]]
@@ -794,7 +840,6 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
                 p["nonlinearOk"] = bool((p["max"] is None or row["nonlinear"] <= p["max"] * 1.02) and
                                         (p["min"] is None or row["nonlinear"] >= p["min"] * 0.98))
         rep["nonlinear"] = nl
-    np.save(os.path.join(out_dir, "xphys.npy"), r.xphys)
     rep["seconds"] = round(r.seconds, 1)
     rep["passes"] = all(p["ok"] for p in rep["presses"])
     return rep

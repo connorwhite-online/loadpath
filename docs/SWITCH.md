@@ -16,7 +16,7 @@ generated gets in the way when the part is put together. A study's
 what force fires the switch, and the force window at each press point.
 
 ```json
-"skin": {"thickness": 0.7, "open": ["-z"]},
+"skin": {"thickness": 1.0, "open": ["-z"]},
 "keepOut": [
   {"id": "board",  "insertFrom": "-z", "bore": false, "shape": {...}},
   {"id": "switch", "insertFrom": "-z", "bore": false, "shape": {...}}
@@ -37,6 +37,16 @@ python -m loadpath switch pad.study.json --out pad-out/
 
 The whole example is `examples/switch/touch_pad.py`. It builds a
 synthetic touch pad, writes its study, and runs it.
+
+**The skin is the process's minimum wall.** Take it from the material,
+not from memory. With the Materialize MCP server connected,
+`materialize_get_material` lists each material's design limits: SLS
+flexible TPU gives a 0.8 mm minimum wall and 0.3 mm minimum detail. Use
+the larger of that and the designer's own rule (1.0 mm for SLS TPU in the
+touch microphone below), and set `minMember` the same. Once the part is
+meshed, `materialize_check_printability` on the STL flags thin walls
+before a quote. (The synthetic pad's 0.7 mm skin is under that minimum;
+it is there to test the thin-skin model.)
 
 ## The model
 
@@ -89,7 +99,57 @@ uniform 50% fill, the forces went from 166-445 gf to inside their windows
 by about iteration 20. The rest of the run removed material while keeping
 the forces in place.
 
-## Two things that had to change
+## On a real product: the touch microphone
+
+`examples/switch/touch_mic.py` runs the same thing on a real design: the
+push pad of a touch microphone (round 17 of its CAD, built from its
+OpenSCAD source). It is a 50 x 59 x 12.3 mm SLS TPU 88A pillow with a sunk
+touch area over a 6 x 6 mm tactile switch (65 gf, 0.25 mm travel); a cone
+under the dish is the plunger, 0.4 mm over the actuator. The board goes up
+through an opening in the underside into rails on the body, and a USB-C
+plug comes in from the back.
+
+The study keeps the designer's exterior as a 1.0 mm skin, the base ring
+with the flap's seat, latch groove and feet, the board rails, and the
+plunger tip. The opening, the board, the switch column, the stem and the
+USB-C plug's path (`insertFrom: "+y"`) stay clear. Everything else (how
+thick the skin is under the touch area, the cone, the rim's walls) is
+design space. The target is a ceiling of 150 gf at the centre rising to
+300 gf at 14 mm, a 100 gf floor, at the 14 press points the product's own
+review used, and the flanks holding under a squeeze.
+
+![round 17 as drawn and loadpath's interior, from below and in two sections](images/switch/touch-mic-sections.png)
+
+![force to click at each press point: round 17, the bare skin, loadpath](images/switch/touch-mic-forces.png)
+
+| design (1 mm cells) | in window | force to click | squeeze | part |
+|---|---|---|---|---|
+| round 17 as drawn | 6 of 14 | 129 gf centre, 292-1436 gf at the sides and corners | 0.05 mm | 9.7 cm^3 |
+| skin, base and rails only | 9 of 14 | 96 gf centre (under the floor), 307-391 at the corners | 0.10 mm | |
+| **loadpath, design** | **13 of 14** | 140 gf centre; 323 gf at one corner, the rest in window | 0.09 mm | |
+| **loadpath, delivered mesh** read back | 10 of 14 | 122 gf centre; the four misses 1-17% over a 289-300 gf ceiling | 0.09 mm | **8.2 cm^3** |
+
+The drawn interior is stiff where the product wants it soft: the corners
+take up to 4.8 times their ceiling. Loadpath's interior meets the map with
+15% less material. The one design miss is a corner where the bare skin
+alone needs 391 gf: the interior carries that press to the plunger and
+brings it down to 323, but a 1.0 mm skin there is too stiff to reach 300.
+That is a question for the designer (a thinner skin in that corner, or a
+higher ceiling), and the bare-skin reading (`--baseline`) is how to see it
+before running anything.
+
+The delivered mesh reads a little stiffer at the corners than the design
+did: on 1 mm cells, smoothing and the exact joins to the skin move
+material by a fraction of a cell. Refining (`pitches: [1.0, 0.7]`) closes
+that gap at about three times the run time. The clearance limit (1.4 mm of
+skin travel toward anything on the board) is not met by any design here,
+round 17 included: it is the smallest gap over the board (the USB-C
+receptacle) applied to the whole board. A clearance region per component
+would be the honest version.
+
+The run took 80 iterations and 454 s on 4 CPU cores.
+
+## Three things that had to change
 
 **A thin skin on a coarse grid.** Preserved cells are whole cells, so a
 0.7 mm skin on 1 mm cells is a 1 mm skin. Bending goes as thickness cubed,
@@ -113,6 +173,18 @@ from it, which takes 3-8 s an iteration. Above that it uses the
 matrix-free multigrid (`mg.py`), which runs on a GPU with
 `LOADPATH_DEVICE`.
 
+**Reading a thin-skin cell as printed.** The optimizer works on the
+density in a thin-skin cell, floored at the skin's share φ. Thresholding
+that density at 0.5 made every cell more than half skin a whole solid
+cell, so a 0.57 mm skin share read as 1 mm, and the as-printed fire forces
+came out 1.6-1.8 times the design's. In such a cell the skin is printed
+exactly (the delivered mesh joins the designer's skin), so only what the
+optimizer added above φ is structure of its own: its share of the rest of
+the cell, (x - φ)/(1 - φ). That is what is meshed and thresholded now, and
+the as-printed reading matches the design to within 1 gf. Meshing also no
+longer fillets or runs material on into the skin: with a 3 mm fillet to a
+skin that wraps the whole exterior, the interior came out solid.
+
 ## Coarse to fine
 
 `pitches: [1.0, 0.7, 0.5]` runs the problem on each grid in turn. Each
@@ -123,15 +195,14 @@ backed off one step.
 
 - **Thresholded reading.** The same linear fire forces on the black and
   white design, as it will print (`thresholdedForceGf`).
-- **Large deflection** (`check_fire_nonlinear`). TPU skins stiffen as
-  they bow. For one press point per distinct target, the solid cells are
-  re-solved with a neo-Hookean large-deflection model. The press and the
-  stem's reaction at the trigger force are applied together, and secant
-  steps find the press force that brings the plunger to gap + travel. The
-  load is elastic, so the order the two loads arrive in does not change
-  the final state. A snap-through before the click shows up as a solve
-  that does not converge. On a coarse grid the thin-skin cells are kept at
-  modulus E x^3.
+- **Large deflection** (`check_fire_nonlinear`, `"nonlinear": true`;
+  off by default). TPU skins stiffen as they bow. For one press point per
+  distinct target, the solid cells are re-solved with a neo-Hookean
+  large-deflection model, the press and the stem's reaction at the
+  trigger force applied together, and secant steps find the press force
+  that brings the plunger to gap + travel. It is experimental: on a
+  thin-skin design (cells at modulus E x^3) the Newton solve crawls under
+  CG and has not converged yet, so it is not run unless asked for.
 - **The delivered mesh** is the isosurface joined to the exact preserved
   geometry, so the cosmetic skin's outside is the designer's mesh
   unchanged.

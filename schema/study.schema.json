@@ -904,7 +904,12 @@
         },
         "nonlinear": {
           "type": "boolean",
-          "description": "re-read each press with large deflections and the stem as a rigid obstacle (default true)"
+          "description": "re-read one press per distinct target with large deflections (default false: experimental, slow, and it does not converge on thin-skin designs yet)"
+        },
+        "nonlinearPitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm grid of the large-deflection check (default the first pitch); the design is read onto it"
         }
       },
       "required": [

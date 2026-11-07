@@ -261,6 +261,17 @@ The eval suite (15/15 passing): robot-arm links, brackets, a bell crank and a ho
 </tr>
 </table>
 
+**Inside a product's exterior.** A touch microphone's push pad: the
+designer's surfacing kept as a 1.0 mm SLS TPU skin, the board, switch and
+USB-C plug paths kept clear, and the interior designed so a press anywhere
+on the touch area clicks at 150 gf at the centre rising to 300 gf at the
+rim. The drawn interior hits 6 of 14 press windows (up to 1436 gf at a
+corner); loadpath's design hits 13 of 14, and its delivered mesh, read
+back, 10 of 14 with the rest 1-17% over, in 15% less material.
+([docs/SWITCH.md](docs/SWITCH.md))
+
+<img src="docs/images/switch/touch-mic-forces.png" width="760">
+
 Where the load goes: von Mises stress, blue (none) to red (the part's 98th percentile), on the part bent by its worst load case:
 
 <table>

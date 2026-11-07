@@ -525,7 +525,8 @@ def main(argv=None):
     sw.add_argument("--out", default="loadpath-switch")
     sw.add_argument("--pitches", help="comma-separated mm, coarse to fine (default: switch.pitches)")
     sw.add_argument("--iterations", help="comma-separated, per pitch")
-    sw.add_argument("--no-nonlinear", action="store_true", help="skip the large-deflection fire-force check")
+    sw.add_argument("--nonlinear", action="store_true", help="also run the large-deflection fire-force check "
+                    "(experimental: slow, and it does not converge on thin-skin designs yet)")
     sw.add_argument("--base-dir")
     ex = sub.add_parser("explore", help="one study, an outcome per manufacturing method and material (fdm, sls, "
                                         "mjf, sla, lpbf, cast, milled...): mass, safety factor, cost and lead "
@@ -1298,7 +1299,7 @@ def _switch(args):
         st = study_from_dict(doc, base)
         pitches = [float(v) for v in args.pitches.split(",")] if args.pitches else None
         its = [int(v) for v in args.iterations.split(",")] if args.iterations else None
-        rep = run_switch(st, args.out, pitches=pitches, iterations=its, nonlinear=False if args.no_nonlinear else None,
+        rep = run_switch(st, args.out, pitches=pitches, iterations=its, nonlinear=True if args.nonlinear else None,
                          on_progress=_progress)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
