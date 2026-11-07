@@ -262,16 +262,22 @@ skins; the honest reading is the delivered one. Whether to trade some
 click-map accuracy for a board that does not ring is the designer's
 call; the report gives both. 22 minutes on 4 shared cores.
 
-**1 mm, then 0.7 mm cells** (60 + 60 iterations, cut-cell skin, 58
-minutes), read on cut cells at 0.5 mm: the drop gets closer but still
-misses, and the board bounce now misses by a little.
+**1 mm, then 0.7 mm cells** (60 + 60 iterations, cut-cell skin traced
+exactly at 1.00 mm, 58 minutes), read on cut cells at 0.5 mm: the drop
+gets closer but still misses, and the board bounce now misses by a little.
 
 | touch-mic, cut-cell read at 0.5 mm | pinch | face-down drop | board bounce x / y / z | presses in window |
 |---|---|---|---|---|
 | bare skin, base and rails (0.7 mm) | 0.43 mm | 1550 g: in window | 63 / 46 / 12 N/mm | |
 | 1 mm design above | 0.29 mm | 3020 g: misses | 93 / 86 / 31 N/mm | |
-| **1.0 then 0.7 mm, design** | **0.38 mm** | **1960 g: in window** | 90 / 60 / 25 N/mm | 8 of 14 |
-| **1.0 then 0.7 mm, delivered** | **0.48 mm** | 2530 g: misses | 89 / 69 / 24 N/mm (z under its 26 floor) | **9 of 14** (155-431 gf) |
+| **1.0 then 0.7 mm, design** | **0.37 mm** | **1980 g: in window** | 90 / 62 / 25 N/mm | 9 of 14 |
+| **1.0 then 0.7 mm, delivered** | **0.44 mm** | 2450 g, 0.6 mm: misses | 86 / 65 / 23 N/mm (z under its 26 floor; modes from 269 Hz) | **9 of 14** (155-392 gf) |
+
+(The same run on the skin as it was traced before main 270c16b, 0.65-1.18
+mm thick in ridges, read within 5% on every feel number: 2530 g, 24 N/mm,
+9 of 14. Its part re-meshed on the exact skin read 2 of 14 presses, so the
+click map, unlike the feel targets, has to be designed on the skin it
+will be printed with.)
 
 The bare part drops inside its window, so the drop is not the exterior's
 limit: the interior the click map and the bounce floor need is what makes
