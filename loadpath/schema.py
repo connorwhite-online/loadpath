@@ -871,6 +871,9 @@ _FEEL = {
                                                "design pitch: members one design cell thick)"},
         "keepThinMembers": {"type": "boolean", "description": "mesh without thinning one-cell members (default "
                                                              "true)"},
+        "cutCells": {"type": "boolean", "description": "read the delivered mesh with cut cells, each cell the "
+                                                      "surface cuts integrated over its solid part (default true; "
+                                                      "false: as a density, cell fill at E x^3)"},
         "moveSharp": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5,
                       "description": "MMA move limit once the projection is fully sharp (default 0.03)"},
         "robust": {"type": "boolean", "description": "read each floor on the eroded design and each ceiling on "

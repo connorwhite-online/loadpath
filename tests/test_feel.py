@@ -185,6 +185,23 @@ def test_a_part_cut_off_from_the_hold_reads_soft():
     assert full["drop"]["directions"][0]["stiffness"] > 100
 
 
+def test_cut_cell_readback_of_a_solid_block_matches_the_grid():
+    """feel_readings_cut on the design space itself, filled: every cell is
+    whole, so it reads what the grid reads on a filled design."""
+    import trimesh
+    st = study_from_dict(body())
+    dom = build_domain(st, 2.0)
+    prob = feel.FeelProblem(st, dom, st.elastic(design=True), float(st.material.E))
+    grid = {r["name"]: r for r in feel.feel_readings(prob, np.ones(dom.n_elem))}
+    block = trimesh.creation.box(extents=[16, 16, 30])
+    block.apply_translation([0, 0, 15])
+    rows, info = feel.feel_readings_cut(st, block, 2.0)
+    assert info["cutCells"] == 0, info
+    for r in rows:
+        for d, g in zip(r["directions"], grid[r["name"]]["directions"]):
+            assert abs(d["stiffness"] / g["stiffness"] - 1) < 1e-6, (r["name"], d, g)
+
+
 def test_optimizes_into_the_windows():
     # robust reads off: 2 mm cells are too coarse for a suspension that
     # survives erosion in a 16 mm body; this checks the loop and the report

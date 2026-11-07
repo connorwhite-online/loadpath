@@ -415,14 +415,17 @@ def _ok(k, t: FeelTarget, tol: float = 0.02) -> bool:
     return bool((t.kmin is None or k >= t.kmin * (1 - tol)) and (t.kmax is None or k <= t.kmax * (1 + tol)))
 
 
-def feel_readings(prob: FeelProblem, xp: np.ndarray) -> list[dict]:
+def feel_readings(prob: FeelProblem, xp: np.ndarray, comp=None, targets=None) -> list[dict]:
     """Per target and direction: stiffness, its window, and what it means
     (travel at the squeeze force; peak g and travel in the drop; natural
-    frequency and transmissibility at the band)."""
+    frequency and transmissibility at the band). `comp` (with `targets`)
+    gives compliances read some other way (feel_readings_cut)."""
     from .modal import transmissibility
-    comp = prob.compliances(np.asarray(xp, float), grads=False)
+    if comp is None:
+        comp = prob.compliances(np.asarray(xp, float), grads=False)
+        targets = prob.targets
     rows = []
-    for ti, t in enumerate(prob.targets):
+    for ti, t in enumerate(targets):
         dirs = []
         for di, (ax, sg) in enumerate(t.directions):
             c = comp[(ti, di)][0]
@@ -445,6 +448,100 @@ def feel_readings(prob: FeelProblem, xp: np.ndarray) -> list[dict]:
         rows.append({"name": t.name, "kind": t.kind, "minStiffness": t.kmin, "maxStiffness": t.kmax,
                      "params": t.params, "directions": dirs, "ok": all(r["ok"] for r in dirs)})
     return rows
+
+
+def feel_readings_cut(study, mesh, pitch: float, n: int = 4) -> tuple[list[dict], dict]:
+    """The feel targets on a delivered mesh, solved on the mesh itself with
+    cut cells (cutcell.py; as switch_lattice.readback reads push pads): each
+    cell the surface cuts is integrated over its solid part on an n^3 split,
+    so a 1 mm skin or member is 1 mm whatever the grid. The thin-skin floor
+    (E ~ phi^3 per cell) read a skin split across two cell layers as two thin
+    layers, soft in bending (docs/SWITCH.md, skin review); cut cells do not.
+    Holds and loads are each target's own, on this grid, limited to the
+    nodes the part has. Returns (rows as feel_readings, info)."""
+    import time
+
+    from scipy import ndimage
+
+    from .bucklingopt import _factor
+    from .cutcell import CutGrid, scan_voxelize
+    from .domain import build_domain
+    from .fem import Stiffness
+
+    t0 = time.time()
+    nu = study.elastic(design=True)
+    E = float(study.material.E)
+    from .fem import HexMesh
+
+    dom = build_domain(study, pitch)
+    dims = np.asarray(dom.dims)
+    fine = scan_voxelize(mesh, dom.pitch / n, dom.origin, dims * n)
+    cg0 = CutGrid(fine, n, dom.origin, dom.pitch, nu)
+    ijk = cg0.mesh.elem_ijk
+    lut = np.full(tuple(dims), -1, np.int64)
+    lut[tuple(dom.mesh.elem_ijk.T)] = np.arange(dom.n_elem)
+    inb = np.all(ijk < dims, axis=1)
+    inb[inb] = lut[tuple(ijk[inb].T)] >= 0      # cells of the design space only
+    # Holds and loads where the part is, as a hand or a floor meets it: on
+    # the cells at least half full. The design grid's outermost nodes sit on
+    # the design space's edge cells, which the part may barely touch, and a
+    # face held or pressed on near-empty slivers drifts with the grid (the
+    # microphone body's grip read 41, 45, 60 N/mm at 1, 0.5, 0.33 mm so).
+    pm = HexMesh(ijk[inb & (cg0.fill >= 0.5)], dom.pitch, dom.origin)
+    on_part = feel_from_study(study, dataclasses.replace(dom, mesh=pm))
+    pid = dom.mesh.node_id(pm.node_ijk)
+
+    def lift(nodes):
+        out = np.zeros(dom.mesh.n_nodes, bool)
+        out[pid[nodes & (pid >= 0)]] = True
+        return out
+
+    targets = [dataclasses.replace(t, ground=lift(t.ground), load=lift(t.load)) for t in on_part]
+    g = np.zeros(tuple(dims), bool)
+    g[tuple(ijk[inb].T)] = True
+    lbl, _ = ndimage.label(g, structure=np.ones((3, 3, 3), bool))
+    el_lbl = np.zeros(len(ijk), np.int64)
+    el_lbl[inb] = lbl[tuple(ijk[inb].T)]
+    node_all = dom.mesh.node_id(cg0.mesh.node_ijk)     # -1 only on cells left out below
+    comp, cells = {}, 0
+    groups: dict[str, list[int]] = {}
+    for ti, t in enumerate(targets):
+        groups.setdefault(t.key, []).append(ti)
+    for tis in groups.values():
+        ground = targets[tis[0]].ground
+        # cells joined (through any contact) to a cell that touches the hold
+        en_dom = node_all[cg0.mesh.enode]
+        touch = inb & (ground[en_dom] & (en_dom >= 0)).any(axis=1)
+        held = np.unique(el_lbl[touch])
+        keep = inb & np.isin(el_lbl, held[held > 0])
+        cg = cg0.restrict(keep)
+        sub = cg.mesh
+        nodes = dom.mesh.node_id(sub.node_ijk)
+        fixed = np.repeat(ground[nodes], 3)
+        free = np.flatnonzero(~fixed)
+        k = cg.assemble(Stiffness(sub, nu, fixed), 1.0)
+        solve, release = _factor(k[free][:, free].tocsr(), sub.node_ijk)
+        cells = max(cells, int(sub.n_elem))
+        probes, keys = [], []
+        for ti in tis:
+            t = targets[ti]
+            have = t.load[nodes] & ~ground[nodes]
+            for di, (ax, sg) in enumerate(t.directions):
+                if not have.any():
+                    comp[(ti, di)] = (1e30, None)   # the load is not on the part: no stiffness
+                    continue
+                probes.append(_unit(have, ax, sg, 3 * sub.n_nodes)[free])
+                keys.append((ti, di))
+        if probes:
+            B = np.stack(probes, axis=1)
+            X = np.asarray(solve(B)).reshape(B.shape) / E
+            for j, key in enumerate(keys):
+                comp[key] = (float(B[:, j] @ X[:, j]), None)
+        if release is not None:
+            release()
+    rows = feel_readings(None, None, comp=comp, targets=targets)
+    return rows, {"pitch": dom.pitch, "cells": cells, "cutCells": int(cg0.cut.sum()),
+                  "seconds": round(time.time() - t0, 1)}
 
 
 def check_isolation_modal(study, prob: FeelProblem, ti: int, xp: np.ndarray, n_modes: int = 12,
@@ -506,6 +603,9 @@ def check_isolation_modal(study, prob: FeelProblem, ti: int, xp: np.ndarray, n_m
             "ok": all(r["ok"] for r in rows), "cells": int(sub.n_elem)}
 
 
+MODAL_MIN_PITCH = 0.5
+
+
 def run_feel(study, out_dir: str, pitches=None, iterations=None, on_progress=None, modal: bool = True,
              nonlinear: bool | None = None) -> dict:
     """Optimize, mesh and check a study's `feel` block (with its `switch`
@@ -547,12 +647,34 @@ def run_feel(study, out_dir: str, pitches=None, iterations=None, on_progress=Non
                 row["delivered"] = rd["directions"]
                 row["deliveredOk"] = rd["ok"]
             out["verifyPitch"] = fine.pitch
+            if fb.get("cutCells", True):
+                # The same mesh with cut cells: the density reading above
+                # takes a cell's fill as E x^3, which reads a thin skin split
+                # across two cell layers soft and does not settle on thin
+                # members (docs/SWITCH.md); this one is what `delivered` is.
+                if on_progress is not None:
+                    on_progress({"stage": "verify", "check": f"feel targets on cut cells at {vp:g} mm"})
+                cut_rows, info = feel_readings_cut(study, mesh, vp)
+                for row, rc in zip(rows, cut_rows):
+                    row["deliveredDensity"], row["deliveredDensityOk"] = row["delivered"], row["deliveredOk"]
+                    row["delivered"], row["deliveredOk"] = rc["directions"], rc["ok"]
+                out["cutCells"] = info
+        if modal and delivered is not None and prob_modal.domain.pitch < MODAL_MIN_PITCH:
+            # modes on a grid no finer than MODAL_MIN_PITCH: the microphone
+            # body's at 0.35 mm (0.7 mm design) took 14 GB in the
+            # shift-invert factor and was killed
+            mp = MODAL_MIN_PITCH
+            mdom, mfloor = _thin_skin(study, build_domain(study, mp))
+            drawn = _fraction([MeshShape(mesh)], mdom.mesh.elem_centers(), mdom.pitch)
+            x_modal = np.maximum(np.maximum(drawn, mfloor), 1e-9)
+            prob_modal = FeelProblem(study, mdom, nu, float(study.material.E))
         if modal:
             for ti, t in enumerate(prob_modal.targets):
                 if t.kind == "isolate":
                     if on_progress is not None:
                         on_progress({"stage": "verify", "check": f"modes: {t.name}"})
-                    rows[ti]["modal"] = check_isolation_modal(study, prob_modal, ti, x_modal)
+                    rows[ti]["modal"] = {**check_isolation_modal(study, prob_modal, ti, x_modal),
+                                         "pitch": prob_modal.domain.pitch}
         return {**out, "feel": rows, "feelOk": all(r["ok"] for r in rows),
                 "feelDeliveredOk": all(r.get("deliveredOk", False) for r in rows)}
 

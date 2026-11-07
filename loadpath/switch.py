@@ -57,6 +57,7 @@ large deflections, the stem's reaction applied at the click.
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -249,6 +250,16 @@ def switch_from_study(study, domain: Domain) -> SwitchSpec:
 # solves
 
 
+def _have_pardiso() -> bool:
+    if os.environ.get("LOADPATH_NO_PARDISO"):
+        return False
+    try:
+        import pypardiso  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 class _Solves:
     """K(E) u = f for several right-hand sides at once, at unit modulus, on
     the cells that carry material.
@@ -267,6 +278,7 @@ class _Solves:
     ALIVE = 0.02
     DIRECT_DOFS = 600_000
     MMD_DOFS = 120_000
+    PARDISO_DOFS = 400_000
 
     def __init__(self, domain: Domain, nu, rtol: float = 1e-8):
         from scipy import ndimage  # noqa: F401
@@ -276,6 +288,7 @@ class _Solves:
         self.rtol = rtol
         self.support_touch = domain.support_nodes[mesh.enode].any(axis=1)
         self._lu = None
+        self._release = None
         self.last_cells = mesh.n_elem
         self._mg = None
         self.prev = {}
@@ -333,6 +346,9 @@ class _Solves:
                 k = (k + st.finish(data, diag=0.0)).tocsr()
             if d.springs is not None:
                 k = (k + d.springs[dofs][:, dofs]).tocsr()
+            if self._release is not None:
+                self._release()
+                self._release = None
             if local is not None and len(local):
                 # cut skin cells: PARDISO (SuperLU's diagonal pivoting
                 # fills in on cells the skin only partly holds)
@@ -341,9 +357,18 @@ class _Solves:
                 if fixed.any():
                     keep = sp.diags((~fixed).astype(float))
                     k = (keep @ k @ keep + sp.diags(fixed.astype(float))).tocsr()
-                solve, _ = _factor(k, sub.node_ijk)
+                solve, self._release = _factor(k, sub.node_ijk)
                 self._lu = _Fn(solve)
                 self._whole = True
+            elif _have_pardiso() and len(free) <= self.PARDISO_DOFS:
+                # PARDISO (bucklingopt._factor) wherever it is installed:
+                # the microphone body's robust feel targets factor six
+                # systems of ~90k dofs an iteration, 524 s with SuperLU's
+                # minimum degree, 22 s with it
+                from .bucklingopt import _factor
+                solve, self._release = _factor(k[free][:, free].tocsr(), sub.node_ijk)
+                self._lu = _Fn(solve)
+                self._whole = False
             elif len(free) <= self.MMD_DOFS:
                 a = k[free][:, free].tocsc()
                 self._lu = splu(a, permc_spec="MMD_AT_PLUS_A", options={"SymmetricMode": True})
