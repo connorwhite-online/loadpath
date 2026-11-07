@@ -288,19 +288,58 @@ def plunger_from_switch(switch_shape, press_dir: np.ndarray, gap: float, skin_sh
             "skinAt": float(t_skin), "gap": float(gap)}
 
 
-def _shape_spec(v, base_dir):
-    """A component's geometry: a path (STL/3MF/OBJ; STEP through cadimport)
-    or a shape dict."""
+def _shape_spec(v, base_dir, reports: dict | None = None, key: str | None = None):
+    """A component's geometry as a study shape: a shape dict, a path (STL/
+    3MF/OBJ/GLB; STEP through cadimport; an .npz SDF grid), {path, size?,
+    up?, ...} for the exterior intake, or in code anything
+    `exterior.load_exterior` reads (an SDF function, a build123d object, a
+    trimesh). Anything not already one clean closed mesh goes through the
+    intake and is written beside its source as <stem>.handoff.stl (or into
+    the working folder for an in-memory source); its report lands in
+    `reports[key]`."""
+    from .exterior import MESH_EXT, STEP_EXT, load_exterior
+    opts = {}
     if isinstance(v, dict):
-        return v
-    path = v if os.path.isabs(v) or base_dir is None else os.path.join(base_dir, v)
-    if path.lower().endswith((".step", ".stp")):
+        if "type" in v:
+            return v
+        if "path" not in v:
+            raise ValueError(f"a shape is a shape dict, a path, or {{path, size?, up?, ...}}: got {v!r}")
+        opts = {k: x for k, x in v.items() if k != "path"}
+        v = v["path"]
+    if isinstance(v, (str, os.PathLike)):
+        spec_path = os.fspath(v)
+        bare = spec_path.partition(".py:")[0] + ".py" if ".py:" in spec_path else spec_path
+        path = spec_path if os.path.isabs(bare) or base_dir is None else os.path.join(base_dir, spec_path)
+        bare_path = path.partition(".py:")[0] + ".py" if ".py:" in path else path
+        ext = os.path.splitext(bare_path)[1].lower()
+        if ext == ".npz" and not opts:
+            return {"type": "sdf", "path": os.path.abspath(path)}
+        if ext in MESH_EXT and ext not in (".glb", ".gltf") and not opts:
+            import trimesh
+            m = trimesh.load(path, force="mesh", process=False)
+            m.merge_vertices()
+            if m.is_watertight and m.is_winding_consistent and len(m.split(only_watertight=False)) == 1:
+                return {"type": "mesh", "path": os.path.abspath(path)}
+        out = os.path.splitext(bare_path)[0] + ".handoff.stl"
+        src = path
+    else:
+        if base_dir is None:
+            base_dir = os.getcwd()
+        out = os.path.join(base_dir, f"{key or 'shape'}.handoff.stl")
+        src = v
+        ext = ""
+    if ext in STEP_EXT and not opts:
         from .cadimport import load_part
-        part = load_part(path)
-        out = os.path.splitext(path)[0] + ".handoff.stl"
+        part = load_part(src)
         part.mesh.export(out)
-        path = out
-    return {"type": "mesh", "path": os.path.abspath(path)}
+        if reports is not None and key:
+            reports[key] = {"kind": "step"}
+        return {"type": "mesh", "path": os.path.abspath(out)}
+    ext_obj = load_exterior(src, **opts)
+    ext_obj.mesh.export(out)
+    if reports is not None and key:
+        reports[key] = ext_obj.report
+    return {"type": "mesh", "path": os.path.abspath(out)}
 
 
 def handoff(brief: dict, base_dir: str | None = None) -> dict:
@@ -314,7 +353,8 @@ def handoff(brief: dict, base_dir: str | None = None) -> dict:
     press_side = press.get("pressDirection", "-z")
     pdir = _axis_vec(press_side)
     rest = _axis_vec(b.get("rest", press_side))
-    ext_spec = _shape_spec(b["exterior"], base_dir)
+    intake = {}
+    ext_spec = _shape_spec(b["exterior"], base_dir, intake, "exterior")
     exterior = _fine_mesh_shape(ext_spec, None)
     skin_v = b.get("skin", 1.0)
     sk = dict(skin_v) if isinstance(skin_v, dict) else {"thickness": float(skin_v)}
@@ -336,13 +376,13 @@ def handoff(brief: dict, base_dir: str | None = None) -> dict:
     preserve = []
     for i, f in enumerate(b.get("fixed") or []):
         fid = f.get("id") or f"fixed-{i}"
-        spec = _shape_spec(f["shape"], base_dir)
+        spec = _shape_spec(f["shape"], base_dir, intake, fid)
         fixed.append((fid, _fine_mesh_shape(spec, None)))
         preserve.append({"id": fid, "shape": spec})
     comps = []
     for i, c in enumerate(b.get("components") or []):
         cid = c.get("id") or f"component-{i}"
-        spec = _shape_spec(c["shape"], base_dir)
+        spec = _shape_spec(c["shape"], base_dir, intake, cid)
         comps.append({**c, "id": cid, "spec": spec, "shape": _fine_mesh_shape(spec, None)})
     ids = [c["id"] for c in comps]
     order = b.get("assembly") or ids
@@ -356,6 +396,16 @@ def handoff(brief: dict, base_dir: str | None = None) -> dict:
     paths = assembly_paths(comps, order, [("skin", skin_shape)] + fixed, (lo, hi), tol=tol,
                            max_slide=float(b.get("maxSlide", 12.0)))
     warnings = []
+    # room inside the exterior once its skin is in: where it is too thin
+    # for anything but skin is the designer's to know first
+    from .exterior import capacity
+    from .shapes import MeshShape
+    if isinstance(exterior, MeshShape):
+        cap = capacity(exterior.mesh, float(t_skin))
+        intake.setdefault("exterior", {})["capacity"] = cap
+        warnings += [f"exterior: {w}" for w in cap.pop("warnings", [])]
+    for k, r in intake.items():
+        warnings += [f"{k}: {w}" for w in r.get("warnings", [])]
     by = {c["id"]: c for c in comps}
 
     def path_of(cid):
@@ -467,6 +517,7 @@ def handoff(brief: dict, base_dir: str | None = None) -> dict:
                            "tolerance": tol},
               "plunger": {**pl, "top": np.round(p1, 4).tolist(), "columnRadius": r_col},
               "supports": supports, "bearsOn": bears, "warnings": warnings, "lint": issues,
+              **({"intake": intake} if intake else {}),
               "seconds": round(time.time() - t0, 1)}
     return {"study": study, "report": report}
 

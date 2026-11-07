@@ -65,6 +65,10 @@ fast = ["pypardiso>=0.4"]
 critic = ["anthropic", "matplotlib>=3.8", "shapely>=2.0"]
 # STEP export with exact planes and cylinders (step.py): OpenCascade's Python bindings
 step = ["cadquery-ocp>=7.7", "embreex>=4.3"]   # embreex: fast ray casts for surface="smooth" (falls back to trimesh's own)
+# the exterior intake's wrap (exterior.py): libigl's generalized winding number
+# reads open, self-intersecting, double-walled meshes (AI-generated, scanned)
+# right; without it a flood fill seals holes up to a few grid cells
+exterior = ["libigl>=2.5"]
 "3mf" = ["lib3mf>=2.4", "pillow>=9"]   # lattice3mf.py: implicit (TPMS) and beam-lattice 3MF; pillow writes the 16-bit image stacks
 
 [project.scripts]

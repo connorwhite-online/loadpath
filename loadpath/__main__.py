@@ -545,6 +545,27 @@ def main(argv=None):
     ho.add_argument("--pitches", help="with --run: comma-separated mm")
     ho.add_argument("--iterations", help="with --run: comma-separated, per pitch")
     ho.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
+    ex = sub.add_parser("exterior", help="any exterior in (STEP, mesh, an AI-generated or scanned mesh, an SDF "
+                                         "function or build123d object in file.py[:name], an .npz SDF): one clean "
+                                         "watertight skin out, with a report of what was wrong, what the wrap "
+                                         "changed and where the shape is too thin to hold anything")
+    ex.add_argument("source")
+    ex.add_argument("--out", default="loadpath-exterior")
+    ex.add_argument("--size", type=float, help="the real longest extent, mm (generated meshes come at unit scale)")
+    ex.add_argument("--scale", type=float, help="a factor instead of --size (metres to mm: 1000)")
+    ex.add_argument("--up", help="the source's up axis (default +y for GLB/glTF, else +z)")
+    ex.add_argument("--place", choices=["keep", "center", "origin"])
+    ex.add_argument("--pitch", type=float, help="mm, the wrap's grid (default longest extent / 320)")
+    ex.add_argument("--wrap", choices=["auto", "always", "never"], default="auto")
+    ex.add_argument("--keep", choices=["largest", "all"], default="largest")
+    ex.add_argument("--skin", type=float, default=1.0, help="the wall the study will keep, mm (for the room report)")
+    ex.add_argument("--sdf", action="store_true", help="also write exterior.sdf.npz (a signed distance grid)")
+    sd = sub.add_parser("sdf", help="a part (STL/STEP/GLB) or an SDF as a signed distance grid (.npz: distance, "
+                                    "origin, pitch; mm, negative inside) for SDF tools; loads back as a study "
+                                    "shape {type: sdf}")
+    sd.add_argument("source")
+    sd.add_argument("--out", help="the .npz (default <source>.sdf.npz)")
+    sd.add_argument("--pitch", type=float, help="mm (default longest extent / 256)")
     fe = sub.add_parser("feel", help="design the inside of a fixed exterior for how it feels: grip squeeze, drop "
                                      "cushioning, vibration isolation of a part inside (the study's feel block; "
                                      "with a switch block too, the click force with them)")
@@ -711,6 +732,10 @@ def main(argv=None):
         return _feel(args)
     if args.cmd == "handoff":
         return _handoff(args)
+    if args.cmd == "exterior":
+        return _exterior(args)
+    if args.cmd == "sdf":
+        return _sdf(args)
     if args.cmd == "explore":
         return _explore(args)
     if args.cmd == "lattice-orient":
@@ -1382,6 +1407,50 @@ def _handoff(args):
         args.nonlinear, args.skin_review, args.lattice = None, False, None
         return _switch(args)
     return 0 if out["ok"] else 2
+
+
+def _exterior(args):
+    from .exterior import load_exterior, save_sdf
+    try:
+        e = load_exterior(args.source, size=args.size, scale=args.scale, up=args.up, place=args.place,
+                          pitch=args.pitch, wrap=args.wrap, keep=args.keep, skin=args.skin)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    stl = e.save(args.out)
+    r = e.report
+    out = {"ok": bool(r["result"]["watertight"]), "stl": stl, "report": os.path.join(args.out, "exterior.json"),
+           "kind": r["kind"], "wrapped": "wrap" in r, "extents": r["result"]["extents"],
+           "volume": r["result"]["volume"], "warnings": r["warnings"]}
+    if "wrap" in r:
+        out["onSourceP95"] = r["wrap"]["onSource"]["p95"]
+        out["patchedArea"] = r["wrap"]["patched"]["area"]
+    if r.get("capacity"):
+        out["cavityVolume"] = r["capacity"]["cavityVolume"]
+        out["thinRegions"] = [x["center"] for x in r["capacity"].get("thinRegions", [])]
+    if args.sdf:
+        out["sdf"] = save_sdf(e.mesh, os.path.join(args.out, "exterior.sdf.npz"))["path"]
+    print(json.dumps(out, default=float))
+    return 0 if out["ok"] else 2
+
+
+def _sdf(args):
+    from .exterior import save_sdf
+    src = args.source
+    path = args.out or os.path.splitext(src.partition(".py:")[0])[0] + ".sdf.npz"
+    try:
+        if ".py" in src:
+            from .exterior import _from_source
+            m, kind, _, sdf = _from_source(src)
+            src = m if sdf is None else sdf[0]
+            r = save_sdf(src, path, args.pitch, None if sdf is None else sdf[1])
+        else:
+            r = save_sdf(src, path, args.pitch)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(json.dumps({"ok": True, **r}, default=float))
+    return 0
 
 
 def _feel(args):

@@ -74,6 +74,15 @@ _SHAPES = {
         "x-requireOne": [["path"], ["stlBase64"]],
         "additionalProperties": False,
     },
+    "sdf": {
+        "type": "object",
+        "description": "A sampled signed distance field: an .npz (distance, origin, pitch; mm, negative "
+                       "inside) relative to the study's folder, as loadpath.exterior.save_sdf writes it. How "
+                       "an SDF tool's shape (libfive, the sdf package, a field graph) comes in.",
+        "properties": {"type": {"const": "sdf"}, "path": {"type": "string"}},
+        "required": ["type", "path"],
+        "additionalProperties": False,
+    },
     "union": {
         "type": "object",
         "description": "Several shapes acting as one region (a servo's four screw bosses).",
@@ -100,11 +109,11 @@ _SHAPES = {
     },
 }
 _SHAPE_TYPES = {"box": "box", "cylinder": "cylinder", "tube": "cylinder", "sphere": "sphere",
-                "mesh": "mesh", "union": "union", "intersect": "intersect", "subtract": "subtract"}
+                "mesh": "mesh", "sdf": "sdf", "union": "union", "intersect": "intersect", "subtract": "subtract"}
 
 _SHAPE = {
-    "title": "a shape object (box, cylinder, tube, sphere, mesh, union, intersect, subtract)",
-    "description": "A shape: box, cylinder (tube), sphere, mesh, union, intersect or subtract. Units mm.",
+    "title": "a shape object (box, cylinder, tube, sphere, mesh, sdf, union, intersect, subtract)",
+    "description": "A shape: box, cylinder (tube), sphere, mesh, sdf, union, intersect or subtract. Units mm.",
     "oneOf": [{"$ref": f"#/$defs/{k}"} for k in _SHAPES],
     "x-discriminator": {"property": "type", "mapping": {k: f"#/$defs/{v}" for k, v in _SHAPE_TYPES.items()}},
 }
@@ -1838,8 +1847,27 @@ FIELD_SCHEMA = {
 }
 
 
-_HANDOFF_SHAPE = {"anyOf": [{"type": "string", "description": "a mesh path (STL/3MF/OBJ) or a STEP file"},
-                            {"$ref": "#/$defs/shape"}]}
+_EXTERIOR_SOURCE = {
+    "type": "object",
+    "description": "any exterior through the intake (loadpath.exterior.load_exterior; `loadpath exterior`): a "
+                   "generated or scanned mesh is wrapped watertight, scaled and turned +z up",
+    "properties": {
+        "path": {"type": "string", "description": "STEP, STL/OBJ/PLY/3MF/GLB/glTF, an .npz SDF grid, or "
+                                                  "file.py[:name] (an SDF function or build123d/CadQuery object)"},
+        "size": {**_POS, "description": "the real longest extent, mm (a generated mesh comes at unit scale)"},
+        "scale": {**_POS, "description": "a factor instead of size (metres to mm: 1000)"},
+        "up": {"type": "string", "pattern": "^[+-]?[xyz]$",
+               "description": "the source's up axis (default +y for GLB/glTF, else +z)"},
+        "place": {"enum": ["keep", "center", "origin"],
+                  "description": "keep the source frame (default unless scaled or turned) or centre it on z = 0"},
+        "pitch": {**_POS, "description": "mm, the wrap's grid (default longest extent / 320)"},
+        "wrap": {"enum": ["auto", "always", "never"]},
+        "keep": {"enum": ["largest", "all"], "description": "bodies kept (default the largest: debris dropped)"},
+        "seal": {**_POS, "description": "mm, holes sealed by the flood wrap (no libigl)"}},
+    "required": ["path"], "additionalProperties": False}
+_HANDOFF_SHAPE = {"anyOf": [{"type": "string", "description": "a mesh path (STL/3MF/OBJ/GLB; open or broken "
+                                                              "meshes are wrapped), a STEP file or an .npz SDF"},
+                            {"$ref": "#/$defs/shape"}, _EXTERIOR_SOURCE]}
 _AXIS = {"type": "string", "pattern": "^[+-]?[xyz]$"}
 HANDOFF_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1851,7 +1879,9 @@ HANDOFF_SCHEMA = {
     "type": "object",
     "properties": {
         "name": {"type": "string"}, "description": {"type": "string"},
-        "exterior": {**_HANDOFF_SHAPE, "description": "the designer's exterior surfacing, a closed solid"},
+        "exterior": {**_HANDOFF_SHAPE, "description": "the exterior: the designer's surfacing, or any shape "
+                                                      "(generated, scanned, an SDF) through the exterior intake; "
+                                                      "never changed"},
         "skin": {"anyOf": [_POS, {"type": "object"}], "description": "the skin kept of the exterior (as a study's "
                                                                      "skin; default 1.0 mm)"},
         "openings": {"type": "array", "items": {"anyOf": [_HANDOFF_SHAPE, {"type": "object", "properties": {

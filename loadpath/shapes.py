@@ -312,6 +312,24 @@ class MeshShape(Shape):
         else:
             g = np.asarray(grid_sign, float)
         cell = self._grid[2] if self._grid is not None else float(np.max(self.mesh.extents)) / self._GRID_CELLS
+        try:
+            import igl
+        except ImportError:
+            igl = None
+        if igl is not None:
+            # libigl (loadpath[exterior]): an AABB tree in C++, two orders
+            # faster than trimesh's closest_point on a dense wrapped skin
+            V = np.asarray(self.mesh.vertices, float)
+            F = np.asarray(self.mesh.faces, np.int64)
+            for s in range(0, len(p), 1_000_000):
+                q = p[s:s + 1_000_000]
+                d = np.sqrt(np.maximum(igl.point_mesh_squared_distance(q, V, F)[0], 0.0))
+                sign = np.sign(g[s:s + 1_000_000])
+                near = np.abs(g[s:s + 1_000_000]) < 1.5 * cell
+                if near.any():
+                    sign[near] = np.where(igl.fast_winding_number(V, F, q[near]) > 0.5, -1.0, 1.0)
+                out[s:s + 1_000_000] = sign * d
+            return out
         for s in range(0, len(p), chunk):
             q = p[s:s + chunk]
             _, d, _ = closest_point(self.mesh, q)
@@ -336,6 +354,66 @@ class MeshShape(Shape):
 
 
 _AXES = {"x": [1.0, 0.0, 0.0], "y": [0.0, 1.0, 0.0], "z": [0.0, 0.0, 1.0]}
+
+
+class GridSDF(Shape):
+    """A sampled signed distance field: {"type": "sdf", "path": "x.npz"}, the
+    file `exterior.save_sdf` writes (distance in mm on a node grid, negative
+    inside; origin; pitch). How an SDF tool's shape (libfive, the `sdf`
+    package, a field graph) comes in without code in the study, and how an
+    interior goes back out to one."""
+
+    kind = "sdf"
+
+    def __init__(self, grid, origin, pitch, path=None):
+        self.grid = np.asarray(grid, np.float32)
+        self.origin = np.asarray(origin, float)
+        self.pitch = float(pitch)
+        self.path = path
+        self._mesh = None
+
+    @classmethod
+    def load(cls, path, name=None):
+        z = np.load(path)
+        for k in ("distance", "origin", "pitch"):
+            if k not in z:
+                raise ValueError(f"sdf file {path!r} has no {k!r} (see loadpath.exterior.save_sdf)")
+        if "units" in z and str(z["units"]) != "mm":
+            raise ValueError(f"sdf file {path!r}: units must be mm")
+        return cls(z["distance"], z["origin"], float(z["pitch"]), name or path)
+
+    def sdf(self, p):
+        from scipy import ndimage
+        p = np.asarray(p, float).reshape(-1, 3)
+        coords = ((p - self.origin) / self.pitch).T
+        n = np.asarray(self.grid.shape)[:, None]
+        inside = np.all((coords >= 0) & (coords <= n - 1), axis=0)
+        out = ndimage.map_coordinates(self.grid, coords, order=1, mode="nearest")
+        lo, hi = self.bounds()
+        q = np.maximum(np.maximum(lo - p, p - hi), 0.0)
+        return np.where(inside, out, np.maximum(np.linalg.norm(q, axis=1), self.pitch))
+
+    def contains(self, p):
+        return self.sdf(p) <= 0.0
+
+    def bounds(self):
+        return self.origin.copy(), self.origin + (np.asarray(self.grid.shape) - 1) * self.pitch
+
+    def mesh(self):
+        if self._mesh is None:
+            from .exterior import _marching
+            F = self.grid.copy()
+            F[0], F[-1], F[:, 0], F[:, -1], F[:, :, 0], F[:, :, -1] = (3 * self.pitch,) * 6
+            self._mesh = _marching(F, self.origin, self.pitch)
+        return self._mesh
+
+    def to_manifold(self):
+        return manifold_from_trimesh(self.mesh())
+
+    def to_spec(self):
+        if self.path is None:
+            raise ValueError("an in-memory SDF grid has no JSON form; save it with exterior.save_sdf")
+        return {"type": "sdf", "path": self.path}
 
 
 class Union(Shape):
@@ -797,7 +875,22 @@ def _shape(spec, base_dir):
             return MeshShape(load_part(path).mesh, spec["path"])
         mesh = trimesh.load(path, force="mesh")
         return MeshShape(mesh, spec["path"])
-    raise ValueError(f"unknown shape type {kind!r} (box, cylinder, tube, sphere, mesh, union)")
+    if kind == "sdf":
+        import os
+        path = spec.get("path")
+        if not path:
+            raise ValueError("sdf shape needs 'path' (an .npz from loadpath.exterior.save_sdf)")
+        full = path
+        if base_dir is not None:
+            root = os.path.realpath(base_dir)
+            full = os.path.realpath(os.path.join(root, path))
+            if os.path.commonpath([root, full]) != root:
+                raise ValueError(f"sdf path {path!r} must stay inside the study's folder")
+        if not os.path.isfile(full):
+            raise ValueError(f"sdf file {path!r} not found")
+        return GridSDF.load(full, path)
+    raise ValueError(f"unknown shape type {kind!r} (box, cylinder, tube, sphere, mesh, sdf, union, intersect, "
+                     "subtract)")
 
 
 def manifold_from_trimesh(mesh):

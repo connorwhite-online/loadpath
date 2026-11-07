@@ -548,6 +548,23 @@
       ],
       "additionalProperties": false
     },
+    "sdf": {
+      "type": "object",
+      "description": "A sampled signed distance field: an .npz (distance, origin, pitch; mm, negative inside) relative to the study's folder, as loadpath.exterior.save_sdf writes it. How an SDF tool's shape (libfive, the sdf package, a field graph) comes in.",
+      "properties": {
+        "type": {
+          "const": "sdf"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
     "union": {
       "type": "object",
       "description": "Several shapes acting as one region (a servo's four screw bosses).",
@@ -612,8 +629,8 @@
       "additionalProperties": false
     },
     "shape": {
-      "title": "a shape object (box, cylinder, tube, sphere, mesh, union, intersect, subtract)",
-      "description": "A shape: box, cylinder (tube), sphere, mesh, union, intersect or subtract. Units mm.",
+      "title": "a shape object (box, cylinder, tube, sphere, mesh, sdf, union, intersect, subtract)",
+      "description": "A shape: box, cylinder (tube), sphere, mesh, sdf, union, intersect or subtract. Units mm.",
       "oneOf": [
         {
           "$ref": "#/$defs/box"
@@ -626,6 +643,9 @@
         },
         {
           "$ref": "#/$defs/mesh"
+        },
+        {
+          "$ref": "#/$defs/sdf"
         },
         {
           "$ref": "#/$defs/union"
@@ -645,6 +665,7 @@
           "tube": "#/$defs/cylinder",
           "sphere": "#/$defs/sphere",
           "mesh": "#/$defs/mesh",
+          "sdf": "#/$defs/sdf",
           "union": "#/$defs/union",
           "intersect": "#/$defs/intersect",
           "subtract": "#/$defs/subtract"
