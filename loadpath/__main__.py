@@ -593,6 +593,17 @@ def main(argv=None):
     fe.add_argument("--iterations", help="comma-separated, per pitch")
     fe.add_argument("--no-modal", action="store_true", help="skip the modal check of isolate targets")
     fe.add_argument("--base-dir")
+    co = sub.add_parser("cooling", help="design the inside of a fixed exterior around the heat its parts make: "
+                                        "components under their maxTemp, the touched skin under its touch "
+                                        "limit (the study's cooling block; with feel or switch blocks, "
+                                        "together with them)")
+    co.add_argument("study")
+    co.add_argument("--out", default="loadpath-cooling")
+    co.add_argument("--pitches", help="comma-separated mm, coarse to fine (default: switch.pitches or "
+                                      "cooling.pitches)")
+    co.add_argument("--iterations", help="comma-separated, per pitch")
+    co.add_argument("--verify", help="comma-separated mm grids for the delivered mesh's temperatures")
+    co.add_argument("--base-dir")
     ex = sub.add_parser("explore", help="one study, an outcome per manufacturing method and material (fdm, sls, "
                                         "mjf, sla, lpbf, cast, milled...): mass, safety factor, cost and lead "
                                         "time, ranked, with Pareto fronts")
@@ -748,6 +759,8 @@ def main(argv=None):
         return _switch(args)
     if args.cmd == "feel":
         return _feel(args)
+    if args.cmd == "cooling":
+        return _cooling(args)
     if args.cmd == "handoff":
         return _handoff(args)
     if args.cmd == "exterior":
@@ -1567,6 +1580,33 @@ def _feel(args):
         its = [int(v) for v in args.iterations.split(",")] if args.iterations else None
         rep = run_feel(st, args.out, pitches=pitches, iterations=its, on_progress=_progress,
                        modal=not args.no_modal)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    _write_report(args.out, {"ok": rep["passes"], **rep})
+    return 0 if rep["passes"] else 1
+
+
+def _cooling(args):
+    from .cooling import run_cooling
+    from .schema import format_issues, lint
+    from .spec import study_from_dict
+
+    doc = _load(args.study)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
+    errors = [x for x in lint(doc, "study") if x["level"] == "error"]
+    if not doc.get("cooling"):
+        errors.append({"level": "error", "path": "$.cooling", "message": "the study needs a cooling block"})
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+    try:
+        st = study_from_dict(doc, base)
+        pitches = [float(v) for v in args.pitches.split(",")] if args.pitches else None
+        its = [int(v) for v in args.iterations.split(",")] if args.iterations else None
+        vps = [float(v) for v in args.verify.split(",")] if args.verify else None
+        rep = run_cooling(st, args.out, pitches=pitches, iterations=its, on_progress=_progress,
+                          verify_pitches=vps)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2

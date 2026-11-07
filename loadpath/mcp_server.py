@@ -370,6 +370,26 @@ def feel(study, base_dir: str | None = None, pitches: list | None = None) -> dic
     return out
 
 
+def cooling(study, base_dir: str | None = None, pitches: list | None = None) -> dict:
+    """Validate a study with a `cooling` block and design its interior
+    (cooling.py) as a background job."""
+    if isinstance(study, str):
+        from .tasks import read_doc
+        study, base_dir = read_doc(study, base_dir)
+    if not (study or {}).get("cooling"):
+        return {"ok": False, "error": "the study needs a cooling block (see loadpath_schema('study'), $.cooling)"}
+    v = check(study, base_dir)
+    if not v["ok"]:
+        return v
+    args = ["cooling", "{dir}/study.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
+    if pitches:
+        args += ["--pitches", ",".join(str(float(p)) for p in pitches)]
+    out = _spawn("cooling", v.get("name") or "study", {"study.json": study}, args,
+                 cells=v["cells"], warnings=v["warnings"], base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def _explore_status(d, r):
     keep = ("id", "passes", "mass", "safetyFactor", "safetyFactorMethod", "maxDeflection", "unitCost", "leadDays",
             "governedBy", "stl", "render", "warnings", "error")
@@ -742,6 +762,16 @@ def status(job_id: str) -> tuple[dict, list]:
                     "delivered = read back from the STL; modal = the isolate check with modes). A window the "
                     "exterior alone already misses cannot be met from inside."}
         pngs = []
+    elif kind == "cooling":
+        info = {"status": "done", "kind": kind, **{k: r.get(k) for k in (
+            "passes", "cooling", "feel", "feelOk", "presses", "volume", "mass", "mesh", "watertight",
+            "levels", "seconds")}, "report": report,
+            "next": "Show the user each component's hottest temperature against its maxTemp and the skin's hot "
+                    "spot against its touch limit (cooling.design; delivered = read back from the STL on two "
+                    "finer grids, gridChange = how much they differ), and where the heat leaves (heatOut). A "
+                    "limit the filled interior still misses needs a change the designer owns: more exterior "
+                    "area, vents, a metal spreader, or less power."}
+        pngs = []
     elif kind == "lattice":
         info = {"status": "done", "kind": kind, "parent": meta.get("parent"), **r}
         pngs = [_png(d, r.get("render"))]
@@ -1010,6 +1040,17 @@ def serve():
         design, as printed and read back from the STL, and a modal check of isolate targets. Starts a
         job; poll loadpath_status."""
         return feel(study, base_dir, pitches)
+
+    @tool
+    def loadpath_cooling(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:
+        """Design everything inside a fixed exterior around the heat its electronics make, with the least
+        material: a study with a thin `skin`, components as keepOuts and a `cooling` block: components
+        [{region, watts, maxTemp, conductivity}], skin {maxTemp | contact: continuous|held|brief, shape
+        where touched}, ambient, vents (openings the exterior already has; stack flow). Grows pads and
+        ribs that carry heat to the skin and spread it. `feel` and `switch` blocks in the same study are
+        designed with it. No supports or load cases needed. Reports temperatures on the design, as
+        printed, and read back from the STL on two finer grids. Starts a job; poll loadpath_status."""
+        return cooling(study, base_dir, pitches)
 
     @tool
     def loadpath_lattice(job_id: str, outcome: int | None = None, options: dict | None = None) -> dict:

@@ -578,6 +578,30 @@ cells, half the design pitch and no finer than 0.5 mm) and, for isolate,
 when a 1 mm design misses on the delivered reading (it closed the
 microphone body's drop). See docs/FEEL.md.
 
+## Designing around electronics heat
+
+Inside the same kind of exterior, a `cooling` block designs the interior
+around the heat the parts inside make, and `loadpath cooling study.json
+--out out` runs it (MCP: `loadpath_cooling`). `components`: each a keep-out
+`region` (or `shape`) with `watts`, `maxTemp` (C) and `conductivity`
+(default 20 W/(m K); a battery 1-3, with no watts). `skin`: `maxTemp`, or
+`contact: continuous | held | brief` (plastic touch limits 43 / 48 / 60 C
+after IEC 62368-1), and a `shape` where it is touched. `ambient` (default
+25; ask the user how hot a room it must work in). `vents`: openings the
+exterior already has, with `gravity` the way down in use; never add one
+yourself, suggest it to the designer. The interior grows pads and ribs
+that carry heat from the hot parts and spread it under the skin; still air
+conducts in the gaps, the outside loses heat at 10 W/(m^2 K).
+
+Read the bare skin and a filled interior first (`examples/cooling/handheld.py
+--baseline`). The skin's mean rise is about watts / (h x outside area)
+whatever is inside: if that alone is over the touch limit, or the filled
+interior still misses a limit, no interior meets it, and the designer
+decides (more area, vents, a metal spreader, less power). Feel and switch
+blocks in the same study are designed with it. Report the `delivered`
+readings (the STL on two finer grids) and their `gridChange`. See
+docs/COOLING.md.
+
 ## Heat, fatigue and creep
 
 - A part next to something hot (a stepper face at 70 C, a heated bed):

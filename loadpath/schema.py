@@ -909,6 +909,62 @@ _FEEL_TARGET = {"type": "object", "properties": {
     "shockG": {**_POS, "description": "isolate: the knock `maxTravel` is read at, in g (default 1: its weight)"}},
     "required": ["kind"],
     "additionalProperties": False}
+_COOLING_COMPONENT = {
+    "type": "object",
+    "description": "A part inside that makes heat or carries it: a keep-out `region` (the part as drawn, not its "
+                   "assembly path) or its own `shape`.",
+    "properties": {
+        "region": {"type": "string", "description": "the keepOut (or preserve) id of the part"},
+        "shape": {"$ref": "#/$defs/shape"},
+        "watts": {"type": "number", "minimum": 0, "description": "heat it gives off, W (default 0: it only "
+                                                                 "conducts, a battery or a board)"},
+        "maxTemp": {"type": "number", "description": "C its hottest point must stay under (a die's junction "
+                                                     "limit less the package's own rise, a battery's 45-60 C)"},
+        "conductivity": {**_POS, "description": "W/(m K) (default 20: a package on a copper-filled board)"}},
+    "additionalProperties": False}
+_COOLING = {
+    "type": "object",
+    "description": "`loadpath cooling`: design the inside of a fixed exterior around the heat its parts make "
+                   "(cooling.py). Minimum volume, with each component's hottest point under its `maxTemp` and "
+                   "the touched skin under `skin.maxTemp` (or a `skin.contact` class): the interior grows pads "
+                   "and ribs that carry heat to the skin and spread it. Enclosed air conducts (still air in "
+                   "gaps of a few mm), the outside loses heat by natural convection and radiation, and vents "
+                   "the exterior already has carry heat by stack flow. Pair it with `skin`; `switch` and `feel` "
+                   "blocks in the same study are designed together with it. A study with a cooling block "
+                   "needs no supports or load cases. `run` ignores it.",
+    "properties": {
+        "ambient": {"type": "number", "description": "room temperature, C (default 25; 35 for a hot day)"},
+        "components": {"type": "array", "items": _COOLING_COMPONENT, "minItems": 1},
+        "skin": {"type": "object", "properties": {
+                     "maxTemp": {"type": "number", "description": "C the touched surface must stay under"},
+                     "contact": {"enum": ["continuous", "held", "brief"],
+                                 "description": "instead of maxTemp: plastic touch limits after IEC 62368-1 "
+                                                "(43, 48, 60 C)"},
+                     "shape": {"$ref": "#/$defs/shape", "description": "where it is touched (default: all of "
+                                                                         "the outside)"},
+                     "h": {**_POS, "description": "W/(m^2 K) to the room, convection and radiation (default 10)"}},
+                 "additionalProperties": False},
+        "air": {"type": "object", "properties": {
+                    "conductivity": {**_POS, "description": "W/(m K) of the air inside (default 0.03)"}},
+                "additionalProperties": False},
+        "vents": {"type": "array", "items": {"type": "object", "properties": {
+                      "id": {"type": "string"},
+                      "shape": {"$ref": "#/$defs/shape", "description": "an opening the exterior already has"},
+                      "area": {**_POS, "description": "open area, mm^2 (default: the outside faces it covers)"}},
+                  "required": ["shape"], "additionalProperties": False},
+                  "description": "openings for stack flow: the lowest let air in, the highest out"},
+        "gravity": {"type": "string", "pattern": "^[+-]?[xyz]$",
+                    "description": "the way down in use, for the vents' stack (default -z)"},
+        "conductivity": {**_POS, "description": "W/(m K) of the printed material (default the material card's)"},
+        "pitches": {"type": "array", "items": _POS, "minItems": 1,
+                    "description": "mm, coarse to fine (without a switch block)"},
+        "iterations": {"oneOf": [{"type": "integer", "minimum": 1},
+                                 {"type": "array", "items": {"type": "integer", "minimum": 1}}]},
+        "verifyPitches": {"type": "array", "items": _POS, "minItems": 1,
+                          "description": "mm grids the delivered mesh's temperatures are read on (default "
+                                         "0.7 and 0.5 of the design pitch)"}},
+    "required": ["components"],
+    "additionalProperties": False}
 _FEEL = {
     "type": "object",
     "description": "`loadpath feel`: design the inside of a fixed exterior for how it feels (feel.py). Minimum "
@@ -1195,6 +1251,7 @@ STUDY_SCHEMA = {
                   "description": "`loadpath split`: cut the exterior into a base and a cover with a lip, screw "
                                  "posts and snaps inside the skin (shells.py; `loadpath schema split`). `run` "
                                  "refuses a study that still has one: split it first and run each half"},
+        "cooling": _COOLING,
         "pattern": {"type": "object", "properties": {
                         "type": {"const": "circular"},
                         "axis": {"enum": ["x", "y", "z"]},
@@ -1217,7 +1274,7 @@ STUDY_SCHEMA = {
                            "directory the environment variable `env` names; the case is skipped without it."},
     },
     "required": ["designSpace"],
-    "x-requireOne": [["loadCases"], ["loads"], ["feel"]],
+    "x-requireOne": [["loadCases"], ["loads"], ["feel"], ["cooling"]],
     "additionalProperties": False,
     "$defs": {**_SHAPES, "shape": _SHAPE, "region": _REGION, "keepOut": _KEEP_OUT, "support": _SUPPORT,
               "switchClearance": _SWITCH_CLEARANCE,
@@ -2297,7 +2354,8 @@ def lint(doc, kind: str = "study") -> list[dict]:
             FieldGraph(doc)
         except ValueError as exc:
             out.append(("error", "$.nodes", str(exc)))
-    if kind == "study" and isinstance(doc, dict) and not doc.get("supports") and not doc.get("feel"):
+    if kind == "study" and isinstance(doc, dict) and not doc.get("supports") and not doc.get("feel") \
+            and not doc.get("cooling"):
         # beyond JSON Schema: supports are optional only for pressure vessels
         cases = doc.get("loadCases") or ([{"loads": doc["loads"]}] if isinstance(doc.get("loads"), list) else [])
         loads = [ld for c in cases if isinstance(c, dict) for ld in (c.get("loads") or [])]

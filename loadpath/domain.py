@@ -494,8 +494,9 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     touches |= support_nodes[mesh.enode].any(axis=1)
     keep_lbls = np.unique(el_lbl[touches])
     keep = np.isin(el_lbl, keep_lbls)
-    if not study.supports and (study.raw or {}).get("feel"):
-        # a feel study holds the part where each target says (feel.py)
+    if not study.supports and ((study.raw or {}).get("feel") or (study.raw or {}).get("cooling")):
+        # a feel study holds the part where each target says (feel.py); a
+        # cooling study has no holds (cooling.py)
         keep[:] = True
     if (~keep).any():
         dropped = int((~keep).sum())
