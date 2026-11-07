@@ -143,6 +143,8 @@ def main():
     ap.add_argument("--pitches", default="1.0")
     ap.add_argument("--iterations", default=None)
     ap.add_argument("--baseline", action="store_true")
+    ap.add_argument("--stl-only", action="store_true",
+                    help="write the touch-mic-pad eval case's STLs into --out (point LOADPATH_TOUCH_MIC_STL at it)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     from loadpath.domain import build_domain
@@ -153,6 +155,17 @@ def main():
 
     import trimesh
     paths = geometry(a.touch_mic, a.out)
+    if a.stl_only:
+        from loadpath.shapes import manifold_from_trimesh
+        for w in ("outer", "base", "bay", "opening", "boardspace"):
+            m = trimesh.load(paths[w], force="mesh")
+            if w in ("outer", "base"):
+                # within 0.01 mm of the extract, a third of the triangles
+                o = manifold_from_trimesh(m).simplify(0.01).to_mesh()
+                m = trimesh.Trimesh(o.vert_properties[:, :3], o.tri_verts)
+            m.export(os.path.join(a.out, f"touch-mic-{w}.stl"))
+        print(os.path.abspath(a.out))
+        return
     pitches = [float(p) for p in a.pitches.split(",")]
     doc = study(paths, pitches[0])
     json.dump(doc, open(os.path.join(a.out, "touch-mic.study.json"), "w"), indent=1)

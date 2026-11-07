@@ -1883,5 +1883,183 @@
    }
   ],
   "seconds": 2035.1861338615417
+ },
+ {
+  "case": "touch-mic-pad",
+  "kind": "switch",
+  "tier": "full",
+  "checks": [
+   {
+    "check": "in window (design)",
+    "value": 13,
+    "op": ">=",
+    "limit": 12,
+    "pass": true
+   },
+   {
+    "check": "in window (delivered mesh)",
+    "value": 12,
+    "op": ">=",
+    "limit": 10,
+    "pass": true
+   },
+   {
+    "check": "volume mm^3",
+    "value": 8070.091177880771,
+    "op": "<=",
+    "limit": 9000,
+    "pass": true
+   },
+   {
+    "check": "watertight",
+    "value": true,
+    "op": "==",
+    "limit": true,
+    "pass": true
+   },
+   {
+    "check": "hold squeeze mm (delivered mesh)",
+    "value": 0.09205617732507854,
+    "op": "<=",
+    "limit": 0.3,
+    "pass": true
+   }
+  ],
+  "best": {
+   "mass": 8.87710029566885,
+   "volume": 8070.091177880771,
+   "inWindow": 13,
+   "deliveredInWindow": 12
+  },
+  "presses": [
+   {
+    "at": [
+     0.0,
+     0.0
+    ],
+    "forceGf": 141.1059177300275,
+    "thresholdedForceGf": 140.67498891074678,
+    "deliveredForceGf": 120.82527631283925
+   },
+   {
+    "at": [
+     0.0,
+     -7.0
+    ],
+    "forceGf": 199.9976378961105,
+    "thresholdedForceGf": 198.7116066951273,
+    "deliveredForceGf": 184.9322822664438
+   },
+   {
+    "at": [
+     0.0,
+     -13.0
+    ],
+    "forceGf": 291.089352304572,
+    "thresholdedForceGf": 288.11331694245615,
+    "deliveredForceGf": 293.5762946478535
+   },
+   {
+    "at": [
+     7.0,
+     -5.0
+    ],
+    "forceGf": 182.10930786824446,
+    "thresholdedForceGf": 181.92676873883732,
+    "deliveredForceGf": 166.70364927990414
+   },
+   {
+    "at": [
+     12.0,
+     -9.0
+    ],
+    "forceGf": 302.4099384776011,
+    "thresholdedForceGf": 304.29075955133595,
+    "deliveredForceGf": 316.3348678354926
+   },
+   {
+    "at": [
+     11.0,
+     0.0
+    ],
+    "forceGf": 202.85619612203038,
+    "thresholdedForceGf": 201.9915074653262,
+    "deliveredForceGf": 190.83948668503263
+   },
+   {
+    "at": [
+     14.0,
+     6.0
+    ],
+    "forceGf": 303.1969492772547,
+    "thresholdedForceGf": 299.7883366565617,
+    "deliveredForceGf": 293.18701246305534
+   },
+   {
+    "at": [
+     8.0,
+     11.0
+    ],
+    "forceGf": 204.23688370828881,
+    "thresholdedForceGf": 202.84116112581597,
+    "deliveredForceGf": 168.4126229113459
+   },
+   {
+    "at": [
+     0.0,
+     12.0
+    ],
+    "forceGf": 167.02327827843882,
+    "thresholdedForceGf": 166.5717203900521,
+    "deliveredForceGf": 128.6135002354591
+   },
+   {
+    "at": [
+     -7.0,
+     -5.0
+    ],
+    "forceGf": 199.98589860472396,
+    "thresholdedForceGf": 200.02969469068645,
+    "deliveredForceGf": 189.3127427566619
+   },
+   {
+    "at": [
+     -12.0,
+     -9.0
+    ],
+    "forceGf": 321.10548490146044,
+    "thresholdedForceGf": 322.064006245587,
+    "deliveredForceGf": 350.9193721759213
+   },
+   {
+    "at": [
+     -11.0,
+     0.0
+    ],
+    "forceGf": 213.42390692686442,
+    "thresholdedForceGf": 213.53496235917677,
+    "deliveredForceGf": 210.56597340334844
+   },
+   {
+    "at": [
+     -14.0,
+     6.0
+    ],
+    "forceGf": 302.4524617443123,
+    "thresholdedForceGf": 301.2687742554834,
+    "deliveredForceGf": 303.55727722038495
+   },
+   {
+    "at": [
+     -8.0,
+     11.0
+    ],
+    "forceGf": 206.8261514160614,
+    "thresholdedForceGf": 206.17035377079847,
+    "deliveredForceGf": 183.78482310947476
+   }
+  ],
+  "pass": true,
+  "seconds": 494.2440388202667
  }
 ]

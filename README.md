@@ -267,7 +267,8 @@ USB-C plug paths kept clear, and the interior designed so a press anywhere
 on the touch area clicks at 150 gf at the centre rising to 300 gf at the
 rim. The drawn interior hits 6 of 14 press windows (up to 1436 gf at a
 corner); loadpath's design hits 13 of 14, and its delivered mesh, read
-back, 10 of 14 with the rest 1-17% over, in 15% less material.
+back, 11 of 14 with the rest 3-17% over, in 15% less material. It runs in
+the eval suite as `touch-mic-pad`.
 ([docs/SWITCH.md](docs/SWITCH.md))
 
 <img src="docs/images/switch/touch-mic-forces.png" width="760">

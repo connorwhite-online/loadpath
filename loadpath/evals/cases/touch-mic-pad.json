@@ -1,0 +1,343 @@
+{
+ "name": "touch-mic-pad",
+ "description": "Push pad of a touch microphone (SLS TPU 88A, real product CAD, round 17 surfacing): exterior kept as a 1.0 mm skin, board/switch/USB-C paths clear, interior designed for a fire-force map (150 gf centre to 300 gf at 14 mm, 100 gf floor). Round 17's drawn interior reads 6 of 14 windows (129-1436 gf), 9.7 cm^3; the bare skin 9 of 14.",
+ "designSpace": {
+  "type": "mesh",
+  "path": "touch-mic-outer.stl"
+ },
+ "skin": {
+  "thickness": 1.0
+ },
+ "preserve": [
+  {
+   "id": "base",
+   "shape": {
+    "type": "mesh",
+    "path": "touch-mic-base.stl"
+   }
+  },
+  {
+   "id": "rails",
+   "shape": {
+    "type": "mesh",
+    "path": "touch-mic-bay.stl"
+   }
+  },
+  {
+   "id": "tip",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0,
+     0,
+     8.1
+    ],
+    "p1": [
+     0,
+     0,
+     8.6
+    ],
+    "r": 1.6
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "opening",
+   "bore": false,
+   "shape": {
+    "type": "mesh",
+    "path": "touch-mic-opening.stl"
+   }
+  },
+  {
+   "id": "board",
+   "bore": false,
+   "shape": {
+    "type": "mesh",
+    "path": "touch-mic-boardspace.stl"
+   }
+  },
+  {
+   "id": "switch",
+   "bore": false,
+   "insertFrom": "-z",
+   "shape": {
+    "type": "box",
+    "min": [
+     -6.8,
+     -5.6,
+     0
+    ],
+    "max": [
+     6.8,
+     4.6,
+     7.0
+    ]
+   }
+  },
+  {
+   "id": "stem",
+   "bore": false,
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     0,
+     0,
+     -1
+    ],
+    "p1": [
+     0,
+     0,
+     8.1
+    ],
+    "r": 2.7
+   }
+  },
+  {
+   "id": "usb-plug",
+   "bore": false,
+   "insertFrom": "+y",
+   "shape": {
+    "type": "box",
+    "min": [
+     -6.0,
+     24.84,
+     3.5999999999999996
+    ],
+    "max": [
+     6.0,
+     28.84,
+     9.6
+    ]
+   }
+  }
+ ],
+ "supports": [
+  {
+   "shape": {
+    "type": "box",
+    "min": [
+     -30,
+     -35,
+     -0.5
+    ],
+    "max": [
+     30,
+     35,
+     0.31
+    ]
+   }
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "squeeze",
+   "loads": [
+    {
+     "shape": {
+      "type": "box",
+      "min": [
+       23.0,
+       -8,
+       4.5
+      ],
+      "max": [
+       26,
+       8,
+       9
+      ]
+     },
+     "force": [
+      -2.5,
+      0,
+      0
+     ]
+    },
+    {
+     "shape": {
+      "type": "box",
+      "min": [
+       -26,
+       -8,
+       4.5
+      ],
+      "max": [
+       -23.0,
+       8,
+       9
+      ]
+     },
+     "force": [
+      2.5,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ ],
+ "material": "tpu88a",
+ "minMember": 1.0,
+ "goal": {
+  "volumeFraction": 0.2
+ },
+ "resolution": {
+  "pitch": 1.0
+ },
+ "switch": {
+  "unit": "gf",
+  "output": {
+   "region": "tip",
+   "direction": "-z",
+   "gap": 0.4,
+   "trigger": 65,
+   "travel": 0.25
+  },
+  "presses": [
+   {
+    "at": [
+     0,
+     0
+    ],
+    "max": 150.0,
+    "min": 100
+   },
+   {
+    "at": [
+     0,
+     -7
+    ],
+    "max": 225.0,
+    "min": 100
+   },
+   {
+    "at": [
+     0,
+     -13
+    ],
+    "max": 289.3,
+    "min": 100
+   },
+   {
+    "at": [
+     7,
+     -5
+    ],
+    "max": 242.2,
+    "min": 100
+   },
+   {
+    "at": [
+     12,
+     -9
+    ],
+    "max": 300.0,
+    "min": 100
+   },
+   {
+    "at": [
+     11,
+     0
+    ],
+    "max": 267.9,
+    "min": 100
+   },
+   {
+    "at": [
+     14,
+     6
+    ],
+    "max": 300.0,
+    "min": 100
+   },
+   {
+    "at": [
+     8,
+     11
+    ],
+    "max": 295.7,
+    "min": 100
+   },
+   {
+    "at": [
+     0,
+     12
+    ],
+    "max": 278.6,
+    "min": 100
+   },
+   {
+    "at": [
+     -7,
+     -5
+    ],
+    "max": 242.2,
+    "min": 100
+   },
+   {
+    "at": [
+     -12,
+     -9
+    ],
+    "max": 300.0,
+    "min": 100
+   },
+   {
+    "at": [
+     -11,
+     0
+    ],
+    "max": 267.9,
+    "min": 100
+   },
+   {
+    "at": [
+     -14,
+     6
+    ],
+    "max": 300.0,
+    "min": 100
+   },
+   {
+    "at": [
+     -8,
+     11
+    ],
+    "max": 295.7,
+    "min": 100
+   }
+  ],
+  "pressRadius": 1.0,
+  "clearance": {
+   "region": "board",
+   "gap": 1.4
+  },
+  "hold": [
+   {
+    "case": "squeeze",
+    "maxDeflection": 0.3
+   }
+  ],
+  "iterations": 80
+ },
+ "expect": {
+  "minInWindow": 12,
+  "minDeliveredInWindow": 10,
+  "maxVolume": 9000,
+  "coarse": {
+   "iterations": 40
+  }
+ },
+ "assets": {
+  "env": "LOADPATH_TOUCH_MIC_STL",
+  "files": [
+   "touch-mic-outer.stl",
+   "touch-mic-base.stl",
+   "touch-mic-bay.stl",
+   "touch-mic-opening.stl",
+   "touch-mic-boardspace.stl"
+  ],
+  "make": "python examples/switch/touch_mic.py --touch-mic <touch-mic checkout> --out <dir> --stl-only"
+ }
+}

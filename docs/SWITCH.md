@@ -127,7 +127,7 @@ review used, and the flanks holding under a squeeze.
 | round 17 as drawn | 6 of 14 | 129 gf centre, 292-1436 gf at the sides and corners | 0.05 mm | 9.7 cm^3 |
 | skin, base and rails only | 9 of 14 | 96 gf centre (under the floor), 307-391 at the corners | 0.10 mm | |
 | **loadpath, design** | **13 of 14** | 140 gf centre; 323 gf at one corner, the rest in window | 0.09 mm | |
-| **loadpath, delivered mesh** read back | 10 of 14 | 122 gf centre; the four misses 1-17% over a 289-300 gf ceiling | 0.09 mm | **8.2 cm^3** |
+| **loadpath, delivered mesh** read back | 11 of 14 | 122 gf centre; the three misses 3-17% over a 300 gf ceiling | 0.09 mm | **8.2 cm^3** |
 
 The drawn interior is stiff where the product wants it soft: the corners
 take up to 4.8 times their ceiling. Loadpath's interior meets the map with
@@ -147,7 +147,18 @@ round 17 included: it is the smallest gap over the board (the USB-C
 receptacle) applied to the whole board. A clearance region per component
 would be the honest version.
 
-The run took 80 iterations and 454 s on 4 CPU cores.
+The run took 80 iterations and 454 s on 4 CPU cores. A press counts as in
+window within 2%, on the design and on the delivered mesh alike.
+
+It is an eval case, `touch-mic-pad`. The product's CAD is not in this
+repository: `touch_mic.py --stl-only` writes the case's STLs from a
+touch-mic checkout, `LOADPATH_TOUCH_MIC_STL` points the suite at them, and
+the case is skipped where that is not set. It passes with at least 12 presses in window on the
+design, 10 read back from the delivered mesh, under 9.0 cm^3, a
+watertight mesh, and the squeeze held on the delivered mesh. Every
+`loadpath switch` report now carries that read-back
+(`deliveredForceGf`, `deliveredInWindow`, `deliveredHold`). A
+shareable comparison sheet of this run: https://claude.ai/artifact/DevY83gMUWnygXPb2Jkm5v.
 
 ## Three things that had to change
 

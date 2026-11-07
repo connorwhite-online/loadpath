@@ -1655,5 +1655,183 @@
    "constrainedMass": 74.98834982559252,
    "reason": "stress utilization 0.18: constrained 75.0 g against search 77.3 g"
   }
+ },
+ {
+  "case": "touch-mic-pad",
+  "kind": "switch",
+  "tier": "coarse",
+  "checks": [
+   {
+    "check": "in window (design)",
+    "value": 13,
+    "op": ">=",
+    "limit": 12,
+    "pass": true
+   },
+   {
+    "check": "in window (delivered mesh)",
+    "value": 11,
+    "op": ">=",
+    "limit": 10,
+    "pass": true
+   },
+   {
+    "check": "volume mm^3",
+    "value": 8008.687749519472,
+    "op": "<=",
+    "limit": 9000,
+    "pass": true
+   },
+   {
+    "check": "watertight",
+    "value": true,
+    "op": "==",
+    "limit": true,
+    "pass": true
+   },
+   {
+    "check": "hold squeeze mm (delivered mesh)",
+    "value": 0.09252557124612155,
+    "op": "<=",
+    "limit": 0.3,
+    "pass": true
+   }
+  ],
+  "best": {
+   "mass": 8.80955652447142,
+   "volume": 8008.687749519472,
+   "inWindow": 13,
+   "deliveredInWindow": 11
+  },
+  "presses": [
+   {
+    "at": [
+     0.0,
+     0.0
+    ],
+    "forceGf": 125.06668426184645,
+    "thresholdedForceGf": 127.19735881442193,
+    "deliveredForceGf": 118.40654593720637
+   },
+   {
+    "at": [
+     0.0,
+     -7.0
+    ],
+    "forceGf": 188.27179242454912,
+    "thresholdedForceGf": 187.9223364863772,
+    "deliveredForceGf": 183.2096690214549
+   },
+   {
+    "at": [
+     0.0,
+     -13.0
+    ],
+    "forceGf": 287.065839330635,
+    "thresholdedForceGf": 281.88876119397906,
+    "deliveredForceGf": 296.1505939311177
+   },
+   {
+    "at": [
+     7.0,
+     -5.0
+    ],
+    "forceGf": 169.85092627635188,
+    "thresholdedForceGf": 170.2591077126541,
+    "deliveredForceGf": 166.23980295863433
+   },
+   {
+    "at": [
+     12.0,
+     -9.0
+    ],
+    "forceGf": 296.7289128884466,
+    "thresholdedForceGf": 300.79088784703015,
+    "deliveredForceGf": 319.62619621689265
+   },
+   {
+    "at": [
+     11.0,
+     0.0
+    ],
+    "forceGf": 189.2413400427965,
+    "thresholdedForceGf": 187.16481315262604,
+    "deliveredForceGf": 189.7227207821183
+   },
+   {
+    "at": [
+     14.0,
+     6.0
+    ],
+    "forceGf": 291.55865419904865,
+    "thresholdedForceGf": 285.01586300470495,
+    "deliveredForceGf": 290.9372818726034
+   },
+   {
+    "at": [
+     8.0,
+     11.0
+    ],
+    "forceGf": 184.5293287244734,
+    "thresholdedForceGf": 186.37572180004165,
+    "deliveredForceGf": 164.728588279761
+   },
+   {
+    "at": [
+     0.0,
+     12.0
+    ],
+    "forceGf": 144.057159263576,
+    "thresholdedForceGf": 148.60545866819868,
+    "deliveredForceGf": 125.59127773997581
+   },
+   {
+    "at": [
+     -7.0,
+     -5.0
+    ],
+    "forceGf": 187.9721699118013,
+    "thresholdedForceGf": 189.01602290270918,
+    "deliveredForceGf": 186.19412791335478
+   },
+   {
+    "at": [
+     -12.0,
+     -9.0
+    ],
+    "forceGf": 315.79191998581956,
+    "thresholdedForceGf": 316.11453857941945,
+    "deliveredForceGf": 352.4439492175428
+   },
+   {
+    "at": [
+     -11.0,
+     0.0
+    ],
+    "forceGf": 202.3244118265687,
+    "thresholdedForceGf": 203.25857787537458,
+    "deliveredForceGf": 208.28867324846678
+   },
+   {
+    "at": [
+     -14.0,
+     6.0
+    ],
+    "forceGf": 276.88847983024476,
+    "thresholdedForceGf": 274.28116064687185,
+    "deliveredForceGf": 296.18654780356127
+   },
+   {
+    "at": [
+     -8.0,
+     11.0
+    ],
+    "forceGf": 181.16990349867385,
+    "thresholdedForceGf": 184.3663053245823,
+    "deliveredForceGf": 168.85680004742972
+   }
+  ],
+  "pass": true,
+  "seconds": 266.62970542907715
  }
 ]

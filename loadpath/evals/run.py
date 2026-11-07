@@ -519,8 +519,21 @@ def run_switch_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
     expect = raw.get("expect", {})
     t0 = time.time()
     row = {"case": name, "kind": "switch", "tier": tier, "checks": []}
+    assets = raw.get("assets")
+    if assets:
+        # Geometry that is not in this repository (a product's own CAD):
+        # read from the directory an environment variable names, and the
+        # case skipped where it is not set.
+        where = os.environ.get(assets["env"], "")
+        missing = [f for f in assets.get("files", []) if not (where and os.path.exists(os.path.join(where, f)))]
+        if missing:
+            why = f"needs {assets['env']} (a directory with {', '.join(missing)}; {assets.get('make', '')})"
+            print(f"== {name} (skipped: {why})", file=sys.stderr, flush=True)
+            return {"case": name, "kind": "switch", "tier": tier, "skipped": why, "pass": True, "seconds": 0.0,
+                    "checks": []}
+        base = where
     try:
-        doc = {k: v for k, v in raw.items() if k != "expect"}
+        doc = {k: v for k, v in raw.items() if k not in ("expect", "assets")}
         st = study_from_dict(doc, base_dir=base)
         its = None
         if tier == "coarse":
