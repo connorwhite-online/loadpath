@@ -142,8 +142,8 @@ def test_thin_skin_is_a_density_floor():
 
 
 def test_skin_review_names_where_the_skin_alone_misses():
-    """Ceilings of 600 gf at the outer presses, where the bare 1 mm skin
-    alone fires at about 665 gf: the review says the skin, not the
+    """Ceilings of 550 gf at the outer presses, where the bare 1 mm skin
+    alone fires at about 615 gf (1.5 mm cut cells): the review says the skin, not the
     interior, decides those presses, by how much, and what the designer
     could change. It changes nothing itself."""
     import copy
@@ -151,7 +151,7 @@ def test_skin_review_names_where_the_skin_alone_misses():
 
     from loadpath.skinreview import _rescale, skin_preflight
 
-    doc = pad(field={"center": [0, 0], "radius": 6, "rings": 1, "perRing": 4, "max": [500, 600], "min": 400},
+    doc = pad(field={"center": [0, 0], "radius": 6, "rings": 1, "perRing": 4, "max": [500, 550], "min": 400},
               skinReview={"minWall": 0.6})
     st = study_from_dict(doc)
     raw0 = copy.deepcopy(st.raw)
@@ -187,9 +187,10 @@ def test_skin_review_names_where_the_skin_alone_misses():
     assert rv["trusted"] == g["check"]["converged"]
     if not rv["trusted"]:
         assert rv["summary"].startswith("Grid too coarse")
-    # a 1 mm skin floored on 1.5 mm cells is mostly split across cells: the
-    # review says the skin reads soft
-    assert g["splitSkinShare"] > 0.5 and rv["skinModel"]["readsSoft"]
+    # a 1 mm skin on 1.5 mm cells is mostly split across cells: read as cut
+    # cells, not soft (LOADPATH_SKIN_MODEL=floor: the review says it is)
+    assert g["splitSkinShare"] > 0.5 and rv["skinModel"]["model"] == "cut"
+    assert not rv["skinModel"]["readsSoft"]
     # the default minimum wall for TPU powder is 1.0 mm: no thinner skin is
     # printable, and the summary falls back on the ceiling
     rv2 = skin_preflight(study_from_dict(pad(field=doc["switch"]["field"])), 1.5)

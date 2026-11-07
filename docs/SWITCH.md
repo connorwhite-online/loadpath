@@ -225,19 +225,21 @@ On the touch microphone, the bare skin's fire force at five presses (ceilings 30
 | 0.7 mm | 389 | 341 | 311 | 338 | 103 |
 | 0.5 mm, whole cells (skin ~30% too thick) | 565 | 503 | 479 | 487 | 154 |
 
-Neither model of the skin is exact here, and they err in opposite
-directions. On 1.0, 0.75 and 0.7 mm cells the skin is a density floor, and
-a floor reads a skin soft where it splits across two cell layers. On the
-flat 1.0 mm skin of the test pad, 0.25 mm whole cells fire the centre at
-230 gf, 1.0 mm cells that hold the skin exactly give 241 gf, and floored
-0.75, 0.45 and 0.33 mm cells give 158-185 gf, 20-35% soft. On 0.5 mm
-cells the touch microphone's skin is whole cells instead (two per
-thickness), but on its curved surface those hold 4737 mm^3 against
-3647 mm^3 of skin, a skin about 1.3 mm thick: 565 gf at the corner and
-154 gf at the centre. The review reports the floor's share of split cells
-(`grid.splitSkinShare`, 0.6-0.77 on the touch microphone) and says when
-the skin reads soft (`skinModel`). A skin-limited miss read through the
-floor is then at least as large as shown.
+The table above is the density floor, which this section replaced. A floor
+reads a skin soft where it splits across two cell layers: on the flat
+1.0 mm skin of the test pad, 0.25 mm whole cells fire the centre at
+230 gf, and floored 0.75-0.9 mm cells gave 175-185 gf. On 0.5 mm cells the
+touch microphone's skin is whole cells instead, and on its curved surface
+those make a skin about 1.3 mm thick (565 gf at the corner).
+
+Thin skins are now cut cells (`switch._thin_skin`, below). On the test pad
+they fire the centre at 250-265 gf on every grid from 1.0 to 0.55 mm (5-15%
+over the 0.25 mm reference, about what one layer of whole cells gives).
+On the touch microphone's bare skin at 0.7 mm they read 129 gf at the
+centre and 378-477 gf at the rim corners. The mesh read back on its own
+cut cells at 0.33 mm (`switch_lattice.readback`) gives 131 and 397-486.
+The review reports `skinModel.model` and the share of skin in split
+cells. `LOADPATH_SKIN_MODEL=floor` brings back the floor for comparison.
 
 The corner at (-12, -9) is the exterior's problem either way: at least
 about 390 gf on the bare 1.0 mm skin against a 300 gf ceiling. The stiffest skin
@@ -350,12 +352,22 @@ so the click came out about three times too stiff, and the optimizer could
 only add material on top of that. It removed everything and stopped at
 the skin, which is the same thing the touch-mic run saw with its whole
 shell preserved. When the skin is under two cells thick, `switch` now
-turns each cell the skin passes through into a design cell. The cell's
-density is floored at its share of skin volume φ (4^3 samples per cell).
-Under SIMP's E ~ x^3, a cell at φ bends like the real skin (φh = t gives
-E h^3 φ^3 = E t^3). Membrane stiffness reads low by φ^2. This stands in
-for the skin on coarse grids only. From two cells per skin thickness up,
-the skin is ordinary preserved cells.
+turns each cell the skin passes through into a design cell, with its
+density floored at its share of skin volume φ. The stiffness of the cell is
+the skin's own, integrated over 4^3 sub-cells weighted by the skin's share
+of each (from its signed distance, so the thickness is not rounded to a
+sub-cell). The incompatible-mode element keeps a skin that only partly
+fills a cell from locking. Material the optimizer adds above φ fills the
+rest of the cell: K = K_skin + s (K_solid - K_skin), with s = ((x - φ)/(1 -
+φ))^3. Below φ (the skin review thinning the skin), the skin's matrix scales
+as (x/φ)^3. Cells with under 2% skin stay on the floor law, every cut cell
+carries 1e-4 of a solid cell's stiffness for conditioning, and the systems
+factor with PARDISO (or nested-dissection SuperLU). The first version of
+this, E ~ x^3 with x floored at φ, bent like the real skin only when the
+skin sat in one cell layer, and read 20-35% soft where it split across
+two. The large-deflection check still reads skin cells at E x^3 and
+applies its ratio to the cut-cell linear force. From two cells per skin
+thickness up, the skin is ordinary preserved cells.
 
 **Void cells.** A pad's optimum is mostly empty. With empty cells kept in
 the system at E_MIN, preconditioned CG crawled: 60 s an iteration on 17k

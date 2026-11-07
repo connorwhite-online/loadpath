@@ -133,7 +133,12 @@ class _Reader:
     """Fire forces of a design with the skin scaled in some cells."""
 
     def __init__(self, domain, nu, spec, modulus):
+        import dataclasses
+
         from .switch import _problem, _Solves
+        if domain.skin is not None:
+            # sensitivities of thinning the skin at its own share
+            domain = dataclasses.replace(domain, skin=dataclasses.replace(domain.skin, left=True))
         self.domain, self.nu, self.spec, self.modulus = domain, nu, spec, modulus
         self.prob = _problem(domain, spec)
         self.solves = _Solves(domain, nu)
@@ -543,12 +548,20 @@ def note_grid(review: dict, res: dict, check: dict | None) -> dict:
         warn = (f"Coarse grid: {res['cellsAcrossSkin']} cells across the skin and {res['cellsAcrossMember']} across "
                 f"the thinnest member at {res['pitch']:g} mm, unchecked. Confirm on {res['checkPitch']:g} mm cells "
                 "before showing the designer.")
+    from .switch import skin_model
     soft = None
-    if res.get("splitSkinShare") is not None and res["splitSkinShare"] > 0.1:
+    split = res.get("splitSkinShare")
+    if split is not None and skin_model() == "cut":
+        review["skinModel"] = {
+            "model": "cut", "splitSkinShare": split, "readsSoft": False,
+            "note": ("The thin skin is read as cut cells: on a flat 1.0 mm test skin they fire 5-15% stiffer than "
+                     "0.25 mm whole cells on every grid from 1.0 to 0.55 mm, so a skin-limited miss over a "
+                     "ceiling may be that much smaller than shown.")}
+    elif split is not None and split > 0.1:
         soft = (f"{100 * res['splitSkinShare']:.0f}% of the skin sits in cells it only partly fills, where the "
                 "thin-skin model reads it soft (20-35% on a flat test skin): forces the skin carries may be higher "
                 "than shown, so a skin-limited miss is at least this large.")
-        review["skinModel"] = {"splitSkinShare": res["splitSkinShare"], "readsSoft": True, "note": soft}
+        review["skinModel"] = {"model": "floor", "splitSkinShare": split, "readsSoft": True, "note": soft}
     if warn:
         review["trusted"] = False
         review["summary"] = warn + " " + review["summary"]

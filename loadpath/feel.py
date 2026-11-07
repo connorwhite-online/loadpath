@@ -69,8 +69,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .domain import Domain
-from .fem import hex8_ke
-from .switch import _AXES, _axis, _pair, _Solves
+from .switch import _AXES, _axis, _dpair, _Solves
 
 __all__ = ["FeelTarget", "feel_from_study", "feel_readings", "run_feel", "drop_window", "isolation_window",
            "G0"]
@@ -356,18 +355,15 @@ class FeelProblem:
 
     def compliances(self, xp, grads: bool = True):
         """{(target, direction): (c mm/N, dc/dxp or None)}."""
-        from .simp import E_MIN, PENALTY
-        mesh = self.domain.mesh
-        ke = hex8_ke(self.nu) * mesh.pitch
-        dEdx = PENALTY * xp ** (PENALTY - 1) * (1 - E_MIN)
         out = {}
         for g in self.groups:
             g.solves.factor(xp)
+            dpair = _dpair(g.solves.domain, self.nu, xp, self.modulus, g.solves) if grads else None
             sol = g.solves.solve([f for _, _, f in g.probes], "feel")
             for (ti, di, f), u in zip(g.probes, sol):
                 u = np.asarray(u) / self.modulus
                 c = float(f @ u)
-                dc = -self.modulus * dEdx * _pair(mesh.edof, ke, u, u) if grads else None
+                dc = dpair(u, u) if grads else None
                 out[(ti, di)] = (c, dc)
         return out
 

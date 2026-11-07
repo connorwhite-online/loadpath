@@ -307,6 +307,17 @@ class _Solves:
         self.last_cells = len(el)
         e = _modulus(xp[el], E_MIN, PENALTY)
         sub = HexMesh(mesh.elem_ijk[el], mesh.pitch, mesh.origin)
+        sk = d.skin
+        local = None
+        if sk is not None:
+            # skin cells: E_MIN plus their own matrices (_SkinCells)
+            pos = np.full(mesh.n_elem, -1)
+            pos[el] = np.arange(len(el))
+            on = pos[sk.elem] >= 0
+            local = pos[sk.elem[on]]
+            t, scale, _, _ = sk.stiffness_scale(xp)
+            mats = (t[on, None, None] * sk.ks[on] + scale[on, None, None] * sk.dk[on]) * (1 - E_MIN)
+            e[local] = E_MIN
         nodes = mesh.node_id(sub.node_ijk)
         dofs = (3 * nodes[:, None] + np.arange(3)).ravel()
         fixed = d.fixed[dofs]
@@ -314,10 +325,26 @@ class _Solves:
         self.dofs, self.free = dofs, free
         self.dofs_fixed_local = np.flatnonzero(fixed)
         if len(free) <= self.DIRECT_DOFS:
-            k = Stiffness(sub, self.nu, fixed).assemble(e)
+            st = Stiffness(sub, self.nu, fixed)
+            k = st.assemble(e)
+            if local is not None and len(local):
+                data = np.zeros(st.nnz)
+                st.add_elements(data, mats, local)
+                k = (k + st.finish(data, diag=0.0)).tocsr()
             if d.springs is not None:
                 k = (k + d.springs[dofs][:, dofs]).tocsr()
-            if len(free) <= self.MMD_DOFS:
+            if local is not None and len(local):
+                # cut skin cells: PARDISO (SuperLU's diagonal pivoting
+                # fills in on cells the skin only partly holds)
+                from .bucklingopt import _factor
+                k = k.tocsr()
+                if fixed.any():
+                    keep = sp.diags((~fixed).astype(float))
+                    k = (keep @ k @ keep + sp.diags(fixed.astype(float))).tocsr()
+                solve, _ = _factor(k, sub.node_ijk)
+                self._lu = _Fn(solve)
+                self._whole = True
+            elif len(free) <= self.MMD_DOFS:
                 a = k[free][:, free].tocsc()
                 self._lu = splu(a, permc_spec="MMD_AT_PLUS_A", options={"SymmetricMode": True})
                 self._whole = False
@@ -337,7 +364,8 @@ class _Solves:
         else:
             from .mg import GridElasticity
             full = np.zeros(mesh.n_elem)
-            full[el] = e      # 0 drops a cell outright
+            full[el] = _modulus(xp[el], E_MIN, PENALTY)      # 0 drops a cell outright
+            # (shared-matrix multigrid: skin cells keep the E ~ phi^3 floor)
             if self._mg is None:
                 self._mg = GridElasticity(mesh, self.nu, d.fixed, springs=d.springs, rtol=self.rtol, maxiter=2000)
             self._mg.set_moduli(full)
@@ -362,6 +390,11 @@ class _Solves:
         out = self._mg.solve_many(fs, self.prev.get(tag))
         self.prev[tag] = [np.array(u) for u in out]
         return [np.asarray(u) for u in out]
+
+
+class _Fn:
+    def __init__(self, f):
+        self.solve = f
 
 
 def _pair(edof, ke, v, w):
@@ -405,12 +438,41 @@ def _modulus(xp, E_MIN, PENALTY):
     return E_MIN + xp ** PENALTY * (1 - E_MIN)
 
 
+def _dpair(domain: Domain, nu, xp, modulus: float, solves: _Solves):
+    """d(v . K^-1 w) / dxp as a function of the solutions (v, w) =
+    (K^-1 a, K^-1 b): -(v_e dK_e/dxp w_e), with K at modulus E (the stored
+    solutions already carry 1/E). Skin cells read as cut cells
+    (domain.skin, _SkinCells) have their own dK; the multigrid path (past
+    DIRECT_DOFS) reads them by the floor."""
+    from .simp import E_MIN, PENALTY
+    mesh = domain.mesh
+    edof = mesh.edof
+    ke = hex8_ke(nu) * mesh.pitch
+    dEdx = PENALTY * xp ** (PENALTY - 1) * (1 - E_MIN)   # unit modulus
+    sk = domain.skin if solves._lu is not None else None
+    if sk is not None:
+        _, _, dtdx, dsdx = sk.stiffness_scale(xp)
+        dsdx, dtdx = dsdx * (1 - E_MIN), dtdx * (1 - E_MIN)
+        dEdx = dEdx.copy()
+        dEdx[sk.elem] = 0.0
+        under = dtdx != 0
+
+    def dpair(v, w):
+        g = -modulus * dEdx * _pair(edof, ke, v, w)
+        if sk is not None:
+            g[sk.elem] = -modulus * dsdx * sk.pair(edof, v, w)
+            if under.any():
+                de = edof[sk.elem[under]]
+                g[sk.elem[under]] = -modulus * dtdx[under] * np.einsum("ei,eij,ej->e", v[de], sk.ks[under], w[de])
+        return g
+    return dpair
+
+
 def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float, solves: _Solves,
               grads: bool = True):
     """Fire forces and the constraint quantities for density xp (per
     element, preserve included), and their gradients wrt xp. Moduli in
     MPa: the solves run at unit modulus and displacements divide by E."""
-    from .simp import E_MIN, PENALTY
     mesh = domain.mesh
     spec = prob.spec
     solves.factor(xp)
@@ -439,14 +501,7 @@ def _evaluate(domain: Domain, nu, prob: _Problem, xp: np.ndarray, modulus: float
         out["clearanceMax"] = float(max(q.max() for q in clr_q))
     if not grads:
         return out, None
-    edof = mesh.edof
-    ke = hex8_ke(nu) * mesh.pitch
-    dEdx = PENALTY * xp ** (PENALTY - 1) * (1 - E_MIN)   # unit modulus
-
-    # d(v . K^-1 w) / dxp = -(K^-1 v)_e ke (K^-1 w)_e dE/dxp, with K at
-    # modulus E: the stored solutions already carry 1/E, and dK = E dE ke
-    def dpair(v, w):
-        return -modulus * dEdx * _pair(edof, ke, v, w)
+    dpair = _dpair(domain, nu, xp, modulus, solves)
 
     dc = dpair(lam, lam)
     G = {"logF": [], "travel": [], "hold": [], "clearance": None}
@@ -518,21 +573,79 @@ def _interp_design(old: Domain, x_old: np.ndarray, new: Domain) -> np.ndarray:
     return ndimage.map_coordinates(g, c.T, order=1, mode="nearest")
 
 
+@dataclass
+class _SkinCells:
+    """A thin skin's cells as cut cells: elem (element indices), phi (skin
+    volume share), ks (24x24 per cell, unit modulus, side h: the skin's own
+    stiffness, integrated over 4^3 sub-cells with the skin's share of each),
+    dk = k_solid - ks (what filling the rest of the cell adds)."""
+    elem: np.ndarray
+    phi: np.ndarray
+    ks: np.ndarray
+    dk: np.ndarray
+    # skin review: at x = phi, the derivative of thinning the skin (left)
+    # rather than of adding structure over it (right, 0)
+    left: bool = False
+
+    def stiffness_scale(self, xp):
+        """(t, s, dt/dxp, ds/dxp) per skin cell: K_e = t ks + s dk. Over the
+        skin (x >= phi) t = 1 and s = extra^3, extra = (x - phi) / (1 - phi)
+        the structure added over it (see _as_printed); under it (a thinner
+        skin, skinreview._rescale) s = 0 and t = (x / phi)^3, bending as
+        thickness cubed."""
+        x = np.asarray(xp, float)[self.elem]
+        phi = np.maximum(self.phi, 1e-9)
+        span = np.maximum(1.0 - self.phi, 1e-9)
+        ex = np.clip((x - self.phi) / span, 0.0, 1.0)
+        r = np.clip(x / phi, 0.0, 1.0)
+        under = x < self.phi if not self.left else x <= self.phi
+        ds = np.where((x > self.phi) & (ex < 1.0), 3.0 * ex ** 2 / span, 0.0)
+        dt = np.where(under, 3.0 * r ** 2 / phi, 0.0)
+        return r ** 3, ex ** 3, dt, ds
+
+    def pair(self, edof, v, w, which="dk"):
+        """Per skin cell v_e . dk w_e (or ks)."""
+        de = edof[self.elem]
+        return np.einsum("ei,eij,ej->e", v[de], getattr(self, which), w[de])
+
+
+CUT_ALPHA = 1e-4
+SKIN_SUB = int(__import__("os").environ.get("LOADPATH_SKIN_SUB", 4))
+
+
+def skin_model() -> str:
+    """LOADPATH_SKIN_MODEL: "cut" (default) or "floor" (the density floor
+    alone, for comparison)."""
+    import os
+    m = os.environ.get("LOADPATH_SKIN_MODEL", "cut").strip().lower() or "cut"
+    if m not in ("cut", "floor"):
+        raise ValueError(f"LOADPATH_SKIN_MODEL must be cut or floor, not {m!r}")
+    return m
+
+
 def _thin_skin(study, domain: Domain):
-    """A skin thinner than two cells on this grid, as a density floor.
+    """A skin thinner than two cells on this grid, as cut cells.
 
     The preserved skin is whole cells: at 1 mm cells a 0.7 mm skin is a
     1 mm (or 2 mm) one, and bending goes as thickness cubed, so the click
     came out three times too stiff on a coarse grid and nothing the
     optimizer added could bring it down. Here each cell the skin passes
-    through gets its share of skin volume phi (4^3 samples) as a floor on
-    its density, and the rest of the cell is design space. With SIMP's
-    E ~ x^3 a layer of cells at phi bends like the true skin (phi h = t in
-    one cell: E h^3 phi^3 = E t^3); membrane stiffness reads low, by phi^2.
-    A coarse-grid stand-in: from two cells per skin thickness up the skin
-    is plain preserved cells.
+    through gets its share of skin volume phi as a floor on its density,
+    and the rest of the cell is design space.
 
-    Returns (domain with those cells as design, floor per element)."""
+    The stiffness of such a cell is the skin's own, integrated over 4^3
+    sub-cells weighted by the skin's share of each (from its signed
+    distance, so a skin's thickness is not rounded to a sub-cell), plus
+    what the optimizer adds over it (_SkinCells). That knows where in the
+    cell the skin sits. The earlier stand-in, E ~ phi^3 per cell, bent like
+    the skin only when the skin sat in one cell layer; split across two it
+    added two thin layers' bending instead of one solid layer's and read
+    20-35% soft (skinreview.SPLIT_SKIN). LOADPATH_SKIN_MODEL=floor keeps
+    that model. From two cells per skin thickness up the skin is plain
+    preserved cells.
+
+    Returns (domain with those cells as design and domain.skin set, floor
+    per element)."""
     import dataclasses
 
     floor = np.zeros(domain.n_elem)
@@ -541,22 +654,50 @@ def _thin_skin(study, domain: Domain):
         return domain, floor
     shape, _ = study.region_shape("skin")
     c = domain.mesh.elem_centers()
-    sub = (np.arange(4) + 0.5) / 4 - 0.5
+    n = SKIN_SUB
+    sub = (np.arange(n) + 0.5) / n - 0.5
     offs = np.array([[a, b, d] for a in sub for b in sub for d in sub]) * domain.pitch
+    # candidate cells: any of the skin within a cell's circumradius
+    near = shape.sdf(c) < 0.87 * domain.pitch
+    idx = np.flatnonzero(near)
+    hs = domain.pitch / n
+    ind = np.zeros((len(idx), len(offs)))
+    for k, o in enumerate(offs):
+        # the skin's share of each sub-cell, from its signed distance
+        ind[:, k] = np.clip(0.5 - shape.sdf(c[idx] + o) / hs, 0.0, 1.0)
     phi = np.zeros(len(c))
-    for o in offs:
-        phi += shape.contains(c + o)
-    phi /= len(offs)
+    phi[idx] = ind.mean(axis=1)
     # other preserves (the plunger, bosses) stay whole cells
     others = [r.shape for r in study.preserve if r.id != "skin"]
     hard = np.zeros(len(c), bool)
     if others:
         from .domain import _fraction
         hard = _fraction(others, c, domain.pitch) >= 0.5
-    skin = (phi > 0) & ~hard
+    skin = (phi > 1e-3) & ~hard
     floor[skin] = np.clip(phi[skin], 0.0, 1.0)
     pres = domain.preserve & ~skin
-    return dataclasses.replace(domain, preserve=pres), floor
+    cells = None
+    if skin_model() == "cut":
+        from .cutcell import MIN_FILL, SubcellRule
+        # slivers stay on the floor law (as cutcell leaves them out): a cell
+        # with a corner of skin has nodes it barely holds, and the factor
+        # pivots off the diagonal and fills in
+        el = np.flatnonzero(skin & (phi >= MIN_FILL))
+        pos = np.full(len(c), -1)
+        pos[idx] = np.arange(len(idx))
+        nu = study.elastic(design=True)
+        rule = SubcellRule(nu, n)
+        k0 = hex8_ke(nu)
+        ks = np.empty((len(el), 24, 24))
+        for s in range(0, len(el), 4000):
+            sl = slice(s, s + 4000)
+            ks[sl] = rule.matrices(ind[pos[el[sl]]])[0]
+        # a small share of a whole cell's stiffness under every cut cell
+        # (finite cell alpha method) keeps the nodes a partial cell barely
+        # holds conditioned; ~0.01-0.5% of the skin's own stiffness
+        ks = ks + CUT_ALPHA * k0[None]
+        cells = _SkinCells(el, floor[el], ks * domain.pitch, (k0[None] - ks) * domain.pitch)
+    return dataclasses.replace(domain, preserve=pres, skin=cells), floor
 
 
 def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_max: float = 16.0,
@@ -764,6 +905,12 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
         keep = (keep & ~(floor > 0)) | thin
         emod[thin] = modulus * np.minimum(xphys[thin], 1.0) ** 3
     target = spec.gap + spec.travel
+    # With cut-cell skin cells (domain.skin) the Newton solve still reads
+    # them at E x^3 (it takes one modulus per cell): its large-deflection
+    # ratio is applied to the cut-cell linear reading
+    f_cut = None
+    if floor is not None and domain.skin is not None:
+        f_cut = fire_forces(domain, nu, spec, np.maximum(xphys, 1e-9), modulus)["forces"]
     clr = np.zeros(domain.mesh.n_dof)
     if prob.clr_dofs is not None:
         clr[prob.clr_dofs] = 1.0
@@ -819,10 +966,14 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
             P0, t0, P1 = P1, t1, P1 + (target - t1) * (P1 - P0) / (t1 - t0)
             P1 = max(P1, 0.2 * P0)
         P, t, r = best
+        ratio = float(P / f_lin)
         rec = {"press": int(i), "at": spec.presses[i].at.tolist(), "linear": f_lin, "nonlinear": float(P),
-               "nonlinearOverLinear": float(P / f_lin), "plungerTravel": t, "converged": bool(r.converged),
+               "nonlinearOverLinear": ratio, "plungerTravel": t, "converged": bool(r.converged),
                "pressTravel": float(f @ r.u), "maxStrain": float(r.strain.max()) if r.strain is not None else None,
                "solves": n_solves, "cells": int(sub.n_elem)}
+        if f_cut is not None:
+            rec.update({"linearFloor": f_lin, "linear": float(f_cut[i]), "nonlinear": ratio * float(f_cut[i]),
+                        "skinModel": "cut cells; large-deflection ratio from the E x^3 floor"})
         if prob.clr_dofs is not None:
             rec["clearanceMax"] = float(spec.press_sign * (r.u[cm > 0]).max() if spec.press_sign > 0
                                         else (-r.u[cm > 0]).max())
@@ -912,10 +1063,8 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
     rep["mass"] = float(mesh.volume * study.material.density / 1000.0)
     rep["watertight"] = bool(mesh.is_watertight)
     if mesh.is_watertight:
-        # The delivered mesh read back the way a drawn part is: its volume
-        # share in each cell (the skin floor under it), the same fire forces.
-        # Smoothing and the exact joins move material by a fraction of a
-        # cell, and on 1 mm cells that is a few percent of force.
+        # drawn: the delivered mesh's volume share per cell over the skin
+        # floor (for a feel read-back)
         from .domain import _fraction
         from .shapes import MeshShape
         if on_progress is not None:
@@ -923,13 +1072,20 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
         drawn = _fraction([MeshShape(mesh)], r.domain.mesh.elem_centers(), r.domain.pitch)
         delivered = np.maximum(np.maximum(drawn, r.floor), 1e-9)
         if has_switch:
-            fd = fire_forces(r.domain, nu, spec, delivered, modulus)
-            for p, f in zip(rep["presses"], fd["forces"]):
-                p["deliveredForceGf"] = float(f / GF)
+            # solved on the mesh itself as cut cells on this grid
+            # (switch_lattice.readback): reading the volume share per cell
+            # as a density read thin members as soft hinges and did not
+            # converge with the grid
+            from .switch_lattice import readback as cut_readback
+            fd = cut_readback(study, mesh, pitch=r.domain.pitch)
+            for p, fg in zip(rep["presses"], fd["forceGf"]):
+                f = fg * GF
+                p["deliveredForceGf"] = float(fg)
                 p["deliveredOk"] = bool((p["max"] is None or f <= p["max"] * 1.02) and
                                         (p["min"] is None or f >= p["min"] * 0.98))
             rep["deliveredHold"] = [float(v) for v in fd["hold"]]
             rep["deliveredClearanceMax"] = fd.get("clearanceMax")
+            rep["deliveredReadback"] = {"method": "cut cells", "pitch": fd["pitch"], "seconds": fd["seconds"]}
     else:
         delivered = None
     if readback is not None:

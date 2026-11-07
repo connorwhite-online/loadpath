@@ -60,6 +60,8 @@ class Domain:
     thermal: object = None
     # buildSim warp design (WarpSpec: warpWeight and/or limits), or None.
     warp: object = None
+    # A thin skin's cells as cut cells (switch._SkinCells), or None.
+    skin: object = None
 
     @property
     def n_elem(self):
