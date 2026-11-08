@@ -757,6 +757,9 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     # so the budget buys material near the axis cheaper than far out
     vw = getattr(domain, "volume_weights", None)
     wdesign = design.astype(float) if vw is None else np.where(design, vw, 0.0)
+    com_cfg = getattr(domain, "center_of_mass", None)
+    com_state = {}
+    com_cen = (mesh.origin + (mesh.elem_ijk + 0.5) * mesh.pitch) if com_cfg is not None else None
     target = vf * float(wdesign.sum())
 
     beta = float(opts.beta_start)
@@ -976,7 +979,36 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 a = opts.deflate_weight * dk ** -opts.deflate_power
                 g += (-opts.deflate_power * a / (a + 1.0)) * diff / (d2 * n_design)
             dc = dc + ht @ (printed_grad(am_b, comp * g) * dproj / hs)
+        com_rec = None
+        if com_cfg is not None:
+            # massProperties.centerOfMass: a penalty on the blueprint's centre
+            # of mass past half the tolerance on each held axis, its weight
+            # raised while the design is off target and eased once on it (as
+            # the warp limits), carried back through the projection and filter
+            tgt, tol = com_cfg
+            M = float(xp.sum())
+            C = (xp @ com_cen) / max(M, 1e-30)
+            d = np.where(np.isfinite(tgt), C - np.nan_to_num(tgt), 0.0)
+            over = np.maximum(np.abs(d) - 0.5 * tol, 0.0)
+            w_c = com_state.setdefault("w", np.zeros(3))
+            w_c[:] = np.where(np.abs(d) > tol, np.maximum(w_c * 1.2, 1.0), w_c * 0.9)
+            w_c[:] = np.minimum(w_c, 50.0)
+            cref = com_state.setdefault("c", comp)
+            comp = comp + cref * float(np.sum(w_c * (over / tol) ** 2))
+            gk = cref * w_c * 2.0 * np.sign(d) * over / tol ** 2          # d pen / d C_k
+            gcom = ((com_cen - C) @ gk) / max(M, 1e-30)                    # d pen / d xp_e
+            dc = dc + ht @ (printed_grad(am_b, gcom) * dproj / hs)
+            com_rec = {"centerOfMass": [round(float(v), 3) for v in C],
+                       "centerOfMassWeight": [round(float(v), 3) for v in w_c]}
         dv = ht @ (printed_grad(am_b, wdesign) * dproj / hs)
+        if com_cfg is not None:
+            # the penalty's pull makes some sensitivities positive; shift by
+            # s dv as the thermal swing does (the volume multiplier absorbs it)
+            live = design & (dv > 1e-12)
+            if live.any():
+                s_c = float(np.max(dc[live] / dv[live]))
+                if s_c > 0:
+                    dc = dc - 1.05 * s_c * dv - 1e-12
         if heat is not None and heat.swing_weight > 0:
             # The thermal-cycling swing's stress rises where material is
             # added near the heat (a stiffer part holds more of its own
@@ -1153,6 +1185,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if swing_step and "swing_max" in heat_state:
             rec.update(swing_rec)
         rec.update(buck_rec)
+        if com_rec is not None:
+            rec.update(com_rec)
         if excess is not None:
             rec["maxMemberExcess"] = excess
             rec["maxMemberWeight"] = mu

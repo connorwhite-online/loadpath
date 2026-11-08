@@ -143,6 +143,9 @@ class MassProperties:
     direction: np.ndarray | None = None
     max_inertia: float | None = None
     weight: float = 0.0
+    # centerOfMass: target (3,) with nan on a free axis, and the tolerance (mm)
+    com_target: np.ndarray | None = None
+    com_tolerance: float = 1.0
 
 
 @dataclass
@@ -899,7 +902,20 @@ def _mass_properties(v, goal):
         raise ValueError("massProperties.inertiaWeight is 0-1: the share of a cell's cost that is its inertia")
     if w > 0 and through is None:
         raise ValueError("massProperties.inertiaWeight needs massProperties.axis")
-    return MassProperties(through, direction, float(mi) if mi is not None else None, float(w))
+    com_t, com_tol = None, 1.0
+    if v.get("centerOfMass") is not None:
+        cm = v["centerOfMass"]
+        t = cm.get("target") if isinstance(cm, dict) else None
+        if not isinstance(t, (list, tuple)) or len(t) != 3 \
+                or not all(x is None or isinstance(x, (int, float)) for x in t) or all(x is None for x in t):
+            raise ValueError("massProperties.centerOfMass is {target: [x, y, z] (mm, null for a free axis), "
+                             "tolerance}")
+        com_t = np.array([np.nan if x is None else float(x) for x in t])
+        com_tol = cm.get("tolerance", 1.0)
+        if not isinstance(com_tol, (int, float)) or com_tol <= 0:
+            raise ValueError("massProperties.centerOfMass.tolerance is mm (> 0)")
+        com_tol = float(com_tol)
+    return MassProperties(through, direction, float(mi) if mi is not None else None, float(w), com_t, com_tol)
 
 
 def _vibration(v, goal, supports, base_dir):

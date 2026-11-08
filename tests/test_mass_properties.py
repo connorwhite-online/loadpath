@@ -85,5 +85,27 @@ def test_inertia_weight_pulls_material_towards_the_axis():
     assert i1 < 0.94 * i0, (i0, i1)
 
 
+def test_center_of_mass_target_is_held():
+    # the link's own design sits on y = 0; asked for y = 6 +- 1 the
+    # optimizer moves its material over (at a stiffness cost)
+    s = study_from_dict({**LINK, "massProperties": {"centerOfMass": {"target": [None, 6, None], "tolerance": 1}}})
+    assert np.isnan(s.mass_properties.com_target[0]) and s.mass_properties.com_target[1] == 6
+    d = build_domain(s)
+    r = optimize(d, 0.39, SimpOptions(volume_fraction=0.3, filter_radius=filter_radius(d, None),
+                                      max_iterations=50))
+    c = d.mesh.origin + (d.mesh.elem_ijk + 0.5) * d.mesh.pitch
+    com = (r.xphys @ c) / r.xphys.sum()
+    assert abs(com[1] - 6) < 1.0, com
+    assert r.history[-1]["centerOfMass"][1] == pytest.approx(com[1], abs=0.6)
+    # the report checks it, per held axis
+    box = trimesh.creation.box(extents=[40, 20, 10])
+    box.apply_translation([30, 2, 0])
+    mp = mass_properties(box, 1.0, s.mass_properties)
+    assert mp["centerOfMassOffset"] == [0.0, -4.0, 0.0] and mp["centerOfMassOk"] is False
+    assert mp["centerOfMassTarget"] == [None, 6.0, None]
+    with pytest.raises(ValueError, match="centerOfMass"):
+        study_from_dict({**LINK, "massProperties": {"centerOfMass": {"target": [None, None, None]}}})
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

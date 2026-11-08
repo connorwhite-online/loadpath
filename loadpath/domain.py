@@ -69,6 +69,8 @@ class Domain:
     # massProperties: each cell's cost in the volume budget, mean 1 over the
     # design cells ((1 - w) + w r^2 / mean r^2 about the axis), or None
     volume_weights: np.ndarray | None = None
+    # massProperties.centerOfMass: (target (3,) with nan on a free axis, tolerance mm), or None
+    center_of_mass: tuple | None = None
     # inertiaRelief: the cases' loads as written (BoundaryConditions.raw_loads)
     # so the optimizer rebalances them against the design's own mass
     raw_loads: list | None = None
@@ -666,6 +668,8 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
                   springs=bc.springs, gravity=bc.gravity, spreads=spreads, inertial_cases=inertial,
                   volume_weights=_volume_weights(study, mesh, pres_el),
+                  center_of_mass=(None if getattr(getattr(study, "mass_properties", None), "com_target", None) is None
+                                  else (study.mass_properties.com_target, study.mass_properties.com_tolerance)),
                   raw_loads=list(bc.raw_loads) if bc.raw_loads else None,
                   thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
                                      near=_near_cells(mesh, support_nodes | load_nodes)),

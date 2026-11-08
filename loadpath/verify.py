@@ -839,6 +839,14 @@ def mass_properties(mesh, density: float, axis=None) -> dict:
         if axis.max_inertia is not None:
             out["maxInertia"] = axis.max_inertia
             out["ok"] = bool(about <= axis.max_inertia)
+    tgt = getattr(axis, "com_target", None)
+    if tgt is not None:
+        held = np.isfinite(tgt)
+        off = np.where(held, com - np.nan_to_num(tgt), 0.0)
+        out["centerOfMassTarget"] = [None if not h else float(v) for h, v in zip(held, tgt, strict=True)]
+        out["centerOfMassOffset"] = [round(float(v), 3) for v in off]
+        out["centerOfMassTolerance"] = axis.com_tolerance
+        out["centerOfMassOk"] = bool(np.all(np.abs(off) <= axis.com_tolerance + 1e-9))
     return out
 
 
@@ -1218,6 +1226,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     report = {"volume": vol, "mass": vol * mat.density / 1000.0, "material": mat.to_dict()}
     try:
         report["massProperties"] = mass_properties(mesh, mat.density, getattr(study, "mass_properties", None))
+        mpr = report["massProperties"]
+        if mpr.get("centerOfMassOk") is False:
+            report.setdefault("warnings", []).append(
+                f"centre of mass {mpr['centerOfMass']} is {mpr['centerOfMassOffset']} mm off its target "
+                f"(tolerance {mpr['centerOfMassTolerance']} mm)")
     except (ValueError, IndexError, FloatingPointError) as exc:
         report.setdefault("warnings", []).append(f"mass properties failed: {exc}")
 

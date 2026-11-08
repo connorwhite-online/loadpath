@@ -420,6 +420,15 @@ _MASS_PROPERTIES = {
                           "description": "share of a cell's cost in the optimizer that is its inertia about the "
                                          "axis rather than its volume (default 0.5 with an axis): material near "
                                          "the axis comes cheaper"},
+        "centerOfMass": {"type": "object", "properties": {
+            "target": {"type": "array", "minItems": 3, "maxItems": 3,
+                       "items": {"type": ["number", "null"]},
+                       "description": "mm [x, y, z]; null leaves that axis free (balance over a z axis: "
+                                      "[0, 0, null])"},
+            "tolerance": {**_POS, "description": "mm each held axis may be off (default 1)"}},
+            "required": ["target"], "additionalProperties": False,
+            "description": "where the part's centre of mass must sit (a handheld that balances in the hand, a "
+                           "rotor, a part on a gimbal): the optimizer pulls it there and the report checks it"},
     },
     "additionalProperties": False,
 }
