@@ -116,6 +116,35 @@ and 42 g. Want a quote to print it in PA12, or a page to share it?"
 Show the price, material and lead time before `materialize_create_order`,
 and never place an order without the user's go-ahead.
 
+### Printing limits: Materialize is the reference
+
+When the part will be printed, its minimum wall, minimum detail and
+largest size come from Materialize's published figures per material and
+process (`materialize_get_material` → `designLimits`, `buildVolumeMm`,
+`properties.accuracyMm`). Re-read them live when the server is connected;
+`loadpath/dfm_reference.py` keeps a dated snapshot so runs work offline,
+and loadpath's own defaults never go under it:
+
+| process | Materialize min wall / detail (mm) | loadpath default wall (mm) |
+|---|---|---|
+| FDM | 1.0 / 0.8 | 1.0 (`minFeature`) |
+| SLS | 0.8 / 0.3 | 0.8; SLS/MJF TPU 1.0, a margin kept on purpose (0.8 is the hard limit) |
+| MJF | 0.8 / 0.25 | 0.8 |
+| SLA, DLP | 0.6 / 0.25 | 0.6 |
+| PolyJet (`jetting`) | 1.0 / 0.25 | 1.0 |
+| LPBF metal (`lpbf`) | 1.0 / 0.25 | 1.0; heat exchanger walls too (`sizing.PROCESS_LIMITS`), unless you pass thinner walls for a shop that holds them |
+
+Powder TPU (SLS 86-90A, MJF 88-90A) is the softest powder elastomer
+Materialize lists, at about +-1.8 mm accuracy; softer grades (50-80A) are
+FDM TPU only. Volumetric printing, Agilus30, Vero, Inconel 625 and 15-5 PH
+are not listed. Escape holes, hole sizes, bridges, warp and clearances are
+loadpath's own (Materialize publishes none).
+
+A run's `report.json` → `materialize` has the limits for its process and
+material, the Materialize material `id` (pass it to `materialize_get_quote`
+as `materialId`, and as `metadata.recommendedMaterialId` when publishing;
+keep the material out of the file name), `fitsBuildVolume`, and warnings.
+
 ## Errors
 
 Every tool returns `{"ok": false, "error": "...", "issues": [...]}` instead of

@@ -17,8 +17,10 @@ _VF_FLOOR = 0.02    # study._VF_MIN
 # Read by agents in report.json and MCP results, not printed to a terminal.
 MAKE_IT = ("To have it made: any print service that takes an STL or 3MF works. With the Materialize MCP "
            "server connected, materialize_import_model then materialize_check_printability and "
-           "materialize_get_quote price it across materials and services, or materialize_create_project "
-           "hosts it as a page. Show the price and lead time and never order without the user's go-ahead.")
+           "materialize_get_quote price it across materials and services (deliver.materialize.materialId is the "
+           "material it was designed for; set it as metadata.recommendedMaterialId when publishing), or "
+           "materialize_create_project hosts it as a page. Show the price and lead time and never order without "
+           "the user's go-ahead.")
 
 
 def attention(o: dict, study: dict) -> list[str]:
@@ -180,6 +182,14 @@ def delivery(summary: dict, study: dict) -> dict | None:
         if top >= _VF_CEILING - 1e-6:
             d["warnings"].insert(1, f"the search stopped at the volume-fraction ceiling ({_VF_CEILING:.0%} of the design "
                                     "space): more material is not allowed, so change the material, the design space or the loads")
+    ref = o.get("materialize")
+    if ref:
+        # the printing DFM reference (dfm_reference): which Materialize
+        # material to quote it as, and whether it fits a machine
+        m = ref.get("material") or {}
+        d["materialize"] = {k: v for k, v in (("materialId", m.get("id")), ("material", m.get("name")),
+                                              ("minWall", ref.get("minWall")),
+                                              ("fitsBuildVolume", ref.get("fitsBuildVolume"))) if v is not None}
     if d["passes"]:
         d["makeIt"] = MAKE_IT
     return d

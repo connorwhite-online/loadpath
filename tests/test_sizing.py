@@ -13,7 +13,7 @@ ENV = [80, 70, 40]
 def test_sized_candidates_fit_the_envelope_and_the_budget():
     budget = {"A": 3000, "B": 3000}
     res = size_exchanger(DUTY, ENV, process="lpbf", max_pressure_drop=budget, cells=[5.0, 6.0, 8.0],
-                         walls=[0.5, 0.8], fractions=(0.6, 1.0))
+                         walls=[1.0, 1.2], fractions=(0.6, 1.0))
     assert res["feasible"] > 0 and res["best"] is not None
     lim = PROCESS_LIMITS["lpbf"]
     for c in res["candidates"]:

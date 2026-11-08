@@ -49,10 +49,13 @@ from .heatx_thermal import WALL_DENSITY, _flow, _fluid, rate, tpms_geometry
 __all__ = ["PROCESS_LIMITS", "size_exchanger", "verify"]
 
 # per process: thinnest leak-tight wall (mm), narrowest channel (hydraulic diameter, mm,
-# to clear powder or drain resin), and the heatx process that builds it
+# to clear powder or drain resin), and the heatx process that builds it. Walls are at
+# least Materialize's published minimum wall for the process (dfm_reference;
+# LPBF metal 1.0 mm, so exchangers here size to walls a print service will
+# take: pass a thinner wall explicitly for a specialist shop that holds it)
 PROCESS_LIMITS = {
-    "fdm": {"minWall": 0.8, "minChannel": 1.5, "heatx": "fdm"},
-    "lpbf": {"minWall": 0.5, "minChannel": 2.0, "heatx": "lpbf"},
+    "fdm": {"minWall": 1.0, "minChannel": 1.5, "heatx": "fdm"},
+    "lpbf": {"minWall": 1.0, "minChannel": 2.0, "heatx": "lpbf"},
     "sls": {"minWall": 0.8, "minChannel": 2.5, "heatx": "lpbf"},
     "mjf": {"minWall": 0.8, "minChannel": 2.5, "heatx": "lpbf"},
     "sla": {"minWall": 0.6, "minChannel": 1.5, "heatx": "lpbf"},

@@ -48,7 +48,7 @@ wire, an expression) recompiles, in milliseconds.
   when asked, and later bakes and Run reuse it while its part is unchanged.
 - **Colour → wall thickness** paints every wall by its thickness, traced
   in along the surface normal: red under the process's smallest feature
-  (`minFeature`: FDM and SLS 0.8 mm, SLA 0.5, LPBF 0.4, ...), amber under
+  (`minFeature`, at least Materialize's minimum wall: FDM 1.0 mm, SLS/MJF 0.8, SLA/DLP 0.6, LPBF 1.0, ...), amber under
   twice it. Hover reads the thickness. On the arm link it shows the skin
   over the gyroid's voids at 1 to 1.6 mm, thicker where a lattice wall
   backs it.

@@ -961,16 +961,28 @@ def _print_setup_rescue(result: StudyResult, on_progress=None) -> StudyResult:
 def _process_checks(result: StudyResult, on_progress=None) -> StudyResult:
     """Powder-bed polymer and resin parts: the process checks
     (processcheck.check_process) on the delivered outcome, into its report
-    as "process", with its warnings added to the outcome's."""
+    as "process", with its warnings added to the outcome's. Every printed
+    process also gets Materialize's published limits, the material id to
+    quote it as and the build-volume fit, as "materialize"
+    (dfm_reference.review)."""
     proc = result.study.process
     if proc is None or result.best is None:
         return result
     from .processcheck import RULES, check_process
 
-    if proc.kind not in RULES:
-        return result
     o = result.outcomes[result.best]
     if getattr(o, "mesh", None) is None:
+        return result
+    if proc.kind not in RULES:
+        # FDM, metal, jetting: Materialize's limits and build volume only
+        # (dfm_reference); their print checks are printcheck's
+        from .dfm_reference import review
+
+        mat = (o.report.get("material") or {}).get("name")
+        ref = review(proc.kind, mat, extents=o.mesh.extents, wall_floor=proc.min_feature)
+        if ref is not None:
+            o.report["materialize"] = ref
+            o.report.setdefault("warnings", []).extend(ref["warnings"])
         return result
     if on_progress is not None:
         on_progress({"stage": "process", "process": proc.kind}, None)
@@ -980,6 +992,8 @@ def _process_checks(result: StudyResult, on_progress=None) -> StudyResult:
     except Exception as exc:  # noqa: BLE001 - a failed check leaves the part's report standing
         rep = {"process": proc.kind, "error": f"{type(exc).__name__}: {exc}", "ok": None, "warnings": []}
     o.report["process"] = rep
+    if rep.get("materialize") is not None:
+        o.report["materialize"] = rep["materialize"]
     o.report.setdefault("warnings", []).extend(rep.get("warnings", []))
     return result
 

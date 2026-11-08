@@ -189,23 +189,28 @@ class Goal:
 # powder sinters shut in a narrow SLS/MJF hole, resin cures shut in a narrow
 # SLA one, a nozzle bridges over a narrow FDM one). Values are typical
 # published ranges, chosen conservative; override any of them in the study.
+# minFeature is never under Materialize's published minimum wall for the
+# process (dfm_reference.PROCESSES: FDM 1.0, SLS/MJF 0.8, SLA/DLP 0.6,
+# PolyJet 1.0, LPBF metal 1.0 mm), the DFM reference when a part is printed;
+# minHole is loadpath's own (Materialize publishes none). Volumetric is not
+# offered on Materialize.
 PROCESSES = {
-    "fdm": {"interlayer": 0.6, "minFeature": 0.8, "minHole": 2.0, "overhangs": True,
+    "fdm": {"interlayer": 0.6, "minFeature": 1.0, "minHole": 2.0, "overhangs": True,
             "note": "filament: layer bonds ~50-70% of in-plane strength; self-supporting at 45 degrees"},
     "sls": {"interlayer": 0.9, "minFeature": 0.8, "minHole": 2.0, "overhangs": False,
             "note": "powder bed (PA12, PA11): nearly isotropic, no supports; leave powder escape holes in closed cavities"},
     "mjf": {"interlayer": 0.95, "minFeature": 0.8, "minHole": 2.0, "overhangs": False,
             "note": "HP Multi Jet Fusion: as SLS, slightly more isotropic"},
-    "sla": {"interlayer": 1.0, "minFeature": 0.5, "minHole": 1.0, "overhangs": False,
+    "sla": {"interlayer": 1.0, "minFeature": 0.6, "minHole": 1.0, "overhangs": False,
             "note": "resin vat: isotropic once cured; supports are added by the slicer"},
-    "dlp": {"interlayer": 1.0, "minFeature": 0.5, "minHole": 1.0, "overhangs": False,
+    "dlp": {"interlayer": 1.0, "minFeature": 0.6, "minHole": 1.0, "overhangs": False,
             "note": "resin vat, whole-layer exposure (DLP/LCD): as SLA; large cross-sections peel hard"},
     "volumetric": {"interlayer": 1.0, "minFeature": 0.3, "minHole": 0.6, "overhangs": False,
                    "note": "volumetric / tomographic resin printing: no layers, no supports"},
-    "jetting": {"interlayer": 0.95, "minFeature": 0.4, "minHole": 1.0, "overhangs": False,
+    "jetting": {"interlayer": 0.95, "minFeature": 1.0, "minHole": 1.0, "overhangs": False,
                 "note": "material jetting (PolyJet): photopolymer droplets cured layer by layer, several materials "
                         "mixed voxel by voxel; gel support everywhere, so no overhang limit; nearly isotropic"},
-    "lpbf": {"interlayer": 0.85, "minFeature": 0.4, "minHole": 1.0, "overhangs": True,
+    "lpbf": {"interlayer": 0.85, "minFeature": 1.0, "minHole": 1.0, "overhangs": True,
              "note": "laser powder-bed fusion metal (AlSi10Mg, Ti64, 316L): strength across layers ~85-90% "
                      "as built; overhangs past 45 degrees need supports, which cannot come out of closed "
                      "channels; bridges only ~2 mm; enclosed powder must drain"},

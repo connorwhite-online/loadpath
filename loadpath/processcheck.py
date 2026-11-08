@@ -48,6 +48,11 @@ RESIN = ("sla", "dlp")
 
 # Typical published design-guide values (EOS/Formlabs Fuse/HP MJF and
 # Formlabs/Asiga resin guides), on the conservative side. mm, mm^2.
+# minWall is never under Materialize's published minimum wall for the
+# process (dfm_reference.PROCESSES: SLS/MJF 0.8, SLA/DLP 0.6), the DFM
+# reference for printed parts; every card carries it as "materialize".
+# Escape holes, clearance, warp and peel are loadpath's own: Materialize
+# publishes none of them.
 RULES = {
     "sls": {"minWall": 0.8, "escapeHole": 4.0, "escapeHoles": 2, "minClearance": 0.5,
             "warpThickness": 2.0, "warpSpan": 100.0,
@@ -56,20 +61,22 @@ RULES = {
     "mjf": {"minWall": 0.8, "escapeHole": 5.0, "escapeHoles": 2, "minClearance": 0.4,
             "warpThickness": 2.0, "warpSpan": 100.0,
             "note": "HP Multi Jet Fusion: as SLS; HP asks for >= 2 escape holes of >= 5 mm"},
-    "sla": {"minWall": 0.6, "minSupportedWall": 0.4, "escapeHole": 3.5, "escapeHoles": 2, "minClearance": 0.5,
+    "sla": {"minWall": 0.6, "escapeHole": 3.5, "escapeHoles": 2, "minClearance": 0.5,
             "peelArea": 2500.0, "cupArea": 10.0,
             "note": "resin vat (bottom-up SLA): supports below 45 degrees and at islands; drains >= 3.5 mm "
                     "plus a vent near the plate in hollow parts; tilt large cross-sections"},
-    "dlp": {"minWall": 0.6, "minSupportedWall": 0.4, "escapeHole": 3.5, "escapeHoles": 2, "minClearance": 0.3,
+    "dlp": {"minWall": 0.6, "escapeHole": 3.5, "escapeHoles": 2, "minClearance": 0.3,
             "peelArea": 2000.0, "cupArea": 10.0,
             "note": "resin vat (DLP/LCD, bottom-up): as SLA; the whole layer cures at once, so peel force "
                     "grows with cross-section faster"},
 }
 # Material-specific changes to a process's rules: TPU powder tears thin walls
 # out in depowdering and does not warp like nylon. TPU's 1.0 mm is a margin
-# kept on purpose over the 0.8 mm print services list for SLS TPU walls.
+# kept on purpose over Materialize's 0.8 mm SLS/MJF TPU minimum wall, which
+# stays the hard limit (Connor, 2026-11-08: "seems safer").
 _MATERIAL_RULES = {
-    "tpu88a": {"minWall": 1.0, "warpSpan": None},
+    "tpu88a": {"minWall": 1.0, "warpSpan": None,
+               "minWallWhy": "1.0 mm is a margin over Materialize's 0.8 mm SLS/MJF TPU minimum, the hard limit"},
 }
 # Cell budget for the grid (one byte per cell, plus float distance fields).
 _BUDGET = 12_000_000
@@ -95,6 +102,11 @@ def rules_for(process: str, material=None, overrides: dict | None = None) -> dic
     if min_feature is not None:
         out["minWall"] = max(out["minWall"], float(min_feature))
     out["process"] = kind
+    from .dfm_reference import limits
+
+    ref = limits(kind, material)
+    if ref is not None:
+        out["materialize"] = {k: ref[k] for k in ("minWall", "minDetail", "accessed")}
     return out
 
 
@@ -318,6 +330,14 @@ def check_process(part, process="sls", build=None, material=None, pitch: float |
     if procs and kind not in procs:
         warnings.append(f"{mat} is not a {kind} material (made by {', '.join(procs)}): pick one of the "
                         f"{kind} cards in materials.MATERIALS")
+
+    from .dfm_reference import review
+
+    ref = review(kind, material, extents=extents,
+                 wall_floor=getattr(process, "min_feature", None) if hasattr(process, "kind") else None)
+    if ref is not None:
+        rep["materialize"] = ref
+        warnings.extend(ref["warnings"])
 
     rep["walls"] = _walls(solid, p, origin, card["minWall"])
     if rep["walls"]["ok"] is False:

@@ -531,6 +531,16 @@ def describe(name):
     for k, (v, src, note) in c["values"].items():
         s = SOURCES[src]
         vals[k] = {"value": v, "note": note, "source": s.title, **({"url": s.url} if s.url else {})}
-    return {"name": str(name).strip().lower(), "title": c["title"], "processes": list(c["processes"]),
-            "measured": c["measured"],
-            "values": vals, "accessed": ACCESSED}
+    from .dfm_reference import limits
+
+    key = str(name).strip().lower()
+    out = {"name": key, "title": c["title"], "processes": list(c["processes"]),
+           "measured": c["measured"],
+           "values": vals, "accessed": ACCESSED}
+    # the printing DFM reference: Materialize's limits per process this
+    # card is printed by, and the material id to quote or publish it as
+    ref = {p: limits(p, key) for p in c["processes"]}
+    ref = {p: r for p, r in ref.items() if r is not None}
+    if ref:
+        out["materialize"] = ref
+    return out

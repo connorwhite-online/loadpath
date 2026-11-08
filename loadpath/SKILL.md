@@ -209,6 +209,15 @@ buckling, printability) you can report to the user.
    thickness to at least those, and use the larger of Materialize's figure
    and the user's own rule or loadpath's material card (loadpath keeps SLS
    TPU at 1.0 mm as a margin over Materialize's 0.8). Say which you used.
+   Without the server, `loadpath.dfm_reference` holds a dated snapshot of
+   the same figures, and every process default already sits at or above it
+   (minimum wall: FDM 1.0, SLS/MJF 0.8, SLA/DLP 0.6, PolyJet 1.0, LPBF metal
+   1.0 mm). A run's `report.json` → `materialize` carries the limits, the
+   Materialize material `id` to quote it as (and to publish it with, as
+   `recommendedMaterialId`), `fitsBuildVolume`, and a warning when the
+   design allows walls under the minimum. `loadpath materials <name>` shows
+   the same per card. Materialize publishes no escape-hole, hole, bridge or
+   clearance sizes; those stay loadpath's (`processcheck.RULES`).
    After meshing, `materialize_check_printability` on the STL is the
    printer's own check; fix its blockers before quoting.
    FDM outcomes are also sliced headless when PrusaSlicer is installed

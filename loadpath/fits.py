@@ -69,6 +69,10 @@ import numpy as np
 
 __all__ = ["HOLES", "FITS", "BOLT_HOLES", "expand_fits", "fit_window", "fits_report", "measure_bore"]
 
+# Materialize's typical accuracy per material (dfm_reference.MATERIALS
+# "accuracy": +-0.3 mm FDM and nylon powder, +-0.2 resin and most metals,
+# +-1.8 mm for powder TPU) is the bureau's overall figure; these bands are
+# for holes and sit inside it, except powder TPU, where a fit is a guess.
 # Per process: bias (mm, as built minus drawn hole diameter, axis along the
 # build), biasAcross (axis across the layers), tol (+- mm) + tolPerMm x D,
 # repeat (the fraction of the band left once a printer's bias is tuned).

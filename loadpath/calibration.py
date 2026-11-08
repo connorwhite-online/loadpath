@@ -857,13 +857,19 @@ def fit_snaps(coupons: dict, mat) -> dict | None:
     return out
 
 
+# the wall crush coupons were drawn at, from spec.PROCESSES minFeature before
+# it followed Materialize's minimum walls (2026-11-08): coupons already
+# printed keep their cell, so their read-back still matches
+_COUPON_WALL = {"fdm": 0.8, "sla": 0.5, "dlp": 0.5, "jetting": 0.4, "lpbf": 0.4}
+
+
 def _crush_spec(mat, process):
     from .impact import ELASTOMERS
     from .lattice import wall_for_density
     from .spec import PROCESSES
 
     c = dict(_CRUSH_ELASTIC if mat.name in ELASTOMERS else _CRUSH)
-    wall = float(PROCESSES[process]["minFeature"])
+    wall = float(_COUPON_WALL.get(process, PROCESSES[process]["minFeature"]))
     c["cell"] = round(wall / float(wall_for_density(c["kind"], min(c["densities"]), 1.0)), 1)
     c["side"] = c["plan"] * c["cell"]
     c["core"] = c["tall"] * c["cell"]

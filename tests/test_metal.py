@@ -81,7 +81,7 @@ def test_lpbf_process():
     from loadpath.spec import _process
 
     p = _process("lpbf")
-    assert p.overhangs and p.min_feature == 0.4 and p.build is not None
+    assert p.overhangs and p.min_feature == 1.0 and p.build is not None
 
 
 def test_heatx_closure_cuts_internal_ceilings_and_keeps_the_fluids_apart():

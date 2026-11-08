@@ -110,7 +110,7 @@ def test_rated_duty_is_a_magnitude_whichever_fluid_comes_first():
 
 
 def test_design_reports_mass_warnings_and_status(tmp_path):
-    # cold fluid listed first, a shell under lpbf's minimum, a big sideways port (its teardrop)
+    # cold fluid listed first, a shell under lpbf's minimum (Materialize: 1 mm), a big sideways port (its teardrop)
     spec = {"name": "thin", "core": {"type": "box", "min": [0, 0, 0], "max": [24, 24, 20]}, "layout": "cross",
             "fluids": ["cold", "hot"], "cell": 8, "wall": 1.0, "header": 6, "shell": 0.35, "portDiameter": 10,
             "portLength": 3, "process": "lpbf", "step": 0.3,
@@ -125,7 +125,7 @@ def test_design_reports_mass_warnings_and_status(tmp_path):
     assert np.isclose(r["mass"], r["solidVolume"] * 2.67 / 1000.0) and r["massMaterial"]["name"] == "alsi10mg"
     assert rep["rating"]["duty"] > 0 and rep["rating"]["hotFluid"] == "hot"
     assert r["minOuterWall"] < 0.5
-    assert any("outer wall" in w and "0.5 mm" in w for w in r["warnings"]), r["warnings"]
+    assert any("outer wall" in w and "1 mm" in w for w in r["warnings"]), r["warnings"]
 
 
 def test_sideways_teardrop_port_has_no_thin_outer_wall():
@@ -154,4 +154,4 @@ def test_design_refused_up_front_when_memory_is_short(tmp_path, monkeypatch, cap
     assert status["state"] == "failed" and "GB is free" in status["error"]
     assert "GB is free" in json.loads(capsys.readouterr().out)["error"]
     assert any("GB" in w for w in check_document(CUBE)["warnings"])
-    assert PROCESS_LIMITS["lpbf"]["minWall"] == 0.5
+    assert PROCESS_LIMITS["lpbf"]["minWall"] == 1.0
