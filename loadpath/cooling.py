@@ -84,7 +84,12 @@ __all__ = ["CoolingProblem", "CoolingModel", "cooling_readings", "run_cooling", 
 
 K_AIR = 0.03            # W/(m K): air near 40 C is 0.027; a little for what convection there is
 H_OUT = 10.0            # W/(m^2 K): natural convection ~5 + radiation ~5-6 (emissivity 0.9, 30-50 C)
-COMPONENT_K = 20.0      # W/(m K): a package on a copper-filled board, in plane
+COMPONENT_K = 20.0
+# J/(mm^3 K) a component holds per K and volume when it gives no
+# heatCapacity: rho c_p of silicon 1.66, FR-4 1.6, a lithium pouch about 2.0
+# (2300 kg/m^3 x 900 J/(kg K)), copper 3.4 (MJ/(m^3 K))
+VOL_CAP = 1.8e-3
+RHO_CP_AIR_VOL = 1.2e-6       # J/(mm^3 K), still air      # W/(m K): a package on a copper-filled board, in plane
 P_NORM = 12.0
 CD = 0.6                # discharge coefficient of a sharp-edged vent
 RHO_CP_AIR = 1.16 * 1007.0    # J/(m^3 K) at ~30 C
@@ -120,6 +125,7 @@ class Source:
     max_t: float | None
     k: float
     shape: object
+    capacity: float | None = None     # J/K (None: VOL_CAP times its volume)
     cells: np.ndarray = None          # thermal cell indices
     nodes: np.ndarray = None          # bool per thermal node
 
@@ -144,6 +150,34 @@ class CoolingSpec:
     vents: list
     up: np.ndarray                    # unit vector against gravity
     raw: dict = field(default_factory=dict)
+    cycle: "Cycle | None" = None
+
+
+@dataclass
+class Cycle:
+    """Power over time: phases of (seconds, steps, watts per source), from
+    `start` ("first": the steady state of the first phase's power;
+    "ambient": everything at room temperature), or with `repeat` the
+    repeating state, run `cycles` times from the steady state at the mean
+    power and read on the last."""
+    phases: list                      # [(seconds, steps, np.array watts per source)]
+    start: str = "first"
+    repeat: bool = False
+    cycles: int = 3
+
+    def steps(self):
+        """[(dt, watts)] for every step of the run, and the first step
+        the limits read (the last cycle's, with repeat)."""
+        one = [(sec / n, w) for sec, n, w in self.phases for _ in range(n)]
+        if not self.repeat:
+            return one, 0
+        return one * self.cycles, len(one) * (self.cycles - 1)
+
+    def start_watts(self):
+        if self.repeat:
+            t = sum(sec for sec, _, _ in self.phases)
+            return sum(sec * w for sec, _, w in self.phases) / t
+        return None if self.start == "ambient" else self.phases[0][2]
 
 
 def _num(v, label, positive=True):
@@ -193,9 +227,11 @@ def cooling_from_study(study) -> CoolingSpec:
             mt = float(mt)
             if mt <= ambient:
                 raise ValueError(f"{label}.maxTemp {mt:g} C is not over the ambient {ambient:g} C")
+        hc = c.get("heatCapacity")
         sources.append(Source(str(c.get("region") or c.get("id") or f"component-{i}"), w, mt,
                               _num(c.get("conductivity", COMPONENT_K), f"{label}.conductivity"),
-                              _component_shape(study, c, label)))
+                              _component_shape(study, c, label),
+                              _num(hc, f"{label}.heatCapacity") if hc is not None else None))
     if not sources or not any(s.watts > 0 for s in sources):
         raise ValueError("cooling.components: at least one component with watts > 0")
     sk = cb.get("skin") or {}
@@ -220,7 +256,39 @@ def cooling_from_study(study) -> CoolingSpec:
     up = -_leg_direction(cb.get("gravity", "-z"), "cooling.gravity")
     if not any(s.max_t is not None for s in sources) and smax is None:
         raise ValueError("cooling: nothing to hold: give a component maxTemp or skin.maxTemp")
-    return CoolingSpec(ambient, h, k_air, k_mat, sources, smax, skin_shape, vents, up, cb)
+    cyc = _cycle_from(cb.get("cycle"), sources) if cb.get("cycle") is not None else None
+    return CoolingSpec(ambient, h, k_air, k_mat, sources, smax, skin_shape, vents, up, cb, cyc)
+
+
+def _cycle_from(cb, sources) -> Cycle:
+    if not isinstance(cb, dict) or not isinstance(cb.get("phases"), list) or not cb["phases"]:
+        raise ValueError("cooling.cycle is {phases: [{seconds, watts: {component: W}, steps?}], repeat?, start?}")
+    ids = [s.id for s in sources]
+    steps = int(cb.get("steps", 12))
+    phases = []
+    for i, ph in enumerate(cb["phases"]):
+        label = f"cooling.cycle.phases[{i}]"
+        if not isinstance(ph, dict):
+            raise ValueError(f"{label} is {{seconds, watts: {{component: W}}, steps?}}")
+        sec = _num(ph.get("seconds"), f"{label}.seconds")
+        w = np.array([s.watts for s in sources], float)
+        for cid, v in (ph.get("watts") or {}).items():
+            if cid not in ids:
+                raise ValueError(f"{label}.watts: no cooling component {cid!r} (have {ids})")
+            w[ids.index(cid)] = _num(v, f"{label}.watts.{cid}", positive=False)
+        if (w < 0).any():
+            raise ValueError(f"{label}.watts must be >= 0")
+        n = int(ph.get("steps", steps))
+        if n < 1:
+            raise ValueError(f"{label}.steps must be >= 1")
+        phases.append((sec, n, w))
+    start = str(cb.get("start", "first"))
+    if start not in ("first", "ambient"):
+        raise ValueError("cooling.cycle.start is 'first' (the first phase's steady state) or 'ambient'")
+    cycles = int(cb.get("cycles", 3))
+    if cycles < 1:
+        raise ValueError("cooling.cycle.cycles must be >= 1")
+    return Cycle(phases, start, bool(cb.get("repeat", False)), cycles)
 
 
 def stack_conductance(vents_area_height, d_t: float, ambient: float) -> tuple[float, float]:
@@ -246,6 +314,28 @@ def stack_conductance(vents_area_height, d_t: float, ambient: float) -> tuple[fl
 
 
 # --------------------------------------------------------------- the model
+
+
+def _true_area_weights(study, centers, pitch):
+    """Per outside grid face, the share of its area the exterior's own
+    surface has there: 1 / (|nx| + |ny| + |nz|) with n the exterior's unit
+    normal (from its distance field), so the faces of a stepped surface add
+    up to the area of the surface they follow. 1 on faces that line up
+    with the grid, 1/sqrt(3) at most on a surface at 45 degrees to all
+    three axes."""
+    shapes = list(study.design_space or [])
+    if not len(centers) or not shapes:
+        return np.ones(len(centers))
+
+    def sdf(p):
+        return np.min([sh.sdf(p) for sh in shapes], axis=0)
+    e = 0.25 * pitch
+    g = np.stack([(sdf(centers + e * d) - sdf(centers - e * d)) / (2 * e) for d in np.eye(3)], axis=1)
+    norm = np.linalg.norm(g, axis=1)
+    ok = np.isfinite(norm) & (norm > 0.2)
+    n = np.where(ok[:, None], g / np.where(ok, norm, 1.0)[:, None], 0.0)
+    l1 = np.abs(n).sum(axis=1)
+    return np.where(ok, 1.0 / np.clip(l1, 1.0, np.sqrt(3.0)), 1.0)
 
 
 class CoolingModel:
@@ -301,17 +391,33 @@ class CoolingModel:
                 heat.append((m, s.watts, "volume"))
         self.k0 = k0
         self.src = src
+        # heat capacity per thermal cell, J/K (designed cells set per design)
+        vol = pitch ** 3
+        c0 = np.full(mesh.n_elem, RHO_CP_AIR_VOL * vol)
+        for s in spec.sources:
+            c0[s.cells] = (s.capacity / len(s.cells)) if s.capacity is not None else VOL_CAP * vol
+        self.c0 = c0
+        from .thermal import specific_heat
+        self.c_mat = float(study.material.density) * 1e-6 * specific_heat(study.material) * vol
+        # node load per watt of each source (its heat spread over its cells)
+        self.src_load = np.stack([np.bincount(mesh.enode[s.cells].ravel(),
+                                              weights=np.full(8 * len(s.cells), 1.0 / (8 * len(s.cells))),
+                                              minlength=mesh.n_nodes) for s in spec.sources], axis=1)
         faces = Faces(mesh)
         self.faces = faces
         self.bc = thermal_bc(mesh, ambient=spec.ambient, heat=heat, faces=faces)
         self.heat = self.bc.heat
         self._kt = hex8_kt() * pitch
-        # the outside's convection, h (T - ambient) on every outside face: a
-        # constant matrix (the outside is the exterior, whatever the design)
+        # the outside's convection, h (T - ambient) on every outside face: a (the outside is the exterior, whatever the design)
+        # constant matrix (the outside is the exterior, whatever the design).
+        # Each face convects over the true surface it stands for: a stepped
+        # grid surface has |nx| + |ny| + |nz| times the area of the surface
+        # it follows (1.5x on a sphere, which read its outside a third cool)
         bf = faces.nodes[faces.boundary]
-        w = (spec.h_out * 1e-6 * faces.area) * _FACE_M.ravel()
-        self._kc = sp.csr_matrix((np.tile(w, len(bf)), (np.repeat(bf, 4, axis=1).ravel(),
-                                                       np.tile(bf, (1, 4)).ravel())),
+        self.out_w = _true_area_weights(study, faces.center[faces.boundary], pitch)
+        w = (spec.h_out * 1e-6 * faces.area) * self.out_w[:, None] * _FACE_M.ravel()[None]
+        self._kc = sp.csr_matrix((w.ravel(), (np.repeat(bf, 4, axis=1).ravel(),
+                                              np.tile(bf, (1, 4)).ravel())),
                                  shape=(mesh.n_nodes, mesh.n_nodes))
         self.solver = ScalarSolver(rtol=1e-9)
         self._ones = np.ones(mesh.n_elem)
@@ -338,7 +444,8 @@ class CoolingModel:
         for v in spec.vents:
             sel_v = bnd[v.shape.sdf(faces.center[bnd]) <= 0.5 * pitch]
             v.faces = sel_v
-            area = v.area if v.area is not None else len(sel_v) * pitch ** 2
+            wv = self.out_w[np.searchsorted(bnd, sel_v)]
+            area = v.area if v.area is not None else float(wv.sum()) * pitch ** 2
             if not len(sel_v) and v.area is None:
                 raise ValueError(f"cooling vent {v.id!r} touches no outside face of the grid")
             if len(sel_v):
@@ -472,6 +579,113 @@ class CoolingModel:
             g[self.domain.preserve] = 0.0
         return g
 
+    # ---- heat over time
+    def capacity(self, xp):
+        """Lumped heat capacity per node, J/K: a designed cell holds its
+        density's share of the material's rho c_p (the rest is air)."""
+        c = self.c0.copy()
+        x = np.clip(np.asarray(xp, float), 0.0, 1.0)
+        c[self.mech] = RHO_CP_AIR_VOL * self.mesh.pitch ** 3 + x * (self.c_mat - RHO_CP_AIR_VOL * self.mesh.pitch ** 3)
+        return np.bincount(self.mesh.enode.ravel(), weights=np.repeat(c / 8.0, 8), minlength=self.mesh.n_nodes)
+
+    def history(self, xp, vent_rounds: int = 1):
+        """Node temperature rise at every step of the study's cycle
+        (backward Euler on the conduction system with a lumped capacity:
+        (K + C/dt) theta_n = C/dt theta_n-1 + f_n), as a (steps + 1, nodes)
+        array with the start state first, and the first step the limits
+        read. One factor per distinct step length, kept for the adjoint
+        (`history_gradient`)."""
+        cyc = self.spec.cycle
+        steps, first = cyc.steps()
+        sw = cyc.start_watts()
+        # the steady start (and the vents' flow, frozen from it)
+        self.heat_saved = self.heat
+        if sw is not None:
+            self.heat = self.src_load @ sw
+        theta0 = self.solve(xp, vent_rounds=vent_rounds) if sw is not None else np.zeros(self.mesh.n_nodes)
+        if sw is None:
+            self.solve(xp, vent_rounds=1)         # K (and the vents at no rise: none)
+        self.heat = self.heat_saved
+        self._steady = (self._direct, self._pardiso) if sw is not None else None
+        if sw is None:
+            self.release()
+        self._direct, self._pardiso = None, None
+        kmat = self._mat
+        cap = self.capacity(xp)
+        self._cap = cap
+        self._steps = steps
+        self._start_steady = sw is not None
+        self._factors = {}
+        th = [theta0]
+        for dt, w in steps:
+            solve = self._step_factor(kmat, cap, dt)
+            th.append(solve(cap / dt * th[-1] + self.src_load @ w))
+        return np.array(th), first + 1
+
+    def _step_factor(self, kmat, cap, dt):
+        key = float(dt)
+        if key not in self._factors:
+            a = (kmat + sp.diags(cap / dt)).tocsr()
+            if _HAS_PARDISO and a.shape[0] <= DIRECT_MAX:
+                from .bucklingopt import _factor
+                f, rel = _factor(a)
+                self._factors[key] = (lambda b, f=f: np.asarray(f(np.asarray(b, float)), float).reshape(np.shape(b)),
+                                      rel)
+            else:
+                self._factors[key] = (lambda b, a=a: self._cg_block(a, b), None)
+        return self._factors[key][0]
+
+    def _cg_block(self, a, b):
+        b = np.asarray(b, float)
+        if b.ndim == 1:
+            return self.solver.solve(a, b)
+        return np.stack([self.solver.solve(a, b[:, j]) for j in range(b.shape[1])], axis=1)
+
+    def history_gradient(self, xp, th, dj):
+        """d J / d xp for objectives J of the history th: dj is (steps + 1,
+        nodes, m), dJ_j/dtheta_n. The adjoint runs back from the last step
+        on the same factors: (K + C/dt_n) lam_n = dJ/dtheta_n + C/dt_n+1
+        lam_n+1, and K lam_0 = dJ/dtheta_0 + C/dt_1 lam_1 from a steady
+        start. Returns (xp size, m)."""
+        steps, cap = self._steps, self._cap
+        n_steps = len(steps)
+        m = dj.shape[2]
+        g = np.zeros((len(xp), m))
+        en = self.mesh.enode[self.mech]
+        dce = (self.c_mat - RHO_CP_AIR_VOL * self.mesh.pitch ** 3) / 8.0
+        lam_next = None
+        for n in range(n_steps, 0, -1):
+            dt = steps[n - 1][0]
+            rhs = dj[n].copy()
+            if lam_next is not None:
+                rhs += (cap / steps[n][0])[:, None] * lam_next
+            lam = self._factors[float(dt)][0](rhs)
+            lam = lam.reshape(-1, m)
+            dth = (th[n] - th[n - 1]) / dt
+            for j in range(m):
+                g[:, j] += self.gradient(xp, th[n], lam[:, j])
+                g[:, j] -= dce * (lam[en, j] * dth[en]).sum(axis=1)
+            lam_next = lam
+        if self._start_steady:
+            rhs = dj[0] + (cap / steps[0][0])[:, None] * lam_next
+            direct, _ = self._steady
+            lam0 = np.asarray(direct(rhs), float).reshape(-1, m) if direct is not None else \
+                self._cg_block(self._mat, rhs).reshape(-1, m)
+            for j in range(m):
+                g[:, j] += self.gradient(xp, th[0], lam0[:, j])
+        g[self.domain.preserve] = 0.0
+        return g
+
+    def release_history(self):
+        for _, rel in getattr(self, "_factors", {}).values():
+            if rel is not None:
+                rel()
+        self._factors = {}
+        st = getattr(self, "_steady", None)
+        if st is not None and st[1] is not None:
+            st[1]()
+        self._steady = None
+
 
 class _Limit:
     def __init__(self, name, nodes, limit_rise):
@@ -485,6 +699,18 @@ class _Limit:
         pn = tmax * float(np.mean(tn ** p)) ** (1.0 / p)
         d = np.zeros(len(theta))
         d[self.nodes] = (tn ** (p - 1)) * float(np.mean(tn ** p)) ** (1.0 / p - 1.0) / len(t)
+        return pn, d, tmax
+
+    def value_history(self, th, first, p=P_NORM):
+        """The same p-norm over every node and every step from `first`:
+        the hot spot at its hottest moment. d is (steps + 1, nodes)."""
+        t = np.maximum(th[first:, self.nodes], 1e-12)
+        tmax = float(t.max())
+        tn = t / tmax
+        mp = float(np.mean(tn ** p))
+        pn = tmax * mp ** (1.0 / p)
+        d = np.zeros(th.shape)
+        d[first:, self.nodes] = (tn ** (p - 1)) * mp ** (1.0 / p - 1.0) / t.size
         return pn, d, tmax
 
 
@@ -505,6 +731,8 @@ class CoolingProblem:
 
     def evaluate(self, xp, ctx=None):
         mdl = self.model
+        if mdl.spec.cycle is not None:
+            return self._evaluate_cycle(xp)
         theta = mdl.solve(xp)
         out = []
         for lim in self.limits:
@@ -517,6 +745,20 @@ class CoolingProblem:
         mdl.release()
         return out
 
+    def _evaluate_cycle(self, xp):
+        mdl = self.model
+        th, first = mdl.history(xp)
+        vals, ds = [], []
+        for lim in self.limits:
+            pn, d, tmax = lim.value_history(th, first)
+            lim.scale = tmax / max(pn, 1e-12)
+            vals.append(pn)
+            ds.append(d)
+        g = mdl.history_gradient(xp, th, np.stack(ds, axis=2))
+        mdl.release_history()
+        return [(lim.scale * pn / lim.limit - 1.0, lim.scale * g[:, j] / lim.limit, lim.name)
+                for j, (lim, pn) in enumerate(zip(self.limits, vals))]
+
 
 # ------------------------------------------------------------- readings
 
@@ -527,18 +769,35 @@ def cooling_readings(study, domain: Domain, xp, floor=None, vent_rounds: int = 8
     skin by convection, vents by stack flow) and the air's mean rise."""
     mdl = CoolingModel(study, domain, floor=floor)
     spec = mdl.spec
-    theta = mdl.solve(xp, vent_rounds=vent_rounds)
+    times = None
+    if spec.cycle is not None:
+        # with a cycle: every node's hottest moment (from the limits' first
+        # step on), and the heat out at the end of the run
+        th, first = mdl.history(xp, vent_rounds=vent_rounds)
+        mdl.release_history()
+        clock = np.concatenate([[0.0], np.cumsum([dt for dt, _ in mdl._steps])])
+        clock = clock - clock[first - 1]
+        hist = th[first:]
+        theta = hist.max(axis=0)
+        end = th[-1]
+        times = (hist, clock[first:])
+    else:
+        theta = mdl.solve(xp, vent_rounds=vent_rounds)
+        end = theta
     t = theta + spec.ambient
     rows = []
     for s in spec.sources:
         tm = float(t[s.nodes].max())
-        rows.append({"component": s.id, "watts": s.watts, "maxTemp": s.max_t, "temperature": round(tm, 2),
-                     "mean": round(float(t[s.nodes].mean()), 2),
-                     "ok": bool(s.max_t is None or tm <= s.max_t + 0.25)})
+        row = {"component": s.id, "watts": s.watts, "maxTemp": s.max_t, "temperature": round(tm, 2),
+               "mean": round(float(t[s.nodes].mean()), 2),
+               "ok": bool(s.max_t is None or tm <= s.max_t + 0.25)}
+        if times is not None:
+            row["peakAt"] = round(float(times[1][int(np.argmax(times[0][:, s.nodes].max(axis=1)))]), 1)
+        rows.append(row)
     f = mdl.faces
     bnd = np.flatnonzero(f.boundary)
-    th_face = theta[f.nodes[bnd]].mean(axis=1)
-    q_skin = float(np.sum(spec.h_out * 1e-6 * f.area * th_face))
+    th_face = end[f.nodes[bnd]].mean(axis=1)
+    q_skin = float(np.sum(spec.h_out * 1e-6 * f.area * mdl.out_w * th_face))
     air = mdl.air(xp)
     rep = {"components": rows, "ambient": spec.ambient, "watts": float(sum(s.watts for s in spec.sources)),
            "heatOut": {"skin": round(q_skin, 4)}, "airRise": round(mdl.air_rise(theta, air), 2),
@@ -554,6 +813,11 @@ def cooling_readings(study, domain: Domain, xp, floor=None, vent_rounds: int = 8
         rep["skin"] = {"maxTemp": spec.skin_max, "temperature": round(float(ts.max()), 2),
                        "mean": round(float(ts.mean()), 2), "hotSpot": mdl.mesh.node_xyz[hot].round(2).tolist(),
                        "ok": bool(spec.skin_max is None or ts.max() <= spec.skin_max + 0.25)}
+        if times is not None:
+            rep["skin"]["peakAt"] = round(float(times[1][int(np.argmax(times[0][:, mdl.skin_nodes].max(axis=1)))]), 1)
+    if times is not None:
+        rep["cycle"] = {"seconds": round(float(times[1][-1]), 1), "steps": int(len(times[1]) - 1),
+                        "note": "temperatures are each point's hottest over the cycle; heatOut at its end"}
     rep["ok"] = all(r["ok"] for r in rows) and rep.get("skin", {}).get("ok", True)
     mdl.release()
     rep["_theta"] = t

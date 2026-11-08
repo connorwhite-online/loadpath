@@ -1795,6 +1795,11 @@
                 "type": "number",
                 "exclusiveMinimum": 0,
                 "description": "W/(m K) (default 20: a package on a copper-filled board)"
+              },
+              "heatCapacity": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "J/K it holds per K, for a `cycle` (default 1.8 J/(cm^3 K) times its volume; a battery is its mass times about 1000 J/(kg K))"
               }
             },
             "additionalProperties": false
@@ -1873,6 +1878,67 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "W/(m K) of the printed material (default the material card's)"
+        },
+        "cycle": {
+          "type": "object",
+          "description": "Power over time instead of a steady state: the limits hold at each point's hottest moment. A burst after idling, charging, a duty cycle (`repeat`).",
+          "properties": {
+            "phases": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "seconds": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "watts": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "description": "W per component id in this phase (others keep their `watts`)"
+                  },
+                  "steps": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "time steps (default `steps`)"
+                  }
+                },
+                "required": [
+                  "seconds"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "start": {
+              "enum": [
+                "first",
+                "ambient"
+              ],
+              "description": "first (default): the steady state of the first phase's power; ambient: cold"
+            },
+            "repeat": {
+              "type": "boolean",
+              "description": "the repeating state of the phases, from the mean power"
+            },
+            "cycles": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "with repeat: cycles run (default 3), the last one read"
+            },
+            "steps": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "time steps per phase (default 12)"
+            }
+          },
+          "required": [
+            "phases"
+          ],
+          "additionalProperties": false
         },
         "pitches": {
           "type": "array",

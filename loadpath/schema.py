@@ -940,8 +940,29 @@ _COOLING_COMPONENT = {
                                                                  "conducts, a battery or a board)"},
         "maxTemp": {"type": "number", "description": "C its hottest point must stay under (a die's junction "
                                                      "limit less the package's own rise, a battery's 45-60 C)"},
-        "conductivity": {**_POS, "description": "W/(m K) (default 20: a package on a copper-filled board)"}},
+        "conductivity": {**_POS, "description": "W/(m K) (default 20: a package on a copper-filled board)"},
+        "heatCapacity": {**_POS, "description": "J/K it holds per K, for a `cycle` (default 1.8 J/(cm^3 K) "
+                                                "times its volume; a battery is its mass times about 1000 "
+                                                "J/(kg K))"}},
     "additionalProperties": False}
+_COOLING_CYCLE = {
+    "type": "object",
+    "description": "Power over time instead of a steady state: the limits hold at each point's hottest moment. "
+                   "A burst after idling, charging, a duty cycle (`repeat`).",
+    "properties": {
+        "phases": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {
+                       "seconds": _POS,
+                       "watts": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0},
+                                 "description": "W per component id in this phase (others keep their `watts`)"},
+                       "steps": {"type": "integer", "minimum": 1, "description": "time steps (default `steps`)"}},
+                   "required": ["seconds"], "additionalProperties": False}},
+        "start": {"enum": ["first", "ambient"],
+                  "description": "first (default): the steady state of the first phase's power; ambient: cold"},
+        "repeat": {"type": "boolean", "description": "the repeating state of the phases, from the mean power"},
+        "cycles": {"type": "integer", "minimum": 1, "description": "with repeat: cycles run (default 3), the "
+                                                                   "last one read"},
+        "steps": {"type": "integer", "minimum": 1, "description": "time steps per phase (default 12)"}},
+    "required": ["phases"], "additionalProperties": False}
 _COOLING = {
     "type": "object",
     "description": "`loadpath cooling`: design the inside of a fixed exterior around the heat its parts make "
@@ -976,6 +997,7 @@ _COOLING = {
         "gravity": {"type": "string", "pattern": "^[+-]?[xyz]$",
                     "description": "the way down in use, for the vents' stack (default -z)"},
         "conductivity": {**_POS, "description": "W/(m K) of the printed material (default the material card's)"},
+        "cycle": _COOLING_CYCLE,
         "pitches": {"type": "array", "items": _POS, "minItems": 1,
                     "description": "mm, coarse to fine (without a switch block)"},
         "iterations": {"oneOf": [{"type": "integer", "minimum": 1},

@@ -20,6 +20,11 @@ Filled solid, the skin over the processor still gets too hot. Loadpath
 grows pads that take the heat off the processor and spread it under the
 skin, with the least material.
 
+`--burst` designs for how it is used instead of a steady load: idling at
+0.4 W, a 5 min burst at 3.5 W, idle again, with each limit held at that
+point's hottest moment (the parts' and the plastic's heat capacity carry
+the burst; see docs/COOLING.md).
+
 `--vents` adds two slots the exterior already has, at the bottom and top
 ends (held upright, gravity along -y), and reads what the stack flow
 through them carries. `--baseline` reads the bare skin and a solid-filled
@@ -54,7 +59,7 @@ def exterior(path: str) -> str:
     return path
 
 
-def study(ext: str, pitch: float = 1.0, vents: bool = False, press: bool = False) -> dict:
+def study(ext: str, pitch: float = 1.0, vents: bool = False, press: bool = False, burst: bool = False) -> dict:
     doc = {
         "name": "handheld",
         "description": "Handheld device (MJF PA 12): exterior kept as a 1.5 mm skin; interior designed to carry "
@@ -94,6 +99,17 @@ def study(ext: str, pitch: float = 1.0, vents: bool = False, press: bool = False
             # eroded design's solves ran the 15 GB box out of memory once the
             # projection sharpened (the delivered read-back checks the panel)
             "robust": False}
+    if burst:
+        # how it is used: idling at 0.4 W, then a 5 min burst at 3.5 W (a
+        # game, a video call, a camera recording), then idle again; the
+        # limits hold at each point's hottest moment, the outside's a while
+        # after the burst ends. The battery: 45 g at about 1000 J/(kg K)
+        comps = doc["cooling"]["components"]
+        comps[3]["heatCapacity"] = 45.0
+        doc["cooling"]["cycle"] = {"phases": [
+            {"seconds": 60, "watts": {"soc": 0.3, "pmic": 0.1}, "steps": 1},
+            {"seconds": 300, "watts": {"soc": 3.0, "pmic": 0.5}, "steps": 15},
+            {"seconds": 300, "watts": {"soc": 0.3, "pmic": 0.1}, "steps": 10}]}
     if vents:
         doc["cooling"]["gravity"] = "-y"
         doc["cooling"]["vents"] = [
@@ -105,7 +121,8 @@ def study(ext: str, pitch: float = 1.0, vents: bool = False, press: bool = False
 
 def _row(r):
     comps = ", ".join(f"{c['component']} {c['temperature']:.1f} C" + ("" if c["maxTemp"] is None else
-                      f" (<= {c['maxTemp']:g})") for c in r["components"])
+                      f" (<= {c['maxTemp']:g})") + (f" at {c['peakAt']:g} s" if "peakAt" in c else "")
+                      for c in r["components"])
     s = r.get("skin", {})
     return f"{comps}; skin hot spot {s.get('temperature', float('nan')):.1f} C (<= {s.get('maxTemp')}), mean " \
            f"{s.get('mean', float('nan')):.1f}; heat out {r['heatOut']}; {'ok' if r['ok'] else 'MISS'}"
@@ -119,6 +136,8 @@ def main():
     ap.add_argument("--verify", default=None, help="comma-separated mm grids for the delivered read-back")
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--vents", action="store_true")
+    ap.add_argument("--burst", action="store_true", help="design for a 5 min 3.5 W burst after idling, not a "
+                                                         "steady 1.8 W")
     ap.add_argument("--press", action="store_true", help="also a feel target: the back panel under a 20 N "
                                                          "thumb press closes by no more than 0.1 mm")
     a = ap.parse_args()
@@ -130,7 +149,7 @@ def main():
 
     pitches = [float(p) for p in a.pitches.split(",")]
     ext = exterior(os.path.abspath(os.path.join(a.out, "exterior.stl")))
-    doc = study(ext, pitches[0], a.vents, a.press)
+    doc = study(ext, pitches[0], a.vents, a.press, a.burst)
     json.dump(doc, open(os.path.join(a.out, "handheld.study.json"), "w"), indent=1)
     st = study_from_dict(doc)
     if a.baseline:

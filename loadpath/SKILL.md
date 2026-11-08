@@ -619,6 +619,15 @@ blocks in the same study are designed with it. Report the `delivered`
 readings (the STL on two finer grids) and their `gridChange`. See
 docs/COOLING.md.
 
+Ask how the product is used before designing for a steady load: most
+handhelds idle, then burst (a game, a call, a recording) or charge. A
+`cycle` (`phases`: each `seconds`, `watts` per component id, `steps`; then
+`start: first | ambient` or `repeat: true`) holds every limit at its
+hottest moment, so the parts' and the plastic's heat capacity carry the
+burst; give a battery its `heatCapacity` (J/K, about 1 J/K per gram:
+45 J/K for 45 g). A steady design at the burst's power asks for
+far more material, or for something no interior can do.
+
 ## Heat, fatigue and creep
 
 - A part next to something hot (a stepper face at 70 C, a heated bed):

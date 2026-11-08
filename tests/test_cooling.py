@@ -83,6 +83,85 @@ def test_heat_balance_and_uniform_skin():
     assert abs(r["skin"]["mean"] - expect) < 0.03 * (expect - 25), (r["skin"], expect)
 
 
+def test_sphere_in_a_shell_matches_the_exact_answer():
+    # a 1 W sphere (r 4 mm, near-isothermal) in a PA 12 ball (r 20 mm)
+    # losing heat at h: rise = W/(4 pi k)(1/a - 1/b) + W/(4 pi b^2 h). The
+    # grid's stepped outside has 1.5x the ball's area; each face convects
+    # over the true surface it stands for, or the outside reads 34% cool
+    a, b, w, k = 4.0, 20.0, 1.0, 0.25
+    doc = {"name": "ball", "designSpace": {"type": "sphere", "center": [0, 0, 0], "r": b},
+           "keepOut": [{"id": "src", "bore": False, "shape": {"type": "sphere", "center": [0, 0, 0], "r": a}}],
+           "material": "pa12", "minMember": 2.0, "resolution": {"pitch": 2.0},
+           "cooling": {"ambient": 25, "conductivity": k,
+                       "components": [{"region": "src", "watts": w, "conductivity": 2000, "maxTemp": 500}]}}
+    st = study_from_dict(doc)
+    dom = build_domain(st, 2.0)
+    r = cooling.cooling_readings(st, dom, np.ones(dom.n_elem))
+    h = cooling.H_OUT * 1e-6
+    skin = w / (4 * np.pi * b ** 2 * h)
+    src = w / (4 * np.pi * k * 1e-3) * (1 / a - 1 / b) + skin
+    assert abs(r["skin"]["mean"] - 25 - skin) < 0.03 * skin, (r["skin"], skin)
+    assert abs(r["components"][0]["temperature"] - 25 - src) < 0.08 * src, (r["components"], src)
+    assert abs(r["heatOut"]["skin"] - w) < 1e-3
+
+
+def test_cycle_lumped_heat_up_matches_the_exact_answer():
+    # a near-isothermal box heated from room temperature: W/(hA)(1 - e^-t/tau),
+    # tau = C/(hA); backward Euler is first order, 1% at 40 steps here
+    doc = box()
+    doc["cooling"]["conductivity"] = 5000.0
+    doc["cooling"]["cycle"] = {"start": "ambient", "phases": [{"seconds": 600, "steps": 40}]}
+    st, dom, fl = _dom(doc, 2.0)
+    x = np.ones(dom.n_elem)
+    mdl = cooling.CoolingModel(st, dom, floor=fl)
+    th, first = mdl.history(x)
+    mdl.release_history()
+    cap = mdl.capacity(x).sum()
+    ha = cooling.H_OUT * 1e-6 * float(mdl.out_w.sum()) * 4.0
+    tau = cap / ha
+    exact = 0.5 / ha * (1 - np.exp(-600 / tau))
+    assert abs(th[-1].mean() - exact) < 0.015 * exact, (th[-1].mean(), exact, tau)
+    r = cooling.cooling_readings(st, dom, x, floor=fl)
+    assert r["cycle"]["seconds"] == 600 and r["components"][0]["peakAt"] == 600
+
+
+def test_cycle_sensitivities_match_finite_differences():
+    # a burst after idling: the limits read the hottest moment; the adjoint
+    # runs back through every step and the steady start
+    doc = box()
+    doc["cooling"]["cycle"] = {"phases": [{"seconds": 300, "watts": {"chip": 0.1}, "steps": 3},
+                                          {"seconds": 120, "watts": {"chip": 1.5}, "steps": 4},
+                                          {"seconds": 60, "watts": {"chip": 0.1}, "steps": 2}]}
+    st, dom, fl = _dom(doc, 2.0)
+    prob = cooling.CoolingProblem(st, dom, floor=fl)
+    rng = np.random.default_rng(2)
+    x = np.clip(0.3 + 0.4 * rng.random(dom.n_elem), 0, 1)
+    x[dom.preserve] = 1.0
+    x = np.maximum(x, fl)
+    mdl = prob.model
+    cand = np.flatnonzero(~dom.preserve & (x > fl + 0.05))
+
+    def pnorms(xx):
+        th, first = mdl.history(xx)
+        out = [lim.value_history(th, first) for lim in prob.limits]
+        return th, first, out
+    th, first, base = pnorms(x)
+    g = mdl.history_gradient(x, th, np.stack([d for _, d, _ in base], axis=2))
+    mdl.release_history()
+    for e in cand[[3, len(cand) // 2, -3]]:
+        h = 1e-4
+        xp, xm = x.copy(), x.copy()
+        xp[e] += h
+        xm[e] -= h
+        vp = [v for v, _, _ in pnorms(xp)[2]]
+        mdl.release_history()
+        vm = [v for v, _, _ in pnorms(xm)[2]]
+        mdl.release_history()
+        for j, lim in enumerate(prob.limits):
+            fd = (vp[j] - vm[j]) / (2 * h)
+            assert abs(fd - g[e, j]) <= 1e-3 * abs(g[e, j]) + 1e-12, (lim.name, e, g[e, j], fd)
+
+
 def test_sensitivities_match_finite_differences():
     st, dom, fl = _dom(box(), 1.0)
     prob = cooling.CoolingProblem(st, dom, floor=fl)
