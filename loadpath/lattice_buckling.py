@@ -196,8 +196,11 @@ def _factorized(kf, direct):
     try:
         import pypardiso
 
+        from .nonlinear import mkl_threads
+
         a = sp.csr_matrix(kf)
         solver = pypardiso.PyPardisoSolver()
+        mkl_threads(solver)
         solver.factorize(a)
         return lambda r: solver.solve(a, np.ascontiguousarray(r, float))
     except ImportError:

@@ -383,6 +383,27 @@ def _have_pardiso():
     return True
 
 
+def mkl_threads(solver) -> None:
+    """Give PARDISO the run's cores on the calling thread. loadpath sets
+    MKL_NUM_THREADS=1 at import (for BLAS; see __init__.py), which left every
+    PARDISO factor and solve on one core: the constrained method's buckling
+    factor of the wrist yoke (395k dofs) took 42.7 s, 12.7 s on 4 threads.
+    The budget is LOADPATH_THREADS (evals and the study's worker split set
+    it), else the cores this process may use. Thread-local, so BLAS stays
+    single-threaded."""
+    import os
+
+    env = os.environ.get("LOADPATH_THREADS")
+    try:
+        n = max(1, int(env)) if env else len(os.sched_getaffinity(0))
+    except (ValueError, AttributeError):
+        n = os.cpu_count() or 1
+    try:
+        solver.libmkl.MKL_Set_Num_Threads_Local(int(n))
+    except Exception:  # noqa: BLE001 - an MKL without it: its own default
+        pass
+
+
 class _Pardiso:
     """A PARDISO factorization of K (`.solve` takes one right-hand side or
     a block). Symmetric K: Cholesky-type (real symmetric positive definite),
@@ -400,6 +421,7 @@ class _Pardiso:
 
         self._s = None
         s = _Pardiso._pool.pop() if _Pardiso._pool else pypardiso.PyPardisoSolver()
+        mkl_threads(s)
         for mtype in ((2, -2) if symmetric else (11,)):
             a = sp.triu(k, format="csr") if mtype != 11 else k.tocsr()
             a.sort_indices()
@@ -418,6 +440,7 @@ class _Pardiso:
 
     def solve(self, b):
         b = np.asarray(b, float)
+        mkl_threads(self._s)
         # straight to the solve phase: pypardiso.solve() hashes the matrix
         # every call to see whether it is factored already
         x = self._s._call_pardiso(self._a, np.asfortranarray(b) if b.ndim == 2 else np.ascontiguousarray(b))

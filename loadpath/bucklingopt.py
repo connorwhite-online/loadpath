@@ -62,9 +62,12 @@ def _factor(k: sp.csr_matrix, node_ijk=None):
 
         lu = _splu(k, node_ijk)
         return lu.solve, None
+    from .nonlinear import mkl_threads
+
     a = sp.triu(k, format="csr")
     a.sort_indices()
     solver = pypardiso.PyPardisoSolver()
+    mkl_threads(solver)
     solver.set_matrix_type(2)
     try:
         solver.factorize(a)
@@ -73,12 +76,14 @@ def _factor(k: sp.csr_matrix, node_ijk=None):
         a = k.tocsr()
         a.sort_indices()
         solver = pypardiso.PyPardisoSolver()
+        mkl_threads(solver)
         solver.set_matrix_type(11)
         solver.factorize(a)
     solver.set_phase(33)
 
     def solve(b):
         b = np.asarray(b, float)
+        mkl_threads(solver)
         # straight to the solve phase: pypardiso.solve() hashes the matrix
         # every call to see whether it is factored already
         return solver._call_pardiso(a, np.asfortranarray(b) if b.ndim == 2 else np.ascontiguousarray(b))
