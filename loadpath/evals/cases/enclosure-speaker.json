@@ -1,0 +1,20 @@
+{
+ "name": "enclosure-speaker",
+ "description": "A portable speaker in PETG (FDM) from a generated mesh (unit scale, Y-up, holes, a doubled shell, debris): driver up out the grille, 18650 cell, a 2 W amp with its USB-C in the back port, all in through the grille; the amp under 85 C, the cell under 45 C, the shell under 48 C (cooling); five 150 g drops checked on the part.",
+ "enclosure": {
+  "product": "speaker"
+ },
+ "expect": {
+  "minSafetyFactor": 1.5,
+  "coarse": {
+   "brief": {
+    "resolution": {
+     "pitch": 1.5
+    }
+   },
+   "iterations": [
+    30
+   ]
+  }
+ }
+}

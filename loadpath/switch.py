@@ -1543,7 +1543,8 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
     mesh.export(path)
     rep["mesh"] = path
     rep["mass"] = float(mesh.volume * study.material.density / 1000.0)
-    rep["watertight"] = bool(mesh.is_watertight)
+    from .reconstruct import _stl_watertight
+    rep["watertight"] = bool(mesh.is_watertight) and _stl_watertight(mesh)
     if mesh.is_watertight:
         # drawn: the delivered mesh's volume share per cell over the skin
         # floor (for a feel read-back)

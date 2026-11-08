@@ -368,8 +368,37 @@ def _md_hx(rows):
 
 def _md(rows):
     hx = [r for r in rows if r.get("kind") == "heatExchanger"]
-    rows = [r for r in rows if r.get("kind") != "heatExchanger"]
-    return _md_study(rows) + ("\n" + _md_hx(hx) if hx else "") + _md_spread(rows)
+    enc = [r for r in rows if r.get("kind") == "enclosure"]
+    rows = [r for r in rows if r.get("kind") not in ("heatExchanger", "enclosure")]
+    return (_md_study(rows) + ("\n" + _md_hx(hx) if hx else "") + ("\n" + _md_enclosure(enc) if enc else "")
+            + _md_spread(rows))
+
+
+def _md_enclosure(rows):
+    """Products from the outside in: one row per product, the checks that
+    passed out of those run."""
+    lines = ["Products from the outside in (loadpath enclosure)", "",
+             "| Product | Pass | Checks passed | Parts | Mass g | Worst SF | Exterior untouched | Time s | Failed checks |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for r in rows:
+        if r.get("skipped"):
+            lines.append(f"| {r['case']} | skipped | - | - | - | - | - | 0 | {r['skipped']} |")
+            continue
+        cs = r.get("checks") or []
+        parts = r.get("parts") or {}
+        sfs = [p.get("safetyFactor") for p in parts.values() if p.get("safetyFactor") is not None]
+        ext = all((p.get("exterior") or {}).get("untouched") for p in parts.values()) if parts else None
+        failed = ", ".join(f"{c['check']} {c['value']}" + (f" (limit {c['op']} {c['limit']})"
+                                                           if not isinstance(c["value"], bool) else "")
+                           for c in cs if not c["pass"])
+        if r.get("error"):
+            failed = (r["error"] + "; " + failed).strip("; ")
+        mass = (r.get("best") or {}).get("mass")
+        lines.append(f"| {r['case']} | {'yes' if r.get('pass') else 'NO'} | {sum(c['pass'] for c in cs)}/{len(cs)} | "
+                     f"{', '.join(parts) or '-'} | {'-' if mass is None else f'{mass:.1f}'} | "
+                     f"{'-' if not sfs else f'{min(sfs):.2f}'} | {'-' if ext is None else ('yes' if ext else 'NO')} | "
+                     f"{r.get('seconds', 0):.0f} | {failed} |")
+    return "\n".join(lines) + "\n"
 
 
 def _md_spread(rows):
@@ -600,6 +629,128 @@ def run_switch_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
     return _jsonable(row)
 
 
+def run_enclosure_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
+    """A product from its outside in (`loadpath enclosure --run`): the case's
+    `enclosure` is {"product": name} (products.py writes its exterior, parts
+    and brief) or {"brief": path}. Scored on what the designer and the
+    engineer would check: every part placed and every way in found, no way
+    in cutting into the skin, and per delivered part (each half of a split
+    shell) the exterior untouched, a watertight mesh, the safety factor of
+    every load case on the delivered part, nothing in a keep-out, and the
+    switch, feel or cooling targets met.
+
+    expect: minSafetyFactor (default the brief's goal), maxKeepOutIntrusion
+    (mm^3, default 1), maxPathsIntoSkin (mm^3, default 0.05), maxMass (g,
+    all parts), maxSeconds; designTargets (default true: switch/feel/cooling
+    passes). expect.coarse: brief (keys merged into the brief: a coarser
+    resolution), pitches and iterations (switch/feel/cooling), timeLimit
+    (minutes, `run`), and its own min/max limits."""
+    from ..__main__ import _jsonable
+    from ..enclosure import design_and_check, run_enclosure
+
+    name = raw.get("name")
+    expect = dict(raw.get("expect") or {})
+    t0 = time.time()
+    row = {"case": name, "kind": "enclosure", "tier": tier, "checks": []}
+    work = os.path.join(out, name)
+    try:
+        spec = raw["enclosure"]
+        if spec.get("product"):
+            from .products import write
+            brief_path = write(spec["product"], os.path.join(work, "product"))
+        else:
+            brief_path = os.path.join(base, spec["brief"])
+        brief = json.load(open(brief_path))
+        pitches = expect.get("pitches")
+        its = expect.get("iterations")
+        tl = expect.get("timeLimit")
+        quick = False
+        if tier == "coarse":
+            co = expect.get("coarse") or {}
+            brief.update(co.get("brief") or {})
+            pitches = co.get("pitches", pitches)
+            its = co.get("iterations", [30])
+            tl = co.get("timeLimit", 10)
+            # not `run --quick`: it coarsens the grid past the brief's own
+            # (a 1.4 mm skin on 2.4 mm cells reads as nothing)
+            expect = {**expect, **{k: v for k, v in co.items() if k.startswith(("min", "max"))}}
+        brief_run = os.path.join(os.path.dirname(brief_path), f"{name}.{tier}.brief.json")
+        with open(brief_run, "w") as fh:
+            json.dump(brief, fh, indent=1)
+        enc = os.path.join(work, "enclosure")
+
+        def note(e, _x=None):
+            if e.get("stage") in ("placement", "assembly", "split", "check", "mesh", "verify", "domain"):
+                print(json.dumps(_jsonable({k: v for k, v in e.items() if isinstance(v, (str, int, float))}
+                                           | {"case": name, "t": round(time.time() - t0)})),
+                      file=sys.stderr, flush=True)
+        r = run_enclosure(brief_run, enc, on_progress=note)
+        rep = r["report"]
+        comps = [c for c in brief.get("components") or []]
+        placed = len(rep["placement"]["components"])
+        blocked = [k for k, v in rep["assembly"]["components"].items() if v.get("insertFrom") is None
+                   and not str(v.get("how", "")).startswith("split")]
+        if rep.get("split"):
+            blocked += [k for k, v in (rep["split"].get("assembly") or {}).get("paths", {}).items()
+                        if v.get("insertFrom") is None]
+        into_skin = max([0.0] + list((rep.get("pathsIntoSkin") or {}).values()))
+        row["placement"] = {k: {kk: v.get(kk) for kk in ("centre", "roomToSkin", "roomToParts", "auto")}
+                            for k, v in rep["placement"]["components"].items()}
+        row["assembly"] = {k: v.get("insertFrom") for k, v in rep["assembly"]["components"].items()}
+        row["warnings"] = rep.get("warnings")
+        checks = [("components placed", placed, ">=", len(comps)),
+                  ("ways in blocked", len(blocked), "<=", 0),
+                  ("ways in into the skin mm^3", into_skin, "<=", expect.get("maxPathsIntoSkin", 0.05)),
+                  ("study lint errors", len(rep.get("lint") or []), "<=", 0)]
+        res = design_and_check(r, enc, pitches=pitches, iterations=its, time_limit=tl, quick=quick, on_progress=note)
+        sf_goal = expect.get("minSafetyFactor", (brief.get("goal") or {}).get("safetyFactor"))
+        mass = 0.0
+        row["parts"] = {}
+        for half, c in res["parts"].items():
+            tag = "" if half == "whole" else f" ({half})"
+            if c.get("error"):
+                row.setdefault("errors", {})[half] = c["error"]
+                checks.append((f"designed{tag}", False, "==", True))
+                continue
+            v = c.get("verify") or {}
+            dr = c.get("designReport") or {}
+            st = json.load(open(r["split"][half] if half != "whole" else r["studyPath"]))
+            from ..spec import study_from_dict
+            dens = study_from_dict(st, os.path.dirname(os.path.abspath(r["studyPath"]))).material.density
+            m = float(c.get("volumeCm3") or 0.0) * dens
+            mass += m
+            row["parts"][half] = {"mass": round(m, 2), "exterior": c.get("exterior"), "watertight": c.get("watertight"),
+                                  "safetyFactor": v.get("safetyFactor"), "keepOutIntrusion": v.get("keepOutIntrusion"),
+                                  "designPasses": dr.get("passes"), "seconds": c.get("designSeconds")}
+            checks += [(f"exterior untouched{tag}", bool((c.get("exterior") or {}).get("untouched")), "==", True),
+                       (f"watertight{tag}", bool(c.get("watertight")), "==", True)]
+            if v:
+                checks += [(f"safety factor{tag}", v.get("safetyFactor"), ">=", sf_goal),
+                           (f"keep-out intrusion mm^3{tag}", v.get("keepOutIntrusion"), "<=",
+                            expect.get("maxKeepOutIntrusion", 1.0))]
+            if "passes" in dr and expect.get("designTargets", True):
+                checks.append((f"switch/feel/cooling targets{tag}", bool(dr["passes"]), "==", True))
+        row["best"] = {"mass": round(mass, 2), "placed": placed, "blocked": blocked}
+        row["seconds"] = time.time() - t0
+        checks += [("mass g", mass, "<=", expect.get("maxMass")),
+                   ("seconds", row["seconds"], "<=", expect.get("maxSeconds") if tier == "full" else None)]
+        ok = True
+        for check, v, op, limit in checks:
+            if limit is None:
+                continue
+            passed = bool(v == limit) if op == "==" else (v is not None and _cmp(v, op, limit))
+            ok &= passed
+            row["checks"].append({"check": check, "value": v, "op": op, "limit": limit, "pass": passed})
+        row["pass"] = bool(ok)
+    except Exception as exc:  # noqa: BLE001 - a crashing case is a failing case
+        import traceback
+        row.update({"pass": False, "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()})
+    row["seconds"] = time.time() - t0
+    print(json.dumps(_jsonable({k: row.get(k) for k in ("case", "pass", "best", "error")})),
+          file=sys.stderr, flush=True)
+    return _jsonable(row)
+
+
 # --spread: the search started this much lower and higher than the case's own
 # goal.volumeFraction (one extra full search each)
 SPREAD_STARTS = (0.8, 1.25)
@@ -632,6 +783,9 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None, spre
     if "graph" in raw:
         print(f"== {name} ({tier})", file=sys.stderr, flush=True)
         return run_field_case(raw, base, out, tier)
+    if "enclosure" in raw:
+        print(f"== {name} ({tier})", file=sys.stderr, flush=True)
+        return run_enclosure_case(raw, base, out, tier)
     if "switch" in raw or "feel" in raw:
         print(f"== {name} ({tier})", file=sys.stderr, flush=True)
         return run_switch_case(raw, base, out, tier)
@@ -781,6 +935,8 @@ def _case_bytes(path: str) -> float:
         return _run_bytes(60_000)
     if "graph" in raw:
         return 2.5e9           # a 1M-cell homogenized check on multigrid peaks near 1.4 GB
+    if "enclosure" in raw:
+        return float((raw.get("expect") or {}).get("peakBytes", 6e9))
     try:
         return _run_bytes(_study_cells(study_from_dict(raw, base_dir=os.path.dirname(path))))
     except Exception:  # noqa: BLE001 - it fails properly when run

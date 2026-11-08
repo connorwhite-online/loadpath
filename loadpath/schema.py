@@ -2418,6 +2418,8 @@ ENCLOSURE_SCHEMA = {
             "mass": {"type": "number", "minimum": 0, "description": "kg: carried through its mount in drops"},
             "watts": {"type": "number", "minimum": 0, "description": "W of heat it gives off"},
             "maxTemp": {"type": "number", "description": "C it must stay under (for a cooling block)"},
+            "conductivity": {**_POS, "description": "W/(m K), for a cooling block (default 20: a package on a "
+                                                    "copper-filled board; a cell is nearer 1.5)"},
             "place": {"enum": ["auto", "given"], "description": "auto: placed by the agent; given: as drawn. "
                                                                 "Default auto when it has size or any placement "
                                                                 "rule, given otherwise"},

@@ -487,13 +487,27 @@ class MeshShape(Shape):
                     sign[near] = np.where(igl.fast_winding_number(V, F, q[near]) > 0.5, -1.0, 1.0)
                 out[s:s + 1_000_000] = sign * d
             return out
+        normals = self.mesh.face_normals
         for s in range(0, len(p), chunk):
             q = p[s:s + chunk]
-            _, d, _ = closest_point(self.mesh, q)
+            c, d, tid = closest_point(self.mesh, q)
             sign = np.sign(g[s:s + chunk])
             near = np.abs(g[s:s + chunk]) < 1.5 * cell
             if near.any():
-                sign[near] = np.where(self.mesh.contains(q[near]), -1.0, 1.0)
+                # the side of the closest face, where the point is clearly
+                # off it (not beside an edge); ray parity for the rest, a
+                # few at a time: without embree, trimesh holds every
+                # candidate triangle of every ray at once (48M triangles for
+                # 500 rays through a generated speaker's skin)
+                off = q[near] - c[near]
+                dot = np.einsum("ij,ij->i", off, normals[tid[near]])
+                clear = np.abs(dot) >= 0.7 * np.linalg.norm(off, axis=1)
+                sn = np.where(dot > 0, 1.0, -1.0)
+                qn = q[near][~clear]
+                if len(qn):
+                    sn[~clear] = np.where(np.concatenate([self.mesh.contains(qn[i:i + 50])
+                                                          for i in range(0, len(qn), 50)]), -1.0, 1.0)
+                sign[near] = sn
             out[s:s + chunk] = sign * d
         return out
 
@@ -822,6 +836,11 @@ def shrink(shape: Shape, t: float, open=()) -> Shape:
     return Offset(shape, -t, open)
 
 
+# most boundary triangles Sweep.to_manifold sweeps one by one (exact);
+# past it, copies along the path
+_SWEEP_PRISMS = 20_000
+
+
 class Sweep(Shape):
     """The space a shape passes through moving `length` mm along `direction`
     from where it is drawn: a component's assembly path (a board slid in from
@@ -918,11 +937,27 @@ class Sweep(Shape):
     def to_manifold(self):
         import manifold3d as m3d
         base = self.base.to_manifold()
-        # consecutive copies' hulls: exact for a convex shape
-        mans = [m3d.Manifold.batch_hull([base.translate(tuple(a * self.direction)),
-                                         base.translate(tuple(b * self.direction))])
-                for a, b in zip(self.offsets[:-1], self.offsets[1:])] if _convex(self.base) else \
-            [base.translate(tuple(t * self.direction)) for t in self.offsets]
+        if _convex(self.base):
+            # consecutive copies' hulls: exact for a convex shape
+            mans = [m3d.Manifold.batch_hull([base.translate(tuple(a * self.direction)),
+                                             base.translate(tuple(b * self.direction))])
+                    for a, b in zip(self.offsets[:-1], self.offsets[1:])]
+            return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
+        mesh = base.to_mesh()
+        tri = np.asarray(mesh.vert_properties, float)[:, :3][np.asarray(mesh.tri_verts, np.int64)]
+        if len(tri) <= _SWEEP_PRISMS:
+            # exact for any solid: where it starts, where it ends, and the
+            # prism each boundary triangle sweeps (a point of the sweep not
+            # in either copy left the solid through some triangle on its
+            # way). 201 copies of a 44 mm speaker driver (two stacked
+            # cylinders, not convex) took past 10 GB in the union
+            L = self.length * self.direction
+            mans = [base, base.translate(tuple(L))]
+            for t in tri:
+                if abs(np.dot(np.cross(t[1] - t[0], t[2] - t[0]), self.direction)) > 1e-9:
+                    mans.append(m3d.Manifold.hull_points(np.vstack([t, t + L])))
+            return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add)
+        mans = [base.translate(tuple(t * self.direction)) for t in self.offsets]
         return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
 
     def to_spec(self):

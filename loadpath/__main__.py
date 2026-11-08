@@ -1691,25 +1691,16 @@ def _enclosure(args):
     print(json.dumps(out, default=float))
     if not (args.run and out["ok"]):
         return 0 if out["ok"] else 2
-    from .enclosure import check_delivered
-    study = r["study"]
-    sp = r["studyPath"]
-    design = os.path.join(args.out, "design")
-    pitches = args.pitches
-    if study.get("feel") or study.get("switch"):
-        ns = argparse.Namespace(study=sp, base_dir=None, out=design, pitches=pitches, iterations=args.iterations,
-                                nonlinear=None, skin_review=False, lattice=None, no_modal=False)
-        code = _feel(ns) if study.get("feel") else _switch(ns)
-    else:
-        argv = ["run", sp, "--out", design, "--viewer", "none"] + \
-            (["--time-limit", str(args.time_limit)] if args.time_limit else []) + \
-            (["--quick"] if getattr(args, "quick", False) else [])
-        code = main(argv)
-    chk = check_delivered(sp, design, quick=getattr(args, "quick", False), on_progress=_progress)
-    json.dump(chk, open(os.path.join(args.out, "checks.json"), "w"), indent=1, default=float)
-    print(json.dumps({"ok": chk["ok"], "checks": os.path.join(args.out, "checks.json"), "part": chk.get("part"),
-                      "exterior": chk.get("exterior"), "summary": chk.get("summary")}, default=float))
-    return 0 if chk["ok"] and code in (0, None) else 1
+    from .enclosure import design_and_check
+    pitches = [float(v) for v in args.pitches.split(",")] if args.pitches else None
+    its = [int(v) for v in args.iterations.split(",")] if args.iterations else None
+    chk = design_and_check(r, args.out, pitches=pitches, iterations=its, time_limit=args.time_limit,
+                           quick=getattr(args, "quick", False), on_progress=_progress)
+    print(json.dumps({"ok": chk["ok"], "checks": os.path.join(args.out, "checks.json"),
+                      "parts": {k: {"part": v.get("part"), "exterior": v.get("exterior"), "summary": v.get("summary"),
+                                    **({"error": v["error"]} if v.get("error") else {})}
+                                for k, v in chk["parts"].items()}}, default=float))
+    return 0 if chk["ok"] else 1
 
 
 def _feel(args):

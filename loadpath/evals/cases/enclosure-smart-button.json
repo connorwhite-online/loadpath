@@ -1,0 +1,14 @@
+{
+ "name": "enclosure-smart-button",
+ "description": "A smart-home button, one piece of SLS TPU 88A over a rigid back: a tactile switch under the middle of the dome and a coin cell placed beside it; the dome clicks at 150-400 gf at the middle and 9 mm out (switch).",
+ "enclosure": {
+  "product": "smart-button"
+ },
+ "expect": {
+  "coarse": {
+   "iterations": [
+    30
+   ]
+  }
+ }
+}

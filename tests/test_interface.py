@@ -44,6 +44,8 @@ def _docs():
         if "graph" in doc:      # a field-graph case (evals/run.py run_field_case): its graph lints as one
             yield p.name, "field", doc["graph"]
             continue
+        if "enclosure" in doc:  # a product (evals/products.py): its brief is linted in test_enclosure.py
+            continue
         yield p.name, "heatExchanger" if "core" in doc else "study", doc
     for e in examples():
         yield e["name"], e["kind"], example(e["name"])

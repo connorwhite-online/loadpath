@@ -541,7 +541,7 @@ def load_exterior(src, *, size: float | None = None, scale: float | None = None,
         src = m
         w, inside, (org, p), winfo = wrap_mesh(src, pitch, method, seal)
         grid = (inside, org, p)
-        report["wrap"] = {**winfo, **_wrap_deviation(src, w, p)}
+        report["wrap"] = {**winfo, **_wrap_deviation(src, w, p, grid)}
         m = w
     elif src_defects is not None and m.volume < 0:
         m.invert()
@@ -643,7 +643,7 @@ def _buried(out, pts, p):
     return res
 
 
-def _wrap_deviation(src, out, p):
+def _wrap_deviation(src, out, p, grid=None):
     """How far the wrap moved the surface. out -> source: where the new
     surface has no source triangle near (patched holes). source -> out:
     source surface the wrap left behind (inner shells, debris, fins
@@ -657,8 +657,8 @@ def _wrap_deviation(src, out, p):
         import trimesh.proximity
         c = src.triangles_center
         try:
-            deep = trimesh.proximity.signed_distance(out, c) > 1.0 * p if len(c) < 60_000 else \
-                _buried(out, c, p)
+            from .enclosure import _signed_distance
+            deep = -_signed_distance(out, c) > 1.0 * p if len(c) < 60_000 else _buried(out, c, p)
         except Exception:  # noqa: BLE001
             deep = np.zeros(len(src.faces), bool)
     skin = trimesh.Trimesh(src.vertices, src.faces[~deep], process=False) if (~deep).sum() > 10 else src
@@ -687,7 +687,16 @@ def _wrap_deviation(src, out, p):
     on = a[a <= patch_tol]
     left = b > patch_tol
     from .verify import voxelize  # noqa: F401
-    ins = out.contains(pts[left]) if left.any() and len(out.faces) < 3_000_000 else np.zeros(0, bool)
+    ins = np.zeros(0, bool)
+    if left.any() and grid is not None:
+        # read off the wrap's own inside grid (these points are off the new
+        # surface by more than patch_tol): trimesh's ray test without
+        # embree took 6.5 GB on a 300k-face wrap
+        inside, org, gp = grid
+        k = np.clip(np.rint((pts[left] - org) / gp).astype(int), 0, np.asarray(inside.shape) - 1)
+        ins = inside[k[:, 0], k[:, 1], k[:, 2]]
+    elif left.any() and len(out.faces) < 3_000_000:
+        ins = out.contains(pts[left])
     return {"onSource": {"p50": round(float(np.median(on)), 4) if len(on) else None,
                          "p95": round(float(np.percentile(on, 95)), 4) if len(on) else None},
             "patched": {"area": round(area, 1), "largestAt": largest, "beyond": round(patch_tol, 3),

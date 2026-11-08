@@ -160,6 +160,49 @@ def test_exterior_check():
     assert not bad["untouched"] and bad["coverage"] < 0.5, bad
 
 
+def test_cooling_block_takes_the_parts_heat():
+    """A cooling block in the brief gets each part's watts and maxTemp on
+    its own keep-out, unless the block names that part already."""
+    b = product()
+    b["components"][2]["maxTemp"] = 45.0
+    b["cooling"] = {"ambient": 30.0, "skin": {"contact": "held"},
+                    "components": [{"region": "conn", "watts": 0.05}]}
+    r = enclosure(b, _DIR, tempfile.mkdtemp())
+    co = r["study"]["cooling"]
+    by = {c["region"]: c for c in co["components"]}
+    assert by["board"] == {"region": "board", "watts": 0.2}, by
+    assert by["battery"] == {"region": "battery", "maxTemp": 45.0}, by
+    assert by["conn"] == {"region": "conn", "watts": 0.05} and "lid" not in by, by
+    assert co["ambient"] == 30.0
+
+
+def test_exterior_check_on_a_half():
+    """A split shell's half is checked against the exterior inside its own
+    region only: the other half's skin is not missing."""
+    import trimesh
+
+    from loadpath.shapes import Box, MeshShape
+    b = product()
+    m = trimesh.load(b["exterior"], force="mesh")
+    half = trimesh.intersections.slice_mesh_plane(m, [0, 0, -1], [0, 0, 0], cap=True)
+    ex = MeshShape(m)
+    whole = exterior_check(half, ex, samples=8000)
+    assert not whole["untouched"], whole
+    mine = exterior_check(half, ex, samples=8000, region=Box([-40, -40, -20], [40, 40, 0]))
+    assert mine["untouched"] and mine["maxProud"] < 0.01, mine
+
+
+def test_eval_products_lint():
+    """The enclosure eval products (loadpath/evals/products.py) write briefs
+    that lint clean."""
+    from loadpath.evals.products import PRODUCTS, write
+    for name in PRODUCTS:
+        path = write(name, os.path.join(tempfile.mkdtemp(), name))
+        brief = json.load(open(path))
+        errs = [x for x in lint(brief, "enclosure") if x["level"] == "error"]
+        assert not errs, (name, errs)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

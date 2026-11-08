@@ -24,7 +24,9 @@ jobs:
           cache: pip
       # crosscheck: the safety-factor cases confirm on tetrahedra (the
       # baselines were taken that way; evals.run refuses to run without it)
-      - run: pip install -e ".[render,crosscheck]"
+      # exterior: libigl, for the generated-mesh products of the enclosure
+      # cases (the wrap and the skin's exact distance)
+      - run: pip install -e ".[render,crosscheck,exterior]"
       - env:
           CASES: ${{ github.event.inputs.cases }}
         run: python -m loadpath.evals.run $CASES --out evals-out --jobs 2

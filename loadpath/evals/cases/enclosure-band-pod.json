@@ -1,0 +1,19 @@
+{
+ "name": "enclosure-band-pod",
+ "description": "The pod of a fitness band, one piece of SLS TPU 88A over a rigid sensor back: board, cell and coin motor placed, all in through the back window; soft to pinch and the cell cushioned in a 1.2 m fall (feel).",
+ "enclosure": {
+  "product": "band-pod"
+ },
+ "expect": {
+  "coarse": {
+   "brief": {
+    "resolution": {
+     "pitch": 1.0
+    }
+   },
+   "iterations": [
+    30
+   ]
+  }
+ }
+}

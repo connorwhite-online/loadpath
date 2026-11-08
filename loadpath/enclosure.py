@@ -52,7 +52,7 @@ import numpy as np
 
 from .handoff import _axis_name, _axis_vec, _fine_mesh_shape, _shape_spec
 
-__all__ = ["enclosure", "run_enclosure", "exterior_check"]
+__all__ = ["enclosure", "run_enclosure", "exterior_check", "check_delivered", "design_and_check"]
 
 _FACES = ["-z", "+z", "-x", "+x", "-y", "+y"]
 
@@ -344,6 +344,19 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     for k in ("process", "resolution", "maxIterations", "printDirection", "drains", "cooling", "feel"):
         if b.get(k) is not None:
             study[k] = b[k]
+    if b.get("cooling") is not None:
+        # the cooling block's components from the parts list: each part's
+        # watts and maxTemp (and conductivity) on its own keep-out, unless
+        # the block names that part itself
+        co = dict(b["cooling"])
+        named = {c.get("region") for c in co.get("components") or []}
+        co["components"] = list(co.get("components") or []) + [
+            {"region": c["id"], **{k: c[k] for k in ("watts", "maxTemp", "conductivity") if c.get(k) is not None}}
+            for c in comps if c["id"] in comp_specs and c["id"] not in named and not c.get("external")
+            and any(c.get(k) is not None for k in ("watts", "maxTemp", "conductivity"))]
+        if not co["components"]:
+            warnings.append("cooling: no component has watts or maxTemp; the cooling block has nothing to do")
+        study["cooling"] = co
 
     # a push pad: handoff reads the plunger and its seat off the placed parts
     handoff_report = None
@@ -527,7 +540,7 @@ def _way_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, hint=None) -> di
         if not legs:
             legs = [(r["legs"][-1][0], None)]
         lg = [(d, L) for d, L in legs[:-1]] + [(legs[-1][0], None)]
-        lg = _settle_legs(pts, obstacles, lg, exit_bounds, pitch)
+        lg = _settle_legs(pts, obstacles, lg, exit_bounds, r["pitch"])
         ok, pen, _, where, dist = _path_check(pts, _Pen(obstacles), lg, exit_bounds[0], exit_bounds[1], tol)
         if len(lg) == 1:
             ins = _axis_name(lg[0][0])
@@ -696,11 +709,13 @@ def _listify(v):
     return v if isinstance(v, list) else [v]
 
 
-def exterior_check(mesh, exterior, openings=(), tol: float = 0.05, samples: int = 40_000) -> dict:
+def exterior_check(mesh, exterior, openings=(), tol: float = 0.05, samples: int = 40_000, region=None) -> dict:
     """The delivered part against the designer's exterior: nothing proud of
     it, and all of it still there (bar the openings). Read on the meshes
     themselves: points sampled on each surface, distances exact (closest
-    point on the triangles), not a grid."""
+    point on the triangles), not a grid. With `region` (a split shell's
+    half), only the exterior inside it is expected, a skin clear of the
+    cut."""
     import trimesh
 
     from .shapes import shape_from_spec
@@ -708,19 +723,73 @@ def exterior_check(mesh, exterior, openings=(), tol: float = 0.05, samples: int 
     if ext_mesh is None:
         raise ValueError("exterior_check needs the exterior as a mesh")
     pts, _ = trimesh.sample.sample_surface(mesh, samples, seed=1)
-    proud = -trimesh.proximity.signed_distance(ext_mesh, pts)
+    proud = _signed_distance(ext_mesh, pts)
     q, _ = trimesh.sample.sample_surface(ext_mesh, samples, seed=2)
     keep = np.ones(len(q), bool)
     for o in openings:
         sh = shape_from_spec(o["shape"]) if isinstance(o, dict) else o
         keep &= sh.sdf(q) > tol
+    if region is not None:
+        keep &= region.sdf(q) < -max(tol, 0.5)
     q = q[keep]
-    _, dist, _ = trimesh.proximity.closest_point(mesh, q)
+    try:
+        import igl
+    except ImportError:
+        igl = None
+    _, dist, _ = _closest(mesh, q, igl)
     missing = dist > tol
     return {"maxProud": round(float(max(proud.max(), 0.0)), 4), "proudShare": round(float((proud > tol).mean()), 5),
             "coverage": round(float(1.0 - missing.mean()), 5), "maxGap": round(float(dist.max()), 4),
             "tolerance": tol, "samples": int(len(q)),
             "untouched": bool(proud.max() <= tol and missing.mean() <= 1e-3)}
+
+
+def _closest(mesh, q, igl=None):
+    """(closest points, distances, face ids) on a mesh: libigl's AABB tree
+    when installed, else trimesh's closest_point a few thousand points at a
+    time (it holds every candidate triangle of every point at once: past
+    12 GB for 40k points on a speaker's 340k-face wrap)."""
+    if igl is not None:
+        sq, fid, c = igl.point_mesh_squared_distance(q, np.asarray(mesh.vertices, float),
+                                                     np.asarray(mesh.faces, np.int64))
+        return np.asarray(c), np.sqrt(np.maximum(sq, 0.0)), np.asarray(fid, np.int64)
+    from trimesh.proximity import closest_point
+    parts = [closest_point(mesh, q[i:i + 2000]) for i in range(0, len(q), 2000)]
+    return (np.vstack([p[0] for p in parts]), np.concatenate([p[1] for p in parts]),
+            np.concatenate([p[2] for p in parts]))
+
+
+def _signed_distance(mesh, pts, chunk: int = 20_000) -> np.ndarray:
+    """Exact distance from each point to the mesh, positive outside. The
+    side from the closest face's normal where the point is clearly off it,
+    from the winding number (libigl) or ray parity, a few points at a time,
+    where it sits beside an edge. trimesh.proximity.signed_distance casts
+    rays for every point at once and, without embree, held 12 GB for 40k
+    points on a smart button's dome."""
+    pts = np.asarray(pts, float)
+    out = np.empty(len(pts))
+    normals = mesh.face_normals
+    try:
+        import igl
+    except ImportError:
+        igl = None
+    for s in range(0, len(pts), chunk):
+        q = pts[s:s + chunk]
+        c, d, tid = _closest(mesh, q, igl)
+        off = q - c
+        dot = np.einsum("ij,ij->i", off, normals[tid])
+        sign = np.where(dot > 0, 1.0, -1.0)
+        unclear = (np.abs(dot) < 0.7 * np.linalg.norm(off, axis=1)) & (d > 1e-9)
+        if unclear.any():
+            qu = q[unclear]
+            if igl is not None:
+                w = igl.fast_winding_number(np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64), qu)
+                inside = np.abs(w) > 0.5
+            else:
+                inside = np.concatenate([mesh.contains(qu[i:i + 50]) for i in range(0, len(qu), 50)])
+            sign[unclear] = np.where(inside, -1.0, 1.0)
+        out[s:s + chunk] = sign * d
+    return out
 
 
 def _localize(study: dict, out_dir: str) -> None:
@@ -837,13 +906,22 @@ def check_delivered(study_path: str, design_dir: str, quick: bool = False, on_pr
         return {"ok": False, "error": f"no delivered part in {design_dir}"}
     mesh = trimesh.load(part, force="mesh")
     study = study_from_dict(raw, base_dir=base)
-    ext = study.design_space[0]
-    openings = [o for o in ((raw.get("skin") or {}).get("openings") or []) if isinstance(raw.get("skin"), dict)]
     from .shapes import shape_from_spec
+    ds = raw.get("designSpace")
+    region = None
+    if isinstance(ds, dict) and ds.get("type") == "intersect" and len(ds.get("shapes") or []) == 2:
+        # a split shell's half (shells.py): the exterior cut by the half's
+        # region; the exterior is checked inside that region
+        from .handoff import _fine_mesh_shape
+        ext = _fine_mesh_shape(ds["shapes"][0], base)
+        region = shape_from_spec(ds["shapes"][1], base)
+    else:
+        ext = study.design_space[0]
+    openings = [o for o in ((raw.get("skin") or {}).get("openings") or []) if isinstance(raw.get("skin"), dict)]
     ops = [shape_from_spec(o["shape"], base) for o in openings]
     if on_progress:
         on_progress({"stage": "check", "message": "exterior against the delivered surface"}, None)
-    ex = exterior_check(mesh, ext, ops)
+    ex = exterior_check(mesh, ext, ops, region=region)
     out = {"part": part, "exterior": ex, "volumeCm3": round(float(abs(mesh.volume)) / 1000.0, 3),
            "watertight": bool(mesh.is_watertight)}
     ok = ex["untouched"] and mesh.is_watertight
@@ -863,9 +941,66 @@ def check_delivered(study_path: str, design_dir: str, quick: bool = False, on_pr
             ok = False
     if rep is not None:
         out["designReport"] = {k: rep[k] for k in ("passes", "best", "summary") if k in rep}
+        if "passes" in rep and any(rep.get(k) for k in ("feel", "presses", "cooling")):
+            # a switch, feel or cooling design: its own targets on the
+            # delivered part (press forces, feel windows, temperatures)
+            ok = ok and bool(rep.get("passes"))
     out["ok"] = bool(ok)
     out["summary"] = (f"exterior {'untouched' if ex['untouched'] else 'CHANGED'} (max proud {ex['maxProud']} mm, "
                       f"coverage {100 * ex['coverage']:.2f}%)"
                       + (f"; min safety factor {out['verify'].get('safetyFactor')}"
                          if out.get("verify") else ""))
+    return out
+
+
+def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_limit: float | None = None,
+                     quick: bool = False, nonlinear: bool | None = None, on_progress=None) -> dict:
+    """Design what run_enclosure wrote and check it as delivered. `r` is
+    run_enclosure's result. The design follows the study's blocks: `switch`
+    (switch.py), `feel` (feel.py), `cooling` (cooling.py, designed together
+    with any switch or feel block; its load cases checked on the part), else
+    `run` for strength and stiffness. A split exterior is two studies, base
+    and cover, each designed and checked on its own. Writes
+    <out>/design[-half]/ and <out>/checks.json; returns {parts: {half:
+    checks}, ok}."""
+    from .__main__ import _jsonable, _write_report
+    from .__main__ import main as cli
+    from .spec import study_from_dict
+
+    halves = dict(r.get("split") or {}) or {"whole": r["studyPath"]}
+    parts = {}
+    for half, sp in halves.items():
+        raw = json.load(open(sp))
+        design = os.path.join(out_dir, "design" if half == "whole" else f"design-{half}")
+        t0 = time.time()
+        code = 0
+        try:
+            if raw.get("cooling") or raw.get("feel") or raw.get("switch"):
+                st = study_from_dict(raw, os.path.dirname(os.path.abspath(sp)))
+                if raw.get("cooling"):
+                    from .cooling import run_cooling
+                    rep = run_cooling(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress)
+                elif raw.get("feel"):
+                    from .feel import run_feel
+                    rep = run_feel(st, design, pitches=pitches, iterations=iterations, on_progress=on_progress,
+                                   nonlinear=nonlinear)
+                else:
+                    from .switch import run_switch
+                    rep = run_switch(st, design, pitches=pitches, iterations=iterations, nonlinear=nonlinear,
+                                     on_progress=on_progress)
+                _write_report(design, {"ok": rep["passes"], **rep})
+            else:
+                argv = ["run", sp, "--out", design, "--viewer", "none"] + \
+                    (["--time-limit", str(time_limit)] if time_limit else []) + (["--quick"] if quick else [])
+                code = cli(argv)
+        except ValueError as exc:
+            parts[half] = {"ok": False, "error": str(exc), "designSeconds": round(time.time() - t0, 1)}
+            continue
+        chk = check_delivered(sp, design, quick=quick, on_progress=on_progress)
+        chk["designSeconds"] = round(time.time() - t0, 1)
+        chk["ok"] = bool(chk["ok"] and code in (0, None))
+        parts[half] = chk
+    out = {"ok": all(p.get("ok") for p in parts.values()), "parts": parts}
+    with open(os.path.join(out_dir, "checks.json"), "w") as fh:
+        json.dump(_jsonable(out), fh, indent=1, default=float)
     return out

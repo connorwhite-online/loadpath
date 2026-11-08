@@ -722,6 +722,11 @@ def _layout(s, gb, byid, meshes, given, exterior, skin, op_shapes, fixed, given_
 _DIRS = [np.array(v, float) for v in ([0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0], [0, -1, 0], [0, 1, 0])]
 
 
+# most cells insertion_path's grid may have (the exterior and the part's
+# size round it); past it the pitch grows
+_PATH_CELLS = 12_000_000
+
+
 def insertion_path(part_sdf, part_bounds, obstacles_sdf, exit_bounds, *, pitch: float = 0.4, tol: float = 0.25,
                    max_legs: int = 4, hint=None) -> dict | None:
     """The way a part gets from where it sits to outside the exterior's
@@ -740,6 +745,14 @@ def insertion_path(part_sdf, part_bounds, obstacles_sdf, exit_bounds, *, pitch: 
     elo, ehi = np.asarray(exit_bounds[0], float), np.asarray(exit_bounds[1], float)
     ext = phi - plo
     h = float(pitch)
+    # the world grid spans the exterior and the part's own size round it:
+    # past _PATH_CELLS cells the pitch grows (a 72 x 96 mm speaker with a
+    # 44 mm driver came to 84M cells at 0.4 mm, past 15 GB); the exact
+    # check along the legs (enclosure._way_in) does not depend on it
+    span = (ehi - elo) + 2.0 * (ext + 2.0 * h + 1.0)
+    cells = float(np.prod(span / h))
+    if cells > _PATH_CELLS:
+        h *= (cells / _PATH_CELLS) ** (1.0 / 3.0)
     # the part's own cells; the world grid is aligned to them
     na = np.ceil(ext / h).astype(int) + 1
     o_c = plo - 0.5 * h * (na * h - ext) / h
@@ -752,25 +765,31 @@ def insertion_path(part_sdf, part_bounds, obstacles_sdf, exit_bounds, *, pitch: 
     g0 = o_c - m_lo * h
     n = m_lo + na + m_hi
     ax = [g0[i] + (np.arange(n[i]) + 0.5) * h for i in range(3)]
-    P = np.stack(np.meshgrid(*ax, indexing="ij"), -1).reshape(-1, 3)
-    inside = np.all((P >= elo - 0.5) & (P <= ehi + 0.5), axis=1)
-    pen = np.zeros(len(P))
-    if inside.any():
-        pen[inside] = -obstacles_sdf(P[inside])
-    B = (pen > tol).reshape(tuple(n))
-    C = fftconvolve(B.astype(np.float64), A[::-1, ::-1, ::-1].astype(np.float64), mode="valid")
+    # blocked cells: the obstacles only inside the exterior's box, a slab
+    # at a time
+    B = np.zeros(tuple(n), np.float32)
+    ins = [np.nonzero((a >= elo[i] - 0.5) & (a <= ehi[i] + 0.5))[0] for i, a in enumerate(ax)]
+    if all(len(v) for v in ins):
+        yz = np.stack(np.meshgrid(ax[1][ins[1]], ax[2][ins[2]], indexing="ij"), -1).reshape(-1, 2)
+        for i in ins[0]:
+            P = np.column_stack([np.full(len(yz), ax[0][i]), yz])
+            B[i, ins[1][0]:ins[1][-1] + 1, ins[2][0]:ins[2][-1] + 1] = \
+                (-obstacles_sdf(P) > tol).reshape(len(ins[1]), len(ins[2]))
+    C = fftconvolve(B, A[::-1, ::-1, ::-1].astype(np.float32), mode="valid")
+    del B
     free = C < 0.5
+    del C
     k0 = tuple(int(v) for v in m_lo)
     if not free[k0]:
         # where it sits already reads as blocked on the grid: let it start
         free[k0] = True
     # an offset is out when the part's box is clear of the exterior's box
-    idx = np.indices(free.shape).reshape(3, -1).T
-    lo_k = o_c - m_lo * h + idx * h          # part box low corner at offset k (shifted)
-    shift = idx * h - m_lo * h
-    blo, bhi = plo + shift, phi + shift
-    out = np.any((bhi < elo) | (blo > ehi), axis=1).reshape(free.shape)
-    del lo_k
+    # (per axis, broadcast: no array of every offset's corners)
+    out = np.zeros(free.shape, bool)
+    for a in range(3):
+        sh = (np.arange(free.shape[a]) - m_lo[a]) * h
+        o = (phi[a] + sh < elo[a]) | (plo[a] + sh > ehi[a])
+        out |= o.reshape([-1 if j == a else 1 for j in range(3)])
     order = list(range(6))
     if hint is not None:
         hv = _axis_vec(hint) if isinstance(hint, str) else None

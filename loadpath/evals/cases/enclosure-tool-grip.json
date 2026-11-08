@@ -1,0 +1,18 @@
+{
+ "name": "enclosure-tool-grip",
+ "description": "The body of a cordless rotary tool in PA12 (MJF) from a generated mesh, split down the middle: motor shaft out through the nose, 18650 cell in the handle, a trigger and a board; five 200 g drops and a 250 N grip.",
+ "enclosure": {
+  "product": "tool-grip"
+ },
+ "expect": {
+  "minSafetyFactor": 1.5,
+  "coarse": {
+   "brief": {
+    "resolution": {
+     "pitch": 1.5
+    }
+   },
+   "timeLimit": 8
+  }
+ }
+}
