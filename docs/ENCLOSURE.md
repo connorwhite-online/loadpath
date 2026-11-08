@@ -140,9 +140,10 @@ Nothing about where the parts go is in the brief beyond the rules. On
 minutes:
 
 - **The board and its USB-C connector** turned so the connector's face
-  points out of the port and sits on the port's axis, 0.8 mm short of the
-  outer surface. The brief asked for 0.3 mm; the board's edge stops on
-  the rim around the mouth first.
+  points out of the port and sits on the port's axis, 0.31 mm short of the
+  outer surface (0.3 asked). The recess is the face's own stand-off; the
+  rest of the part keeps its margin from the walls, which the brief sets
+  to 0.3 mm for the board (0.5 elsewhere).
 - **The battery** went on the floor, straight over the door.
 - **The motor** went up against the ceiling, 0.5 mm under the skin and
   directly over the board (4.7 mm above it), so its wires stay short.
@@ -152,36 +153,39 @@ battery, door):
 
 - The motor and the battery drop straight in through the door.
 - The board, with the connector soldered on, comes out the way it went
-  in. It slides 11.3 mm along +y to free the connector from the port, then
-  drops out through the door. Its turn sits mid-way between the lengths
-  that clear both rims.
+  in. It slides 11.85 mm along +y to free the connector from the port,
+  then drops out through the door. Its turn sits mid-way between the
+  lengths that clear both rims.
 
 Every path is swept as a keep-out, and no keep-out overlaps the skin by any
 amount (`pathsIntoSkin` 0.0 mm³ for each part). The cradles went under the
 board (-y), the battery (+y) and the motor (+z).
 
 `run` then designed the interior for six 300 g drops, one onto each face,
-and a 150 N squeeze across the width. It delivered 43.9 g at 30% of the
-design space and 34.2 g at 15% before its 100-minute limit, out of an
-84.9 g design space. `checks.json` reads the 34.2 g part:
+and a 150 N squeeze across the width, out of an 84.9 g design space:
+43.8 g at 30% of it, 34.1 g at 15%, and 29.8 g at 8.2%, the lightest that
+passed before its 110-minute limit. `checks.json` reads the 29.8 g part
+on 130,703 cut cells at 0.42 mm, not on the optimizer's grid, and
+`examples/enclosure/tets.py` reads it again on 567k 10-node tets:
 
 | check | result |
 |---|---|
 | exterior proud of the designer's surface | 0.0 mm (34,034 samples) |
 | exterior surface still there | 100% |
 | watertight STL | yes |
-| material in any keep-out or way in | 0.000003 mm³ |
-| safety factor, worst case (squeeze-y) | 3.0 (goal 1.5) |
-| safety factor, drops -z / +z / -x / +x / -y / +y | 4.1 / 6.7 / 3.8 / 3.8 / 4.4 / 4.1 |
-| largest deflection (drop -x) | 0.22 mm |
-| buckling factor | 7.2 |
+| material in any keep-out or way in | 0.000005 mm³ |
+| safety factor, worst case: cut cells / tets | 1.9 (squeeze-y) / 4.2 (drop -x); goal 1.5 |
+| drops -z / +z / -x / +x / -y / +y, cut cells | 2.7 / 4.8 / 3.6 / 3.6 / 3.8 / 3.4 |
+| drops -z / +z / -x / +x / -y / +y, tets | 6.3 / 5.3 / 4.2 / 4.3 / 5.6 / 5.8 |
+| squeeze-y: cut cells / tets | 1.9 / 5.2 |
+| buckling factor | 6.7 |
 
-The table is read on 121,498 cut cells at 0.44 mm, not on the
-optimizer's grid. The run hit its time limit before the tet re-check, so
-the safety factors are cut-cell readings. A `loadpath verify` on tets
-would confirm them.
+The two readings agree that every case passes, but not on the margins.
+They are furthest apart on the squeeze, whose load goes in through small
+patches on the skin. The cut cells read the stress peak under a patch
+higher, so they are the reading to design to.
 
-The first run of this example found three bugs, and all of them are fixed:
+The first runs of this example found five bugs, and all of them are fixed:
 
 - **A rim notch.** The board's way out cleared the door's rim by 0.04 mm
   too little. Because a keep-out is cut from everything, that path cut
@@ -189,4 +193,8 @@ The first run of this example found three bugs, and all of them are fixed:
 - **Material back in the keep-outs.** The mesh cleanup's pinch filler put
   up to 18 mm³ back inside the ways in.
 - **A leaky STL.** 14 sliver edges that only an STL reader's weld exposes
-  made the file read as not watertight.
+  made the file read as not watertight. The pass that removes them first
+  crashed on an unwelded mesh, and now welds before it starts.
+- **A recess doubled by the margin.** An aligned connector kept its
+  0.5 mm margin from the exterior on top of the 0.3 mm recess asked, so it
+  stood 0.82 mm back.
