@@ -452,6 +452,38 @@ def _tet_mesh_once(mesh, size, order, algo, size_at=None):
     return pts, tets
 
 
+def _supports_on(study, pts, nodes, edges, surf, tol):
+    """The study's supports on a quadratic tet mesh: (fixed dof mask,
+    [(held nodes, fix, pin or None)], pin spring blocks, held vertices per
+    support)."""
+    # on the quadratic mesh: an edge node is held when both its
+    # ends are; per axis as the study says (a sliding support holds one)
+    fixed_dof = np.zeros(3 * len(nodes), bool)
+    supports, pin_blocks, fixed_nodes = [], [], []
+    for i, sup in enumerate(study.supports):
+        sh = sup.shape if sup.shape is not None else study.region_shape(sup.region)[0]
+        vn = np.intersect1d(_region_nodes(study, sh, pts, tol), surf)
+        if len(vn) == 0:
+            raise ValueError(f"supports[{i}] touches no surface node of the part")
+        on = np.zeros(len(pts), bool)
+        on[vn] = True
+        held = np.concatenate([vn, len(pts) + np.nonzero(on[edges[:, 0]] & on[edges[:, 1]])[0]])
+        fixed_nodes.append(vn)
+        for a in range(3):
+            if sup.fix[a]:
+                fixed_dof[3 * held + a] = True
+        pin = None
+        if sup.pin:
+            # held radially and along the axis, free to turn about it
+            pin = (np.asarray(sh.p0, float), np.asarray(sh.axis, float) / np.linalg.norm(sh.axis))
+            d = nodes[held] - pin[0]
+            rad = d - (d @ pin[1])[:, None] * pin[1]
+            rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
+            pin_blocks.append((held, rad[:, :, None] * rad[:, None, :] + np.outer(pin[1], pin[1])[None]))
+        supports.append((held, sup.fix, pin))
+    return fixed_dof, supports, pin_blocks, fixed_nodes
+
+
 def _boundary_nodes(tets):
     """Vertices on the mesh's boundary: of the faces only one tet owns.
     (A distance to the input surface took 7 s on the motor-mount and misses
@@ -901,31 +933,7 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
 
     t1 = time.time()
     nodes, conn, edges = _p2_mesh(pts, tets)
-    # supports on the quadratic mesh: an edge node is held when both its
-    # ends are; per axis as the study says (a sliding support holds one)
-    fixed_dof = np.zeros(3 * len(nodes), bool)
-    supports, pin_blocks, fixed_nodes = [], [], []
-    for i, sup in enumerate(study.supports):
-        sh = sup.shape if sup.shape is not None else study.region_shape(sup.region)[0]
-        vn = np.intersect1d(_region_nodes(study, sh, pts, tol), surf)
-        if len(vn) == 0:
-            raise ValueError(f"supports[{i}] touches no surface node of the part")
-        on = np.zeros(len(pts), bool)
-        on[vn] = True
-        held = np.concatenate([vn, len(pts) + np.nonzero(on[edges[:, 0]] & on[edges[:, 1]])[0]])
-        fixed_nodes.append(vn)
-        for a in range(3):
-            if sup.fix[a]:
-                fixed_dof[3 * held + a] = True
-        pin = None
-        if sup.pin:
-            # held radially and along the axis, free to turn about it
-            pin = (np.asarray(sh.p0, float), np.asarray(sh.axis, float) / np.linalg.norm(sh.axis))
-            d = nodes[held] - pin[0]
-            rad = d - (d @ pin[1])[:, None] * pin[1]
-            rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
-            pin_blocks.append((held, rad[:, :, None] * rad[:, None, :] + np.outer(pin[1], pin[1])[None]))
-        supports.append((held, sup.fix, pin))
+    fixed_dof, supports, pin_blocks, fixed_nodes = _supports_on(study, pts, nodes, edges, surf, tol)
     fixed_nodes = np.unique(np.concatenate(fixed_nodes))
     contact = np.unique(np.concatenate([fixed_nodes] + [l[2] for l in loads]))
     far = cKDTree(pts[contact]).query(pts, distance_upper_bound=band)[0] == np.inf
@@ -1025,6 +1033,38 @@ def _ccx_material(mat, el) -> str:
             "*SOLID SECTION,ELSET=PART,MATERIAL=M,ORIENTATION=LAYERS\n")
 
 
+def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, heading=None):
+    """An Abaqus / CalculiX input deck: C3D10 elements, a node set per
+    support (a pin in cylindrical axes about it), the material (layered as
+    engineering constants in the layers' frame), and one static step per
+    load case of nodal forces. `solver` names CalculiX's (its *STATIC
+    option); without it the deck is plain Abaqus."""
+    if heading:
+        fh.write(f"*HEADING\n{heading}\n")
+    fh.write("*NODE,NSET=NALL\n")
+    np.savetxt(fh, np.column_stack([np.arange(1, len(nodes) + 1), nodes]), fmt="%d,%.9g,%.9g,%.9g")
+    # _EDGES is CalculiX's C3D10 mid-node order (12, 23, 31, 14, 24, 34)
+    fh.write("*ELEMENT,TYPE=C3D10,ELSET=PART\n")
+    np.savetxt(fh, np.column_stack([np.arange(1, len(conn) + 1), conn + 1]), fmt="%d", delimiter=",")
+    bc = []
+    for k, (held, fix, pin) in enumerate(supports):
+        fh.write(f"*NSET,NSET=S{k}\n")
+        np.savetxt(fh, held + 1, fmt="%d")
+        if pin is not None:
+            # the pin exactly: cylindrical axes about it (radial,
+            # tangential, axial), radial and axial held
+            a, b = pin[0], pin[0] + pin[1]
+            fh.write(f"*TRANSFORM,NSET=S{k},TYPE=C\n" + ",".join(f"{v:.9g}" for v in (*a, *b)) + "\n")
+            bc += [f"S{k},1,1", f"S{k},3,3"]
+        bc += [f"S{k},{a + 1},{a + 1}" for a in range(3) if fix[a]]
+    fh.write(_ccx_material(mat, mat.nu if el is None else el) + "*BOUNDARY\n" + "\n".join(bc) + "\n")
+    for _name, f, _l in loads:
+        fh.write("*STEP\n" + (f"*STATIC,SOLVER={solver}\n" if solver else "*STATIC\n") + "*CLOAD,OP=NEW\n")
+        i, c = np.nonzero(f)
+        np.savetxt(fh, np.column_stack([i + 1, c + 1, f[i, c]]), fmt="%d,%d,%.12g")
+        fh.write("*NODE FILE\nU\n*NODE FILE\nS\n*END STEP\n")
+
+
 def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=None):
     """The quadratic system solved by CalculiX (ccx on PATH): one Abaqus-
     style deck, one static step per load case. Returns [(u, von Mises at
@@ -1041,28 +1081,7 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=No
     with tempfile.TemporaryDirectory() as tmp:
         deck = os.path.join(tmp, "job")
         with open(deck + ".inp", "w") as fh:
-            fh.write("*NODE,NSET=NALL\n")
-            np.savetxt(fh, np.column_stack([np.arange(1, len(nodes) + 1), nodes]), fmt="%d,%.9g,%.9g,%.9g")
-            # _EDGES is CalculiX's C3D10 mid-node order (12, 23, 31, 14, 24, 34)
-            fh.write("*ELEMENT,TYPE=C3D10,ELSET=PART\n")
-            np.savetxt(fh, np.column_stack([np.arange(1, len(conn) + 1), conn + 1]), fmt="%d", delimiter=",")
-            bc = []
-            for k, (held, fix, pin) in enumerate(supports):
-                fh.write(f"*NSET,NSET=S{k}\n")
-                np.savetxt(fh, held + 1, fmt="%d")
-                if pin is not None:
-                    # the pin exactly: cylindrical axes about it (radial,
-                    # tangential, axial), radial and axial held
-                    a, b = pin[0], pin[0] + pin[1]
-                    fh.write(f"*TRANSFORM,NSET=S{k},TYPE=C\n" + ",".join(f"{v:.9g}" for v in (*a, *b)) + "\n")
-                    bc += [f"S{k},1,1", f"S{k},3,3"]
-                bc += [f"S{k},{a + 1},{a + 1}" for a in range(3) if fix[a]]
-            fh.write(_ccx_material(mat, mat.nu if el is None else el) + "*BOUNDARY\n" + "\n".join(bc) + "\n")
-            for _name, f, _l in loads:
-                fh.write(f"*STEP\n*STATIC,SOLVER={solver}\n*CLOAD,OP=NEW\n")
-                i, c = np.nonzero(f)
-                np.savetxt(fh, np.column_stack([i + 1, c + 1, f[i, c]]), fmt="%d,%d,%.12g")
-                fh.write("*NODE FILE\nU\n*NODE FILE\nS\n*END STEP\n")
+            write_abaqus(fh, mat, nodes, conn, supports, loads, el, solver=solver)
         # One thread unless LOADPATH_CCX_THREADS asks for more: the packaged
         # CalculiX (2.21, SPOOLES) on several threads returned a different
         # answer run to run on the same deck (a propped cantilever's

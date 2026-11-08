@@ -166,6 +166,26 @@ def _nest(args):
     return 0 if not rep["unplaced"] else 2
 
 
+def _fe_export(args):
+    import trimesh
+
+    from .fe_export import export_fe
+    from .spec import study_from_dict
+
+    raw = _load(args.study)
+    base = os.path.dirname(os.path.abspath(args.study))
+    try:
+        study = study_from_dict(raw, base_dir=base)
+        mesh = trimesh.load(args.part, force="mesh")
+        out = args.out or os.path.splitext(args.part)[0] + (".inp" if args.format == "abaqus" else ".bdf")
+        info = export_fe(study, mesh, out, fmt=args.format, size=args.size)
+    except (ValueError, RuntimeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(json.dumps(info, indent=1))
+    return 0
+
+
 def _import(args):
     from .cadimport import import_part
 
@@ -754,6 +774,13 @@ def main(argv=None):
     sl.add_argument("--hatch", type=float, default=0.1,
                     help="hatch spacing, mm (default 0.1; 0 for contours only); turned 67 degrees a layer")
     sl.add_argument("--axis", choices=["x", "y", "z"], default="z", help="build axis (default z)")
+    fx = sub.add_parser("fe-export", help="a part with the study's material, supports and load cases as a "
+                                          "Nastran (.bdf) or Abaqus / CalculiX (.inp) deck in 10-node tets")
+    fx.add_argument("study")
+    fx.add_argument("part", help="the part's STL, 3MF or OBJ (closed)")
+    fx.add_argument("--out", help="deck path; the extension picks the format (.bdf/.nas/.dat or .inp)")
+    fx.add_argument("--format", choices=["nastran", "abaqus"], default=None)
+    fx.add_argument("--size", type=float, default=None, help="tet edge, mm (default: the cross-check's)")
     ns = sub.add_parser("nest", help="pack parts (and copies) into one build volume: on the plate (FDM, resin, "
                                      "metal) or stacked in the powder (SLS, MJF), with a measured gap")
     ns.add_argument("parts", nargs="+", help="STL/3MF/OBJ paths, each optionally with :copies (bracket.stl:6)")
@@ -877,6 +904,8 @@ def main(argv=None):
         return _import(args)
     if args.cmd == "step":
         return _step(args)
+    if args.cmd == "fe-export":
+        return _fe_export(args)
     if args.cmd == "nest":
         return _nest(args)
     if args.cmd == "slices":

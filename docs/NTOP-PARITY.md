@@ -92,7 +92,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | --- | --- | --- |
 | STL, 3MF, OBJ | yes | Have |
 | CAD body from implicit (STEP / Parasolid) | STEP from fields and lattices (`step.py`, `latticestep.py`) | Have |
-| FE mesh and model export | CalculiX / Abaqus `.inp` | Partial (no Nastran) |
+| FE mesh and model export | `loadpath fe-export`: the part in 10-node tets with its material, supports, pins and load cases as a Nastran SOL 101 deck (`.bdf`) or Abaqus / CalculiX (`.inp`) (`fe_export.py`) | Have (new) |
 | Voxel grids | `.npz` signed distance in and out | Partial (no OpenVDB) |
 
 ## Workflow and automation
@@ -106,6 +106,6 @@ test. **Partial** means part of it. **Missing** means not yet.
 
 By count: about 53 rows have it, 7 partial, none missing. The partial
 ones that matter most are the three TPMS nTop has and loadpath
-does not, Nastran export and general CFD. The open problem nTop does not
+does not and general CFD. The open problem nTop does not
 solve either is physical validation of printed parts
 ([VALIDATION.md](VALIDATION.md), [CALIBRATION.md](CALIBRATION.md)).
