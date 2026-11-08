@@ -270,3 +270,40 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_air_between_two_components_on_any_grid():
+    # the chip lifted 0.4 mm off the board: 0.4 mm of air over 8 x 8 mm is
+    # 240 K/W, so the chip runs far hotter than the board. On a 1 mm grid
+    # their cells sit face to face, and they once conducted at the board's
+    # own 20 W/(m K) straight across the gap (chip 63 C, board 63 C)
+    doc = box()
+    doc["keepOut"][1]["shape"] = {"type": "box", "min": [-10, -4, 4.0], "max": [-2, 4, 5.2]}
+    doc["cooling"]["components"][1]["maxTemp"] = 200
+    chips = []
+    for p in (1.0, 0.6):
+        st, dom, fl = _dom(doc, p)
+        x = np.maximum(dom.preserve.astype(float), fl)
+        r = cooling.cooling_readings(st, dom, np.maximum(x, 1e-9), floor=fl)
+        chip, board = (c["temperature"] for c in r["components"])
+        assert chip > board + 40.0, r["components"]
+        chips.append(chip)
+    assert abs(chips[0] - chips[1]) < 0.25 * (chips[1] - 25.0), chips
+
+
+def test_delivered_read_takes_a_pad_gap_the_same_on_any_grid():
+    # a chip in a printed pocket 0.4 mm proud all round: without the pad
+    # the gap is air on the 0.7 mm grid and contact on the 1.0 and 0.5 mm
+    # ones (80 / 146 / 83 C). Read as the thermal pad the model assumes,
+    # every grid agrees
+    import manifold3d as m3d
+    import trimesh
+    doc = box(components=[{"region": "chip", "watts": 0.5, "maxTemp": 60}])
+    doc["keepOut"] = [doc["keepOut"][1]]
+    st = study_from_dict(doc)
+    blk = m3d.Manifold.cube((40, 24, 12)).translate((-20, -12, 0))
+    pocket = m3d.Manifold.cube((8.8, 8.8, 2.0)).translate((-10.4, -4.4, 3.2))
+    m = (blk - pocket).to_mesh()
+    mesh = trimesh.Trimesh(np.asarray(m.vert_properties)[:, :3], np.asarray(m.tri_verts))
+    t = [r["components"][0]["temperature"] for r in cooling.delivered_readings(st, mesh, [1.0, 0.7, 0.5])]
+    assert max(t) - min(t) < 0.15 * (min(t) - 25.0), t

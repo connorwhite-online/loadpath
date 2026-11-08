@@ -1093,7 +1093,11 @@ _COOLING = {
                                  {"type": "array", "items": {"type": "integer", "minimum": 1}}]},
         "verifyPitches": {"type": "array", "items": _POS, "minItems": 1,
                           "description": "mm grids the delivered mesh's temperatures are read on (default "
-                                         "0.7 and 0.5 of the design pitch)"}},
+                                         "0.7 and 0.5 of the design pitch)"},
+        "padGap": {"type": "number", "minimum": 0,
+                   "description": "mm: a gap up to this wide between a component and the delivered plastic is "
+                                  "read as the thermal pad (or paste) the model assumes (default 1; 0 reads it "
+                                  "as air)"}},
     "required": ["components"],
     "additionalProperties": False}
 _FEEL = {

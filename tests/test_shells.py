@@ -371,3 +371,22 @@ if __name__ == "__main__":
             print(f"FAIL {t.__name__}")
             traceback.print_exc()
     sys.exit(1 if bad else 0)
+
+
+def test_a_press_goes_to_the_half_with_material_under_it():
+    # a press on the top skin with the seam near its edge: the base side of
+    # the cut holds only a 0.3 mm sliver of it, thinner than a cell, and a
+    # load there touched no cell of the base (the remote's tilted split)
+    from loadpath.shapes import shape_from_spec
+    from loadpath.shells import _halves_under
+    ext = shape_from_spec({"type": "box", "min": [-30, -20, 0], "max": [30, 20, 20]})
+
+    def halves(x):
+        return {"base": shape_from_spec({"type": "box", "min": [-31, -21, -1], "max": [x, 21, 21]}),
+                "cover": shape_from_spec({"type": "box", "min": [x, -21, -1], "max": [31, 21, 21]})}
+
+    g = np.linspace(-1.5, 1.5, 11)
+    P = np.array([[x, y, 20.0 + z] for x in g for y in g for z in g])
+    assert _halves_under(P, halves(-1.2), ext, 0.5) == {"cover"}
+    # the seam through its middle: both halves carry it
+    assert _halves_under(P, halves(0.0), ext, 0.5) == {"base", "cover"}

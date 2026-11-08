@@ -1181,6 +1181,19 @@ def _region_side(spec, cut, base_dir):
     return "cover" if up > 0.95 else "base" if up < 0.05 else "both"
 
 
+def _halves_under(P, halves: dict, ext, reach: float) -> set:
+    """The halves a load or support at sample points P bears on: those with
+    material under it at least `reach` deep (half a cell). Being on a
+    half's side of the cut is not enough: a press on the top skin near a
+    tilted seam can reach the base only in a sliver thinner than a cell, or
+    in the air above it, and a load there touches no cell of the base. With
+    no half that deep, the one it reaches furthest into."""
+    e = ext.sdf(P)
+    depth = {k: float(np.maximum(h.sdf(P), e).min()) for k, h in halves.items()}
+    deep = {k for k, d in depth.items() if d <= -reach}
+    return deep or {min(depth, key=depth.get)}
+
+
 def apply_split(study: dict, split: dict | None = None, components: list | None = None,
                 out_dir: str = "loadpath-split", base_dir: str | None = None) -> dict:
     """Cut a study's exterior into a base and a cover, with the lip, screw
@@ -1621,6 +1634,9 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
     # the two studies
     studies = {}
     transferred = []
+    halves = {sd: shape_from_spec(C.half_spec(ext, sd)) for sd in ("base", "cover")}
+    res = study.get("resolution") or {}
+    reach = 0.5 * float(res.get("pitch") or study.get("minMember") or 1.0)
     for side in ("base", "cover"):
         region_spec = C.half_spec(ext, side)
         region = shape_from_spec(region_spec)
@@ -1700,7 +1716,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                 P_ = _samples(shape_from_spec(it["shape"], base_dir), 0.8, 800)
             except Exception:  # noqa: BLE001
                 return True
-            return bool((region.sdf(P_) <= 0.3).any())
+            return side in _halves_under(P_, halves, ext, reach)
 
         for su in study.get("supports") or []:
             if mine_target(su):

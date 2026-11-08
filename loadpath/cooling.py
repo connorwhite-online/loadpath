@@ -338,6 +338,54 @@ def _true_area_weights(study, centers, pitch):
     return np.where(ok, 1.0 / np.clip(l1, 1.0, np.sqrt(3.0)), 1.0)
 
 
+def _gap_between_sources(sources, c, k, pitch: float, k_air: float) -> None:
+    """Air between two components, under a cell wide. Two components 0.4 mm
+    apart (the speaker's amp and its cell) fill face-adjacent cells on most
+    grids, and those cells conducted at the components' own 20 W/(m K)
+    straight across what is air: the amp's heat ran into the cell on the
+    1.05 and 0.6 mm grids and not on the 0.75 and 0.5 mm ones. Each
+    component's cells within a cell of another conduct in series with half
+    the air gap between the two shapes, so the pair reads the gap's
+    resistance on any grid. Components that touch keep their contact."""
+    if len(sources) < 2:
+        return
+    for s in sources:
+        for t in sources:
+            if t is s:
+                continue
+            near = t.shape.sdf(c[s.cells]) < pitch
+            if not near.any():
+                continue
+            g = _shape_gap(s.shape, t.shape, pitch)
+            if g <= 0.02:
+                continue
+            half = min(0.5 * g, pitch)
+            sel = s.cells[near]
+            k[sel] = np.minimum(k[sel], pitch / (half / k_air + max(pitch - half, 0.0) / s.k))
+
+
+def _shape_gap(a, b, pitch: float) -> float:
+    """The narrowest gap between two shapes where they come within a cell
+    of each other: a's surface sampled at a quarter cell (0.25 mm at most)
+    over the box where the two are near."""
+    lo_a, hi_a = a.bounds()
+    lo_b, hi_b = b.bounds()
+    lo = np.maximum(lo_a, lo_b - pitch) - 1e-6
+    hi = np.minimum(hi_a, hi_b + pitch) + 1e-6
+    if np.any(hi < lo):
+        return float("inf")
+    h = min(0.25, 0.25 * pitch)
+    n = np.clip(np.ceil((hi - lo) / h).astype(int) + 1, 2, 400)
+    best = float("inf")
+    xs = [np.linspace(lo[i], hi[i], n[i]) for i in range(3)]
+    for x in xs[0]:
+        P = np.stack(np.meshgrid([x], xs[1], xs[2], indexing="ij"), -1).reshape(-1, 3)
+        on = np.abs(a.sdf(P)) <= 0.6 * h
+        if on.any():
+            best = min(best, float(b.sdf(P[on]).min()))
+    return best
+
+
 class CoolingModel:
     """The conduction problem on one grid: every cell inside the exterior
     (the designed cells of `domain`, the components, the air in the
@@ -389,6 +437,19 @@ class CoolingModel:
                 m = np.zeros(mesh.n_elem, bool)
                 m[cells] = True
                 heat.append((m, s.watts, "volume"))
+        _gap_between_sources(spec.sources, c, k0, pitch, spec.k_air)
+        # a component is read on its own nodes: the nodes it shares with
+        # another component's cells sit on the gap between them, and read
+        # the neighbour's heat (the speaker's cell read 49 C at a node
+        # 0.4 mm off the amp while its body was at 34 C)
+        for s in spec.sources:
+            others = np.zeros(mesh.n_nodes, bool)
+            for t in spec.sources:
+                if t is not s:
+                    others[mesh.enode[t.cells].ravel()] = True
+            own = s.nodes & ~others
+            if own.any():
+                s.nodes = own
         self.k0 = k0
         self.src = src
         # heat capacity per thermal cell, J/K (designed cells set per design)
@@ -799,12 +860,22 @@ class CoolingProblem:
 # ------------------------------------------------------------- readings
 
 
-def cooling_readings(study, domain: Domain, xp, floor=None, vent_rounds: int = 8) -> dict:
+def cooling_readings(study, domain: Domain, xp, floor=None, vent_rounds: int = 8, fill=None) -> dict:
     """Temperatures of a design: each component's hottest point and its
     limit, the touched skin's hottest and mean, where the heat leaves (the
-    skin by convection, vents by stack flow) and the air's mean rise."""
+    skin by convection, vents by stack flow) and the air's mean rise.
+
+    fill: model -> a mask over the model's thermal cells that are solid
+    material whatever the design says (the delivered part's own fill,
+    including cells the design grid kept clear)."""
     mdl = CoolingModel(study, domain, floor=floor)
     spec = mdl.spec
+    if fill is not None:
+        m = np.asarray(fill(mdl), bool)
+        free = m & ~mdl.src & ~mdl.is_mech
+        mdl.k0[free] = spec.k_material
+        xp = np.array(xp, float)
+        xp[m[mdl.mech]] = 1.0
     times = None
     if spec.cycle is not None:
         # with a cycle: every node's hottest moment (from the limits' first
@@ -874,6 +945,7 @@ def delivered_readings(study, mesh, pitches) -> list[dict]:
     from .switch import _thin_skin
     out = []
     ms = MeshShape(mesh)
+    gap = float((study.raw.get("cooling") or {}).get("padGap", PAD_GAP))
     for p in pitches:
         dom, fl = _thin_skin(study, build_domain(study, p))
         drawn = _fraction([ms], dom.mesh.elem_centers(), dom.pitch)
@@ -881,8 +953,58 @@ def delivered_readings(study, mesh, pitches) -> list[dict]:
         x[dom.preserve] = 1.0
         # a thin skin the grid cannot resolve reads at its own share
         x = np.maximum(x, fl)
-        out.append(_public(cooling_readings(study, dom, x, floor=fl)))
+        out.append(_public(cooling_readings(study, dom, x, floor=fl,
+                                            fill=lambda mdl: _delivered_fill(mdl, ms, x, gap))))
     return out
+
+
+# a gap this thin between a component and the plastic beside it is taken as
+# filled by a thermal pad (or paste), as the model assumes everywhere else
+PAD_GAP = 1.0
+
+
+def _delivered_fill(mdl, ms, x, gap: float):
+    """The delivered part on the thermal grid, read the same way on every
+    grid. Two things a design-grid view gets wrong by where the grid falls:
+
+    - Cells the design grid keeps clear around a keep-out (any cell a
+      keep-out reaches into) are air in the design, but the delivered mesh
+      may fill part of them: they are read off the mesh like any other.
+    - A gap of up to `gap` mm between a component and the plastic beside it
+      is the thermal pad the model assumes, filled.
+
+    The speaker's amp board sits 0.3-0.6 mm off its pads: the 0.75 and
+    0.5 mm grids read a whole cell of air around it (amp 66 C) and the 1.05
+    and 0.6 mm grids read contact (57 C)."""
+    from scipy import ndimage
+    from .domain import _fraction
+    mesh = mdl.mesh
+    c = mesh.elem_centers()
+    solid = np.zeros(mesh.n_elem, bool)
+    solid[mdl.mech] = x >= 0.5
+    rest = ~mdl.is_mech & ~mdl.src
+    if rest.any():
+        solid[rest] = _fraction([ms], c[rest], mesh.pitch) >= 0.5
+    if gap > 0 and mdl.spec.sources:
+        d = np.full(mesh.n_elem, np.inf)
+        for s in mdl.spec.sources:
+            d = np.minimum(d, s.shape.sdf(c))
+        band_e = (d > 0) & (d <= gap) & ~mdl.src
+        if band_e.any():
+            ijk = mesh.elem_ijk
+            lo = ijk.min(axis=0)
+            dims = tuple(ijk.max(axis=0) - lo + 1)
+            at = tuple((ijk - lo).T)
+            grown = np.zeros(dims, bool)
+            grown[at] = solid
+            band = np.zeros(dims, bool)
+            band[at] = band_e
+            # grow the plastic toward the component, at most the gap deep:
+            # the band holds only cells that close to a component
+            for _ in range(max(1, int(np.ceil(gap / mesh.pitch)))):
+                grown |= ndimage.binary_dilation(grown) & band
+            solid = grown[at]
+    return solid
 
 
 # ----------------------------------------------------------------- the run

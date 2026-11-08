@@ -96,7 +96,14 @@ geometry that meets all of them with the least material.
 
 **Not modelled.** Contact resistance between a component and a printed pad
 on it (a thermal pad or paste is assumed: without one, a dry printed
-contact adds 1-10 K per W on a small chip), forced air, the hand as a heat
+contact adds 1-10 K per W on a small chip). On the delivered part, a gap
+of up to `padGap` mm (default 1) between a component and the plastic is
+read as that pad, so every grid reads it the same way: a gap under a cell
+wide was otherwise air or contact by where the grid fell (the enclosure
+speaker's amp read 57 C on two grids and 66 C on two others). Air between
+two components is read as air on any grid, and each component is read on
+its own nodes, not on those it shares with a neighbour across a gap. Also
+not modelled: forced air, the hand as a heat
 sink and sunlight. The plastic's softening with temperature is in the
 `thermal` block, not here.
 
