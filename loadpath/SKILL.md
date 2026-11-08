@@ -190,6 +190,17 @@ buckling, printability) you can report to the user.
    first layer holds; spans past `process.bridgeSpan` (mm; default 15 FDM)
    count as needing support, so set it for your printer. `run` writes a
    `.3mf` per part already standing the right way up for the slicer.
+   **When the part will be printed, take its design limits from
+   Materialize, not from memory or loadpath's defaults.** With the
+   Materialize MCP server connected, `materialize_list_materials` (filter by
+   name, like "TPU" or "PA12") then `materialize_get_material` give each
+   material's `designLimits` per process (`minWallMm`, `minDetailMm`) and
+   its build volume. Set `process.minFeature`, `minMember` and any `skin`
+   thickness to at least those, and use the larger of Materialize's figure
+   and the user's own rule or loadpath's material card (loadpath keeps SLS
+   TPU at 1.0 mm as a margin over Materialize's 0.8). Say which you used.
+   After meshing, `materialize_check_printability` on the STL is the
+   printer's own check; fix its blockers before quoting.
    FDM outcomes are also sliced headless when PrusaSlicer is installed
    (`report.json` → `slicer`: `printTime` s, `filamentVolume` cm^3,
    `filamentMass` g, `supportVolume`); a warning says when no slicer was
