@@ -302,6 +302,11 @@ def _margin(study: Study, report: dict) -> float | None:
     if mp.get("maxInertia") and mp.get("axisInertia"):
         # inertia follows the material: linear in the fraction
         ms.append(mp["maxInertia"] / mp["axisInertia"])
+    from .verify import reaction_margin
+
+    rm = reaction_margin(report.get("reactions"))
+    if rm is not None:
+        ms.append(rm)
     vib = report.get("vibration")
     if vib and vib.get("firstFrequency") is not None:
         # f = sqrt(k / m) / 2 pi: with carried masses the mass barely moves

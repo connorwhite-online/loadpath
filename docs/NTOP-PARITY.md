@@ -62,7 +62,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | Thermal topology optimization | `thermal.py` (heat sinks, thermo-elastic) | Have |
 | Buckling as a constraint | `bucklingopt.py` (nTop has no buckling constraint) | Have, beyond nTop |
 | Field / parameter optimization | `tune`, `lattice-grade`, `explore` | Have |
-| Reaction force response | per-support reactions are not yet a response | Missing |
+| Reaction force response | `report.reactions` per support and case (force, moment, share); `maxForce` / `maxMoment` caps held by the search | Have (new); a cap is a check the search holds, not an optimizer gradient |
 
 ## Simulation
 
@@ -104,8 +104,8 @@ test. **Partial** means part of it. **Missing** means not yet.
 
 ## What is left
 
-By count: about 51 rows have it, 7 partial, 3 missing. The missing ones
-are reaction-force responses, build volumes and nesting;
+By count: about 52 rows have it, 7 partial, 2 missing. The missing ones
+are build volumes and nesting;
 the partial ones that matter most are the three TPMS nTop has and loadpath
 does not, Nastran export and general CFD. The open problem nTop does not
 solve either is physical validation of printed parts

@@ -1107,6 +1107,83 @@ def interlayer_readings(study: Study, mesh, builds, max_cells: int = 60_000, min
     return out
 
 
+def support_reactions(stiff, hm, u, f, moduli, nodes_of, fill=None, cg=None):
+    """What each support carries in one solved case: per support (node mask
+    in `nodes_of`) the resultant force the part puts on it (N) and the
+    moment of that force about the support's centroid (N·mm). Read as the
+    load less the part's own internal force, f - K u, at the support's
+    nodes, which is the clamp's reaction on the held dofs and a pin's
+    spring force on the rest (so pins and partly fixed supports read right,
+    and the supports' forces sum to the applied load). Only the cells
+    touching a support are visited."""
+    n_el = hm.n_elem
+    held = np.any(nodes_of, axis=0) if len(nodes_of) else np.zeros(hm.n_nodes, bool)
+    el = np.nonzero(held[hm.enode].any(axis=1))[0]
+    mod = np.broadcast_to(np.asarray(moduli, float), (n_el,))[el].copy()
+    if fill is not None and cg is None:
+        mod *= fill[el]
+    edof = hm.edof[el]
+    ue = u[edof]
+    fe = (ue @ stiff.ke) * mod[:, None]
+    if cg is not None and len(cg.cut_index):
+        pos = np.full(n_el, -1, np.int64)
+        pos[cg.cut_index] = np.arange(len(cg.cut_index))
+        k = pos[el]
+        cut = k >= 0
+        if cut.any():
+            fe[cut] = np.einsum("nij,nj->ni", cg.ke_cut[k[cut]], ue[cut]) * mod[cut, None]
+    ku = np.bincount(edof.ravel(), weights=fe.ravel(), minlength=hm.n_dof)
+    carried = (f - ku).reshape(-1, 3)
+    xyz = hm.node_xyz
+    out, taken = [], np.zeros(hm.n_nodes, bool)
+    for nodes in nodes_of:
+        own = nodes & ~taken           # a node two supports share counts once
+        taken |= nodes
+        fn = carried[own]
+        c = xyz[nodes].mean(axis=0) if nodes.any() else np.zeros(3)
+        F = fn.sum(axis=0)
+        M = np.cross(xyz[own] - c, fn).sum(axis=0)
+        out.append((F, M, c))
+    return out
+
+
+def _reaction_report(study, rows):
+    """report["reactions"] from per-support, per-case (force, moment,
+    centroid) rows: the worst resultant of each support, its share of the
+    total, and its cap when the study sets one."""
+    out = []
+    for i, s in enumerate(study.supports):
+        cases = [{"name": name, "force": [float(v) for v in r[i][0]], "magnitude": float(np.linalg.norm(r[i][0])),
+                  "moment": [float(v) for v in r[i][1]], "momentMagnitude": float(np.linalg.norm(r[i][1]))}
+                 for name, r in rows]
+        worst = max((c["magnitude"] for c in cases), default=0.0)
+        worst_m = max((c["momentMagnitude"] for c in cases), default=0.0)
+        row = {"support": s.region or f"supports[{i}]", "at": [float(v) for v in rows[0][1][i][2]] if rows else None,
+               "maxForce": worst, "maxMoment": worst_m, "cases": cases}
+        if s.max_force is not None:
+            row["forceLimit"] = s.max_force
+        if s.max_moment is not None:
+            row["momentLimit"] = s.max_moment
+        out.append(row)
+    for name_i, (name, r) in enumerate(rows):
+        tot = sum(np.linalg.norm(x[0]) for x in r)
+        for row in out:
+            c = row["cases"][name_i]
+            c["share"] = c["magnitude"] / tot if tot > 0 else 0.0
+    return out
+
+
+def reaction_margin(reactions) -> float | None:
+    """The least of limit / carried over the supports that have a cap."""
+    ms = []
+    for r in reactions or []:
+        if r.get("forceLimit"):
+            ms.append(r["forceLimit"] / r["maxForce"] if r["maxForce"] > 0 else float("inf"))
+        if r.get("momentLimit"):
+            ms.append(r["momentLimit"] / r["maxMoment"] if r["maxMoment"] > 0 else float("inf"))
+    return min(ms) if ms else None
+
+
 def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
                 contact_band: float | None = None, refine: int = 3, fields: bool = False,
                 fractional: bool = False, cut_cells: bool | None = None) -> dict:
@@ -1271,6 +1348,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     worst_sf = np.inf
     worst_dirs = []
     env = None   # von Mises per node, the worst over the cases
+    reaction_rows = []
+    sup_nodes = bc.regions[:len(study.supports)]
     for ci, case in enumerate(study.load_cases):
         load_nodes = bc.case_load_nodes[ci]
         # Exclude nodes within the contact band of an applied load or support.
@@ -1300,6 +1379,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             if idx[0] is not None:
                 f, u = f + rhs[idx[0]], u + displacements[idx[0]]
         worst_dirs.append(direction)
+        if sup_nodes and not study.self_equilibrated:
+            reaction_rows.append((case.name, support_reactions(stiff, hm, u, f, moduli, sup_nodes, fill, cg)))
         vm = nodal_von_mises(stiff, u, moduli, eps)
         env = vm if env is None else np.maximum(env, vm)
         if bc.case_pressure_nodes[ci].any():
@@ -1432,6 +1513,14 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         })
     report["cases"] = cases
     report["safetyFactor"] = worst_sf
+    if reaction_rows:
+        report["reactions"] = _reaction_report(study, reaction_rows)
+        for r in report["reactions"]:
+            for key, lim, unit in (("maxForce", "forceLimit", "N"), ("maxMoment", "momentLimit", "N·mm")):
+                if r.get(lim) and r[key] > r[lim]:
+                    report.setdefault("warnings", []).append(
+                        f"{r['support']} carries {r[key]:.4g} {unit}, over its limit {r[lim]:g} {unit}: share the "
+                        "load with another support, or move material so the path to the others is stiffer")
     if goal_sf and not study.self_equilibrated:
         # the safety factor holds against buckling too (study._margin). Read
         # for every part, however far under its stress safety factor: the

@@ -111,6 +111,11 @@ class Support:
     # A pin through a bore: held radially and axially, free to rotate about
     # the bore's axis (a bolt or a shaft in a plain hole).
     pin: bool = False
+    # the most this support may carry (N, the resultant of its reaction in
+    # any case): a bolt's or a bearing's rating. Reported for every support
+    # (verify.support_reactions); with a cap it is held like the safety factor.
+    max_force: float | None = None
+    max_moment: float | None = None
 
 
 @dataclass
@@ -1082,7 +1087,17 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             fix_t = tuple(a in fix for a in "xyz") if isinstance(fix, str) else tuple(bool(v) for v in fix)
             if len(fix_t) != 3 or not any(fix_t):
                 raise ValueError(f"supports[{i}].fix must be 'all', 'pin', axes like 'xz', or 3 booleans")
-        supports.append(Support(region, shape, fix_t, pin))
+        caps = []
+        for key in ("maxForce", "maxMoment"):
+            v = s.get(key)
+            if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0):
+                raise ValueError(f"supports[{i}].{key} must be a positive number ({'N' if key == 'maxForce' else 'N·mm'})")
+            caps.append(None if v is None else float(v))
+        if any(c is not None for c in caps) and not (d.get("goal") or {}).get("safetyFactor") \
+                and (d.get("goal") or {}).get("maxDeflection") is None:
+            raise ValueError(f"supports[{i}]: maxForce / maxMoment are held by the search for the lightest part, "
+                             "which needs goal.safetyFactor or maxDeflection")
+        supports.append(Support(region, shape, fix_t, pin, *caps))
 
     cases_in = d.get("loadCases")
     if cases_in is None and "loads" in d:

@@ -207,6 +207,11 @@ _SUPPORT = {
                            "description": "'all', 'pin', or the axes held, like 'xz'"},
                           {"type": "array", "items": {"type": "boolean"}, "minItems": 3, "maxItems": 3}],
                 "description": "'all' (default), 'pin' (a cylinder: turns freely), axes like 'xz', or 3 booleans"},
+        "maxForce": {"type": "number", "exclusiveMinimum": 0,
+                     "description": "N: the most this support may carry (its reaction's resultant, any case), "
+                                    "e.g. a bolt or bearing rating; reported always as report.reactions"},
+        "maxMoment": {"type": "number", "exclusiveMinimum": 0,
+                      "description": "N·mm: the most moment this support may carry about its centroid"},
     },
     "x-requireOne": [["region"], ["shape"]],
     "additionalProperties": False,
