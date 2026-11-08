@@ -2748,9 +2748,12 @@
           "enum": [
             "gyroid",
             "schwarz-p",
-            "diamond"
+            "diamond",
+            "lidinoid",
+            "split-p",
+            "neovius"
           ],
-          "description": "TPMS sheet (default gyroid). Per gram, diamond is the stiffest and strongest, Schwarz P the weakest and has flat ceilings (FDM)."
+          "description": "TPMS sheet (default gyroid). Per gram, diamond is the stiffest and strongest, Schwarz P the weakest and has flat ceilings (FDM); lidinoid and split P are finer sheets (twice the surface a cell), Neovius a thick-noded Schwarz P."
         },
         "cell": {
           "type": "number",

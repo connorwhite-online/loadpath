@@ -114,7 +114,8 @@ BUCKLING_KNOCKDOWN = 0.5
 FACE_CUT = {"bending": (0.2, 1.4, 1.0), "stretch": (0.1, 0.5, 0.0), "sheet": (0.3, 0.5, 0.0)}
 _FACE_FAMILY = {"cubic": "bending", "bccz": "bending", "bcc": "bending", "kelvin": "bending",
                 "voronoi": "bending", "diamond-strut": "bending", "fcc": "stretch", "fccz": "stretch",
-                "octet": "stretch", "gyroid": "sheet", "diamond": "sheet", "schwarz-p": "sheet"}
+                "octet": "stretch", "gyroid": "sheet", "diamond": "sheet", "schwarz-p": "sheet",
+                "lidinoid": "sheet", "split-p": "sheet", "neovius": "sheet"}
 # cells whose face-cut reading holds turned against as laid at full
 # resolution: the orientation optimizer's turn of an octet bar in a pull
 # (-5% mass) was confirmed (resolved turned/as-laid peak 0.91). Bending

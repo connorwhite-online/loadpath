@@ -702,9 +702,10 @@ _PROCESS = {"anyOf": [
                   "powder or resin, warp-prone panels; resin supports, peel area and suction cups)."}
 
 _LATTICE_PROPS = {
-    "type": {"enum": ["gyroid", "schwarz-p", "diamond"],
+    "type": {"enum": ["gyroid", "schwarz-p", "diamond", "lidinoid", "split-p", "neovius"],
              "description": "TPMS sheet (default gyroid). Per gram, diamond is the stiffest and strongest, "
-                            "Schwarz P the weakest and has flat ceilings (FDM)."},
+                            "Schwarz P the weakest and has flat ceilings (FDM); lidinoid and split P are "
+                            "finer sheets (twice the surface a cell), Neovius a thick-noded Schwarz P."},
     "cell": {**_POS, "description": "mm per TPMS period (at least 4 x maxWall)"},
     "skin": {"type": "number", "minimum": 0, "description": "mm of solid shell; 0 leaves the lattice open. "
                                                             "Under a skin, SLS, MJF and resin parts get drain holes"},
@@ -1707,7 +1708,7 @@ _FIELD_OPS = {
                               "nodes on that solid's surface and keeps its struts inside it (a tet lattice from a "
                               "body). Cell size, wall or strut thickness, relative density and node blend can each "
                               "be a field; a conformal frame lays the cells along a surface.",
-                   {"type": {"enum": ["gyroid", "diamond", "schwarz-p", "cubic", "bcc", "bccz", "fcc", "fccz",
+                   {"type": {"enum": ["gyroid", "diamond", "schwarz-p", "lidinoid", "split-p", "neovius", "cubic", "bcc", "bccz", "fcc", "fccz",
                                       "octet", "kelvin", "diamond-strut", "voronoi", "delaunay", "custom"],
                              "description": "TPMS sheets are stiffer and stronger per gram (lattice.SHEETS vs "
                                             "STRUTS); struts are open, easy to clear of powder, and print on FDM "

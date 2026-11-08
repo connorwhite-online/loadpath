@@ -259,7 +259,7 @@ class _Emitter:
 
 # ---- lattices
 
-_TPMS = ("gyroid", "diamond", "schwarz-p")
+_TPMS = ("gyroid", "diamond", "schwarz-p", "lidinoid", "split-p", "neovius")
 
 
 def tpms_unit(kind, x, y, z):
@@ -287,6 +287,10 @@ def tpms_unit_trig(kind, trig):
     elif kind == "schwarz-p":
         f = cx + cy + cz
         g = (-1.0 * sx, -1.0 * sy, -1.0 * sz)
+    elif kind in ("lidinoid", "split-p", "neovius"):
+        from .lattice import tpms_trig
+
+        f, g = tpms_trig(kind, sx, cx, sy, cy, sz, cz)
     else:
         raise ValueError(f"TPMS kind must be one of {', '.join(_TPMS)}")
     return f / fmax(sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * k, 0.3 * k)
@@ -588,8 +592,9 @@ def lattice_from_graph(g, name, lo, hi, grid=None):
     nd = g.nodes[name]
     s, r = nd.spec, nd.refs
     kind = s.get("type", "gyroid")
-    tp = {"gyroid": "gyroid", "diamond": "diamond", "schwarz-p": "schwarz-p", "schwarz_p": "schwarz-p",
-          "schwarzP": "schwarz-p"}.get(kind)
+    from .fields import _TPMS_KIND
+
+    tp = _TPMS_KIND.get(kind)
     strut = is_strut(kind)
     ftype = (s.get("frame") or {}).get("type", "cartesian")
     graded = isinstance(r.get("cell"), str)

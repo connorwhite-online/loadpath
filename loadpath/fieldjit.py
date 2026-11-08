@@ -386,7 +386,7 @@ class _Gen:
                 from .struts import is_strut
 
                 kind = s.get("type", "gyroid")
-                if _TPMS_KIND.get(kind) is None or is_strut(kind):
+                if _KINDS.get(_TPMS_KIND.get(kind)) is None or is_strut(kind):
                     return False
                 if isinstance(s.get("orient"), dict) and "zones" in s["orient"]:
                     return False

@@ -40,7 +40,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | --- | --- | --- |
 | Graph unit cells (cubic, BCC, FCC, octet, Kelvin, diamond ...) | `struts.py`, nine cells | Have |
 | Custom unit cell | `type: custom` with `cellGraph` nodes and beams | Have (new) |
-| TPMS (gyroid, diamond, Schwarz P, lidinoid, split P, neovius), walled TPMS | gyroid, diamond, Schwarz P as sheet or network | Partial |
+| TPMS (gyroid, diamond, Schwarz P, lidinoid, split P, neovius), walled TPMS | all six as sheet or network, field-graded, homogenized fits for each (`lattice.py`), 3MF implicit export | Have (lidinoid, split P, Neovius new; no 6x6 tensor tables for those three yet) |
 | Cell maps: rectangular, cylindrical, spherical, conformal | `frame` cartesian, cylindrical, spherical, conformal (frame field) | Have |
 | Stochastic: Voronoi, Delaunay | `voronoi`, `delaunay` | Have (Delaunay new) |
 | Tet lattice from a body, conformal lattice from a volume mesh | `delaunay` with a conformal frame: nodes on the skin, struts inside | Have (new) |
@@ -104,8 +104,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 
 ## What is left
 
-By count: about 53 rows have it, 7 partial, none missing. The partial
-ones that matter most are the three TPMS nTop has and loadpath
-does not and general CFD. The open problem nTop does not
+By count: about 55 rows have it, 5 partial, none missing. The partial
+one that matters most is general external CFD. The open problem nTop does not
 solve either is physical validation of printed parts
 ([VALIDATION.md](VALIDATION.md), [CALIBRATION.md](CALIBRATION.md)).

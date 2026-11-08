@@ -90,9 +90,62 @@ def _diamond_grad(x, y, z):
             sx * sy * cz - sx * cy * sz - cx * sy * sz + cx * cy * cz)
 
 
+def tpms_trig(kind, sx, cx, sy, cy, sz, cz):
+    """Level-set value and gradient (in phase units) of the lidinoid, split P
+    and Neovius surfaces from each coordinate's sine and cosine, with
+    arithmetic only (double angles as 2 s c and c^2 - s^2), so the same
+    code runs on numpy, torch and the 3MF implicit writer's expressions.
+    The three are cyclic in (x, y, z): each gradient component is one
+    expression with the axes turned.
+
+    lidinoid: 1/2 (sin 2x cos y sin z + ...) - 1/2 (cos 2x cos 2y + ...) + 0.15
+    split P:  1.1 (sin 2x sin z cos y + ...) - 0.2 (cos 2x cos 2y + ...) - 0.4 (cos 2x + ...)
+    Neovius:  3 (cos x + cos y + cos z) + 4 cos x cos y cos z"""
+    S2 = (2 * sx * cx, 2 * sy * cy, 2 * sz * cz)
+    C2 = (cx * cx - sx * sx, cy * cy - sy * sy, cz * cz - sz * sz)
+    S, C = (sx, sy, sz), (cx, cy, cz)
+    rot = ((0, 1, 2), (1, 2, 0), (2, 0, 1))
+    if kind == "lidinoid":
+        f = (0.5 * (S2[0] * C[1] * S[2] + S2[1] * C[2] * S[0] + S2[2] * C[0] * S[1])
+             - 0.5 * (C2[0] * C2[1] + C2[1] * C2[2] + C2[2] * C2[0]) + 0.15)
+
+        def d(a, b, c):
+            return 0.5 * (2 * C2[a] * C[b] * S[c] + S2[b] * C[c] * C[a] - S2[c] * S[a] * S[b]) \
+                + S2[a] * (C2[b] + C2[c])
+    elif kind == "split-p":
+        f = (1.1 * (S2[0] * S[2] * C[1] + S2[1] * S[0] * C[2] + S2[2] * S[1] * C[0])
+             - 0.2 * (C2[0] * C2[1] + C2[1] * C2[2] + C2[2] * C2[0]) - 0.4 * (C2[0] + C2[1] + C2[2]))
+
+        def d(a, b, c):
+            return 1.1 * (2 * C2[a] * S[c] * C[b] + S2[b] * C[a] * C[c] - S2[c] * S[b] * S[a]) \
+                + 0.4 * S2[a] * (C2[b] + C2[c]) + 0.8 * S2[a]
+    elif kind == "neovius":
+        f = 3 * (C[0] + C[1] + C[2]) + 4 * C[0] * C[1] * C[2]
+
+        def d(a, b, c):
+            return -3 * S[a] - 4 * S[a] * C[b] * C[c]
+    else:
+        raise ValueError(f"no trig form for {kind!r}")
+    return f, tuple(d(*r) for r in rot)
+
+
+def _trig_kind(kind):
+    def value(x, y, z):
+        return tpms_trig(kind, np.sin(x), np.cos(x), np.sin(y), np.cos(y), np.sin(z), np.cos(z))[0]
+
+    def grad(x, y, z):
+        return tpms_trig(kind, np.sin(x), np.cos(x), np.sin(y), np.cos(y), np.sin(z), np.cos(z))[1]
+    return value, grad
+
+
+# the three nTop has beside these: lidinoid, split P and Neovius (sheet or
+# network like the rest; the compiled field paths take the first three and
+# hand these to numpy)
+TRIG_KINDS = ("lidinoid", "split-p", "neovius")
 TPMS = {"gyroid": (_gyroid, _gyroid_grad),
         "schwarz-p": (_schwarz_p, _schwarz_p_grad),
-        "diamond": (_diamond, _diamond_grad)}
+        "diamond": (_diamond, _diamond_grad),
+        **{k: _trig_kind(k) for k in TRIG_KINDS}}
 
 # Homogenized sheets, from `homogenize` (periodic unit cell, 40 voxels per
 # cell, nu = 0.35, relative density 0.14-0.6; the fits are within 5% of
@@ -108,6 +161,17 @@ SHEETS = {
     "gyroid": {"C": 0.648, "n": 1.43, "A": 3.01, "m": 1.10},
     "diamond": {"C": 0.671, "n": 1.35, "A": 2.62, "m": 1.22},
     "schwarz-p": {"C": 0.669, "n": 1.68, "A": 3.82, "m": 1.04},
+    # The lidinoid, split P and Neovius as bench/strut_fits.py fits strut
+    # cells, the conservative reading: the lesser of E100 and E111, the
+    # largest of the [100], [111] and shear stress factors (Neovius is far
+    # from isotropic, Zener 0.4-0.8; split P is isotropic to 2%). Fits within
+    # 6% over rho 0.2-0.6 (Neovius 0.14-0.6), 72 voxels a cell (56 for
+    # Neovius): their sheets are finer than a gyroid's at the same cell (the
+    # lidinoid and split P carry about twice the surface), so they are
+    # weaker per gram at low density and read best at 0.3 and up.
+    "lidinoid": {"C": 0.582, "n": 1.71, "A": 3.66, "m": 1.42},
+    "split-p": {"C": 0.675, "n": 1.45, "A": 2.99, "m": 1.17},
+    "neovius": {"C": 0.769, "n": 1.72, "A": 2.53, "m": 1.63},
 }
 
 # Homogenized strut cells (struts.py), from `homogenize` the same way
@@ -238,6 +302,12 @@ def tpms(kind: str, pts: np.ndarray, cell: float) -> np.ndarray:
     as a sheet wall reaches."""
     if kind not in TPMS:
         raise ValueError(f"lattice type must be one of {sorted(TPMS)}, got {kind!r}")
+    if kind in TRIG_KINDS:
+        k = 2.0 * np.pi / cell
+        x, y, z = (k * pts[:, i] for i in range(3))
+        f, g = tpms_trig(kind, np.sin(x), np.cos(x), np.sin(y), np.cos(y), np.sin(z), np.cos(z))
+        gn = np.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * k
+        return np.asarray(f / np.maximum(gn, 0.3 * k), np.float64)
     if not _SINGLE[0] and np.ndim(cell) == 0:
         from . import fieldops
 

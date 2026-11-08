@@ -66,7 +66,7 @@ def test_tpms_expression_is_the_field():
     constant or graded wall (the graded one through the 3D image), and a
     graded cell through images of the lattice coordinates."""
     P = np.random.default_rng(0).uniform((0, 0, 0), (32, 16, 10), (5000, 3))
-    for kind in ("gyroid", "diamond", "schwarz-p"):
+    for kind in ("gyroid", "diamond", "schwarz-p", "lidinoid", "split-p", "neovius"):
         for th, tol in ((1.0, 1e-9), ("grad", 0.01)):
             g = FieldGraph(_box(kind, th))
             lat = L.lattice_from_graph(g, "core", (0, 0, 0), (32, 16, 10))

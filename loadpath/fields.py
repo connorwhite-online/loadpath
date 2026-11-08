@@ -507,7 +507,8 @@ class _Samples:
 # ---- TPMS with field-driven cell and wall ---------------------------------------
 
 _TPMS_KIND = {"gyroid": "gyroid", "diamond": "diamond", "schwarz-p": "schwarz-p", "schwarz_p": "schwarz-p",
-              "schwarzP": "schwarz-p"}
+              "schwarzP": "schwarz-p", "lidinoid": "lidinoid", "split-p": "split-p", "split_p": "split-p",
+              "splitP": "split-p", "neovius": "neovius"}
 
 
 def _frame_points(P, frame):
@@ -643,7 +644,7 @@ def _tpms_distance(kind, P, cell, frame=None):
 
     kind = _TPMS_KIND.get(kind)
     if kind is None:
-        raise ValueError("lattice type must be one of gyroid, diamond, schwarz-p")
+        raise ValueError("lattice type must be one of gyroid, diamond, schwarz-p, lidinoid, split-p, neovius")
     Q, radius = _frame_points(P, frame)
     cell = np.broadcast_to(np.asarray(cell, float), (len(P),))
     if np.any(cell <= 0):

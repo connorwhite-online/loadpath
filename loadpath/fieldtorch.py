@@ -345,9 +345,13 @@ class TorchField:
             g = (cx * sy * sz + cx * cy * cz - sx * sy * cz - sx * cy * sz,
                  sx * cy * sz - sx * sy * cz + cx * cy * cz - cx * sy * sz,
                  sx * sy * cz - sx * cy * sz - cx * sy * sz + cx * cy * cz)
-        else:                                 # schwarz-p
+        elif kind == "schwarz-p":
             f = cx + cy + cz
             g = (-sx, -sy, -sz)
+        else:                                 # lidinoid, split-p, neovius
+            from .lattice import tpms_trig
+
+            f, g = tpms_trig(kind, sx, cx, sy, cy, sz, cz)
         gn = torch.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * k
         return f / torch.clamp(gn, min=0.3 * k)
 

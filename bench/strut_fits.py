@@ -21,7 +21,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from loadpath.lattice import SHEETS, homogenize, wall_for_density  # noqa: E402
+from loadpath.lattice import TPMS, homogenize, wall_for_density  # noqa: E402
 from loadpath.struts import _BOX, STRUT_KINDS, strut_diameter_for_density  # noqa: E402
 
 
@@ -37,7 +37,7 @@ def main():
         rows = []
         for rho in (float(x) for x in a.rho.split(",")):
             # the unit cell is one periodic box (a Voronoi box is 2 seed spacings)
-            if kind in SHEETS:
+            if kind in TPMS:
                 d = float(wall_for_density(kind, rho, 1.0))
             else:
                 d = float(strut_diameter_for_density(kind, rho, 1.0 / _BOX.get(kind, 1.0)))

@@ -184,7 +184,7 @@ back at once with suggestions.
 | `union`, `intersect`, `subtract` | booleans; `blend` is the fillet radius | `inputs`, `blend` |
 | `shell` | a wall inside, outside or centred on a surface | `input`, `thickness` |
 | `offset` | grow or shrink | `input`, `distance` |
-| `lattice` | TPMS sheets (gyroid, diamond, Schwarz P; sheet or network), strut cells (cubic, BCC, BCCz, FCC, FCCz, octet, Kelvin, diamond-strut, or your own from `cellGraph`), a Voronoi foam or a Delaunay (tet) lattice, which with a conformal frame follows a body with its nodes on the skin; cartesian, cylindrical, spherical or conformal frame; `aspect` stretches the cell | `cell`, `thickness` or `density`, `blend` (node fillets), `offset` |
+| `lattice` | TPMS sheets (gyroid, diamond, Schwarz P, lidinoid, split P, Neovius; sheet or network), strut cells (cubic, BCC, BCCz, FCC, FCCz, octet, Kelvin, diamond-strut, or your own from `cellGraph`), a Voronoi foam or a Delaunay (tet) lattice, which with a conformal frame follows a body with its nodes on the skin; cartesian, cylindrical, spherical or conformal frame; `aspect` stretches the cell | `cell`, `thickness` or `density`, `blend` (node fillets), `offset` |
 | `transform` | translate, rotate, scale an input | `input` |
 | `image` | a picture (PNG/JPG) laid on a plane as a 0..1 field: brightness or one channel, optional invert (see Images) | `path`, `size` |
 | `group` | a copy of a sub-graph from `groups` with its own `params` and `inputs` (see Groups) | |
@@ -1163,7 +1163,7 @@ meshing time on a lattice, a fraction of it on a solid. Not with `stream`.
 with every lattice kept as a lattice instead of its triangles
 (loadpath/lattice3mf.py):
 
-- a TPMS (gyroid, diamond, Schwarz P; sheet or network) is a level set of
+- a TPMS (gyroid, diamond, Schwarz P, lidinoid, split P, Neovius; sheet or network) is a level set of
   the 3MF Volumetric & Implicit extension: the TPMS formula loadpath meshes,
   written as an implicit function (about 50-90 nodes). What a field grades
   is sampled into 3D images (16-bit PNG stacks, `grid` mm, default the
