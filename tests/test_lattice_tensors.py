@@ -79,7 +79,9 @@ def test_tables_run_to_the_solid_and_match_the_scalar_tables():
     from loadpath.lattice import SHEETS, sheet_modulus
     from loadpath.struts import STRUT_KINDS
 
-    for kind in list(SHEETS) + list(STRUT_KINDS):
+    # (Delaunay and custom cells have no shipped tables: scalar fits only)
+    shipped = [k for k in STRUT_KINDS if k != "delaunay" and not k.startswith("custom-")]
+    for kind in list(SHEETS) + shipped:
         assert lt.has_tensors(kind), kind
         C, P, Q, F = lt.tensors_at(kind, [1.0])
         assert np.allclose(C[0], elastic_c(1.0, 0.35), atol=1e-9)

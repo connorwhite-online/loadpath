@@ -271,6 +271,10 @@ print(best.report["mass"], best.report["safetyFactor"])
   report, the limits.
 - [Validation](docs/VALIDATION.md): what each model has been checked
   against.
+- [loadpath against nTop](docs/NTOP-PARITY.md): nTop's block reference
+  row by row (implicit modelling, lattices, topology optimization,
+  simulation, print preparation, export), what loadpath has, what it has
+  beyond it, and what is left.
 - [Case studies](docs/case-studies/) and [benchmarks](docs/BENCHMARKS.md).
 - Topics: [fields](docs/fields.md), [materials](docs/materials.md),
   [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),

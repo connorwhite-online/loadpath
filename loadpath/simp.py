@@ -639,6 +639,47 @@ def _warp_report(domain: Domain, xp):
     return out
 
 
+def _relieved(domain, xe):
+    """The cases' loads: as the domain holds them, or (inertiaRelief) the
+    loads as written balanced by the design's own inertia, its mass from
+    the densities `xe`. Returns (loads, per case Phi a or None)."""
+    raw = getattr(domain, "raw_loads", None)
+    if raw is None:
+        return domain.loads, None
+    from .domain import inertia_balance, node_mass
+
+    phi = _rigid_modes(domain)
+    m = node_mass(domain.mesh, np.maximum(xe, 1e-3))
+    loads, accs = [], []
+    for f in raw:
+        fb, acc = inertia_balance(f, m, phi)
+        fb[domain.fixed] = 0.0
+        loads.append(fb)
+        accs.append(acc)
+    return loads, accs
+
+
+def _rigid_modes(domain):
+    phi = getattr(domain, "_phi", None)
+    if phi is None:
+        from .fem import rigid_body_modes
+
+        phi = domain._phi = rigid_body_modes(domain.mesh.node_xyz)
+    return phi
+
+
+def _rigid_free_m(domain, xe, u):
+    """u less its mass-weighted rigid motion (M-orthogonal to the rigid
+    modes, M from the densities)."""
+    from .domain import node_mass
+
+    phi = _rigid_modes(domain)
+    m = np.repeat(node_mass(domain.mesh, np.maximum(xe, 1e-3)), 3)
+    mphi = phi * m[:, None]
+    c = np.linalg.solve(phi.T @ mphi, mphi.T @ u)
+    return u - phi @ c
+
+
 def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_stop=None) -> SimpResult:
     """Optimize, then (opts.escape) open every void the design sealed: drill
     escape holes into it (escape.drill), pin them void, and run on from the
@@ -711,7 +752,12 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     void = opts.void if opts.void is not None and opts.void.any() else None
     if void is not None:
         x[void] = 0.0
-    target = vf * n_design
+    # massProperties: each cell's cost as volume plus its share of inertia
+    # about the axis (domain.volume_weights, mean 1 over the design cells),
+    # so the budget buys material near the axis cheaper than far out
+    vw = getattr(domain, "volume_weights", None)
+    wdesign = design.astype(float) if vw is None else np.where(design, vw, 0.0)
+    target = vf * float(wdesign.sum())
 
     beta = float(opts.beta_start)
     since_beta = 0
@@ -833,7 +879,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             e = e * heat.g
         # A force of unknown direction is three solves, one per axis, and
         # each case is judged in its worst direction (directions.py).
-        rhs, layout = expand(domain.loads, spreads, fg)
+        loads_now, accs = _relieved(domain, xe)
+        rhs, layout = expand(loads_now, spreads, fg)
         if len(us) != len(rhs):
             # an uncertain force alone in its case gains a fixed part (the
             # expansion load) once the design is warm
@@ -861,6 +908,14 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 # d(f.u)/dx with design-dependent weight: + 2 u . df/dx.
                 ue = wc.u_mean.reshape(-1, 3)[mesh.enode].sum(axis=1)
                 dc_xp += weights[ci] * 2.0 * (ue @ domain.gravity) * mesh.pitch ** 3 / 8.0
+            if accs is not None and ci < len(accs):
+                # inertia relief: f - M Phi a, M from the design. With u taken
+                # M-orthogonal to the rigid modes the change in a drops out,
+                # and d(f.u)/dx_e = -2 (pitch^3 / 8) sum over the cell's
+                # nodes of (Phi a) . u
+                ur = _rigid_free_m(domain, xe, wc.u_mean)
+                au = (accs[ci].reshape(-1, 3) * ur.reshape(-1, 3)).sum(axis=1)
+                dc_xp -= weights[ci] * 2.0 * au[mesh.enode].sum(axis=1) * mesh.pitch ** 3 / 8.0
         warp_v = None
         if domain.warp is not None:
             # buildSim warp design (buildsim.WarpTerm on the build axis):
@@ -921,7 +976,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 a = opts.deflate_weight * dk ** -opts.deflate_power
                 g += (-opts.deflate_power * a / (a + 1.0)) * diff / (d2 * n_design)
             dc = dc + ht @ (printed_grad(am_b, comp * g) * dproj / hs)
-        dv = ht @ (printed_grad(am_b, design.astype(float)) * dproj / hs)
+        dv = ht @ (printed_grad(am_b, wdesign) * dproj / hs)
         if heat is not None and heat.swing_weight > 0:
             # The thermal-cycling swing's stress rises where material is
             # added near the heat (a stiffer part holds more of its own
@@ -1042,7 +1097,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             dco = _extrude(dco, columns, design)
             scale = heat_state["swing_max"] / max(heat_state["swing"], 1e-300)
             g_s = scale * heat_state["swing"] / heat.swing_limit - 1.0
-            vol = float(physical(x, beta)[1][design].sum())
+            vol = float(physical(x, beta)[1] @ wdesign)
             if mma_s is None:
                 mma_s = MMA(int(free.sum()), 2, move=opts.move)
             mma_s.move = move
@@ -1074,7 +1129,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             x_new = _extrude(x_new, columns, design)
             if void is not None:
                 x_new[void] = 0.0
-            vol = float(physical(x_new, beta)[1][design].sum())
+            vol = float(physical(x_new, beta)[1] @ wdesign)
             if vol > target:
                 l1 = lm
             else:
@@ -1161,7 +1216,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     if heat is not None:
         fg, fth = _heat_state(heat, xp, fg)
         e = e * heat.g
-    loads, layout = expand(domain.loads, spreads, fg)
+    loads, layout = expand(_relieved(domain, xp)[0], spreads, fg)
     us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
     if opts.prune:
         xp, us = _prune_dead(fe, domain, xp, us, loads, design, pres)
@@ -1179,7 +1234,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             # pruning moved the design: its temperature and load with it
             fg = gravity_force(mesh, xp, domain.gravity, domain.fixed) if domain.gravity is not None else None
             fg, fth = _heat_state(heat, xp, fg)
-            loads, layout = expand(domain.loads, spreads, fg)
+            loads, layout = expand(_relieved(domain, xp)[0], spreads, fg)
             us = fe.solve(stiff * heat.g, xp, us, rtol=1e-6, loads=loads)
         comp, case_c, _, heat_d = heat.sensitivities(fe, xp, loads, us, fth, weights, domain.gravity, heat_state,
                                                      layout, spreads)

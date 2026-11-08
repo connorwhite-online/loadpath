@@ -701,14 +701,14 @@ def lattice_frames(g, lat, centers, pitch, start=None):
         return w @ vt
     frame = (s.get("frame") or {}).get("type", "cartesian")
     graded = isinstance(nd.refs.get("cell"), str) and s.get("grading", "warp") == "warp"
-    if not rotated and (canonical(s.get("type", "gyroid")) == "voronoi"
+    if not rotated and (canonical(s.get("type", "gyroid")) in ("voronoi", "delaunay")
                         or (frame == "cartesian" and not graded and "orient" not in s)):
         return None
 
     def coords(P):
         for t in moves:
             P = g.transform_points(g.nodes[t], P)
-        if canonical(s.get("type", "gyroid")) == "voronoi":
+        if canonical(s.get("type", "gyroid")) in ("voronoi", "delaunay"):
             return P
         return g.lattice_coords(nd, P)[0]
 

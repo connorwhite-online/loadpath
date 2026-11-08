@@ -53,7 +53,8 @@ is set by function rather than load (enclosures, cosmetic covers, gears,
 threads) in CAD instead. loadpath doesn't replace CAD: model the interfaces
 there, let loadpath grow the material between them, and bring the result
 back as STEP or STL (`loadpath step part.stl` turns any closed STL, a
-gyroid-cored one too, into one STEP solid). Its edge over drawing the part yourself is that every
+gyroid-cored one too, into one STEP solid; `loadpath slices part.stl` into
+powder-bed layers, a CLI file of contours and hatches). Its edge over drawing the part yourself is that every
 result comes with an independent check (safety factor, deflection,
 buckling, printability) you can report to the user.
 
@@ -175,6 +176,15 @@ buckling, printability) you can report to the user.
    open port or a flange is held where it is really held. For a cover or
    panel that must stay closed, `"skin": {"thickness": t, "open": ["-z"]}`
    keeps its outer surface and ribs the inside.
+   A part nothing holds (a drone arm between motors, a part that is
+   dropped or thrown): `"inertiaRelief": true` and no supports; its own
+   inertia balances the loads. A part that carries a motor or a camera
+   and must not ring: `"vibration": {"minFrequency": 60, "masses":
+   [{"region": "motor-seat", "mass": 0.12}]}` (Hz, kg) holds its first
+   natural frequency with the safety factor. A link that turns:
+   `"massProperties": {"axis": {"through": [0, 0, 0], "direction": "z"}}`
+   keeps its inertia about the joint down, and every report's
+   `massProperties` gives mass, centre of mass and inertia.
 5. **Say how it will be made**: `"process": "fdm"` (or `{"type": "fdm",
    "buildDirection": "+z"}`), `"sls"`, `"mjf"`, `"sla"`, `"dlp"`, `"volumetric"`, or
    `"lpbf"` for powder-bed metal (AlSi10Mg, Ti64, 316L). The

@@ -812,6 +812,95 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
             "cells": int(hm.n_elem), "seconds": time.time() - t0}
 
 
+def mass_properties(mesh, density: float, axis=None) -> dict:
+    """Mass (g), centre of mass (mm) and inertia tensor about it (kg mm^2)
+    of a closed mesh at `density` g/cm^3; with a spec.MassProperties whose
+    axis is set, the moment of inertia about that axis too (parallel axis
+    from the centre of mass)."""
+    kg_per_mm3 = float(density) * 1e-6
+    vol = float(abs(mesh.volume))
+    m = vol * kg_per_mm3
+    com = np.asarray(mesh.center_mass, float)
+    ic = np.asarray(mesh.moment_inertia, float) * kg_per_mm3
+    if mesh.volume < 0:
+        ic = -ic
+    def sig(v):
+        return float(f"{float(v):.6g}")
+
+    out = {"mass": m * 1e3, "centerOfMass": [round(float(v), 3) for v in com],
+           "inertia": [[sig(v) for v in row] for row in ic],
+           "principalInertia": [sig(v) for v in np.linalg.eigvalsh(ic)]}
+    if axis is not None and getattr(axis, "through", None) is not None:
+        d = axis.direction
+        r = com - axis.through
+        r_perp2 = float(r @ r - (r @ d) ** 2)
+        about = float(d @ ic @ d + m * r_perp2)
+        out["axisInertia"] = sig(about)
+        if axis.max_inertia is not None:
+            out["maxInertia"] = axis.max_inertia
+            out["ok"] = bool(about <= axis.max_inertia)
+    return out
+
+
+# The modal check's grid, cells at their filled share: a clamped bar with a
+# tip mass reads within 2% of beam theory from 2,000 cells on.
+MODAL_CELLS = 12_000
+
+
+def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | None = None) -> dict | None:
+    """The study's vibration block on a delivered part: its lowest natural
+    frequencies clamped at the supports (pins as the stress check holds
+    them), the carried masses spread over the nodes of their regions (a
+    keep-out's mass on the material lining it). Pieces no support holds
+    are left out, as the buckling check does. None without a vibration
+    block or anything holding the part."""
+    from .domain import _region_nodes
+    from .modal import modal_analysis
+    from .shapes import manifold_from_trimesh
+
+    vib = getattr(study, "vibration", None)
+    if vib is None:
+        return None
+    t0 = time.time()
+    mat = study.material
+    if vol is None:
+        vol = float(manifold_from_trimesh(mesh).volume())
+    pm = max(pitch or 0.0, (vol / MODAL_CELLS) ** (1.0 / 3.0))
+    # each cell at its filled share of stiffness and mass: whole cells
+    # stair-step a 10 mm bar to 10.3-10.8 mm and read its bending
+    # frequency 4-16% high
+    share, origin = voxelize(mesh, pm, fractional=True)
+    solid = share > 0.02
+    hm = HexMesh(np.argwhere(solid), pm, origin)
+    bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pm)
+    if not bc.fixed.any() and bc.springs is None:
+        return None
+    lbl, _ = ndimage.label(solid)
+    ijk = hm.elem_ijk
+    held = np.unique(lbl[tuple(ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
+    keep = np.isin(lbl[tuple(ijk.T)], held)
+    if not keep.all():
+        hm = HexMesh(ijk[keep], pm, origin)
+        bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pm)
+    fill = share[tuple(hm.elem_ijk.T)]
+    masses = []
+    for i, (region, shape, kg) in enumerate(vib.masses):
+        nodes = np.flatnonzero(_region_nodes(study, hm, region, shape, f"vibration.masses[{i}]", tol_floor=pm))
+        masses.append((nodes, kg))
+    springs = mat.E * bc.springs if bc.springs is not None else None
+    res = modal_analysis(hm, float(mat.E) * fill, float(mat.density) * fill, float(mat.nu), bc.fixed, vib.modes,
+                         masses,
+                         springs=springs)
+    f1 = float(res.frequencies[0])
+    out = {**res.to_dict(), "minFrequency": vib.min_frequency, "firstFrequency": round(f1, 2),
+           "ok": bool(f1 >= vib.min_frequency), "pitch": pm, "cells": int(hm.n_elem),
+           "carried": round(sum(kg for _, _, kg in vib.masses), 5), "seconds": round(time.time() - t0, 2)}
+    # which way the first mode moves most: what to brace
+    part = res.participation[0]
+    out["firstModeAxis"] = "xyz"[int(np.argmax(part))] if part.sum() > 0.05 else "rotation"
+    return out
+
+
 def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=None, contact_band=None,
                    cut_cells=None, fractional: bool = False, nu=None):
     """The grid a finished part is analyzed on (verify_part's, and the
@@ -1050,6 +1139,10 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     part = manifold_from_trimesh(mesh)
     vol = float(part.volume())
     report = {"volume": vol, "mass": vol * mat.density / 1000.0, "material": mat.to_dict()}
+    try:
+        report["massProperties"] = mass_properties(mesh, mat.density, getattr(study, "mass_properties", None))
+    except (ValueError, IndexError, FloatingPointError) as exc:
+        report.setdefault("warnings", []).append(f"mass properties failed: {exc}")
 
     design = _union(study.design_space + [r.shape for r in study.preserve])
     keep = _union([r.shape for r in study.keep_out])
@@ -1370,6 +1463,20 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         pk = float(np.quantile(env, 0.999))
         report["stressUtilization"] = float(env.mean() / pk) if pk > 0 else None
     report["stressAllowance"] = STRESS_ALLOWANCE
+    if getattr(study, "vibration", None) is not None:
+        try:
+            vib = modal_check(study, mesh, vol, pitch)
+        except (RuntimeError, ValueError, MemoryError) as exc:
+            vib = None
+            report.setdefault("warnings", []).append(f"modal check failed: {exc}")
+        if vib is not None:
+            report["vibration"] = vib
+            report["firstFrequency"] = vib["firstFrequency"]
+            if not vib["ok"]:
+                report.setdefault("warnings", []).append(
+                    f"first natural frequency {vib['firstFrequency']:.1f} Hz is under vibration.minFrequency "
+                    f"{vib['minFrequency']:g} Hz (the mode moves mostly along {vib['firstModeAxis']}): stiffen "
+                    "the path from the carried masses to the supports in that direction")
     from .durability import active, assess
     if active(study):
         # fatigue (cases with cycles), creep and relaxation (hours, preload)

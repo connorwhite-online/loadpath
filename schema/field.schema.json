@@ -2425,7 +2425,15 @@
         },
         "path": {
           "type": "string",
-          "description": ".npz with points and values (save_result_field) or a grid (origin, pitch, values)"
+          "description": ".npz with points and values (save_result_field), a grid (origin, pitch, values), or a point map: a .csv/.txt of x, y, z and values (another tool's FE or CFD export)"
+        },
+        "interpolate": {
+          "enum": [
+            "idw",
+            "rbf",
+            "nearest"
+          ],
+          "description": "between scattered samples: inverse distance over the 8 nearest (default), a thin-plate spline over the 32 nearest (smooth, held to the samples' range), or the nearest"
         },
         "source": {
           "type": "string"
@@ -2445,7 +2453,7 @@
         },
         "quantity": {
           "type": "string",
-          "description": "vonMises (default) or displacement for a study; the array name in an .npz"
+          "description": "vonMises (default) or displacement for a study; the array name in an .npz; the column header in a point map (default its 4th column)"
         },
         "case": {
           "type": "string",
@@ -3272,7 +3280,7 @@
     },
     "op-lattice": {
       "type": "object",
-      "description": "A lattice filling all of space (intersect it with a solid): a TPMS sheet (gyroid, diamond, schwarz-p) or a strut cell (cubic, bcc, bccz, fcc, fccz, octet, kelvin, diamond-strut) or a stochastic voronoi foam. Cell size, wall or strut thickness, relative density and node blend can each be a field; a conformal frame lays the cells along a surface.",
+      "description": "A lattice filling all of space (intersect it with a solid): a TPMS sheet (gyroid, diamond, schwarz-p) or a strut cell (cubic, bcc, bccz, fcc, fccz, octet, kelvin, diamond-strut, or a custom cell from cellGraph), or a stochastic voronoi foam or delaunay (tet) lattice; a delaunay lattice with a conformal frame puts its nodes on that solid's surface and keeps its struts inside it (a tet lattice from a body). Cell size, wall or strut thickness, relative density and node blend can each be a field; a conformal frame lays the cells along a surface.",
       "properties": {
         "op": {
           "const": "lattice"
@@ -3290,13 +3298,15 @@
             "octet",
             "kelvin",
             "diamond-strut",
-            "voronoi"
+            "voronoi",
+            "delaunay",
+            "custom"
           ],
           "description": "TPMS sheets are stiffer and stronger per gram (lattice.SHEETS vs STRUTS); struts are open, easy to clear of powder, and print on FDM when the cell is oriented (lattice report's overhangs)"
         },
         "cell": {
           "title": "a number, a node name or a node object",
-          "description": "mm per period (default 8); a field grades it (voronoi: mean seed spacing)",
+          "description": "mm per period (default 8); a field grades it (voronoi, delaunay: mean seed spacing)",
           "anyOf": [
             {
               "type": "number"
@@ -3309,6 +3319,45 @@
               "$ref": "#/$defs/node"
             }
           ]
+        },
+        "cellGraph": {
+          "type": "object",
+          "description": "type custom: the cell's struts, nTop's custom unit cell",
+          "properties": {
+            "nodes": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "[x, y, z]"
+              },
+              "minItems": 2,
+              "description": "[u, v, w] in cell units (0 to 1 across the cell; it repeats with period 1)"
+            },
+            "beams": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "minItems": 1,
+              "description": "pairs of node indices"
+            }
+          },
+          "required": [
+            "nodes",
+            "beams"
+          ],
+          "additionalProperties": false
         },
         "thickness": {
           "title": "a number, a node name or a node object",

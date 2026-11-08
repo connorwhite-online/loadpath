@@ -177,21 +177,97 @@ back at once with suggestions.
 | `mesh` | a closed STL/3MF/OBJ as a solid; distance exact near the surface | |
 | `constant`, `coordinate` | a number; position along x/y/z or a direction | |
 | `distance` | unsigned distance to a solid (`input`), points, a segment, a plane or a shape | `input` |
-| `result` | von Mises or displacement of a part under a study (run on demand, also on one of the graph's own nodes), or a saved `.npz` | |
+| `result` | von Mises or displacement of a part under a study (run on demand, also on one of the graph's own nodes), a saved `.npz`, or a point map: a `.csv` of x, y, z and values from another tool (see Point maps) | `interpolate` |
 | `grid` | an imported scalar field on a regular grid (`.npz`: origin, pitch, values) | |
 | `remap` | `from` [a, b] to `to` [c, d], linear / smoothstep / smootherstep / sqrt / square or a drawn curve (`[[u, v], ...]` over the unit square; the editor has a curve editor), clamped | `input` |
 | `expr` | arithmetic over node names and x, y, z: `"0.8 + 1.2 * smoothstep(5, 30, stress)"` | `vars` |
 | `union`, `intersect`, `subtract` | booleans; `blend` is the fillet radius | `inputs`, `blend` |
 | `shell` | a wall inside, outside or centred on a surface | `input`, `thickness` |
 | `offset` | grow or shrink | `input`, `distance` |
-| `lattice` | TPMS sheets (gyroid, diamond, Schwarz P; sheet or network), strut cells (cubic, BCC, BCCz, FCC, FCCz, octet, Kelvin, diamond-strut) or a Voronoi foam; cartesian, cylindrical, spherical or conformal frame; `aspect` stretches the cell | `cell`, `thickness` or `density`, `blend` (node fillets), `offset` |
+| `lattice` | TPMS sheets (gyroid, diamond, Schwarz P; sheet or network), strut cells (cubic, BCC, BCCz, FCC, FCCz, octet, Kelvin, diamond-strut, or your own from `cellGraph`), a Voronoi foam or a Delaunay (tet) lattice, which with a conformal frame follows a body with its nodes on the skin; cartesian, cylindrical, spherical or conformal frame; `aspect` stretches the cell | `cell`, `thickness` or `density`, `blend` (node fillets), `offset` |
 | `transform` | translate, rotate, scale an input | `input` |
 | `image` | a picture (PNG/JPG) laid on a plane as a 0..1 field: brightness or one channel, optional invert (see Images) | `path`, `size` |
 | `group` | a copy of a sub-graph from `groups` with its own `params` and `inputs` (see Groups) | |
 
 `expr` knows `abs sqrt exp log sin cos tan floor ceil sign min max clamp
-lerp smoothstep step where`, comparisons and `a if c else b`; nothing else
-(no attributes, no imports).
+lerp smoothstep step where noise cellular`, comparisons and `a if c else b`;
+nothing else (no attributes, no imports).
+
+## Noise and surface textures
+
+`noise(x, y, z)` is gradient (Perlin) noise with a unit grain: smooth, about
+-1 to 1, slope under 3 per unit. `cellular(x, y, z)` is Worley noise: the
+distance to the nearest of one random point per unit cube, 0 to about 1.
+Both are fixed functions of position (the same part on every machine);
+scale the coordinates for a coarser grain. A texture is an `offset` of a
+solid by a field, so nTop's emboss, deboss, bubbles and roughness blocks are
+one node each:
+
+```json
+"grip":    {"op": "expr", "expr": "0.6 * noise(x / 3, y / 3, z / 3)"},
+"bubbles": {"op": "expr", "expr": "0.8 * (0.5 - cellular(x / 4, y / 4, z / 4))"},
+"part":    {"op": "offset", "input": "body", "distance": "grip"}
+```
+
+Multiply the relief by a `remap` of a distance or an `image` to keep it to a
+band, or by `smoothstep` of a `result` to put it only where the part idles.
+The field stays Lipschitz (relief amplitude x slope / grain under 1 keeps the
+narrow-band mesher exact); `tests/test_textures.py` meshes both watertight
+within 2% of the field's volume.
+
+## Point maps
+
+A `result` node reads another tool's results as a field: a `.csv` (or
+space- or tab-separated `.txt`) with one sample per row, x, y, z and one or
+more values, an optional header naming the columns (`quantity` picks one by
+name; the default is the first column after x, y, z). An ANSYS or Abaqus
+nodal stress export, a CFD wall temperature, a scan's thickness map. Between
+the samples it reads by `interpolate`: `idw` (inverse distance over the 8
+nearest, the default), `rbf` (a thin-plate spline over the 32 nearest:
+smooth, exact on a linear field, held inside the samples' range so it does
+not overshoot past them) or `nearest`. Then drive anything with it:
+
+```json
+"temp": {"op": "result", "path": "cfd-wall-temperature.csv", "quantity": "temperature", "interpolate": "rbf"},
+"wall": {"op": "remap", "input": "temp", "from": [40, 120], "to": [0.8, 3.0]},
+"skin": {"op": "shell", "input": "body", "thickness": "wall"}
+```
+
+## Custom, Delaunay and body-following strut lattices
+
+A `custom` lattice is your own strut cell (nTop's custom unit cell): nodes
+in cell units (0 to 1 across, repeating with period 1) and beams between
+them.
+
+```json
+"truss": {"op": "lattice", "type": "custom", "cell": 6, "density": 0.2,
+          "cellGraph": {"nodes": [[0.5, 0.5, 0.5], [0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0],
+                                  [0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]],
+                        "beams": [[0, 1], [0, 2], [0, 3], [0, 4], [0, 5], [0, 6], [0, 7], [0, 8]]}}
+```
+
+It is a strut kind like the built-in ones: its symmetry is found
+numerically for the fast distance, `density` reads its own unit-cell table,
+node `blend`, grading, frames and `aspect` all apply. The graph above is the
+BCC cell and evaluates to the built-in `bcc` to 1e-9 mm. Homogenized checks
+need tables a custom cell does not ship with: check it resolved
+(`loadpath resolved-check`).
+
+`delaunay` (alias `tet`) is a stochastic tet lattice: seeds about `cell`
+apart (a field grades them), relaxed even, and the struts are the edges of
+their Delaunay tetrahedralization, so it is triangulated (stretch-dominated)
+where a Voronoi foam bends. With a conformal frame it follows a body:
+
+```json
+"ball": {"op": "shape", "shape": {"type": "sphere", "center": [0, 0, 0], "r": 15}},
+"tet":  {"op": "lattice", "type": "delaunay", "cell": 6, "thickness": 1.0,
+         "frame": {"type": "conformal", "surface": "ball"}}
+```
+
+Seeds are laid on the body's surface as well as inside it and only struts
+inside it are kept, so nodes sit on the skin and no strut is cut off at it
+(nTop's tet lattice from a body). `tests/test_lattice_library.py` checks the
+three.
 
 ## Groups
 

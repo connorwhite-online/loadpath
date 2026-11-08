@@ -595,8 +595,9 @@ def lattice_from_graph(g, name, lo, hi, grid=None):
     graded = isinstance(r.get("cell"), str)
     if tp is None and not strut:
         raise ValueError(f"lattice {name!r}: unknown lattice type {kind!r}")
-    if strut and canonical(kind) == "voronoi":
-        raise ValueError(f"lattice {name!r}: a Voronoi foam does not go into 3MF as a beam lattice")
+    if strut and canonical(kind) in ("voronoi", "delaunay"):
+        raise ValueError(f"lattice {name!r}: a stochastic ({canonical(kind)}) lattice does not go into 3MF as a "
+                         "beam lattice")
     if strut and (graded or ftype != "cartesian" or "offset" in s):
         raise ValueError(f"lattice {name!r}: a strut lattice goes into 3MF with a constant cell in the "
                          "cartesian frame and no offset")

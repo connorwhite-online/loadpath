@@ -117,6 +117,26 @@ def _step(args):
     return 0 if rep["valid"] and rep["solids"] == 1 else 1
 
 
+def _slices(args):
+    import trimesh
+
+    from .layerfiles import export_cli
+
+    m = trimesh.load(args.part, force="mesh")
+    if not m.is_watertight:
+        print(json.dumps({"error": f"{args.part} is not closed: a powder-bed layer needs closed contours "
+                                   "(run `loadpath exterior` on it first)"}))
+        return 1
+    axis = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[args.axis]
+    out = args.out or os.path.splitext(args.part)[0] + ".cli"
+    name = os.path.splitext(os.path.basename(args.part))[0]
+    rep = export_cli(m, out, layer=args.layer, hatch=None if args.hatch == 0 else args.hatch, axis=axis,
+                     label=name)
+    rep["volumeError"] = round(rep["volume"] / rep["meshVolume"] - 1, 5) if rep["meshVolume"] else None
+    print(json.dumps(rep, indent=1))
+    return 0 if not rep["openLayers"] else 1
+
+
 def _import(args):
     from .cadimport import import_part
 
@@ -696,6 +716,15 @@ def main(argv=None):
     sx.add_argument("--tolerance", type=float, default=None,
                     help="mm the facets may move to keep a TPMS core's tunnels (default 0.05)")
     sx.add_argument("--surface", choices=["facets", "smooth"], default="facets")
+    sl = sub.add_parser("slices", help="a closed part as powder-bed layers: contours and scan hatches in a CLI "
+                                       "file (Common Layer Interface, ASCII) for EOS, 3D Systems, Renishaw and "
+                                       "other build processors")
+    sl.add_argument("part", help="STL, 3MF or OBJ, in mm, closed")
+    sl.add_argument("--out", help="CLI path (default: the part's name with .cli)")
+    sl.add_argument("--layer", type=float, default=0.03, help="layer thickness, mm (default 0.03, LPBF)")
+    sl.add_argument("--hatch", type=float, default=0.1,
+                    help="hatch spacing, mm (default 0.1; 0 for contours only); turned 67 degrees a layer")
+    sl.add_argument("--axis", choices=["x", "y", "z"], default="z", help="build axis (default z)")
     asm = sub.add_parser("assembly",help="derive a part's load cases and neighbour keep-outs from a URDF")
     asm.add_argument("urdf")
     asm.add_argument("--link", required=True, help="the URDF link the study designs")
@@ -805,6 +834,8 @@ def main(argv=None):
         return _import(args)
     if args.cmd == "step":
         return _step(args)
+    if args.cmd == "slices":
+        return _slices(args)
     if args.cmd == "buildsim":
         return _buildsim(args)
     if args.cmd == "guide":

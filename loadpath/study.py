@@ -298,6 +298,16 @@ def _margin(study: Study, report: dict) -> float | None:
         ms.append(g.max_deflection / worst if worst > 0 else float("inf"))
     if dur and dur.get("safetyFactor") is not None:
         ms.append(dur["safetyFactor"] / dur["target"])
+    mp = report.get("massProperties") or {}
+    if mp.get("maxInertia") and mp.get("axisInertia"):
+        # inertia follows the material: linear in the fraction
+        ms.append(mp["maxInertia"] / mp["axisInertia"])
+    vib = report.get("vibration")
+    if vib and vib.get("firstFrequency") is not None:
+        # f = sqrt(k / m) / 2 pi: with carried masses the mass barely moves
+        # with the fraction and k roughly follows it, so the fraction needed
+        # goes as the frequency squared
+        ms.append((vib["firstFrequency"] / vib["minFrequency"]) ** 2)
     warp = report.get("warp")
     if warp:
         # buildSim warp limits: the build of the delivered part when it was
@@ -1137,7 +1147,7 @@ def _constrained_applies(study: Study) -> bool:
     goal = study.goal
     return (goal.safety_factor is not None or goal.max_deflection is not None) \
         and study.gravity is None and not _durability_drives(study) \
-        and study.access is None and study.max_member is None \
+        and study.access is None and study.max_member is None and not study.inertia_relief \
         and not any(ld.direction for c in study.load_cases for ld in c.loads)
 
 

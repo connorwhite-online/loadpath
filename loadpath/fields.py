@@ -74,6 +74,71 @@ def _smoothstep(e0, e1, x):
     return u * u * (3.0 - 2.0 * u)
 
 
+_M1, _M2, _M3 = np.uint64(0x9E3779B97F4A7C15), np.uint64(0xBF58476D1CE4E5B9), np.uint64(0x94D049BB133111EB)
+
+
+def _hash3(i, j, k, salt=0):
+    """A 64-bit hash of integer lattice points (splitmix64 over a mix of
+    the three), the same on every machine: noise is part of the part."""
+    with np.errstate(over="ignore"):
+        h = (np.asarray(i, np.int64).astype(np.uint64) * _M1) ^ (np.asarray(j, np.int64).astype(np.uint64) * _M2) \
+            ^ (np.asarray(k, np.int64).astype(np.uint64) * _M3) ^ np.uint64(salt)
+        h = (h ^ (h >> np.uint64(30))) * _M2
+        h = (h ^ (h >> np.uint64(27))) * _M3
+        return h ^ (h >> np.uint64(31))
+
+
+def _unit(h):
+    """Hash -> [0, 1)."""
+    return (h >> np.uint64(11)).astype(np.float64) * (1.0 / 9007199254740992.0)
+
+
+def _noise(x, y, z):
+    """Gradient (Perlin) noise with unit feature size: smooth, about -1 to 1,
+    zero on the integer lattice. nTop's Simplex Noise block; scale the
+    coordinates for a larger grain, noise(x / 4, y / 4, z / 4)."""
+    x, y, z = np.broadcast_arrays(*(np.asarray(v, float) for v in (x, y, z)))
+    fx, fy, fz = np.floor(x), np.floor(y), np.floor(z)
+    u, v, w = x - fx, y - fy, z - fz
+    i, j, k = fx.astype(np.int64), fy.astype(np.int64), fz.astype(np.int64)
+    out = np.zeros(x.shape)
+    fade = [t * t * t * (t * (t * 6 - 15) + 10) for t in (u, v, w)]
+    for a in (0, 1):
+        for b in (0, 1):
+            for c in (0, 1):
+                h = _hash3(i + a, j + b, k + c)
+                # one of the 12 cube-edge gradients
+                g = (h % np.uint64(12)).astype(np.int64)
+                gx = np.where(g < 4, np.where(g & 1, -1.0, 1.0), np.where(g < 8, np.where(g & 1, -1.0, 1.0), 0.0))
+                gy = np.where(g < 4, np.where(g & 2, -1.0, 1.0), np.where(g < 8, 0.0, np.where(g & 1, -1.0, 1.0)))
+                gz = np.where(g < 4, 0.0, np.where(g & 2, -1.0, 1.0))
+                dot = gx * (u - a) + gy * (v - b) + gz * (w - c)
+                wt = (fade[0] if a else 1 - fade[0]) * (fade[1] if b else 1 - fade[1]) * \
+                     (fade[2] if c else 1 - fade[2])
+                out += wt * dot
+    return out
+
+
+def _cellular(x, y, z):
+    """Cellular (Worley) noise with unit cells: the distance to the nearest
+    of one random feature point per unit cube, 0 at a point and up to ~1
+    between them. nTop's Cellular Noise block: bubbles, scales, a
+    Voronoi-like emboss (remap it, offset a surface by it)."""
+    x, y, z = np.broadcast_arrays(*(np.asarray(v, float) for v in (x, y, z)))
+    fx, fy, fz = np.floor(x), np.floor(y), np.floor(z)
+    best = np.full(x.shape, np.inf)
+    for a in (-1, 0, 1):
+        for b in (-1, 0, 1):
+            for c in (-1, 0, 1):
+                cx, cy, cz = fx + a, fy + b, fz + c
+                i, j, k = cx.astype(np.int64), cy.astype(np.int64), cz.astype(np.int64)
+                px = cx + _unit(_hash3(i, j, k, 1))
+                py = cy + _unit(_hash3(i, j, k, 2))
+                pz = cz + _unit(_hash3(i, j, k, 3))
+                best = np.minimum(best, (x - px) ** 2 + (y - py) ** 2 + (z - pz) ** 2)
+    return np.sqrt(best)
+
+
 _FUNCS = {
     "abs": np.abs, "sqrt": lambda a: np.sqrt(np.maximum(a, 0.0)), "exp": np.exp,
     "log": lambda a: np.log(np.maximum(a, 1e-300)), "sin": np.sin, "cos": np.cos, "tan": np.tan,
@@ -84,6 +149,8 @@ _FUNCS = {
     "smoothstep": _smoothstep,
     "step": lambda edge, x: (x >= edge).astype(float),
     "where": lambda c, a, b: np.where(c > 0, a, b),
+    "noise": _noise,
+    "cellular": _cellular,
 }
 _CONSTS = {"pi": math.pi, "e": math.e}
 
@@ -312,6 +379,48 @@ def save_result_field(path, points, values, **extra):
                         **{k: np.asarray(v) for k, v in extra.items()})
 
 
+def read_point_map(path: str, column: str | None = None) -> dict:
+    """A point map from a text table (nTop's Import Scalar Point Map): one
+    row per sample, x, y, z and a value, comma, tab or space separated, an
+    optional header naming the columns. `column` picks the value by its
+    header name (default: the first column after x, y, z); a vector's
+    columns can be read one at a time. Exports from ANSYS, Abaqus, COMSOL
+    or a CFD code as a CSV of node coordinates and a result."""
+    with open(path, encoding="utf-8-sig") as fh:
+        lines = [ln.strip() for ln in fh if ln.strip() and not ln.lstrip().startswith("#")]
+    if not lines:
+        raise ValueError(f"{path}: empty point map")
+    delim = "," if "," in lines[0] else ("\t" if "\t" in lines[0] else None)
+
+    def cells(ln):
+        return [c.strip().strip('"') for c in (ln.split(delim) if delim else ln.split())]
+
+    head = cells(lines[0])
+    try:
+        [float(c) for c in head]
+        names, body = None, lines
+    except ValueError:
+        names, body = [h.lower() for h in head], lines[1:]
+    rows = np.array([[float(c) for c in cells(ln)] for ln in body], float)
+    if rows.ndim != 2 or rows.shape[1] < 4:
+        raise ValueError(f"{path}: a point map needs x, y, z and at least one value per row")
+    if names is not None and all(a in names for a in ("x", "y", "z")):
+        xyz = [names.index(a) for a in ("x", "y", "z")]
+    else:
+        xyz = [0, 1, 2]
+    rest = [i for i in range(rows.shape[1]) if i not in xyz]
+    if column is not None:
+        if names is None or column.lower() not in names:
+            raise ValueError(f"{path}: no column {column!r} (header: {', '.join(head)})")
+        vi = names.index(column.lower())
+    else:
+        vi = rest[0]
+    key = column or "values"
+    vals = rows[:, vi]
+    ok = np.isfinite(vals) & np.isfinite(rows[:, xyz]).all(axis=1)
+    return {"points": rows[ok][:, xyz], key: vals[ok]}
+
+
 class _Samples:
     """A scalar field from samples: on a regular grid (origin, pitch,
     values[nx, ny, nz]) trilinear; from scattered points (verify's FE nodes,
@@ -319,7 +428,8 @@ class _Samples:
     always do), else inverse-distance weighted over the 8 nearest. Outside
     the samples the nearest value carries on, so a remap never sees NaN."""
 
-    def __init__(self, points=None, values=None, grid=None, origin=None, pitch=None):
+    def __init__(self, points=None, values=None, grid=None, origin=None, pitch=None, method: str = "idw"):
+        self.method = method
         if grid is not None:
             self.grid = np.asarray(grid, np.float32)
             self.origin = np.asarray(origin, float)
@@ -330,7 +440,9 @@ class _Samples:
         vals = np.asarray(values, float).ravel()
         if len(pts) != len(vals):
             raise ValueError(f"result field has {len(pts)} points but {len(vals)} values")
-        g = self._regular(pts, vals)
+        if method not in ("idw", "rbf", "nearest"):
+            raise ValueError(f"interpolate must be idw, rbf or nearest (got {method!r})")
+        g = self._regular(pts, vals) if method == "idw" else None
         if g is not None:
             self.grid, self.origin, self.pitch = g
             self.tree = None
@@ -371,8 +483,22 @@ class _Samples:
         if self.tree is None:
             idx = ((P - self.origin) / self.pitch).T
             return ndimage.map_coordinates(self.grid, idx, order=1, mode="nearest").astype(float)
-        k = min(8, len(self.vals))
+        if self.method == "rbf":
+            # thin-plate spline on the nearest 32 samples round each point,
+            # held inside the samples' range (a spline overshoots past them)
+            if not hasattr(self, "_rbf"):
+                from scipy.interpolate import RBFInterpolator
+
+                self._rbf = RBFInterpolator(self.tree.data, self.vals, neighbors=min(32, len(self.vals)),
+                                            kernel="thin_plate_spline", degree=1)
+            out = np.empty(len(P))
+            for a in range(0, len(P), 200_000):
+                out[a:a + 200_000] = self._rbf(P[a:a + 200_000])
+            return np.clip(out, self.vals.min(), self.vals.max())
+        k = 1 if self.method == "nearest" else min(8, len(self.vals))
         d, j = self.tree.query(P, k=k)
+        if k == 1:
+            return self.vals[j]
         d, j = d.reshape(len(P), k), j.reshape(len(P), k)
         w = 1.0 / np.maximum(d, 1e-9) ** 2
         return (w * self.vals[j]).sum(axis=1) / w.sum(axis=1)
@@ -1410,6 +1536,24 @@ class FieldGraph:
             near = difflib.get_close_matches(str(spec["op"]), OPS, 1)
             raise ValueError(f"node {name!r}: unknown op {spec['op']!r}"
                              + (f"; did you mean {near[0]!r}?" if near else f" ({', '.join(OPS)})"))
+        if spec["op"] == "lattice" and str(spec.get("type", "")).lower() in ("delaunay", "tet") \
+                and "cellGraph" in spec:
+            raise ValueError(f"node {name!r}: a {spec['type']} lattice is stochastic; cellGraph is for type custom")
+        if spec["op"] == "lattice" and (str(spec.get("type", "")).lower().startswith("custom")
+                                        or "cellGraph" in spec):
+            # a custom strut cell (nTop's Custom Unit Cell): registered as
+            # a strut kind of its own, the graph's own copy keeps cellGraph
+            from .struts import register_cell
+
+            cg = spec.get("cellGraph")
+            if not isinstance(cg, dict) or "nodes" not in cg or "beams" not in cg:
+                raise ValueError(f"node {name!r}: a custom lattice needs cellGraph: {{nodes: [[u, v, w], ...] "
+                                 "in cell units, beams: [[i, j], ...]}")
+            try:
+                kind = register_cell(cg["nodes"], cg["beams"])
+            except (ValueError, TypeError, IndexError) as exc:
+                raise ValueError(f"node {name!r}: {exc}") from None
+            spec = {**spec, "type": kind}
         self.nodes[name] = _Node(name, spec["op"], spec)
         return name
 
@@ -1810,7 +1954,10 @@ class FieldGraph:
             data = self._analyze(nd)
         elif "path" in s:
             p = self._path(s["path"])
-            data = dict(np.load(p)) if p.endswith(".npz") else json.load(open(p))
+            if p.lower().endswith((".csv", ".txt", ".tsv")):
+                data = read_point_map(p, s.get("quantity"))
+            else:
+                data = dict(np.load(p)) if p.endswith(".npz") else json.load(open(p))
         else:
             raise ValueError(f"node {nd.name!r}: {nd.op} needs a 'path' (.npz or .json), a 'study' and "
                              "'part' to analyze, or a 'source'")
@@ -1825,7 +1972,8 @@ class FieldGraph:
         key = s.get("quantity", "values")
         if key not in data:
             raise ValueError(f"node {nd.name!r}: no {key!r} in the result (have {', '.join(data)})")
-        return _Samples(data["points"], self._scaled(nd, np.asarray(data[key], float)))
+        return _Samples(data["points"], self._scaled(nd, np.asarray(data[key], float)),
+                        method=s.get("interpolate", "idw"))
 
     @staticmethod
     def _scaled(nd, vals):
@@ -2003,9 +2151,12 @@ class FieldGraph:
         if strut and form != "beam":
             raise ValueError(f"node {nd.name!r}: a strut lattice's form is 'beam' (got {form!r})")
         blend = np.asarray(self._val(r["blend"], P, memo), float) if "blend" in r else 0.0
-        if kind == "voronoi":
-            if (s.get("frame") or {}).get("type", "cartesian") != "cartesian" or "aspect" in s or "orient" in s:
-                raise ValueError(f"node {nd.name!r}: a voronoi foam is cartesian (no frame, aspect or orient)")
+        if struts.canonical(kind) in ("voronoi", "delaunay"):
+            ftype = (s.get("frame") or {}).get("type", "cartesian")
+            if (ftype != "cartesian" and not (ftype == "conformal" and struts.canonical(kind) == "delaunay")) \
+                    or "aspect" in s or "orient" in s:
+                raise ValueError(f"node {nd.name!r}: a {kind} lattice is stochastic: no aspect, orient or frame "
+                                 "(a delaunay one takes a conformal frame: its nodes on that solid's surface)")
             vor = self._resource(nd, lambda: self._voronoi(nd))
             Q = P - np.asarray(s["origin"], float) if "origin" in s else P
             cell = np.broadcast_to(np.asarray(self._val(r["cell"], P, memo) if "cell" in r else 8.0, float),
@@ -2083,10 +2234,18 @@ class FieldGraph:
         return best
 
     def _voronoi(self, nd):
-        from .struts import VoronoiStruts
+        from .struts import VoronoiStruts, canonical
 
         cell_fn, lo, hi = self._warp_domain(nd)
-        return VoronoiStruts(lo, hi, cell_fn, seed=int(nd.spec.get("seed", 0)))
+        edges = canonical(nd.spec.get("type", "voronoi"))
+        surface = None
+        if "surface" in nd.refs:
+            off = np.asarray(nd.spec.get("origin", (0, 0, 0)), float)
+            surf = nd.refs["surface"]
+
+            def surface(G):
+                return self.evaluate(np.asarray(G, float) + off, surf)
+        return VoronoiStruts(lo, hi, cell_fn, seed=int(nd.spec.get("seed", 0)), edges=edges, surface=surface)
 
     def _warp(self, nd, max_cells=400_000):
         """The cell-grading map over the lattice's domain: its own bounds,

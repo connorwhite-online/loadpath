@@ -235,7 +235,11 @@ class BucklingModel:
         t0 = time.time()
         d = self.domain
         mesh = d.mesh
-        cases = list(range(len(d.loads))) if cases is None else list(cases)
+        if cases is None:
+            # not the vibration block's stiffness-only inertial cases
+            skip = set(getattr(d, "inertial_cases", ()))
+            cases = [c for c in range(len(d.loads)) if c not in skip]
+        cases = list(cases)
         keep = self._live(xe)
         el = np.flatnonzero(keep)
         sub = HexMesh(mesh.elem_ijk[el], mesh.pitch, mesh.origin)

@@ -81,9 +81,11 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
 
     cases = len(domain.loads)
     force_mag = [float(np.linalg.norm(f.reshape(-1, 3).sum(axis=0))) for f in domain.loads]
-    defl_cases = [c for c in range(cases) if limits.deflection is not None and force_mag[c] > 0]
-    stress_cases = list(range(cases)) if limits.stress is not None else []
-    buck_cases = [c for c in range(cases) if limits.buckling is not None and np.any(domain.loads[c])]
+    # the vibration block's inertial cases only steer stiffness (domain._inertial_cases)
+    real = [c for c in range(cases) if c not in set(getattr(domain, "inertial_cases", ()))]
+    defl_cases = [c for c in real if limits.deflection is not None and force_mag[c] > 0]
+    stress_cases = list(real) if limits.stress is not None else []
+    buck_cases = [c for c in real if limits.buckling is not None and np.any(domain.loads[c])]
     m = len(defl_cases) + len(stress_cases) + len(buck_cases)
     if m == len(buck_cases):
         raise ValueError("optimize_constrained needs a stress or deflection limit")

@@ -104,9 +104,41 @@ _CELLS = {
     "kelvin": _kelvin,
     "diamond-strut": _diamond,
 }
-STRUT_KINDS = tuple(_CELLS) + ("voronoi",)
+STRUT_KINDS = tuple(_CELLS) + ("voronoi", "delaunay")
 _ALIASES = {"simple-cubic": "cubic", "bcc-z": "bccz", "fcc-z": "fccz", "octet-truss": "octet",
-            "tetrakaidecahedron": "kelvin", "diamond-beam": "diamond-strut", "strut-diamond": "diamond-strut"}
+            "tetrakaidecahedron": "kelvin", "diamond-beam": "diamond-strut", "strut-diamond": "diamond-strut",
+            "tet": "delaunay", "tetrahedral": "delaunay"}
+
+
+def register_cell(nodes, beams) -> str:
+    """A custom periodic strut cell (nTop's Custom Unit Cell): `nodes` in
+    cell units (period 1, usually in [0, 1]^3), `beams` pairs of node
+    indices. Returns its kind ("custom-<hash>"), usable everywhere a built-in
+    cell's name is: distance, density table, symmetry folding (found
+    numerically), printability. The same graph always gets the same kind."""
+    import hashlib
+
+    N = np.asarray(nodes, float).reshape(-1, 3)
+    E = np.asarray(beams, int).reshape(-1, 2)
+    if len(N) < 2 or not len(E):
+        raise ValueError("a custom cell needs at least two nodes and one beam")
+    if E.min() < 0 or E.max() >= len(N):
+        raise ValueError(f"a custom cell's beams index its {len(N)} nodes (0-{len(N) - 1})")
+    if np.any(E[:, 0] == E[:, 1]):
+        raise ValueError("a custom cell's beam joins a node to itself")
+    if not np.all(np.isfinite(N)) or np.abs(N).max() > 2:
+        raise ValueError("a custom cell's nodes are in cell units (0 to 1 across the cell)")
+    segs = [(N[a].copy(), N[b].copy()) for a, b in E]
+    L = np.array([np.linalg.norm(b - a) for a, b in segs])
+    if L.min() < 1e-6:
+        raise ValueError("a custom cell has a beam of zero length")
+    key = hashlib.sha1(np.round(np.concatenate([N.ravel(), E.ravel().astype(float)]), 9).tobytes()).hexdigest()[:12]
+    kind = f"custom-{key}"
+    if kind not in _CELLS:
+        _CELLS[kind] = lambda segs=segs: [(a.copy(), b.copy()) for a, b in segs]
+        global STRUT_KINDS
+        STRUT_KINDS = STRUT_KINDS + (kind,)
+    return kind
 
 
 def canonical(kind):
@@ -138,6 +170,8 @@ def cell_segments(kind) -> np.ndarray:
     kind = canonical(kind)
     if kind == "voronoi":
         return _periodic_voronoi(8, 0)
+    if kind == "delaunay":
+        return _periodic_delaunay(8, 0)
     segs = _CELLS[kind]()
     # one representative per periodic class: shift each so its midpoint is in [0,1)
     reps = []
@@ -359,7 +393,7 @@ def _blend_key(blend):
 
 # the periodic box of a cell, in cells: a Voronoi foam's `cell` is its seed
 # spacing, and its periodic stand-in holds 8 seeds a box, 2 spacings across
-_BOX = {"voronoi": 2.0}
+_BOX = {"voronoi": 2.0, "delaunay": 2.0}      # 8 seeds per periodic cell: seed spacing half the cell
 
 
 def strut_relative_density(kind, diameter, cell, blend=0.0):
@@ -419,6 +453,69 @@ def _periodic_voronoi(n_seeds, seed):
     return _voronoi_edges(allp, np.zeros(3), np.ones(3) - 1e-12)
 
 
+def _delaunay_edges(seeds):
+    """(E, 2) unique edges of the Delaunay tetrahedralization of `seeds`."""
+    from scipy.spatial import Delaunay
+
+    tet = Delaunay(seeds).simplices
+    pairs = np.concatenate([tet[:, [a, b]] for a, b in itertools.combinations(range(4), 2)])
+    pairs.sort(axis=1)
+    return np.unique(pairs, axis=0)
+
+
+@lru_cache(maxsize=None)
+def _periodic_delaunay(n_seeds, seed):
+    """A periodic tet (Delaunay) cell: the periodic Voronoi cell's relaxed
+    seeds, tiled 3x3x3; the Delaunay edges whose midpoints are in the home
+    box (the Voronoi foam's dual: struts join the seeds)."""
+    rng = np.random.default_rng(seed)
+    s = rng.uniform(0, 1, (n_seeds, 3))
+    offs = np.array(list(itertools.product((-1, 0, 1), repeat=3)), float)
+    for _ in range(30):
+        allp = (s[None] + offs[:, None]).reshape(-1, 3)
+        d = s[:, None, :] - allp[None]
+        r = np.linalg.norm(d, axis=2)
+        r[r < 1e-9] = np.inf
+        h = n_seeds ** (-1 / 3)
+        w = np.clip(1.0 - r / h, 0, None) ** 2
+        s = (s + 0.1 * h * (w[..., None] * d / r[..., None]).sum(axis=1)) % 1.0
+    allp = (s[None] + offs[:, None]).reshape(-1, 3)
+    S = allp[_delaunay_edges(allp)]
+    m = S.mean(axis=1)
+    return S[np.all((m >= 0) & (m < 1 - 1e-12), axis=1)]
+
+
+def _surface_seeds(sdf, lo, hi, cell_fn, rng, pad):
+    """Seeds on a solid's surface (`sdf` < 0 inside), about a local cell
+    apart: random points near the surface projected onto it by two Newton
+    steps on the distance, then thinned to one per cell of a hash grid 0.8
+    of the finest spacing across."""
+    lo, hi = np.asarray(lo, float) - pad, np.asarray(hi, float) + pad
+    probe = rng.uniform(lo, hi, (20_000, 3))
+    cmin = float(np.min(cell_fn(probe)))
+    vol = float(np.prod(hi - lo))
+    n = int(min(3e6, 40.0 * vol / cmin ** 3))
+    P = rng.uniform(lo, hi, (n, 3))
+    d = sdf(P)
+    P = P[np.abs(d) < cmin]
+    eps = 0.05 * cmin
+    for _ in range(2):
+        d = sdf(P)
+        g = np.stack([(sdf(P + eps * e) - sdf(P - eps * e)) / (2 * eps) for e in np.eye(3)], axis=1)
+        gn = np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-9)
+        P = P - (d[:, None] * g / gn ** 2)
+    P = P[np.abs(sdf(P)) < 0.05 * cmin]
+    if not len(P):
+        return P
+    h = np.asarray(cell_fn(P), float)
+    # coarser keys where the local cell is larger: one seed per local cell
+    lvl = np.maximum(1, np.round(h / cmin)).astype(np.int64)
+    key = np.floor(P / (0.8 * cmin * lvl[:, None])).astype(np.int64)
+    key = np.concatenate([key, lvl[:, None]], axis=1)
+    _, first = np.unique(key, axis=0, return_index=True)
+    return P[np.sort(first)]
+
+
 class VoronoiStruts:
     """A stochastic Voronoi strut foam over a box: seeds `cell` mm apart on
     average (a callable gives a per-point spacing), relaxed so cells come out
@@ -426,7 +523,13 @@ class VoronoiStruts:
     nearest edge (edges are split so a k-nearest query on piece midpoints
     finds it)."""
 
-    def __init__(self, lo, hi, cell, seed=0, relax=8):
+    def __init__(self, lo, hi, cell, seed=0, relax=8, edges="voronoi", surface=None):
+        """`edges` "delaunay": the struts join the seeds (a stochastic tet
+        lattice, nTop's Delaunay / tet lattice) instead of running between
+        them. `surface` (delaunay only): a solid's signed distance, negative
+        inside: seeds are laid on its surface as well as inside it and only
+        struts inside it are kept, so the lattice's nodes sit on the skin
+        and it follows the body (nTop's tet lattice from a body)."""
         from scipy.spatial import cKDTree
 
         lo, hi = np.asarray(lo, float), np.asarray(hi, float)
@@ -451,8 +554,35 @@ class VoronoiStruts:
             vec = S[:, None, :] - S[j]
             w = np.clip(1.0 - d / h[:, None], 0, None) ** 2
             S = S + 0.15 * h[:, None] * (w[..., None] * vec / np.maximum(d, 1e-9)[..., None]).sum(axis=1)
+        if edges not in ("voronoi", "delaunay"):
+            raise ValueError("edges must be voronoi or delaunay")
+        if surface is not None and edges != "delaunay":
+            raise ValueError("a surface-conforming strut lattice is the delaunay (tet) kind")
+        if surface is not None:
+            h = np.asarray(cell_fn(S), float)
+            S = S[surface(S) < -0.35 * h]
+            S = np.concatenate([S, _surface_seeds(surface, lo, hi, cell_fn, rng, 0.0)])
+            if len(S) < 8:
+                raise ValueError("tet lattice: the body holds fewer than 8 cells; make the cell smaller")
         self.seeds = S
-        segs = _voronoi_edges(S, lo - 0.5 * pad, hi + 0.5 * pad)
+        if edges == "voronoi":
+            segs = _voronoi_edges(S, lo - 0.5 * pad, hi + 0.5 * pad)
+        else:
+            E = _delaunay_edges(S)
+            segs = S[E]
+            mid = segs.mean(axis=1)
+            L = np.linalg.norm(segs[:, 1] - segs[:, 0], axis=1)
+            hm = np.asarray(cell_fn(mid), float)
+            # hull slivers: the convex hull's long, flat tets
+            keep = L <= 1.9 * hm
+            if surface is not None:
+                # inside the body, not chords across a concave stretch of it
+                keep &= surface(mid) <= 0.1 * hm
+                for t in (0.25, 0.75):
+                    keep &= surface(segs[:, 0] + t * (segs[:, 1] - segs[:, 0])) <= 0.1 * hm
+            else:
+                keep &= np.all((mid >= lo - 0.5 * pad) & (mid <= hi + 0.5 * pad), axis=1)
+            segs = segs[keep]
         # split long edges so each piece is short against the spacing
         L = np.linalg.norm(segs[:, 1] - segs[:, 0], axis=1)
         piece = 0.2 * cmin

@@ -302,6 +302,124 @@
       "maxItems": 3,
       "description": "m/s\u00b2, the part's own weight in every load case"
     },
+    "vibration": {
+      "type": "object",
+      "description": "The part's natural frequencies, held above a floor (nTop's natural frequency constraint): the delivered part's first mode, clamped at the supports, with the carried masses, must reach minFrequency. The search counts it with the safety factor and deflection; with masses, the optimizer also stiffens the part against them shaken along each axis (inertial load cases). Needs safetyFactor or maxDeflection in the goal.",
+      "properties": {
+        "minFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Hz the first natural frequency must reach"
+        },
+        "masses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "A carried mass (a motor, a gripper, a battery) on A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+            "properties": {
+              "region": {
+                "type": "string"
+              },
+              "shape": {
+                "$ref": "#/$defs/shape"
+              },
+              "mass": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "kg"
+              }
+            },
+            "x-requireOne": [
+              [
+                "region"
+              ],
+              [
+                "shape"
+              ]
+            ],
+            "required": [
+              "mass"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "modes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "modes reported (default 3)"
+        },
+        "inOptimizer": {
+          "type": "boolean",
+          "description": "add the masses' inertial load cases to the optimizer (default true; false: only the check)"
+        }
+      },
+      "required": [
+        "minFrequency"
+      ],
+      "additionalProperties": false
+    },
+    "inertiaRelief": {
+      "type": "boolean",
+      "description": "A part nothing holds (a drone arm, a dropped or thrown part): no supports; its own inertia balances each case's loads (inertia relief) and a 3-2-1 hold that takes nothing keeps it still. Not with gravity, thermal or loads of unknown direction."
+    },
+    "massProperties": {
+      "type": "object",
+      "description": "Mass properties (nTop's mass, centre of mass and moment of inertia responses): every report gives mass, centre of mass and the inertia tensor (report.massProperties). With an axis the part turns about (a robot link's joint), the optimizer weighs each cell's inertia about it into its cost (inertiaWeight), and maxInertia caps the delivered part's inertia about it.",
+      "properties": {
+        "axis": {
+          "type": "object",
+          "properties": {
+            "through": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[+-]?[xyz]$",
+                  "description": "like '-x' or '+z'"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              ],
+              "description": "'+x' ... '-z' or a direction vector"
+            }
+          },
+          "required": [
+            "through",
+            "direction"
+          ],
+          "additionalProperties": false,
+          "description": "the axis the part turns about (mm)"
+        },
+        "maxInertia": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "kg mm^2 about the axis, held by the search"
+        },
+        "inertiaWeight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "share of a cell's cost in the optimizer that is its inertia about the axis rather than its volume (default 0.5 with an axis): material near the axis comes cheaper"
+        }
+      },
+      "additionalProperties": false
+    },
     "thermal": {
       "type": "object",
       "description": "Heat in the part, applied in every load case: the temperature is solved on the part itself (conduction through the material, convection off its surface), each cell softens by the material's modulus retention at its temperature, and expansion that the supports or the part's own cooler material stop becomes stress. The optimizer designs for it and verification checks it (stress with the free expansion taken off, strength derated as the modulus is). Needs a way for heat out: a fixed temperature or convection.",

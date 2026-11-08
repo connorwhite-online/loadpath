@@ -62,6 +62,16 @@ class Domain:
     warp: object = None
     # A thin skin's cells as cut cells (switch._SkinCells), or None.
     skin: object = None
+    # indices of the stiffness-only inertial cases (vibration masses shaken
+    # along x, y, z; see _inertial_cases): in the compliance objective, not
+    # in stress, deflection or buckling limits
+    inertial_cases: list = field(default_factory=list)
+    # massProperties: each cell's cost in the volume budget, mean 1 over the
+    # design cells ((1 - w) + w r^2 / mean r^2 about the axis), or None
+    volume_weights: np.ndarray | None = None
+    # inertiaRelief: the cases' loads as written (BoundaryConditions.raw_loads)
+    # so the optimizer rebalances them against the design's own mass
+    raw_loads: list | None = None
 
     @property
     def n_elem(self):
@@ -195,6 +205,46 @@ class BoundaryConditions:
     # per case, directions.Spread for a force of unknown direction, or None;
     # `loads` then holds the force as written
     spreads: list = field(default_factory=list)
+    # inertiaRelief: the loads as written (before the part's own inertia
+    # balances them) and the rigid-body modes, for rebalancing on a design
+    raw_loads: list | None = None
+
+
+def node_mass(mesh: HexMesh, density) -> np.ndarray:
+    """Lumped volume per node (mm^3) of cells at `density` (0-1 per cell or
+    a scalar): what inertia relief weighs each node's acceleration by."""
+    m = np.zeros(mesh.n_nodes)
+    np.add.at(m, mesh.enode, (np.broadcast_to(np.asarray(density, float), (mesh.n_elem,))
+                              * mesh.pitch ** 3 / 8.0)[:, None])
+    return m
+
+
+def inertia_balance(f: np.ndarray, m_node: np.ndarray, phi: np.ndarray):
+    """Inertia relief: the load less the d'Alembert force of the rigid
+    acceleration it gives the free part, f - M Phi a with a = (Phi^T M
+    Phi)^-1 Phi^T f, so it has no net force or moment and needs no
+    reaction (Nastran's SUPORT / nTop's static analysis with inertia
+    relief). Returns (balanced load, Phi a per dof)."""
+    m = np.repeat(m_node, 3)
+    mphi = phi * m[:, None]
+    a = np.linalg.solve(phi.T @ mphi, phi.T @ f)
+    acc = phi @ a
+    return f - m * acc, acc
+
+
+def _inertia_relief(study: Study, mesh: HexMesh, loads: list, fixed: np.ndarray):
+    """Every case balanced by the part's own inertia, the mesh taken as
+    solid; the 3-2-1 support then takes nothing."""
+    from .fem import rigid_body_modes
+
+    phi = rigid_body_modes(mesh.node_xyz)
+    m = node_mass(mesh, 1.0)
+    out = []
+    for f in loads:
+        fb, _ = inertia_balance(f, m, phi)
+        fb[fixed] = 0.0
+        out.append(fb)
+    return out
 
 
 def _cylinder_of(study: Study, region, shape, label):
@@ -241,7 +291,11 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     if study.self_equilibrated:
         from .pressure import stabilize
 
-        fixed, support_nodes = stabilize(mesh, np.any([n for _, n in wet.values()], axis=0))
+        held = np.any([n for _, n in wet.values()], axis=0) if wet else np.zeros(mesh.n_nodes, bool)
+        if study.inertia_relief:
+            # free in space: three nodes of the whole part hold it still
+            held = np.ones(mesh.n_nodes, bool)
+        fixed, support_nodes = stabilize(mesh, held)
     for i, s in enumerate(study.supports):
         label = f"supports[{i}]"
         nodes = _region_nodes(study, mesh, s.region, s.shape, label, tol_floor)
@@ -343,7 +397,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         if cw.any():
             fv = fp.reshape(-1, 3)
             imb = float(np.linalg.norm(fv.sum(axis=0)) / max(np.abs(fv).sum(), 1e-300))
-            if study.self_equilibrated and imb > _IMBALANCE_MAX and check_loads:
+            if study.self_equilibrated and not study.inertia_relief and imb > _IMBALANCE_MAX and check_loads:
                 raise ValueError(
                     f"load case {case.name!r}: the pressure does not balance on itself (net force "
                     f"{np.linalg.norm(fv.sum(axis=0)):.1f} N): the cavity is open, so its ends' thrust has "
@@ -362,7 +416,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             spread = Spread(f.copy(), spread[0], spread[1], spread[2])
             f = spread.load(spread.nominal)
         spreads.append(spread)
-        if check_loads and not np.any(f) and study.gravity is None:
+        if check_loads and not np.any(f) and study.gravity is None and not study.inertia_relief:
             if not applied and spread is None:
                 raise ValueError(f"load case {case.name!r} adds up to nothing at pitch {mesh.pitch:.3g} mm: its "
                                  "forces cancel on the same grid nodes (a fastener's seat and face rings closer "
@@ -382,8 +436,12 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     if study.gravity is not None:
         # g/cm^3 -> kg/mm^3 is 1e-6; times m/s^2 gives N per mm^3.
         gravity = study.material.density * 1e-6 * study.gravity
+    raw = None
+    if study.inertia_relief:
+        raw = [f.copy() for f in loads]
+        loads = _inertia_relief(study, mesh, loads, fixed)
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
-                              case_wet, imbalance, spreads)
+                              case_wet, imbalance, spreads, raw)
 
 
 def _near_cells(mesh: HexMesh, nodes: np.ndarray, layers: int = 2) -> np.ndarray:
@@ -494,7 +552,8 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     touches |= support_nodes[mesh.enode].any(axis=1)
     keep_lbls = np.unique(el_lbl[touches])
     keep = np.isin(el_lbl, keep_lbls)
-    if not study.supports and ((study.raw or {}).get("feel") or (study.raw or {}).get("cooling")):
+    if not study.supports and ((study.raw or {}).get("feel") or (study.raw or {}).get("cooling")
+                               or study.inertia_relief):
         # a feel study holds the part where each target says (feel.py); a
         # cooling study has no holds (cooling.py)
         keep[:] = True
@@ -523,9 +582,18 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                         "the screw only (fix 'xy' for a screw along z) or support elsewhere")
         bc = boundary_conditions(study, mesh)
     support_nodes, fixed, load_nodes = bc.support_nodes, bc.fixed, bc.load_nodes
-    loads = bc.loads
+    loads = list(bc.loads)
     names = [c.name for c in study.load_cases]
     weights = [c.weight for c in study.load_cases]
+    spreads = list(bc.spreads) if bc.spreads else []
+    inertial = []
+    for name, f in _inertial_cases(study, mesh, fixed, loads):
+        inertial.append(len(loads))
+        loads.append(f)
+        names.append(name)
+        weights.append(1.0)
+        if spreads:
+            spreads.append(None)
 
     # A small load or support (a bolt hole, a pin, a corner support) needs
     # material to act through: the cells touching it are pinned solid, as if
@@ -596,10 +664,55 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     return Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
-                  springs=bc.springs, gravity=bc.gravity, spreads=bc.spreads,
+                  springs=bc.springs, gravity=bc.gravity, spreads=spreads, inertial_cases=inertial,
+                  volume_weights=_volume_weights(study, mesh, pres_el),
+                  raw_loads=list(bc.raw_loads) if bc.raw_loads else None,
                   thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
                                      near=_near_cells(mesh, support_nodes | load_nodes)),
                   warp=_warp_term(study, mesh))
+
+
+def _volume_weights(study: Study, mesh: HexMesh, preserve: np.ndarray):
+    """massProperties.inertiaWeight w: a cell's cost (1 - w) + w r^2 / mean
+    r^2, r its centre's distance from the axis, the mean over the design
+    cells, so the budget the search sets keeps its meaning (a fraction of
+    the design space) and a cell on the axis costs 1 - w of one far out."""
+    mp = getattr(study, "mass_properties", None)
+    if mp is None or not mp.weight or mp.through is None:
+        return None
+    c = mesh.origin + (mesh.elem_ijk + 0.5) * mesh.pitch - mp.through[None, :]
+    r2 = np.einsum("ij,ij->i", c, c) - (c @ mp.direction) ** 2
+    design = ~np.asarray(preserve, bool)
+    mean = float(r2[design].mean()) if design.any() else float(r2.mean())
+    return (1.0 - mp.weight) + mp.weight * r2 / max(mean, 1e-12)
+
+
+def _inertial_cases(study: Study, mesh: HexMesh, fixed: np.ndarray, loads: list) -> list:
+    """The vibration block's carried masses shaken along x, y and z, as
+    stiffness-only load cases: (name, force per dof). A part that is stiff
+    against its masses' inertia has a high first frequency (the Rayleigh
+    quotient's numerator is the strain energy of the mode the masses
+    drive), so these steer the compliance design towards it; the delivered
+    part's frequency is then read by a modal check (verify._modal) and the
+    search holds it. The acceleration is scaled so the masses' total force
+    matches the largest real load case: the objective weighs them alongside
+    the real cases rather than letting either swamp the other."""
+    vib = getattr(study, "vibration", None)
+    if vib is None or not vib.in_optimizer or not vib.masses:
+        return []
+    total = sum(kg for _, _, kg in vib.masses)
+    real = max((float(np.linalg.norm(f.reshape(-1, 3).sum(axis=0))) for f in loads), default=0.0)
+    scale = real / total if real > 0 else 9.81
+    out = []
+    for a in range(3):
+        f = np.zeros(mesh.n_dof)
+        for i, (region, shape, kg) in enumerate(vib.masses):
+            nodes = np.flatnonzero(_region_nodes(study, mesh, region, shape, f"vibration.masses[{i}]"))
+            f.reshape(-1, 3)[nodes, a] += kg * scale / len(nodes)
+        f[fixed] = 0.0
+        if np.any(f):
+            out.append((f"inertia-{'xyz'[a]}", f))
+    return out
 
 
 def _warp_term(study, mesh):

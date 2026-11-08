@@ -377,6 +377,48 @@ _GOAL = {
     "additionalProperties": False,
 }
 
+_VIBRATION = {
+    "type": "object",
+    "description": "The part's natural frequencies, held above a floor (nTop's natural frequency constraint): "
+                   "the delivered part's first mode, clamped at the supports, with the carried masses, must "
+                   "reach minFrequency. The search counts it with the safety factor and deflection; with masses, "
+                   "the optimizer also stiffens the part against them shaken along each axis (inertial load "
+                   "cases). Needs safetyFactor or maxDeflection in the goal.",
+    "properties": {
+        "minFrequency": {**_POS, "description": "Hz the first natural frequency must reach"},
+        "masses": {"type": "array", "items": {
+            "type": "object", "description": "A carried mass (a motor, a gripper, a battery) on " + _TARGET,
+            "properties": {"region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"},
+                           "mass": {**_POS, "description": "kg"}},
+            "x-requireOne": [["region"], ["shape"]], "required": ["mass"], "additionalProperties": False}},
+        "modes": {"type": "integer", "minimum": 1, "maximum": 20, "description": "modes reported (default 3)"},
+        "inOptimizer": {"type": "boolean", "description": "add the masses' inertial load cases to the optimizer "
+                                                          "(default true; false: only the check)"},
+    },
+    "required": ["minFrequency"],
+    "additionalProperties": False,
+}
+
+_MASS_PROPERTIES = {
+    "type": "object",
+    "description": "Mass properties (nTop's mass, centre of mass and moment of inertia responses): every report "
+                   "gives mass, centre of mass and the inertia tensor (report.massProperties). With an axis the "
+                   "part turns about (a robot link's joint), the optimizer weighs each cell's inertia about it "
+                   "into its cost (inertiaWeight), and maxInertia caps the delivered part's inertia about it.",
+    "properties": {
+        "axis": {"type": "object", "properties": {
+            "through": _VEC3, "direction": _SIGNED_AXIS},
+            "required": ["through", "direction"], "additionalProperties": False,
+            "description": "the axis the part turns about (mm)"},
+        "maxInertia": {**_POS, "description": "kg mm^2 about the axis, held by the search"},
+        "inertiaWeight": {"type": "number", "minimum": 0, "maximum": 1,
+                          "description": "share of a cell's cost in the optimizer that is its inertia about the "
+                                         "axis rather than its volume (default 0.5 with an axis): material near "
+                                         "the axis comes cheaper"},
+    },
+    "additionalProperties": False,
+}
+
 _DURABILITY = {
     "type": "object",
     "description": "Fatigue (load cases with cycles), creep (with hours) and bolt-preload relaxation, reported "
@@ -1287,6 +1329,13 @@ STUDY_SCHEMA = {
                        "additionalProperties": False},
         "maxIterations": {"type": "integer", "minimum": 1},
         "gravity": {**_VEC3, "description": "m/s², the part's own weight in every load case"},
+        "vibration": _VIBRATION,
+        "inertiaRelief": {"type": "boolean",
+                          "description": "A part nothing holds (a drone arm, a dropped or thrown part): no supports; "
+                                         "its own inertia balances each case's loads (inertia relief) and a 3-2-1 "
+                                         "hold that takes nothing keeps it still. Not with gravity, thermal or "
+                                         "loads of unknown direction."},
+        "massProperties": _MASS_PROPERTIES,
         "thermal": _THERMAL,
         "printDirection": {"type": "string", "pattern": "^[+-]?[xyz]$",
                            "description": "The direction layers stack; turns on overhang control."},
@@ -1572,8 +1621,14 @@ _FIELD_OPS = {
     "result": _op("result", "A simulation result as a scalar field: von Mises stress (MPa) or displacement "
                             "(mm) of `part` under `study` (analyzed on demand), a saved .npz (points + values, "
                             "or verify fields), or an in-memory source.",
-                  {"path": {"type": "string", "description": ".npz with points and values (save_result_field) "
-                                                            "or a grid (origin, pitch, values)"},
+                  {"path": {"type": "string", "description": ".npz with points and values (save_result_field), "
+                                                            "a grid (origin, pitch, values), or a point map: a "
+                                                            ".csv/.txt of x, y, z and values (another tool's FE "
+                                                            "or CFD export)"},
+                   "interpolate": {"enum": ["idw", "rbf", "nearest"],
+                                   "description": "between scattered samples: inverse distance over the 8 "
+                                                  "nearest (default), a thin-plate spline over the 32 nearest "
+                                                  "(smooth, held to the samples' range), or the nearest"},
                    "source": {"type": "string"},
                    "study": {"type": "string", "description": "study JSON, relative to the graph's folder, or "
                                                               "'example:<name>' for a packaged example"},
@@ -1581,7 +1636,8 @@ _FIELD_OPS = {
                                                              "node of this graph (meshed for the analysis)"},
                    "pitch": {**_POS, "description": "mm, meshing a node part for the analysis (default 1)"},
                    "quantity": {"type": "string", "description": "vonMises (default) or displacement for a "
-                                                                 "study; the array name in an .npz"},
+                                                                 "study; the array name in an .npz; the column "
+                                                                 "header in a point map (default its 4th column)"},
                    "case": {"type": "string", "description": "one load case (default: the worst at each point)"},
                    "scale": {"anyOf": [{"const": "peak"}, _POS],
                              "description": "divide by this, or 'peak' (the 99.5th percentile): remap in "
@@ -1635,16 +1691,29 @@ _FIELD_OPS = {
                   {"input": _FIELD, "distance": _FIELD}, ["input", "distance"]),
     "lattice": _op("lattice", "A lattice filling all of space (intersect it with a solid): a TPMS sheet "
                               "(gyroid, diamond, schwarz-p) or a strut cell (cubic, bcc, bccz, fcc, fccz, octet, "
-                              "kelvin, diamond-strut) or a stochastic voronoi foam. Cell size, wall or strut "
-                              "thickness, relative density and node blend can each be a field; a conformal frame "
-                              "lays the cells along a surface.",
+                              "kelvin, diamond-strut, or a custom cell from cellGraph), or a stochastic voronoi "
+                              "foam or delaunay (tet) lattice; a delaunay lattice with a conformal frame puts its "
+                              "nodes on that solid's surface and keeps its struts inside it (a tet lattice from a "
+                              "body). Cell size, wall or strut thickness, relative density and node blend can each "
+                              "be a field; a conformal frame lays the cells along a surface.",
                    {"type": {"enum": ["gyroid", "diamond", "schwarz-p", "cubic", "bcc", "bccz", "fcc", "fccz",
-                                      "octet", "kelvin", "diamond-strut", "voronoi"],
+                                      "octet", "kelvin", "diamond-strut", "voronoi", "delaunay", "custom"],
                              "description": "TPMS sheets are stiffer and stronger per gram (lattice.SHEETS vs "
                                             "STRUTS); struts are open, easy to clear of powder, and print on FDM "
                                             "when the cell is oriented (lattice report's overhangs)"},
-                    "cell": {**_FIELD, "description": "mm per period (default 8); a field grades it (voronoi: "
-                                                      "mean seed spacing)"},
+                    "cell": {**_FIELD, "description": "mm per period (default 8); a field grades it (voronoi, "
+                                                      "delaunay: mean seed spacing)"},
+                    "cellGraph": {"type": "object", "description": "type custom: the cell's struts, nTop's custom "
+                                                                   "unit cell",
+                                  "properties": {
+                                      "nodes": {"type": "array", "items": _VEC3, "minItems": 2,
+                                                "description": "[u, v, w] in cell units (0 to 1 across the cell; "
+                                                               "it repeats with period 1)"},
+                                      "beams": {"type": "array", "items": {
+                                          "type": "array", "items": {"type": "integer", "minimum": 0},
+                                          "minItems": 2, "maxItems": 2}, "minItems": 1,
+                                          "description": "pairs of node indices"}},
+                                  "required": ["nodes", "beams"], "additionalProperties": False},
                     "thickness": {**_FIELD, "description": "sheet wall or strut diameter, mm (default 1)"},
                     "density": {**_FIELD, "description": "relative density instead of thickness (sheets "
                                                          "0.05-0.95, struts 0.02-0.95; the unit-cell tables "
@@ -2479,13 +2548,14 @@ def lint(doc, kind: str = "study") -> list[dict]:
         except ValueError as exc:
             out.append(("error", "$.nodes", str(exc)))
     if kind == "study" and isinstance(doc, dict) and not doc.get("supports") and not doc.get("feel") \
-            and not doc.get("cooling"):
+            and not doc.get("cooling") and not doc.get("inertiaRelief"):
         # beyond JSON Schema: supports are optional only for pressure vessels
         cases = doc.get("loadCases") or ([{"loads": doc["loads"]}] if isinstance(doc.get("loads"), list) else [])
         loads = [ld for c in cases if isinstance(c, dict) for ld in (c.get("loads") or [])]
         if not loads or not all(isinstance(ld, dict) and ld.get("pressure") for ld in loads):
             out.append(("error", "$.supports", "needs at least one support (where the part is held); only a "
-                                               "study whose every load is a pressure may leave them out"))
+                                               "study whose every load is a pressure, or one with inertiaRelief "
+                                               "(a free part), may leave them out"))
     return [{"level": lv, "path": p, "message": m} for lv, p, m in out]
 
 

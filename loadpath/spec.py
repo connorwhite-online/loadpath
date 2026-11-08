@@ -114,6 +114,33 @@ class Support:
 
 
 @dataclass
+class Vibration:
+    """The study's `vibration` block: the delivered part's first natural
+    frequency (clamped at the supports, carrying `masses`) must reach
+    `min_frequency` Hz. `masses`: [(region id or None, shape or None, kg)].
+    `in_optimizer`: the masses shaken along x, y and z become extra,
+    stiffness-only load cases in the optimizer (domain.inertial_cases)."""
+    min_frequency: float
+    masses: list = field(default_factory=list)
+    modes: int = 3
+    in_optimizer: bool = True
+
+
+@dataclass
+class MassProperties:
+    """The study's `massProperties` block. `through` and `direction`: an
+    axis the part turns about (a robot link's joint); `max_inertia`
+    (kg mm^2) a cap on the delivered part's moment of inertia about it,
+    held by the search; `weight` (0-1) how much of each cell's cost in the
+    optimizer is its inertia about the axis rather than its volume
+    (domain.volume_weights)."""
+    through: np.ndarray | None = None
+    direction: np.ndarray | None = None
+    max_inertia: float | None = None
+    weight: float = 0.0
+
+
+@dataclass
 class Goal:
     # Exactly one of these drives the optimizer.
     volume_fraction: float | None = None
@@ -584,6 +611,10 @@ class Study:
     # fits.py rows: each fitted bore (bearing seat, pin, bolt hole) with the
     # hole drawn for the process and the window it must print to
     fits: list = field(default_factory=list)
+    # natural frequency floor and carried masses (Vibration), or None
+    vibration: Any = None
+    # an axis to keep the inertia down about (MassProperties), or None
+    mass_properties: Any = None
     raw: dict[str, Any] = field(default_factory=dict)
     # where the study's relative mesh paths start (blocks read later:
     # switch.output.bearsOn, switch.clearance, skin.openings)
@@ -596,6 +627,12 @@ class Study:
         sheet would otherwise build one (the 845k-cell arm link with no
         minMember came out a 1 mm skin sealed round its cable channel)."""
         return float(self.min_member) if self.min_member else DEFAULT_MIN_MEMBER
+
+    @property
+    def inertia_relief(self) -> bool:
+        """No supports: the part floats free and its own inertia balances
+        the loads (study `inertiaRelief`)."""
+        return bool((self.raw or {}).get("inertiaRelief"))
 
     @property
     def self_equilibrated(self) -> bool:
@@ -815,6 +852,67 @@ def _target(item, label, base_dir):
     if "shape" in item:
         return None, shape_from_spec(item["shape"], base_dir)
     raise ValueError(f"{label} needs a 'region' id or an inline 'shape'")
+
+
+def _mass_properties(v, goal):
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        raise ValueError("massProperties is an object: {axis: {through, direction}, maxInertia, inertiaWeight}")
+    from .am import build_vector
+    from .shapes import _vec
+
+    through = direction = None
+    if v.get("axis") is not None:
+        ax = v["axis"]
+        if not isinstance(ax, dict) or "through" not in ax or "direction" not in ax:
+            raise ValueError("massProperties.axis is {through: [x, y, z], direction: 'z' or [x, y, z]}: the axis "
+                             "the part turns about")
+        through = np.asarray(_vec(ax["through"], name="massProperties.axis.through"), float)
+        dv = ax["direction"]
+        dv = build_vector(parse_build_direction(dv)) if isinstance(dv, str) else dv
+        direction = np.asarray(dv, float).reshape(-1)
+        if direction.shape != (3,) or not np.linalg.norm(direction) > 0:
+            raise ValueError("massProperties.axis.direction is an axis like 'z' or a vector")
+        direction = direction / np.linalg.norm(direction)
+    mi = v.get("maxInertia")
+    if mi is not None:
+        if through is None:
+            raise ValueError("massProperties.maxInertia is about the axis: give massProperties.axis")
+        if not isinstance(mi, (int, float)) or mi <= 0:
+            raise ValueError("massProperties.maxInertia is kg mm^2 (> 0)")
+        if goal.safety_factor is None and goal.max_deflection is None:
+            raise ValueError("massProperties.maxInertia is held by the search: give the goal a safetyFactor or "
+                             "maxDeflection too")
+    w = v.get("inertiaWeight", 0.5 if through is not None else 0.0)
+    if not isinstance(w, (int, float)) or not 0 <= w <= 1:
+        raise ValueError("massProperties.inertiaWeight is 0-1: the share of a cell's cost that is its inertia")
+    if w > 0 and through is None:
+        raise ValueError("massProperties.inertiaWeight needs massProperties.axis")
+    return MassProperties(through, direction, float(mi) if mi is not None else None, float(w))
+
+
+def _vibration(v, goal, supports, base_dir):
+    if v is None:
+        return None
+    if not isinstance(v, dict) or not isinstance(v.get("minFrequency"), (int, float)) or v["minFrequency"] <= 0:
+        raise ValueError("vibration needs minFrequency: the Hz the part's first natural frequency must reach")
+    if not supports:
+        raise ValueError("vibration needs supports: natural frequencies are of the part clamped where it is held")
+    if goal.safety_factor is None and goal.max_deflection is None:
+        raise ValueError("vibration.minFrequency is held by the search for the lightest passing part: give the "
+                         "goal a safetyFactor or maxDeflection too")
+    masses = []
+    for i, m in enumerate(v.get("masses") or []):
+        label = f"vibration.masses[{i}]"
+        if not isinstance(m, dict) or not isinstance(m.get("mass"), (int, float)) or m["mass"] <= 0:
+            raise ValueError(f"{label}.mass is the carried mass in kg (> 0)")
+        region, shape = _target(m, label, base_dir)
+        masses.append((region, shape, float(m["mass"])))
+    modes = int(v.get("modes", 3))
+    if not 1 <= modes <= 20:
+        raise ValueError("vibration.modes is how many modes to report (1-20)")
+    return Vibration(float(v["minFrequency"]), masses, modes, bool(v.get("inOptimizer", True)))
 
 
 def _extrusion_axis(v):
@@ -1061,9 +1159,27 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     for rid in sorted(pressurized - ko_ids):
         raise ValueError(f"pressure on {rid!r}: a pressure acts in a keepOut (the fluid's volume); "
                          f"keepOut ids: {sorted(ko_ids)}")
-    if not supports and not feel_only and not all(ld.pressure for c in cases for ld in c.loads):
+    relief = d.get("inertiaRelief")
+    if relief is not None and not isinstance(relief, bool):
+        raise ValueError("inertiaRelief is true or false")
+    if relief:
+        if supports:
+            raise ValueError("inertiaRelief is for a part nothing holds (a drone frame, a thrown or dropped part, a "
+                             "satellite bracket): its own inertia balances the loads. Drop the supports, or drop "
+                             "inertiaRelief")
+        if d.get("gravity") is not None:
+            raise ValueError("inertiaRelief with gravity: a free part only falls under its own weight, which "
+                             "stresses nothing; give the accelerations as loads (a carried mass, a thrust)")
+        if d.get("thermal") is not None or feel_only:
+            raise ValueError("inertiaRelief does not go with thermal, feel or cooling blocks yet")
+        if any(ld.direction is not None for c in cases for ld in c.loads):
+            raise ValueError("inertiaRelief takes forces of a known direction: give each direction as a load case")
+        if (d.get("goal") or {}).get("method") == "constrained":
+            raise ValueError("inertiaRelief runs with the search (goal.method search or auto)")
+    if not supports and not feel_only and not relief and not all(ld.pressure for c in cases for ld in c.loads):
         raise ValueError("at least one support is required (where the part is held); only a study whose "
-                         "every load is a pressure may leave supports out")
+                         "every load is a pressure may leave supports out, or one with inertiaRelief: true (a "
+                         "free part whose own inertia balances its loads)")
     gravity = d.get("gravity")
     if gravity is not None and not supports:
         raise ValueError("gravity needs supports: a part's own weight has to be held somewhere")
@@ -1191,6 +1307,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         if min_member is not None and max_member < 2.0 * float(min_member):
             raise ValueError(f"maxMember ({max_member:g}mm) must be at least twice minMember "
                              f"({float(min_member):g}mm) to leave the optimizer room")
+    vibration = _vibration(d.get("vibration"), goal, supports, base_dir)
+    mass_properties = _mass_properties(d.get("massProperties"), goal)
     st = Study(
         name=str(d.get("name") or "study"),
         design_space=design_space,
@@ -1222,6 +1340,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         drains=_drains(d.get("drains", "auto"), process),
         build_sim=_build_sim(d.get("buildSim"), process, d.get("material")),
         fits=fits,
+        vibration=vibration,
+        mass_properties=mass_properties,
         raw=d,
     )
     if d.get("multiMaterial") is not None:

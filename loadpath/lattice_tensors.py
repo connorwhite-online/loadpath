@@ -133,7 +133,7 @@ def symmetry_of(kind: str) -> str:
     k = canonical(kind)
     if k in ("bccz", "fccz"):
         return "tetragonal"
-    if k == "voronoi":
+    if k in ("voronoi", "delaunay") or k.startswith("custom-"):
         return "none"
     return "cubic"
 
@@ -415,7 +415,7 @@ def has_tensors(kind: str, aspect=None) -> bool:
     from .struts import canonical
 
     if _aspect_key(aspect) is not None:
-        return canonical(kind) != "voronoi" and _key(kind) in _tables().get("kinds", {})
+        return canonical(kind) not in ("voronoi", "delaunay") and _key(kind) in _tables().get("kinds", {})
     return _key(kind) in _tables().get("kinds", {})
 
 

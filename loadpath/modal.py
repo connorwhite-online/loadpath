@@ -53,8 +53,10 @@ LOSS_FACTOR = {
 
 
 # Up to this many free dofs the eigensolve factors the reduced K with
-# scipy's own shift-invert; above it with bucklingopt._factor
-DIRECT_EIG_DOFS = 120_000
+# scipy's own shift-invert; above it with bucklingopt._factor, which is
+# ~8x faster already at 25k dofs (a 8,000-cell bar: 21.9 s -> 2.7 s, same
+# frequencies) and 16x at 60k
+DIRECT_EIG_DOFS = 5_000
 
 
 def loss_factor(material) -> float:
@@ -94,17 +96,21 @@ def _lumped_mass(mesh: HexMesh, density):
 
 
 def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray, n_modes: int = 6,
-                   point_masses: list | None = None) -> ModalResult:
+                   point_masses: list | None = None, springs=None) -> ModalResult:
     """Lowest `n_modes` natural frequencies (Hz) of a voxel model.
 
     modulus: E per element (MPa) or scalar; density: g/cm^3 per element or
     scalar; fixed: bool per dof (clamped). point_masses: [(node_ids, kg)],
-    each spread evenly over its nodes (all three directions)."""
+    each spread evenly over its nodes (all three directions). springs: an
+    (n_dof x n_dof) sparse stiffness added to K (pin supports)."""
     from scipy.sparse.linalg import eigsh
 
     fixed = np.asarray(fixed, bool)
     st = Stiffness(mesh, nu, fixed)
     k = st.assemble(np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,)))
+    if springs is not None:
+        # pin supports' penalty springs (n_dof x n_dof, already in MPa x mm)
+        k = (k + springs).tocsr()
     m_node = _lumped_mass(mesh, density)
     for nodes, kg in point_masses or []:
         nodes = np.asarray(nodes, np.int64)
