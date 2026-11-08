@@ -1,0 +1,7 @@
+{
+ "a single cross": {"volume": 13428, "deflection": 0.6704},
+ "square grid, 18 mm": {"volume": 17218, "deflection": 0.3033},
+ "square grid, 12 mm": {"volume": 20815, "deflection": 0.2110},
+ "stress lines along the span, 8 mm": {"volume": 18743, "deflection": 0.2446},
+ "stress lines both ways, 12 mm": {"volume": 20385, "deflection": 0.2060}
+}

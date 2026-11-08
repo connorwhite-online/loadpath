@@ -1813,6 +1813,65 @@ _FIELD_OPS = {
                                                                   "center": _VEC3},
                                  "required": ["degrees"], "additionalProperties": False},
                       "scale": _POS}, ["input"]),
+    "ribs": _op("ribs", "Ribs on a solid's face: walls of `thickness` standing `height` off its surface "
+                        "(inside it, under the face, or outside), laid along curves projected onto it "
+                        "(`paths`), a `pattern` (square grid, isogrid, radial spokes and rings), or the "
+                        "principal stress lines a study puts in the face (`stressLines`). With `direction` "
+                        "the walls are parallel to it (a straight pull); without, square to the surface.",
+                {"surface": {**_FIELD, "description": "the solid whose face the ribs stand on"},
+                 "thickness": {**_FIELD, "description": "mm wall thickness, or a field (graded ribs)"},
+                 "height": {**_FIELD, "description": "mm off the surface: depth under it (side inside) or "
+                                                     "height over it (outside); default 5"},
+                 "side": {"enum": ["inside", "outside"], "description": "default inside"},
+                 "paths": {"type": "array", "items": {"type": "array", "items": _VEC3, "minItems": 2},
+                           "description": "polylines [[x, y, z], ...] dropped onto the surface (along "
+                                          "`direction`, else to the nearest point)"},
+                 "direction": {**_AXIS, "description": "the walls' direction (paths dropped along it); "
+                                                       "omit for walls square to the surface"},
+                 "pattern": {"type": "object", "description": "a rib pattern, walls along its direction",
+                             "properties": {"type": {"enum": ["square", "triangle", "isogrid", "radial"]},
+                                            "spacing": {**_POS, "description": "mm between ribs (rings, for "
+                                                                               "radial)"},
+                                            "angle": {"type": "number", "description": "degrees about the "
+                                                                                       "direction"},
+                                            "direction": _AXIS, "origin": _VEC3, "center": _VEC3,
+                                            "spokes": {"type": "integer", "minimum": 0},
+                                            "rings": {"type": "boolean"},
+                                            "innerRadius": {"type": "number", "minimum": 0}},
+                             "additionalProperties": False},
+                 "stressLines": {"type": "object", "description": "ribs along the face's principal stress "
+                                                                  "lines under a study's loads",
+                                 "properties": {"study": {"type": "string", "description": "study JSON path or "
+                                                                                           "example:<name>"},
+                                                "part": {"type": "string", "description": "the node or mesh "
+                                                                                          "analyzed (default "
+                                                                                          "the surface)"},
+                                                "spacing": {**_POS, "description": "mm between lines "
+                                                                                   "(default 10)"},
+                                                "family": {"enum": ["max", "min", "both"],
+                                                           "description": "the larger principal stress, the "
+                                                                          "other, or both (default)"},
+                                                "cutoff": {"type": "number", "minimum": 0,
+                                                           "description": "seed only where the stress is over "
+                                                                          "this times the face's 95th "
+                                                                          "percentile (default 0.15)"},
+                                                "merge": {"type": "number", "minimum": 0,
+                                                          "description": "mm at which a line joins another "
+                                                                         "(default 0.15 spacing)"},
+                                                "bridge": {"type": "number", "minimum": 0,
+                                                           "description": "mm a line carries straight over low "
+                                                                          "stress (default 1.5 spacing)"},
+                                                "case": {"type": "string"},
+                                                "within": {"type": "object", "properties": {"min": _VEC3,
+                                                                                            "max": _VEC3},
+                                                           "required": ["min", "max"],
+                                                           "additionalProperties": False,
+                                                           "description": "only the face inside this box"},
+                                                "direction": _AXIS, "pitch": _POS,
+                                                "cells": {"type": "integer", "minimum": 1000}},
+                                 "required": ["study"], "additionalProperties": False},
+                 "pathStep": _POS, "gradientStep": _POS},
+                ["surface", "thickness"], require_one=[["paths"], ["pattern"], ["stressLines"]]),
     "group": _op("group", "A copy of a sub-graph from the graph's `groups`, with its own param values and "
                           "inputs; it stands for the group's output.",
                  {"group": {"type": "string", "description": "the name of a group in `groups`"},

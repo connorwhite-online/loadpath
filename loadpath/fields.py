@@ -60,7 +60,7 @@ __all__ = ["FieldGraph", "MeshField", "field_mesh", "save_result_field", "result
 
 # the operations and what they take (the schema says the same, with docs)
 OPS = ("constant", "coordinate", "distance", "shape", "mesh", "result", "grid", "image", "remap", "expr",
-       "union", "intersect", "subtract", "shell", "offset", "lattice", "transform")
+       "union", "intersect", "subtract", "shell", "offset", "lattice", "transform", "ribs")
 
 _CELL_BUDGET = 60_000_000
 _CHUNK = 1_000_000
@@ -1658,6 +1658,20 @@ class FieldGraph:
             refs["surface"] = self._ref(s["frame"]["surface"], nd.name, "frame.surface")
             if isinstance(refs["surface"], float):
                 raise ValueError(f"node {nd.name!r}: frame.surface must be a solid node")
+        if nd.op == "ribs":
+            if "surface" not in s:
+                raise ValueError(f"node {nd.name!r}: ribs need the 'surface' (the solid whose face they stand on)")
+            refs["surface"] = self._ref(s["surface"], nd.name, "surface")
+            if isinstance(refs["surface"], float):
+                raise ValueError(f"node {nd.name!r}: ribs' surface must be a solid node")
+            if "height" in s:
+                refs["height"] = self._ref(s["height"], nd.name, "height")
+            if sum(k in s for k in ("paths", "pattern", "stressLines")) != 1:
+                raise ValueError(f"node {nd.name!r}: ribs need one of paths, pattern or stressLines")
+            if "thickness" not in s:
+                raise ValueError(f"node {nd.name!r}: ribs need a 'thickness' (mm, or a field)")
+            if s.get("side", "inside") not in ("inside", "outside"):
+                raise ValueError(f"node {nd.name!r}: ribs' side must be inside or outside")
         if nd.op == "expr":
             if not isinstance(s.get("expr"), str):
                 raise ValueError(f"node {nd.name!r}: expr needs an 'expr' string")
@@ -1848,7 +1862,77 @@ class FieldGraph:
             return self._lattice(nd, P, memo)
         if op == "transform":
             return self._transform(nd, P, memo)
+        if op == "ribs":
+            return self._ribs(nd, P, memo)
         raise AssertionError(op)
+
+    def _rib_layout(self, nd):
+        """The ribs' wall distance, callable(P, fs) (fs the surface field at
+        P), built once: projected paths, a pattern or stress lines."""
+        from . import ribs as rb
+
+        s, r = nd.spec, nd.refs
+        surf = r["surface"]
+        fn = lambda Q: self.evaluate(np.asarray(Q, float).reshape(-1, 3), surf)
+        b = self.bounds(surf)
+        size = float(np.max(b[1] - b[0])) if b is not None else 100.0
+        h = float(s.get("gradientStep", max(1e-3 * size, 0.02)))
+        if "pattern" in s:
+            pat = rb.pattern_distance(s["pattern"])
+            return lambda P, fs: pat(P), None
+        if "paths" in s:
+            paths = s["paths"]
+            if not isinstance(paths, list) or not paths:
+                raise ValueError(f"node {nd.name!r}: paths must be a list of polylines [[x, y, z], ...]")
+            step = float(s.get("pathStep", 0.5))
+            if s.get("direction") is not None:
+                proj = rb.project_paths(paths, fn, h, direction=s["direction"], step=step, reach=size * 2)
+                dist = rb.polylines_distance(proj, direction=s["direction"], step=step)
+                return lambda P, fs: dist(P), proj
+            proj = rb.project_paths(paths, fn, h, step=step)
+            lines = proj
+        else:
+            sl = s["stressLines"]
+            if not isinstance(sl, dict) or "study" not in sl:
+                raise ValueError(f"node {nd.name!r}: stressLines needs a 'study' (and 'spacing' mm)")
+            fake = _Node(f"{nd.name}.stressLines", "result",
+                         {"op": "result", "study": sl["study"], "part": sl.get("part", surf),
+                          "pitch": sl.get("pitch", 1.0), "cells": sl.get("cells", 120_000)})
+            fields = self._analyze(fake)
+            self.analyses[nd.name] = self.analyses.pop(fake.name)
+            lines = rb.stress_lines(fn, fields, float(sl.get("spacing", 10.0)), h,
+                                    family=sl.get("family", "both"), cutoff=float(sl.get("cutoff", 0.15)),
+                                    case=sl.get("case"), merge=sl.get("merge"), bridge=sl.get("bridge"),
+                                    bounds=(sl["within"]["min"], sl["within"]["max"]) if "within" in sl else b)
+            if sl.get("direction") is not None:
+                dist = rb.polylines_distance(lines, direction=sl["direction"], step=0.5)
+                return lambda P, fs: dist(P), lines
+        dist = rb.polylines_distance(lines, step=float(s.get("pathStep", 0.5)))
+
+        def normal_walls(P, fs):
+            # the foot of P on the surface against the curves on it
+            Q, _n = rb.foot(fn, P, h, f0=fs)
+            return dist(Q)
+        return normal_walls, lines
+
+    def _ribs(self, nd, P, memo):
+        s, r = nd.spec, nd.refs
+        wall, lines = self._resource(nd, lambda: self._rib_layout(nd))
+        nd.lines = lines
+        fs = np.asarray(self._val(r["surface"], P, memo), float)
+        fs = np.broadcast_to(fs, (len(P),))
+        t = np.asarray(self._val(r["thickness"], P, memo), float)
+        hgt = np.asarray(self._val(r["height"], P, memo), float) if "height" in r else 5.0
+        if s.get("side", "inside") == "inside":
+            band = np.maximum(fs, -(fs + hgt))
+        else:
+            band = np.maximum(-fs, fs - hgt)
+        out = band.copy()
+        # walls only where the band is near (the foot is costly)
+        near = band < np.max(t) + 1.0
+        if near.any():
+            out[near] = wall(P[near], fs[near]) - 0.5 * (t[near] if np.ndim(t) else t)
+        return np.maximum(out, band)
 
     def _distance(self, nd, P, memo):
         s = nd.spec
@@ -2342,6 +2426,12 @@ class FieldGraph:
             return lo, np.maximum(hi, lo)
         if nd.op == "subtract":
             return sub[0]
+        if nd.op == "ribs" and isinstance(r.get("surface"), str):
+            b = self._bounds(r["surface"], seen)
+            if b is None or s.get("side", "inside") == "inside":
+                return b
+            g = max(self._max_over(r.get("height", 5.0), b), 0.0) + 1e-6
+            return b[0] - g, b[1] + g
         if nd.op in ("shell", "offset") and isinstance(r.get("input"), str):
             b = self._bounds(r["input"], seen)
             if b is None:

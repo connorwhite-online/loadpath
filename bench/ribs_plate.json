@@ -1,0 +1,5 @@
+{"designSpace": {"type": "box", "min": [-50, -30, -7], "max": [50, 30, 2]},
+ "supports": [{"shape": {"type": "box", "min": [-51, -31, -8], "max": [-47, 31, 3]}},
+              {"shape": {"type": "box", "min": [47, -31, -8], "max": [51, 31, 3]}}],
+ "loadCases": [{"name": "press", "loads": [{"shape": {"type": "box", "min": [-5, -5, 1.5], "max": [5, 5, 2.5]}, "force": [0, 0, -50]}]}],
+ "material": "pa12", "goal": {"safetyFactor": 2}}

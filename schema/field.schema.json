@@ -1945,7 +1945,7 @@
     },
     "node": {
       "title": "a node object with an 'op'",
-      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, image, remap, expr, union, intersect, subtract, shell, offset, lattice, transform, group.",
+      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, image, remap, expr, union, intersect, subtract, shell, offset, lattice, transform, ribs, group.",
       "oneOf": [
         {
           "$ref": "#/$defs/op-constant"
@@ -1999,6 +1999,9 @@
           "$ref": "#/$defs/op-transform"
         },
         {
+          "$ref": "#/$defs/op-ribs"
+        },
+        {
           "$ref": "#/$defs/op-group"
         }
       ],
@@ -2022,6 +2025,7 @@
           "offset": "#/$defs/op-offset",
           "lattice": "#/$defs/op-lattice",
           "transform": "#/$defs/op-transform",
+          "ribs": "#/$defs/op-ribs",
           "group": "#/$defs/op-group"
         }
       }
@@ -3795,6 +3799,350 @@
         "input"
       ],
       "additionalProperties": false
+    },
+    "op-ribs": {
+      "type": "object",
+      "description": "Ribs on a solid's face: walls of `thickness` standing `height` off its surface (inside it, under the face, or outside), laid along curves projected onto it (`paths`), a `pattern` (square grid, isogrid, radial spokes and rings), or the principal stress lines a study puts in the face (`stressLines`). With `direction` the walls are parallel to it (a straight pull); without, square to the surface.",
+      "properties": {
+        "op": {
+          "const": "ribs"
+        },
+        "surface": {
+          "title": "a number, a node name or a node object",
+          "description": "the solid whose face the ribs stand on",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "thickness": {
+          "title": "a number, a node name or a node object",
+          "description": "mm wall thickness, or a field (graded ribs)",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "height": {
+          "title": "a number, a node name or a node object",
+          "description": "mm off the surface: depth under it (side inside) or height over it (outside); default 5",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "side": {
+          "enum": [
+            "inside",
+            "outside"
+          ],
+          "description": "default inside"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "minItems": 2
+          },
+          "description": "polylines [[x, y, z], ...] dropped onto the surface (along `direction`, else to the nearest point)"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "the walls' direction (paths dropped along it); omit for walls square to the surface"
+        },
+        "pattern": {
+          "type": "object",
+          "description": "a rib pattern, walls along its direction",
+          "properties": {
+            "type": {
+              "enum": [
+                "square",
+                "triangle",
+                "isogrid",
+                "radial"
+              ]
+            },
+            "spacing": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm between ribs (rings, for radial)"
+            },
+            "angle": {
+              "type": "number",
+              "description": "degrees about the direction"
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              ],
+              "description": "'x', 'y', 'z' or a direction vector"
+            },
+            "origin": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "center": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "spokes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rings": {
+              "type": "boolean"
+            },
+            "innerRadius": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "stressLines": {
+          "type": "object",
+          "description": "ribs along the face's principal stress lines under a study's loads",
+          "properties": {
+            "study": {
+              "type": "string",
+              "description": "study JSON path or example:<name>"
+            },
+            "part": {
+              "type": "string",
+              "description": "the node or mesh analyzed (default the surface)"
+            },
+            "spacing": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm between lines (default 10)"
+            },
+            "family": {
+              "enum": [
+                "max",
+                "min",
+                "both"
+              ],
+              "description": "the larger principal stress, the other, or both (default)"
+            },
+            "cutoff": {
+              "type": "number",
+              "minimum": 0,
+              "description": "seed only where the stress is over this times the face's 95th percentile (default 0.15)"
+            },
+            "merge": {
+              "type": "number",
+              "minimum": 0,
+              "description": "mm at which a line joins another (default 0.15 spacing)"
+            },
+            "bridge": {
+              "type": "number",
+              "minimum": 0,
+              "description": "mm a line carries straight over low stress (default 1.5 spacing)"
+            },
+            "case": {
+              "type": "string"
+            },
+            "within": {
+              "type": "object",
+              "properties": {
+                "min": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                },
+                "max": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              },
+              "required": [
+                "min",
+                "max"
+              ],
+              "additionalProperties": false,
+              "description": "only the face inside this box"
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              ],
+              "description": "'x', 'y', 'z' or a direction vector"
+            },
+            "pitch": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cells": {
+              "type": "integer",
+              "minimum": 1000
+            }
+          },
+          "required": [
+            "study"
+          ],
+          "additionalProperties": false
+        },
+        "pathStep": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "gradientStep": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "surface",
+        "thickness"
+      ],
+      "additionalProperties": false,
+      "x-requireOne": [
+        [
+          "paths"
+        ],
+        [
+          "pattern"
+        ],
+        [
+          "stressLines"
+        ]
+      ]
     },
     "op-group": {
       "type": "object",

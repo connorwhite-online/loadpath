@@ -186,6 +186,7 @@ back at once with suggestions.
 | `offset` | grow or shrink | `input`, `distance` |
 | `lattice` | TPMS sheets (gyroid, diamond, Schwarz P, lidinoid, split P, Neovius; sheet or network), strut cells (cubic, BCC, BCCz, FCC, FCCz, octet, Kelvin, diamond-strut, or your own from `cellGraph`), a Voronoi foam or a Delaunay (tet) lattice, which with a conformal frame follows a body with its nodes on the skin; cartesian, cylindrical, spherical or conformal frame; `aspect` stretches the cell | `cell`, `thickness` or `density`, `blend` (node fillets), `offset` |
 | `transform` | translate, rotate, scale an input | `input` |
+| `ribs` | walls standing off a solid's face: along curves projected onto it, a square / isogrid / radial pattern, or the face's principal stress lines under a study (see Ribs) | `surface`, `thickness`, `height` |
 | `image` | a picture (PNG/JPG) laid on a plane as a 0..1 field: brightness or one channel, optional invert (see Images) | `path`, `size` |
 | `group` | a copy of a sub-graph from `groups` with its own `params` and `inputs` (see Groups) | |
 
@@ -268,6 +269,56 @@ Seeds are laid on the body's surface as well as inside it and only struts
 inside it are kept, so nodes sit on the skin and no strut is cut off at it
 (nTop's tet lattice from a body). `tests/test_lattice_library.py` checks the
 three.
+
+## Ribs
+
+A thin lid, a plate, an enclosure's back: the skin carries little until
+ribs stiffen it, and where they go matters more than how much material
+they take. The `ribs` op stands walls of `thickness` off a solid's face,
+`height` deep under it (side `inside`, the default) or proud of it
+(`outside`), laid out three ways:
+
+```json
+"ribs": {"op": "ribs", "surface": "body", "thickness": 1.2, "height": 8,
+         "pattern": {"type": "triangle", "spacing": 15}}
+```
+
+- `pattern`: `square`, `triangle` (an isogrid) or `radial` (spokes and
+  rings about a `center`), turned by `angle`, walls along the pattern's
+  `direction` (default z).
+- `paths`: polylines dropped onto the surface. With `direction` they drop
+  along it and the walls are parallel to it (a mould or a print pulls them
+  straight; the distance is exact); without, each drops to the nearest
+  surface point and the walls stand square to a curved skin.
+- `stressLines`: `{"study": "plate.json", "spacing": 12, "family": "max"}`
+  analyzes the surface solid (or `part`) under the study, takes the stress
+  tensor from the displacement's local gradient, and traces evenly spaced
+  principal stress lines across the face (`within` picks the face):
+  `max` the larger principal stress, `min` the other, `both` a
+  Michell-like grid. Lines carry straight across a low-stress stretch
+  (the zero of a bending moment) and join a line they run into, so a rib
+  reaches from the load to the supports.
+
+Ribs are infinite walls cut to a depth band of the surface, so intersect
+them with what should carry them (a box below a lid, the body) and union
+them with the skin; `thickness` can be a field for ribs graded by stress.
+
+How much the layout buys: a 100 x 60 x 2 mm PA12 plate held at both ends
+with 50 N at the middle, 6 mm ribs 1.5 mm thick under it
+(bench/ribs_compare.py):
+
+| Ribs | Volume (mm³) | Deflection (mm) |
+| --- | --- | --- |
+| a single cross | 13,428 | 0.670 |
+| square grid, 18 mm | 17,218 | 0.303 |
+| stress lines along the span, 8 mm | 18,743 | 0.245 |
+| stress lines both ways, 12 mm | 20,385 | 0.206 |
+| square grid, 12 mm | 20,815 | 0.211 |
+
+Against the square grids' curve at the same volume the stress-line ribs
+deflect about 7% less. The plate is a plain case, and the gap grows where
+the stress paths curve (a bracket, a lid on bosses), which is where a
+grid wastes most of its ribs on the wrong direction.
 
 ## Groups
 
