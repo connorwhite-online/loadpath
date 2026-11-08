@@ -84,7 +84,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | Build orientation, minimum support orientation | `orient.py` | Have |
 | Overhang, thickness, trapped powder | `check_dfm`, `processcheck.py`, `drains.py` | Have |
 | Slicing, hatching, slice export (CLI) | `loadpath slices`: contours and hatches in a CLI file (`layerfiles.py`); FDM G-code through a slicer (`slicer.py`) | Have (CLI new); SLC, EOS and Renishaw native formats not yet |
-| Build volumes, nesting | | Missing |
+| Build volumes, nesting | build-volume fit per material (`dfm_reference.py`); `loadpath nest` packs parts and copies on the plate or stacked in an SLS / MJF cake, gap measured (`nesting.py`) | Have (new) |
 
 ## Export and exchange
 
@@ -104,9 +104,8 @@ test. **Partial** means part of it. **Missing** means not yet.
 
 ## What is left
 
-By count: about 52 rows have it, 7 partial, 2 missing. The missing ones
-are build volumes and nesting;
-the partial ones that matter most are the three TPMS nTop has and loadpath
+By count: about 53 rows have it, 7 partial, none missing. The partial
+ones that matter most are the three TPMS nTop has and loadpath
 does not, Nastran export and general CFD. The open problem nTop does not
 solve either is physical validation of printed parts
 ([VALIDATION.md](VALIDATION.md), [CALIBRATION.md](CALIBRATION.md)).

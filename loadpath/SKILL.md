@@ -54,7 +54,10 @@ threads) in CAD instead. loadpath doesn't replace CAD: model the interfaces
 there, let loadpath grow the material between them, and bring the result
 back as STEP or STL (`loadpath step part.stl` turns any closed STL, a
 gyroid-cored one too, into one STEP solid; `loadpath slices part.stl` into
-powder-bed layers, a CLI file of contours and hatches). Its edge over drawing the part yourself is that every
+powder-bed layers, a CLI file of contours and hatches; `loadpath nest a.stl:6 b.stl:2
+--process sls --material pa12` packs a job into one build volume). Every report
+also says what each support carries (`report.reactions`), the bolt or bearing
+load to size hardware from; cap one with `maxForce` on the support. Its edge over drawing the part yourself is that every
 result comes with an independent check (safety factor, deflection,
 buckling, printability) you can report to the user.
 

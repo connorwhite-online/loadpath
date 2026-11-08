@@ -137,6 +137,35 @@ def _slices(args):
     return 0 if not rep["openLayers"] else 1
 
 
+def _nest(args):
+    import trimesh
+
+    from .nesting import BED_PROCESSES, nest
+
+    parts = []
+    for item in args.parts:
+        path, _, n = item.rpartition(":") if ":" in item and item.rsplit(":", 1)[1].isdigit() else (item, "", "1")
+        parts.append((trimesh.load(path, force="mesh"), int(n)))
+    vol = args.volume
+    if vol is None:
+        from . import dfm_reference
+
+        lim = dfm_reference.limits(args.process, args.material) if args.material else None
+        if not lim or "material" not in lim:
+            print(json.dumps({"error": "give --volume X Y Z (mm), or --process with --material to use the "
+                                       "largest build volume Materialize lists for it"}))
+            return 1
+        vol = lim["material"]["buildVolume"]
+    mode = args.mode or ("bed" if (args.process or "fdm") in BED_PROCESSES else "volume")
+    res = nest(parts, vol, gap=args.gap, mode=mode, rotations=args.rotations, pitch=args.pitch)
+    rep = res.report()
+    out = args.out or "nest.3mf"
+    res.combined().export(out)
+    rep["out"] = out
+    print(json.dumps(rep if args.full else {k: v for k, v in rep.items() if k != "placements"}, indent=1))
+    return 0 if not rep["unplaced"] else 2
+
+
 def _import(args):
     from .cadimport import import_part
 
@@ -725,6 +754,20 @@ def main(argv=None):
     sl.add_argument("--hatch", type=float, default=0.1,
                     help="hatch spacing, mm (default 0.1; 0 for contours only); turned 67 degrees a layer")
     sl.add_argument("--axis", choices=["x", "y", "z"], default="z", help="build axis (default z)")
+    ns = sub.add_parser("nest", help="pack parts (and copies) into one build volume: on the plate (FDM, resin, "
+                                     "metal) or stacked in the powder (SLS, MJF), with a measured gap")
+    ns.add_argument("parts", nargs="+", help="STL/3MF/OBJ paths, each optionally with :copies (bracket.stl:6)")
+    ns.add_argument("--volume", type=float, nargs=3, metavar=("X", "Y", "Z"), help="build volume, mm")
+    ns.add_argument("--process", default=None, help="fdm, sla, dlp, lpbf (on the plate) or sls, mjf (stacked)")
+    ns.add_argument("--material", default=None, help="with --process and no --volume: Materialize's build volume")
+    ns.add_argument("--mode", choices=["bed", "volume"], default=None, help="override the process's mode")
+    ns.add_argument("--rotations", choices=["z", "any", "none"], default=None,
+                    help="z: quarter turns about the build axis (default on a plate); any: 24 axis-aligned "
+                         "orientations (default stacked)")
+    ns.add_argument("--gap", type=float, default=2.0, help="least distance between parts, mm (default 2)")
+    ns.add_argument("--pitch", type=float, default=None, help="packing grid, mm (default from the volume)")
+    ns.add_argument("--out", default=None, help="the packed build as one mesh (default nest.3mf)")
+    ns.add_argument("--full", action="store_true", help="print every placement's transform")
     asm = sub.add_parser("assembly",help="derive a part's load cases and neighbour keep-outs from a URDF")
     asm.add_argument("urdf")
     asm.add_argument("--link", required=True, help="the URDF link the study designs")
@@ -834,6 +877,8 @@ def main(argv=None):
         return _import(args)
     if args.cmd == "step":
         return _step(args)
+    if args.cmd == "nest":
+        return _nest(args)
     if args.cmd == "slices":
         return _slices(args)
     if args.cmd == "buildsim":
