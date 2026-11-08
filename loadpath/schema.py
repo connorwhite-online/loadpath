@@ -900,15 +900,40 @@ _RANGE = {"anyOf": [{"type": "array", "items": _POS, "minItems": 2, "maxItems": 
                     {"type": "object", "properties": {"min": _POS, "max": _POS}, "additionalProperties": False}],
           "description": "[min, max], or {min} / {max} for one side only"}
 _FEEL_TARGET = {"type": "object", "properties": {
-    "kind": {"enum": ["squeeze", "drop", "isolate"]},
-    "name": {"type": "string"},
-    "hold": {**_WHERE, "description": "squeeze, isolate: where the product is held (all three directions)"},
+    "kind": {"enum": ["squeeze", "drop", "isolate", "touch"]},
+    "name": {"type": "string", "description": "touch: the zone's name, as `contrast` refers to it"},
+    "hold": {**_WHERE, "description": "squeeze, isolate, touch: where the product is held (all three "
+                                      "directions; touch default: the face opposite the press)"},
     "press": {**_WHERE, "description": "squeeze: where the hand presses"},
-    "direction": {**_DIRECTION, "description": "squeeze: the press direction; drop: the fall direction "
-                                               "(default: toward the landing face)"},
-    "force": {**_POS, "description": "squeeze: N the hand presses with"},
-    "travel": {**_RANGE, "description": "squeeze: mm the grip gives at `force`, [min, max]"},
-    "stiffness": {**_RANGE, "description": "squeeze: N/mm, in place of force and travel"},
+    "direction": {**_DIRECTION, "description": "squeeze, touch: the press direction (touch default -z); drop: the "
+                                               "fall direction (default: toward the landing face)"},
+    "force": {**_POS, "description": "squeeze: N the hand presses with; touch: N of a fingertip press"},
+    "travel": {**_RANGE, "description": "squeeze, touch: mm it gives at `force`, [min, max]; {max} alone is a "
+                                        "firmness floor (at least `force` N to push it that far)"},
+    "stiffness": {**_RANGE, "description": "squeeze, touch: N/mm, in place of force and travel"},
+    "zone": {"$ref": "#/$defs/shape", "description": "touch: the place on the exterior (fingertip presses are "
+                                                     "sampled where a press along `direction` meets the part "
+                                                     "inside it)"},
+    "feel": {"enum": ["pliable", "firm", "rigid"],
+             "description": "touch: a preset window under a 4 mm-radius fingertip: pliable 1-4 N/mm (a 2 N touch "
+                            "sinks 0.5-2 mm), firm >= 15 N/mm (a 5 N press moves it under 0.33 mm), rigid "
+                            ">= 50 N/mm; stiffness or force/travel override the side they give"},
+    "fingertip": {**_POS, "description": "touch: mm radius of the pressed disc (default 4)"},
+    "spacing": {**_POS, "description": "touch: mm between sampled presses (default 6)"},
+    "inset": {"type": "number", "minimum": 0,
+              "description": "touch: sampled presses are at least this far inside the zone's edge, mm (default "
+                             "half the fingertip, at most a quarter of the spacing)"},
+    "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}, "minItems": 2,
+                                          "maxItems": 3}, "minItems": 1,
+               "description": "touch: the presses, in place of sampling the zone (2 coordinates across the press "
+                              "direction, or 3)"},
+    "skinThickness": {"anyOf": [_POS, {"const": "auto"}],
+                      "description": "touch: mm of skin under the zone, the exterior unchanged (skin.zones); "
+                                     "\"auto\": the thickest skin whose bare presses sit under 0.75 of the "
+                                     "ceiling, never under the process's minimum wall (flagged when the zone "
+                                     "would need less)"},
+    "skinBlend": {"type": "number", "minimum": 0, "description": "touch: mm the skin's thickness ramps over at "
+                                                                 "the zone's edge (default 2)"},
     "lands": {**_WHERE, "description": "drop: where it lands (usually {face})"},
     "mass": {**_WHERE, "description": "drop: the part to cushion (its mount)"},
     "mount": {**_WHERE, "description": "isolate: the mount of the part to keep vibration from"},
@@ -1011,7 +1036,9 @@ _FEEL = {
     "type": "object",
     "description": "`loadpath feel`: design the inside of a fixed exterior for how it feels (feel.py). Minimum "
                    "volume, with each target a stiffness window between where it is held and where the load "
-                   "comes in: `squeeze` (a grip gives `travel` mm at `force` N), `drop` (a part of `kg` "
+                   "comes in: `touch` (a zone of the exterior under a fingertip: pliable, firm, or a window; "
+                   "`contrast` sets how distinctly zones differ; `skinThickness` thins the skin under a zone), "
+                   "`squeeze` (a grip gives `travel` mm at `force` N), `drop` (a part of `kg` "
                    "dropped `height` m sees under `maxG` and moves under `maxTravel`), `isolate` (handling "
                    "vibration from `band` Hz up reaches a part at under `maxTransmissibility`, a soft mount; or "
                    "its resonance stays over a handling band `upTo` Hz, a stiff one). Pair it with "
@@ -1019,6 +1046,17 @@ _FEEL = {
                    "feel block needs no supports or load cases. `run` ignores it.",
     "properties": {
         "targets": {"type": "array", "items": _FEEL_TARGET, "minItems": 1},
+        "contrast": {"type": "array", "items": {"type": "object", "properties": {
+                         "softer": {"type": "string", "description": "a touch zone's name"},
+                         "firmer": {"type": "string", "description": "a touch zone's name"},
+                         "ratio": {"type": "number", "exclusiveMinimum": 1,
+                                   "description": "the firmer zone's softest press over the softer zone's "
+                                                  "stiffest (default 2)"}},
+                         "required": ["softer", "firmer"], "additionalProperties": False},
+                     "description": "touch zones that must feel distinctly different: every press in `firmer` "
+                                    "at least `ratio` times as stiff as every press in `softer`"},
+        "skinPitch": {**_POS, "description": "mm grid an auto skinThickness is chosen on (default the first "
+                                             "pitch, at most 0.5)"},
         "lossFactor": {**_POS, "description": "material loss factor for isolate (default modal.LOSS_FACTOR)"},
         "verifyPitch": {**_POS, "description": "mm grid the delivered mesh is read back on (default half the "
                                                "design pitch: members one design cell thick)"},

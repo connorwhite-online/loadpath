@@ -158,15 +158,23 @@ class FeelTarget:
     key: str = ""                   # the hold's identity: targets that share it share a factorization
 
 
-def _face_nodes(domain: Domain, axis: int, sign: int, within=None) -> np.ndarray:
+def _face_nodes(domain: Domain, axis: int, sign: int, within=None, exterior=None) -> np.ndarray:
     """The outermost node of every node column along `axis` on its `sign`
     side (the part's exterior facing that way), optionally only inside
-    `within` (a shape)."""
+    `within` (a shape). With `exterior` (the design space), only nodes
+    within two cells of leaving it that way: in a hollow part (a delivered
+    mesh read back) the outermost node of a column through the cavity is
+    the underside of the skin across it, not the exterior (a lid held on
+    its bottom edge read as held right under the pad, 6000 N/mm)."""
     mesh = domain.mesh
     xyz = mesh.node_xyz
     cand = np.ones(len(xyz), bool)
     if within is not None:
         cand = within.sdf(xyz) <= 0.5 * mesh.pitch
+    if exterior is not None:
+        step = np.zeros(3)
+        step[axis] = sign * 2.0 * mesh.pitch
+        cand &= exterior.sdf(xyz + step) > 0
     idx = np.flatnonzero(cand)
     if not len(idx):
         raise ValueError("face: the shape it is limited to touches no node of the part")
@@ -193,8 +201,10 @@ def _where(study, domain: Domain, spec, label: str) -> np.ndarray:
         raise ValueError(f"{label}: a location is {{region}}, {{shape}} or {{face}}")
     shape = shape_from_spec(spec["shape"], getattr(study, "base_dir", None)) if "shape" in spec else None
     if "face" in spec:
+        from .shapes import Union
         ax, sg = _axis(spec["face"])
-        nodes = _face_nodes(domain, ax, sg, shape)
+        ds = study.design_space[0] if len(study.design_space) == 1 else Union(study.design_space)
+        nodes = _face_nodes(domain, ax, sg, shape, ds)
     elif "region" in spec:
         # a region, optionally only where it is inside the shape (the
         # skin where the hand is)
@@ -221,8 +231,43 @@ def _rng(v):
     return None, float(v)
 
 
-def feel_from_study(study, domain: Domain) -> list[FeelTarget]:
-    """The study's `feel.targets` on this domain's mesh."""
+def _touch_targets(study, domain: Domain, t: dict, i: int) -> list[FeelTarget]:
+    """A touch zone as one target per fingertip press (touchzones.py)."""
+    import json
+
+    from .switch import _press_nodes
+    from .touchzones import FINGERTIP, touch_points, touch_window
+    lab = f"feel.targets[{i}]"
+    name = t.get("name") or f"touch-{i}"
+    kmin, kmax = touch_window(t, lab)
+    if kmin is not None and kmax is not None and kmin > kmax:
+        raise ValueError(f"{lab} ({name}) asks for a stiffness of at least {kmin:.3g} N/mm and at most "
+                         f"{kmax:.3g} N/mm")
+    ax, sg = _axis(t.get("direction", "-z"))
+    # default: held on the far side, the face the press points at
+    hold_spec = t.get("hold") or {"face": ("-" if sg < 0 else "+") + "xyz"[ax]}
+    ground = _where(study, domain, hold_spec, f"{lab}.hold")
+    radius = float(t.get("fingertip", FINGERTIP))
+    params = {"zone": name, "fingertip": radius, **{k: t[k] for k in ("feel", "force", "travel", "stiffness")
+                                                     if k in t}}
+    work = getattr(study, "_touch_relax", {}).get(name)
+    out = []
+    for p in touch_points(study, t, lab):
+        load = _press_nodes(domain, p, ax, sg, radius) & ~ground
+        if not load.any():
+            raise ValueError(f"{lab}: the press at {np.round(p, 1).tolist()} is all on held nodes")
+        uv = [round(float(p[o]), 1) for o in range(3) if o != ax]
+        pr = {**params, "at": [round(float(v), 2) for v in p]}
+        if work is not None and kmax is not None and work > kmax:
+            pr["workingMax"] = float(work)
+        out.append(FeelTarget("touch", f"{name}@{uv[0]:g},{uv[1]:g}", ground, load, [(ax, sg)], kmin, kmax, pr,
+                              key=json.dumps(hold_spec, sort_keys=True)))
+    return out
+
+
+def feel_from_study(study, domain: Domain, only_zone: str | None = None) -> list[FeelTarget]:
+    """The study's `feel.targets` on this domain's mesh (a touch zone as
+    one target per fingertip press; only_zone: that zone's alone)."""
     import json
 
     from .modal import loss_factor
@@ -233,6 +278,11 @@ def feel_from_study(study, domain: Domain) -> list[FeelTarget]:
         kind = t.get("kind")
         name = t.get("name") or f"{kind}-{i}"
         lab = f"feel.targets[{i}]"
+        if only_zone is not None and (kind != "touch" or name != only_zone):
+            continue
+        if kind == "touch":
+            out += _touch_targets(study, domain, t, i)
+            continue
         if kind == "squeeze":
             hold_spec, load_spec = t["hold"], t["press"]
             dirs = [_axis(t["direction"])]
@@ -274,7 +324,7 @@ def feel_from_study(study, domain: Domain) -> list[FeelTarget]:
                 params["maxAmplification"] = ma
                 params["minFrequency"] = float(t["upTo"]) / resonance_ratio(ma, eta)
         else:
-            raise ValueError(f"{lab}: kind must be squeeze, drop or isolate, got {kind!r}")
+            raise ValueError(f"{lab}: kind must be squeeze, drop, isolate or touch, got {kind!r}")
         if kmin is not None and kmax is not None and kmin > kmax:
             why = ""
             if kind == "drop":
@@ -331,8 +381,12 @@ class FeelProblem:
 
     ROBUST = 0.2
 
-    def __init__(self, study, domain: Domain, nu, modulus: float):
-        self.targets = feel_from_study(study, domain)
+    KS = 30.0      # contrast: smooth max / min over a zone's presses, on log stiffness
+
+    def __init__(self, study, domain: Domain, nu, modulus: float, only_zone: str | None = None):
+        from .touchzones import contrast_pairs
+        self.targets = feel_from_study(study, domain, only_zone)
+        self.contrasts = contrast_pairs(study, self.targets) if only_zone is None else []
         self.robust = bool((study.raw.get("feel") or {}).get("robust", True))
         self.domain, self.nu, self.modulus = domain, nu, modulus
         mesh = domain.mesh
@@ -351,7 +405,8 @@ class FeelProblem:
         for g in groups.values():
             g.solves = _HeldSolves(g.domain, nu, g.need)
         self.groups = list(groups.values())
-        self.m = sum((t.kmin is not None) + (t.kmax is not None) for t in self.targets for _ in t.directions)
+        self.m = sum((t.kmin is not None) + (t.kmax is not None) for t in self.targets for _ in t.directions) + \
+            len(self.contrasts)
 
     def compliances(self, xp, grads: bool = True):
         """{(target, direction): (c mm/N, dc/dxp or None)}."""
@@ -378,15 +433,17 @@ class FeelProblem:
         thresholded 0.5): grey is cheap softness that printing does not
         have, and it thresholds away to nothing."""
         if ctx is None or not self.robust:
+            comp = self.compliances(xp)
             res = []
-            for (ti, di), (c, dc) in self.compliances(xp).items():
+            for (ti, di), (c, dc) in comp.items():
                 res += self._cons(ti, di, c, dc, True, True)
-            return res
+            return res + [r[:3] for r in self._contrast(comp, comp, None, None)]
         from .simp import _dproject, _project
         xt, beta = ctx["xt"], ctx["beta"]
         res = []
+        sides = {}
         for side, eta in (("min", 0.5 + self.ROBUST), ("max", 0.5 - self.ROBUST)):
-            if not any(getattr(t, "k" + side) is not None for t in self.targets):
+            if not self.contrasts and not any(getattr(t, "k" + side) is not None for t in self.targets):
                 continue
             x = _project(xt, beta, eta)
             d = _dproject(xt, beta, eta)
@@ -395,10 +452,40 @@ class FeelProblem:
             held = ctx["floor"] > x
             x[held] = ctx["floor"][held]
             d[held] = 0.0
-            for (ti, di), (c, dc) in self.compliances(x).items():
+            comp = self.compliances(x)
+            sides[side] = (comp, d)
+            for (ti, di), (c, dc) in comp.items():
                 for val, g, name in self._cons(ti, di, c, dc, side == "min", side == "max"):
                     res.append((val, g * d, name, "xt"))
+        if self.contrasts:
+            # the softer zone read where ceilings are (dilated), the firmer
+            # where floors are (eroded): the printed part has both margins
+            res += self._contrast(sides["max"][0], sides["min"][0], sides["max"][1], sides["min"][1])
         return res
+
+    def _contrast(self, comp_soft, comp_firm, d_soft, d_firm):
+        """KS(log k over the softer zone's presses) - KS_min(log k over the
+        firmer zone's) + log ratio <= 0, per contrast."""
+        out = []
+        r = self.KS
+        for soft, firm, ratio, name in self.contrasts:
+            a = np.array([-np.log(max(comp_soft[(ti, 0)][0], 1e-30)) for ti in soft])
+            b = np.array([-np.log(max(comp_firm[(ti, 0)][0], 1e-30)) for ti in firm])
+            wa = np.exp(r * (a - a.max()))
+            smax = a.max() + np.log(wa.sum()) / r
+            wa /= wa.sum()
+            wb = np.exp(-r * (b - b.min()))
+            smin = b.min() - np.log(wb.sum()) / r
+            wb /= wb.sum()
+            # d log k / dx = -dc / c
+            g_soft = sum(w * (-comp_soft[(ti, 0)][1] / comp_soft[(ti, 0)][0]) for w, ti in zip(wa, soft))
+            g_firm = sum(w * (-comp_firm[(ti, 0)][1] / comp_firm[(ti, 0)][0]) for w, ti in zip(wb, firm))
+            val = float(smax - smin + np.log(ratio))
+            if d_soft is None:
+                out.append((val, g_soft - g_firm, name, "xp"))
+            else:
+                out.append((val, g_soft * d_soft - g_firm * d_firm, name, "xt"))
+        return out
 
     def _cons(self, ti, di, c, dc, lo, hi):
         t = self.targets[ti]
@@ -407,7 +494,10 @@ class FeelProblem:
         if lo and t.kmin is not None:       # k >= kmin: c <= 1 / kmin
             out.append((np.log(c * t.kmin), dc / c, f"{t.name}:{di}:min"))
         if hi and t.kmax is not None:       # k <= kmax: c >= 1 / kmax
-            out.append((-np.log(c * t.kmax), -dc / c, f"{t.name}:{di}:max"))
+            # (a touch zone whose thinnest printable skin is already over
+            # its ceiling works to that skin: touchzones.plan_touch_skins)
+            kmax = max(t.kmax, float(t.params.get("workingMax", t.kmax)))
+            out.append((-np.log(c * kmax), -dc / c, f"{t.name}:{di}:max"))
         return out
 
 
@@ -431,7 +521,7 @@ def feel_readings(prob: FeelProblem, xp: np.ndarray, comp=None, targets=None) ->
             c = comp[(ti, di)][0]
             k = 1.0 / max(c, 1e-30)
             r = {"direction": ("-" if sg < 0 else "+") + "xyz"[ax], "stiffness": k, "ok": _ok(k, t)}
-            if t.kind == "squeeze" and "force" in t.params:
+            if t.kind in ("squeeze", "touch") and "force" in t.params:
                 r["travel"] = float(t.params["force"]) * c
             elif t.kind == "drop":
                 r.update(drop_response(k, float(t.params["kg"]), float(t.params["height"])))
@@ -615,8 +705,17 @@ def run_feel(study, out_dir: str, pitches=None, iterations=None, on_progress=Non
     black-and-white design and on the delivered mesh, and for an isolate
     target the modal check on the delivered mesh."""
     from .switch import run_switch
+    from .touchzones import plan_touch_skins, zone_summary
 
     fb = study.raw.get("feel") or {}
+    skin_rows = []
+    if any(t.get("kind") == "touch" and t.get("skinThickness") is not None for t in fb.get("targets") or []):
+        # each touch zone's skin first: the optimizer only adds stiffness
+        ps = pitches or (study.raw.get("switch") or {}).get("pitches") or fb.get("pitches") or [study.pitch or 1.0]
+        # (0.5 mm by default: a 2 mm skin read 35% stiff at 0.7 against
+        # 1.0 and 0.5, which agree within 2%)
+        sp = float(fb.get("skinPitch") or min(float(ps[0]), 0.5))
+        study, skin_rows = plan_touch_skins(study, sp, on_progress)
 
     def make(st, domain, nu, modulus):
         return FeelProblem(st, domain, nu, modulus)
@@ -679,8 +778,18 @@ def run_feel(study, out_dir: str, pitches=None, iterations=None, on_progress=Non
                         on_progress({"stage": "verify", "check": f"modes: {t.name}"})
                     rows[ti]["modal"] = {**check_isolation_modal(study, prob_modal, ti, x_modal),
                                          "pitch": prob_modal.domain.pitch}
-        return {**out, "feel": rows, "feelOk": all(r["ok"] for r in rows),
-                "feelDeliveredOk": all(r.get("deliveredOk", False) for r in rows)}
+        res = {**out, "feel": rows, "feelOk": all(r["ok"] for r in rows),
+               "feelDeliveredOk": all(r.get("deliveredOk", False) for r in rows)}
+        if any(r["kind"] == "touch" for r in rows):
+            zs = {"design": zone_summary(rows, study), "thresholded": zone_summary(rows, study, "thresholded")}
+            if delivered is not None:
+                zs["delivered"] = zone_summary(rows, study, "delivered")
+            res["touchZones"] = zs
+            # a contrast is a target too
+            res["feelOk"] = bool(res["feelOk"] and zs["design"]["ok"])
+            if "delivered" in zs:
+                res["feelDeliveredOk"] = bool(res["feelDeliveredOk"] and zs["delivered"]["ok"])
+        return res
 
     if not study.raw.get("switch"):
         pitches = pitches or fb.get("pitches")
@@ -695,5 +804,7 @@ def run_feel(study, out_dir: str, pitches=None, iterations=None, on_progress=Non
     rep = run_switch(study, out_dir, pitches=pitches, iterations=iterations, on_progress=on_progress,
                      nonlinear=nonlinear, providers=[make], readback=readback, mesh_options=mesh_opts,
                      optimize_options={"move_sharp": float(fb.get("moveSharp", 0.03))})
+    if skin_rows:
+        rep["touchSkin"] = skin_rows
     rep["passes"] = bool(rep["feelOk"] and (rep["passes"] if rep.get("presses") else True))
     return rep

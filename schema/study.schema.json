@@ -1140,7 +1140,7 @@
     },
     "feel": {
       "type": "object",
-      "description": "`loadpath feel`: design the inside of a fixed exterior for how it feels (feel.py). Minimum volume, with each target a stiffness window between where it is held and where the load comes in: `squeeze` (a grip gives `travel` mm at `force` N), `drop` (a part of `kg` dropped `height` m sees under `maxG` and moves under `maxTravel`), `isolate` (handling vibration from `band` Hz up reaches a part at under `maxTransmissibility`, a soft mount; or its resonance stays over a handling band `upTo` Hz, a stiff one). Pair it with `skin`; a `switch` block in the same study is designed together with it. A study with a feel block needs no supports or load cases. `run` ignores it.",
+      "description": "`loadpath feel`: design the inside of a fixed exterior for how it feels (feel.py). Minimum volume, with each target a stiffness window between where it is held and where the load comes in: `touch` (a zone of the exterior under a fingertip: pliable, firm, or a window; `contrast` sets how distinctly zones differ; `skinThickness` thins the skin under a zone), `squeeze` (a grip gives `travel` mm at `force` N), `drop` (a part of `kg` dropped `height` m sees under `maxG` and moves under `maxTravel`), `isolate` (handling vibration from `band` Hz up reaches a part at under `maxTransmissibility`, a soft mount; or its resonance stays over a handling band `upTo` Hz, a stiff one). Pair it with `skin`; a `switch` block in the same study is designed together with it. A study with a feel block needs no supports or load cases. `run` ignores it.",
       "properties": {
         "targets": {
           "type": "array",
@@ -1151,11 +1151,13 @@
                 "enum": [
                   "squeeze",
                   "drop",
-                  "isolate"
+                  "isolate",
+                  "touch"
                 ]
               },
               "name": {
-                "type": "string"
+                "type": "string",
+                "description": "touch: the zone's name, as `contrast` refers to it"
               },
               "hold": {
                 "type": "object",
@@ -1174,7 +1176,7 @@
                   }
                 },
                 "additionalProperties": false,
-                "description": "squeeze, isolate: where the product is held (all three directions)"
+                "description": "squeeze, isolate, touch: where the product is held (all three directions; touch default: the face opposite the press)"
               },
               "press": {
                 "type": "object",
@@ -1198,12 +1200,12 @@
               "direction": {
                 "type": "string",
                 "pattern": "^[+-]?[xyz]$",
-                "description": "squeeze: the press direction; drop: the fall direction (default: toward the landing face)"
+                "description": "squeeze, touch: the press direction (touch default -z); drop: the fall direction (default: toward the landing face)"
               },
               "force": {
                 "type": "number",
                 "exclusiveMinimum": 0,
-                "description": "squeeze: N the hand presses with"
+                "description": "squeeze: N the hand presses with; touch: N of a fingertip press"
               },
               "travel": {
                 "anyOf": [
@@ -1231,7 +1233,7 @@
                     "additionalProperties": false
                   }
                 ],
-                "description": "squeeze: mm the grip gives at `force`, [min, max]"
+                "description": "squeeze, touch: mm it gives at `force`, [min, max]; {max} alone is a firmness floor (at least `force` N to push it that far)"
               },
               "stiffness": {
                 "anyOf": [
@@ -1259,7 +1261,64 @@
                     "additionalProperties": false
                   }
                 ],
-                "description": "squeeze: N/mm, in place of force and travel"
+                "description": "squeeze, touch: N/mm, in place of force and travel"
+              },
+              "zone": {
+                "$ref": "#/$defs/shape",
+                "description": "touch: the place on the exterior (fingertip presses are sampled where a press along `direction` meets the part inside it)"
+              },
+              "feel": {
+                "enum": [
+                  "pliable",
+                  "firm",
+                  "rigid"
+                ],
+                "description": "touch: a preset window under a 4 mm-radius fingertip: pliable 1-4 N/mm (a 2 N touch sinks 0.5-2 mm), firm >= 15 N/mm (a 5 N press moves it under 0.33 mm), rigid >= 50 N/mm; stiffness or force/travel override the side they give"
+              },
+              "fingertip": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "touch: mm radius of the pressed disc (default 4)"
+              },
+              "spacing": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "touch: mm between sampled presses (default 6)"
+              },
+              "inset": {
+                "type": "number",
+                "minimum": 0,
+                "description": "touch: sampled presses are at least this far inside the zone's edge, mm (default half the fingertip, at most a quarter of the spacing)"
+              },
+              "points": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 3
+                },
+                "minItems": 1,
+                "description": "touch: the presses, in place of sampling the zone (2 coordinates across the press direction, or 3)"
+              },
+              "skinThickness": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  {
+                    "const": "auto"
+                  }
+                ],
+                "description": "touch: mm of skin under the zone, the exterior unchanged (skin.zones); \"auto\": the thickest skin whose bare presses sit under 0.75 of the ceiling, never under the process's minimum wall (flagged when the zone would need less)"
+              },
+              "skinBlend": {
+                "type": "number",
+                "minimum": 0,
+                "description": "touch: mm the skin's thickness ramps over at the zone's edge (default 2)"
               },
               "lands": {
                 "type": "object",
@@ -1383,6 +1442,38 @@
             "additionalProperties": false
           },
           "minItems": 1
+        },
+        "contrast": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "softer": {
+                "type": "string",
+                "description": "a touch zone's name"
+              },
+              "firmer": {
+                "type": "string",
+                "description": "a touch zone's name"
+              },
+              "ratio": {
+                "type": "number",
+                "exclusiveMinimum": 1,
+                "description": "the firmer zone's softest press over the softer zone's stiffest (default 2)"
+              }
+            },
+            "required": [
+              "softer",
+              "firmer"
+            ],
+            "additionalProperties": false
+          },
+          "description": "touch zones that must feel distinctly different: every press in `firmer` at least `ratio` times as stiff as every press in `softer`"
+        },
+        "skinPitch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm grid an auto skinThickness is chosen on (default the first pitch, at most 0.5)"
         },
         "lossFactor": {
           "type": "number",

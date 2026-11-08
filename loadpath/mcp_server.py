@@ -1035,7 +1035,10 @@ def serve():
         a `feel` block of targets, each a stiffness window: `squeeze` (a grip gives travel [min, max] mm
         at force N between hold and press), `drop` (a part of kg on its mount, dropped height m onto a
         face, sees under maxG and moves under maxTravel mm), `isolate` (handling vibration from the hand
-        reaches a part's mount at under maxTransmissibility from band Hz up). A `switch` block in the
+        reaches a part's mount at under maxTransmissibility from band Hz up), `touch` (a zone of the
+        exterior under a fingertip: feel pliable|firm|rigid or a stiffness window; feel.contrast makes
+        zones distinctly different; skinThickness "auto" thins the skin under a pliable zone, never under
+        the process minimum wall, flagged when it would need to be). A `switch` block in the
         same study is designed with it. No supports or load cases needed. Reports each target on the
         design, as printed and read back from the STL, and a modal check of isolate targets. Starts a
         job; poll loadpath_status."""

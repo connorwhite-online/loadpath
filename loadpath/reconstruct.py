@@ -1257,23 +1257,35 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     # the cavity outright (a push pad's 7.8 cm^3 interior meshed as 16.9).
     # The exact union afterwards still adds the skin itself.
     inner = [r.shape for r in study.preserve if r.id != "skin"]
-    iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
-                      flush=flush, preserve=inner, design=list(study.design_space),
-                      draft=draft)
-    parting = iso.metadata.get("parting")
-    info = {"isoTriangles": int(len(iso.faces))}
+    try:
+        iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
+                          flush=flush, preserve=inner, design=list(study.design_space),
+                          draft=draft)
+    except ValueError as exc:
+        # Nothing designed, but preserved geometry to deliver: a fixed
+        # exterior whose bare skin already meets every target (a touch
+        # zone the skin alone makes pliable) is the skin itself.
+        if "never reaches solid" not in str(exc) or not study.preserve:
+            raise
+        iso = None
+    parting = iso.metadata.get("parting") if iso is not None else None
+    info = {"isoTriangles": int(len(iso.faces)) if iso is not None else 0}
     if bridged:
         info["bridged"] = bridged
-    if o.taubin_iterations and draft is None:
+    if iso is None:
+        pass
+    elif o.taubin_iterations and draft is None:
         # (not on a drafted cast part: smoothing rounds the ledge where a
         # section steps in just past the parting plane down across it,
         # leaning those walls the wrong way for the other mold half; its
         # field was smoothed before the draft and meshes clean without)
         keep_thin = bool((getattr(study, "raw", None) or {}).get("resolution", {}).get("keepThinMembers", False))
         _smooth_surface(iso, domain, xphys, o.taubin_iterations, keep_thin, min_member=study.min_member)
-    if study.preserve and o.fillet and o.blend > 0:
+    if iso is not None and study.preserve and o.fillet and o.blend > 0:
         _snap_to_flat_faces(iso, [r.shape for r in study.preserve], domain.pitch / o.upsample, o.blend)
-    if len(iso.faces) > o.max_triangles:
+    if iso is None:
+        organic = m3d.Manifold()
+    elif len(iso.faces) > o.max_triangles:
         # Decimate the organic surface before the booleans, never after: a
         # decimated part shaves the exact preserved faces (a bore wall moved
         # a few hundredths of a millimetre reads as preserved geometry lost).
@@ -1283,15 +1295,16 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
                 iso = simplified
         except Exception:  # noqa: BLE001 - decimation is an optimization, never fatal
             pass
-    try:
-        organic = manifold_from_trimesh(iso)
-    except ValueError:
-        # Marching cubes is closed by construction, but a degenerate sliver can
-        # still trip manifold3d; trimesh's repair is enough for those.
-        import trimesh
-        trimesh.repair.fix_winding(iso)
-        trimesh.repair.fill_holes(iso)
-        organic = manifold_from_trimesh(iso)
+    if iso is not None:
+        try:
+            organic = manifold_from_trimesh(iso)
+        except ValueError:
+            # Marching cubes is closed by construction, but a degenerate sliver can
+            # still trip manifold3d; trimesh's repair is enough for those.
+            import trimesh
+            trimesh.repair.fix_winding(iso)
+            trimesh.repair.fill_holes(iso)
+            organic = manifold_from_trimesh(iso)
 
     total = organic.volume()
     # Drop the small bodies by cutting them away, not by rebuilding from the
