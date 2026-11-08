@@ -953,7 +953,14 @@ def check_delivered(study_path: str, design_dir: str, quick: bool = False, on_pr
         if on_progress:
             on_progress({"stage": "check", "message": "load cases on the delivered part"}, None)
         cells = q.verify_cells(60_000) if quick else 120_000
-        vr = verify_part(study, mesh, max_cells=cells)
+        from .domain import choose_pitch
+        # stress within a design cell of a load or support is left out of
+        # the peak, as `run` and `loadpath verify` read it: the drop's
+        # floor patch and a cradle's mass load are applied on a few cells,
+        # and their edge stress grows without bound as the grid refines
+        # (the tool grip's cover read 0.09 here and 5.5 in run's own check
+        # of the same file, on the same solution)
+        vr = verify_part(study, mesh, max_cells=cells, contact_band=choose_pitch(study))
         sf = study.goal.safety_factor if study.goal is not None else None
         out["verify"] = {k: vr[k] for k in ("safetyFactor", "keepOutIntrusion", "outsideDesignSpace",
                                             "preserveMissing", "bodies", "bucklingFactor", "thermal", "cases",

@@ -390,3 +390,21 @@ def test_a_press_goes_to_the_half_with_material_under_it():
     assert _halves_under(P, halves(-1.2), ext, 0.5) == {"cover"}
     # the seam through its middle: both halves carry it
     assert _halves_under(P, halves(0.0), ext, 0.5) == {"base", "cover"}
+
+
+def test_a_case_on_the_other_half_comes_through_the_seam():
+    # a drop onto the cover's face with the board's mass on the base: the
+    # base's half of the case gets the floor's push back through its rim,
+    # so its loads balance instead of hanging on its support
+    from loadpath.shells import _load_force
+    out = tempfile.mkdtemp()
+    st = product()
+    st["preserve"] = [{"id": "cradle", "shape": {"type": "box", "min": [-20, -10, 1.5], "max": [20, 10, 4.0]}}]
+    st["loadCases"] = [{"name": "drop+z", "loads": [
+        {"region": "cradle", "mass": 0.05, "dynamic": 200, "gravity": "+z"},
+        {"shape": {"type": "box", "min": [-31, -21, 18.0], "max": [31, 21, 20.5]}, "force": [0, 0, -98.1]}]}]
+    r = apply_split(st, {"normal": "+z", "at": 12.0, "snaps": {"count": 4}}, out_dir=out, base_dir=_DIR)
+    for side in ("base", "cover"):
+        lc = [c for c in r["studies"][side]["loadCases"] if c["name"] == "drop+z"][0]
+        F = sum((_load_force(ld) for ld in lc["loads"]), np.zeros(3))
+        assert np.linalg.norm(F) < 1e-6, (side, lc["loads"])

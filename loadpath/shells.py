@@ -1181,6 +1181,26 @@ def _region_side(spec, cut, base_dir):
     return "cover" if up > 0.95 else "base" if up < 0.05 else "both"
 
 
+def _load_force(ld) -> np.ndarray:
+    """The net force of one load entry, N: a force, or a carried mass's
+    weight x dynamic factor along its gravity."""
+    if ld.get("force") is not None:
+        f = np.asarray(ld["force"], float)
+        return f if f.shape == (3,) else np.zeros(3)
+    if ld.get("mass") is not None:
+        g = ld.get("gravity", "-z")
+        if isinstance(g, str):
+            k = g.strip().lower()
+            k = k if k[:1] in "+-" else "+" + k
+            v = np.zeros(3)
+            v["xyz".index(k[1])] = 1.0 if k[0] == "+" else -1.0
+        else:
+            v = np.asarray(g, float)
+            v = v / max(np.linalg.norm(v), 1e-12)
+        return 9.81 * float(ld["mass"]) * float(ld.get("dynamic", 1.0)) * v
+    return np.zeros(3)
+
+
 def _halves_under(P, halves: dict, ext, reach: float) -> set:
     """The halves a load or support at sample points P bears on: those with
     material under it at least `reach` deep (half a cell). Being on a
@@ -1722,9 +1742,21 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             if mine_target(su):
                 sup.append(copy.deepcopy(su))
         lcs = []
+        rim_here = None
         for lc in study.get("loadCases") or []:
-            loads = [copy.deepcopy(ld) for ld in lc.get("loads") or [] if mine_target(ld)]
+            all_loads = lc.get("loads") or []
+            mine = [mine_target(ld) for ld in all_loads]
+            loads = [copy.deepcopy(ld) for ld, m in zip(all_loads, mine) if m]
             if loads:
+                # what the case puts on the other half comes into this one
+                # through the seam: a drop onto the cover's face pushes the
+                # base's components' weight back through the rim, where it
+                # had only the support to react on (the tool grip's base read
+                # 0.21 on a 3 mm support sphere carrying 300 N)
+                F = sum((_load_force(ld) for ld, m in zip(all_loads, mine) if not m), np.zeros(3))
+                if np.linalg.norm(F) > 1e-9:
+                    rim_here = rim_here if rim_here is not None else _rim(ext, C, side)
+                    loads.append({"shape": rim_here, "force": _r(F, 6)})
                 lcs.append({**copy.deepcopy(lc), "loads": loads})
         if not sup:
             if side == "base":
@@ -1741,10 +1773,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             for lc in study.get("loadCases") or []:
                 if lc.get("name") in have:
                     continue
-                F = np.zeros(3)
-                for ld in lc.get("loads") or []:
-                    if ld.get("force") is not None:
-                        F += np.asarray(ld["force"], float)
+                F = sum((_load_force(ld) for ld in lc.get("loads") or []), np.zeros(3))
                 if np.linalg.norm(F) > 0:
                     lcs.append({"name": f"{lc.get('name', 'case')}-through-seam",
                                 "loads": [{"shape": rim, "force": _r(F, 6)}]})
