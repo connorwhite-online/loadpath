@@ -186,6 +186,7 @@ back at once with suggestions.
 | `offset` | grow or shrink | `input`, `distance` |
 | `lattice` | TPMS sheets (gyroid, diamond, Schwarz P, lidinoid, split P, Neovius; sheet or network), strut cells (cubic, BCC, BCCz, FCC, FCCz, octet, Kelvin, diamond-strut, or your own from `cellGraph`), a Voronoi foam or a Delaunay (tet) lattice, which with a conformal frame follows a body with its nodes on the skin; cartesian, cylindrical, spherical or conformal frame; `aspect` stretches the cell | `cell`, `thickness` or `density`, `blend` (node fillets), `offset` |
 | `transform` | translate, rotate, scale an input | `input` |
+| `pattern` | copies of a body as one solid: linear (a line or grid), circular, mirror, or along a curve (see Patterns) | `input`, `blend` |
 | `ribs` | walls standing off a solid's face: along curves projected onto it, a square / isogrid / radial pattern, or the face's principal stress lines under a study (see Ribs) | `surface`, `thickness`, `height` |
 | `image` | a picture (PNG/JPG) laid on a plane as a 0..1 field: brightness or one channel, optional invert (see Images) | `path`, `size` |
 | `group` | a copy of a sub-graph from `groups` with its own `params` and `inputs` (see Groups) | |
@@ -269,6 +270,31 @@ Seeds are laid on the body's surface as well as inside it and only struts
 inside it are kept, so nodes sit on the skin and no strut is cut off at it
 (nTop's tet lattice from a body). `tests/test_lattice_library.py` checks the
 three.
+
+## Patterns
+
+Bolt bosses round a flange, a row of vents, a mirrored bracket, clips
+along a lid's edge: one body drawn once and laid out by a `pattern` node.
+
+```json
+"bosses": {"op": "pattern", "input": "boss", "type": "circular", "axis": "z",
+           "center": [0, 0, 0], "count": 6}
+```
+
+- `linear`: `step` [dx, dy, dz] and `count`, or `directions`, up to three
+  {step, count} for a grid.
+- `circular`: `axis`, `center`, `count`; `angle` sweeps less than a full
+  turn end to end; `rotate: false` carries each copy round unturned.
+- `mirror`: `plane` {point, normal}; `keep: false` drops the original.
+- `curve`: `count` copies evenly along a `path` polyline (`closed` for a
+  loop), each turned with its x along the curve and z toward `up`; the
+  input's `anchor` (default the path's start) goes on the curve.
+
+The copies are a union (smooth with `blend`), and each point reads only
+its nearest `neighbors` copies (default 4; `exact` reads all), so a
+pattern of hundreds of bosses costs about four. Use a pattern rather than
+an `expr` with `mod`: it keeps each copy's exact distance, its bounds,
+and works on any body, a mesh included.
 
 ## Ribs
 

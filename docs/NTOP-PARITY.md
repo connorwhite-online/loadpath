@@ -31,7 +31,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | Noise fields (simplex, cellular) | `noise`, `cellular` in `expr` | Have (new) |
 | Surface textures (emboss, deboss, bubbles, roughness) | an `offset` by a noise, image or lattice field ([fields.md](fields.md#noise-and-surface-textures)) | Have (new) |
 | Point maps (scattered FE / CFD data as a field) | `result` reads `.csv` / `.txt` / `.npz`, idw, thin-plate spline or nearest ([fields.md](fields.md#point-maps)) | Have (new) |
-| Linear / circular patterns of bodies | `expr` with `mod`; studies' circular `pattern` | Partial |
+| Linear / circular / mirror / along-curve patterns of bodies | field `pattern` op: linear grids, circular (turned or not, part sweeps), mirror and along a curve, each point reading its nearest copies ([fields.md](fields.md#patterns)); studies' circular `pattern` for symmetric design | Have (new) |
 | Rib design (graphs projected on faces, ribs from graphs) | field `ribs` op: curves projected onto a face (walls along a pull direction or square to the surface), square / isogrid / radial patterns, and ribs along the face's principal stress lines under a study, 7% stiffer than a square grid at equal mass on a plate ([fields.md](fields.md#ribs)); `cores` ribbed box sections | Have (new) |
 
 ## Lattices
@@ -104,7 +104,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 
 ## What is left
 
-By count: about 57 rows have it, 3 partial, none missing. External flow
+By count: about 58 rows have it, 2 partial, none missing. External flow
 is now in, coarse: it reads drag on the high side and caps the Reynolds
 number, which is right for structural loads and not for aerodynamic design. The open problem nTop does not
 solve either is physical validation of printed parts

@@ -60,7 +60,8 @@ __all__ = ["FieldGraph", "MeshField", "field_mesh", "save_result_field", "result
 
 # the operations and what they take (the schema says the same, with docs)
 OPS = ("constant", "coordinate", "distance", "shape", "mesh", "result", "grid", "image", "remap", "expr",
-       "union", "intersect", "subtract", "shell", "offset", "lattice", "transform", "ribs")
+       "union", "intersect", "subtract", "shell", "offset", "lattice", "transform", "ribs",
+       "pattern")
 
 _CELL_BUDGET = 60_000_000
 _CHUNK = 1_000_000
@@ -1864,7 +1865,30 @@ class FieldGraph:
             return self._transform(nd, P, memo)
         if op == "ribs":
             return self._ribs(nd, P, memo)
+        if op == "pattern":
+            return self._pattern(nd, P, memo)
         raise AssertionError(op)
+
+    def _pattern_copies(self, nd):
+        from .patterns import instances
+
+        b = self._bounds(nd.refs["input"], set()) if isinstance(nd.refs.get("input"), str) else None
+        center = 0.5 * (np.asarray(b[0], float) + np.asarray(b[1], float)) if b is not None else np.zeros(3)
+        try:
+            inst = instances(nd.spec, pivot=center)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"node {nd.name!r}: {exc}") from None
+        return inst, center
+
+    def _pattern(self, nd, P, memo):
+        from .patterns import pattern_value
+
+        s, r = nd.spec, nd.refs
+        inst, center = self._resource(nd, lambda: self._pattern_copies(nd))
+        k = r["blend"] if isinstance(r.get("blend"), float) else 0.0
+        return pattern_value(lambda Q: self._val(r["input"], Q, memo), P, inst, center,
+                             neighbors=int(s.get("neighbors", 4)), exact=bool(s.get("exact", False)),
+                             blend=k, smin=_smin)
 
     def _rib_layout(self, nd):
         """The ribs' wall distance, callable(P, fs) (fs the surface field at
@@ -2426,6 +2450,14 @@ class FieldGraph:
             return lo, np.maximum(hi, lo)
         if nd.op == "subtract":
             return sub[0]
+        if nd.op == "pattern" and isinstance(r.get("input"), str):
+            b = self._bounds(r["input"], seen)
+            if b is None:
+                return None
+            inst, _c = self._resource(nd, lambda: self._pattern_copies(nd))
+            corners = np.array([[b[i][0], b[j][1], b[k][2]] for i in (0, 1) for j in (0, 1) for k in (0, 1)])
+            pts = np.concatenate([corners @ R.T + t for R, t in inst])
+            return pts.min(axis=0), pts.max(axis=0)
         if nd.op == "ribs" and isinstance(r.get("surface"), str):
             b = self._bounds(r["surface"], seen)
             if b is None or s.get("side", "inside") == "inside":

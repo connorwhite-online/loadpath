@@ -1813,6 +1813,43 @@ _FIELD_OPS = {
                                                                   "center": _VEC3},
                                  "required": ["degrees"], "additionalProperties": False},
                       "scale": _POS}, ["input"]),
+    "pattern": _op("pattern", "Copies of a body as one solid: in a line or grid (linear), round an axis "
+                              "(circular), mirrored across a plane, or along a curve. Each point reads the "
+                              "nearest few copies (`neighbors`), so a pattern of hundreds costs a few.",
+                   {"input": {**_FIELD, "description": "the body copied"},
+                    "type": {"enum": ["linear", "circular", "mirror", "curve"], "description": "default linear"},
+                    "step": {**_VEC3, "description": "linear: mm from one copy to the next"},
+                    "count": {"type": "integer", "minimum": 1, "description": "copies (linear, circular, curve)"},
+                    "directions": {"type": "array", "minItems": 1, "maxItems": 3,
+                                   "items": {"type": "object", "properties": {"step": _VEC3,
+                                                                              "count": {"type": "integer",
+                                                                                        "minimum": 1}},
+                                             "required": ["step"], "additionalProperties": False},
+                                   "description": "linear: a grid, one {step, count} per direction"},
+                    "axis": {**_AXIS, "description": "circular: the axis (default z)"},
+                    "center": {**_VEC3, "description": "circular: a point on the axis"},
+                    "angle": {"type": "number", "description": "circular: degrees swept (default 360, evenly "
+                                                               "round; less spreads the copies end to end)"},
+                    "rotate": {"type": "boolean", "description": "circular: turn each copy with the pattern "
+                                                                 "(default true)"},
+                    "pivot": _VEC3,
+                    "plane": {"type": "object", "properties": {"point": _VEC3, "normal": _AXIS},
+                              "required": ["normal"], "additionalProperties": False,
+                              "description": "mirror: the plane"},
+                    "keep": {"type": "boolean", "description": "mirror: keep the original too (default true)"},
+                    "path": {"type": "array", "items": _VEC3, "minItems": 2,
+                             "description": "curve: the polyline the copies go along"},
+                    "closed": {"type": "boolean", "description": "curve: a closed loop (no copy doubled at "
+                                                                 "the ends)"},
+                    "orient": {"type": "boolean", "description": "curve: turn each copy's x along the curve, "
+                                                                 "z toward `up` (default true)"},
+                    "up": _AXIS, "anchor": {**_VEC3, "description": "curve: the input's point that goes on "
+                                                                     "the curve (default the path's start)"},
+                    "blend": _FIELD,
+                    "neighbors": {"type": "integer", "minimum": 1, "description": "copies read per point "
+                                                                                  "(default 4)"},
+                    "exact": {"type": "boolean", "description": "read every copy at every point"}},
+                   ["input"]),
     "ribs": _op("ribs", "Ribs on a solid's face: walls of `thickness` standing `height` off its surface "
                         "(inside it, under the face, or outside), laid along curves projected onto it "
                         "(`paths`), a `pattern` (square grid, isogrid, radial spokes and rings), or the "

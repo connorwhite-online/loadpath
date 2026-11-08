@@ -1945,7 +1945,7 @@
     },
     "node": {
       "title": "a node object with an 'op'",
-      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, image, remap, expr, union, intersect, subtract, shell, offset, lattice, transform, ribs, group.",
+      "description": "A field node: constant, coordinate, distance, shape, mesh, result, grid, image, remap, expr, union, intersect, subtract, shell, offset, lattice, transform, pattern, ribs, group.",
       "oneOf": [
         {
           "$ref": "#/$defs/op-constant"
@@ -1999,6 +1999,9 @@
           "$ref": "#/$defs/op-transform"
         },
         {
+          "$ref": "#/$defs/op-pattern"
+        },
+        {
           "$ref": "#/$defs/op-ribs"
         },
         {
@@ -2025,6 +2028,7 @@
           "offset": "#/$defs/op-offset",
           "lattice": "#/$defs/op-lattice",
           "transform": "#/$defs/op-transform",
+          "pattern": "#/$defs/op-pattern",
           "ribs": "#/$defs/op-ribs",
           "group": "#/$defs/op-group"
         }
@@ -3759,6 +3763,291 @@
         "scale": {
           "type": "number",
           "exclusiveMinimum": 0
+        },
+        "description": {
+          "type": "string",
+          "description": "What the node is for (ignored)."
+        },
+        "bounds": {
+          "type": "object",
+          "description": "Where this solid lives, when it cannot be worked out (meshing needs the output's).",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "op-pattern": {
+      "type": "object",
+      "description": "Copies of a body as one solid: in a line or grid (linear), round an axis (circular), mirrored across a plane, or along a curve. Each point reads the nearest few copies (`neighbors`), so a pattern of hundreds costs a few.",
+      "properties": {
+        "op": {
+          "const": "pattern"
+        },
+        "input": {
+          "title": "a number, a node name or a node object",
+          "description": "the body copied",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "type": {
+          "enum": [
+            "linear",
+            "circular",
+            "mirror",
+            "curve"
+          ],
+          "description": "default linear"
+        },
+        "step": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "linear: mm from one copy to the next"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "copies (linear, circular, curve)"
+        },
+        "directions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "step": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "[x, y, z]"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "step"
+            ],
+            "additionalProperties": false
+          },
+          "description": "linear: a grid, one {step, count} per direction"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "circular: the axis (default z)"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "circular: a point on the axis"
+        },
+        "angle": {
+          "type": "number",
+          "description": "circular: degrees swept (default 360, evenly round; less spreads the copies end to end)"
+        },
+        "rotate": {
+          "type": "boolean",
+          "description": "circular: turn each copy with the pattern (default true)"
+        },
+        "pivot": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "[x, y, z]"
+        },
+        "plane": {
+          "type": "object",
+          "properties": {
+            "point": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "normal": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                }
+              ],
+              "description": "'x', 'y', 'z' or a direction vector"
+            }
+          },
+          "required": [
+            "normal"
+          ],
+          "additionalProperties": false,
+          "description": "mirror: the plane"
+        },
+        "keep": {
+          "type": "boolean",
+          "description": "mirror: keep the original too (default true)"
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "[x, y, z]"
+          },
+          "minItems": 2,
+          "description": "curve: the polyline the copies go along"
+        },
+        "closed": {
+          "type": "boolean",
+          "description": "curve: a closed loop (no copy doubled at the ends)"
+        },
+        "orient": {
+          "type": "boolean",
+          "description": "curve: turn each copy's x along the curve, z toward `up` (default true)"
+        },
+        "up": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            }
+          ],
+          "description": "'x', 'y', 'z' or a direction vector"
+        },
+        "anchor": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "curve: the input's point that goes on the curve (default the path's start)"
+        },
+        "blend": {
+          "title": "a number, a node name or a node object",
+          "description": "A number, the name of another node, or an inline node object: anywhere a number goes, a field can drive it.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "description": "a node name"
+            },
+            {
+              "$ref": "#/$defs/node"
+            }
+          ]
+        },
+        "neighbors": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "copies read per point (default 4)"
+        },
+        "exact": {
+          "type": "boolean",
+          "description": "read every copy at every point"
         },
         "description": {
           "type": "string",
