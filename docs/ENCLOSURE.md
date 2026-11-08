@@ -131,4 +131,62 @@ STEP, a generated mesh that needs repair, or an SDF: `handoff`'s intake
 `examples/enclosure/sensor_puck.py` writes a generic handheld sensor puck
 (an 84 x 56 x 24 mm pebble with a USB-C port at one end and a battery door
 underneath), its parts and the brief above, then runs it.
+`examples/enclosure/render.py` draws the result.
 
+![sensor puck: the exterior, the parts as placed, the delivered interior](images/enclosure/sensor-puck.png)
+
+Nothing about where the parts go is in the brief beyond the rules. On
+0.6 mm cells (the skin two cells thick) loadpath placed all four in three
+minutes:
+
+- **The board and its USB-C connector** turned so the connector's face
+  points out of the port and sits on the port's axis, 0.8 mm short of the
+  outer surface. The brief asked for 0.3 mm; the board's edge stops on
+  the rim around the mouth first.
+- **The battery** went on the floor, straight over the door.
+- **The motor** went up against the ceiling, 0.5 mm under the skin and
+  directly over the board (4.7 mm above it), so its wires stay short.
+
+Each part has a checked way in, in the assembly order (motor, board,
+battery, door):
+
+- The motor and the battery drop straight in through the door.
+- The board, with the connector soldered on, comes out the way it went
+  in. It slides 11.3 mm along +y to free the connector from the port, then
+  drops out through the door. Its turn sits mid-way between the lengths
+  that clear both rims.
+
+Every path is swept as a keep-out, and no keep-out overlaps the skin by any
+amount (`pathsIntoSkin` 0.0 mm³ for each part). The cradles went under the
+board (-y), the battery (+y) and the motor (+z).
+
+`run` then designed the interior for six 300 g drops, one onto each face,
+and a 150 N squeeze across the width. It delivered 43.9 g at 30% of the
+design space and 34.2 g at 15% before its 100-minute limit, out of an
+84.9 g design space. `checks.json` reads the 34.2 g part:
+
+| check | result |
+|---|---|
+| exterior proud of the designer's surface | 0.0 mm (34,034 samples) |
+| exterior surface still there | 100% |
+| watertight STL | yes |
+| material in any keep-out or way in | 0.000003 mm³ |
+| safety factor, worst case (squeeze-y) | 3.0 (goal 1.5) |
+| safety factor, drops -z / +z / -x / +x / -y / +y | 4.1 / 6.7 / 3.8 / 3.8 / 4.4 / 4.1 |
+| largest deflection (drop -x) | 0.22 mm |
+| buckling factor | 7.2 |
+
+The table is read on 121,498 cut cells at 0.44 mm, not on the
+optimizer's grid. The run hit its time limit before the tet re-check, so
+the safety factors are cut-cell readings. A `loadpath verify` on tets
+would confirm them.
+
+The first run of this example found three bugs, and all of them are fixed:
+
+- **A rim notch.** The board's way out cleared the door's rim by 0.04 mm
+  too little. Because a keep-out is cut from everything, that path cut
+  7.9 mm³ out of the skin's rim.
+- **Material back in the keep-outs.** The mesh cleanup's pinch filler put
+  up to 18 mm³ back inside the ways in.
+- **A leaky STL.** 14 sliver edges that only an STL reader's weld exposes
+  made the file read as not watertight.

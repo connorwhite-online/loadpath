@@ -92,7 +92,10 @@ Where it is strongest:
   places each part can actually be assembled into in order, and designs
   everything invisible around them for drops, squeezes and presses, with
   the exterior checked untouched on the delivered part
-  ([docs/ENCLOSURE.md](docs/ENCLOSURE.md)). The designer's exterior is kept
+  ([docs/ENCLOSURE.md](docs/ENCLOSURE.md)): a generic sensor puck's
+  four parts placed from one brief and the interior delivered at 34 g of
+  PA12, safety factor 3.0 in six drops and a squeeze, the exterior 0.0 mm
+  proud and all of it still there. The designer's exterior is kept
   as a thin cosmetic skin, every component's assembly path kept clear, and
   the inside can be designed for how the product should feel too: a push pad that fires
   its switch at a chosen force anywhere on the touch area, a grip that gives
