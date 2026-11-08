@@ -371,6 +371,32 @@ the designer's call (a lower drop height or a softer board bounce floor
 would each let the others pass). Part and report in the project files
 (`feel/touch-mic-0.7/`).
 
+### Holding the touch microphone's board still (2026-11-08)
+
+With the rim corners at 350-450 gf (firm on purpose) the push-pad part
+reads 14 of 14 presses and drops face-down at 1860 g, but its board bounces
+like the bare shell's: 11.6 N/mm up and down, a 225 Hz mode, against a
+floor of 26 N/mm (a mode over 335 Hz, for a 150 Hz handling band).
+
+Restarted from that part (`optimize_switch(x0=..., beta_start=8)`, 80
+iterations at 0.7 mm) with the clicks, the drop and the bounce all on, the
+design keeps 14 of 14 presses (12 printed) and the drop on the design
+(145 N/mm), and gets the bounce to 16 N/mm (203 Hz) and no further; the
+printed part drops at 2190 g.
+
+The reason is where the board sits. Its only support is the rails at the
+USB end (y 20-30 mm); the rails along the rest of it are thinner than a
+cell, and under its middle is the flap, a separate part. So the 6 g board
+is a weight on the end of a diving board: the bare shell gives 11.6 N/mm,
+a solid interior only 52 (and a 3500 g drop). The bounce floor needs half
+of solid while the drop allows a quarter.
+
+What would change that is outside this part: a second support under the
+board's middle (a standoff on the flap, or a clip in the rails), which
+the clearance rule (0.2 mm round the board) now forbids. Under a 5 g knock
+the board moves 0.02 mm on today's part, so it does not knock against
+anything; what remains is a mode at 200-225 Hz.
+
 ## Limits
 
 - Linear and quasi-static: the drop is an elastic spring (no crush, no

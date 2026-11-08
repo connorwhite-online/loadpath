@@ -94,6 +94,16 @@ plunger and its seat read off the placed parts) and a `feel` block pass
 through. Component `watts` go into the study's `thermal` block when the
 brief has one.
 
+`rattle: {band, maxAmplification, g, maxTravel}` holds every mounted part
+still in the hand: each massed part gets a feel `isolate` target
+(FEEL.md) from the skin where the hand is (`hold`, default the whole skin)
+to its cradle, with its resonance kept above the handling `band` (default
+150 Hz, at most 1.25x the hand's motion over it) and a knock at `g`
+(default 5) moving it under `maxTravel` mm (default 0.1) on its mount, so
+it neither rings nor knocks against its neighbours. The targets are
+designed with everything else and read on the delivered part, modes
+included.
+
 **5. It writes an ordinary study**: the exterior as its `skin` (preserved,
 never edited, with no skin across the openings), the whole interior as
 design space, components as keep-outs with their paths, cradles as

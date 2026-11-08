@@ -698,7 +698,7 @@ CUT_MIN_PITCH = 0.5
 
 
 def run_feel(study, out_dir: str, pitches=None, iterations=None, on_progress=None, modal: bool = True,
-             nonlinear: bool | None = None) -> dict:
+             nonlinear: bool | None = None, optimize: dict | None = None) -> dict:
     """Optimize, mesh and check a study's `feel` block (with its `switch`
     block too, if it has one). Writes <name>.stl and returns the report:
     per target its window and its reading on the design, on the
@@ -803,7 +803,7 @@ def run_feel(study, out_dir: str, pitches=None, iterations=None, on_progress=Non
     mesh_opts = ReconstructOptions(axial_debias=bool(fb.get("keepThinMembers", True)))
     rep = run_switch(study, out_dir, pitches=pitches, iterations=iterations, on_progress=on_progress,
                      nonlinear=nonlinear, providers=[make], readback=readback, mesh_options=mesh_opts,
-                     optimize_options={"move_sharp": float(fb.get("moveSharp", 0.03))})
+                     optimize_options={"move_sharp": float(fb.get("moveSharp", 0.03)), **(optimize or {})})
     if skin_rows:
         rep["touchSkin"] = skin_rows
     rep["passes"] = bool(rep["feelOk"] and (rep["passes"] if rep.get("presses") else True))

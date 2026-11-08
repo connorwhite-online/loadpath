@@ -337,7 +337,25 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
             {"shape": {"type": "sphere", "center": _r(p), "r": float(pz.get("radius", 5.0))},
              "force": _r(-F * n, 3)},
             {"shape": face_slab(_axis_name(-n), t_skin + 0.5), "force": _r(F * n, 3)}]})
-    if not cases and not b.get("switch") and not b.get("feel"):
+    # rattle: every mounted component held still in the hand (feel.py
+    # isolate with upTo): its resonance above the handling band, and a knock
+    # at `g` moving it under maxTravel on its mount
+    rattle = loads.get("rattle")
+    rattle_targets = []
+    if rattle is not None:
+        want = rattle.get("components")
+        hold = rattle.get("hold") or {"region": "skin"}
+        for k, v in mounts.items():
+            if v["mass"] <= 0 or (want and k not in want):
+                continue
+            rattle_targets.append({
+                "kind": "isolate", "name": f"rattle-{k}", "hold": hold, "mount": {"region": f"mount-{k}"},
+                "kg": round(v["mass"], 6), "upTo": float(rattle.get("band", 150.0)),
+                "maxAmplification": float(rattle.get("maxAmplification", 1.25)),
+                "maxTravel": float(rattle.get("maxTravel", 0.1)), "shockG": float(rattle.get("g", 5.0))})
+        if not rattle_targets:
+            warnings.append("loads.rattle: no component has a mass with a mount; nothing to hold still")
+    if not cases and not b.get("switch") and not b.get("feel") and not rattle_targets:
         raise ValueError("enclosure: nothing to design for; give loads (drop, squeeze, press), loadCases, a "
                          "switch or a feel block")
 
@@ -362,6 +380,10 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     for k in ("process", "resolution", "maxIterations", "printDirection", "drains", "cooling", "feel"):
         if b.get(k) is not None:
             study[k] = b[k]
+    if rattle_targets:
+        fb = dict(study.get("feel") or {})
+        fb["targets"] = list(fb.get("targets") or []) + rattle_targets
+        study["feel"] = fb
     if b.get("cooling") is not None:
         # the cooling block's components from the parts list: each part's
         # watts and maxTemp (and conductivity) on its own keep-out, unless

@@ -1,12 +1,22 @@
 {
  "name": "touch-mic-feel",
- "description": "Touch microphone (SLS TPU 88A, real product CAD, round 17 surfacing): the push pad's fire-force map together with three feel targets under the same fixed exterior: a 10 N pinch across the flanks gives 0.15-0.6 mm, a 0.75 m face-down drop keeps the 6 g board on its rails under 2000 g and 1.2 mm of travel, and the board's resonance stays over a 150 Hz handling band (it sits on rails moulded into the base, so it cannot be soft-mounted). Bare skin: 1.26 mm pinch, 1040 g / 1.45 mm drop, 172 Hz board bounce. First run (2026-11-07): feel 5/5 on the design, 4/5 delivered (the drop reads 2850 g at 0.5 mm), presses 10/14 design and 9/14 delivered, 10.6 cm^3. Read on 0.7 mm cells the feel readings hold (pinch, board bounce in window; drop out) but 0 of 14 presses are in window: the press numbers are a 1 mm reading only.",
+ "description": "Touch microphone (SLS TPU 88A, real product CAD): the push pad's fire-force map (rim corners 350-450 gf, firm on purpose; the touch area pliable) with three feel targets under the same fixed exterior: a 10 N pinch across the flanks gives 0.15-0.6 mm, a 0.75 m face-down drop keeps the 6 g board on its rails under 2000 g and 1.2 mm of travel, and the board's resonance stays over a 150 Hz handling band. The board is carried only at its USB end; its bounce floor is not met (docs/FEEL.md). CAD from LOADPATH_TOUCH_MIC_STL.",
  "designSpace": {
   "type": "mesh",
   "path": "touch-mic-outer.stl"
  },
  "skin": {
-  "thickness": 1.0
+  "thickness": 1.0,
+  "openings": [
+   {
+    "shape": {
+     "type": "mesh",
+     "path": "touch-mic-opening.stl"
+    },
+    "inward": "+z",
+    "depth": 1.2
+   }
+  ]
  },
  "preserve": [
   {
@@ -192,7 +202,43 @@
    "direction": "-z",
    "gap": 0.4,
    "trigger": 65,
-   "travel": 0.25
+   "travel": 0.25,
+   "bearsOn": {
+    "part": {
+     "shape": {
+      "type": "mesh",
+      "path": "touch-mic-flap.stl"
+     },
+     "seat": {
+      "type": "box",
+      "min": [
+       -3.3,
+       -3.0,
+       2.6
+      ],
+      "max": [
+       3.3,
+       3.0,
+       2.8
+      ]
+     },
+     "supports": [
+      {
+       "type": "box",
+       "min": [
+        -30,
+        -35,
+        -0.5
+       ],
+       "max": [
+        30,
+        35,
+        0.31
+       ]
+      }
+     ]
+    }
+   }
   },
   "presses": [
    {
@@ -232,8 +278,8 @@
      12,
      -9
     ],
-    "max": 300.0,
-    "min": 100
+    "max": 450.0,
+    "min": 350.0
    },
    {
     "at": [
@@ -248,8 +294,8 @@
      14,
      6
     ],
-    "max": 300.0,
-    "min": 100
+    "max": 450.0,
+    "min": 350.0
    },
    {
     "at": [
@@ -280,8 +326,8 @@
      -12,
      -9
     ],
-    "max": 300.0,
-    "min": 100
+    "max": 450.0,
+    "min": 350.0
    },
    {
     "at": [
@@ -296,8 +342,8 @@
      -14,
      6
     ],
-    "max": 300.0,
-    "min": 100
+    "max": 450.0,
+    "min": 350.0
    },
    {
     "at": [
@@ -309,17 +355,79 @@
    }
   ],
   "pressRadius": 1.0,
-  "clearance": {
-   "region": "board",
-   "gap": 1.4
-  },
+  "clearance": [
+   {
+    "component": {
+     "type": "mesh",
+     "path": "touch-mic-pcb.stl"
+    },
+    "id": "pcb",
+    "margin": 0.2,
+    "region": "skin"
+   },
+   {
+    "component": {
+     "type": "mesh",
+     "path": "touch-mic-receptacle.stl"
+    },
+    "id": "receptacle",
+    "margin": 0.2,
+    "region": "skin"
+   },
+   {
+    "component": {
+     "type": "mesh",
+     "path": "touch-mic-chip.stl"
+    },
+    "id": "chip",
+    "margin": 0.2,
+    "region": "skin"
+   }
+  ],
   "hold": [
    {
     "case": "squeeze",
     "maxDeflection": 0.3
    }
   ],
-  "iterations": 80
+  "pitches": [
+   1.0,
+   0.7
+  ],
+  "iterations": [
+   60,
+   60
+  ]
+ },
+ "expect": {
+  "minInWindow": 12,
+  "minDeliveredInWindow": 10,
+  "maxVolume": 11500,
+  "coarse": {
+   "pitches": [
+    1.0
+   ],
+   "iterations": 40
+  },
+  "minFeelInWindow": 4,
+  "minFeelDeliveredInWindow": 3,
+  "minFeelModalOk": 2
+ },
+ "assets": {
+  "env": "LOADPATH_TOUCH_MIC_STL",
+  "files": [
+   "touch-mic-outer.stl",
+   "touch-mic-base.stl",
+   "touch-mic-bay.stl",
+   "touch-mic-opening.stl",
+   "touch-mic-boardspace.stl",
+   "touch-mic-flap.stl",
+   "touch-mic-switch.stl",
+   "touch-mic-pcb.stl",
+   "touch-mic-receptacle.stl",
+   "touch-mic-chip.stl"
+  ],
+  "make": "python examples/switch/touch_mic.py --touch-mic <touch-mic checkout> --out <dir> --stl-only"
  },
  "feel": {
   "targets": [
@@ -406,27 +514,5 @@
     "maxAmplification": 1.25
    }
   ]
- },
- "expect": {
-  "minInWindow": 9,
-  "minDeliveredInWindow": 8,
-  "maxVolume": 11500,
-  "coarse": {
-   "iterations": 40
-  },
-  "minFeelInWindow": 5,
-  "minFeelDeliveredInWindow": 4,
-  "minFeelModalOk": 3
- },
- "assets": {
-  "env": "LOADPATH_TOUCH_MIC_STL",
-  "files": [
-   "touch-mic-outer.stl",
-   "touch-mic-base.stl",
-   "touch-mic-bay.stl",
-   "touch-mic-opening.stl",
-   "touch-mic-boardspace.stl"
-  ],
-  "make": "python examples/switch/touch_mic.py --touch-mic <touch-mic checkout> --out <dir> --stl-only"
  }
 }

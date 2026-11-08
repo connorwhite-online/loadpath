@@ -1082,7 +1082,7 @@ def _relax_skin_limited(domain, nu, spec, floor, modulus):
 
 def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_max: float = 16.0,
                     beta_every: int = 15, move: float = 0.1, on_iter=None, tol: float = 0.003,
-                    providers=None, move_sharp: float | None = None) -> SwitchResult:
+                    providers=None, move_sharp: float | None = None, beta_start: float = 1.0) -> SwitchResult:
     """Minimize volume subject to the study's `switch` block (see the module
     docstring), on each pitch in turn (coarse to fine). Returns the last
     level's design, its fire forces and the per-level summaries.
@@ -1095,6 +1095,11 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
     projects the filtered design itself (ctx: xt, beta, floor, preserve). The
     feel targets (feel.py) come in this way. With providers the study may
     have no `switch` block at all.
+
+    x0: the starting density, a number or (warm start) a design on the
+    first pitch's grid, one value per element; beta_start the projection
+    sharpness to start from (a warm start from a finished design wants it
+    high, or the blurred start forgets the design).
 
     move_sharp: the move limit once the projection is at full sharpness
     (default: `move` throughout). At beta 16 a 0.1 step in x is nearly a
@@ -1114,7 +1119,7 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
     modulus = float(study.material.E)
     history, levels = [], []
     prev_dom, prev_x = None, None
-    beta = 1.0
+    beta = float(beta_start)
     it_total = 0
     relaxed = []
     for li, pitch in enumerate(pitches):
@@ -1133,7 +1138,11 @@ def optimize_switch(study, pitches=None, iterations=None, x0: float = 0.5, beta_
         h, hs = density_filter(domain, radius)
         ht = h.T
         solves = _Solves(domain, nu)
-        if prev_dom is None:
+        if prev_dom is None and np.ndim(x0):
+            x = np.clip(np.asarray(x0, float).copy(), 0.0, 1.0)
+            if len(x) != n:
+                raise ValueError(f"x0 has {len(x)} values; the {pitch} mm grid has {n} elements")
+        elif prev_dom is None:
             x = np.full(n, float(x0))
         else:
             x = np.clip(_interp_design(prev_dom, prev_x, domain), 0.0, 1.0)

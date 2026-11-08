@@ -176,6 +176,33 @@ def test_cooling_block_takes_the_parts_heat():
     assert co["ambient"] == 30.0
 
 
+def test_rattle_holds_every_mounted_part_still():
+    """loads.rattle: an isolate (upTo) feel target per massed, mounted
+    part, from the hand on the skin to its mount; the study lints and the
+    targets resolve on its grid."""
+    from loadpath.domain import build_domain
+    from loadpath.feel import feel_from_study
+    from loadpath.spec import study_from_dict
+    b = product()
+    b["loads"]["rattle"] = {"band": 120, "g": 4}
+    assert not [x for x in lint(b, "enclosure") if x["level"] == "error"], lint(b, "enclosure")
+    out = tempfile.mkdtemp()
+    r = enclosure(b, _DIR, out)
+    st = r["study"]
+    ts = {t["name"]: t for t in st["feel"]["targets"]}
+    assert set(ts) == {"rattle-board", "rattle-battery"}, ts
+    t = ts["rattle-battery"]
+    assert t["kind"] == "isolate" and t["upTo"] == 120 and t["shockG"] == 4 and t["kg"] == 0.02, t
+    assert t["mount"] == {"region": "mount-battery"} and t["hold"] == {"region": "skin"}
+    assert not [x for x in lint(st, "study") if x["level"] == "error"], lint(st, "study")
+    from loadpath.enclosure import _localize
+    st = json.loads(json.dumps(st))
+    _localize(st, out)
+    s = study_from_dict(st, base_dir=out)
+    got = feel_from_study(s, build_domain(s, 2.0))
+    assert [g.kmin > 0 and g.kmax is None for g in got] == [True, True], got
+
+
 def test_exterior_check_on_a_half():
     """A split shell's half is checked against the exterior inside its own
     region only: the other half's skin is not missing."""

@@ -2478,7 +2478,24 @@ ENCLOSURE_SCHEMA = {
             "squeeze": {"anyOf": [_SQUEEZE, {"type": "array", "items": _SQUEEZE}],
                         "description": "a hand squeezing across an axis"},
             "press": {"anyOf": [_PRESS, {"type": "array", "items": _PRESS}],
-                      "description": "a finger or a weight on the exterior, held by the far face"}},
+                      "description": "a finger or a weight on the exterior, held by the far face"},
+            "rattle": {"type": "object", "properties": {
+                "band": {**_POS, "description": "handling band, Hz: each mounted component's resonance is kept "
+                                                "above it (default 150)"},
+                "maxAmplification": {**_POS, "description": "worst amplification of the hand's motion at the "
+                                                            "component over the band (default 1.25)"},
+                "g": {**_POS, "description": "handling acceleration, g: a knock or a shake (default 5)"},
+                "maxTravel": {**_POS, "description": "mm a component may move on its mount under that "
+                                                    "acceleration before it rattles against its neighbours "
+                                                    "(default 0.1)"},
+                "hold": {"description": "where the hand holds the product, a feel location (default the whole "
+                                        "skin)"},
+                "components": {"type": "array", "items": {"type": "string"},
+                               "description": "component ids to check (default every component with a mass "
+                                              "and a mount)"}},
+                "additionalProperties": False,
+                "description": "no component rattles or rings when the product is handled: an isolate "
+                               "(upTo) feel target per mounted component, between the hand and its mount"}},
             "additionalProperties": False},
         "rest": {**_AXIS, "description": "the side it is held by for the analysis (default -z): a small patch of "
                                          "the exterior there"},
