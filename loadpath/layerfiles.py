@@ -13,7 +13,15 @@ or a machine that takes layers rather than a mesh.
   contours (even-odd), the angle turned by 67 degrees a layer as machines
   do, so no two layers' tracks line up.
 - `write_cli(path, layers)` / `read_cli(path)`: the file and back
-  (integer micrometres, $$UNITS/0.001).
+  (integer micrometres, $$UNITS/0.001); `binary=True` writes binary CLI
+  (long commands, float32 coordinates), which `read_cli` reads too.
+- `write_slc(path, layers)` / `read_slc(path)`: 3D Systems' SLC 2.0
+  (binary contours, outer loops counter-clockwise and holes clockwise, no
+  hatches: SLC carries boundaries only, the machine fills them).
+
+EOS's SLI and Renishaw's MTT are closed formats without public
+specifications; both machines' build processors (EOSPRINT, QuantAM) take
+CLI in, so CLI is the hand-off for them.
 
 Slicing is exact on the mesh (plane-triangle intersections chained into
 loops); a layer is sampled at its mid-height, as build processors do.
@@ -21,10 +29,12 @@ loops); a layer is sampled at its mid-height, as build processors do.
 from __future__ import annotations
 
 import datetime
+import struct
 
 import numpy as np
 
-__all__ = ["Layer", "slice_layers", "hatch_layer", "write_cli", "read_cli", "export_cli"]
+__all__ = ["Layer", "export_cli", "export_layers", "hatch_layer", "read_cli", "read_slc", "slice_layers", "write_cli",
+           "write_slc"]
 
 HATCH_TURN = 67.0          # degrees per layer
 
@@ -187,10 +197,14 @@ def hatch_layer(contours, spacing: float, angle: float = 0.0) -> np.ndarray:
     return H @ rot                                     # back to the layer's axes
 
 
-def write_cli(path: str, layers: list, label: str = "part", units: float = 0.001) -> dict:
+def write_cli(path: str, layers: list, label: str = "part", units: float = 0.001, binary: bool = False) -> dict:
     """An ASCII CLI file: one $$LAYER per layer (its top height), a
     $$POLYLINE per contour (direction 1 outer, 0 hole), one $$HATCHES per
-    layer. Coordinates in integer multiples of `units` mm."""
+    layer. Coordinates in integer multiples of `units` mm. `binary`: the
+    binary CLI form (the same header with $$BINARY, then long commands:
+    127 layer, 130 polyline, 132 hatches, float32 in `units`)."""
+    if binary:
+        return _write_cli_binary(path, layers, label, units)
     def q(v):
         return np.rint(np.asarray(v, float) / units).astype(np.int64)
 
@@ -224,8 +238,94 @@ def write_cli(path: str, layers: list, label: str = "part", units: float = 0.001
     return {"path": path, "layers": len(layers), "contours": n_poly, "hatches": n_hatch, "units": units}
 
 
+def _header_extent(layers):
+    pts = [p for L in layers for p, _ in L.contours]
+    if pts:
+        allp = np.concatenate(pts)
+        return allp.min(axis=0), allp.max(axis=0)
+    return np.zeros(2), np.zeros(2)
+
+
+def _write_cli_binary(path, layers, label, units):
+    lo, hi = _header_extent(layers)
+    z0 = layers[0].z if layers else 0.0
+    z1 = layers[-1].z if layers else 0.0
+    n_poly = n_hatch = 0
+    head = ("$$HEADERSTART\n$$BINARY\n"
+            f"$$UNITS/{units:.6g}\n$$VERSION/200\n$$LABEL/1,{label}\n$$DATE/{datetime.date.today():%d%m%y}\n"
+            f"$$DIMENSION/{lo[0]/units:.6f},{lo[1]/units:.6f},{z0/units:.6f},{hi[0]/units:.6f},{hi[1]/units:.6f},"
+            f"{z1/units:.6f}\n$$LAYERS/{len(layers)}\n$$HEADEREND")
+    with open(path, "wb") as fh:
+        fh.write(head.encode("ascii"))
+        for L in layers:
+            fh.write(struct.pack("<Hf", 127, L.z / units))
+            for p, direc in L.contours:
+                c = np.vstack([p, p[:1]]) / units
+                fh.write(struct.pack("<Hiii", 130, 1, int(direc), len(c)))
+                fh.write(c.astype("<f4").tobytes())
+                n_poly += 1
+            if len(L.hatches):
+                h = L.hatches.reshape(-1, 4) / units
+                fh.write(struct.pack("<Hii", 132, 1, len(h)))
+                fh.write(h.astype("<f4").tobytes())
+                n_hatch += len(h)
+    return {"path": path, "layers": len(layers), "contours": n_poly, "hatches": n_hatch, "units": units,
+            "format": "cli-binary"}
+
+
+def _read_cli_binary(data, start, units):
+    layers, i = [], start
+    while i + 2 <= len(data):
+        (cmd,) = struct.unpack_from("<H", data, i)
+        i += 2
+        if cmd == 127:
+            (z,) = struct.unpack_from("<f", data, i)
+            i += 4
+            layers.append(Layer(z * units, []))
+        elif cmd == 128:
+            (z,) = struct.unpack_from("<H", data, i)
+            i += 2
+            layers.append(Layer(z * units, []))
+        elif cmd == 130:
+            _id, direc, n = struct.unpack_from("<iii", data, i)
+            i += 12
+            p = np.frombuffer(data, "<f4", 2 * n, i).reshape(n, 2).astype(float) * units
+            i += 8 * n
+            layers[-1].contours.append((p[:-1] if n > 1 and np.allclose(p[0], p[-1]) else p, direc))
+        elif cmd == 129:
+            _id, direc, n = struct.unpack_from("<HHH", data, i)
+            i += 6
+            p = np.frombuffer(data, "<u2", 2 * n, i).reshape(n, 2).astype(float) * units
+            i += 4 * n
+            layers[-1].contours.append((p[:-1] if n > 1 and np.allclose(p[0], p[-1]) else p, direc))
+        elif cmd == 132:
+            _id, n = struct.unpack_from("<ii", data, i)
+            i += 8
+            h = np.frombuffer(data, "<f4", 4 * n, i).reshape(n, 2, 2).astype(float) * units
+            i += 16 * n
+            layers[-1].hatches = np.concatenate([layers[-1].hatches, h])
+        elif cmd == 131:
+            _id, n = struct.unpack_from("<HH", data, i)
+            i += 4
+            h = np.frombuffer(data, "<u2", 4 * n, i).reshape(n, 2, 2).astype(float) * units
+            i += 8 * n
+            layers[-1].hatches = np.concatenate([layers[-1].hatches, h])
+        else:
+            raise ValueError(f"binary CLI: unknown command {cmd} at byte {i - 2}")
+    return layers
+
+
 def read_cli(path: str) -> list:
-    """Layers back from an ASCII CLI file (contours and hatches, mm)."""
+    """Layers back from a CLI file, ASCII or binary (contours and hatches, mm)."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    end = data.find(b"$$HEADEREND")
+    if end >= 0 and b"$$BINARY" in data[:end]:
+        units = 1.0
+        for ln in data[:end].decode("ascii", "replace").splitlines():
+            if ln.strip().startswith("$$UNITS/"):
+                units = float(ln.strip().split("/", 1)[1])
+        return _read_cli_binary(data, end + len(b"$$HEADEREND"), units)
     units, layers = 1.0, []
     geo = False
     with open(path) as fh:
@@ -250,6 +350,95 @@ def read_cli(path: str) -> list:
                 h = np.asarray(v[2:2 + 4 * n]).reshape(n, 2, 2) * units
                 layers[-1].hatches = np.concatenate([layers[-1].hatches, h])
     return layers
+
+
+SLC_END = 0xFFFFFFFF
+
+
+def write_slc(path: str, layers: list, layer: float | None = None, label: str = "loadpath") -> dict:
+    """3D Systems SLC 2.0: an ASCII header (to CR LF ^Z), 256 reserved
+    bytes, a one-entry sampling table (first z, layer thickness, line-width
+    compensation 0), then per layer its z (float32), boundary count and each
+    boundary as a closed float32 polyline (vertices, gaps 0); the file ends
+    with the last z and 0xFFFFFFFF. Contours only, in mm; holes run
+    clockwise."""
+    lo, hi = _header_extent(layers)
+    z0 = layers[0].z if layers else 0.0
+    z1 = layers[-1].z if layers else 0.0
+    if layer is None:
+        layer = float(np.median(np.diff([L.z for L in layers]))) if len(layers) > 1 else 0.1
+    head = (f"-SLCVER 2.0 -UNIT MM -TYPE PART -PACKAGE {label} "
+            f"-EXTENTS {lo[0]:.4f},{hi[0]:.4f} {lo[1]:.4f},{hi[1]:.4f} {z0 - layer:.4f},{z1:.4f}")
+    n_poly = 0
+    with open(path, "wb") as fh:
+        fh.write(head.encode("ascii") + b"\r\n\x1a")
+        fh.write(bytes(256))
+        fh.write(struct.pack("<B4f", 1, z0 - layer, layer, 0.0, 0.0))
+        for L in layers:
+            fh.write(struct.pack("<fI", L.z, len(L.contours)))
+            for p, _ in L.contours:
+                c = np.vstack([p, p[:1]])
+                fh.write(struct.pack("<II", len(c), 0))
+                fh.write(c.astype("<f4").tobytes())
+                n_poly += 1
+        fh.write(struct.pack("<fI", z1, SLC_END))
+    return {"path": path, "layers": len(layers), "contours": n_poly, "hatches": 0, "layerThickness": layer,
+            "format": "slc"}
+
+
+def read_slc(path: str) -> list:
+    """Layers back from an SLC file (contours, mm; direction from each
+    loop's winding: counter-clockwise outer, clockwise hole)."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    end = data.find(b"\r\n\x1a")
+    if end < 0:
+        raise ValueError(f"{path}: no SLC header (it ends with CR LF ^Z)")
+    head = data[:end].decode("ascii", "replace").upper()
+    scale = 25.4 if "-UNIT INCH" in head else 1.0
+    i = end + 3 + 256
+    (n_tab,) = struct.unpack_from("<B", data, i)
+    i += 1 + 16 * n_tab
+    layers = []
+    while i + 8 <= len(data):
+        z, nb = struct.unpack_from("<fI", data, i)
+        i += 8
+        if nb == SLC_END:
+            break
+        L = Layer(z * scale, [])
+        for _ in range(nb):
+            nv, ng = struct.unpack_from("<II", data, i)
+            i += 8
+            p = np.frombuffer(data, "<f4", 2 * nv, i).reshape(nv, 2).astype(float) * scale
+            i += 8 * nv
+            if nv > 1 and np.allclose(p[0], p[-1]):
+                p = p[:-1]
+            L.contours.append((p, 1 if _signed_area(p) > 0 else 0))
+        layers.append(L)
+    return layers
+
+
+def export_layers(mesh, path: str, fmt: str = "cli", layer: float = 0.03, hatch: float | None = 0.1,
+                  axis=(0.0, 0.0, 1.0), label: str = "part", turn: float = HATCH_TURN) -> dict:
+    """Slice and write one of the layer formats: cli (ASCII), cli-binary or
+    slc (contours only)."""
+    if fmt == "cli":
+        return export_cli(mesh, path, layer, hatch, axis, label, turn)
+    if fmt not in ("cli-binary", "slc"):
+        raise ValueError(f"layer format must be cli, cli-binary or slc, not {fmt!r}")
+    layers = slice_layers(mesh, layer, axis)
+    if fmt == "slc":
+        info = write_slc(path, layers, layer=layer, label=label)
+    else:
+        for k, L in enumerate(layers):
+            if hatch:
+                L.hatches = hatch_layer(L.contours, hatch, (k * turn) % 180.0)
+        info = write_cli(path, layers, label=label, binary=True)
+    vol = float(sum(L.area() for L in layers) * layer)
+    info.update(layerThickness=layer, hatchSpacing=hatch if fmt != "slc" else None, height=len(layers) * layer,
+                volume=vol, meshVolume=float(abs(mesh.volume)),
+                openLayers=int(sum(1 for L in layers if not L.contours and L is not layers[-1])))
+    return info
 
 
 def export_cli(mesh, path: str, layer: float = 0.03, hatch: float | None = 0.1, axis=(0.0, 0.0, 1.0),

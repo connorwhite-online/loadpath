@@ -55,7 +55,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | Compliance with a volume or mass target, several load cases | `simp.py`, the search for the lightest part that meets a safety factor and deflection | Have |
 | Stress and displacement constraints | `goal.safetyFactor`, `maxDeflection`, the constrained method (`constrained.py`) | Have |
 | Natural frequency response and constraint | `vibration.minFrequency` with carried masses ([README](../loadpath/README.md#the-study)) | Have (new) |
-| Mass, centre of mass, moment of inertia responses | `report.massProperties` on every part; `massProperties.axis` weighs inertia into the design, `maxInertia` caps it | Have (new); centre of mass reported, not constrained |
+| Mass, centre of mass, moment of inertia responses | `report.massProperties` on every part; `massProperties.axis` weighs inertia into the design, `maxInertia` caps it, `centerOfMass` {target, tolerance} pulls the centre of mass to a point on any of its axes in the optimizer and checks it in the report | Have (new) |
 | Overhang, min / max feature, symmetry, pattern repetition, extrusion | `printDirection` / `process`, `minMember`, `maxMember`, `symmetry`, `pattern`, `extrusion` | Have |
 | Demold, 3- and 5-axis milling | `casting` (draw, sides, draft), `milling` (2.5 / 3 / 5 axis, tool diameter) | Have |
 | Passive regions | `preserve`, `keepOut` | Have |
@@ -83,7 +83,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | --- | --- | --- |
 | Build orientation, minimum support orientation | `orient.py` | Have |
 | Overhang, thickness, trapped powder | `check_dfm`, `processcheck.py`, `drains.py` | Have |
-| Slicing, hatching, slice export (CLI) | `loadpath slices`: contours and hatches in a CLI file (`layerfiles.py`); FDM G-code through a slicer (`slicer.py`) | Have (CLI new); SLC, EOS and Renishaw native formats not yet |
+| Slicing, hatching, slice export (CLI, SLC) | `loadpath slices`: contours and hatches in ASCII or binary CLI, or 3D Systems SLC contours (`--format`, `layerfiles.py`); FDM G-code through a slicer (`slicer.py`) | Have (new); EOS SLI and Renishaw MTT are closed formats with no public spec, and EOSPRINT and QuantAM take CLI in |
 | Build volumes, nesting | build-volume fit per material (`dfm_reference.py`); `loadpath nest` packs parts and copies on the plate or stacked in an SLS / MJF cake, gap measured (`nesting.py`) | Have (new) |
 
 ## Export and exchange
@@ -104,7 +104,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 
 ## What is left
 
-By count: about 58 rows have it, 2 partial, none missing. External flow
+By count: about 60 rows have it, 1 partial, none missing. External flow
 is now in, coarse: it reads drag on the high side and caps the Reynolds
 number, which is right for structural loads and not for aerodynamic design. The open problem nTop does not
 solve either is physical validation of printed parts

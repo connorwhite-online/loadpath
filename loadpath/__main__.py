@@ -120,7 +120,7 @@ def _step(args):
 def _slices(args):
     import trimesh
 
-    from .layerfiles import export_cli
+    from .layerfiles import export_layers
 
     m = trimesh.load(args.part, force="mesh")
     if not m.is_watertight:
@@ -128,10 +128,11 @@ def _slices(args):
                                    "(run `loadpath exterior` on it first)"}))
         return 1
     axis = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[args.axis]
-    out = args.out or os.path.splitext(args.part)[0] + ".cli"
+    fmt = args.format or ("slc" if (args.out or "").lower().endswith(".slc") else "cli")
+    out = args.out or os.path.splitext(args.part)[0] + (".slc" if fmt == "slc" else ".cli")
     name = os.path.splitext(os.path.basename(args.part))[0]
-    rep = export_cli(m, out, layer=args.layer, hatch=None if args.hatch == 0 else args.hatch, axis=axis,
-                     label=name)
+    rep = export_layers(m, out, fmt, layer=args.layer, hatch=None if args.hatch == 0 else args.hatch, axis=axis,
+                        label=name)
     rep["volumeError"] = round(rep["volume"] / rep["meshVolume"] - 1, 5) if rep["meshVolume"] else None
     print(json.dumps(rep, indent=1))
     return 0 if not rep["openLayers"] else 1
@@ -799,11 +800,14 @@ def main(argv=None):
                                        "file (Common Layer Interface, ASCII) for EOS, 3D Systems, Renishaw and "
                                        "other build processors")
     sl.add_argument("part", help="STL, 3MF or OBJ, in mm, closed")
-    sl.add_argument("--out", help="CLI path (default: the part's name with .cli)")
+    sl.add_argument("--out", help="layer file path (default: the part's name with .cli, or .slc)")
     sl.add_argument("--layer", type=float, default=0.03, help="layer thickness, mm (default 0.03, LPBF)")
     sl.add_argument("--hatch", type=float, default=0.1,
                     help="hatch spacing, mm (default 0.1; 0 for contours only); turned 67 degrees a layer")
     sl.add_argument("--axis", choices=["x", "y", "z"], default="z", help="build axis (default z)")
+    sl.add_argument("--format", choices=["cli", "cli-binary", "slc"],
+                    help="cli (ASCII, default), cli-binary, or slc (3D Systems, contours only; default when --out "
+                         "ends .slc)")
     ef = sub.add_parser("external-flow", help="a part in a stream of air or water (lattice Boltzmann wind "
                                               "tunnel): drag, lift, moment, and the surface forces as a load case")
     ef.add_argument("part", help="STL, 3MF or OBJ in mm, closed")

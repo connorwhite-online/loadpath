@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import trimesh
 
-from loadpath.layerfiles import export_cli, hatch_layer, read_cli, slice_layers
+from loadpath.layerfiles import export_cli, export_layers, hatch_layer, read_cli, read_slc, slice_layers
 
 
 def _tube():
@@ -63,6 +63,26 @@ def test_cli_round_trip_and_command(tmp_path):
                        capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1])
     assert r.returncode == 0, r.stdout + r.stderr
     assert (tmp_path / "tube.cli").exists()
+
+
+def test_binary_cli_and_slc_round_trip(tmp_path):
+    ref = read_cli(export_cli(_tube(), str(tmp_path / "a.cli"), layer=0.5, hatch=0.3)["path"])
+    b = export_layers(_tube(), str(tmp_path / "b.cli"), "cli-binary", layer=0.5, hatch=0.3)
+    assert b["format"] == "cli-binary" and (tmp_path / "b.cli").read_bytes().count(b"$$BINARY") == 1
+    back = read_cli(b["path"])
+    assert len(back) == len(ref) == 12
+    for L, R in zip(back, ref, strict=True):
+        assert abs(L.z - R.z) < 1e-4 and abs(L.area() - R.area()) < 1e-2
+        assert sorted(d for _, d in L.contours) == [0, 1] and len(L.hatches) == len(R.hatches)
+    s = export_layers(_tube(), str(tmp_path / "t.slc"), "slc", layer=0.5)
+    data = (tmp_path / "t.slc").read_bytes()
+    assert data.startswith(b"-SLCVER 2.0 -UNIT MM") and b"\r\n\x1a" in data[:2048]
+    assert s["hatches"] == 0 and abs(s["volume"] / s["meshVolume"] - 1) < 2e-3
+    back = read_slc(s["path"])
+    assert len(back) == 12 and abs(back[0].z - (-2.5)) < 1e-5
+    for L in back:
+        assert sorted(d for _, d in L.contours) == [0, 1]            # winding gives outer and hole
+        assert abs(L.area() - np.pi * 84) / (np.pi * 84) < 0.01
 
 
 if __name__ == "__main__":

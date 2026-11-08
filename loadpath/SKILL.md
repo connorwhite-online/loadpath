@@ -53,7 +53,7 @@ is set by function rather than load (enclosures, cosmetic covers, gears,
 threads) in CAD instead. loadpath doesn't replace CAD: model the interfaces
 there, let loadpath grow the material between them, and bring the result
 back as STEP or STL (`loadpath step part.stl` turns any closed STL, a
-gyroid-cored one too, into one STEP solid; `loadpath slices part.stl` into
+gyroid-cored one too, into one STEP solid; `loadpath slices part.stl` (`--format cli-binary` or `slc`) into
 powder-bed layers, a CLI file of contours and hatches; `loadpath nest a.stl:6 b.stl:2
 --process sls --material pa12` packs a job into one build volume; `loadpath fe-export study.json part.stl --out part.bdf`
 hands the part to Nastran or Abaqus with its loads and supports; `loadpath external-flow part.stl --speed 15
