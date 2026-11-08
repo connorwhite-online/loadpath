@@ -40,7 +40,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | --- | --- | --- |
 | Graph unit cells (cubic, BCC, FCC, octet, Kelvin, diamond ...) | `struts.py`, nine cells | Have |
 | Custom unit cell | `type: custom` with `cellGraph` nodes and beams | Have (new) |
-| TPMS (gyroid, diamond, Schwarz P, lidinoid, split P, neovius), walled TPMS | all six as sheet or network, field-graded, homogenized fits for each (`lattice.py`), 3MF implicit export | Have (lidinoid, split P, Neovius new; no 6x6 tensor tables for those three yet) |
+| TPMS (gyroid, diamond, Schwarz P, lidinoid, split P, neovius), walled TPMS | all six as sheet or network, field-graded, homogenized fits for each (`lattice.py`), 3MF implicit export | Have (lidinoid, split P, Neovius new, with full 6x6 tensors and stress surfaces) |
 | Cell maps: rectangular, cylindrical, spherical, conformal | `frame` cartesian, cylindrical, spherical, conformal (frame field) | Have |
 | Stochastic: Voronoi, Delaunay | `voronoi`, `delaunay` | Have (Delaunay new) |
 | Tet lattice from a body, conformal lattice from a volume mesh | `delaunay` with a conformal frame: nodes on the skin, struts inside | Have (new) |
