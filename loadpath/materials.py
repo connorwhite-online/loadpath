@@ -40,6 +40,9 @@ class Material:
     # the process the datasheet's specimens were made by: E_z and
     # strength_z apply to a study printed that way
     measured: str = ""
+    # mm: the thinnest wall this material is trusted to print, when it is
+    # more than its process's (a thin flexible skin); None = the process's
+    min_wall: float | None = None
 
     def to_dict(self):
         out = {"name": self.name, "E": self.E, "nu": self.nu,
@@ -51,6 +54,8 @@ class Material:
             out["strengthZ"] = self.strength_z
         if self.measured:
             out["measured"] = self.measured
+        if self.min_wall is not None:
+            out["minWall"] = self.min_wall
         return out
 
     def across_layers(self):
@@ -66,7 +71,7 @@ def _from_card(name, c):
     get = (lambda k: float(v[k][0]) if k in v else None)
     return Material(name, get("E"), get("nu"), get("strength"), get("density"), c["title"],
                     c["processes"], E_z=get("EZ"), strength_z=get("strengthZ"),
-                    measured=c.get("measured", c["processes"][0]))
+                    measured=c.get("measured", c["processes"][0]), min_wall=get("minWall"))
 
 
 # every value sourced: material_library.py (`loadpath materials <name>`)

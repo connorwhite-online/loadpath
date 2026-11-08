@@ -280,10 +280,17 @@ def _drains(spec, process):
 def _card_process(process, mat, spec):
     """A library card that measured across-layer strength and stiffness on
     the study's process (material_library.py) sets the process's factors,
-    unless the study sets its own; a calibrated card then overrides both."""
-    if process is None or not mat.measured or mat.measured != process.kind:
+    unless the study sets its own; a calibrated card then overrides both.
+    A card's minimum wall (a thin flexible TPU skin) raises the process's,
+    unless the study sets process.minFeature."""
+    if process is None:
         return process
     spec = spec if isinstance(spec, dict) else {}
+    mw = getattr(mat, "min_wall", None)
+    if mw is not None and "minFeature" not in spec and mw > process.min_feature:
+        process.min_feature = float(mw)
+    if not mat.measured or mat.measured != process.kind:
+        return process
     inter, ez = mat.across_layers()
     if inter is not None and "interlayer" not in spec:
         process.interlayer = inter

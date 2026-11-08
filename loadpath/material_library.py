@@ -340,7 +340,10 @@ LIBRARY = {
                  strength=(8, "basf-tpu88a", "tensile strength X (DIN 53504 S2)"),
                  strengthZ=(7, "basf-tpu88a", "tensile strength Z"),
                  density=(1.10, "basf-tpu88a", "printed part, ISO 1183-1"),
-                 elongation=(270, "basf-tpu88a", "% at break X (Z: 130)")),
+                 elongation=(270, "basf-tpu88a", "% at break X (Z: 130)"),
+                 minWall=(1.0, "estimate", "mm; Materialize lists 0.8 mm for SLS and MJF TPU, 1.0 kept as a "
+                                           "margin for thin flexible skins (a study's process.minFeature "
+                                           "overrides it)")),
     # ------------------------------------------------------------ resin
     "resin": _c("standard resin (values from Formlabs Grey V4, post-cured)", ("sla", "dlp"),
                 E=(2800, "formlabs-standard", "tensile modulus, post-cured"),

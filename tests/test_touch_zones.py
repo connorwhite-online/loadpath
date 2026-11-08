@@ -104,13 +104,15 @@ def test_contrast_sensitivities_match_finite_differences():
 
 def test_auto_skin_thins_a_pliable_zone_and_flags_the_minimum_wall():
     # a 1.5 mm skin is too stiff for a 1-4 N/mm pad: thinned, never under
-    # SLS's 0.8 mm
+    # the TPU card's 1.0 mm minimum wall (Materialize lists 0.8; the card
+    # keeps a margin)
     st = study_from_dict(lid(targets=[{"kind": "touch", "name": "pad", "zone": PAD, "feel": "pliable",
                                        "skinThickness": "auto"}]))
     k_bare = touchzones._bare_stiffness(st, "pad", 1.0).max()
     st2, rows = touchzones.plan_touch_skins(st, 1.0)
     (r,) = rows
-    assert 0.8 <= r["thickness"] < 1.5, r
+    assert st.process.min_feature == 1.0
+    assert 1.0 <= r["thickness"] < 1.5, r
     assert st2.raw["skin"]["zones"][0]["thickness"] == r["thickness"]
     k_new = touchzones._bare_stiffness(st2, "pad", 1.0).max()
     assert k_new < k_bare and (r.get("belowMinWall") or k_new <= touchzones.AUTO_MARGIN * 4.0 * 1.001), (k_new, r)
@@ -119,15 +121,21 @@ def test_auto_skin_thins_a_pliable_zone_and_flags_the_minimum_wall():
     st = study_from_dict(lid(targets=[{"kind": "touch", "name": "pad", "zone": PAD, "stiffness": [0.1, 0.4],
                                        "skinThickness": "auto"}], contrast=[]))
     st3, (r,) = touchzones.plan_touch_skins(st, 1.0)
-    assert r["thickness"] == 0.8 and r["belowMinWall"] and r["needs"] < 0.8, r
+    assert r["thickness"] == 1.0 and r["belowMinWall"] and r["needs"] < 1.0, r
     assert "minimum wall" in r["note"] and r["workingCeiling"] > 0.4
     ts = feel.feel_from_study(st3, build_domain(st3, 1.0))
     assert all(t.kmax == 0.4 and t.params["workingMax"] == r["workingCeiling"] for t in ts)
     # a thickness given under the minimum wall is flagged too
     st = study_from_dict(lid(targets=[{"kind": "touch", "name": "pad", "zone": PAD, "feel": "pliable",
-                                       "skinThickness": 0.6}], contrast=[]))
+                                       "skinThickness": 0.8}], contrast=[]))
     _, (r,) = touchzones.plan_touch_skins(st, 1.0)
-    assert r["belowMinWall"] and r["thickness"] == 0.6
+    assert r["belowMinWall"] and r["thickness"] == 0.8
+    # a study that sets its own minimum wall is taken at its word
+    d = lid(targets=[{"kind": "touch", "name": "pad", "zone": PAD, "feel": "pliable", "skinThickness": 0.8}],
+            contrast=[])
+    d["process"] = {"type": "sls", "minFeature": 0.8}
+    _, (r,) = touchzones.plan_touch_skins(study_from_dict(d), 1.0)
+    assert not r.get("belowMinWall"), r
 
 
 def test_run_meets_zones_and_contrast():
@@ -135,15 +143,15 @@ def test_run_meets_zones_and_contrast():
     contrast holds on the design."""
     doc = lid(robust=False)
     pad, rim = doc["feel"]["targets"]
-    pad.update(feel=None, stiffness=[2, 10], skinThickness="auto")
     del pad["feel"]
+    pad.update(stiffness=[2, 14], skinThickness="auto")
     rim.update(stiffness={"min": 80})       # the bare skin's rim is 46-50: ribs
     st = study_from_dict(doc)
     with tempfile.TemporaryDirectory() as out:
         rep = feel.run_feel(st, out, pitches=[1.0], iterations=[40], modal=False)
-    assert 0.8 <= rep["touchSkin"][0]["thickness"] < 1.5, rep["touchSkin"]
+    assert 1.0 <= rep["touchSkin"][0]["thickness"] < 1.5, rep["touchSkin"]
     zs = rep["touchZones"]["design"]
-    assert zs["zones"]["pad"]["max"] <= 10 * 1.02, zs
+    assert zs["zones"]["pad"]["max"] <= 14 * 1.02, zs
     assert zs["zones"]["rim"]["min"] >= 80 * 0.98, zs
     assert zs["contrast"][0]["ok"], zs
     # read on the delivered mesh too, held on the walls' bottom edge (not

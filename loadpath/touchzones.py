@@ -280,8 +280,8 @@ def plan_touch_skins(study, pitch: float, on_progress=None):
             else:
                 th = t0 * (goal / k0) ** (1.0 / n_exp)
                 th = max(tmin, np.floor(th / 0.05 + 1e-9) * 0.05)
-                k_at = None
-                for _ in range(4):
+                k_at = k1 if th <= tmin + 1e-9 else None
+                for _ in range(4 if k_at is None else 0):
                     if on_progress is not None:
                         on_progress({"stage": "skin", "zone": name, "check": f"bare skin at {th:g} mm"})
                     k_at = float(_bare_stiffness(_with_zones(study, zones + [zone_at(th)]), name, pitch).max())
