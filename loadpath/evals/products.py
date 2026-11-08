@@ -163,7 +163,7 @@ def remote(out):
              "alignTo": {"opening": "battery-door", "face": "-z", "recess": 1.7}},
             {"id": "door", "shape": f["lid"], "place": "given", "external": True, "mount": False}],
         "assembly": ["board", "batteries", "door"],
-        "split": {"normal": "z"},
+        "split": {"normal": "z", "search": "flat"},
         "rest": "-z",
         "loads": {"drop": {"g": 300, "faces": ["-z", "+z", "-x", "+x", "-y", "+y"]},
                   "squeeze": {"axis": "y", "force": 120, "radius": 10},
@@ -241,8 +241,8 @@ def speaker(out):
         "name": "speaker",
         "description": "A portable speaker in PETG (FDM) from a generated mesh: a 50 mm grille opening on top "
                        "(a cover closes it) and a USB-C port low on the back. Parts: a 44 mm driver facing up "
-                       "out the grille, an 18650 cell, a 32 x 26 mm amp board making 2 W, with its USB-C "
-                       "receptacle in the port. Drops on the base and sides; the amp under 85 C and the shell "
+                       "out the grille, an 18650 cell, a 32 x 26 mm amp board losing 1 W (a class-D amp at "
+                       "about 5 W out), with its USB-C receptacle in the port. Drops on the base and sides; the amp under 85 C and the shell "
                        "cool enough to hold.",
         "exterior": {"path": ext, "scale": Ls, "up": "+y", "place": "keep"}, "skin": 1.6,
         "openings": [{"id": "grille", "shape": f["grille"], "inward": "-z"},
@@ -252,7 +252,7 @@ def speaker(out):
              "alignTo": {"opening": "grille", "face": "+z", "recess": 1.0}},
             {"id": "cell", "shape": {"type": "cylinder", "center": [0, 0, 0], "axis": "z", "length": 65.0, "r": 9.2},
              "mass": 0.046, "rotate": "none", "maxTemp": 45.0},
-            {"id": "amp", "shape": f["amp"], "mass": 0.010, "watts": 2.0, "maxTemp": 85.0, "rotate": "x",
+            {"id": "amp", "shape": f["amp"], "mass": 0.010, "watts": 1.0, "maxTemp": 85.0, "rotate": "x",
              "margin": 0.3},
             {"id": "usbc", "shape": f["usbc"], "installedOn": "amp", "mass": 0.001,
              "alignTo": {"opening": "usb-port", "face": "-y", "recess": 0.3}},

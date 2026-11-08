@@ -639,7 +639,8 @@ def run_enclosure_case(raw: dict, base: str, out: str, tier: str = "full") -> di
     every load case on the delivered part, nothing in a keep-out, and the
     switch, feel or cooling targets met.
 
-    expect: minSafetyFactor (default the brief's goal), maxKeepOutIntrusion
+    expect: brief (keys merged into the product's brief: a coarser grid),
+    minSafetyFactor (default the brief's goal), maxKeepOutIntrusion
     (mm^3, default 1), maxPathsIntoSkin (mm^3, default 0.05), maxMass (g,
     all parts), maxSeconds; designTargets (default true: switch/feel/cooling
     passes). expect.coarse: brief (keys merged into the brief: a coarser
@@ -661,6 +662,9 @@ def run_enclosure_case(raw: dict, base: str, out: str, tier: str = "full") -> di
         else:
             brief_path = os.path.join(base, spec["brief"])
         brief = json.load(open(brief_path))
+        # the tier's own changes to the product's brief (a coarser grid
+        # than the product's own: an eval box has 15 GB)
+        brief.update(expect.get("brief") or {})
         pitches = expect.get("pitches")
         its = expect.get("iterations")
         tl = expect.get("timeLimit")

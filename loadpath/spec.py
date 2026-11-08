@@ -718,7 +718,11 @@ def _assembly_path(shape, side, bounds, label):
     through the opening: [{"toward": "-y", "length": 3.5}, "-z"]."""
     from .shapes import Moved, Union, sweep
 
-    if isinstance(side, list):
+    # a vector ([x, y, z], as shells.apply_split writes for a tilted
+    # parting line) is one straight way out, not a path of three legs
+    is_vec = (isinstance(side, (list, tuple)) and len(side) == 3
+              and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in side))
+    if isinstance(side, list) and not is_vec:
         if not side:
             raise ValueError(f"{label}: an empty path")
         parts, cur, at = [], shape, np.zeros(3)

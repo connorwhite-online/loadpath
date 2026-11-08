@@ -8,7 +8,17 @@
   "coarse": {
    "iterations": [
     30
-   ]
+   ],
+   "brief": {
+    "resolution": {
+     "pitch": 1.0
+    }
+   }
+  },
+  "brief": {
+   "resolution": {
+    "pitch": 1.0
+   }
   }
  }
 }

@@ -9,10 +9,15 @@
   "coarse": {
    "brief": {
     "resolution": {
-     "pitch": 1.2
+     "pitch": 1.5
     }
    },
    "timeLimit": 8
+  },
+  "brief": {
+   "resolution": {
+    "pitch": 1.0
+   }
   }
  }
 }

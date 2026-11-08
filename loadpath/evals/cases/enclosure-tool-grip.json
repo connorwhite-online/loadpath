@@ -13,6 +13,11 @@
     }
    },
    "timeLimit": 8
+  },
+  "brief": {
+   "resolution": {
+    "pitch": 1.2
+   }
   }
  }
 }

@@ -57,6 +57,24 @@ __all__ = ["enclosure", "run_enclosure", "exterior_check", "check_delivered", "d
 _FACES = ["-z", "+z", "-x", "+x", "-y", "+y"]
 
 
+def _inner_centre(exterior, lo, hi, n: int = 28):
+    """The middle of the exterior's box, or where that is outside the
+    exterior (a tool's barrel over its handle: the box's middle is in the
+    air in front of the handle), the point inside nearest to it among the
+    deeper half of the interior. Supports and squeezes are found from here
+    by rays."""
+    c = 0.5 * (lo + hi)
+    if exterior.sdf(c[None])[0] < 0:
+        return c
+    ax = [np.linspace(lo[i], hi[i], n) for i in range(3)]
+    g = np.stack(np.meshgrid(*ax, indexing="ij"), -1).reshape(-1, 3)
+    d = -exterior.sdf(g)
+    if not (d > 0).any():
+        return c
+    deep = g[d >= 0.5 * d.max()]
+    return deep[int(np.argmin(np.linalg.norm(deep - c, axis=1)))]
+
+
 def _surface_point(exterior, centre, d, reach=None):
     """Where a ray from `centre` along d leaves the exterior."""
     lo, hi = exterior.bounds()
@@ -107,7 +125,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     exterior = _fine_mesh_shape(ext_spec, None)
     lo, hi = exterior.bounds()
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
-    centre = 0.5 * (lo + hi)
+    centre = _inner_centre(exterior, lo, hi)
     skin_v = b.get("skin", 1.0)
     sk = dict(skin_v) if isinstance(skin_v, dict) else {"thickness": float(skin_v)}
     t_skin = float(sk["thickness"])
@@ -617,7 +635,7 @@ def _swept_hits(pts, grp_sdf, legs, step: float = 0.5) -> bool:
 def _legs_of(ins):
     if ins is None:
         return None
-    if isinstance(ins, str):
+    if isinstance(ins, str) or (len(ins) == 3 and all(isinstance(v, (int, float)) for v in ins)):
         return [(_axis_vec(ins), None)]
     out = []
     for leg in ins:
@@ -884,6 +902,12 @@ def _delivered(design_dir: str, name: str):
         r = json.load(open(rp))
         if r.get("best") is not None and r.get("outcomes"):
             return os.path.join(design_dir, os.path.basename(r["outcomes"][r["best"]]["stl"])), r
+        # no passing outcome: `run` still delivers its closest part, and
+        # that is what gets checked (and fails, with numbers) rather than
+        # reporting nothing at all
+        d = (r.get("deliver") or {}).get("stl")
+        if d and os.path.exists(os.path.join(design_dir, os.path.basename(d))):
+            return os.path.join(design_dir, os.path.basename(d)), r
     p = os.path.join(design_dir, f"{name}.stl")
     return (p if os.path.exists(p) else None), (json.load(open(rp)) if os.path.exists(rp) else None)
 

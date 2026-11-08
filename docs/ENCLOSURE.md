@@ -198,3 +198,59 @@ The first runs of this example found five bugs, and all of them are fixed:
 - **A recess doubled by the margin.** An aligned connector kept its
   0.5 mm margin from the exterior on top of the 0.3 mm recess asked, so it
   stood 0.82 mm back.
+
+## Five more products
+
+`loadpath/evals/products.py` writes five more generic products, each an
+exterior, its parts in plain words and a brief, and the evals run each one
+end to end (`python -m loadpath.evals.run enclosure-remote`, and so on):
+placement, ways in, the split where there is one, the design (run, feel,
+switch or cooling) and the checks on the delivered part. Two of the
+exteriors are generated-style meshes (holes, a doubled patch, flipped
+faces, debris) that the intake wraps first.
+
+| product | made as | what it asks for |
+|---|---|---|
+| remote | PA12 SLS, top/bottom split | IR LED aimed out its window, cells over the battery door, 300 g drops, a 120 N squeeze, a 30 N thumb press |
+| band pod | TPU 88A, one piece | board on the sensor window, a cell that can move 1.6 mm in a 1.2 m drop, a soft pinch |
+| speaker | PETG FDM, generated mesh | driver up into the grille, USB-C in its port, a 1 W amp and an 18650 kept cool, the shell cool to hold |
+| tool grip | PA12 MJF, generated mesh, clamshell | motor aimed out the nose, cell in the handle, a trigger where the finger falls, a 250 N grip |
+| smart button | TPU over a rigid back | a tactile switch that fires between 150 and 400 gf from 5 points on the dome |
+
+The coarse tier (1.0 to 1.5 mm cells, short design runs, 2026-11-08):
+
+| product | pass | checks | mass | notes |
+|---|---|---|---|---|
+| band pod | yes | 7/7 | 3.6 g | drop and pinch windows met on the delivered part |
+| smart button | yes | 8/8 | 6.4 g | 5/5 presses in window, worst SF 2.0 |
+| speaker | no | 8/9 | 288 g | SF 1.63; heat meets every limit on the design and on the 1.05 mm read of the part, but the 0.75 mm read puts the shell at 53.5 C (48 allowed). The reads differ by 34-113% between grids, so the delivered thermal read is not converged on a 1.6 mm FDM skin. |
+| remote | no | 11/12 | 72 g | cover SF 2.1; base 0.99 (1.63 on the design grid): the cradle by the battery door loses material in meshing at 1.5 mm cells |
+| tool grip | no | 7/9 | | every part placed with a way in, exterior untouched; the base did not reach its SF in the coarse run's 10 minutes (0.21), and the cover, 5.5 on the design grid, reads 0.09 at the nose collar on cut cells |
+
+Every product kept its exterior untouched (0.0 mm proud) and every
+component placed with a clear way in. What fails is strength and heat on
+the delivered part at coarse settings, which the full tier (finer cells,
+longer runs) is for.
+
+Running them found and fixed these:
+
+- A tilted parting line writes its way out as a vector, and the study
+  reader took a three-number vector for a path of three legs.
+- Generated wraps of 300k faces ran out of memory in trimesh's ray and
+  closest-point queries without embree: the wrap report reads inside and
+  outside off the wrap's own grid, and the exterior check uses libigl or
+  chunks.
+- The way-in grid reached 84M cells on a 150 mm remote; it is capped.
+- Sweeping a way in by copying the part 201 times took over 10 GB; the
+  sweep is now exact per-triangle prisms.
+- A half with no passing outcome reported nothing; the closest part is now
+  checked, and fails with numbers.
+- The support of a product with a hollow middle landed outside the part;
+  it now goes at the interior's centre.
+- The `cooling` block now takes each part's watts and limit from the
+  parts list.
+
+Two things are left open: the split search chose a 15° cut that crossed
+the remote's top face with no room for a snap (the remote now asks for a
+flat split), and a press whose sphere falls over the seam's lip room can
+reach a half that has no material under it.

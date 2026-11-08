@@ -215,3 +215,19 @@ if __name__ == "__main__":
                 print("FAIL", name, flush=True)
                 traceback.print_exc()
     sys.exit(1 if fails else 0)
+
+
+def test_keep_out_insert_from_a_vector_is_one_straight_way_out():
+    # shells.apply_split writes a tilted parting line's way out as a vector;
+    # it once read as a path of three legs with no lengths and failed lint
+    from loadpath.enclosure import _legs_of
+    from loadpath.spec import _assembly_path
+    from loadpath.shapes import Box
+    import numpy as np
+
+    lo, hi = np.array([-10.0, -10, -10]), np.array([10.0, 10, 10])
+    sw = _assembly_path(Box((-1, -1, -1), (1, 1, 1)), [-0.258819, 0.0, 0.965926], (lo, hi), "k")
+    a, b = sw.bounds()
+    assert b[2] > 9.0 and a[0] < -2.0
+    legs = _legs_of([-0.258819, 0.0, 0.965926])
+    assert len(legs) == 1 and legs[0][1] is None
