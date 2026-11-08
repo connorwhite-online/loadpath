@@ -1364,9 +1364,13 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     if not _stl_watertight(mesh):
         # a boolean can leave sliver pairs only an STL's weld exposes
         # (edges shared by four faces); a pass back through manifold3d
-        # drops them
-        again = _drop_slivers(trimesh_from_manifold(manifold_from_trimesh(mesh)))
-        if _stl_watertight(again):
+        # drops them. It refuses a mesh that is not a 2-manifold (the full-
+        # tier wrist yoke's search part): keep the mesh as it is then.
+        try:
+            again = _drop_slivers(trimesh_from_manifold(manifold_from_trimesh(mesh)))
+        except ValueError:
+            again = None
+        if again is not None and _stl_watertight(again):
             mesh = again
     if parting is not None:
         mesh.metadata["parting"] = parting
