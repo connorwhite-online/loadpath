@@ -339,6 +339,13 @@ buckling, printability) you can report to the user.
      reads softer than it should and the search picks a heavier outcome.
      The verified numbers hold; if the part is too heavy, a hand-built
      field graph of the same layout (`loadpath field`) can do better;
+   - a "meshing cut N mm^3 loose from material the optimized field had
+     joined to the part" warning (`reconstruction.droppedFragments`, each
+     with its volume, bounding box and `connectedInField`) → a meshing
+     artifact, not the design: report a bug with the study and the
+     outcome's `<name>-NN.field.npz` (the optimized field `run` saves
+     beside each STL); `loadpath remesh study.json out/<name>-NN.field.npz`
+     meshes and verifies that field again without optimizing;
    - `keepOutIntrusion` / `preserveMissing` above ~1 mm³ → report a bug;
    - `p5Member` under the printer's minimum → raise `minMember`;
    - `durability.safetyFactor` under its target → `durability.constrain`,

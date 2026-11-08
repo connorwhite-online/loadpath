@@ -260,7 +260,7 @@ def _shared_min(shapes, shape, origin, step, pts):
         if hit is not None and all(a is b for a, b in zip(hit[0], shapes)):
             _SDF_CACHE.move_to_end(key)
             return hit[1]
-    val = _min_sdf(shapes, pts())
+    val = _grid_min_sdf(shapes, shape, step, pts())
     val.setflags(write=False)
     with _SDF_LOCK:
         _SDF_CACHE[key] = (shapes, val)
@@ -277,6 +277,44 @@ def _min_sdf(shapes, pts):
     for sh in shapes:
         d = sh.sdf(pts)
         out = np.array(d, float) if out is None else np.minimum(out, d, out=out)
+    return out
+
+
+def _boolean_in(shape) -> bool:
+    """Whether `shape` is (or is built on) an intersect or subtract, whose
+    sdf is exact inside but only a lower bound outside."""
+    from .shapes import Boolean, Shape
+
+    if isinstance(shape, Boolean):
+        return True
+    kids = list(getattr(shape, "shapes", None) or []) + list(getattr(shape, "parts", None) or [])
+    base = getattr(shape, "base", None)
+    if isinstance(base, Shape):
+        kids.append(base)
+    return any(_boolean_in(k) for k in kids)
+
+
+def _grid_min_sdf(shapes, grid_shape, step, pts):
+    """_min_sdf on a regular grid (`pts` its cell centers, C order), with
+    each subtract or intersect shape's outside distance made true to the
+    grid: max(a, -b) is a lower bound there, and across a subtract's
+    opening it reads the cutter's far faces as near ones. The fan plate's
+    duct rim (a box minus its opening, the opening's cutter 1 mm taller
+    than the rim) read 0.5 mm from every point of the opening at the rim's
+    top, so the flush seating and fillets treated the whole opening as
+    the rim's face and severed the ribs the optimizer ran up through it.
+    The sign is exact, so the distance from outside is the distance to
+    the shape's own cells (an EDT), less half a cell for the cell centers;
+    never under the sdf's own bound."""
+    out = None
+    for sh in shapes:
+        d = np.array(sh.sdf(pts), float)
+        if _boolean_in(sh):
+            occ = (d <= 0.0).reshape(grid_shape)
+            if occ.any() and not occ.all():
+                e = ndimage.distance_transform_edt(~occ).ravel() * step - 0.5 * step
+                d = np.where(d > 0.0, np.maximum(d, e), d)
+        out = d if out is None else np.minimum(out, d, out=out)
     return out
 
 
@@ -383,7 +421,13 @@ def _seat_on_flush_faces(fine, domain: Domain, upsample: int, pad: int, flush, d
             continue
         for a in range(3):
             for sign, face, hang in ((1, b.lo[a], b.lo[a] - grid_lo[a]), (-1, b.hi[a], grid_hi[a] - b.hi[a])):
-                if hang < 0.5 * step:
+                # (only a face the grid ends at: hanging past it by under
+                # a cell. A face inside the grid (a design space of two
+                # boxes, the upper one standing on the lower) is no grid
+                # end, and seating on it shifted the field by its whole
+                # height: the fan plate's deck lost its bottom 2 mm and
+                # its ribs grew a slab at the seam.)
+                if hang < 0.5 * step or hang >= domain.pitch:
                     continue
                 if near is None:
                     near = grid.min(flush) < 1.5 * domain.pitch
@@ -569,7 +613,7 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         edge = np.pad(np.pad(grid, pad - 1, mode="edge"), 1)
         idx = np.stack(np.meshgrid(*[np.arange(n) for n in padded.shape], indexing="ij"), -1).reshape(-1, 3)
         centers = domain.origin + (idx - pad + 0.5) * domain.pitch
-        near = (_min_sdf(flush, centers) < 1.5 * domain.pitch).reshape(padded.shape)
+        near = (_grid_min_sdf(flush, padded.shape, domain.pitch, centers) < 1.5 * domain.pitch).reshape(padded.shape)
         padded = np.where(near, edge, padded)
     grid = padded
     # Cubic upsampling: linear interpolation of a voxel field leaves the
@@ -1166,6 +1210,46 @@ def _bodies(man):
     return sorted(man.decompose(), key=lambda b: -b.volume())
 
 
+class _FieldBodies:
+    """The optimized field's own solid bodies (26-connected cells at the
+    meshing level), to tell a fragment the field made from one meshing cut
+    loose: a piece whose cells the field joins to the main body was severed
+    by reconstruction (the fan plate's ribs, cut at its duct rim's top
+    face), and dropping it silently loses optimized material."""
+
+    def __init__(self, domain: Domain, xphys, level: float):
+        g = domain.full_grid(xphys) >= level
+        self.labels, _ = ndimage.label(g, structure=np.ones((3, 3, 3), bool))
+        self.origin = np.asarray(domain.origin, float)
+        self.pitch = float(domain.pitch)
+
+    def of(self, man) -> set:
+        """The field bodies a manifold's surface runs through (its vertices,
+        and the same half a cell in along the normals)."""
+        m = trimesh_from_manifold(man)
+        if not len(m.vertices):
+            return set()
+        v = np.asarray(m.vertices, float)
+        pts = np.vstack([v, v - 0.5 * self.pitch * np.asarray(m.vertex_normals, float)])
+        ijk = np.floor((pts - self.origin) / self.pitch).astype(int)
+        ok = np.all((ijk >= 0) & (ijk < np.array(self.labels.shape)), axis=1)
+        lab = self.labels[ijk[ok, 0], ijk[ok, 1], ijk[ok, 2]]
+        return set(int(x) for x in np.unique(lab) if x > 0)
+
+
+def _fragment(man, stage: str, field: "_FieldBodies | None", main: set) -> dict:
+    try:
+        b = man.bounding_box()
+        lo, hi = [float(x) for x in b.min], [float(x) for x in b.max]
+    except Exception:  # noqa: BLE001 - older manifold3d: from the mesh
+        m = trimesh_from_manifold(man)
+        lo, hi = [float(x) for x in m.bounds[0]], [float(x) for x in m.bounds[1]]
+    f = {"stage": stage, "volume": float(man.volume()), "bboxMin": lo, "bboxMax": hi}
+    if field is not None:
+        f["connectedInField"] = bool(field.of(man) & main)
+    return f
+
+
 def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: ReconstructOptions | None = None):
     """Returns (trimesh.Trimesh, info dict)."""
     import manifold3d as m3d
@@ -1312,8 +1396,14 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     # negative volume, and rebuilding without it filled the cavity. Inside a
     # closed exterior (a handheld's skin, every rib joined to it) the whole
     # interior is one such cavity: the part came out solid, 90 cm^3 for 17%.
-    small = [b for b in organic.decompose() if 0 < b.volume() < o.min_body_fraction * total]
+    organic_bodies = _bodies(organic)
+    small = [b for b in organic_bodies if 0 < b.volume() < o.min_body_fraction * total]
+    fragments = []
+    field = None
     if small:
+        field = _FieldBodies(domain, xphys, o.level)
+        main = field.of(organic_bodies[0]) if field is not None else set()
+        fragments += [_fragment(b, "organic", field, main) for b in small]
         organic = organic - (m3d.Manifold.batch_boolean(small, m3d.OpType.Add) if len(small) > 1 else small[0])
 
     # Trim to the design space (and preserved geometry) exactly: flat,
@@ -1360,9 +1450,21 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     if loose:
         # cut the fragments away rather than rebuilding from the kept
         # bodies, which would fill every enclosed cavity
+        field = field or _FieldBodies(domain, xphys, o.level)
+        main = set()
+        for b in kept:
+            main |= field.of(b)
+        fragments += [_fragment(b, "trim", field, main) for b in loose]
         part = part - (m3d.Manifold.batch_boolean(loose, m3d.OpType.Add) if len(loose) > 1 else loose[0])
     info["bodies"] = len(kept)
-    info["droppedFragmentVolume"] = float(dropped)
+    # (the organic specks dropped before the trim count too: a rib severed
+    # in the field's meshing is one of those)
+    info["droppedFragmentVolume"] = float(dropped + sum(f["volume"] for f in fragments if f["stage"] == "organic"))
+    if fragments:
+        info["droppedFragments"] = sorted(fragments, key=lambda f: -f["volume"])[:20]
+        severed = [f for f in fragments if f.get("connectedInField")]
+        if severed:
+            info["severedFragmentVolume"] = float(sum(f["volume"] for f in severed))
 
     clip, ko_all, hold = envelope, None, None
     if study.keep_out:

@@ -323,6 +323,52 @@ def _making_summary(m: dict) -> dict:
     return out
 
 
+def _remesh(args):
+    """A run's saved optimized field meshed again and verified: the same
+    reconstruction and check `run` gives an outcome, without the optimizer."""
+    from .domain import build_domain
+    from .reconstruct import reconstruct
+    from .spec import study_from_dict
+    from .study import _margin, fragment_warnings, load_field, mesh_fidelity
+    from .tasks import check_study
+    from .verify import verify_part
+
+    raw = _load(args.study)
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.study))
+    checked = check_study(raw, base)
+    if not checked["ok"]:
+        print(json.dumps(checked, indent=2))
+        return 2
+    study = study_from_dict(raw, base_dir=base)
+    xphys, pitch = load_field(args.field)
+    domain = build_domain(study, pitch=pitch)
+    if domain.n_elem != len(xphys):
+        print(json.dumps({"ok": False, "error": f"{args.field} has {len(xphys)} cells and this study's grid at "
+                                                f"pitch {domain.pitch:g} has {domain.n_elem}: not the same "
+                                                "study (or design space) the field was optimized on"}))
+        return 2
+    mesh, info = reconstruct(study, domain, xphys)
+    os.makedirs(args.out, exist_ok=True)
+    stem = os.path.basename(args.field).split(".")[0]
+    stl = os.path.join(args.out, stem + ".stl")
+    mesh.export(stl)
+    rep = {"ok": True, "stl": stl, "pitch": domain.pitch, "reconstruction": info}
+    warnings = fragment_warnings(info, mesh)
+    fid = mesh_fidelity(domain, xphys, mesh)
+    if fid is not None:
+        rep["meshFidelity"] = fid
+    if not args.no_verify:
+        report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
+        m = _margin(study, report)
+        if m is not None:
+            report["margin"] = m
+        warnings = report.get("warnings", []) + warnings
+        rep["verify"] = {k: v for k, v in report.items() if k != "warnings"}
+    rep["warnings"] = warnings
+    _write_report(args.out, rep)
+    return 0
+
+
 def _verify(args):
     """A finished part (an STL, or a run's folder: its best outcome) checked
     against a study: the same check `run` gives its outcomes."""
@@ -493,6 +539,13 @@ def main(argv=None):
     r.add_argument("--recall", action="store_true",
                    help="start from what earlier runs on the same design space found (recall.py; "
                         "or set LOADPATH_RECALL=1)")
+    rm = sub.add_parser("remesh", help="mesh a run's saved optimized field again (out/<name>-NN.field.npz) and "
+                                       "verify it, without optimizing: after a meshing fix, or to check one")
+    rm.add_argument("study")
+    rm.add_argument("field", help="a .field.npz `run` saved beside an outcome's STL (or a .npy of xphys)")
+    rm.add_argument("--out", default="loadpath-remesh")
+    rm.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
+    rm.add_argument("--no-verify", action="store_true", help="mesh only: skip the stress check")
     stp = sub.add_parser("status", help="is a background run still going? reads out/status.json and checks its "
                                         "process is alive (a killed run cannot update the file itself)")
     stp.add_argument("out", nargs="?", default="out", help="the run's --out folder (default out)")
@@ -944,6 +997,8 @@ def main(argv=None):
         return 0 if st.get("state") == "done" else 3 if st.get("state") in ("running", "none") else 1
     if args.cmd == "verify":
         return _verify(args)
+    if args.cmd == "remesh":
+        return _remesh(args)
     if args.cmd == "import":
         return _import(args)
     if args.cmd == "step":
@@ -1095,6 +1150,14 @@ def main(argv=None):
         stl = os.path.join(args.out, stem + ".stl")
         o.mesh.export(stl)
         summary["outcomes"][i]["stl"] = stl
+        # the optimized field beside it: `loadpath remesh` meshes it again
+        # without optimizing (a mesh that lost material to a meshing bug)
+        from .study import save_field
+        dom = summary.get("domain") or {}
+        field = save_field(os.path.join(args.out, stem + ".field.npz"), getattr(o, "xphys", None),
+                           dom.get("pitch"), dom.get("cells")) if dom.get("pitch") else None
+        if field:
+            summary["outcomes"][i]["field"] = field
         if getattr(o, "compensated", None) is not None:
             # pre-distorted against the simulated build: print this one
             cstl = os.path.join(args.out, stem + "-compensated.stl")

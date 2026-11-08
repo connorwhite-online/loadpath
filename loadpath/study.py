@@ -430,6 +430,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     if making:
         report["manufacturing"] = making
         report.setdefault("warnings", []).extend(making.get("warnings", []))
+    report.setdefault("warnings", []).extend(fragment_warnings(rinfo, mesh))
     if res.warp:
         report["warp"] = res.warp
     o.report = report
@@ -489,6 +490,29 @@ def _domain_info(d: Domain, radius: float) -> dict:
         "filterRadius": radius,
         "loadCases": d.case_names,
     }
+
+
+def save_field(path: str, xphys, pitch: float, cells: int | None = None) -> str | None:
+    """Save an outcome's optimized density field (.npz: xphys as float32 and
+    the design grid's pitch), so a bad mesh can be re-meshed without
+    optimizing again (`loadpath remesh`). None when there is no field, or it
+    is not on the grid named (`cells`)."""
+    if xphys is None:
+        return None
+    x = np.asarray(xphys, np.float32).ravel()
+    if cells is not None and len(x) != int(cells):
+        return None
+    np.savez_compressed(path, xphys=x, pitch=np.float64(pitch))
+    return path if path.endswith(".npz") else path + ".npz"
+
+
+def load_field(path: str):
+    """(xphys, pitch) from save_field's file (or a bare .npy of xphys:
+    pitch None, the study's own grid)."""
+    if path.endswith(".npy"):
+        return np.load(path).astype(float), None
+    with np.load(path) as z:
+        return z["xphys"].astype(float), float(z["pitch"]) if "pitch" in z else None
 
 
 # Peak memory of one worker, roughly, by the most cells it solves at once
@@ -611,7 +635,7 @@ def _workers(n: int, cells: int | None = None) -> int:
     return w
 
 
-def _save_partial(o) -> None:
+def _save_partial(o, pitch: float | None = None) -> None:
     """With LOADPATH_PARTIAL_DIR set (`loadpath run` sets it to out/partial),
     write each outcome's STL and summary as the search finds it: four
     brief-eval runs were killed in their last stage and kept nothing of
@@ -625,8 +649,10 @@ def _save_partial(o) -> None:
         os.makedirs(d, exist_ok=True)
         stem = f"vf{o.volume_fraction:.4f}".replace(".", "p")
         o.mesh.export(os.path.join(d, stem + ".stl"))
+        field = save_field(os.path.join(d, stem + ".field.npz"), o.xphys, pitch) if pitch else None
         with open(os.path.join(d, "outcomes.jsonl"), "a") as fh:
-            fh.write(json.dumps({"stl": stem + ".stl", **o.summary()}, default=str) + "\n")
+            fh.write(json.dumps({"stl": stem + ".stl", **({"field": stem + ".field.npz"} if field else {}),
+                                 **o.summary()}, default=str) + "\n")
     except Exception:  # noqa: BLE001  (a convenience: never fail the run for it)
         pass
 
@@ -1154,6 +1180,49 @@ def mesh_fidelity(domain, xphys, mesh) -> dict | None:
 
 MESH_LOSS_WARN = 0.10
 
+# A fragment meshing cut loose and dropped is reported when the field had
+# it joined to the part (a reconstruction artifact: any of it past this
+# share of the part's volume), or when the drop is large anyway.
+FRAGMENT_SEVERED_WARN = 0.005
+FRAGMENT_DROPPED_WARN = 0.02
+
+
+def fragment_warnings(rinfo: dict | None, mesh) -> list[str]:
+    """Warnings for material reconstruction dropped as loose fragments.
+
+    The fan plate's ribs were severed at its duct rim's face by meshing and
+    dropped as fragments: 113-137 cm^3 of a 468 cm^3 design, and the only
+    word of it was the mesh-fidelity warning's share of lost cells. Say how
+    much went, where, and whether the optimized field had it joined to the
+    part (then it is meshing's fault, not the design's)."""
+    if not rinfo:
+        return []
+    dropped = float(rinfo.get("droppedFragmentVolume") or 0.0)
+    if dropped <= 0.0:
+        return []
+    vol = max(float(getattr(mesh, "volume", 0.0) or 0.0), 1e-9)
+    severed = float(rinfo.get("severedFragmentVolume") or 0.0)
+    frags = rinfo.get("droppedFragments") or []
+
+    def where(fs):
+        return "; ".join(f"{f['volume']:.0f} mm^3 at x {f['bboxMin'][0]:.1f}..{f['bboxMax'][0]:.1f}, "
+                         f"y {f['bboxMin'][1]:.1f}..{f['bboxMax'][1]:.1f}, z {f['bboxMin'][2]:.1f}..{f['bboxMax'][2]:.1f}"
+                         for f in fs[:3])
+
+    out = []
+    if severed > FRAGMENT_SEVERED_WARN * vol:
+        cut = [f for f in frags if f.get("connectedInField")]
+        out.append(
+            f"meshing cut {severed:.0f} mm^3 ({severed / vol:.0%} of the delivered part) loose from material the "
+            f"optimized field had joined to the part, and dropped it ({where(cut)}): a reconstruction artifact, "
+            "not the design. The delivered part is lighter and weaker than the one optimized, so a search goes "
+            "heavier than it needs. Re-mesh the saved field (`loadpath remesh`) after a fix, or report it with "
+            "the study and the field.")
+    elif dropped > FRAGMENT_DROPPED_WARN * vol:
+        out.append(f"meshing dropped {dropped:.0f} mm^3 ({dropped / vol:.0%} of the delivered part) as loose "
+                   f"fragments the optimized field also had apart from the part ({where(frags)}).")
+    return out
+
 def _material_named(name, study):
     """The study's Material called `name` (a study can try several)."""
     for m in study.materials or [study.material]:
@@ -1479,7 +1548,9 @@ def _constrained_main(work: str) -> None:
     try:
         out = ("ok", _run_single(study, note, stop, fallback=False))
         for o in out[1].outcomes:
-            o.xphys = None   # not needed back; the pickle stays small
+            # (as float32: the pickle stays small, and the field comes back
+            # to be saved beside the outcome for re-meshing)
+            o.xphys = None if o.xphys is None else np.asarray(o.xphys, np.float32)
     except Exception as exc:  # noqa: BLE001 - raised again in the search's process
         out = ("error", exc)
     with open(os.path.join(work, "out.tmp.pkl"), "wb") as fh:
@@ -1848,6 +1919,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         if making:
             report["manufacturing"] = making
             report.setdefault("warnings", []).extend(making.get("warnings", []))
+        report.setdefault("warnings", []).extend(fragment_warnings(rinfo, mesh))
         fid = mesh_fidelity(domain, xphys, mesh)
         if fid is not None:
             report["meshFidelity"] = fid
@@ -1981,7 +2053,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                                            ("start", "mass", "safetyFactor", "margin")} | {"passes": c.passes}
         started = True
         emit({"stage": "outcome", **o.summary()})
-        _save_partial(o)
+        _save_partial(o, domain.pitch)
         prefetch_tets(o)
         return o
 
@@ -2210,6 +2282,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             limits, on_iter=on_iter, should_stop=should_stop)
         mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
         report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
+        report.setdefault("warnings", []).extend(fragment_warnings(rinfo, mesh))
         opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                "achievedVolumeFraction": res.volume_fraction, "method": "constrained",
                "limits": {"stress": limits.stress, "deflection": limits.deflection,
@@ -2219,6 +2292,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         if bks:
             opt["bucklingFactor"] = float(min(bks))   # the optimizer's own reading, eroded grey design
         o = Outcome(res.volume_fraction, mesh, report, opt, rinfo)
+        o.xphys = res.xphys
         o.voxel_sf = report.get("safetyFactor")
         m = _margin(study, report)
         report["margin"] = m
