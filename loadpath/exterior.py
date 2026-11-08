@@ -18,7 +18,7 @@ wrong for a solver:
   detail stays where the generator put it;
 - an **SDF**: a Python function `f(P) -> distance` over (N, 3) points in mm
   (negative inside; numpy, the `sdf` package, libfive-style expressions),
-  a loadpath shape, or a sampled grid file (`.npz`, see `save_sdf`);
+  a loadpath shape, or a sampled grid file (`.npz` or an OpenVDB `.vdb`, see `save_sdf`);
 - a **build123d or CadQuery** object, tessellated through OpenCascade.
 
 The result is an `Exterior`: the mesh, the transform from the source's
@@ -112,7 +112,7 @@ def _from_source(src, *, bounds=None, pitch=None, name=None):
             part = load_part(path)
             return part.mesh, "step", {**info, "healedLoops": part.heal.get("loops", 0)
                                        if isinstance(getattr(part, "heal", None), dict) else None}, None
-        if ext == ".npz":
+        if ext in (".npz", ".vdb"):
             g = load_sdf(path)
             lo, hi = g.bounds()
             return None, "sdf-grid", {**info, "pitch": g.pitch}, (g.sdf, (lo, hi), g.pitch)
@@ -122,7 +122,7 @@ def _from_source(src, *, bounds=None, pitch=None, name=None):
                 raise ValueError(f"exterior: {path} holds no triangles")
             m.merge_vertices()        # STL stores each triangle's corners apart
             return m, "mesh", info, None
-        raise ValueError(f"exterior: {ext} is not a known format (STEP, STL/OBJ/PLY/3MF/GLB, .npz SDF, .py)")
+        raise ValueError(f"exterior: {ext} is not a known format (STEP, STL/OBJ/PLY/3MF/GLB, .npz/.vdb SDF, .py)")
     if isinstance(src, trimesh.Scene):
         m = src.dump(concatenate=True)
         m.merge_vertices()
@@ -752,7 +752,7 @@ def sdf_of(src, pitch=None, bounds=None):
         ext = os.path.splitext(os.fspath(src))[1].lower()
         if ext in MESH_EXT or ext in STEP_EXT:
             src = load_exterior(src, max_faces=None).mesh
-        elif ext == ".npz":
+        elif ext in (".npz", ".vdb"):
             g = load_sdf(src)
             return g.grid, g.origin, g.pitch
     if isinstance(src, trimesh.Trimesh):
@@ -804,8 +804,16 @@ def save_sdf(src, path, pitch=None, bounds=None) -> dict:
     """Write a solid's signed distance as an .npz any SDF tool can read:
     `distance` (float32, nx x ny x nz, mm, negative inside), `origin` (mm,
     the node [0, 0, 0]), `pitch` (mm), `units` ("mm"). Trilinear between
-    nodes. Loads back as a study shape {"type": "sdf", "path": ...}."""
+    nodes. Loads back as a study shape {"type": "sdf", "path": ...}. A
+    `.vdb` path writes an OpenVDB level set instead (loadpath.vdb)."""
     F, org, p = sdf_of(src, pitch, bounds)
+    if str(path).lower().endswith(".vdb"):
+        # an OpenVDB narrow-band level set (3 voxels each side, the OpenVDB
+        # default): Houdini, Blender, nTop and OpenVDB tools read it
+        from .vdb import write_vdb
+        r = write_vdb(path, {"name": "surface", "values": F, "origin": org, "pitch": p, "class": "level set"})
+        return {"path": path, "shape": list(F.shape), "pitch": float(p), "origin": np.round(org, 4).tolist(),
+                "insideNodes": int((F < 0).sum()), "format": "vdb", "bytes": r["bytes"]}
     np.savez_compressed(path, distance=F.astype(np.float32), origin=np.asarray(org, float), pitch=float(p),
                         units="mm")
     return {"path": path, "shape": list(F.shape), "pitch": float(p), "origin": np.round(org, 4).tolist(),

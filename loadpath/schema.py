@@ -100,7 +100,8 @@ _SHAPES = {
     "sdf": {
         "type": "object",
         "description": "A sampled signed distance field: an .npz (distance, origin, pitch; mm, negative "
-                       "inside) relative to the study's folder, as loadpath.exterior.save_sdf writes it. How "
+                       "inside) relative to the study's folder, as loadpath.exterior.save_sdf writes it, or "
+                       "an OpenVDB level set (.vdb, from Houdini, Blender, nTop or `loadpath sdf`). How "
                        "an SDF tool's shape (libfive, the sdf package, a field graph) comes in.",
         "properties": {"type": {"const": "sdf"}, "path": {"type": "string"}},
         "required": ["type", "path"],
@@ -1665,10 +1666,11 @@ _FIELD_OPS = {
                                             "fractions of the part's own worst stress"},
                    "cells": {"type": "integer", "minimum": 1000, "description": "analysis size (default 120000)"}},
                   require_one=[["path"], ["source"], ["study", "part"]]),
-    "grid": _op("grid", "An imported scalar field on a regular grid (.npz with origin, pitch, values[nx,ny,nz]): "
-                        "a temperature map, a CFD pressure, a hand-painted density.",
+    "grid": _op("grid", "An imported scalar field on a regular grid (.npz with origin, pitch, values[nx,ny,nz], "
+                        "or an OpenVDB .vdb float grid): a temperature map, a CFD pressure, a "
+                        "hand-painted density, a Houdini or Blender volume.",
                 {"path": {"type": "string"}, "source": {"type": "string"},
-                 "quantity": {"type": "string", "description": "array name (default values)"}},
+                 "quantity": {"type": "string", "description": "array name (default values); a .vdb grid's name (default the first)"}},
                 require_one=[["path"], ["source"]]),
     "image": _op("image", "A picture as a scalar field from 0 to 1, laid on a plane and carried straight through "
                           "along the third axis: a logo to emboss, a texture to drive a wall, a hand-painted density.",
@@ -2287,7 +2289,7 @@ _EXTERIOR_SOURCE = {
     "description": "any exterior through the intake (loadpath.exterior.load_exterior; `loadpath exterior`): a "
                    "generated or scanned mesh is wrapped watertight, scaled and turned +z up",
     "properties": {
-        "path": {"type": "string", "description": "STEP, STL/OBJ/PLY/3MF/GLB/glTF, an .npz SDF grid, or "
+        "path": {"type": "string", "description": "STEP, STL/OBJ/PLY/3MF/GLB/glTF, an .npz or .vdb SDF grid, or "
                                                   "file.py[:name] (an SDF function or build123d/CadQuery object)"},
         "size": {**_POS, "description": "the real longest extent, mm (a generated mesh comes at unit scale)"},
         "scale": {**_POS, "description": "a factor instead of size (metres to mm: 1000)"},
@@ -2301,7 +2303,7 @@ _EXTERIOR_SOURCE = {
         "seal": {**_POS, "description": "mm, holes sealed by the flood wrap (no libigl)"}},
     "required": ["path"], "additionalProperties": False}
 _HANDOFF_SHAPE = {"anyOf": [{"type": "string", "description": "a mesh path (STL/3MF/OBJ/GLB; open or broken "
-                                                              "meshes are wrapped), a STEP file or an .npz SDF"},
+                                                              "meshes are wrapped), a STEP file or an .npz/.vdb SDF"},
                             {"$ref": "#/$defs/shape"}, _EXTERIOR_SOURCE]}
 _AXIS = {"type": "string", "pattern": "^[+-]?[xyz]$"}
 HANDOFF_SCHEMA = {

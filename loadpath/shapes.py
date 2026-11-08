@@ -530,7 +530,16 @@ class GridSDF(Shape):
         self._mesh = None
 
     @classmethod
-    def load(cls, path, name=None):
+    def load(cls, path, name=None, grid=None):
+        if str(path).lower().endswith(".vdb"):
+            from .vdb import read_vdb
+            gs = read_vdb(path)
+            if grid is not None:
+                gs = [g for g in gs if g["name"] == grid] or gs[:0]
+            g = next((g for g in gs if g["class"] == "level set"), gs[0] if gs else None)
+            if g is None:
+                raise ValueError(f"sdf file {path!r} has no grid {grid!r}")
+            return cls(g["values"], g["origin"], g["pitch"], name or path)
         z = np.load(path)
         for k in ("distance", "origin", "pitch"):
             if k not in z:

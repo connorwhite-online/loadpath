@@ -2065,10 +2065,19 @@ class FieldGraph:
             p = self._path(s["path"])
             if p.lower().endswith((".csv", ".txt", ".tsv")):
                 data = read_point_map(p, s.get("quantity"))
+            elif p.lower().endswith(".vdb"):
+                from .vdb import read_vdb
+                gs = read_vdb(p)
+                want = s.get("quantity")
+                g = next((g for g in gs if g["name"] == want), None) if want else gs[0]
+                if g is None:
+                    raise ValueError(f"node {nd.name!r}: no grid {want!r} in {p!r} "
+                                     f"(have {', '.join(x['name'] for x in gs)})")
+                data = {"grid": g["values"], "origin": g["origin"], "pitch": g["pitch"]}
             else:
                 data = dict(np.load(p)) if p.endswith(".npz") else json.load(open(p))
         else:
-            raise ValueError(f"node {nd.name!r}: {nd.op} needs a 'path' (.npz or .json), a 'study' and "
+            raise ValueError(f"node {nd.name!r}: {nd.op} needs a 'path' (.npz, .vdb or .json), a 'study' and "
                              "'part' to analyze, or a 'source'")
         if isinstance(data, dict) and "cases" in data and "nodes" in data:   # verify_part fields
             pts, vals = result_samples(data, s.get("quantity", "vonMises"), s.get("case"))

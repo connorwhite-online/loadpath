@@ -105,3 +105,17 @@ negative inside), `origin` (the node [0, 0, 0], mm), `pitch` (mm), `units`
 `{"type": "sdf", "path": "part.sdf.npz"}`, which is how an SDF tool's shape
 comes in without code in the study (`exterior.save_sdf(f, path, bounds=...)`
 samples a function).
+
+```bash
+loadpath sdf part.stl --pitch 0.25 --out part.vdb   # an OpenVDB level set
+```
+
+A `.vdb` path writes an OpenVDB narrow-band level set (3 voxels each side,
+OpenVDB's default) that Houdini, Blender and nTop open directly, and a
+`.vdb` level set from any of them comes back as an sdf shape or an
+exterior the same way. The field graph's `grid` op samples any float grid
+in a `.vdb` (`"quantity"` names the grid), so a density or temperature
+volume made elsewhere can drive a lattice or a remap. `loadpath.vdb` reads
+and writes the files in pure Python: zip, blosc (with the `blosc` package),
+active-mask and half-float files read, and files it writes open in the
+OpenVDB library to float precision.

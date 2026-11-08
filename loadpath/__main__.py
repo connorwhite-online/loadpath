@@ -664,7 +664,7 @@ def main(argv=None):
                                     "origin, pitch; mm, negative inside) for SDF tools; loads back as a study "
                                     "shape {type: sdf}")
     sd.add_argument("source")
-    sd.add_argument("--out", help="the .npz (default <source>.sdf.npz)")
+    sd.add_argument("--out", help="the .npz, or a .vdb for an OpenVDB level set (default <source>.sdf.npz)")
     sd.add_argument("--pitch", type=float, help="mm (default longest extent / 256)")
     spl = sub.add_parser("split", help="cut a study's exterior into a base and a cover that go together round "
                                        "its components: the cut checked or searched, an alignment lip, screw "

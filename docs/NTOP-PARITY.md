@@ -93,7 +93,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | STL, 3MF, OBJ | yes | Have |
 | CAD body from implicit (STEP / Parasolid) | STEP from fields and lattices (`step.py`, `latticestep.py`) | Have |
 | FE mesh and model export | `loadpath fe-export`: the part in 10-node tets with its material, supports, pins and load cases as a Nastran SOL 101 deck (`.bdf`) or Abaqus / CalculiX (`.inp`) (`fe_export.py`) | Have (new) |
-| Voxel grids | `.npz` signed distance in and out | Partial (no OpenVDB) |
+| Voxel grids (OpenVDB) | OpenVDB `.vdb` float grids in and out in pure Python (`vdb.py`): `loadpath sdf part.stl --out part.vdb` writes a narrow-band level set, sdf shapes and exteriors read level sets, the field `grid` op samples any float volume (a Houdini or Blender density, a temperature); zip, blosc, active-mask and half-float files read, checked against the OpenVDB library both ways; `.npz` too | Have (new) |
 
 ## Workflow and automation
 
@@ -104,7 +104,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 
 ## What is left
 
-By count: about 60 rows have it, 1 partial, none missing. External flow
+By count: about 60 rows have it, none partial, none missing. External flow
 is now in, coarse: it reads drag on the high side and caps the Reynolds
 number, which is right for structural loads and not for aerodynamic design. The open problem nTop does not
 solve either is physical validation of printed parts

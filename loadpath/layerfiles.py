@@ -407,7 +407,7 @@ def read_slc(path: str) -> list:
             break
         L = Layer(z * scale, [])
         for _ in range(nb):
-            nv, ng = struct.unpack_from("<II", data, i)
+            nv, _ng = struct.unpack_from("<II", data, i)
             i += 8
             p = np.frombuffer(data, "<f4", 2 * nv, i).reshape(nv, 2).astype(float) * scale
             i += 8 * nv
