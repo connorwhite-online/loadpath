@@ -1181,6 +1181,46 @@ def _region_side(spec, cut, base_dir):
     return "cover" if up > 0.95 else "base" if up < 0.05 else "both"
 
 
+def _rim_patch(rim: dict, ld: dict, study: dict, cut, ext, base_dir) -> dict:
+    """The stretch of a half's rim a load on the other half comes in
+    through: the rim within a sphere round the load's point (projected onto
+    a flat cut), grown until it holds material; a load spread wider than
+    half the part (a drop's floor) comes in over the whole rim."""
+    from .shapes import shape_from_spec
+    spec = None
+    if ld.get("shape") is not None:
+        spec = ld["shape"]
+    elif ld.get("region") is not None:
+        for p in list(study.get("preserve") or []) + list(study.get("keepOut") or []):
+            if p.get("id") == ld["region"]:
+                spec = p.get("shape")
+                break
+    try:
+        lo, hi = shape_from_spec(spec, base_dir).bounds()
+    except Exception:  # noqa: BLE001
+        return rim
+    elo, ehi = ext.bounds()
+    if np.max(hi - lo) > 0.5 * np.max(ehi - elo):
+        return rim
+    at = np.asarray(ld.get("at"), float) if ld.get("at") is not None else 0.5 * (lo + hi)
+    if cut.axis is not None and cut.planar:
+        at = at.copy()
+        at[cut.axis[0]] = cut.at
+    r = max(12.0, 0.5 * float(np.max(hi - lo)))
+    band = shape_from_spec(rim, base_dir)
+    for _ in range(8):
+        patch = {"type": "intersect", "shapes": [copy.deepcopy(rim),
+                                                   {"type": "sphere", "center": _r(at), "r": round(r, 3)}]}
+        try:
+            P = _samples(shape_from_spec(patch, base_dir), 0.5, 2000)
+        except Exception:  # noqa: BLE001
+            P = np.zeros((0, 3))
+        if len(P) and (np.maximum(ext.sdf(P), band.sdf(P)) <= 0).sum() >= 20:
+            return patch
+        r *= 1.6
+    return rim
+
+
 def _load_force(ld) -> np.ndarray:
     """The net force of one load entry, N: a force, or a carried mass's
     weight x dynamic factor along its gravity."""
@@ -1753,10 +1793,17 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                 # base's components' weight back through the rim, where it
                 # had only the support to react on (the tool grip's base read
                 # 0.21 on a 3 mm support sphere carrying 300 N)
-                F = sum((_load_force(ld) for ld, m in zip(all_loads, mine) if not m), np.zeros(3))
-                if np.linalg.norm(F) > 1e-9:
-                    rim_here = rim_here if rim_here is not None else _rim(ext, C, side)
-                    loads.append({"shape": rim_here, "force": _r(F, 6)})
+                # Each comes in on the stretch of rim nearest where it acts,
+                # so the moment comes across too: a squeeze on the cover's
+                # face put at the whole rim's middle twisted the tool grip's
+                # base about its one support (compliance 3e7 vs 500)
+                rim_here = rim_here if rim_here is not None else _rim(ext, C, side)
+                for ld, m in zip(all_loads, mine):
+                    F = _load_force(ld)
+                    if m or np.linalg.norm(F) <= 1e-9:
+                        continue
+                    loads.append({"shape": _rim_patch(rim_here, ld, study, C, ext, base_dir),
+                                  "force": _r(F, 6)})
                 lcs.append({**copy.deepcopy(lc), "loads": loads})
         if not sup:
             if side == "base":

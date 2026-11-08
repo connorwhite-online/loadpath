@@ -133,7 +133,14 @@ def test_enclosure_study():
     drop = st["loadCases"][0]["loads"]
     # the floor holds back exactly what the parts push on it
     total = sum(9.81 * 100 * ld["mass"] for ld in drop if "mass" in ld)
-    assert abs(drop[-1]["force"][2] - total) < 1e-3 * total, drop
+    floor = [ld for ld in drop if "shape" in ld][0]
+    assert abs(floor["force"][2] - total) < 1e-3 * total, drop
+    # and the landing's spin balances the moment: the support carries nothing
+    from loadpath.shells import _load_force
+    F = sum((_load_force(ld) for ld in drop), np.zeros(3))
+    assert np.linalg.norm(F) < 1e-3 * total, F
+    spin = [ld for ld in drop if "force" in ld and "region" in ld]
+    assert spin and all("at" in ld for ld in spin), drop
     assert st["thermal"]["heat"] == [{"region": "board", "watts": 0.2}]
     assert st["skin"]["thickness"] == 1.0 and len(st["skin"]["openings"]) == 2
     assert os.path.exists(os.path.join(out, "cad", "battery.stl"))

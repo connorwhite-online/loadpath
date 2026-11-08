@@ -298,7 +298,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
             warnings.append("loads.drop: no component has a mass with a mount; no drop cases written")
         for f in faces if massed else []:
             d = _axis_vec(f)
-            ls, total = [], 0.0
+            ls, total, pts = [], 0.0, []
             for k, v in massed.items():
                 gm = [m for m in byid if root(m) == k]
                 w = np.array([float(byid[m].get("mass") or 0.0) for m in gm])
@@ -306,10 +306,12 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
                 at = (w[:, None] * cs).sum(axis=0) / max(w.sum(), 1e-12)
                 ls.append({"region": f"mount-{k}", "mass": round(v["mass"], 6), "dynamic": g,
                            "gravity": f, "at": _r(at, 3)})
+                pts.append((k, float(v["mass"]), np.asarray(at, float)))
                 total += v["mass"] * 9.81 * g
             # the floor holds the shell back on that face
-            ls.append({"shape": face_slab(f, t_skin + float(drop.get("contactDepth", 0.5))),
-                       "force": _r(-total * d, 3)})
+            slab = face_slab(f, t_skin + float(drop.get("contactDepth", 0.5)))
+            ls.append({"shape": slab, "force": _r(-total * d, 3)})
+            ls += _drop_spin(pts, -total * d, _contact_centre(exterior, slab), 9.81 * g * d)
             cases.append({"name": f"drop{f}", "loads": ls})
     for i, sq in enumerate(_listify(loads.get("squeeze"))):
         a = str(sq.get("axis", "x")).lstrip("+-")
@@ -652,6 +654,50 @@ def _swept_hits(pts, grp_sdf, legs, step: float = 0.5) -> bool:
                 return True
         at = at + L * d
     return False
+
+
+def _contact_centre(exterior, slab: dict):
+    """Where the floor meets the part: the middle of the exterior's material
+    inside a drop's floor slab."""
+    lo, hi = np.asarray(slab["min"], float), np.asarray(slab["max"], float)
+    n = np.clip(np.ceil((hi - lo) / 1.0).astype(int) + 1, 2, 160)
+    P = np.stack(np.meshgrid(*[np.linspace(lo[i], hi[i], n[i]) for i in range(3)], indexing="ij"),
+                 -1).reshape(-1, 3)
+    P = P[exterior.sdf(P) <= 0]
+    return P.mean(axis=0) if len(P) else 0.5 * (lo + hi)
+
+
+def _drop_spin(pts, floor_force, at_floor, accel) -> list:
+    """Inertia relief for a drop: the floor's push on one face and the
+    components' weight elsewhere balance as forces but not as moments (a
+    tool landing on its handle's foot with its motor out front), and the
+    part's one support then carries the whole twist as a load it does not
+    see (the tool grip's base read 0.27 at its 3 mm support). The landing
+    also spins the part: each component gets m (alpha x r) about their
+    centre of mass, with alpha from the components' inertia, so the case
+    balances in moment too and the support carries nothing. With a single
+    massed component (or all on one line) the part cannot spin about that
+    line; the least-squares alpha leaves that much to the support."""
+    if not pts:
+        return []
+    m = np.array([p[1] for p in pts])
+    r = np.array([p[2] for p in pts])
+    cm = (m[:, None] * r).sum(axis=0) / m.sum()
+    q = r - cm
+    M = np.cross(np.asarray(at_floor, float) - cm, floor_force) + sum(
+        np.cross(q[i], m[i] * accel) for i in range(len(m)))
+    inertia = sum(m[i] * (np.dot(q[i], q[i]) * np.eye(3) - np.outer(q[i], q[i])) for i in range(len(m)))
+    # the extra forces m (alpha x q) make a moment I alpha; it must cancel M.
+    # Point masses alone may leave inertia singular (a single component):
+    # the shell's own mass is not in it, so cap the spin at what the
+    # components can take and say nothing more
+    alpha = -np.linalg.lstsq(inertia, M, rcond=1e-9)[0]
+    out = []
+    for i, (k, mi, at) in enumerate(pts):
+        e = mi * np.cross(alpha, q[i])
+        if np.linalg.norm(e) > 1e-6:
+            out.append({"region": f"mount-{k}", "force": _r(e, 3), "at": _r(at, 3)})
+    return out
 
 
 def _legs_of(ins):
@@ -1045,7 +1091,17 @@ def design_and_check(r: dict, out_dir: str, pitches=None, iterations=None, time_
             else:
                 argv = ["run", sp, "--out", design, "--viewer", "none"] + \
                     (["--time-limit", str(time_limit)] if time_limit else []) + (["--quick"] if quick else [])
-                code = cli(argv)
+                if len(halves) > 1:
+                    # each half in a process of its own: what the base's run
+                    # leaves allocated (solver caches, factor pools) stayed in
+                    # the process, and the cover's check went over 15 GB on
+                    # the tool grip
+                    import subprocess
+                    import sys
+                    code = subprocess.run([sys.executable, "-m", "loadpath"] + argv,
+                                          stdout=sys.stderr, check=False).returncode
+                else:
+                    code = cli(argv)
         except ValueError as exc:
             parts[half] = {"ok": False, "error": str(exc), "designSeconds": round(time.time() - t0, 1)}
             continue

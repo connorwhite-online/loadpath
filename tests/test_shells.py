@@ -402,9 +402,19 @@ def test_a_case_on_the_other_half_comes_through_the_seam():
     st["preserve"] = [{"id": "cradle", "shape": {"type": "box", "min": [-20, -10, 1.5], "max": [20, 10, 4.0]}}]
     st["loadCases"] = [{"name": "drop+z", "loads": [
         {"region": "cradle", "mass": 0.05, "dynamic": 200, "gravity": "+z"},
-        {"shape": {"type": "box", "min": [-31, -21, 18.0], "max": [31, 21, 20.5]}, "force": [0, 0, -98.1]}]}]
+        {"shape": {"type": "box", "min": [-31, -21, 18.0], "max": [31, 21, 20.5]}, "force": [0, 0, -98.1]}]},
+        {"name": "press", "loads": [
+            {"shape": {"type": "sphere", "center": [15, 8, 20], "r": 3}, "force": [0, 0, -40]},
+            {"shape": {"type": "box", "min": [-31, -21, -0.5], "max": [31, 21, 1.0]}, "force": [0, 0, 40]}]}]
     r = apply_split(st, {"normal": "+z", "at": 12.0, "snaps": {"count": 4}}, out_dir=out, base_dir=_DIR)
     for side in ("base", "cover"):
         lc = [c for c in r["studies"][side]["loadCases"] if c["name"] == "drop+z"][0]
         F = sum((_load_force(ld) for ld in lc["loads"]), np.zeros(3))
         assert np.linalg.norm(F) < 1e-6, (side, lc["loads"])
+    # a local press comes in on the rim near it, not over the whole rim,
+    # so its moment comes across too
+    press = [c for c in r["studies"]["base"]["loadCases"] if c["name"] == "press"][0]
+    patch = [ld for ld in press["loads"] if ld["shape"].get("type") == "intersect"]
+    assert len(patch) == 1, press["loads"]
+    c = patch[0]["shape"]["shapes"][1]["center"]
+    assert abs(c[0] - 15) < 1e-6 and abs(c[1] - 8) < 1e-6 and abs(c[2] - 12.0) < 1e-6, c

@@ -233,9 +233,9 @@ The coarse tier (1.0 to 1.5 mm cells, short design runs, 2026-11-08):
 |---|---|---|---|---|
 | band pod | yes | 7/7 | 3.6 g | drop and pinch windows met on the delivered part |
 | smart button | yes | 8/8 | 6.4 g | 5/5 presses in window, worst SF 2.0 |
-| speaker | no | 8/9 | 288 g | SF 1.63; heat meets every limit on the design and on the 1.05 mm read of the part, but the 0.75 mm read puts the shell at 53.5 C (48 allowed). The reads differ by 34-113% between grids, so the delivered thermal read is not converged on a 1.6 mm FDM skin. |
-| remote | no | 11/12 | 72 g | cover SF 2.1; base 0.99 (1.63 on the design grid): the cradle by the battery door loses material in meshing at 1.5 mm cells |
-| tool grip | no | 7/9 | | every part placed with a way in, exterior untouched; the base did not reach its SF in the coarse run's 10 minutes (0.21), and the cover, 5.5 on the design grid, reads 0.09 at the nose collar on cut cells |
+| speaker | no | 8/9 | 344 g | SF 1.57. The delivered reads now agree (amp 57.1 / 58.8 C, shell 48.8 / 48.9 C at 1.05 / 0.75 mm): the shell is 0.8 C over its 48 C touch limit |
+| remote | yes | 12/12 | 72.8 g | worst SF 1.72 (base, a drop onto the underside) |
+| tool grip | no | 7/9 | 38.6 g base | base SF 0.74 in the coarse run's 10 minutes (was 0.21); the cover's own run check ran past the box's 15 GB, so it has no part this run (its earlier part read 5.56) |
 
 Every product kept its exterior untouched (0.0 mm proud) and every
 component placed with a clear way in. What fails is strength and heat on
@@ -260,7 +260,36 @@ Running them found and fixed these:
 - The `cooling` block now takes each part's watts and limit from the
   parts list.
 
-Two things are left open: the split search chose a 15° cut that crossed
-the remote's top face with no room for a snap (the remote now asks for a
-flat split), and a press whose sphere falls over the seam's lip room can
-reach a half that has no material under it.
+A second pass fixed what the first left open:
+
+- **The check read stress the run leaves out.** The enclosure check left
+  no band round loads and supports, so a drop's floor patch and a cradle's
+  mass load read their edge stress, which grows without bound as the grid
+  refines. The tool grip's cover read 0.09 there and 5.5 in run's own
+  check of the same file. It now leaves out a design cell round them, as
+  run and `loadpath verify` do; that alone takes the remote to 12/12.
+- **A split half's loads from the other half.** A drop onto the cover's
+  face pushed the base's components into its single 3 mm support. Loads
+  on the other half now come in through the stretch of seam nearest them,
+  and loads go to a half only where it has material under them half a
+  cell deep (a press near a tilted seam once landed on a sliver of the
+  base with no cell under it).
+- **Drops spin the part.** A tool landing on its handle's foot with its
+  motor out front: the floor's push and the parts' weight balance as
+  forces but not as a moment, and the support carried the twist. Each
+  drop now adds the spin the landing gives the parts (inertia relief on
+  the components), so the case balances and the support carries nothing.
+  The tool grip's base went from 0.21 to 0.74.
+- **Heat reads that agree across grids.** Two components 0.4 mm apart
+  conducted at their own 20 W/(m K) across the air between them on some
+  grids; a component was read at nodes in the gap beside another; and a
+  gap under a cell wide between a component and its pad read as air on
+  some grids and contact on others. All three are fixed (docs/COOLING.md).
+- **Each half of a split runs in its own process**, so the cover's run
+  does not start with the base's memory still held.
+
+Still open: the tool grip's base needs a longer run than the coarse tier's
+10 minutes, and its cover's run check needs more memory than this box has
+alongside everything else; the speaker's shell is 0.8 C warm; and the
+split search once chose a 15° cut across the remote's top face with no room
+for a snap (the remote asks for a flat split).
