@@ -54,7 +54,7 @@ def test_powder_cake_stacks_low_and_reports_what_does_not_fit():
 def test_cli(tmp_path):
     stl = tmp_path / "bracket.stl"
     trimesh.creation.box(extents=[30, 20, 8]).export(stl)
-    out = tmp_path / "plate.3mf"
+    out = tmp_path / "plate.stl"
     r = subprocess.run([sys.executable, "-m", "loadpath", "nest", f"{stl}:5", "--volume", "100", "100", "50",
                         "--process", "fdm", "--out", str(out)], capture_output=True, text=True,
                        cwd=Path(__file__).resolve().parents[1])

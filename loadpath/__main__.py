@@ -159,7 +159,7 @@ def _nest(args):
     mode = args.mode or ("bed" if (args.process or "fdm") in BED_PROCESSES else "volume")
     res = nest(parts, vol, gap=args.gap, mode=mode, rotations=args.rotations, pitch=args.pitch)
     rep = res.report()
-    out = args.out or "nest.3mf"
+    out = args.out or "nest.stl"
     res.combined().export(out)
     rep["out"] = out
     print(json.dumps(rep if args.full else {k: v for k, v in rep.items() if k != "placements"}, indent=1))
@@ -793,7 +793,7 @@ def main(argv=None):
                          "orientations (default stacked)")
     ns.add_argument("--gap", type=float, default=2.0, help="least distance between parts, mm (default 2)")
     ns.add_argument("--pitch", type=float, default=None, help="packing grid, mm (default from the volume)")
-    ns.add_argument("--out", default=None, help="the packed build as one mesh (default nest.3mf)")
+    ns.add_argument("--out", default=None, help="the packed build as one mesh (default nest.stl; .3mf needs lxml)")
     ns.add_argument("--full", action="store_true", help="print every placement's transform")
     asm = sub.add_parser("assembly",help="derive a part's load cases and neighbour keep-outs from a URDF")
     asm.add_argument("urdf")
