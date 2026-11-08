@@ -718,6 +718,14 @@ class CoolingProblem:
     """The cooling limits on one grid, as constraints for
     switch.optimize_switch (see `providers` there)."""
 
+    # `robust`: the limits hold on the design eroded and dilated by this
+    # much of the projection too (simp's robust formulation, as feel.py),
+    # for designs whose grey cells the delivered mesh reads differently.
+    # Off by default: on the handheld it cost 8% more material and closed
+    # only half of a 1.1 K delivered skin overshoot, which came from the
+    # mesher closing an air gap (see run_cooling), not from grey cells
+    ROBUST = 0.15
+
     def __init__(self, study, domain: Domain, nu=None, modulus=None, floor=None):
         self.model = CoolingModel(study, domain, floor=floor)
         spec = self.model.spec
@@ -727,37 +735,65 @@ class CoolingProblem:
                 self.limits.append(_Limit(f"cool:{s.id}", s.nodes, s.max_t - spec.ambient))
         if spec.skin_max is not None:
             self.limits.append(_Limit("cool:skin", self.model.skin_nodes, spec.skin_max - spec.ambient))
-        self.m = len(self.limits)
+        # `margin`: K under each limit the design aims for (the readings
+        # keep the true limits): the design grid's own error, read off the
+        # delivered part's finer grids
+        margin = float(spec.raw.get("margin", 0.0))
+        for lim in self.limits:
+            if margin >= lim.limit:
+                raise ValueError(f"cooling.margin {margin:g} K is more than {lim.name}'s whole rise over ambient")
+            lim.limit -= margin
+        rb = spec.raw.get("robust", False)
+        self.robust = float(self.ROBUST if rb is True else (rb or 0.0))
+        self.sides = (("eroded", 0.5 + self.robust), ("dilated", 0.5 - self.robust)) if self.robust > 0 else \
+            (("", None),)
+        self.m = len(self.limits) * len(self.sides)
 
     def evaluate(self, xp, ctx=None):
+        from .simp import _dproject, _project
+        out = []
+        for side, eta in self.sides:
+            if eta is None or ctx is None:
+                x, d, wrt = np.asarray(xp, float), None, None
+            else:
+                x = _project(ctx["xt"], ctx["beta"], eta)
+                d = _dproject(ctx["xt"], ctx["beta"], eta)
+                x[ctx["preserve"]] = 1.0
+                d[ctx["preserve"]] = 0.0
+                held = ctx["floor"] > x
+                x[held] = ctx["floor"][held]
+                d[held] = 0.0
+                wrt = "xt"
+            for val, g, name in self._evaluate_one(x, side):
+                tag = f"{name}:{side}" if side else name
+                out.append((val, g, tag) if wrt is None else (val, g * d, tag, wrt))
+        return out
+
+    def _evaluate_one(self, xp, side):
         mdl = self.model
         if mdl.spec.cycle is not None:
-            return self._evaluate_cycle(xp)
+            th, first = mdl.history(xp)
+            vals, ds, scales = [], [], []
+            for lim in self.limits:
+                pn, d, tmax = lim.value_history(th, first)
+                vals.append(pn)
+                ds.append(d)
+                scales.append(tmax / max(pn, 1e-12))
+            g = mdl.history_gradient(xp, th, np.stack(ds, axis=2))
+            mdl.release_history()
+            return [(sc * pn / lim.limit - 1.0, sc * g[:, j] / lim.limit, lim.name)
+                    for j, (lim, pn, sc) in enumerate(zip(self.limits, vals, scales))]
         theta = mdl.solve(xp)
         out = []
         for lim in self.limits:
             pn, d, tmax = lim.value(theta)
             # adaptive scale: the p-norm times the last true max / p-norm
-            lim.scale = tmax / max(pn, 1e-12)
+            sc = tmax / max(pn, 1e-12)
             lam = mdl.adjoint(d)
             g = mdl.gradient(xp, theta, lam)
-            out.append((lim.scale * pn / lim.limit - 1.0, lim.scale * g / lim.limit, lim.name))
+            out.append((sc * pn / lim.limit - 1.0, sc * g / lim.limit, lim.name))
         mdl.release()
         return out
-
-    def _evaluate_cycle(self, xp):
-        mdl = self.model
-        th, first = mdl.history(xp)
-        vals, ds = [], []
-        for lim in self.limits:
-            pn, d, tmax = lim.value_history(th, first)
-            lim.scale = tmax / max(pn, 1e-12)
-            vals.append(pn)
-            ds.append(d)
-        g = mdl.history_gradient(xp, th, np.stack(ds, axis=2))
-        mdl.release_history()
-        return [(lim.scale * pn / lim.limit - 1.0, lim.scale * g[:, j] / lim.limit, lim.name)
-                for j, (lim, pn) in enumerate(zip(self.limits, vals))]
 
 
 # ------------------------------------------------------------- readings
@@ -869,14 +905,19 @@ def run_cooling(study, out_dir: str, pitches=None, iterations=None, on_progress=
 
     providers = [make]
     feel_readback = None
-    mesh_opts = None
+    from .reconstruct import ReconstructOptions
+    # no closing: it fills slots under twice its radius (1 mm here) as
+    # unprintable, but an air gap of 1-2 mm prints (MJF, SLS, FDM) and is
+    # what keeps a pad's heat off the skin. With it, the handheld's mesh
+    # bridged a 1.4 mm gap between a pad under the board and the back
+    # skin: 2.1 g more and the back 0.5 K over its limit
+    mesh_opts = ReconstructOptions(close=0.0)
     opt_opts = {}
     if has_feel:
         from .feel import FeelProblem
         providers.append(lambda st, domain, nu, modulus: FeelProblem(st, domain, nu, modulus))
         fb = study.raw.get("feel") or {}
-        from .reconstruct import ReconstructOptions
-        mesh_opts = ReconstructOptions(axial_debias=bool(fb.get("keepThinMembers", True)))
+        mesh_opts = ReconstructOptions(close=0.0, axial_debias=bool(fb.get("keepThinMembers", True)))
         opt_opts["move_sharp"] = float(fb.get("moveSharp", 0.03))
 
     def readback(domain, design, solid, delivered, floor, mesh):

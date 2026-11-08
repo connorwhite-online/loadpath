@@ -85,6 +85,9 @@ def study(ext: str, pitch: float = 1.0, vents: bool = False, press: bool = False
                 {"region": "battery", "conductivity": 1.5, "maxTemp": 45},
             ],
             "skin": {"contact": "held"},
+            # the 0.7 mm design grid reads the hot spot at a pad's foot on
+            # the skin about 1 K cool against 0.35 mm: aim 1 K under
+            "margin": 1.0,
             "iterations": 80,
         },
     }

@@ -1070,6 +1070,12 @@ _COOLING = {
                     "description": "the way down in use, for the vents' stack (default -z)"},
         "conductivity": {**_POS, "description": "W/(m K) of the printed material (default the material card's)"},
         "cycle": _COOLING_CYCLE,
+        "robust": {"oneOf": [{"type": "boolean"}, {"type": "number", "minimum": 0, "maximum": 0.4}],
+                   "description": "hold the limits on the design eroded and dilated by this much of the "
+                                  "projection (true: 0.15; default off)"},
+        "margin": {"type": "number", "minimum": 0,
+                   "description": "K under each limit the design aims for (default 0): the design grid's error, "
+                                  "as the delivered readings on finer grids show it"},
         "pitches": {"type": "array", "items": _POS, "minItems": 1,
                     "description": "mm, coarse to fine (without a switch block)"},
         "iterations": {"oneOf": [{"type": "integer", "minimum": 1},
