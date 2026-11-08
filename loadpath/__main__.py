@@ -166,6 +166,36 @@ def _nest(args):
     return 0 if not rep["unplaced"] else 2
 
 
+def _external_flow(args):
+    import numpy as np
+    import trimesh
+
+    from .aero import external_flow
+
+    mesh = trimesh.load(args.part, force="mesh")
+    d = args.direction.strip().lower()
+    axes = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
+    if d.lstrip("+-") in axes:
+        vec = np.array(axes[d.lstrip("+-")], float) * (-1 if d.startswith("-") else 1)
+    else:
+        vec = np.array([float(v) for v in d.split(",")])
+    try:
+        rep = external_flow(mesh, args.speed, vec, medium=args.medium, cells=args.cells, re_max=args.re_max)
+    except (ValueError, RuntimeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    rep.pop("_surface", None)
+    if args.study:
+        doc = _load(args.study)
+        doc.setdefault("loadCases", []).append(rep["load_case"])
+        out = args.out or os.path.splitext(args.study)[0] + "-flow.json"
+        with open(out, "w") as fh:
+            json.dump(doc, fh, indent=1)
+        rep["study"] = out
+    print(json.dumps(rep, indent=1))
+    return 0
+
+
 def _fe_export(args):
     import trimesh
 
@@ -774,6 +804,16 @@ def main(argv=None):
     sl.add_argument("--hatch", type=float, default=0.1,
                     help="hatch spacing, mm (default 0.1; 0 for contours only); turned 67 degrees a layer")
     sl.add_argument("--axis", choices=["x", "y", "z"], default="z", help="build axis (default z)")
+    ef = sub.add_parser("external-flow", help="a part in a stream of air or water (lattice Boltzmann wind "
+                                              "tunnel): drag, lift, moment, and the surface forces as a load case")
+    ef.add_argument("part", help="STL, 3MF or OBJ in mm, closed")
+    ef.add_argument("--speed", type=float, required=True, help="m/s")
+    ef.add_argument("--direction", default="x", help="the way the fluid moves: x, -z, ... or vx,vy,vz (default x)")
+    ef.add_argument("--medium", default="air", help="air, water, glycol50, oil (default air)")
+    ef.add_argument("--cells", type=int, default=16, help="voxels across the part's frontal size (default 16)")
+    ef.add_argument("--re-max", type=float, default=2e4, help="Reynolds number the run is capped at (default 2e4)")
+    ef.add_argument("--study", help="append the flow's load case to this study, written to --out")
+    ef.add_argument("--out", help="the study with the flow case (default <study>-flow.json)")
     fx = sub.add_parser("fe-export", help="a part with the study's material, supports and load cases as a "
                                           "Nastran (.bdf) or Abaqus / CalculiX (.inp) deck in 10-node tets")
     fx.add_argument("study")
@@ -904,6 +944,8 @@ def main(argv=None):
         return _import(args)
     if args.cmd == "step":
         return _step(args)
+    if args.cmd == "external-flow":
+        return _external_flow(args)
     if args.cmd == "fe-export":
         return _fe_export(args)
     if args.cmd == "nest":

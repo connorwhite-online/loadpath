@@ -56,7 +56,8 @@ back as STEP or STL (`loadpath step part.stl` turns any closed STL, a
 gyroid-cored one too, into one STEP solid; `loadpath slices part.stl` into
 powder-bed layers, a CLI file of contours and hatches; `loadpath nest a.stl:6 b.stl:2
 --process sls --material pa12` packs a job into one build volume; `loadpath fe-export study.json part.stl --out part.bdf`
-hands the part to Nastran or Abaqus with its loads and supports). Every report
+hands the part to Nastran or Abaqus with its loads and supports; `loadpath external-flow part.stl --speed 15
+--direction -x --study study.json` puts it in a wind or water tunnel and adds the surface forces as a load case). Every report
 also says what each support carries (`report.reactions`), the bolt or bearing
 load to size hardware from; cap one with `maxForce` on the support. Its edge over drawing the part yourself is that every
 result comes with an independent check (safety factor, deflection,

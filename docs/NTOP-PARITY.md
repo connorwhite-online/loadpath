@@ -74,7 +74,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | Steady and transient thermal | `thermal.py` (cycles, softening, expansion) | Have |
 | Lattices as solids, beams or homogenized | resolved check, homogenized check | Have |
 | Static analysis with inertia relief (unsupported bodies) | `inertiaRelief: true`: loads balanced by the part's own rigid-body inertia, in the check and the optimizer ([README](../loadpath/README.md#the-study)) | Have (new) |
-| CFD | lattice-Boltzmann flow for exchangers and lattice cells (`flow.py`, `conjugate.py`), not general external flow | Partial |
+| CFD | lattice-Boltzmann flow for exchangers and lattice cells (`flow.py`, `conjugate.py`); `loadpath external-flow` puts any part in a wind or water tunnel and writes the surface forces as a load case ([EXTERNAL-FLOW.md](EXTERNAL-FLOW.md); coarse LES, reads high, capped Reynolds number) | Have (new, coarse) |
 | Nonlinear, contact, fatigue, creep, impact | `nonlinear.py`, `contact.py`, `durability.py`, `impact.py` | Beyond nTop |
 
 ## Design for additive manufacturing
@@ -104,7 +104,8 @@ test. **Partial** means part of it. **Missing** means not yet.
 
 ## What is left
 
-By count: about 55 rows have it, 5 partial, none missing. The partial
-one that matters most is general external CFD. The open problem nTop does not
+By count: about 56 rows have it, 4 partial, none missing. External flow
+is now in, coarse: it reads drag on the high side and caps the Reynolds
+number, which is right for structural loads and not for aerodynamic design. The open problem nTop does not
 solve either is physical validation of printed parts
 ([VALIDATION.md](VALIDATION.md), [CALIBRATION.md](CALIBRATION.md)).
