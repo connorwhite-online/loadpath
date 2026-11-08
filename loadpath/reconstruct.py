@@ -912,6 +912,18 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
     return part, total
 
 
+def _stl_watertight(mesh) -> bool:
+    """Watertight as an STL reader sees it: float32 vertices welded by
+    position, every edge on exactly two faces."""
+    m = mesh.copy()
+    m.vertices = m.vertices.astype(np.float32).astype(float)
+    m.merge_vertices()
+    if not len(m.faces):
+        return False
+    _, c = np.unique(m.edges_sorted, axis=0, return_counts=True)
+    return bool((c == 2).all())
+
+
 def _drop_slivers(mesh):
     """Drop zero-volume shells (a pair of coincident triangles facing apart)
     that a boolean can leave on a flat face. manifold3d keeps them on vertices
@@ -1349,11 +1361,18 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     if pinches:
         info["pinchesFilled"] = pinches
     mesh = _drop_slivers(trimesh_from_manifold(part))
+    if not _stl_watertight(mesh):
+        # a boolean can leave sliver pairs only an STL's weld exposes
+        # (edges shared by four faces); a pass back through manifold3d
+        # drops them
+        again = _drop_slivers(trimesh_from_manifold(manifold_from_trimesh(mesh)))
+        if _stl_watertight(again):
+            mesh = again
     if parting is not None:
         mesh.metadata["parting"] = parting
         info["parting"] = parting
     _attach_plan(mesh, study, organic_raw)
     info["triangles"] = int(len(mesh.faces))
     info["volume"] = float(mesh.volume)
-    info["watertight"] = bool(mesh.is_watertight)
+    info["watertight"] = bool(mesh.is_watertight) and _stl_watertight(mesh)
     return mesh, info
