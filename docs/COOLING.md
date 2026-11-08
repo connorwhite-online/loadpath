@@ -97,9 +97,64 @@ geometry that meets all of them with the least material.
 **Not modelled.** Contact resistance between a component and a printed pad
 on it (a thermal pad or paste is assumed: without one, a dry printed
 contact adds 1-10 K per W on a small chip), forced air, the hand as a heat
-sink, sunlight, and transients (`thermal.cycle` in thermal.py covers
-those for a plain part). The plastic's softening with temperature is in
-the `thermal` block, not here.
+sink and sunlight. The plastic's softening with temperature is in the
+`thermal` block, not here.
+
+## Bursts, charging and duty cycles
+
+A handheld product is rarely at a steady load. It idles, then runs a game
+or a video call for a few minutes, or charges for an hour. Its parts and
+its plastic hold heat, so a five-minute burst at twice the steady power can
+peak lower than the steady state would. Designing for the steady state at
+the burst's power asks for far more than the product needs, or for
+something no interior can do. A `cycle` says how power changes over time:
+
+```json
+"cycle": {"phases": [
+  {"seconds": 60,  "watts": {"soc": 0.3, "pmic": 0.1}, "steps": 1},
+  {"seconds": 300, "watts": {"soc": 3.0, "pmic": 0.5}, "steps": 15},
+  {"seconds": 300, "watts": {"soc": 0.3, "pmic": 0.1}, "steps": 10}]}
+```
+
+Each phase lists the watts that change (other components keep their
+`watts`). The run starts from the steady state of the first phase (`start:
+"ambient"` starts cold), or with `repeat: true` it is the repeating state
+of the phases, run `cycles` times (default 3) from the steady state at the
+mean power and read on the last. Every limit holds at each point's hottest
+moment: the processor's peak at the end of the burst, the outside's a while
+later, as the heat reaches it. The report gives each peak and when it
+happens (`peakAt`, seconds).
+
+The model is backward Euler on the same conduction system with a lumped
+heat capacity per node: the material's density times its card's specific
+heat in each designed cell (in proportion to its density, the rest is
+air), each component's `heatCapacity` (J/K; default 1.8 J/(cm^3 K) times
+its volume, about right for silicon, board and a lithium cell), air at
+1.2 J/(L K). Each step length is factored once, and the adjoint runs back
+through every step on the same factors, so the gradient of the hottest
+moment is exact (tests/test_cooling.py checks it against finite
+differences to 1e-3, and a near-isothermal box heating up against
+W/(hA)(1 - e^(-t/tau)) to 1.5% at 40 steps).
+
+## How it was checked
+
+- **A heated sphere in a shell.** A 1 W sphere (4 mm) at the centre of a
+  PA 12 ball (20 mm) losing heat at h has an exact answer:
+  W/(4 pi k)(1/a - 1/b) + W/(4 pi b^2 h). This found a real error. A grid's
+  stepped outside has |nx| + |ny| + |nz| times the area of the surface it
+  follows, 1.5 times on a sphere, and the outside read a third too cool,
+  at every grid size. Each outside face now convects over the true surface
+  it stands for (1 / (|nx| + |ny| + |nz|) of a face, the normal from the
+  exterior's distance field). The ball's outside now reads within 1% and
+  the centre within 3% at 0.5 mm (`tests/test_cooling.py`). Flat faces are
+  unchanged; the handheld's rounded edges read about 1 K warmer than
+  before the fix, and the example below was designed again with it.
+- **Heat balance.** All the heat leaves through the outside and the vents
+  (to 1e-4 W without vents, 0.2% with them).
+- **Gradients.** The adjoint matches central finite differences, steady
+  and over a cycle.
+- **Grids.** The delivered part is read on two finer grids than it was
+  designed on (below).
 
 ## Checks
 
@@ -123,69 +178,96 @@ power have to change, and those are the designer's to decide.
 ## Example: a handheld device
 
 `examples/cooling/handheld.py`: a generic 120 x 64 x 16 mm handheld with
-rounded edges, MJF PA 12, a 1.5 mm skin. A board carries a 1.5 W processor
-and a 0.3 W power chip (both under 70 C); a battery under the board must
-stay under 45 C; the outside under 48 C (held); a 30 C room. A 30 N squeeze
-across the width must close it by no more than 0.15 mm.
+rounded edges, MJF PA 12, a 1.5 mm skin. A board at one end carries a
+1.5 W processor and a 0.3 W power chip (both under 70 C); the battery
+beside it must stay under 45 C; the outside under 48 C (held); a 25 C
+room.
 
 Read before anything is designed (`--baseline`, 1 mm cells):
 
 | interior | processor | power chip | battery | skin hot spot | skin mean |
 |---|---|---|---|---|---|
-| bare skin (parts in still air) | 92.3 C (limit 70) | 88.1 C | 29.9 C | 51.0 C (limit 48) | 33.6 C |
-| filled solid | 53.7 C | 48.9 C | 33.2 C | 46.2 C | 33.6 C |
+| bare skin (parts in still air) | 93.3 C (limit 70) | 89.1 C | 30.1 C | 51.4 C (limit 48) | 34.4 C |
+| filled solid | 54.9 C | 50.0 C | 33.9 C | 47.1 C | 34.4 C |
 
-Bare, the processor is 22 K over its limit and the skin over it is 3 K
+Bare, the processor is 23 K over its limit and the skin over it is 3 K
 over the touch limit. Filled solid, both are met, at 89.6 cm^3 of PA 12
 inside. The skin's mean is the same either way: W / (h A).
 
-Designed on 0.7 mm cells (90 iterations, 31 min on the 4-core cloud box,
-`--pitches 0.7 --iterations 90`), the interior is 17% of the design space:
-pads off the processor and power chip that spread into a thin liner under
-the skin over the board, and almost nothing at the battery end. 41.1 cm^3
-in all (skin included), 41.5 g of PA 12.
+Designed on 0.7 mm cells (90 iterations, 32 min on the 4-core cloud box,
+`--pitches 0.7 --iterations 90`, aiming 1 K under each limit: `margin`),
+the interior is 23% of the design space: pads off the processor and power
+chip that spread into a thin liner under the skin over the board, and
+almost nothing at the battery end. 43.5 g of PA 12 in all, skin included.
 
 ![handheld sections](images/cooling/handheld-sections.png)
 
 | reading | processor | power chip | battery | skin hot spot |
 |---|---|---|---|---|
-| design (0.7 mm) | 70.0 C | 64.2 C | 33.2 C | 48.0 C |
-| black and white (0.7 mm) | 69.4 C | 63.6 C | 33.3 C | 48.3 C |
-| delivered STL, 0.49 mm | 64.4 C | 59.9 C | 32.0 C | 47.9 C |
-| delivered STL, 0.35 mm | 65.9 C | 60.6 C | 33.5 C | 47.9 C |
+| design (0.7 mm) | 69.0 C | 63.0 C | 35.2 C | 47.0 C |
+| black and white (0.7 mm) | 68.3 C | 62.4 C | 35.2 C | 47.3 C |
+| delivered STL, 0.49 mm | 63.6 C | 59.0 C | 33.5 C | 47.8 C |
+| delivered STL, 0.35 mm | 65.1 C | 59.7 C | 34.8 C | 48.0 C |
 
 Every limit is met on the delivered part. The two delivered grids agree
-within 3.6% of each temperature rise on the processor and exactly on the
-skin hot spot (the battery's rise is small, so its 1.5 K reads as 17%).
-The delivered part reads cooler than the design because meshing joins the
-pads to the skin and parts the design touched only with grey cells.
+within 3.8% of each temperature rise on the processor and 0.8% on the skin
+hot spot (the battery's rise is small, so its 1.3 K reads as 14%). The
+skin reads 1 K warmer delivered than designed, at the foot of the pad
+under the board on the back: the margin is that 1 K.
 
 **Design on 0.7 mm, not 1 mm.** The same study designed on 1 mm cells met
-its limits there and read 3-4 K hot at 0.5 mm (processor 73.7 C, skin
-up to 48.5 C): the processor is 1.2 mm thick, the board 1.6 mm and the gaps
-around them under a cell, and a 1 mm grid conducts across them more than
-they do. 0.5 and 0.35 mm agreed within 1% on the processor.
+its limits there and read 3-4 K hot at 0.5 mm: the processor is 1.2 mm
+thick, the board 1.6 mm and the gaps around them under a cell, and a 1 mm
+grid conducts across them more than they do. 0.5 and 0.35 mm agreed
+within 1% on the processor.
 
 **Combined with a structural target.** `--press` adds a feel target: the
 back panel under a 20 N thumb press in its middle closes by no more than
-0.1 mm. The bare skin closes 0.56 mm. Designed together on 0.7 mm cells
-(90 iterations, 54 min), the press never bound: the liner the heat needs
-under the skin over the board is also what stiffens the panel, to 0.036 mm
-(0.035 black and white). The run delivered the same part as cooling alone
-(41.4 g; processor 66.0 C, skin 47.9 C at 0.35 mm), and the cooling-only
-design reads the same 0.036 mm. A target that is met for free costs
+0.1 mm. The bare skin closes 0.56 mm. The press never binds: the liner the
+heat needs under the skin over the board is also what stiffens the panel,
+to 0.023 mm on this design. A target that is met for free costs
 nothing; it is there so a change to the layout that thins the liner cannot
 quietly make the panel creak. `tests/test_cooling.py` has a case where the
 grip does bind (a squeeze across a small box).
 
-## Two lessons from building it
+**Designed for a burst.** `--burst` designs the same handheld for how it
+is used instead: idling at 0.4 W, five minutes at 3.5 W (a game, a call,
+a recording), then idle again, the battery holding 45 J/K. Held steady at
+3.5 W no interior meets the limits: the outside averages 16.5 K over the
+room, and filled solid the hot spot reads 68 C. Over the burst a filled
+interior peaks at 56.5 C on the processor and 43.5 C outside (1 mm), and
+the bare skin at 108 C and 48.5 C, so the interior has work to do.
+Designed on 0.7 mm cells (90 iterations, 3.1 h: each iteration is 26 time
+steps forward and back):
+
+| reading | processor (at 360 s) | power chip | battery | skin hot spot |
+|---|---|---|---|---|
+| design (0.7 mm) | 69.0 C | 57.7 C | 28.8 C | 46.9 C |
+| black and white (0.7 mm) | 68.4 C | 57.1 C | 28.8 C | 48.3 C |
+| delivered STL, 0.49 mm | 61.7 C | 52.4 C | 28.3 C | 47.1 C |
+| delivered STL, 0.35 mm | 65.2 C | 54.3 C | 28.8 C | 49.3 C |
+
+52.4 g, 38% of the design space: twice the power for five minutes takes
+more material than the steady 1.8 W (43.5 g), not less, and the part
+meets a load no steady design could. The finest read misses the touch
+limit by 1.3 K, and the two delivered grids differ by 9% of the rise (3.8%
+for the steady design), so this result is not settled: the delivered
+reading on a third grid, and why 0.49 mm reads cool on both designs, are
+the next things to check.
+
+
+## Lessons from building it
 
 - A part whose interior lines the whole inside of a closed skin encloses
   that interior as one cavity, and reconstruct used to drop the cavity's
   surface with the small bodies (decompose() gives a cavity a negative
   volume) and deliver the part solid. Fixed on main (32b8293); a closed
   exterior's delivered volume is worth a glance against the design's.
+- The mesher's closing filled slots under 2 mm as too narrow to print. In
+  a cooling part an air gap is the design: the handheld's mesh bridged a
+  1.4 mm gap between a pad under the board and the back skin, 2 g more
+  and the back 0.5 K over its limit. Cooling parts mesh without it.
 - The touch limit is usually set by the exterior, not the interior: the
   skin's mean rise is W / (h A) whatever is inside, so at 1.8 W this
-  21,200 mm^2 exterior averages about 8.5 K over the room, and the interior can
-  only decide how far over that mean the hot spot sits.
+  21,200 mm^2 exterior averages about 8.5 K over the room, and the interior
+  can only decide how far over that mean the hot spot sits.

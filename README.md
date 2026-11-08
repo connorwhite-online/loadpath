@@ -384,9 +384,11 @@ under, a battery a lower one, and the surface a hand holds a touch limit
 watts and limit and designs the interior to meet all of them with the least
 material, together with any feel target. A generic 120 x 64 x 16 mm
 handheld in MJF PA 12 with a 1.5 W processor: bare, the processor reads
-92 C and the skin over it 51 C; designed on 0.7 mm cells, pads off the
-chips spread into a thin liner under the skin over the board, 17% of the
-inside, and the delivered mesh reads 66 C and 47.9 C.
+93 C and the skin over it 51 C; designed on 0.7 mm cells, pads off the
+chips spread into a thin liner under the skin over the board, 43.5 g in
+all, and the delivered mesh reads 65 C and 48.0 C. A `cycle` designs for
+how it is used (an idle, a five-minute burst at twice the power) instead
+of a steady load.
 ([docs/COOLING.md](docs/COOLING.md))
 
 <img src="docs/images/cooling/handheld-sections.png" width="760">
