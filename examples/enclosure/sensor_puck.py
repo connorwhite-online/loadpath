@@ -70,7 +70,8 @@ def write(out):
         "openings": [{"id": "usb-port", "shape": files["port"], "inward": "+y"},
                      {"id": "battery-door", "shape": files["door"], "inward": "+z"}],
         "components": [
-            {"id": "board", "shape": files["board"], "mass": 0.008, "watts": 0.3, "rotate": "z"},
+            {"id": "board", "shape": files["board"], "mass": 0.008, "watts": 0.3, "rotate": "z",
+             "margin": 0.3},
             {"id": "usbc", "shape": files["usbc"], "installedOn": "board", "mass": 0.001,
              "alignTo": {"opening": "usb-port", "face": "-y", "recess": 0.3}},
             {"id": "battery", "size": [45.0, 30.0, 6.0], "mass": 0.032, "against": "-z", "rotate": "z"},

@@ -380,8 +380,10 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
             if not ok:
                 continue
             mg = g.margin
-            if lr is not None and lr["kind"] == "alignTo" and lr["recess"] != 0.3:
-                room = np.minimum(np.maximum(room_base, opening_room(lr["opening"], lr["recess"])), occ_state)
+            if lr is not None and lr["kind"] == "alignTo":
+                # the recess is the face's own stand-off from the exterior,
+                # not on top of the margin the rest of the part keeps
+                room = np.minimum(np.maximum(room_base, opening_room(lr["opening"], lr["recess"] - mg)), occ_state)
             else:
                 room = np.minimum(room_base, occ_state)
             if lr is not None and lr["kind"] == "under":
@@ -615,7 +617,8 @@ def _refine(g, R, t, lr, G, exterior, skin, op_shapes, fixed, given_shapes, pose
     mg = g.margin
 
     def ok(tt):
-        r = _exact_room(pts0 @ R.T + tt, exterior, skin, op_shapes, fixed, given_shapes, others, opening, recess)
+        r = _exact_room(pts0 @ R.T + tt, exterior, skin, op_shapes, fixed, given_shapes, others, opening,
+                        recess - mg)
         return float(r.min()) >= mg - 1e-6
 
     t = np.asarray(t, float)
@@ -700,6 +703,12 @@ def _layout(s, gb, byid, meshes, given, exterior, skin, op_shapes, fixed, given_
                     "roomToSkin": round(wall_room, 3), "beyondExterior": round(max(outside, 0.0), 3),
                     "roomToParts": {k: round(v, 3) for k, v in sorted(nb.items(), key=lambda kv: kv[1])[:4]},
                     **({"roomToFixed": {k: round(v, 3) for k, v in fx.items()}} if fx else {})})
+        al = byid[m].get("alignTo") if isinstance(byid[m].get("alignTo"), dict) else None
+        o = op_shapes.get(al.get("opening")) if al else None
+        if o is not None and o.get("plane") is not None:
+            # measured: how far the part's outermost point stands back from
+            # the exterior across the opening (the brief's `recess`)
+            rec["recess"] = round(float(o["plane"] - (pts @ o["axis"]).max()), 3)
     mass = sum(float(byid[m].get("mass") or 0.0) for m in out)
     com = None
     if mass > 0:

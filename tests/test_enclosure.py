@@ -103,6 +103,9 @@ def test_placement_rules():
     # edge stops it before the rim round the mouth)
     face = c["conn"]["bounds"][0][1]
     assert -17.0 + 0.3 - 1e-3 <= face <= -16.0, c["conn"]
+    # the recess is the face's own (0.3 asked, not 0.3 plus the 0.5 margin);
+    # here the skin lining the port's inner edge stops the board first
+    assert 0.3 - 1e-3 <= c["conn"]["recess"] < 0.75, c["conn"]
     # the battery on the floor: the skin is 1 mm, the margin 0.5 mm
     assert c["battery"]["bounds"][0][2] < -10 + 1.0 + 0.5 + 0.6, c["battery"]
     for k in ("board", "battery"):
