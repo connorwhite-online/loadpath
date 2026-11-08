@@ -494,7 +494,7 @@ def test_overlays_paste_and_sweep():
     assert "_fatal" not in out and not out["_errors"], out
     for k, want in (("thin", 0.5), ("thick", 2.0), ("thinSide", 0.5), ("thickSide", 2.0)):
         assert abs(out[k] - want) < 0.02, (k, out[k])
-    assert "FDM minimum 0.8 mm" in out["legend"], out["legend"]
+    assert "FDM minimum 1 mm" in out["legend"], out["legend"]
     t = out["tune"]
     assert t["rows"] == 1 and t["can"] and t["spec"]["params"][0]["path"] == "nodes/sa/thickness", t
     assert t["spec"]["params"][0]["min"] < 0.5 < t["spec"]["params"][0]["max"], t
