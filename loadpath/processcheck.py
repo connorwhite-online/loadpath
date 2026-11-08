@@ -66,7 +66,10 @@ RULES = {
                     "grows with cross-section faster"},
 }
 # Material-specific changes to a process's rules: TPU powder tears thin walls
-# out in depowdering and does not warp like nylon.
+# out in depowdering and does not warp like nylon. TPU's 1.0 mm is a margin
+# kept on purpose (Connor, 2026-11-08): Materialize lists 0.8 mm walls and
+# 0.3 mm detail for SLS Flexible TPU, the hard limit; ask the Materialize MCP
+# (materialize_get_material) for the current one before going under 1.0.
 _MATERIAL_RULES = {
     "tpu88a": {"minWall": 1.0, "warpSpan": None},
 }
