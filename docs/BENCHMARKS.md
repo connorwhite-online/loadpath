@@ -642,6 +642,51 @@ fell 1.3-1.5x, less than the optimizer's 2.6x: the rest of a part is
 reconstruct, verify and the tet check, mostly single-core, and they are
 the next lever.
 
+## Buckling inside the optimizer on all cores (2026-11-08)
+
+After mgops, a constrained part on the full-tier wrist yoke still spent 600-685 s
+in the optimizer, and about half of that in its buckling constraint (py-spy).
+Two fixes, same numbers:
+
+- **PARDISO ran on one core.** loadpath sets `MKL_NUM_THREADS=1` at import so
+  BLAS stays out of numba's way, and that also pinned every PARDISO factor and
+  solve. `nonlinear.mkl_threads` now sets MKL's thread-local count before each
+  factor and solve (bucklingopt, nonlinear, lattice_buckling), BLAS stays at
+  one. Yoke constrained grid (395k dofs): factor 42.7 -> 12.7 s, the buckling
+  evaluation 75 -> 44 s warm and 220 -> 108 s cold.
+- **The gradient terms were einsums per Gauss point.** `geometric_parts` now
+  stacks every point's gradients into one matrix, two GEMMs per mode: 3.25 ->
+  0.60 s at 130k cells for two modes (it was 125 s of the yoke run).
+
+Wrist yoke, full tier, alone: 1810 s, 15.8 g (SF 4.20), against 2591 s / 15.2 g after mgops and 4520 s / 14.8 g before; the
+optimizer per constrained part 492-503 s. The buckling eigen-solves (LOBPCG's
+block solves with the factor, about 8 s an evaluation) are now its largest
+single cost.
+
+## Wall time against nTop and Fusion 360
+
+There is no like-for-like benchmark: neither vendor publishes solver timings
+for a defined problem, and both run on other hardware (Fusion solves in
+Autodesk's cloud, several outcomes at once; nTop runs on the user's
+workstation). What is published, and how loadpath compares on a 4-core,
+15 GB cloud box:
+
+| Tool | Typical time to a part | Source |
+| --- | --- | --- |
+| Fusion 360 generative design | "3-4 hours or longer is normal" for a study; guides give 30 min to several hours, 2-8 h for complex studies; one Autodesk customer story cites four hours | [Make:](https://makezine.com/article/maker-news/how-to-use-ai-to-build-optimized-models-in-fusion-360-generative-design/), [arched.ai](https://arched.ai/resources/autodesk-generative-design), [Oregon State capstone](https://events.engineering.oregonstate.edu/node/165) (studies bucketed 1-2, 2-7, 7+ h) |
+| nTop topology optimization | No published timings. Its docs default to 200 iterations (250+ with feature-size constraints); GPU acceleration in nTop 3.x is for geometry and previews | [nTop support](https://support.ntop.com/hc/en-us/articles/360048490154-Understanding-the-Optimization-settings), [Fabbaloo](https://www.fabbaloo.com/news/ntopologys-gpu-acceleration) |
+| Academic GPU topology optimization | 65.5M elements in about 2 h on one GPU, 3 h 10 min on 48 CPU cores | [CMAME 2023 via hgpu.org](https://hgpu.org/?p=28174) |
+| loadpath, full eval tier | Median case about 19 min, quickest under 2 min, the 140 g robot turret 77 min; each case is a whole search (several outcomes, each meshed, voxel-verified and tet-confirmed) | `loadpath/evals/baselines/full.json` (2026-11-04, older code, two cases at a time) and the rows above |
+
+What this does and does not say. A loadpath full-tier case and a Fusion study
+are both "requirements in, several checked candidates out", and loadpath's
+are in the same tens-of-minutes range or under on a 4-core box, where Fusion
+users report hours in the cloud. Fusion's queue time, its larger outcome
+sets (several materials and methods per study) and its mesh sizes are not
+known, so this is an order-of-magnitude reading, not a race. nTop cannot be
+placed at all from public numbers. Everything loadpath-side is reproducible
+with `python -m loadpath.evals.run <case> --tier full`.
+
 ## Pitch sensitivity: one grid is a sample
 
 A safety-factor search's answer moves a lot with sub-percent changes of the

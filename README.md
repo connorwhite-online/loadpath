@@ -203,6 +203,21 @@ In short:
   safety factor in the case studies. The analysis is linear elastic with
   datasheet material values; printed parts vary with the printer.
 
+## How fast it is
+
+On a 4-core cloud box, a whole full-tier eval case (a search over several
+outcomes, each meshed and checked) takes a median of about 19 minutes; a motor
+mount and a bell crank finish in 2 and 7 minutes and the largest robot part (140 g) in 77.
+Fusion 360 users report 2-4 hours or more per generative study in Autodesk's
+cloud; nTop publishes no timings. The sources, caveats and the speed work
+behind these numbers are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md#wall-time-against-ntop-and-fusion-360).
+
+| Case (full tier, alone) | loadpath on Nov 6 | Now | Mass |
+| --- | --- | --- | --- |
+| Robot-arm wrist yoke | 4520 s | 1810 s | 15.8 g (runs spread 13.9-15.8 g) |
+| Robot turret | over 2 h (stopped) | 4718 s | 140.9 g |
+| Generated bracket (corpus 1) | over 2 h (stopped) | 1867 s | 46.5 g |
+
 ## Case studies
 
 Each states the problem, the setup, the numbers against a named baseline,
