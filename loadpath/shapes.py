@@ -728,7 +728,16 @@ class Thickened(Offset):
 
     def __init__(self, base: Offset, extra):
         super().__init__(base.base, base.offset, [(a, s) for a, s in base.open])
-        self._more = extra
+        if isinstance(base, Thickened):
+            # a skin of zoned thickness thickened again by a lining: both hold
+            first = base._more
+            self._more = lambda p: first(p) + extra(p)
+        else:
+            self._more = extra
+
+    def thickness_at(self, p):
+        """The skin thickness at points (mm): the shrink plus the field."""
+        return -self.offset + self._more(np.asarray(p, float))
 
     def sdf(self, p):
         p = np.asarray(p, float)

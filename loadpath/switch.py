@@ -1441,6 +1441,8 @@ def _skin_lining(study, domain, extra):
     h = domain.pitch
     c = domain.mesh.elem_centers()
     depth = -inner.base.sdf(c)                      # below the exterior, mm
+    if hasattr(inner, "thickness_at"):               # a skin of zoned thickness
+        t = inner.thickness_at(c)
     solid = (extra > 0.5) & ~domain.preserve
     band = solid & (depth > t - 0.5 * h) & (depth < t + 1.0 * h)
     if not band.any():

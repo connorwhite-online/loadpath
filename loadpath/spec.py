@@ -750,6 +750,16 @@ def _skin(v, design, base_dir=None):
         of_shapes = [shape_from_spec(x, base_dir) for x in (of if isinstance(of, list) else [of])]
         ds = of_shapes[0] if len(of_shapes) == 1 else Union(of_shapes)
     inner = shrink(ds, float(t), faces)
+    zones = []
+    for j, z in enumerate(v.get("zones") or []):
+        if not isinstance(z, dict) or "shape" not in z or not isinstance(z.get("thickness"), (int, float)) \
+                or z["thickness"] <= 0:
+            raise ValueError(f"skin.zones[{j}] is {{shape, thickness (mm > 0), blend?}}")
+        zones.append((shape_from_spec(z["shape"], base_dir), float(z["thickness"]), float(z.get("blend", 2.0))))
+    if zones:
+        inner = _zoned(ds, float(t), faces, zones)
+        # the thinnest skin is the one the grid has to resolve
+        t = min([float(t)] + [z[1] for z in zones])
     holes = []
     for j, o in enumerate(v.get("openings") or []):
         if not isinstance(o, dict) or "shape" not in o:
@@ -764,6 +774,32 @@ def _skin(v, design, base_dir=None):
         from .shapes import Boolean
         return float(t), Boolean("intersect", [Shell(ds, inner), part])
     return float(t), Shell(ds, inner)
+
+
+def _zoned(ds, t, faces, zones):
+    """The inner surface of a skin `t` mm thick except in `zones`
+    [(shape, thickness, blend)], where it is that zone's thickness, ramped
+    smoothly over `blend` mm across the zone's edge. The exterior is not
+    touched: a Thickened offset of the thinnest skin, so the lining and the
+    cut-cell skin see one smooth inner surface."""
+    from .shapes import MeshShape, Offset, Thickened
+
+    t_min = min([t] + [z[1] for z in zones])
+    t_max = max([t] + [z[1] for z in zones])
+    base = Offset(ds, -t_min, faces)
+    if isinstance(ds, MeshShape):
+        ds.exact_band(t_max + 0.5)
+
+    def extra(p):
+        te = np.full(len(p), t)
+        for shape, tz, blend in zones:
+            d = shape.sdf(p)
+            w = np.clip(0.5 - d / blend, 0.0, 1.0) if blend > 0 else (d <= 0).astype(float)
+            w = w * w * (3 - 2 * w)
+            te += (tz - t) * w
+        return np.clip(te, t_min, t_max) - t_min
+
+    return Thickened(base, extra)
 
 
 def _target(item, label, base_dir):

@@ -141,6 +141,32 @@ def test_thin_skin_is_a_density_floor():
     assert not f2.any()
 
 
+def test_skin_zone_thins_the_skin_under_a_touch_area():
+    """skin.zones: a 0.6 mm skin inside a 5 mm disc of the top, 1.0 mm
+    elsewhere, the exterior unchanged; the bare skin presses lighter there."""
+    zone = {"shape": {"type": "cylinder", "p0": [0, 0, 0], "p1": [0, 0, 7], "r": 5}, "thickness": 0.6,
+            "blend": 1.0}
+    doc = pad()
+    doc["skin"] = dict(doc["skin"], zones=[zone])
+    assert not lint(doc, "study"), lint(doc, "study")
+    st = study_from_dict(doc)
+    assert st.shells == [("skin", 0.6)]
+    skin = next(r for r in st.preserve if r.id == "skin").shape
+    p = np.array([[0, 0, 5.7], [0, 0, 5.2], [9, 9, 5.2], [9, 9, 4.9], [12.5, 0, 3]])
+    assert list(skin.contains(p)) == [True, False, True, False, False]
+    # the outer surface is the design space's own
+    assert abs(skin.sdf(np.array([[0, 0, 6.0]]))[0]) < 1e-6
+
+    def bare_centre(study):
+        d, floor = sw._thin_skin(study, build_domain(study, 0.75))
+        spec = sw.switch_from_study(study, d)
+        bare = np.maximum(np.maximum(d.preserve.astype(float), floor), 1e-9)
+        return sw.fire_forces(d, study.elastic(design=True), spec, bare, float(study.material.E))["forces"][0]
+
+    f1, f0 = bare_centre(st), bare_centre(study_from_dict(pad()))
+    assert f1 < 0.8 * f0, (f1, f0)
+
+
 def test_skin_review_names_where_the_skin_alone_misses():
     """Ceilings of 550 gf at the outer presses, where the bare 1 mm skin
     alone fires at about 615 gf (1.5 mm cut cells): the review says the skin, not the

@@ -341,6 +341,26 @@ the bare skin uses 90% of its room over the board, 83% over the
 receptacle, and 109% over the chip (a press at (0, 12), right over it,
 bottoms the bare skin on it). Every design since meets all three.
 
+## A skin of more than one thickness
+
+An interior can only stiffen a press, so a touch area cannot be made
+softer than its skin. What can change without touching the exterior is
+the skin's inside: `skin.zones` gives a place its own thickness, and only
+the inner surface moves.
+
+```json
+"skin": {"thickness": 1.0,
+         "zones": [{"shape": {"type": "cylinder", "p0": [0, 0, 0], "p1": [0, 0, 20], "r": 12},
+                    "thickness": 0.8, "blend": 2.0}]}
+```
+
+The thickness ramps across the zone's edge over `blend` mm (default 2),
+as one smooth inner surface, so the cut-cell skin and the lining see no
+step. Zones can be thicker too (a rim that should be firm). The grid
+checks and the process's minimum wall use the thinnest skin. On the test
+pad a 0.6 mm disc under the press point takes the bare skin's force down
+by more than a fifth.
+
 ## When the exterior decides: feedback for the designer
 
 Some presses are set by the skin, and no interior can fix them. The

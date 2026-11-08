@@ -1138,7 +1138,17 @@ STUDY_SCHEMA = {
                                         "the cavity behind it"},
                      "of": {"anyOf": [{"$ref": "#/$defs/shape"}, {"type": "array", "items": {"$ref": "#/$defs/shape"}}],
                             "description": "the exterior the skin lines when the design space is only part of it "
-                                           "(a split half): the skin follows it and stops at the cut"}},
+                                           "(a split half): the skin follows it and stops at the cut"},
+                     "zones": {"type": "array", "items": {"type": "object", "properties": {
+                         "shape": {"$ref": "#/$defs/shape"},
+                         "thickness": {**_POS, "description": "mm of skin inside the zone"},
+                         "blend": {"type": "number", "minimum": 0,
+                                   "description": "mm over which the thickness ramps across the zone's edge "
+                                                  "(default 2)"}},
+                         "required": ["shape", "thickness"], "additionalProperties": False},
+                         "description": "places the skin is another thickness, the exterior unchanged: only "
+                                        "the inner surface moves (a thinner skin under a touch area so it "
+                                        "feels pliable, a thicker one where a rim should be firm)"}},
                      "required": ["thickness"], "additionalProperties": False}],
                  "description": "Skin-and-rib: mm of the design space's outer surface kept as a solid wall; "
                                 "the optimizer designs the ribs behind it."},
