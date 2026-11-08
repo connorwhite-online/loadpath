@@ -1378,9 +1378,14 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         # a boolean can leave sliver pairs only an STL's weld exposes
         # (edges shared by four faces); a pass back through manifold3d
         # drops them. It refuses a mesh that is not a 2-manifold (the full-
-        # tier wrist yoke's search part): keep the mesh as it is then.
+        # tier wrist yoke's search part, the sensor puck's 15% outcome
+        # unwelded): weld by position first, as an STL reader would, and
+        # keep the mesh as it is if it still refuses.
+        w = mesh.copy()
+        w.vertices = w.vertices.astype(np.float32).astype(float)
+        w.merge_vertices()
         try:
-            again = _drop_slivers(trimesh_from_manifold(manifold_from_trimesh(mesh)))
+            again = _drop_slivers(trimesh_from_manifold(manifold_from_trimesh(w)))
         except ValueError:
             again = None
         if again is not None and _stl_watertight(again):
