@@ -166,10 +166,11 @@ def test_search_avoids_and_tall_parts():
     r = apply_split(product(), {"normal": "+z", "avoid": [{"type": "box", "min": [-40, -30, 9], "max": [40, 30, 15]}],
                                 "lip": False, "snaps": False, "screws": False},
                     out_dir=out, base_dir=_DIR)
-    at = r["report"]["cut"]["at"]
-    assert at < 9 - 0.3 or at > 15 + 0.3, at
+    cut = r["report"]["cut"]
+    lv = cut.get("levels") or [cut["at"], cut["at"]]
+    assert lv[1] < 9 - 0.3 or lv[0] > 15 + 0.3, cut
     for c in r["report"]["candidates"]:
-        if 9 - 0.3 <= c["at"] <= 15 + 0.3 and c.get("ok") is not None:
+        if c.get("kind") == "plane" and 9 - 0.3 <= c["at"] <= 15 + 0.3 and c.get("ok") is not None:
             assert not c["ok"] and c["why"].startswith("the seam crosses"), c
 
 
@@ -198,11 +199,13 @@ def _box_outline(a):
     return d * k
 
 
-def _halves_partition(r, n=20000):
+def _halves_partition(r, n=20000, exterior=None):
     from loadpath.shapes import shape_from_spec
     B = shape_from_spec(r["studies"]["base"]["designSpace"], _DIR)
     C = shape_from_spec(r["studies"]["cover"]["designSpace"], _DIR)
     P = np.random.default_rng(0).uniform([-30, -20, 0], [30, 20, 20], (n, 3))
+    if exterior is not None:
+        P = P[shape_from_spec(exterior, _DIR).sdf(P) < -1e-6]
     b, c = B.sdf(P) < 0, C.sdf(P) < 0
     return int((b & c).sum()), int((~b & ~c).sum())
 
@@ -287,6 +290,74 @@ def test_tolerance_stackups():
                      base_dir=_DIR)
     t3 = r3["report"]["tolerance"]
     assert t3["face"] < tol["face"] and t3["clearance"]["drawn"] < cl["drawn"], (t3, tol)
+
+
+def _reveal_box(slope=0.06, z0=9.0, inset=0.8):
+    """A 60 x 40 x 20 mm box whose upper body stands `inset` mm in from the
+    lower along a tilted line (a reveal, z = z0 + slope x): a crease that is
+    not flat."""
+    a = math.atan(slope)
+    n = np.array([-math.sin(a), 0.0, math.cos(a)])
+    c = np.array([0.0, 0.0, z0]) - 50.0 * n
+    under = {"type": "box", "center": c.tolist(), "size": [200.0, 200.0, 100.0],
+             "axes": [[math.cos(a), 0.0, math.sin(a)], [0.0, 1.0, 0.0]]}
+    outer = {"type": "box", "min": [-30, -20, 0], "max": [30, 20, 20]}
+    inner = {"type": "box", "min": [-30 + inset, -20 + inset, 0], "max": [30 - inset, 20 - inset, 20]}
+    # the inner body runs the full height, so the union's distance is right
+    # deep inside too (two bodies meeting at the line would read as a wall
+    # there to the skin's offset)
+    return {"type": "union", "shapes": [inner, {"type": "intersect", "shapes": [outer, under]}]}
+
+
+def test_search_proposes_non_flat_cuts():
+    """With no `at`, the search proposes cuts that are not flat: on a box
+    whose upper body steps in along a tilted reveal, it finds the reveal
+    and splits in it (the seam hidden in the crease), and on the plain box
+    with a post standing up through the middle it tries steps over the
+    post and tilted planes too. `search: flat` keeps to axis planes."""
+    from loadpath.shapes import shape_from_spec
+    st = {**product(), "designSpace": _reveal_box()}
+    r = apply_split(st, {"normal": "+z", "lip": False, "snaps": False}, out_dir=tempfile.mkdtemp(), base_dir=_DIR)
+    cut = r["report"]["cut"]
+    assert cut["ok"] and cut["kind"] == "crease", cut
+    assert cut["seamHidden"] > 0.9 * cut["seam"], cut
+    surf = shape_from_spec(cut["surface"])
+    for x in (-20.0, 0.0, 20.0):
+        assert abs(surf.height(np.array([[x, 0.0, 0.0]]))[0] - (9.0 + 0.06 * x)) < 0.5, (x, cut)
+    assert _halves_partition(r, exterior=st["designSpace"]) == (0, 0)
+    flat = apply_split(st, {"normal": "+z", "lip": False, "snaps": False, "search": "flat"},
+                       out_dir=tempfile.mkdtemp(), base_dir=_DIR)["report"]
+    assert {c["kind"] for c in flat["candidates"]} == {"plane"}
+    # a crease seam scores under every flat one
+    assert cut["score"] < min(c["score"] for c in flat["candidates"]), cut
+    r2 = apply_split(product(with_tall=True), {"normal": "+z", "lip": False, "snaps": False},
+                     out_dir=tempfile.mkdtemp(), base_dir=_DIR)["report"]
+    kinds = {c["kind"] for c in r2["candidates"]}
+    assert {"plane", "tilted", "steps"} <= kinds, kinds
+    stepped = [c for c in r2["candidates"] if c["kind"] == "steps"]
+    assert any(c["crossing"] == 0 and c["steps"][0]["over"] == "board" for c in stepped), stepped
+
+
+def test_silhouette_line():
+    """The widest line round a cylinder lying 10 degrees off level, seen
+    from above, rises along it: the silhouette follows it."""
+    from loadpath import parting
+    from loadpath.shapes import shape_from_spec
+    from loadpath.shells import _Cut
+    a = math.radians(10.0)
+    d = np.array([math.cos(a), 0.0, math.sin(a)])
+    cyl = shape_from_spec({"type": "cylinder", "p0": (-35 * d + [0, 0, 20]).tolist(),
+                           "p1": (35 * d + [0, 0, 20]).tolist(), "r": 10.0})
+    got = parting.silhouette_line(cyl, _Cut.plane_axis(2, 1, 0.0), min_depth=3.0)
+    assert got is not None
+    pts, _w = got
+    mid = np.abs(pts[:, 0]) < 20
+    err = np.abs(pts[mid, 2] - (20 + math.tan(a) * pts[mid, 0]))
+    assert err.max() < 0.6, err.max()
+
+
+TESTS += [test_angled_stepped_and_seam_cuts, test_tolerance_stackups, test_search_proposes_non_flat_cuts,
+          test_silhouette_line]
 
 
 if __name__ == "__main__":

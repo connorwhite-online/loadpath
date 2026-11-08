@@ -522,9 +522,15 @@ designs it straight away.
 (MCP `loadpath_split`; `loadpath schema split`).** The study is the whole
 product (exterior as designSpace, a `skin`, components as keep-outs with
 insertFrom) plus a `split` block. Give `normal` and `at` when the designer
-drew the parting line; otherwise it searches cuts across x, y and z and
-picks the short seam where components drop in a short way, then the one
-with room for joints. It checks that every component goes into its half
+drew the parting line; otherwise it searches: flat cuts across x, y and z,
+then tilted planes, stepped lines (over or under each part a flat cut runs
+through, round each `avoid`), the silhouette and any crease in the
+exterior (a reveal, a shoulder, a character line). It ranks them by seam
+that shows (seam in a crease or a `hidden` region counts a quarter), how
+far components travel to go in, parts cut through, and for FDM a rim that
+is not flat, then lays out the joints on the best four and takes the one
+whose snaps fit and hold (`candidates[].final`; `search: "flat"` for axis
+planes only). It checks that every component goes into its half
 with the other off and that the cover lifts off without catching on
 anything. `avoid` lists the designer's A surfaces the seam must not
 cross. The joints go inside the skin and the exterior is never changed:

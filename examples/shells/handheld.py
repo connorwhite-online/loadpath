@@ -7,6 +7,7 @@ read from outside the repository.
     python examples/shells/handheld.py --out /tmp/handheld            # the study, split
     python examples/shells/handheld.py --out /tmp/handheld --screws   # with screws through the underside
     python examples/shells/handheld.py --out /tmp/handheld --seam     # a parting line that sweeps up toward the back
+    python examples/shells/handheld.py --out /tmp/handheld --reveal   # a reveal in the exterior; the search finds it
 """
 from __future__ import annotations
 
@@ -28,18 +29,35 @@ def _stl(path, man):
     return os.path.basename(path)
 
 
-def build(out: str) -> dict:
-    """The exterior and component STLs, and the study."""
+def reveal_height(x):
+    """The reveal line's height: level at 11 mm along the front, sweeping
+    up to 15 mm over the back third."""
+    return 11.0 + 4.0 * np.clip((np.asarray(x, float) - 10.0) / 38.0, 0.0, 1.0) ** 2
+
+
+def build(out: str, reveal: bool = False) -> dict:
+    """The exterior and component STLs, and the study. reveal: the upper
+    body stands 0.8 mm in from the lower along a line that runs level at
+    the front and sweeps up over the back (a designer's character line)."""
     import manifold3d as m3d
     os.makedirs(out, exist_ok=True)
     L, W, H, r = 96.0, 56.0, 26.0, 9.0
-    # a soft box: the hull of eight spheres, its top crowned a little
-    pts = []
-    for x in (-L / 2 + r, L / 2 - r):
-        for y in (-W / 2 + r, W / 2 - r):
-            for z in (r, H - r):
-                pts.append(m3d.Manifold.sphere(r, 48).translate((x, y, z)))
-    ext = m3d.Manifold.batch_hull(pts)
+
+    def soft_box(inset=0.0):
+        # the hull of eight spheres
+        pts = []
+        for x in (-L / 2 + r, L / 2 - r):
+            for y in (-W / 2 + r, W / 2 - r):
+                for z in (r, H - r):
+                    pts.append(m3d.Manifold.sphere(r - inset, 48).translate((x, y, z)))
+        return m3d.Manifold.batch_hull(pts)
+    ext = soft_box()
+    if reveal:
+        xs = np.linspace(-60.0, 60.0, 241)
+        poly = [(-60.0, -10.0)] + [(float(x), float(reveal_height(x))) for x in xs] + [(60.0, -10.0)]
+        # the region under the line: the (x, z) outline extruded across y
+        under = m3d.Manifold.extrude(m3d.CrossSection([poly[::-1]]), 100.0).rotate((90.0, 0.0, 0.0)).translate((0, 50.0, 0))
+        ext = (ext ^ under) + (soft_box(0.8) - under)
     board = m3d.Manifold.cube((72, 42, 1.6)).translate((-40, -21, 5.0)) + \
         m3d.Manifold.cube((10, 8, 6)).translate((20, -4, 6.6))        # a connector block on the board
     battery = m3d.Manifold.cube((50, 30, 7.0)).translate((-34, -15, 8.6))
@@ -96,12 +114,16 @@ def main(argv=None):
     ap.add_argument("--normal", default="auto")
     ap.add_argument("--at", type=float)
     ap.add_argument("--seam", action="store_true", help="split along a designer's line sweeping up toward the back")
+    ap.add_argument("--reveal", action="store_true", help="an exterior with a reveal line (searched, not given)")
+    ap.add_argument("--search", default=None, help="'all' (default) or 'flat'")
     args = ap.parse_args(argv)
     from loadpath.shells import run_split
-    study = build(args.out)
+    study = build(args.out, reveal=args.reveal)
     split = {"normal": args.normal, "lip": {"height": 2.0, "width": 1.2}}
     if args.at is not None:
         split["at"] = args.at
+    if args.search:
+        split["search"] = args.search
     if args.seam:
         split["seam"] = {"points": seam_line(args.out)}
     if args.screws:

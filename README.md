@@ -112,7 +112,8 @@ Where it is strongest:
   that has to slide back before it drops out included), the plunger over
   the switch, what the switch stands on, and a clearance per component.
   `loadpath split` makes the product buildable in two parts. It finds a
-  parting line where every part can go in and the cover comes off cleanly,
+  parting line where every part can go in and the cover comes off cleanly
+  (flat, tilted, stepped over a part, or along a crease in the exterior),
   then puts the joints inside the skin: an alignment lip, snap fits sized
   to the material's strain limit, and screw posts if the designer allows
   holes in one face ([docs/SHELLS.md](docs/SHELLS.md)).

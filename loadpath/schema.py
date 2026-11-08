@@ -1044,6 +1044,14 @@ _SPLIT_PROPS = {
                        "lift off from along the normal"},
     "avoid": {"type": "array", "items": {"$ref": "#/$defs/shape"},
               "description": "surfaces the seam must not cross (the designer's A surfaces)"},
+    "hidden": {"type": "array", "items": {"$ref": "#/$defs/shape"},
+               "description": "where a seam is not seen (an underside, inside an opening): seam there counts a "
+                              "quarter of its length in the search, as seam in a crease does"},
+    "search": {"enum": ["all", "flat"],
+               "description": "with no `at`: 'all' (default) tries flat cuts across x, y and z, then tilted "
+                              "planes, stepped lines (over or under each part a cut runs through, round each "
+                              "`avoid`), the silhouette and creases in the exterior from the best of them; 'flat' "
+                              "the axis planes only"},
     "componentsIn": {"type": "object", "additionalProperties": {"enum": ["base", "cover"]},
                      "description": "which half holds a component (default: the one most of it is in)"},
     "assembly": {"type": "array", "items": {"type": "string"},

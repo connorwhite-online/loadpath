@@ -32,21 +32,31 @@ ghosted. Both halves come from a quick run.
 
 ## The cut
 
-Give `normal` and `at` when the designer has drawn the parting line.
-Otherwise loadpath tries cuts across x, y and z and scores each one in
-millimetres:
+Give `normal` and `at` (or `steps`, or a `seam`) when the designer has
+drawn the parting line. Otherwise loadpath searches for one. It tries flat
+cuts across x, y and z, then, from the two best lift directions and their
+two best levels, cuts that are not flat (see
+[the search proposes curved lines](#the-search-proposes-curved-lines)).
+Each is scored in millimetres:
 
-- the seam's length (the seam is visible, so shorter is better),
+- the seam's length where it shows (the seam is visible, so shorter is
+  better). Seam that runs in a crease, or inside a region listed in
+  `hidden` (an underside, an opening), counts a quarter of its length,
 - plus four times how far each component has to travel to go in (a
   battery dropped 8 mm into a tray beats one slid 60 mm down a tube),
 - plus 20 for each component the cut runs through,
-- plus 10 for each millimetre a half falls short of a joint's depth.
+- plus 10 for each millimetre a half falls short of a joint's depth,
+- plus, for FDM, half the seam that does not lie on one plane: a half
+  whose rim is not flat cannot stand on it to print.
 
-That score is a rule of thumb, so give `at` to overrule it. The four best
-cuts that pass the checks below each get their joints laid out, and the
-first one with room for all of them wins. On the handheld, z = 6.0 had the
-shortest seam, but the bottom edge's 9 mm round leaves no straight wall
-for a snap there. The search moved to 7.75, where six snaps fit.
+The best cuts are checked (below) until four pass. Each of those four
+gets its joints laid out, and the score goes up by 15 for each joint
+short of the count, 50 if the snaps bend past their allowance and 10 per
+warning. The lowest wins. That score is a rule of thumb, so give `at` to
+overrule it. On the handheld, z = 6.0 had the shortest seam, but the
+bottom edge's 9 mm round leaves no straight wall for a snap there. The
+search moved to 7.75, where six snaps fit. `"search": "flat"` keeps to
+axis planes.
 
 ### Cuts that are not flat
 
@@ -81,6 +91,50 @@ The lip follows the seam up and down.
 
 *The handheld again, split along a line that sweeps from 8 mm at the front
 up to 15 mm at the back.*
+
+### The search proposes curved lines
+
+With no `at`, the search does not stop at flat cuts. From the two best
+lift directions and their two best flat levels, `loadpath/parting.py`
+proposes:
+
+- **tilted planes** through those levels, leaning 8 and 15 degrees about
+  each axis across the lift;
+- **stepped lines**: the flat level climbing over, or dipping under, each
+  component it would cut through and each `avoid` region it would cross,
+  so the part sits whole in one half;
+- **the silhouette**: the widest line round the form seen along the lift,
+  the parting line a mould would use. Along a straight wall it keeps to
+  the middle of the wall, and it rises and falls where a curved form makes
+  it;
+- **creases**: a line that follows a kink in the exterior's section all
+  the way round, such as a reveal, a shoulder or a character line. Rays
+  come in from outside at every angle and height, and wherever the
+  section turns by more than 20 degrees within a millimetre, that height
+  is a crease. Creases that continue angle to angle within 1.5 mm are
+  linked into a line. A step puts the seam just onto the face that stands
+  in, not along the ledge.
+
+Each comes back as an ordinary cut (a plane, or a height field through the
+line), so the checks below and the joints are the same as for a cut drawn
+by hand. A seam is hidden where the exterior's section across it turns by
+more than 20 degrees within 1 mm (it runs in a crease, not just across
+one). The search only tries short slides into a half (4 mm, then out
+through the cut), because a part with no way in costs a full path search.
+A cut given by hand gets the full 12 mm.
+
+| part | flat search only | full search |
+| --- | --- | --- |
+| handheld (soft box, no creases) | z = 7.75, 288 mm of seam seen, 6 snaps, 51 s | same cut: the 40 non-flat ones (tilted, stepped over the board) score worse, 59 s |
+| handheld with a reveal (upper body 0.8 mm in, the line level at 11 mm along the front, sweeping up to 15 over the back) | z = 7.9: 289 mm of seam seen, below the reveal, so the product shows two lines; 6 snaps; 51 s | the reveal itself (picked from 43 non-flat cuts): 283 of 289 mm of seam hidden in it, score 147 against 349; 1 of 6 snaps fits (below); 265 s |
+| sensor puck (`loadpath enclosure`, 84 x 56 x 24 mm pebble, USB-C port, battery door) | z = 2.57, 6 snaps, 137 s | same cut: 37 non-flat cuts tried, none better, 172 s |
+
+On the reveal the hooks are the limit: where the seam runs in a step, the
+inner wall steps by the reveal's depth across the seam, and a hook's root
+block has to sit in the skin on one side and stand out from it on the
+other. Five of the six sites fail that, so the report has the crease cut
+with one snap and a score that says so (`final`, 75 for the missing five).
+`screws`, or a hook that steps with the wall, are the ways round it.
 
 A cut passes when:
 
@@ -192,9 +246,15 @@ length and the barb sits further out.
 
 ## What it does not do yet
 
-- **The search only tries flat cuts across x, y and z.** A tilted,
-  stepped or drawn parting line is taken as given and checked, not
-  searched for.
+- **Snaps do not cross a step in the wall.** A seam in a reveal or on a
+  shoulder fits a hook only where the wall runs straight across the seam
+  (1 of 6 on the reveal handheld). Use screws there, or give the count.
+- **The search's paths are short.** While searching, a part may slide 4 mm
+  before it goes in through the cut. A cut that needs a longer slide is
+  rejected with that reason; give it by hand to check every path.
+- **Creases come from the exterior's section round the lift axis.** A
+  crease that only runs part of the way round, or one on a face the lift
+  looks straight down on, is not proposed. Draw it as a `seam`.
 - **A parting surface has to be a height over the lift plane.** A seam
   that doubles back on itself along the lift direction (an undercut
   parting line, which needs side actions in a mould too) is not

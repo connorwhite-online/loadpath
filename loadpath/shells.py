@@ -8,8 +8,12 @@ it is short and away from the surfaces the designer cares about; each half
 has to pull off the other without hooking it (no undercut across the seam);
 every component has to go into its half with the other half off, and the
 cover has to come down over the components already in place. `apply_split`
-checks all of that for a given cut, or tries cuts across each axis and
-picks the shortest seam that passes. A cut need not be a flat axis plane:
+checks all of that for a given cut, or searches: cuts across each axis,
+then the non-flat ones parting.py proposes from the best of them (tilted
+planes, steps over a part, the silhouette, a crease in the exterior),
+ranked by the seam that shows, how far parts travel in, parts cut
+through, printability and the joints that fit. A cut need not be a flat
+axis plane:
 it can be tilted (`normal` a vector), step up over part of the product
 (`steps`), or follow a parting line the designer drew on the exterior
 (`seam`). Any surface that is a height over the plane across the lift
@@ -80,6 +84,10 @@ __all__ = [
 ]
 
 _AX = {"x": 0, "y": 1, "z": 2}
+# mm a component may slide before it drops in, while the search checks
+# cuts (a cut given is checked to handoff's 12 mm): a part with no way in
+# costs a full slide-and-drop search, minutes on a mesh product
+SEARCH_SLIDE = 4.0
 
 
 def _axis(side):
@@ -345,6 +353,9 @@ class _Cut:
         c = _Cut(-self.n, -self.h0, g, e1=self.e1, kind=self.kind,
                  axis=None if self.axis is None else (self.axis[0], -self.axis[1]), at=self.at)
         c.e1, c.e2 = self.e1, self.e2
+        for k in ("steps", "tilt", "seam_points"):
+            if hasattr(self, k):
+                setattr(c, k, getattr(self, k))
         return c
 
     def uv(self, P):
@@ -386,7 +397,8 @@ class _Cut:
             return f"{'xyz'[self.axis[0]]} = {self.at:g}"
         if self.planar:
             return f"the plane n.x = {self.at:g}, n = {_r(self.n, 3)}"
-        return "a stepped parting line" if self.kind == "steps" else "the seam line drawn on the exterior"
+        return {"steps": "a stepped parting line", "silhouette": "the silhouette (the widest line round the part)",
+                "crease": "a crease in the exterior"}.get(self.kind, "the seam line drawn on the exterior")
 
     def footprint(self, ext, pad=1.0):
         lo, hi = ext.bounds()
@@ -436,6 +448,10 @@ class _Cut:
         else:
             o, st, H = self.grid
             out["levels"] = [round(float(H.min()), 3), round(float(H.max()), 3)]
+        if getattr(self, "tilt", None):
+            out["tilt"] = self.tilt
+        if getattr(self, "steps", None):
+            out["steps"] = [{k: v for k, v in s.items() if k != "where"} for s in self.steps]
         return out
 
 
@@ -631,7 +647,7 @@ def _grad(ext, p, h=0.1):
     return g
 
 
-def _half_skin(ext, skin: dict, cut, side):
+def _half_skin(ext, skin: dict, cut, side, base_dir=None):
     """(half design space, the half's skin shape, the skin dict, the half
     region): the skin lines the whole exterior and stops at the cut."""
     from .shapes import Boolean, shape_from_spec
@@ -641,7 +657,7 @@ def _half_skin(ext, skin: dict, cut, side):
     ds = Boolean("intersect", [ext, region])
     sk = dict(skin)
     sk.pop("of", None)
-    _t, shape = _skin(sk, [ext])
+    _t, shape = _skin(sk, [ext], base_dir)
     shape = Boolean("intersect", [shape, region])
     return ds, shape, sk, region
 
@@ -672,7 +688,7 @@ def _assign(comps, cut, given):
     return out
 
 
-def _check_cut(ext, skin, t, comps, cut, given, tol, avoid, order):
+def _check_cut(ext, skin, t, comps, cut, given, tol, avoid, order, base_dir=None, max_slide=12.0):
     """Everything about one cut: seam, separation, assembly in each half."""
     from .handoff import _Obstacles, _path_check, assembly_paths
 
@@ -694,7 +710,7 @@ def _check_cut(ext, skin, t, comps, cut, given, tol, avoid, order):
     rec["componentsIn"] = where
     halves = {}
     for side in ("base", "cover"):
-        halves[side] = _half_skin(ext, skin, cut, side)
+        halves[side] = _half_skin(ext, skin, cut, side, base_dir)
     # Two halves of one solid cut by a surface that is a height over the
     # plane across n always part along n; what can hook is a component. The
     # cover lifts off along +n with its components: they must not catch on
@@ -735,13 +751,16 @@ def _check_cut(ext, skin, t, comps, cut, given, tol, avoid, order):
         cl = [{**c, "insertFrom": c.get("insertFrom") or hint} for c in mine]
         ids = [c["id"] for c in mine]
         od = [i for i in order if i in ids] + [i for i in ids if i not in order]
-        paths = assembly_paths(cl, od, [(f"{side} skin", halves[side][1])], (lo, hi), tol=tol)
+        paths = assembly_paths(cl, od, [(f"{side} skin", halves[side][1])], (lo, hi), tol=tol,
+                               max_slide=max_slide, hint_exit=max_slide < 12.0)
         for k, v in paths.items():
             rec["paths"][k] = {"half": side, "insertFrom": v.get("insertFrom"), "how": v.get("how"),
                                **({"blocked": v["blocked"]} if v.get("insertFrom") is None else {})}
     blocked = [k for k, v in rec["paths"].items() if v["insertFrom"] is None]
     if blocked:
-        rec.update(ok=False, why=f"no way in for {blocked} with the other half off")
+        rec.update(ok=False, why=f"no way in for {blocked} with the other half off"
+                   + (f" (in the search, a slide of up to {max_slide:g} mm, then out through the cut, is "
+                      "tried; give the cut to check every path)" if max_slide < 12.0 else ""))
         return rec
     db, dc = _depths(ext, cut)
     rec["depth"] = {"base": round(db, 2), "cover": round(dc, 2)}
@@ -749,7 +768,14 @@ def _check_cut(ext, skin, t, comps, cut, given, tol, avoid, order):
     return rec
 
 
-def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=None, min_depth=6.0):
+def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=None, min_depth=6.0,
+            curved=True, pkind=None, hidden=None, avoid_specs=(), base_dir=None, max_checks=12):
+    """Cuts across x, y and z at a spread of levels, and (curved) the
+    non-flat ones parting.py proposes from the best of them: tilted planes,
+    stepped lines, the silhouette and creases. Each is scored (`score`),
+    the best are checked (_check_cut) until four pass, and the passing ones
+    come back ranked; apply_split then places the joints on the best four
+    and takes the one that holds best."""
     lo, hi = ext.bounds()
     if normal in (None, "auto"):
         dirs = [_unit(a, 1) for a in range(3)]
@@ -770,15 +796,23 @@ def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=N
                 lv = [base.axis[1] * x for x in lv]          # levels are coordinates on an axis
         for at in lv:
             c = _cut_plane(base.name() if base.axis is not None else d, round(float(at), 3))
-            cands.append((seam_length(ext, c), c))
+            cands.append(c)
     samples = {c["id"]: _samples(c["shape"], 0.8, 600) for c in comps}
 
-    def score(seam, cut):
-        """mm, lower is better: the seam's length, plus four times how far
-        each component travels to go in (a battery dropped 8 mm into a tray
-        beats one slid 60 mm down a tube), plus 20 for each component
-        standing across the cut and 10 per mm a half is too shallow for a
-        joint. A rule of thumb; give `at` to overrule it."""
+    def score(cut):
+        """mm, lower is better: the seam's length where it shows (a quarter
+        of it where it runs in a crease or a `hidden` region), plus four
+        times how far each component travels to go in (a battery dropped
+        8 mm into a tray beats one slid 60 mm down a tube), plus 20 for each
+        component standing across the cut, 10 per mm a half is too shallow
+        for a joint, and for FDM half the seam that does not lie on one
+        plane (the half cannot stand on its rim to print). A rule of thumb;
+        give `at` to overrule it."""
+        from .parting import HIDDEN_WEIGHT, rim_flat, seam_visibility
+        curves = _contours(ext, cut, 0.0)
+        seam = float(sum(_length(c) for c in curves))
+        if not curves:
+            return None
         where = _assign(comps, cut, given)
         travel, cross = 0.0, 0
         for c in comps:
@@ -787,28 +821,72 @@ def _search(ext, skin, t, comps, given, tol, avoid, order, normal=None, levels=N
             travel += max(0.0, float(-sd.min())) if where[c["id"]] == "base" else max(0.0, float(sd.max()))
         depth = _depths(ext, cut)
         shallow = sum(max(0.0, min_depth - d) for d in depth)
-        return round(seam + 4.0 * travel + 20.0 * cross + 10.0 * shallow, 1), round(travel, 1)
+        if cut.planar and cut.kind == "plane":
+            seen, hid = seam, 0.0                # an axis plane: kept as before
+            if hidden:
+                seen, hid = seam_visibility(ext, curves, hidden, deg=1e9)
+        else:
+            seen, hid = seam_visibility(ext, curves, hidden)
+        flat = 1.0 if cut.planar else rim_flat(curves, cut)
+        fdm = 0.5 * seam * (1.0 - flat) if pkind == "fdm" else 0.0
+        sc = seen + HIDDEN_WEIGHT * hid + 4.0 * travel + 20.0 * cross + 10.0 * shallow + fdm
+        return {"score": round(sc, 1), "travel": round(travel, 1), "seam": round(seam, 1),
+                "seamSeen": round(seen, 1), "seamHidden": round(hid, 1), "crossing": cross,
+                "rimFlat": round(flat, 3)}
 
-    pre = sorted(((*score(seam, c), seam, i, c) for i, (seam, c) in enumerate(cands)), key=lambda x: x[:4])
-    rows, best, n_ok = [], np.inf, 0
-    for sc_, travel, seam, _i, c in pre:
-        # the best four that work are all checked: apply_split tries each for
-        # room for its joints
-        if sc_ >= best and n_ok >= 4:
-            rows.append({**c.report(), "seam": round(seam, 1), "travel": travel,
-                         "score": sc_, "ok": None, "why": "not checked: scores worse than a cut that works",
-                         "_cut": c})
+    scored = []
+    for c in cands:
+        s_ = score(c)
+        if s_ is not None:
+            scored.append((s_, c))
+    if curved and levels is None:
+        from .parting import propose
+        # the two lift directions whose best flat cut scores best, and their
+        # two best levels: the non-flat cuts start from there
+        best_dir = {}
+        for s_, c in scored:
+            key = tuple(np.round(c.n, 6))
+            best_dir.setdefault(key, []).append((s_["score"], c))
+        ranked_dirs = sorted(best_dir.values(), key=lambda L: min(x[0] for x in L))[:2]
+        for L in ranked_dirs:
+            L.sort(key=lambda x: x[0])
+            c0 = L[0][1]
+            lv_n = []
+            for _sc, c in L:
+                if all(abs(c.h0 - x) > 1.0 for x in lv_n):
+                    lv_n.append(c.h0)
+                if len(lv_n) == 2:
+                    break
+            base = _Cut.plane(c0.n, 0.0)
+            for c in propose(ext, base, lv_n, comps, samples, avoid_specs, min_depth=min_depth):
+                s_ = score(c)
+                if s_ is not None:
+                    scored.append((s_, c))
+    pre = sorted(((s_["score"], i, s_, c) for i, (s_, c) in enumerate(scored)), key=lambda x: x[:2])
+    rows, best, n_ok, n_checked = [], np.inf, 0, 0
+    for sc_, _i, s_, c in pre:
+        # the best four that work are all checked: apply_split places joints
+        # on each and takes the one that holds best. A cut that fails costs
+        # a full path search for the part with no way in, so at most
+        # max_checks are checked once one works.
+        if (sc_ >= best and n_ok >= 4) or (n_ok >= 1 and n_checked >= max_checks):
+            rows.append({**c.report(), **s_, "ok": None,
+                         "why": "not checked: scores worse than a cut that works" if sc_ >= best and n_ok >= 4
+                         else f"not checked: {max_checks} cuts checked already", "_cut": c})
             continue
-        r = _check_cut(ext, skin, t, comps, c, given, tol, avoid, order)
+        t_c = time.time()
+        n_checked += 1
+        r = _check_cut(ext, skin, t, comps, c, given, tol, avoid, order, base_dir, SEARCH_SLIDE)
         if normal in (None, "auto") and r.get("ok"):
             # the half with the components is the base (the cover is the
             # lid that comes off): flip the normal if they sit in the other
             w = r.get("componentsIn") or {}
             if sum(v == "cover" for v in w.values()) > sum(v == "base" for v in w.values()):
-                r2 = _check_cut(ext, skin, t, comps, c.flipped(), given, tol, avoid, order)
+                r2 = _check_cut(ext, skin, t, comps, c.flipped(), given, tol, avoid, order, base_dir, SEARCH_SLIDE)
                 if r2.get("ok"):
                     r = r2
-        r["travel"], r["score"] = travel, sc_
+        r.update({k: v for k, v in s_.items() if k != "seam"})
+        r["seconds"] = round(time.time() - t_c, 1)
         if r.get("ok"):
             best = min(best, sc_)
             n_ok += 1
@@ -1158,12 +1236,12 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
     elif split.get("at") is not None and normal not in (None, "auto"):
         given_cut = _cut_plane(normal, float(split["at"]))
     if given_cut is not None:
-        cut = _check_cut(ext, skin, t, comps, given_cut, given, tol, avoid, order)
+        cut = _check_cut(ext, skin, t, comps, given_cut, given, tol, avoid, order, base_dir)
         if normal in (None, "auto") and cut.get("ok"):
             # a seam's own plane: the half holding the components is the base
             w_ = cut.get("componentsIn") or {}
             if sum(v == "cover" for v in w_.values()) > sum(v == "base" for v in w_.values()):
-                c2 = _check_cut(ext, skin, t, comps, given_cut.flipped(), given, tol, avoid, order)
+                c2 = _check_cut(ext, skin, t, comps, given_cut.flipped(), given, tol, avoid, order, base_dir)
                 if c2.get("ok"):
                     cut = c2
         rows = [cut]
@@ -1172,14 +1250,22 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             warnings.append(f"the given cut does not work: {cut.get('why')}")
     else:
         levels = [float(split["at"])] if split.get("at") is not None else None
-        cut, rows = _search(ext, skin, t, comps, given, tol, avoid, order, normal, levels)
+        mode = split.get("search", "all")
+        if mode not in ("all", "flat"):
+            raise ValueError("split.search is 'all' (default: flat, tilted, stepped, silhouette and crease cuts) "
+                             "or 'flat' (axis planes only)")
+        hidden = [shape_from_spec(s_, base_dir) for s_ in split.get("hidden") or []]
+        cut, rows = _search(ext, skin, t, comps, given, tol, avoid, order, normal, levels,
+                            curved=mode == "all", pkind=pkind, hidden=hidden,
+                            avoid_specs=list(zip(split.get("avoid") or [], avoid)), base_dir=base_dir)
         how = "searched"
         if cut is None:
-            raise ValueError("no cut across x, y or z separates the halves with every component able to go in: "
+            raise ValueError("no cut (flat, tilted, stepped or curved) separates the halves with every component able to go in: "
                              + "; ".join(sorted({str(r.get('why')) for r in rows})[:6]))
     def _joints(cut):
         """Place the screws and snaps for a cut; returns what the rest needs."""
         warnings = []
+        wanted = 0
         r_ring = r_sleeve = 0.0
         C = cut["_cut"]
         n = C.n
@@ -1276,6 +1362,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                         break
             count = sc.get("count", "auto")
             k = max(2, int(round(total / 90.0))) if count == "auto" else int(count)
+            wanted += k
             pick = _spread(feas, s, total, k, [], 0.0)
             kk = k
             while pick is None and kk > 1:
@@ -1419,6 +1506,7 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
             else:
                 k = int(count)
             keep = 0.5 * b + (max(r_ring, r_sleeve) if screws else 0.0) + 3.0
+            wanted += k
             pick = _spread(feas, s, total, k, taken, keep)
             while pick is None and k > 1:
                 k -= 1
@@ -1464,19 +1552,36 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
                 "cut": C, "n": n, "where": where, "frames": frames, "c_fit": c_fit,
                 "screws": screws, "snaps": snaps, "snap_summary": snap_summary,
                 "exterior_changes": exterior_changes, "r_ring": r_ring, "r_sleeve": r_sleeve,
-                "warnings": warnings, "placed": len(screws) + len(snaps)}
+                "warnings": warnings, "placed": len(screws) + len(snaps), "wanted": wanted}
 
     J = _joints(cut)
     if how == "searched":
-        # the best few cuts by seam and travel, each with its joints placed:
-        # a cut where the wall curves away leaves no room for a snap
+        # the best four cuts by score, each with its joints placed: a cut
+        # where the wall curves away leaves no room for a snap, and one
+        # whose snaps bend past the allowance does not hold. Each joint
+        # short of the count asked for adds 15, a snap over its strain
+        # allowance 50, each warning 10.
         ranked = sorted([r for r in rows if r.get("ok")], key=lambda r: r["score"])[:4]
+
+        def held(r, J_):
+            want = J_.get("wanted") or 0
+            sn = J_["snap_summary"]
+            pen = 15.0 * max(0, want - J_["placed"]) + (50.0 if sn and not sn["ok"] else 0.0) \
+                + 10.0 * len(J_["warnings"])
+            r["joints"] = {"placed": J_["placed"], "wanted": want,
+                           "snaps": len(J_["snaps"]), "screws": len(J_["screws"]),
+                           **({"strain": sn["strain"], "strainWorst": sn["strainWorst"],
+                               "allowable": sn["allowable"]} if sn else {}),
+                           "warnings": len(J_["warnings"])}
+            r["final"] = round(r["score"] + pen, 1)
+            return r["final"]
+
+        best_f = held(cut, J)
         for r in ranked[1:]:
-            if J["placed"] > 0 and not J["warnings"]:
-                break
             J2 = _joints(r)
-            if J2["placed"] > J["placed"]:
-                J, cut = J2, r
+            f2 = held(r, J2)
+            if f2 < best_f:
+                J, cut, best_f = J2, r, f2
         cut["chosenFor"] = "joints placed" if cut is not ranked[0] else "score"
     C, where, frames = J["cut"], J["where"], J["frames"]
     c_fit, screws, snaps, snap_summary = J["c_fit"], J["screws"], J["snaps"], J["snap_summary"]
@@ -1644,9 +1749,10 @@ def apply_split(study: dict, split: dict | None = None, components: list | None 
     report = {"cut": {**{k: v for k, v in cut.items() if k != "paths" and not k.startswith("_")}, "how": how,
                       "label": C.label(),
                       **({"surface": C.half_spec(ext, "base")} if not C.planar else {})},
-              "candidates": [{k: v for k, v in r.items() if k in ("normal", "at", "kind", "levels", "seam", "travel",
-                                                                  "score", "ok",
-                                                                  "why", "depth")}
+              "candidates": [{k: v for k, v in r.items() if k in ("normal", "at", "kind", "levels", "tilt", "steps",
+                                                                  "seam", "seamSeen", "seamHidden", "rimFlat",
+                                                                  "crossing", "travel", "score", "joints", "final",
+                                                                  "ok", "why", "depth", "seconds")}
                              for r in rows],
               "assembly": {"componentsIn": where, "paths": cut.get("paths") or {},
                            "order": "the base's components in order with the cover off; then the cover comes "

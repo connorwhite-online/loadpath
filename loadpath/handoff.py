@@ -163,14 +163,16 @@ def _path_check(pts, obstacles: _Obstacles, legs, exit_lo, exit_hi, tol: float, 
 
 
 def assembly_paths(components: list, order: list, fixed: list, exit_bounds, tol: float = 0.25,
-                   max_slide: float = 12.0, cut: list | None = None) -> dict:
+                   max_slide: float = 12.0, cut: list | None = None, hint_exit: bool = False) -> dict:
     """The way each component comes in, in assembly order.
 
     components: [{id, shape, installedOn?, insertFrom? (a hint, tried
     first, or fixed: true to take it as given)}]. fixed: [(name, shape)]
     that are there from the start (the skin, the designer's own internal
     geometry). A component travels with everything installed on it, and
-    must not pass through a component already in place.
+    must not pass through a component already in place. hint_exit: a
+    two-leg path leaves along the component's hint only (a split half,
+    whose components go in through its open cut face), a sixth the search.
 
     Returns {id: {insertFrom, how, legs, worstPenetration, tried: [...]}};
     a component with no clear path has insertFrom None and blocked: where
@@ -237,8 +239,9 @@ def assembly_paths(components: list, order: list, fixed: list, exit_bounds, tol:
             if found is None:
                 # slide, then out: the shortest first leg that clears
                 best = None
+                exits = cands[:1] if hint_exit and hint is not None and not isinstance(hint, list) else cands
                 for s in np.arange(0.5, max_slide + 1e-9, 0.5):
-                    for d2 in cands:
+                    for d2 in exits:
                         for d1 in cands:
                             if abs(float(d1 @ d2)) > 0.5:
                                 continue
