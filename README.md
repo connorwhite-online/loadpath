@@ -365,6 +365,18 @@ all read on the delivered mesh's own cut cells, modes included.
 
 <img src="docs/images/feel/mic-body-sections.png" width="760">
 
+**Soft here, firm there.** A designer marks places on the surfacing and how
+each should feel under a fingertip, and how distinct they must be. On a
+generic soft-top controller in one piece of SLS TPU, the touch pad reads
+2.3-3.8 N/mm (pliable: 1-4), the rim and walls at least 17, every one of
+them 4.5x stiffer than any pad press (asked: 4x). loadpath got there by
+thinning only the inside of the pad's skin, 2 mm down to the 1.0 mm
+minimum wall, and growing posts and buttresses that hold the rim up
+without touching the pad. All 67 presses were read on the delivered
+mesh. ([docs/FEEL.md](docs/FEEL.md#touch-zones-pliable-here-firm-there))
+
+<img src="docs/images/feel/soft-top.png" width="760">
+
 **Designed around the heat.** A processor has a temperature it must stay
 under, a battery a lower one, and the surface a hand holds a touch limit
 (48 C held, after IEC 62368-1). `loadpath cooling` gives each component its

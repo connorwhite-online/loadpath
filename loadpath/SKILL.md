@@ -606,6 +606,19 @@ product is held and where the load comes in; a location is a `region`
   A part on rails moulded into the base cannot be soft-mounted; use
   `upTo`.
 
+- `touch`: a `zone` (a shape) of the exterior under a fingertip, pressed
+  along `direction` (default -z), `feel: pliable|firm|rigid` or a
+  `stiffness` / `force`+`travel` window (a travel max alone is a firmness
+  floor). `feel.contrast: [{softer, firmer, ratio}]` makes zones
+  distinctly different. `skinThickness: "auto"` thins the skin under a
+  pliable zone, never under the process minimum wall (TPU 1.0 mm); a zone
+  that would need less comes back in `touchSkin` with `belowMinWall` and
+  the thickness it `needs`: tell the designer, with the options in its
+  note. Report `touchZones.delivered`. Design on 1 mm cells and let the
+  read-back check finer (0.5 mm design did not converge on the soft-top
+  example). Ask the designer which places should feel pliable and which
+  firm; never move the exterior to get there.
+
 No supports or load cases are needed. A `switch` block in the same study
 is designed with it. Read the bare skin first (`examples/feel/mic_body.py
 --baseline` shows how): a target the exterior and preserved parts already

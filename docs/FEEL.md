@@ -35,7 +35,7 @@ says where the product is held and where its load comes in. A `switch`
 block in the same study is designed together with the feel targets, so a
 push pad's click force and the grip around it come out of one run.
 
-## The three targets
+## The targets
 
 Each target is a stiffness window between where the product is held and
 where the load goes in. Where is a `region` (a preserve or keep-out id;
@@ -151,6 +151,89 @@ here) and read the delivered mesh back on a grid of half the design pitch
   amplification up to `upTo`, by modal superposition (`modal`). Modes are
   read on a grid no finer than 0.5 mm: at 0.35 mm the shift-invert factor
   took 14 GB.
+
+## Touch zones: pliable here, firm there
+
+A designer rarely wants one feel all over. The touch area of a product
+should feel distinctly pliable; the rim and the sides around it should
+feel firm, on purpose. A `touch` target is a zone of the exterior and how
+it should feel under a fingertip:
+
+```json
+"feel": {"targets": [
+  {"kind": "touch", "name": "pad", "zone": PAD_DISC, "feel": "pliable", "skinThickness": "auto"},
+  {"kind": "touch", "name": "rim", "zone": TOP_OUTSIDE_A_CIRCLE, "feel": "firm"},
+  {"kind": "touch", "name": "side+x", "zone": SIDE_WALL, "direction": "-x", "feel": "firm"}],
+ "contrast": [{"softer": "pad", "firmer": "rim", "ratio": 4}]}
+```
+
+- **Presses.** Fingertip presses (a disc of `fingertip` mm radius,
+  default 4) are sampled `spacing` mm apart (default 6) wherever a press
+  along `direction` (default `-z`) meets the part inside the zone, at least
+  `inset` mm from its edge, or given as `points`. They come from the
+  shapes, not the mesh, so every grid and the delivered read-back press
+  the same places. Each press is a stiffness window between it and `hold`
+  (default: the face the press points at).
+- **Windows.** `feel` presets for a fingertip: `pliable` 1-4 N/mm (a light
+  2 N touch sinks 0.5-2 mm), `firm` at least 15 N/mm (a 5 N press moves it
+  under 0.33 mm), `rigid` at least 50 N/mm. Or `stiffness: [min, max]`, or
+  `force` with `travel`; a `travel` max alone is a firmness floor: `"force":
+  5, "travel": {"max": 0.25}` means it takes at least 5 N to push it in
+  0.25 mm.
+- **Contrast.** "Distinctly" is a ratio, not two windows: every press of
+  the firmer zone at least `ratio` times as stiff as every press of the
+  softer one. One constraint per pair, on log stiffness with a smooth max
+  over the softer zone and a smooth min over the firmer one, read robustly
+  (softer side on the dilated design, firmer on the eroded one).
+- **The skin.** An interior can only stiffen a press, so a zone can never
+  be softer than its skin with nothing behind it. `skinThickness: "auto"`
+  thins the skin under the zone (only its inner surface moves: skin.zones),
+  to the thickest skin whose bare presses sit under 0.75 of the ceiling,
+  and **never under the process's minimum wall**. For SLS TPU that is 1.0
+  mm: the material card keeps a margin over the 0.8 mm Materialize lists
+  (`process.minFeature` in a study overrides it). A zone that would need
+  less is flagged in `touchSkin` with the thickness it needs (`needs`) and
+  what would help instead (a softer material, a wider zone, a higher
+  ceiling); the optimizer then works to what the thinnest printable skin
+  gives, and the part is still read against the real window. A number
+  instead of "auto" sets the thickness, and is flagged when under the
+  minimum wall.
+
+The report's `touchZones` gives each zone's softest and stiffest press and
+how many meet the window, and each contrast's ratio, on the design, as
+printed and on the delivered mesh.
+
+### A soft-top controller
+
+`examples/feel/soft_top.py`: a generic handheld, 56 x 40 x 16 mm with
+rounded corners, one piece of SLS TPU 88A. The exterior is kept as a 2 mm
+skin, open underneath where a lid closes it and where the board slides
+in. A 24 mm pad in the middle of the top is `pliable`, the rim outside a
+30 mm circle and the four walls are `firm`, and every rim and wall press
+must be at least 4x as stiff as any pad press. 67 presses in all.
+
+| | pad (1-4 N/mm) | rim (>= 15) | walls (>= 15) | rim / pad (>= 4) |
+|---|---|---|---|---|
+| bare 2 mm skin (1 mm cells) | 5.7-7.2, 0 of 9 | 12.1-165, 36 of 42 | 40-57, 16 of 16 | 1.7 |
+| loadpath, delivered mesh (0.5 mm cut cells) | 2.3-3.8, 9 of 9 | 17.4-163, 42 of 42 | 38-92, 16 of 16 | 4.5 |
+
+The 2 mm skin is too stiff to feel pliable anywhere on the pad, and
+the inner rim, next to the pad, is not firm. Auto skin takes the pad's
+skin to the 1.0 mm minimum wall (the bare skin there reads 3.5 N/mm,
+just over 0.75 of the ceiling, so no thicker skin passes). The optimizer
+grows four corner posts and two buttresses on the long walls, and leaves
+the pad's span clear, so the pad stays pliable while the rim is held up:
+11.2 g, watertight.
+Designed on 1 mm cells (80 iterations, 15 min); read on the delivered
+mesh's own cut cells at 0.5 mm and again at 0.4 mm, which agree within
+1% (pad 2.28-3.84, rim from 17.43, rim/pad 4.53). Part, study and report
+in the project files (`feel/soft-top/`).
+
+<img src="images/feel/soft-top.png" width="760">
+
+Designing on 0.5 mm cells after the 1 mm stage did not converge (the
+contrast drifted further out each iteration, its gradients checked
+against finite differences); design on 1 mm and verify finer.
 
 ## A handheld microphone body
 
