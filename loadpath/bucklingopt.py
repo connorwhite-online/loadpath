@@ -108,24 +108,23 @@ def geometric_parts(ue, phis, h, nu):
     r = _hex8_parts(nu, hex8_element())[1]
     im = r is not None and len(grads[0]) == 11
     t = np.vstack([np.eye(24), r]) if im else np.eye(24)
-    n = t.shape[0] // 3
-    m = len(ue)
+    n, ng, m = t.shape[0] // 3, len(grads), len(ue)
     w = h ** 3 / 8.0
-    ux = (ue @ t.T).reshape(m, n, 3)
+    # every Gauss point's gradients as one matrix, so each mode is two
+    # GEMMs (an einsum per point ran 5x slower on the 130k-cell yoke):
+    # (ue @ td)[m, (g, k, i)] = d u_k / d x_i at point g
+    d = np.zeros((n, 3, ng, 3, 3))
+    for g, dn0 in enumerate(grads):
+        for k in range(3):
+            d[:, k, g, k, :] = dn0 / h
+    td = t.T @ d.reshape(3 * n, ng * 9)                     # (24, 9 ng)
+    gu = (ue @ td).reshape(m, ng * 9)
     out = []
     for ph in phis:
-        px = (ph @ t.T).reshape(m, n, 3)
-        g = np.zeros(m)
-        da = np.zeros((m, n, 3))
-        for dn0 in grads:
-            dn = dn0 / h
-            gp = np.einsum("mak,ai->mki", px, dn)              # d phi_k / d x_i
-            hh = np.einsum("mki,mkj->mij", gp, gp)
-            s = _linear_stress(hh, nu)
-            gu = np.einsum("mai,aj->mij", ux, dn)              # d u_i / d x_j
-            g += w * np.einsum("mij,mij->m", gu, s)
-            da += w * np.einsum("aj,mij->mai", dn, s)
-        out.append((g, da.reshape(m, 3 * n) @ t))
+        gp = (ph @ td).reshape(m * ng, 3, 3)                # [k, i] = d phi_k / d x_i
+        hh = np.matmul(gp.transpose(0, 2, 1), gp)
+        s = w * _linear_stress(hh, nu).reshape(m, ng * 9)
+        out.append((np.einsum("mq,mq->m", gu, s), s @ td.T))
     return out
 
 
@@ -297,8 +296,8 @@ class BucklingModel:
                 for j, i in enumerate(use):
                     pe = phis[j][sub.edof]
                     g_e = parts[j][0]
-                    kphi = np.einsum("mi,ij,mj->m", pe, ke, pe)
-                    term = np.einsum("mi,ij,mj->m", wsol[:, j][sub.edof], ke, ue)
+                    kphi = np.einsum("mi,mi->m", pe @ ke, pe)
+                    term = np.einsum("mi,mi->m", wsol[:, j][sub.edof] @ ke, ue)
                     grad[el] += wts[i] * (-deg * g_e - mu[i] * de * kphi + de * term)
                 out.append((ks, grad, mu))
         finally:
