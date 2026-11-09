@@ -78,6 +78,10 @@ def graph(link, study_path, v3_stl, offset=2.5, skin=(1.0, 2.5), wall=(0.8, 1.2)
         # at 0.35 mm, its exact distance printed every facet as a hammered grain on the skin
         "v3": {"op": "mesh", "path": os.path.basename(v3_stl), "band": 10.0, "smooth": True,
                "description": "the v0.3 part: its load path, facets taken off"},
+        # the hubs keep the part exactly as built: smoothing round an interface moved the
+        # peak stress at the upper arm's J2 hub (tet SF 3.04 -> 2.61; 2.97 kept exact)
+        "v3exact": {"op": "mesh", "path": os.path.basename(v3_stl), "band": 10.0,
+                    "description": "the v0.3 part as built, for the hubs"},
         "space": {"op": "shape", "shape": _union(ds)},
         "keepout": {"op": "shape", "shape": _union(ko_exact)},
         "preserve": {"op": "shape", "shape": _union(pres)},
@@ -88,7 +92,7 @@ def graph(link, study_path, v3_stl, offset=2.5, skin=(1.0, 2.5), wall=(0.8, 1.2)
         "hubZone": {"op": "offset", "input": "preserve", "distance": margin},
         "inSpace": {"op": "intersect", "inputs": ["grown", "space"], "blend": 1.0},
         "members": {"op": "subtract", "inputs": ["inSpace", "hubZone", "keepout"]},
-        "hubs": {"op": "intersect", "inputs": ["v3", "hubZone"],
+        "hubs": {"op": "intersect", "inputs": ["v3exact", "hubZone"],
                  "description": "the v0.3 part, unchanged, round every interface"},
         "envelope": {"op": "union", "inputs": ["members", "hubs", "preserve"], "blend": 2.0},
         "skinWall": {"op": "remap", "input": "stress", "from": [0.05, 0.7], "to": list(skin), "curve": "smoothstep"},
