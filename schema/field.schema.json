@@ -2377,6 +2377,23 @@
           "exclusiveMinimum": 0,
           "description": "mm from the surface within which distance is exact (default 3 pitches); make it cover shell thicknesses"
         },
+        "smooth": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          ],
+          "description": "take a faceted organic mesh's facets off first (true: ripples under 4 mean edges; a number: under that many mm), so an offset or shell of it meshes smooth instead of tracing every facet; edges sharper than smoothCrease stay put"
+        },
+        "smoothCrease": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "degrees; sharper edges are kept (default 60)"
+        },
         "description": {
           "type": "string",
           "description": "What the node is for (ignored)."

@@ -143,6 +143,27 @@ remaps, expressions and lattices; to the bake's grid for meshes). The
 server listens on 127.0.0.1 unless `--host` says otherwise: it reads and
 writes files in the graph's folder.
 
+## Faceted meshes
+
+A `mesh` node's distance is exact to its triangles, so every facet comes
+through. That is right for a CAD part, but an organic one (a topology
+optimizer's marching-cubes output, a scan) has facets of 0.5-1 mm with a few
+degrees between neighbours. Offset or shell it and mesh the graph finer than
+those facets, and the new surface has a crease along every concave facet
+edge: a fine hammered grain all over the outside. It is tens of microns deep
+(below what a printer resolves), but it shows in every viewer and render.
+The robot-arm SLS wrist link and upper arm (skins swollen off the v0.3
+parts, meshed at 0.35 mm) came out that way.
+
+`"smooth": true` on the node takes the facets off before the distance is
+taken: a Taubin filter on the mesh as it is (60 passes of lambda 0.5,
+mu -0.5, which amplifies nothing), then one level of Loop subdivision, so the surface the distance sees is smooth.
+Edges sharper than `smoothCrease` degrees (default 60: bores, cut faces) do
+not move and the facets beside them stay flat; the volume changes by about
+1% or less (the v0.3 wrist link: -0.6%). A number instead of `true` sets the subdivided edge length in mm
+(default half the mesh's mean edge). Leave it off for CAD meshes and for a
+designer's exterior that must be kept as drawn.
+
 ## The graph
 
 ```json
@@ -174,7 +195,7 @@ back at once with suggestions.
 | op | what it is | fields it takes |
 | --- | --- | --- |
 | `shape` | exact box, cylinder, tube, sphere or union (same JSON as a study) | |
-| `mesh` | a closed STL/3MF/OBJ as a solid; distance exact near the surface | |
+| `mesh` | a closed STL/3MF/OBJ as a solid; distance exact near the surface. `smooth: true` takes a faceted organic mesh's facets off first (see Faceted meshes) | |
 | `constant`, `coordinate` | a number; position along x/y/z or a direction | |
 | `distance` | unsigned distance to a solid (`input`), points, a segment, a plane or a shape | `input` |
 | `result` | von Mises or displacement of a part under a study (run on demand, also on one of the graph's own nodes), a saved `.npz`, or a point map: a `.csv` of x, y, z and values from another tool (see Point maps) | `interpolate` |

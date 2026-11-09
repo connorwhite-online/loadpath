@@ -259,6 +259,76 @@ def _closest_on_triangles(p, a, b, c):
     return out
 
 
+def smooth_mesh(mesh, edge=None, crease=60.0, iterations=60, max_faces=4_000_000):
+    """A faceted organic mesh (a marching-cubes part, a scan) with its facets
+    taken off, for use as a field.
+
+    The exact distance to a faceted mesh keeps every facet: its offset has a
+    crease along each concave facet edge, and a field graph meshed finer than
+    the facets (a skin swollen off a 0.8 mm-faceted part, meshed at 0.35 mm)
+    prints those creases as a fine hammered grain over the whole outside.
+
+    First a Taubin filter on the mesh as it is (lambda 0.5, mu -0.5,
+    `iterations` passes: each pass scales a ripple by 1 - k^2/4 for
+    Laplacian eigenvalue k, so the facet-scale ripple and a voxel staircase
+    a few facets long go, and nothing is amplified) takes off the ripple, then
+    Loop subdivision, down to `edge` mm (default half the mean edge), turns
+    the facets into a smooth limit surface. Vertices on edges sharper than
+    `crease` degrees (bores, cut faces) do not move, and the subdivision
+    next to them keeps the facets flat (midpoints), so real edges stay
+    where they are; the volume changes by about 1% or less."""
+    import trimesh
+    from scipy import sparse
+
+    m = trimesh.Trimesh(np.asarray(mesh.vertices, float), np.asarray(mesh.faces, np.int64), process=True)
+    lock = np.zeros(len(m.vertices), bool)
+    lock[m.face_adjacency_edges[np.degrees(m.face_adjacency_angles) > crease].ravel()] = True
+    ed = m.edges_unique
+    n = len(m.vertices)
+    A = sparse.coo_matrix((np.ones(2 * len(ed)), (np.r_[ed[:, 0], ed[:, 1]], np.r_[ed[:, 1], ed[:, 0]])),
+                          shape=(n, n)).tocsr()
+    W = sparse.diags(1.0 / np.maximum(np.asarray(A.sum(axis=1)).ravel(), 1.0)) @ A
+    x0 = np.asarray(m.vertices, float)
+    x = x0.copy()
+    for _ in range(int(iterations)):
+        for w in (0.5, -0.5):
+            x = x + w * (W @ x - x)
+            x[lock] = x0[lock]
+    v, f = x, np.asarray(m.faces, np.int64)
+    mean_edge = float(m.edges_unique_length.mean())
+    target = 0.5 * mean_edge if edge is None else float(edge)
+    cur = mean_edge
+    while len(f) * 4 <= max_faces and cur > target * 1.01:
+        # near a kept edge the facets stay flat: midpoints there, the Loop surface elsewhere
+        near = np.zeros(len(v), bool)
+        near[f[lock[f].any(axis=1)].ravel()] = True
+        vm, fm = trimesh.remesh.subdivide(v, f)
+        vl, fl = trimesh.remesh.subdivide_loop(v, f, iterations=1)
+        if not np.array_equal(fm, fl):          # different numbering: no blend, keep it exact
+            v, f = vm, fm
+        else:
+            emid = trimesh.Trimesh(vm, fm, process=False)
+            keep = np.zeros(len(vm), bool)
+            keep[:len(near)] = near
+            # an odd vertex is near when both its edge's ends were
+            e = emid.edges_unique
+            odd_lo = len(near)
+            for a_, b_ in ((0, 1), (1, 0)):
+                sel = (e[:, a_] >= odd_lo) & (e[:, b_] < odd_lo)
+                keep[e[sel, a_]] |= near[e[sel, b_]]
+            v = np.where(keep[:, None], vm, vl)
+            f = fm
+            lk = np.zeros(len(v), bool)
+            lk[:len(lock)] = lock
+            sel = (e[:, 0] >= odd_lo) & (e[:, 1] < odd_lo)
+            lk[e[sel, 0]] |= lock[e[sel, 1]] & keep[e[sel, 0]]
+            sel = (e[:, 1] >= odd_lo) & (e[:, 0] < odd_lo)
+            lk[e[sel, 1]] |= lock[e[sel, 0]] & keep[e[sel, 1]]
+            lock = lk
+        cur *= 0.5
+    return trimesh.Trimesh(v, f, process=False)
+
+
 class MeshField:
     """Signed distance to a closed triangle mesh, exact near the surface.
 
@@ -1999,6 +2069,10 @@ class FieldGraph:
             if "path" not in s:
                 raise ValueError(f"node {nd.name!r}: mesh needs a 'path' (STL/3MF/OBJ) or a 'source'")
             mesh = trimesh.load(self._path(s["path"]), force="mesh")
+        sm = s.get("smooth", False)
+        if sm:
+            mesh = smooth_mesh(mesh, edge=None if sm is True else float(sm),
+                               crease=float(s.get("smoothCrease", 60.0)))
         return MeshField(mesh, pitch=s.get("pitch"), band=s.get("band"))
 
     _PLANES = {"xy": (0, 1, 2), "xz": (0, 2, 1), "yz": (1, 2, 0)}

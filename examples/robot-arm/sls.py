@@ -74,8 +74,10 @@ def graph(link, study_path, v3_stl, offset=2.5, skin=(1.0, 2.5), wall=(0.8, 1.2)
     bores = [k["shape"] for k in st["keepOut"] if k.get("bore", True) and k["shape"].get("type") == "cylinder"
              and k["shape"].get("r", 99) < 4.0]
     n = {
-        "v3": {"op": "mesh", "path": os.path.basename(v3_stl), "band": 10.0,
-               "description": "the v0.3 part: its load path"},
+        # smooth: the v0.3 STL is a marching-cubes mesh with ~0.8 mm facets; swollen and meshed
+        # at 0.35 mm, its exact distance printed every facet as a hammered grain on the skin
+        "v3": {"op": "mesh", "path": os.path.basename(v3_stl), "band": 10.0, "smooth": True,
+               "description": "the v0.3 part: its load path, facets taken off"},
         "space": {"op": "shape", "shape": _union(ds)},
         "keepout": {"op": "shape", "shape": _union(ko_exact)},
         "preserve": {"op": "shape", "shape": _union(pres)},

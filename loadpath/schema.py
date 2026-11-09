@@ -1663,7 +1663,13 @@ _FIELD_OPS = {
                  "source": {"type": "string", "description": "an in-memory mesh passed to FieldGraph(meshes=)"},
                  "pitch": {**_POS, "description": "mm, far-field voxel grid (default extent/200, >= 0.25)"},
                  "band": {**_POS, "description": "mm from the surface within which distance is exact "
-                                                 "(default 3 pitches); make it cover shell thicknesses"}},
+                                                 "(default 3 pitches); make it cover shell thicknesses"},
+                 "smooth": {"anyOf": [{"type": "boolean"}, _POS],
+                            "description": "take a faceted organic mesh's facets off first (true: ripples "
+                                           "under 4 mean edges; a number: under that many mm), so an "
+                                           "offset or shell of it meshes smooth instead of tracing every "
+                                           "facet; edges sharper than smoothCrease stay put"},
+                 "smoothCrease": {**_POS, "description": "degrees; sharper edges are kept (default 60)"}},
                 require_one=[["path"], ["source"]]),
     "result": _op("result", "A simulation result as a scalar field: von Mises stress (MPa) or displacement "
                             "(mm) of `part` under `study` (analyzed on demand), a saved .npz (points + values, "

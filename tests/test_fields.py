@@ -130,6 +130,38 @@ def test_mesh_field_is_exact_near_the_surface():
     assert far[0] < -9 and far[1] > 15
 
 
+def test_smooth_mesh_takes_the_facets_off_and_keeps_the_shape():
+    """A sphere with jittered facets as a smoothed mesh: the ripple off the
+    true sphere drops by more than half, the volume holds, and a box keeps
+    its sharp edges and faces where they are. As a graph node, an offset of
+    it meshes with a smoother skin than the faceted mesh gives."""
+    from loadpath.fields import smooth_mesh
+
+    s = trimesh.creation.icosphere(subdivisions=4, radius=10)
+    rng = np.random.default_rng(0)                # facet-scale jitter, as a marching-cubes part has
+    s = trimesh.Trimesh(s.vertices * (1 + rng.normal(0, 0.015, (len(s.vertices), 1))), s.faces)
+    r0 = np.linalg.norm(s.vertices, axis=1)
+    sm = smooth_mesh(s)
+    r1 = np.linalg.norm(sm.vertices, axis=1)
+    assert r1.std() < 0.5 * r0.std(), (r0.std(), r1.std())
+    assert abs(sm.volume / s.volume - 1) < 0.01
+    assert len(sm.faces) == 4 * len(s.faces)
+    b = trimesh.creation.box(extents=(10, 6, 4))
+    bs = smooth_mesh(trimesh.Trimesh(*trimesh.remesh.subdivide_to_size(b.vertices, b.faces, 1.0)))
+    assert np.allclose(bs.bounds, b.bounds, atol=1e-9)
+    assert abs(bs.volume - b.volume) < 1e-6 * b.volume
+    g = FieldGraph({"nodes": {"m": {"op": "mesh", "source": "s", "smooth": True},
+                              "o": {"op": "offset", "input": "m", "distance": 0.5}},
+                    "output": "o", "mesh": {"pitch": 0.4}}, meshes={"s": s})
+    out = g.mesh()
+    ang = np.degrees(out.face_adjacency_angles)
+    g0 = FieldGraph({"nodes": {"m": {"op": "mesh", "source": "s"},
+                               "o": {"op": "offset", "input": "m", "distance": 0.5}},
+                     "output": "o", "mesh": {"pitch": 0.4}}, meshes={"s": s})
+    ang0 = np.degrees(g0.mesh().face_adjacency_angles)
+    assert np.percentile(ang, 90) < 0.6 * np.percentile(ang0, 90), (np.percentile(ang, 90), np.percentile(ang0, 90))
+
+
 def test_samples_on_a_grid_interpolate_exactly():
     """FE-style nodes (a subset of a regular grid) are put back on the grid:
     a linear field comes back exactly, and holes take the nearest value."""
