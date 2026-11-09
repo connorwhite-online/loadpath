@@ -155,3 +155,21 @@ def test_design_refused_up_front_when_memory_is_short(tmp_path, monkeypatch, cap
     assert "GB is free" in json.loads(capsys.readouterr().out)["error"]
     assert any("GB" in w for w in check_document(CUBE)["warnings"])
     assert PROCESS_LIMITS["lpbf"]["minWall"] == 1.0
+
+
+def test_exterior_blend_fillets_the_outside_and_leaves_the_fluids_alone():
+    """exteriorBlend smooth-unions the core's, headers' and ports' outer walls:
+    material is only added outside the sharp union (in the valleys where they
+    meet), so each fluid space and the part's isolation stay as designed."""
+    out = {}
+    for xb in (0.0, 6.0):
+        hx = heat_exchanger_from_spec({**{k: v for k, v in CUBE.items() if k not in ("name", "step")},
+                                       "build": "none", "exteriorBlend": xb})
+        hx.step = 0.45
+        mesh, rep, spaces = design_heat_exchanger(hx, fluid_meshes=True)
+        assert rep["isolated"] and all(rep["connected"].values()) and rep["watertight"]
+        out[xb] = (rep["solidVolume"], {k: m.volume for k, m in spaces.items()})
+    (v0, f0), (v1, f1) = out[0.0], out[6.0]
+    assert v1 > v0 * 1.02, (v0, v1)
+    for k in f0:
+        assert abs(f1[k] - f0[k]) < 0.01 * f0[k], (k, f0[k], f1[k])

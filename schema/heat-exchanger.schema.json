@@ -48,6 +48,11 @@
       "type": "number",
       "exclusiveMinimum": 0
     },
+    "exteriorBlend": {
+      "type": "number",
+      "minimum": 0,
+      "description": "mm, fillet radius where the outside of the core, headers and ports meet (default 0: sharp); only adds material outside, the fluid spaces stay as designed"
+    },
     "phase": {
       "type": "array",
       "items": {

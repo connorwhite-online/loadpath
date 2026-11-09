@@ -124,6 +124,7 @@ class HeatExchangerSpec:
     header: float = 6.0             # mm, plenum depth over the surface
     cap: float | None = None        # mm, sealing depth under the other fluid's zones (default: wall + 1 mm)
     blend: float | None = None      # mm, smooth-union radius from plenum into its channels (default cell / 4; 0: sharp)
+    exterior_blend: float = 0.0     # mm, fillet radius where the outside of headers, ports and core meet (0: sharp)
     port_diameter: float = 8.0      # mm; or one per fluid, (A, B): an air side wants a far bigger port
     port_length: float = 8.0
     axes: tuple = (0, 1)            # cross: A along axes[0], B along axes[1]; counter: A along axes[0], B's side ports along axes[1]
@@ -187,7 +188,8 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
                          "e.g. {\"type\": \"cylinder\", \"center\": [0, 0, 30], \"axis\": \"z\", \"length\": 60, \"r\": 20}")
     hx = HeatExchangerSpec(core=shape_from_spec(core, base_dir))
     for key, attr in (("cell", "cell"), ("wall", "wall"), ("shell", "shell"), ("header", "header"),
-                      ("cap", "cap"), ("blend", "blend"), ("portLength", "port_length")):
+                      ("cap", "cap"), ("blend", "blend"), ("portLength", "port_length"),
+                      ("exteriorBlend", "exterior_blend")):
         if key in spec:
             setattr(hx, attr, float(spec[key]))
     if "portDiameter" in spec:
@@ -503,7 +505,8 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
             bore, tube = _port(hx, zi, pts[sel], up, bed)
             # (a port's root stays sharp: rounded, it would leave a ceiling under the plenum's roof)
             void[sel] = np.minimum(void[sel], bore)
-            body[-1][sel] = np.minimum(body[-1][sel], tube)
+            xb = hx.exterior_blend
+            body[-1][sel] = _smooth_union(body[-1][sel], tube, xb) if xb > 0 else np.minimum(body[-1][sel], tube)
         fluid.append((net, void))
         del net, void
     if shape is not None:
@@ -540,7 +543,14 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     else:
         fluid = sharp
     del sharp
-    d_body = np.min(body, axis=0)
+    if hx.exterior_blend > 0:
+        # the outside blends where core, headers and ports meet: the fillets only add
+        # material outside the sharp union, so the fluid spaces are untouched
+        d_body = body[0]
+        for b in body[1:]:
+            d_body = _smooth_union(d_body, b, hx.exterior_blend)
+    else:
+        d_body = np.min(body, axis=0)
     del body, ell, coords
     grid = np.maximum(d_body, -np.minimum(fluid[0], fluid[1])).reshape(dims)
     if up is not None and hx.skirt:

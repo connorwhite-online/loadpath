@@ -25,6 +25,9 @@ on 4 cores.
 - `cell`, `wall`, `split`: the gyroid's period, the sheet between the fluids
   and the oil's share of the void. Step 1 picks them;
 - `header`, `portDiameter`, `portLength`: the plenums and tubes;
+- `exteriorBlend` (optional, mm): rounds the outside where the core, headers
+  and ports meet into smooth fillets. It only adds material on the outside;
+  the fluid spaces, and so the rating and simulation, stay as designed;
 - `build: "z"`, `process: "lpbf"`: printed upright in metal, so nothing
   inside may need support (the channels close in peaked roofs, not flat
   ceilings) and no skirt;

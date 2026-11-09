@@ -1544,6 +1544,10 @@ HEAT_EXCHANGER_SCHEMA = {
                                        "core's ends (default wall + 1); thinner leaves more core open to flow "
                                        "and fewer dead pockets"},
         "portLength": _POS,
+        "exteriorBlend": {"type": "number", "minimum": 0,
+                          "description": "mm, fillet radius where the outside of the core, headers and ports meet "
+                                         "(default 0: sharp); only adds material outside, the fluid spaces stay "
+                                         "as designed"},
         "phase": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
                   "description": "mm: shift the TPMS against the core's low corner, which moves where the core's "
                                  "faces cut the channels (a partial channel at an edge starves)"},
