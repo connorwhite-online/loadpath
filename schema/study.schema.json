@@ -3308,6 +3308,11 @@
           "maxItems": 3,
           "description": "[x, y, z]"
         },
+        "radius": {
+          "type": "number",
+          "minimum": 0,
+          "description": "mm: round every edge and corner (axis-aligned boxes; default 0)"
+        },
         "axes": {
           "type": "array",
           "items": {

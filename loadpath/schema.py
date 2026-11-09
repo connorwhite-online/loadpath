@@ -46,6 +46,8 @@ _SHAPES = {
         "description": "Box: min/max corners, or center/size (axis-aligned), or center/size/axes (turned: "
                        "size along the two axes given and their cross product).",
         "properties": {"type": {"const": "box"}, "min": _VEC3, "max": _VEC3, "center": _VEC3, "size": _VEC3,
+                       "radius": {"type": "number", "minimum": 0,
+                                  "description": "mm: round every edge and corner (axis-aligned boxes; default 0)"},
                        "axes": {"type": "array", "items": _VEC3, "minItems": 2, "maxItems": 2,
                                 "description": "the box's x and y axes as vectors (its z is their cross "
                                                "product); with center and size"}},
@@ -1544,6 +1546,10 @@ HEAT_EXCHANGER_SCHEMA = {
                                        "core's ends (default wall + 1); thinner leaves more core open to flow "
                                        "and fewer dead pockets"},
         "portLength": _POS,
+        "headers": {"enum": ["flat", "loft"],
+                    "description": "flat (default): each plenum an even header depth over its zone; loft: a "
+                                   "smooth funnel from the zone to its port (the convex hull of the two), so the "
+                                   "outside sweeps from core to port with no flat lid or side walls"},
         "exteriorBlend": {"type": "number", "minimum": 0,
                           "description": "mm, fillet radius where the outside of the core, headers and ports meet "
                                          "(default 0: sharp); only adds material outside, the fluid spaces stay "

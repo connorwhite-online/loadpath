@@ -28,6 +28,11 @@ on 4 cores.
 - `exteriorBlend` (optional, mm): rounds the outside where the core, headers
   and ports meet into smooth fillets. It only adds material on the outside;
   the fluid spaces, and so the rating and simulation, stay as designed;
+- `headers: "loft"` (optional, with no `build` axis): each plenum becomes a
+  smooth funnel lofted from its zone to its port instead of an even-depth
+  lid with side walls, and the whole outside is smoothed into one skin (the
+  shell is kept round every fluid). Pair it with a rounded core, e.g. a box
+  with `radius`, for a part that reads as one cast body;
 - `build: "z"`, `process: "lpbf"`: printed upright in metal, so nothing
   inside may need support (the channels close in peaked roofs, not flat
   ceilings) and no skirt;

@@ -173,3 +173,33 @@ def test_exterior_blend_fillets_the_outside_and_leaves_the_fluids_alone():
     assert v1 > v0 * 1.02, (v0, v1)
     for k in f0:
         assert abs(f1[k] - f0[k]) < 0.01 * f0[k], (k, f0[k], f1[k])
+
+
+def test_loft_headers_funnel_each_zone_into_its_port():
+    """headers: "loft" makes each plenum the convex hull of its zone and its
+    port's root, smoothed, so the outside sweeps from core to port: still
+    isolated, connected and watertight, with channels in the core for both
+    fluids and the outer wall kept."""
+    spec = {**{k: v for k, v in CUBE.items() if k not in ("name", "step")}, "build": "none",
+            "core": {"type": "box", "min": [0, 0, 0], "max": [30, 30, 24], "radius": 6}}
+    hx = heat_exchanger_from_spec({**spec, "headers": "loft"})
+    hx.step = 0.45
+    mesh, rep, spaces = design_heat_exchanger(hx, fluid_meshes=True)
+    assert rep["isolated"] and all(rep["connected"].values()) and rep["watertight"]
+    assert all(rep[n]["hydraulicDiameter"] for n in hx.names)
+    assert rep["minOuterWall"] >= 0.9 * hx.shell
+    with pytest.raises(ValueError):
+        heat_exchanger_from_spec({**spec, "headers": "domed"})
+
+
+def test_box_radius_rounds_every_edge_exactly():
+    from loadpath.shapes import shape_from_spec
+
+    s = shape_from_spec({"type": "box", "min": [0, 0, 0], "max": [40, 30, 20], "radius": 5})
+    lo, hi = s.bounds()
+    assert np.allclose(lo, 0) and np.allclose(hi, [40, 30, 20])
+    # a face's middle is on the surface, a corner of the box is 5 (sqrt 3 - 1) outside it
+    assert abs(s.sdf(np.array([[20.0, 15.0, 20.0]]))[0]) < 1e-9
+    assert abs(s.sdf(np.array([[0.0, 0.0, 0.0]]))[0] - 5 * (np.sqrt(3) - 1)) < 1e-9
+    with pytest.raises(ValueError):
+        shape_from_spec({"type": "box", "min": [0, 0, 0], "max": [40, 30, 8], "radius": 5})

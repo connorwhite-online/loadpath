@@ -48,6 +48,13 @@
       "type": "number",
       "exclusiveMinimum": 0
     },
+    "headers": {
+      "enum": [
+        "flat",
+        "loft"
+      ],
+      "description": "flat (default): each plenum an even header depth over its zone; loft: a smooth funnel from the zone to its port (the convex hull of the two), so the outside sweeps from core to port with no flat lid or side walls"
+    },
     "exteriorBlend": {
       "type": "number",
       "minimum": 0,
@@ -399,6 +406,11 @@
           "minItems": 3,
           "maxItems": 3,
           "description": "[x, y, z]"
+        },
+        "radius": {
+          "type": "number",
+          "minimum": 0,
+          "description": "mm: round every edge and corner (axis-aligned boxes; default 0)"
         },
         "axes": {
           "type": "array",

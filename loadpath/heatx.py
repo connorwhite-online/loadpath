@@ -98,6 +98,7 @@ _LPBF_TRAPPED = 20.0
 _LEAN = 55.0
 # a sideways zone keeps the surface facing at most 20 degrees above level
 _MAX_UP = np.sin(np.radians(20.0))
+_LOFT_SMOOTH = 1.5                 # mm, how far a lofted header's facets and rims are rounded
 
 
 @dataclass
@@ -125,6 +126,7 @@ class HeatExchangerSpec:
     cap: float | None = None        # mm, sealing depth under the other fluid's zones (default: wall + 1 mm)
     blend: float | None = None      # mm, smooth-union radius from plenum into its channels (default cell / 4; 0: sharp)
     exterior_blend: float = 0.0     # mm, fillet radius where the outside of headers, ports and core meet (0: sharp)
+    headers: str = "flat"           # "flat": a plenum of even depth over its zone; "loft": a smooth funnel from the zone to its port
     port_diameter: float = 8.0      # mm; or one per fluid, (A, B): an air side wants a far bigger port
     port_length: float = 8.0
     axes: tuple = (0, 1)            # cross: A along axes[0], B along axes[1]; counter: A along axes[0], B's side ports along axes[1]
@@ -207,6 +209,10 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
         if not (isinstance(ph, (list, tuple)) and len(ph) == 3):
             raise ValueError("heatExchanger.phase is a shift of the TPMS in mm, [x, y, z]")
         hx.phase = tuple(float(v) for v in ph)
+    if "headers" in spec:
+        if spec["headers"] not in ("flat", "loft"):
+            raise ValueError("heatExchanger.headers is \"flat\" (even depth over the zone) or \"loft\" (a funnel to the port)")
+        hx.headers = str(spec["headers"])
     if "type" in spec:
         hx.kind = str(spec["type"])
     if "layout" in spec:
@@ -359,7 +365,7 @@ def _surface_zones(hx, zones, pitch, lo, hi, up=None):
         mean_n = n[zk].sum(axis=0)
         mean_n /= np.linalg.norm(mean_n)
         info.append({"center": c, "normal": nc, "meanNormal": mean_n, "ellMax": float(vals[top].mean() - 0.5 * pitch),
-                     "surface": (sp, sn)})
+                     "surface": (sp, sn), "patch": (pts.reshape(*dims, 3)[zk], inside[zk] - 0.5 * pitch)})
     return ell, slopes, far, lo, pitch, info
 
 
@@ -493,6 +499,16 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                                                    np.maximum(cone, column)))
                 body.append(np.maximum(np.maximum(cone, column) - hx.shell, floor))
                 del hgt, rh, cone, column, floor, inzone
+            elif hx.headers == "loft":
+                # a funnel lofted from the zone (held `cap` inside its edge) to the port's root:
+                # the convex hull of the two, so the outside runs in one smooth sweep from the
+                # core to the port instead of a flat lid with walls round it
+                hull = _planes_sdf(_loft_planes(zi, cap), pts, hx.shell + hx.exterior_blend + 2.0 * step + 6.0)
+                # smoothed: the hull's facets and its sharp rims round over (planes stay planes)
+                hull = ndimage.gaussian_filter(hull.reshape(dims), _LOFT_SMOOTH / step).ravel()
+                void = np.minimum(void, np.maximum(hull, -d))
+                body.append(hull - hx.shell)
+                del hull
             else:
                 # a sideways zone's top edge leans out over the wall below it at 55 degrees
                 slope = ndimage.map_coordinates(slope_grids[k], coords, order=1, mode="nearest", output=np.float32) \
@@ -551,6 +567,13 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
             d_body = _smooth_union(d_body, b, hx.exterior_blend)
     else:
         d_body = np.min(body, axis=0)
+    if hx.headers == "loft":
+        # one smooth skin: the creases where lofts, core and ports meet round over too
+        # (a smoothed skin thins over convex spots: the shell is put back wherever the sharp
+        # body had it, within a shell of either fluid)
+        keep = np.maximum(d_body, np.minimum(fluid[0], fluid[1]) - hx.shell)
+        d_body = np.minimum(ndimage.gaussian_filter(d_body.reshape(dims), _LOFT_SMOOTH / step).ravel(), keep)
+        del keep
     del body, ell, coords
     grid = np.maximum(d_body, -np.minimum(fluid[0], fluid[1])).reshape(dims)
     if up is not None and hx.skirt:
@@ -926,6 +949,46 @@ def _skirt(grid, envelope, axis, step):
     d += np.where(sub, 0.5 * step, -0.5 * step)
     out = grid.copy()
     out[box] = np.minimum(out[box], d)
+    return out
+
+
+def _loft_planes(zi, cap, n_patch=700, n_rim=64):
+    """A lofted header (scipy ConvexHull; face planes n.x + d <= 0 inside): the convex hull of
+    its zone's surface, `cap` inside the zone's edge, and the port's root circle."""
+    from scipy.spatial import ConvexHull
+
+    pp, depth = zi["patch"]
+    pp = pp[depth >= cap]
+    if len(pp) < 8:
+        raise ValueError("a lofted header's zone is too small for its cap; use flat headers or a smaller cap")
+    if len(pp) > n_patch:
+        pp = pp[np.random.default_rng(0).choice(len(pp), n_patch, replace=False)]
+    a = zi["axis"]
+    u = np.cross(a, [1.0, 0.0, 0.0] if abs(a[0]) < 0.9 else [0.0, 1.0, 0.0])
+    u /= np.linalg.norm(u)
+    v = np.cross(a, u)
+    th = np.linspace(0.0, 2.0 * np.pi, n_rim, endpoint=False)
+    r = 0.5 * zi["portDiameter"]
+    rim = zi["exit"] + r * (np.outer(np.cos(th), u) + np.outer(np.sin(th), v))
+    return ConvexHull(np.vstack([pp, rim]))
+
+
+def _planes_sdf(hull, pts, pad, soft=0.0, chunk=32768):
+    """max over a convex hull's face planes: the exact distance inside, a close lower
+    bound outside; evaluated only within `pad` of the hull's box (`pad` beyond it)."""
+    out = np.full(len(pts), np.float32(pad), np.float32)
+    eq, hv = hull.equations, hull.points[hull.vertices]
+    lo, hi = hv.min(axis=0) - pad, hv.max(axis=0) + pad
+    sel = np.flatnonzero(np.all((pts >= lo) & (pts <= hi), axis=1))
+    n, c = eq[:, :3].astype(np.float32).T, eq[:, 3].astype(np.float32)
+    for i in range(0, len(sel), chunk):
+        j = sel[i:i + chunk]
+        v = pts[j] @ n + c
+        m = v.max(axis=1)
+        if soft > 0:
+            # a soft maximum: the hull's facet edges round over at about `soft` mm
+            m = m + np.float32(soft) * np.log(np.exp((v - m[:, None]) / np.float32(soft)).sum(axis=1))
+        out[j] = np.minimum(m, pad)
     return out
 
 

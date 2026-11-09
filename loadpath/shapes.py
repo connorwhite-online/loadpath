@@ -1029,12 +1029,22 @@ def shape_from_spec(spec, base_dir=None) -> Shape:
 def _shape(spec, base_dir):
     kind = spec["type"]
     if kind == "box":
-        if "min" in spec:
-            return Box(spec["min"], spec["max"])
+        r = float(spec.get("radius", 0.0))
         if spec.get("axes") is not None:
+            if r > 0:
+                raise ValueError("a turned box (axes) can't take a radius yet; use an axis-aligned box")
             return OrientedBox(spec["center"], spec["size"], spec["axes"])
-        c, s = _vec(spec["center"], name="box center"), _vec(spec["size"], name="box size")
-        return Box(c - s / 2, c + s / 2)
+        if "min" in spec:
+            lo, hi = _vec(spec["min"], name="box min"), _vec(spec["max"], name="box max")
+        else:
+            c, s = _vec(spec["center"], name="box center"), _vec(spec["size"], name="box size")
+            lo, hi = c - s / 2, c + s / 2
+        if r <= 0:
+            return Box(lo, hi)
+        if 2.0 * r > float(np.min(hi - lo)):
+            raise ValueError(f"box radius {r:g} mm is more than half its smallest side ({float(np.min(hi - lo)):g} mm)")
+        # every edge and corner rounded at `radius`: the exact distance, an inset box grown by r
+        return Offset(Box(lo + r, hi - r), r)
     if kind in ("cylinder", "tube"):
         r_inner = spec.get("rInner", spec.get("r_inner", 0.0))
         if "p0" in spec:
