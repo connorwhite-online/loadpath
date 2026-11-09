@@ -783,7 +783,7 @@ far more material, or for something no interior can do.
   `porous.simulate_box` (minutes; its header dp is an upper bound).
   On the command line: `loadpath check exchanger.json` lints the spec and
   prints the design grid (`gridStep`, `gridPoints`) and `peakMemoryGB`
-  (about 400 bytes a grid point) against what is free, in milliseconds.
+  (about 270 bytes a grid point) against what is free, in milliseconds.
   `loadpath heatx spec.json --size --out DIR` writes `sizing.json` (the
   ranked result) and `best.json` (the top spec) to DIR; `--objective`
   is `mass`, `effectiveness` or `pressure` (as `sizing.objective`; the

@@ -1,0 +1,79 @@
+{
+  "name": "intercooler-pod-core",
+  "description": "A real car intercooler core: the 216 x 90 x 61 mm gyroid window of a one-piece AlSi10Mg air-to-coolant charge cooler (LPBF, connorwhite-online/intercooler), at its rated duty: 0.143 kg/s of 2 bar boost air at 137 C and 0.33 kg/s of coolant at 55 C. Air crosses the 90 mm depth, coolant runs the 216 mm length. The design to beat is that cooler's 10 mm cell with 1.5 mm walls (air gets 66% of the void): run the same way it rates effectiveness 0.716, air 16.5 kPa, coolant 23.0 kPa, 2040 g. This one is an 8 mm cell with the 1.0 mm minimum wall and the sheet moved toward the coolant (air 69% of the void). Its grid is 37M points at 0.5 mm, about 10 GB: past the default 16M cap, so the case raises maxPoints.",
+  "core": {
+    "type": "box",
+    "min": [
+      0,
+      0,
+      0
+    ],
+    "max": [
+      216,
+      90,
+      61
+    ]
+  },
+  "type": "gyroid",
+  "layout": "cross",
+  "axes": "yx",
+  "fluids": [
+    "air",
+    "coolant"
+  ],
+  "cell": 8,
+  "wall": 1.0,
+  "split": 0.694,
+  "shell": 2.0,
+  "header": 16,
+  "portDiameter": {
+    "air": 46,
+    "coolant": 14
+  },
+  "portLength": 6,
+  "build": "z",
+  "process": "lpbf",
+  "cleanouts": 1,
+  "step": 0.5,
+  "duty": {
+    "air": {
+      "fluid": {
+        "name": "charge air, 2 bar",
+        "rho": 1.815,
+        "cp": 1013,
+        "k": 0.0314,
+        "mu": 2.2e-05
+      },
+      "kgPerS": 0.1434,
+      "tIn": 137.1
+    },
+    "coolant": {
+      "fluid": {
+        "name": "coolant, 55 C",
+        "rho": 1022,
+        "cp": 3800,
+        "k": 0.52,
+        "mu": 0.000697
+      },
+      "kgPerS": 0.33,
+      "tIn": 55.2
+    },
+    "wall": "alsi10mg"
+  },
+  "expect": {
+    "maxMass": 1900,
+    "minWallBetweenFluids": 0.9,
+    "maxInternalFlatArea": 2000,
+    "maxTrappedVolume": 100,
+    "minEffectiveness": 0.75,
+    "maxPressureDrop": {
+      "air": 13000,
+      "coolant": 30000
+    },
+    "maxSeconds": 1200,
+    "coarse": {
+      "skip": "a 37M-point grid, about 10 GB and 5 minutes"
+    }
+  },
+  "maxPoints": 40000000
+}

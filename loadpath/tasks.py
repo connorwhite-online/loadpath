@@ -744,7 +744,7 @@ def heat_exchanger(spec: dict, out_dir: str, base_dir: str | None = None, render
     """Design a heat exchanger, check it, rate it if `duty` is given (and
     simulate it whole with "simulate": true; porous.py), and write <name>.stl, <name>.png, the fluid spaces (<name>-<fluid>.stl) and
     an interactive viewer (<name>.html). `max_points` caps the design grid
-    (default 16M; about 400 bytes a point at the peak); a design whose
+    (default 16M, or the spec's "maxPoints"; about 270 bytes a point at the peak); a design whose
     estimated peak is over the free memory is refused unless `force`."""
     from .heatx import design_heat_exchanger
     from .heatx_thermal import rate_design

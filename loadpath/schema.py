@@ -1491,7 +1491,13 @@ STUDY_SCHEMA = {
 _FLUID_NAMES = ["water", "water60", "air", "glycol50", "oil"]
 _DUTY_SIDE = {
     "type": "object",
-    "properties": {"fluid": {"enum": _FLUID_NAMES}, "lPerMin": _POS, "kgPerS": _POS,
+    "properties": {"fluid": {"anyOf": [
+                       {"enum": _FLUID_NAMES},
+                       {"type": "object", "description": "the fluid's own properties at its working state, SI "
+                                                         "(boost air at 2 bar, a coolant mix not listed)",
+                        "properties": {"name": {"type": "string"}, "rho": _POS, "cp": _POS, "k": _POS, "mu": _POS},
+                        "required": ["rho", "cp", "k", "mu"], "additionalProperties": False}]},
+                   "lPerMin": _POS, "kgPerS": _POS,
                    "tIn": {"type": "number", "description": "°C"}},
     "x-requireOne": [["lPerMin"], ["kgPerS"]],
     "additionalProperties": False,
@@ -1537,6 +1543,10 @@ HEAT_EXCHANGER_SCHEMA = {
                     "description": "fdm (default) or lpbf: laser powder-bed metal (AlSi10Mg, Ti64, 316L). "
                                    "lpbf drops the skirt (outside supports are cut off) and the report's "
                                    "internalCeilings must be near zero: nothing inside can be supported."},
+        "maxPoints": {"type": "integer", "minimum": 100000,
+                      "description": "cap on the design grid's points (default 16M, about 270 bytes each at the "
+                                     "peak; a design over the free memory is refused): a car-sized core at a "
+                                     "1 mm wall needs about 40M"},
         "cleanouts": {"type": "integer", "minimum": 0,
                       "description": "powder clean-out ports per fluid (default 0): each a bore through the outer "
                                      "wall at the point of that fluid's space farthest from every opening, on a "

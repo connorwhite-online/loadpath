@@ -32,6 +32,7 @@ process checks where the case has a process. The cases:
 | wall-bracket | PLA, FDM | SF 2.5 | A 120 x 100 mm shelf bracket on two M5 screws, 150 N. |
 | wall-bracket-fasteners | PLA, FDM | SF 2.5 | The same bracket with its screws modelled as fasteners with preload. |
 | lpbf-intercooler-core | AlSi10Mg, LPBF | effectiveness 0.7, pressure-drop limits | A two-fluid gyroid heat exchanger with no unsupported internal ceilings and a powder clean-out per fluid. |
+| intercooler-pod-core | AlSi10Mg, LPBF | beat a real car intercooler's core | The full-size 216 x 90 x 61 mm core of a one-piece charge-air cooler ([connorwhite-online/intercooler](https://github.com/connorwhite-online/intercooler)) at its rated duty. Full tier only: a 37M-point grid, about 10 GB. |
 
 Each safety-factor case searches over volume fractions for the lightest
 part that meets its goal. The search's pick is then re-meshed as an STL and
@@ -68,6 +69,13 @@ draw. For comparisons with real, conventionally designed parts, see the
 | wall-bracket | 26.9 g | 419.2 g | 2.85 (2.5) | 0.692 mm (1.5) | stress (constrained method)† |
 | wall-bracket-fasteners | 26.5 g | 421.6 g | 2.57 (2.5) | 0.566 mm (1.5) | stress (constrained method)† |
 | lpbf-intercooler-core | 131.8 g | | | | effectiveness 0.77 (0.7), 1.0 mm wall between fluids, 126 mm² flat ceiling (limit 200) |
+| intercooler-pod-core | 1786 g | | | | effectiveness 0.77 (0.75), air 11.5 kPa, coolant 25.4 kPa; the cooler's own 10 mm / 1.5 mm core run the same way: 0.72, 16.5 kPa, 23.0 kPa, 2040 g‡ |
+
+‡ Same box, headers, ports and duty for both; only the cell (8 vs 10 mm), wall
+(1.0 vs 1.5 mm) and split (air's share of the void, 0.69 vs 0.66) differ. The
+intercooler project's own system model, with its own unit-cell CFD, puts the
+new core at about 74 °C charge air out against 78 °C for its current one at
+80 km/h on a 35 °C day, at the same air-side pressure drop.
 
 \* The search brackets in volume-fraction steps. The next lighter step
 (45.0 g for arm-link-driven, about 16 g for the yoke, 36-37 g for the MJF

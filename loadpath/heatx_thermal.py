@@ -201,10 +201,18 @@ def _flow(spec, fluid):
 
 
 def _fluid(v):
+    """A Fluid, a name from FLUIDS, or its properties as a dict (JSON specs:
+    {"name": "charge air", "rho": 1.81, "cp": 1013, "k": 0.0314, "mu": 2.2e-5},
+    e.g. boost air at 2 bar, which "air" at 1 atm and 20 C is not)."""
     if isinstance(v, Fluid):
         return v
+    if isinstance(v, dict):
+        try:
+            return Fluid(str(v.get("name", "fluid")), *(float(v[k]) for k in ("rho", "cp", "k", "mu")))
+        except KeyError as e:
+            raise ValueError(f"a fluid given by its properties needs rho, cp, k and mu (SI), missing {e}") from None
     if v not in FLUIDS:
-        raise ValueError(f"fluid must be one of {sorted(FLUIDS)} or a Fluid, got {v!r}")
+        raise ValueError(f"fluid must be one of {sorted(FLUIDS)}, a Fluid or a dict of rho, cp, k, mu, got {v!r}")
     return FLUIDS[v]
 
 

@@ -82,9 +82,11 @@ __all__ = ["HeatExchangerSpec", "Zone", "design_heat_exchanger", "grid_plan", "h
            "zones_for"]
 
 _SQRT2 = np.sqrt(2.0)
-# the design's peak memory: about this many bytes per grid point (measured on the
-# design with fluid spaces and grids, 3-6M points: 350-390 B), plus the interpreter
-_BYTES_PER_POINT = 400.0
+# the design's peak memory: about this many bytes per grid point, plus the interpreter.
+# The design grid is float32 and the checks keep no full float64 fields: a 216 x 90 x 61 mm
+# intercooler core at 0.5 mm (37M points) peaked at 9.8 GB, 5M points at 1.6 GB (it was
+# 350-400 B a point while the grid was float64, which put that core out of a 15 GB machine)
+_BYTES_PER_POINT = 270.0
 _BASE_BYTES = 0.25e9
 # report warnings, per process: an internal ceiling area (mm^2, faces within 20 degrees
 # of level over a fluid) and trapped open space (mm^3) past which powder-bed metal
@@ -238,6 +240,8 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
             raise ValueError("heatExchanger.split is the first fluid's share of the void, between 0.05 and 0.95")
     if "cleanouts" in spec:
         hx.cleanouts = int(spec["cleanouts"])
+    if "maxPoints" in spec:
+        hx.max_points = int(spec["maxPoints"])
     if "cleanoutDiameter" in spec:
         hx.cleanout_diameter = float(spec["cleanoutDiameter"])
     if "zones" in spec:
@@ -260,17 +264,23 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
     return hx
 
 
-def _grid(lo, hi, step):
+def _grid(lo, hi, step, dtype=float):
     dims = np.maximum(np.ceil((hi - lo) / step).astype(int), 2)
-    idx = np.stack(np.meshgrid(*[np.arange(n) for n in dims], indexing="ij"), -1).reshape(-1, 3)
-    return lo + (idx + 0.5) * step, dims
+    return _grid_points(lo, dims, step, dtype), dims
 
 
-def _grid_points(lo, dims, step):
+def _grid_points(lo, dims, step, dtype=float):
     """The points of a grid already sized (dims), in _grid's order: rebuilding
-    it from lo + dims * step can round to one more cell."""
-    idx = np.stack(np.meshgrid(*[np.arange(n) for n in dims], indexing="ij"), -1).reshape(-1, 3)
-    return lo + (idx + 0.5) * step
+    it from lo + dims * step can round to one more cell. The design grid
+    asks for float32: a car-sized exchanger at wall / 2 is 40M points, and
+    float32 still resolves a 300 mm part to 0.03 um."""
+    dims = [int(n) for n in dims]
+    out = np.empty((int(np.prod(dims)), 3), dtype)
+    view = out.reshape(*dims, 3)
+    for a in range(3):
+        ax = (lo[a] + (np.arange(dims[a]) + 0.5) * step).astype(dtype)
+        view[..., a] = ax.reshape([-1 if b == a else 1 for b in range(3)])
+    return out
 
 
 def _surface_zones(hx, zones, pitch, lo, hi, up=None):
@@ -430,7 +440,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     step = max(step, (float(np.prod(hi - lo)) / hx.max_points) ** (1.0 / 3.0))
     if step > hx.wall / 2.0:
         raise ValueError(_too_coarse(hx, float(np.prod(hi - lo)), step))
-    pts, dims = _grid(lo, hi, step)
+    pts, dims = _grid(lo, hi, step, np.float32)
     # the lowest point of the part, where a port's gusset may stand
     bed = None
     if up is not None:
@@ -438,13 +448,13 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                   [float((zi["center"] + zi["normal"] * (zi["height"] + hx.shell)) @ up) for zi in zinfo] +
                   [float(zi["port"][1] @ up) for zi in zinfo])
 
-    coords = ((pts - c_lo) / pitch - 0.5).T
-    ell = [ndimage.map_coordinates(g, coords, order=1, mode="nearest") for g in ell_grids]
-    d = hx.core.sdf(pts)
-    d_far = ndimage.map_coordinates(far, coords, order=1, mode="nearest")
+    coords = ((pts - np.asarray(c_lo, np.float32)) / np.float32(pitch) - np.float32(0.5)).T
+    ell = [ndimage.map_coordinates(g, coords, order=1, mode="nearest", output=np.float32) for g in ell_grids]
+    d = np.asarray(hx.core.sdf(pts), np.float32)
+    d_far = ndimage.map_coordinates(far, coords, order=1, mode="nearest", output=np.float32)
     d = np.where(np.abs(d_far) > 3.0 * pitch, d_far, d)
     del d_far
-    g = tpms(hx.kind, pts - clo - np.asarray(hx.phase, float), hx.cell)
+    g = np.asarray(tpms(hx.kind, pts - (clo + np.asarray(hx.phase, float)).astype(np.float32), hx.cell), np.float32)
     sheet_c = 0.0
     if abs(hx.split - 0.5) > 1e-9:
         from .heatx_thermal import sheet_offset
@@ -483,7 +493,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                 del hgt, rh, cone, column, floor, inzone
             else:
                 # a sideways zone's top edge leans out over the wall below it at 55 degrees
-                slope = ndimage.map_coordinates(slope_grids[k], coords, order=1, mode="nearest") \
+                slope = ndimage.map_coordinates(slope_grids[k], coords, order=1, mode="nearest", output=np.float32) \
                     if up is not None else 1.0
                 lateral = (cap + slope * d - ell[k]) / np.hypot(1.0, slope)
                 void = np.minimum(void, np.maximum(np.maximum(-d, d - zi["height"]), lateral))
@@ -504,7 +514,8 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
             if not pot.any():
                 continue
             other = (fluid[1 - f][0] < 0).reshape(dims)
-            room = ndimage.distance_transform_edt(~other).ravel() * step if other.any() else np.full(len(d), np.inf)
+            room = (ndimage.distance_transform_edt(~other).astype(np.float32).ravel() * np.float32(step)
+                    if other.any() else np.full(len(d), np.inf, np.float32))
             del other
             fl = pot * np.clip((room - hx.wall - 2.0 * step) / step, 0.0, 1.0)
             del room
@@ -566,7 +577,8 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                        for z, zi in zip(zones, zinfo)},
                    "warnings": warnings})
     warnings += _process_warnings(hx, report)
-    del side_a
+    # the design's full-grid fields are done with: free them before the fluid spaces
+    del side_a, g, d, pts, fluid, shape
     extra = ({"masks": masks, "lo": lo, "step": step, "dims": tuple(dims)},) if grids else ()
     if not fluid_meshes:
         return (mesh, report, *extra)
@@ -578,8 +590,9 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     inside = -d_body.reshape(dims)
     for name, m in zip(hx.names, masks):
         if m.any():
-            near = 1.5 * step - ndimage.distance_transform_edt(~m) * step
+            near = np.float32(1.5 * step) - ndimage.distance_transform_edt(~m).astype(np.float32) * np.float32(step)
             f = np.minimum(np.minimum(grid, inside), near).astype(np.float32)
+            del near
             f[f == 0.0] = -1e-6
             v, fc, _, _ = marching_cubes(np.pad(f, 1, constant_values=-1.0), 0.0, spacing=(step, step, step),
                                          allow_degenerate=False)
@@ -688,8 +701,8 @@ def _closure(hx, zones, ell, d, dims, step, up, cap):
     mouths leans instead of ending flat; applied only a wall clear of the
     other fluid). Closing and sealing only add metal, so they can never open
     a leak."""
-    grad = np.gradient(d.reshape(dims), step)
-    nu = sum(float(up[i]) * grad[i] for i in range(3) if abs(up[i]) > 1e-9).ravel()
+    grad = np.gradient(d.reshape(dims), float(step))
+    nu = sum(float(up[i]) * grad[i] for i in range(3) if abs(up[i]) > 1e-9).ravel().astype(np.float32, copy=False)
     del grad
     c = np.cos(np.radians(_CLOSE_FACE))
     w_up = np.clip((nu - c) / 0.1, 0.0, 1.0)
@@ -702,9 +715,9 @@ def _closure(hx, zones, ell, d, dims, step, up, cap):
     for f in (0, 1):
         own = np.max([ell[k] for k, z in enumerate(zones) if z.fluid == f], axis=0)
         inzone = np.clip(own / (2.0 * step) + 0.5, 0.0, 1.0)
-        out["close"].append(close * (1.0 - inzone))
-        out["flare"].append(flare_ramp * inzone)
-        out["deep"][1 - f] = (reach + hx.wall) * w_dn * inzone
+        out["close"].append((close * (1.0 - inzone)).astype(np.float32, copy=False))
+        out["flare"].append((flare_ramp * inzone).astype(np.float32, copy=False))
+        out["deep"][1 - f] = ((reach + hx.wall) * w_dn * inzone).astype(np.float32, copy=False)
     return out
 
 
@@ -750,6 +763,19 @@ def _densest(points, weights, size):
 _TAPS = ((2.5, "M3x0.5"), (3.3, "M4x0.7"), (4.2, "M5x0.8"), (5.0, "M6x1"), (6.8, "M8x1.25"), (8.5, "M10x1.5"))
 
 
+def _central_gradient(field, ijk, step):
+    """The gradient of a grid field at one voxel (central differences, one-sided
+    at the grid's edge): np.gradient at that point, without the whole field's."""
+    g = np.zeros(3)
+    for a in range(3):
+        lo_, hi_ = list(ijk), list(ijk)
+        lo_[a] = max(ijk[a] - 1, 0)
+        hi_[a] = min(ijk[a] + 1, field.shape[a] - 1)
+        if hi_[a] > lo_[a]:
+            g[a] = (float(field[tuple(hi_)]) - float(field[tuple(lo_)])) / ((hi_[a] - lo_[a]) * step)
+    return g
+
+
 def _geodesic(mask, starts, step):
     """Distance (mm) from `starts` (voxel indices) through `mask`, inf where
     unreached."""
@@ -775,8 +801,7 @@ def _cleanouts(hx, zones, zinfo, grid, masks, d_body, d_core, lo, step, dims):
     r = 0.5 * hx.cleanout_diameter
     solid = grid < 0
     outside = ~solid & (d_body.reshape(dims) >= 0)
-    dist_out = ndimage.distance_transform_edt(~outside) * step
-    grad = np.stack(np.gradient(dist_out, step), -1)
+    dist_out = ndimage.distance_transform_edt(~outside).astype(np.float32) * np.float32(step)
     core = d_core.reshape(dims) < 0
     body = d_body.reshape(dims) < 0
     del outside
@@ -801,14 +826,17 @@ def _cleanouts(hx, zones, zinfo, grid, masks, d_body, d_core, lo, step, dims):
         for _ in range(hx.cleanouts):
             geo = _geodesic(m, starts, step)
             placed = False
+            cand = np.where(ok & np.isfinite(geo), geo, -1.0)
+            del geo
             while not placed:
-                cand = np.where(ok & np.isfinite(geo), geo, -1.0)
                 i = int(np.argmax(cand))
                 if cand.flat[i] <= 0:
                     break
                 ijk = np.asarray(np.unravel_index(i, dims))
                 ok[tuple(ijk)] = False
-                n = -grad[tuple(ijk)]
+                path = float(cand.flat[i])
+                cand.flat[i] = -1.0
+                n = -_central_gradient(dist_out, ijk, step)
                 if np.linalg.norm(n) < 1e-6:
                     continue
                 n /= np.linalg.norm(n)
@@ -830,7 +858,7 @@ def _cleanouts(hx, zones, zinfo, grid, masks, d_body, d_core, lo, step, dims):
                 break
             b = site + n * (depth + boss_len)
             if pts_all is None:
-                pts_all = _grid_points(lo, dims, step)
+                pts_all = _grid_points(lo, dims, step, np.float32)
             box_lo = np.minimum(site, b) - r - boss_wall - hx.wall - 2 * step
             box_hi = np.maximum(site, b) + r + boss_wall + hx.wall + 2 * step
             sel = np.all((pts_all >= box_lo) & (pts_all <= box_hi), axis=1)
@@ -849,7 +877,7 @@ def _cleanouts(hx, zones, zinfo, grid, masks, d_body, d_core, lo, step, dims):
             tap = min(_TAPS, key=lambda t: abs(t[0] - hx.cleanout_diameter))[1]
             plug_a = site + n * max(depth - hx.shell, step)
             out.append({"fluid": hx.names[f], "at": np.round(site, 2).tolist(), "axis": np.round(n, 3).tolist(),
-                        "diameter": hx.cleanout_diameter, "pathBefore": round(float(geo[tuple(ijk)]), 1),
+                        "diameter": hx.cleanout_diameter, "pathBefore": round(path, 1),
                         "plug": {"a": np.round(plug_a, 3).tolist(), "b": np.round(b + n * 1.0, 3).tolist(),
                                  "r": r, "ends": "flat"},
                         "seal": f"tap {tap} through the boss; after de-powdering, a set screw with thread "
@@ -984,16 +1012,17 @@ def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap, 
         del tl
     if a.any() and b.any():
         # thinnest wall between the fluids: distance from B's space to A's
-        dist_to_a = ndimage.distance_transform_edt(~a) * step
-        report["minWallBetweenFluids"] = float(dist_to_a[b].min())
-        i = np.argmin(np.where(b, dist_to_a, np.inf))
+        dist_to_a = ndimage.distance_transform_edt(~a).astype(np.float32)
+        dist_to_a[~b] = np.inf
+        i = int(np.argmin(dist_to_a))
+        report["minWallBetweenFluids"] = float(dist_to_a.flat[i]) * step
         report["minWallBetweenFluidsAt"] = np.round(lo + (np.asarray(np.unravel_index(i, dims)) + 0.5) * step, 1).tolist()
         del dist_to_a
     # thinnest outer wall: from either fluid to the outside, away from the port mouths
     outside = ~solid & ~inside_body               # air (the skirt is solid, though outside the body)
-    dist_out = ndimage.distance_transform_edt(~outside) * step
+    dist_out = ndimage.distance_transform_edt(~outside).astype(np.float32) * np.float32(step)
     near_mouth = np.zeros(int(np.prod(dims)), bool)
-    pts = _grid_points(lo, dims, step)
+    pts = _grid_points(lo, dims, step, np.float32)
     up = _unit(hx.build) if hx.build is not None else None
     for zi in zinfo:
         p0, p1 = zi["port"]
@@ -1006,7 +1035,9 @@ def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap, 
     for a_, b_, r_ in mouths:
         a_, b_ = np.asarray(a_, float), np.asarray(b_, float)
         ax_ = (b_ - a_) / np.linalg.norm(b_ - a_)
-        near_mouth |= Cylinder(a_ - ax_ * (hx.shell + 2 * step), b_, r_ + hx.shell + 2 * step).sdf(pts) < 0
+        a0, rr = a_ - ax_ * (hx.shell + 2 * step), r_ + hx.shell + 2 * step
+        box = np.all((pts >= np.minimum(a0, b_) - rr) & (pts <= np.maximum(a0, b_) + rr), axis=1)
+        near_mouth[box] |= Cylinder(a0, b_, rr).sdf(pts[box]) < 0
     del pts
     near_mouth = near_mouth.reshape(dims)
     wet = (a | b) & ~near_mouth

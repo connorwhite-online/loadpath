@@ -23,6 +23,17 @@ def _decimate(mesh, faces=40_000):
         return mesh
 
 
+def _thin(mesh, faces=1_000_000):
+    """A render proxy of a very large mesh, still closed enough to cut with a
+    capped plane; small meshes as they are."""
+    if len(mesh.faces) <= faces:
+        return mesh
+    try:
+        return mesh.simplify_quadric_decimation(face_count=faces)
+    except Exception:  # noqa: BLE001 - render proxy only
+        return mesh
+
+
 def _outside(mesh):
     """The mesh without its enclosed cavities' surfaces (a sealed plenum's
     inside): matplotlib sorts faces by depth only roughly, and a cavity's
@@ -279,6 +290,10 @@ def render_heat_exchanger(mesh, spaces, core, path, title=None, size=(5.0, 4.6),
     grey = np.array([0.80, 0.80, 0.82])
     colors = [np.array([0.20, 0.45, 0.85]), np.array([0.92, 0.50, 0.15])]
     names = list(spaces)
+    # a car-sized core is 10M+ faces: cutting it whole (slice_plane caps on the full
+    # mesh) took more memory than designing it, so thin out big meshes first
+    mesh = _thin(mesh)
+    spaces = {n: _thin(m) for n, m in spaces.items()}
     panels = [("part", [(mesh, grey)]),
               ("part, cut open", [(mesh.slice_plane(c0, cn, cap=True), grey)])]
     # keep the half beyond the cut, so the view looks into it
