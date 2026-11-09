@@ -158,8 +158,9 @@ parts, meshed at 0.35 mm) came out that way.
 `"smooth": true` on the node takes the facets off before the distance is
 taken: a Taubin filter on the mesh as it is (60 passes of lambda 0.5,
 mu -0.5, which amplifies nothing), then one level of Loop subdivision, so the surface the distance sees is smooth.
-Edges sharper than `smoothCrease` degrees (default 60: bores, cut faces) do
-not move and the facets beside them stay flat; the volume changes by about
+Edges sharper than `smoothCrease` degrees (default 60: bores, cut faces) and
+the ring of vertices round them do not move (a narrow lip between two such
+edges keeps its shape), and the facets beside them stay flat; the volume changes by about
 1% or less (the v0.3 wrist link: -0.6%). A number instead of `true` sets the subdivided edge length in mm
 (default half the mesh's mean edge). Leave it off for CAD meshes and for a
 designer's exterior that must be kept as drawn.

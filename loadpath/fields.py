@@ -259,7 +259,7 @@ def _closest_on_triangles(p, a, b, c):
     return out
 
 
-def smooth_mesh(mesh, edge=None, crease=60.0, iterations=60, max_faces=4_000_000):
+def smooth_mesh(mesh, edge=None, crease=60.0, iterations=60, lock_rings=1, max_faces=4_000_000):
     """A faceted organic mesh (a marching-cubes part, a scan) with its facets
     taken off, for use as a field.
 
@@ -274,7 +274,8 @@ def smooth_mesh(mesh, edge=None, crease=60.0, iterations=60, max_faces=4_000_000
     a few facets long go, and nothing is amplified) takes off the ripple, then
     Loop subdivision, down to `edge` mm (default half the mean edge), turns
     the facets into a smooth limit surface. Vertices on edges sharper than
-    `crease` degrees (bores, cut faces) do not move, and the subdivision
+    `crease` degrees (bores, cut faces), and `lock_rings` rings of vertices
+    round them, do not move, and the subdivision
     next to them keeps the facets flat (midpoints), so real edges stay
     where they are; the volume changes by about 1% or less."""
     import trimesh
@@ -287,6 +288,10 @@ def smooth_mesh(mesh, edge=None, crease=60.0, iterations=60, max_faces=4_000_000
     n = len(m.vertices)
     A = sparse.coo_matrix((np.ones(2 * len(ed)), (np.r_[ed[:, 0], ed[:, 1]], np.r_[ed[:, 1], ed[:, 0]])),
                           shape=(n, n)).tocsr()
+    # and the ring of vertices round a kept edge: a narrow ledge or lip between
+    # two kept edges stays as it is instead of being pulled ragged
+    for _ in range(int(lock_rings)):
+        lock = lock | (A @ lock.astype(float) > 0)
     W = sparse.diags(1.0 / np.maximum(np.asarray(A.sum(axis=1)).ravel(), 1.0)) @ A
     x0 = np.asarray(m.vertices, float)
     x = x0.copy()
