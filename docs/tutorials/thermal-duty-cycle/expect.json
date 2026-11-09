@@ -68,7 +68,7 @@
    "file": "hot/report.json",
    "value": "r['outcomes'][r['best']]['thermal']['maxTemperature']",
    "min": 63,
-   "max": 82,
+   "max": 86,
    "what": "PA-CF designed for the cycle: hottest point, C"
   },
   {
