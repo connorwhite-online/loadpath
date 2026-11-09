@@ -37,6 +37,10 @@ def attention(o: dict, study: dict) -> list[str]:
         defl = max((c.get("deflection") or 0.0 for c in o.get("cases") or []), default=0.0)
         if dmax and defl > dmax:
             why.append(f"deflection {defl:.2f} mm over {dmax:g}")
+        for c in o.get("cases") or []:
+            for r in c.get("clearances") or []:
+                if r.get("travel") is not None and r["travel"] > r["maxTravel"]:
+                    why.append(f"{r['name']} travels {r['travel']:.2f} mm in {c.get('name')!r}, over {r['maxTravel']:g}")
         out.append("does not meet the goal" + (f" ({', '.join(why)})" if why else "") +
                    ": raise the volume fraction or the material, or check the loads")
     if (o.get("bodies") or 1) > 1:
@@ -84,6 +88,10 @@ def _governing(o: dict, goal: dict) -> str | None:
         d = max((c.get("deflection") or 0.0) for c in o.get("cases") or [{}])
         if d > 0:
             ms["maxDeflection"] = goal["maxDeflection"] / d
+    tr = [r["maxTravel"] / r["travel"] for c in o.get("cases") or [] for r in c.get("clearances") or []
+          if r.get("travel")]
+    if tr:
+        ms["clearances"] = min(tr)
     dur = o.get("durability") or {}
     if dur.get("safetyFactor") is not None and dur.get("constrain"):
         ms["durability"] = dur["safetyFactor"] / dur.get("target", 1.5)
@@ -111,7 +119,8 @@ def delivery(summary: dict, study: dict) -> dict | None:
     cases = [{"name": c.get("name"), "safetyFactor": c.get("safetyFactor"), "deflection": c.get("deflection"),
               "peakStress": c.get("peakStress") if c.get("peakStress") is not None else peaks.get(c.get("name")),
               **({"peakAt": c["peakAt"]} if c.get("peakAt") is not None else {}),
-              **({"worstDirection": c["worstDirection"]} if c.get("worstDirection") else {})}
+              **({"worstDirection": c["worstDirection"]} if c.get("worstDirection") else {}),
+              **({"clearances": c["clearances"]} if c.get("clearances") else {})}
              for c in o.get("cases") or []]
     d = {
         "outcome": best,
@@ -126,8 +135,8 @@ def delivery(summary: dict, study: dict) -> dict | None:
         # which analysis that number comes from: "tet" (body-fitted cross-check),
         # "voxel-fine" (a finer voxel re-analysis) or "voxel" (the design grid)
         "safetyFactorMethod": _sf_method(o),
-        **({"target": {k: goal[k] for k in ("safetyFactor", "maxDeflection", "maxMass") if k in goal}}
-           if any(k in goal for k in ("safetyFactor", "maxDeflection", "maxMass")) else {}),
+        **({"target": {k: goal[k] for k in ("safetyFactor", "maxDeflection", "maxMass", "clearances") if k in goal}}
+           if any(k in goal for k in ("safetyFactor", "maxDeflection", "maxMass", "clearances")) else {}),
         "governedBy": _governing(o, goal),
         "maxDeflection": max((c.get("deflection") or 0.0) for c in o.get("cases") or [{}]) or None,
         "cases": cases,

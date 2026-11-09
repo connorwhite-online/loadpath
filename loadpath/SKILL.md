@@ -370,6 +370,17 @@ buckling, printability) you can report to the user.
   (either alone works too). Mechanisms like robot arms are usually limited by
   deflection, not strength. It runs several optimizations, so it is the slowest and the one
   to use when you know the loads.
+  `maxDeflection` is the mean travel of the loaded nodes: a load spread over
+  a stiff rim reads low while the span between sags (a fan plate read 0.8 mm
+  at its loads while its deck's middle dropped 3.9). To cap travel anywhere
+  else, add `"clearances": [{"region": "deck", "maxTravel": 2, "direction":
+  "-z"}]`: no node of that region moves more than 2 mm (down, with a
+  direction; any way without); `cases` limits it to named load cases. Each
+  case reports `clearances` with the travel, the limit and where. A
+  `thinPreserves` warning means a preserved wall or deck is under 3 analysis
+  cells thick: its bending reads stiff (up to ~2x), so check it on tets.
+  If no fraction passes the finer-grid confirm, nothing is delivered as
+  passing and the run's warnings say so.
   With `pip install loadpath[crosscheck]` the pick is confirmed on a
   body-fitted tetrahedral mesh (`goal.confirm`, default `auto`): the report's
   `safetyFactor` is then the tet reading (`confirm.method: "tet"`, voxel
@@ -379,7 +390,8 @@ buckling, printability) you can report to the user.
   It is isotropic, so it never runs for a `process` (FDM layers, SLS, resin)
   or gravity or pressure loads: those are confirmed on a finer voxel grid,
   `deliver.tetCrossCheck` says why. That fine re-check is the memory peak
-  `check` reports (`peakMemoryGB`); `LOADPATH_CONFIRM_CELLS=60000` lowers it.
+  `check` reports (`peakMemoryGB`); `LOADPATH_CONFIRM_CELLS=60000` lowers it,
+  never below 1.5x the cells the pick passed on.
   `check` also reports numba's `threadingLayer`: on `workqueue` (pip numba
   on macOS without `brew install libomp`) load cases solve one after
   another, which is safe but slower; it warns when the study has several.

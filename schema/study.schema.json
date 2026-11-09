@@ -4286,7 +4286,66 @@
         "maxDeflection": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "mm, at the loads"
+          "description": "mm, at the loads: the mean displacement of the loaded nodes. A load spread over a stiff rim reads low while the span between sags: cap that with clearances."
+        },
+        "clearances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "A travel limit away from the loads: no node of the target moves more than maxTravel (keep this face within d of where it is). Held by the search with the safety factor and deflection; each case reports its travel (cases[].clearances). A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.",
+            "properties": {
+              "region": {
+                "type": "string"
+              },
+              "shape": {
+                "$ref": "#/$defs/shape"
+              },
+              "maxTravel": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "mm the region may move"
+              },
+              "direction": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                ],
+                "description": "count only travel along this direction (toward what is there, e.g. '-z' for a fan under the deck); default: any direction"
+              },
+              "cases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "load case names it applies in (default: every case)"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "x-requireOne": [
+              [
+                "region"
+              ],
+              [
+                "shape"
+              ]
+            ],
+            "required": [
+              "maxTravel"
+            ],
+            "additionalProperties": false
+          }
         },
         "maxMass": {
           "type": "number",

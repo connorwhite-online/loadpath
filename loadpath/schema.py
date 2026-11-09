@@ -351,7 +351,26 @@ _GOAL = {
     "properties": {
         "volumeFraction": {"type": "number", "minimum": 0.02, "maximum": 0.95},
         "safetyFactor": _POS,
-        "maxDeflection": {**_POS, "description": "mm, at the loads"},
+        "maxDeflection": {**_POS, "description": "mm, at the loads: the mean displacement of the loaded "
+                                                 "nodes. A load spread over a stiff rim reads low while the span "
+                                                 "between sags: cap that with clearances."},
+        "clearances": {"type": "array", "items": {
+            "type": "object",
+            "description": "A travel limit away from the loads: no node of the target moves more than maxTravel "
+                           "(keep this face within d of where it is). Held by the search with the safety factor "
+                           "and deflection; each case reports its travel (cases[].clearances). " + _TARGET,
+            "properties": {
+                "region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"},
+                "maxTravel": {**_POS, "description": "mm the region may move"},
+                "direction": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"},
+                                        {"type": "array", "items": {"type": "number"}, "minItems": 3,
+                                         "maxItems": 3}],
+                              "description": "count only travel along this direction (toward what is there, "
+                                             "e.g. '-z' for a fan under the deck); default: any direction"},
+                "cases": {"type": "array", "items": {"type": "string"},
+                          "description": "load case names it applies in (default: every case)"},
+                "name": {"type": "string"}},
+            "x-requireOne": [["region"], ["shape"]], "required": ["maxTravel"], "additionalProperties": False}},
         "maxMass": {**_POS, "description": "g: a cap the delivered part is checked against (deliver.passes is "
                                            "false over it). The search already returns the lightest part that "
                                            "meets the other limits, so over the cap means a lighter material, "

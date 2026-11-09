@@ -301,13 +301,18 @@ def verify_mesh(raw, path: str, base_dir: str | None = None, max_cells: int = 60
     if not os.path.isfile(full):
         return {"ok": False, "error": f"no mesh at {full}"}
     study = study_from_dict(raw, base_dir=base_dir or os.getcwd())
-    rep = verify_part(study, trimesh.load(full, force="mesh"), max_cells=max_cells)
+    from .domain import choose_pitch
+
+    # no coarser than the grid the study designs on (a 3 mm deck at 1.91 mm
+    # cells read half the sag of 1.41 mm ones)
+    rep = verify_part(study, trimesh.load(full, force="mesh"), max_cells=max_cells, max_pitch=choose_pitch(study))
     margin = _margin(study, rep)
     out = {k: rep.get(k) for k in ("mass", "volume", "massReduction", "safetyFactor", "keepOutIntrusion",
                                    "preserveMissing", "outsideDesignSpace", "bodies", "enclosedCavityVolume",
-                                   "minMember", "p5Member", "closedBores", "analysisCells")}
+                                   "minMember", "p5Member", "closedBores", "analysisCells", "analysisPitch",
+                                   "thinPreserves", "warnings")}
     out["cases"] = [{k: c.get(k) for k in ("name", "safetyFactor", "peakStress", "peakAt", "deflection",
-                                           "worstDirection", "interlayerStress") if c.get(k) is not None}
+                                           "worstDirection", "interlayerStress", "clearances") if c.get(k) is not None}
                     for c in rep["cases"]]
     if rep.get("durability"):
         out["durability"] = {k: rep["durability"].get(k) for k in ("safetyFactor", "target", "warnings")}

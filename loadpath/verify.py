@@ -411,6 +411,15 @@ _WET_SMOOTH = 1.5
 # cells verification will spend getting there
 _SHELL_CELLS = 4.0
 _SHELL_MAX_CELLS = 400_000
+# A grid coarser than the design's reads the part it was designed on
+# coarser still: a 3 mm deck designed at 1.5 mm cells, analysed at 1.91,
+# sagged 2.16 mm where 1.41 mm cells read 4.09 and tets 6.8 (the fan
+# plate). With max_pitch, the cell budget stretches up to this many times
+# to reach it, and the report says when it still cannot.
+_MAX_PITCH_STRETCH = 2.5
+# Under this many cells through, a plate reads stiff in bending (hex cells
+# lock in shear): that deck at 2 cells, 1.7x stiffer than tets.
+_THIN_CELLS = 3.0
 
 
 def _smooth_wetted(xyz, vm, wet, pitch):
@@ -909,8 +918,86 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
     return out
 
 
+def _thin_preserves(study: Study, pitch: float) -> dict:
+    """Preserved walls and decks under _THIN_CELLS analysis cells through,
+    when the study limits how far the part moves (maxDeflection, clearances):
+    {"thinPreserves": [{id, thickness, cells}], "warnings": [...]}, or {}.
+    The thickness is the median across the preserve's medial ridge, on a
+    grid a quarter of the analysis cell (at most ~2M points): a deck with
+    a few thick bosses still reads as the deck."""
+    g = study.goal
+    if g.max_deflection is None and not getattr(g, "clearances", None):
+        return {}
+    rows = []
+    for r in study.preserve:
+        try:
+            lo, hi = r.shape.bounds()
+        except (NotImplementedError, AttributeError):
+            continue
+        lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+        size = hi - lo
+        if not np.all(size > 0):
+            continue
+        h = max(pitch / 4.0, (float(np.prod(size)) / 2e6) ** (1.0 / 3.0))
+        n = np.maximum(np.ceil(size / h).astype(int), 1)
+        axes = [lo[i] + h * (np.arange(n[i]) + 0.5) for i in range(3)]
+        pts = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+        inside = (r.shape.sdf(pts) <= 0).reshape(n)
+        if inside.sum() < 8:
+            continue
+        edt = ndimage.distance_transform_edt(np.pad(inside, 1))[1:-1, 1:-1, 1:-1]
+        ridge = inside & (edt >= ndimage.maximum_filter(edt, size=3)) & (edt > 0)
+        if not ridge.any():
+            continue
+        t = float(np.median(2.0 * edt[ridge] - 0.5)) * h
+        if t < _THIN_CELLS * pitch:
+            rows.append({"id": r.id, "thickness": round(t, 2), "cells": round(t / pitch, 2)})
+    if not rows:
+        return {}
+    warn = [f"preserve {q['id']!r} is about {q['thickness']:g} mm thick, {q['cells']:g} analysis cells of "
+            f"{pitch:.2f} mm: a wall or deck under {_THIN_CELLS:g} cells reads stiff in bending (a 3 mm deck at "
+            "2 cells sagged 0.6x what tets read), so its deflection and travel read low. Check it on a finer grid "
+            "(`loadpath verify --cells`) or on tets (`loadpath crosscheck`)" for q in rows]
+    return {"thinPreserves": rows, "warnings": warn}
+
+
+def _clearance_nodes(study: Study, hm, pitch: float, report: dict) -> list:
+    """Per goal.clearances entry, the analysis nodes it covers (an empty
+    array, with a warning, when the part does not reach it)."""
+    from .domain import _region_nodes
+
+    out = []
+    for i, c in enumerate(getattr(study.goal, "clearances", None) or []):
+        try:
+            out.append(np.flatnonzero(_region_nodes(study, hm, c.region, c.shape, f"goal.clearances[{i}]",
+                                                    tol_floor=pitch)))
+        except ValueError as exc:
+            out.append(np.zeros(0, int))
+            report.setdefault("warnings", []).append(str(exc))
+    return out
+
+
+def _clearance_rows(study: Study, case_name: str, xyz, disp, nodes_per) -> list:
+    """cases[].clearances: per goal.clearances entry that applies to the
+    case, the most any of its nodes travels (along its direction, when it
+    has one), against its limit."""
+    rows = []
+    for c, nodes in zip(getattr(study.goal, "clearances", None) or [], nodes_per):
+        if c.cases and case_name not in c.cases:
+            continue
+        if not len(nodes):
+            rows.append({"name": c.name, "travel": None, "maxTravel": c.max_travel})
+            continue
+        d = disp[nodes]
+        t = d @ c.direction if c.direction is not None else np.linalg.norm(d, axis=1)
+        k = int(np.argmax(t))
+        rows.append({"name": c.name, "travel": max(float(t[k]), 0.0), "maxTravel": c.max_travel,
+                     "at": [round(float(v), 3) for v in xyz[nodes[k]]]})
+    return rows
+
+
 def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=None, contact_band=None,
-                   cut_cells=None, fractional: bool = False, nu=None):
+                   cut_cells=None, fractional: bool = False, nu=None, max_pitch=None):
     """The grid a finished part is analyzed on (verify_part's, and the
     across-layer readings behind orient.rank_orientations, so the two read
     the same part the same way): the pitch, the cells (cut cells unless the
@@ -923,6 +1010,9 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
     pitch = (vol / max_cells) ** (1.0 / 3.0)
     if min_pitch:
         pitch = max(pitch, min_pitch)
+    if max_pitch and pitch > max_pitch:
+        # no coarser than the grid the part was designed on, within a budget
+        pitch = max(max_pitch, (vol / (_MAX_PITCH_STRETCH * max_cells)) ** (1.0 / 3.0))
     if study.shells:
         # A wall voxelizes to a whole number of cells, so at two or three
         # cells through it reads up to a cell thick or thin: bending stress
@@ -1194,7 +1284,7 @@ def reaction_margin(reactions) -> float | None:
 
 def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
                 contact_band: float | None = None, refine: int = 3, fields: bool = False,
-                fractional: bool = False, cut_cells: bool | None = None) -> dict:
+                fractional: bool = False, cut_cells: bool | None = None, max_pitch: float | None = None) -> dict:
     """Analyze a finished part (trimesh) against the study. Returns a JSON-able
     report. `contact_band` (mm) is how far from applied loads and supports
     stress is left out of the peak; it defaults to 1.5 analysis cells, and the
@@ -1274,13 +1364,23 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         report["print"] = check_print(mesh, build, process=proc.kind if proc is not None else "fdm",
                                       material=mat, bridge_span=getattr(proc, "bridge_span", None))
 
-    g = _analysis_grid(study, mesh, vol, max_cells, min_pitch, contact_band, cut_cells, fractional)
+    g = _analysis_grid(study, mesh, vol, max_cells, min_pitch, contact_band, cut_cells, fractional,
+                       max_pitch=max_pitch)
     pitch, cg, solid, origin, share = g.pitch, g.cg, g.solid, g.origin, g.share
     hm, bc, fill, band, edges, on_edge = g.hm, g.bc, g.fill, g.band, g.edges, g.on_edge
     support_nodes, fixed = bc.support_nodes, bc.fixed
     if cg is not None:
         report["cutCells"] = g.cut_count
     report["analysisPitch"] = pitch
+    if max_pitch and pitch > 1.01 * max_pitch:
+        report.setdefault("warnings", []).append(
+            f"analysed at {pitch:.2f} mm cells, coarser than the {max_pitch:.2f} mm grid it was designed on (the "
+            f"cell budget, {max_cells} x {_MAX_PITCH_STRETCH:g}): thin walls read stiff and their stress low "
+            "there; `loadpath verify --cells` a finer grid, or `loadpath crosscheck` on tets")
+    thin = _thin_preserves(study, pitch)
+    if thin:
+        report["thinPreserves"] = thin["thinPreserves"]
+        report.setdefault("warnings", []).extend(thin["warnings"])
     report["minMember"], report["p5Member"] = _thickness(solid if share is None else share >= 0.5, pitch)
     report["contactBand"] = band
     fg = gravity_force(hm, np.ones(hm.n_elem) if fill is None else fill, bc.gravity, fixed) if bc.gravity is not None else None
@@ -1363,6 +1463,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     env = None   # von Mises per node, the worst over the cases
     reaction_rows = []
     sup_nodes = bc.regions[:len(study.supports)]
+    clear_nodes = _clearance_nodes(study, hm, pitch, report)
     for ci, case in enumerate(study.load_cases):
         load_nodes = bc.case_load_nodes[ci]
         # Exclude nodes within the contact band of an applied load or support.
@@ -1451,6 +1552,9 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             defl = float(np.linalg.norm(dw[wet], axis=1).max())
         else:
             defl = 0.0
+        clear_rows = _clearance_rows(study, case.name, hm.node_xyz,
+                                     _rigid_free(hm.node_xyz, u).reshape(-1, 3) if study.self_equilibrated else disp,
+                                     clear_nodes)
         if bc.pressure_imbalance[ci] > 0.02 and study.self_equilibrated:
             report.setdefault("warnings", []).append(
                 f"{case.name}: the pressure no longer balances on the delivered part "
@@ -1518,6 +1622,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             "interlayerStress": inter,
             "deflection": defl,
             "maxDisplacement": float(np.linalg.norm(disp, axis=1).max()),
+            **({"clearances": clear_rows} if clear_rows else {}),
             "compliance": float(f @ u),
             **({"pressureImbalance": bc.pressure_imbalance[ci]} if wet.any() else {}),
             # the uncertain force's most stressful direction, which the

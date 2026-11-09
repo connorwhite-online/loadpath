@@ -59,6 +59,20 @@ MAX_ELEMENTS_CEILING = 4_000_000
 
 
 @dataclass
+class Clearance:
+    """goal.clearances[i]: no node of the region (or inline shape) moves
+    more than `max_travel` mm, along `direction` (a unit vector: travel
+    toward what is there) or in any direction (None), in `cases` (names;
+    empty: every case)."""
+    region: str | None
+    shape: object
+    max_travel: float
+    direction: np.ndarray | None = None
+    cases: list = field(default_factory=list)
+    name: str = ""
+
+
+@dataclass
 class Region:
     id: str
     shape: Shape
@@ -188,6 +202,12 @@ class Goal:
     # buckling load factor (verify._buckling) must reach it, as the stress
     # safety factor must. False reports the factor without failing on it.
     buckling: bool = True
+    # Travel limits away from the loads: [Clearance]. maxDeflection reads
+    # the mean displacement of the loaded nodes, which a load spread over a
+    # stiff rim hides: a fan plate read 0.8 mm there while its deck's middle
+    # dropped 3.9. A clearance caps the most any node in a region moves (or
+    # moves along a direction), "keep this face within d of where it is".
+    clearances: list = field(default_factory=list)
 
 
 # How the part will be made. Each process sets what the design must respect:
@@ -922,6 +942,39 @@ def _mass_properties(v, goal):
     return MassProperties(through, direction, float(mi) if mi is not None else None, float(w), com_t, com_tol)
 
 
+def _clearances(items, base_dir):
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise ValueError("goal.clearances is a list of {region or shape, maxTravel, direction?, cases?}")
+    out = []
+    for i, it in enumerate(items):
+        label = f"goal.clearances[{i}]"
+        if not isinstance(it, dict):
+            raise ValueError(f"{label} is an object: {{region or shape, maxTravel}}")
+        mt = it.get("maxTravel")
+        if not isinstance(mt, (int, float)) or isinstance(mt, bool) or mt <= 0:
+            raise ValueError(f"{label}.maxTravel is how far (mm, > 0) the region may move")
+        region, shape = _target(it, label, base_dir)
+        dv = it.get("direction")
+        direction = None
+        if dv is not None:
+            if isinstance(dv, str):
+                from .am import build_vector
+
+                dv = build_vector(parse_build_direction(dv))
+            direction = np.asarray(dv, float).reshape(-1)
+            if direction.shape != (3,) or not np.isfinite(direction).all() or not np.linalg.norm(direction) > 0:
+                raise ValueError(f"{label}.direction is an axis like '-z' or a vector [x, y, z]")
+            direction = direction / np.linalg.norm(direction)
+        cases = it.get("cases") or []
+        if isinstance(cases, str):
+            cases = [cases]
+        out.append(Clearance(region, shape, float(mt), direction, [str(c) for c in cases],
+                             str(it.get("name") or region or f"clearance {i + 1}")))
+    return out
+
+
 def _vibration(v, goal, supports, base_dir):
     if v is None:
         return None
@@ -1240,6 +1293,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         minimize=str(g.get("minimize", "mass")),
         restarts=int(g.get("restarts", 1)),
         buckling=bool(g.get("buckling", True)),
+        clearances=_clearances(g.get("clearances"), base_dir),
     )
     if goal.restarts < 1:
         raise ValueError("goal.restarts must be 1 or more")
@@ -1260,6 +1314,14 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     for v in goal.outcomes:
         if not (0.02 <= v <= 0.95):
             raise ValueError("goal.outcomes values must be between 0.02 and 0.95")
+    if goal.clearances and goal.safety_factor is None and goal.max_deflection is None:
+        raise ValueError("goal.clearances are held by the search for the lightest passing part: give the goal a "
+                         "safetyFactor or maxDeflection too")
+    names = {c.get("name") for c in d.get("loadCases") or [] if isinstance(c, dict)}
+    for i, c in enumerate(goal.clearances):
+        for n in c.cases:
+            if n not in names:
+                raise ValueError(f"goal.clearances[{i}].cases names {n!r}, which is not a load case")
 
     mat_in = d.get("material", "pla")
     materials = [material_from_spec(m) for m in mat_in] if isinstance(mat_in, list) else [material_from_spec(mat_in)]
@@ -1392,4 +1454,10 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             st.material = st.materials[0] = st.multi_material.materials[0]
     # mesh paths in blocks read later (switch.output.bearsOn, switch.clearance)
     st.base_dir = base_dir
+    for i, c in enumerate(goal.clearances):
+        if c.region is not None:
+            try:
+                st.region_shape(c.region)
+            except ValueError as exc:
+                raise ValueError(f"goal.clearances[{i}]: {exc}") from None
     return st

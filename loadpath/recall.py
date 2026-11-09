@@ -275,11 +275,22 @@ class Recall:
         k = self.scale / e["loadScale"]
         s = (mat.strength / e["strength"]) / k
         d = k * (e["E"] / mat.E)
+        cls_ = getattr(self.study.goal, "clearances", None) or []
+        lim = {cl.name: cl.max_travel for cl in cls_}
+        if lim and not all({r["name"] for r in cs.get("clearances") or []} >= {
+                cl.name for cl in cls_ if not cl.cases or cs["name"] in cl.cases}
+                for cs in c["cases"]):
+            return None   # stored without this study's travel limits: confirm afresh
+
+        def travel(rows):
+            return [{**r, "travel": r["travel"] * d if r.get("travel") is not None else None,
+                     "maxTravel": lim[r["name"]]} for r in rows if r.get("name") in lim]
         return {"safetyFactor": c["safetyFactor"] * s, "analysisPitch": c["analysisPitch"],
                 "analysisCells": c["analysisCells"], "p5Member": c.get("p5Member"),
                 "minMember": c.get("minMember"),
                 "cases": [{**cs, "peakStress": cs["peakStress"] * k, "deflection": cs["deflection"] * d,
-                           **({"safetyFactor": cs["safetyFactor"] * s} if "safetyFactor" in cs else {})}
+                           **({"safetyFactor": cs["safetyFactor"] * s} if "safetyFactor" in cs else {}),
+                           **({"clearances": travel(cs.get("clearances") or [])} if lim else {})}
                           for cs in c["cases"]]}
 
     def confirm_for(self, vf: float) -> dict | None:
@@ -379,7 +390,8 @@ def _stored_confirm(rep: dict) -> dict:
             "defl": max((c["deflection"] for c in rep["cases"]), default=None),
             "analysisPitch": rep.get("analysisPitch"), "analysisCells": rep.get("analysisCells"),
             "p5Member": rep.get("p5Member"), "minMember": rep.get("minMember"),
-            "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection", "safetyFactor") if k in c}
+            "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection", "safetyFactor",
+                                         "clearances") if k in c}
                       for c in rep["cases"]]}
 
 

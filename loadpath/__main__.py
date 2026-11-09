@@ -410,7 +410,8 @@ def _verify(args):
     # floored to that same pitch, and 120k cells read exactly as 60k did
     asked = args.cells is not None
     rep = verify_part(study, mesh, max_cells=quick.verify_cells(args.cells if asked else 60_000),
-                      min_pitch=None if asked else 0.5 * pitch, contact_band=pitch)
+                      min_pitch=None if asked else 0.5 * pitch, contact_band=pitch,
+                      max_pitch=None if asked or quick.on() else pitch)
     if study.access is not None or study.pattern is not None or study.max_member is not None:
         # draft, undercuts, tool reach and the machining estimate, on the
         # study's own design grid (manufacture.report)

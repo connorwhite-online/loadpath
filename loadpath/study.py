@@ -296,6 +296,11 @@ def _margin(study: Study, report: dict) -> float | None:
             # a held load's deflection after creep, at its temperature
             worst = max([worst] + [c["creepDeflection"] for c in dur["cases"] if "creepDeflection" in c])
         ms.append(g.max_deflection / worst if worst > 0 else float("inf"))
+    for c in report.get("cases") or []:
+        # goal.clearances: travel away from the loads (a deck's middle)
+        for r in c.get("clearances") or []:
+            if r.get("travel") is not None:
+                ms.append(r["maxTravel"] / r["travel"] if r["travel"] > 0 else float("inf"))
     if dur and dur.get("safetyFactor") is not None:
         ms.append(dur["safetyFactor"] / dur["target"])
     mp = report.get("massProperties") or {}
@@ -418,7 +423,7 @@ def design_at(study: Study, domain: Domain, radius: float, vf: float, x0=None, b
     note({"stage": "verify", "volumeFraction": vf})
     try:
         report = verify_part(study, mesh, max_cells=verify_cells, min_pitch=0.5 * domain.pitch,
-                             contact_band=domain.pitch, refine=refine)
+                             contact_band=domain.pitch, refine=refine, max_pitch=domain.pitch)
     except (RuntimeError, ValueError) as exc:
         # one outcome verification cannot solve (a piece the supports do
         # not hold) is a failed outcome, not a failed study: the search
@@ -1234,7 +1239,7 @@ def _material_named(name, study):
 def _constrained_applies(study: Study) -> bool:
     goal = study.goal
     return (goal.safety_factor is not None or goal.max_deflection is not None) \
-        and study.gravity is None and not _durability_drives(study) \
+        and study.gravity is None and not _durability_drives(study) and not goal.clearances \
         and study.access is None and study.max_member is None and not study.inertia_relief \
         and not any(ld.direction for c in study.load_cases for ld in c.loads)
 
@@ -1830,6 +1835,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
     info = _domain_info(domain, radius)
     emit({"stage": "domain", **info, "warnings": domain.warnings})
     outcomes: list[Outcome] = []
+    run_notes: list[str] = []
     started = False
     # what earlier runs on this domain found (recall.py), when turned on
     from .recall import Recall
@@ -1893,7 +1899,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         mesh, rinfo = reconstruct(study, domain, xphys, ReconstructOptions())
         emit({"stage": "verify", "volumeFraction": vf})
         try:
-            report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
+            report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch,
+                                 max_pitch=domain.pitch)
         except (RuntimeError, ValueError) as exc:
             # one outcome verification cannot solve (or a load pad the
             # design let go of: the robot arm's wrist link at 5% after 43 g at 6%) (a piece the supports do
@@ -2084,8 +2091,16 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         if rep is None:
             try:
                 cc = _confirm_cells(study)
+                # finer than the grid it passed on, whatever the budget says
+                # (LOADPATH_CONFIRM_CELLS 50k confirmed the fan plate at 2.03 mm
+                # cells after a 1.91 mm analysis): at least 1.5x its cells
+                ac = o.report.get("analysisCells") or 0
+                raised = cc < 1.5 * ac
+                cc = max(cc, int(1.5 * ac))
+                ap = o.report.get("analysisPitch")
                 rep = verify_part(study, o.mesh, max_cells=cc, min_pitch=0.3 * domain.pitch,
-                                  contact_band=domain.pitch)
+                                  contact_band=domain.pitch,
+                                  max_pitch=min(domain.pitch, 0.9 * ap) if ap else domain.pitch)
             except RuntimeError as exc:
                 o.report.setdefault("warnings", []).append(f"confirmation failed: {exc}")
                 o.report["margin"] = 0.0
@@ -2098,6 +2113,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                                **({"cellsCapped": "by free memory (LOADPATH_CONFIRM_CELLS sets it)"}
                                   if not recalled and cc < _CONFIRM_CELLS and not os.environ.get("LOADPATH_CONFIRM_CELLS")
                                   else {}),
+                               **({"cellsRaised": "to 1.5x the analysis grid's: the confirm is never coarser"}
+                                  if not recalled and raised else {}),
                                "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
                                          for c in rep["cases"]]}
         # recorded, not adopted: the finer grid also resolves small features
@@ -2281,7 +2298,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                         build_direction=study.print_direction),
             limits, on_iter=on_iter, should_stop=should_stop)
         mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
-        report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch)
+        report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch,
+                                 max_pitch=domain.pitch)
         report.setdefault("warnings", []).extend(fragment_warnings(rinfo, mesh))
         opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                "achievedVolumeFraction": res.volume_fraction, "method": "constrained",
@@ -2590,7 +2608,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         # that failed confirmation while that gap is over 10%: the step up
         # overshoots (the robot arm's wrist yoke failed at 0.080 and confirmed at
         # 0.102, 27.5 g, with SF 2 near 0.09).
-        confirmed, conf_fail = set(), None
+        confirmed, conf_fail, conf_failed = set(), None, []
         for _ in range(2 * _CONFIRM_RUNS if voxel_confirm else 0):
             if best is None or (should_stop is not None and should_stop()):
                 break
@@ -2602,15 +2620,31 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 if mc < 1.0:
                     o.passes = False
                     conf_fail = max(conf_fail or 0.0, o.volume_fraction)
+                    conf_failed.append(o.volume_fraction)
                     up = [i for i in confirmed if outcomes[i].volume_fraction > o.volume_fraction]
                     if up:
                         best = min(up, key=lambda i: outcomes[i].report["mass"])
+                        continue
+                    # a heavier part that passed its analysis is confirmed
+                    # before anything new runs: stepping up from each lighter
+                    # pick in turn re-ran the same 0.7 design four times
+                    heavier = [i for i, q in enumerate(outcomes) if q.passes and i not in confirmed
+                               and q.volume_fraction > o.volume_fraction]
+                    if heavier:
+                        best = min(heavier, key=lambda i: outcomes[i].report["mass"])
                         continue
                     vf = float(np.clip(o.volume_fraction * 1.05 / max(mc, 1e-9), o.volume_fraction + 0.01, _VF_MAX))
                     if any(abs(vf - q.volume_fraction) < 0.005 for q in outcomes):
                         vf = min(vf + 0.02, _VF_MAX)
                     if memory is not None:
                         vf = memory.snap(vf, skip=[q.volume_fraction for q in outcomes])
+                    if any(abs(vf - f) < 0.005 for f in conf_failed):
+                        # nowhere heavier to go (the pick sat at _VF_MAX): the
+                        # step up re-ran the same recalled design, failed its
+                        # confirm each time and delivered the last, never
+                        # confirmed copy as passing. Nothing passes.
+                        best = None
+                        break
                     outcomes.append(run_one(vf))
                     passing = [i for i, q in enumerate(outcomes) if q.passes]
                     best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
@@ -2624,6 +2658,37 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 best = len(outcomes) - 1
             else:
                 conf_fail = q.volume_fraction
+        if voxel_confirm and best is not None and best not in confirmed:
+            # the confirm runs ran out on a pick that only passed its
+            # analysis grid: confirm it now, or fall back to the lightest
+            # confirmed part; never deliver it as passing unconfirmed
+            o = outcomes[best]
+            if not (should_stop is not None and should_stop()):
+                emit({"stage": "confirm", "volumeFraction": o.volume_fraction})
+                mc = _confirm(o)
+                emit({"stage": "confirmed", "volumeFraction": o.volume_fraction, "margin": mc})
+                if mc >= 1.0:
+                    confirmed.add(best)
+                else:
+                    o.passes = False
+            if best not in confirmed:
+                if o.passes:
+                    o.report.setdefault("warnings", []).append(
+                        "the run stopped before this outcome's finer-grid confirm: it is verified on the "
+                        "analysis grid only; `loadpath verify` it, or give the run more time")
+                else:
+                    ok = [i for i in confirmed if outcomes[i].passes]
+                    best = min(ok, key=lambda i: outcomes[i].report["mass"]) if ok else None
+        if voxel_confirm and best is None and conf_failed:
+            top = max(outcomes, key=lambda q: q.volume_fraction)
+            mcs = [q.report["confirm"]["margin"] for q in outcomes if (q.report.get("confirm") or {}).get("margin")
+                   is not None]
+            ceiling = " (the search's ceiling)" if top.volume_fraction >= _VF_MAX - 1e-9 else ""
+            best_m = f" (best confirmed margin {max(mcs):.2f})" if mcs else ""
+            run_notes.append(
+                f"no volume fraction passes: up to {top.volume_fraction:.3f}{ceiling}, every part that passed "
+                f"its analysis failed the finer-grid confirm{best_m}. Lower the target, use a stiffer or "
+                "stronger material, or widen the design space")
         # The voxel-confirmed counterpart of layout_search: a fraction below
         # the pick that failed warm, carried down from the pick's layout, is
         # run once more from its own coarse layout. The warm chain can lose
@@ -2693,7 +2758,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         memory.save()
         info["recall"] = dict(memory.used)
     return StudyResult(study=study, domain=info, outcomes=outcomes, best=best,
-                       seconds=time.time() - t0, warnings=list(domain.warnings))
+                       seconds=time.time() - t0, warnings=list(domain.warnings) + run_notes)
 
 
 def _quick_limits():
