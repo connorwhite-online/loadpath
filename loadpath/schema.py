@@ -1550,6 +1550,9 @@ HEAT_EXCHANGER_SCHEMA = {
                     "description": "flat (default): each plenum an even header depth over its zone; loft: a "
                                    "smooth funnel from the zone to its port (the convex hull of the two), so the "
                                    "outside sweeps from core to port with no flat lid or side walls"},
+        "headerRibs": {"type": "integer", "minimum": 0,
+                       "description": "with headers: loft, stiffening ribs along each funnel from the core to its "
+                                      "port, evenly round the port's axis (default 0)"},
         "exteriorBlend": {"type": "number", "minimum": 0,
                           "description": "mm, fillet radius where the outside of the core, headers and ports meet "
                                          "(default 0: sharp); only adds material outside, the fluid spaces stay "

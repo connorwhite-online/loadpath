@@ -192,6 +192,23 @@ def test_loft_headers_funnel_each_zone_into_its_port():
         heat_exchanger_from_spec({**spec, "headers": "domed"})
 
 
+def test_header_ribs_add_material_and_keep_the_part_sound():
+    """headerRibs stand fins on each lofted plenum: more metal on the outside,
+    the part still isolated, connected and watertight, and negative counts refused."""
+    spec = {**{k: v for k, v in CUBE.items() if k not in ("name", "step")}, "build": "none",
+            "core": {"type": "box", "min": [0, 0, 0], "max": [30, 30, 24], "radius": 6}, "headers": "loft"}
+    vols = []
+    for ribs in (0, 4):
+        hx = heat_exchanger_from_spec({**spec, "headerRibs": ribs})
+        hx.step = 0.45
+        mesh, rep = design_heat_exchanger(hx)[:2]
+        assert rep["isolated"] and all(rep["connected"].values()) and rep["watertight"]
+        vols.append(mesh.volume)
+    assert vols[1] > vols[0]
+    with pytest.raises(ValueError):
+        heat_exchanger_from_spec({**spec, "headerRibs": -1})
+
+
 def test_box_radius_rounds_every_edge_exactly():
     from loadpath.shapes import shape_from_spec
 

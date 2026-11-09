@@ -32,7 +32,9 @@ on 4 cores.
   smooth funnel lofted from its zone to its port instead of an even-depth
   lid with side walls, and the whole outside is smoothed into one skin (the
   shell is kept round every fluid). Pair it with a rounded core, e.g. a box
-  with `radius`, for a part that reads as one cast body;
+  with `radius`, for a part that reads as one cast body. `headerRibs: 4`
+  stands that many fins along each funnel, core to port, so the plenums
+  read as stiffened pressure vessels and the port ends stay crisp;
 - `build: "z"`, `process: "lpbf"`: printed upright in metal, so nothing
   inside may need support (the channels close in peaked roofs, not flat
   ceilings) and no skirt;

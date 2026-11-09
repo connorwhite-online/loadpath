@@ -127,6 +127,7 @@ class HeatExchangerSpec:
     blend: float | None = None      # mm, smooth-union radius from plenum into its channels (default cell / 4; 0: sharp)
     exterior_blend: float = 0.0     # mm, fillet radius where the outside of headers, ports and core meet (0: sharp)
     headers: str = "flat"           # "flat": a plenum of even depth over its zone; "loft": a smooth funnel from the zone to its port
+    header_ribs: int = 0            # with loft headers: stiffening ribs along each funnel, from the core to the port
     port_diameter: float = 8.0      # mm; or one per fluid, (A, B): an air side wants a far bigger port
     port_length: float = 8.0
     axes: tuple = (0, 1)            # cross: A along axes[0], B along axes[1]; counter: A along axes[0], B's side ports along axes[1]
@@ -213,6 +214,10 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
         if spec["headers"] not in ("flat", "loft"):
             raise ValueError("heatExchanger.headers is \"flat\" (even depth over the zone) or \"loft\" (a funnel to the port)")
         hx.headers = str(spec["headers"])
+    if "headerRibs" in spec:
+        hx.header_ribs = int(spec["headerRibs"])
+        if hx.header_ribs < 0:
+            raise ValueError("headerRibs must be 0 or more")
     if "type" in spec:
         hx.kind = str(spec["type"])
     if "layout" in spec:
@@ -473,6 +478,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     half = 0.5 * hx.wall
     fluid = []
     body = [d - hx.shell]
+    ribs = []
     shape = _closure(hx, zones, ell, d, dims, step, up, cap) if up is not None and hx.closure else None
     for f in (0, 1):
         ks = [k for k, z in enumerate(zones) if z.fluid == f]
@@ -503,11 +509,14 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                 # a funnel lofted from the zone (held `cap` inside its edge) to the port's root:
                 # the convex hull of the two, so the outside runs in one smooth sweep from the
                 # core to the port instead of a flat lid with walls round it
-                hull = _planes_sdf(_loft_planes(zi, cap), pts, hx.shell + hx.exterior_blend + 2.0 * step + 6.0)
+                pad = hx.shell + hx.exterior_blend + 2.0 * step + 6.0
+                hull = _planes_sdf(_loft_planes(zi, cap), pts, pad)
                 # smoothed: the hull's facets and its sharp rims round over (planes stay planes)
                 hull = ndimage.gaussian_filter(hull.reshape(dims), _LOFT_SMOOTH / step).ravel()
                 void = np.minimum(void, np.maximum(hull, -d))
                 body.append(hull - hx.shell)
+                if hx.header_ribs > 0:
+                    ribs.append(_loft_ribs(hx, zi, pts, hull, pad - 0.5))
                 del hull
             else:
                 # a sideways zone's top edge leans out over the wall below it at 55 degrees
@@ -571,9 +580,28 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
         # one smooth skin: the creases where lofts, core and ports meet round over too
         # (a smoothed skin thins over convex spots: the shell is put back wherever the sharp
         # body had it, within a shell of either fluid)
-        keep = np.maximum(d_body, np.minimum(fluid[0], fluid[1]) - hx.shell)
+        keep = np.where(d_body <= 0.0, np.maximum(d_body, np.minimum(fluid[0], fluid[1]) - hx.shell), np.inf)
         d_body = np.minimum(ndimage.gaussian_filter(d_body.reshape(dims), _LOFT_SMOOTH / step).ravel(), keep)
         del keep
+        if ribs:
+            # the ribs go on after the smoothing, standing their height off the finished
+            # outside, their edges rounded over a little, with small fillets at their roots
+            rib = np.full(len(d_body), 10.0, np.float32)
+            for near, fins, height in ribs:
+                rib[near] = np.minimum(rib[near], np.maximum(fins, d_body[near] - height))
+            rib = ndimage.gaussian_filter(rib.reshape(dims), 0.5 / step).ravel()
+            d_body = _smooth_union(d_body, rib, 0.8)
+            del rib
+        del ribs
+        # and each port's tube left as drawn: a true cylinder, cut square at its end
+        for zi in zinfo:
+            sel = _port_box(hx, zi, pts, up, bed)
+            p0, p1 = zi["port"]
+            ax = (p1 - p0) / np.linalg.norm(p1 - p0)
+            q = pts[sel]
+            tube = Cylinder(p0, p1, 0.5 * zi["portDiameter"] + hx.shell).sdf(q)
+            d_body[sel] = np.minimum(np.maximum(d_body[sel], (q - p1) @ ax), tube)
+            del q, tube
     del body, ell, coords
     grid = np.maximum(d_body, -np.minimum(fluid[0], fluid[1])).reshape(dims)
     if up is not None and hx.skirt:
@@ -971,6 +999,37 @@ def _loft_planes(zi, cap, n_patch=700, n_rim=64):
     r = 0.5 * zi["portDiameter"]
     rim = zi["exit"] + r * (np.outer(np.cos(th), u) + np.outer(np.sin(th), v))
     return ConvexHull(np.vstack([pp, rim]))
+
+
+_RIB_HEIGHT = 3.5                  # mm a lofted header's ribs stand off its wall
+
+
+def _loft_ribs(hx, zi, pts, hull, reach):
+    """Where a lofted header's ribs go: `header_ribs` fins evenly round its
+    port's axis (the first on the side nearest +z), each 1.25 shells thick, from
+    the core to the port's root. Returns (grid indices, the fins' field
+    without their height, the height there), the height swelling from nothing
+    at either end to `_RIB_HEIGHT` midway; `_rib_field` stands them off the
+    finished outside."""
+    a = zi["axis"]
+    z = np.array([0.0, 0.0, 1.0]) - a[2] * a
+    u = z / np.linalg.norm(z) if np.linalg.norm(z) > 1e-6 else np.cross(a, [1.0, 0.0, 0.0])
+    u /= np.linalg.norm(u)
+    v = np.cross(a, u)
+    near = np.flatnonzero(hull < reach)
+    q = pts[near] - zi["exit"]
+    along = q @ a
+    span = max(float((zi["exit"] - zi["center"]) @ a), 1e-3)
+    s_ = np.clip(1.0 + along / span, 0.0, 1.0)           # 0 at the zone, 1 at the port's root
+    height = (_RIB_HEIGHT * np.minimum(1.0, 4.0 * s_ * (1.0 - s_) * 1.6)).astype(np.float32)
+    fins = np.full(len(near), np.inf, np.float32)
+    for k in range(hx.header_ribs):
+        th = 2.0 * np.pi * k / hx.header_ribs
+        e = np.cos(th) * u + np.sin(th) * v
+        n = np.cross(a, e)
+        fin = np.maximum(np.abs(q @ n) - 0.625 * hx.shell, -(q @ e))   # a slab, one side of the axis
+        fins = np.minimum(fins, fin.astype(np.float32))
+    return near, fins, height
 
 
 def _planes_sdf(hull, pts, pad, soft=0.0, chunk=32768):
