@@ -192,11 +192,21 @@ def _face_nodes(domain: Domain, axis: int, sign: int, within=None, exterior=None
 def _where(study, domain: Domain, spec, label: str) -> np.ndarray:
     """Nodes of a location: {"region": id}, {"shape": {...}}, or {"face":
     "-z"} (the exterior facing -z). A region or a face with a "shape" too is
-    only the part of it inside the shape."""
+    only the part of it inside the shape. A list of locations is all of
+    them."""
     from .domain import _region_nodes
     from .shapes import shape_from_spec
     if isinstance(spec, str):
         spec = {"region": spec}
+    if isinstance(spec, (list, tuple)):
+        # several places at once: a board held by rails and by a boss on
+        # another part is one mount
+        if not spec:
+            raise ValueError(f"{label}: an empty list of locations")
+        out = np.zeros(domain.mesh.n_nodes, bool)
+        for k, s in enumerate(spec):
+            out |= _where(study, domain, s, f"{label}[{k}]")
+        return out
     if not isinstance(spec, dict):
         raise ValueError(f"{label}: a location is {{region}}, {{shape}} or {{face}}")
     shape = shape_from_spec(spec["shape"], getattr(study, "base_dir", None)) if "shape" in spec else None
@@ -337,9 +347,37 @@ def feel_from_study(study, domain: Domain, only_zone: str | None = None) -> list
         load &= ~ground
         if not load.any():
             raise ValueError(f"{lab}: every loaded node is also held")
-        out.append(FeelTarget(kind, name, ground, load, dirs, kmin, kmax, params,
-                              key=json.dumps(hold_spec, sort_keys=True)))
+        key = json.dumps(hold_spec, sort_keys=True)
+        if kind in ("drop", "isolate") and t.get("rigid"):
+            # a stiff part (a board) ties every place it is held together:
+            # its own factorization, with the tie in it
+            params["rigid"] = True
+            key += f"|rigid:{i}"
+        out.append(FeelTarget(kind, name, ground, load, dirs, kmin, kmax, params, key=key))
     return out
+
+
+RIGID_TIE = 1e3      # a rigid part's tie, per node and direction, in cell stiffnesses (E x pitch)
+
+
+def _tie(nodes, n_dof: int, k: float):
+    """A stiff part's mounts moving as one (in translation): springs of
+    stiffness k (absolute) from each of `nodes` (bool or indices) to the
+    first, in each direction. Rotation is held too, which for a board
+    clamped at both ends and along its edges is how it moves."""
+    import scipy.sparse as sp
+    idx = np.flatnonzero(nodes) if np.asarray(nodes).dtype == bool else np.asarray(nodes)
+    if len(idx) < 2:
+        return None
+    m, o = idx[0], idx[1:]
+    rows, cols, vals = [], [], []
+    for a in range(3):
+        i, j = 3 * o + a, np.full(len(o), 3 * m + a)
+        rows += [i, j, i, j]
+        cols += [i, j, j, i]
+        vals += [np.full(len(o), k)] * 2 + [np.full(len(o), -k)] * 2
+    return sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+                         shape=(n_dof, n_dof))
 
 
 def _unit(nodes, axis, sign, n_dof):
@@ -394,7 +432,8 @@ class FeelProblem:
         for ti, t in enumerate(self.targets):
             if t.key not in groups:
                 fixed = np.repeat(t.ground, 3)
-                dom = dataclasses.replace(domain, fixed=fixed, support_nodes=t.ground.copy(), springs=None)
+                tie = _tie(t.load, mesh.n_dof, RIGID_TIE * mesh.pitch) if t.params.get("rigid") else None
+                dom = dataclasses.replace(domain, fixed=fixed, support_nodes=t.ground.copy(), springs=tie)
                 need = np.zeros(mesh.n_nodes, bool)
                 groups[t.key] = _Group(dom, None, [])
                 groups[t.key].need = need
@@ -610,6 +649,11 @@ def feel_readings_cut(study, mesh, pitch: float, n: int = 4) -> tuple[list[dict]
         fixed = np.repeat(ground[nodes], 3)
         free = np.flatnonzero(~fixed)
         k = cg.assemble(Stiffness(sub, nu, fixed), 1.0)
+        t0_ = targets[tis[0]]
+        if t0_.params.get("rigid"):
+            tie = _tie(t0_.load[nodes] & ~ground[nodes], 3 * sub.n_nodes, RIGID_TIE * dom.pitch)
+            if tie is not None:
+                k = (k + tie).tocsr()
         solve, release = _factor(k[free][:, free].tocsr(), sub.node_ijk)
         cells = max(cells, int(sub.n_elem))
         probes, keys = [], []
@@ -669,7 +713,11 @@ def check_isolation_modal(study, prob: FeelProblem, ti: int, xp: np.ndarray, n_m
         return {"name": t.name, "error": "the mount is not connected to the hand through the part"}
     E = float(study.material.E) * xp[el] ** 3
     rho = float(study.material.density) * xp[el]
-    res = modal_analysis(sub, E, rho, prob.nu, fx, n_modes=n_modes, point_masses=[(nodes, t.params["kg"])])
+    tie = None
+    if t.params.get("rigid"):
+        tie = _tie(nodes, 3 * sub.n_nodes, RIGID_TIE * mesh.pitch * float(study.material.E))
+    res = modal_analysis(sub, E, rho, prob.nu, fx, n_modes=n_modes, point_masses=[(nodes, t.params["kg"])],
+                         springs=tie)
     eta = t.params["lossFactor"]
     rows = []
     for ax, _ in t.directions:

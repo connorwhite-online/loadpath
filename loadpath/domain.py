@@ -511,6 +511,23 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         raise ValueError("the design space is empty after removing keep-outs")
 
     warnings = []
+    # A keep-out drawn round a preserved part (a board's clear zone round the
+    # rails that hold it) takes the part out of the analysis without a word:
+    # the touch microphone's rails were read as missing except at the wall
+    # they hang from, so its board looked held at one end only.
+    lost_cells = (pres_f >= 0.5) & (keep_f >= 0.5)
+    if lost_cells.any() and study.keep_out:
+        on = np.flatnonzero(pres_f >= 0.5)
+        for r in study.preserve:
+            mine = on[_fraction([r.shape], centers[on], pitch) >= 0.5]
+            gone = mine[lost_cells[mine]]
+            if len(mine) and len(gone) >= 4 and len(gone) > 0.25 * len(mine):
+                by = [k.id for k in study.keep_out if _fraction([k.shape], centers[gone], pitch).mean() >= 0.25]
+                warnings.append(
+                    f"preserve {r.id!r}: {100 * len(gone) / len(mine):.0f}% of it is inside keep-out "
+                    f"{', '.join(map(repr, by)) or 'regions'} and is left out of the part; a clear zone drawn round "
+                    "a preserved part takes the part away with it. Subtract the preserve from the keep-out "
+                    "({\"type\": \"subtract\", \"shapes\": [keep-out, preserve]}) if it is meant to stay.")
     for rid, t in study.shells:
         if t < 2.0 * pitch:
             warnings.append(

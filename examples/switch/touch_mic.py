@@ -129,7 +129,10 @@ def study(paths: dict, pitch: float = 1.0) -> dict:
         ],
         "keepOut": [
             {"id": "opening", "bore": False, "shape": {"type": "mesh", "path": paths["opening"]}},
-            {"id": "board", "bore": False, "shape": {"type": "mesh", "path": paths["boardspace"]}},
+            # the board's clear zone is the cavity over it, rails and all: the
+            # rails stay (a keep-out round a preserve takes it out of the part)
+            {"id": "board", "bore": False, "shape": {"type": "subtract", "shapes": [
+                {"type": "mesh", "path": paths["boardspace"]}, {"type": "mesh", "path": paths["bay"]}]}},
             {"id": "switch", "bore": False, "insertFrom": "-z",
              "shape": {"type": "box", "min": [-6.8, -5.6, 0], "max": [6.8, 4.6, 7.0]}},
             {"id": "stem", "bore": False, "shape": {"type": "cylinder", "p0": [0, 0, -1], "p1": [0, 0, TIP], "r": 2.7}},
@@ -190,7 +193,8 @@ def brief(paths: dict) -> dict:
              "shape": {"type": "box", "min": [-6.0, USB_Y - 3.0, USB_Z - 3.0], "max": [6.0, USB_Y + 1.0, USB_Z + 3.0]}}],
         "assembly": ["pcb", "flap", "usb-plug"],
         # the designer's clear zone: nothing grows over the board
-        "keepOut": [{"id": "board-bay", "bore": False, "shape": {"type": "mesh", "path": paths["boardspace"]}}],
+        "keepOut": [{"id": "board-bay", "bore": False, "shape": {"type": "subtract", "shapes": [
+            {"type": "mesh", "path": paths["boardspace"]}, {"type": "mesh", "path": paths["bay"]}]}}],
         "switch": {"unit": "gf", "trigger": 65, "travel": 0.25, "gap": 0.4, "plungerRadius": 1.6,
                    "presses": s["switch"]["presses"], "pressRadius": 1.0,
                    "hold": [{"case": "squeeze", "maxDeflection": 0.3}]},

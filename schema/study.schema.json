@@ -1485,42 +1485,104 @@
                 "description": "drop: where it lands (usually {face})"
               },
               "mass": {
-                "type": "object",
-                "properties": {
-                  "region": {
-                    "type": "string",
-                    "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "region": {
+                        "type": "string",
+                        "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                      },
+                      "shape": {
+                        "$ref": "#/$defs/shape"
+                      },
+                      "face": {
+                        "type": "string",
+                        "pattern": "^[+-]?[xyz]$",
+                        "description": "the exterior facing this way: the outermost node of every column"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "description": "where: a region, a shape, or an exterior face; a region or a face with a shape too is only the part of it inside the shape (the skin where the hand is)"
                   },
-                  "shape": {
-                    "$ref": "#/$defs/shape"
-                  },
-                  "face": {
-                    "type": "string",
-                    "pattern": "^[+-]?[xyz]$",
-                    "description": "the exterior facing this way: the outermost node of every column"
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "region": {
+                          "type": "string",
+                          "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                        },
+                        "shape": {
+                          "$ref": "#/$defs/shape"
+                        },
+                        "face": {
+                          "type": "string",
+                          "pattern": "^[+-]?[xyz]$",
+                          "description": "the exterior facing this way: the outermost node of every column"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "description": "where: a region, a shape, or an exterior face; a region or a face with a shape too is only the part of it inside the shape (the skin where the hand is)"
+                    },
+                    "minItems": 1,
+                    "description": "several places at once"
                   }
-                },
-                "additionalProperties": false,
-                "description": "drop: the part to cushion (its mount)"
+                ],
+                "description": "drop: the part to cushion (its mount; a list: every place it is held)"
               },
               "mount": {
-                "type": "object",
-                "properties": {
-                  "region": {
-                    "type": "string",
-                    "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "region": {
+                        "type": "string",
+                        "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                      },
+                      "shape": {
+                        "$ref": "#/$defs/shape"
+                      },
+                      "face": {
+                        "type": "string",
+                        "pattern": "^[+-]?[xyz]$",
+                        "description": "the exterior facing this way: the outermost node of every column"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "description": "where: a region, a shape, or an exterior face; a region or a face with a shape too is only the part of it inside the shape (the skin where the hand is)"
                   },
-                  "shape": {
-                    "$ref": "#/$defs/shape"
-                  },
-                  "face": {
-                    "type": "string",
-                    "pattern": "^[+-]?[xyz]$",
-                    "description": "the exterior facing this way: the outermost node of every column"
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "region": {
+                          "type": "string",
+                          "description": "a preserve or keep-out id (`skin` is the exterior skin)"
+                        },
+                        "shape": {
+                          "$ref": "#/$defs/shape"
+                        },
+                        "face": {
+                          "type": "string",
+                          "pattern": "^[+-]?[xyz]$",
+                          "description": "the exterior facing this way: the outermost node of every column"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "description": "where: a region, a shape, or an exterior face; a region or a face with a shape too is only the part of it inside the shape (the skin where the hand is)"
+                    },
+                    "minItems": 1,
+                    "description": "several places at once"
                   }
-                },
-                "additionalProperties": false,
-                "description": "isolate: the mount of the part to keep vibration from"
+                ],
+                "description": "isolate: the mount of the part to keep vibration from (a list: every place it is held, e.g. rails and a boss on a lid)"
+              },
+              "rigid": {
+                "type": "boolean",
+                "description": "drop, isolate: the part is stiff next to its mounts (a circuit board, a battery, a capsule), so every place it is held moves with it: its stiffness is the sum of its holds', not their average (default false: the load spread evenly)"
               },
               "kg": {
                 "type": "number",

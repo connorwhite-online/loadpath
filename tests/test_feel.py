@@ -202,6 +202,54 @@ def test_cut_cell_readback_of_a_solid_block_matches_the_grid():
             assert abs(d["stiffness"] / g["stiffness"] - 1) < 1e-6, (r["name"], d, g)
 
 
+def test_a_rigid_part_held_in_two_places_is_as_stiff_as_its_stiffest_hold():
+    """A board held by a stub near the hand and by the tip of a long, thin
+    arm: spread evenly, the 1 N load reads mostly the arm (soft); a rigid
+    board takes it where it is held stiffly. A list of locations is all of
+    them."""
+    doc = {
+        "name": "arm", "material": "tpu88a", "resolution": {"pitch": 1.0}, "goal": {"volumeFraction": 0.3},
+        "designSpace": {"type": "box", "min": [0, 0, 0], "max": [30, 3, 3]},
+        "preserve": [{"id": "near", "shape": {"type": "box", "min": [2, 0, 0], "max": [4, 3, 3]}},
+                     {"id": "far", "shape": {"type": "box", "min": [27, 0, 0], "max": [30, 3, 3]}}],
+        "feel": {"targets": [
+            {"kind": "isolate", "name": "spread", "hold": {"face": "-x"}, "mount": [{"region": "near"},
+                                                                                   {"region": "far"}],
+             "kg": 0.005, "upTo": 100, "directions": ["z"]},
+            {"kind": "isolate", "name": "rigid", "hold": {"face": "-x"}, "mount": [{"region": "near"},
+                                                                                  {"region": "far"}],
+             "rigid": True, "kg": 0.005, "upTo": 100, "directions": ["z"]},
+            {"kind": "isolate", "name": "near only", "hold": {"face": "-x"}, "mount": {"region": "near"},
+             "kg": 0.005, "upTo": 100, "directions": ["z"]}]}}
+    assert not lint(doc, "study"), lint(doc, "study")
+    st = study_from_dict(doc)
+    dom = build_domain(st, 1.0)
+    prob = feel.FeelProblem(st, dom, st.elastic(design=True), float(st.material.E))
+    both = prob.targets[0].load
+    assert both.sum() == (feel._where(st, dom, "near", "n") | feel._where(st, dom, "far", "f")).sum()
+    k = {r["name"]: r["directions"][0]["stiffness"] for r in feel.feel_readings(prob, np.ones(dom.n_elem))}
+    assert k["rigid"] >= 0.95 * k["near only"], k
+    assert k["rigid"] > 3 * k["spread"], k
+    modal = feel.check_isolation_modal(st, prob, 1, np.ones(dom.n_elem))
+    spread = feel.check_isolation_modal(st, prob, 0, np.ones(dom.n_elem))
+    assert modal["directions"][0]["partMode"] > 1.5 * spread["directions"][0]["partMode"], (modal, spread)
+
+
+def test_a_keep_out_round_a_preserved_part_warns():
+    doc = {"name": "rails", "material": "pla", "resolution": {"pitch": 1.0}, "goal": {"volumeFraction": 0.3},
+           "designSpace": {"type": "box", "min": [0, 0, 0], "max": [20, 10, 10]},
+           "preserve": [{"id": "rail", "shape": {"type": "box", "min": [0, 0, 0], "max": [20, 2, 3]}}],
+           "keepOut": [{"id": "clear", "bore": False, "shape": {"type": "box", "min": [5, -1, -1], "max": [21, 6, 11]}}],
+           "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.5, 11, 11]}}],
+           "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [19, 7, 0], "max": [20, 10, 10]},
+                                                  "force": [0, 0, -1]}]}]}
+    w = build_domain(study_from_dict(doc), 1.0).warnings
+    assert any("preserve 'rail'" in x and "'clear'" in x for x in w), w
+    doc["keepOut"][0]["shape"] = {"type": "subtract", "shapes": [doc["keepOut"][0]["shape"], doc["preserve"][0]["shape"]]}
+    w = build_domain(study_from_dict(doc), 1.0).warnings
+    assert not any("preserve 'rail'" in x for x in w), w
+
+
 def test_optimizes_into_the_windows():
     # robust reads off: 2 mm cells are too coarse for a suspension that
     # survives erosion in a 16 mm body; this checks the loop and the report

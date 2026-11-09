@@ -352,7 +352,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
                 continue
             rattle_targets.append({
                 "kind": "isolate", "name": f"rattle-{k}", "hold": hold, "mount": {"region": f"mount-{k}"},
-                "kg": round(v["mass"], 6), "upTo": float(rattle.get("band", 150.0)),
+                "rigid": True, "kg": round(v["mass"], 6), "upTo": float(rattle.get("band", 150.0)),
                 "maxAmplification": float(rattle.get("maxAmplification", 1.25)),
                 "maxTravel": float(rattle.get("maxTravel", 0.1)), "shockG": float(rattle.get("g", 5.0))})
         if not rattle_targets:

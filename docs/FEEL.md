@@ -384,18 +384,48 @@ design keeps 14 of 14 presses (12 printed) and the drop on the design
 (145 N/mm), and gets the bounce to 16 N/mm (203 Hz) and no further; the
 printed part drops at 2190 g.
 
-The reason is where the board sits. Its only support is the rails at the
-USB end (y 20-30 mm); the rails along the rest of it are thinner than a
-cell, and under its middle is the flap, a separate part. So the 6 g board
-is a weight on the end of a diving board: the bare shell gives 11.6 N/mm,
-a solid interior only 52 (and a 3500 g drop). The bounce floor needs half
-of solid while the drop allows a quarter.
+**Correction (2026-11-09): the board was not held at one end.** The
+touch microphone holds it in rails along its whole length (crush ribs on
+each), and the closed flap's boss presses it up against the stops, with a
+fence behind it. The model had lost both. The board's clear zone was the
+whole cavity over it, rails included, and a keep-out takes a preserve out
+of the analysis where it covers most of a cell: 91% of the rails were
+gone. The flap is a separate part and was not in the model at all. Study
+setup now warns when a keep-out swallows a preserve
+(`preserve 'rails': 91% of it is inside keep-out 'board'`), and the
+example subtracts the rails from the clear zone.
 
-What would change that is outside this part: a second support under the
-board's middle (a standoff on the flap, or a clip in the rails), which
-the clearance rule (0.2 mm round the board) now forbids. Under a 5 g knock
-the board moves 0.02 mm on today's part, so it does not knock against
-anything; what remains is a mode at 200-225 Hz.
+Two feel options came out of it:
+
+- a `mount` (or drop `mass`) can be a list of places: rails and a boss on
+  the flap are one mount;
+- `"rigid": true` ties a stiff part's holds together (a board, a battery,
+  a capsule), so its stiffness is the sum of its holds', not the average
+  of a load spread over them. The touch microphone's board on its full rails read 1.1 N/mm
+  with the load spread over the rails (their free tips dominate) and 13.7 N/mm
+  rigid. Enclosure rattle targets
+  are rigid.
+
+Read on the same push-pad part with the rails and the closed flap in
+(the flap fused to the base at its seat, 0.7 mm):
+
+| board held by | bounce up/down | face-down drop |
+|---|---|---|
+| rail stub at the USB end (as before) | 11.6 N/mm | 92 N/mm, 1530 g |
+| full rails, board rigid | 13.7 N/mm | 214 N/mm, 2340 g |
+| full rails and the flap's boss | 22.5 N/mm (~300 Hz) | 219 N/mm, 2360 g |
+
+Floor 26 N/mm, ceiling 157 N/mm. 50 more iterations from that part with
+everything on moved neither (20.9, 218), and kept 14 of 14 presses on the
+design: both are set by the rails and the flap as drawn, which are
+preserved, and the clear zone round the board leaves the optimizer no
+cell that touches them. The linear model also reads the boss as pulling
+the board back in a face-down drop; it only pushes, so the drop is the
+stops' alone (214 N/mm). That splits the two: the drop wants softer stops,
+the bounce a stiffer boss (bounce is stops plus boss, both preloaded).
+Designing the holder itself, rails and boss as design space, is the next
+step. Under a 5 g knock the board moves about 0.02 mm, under the crush
+ribs' and boss's preload, so it does not rattle against anything.
 
 ## Limits
 

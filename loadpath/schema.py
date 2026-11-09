@@ -954,6 +954,7 @@ _WHERE = {"type": "object", "properties": {
     "additionalProperties": False,
     "description": "where: a region, a shape, or an exterior face; a region or a face with a shape too is only "
                    "the part of it inside the shape (the skin where the hand is)"}
+_WHERES = {"type": "array", "items": _WHERE, "minItems": 1, "description": "several places at once"}
 _RANGE = {"anyOf": [{"type": "array", "items": _POS, "minItems": 2, "maxItems": 2},
                     {"type": "object", "properties": {"min": _POS, "max": _POS}, "additionalProperties": False}],
           "description": "[min, max], or {min} / {max} for one side only"}
@@ -993,8 +994,15 @@ _FEEL_TARGET = {"type": "object", "properties": {
     "skinBlend": {"type": "number", "minimum": 0, "description": "touch: mm the skin's thickness ramps over at "
                                                                  "the zone's edge (default 2)"},
     "lands": {**_WHERE, "description": "drop: where it lands (usually {face})"},
-    "mass": {**_WHERE, "description": "drop: the part to cushion (its mount)"},
-    "mount": {**_WHERE, "description": "isolate: the mount of the part to keep vibration from"},
+    "mass": {"anyOf": [_WHERE, _WHERES], "description": "drop: the part to cushion (its mount; a list: every "
+                                                          "place it is held)"},
+    "mount": {"anyOf": [_WHERE, _WHERES], "description": "isolate: the mount of the part to keep vibration from "
+                                                           "(a list: every place it is held, e.g. rails and a "
+                                                           "boss on a lid)"},
+    "rigid": {"type": "boolean", "description": "drop, isolate: the part is stiff next to its mounts (a circuit "
+                                                "board, a battery, a capsule), so every place it is held moves "
+                                                "with it: its stiffness is the sum of its holds', not their "
+                                                "average (default false: the load spread evenly)"},
     "kg": {**_POS, "description": "drop, isolate: the part's mass"},
     "height": {**_POS, "description": "drop: m"},
     "maxG": {**_POS, "description": "drop: peak deceleration of the part, in g"},
