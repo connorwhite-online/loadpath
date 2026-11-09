@@ -230,6 +230,10 @@ def test_a_rigid_part_held_in_two_places_is_as_stiff_as_its_stiffest_hold():
     k = {r["name"]: r["directions"][0]["stiffness"] for r in feel.feel_readings(prob, np.ones(dom.n_elem))}
     assert k["rigid"] >= 0.95 * k["near only"], k
     assert k["rigid"] > 3 * k["spread"], k
+    # where a component touches the part: the nodes within `within` mm of it
+    touch = feel._where(st, dom, {"shape": {"type": "box", "min": [27, 3, 0], "max": [30, 4, 3]}, "within": 0.6},
+                        "t")
+    assert touch.any() and np.all(dom.mesh.node_xyz[touch][:, 1] >= 2.4), dom.mesh.node_xyz[touch].min(0)
     modal = feel.check_isolation_modal(st, prob, 1, np.ones(dom.n_elem))
     spread = feel.check_isolation_modal(st, prob, 0, np.ones(dom.n_elem))
     assert modal["directions"][0]["partMode"] > 1.5 * spread["directions"][0]["partMode"], (modal, spread)

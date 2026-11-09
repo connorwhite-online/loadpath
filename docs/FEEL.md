@@ -406,26 +406,30 @@ Two feel options came out of it:
   rigid. Enclosure rattle targets
   are rigid.
 
-Read on the same push-pad part with the rails and the closed flap in
-(the flap fused to the base at its seat, 0.7 mm):
+Where the board touches matters as much. A location can now be the part
+where a component touches it, `{"shape": ..., "within": mm}`. The touch
+microphone's board pushes on the stops over it in a face-down drop (the
+boss and the lips under it only push, so they let go); in a shake it is
+held by all of them, rails, stops, boss and the wall slot at its USB end.
+Read that way on the same push-pad part (0.7 mm, the flap fused to the base
+at its seat, the board rigid):
 
-| board held by | bounce up/down | face-down drop |
+| | board, up/down | modes |
 |---|---|---|
-| rail stub at the USB end (as before) | 11.6 N/mm | 92 N/mm, 1530 g |
-| full rails, board rigid | 13.7 N/mm | 214 N/mm, 2340 g |
-| full rails and the flap's boss | 22.5 N/mm (~300 Hz) | 219 N/mm, 2360 g |
+| face-down drop (stops over it) | 88 N/mm, 1500 g (window 61-157 N/mm, 2000 g) | |
+| shake, on the desk | 76 N/mm | 565 Hz (x 1040, y 870) |
+| shake, held by its sides in the hand | 20.4 N/mm | ~300 Hz (floor 26 N/mm, 333 Hz) |
 
-Floor 26 N/mm, ceiling 157 N/mm. 50 more iterations from that part with
-everything on moved neither (20.9, 218), and kept 14 of 14 presses on the
-design: both are set by the rails and the flap as drawn, which are
-preserved, and the clear zone round the board leaves the optimizer no
-cell that touches them. The linear model also reads the boss as pulling
-the board back in a face-down drop; it only pushes, so the drop is the
-stops' alone (214 N/mm). That splits the two: the drop wants softer stops,
-the bounce a stiffer boss (bounce is stops plus boss, both preloaded).
-Designing the holder itself, rails and boss as design space, is the next
-step. Under a 5 g knock the board moves about 0.02 mm, under the crush
-ribs' and boss's preload, so it does not rattle against anything.
+Everything the pad is used for passes as drawn: clicks 14 of 14, drop, and
+the board's modes on the desk. Held by its sides, the board's up-and-down
+mode sits at about 300 Hz, and neither the stops nor the boss set it: the
+bay's floor does. The board sits in a clear bay whose floor is the flap and
+the base ring round it, and that floor bends. Holding the flap rigid reads
+372 N/mm; filling the whole interior 312; the 400 best interior cells only
+take it from 20.3 to 20.7, and 50 more iterations with the contact model
+moved it 0.1 N/mm (the drop rose to 134 N/mm, still inside). A stiffer
+flap, or a post from the skin onto the board, would close it; both are the
+designer's parts.
 
 ## Limits
 

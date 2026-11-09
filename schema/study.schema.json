@@ -1318,6 +1318,11 @@
                     "type": "string",
                     "pattern": "^[+-]?[xyz]$",
                     "description": "the exterior facing this way: the outermost node of every column"
+                  },
+                  "within": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "with a shape alone: the part within this many mm of the shape (where a component touches it: a board's rails, stops and boss)"
                   }
                 },
                 "additionalProperties": false,
@@ -1337,6 +1342,11 @@
                     "type": "string",
                     "pattern": "^[+-]?[xyz]$",
                     "description": "the exterior facing this way: the outermost node of every column"
+                  },
+                  "within": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "with a shape alone: the part within this many mm of the shape (where a component touches it: a board's rails, stops and boss)"
                   }
                 },
                 "additionalProperties": false,
@@ -1479,6 +1489,11 @@
                     "type": "string",
                     "pattern": "^[+-]?[xyz]$",
                     "description": "the exterior facing this way: the outermost node of every column"
+                  },
+                  "within": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "with a shape alone: the part within this many mm of the shape (where a component touches it: a board's rails, stops and boss)"
                   }
                 },
                 "additionalProperties": false,
@@ -1500,6 +1515,11 @@
                         "type": "string",
                         "pattern": "^[+-]?[xyz]$",
                         "description": "the exterior facing this way: the outermost node of every column"
+                      },
+                      "within": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "with a shape alone: the part within this many mm of the shape (where a component touches it: a board's rails, stops and boss)"
                       }
                     },
                     "additionalProperties": false,
@@ -1521,6 +1541,11 @@
                           "type": "string",
                           "pattern": "^[+-]?[xyz]$",
                           "description": "the exterior facing this way: the outermost node of every column"
+                        },
+                        "within": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "with a shape alone: the part within this many mm of the shape (where a component touches it: a board's rails, stops and boss)"
                         }
                       },
                       "additionalProperties": false,
@@ -1548,6 +1573,11 @@
                         "type": "string",
                         "pattern": "^[+-]?[xyz]$",
                         "description": "the exterior facing this way: the outermost node of every column"
+                      },
+                      "within": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "with a shape alone: the part within this many mm of the shape (where a component touches it: a board's rails, stops and boss)"
                       }
                     },
                     "additionalProperties": false,
@@ -1569,6 +1599,11 @@
                           "type": "string",
                           "pattern": "^[+-]?[xyz]$",
                           "description": "the exterior facing this way: the outermost node of every column"
+                        },
+                        "within": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "with a shape alone: the part within this many mm of the shape (where a component touches it: a board's rails, stops and boss)"
                         }
                       },
                       "additionalProperties": false,

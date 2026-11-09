@@ -950,7 +950,10 @@ _DIRECTION = {"type": "string", "pattern": "^[+-]?[xyz]$"}
 _WHERE = {"type": "object", "properties": {
     "region": {"type": "string", "description": "a preserve or keep-out id (`skin` is the exterior skin)"},
     "shape": {"$ref": "#/$defs/shape"},
-    "face": {**_DIRECTION, "description": "the exterior facing this way: the outermost node of every column"}},
+    "face": {**_DIRECTION, "description": "the exterior facing this way: the outermost node of every column"},
+    "within": {"type": "number", "minimum": 0,
+               "description": "with a shape alone: the part within this many mm of the shape (where a component "
+                              "touches it: a board's rails, stops and boss)"}},
     "additionalProperties": False,
     "description": "where: a region, a shape, or an exterior face; a region or a face with a shape too is only "
                    "the part of it inside the shape (the skin where the hand is)"}

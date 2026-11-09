@@ -221,6 +221,10 @@ def _where(study, domain: Domain, spec, label: str) -> np.ndarray:
         nodes = _region_nodes(study, domain.mesh, spec["region"], None, label)
         if shape is not None:
             nodes &= shape.sdf(domain.mesh.node_xyz) <= 0.5 * domain.mesh.pitch
+    elif shape is not None and spec.get("within") is not None:
+        # the part where it touches a component (a board in its rails, on
+        # a boss): every node of the part within `within` mm of its shape
+        nodes = shape.sdf(domain.mesh.node_xyz) <= float(spec["within"])
     elif shape is not None:
         nodes = _region_nodes(study, domain.mesh, None, shape, label)
     else:
