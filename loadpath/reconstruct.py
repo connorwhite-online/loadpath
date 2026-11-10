@@ -1088,8 +1088,6 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
     between. That keeps the yoke at SF 1.22 and the motor mount's 15k
     design at 1.42 (0.95 before); a narrower window (1.0-1.5) kept only
     0.43 on the yoke. Off, every vertex smooths as before."""
-    import trimesh
-
     w = 1.0
     if keep_thin:
         grid = domain.full_grid(np.asarray(xphys, float)) > 0.5
@@ -1098,7 +1096,7 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
         ijk = np.clip(ijk, 0, np.array(grid.shape) - 1)
         w = np.clip((half[ijk[:, 0], ijk[:, 1], ijk[:, 2]] - THIN[0]) / (THIN[1] - THIN[0]), 0.0, 1.0)[:, None]
     second = nu * (2.0 * w - 1.0)          # -nu thin (Taubin), +nu thick (as before)
-    lap = trimesh.smoothing.laplacian_calculation(iso)
+    lap = _umbrella(iso)
     v0 = np.asarray(iso.vertices, float).copy()
     v = v0.copy()
     for k in range(iterations):
@@ -1156,6 +1154,39 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
         w = np.clip((6.0 * domain.pitch - d) / (3.0 * domain.pitch), 0.0, 1.0)[:, None]
         if w.any():
             iso.vertices = (1.0 - w) * np.asarray(iso.vertices, float) + w * v0
+
+
+def _umbrella(mesh):
+    """The operator _smooth_surface steps by: each vertex's mean of its
+    distinct edge neighbours, a sparse matrix whose rows sum to 1.
+
+    trimesh.smoothing.laplacian_calculation divides a row by its count of
+    half-edges but keeps a repeated one once, so at a vertex of a zero-area
+    triangle (a face with a repeated vertex; edges on four faces or more)
+    the row sums under 1, and every step pulls that vertex toward the world
+    origin instead of toward its neighbours. Marching cubes leaves such
+    triangles wherever the field sits on the level at a node, and the
+    closing, capped at the envelope's 0.5 on the design space's faces, puts
+    a whole face on the level when it lies on a fine-grid plane. The fan
+    bracket's faces at z -6, 12, 26 and 43 did (loadpath 9815ad1, before
+    _isosurface's on-level guard): 25 steps threw vertices 30-150 mm toward
+    the origin and folded the surface back through its arms. The exact trim
+    kept the folds as hairline slits, 0.06-0.2 mm across, that a tet check
+    read as cracks (90-260 MPa in every load case). 7% of the volume went
+    with them, and the part still read watertight and one body. On a clean
+    mesh this matrix is trimesh's, entry for entry."""
+    from scipy.sparse import csr_matrix
+
+    f = np.asarray(mesh.faces)
+    n = len(mesh.vertices)
+    e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    e = np.unique(np.sort(e[e[:, 0] != e[:, 1]], axis=1), axis=0)
+    row = np.concatenate([e[:, 0], e[:, 1]])
+    col = np.concatenate([e[:, 1], e[:, 0]])
+    deg = np.bincount(row, minlength=n).astype(float)
+    lone = np.flatnonzero(deg == 0)            # on no edge: stays where it is
+    w = np.concatenate([1.0 / deg[row], np.ones(len(lone))])
+    return csr_matrix((w, (np.concatenate([row, lone]), np.concatenate([col, lone]))), shape=(n, n))
 
 
 HOLD_SPREAD = 10     # averaging passes over the smoothing's shift before _smooth_surface holds a member

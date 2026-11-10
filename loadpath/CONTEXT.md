@@ -168,6 +168,15 @@ Python API worth knowing: `run_study`, `verify_part(..., fields=True)`,
 - **A support region holds the nodes inside it** (solid regions with nodes in
   them). Taking a node plane half a cell outside too let the optimizer hang
   the printed hook 0.75 mm off its wall.
+- **Watertight and one body is not sound.** The fan bracket (9815ad1) passed
+  both with its surface folded back through its arms: hairline slits 0.06-0.2
+  mm across that a tet check read as cracks. Design-space faces on the fine
+  grid put the field on the level there; marching cubes left zero-area
+  triangles, and trimesh's smoothing operator, whose rows then sum under 1,
+  threw their vertices 30-150 mm toward the world origin. The on-level guard
+  now keeps such nodes off the level, and `_smooth_surface` steps by
+  `reconstruct._umbrella`, whose rows always sum to 1
+  (tests/test_reconstruct_slits.py finds the folds by section crossings).
 
 ## Open problems
 
