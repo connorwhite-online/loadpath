@@ -232,14 +232,26 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
         if stress_cases:
             adj_rhs, partials = [], []
             for c in stress_cases:
-                ue = us[c][mesh.edof]                        # (n, 24)
+                # Only over the cells that moved. The solve leaves every dof
+                # outside the live cells at exactly zero (simp._Analysis),
+                # and a cell with no displacement has no stress, no share
+                # of the p-norm and no term in either gradient: on a
+                # density design that is most of the grid (the wrist yoke:
+                # 8-30k live cells of 119k), and these passes, eight points
+                # a cell for every case, were a quarter of an iteration.
+                moved = np.flatnonzero(us[c].reshape(-1, 3).any(axis=1)[mesh.enode].any(axis=1))
+                act = moved[counted[moved]]
+                edof = mesh.edof[act]
+                ue = us[c][edof]                             # (cells, 24)
+                xa = xe[act]
                 nc = max(int(counted.sum()), 1) * len(cbs)
                 parts = []
                 for cbk in cbs:
-                    sig = ue @ cbk.T                         # (n, 6) solid stress, MPa
-                    vm = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", sig, _VM, sig), 1e-30))
-                    parts.append((cbk, sig, vm, np.where(counted, xe ** _Q * vm / limits.stress, 0.0)))
-                smax = max(float(sr.max()) for *_, sr in parts)
+                    sig = ue @ cbk.T                         # (cells, 6) solid stress, MPa
+                    sv = sig @ _VM
+                    vm = np.sqrt(np.maximum(np.einsum("ij,ij->i", sv, sig), 1e-30))
+                    parts.append((cbk, sv, vm, xa ** _Q * vm / limits.stress))
+                smax = max((float(sr.max()) for *_, sr in parts if len(sr)), default=0.0)
                 # the p-norm scaled by the peak, so a design that lets go
                 # (stress 1e40) does not overflow sr ** P to inf and hand
                 # MMA a NaN step (the robot-arm upper arm)
@@ -249,24 +261,22 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                 g = kappa[c] * pm
                 g_xe = np.zeros(n)
                 rhs = np.zeros(mesh.n_dof)
-                for cbk, sig, vm, srel in parts:
+                for cbk, sv, vm, srel in parts:
                     dg_ds = kappa[c] * (srel / max(pm, 1e-30)) ** (_P - 1) / nc
                     # explicit: d s / d xe at fixed u
-                    g_xe += dg_ds * np.where(counted, _Q * np.maximum(xe, 1e-12) ** (_Q - 1) * vm / limits.stress,
-                                             0.0)
+                    g_xe[act] += dg_ds * (_Q * np.maximum(xa, 1e-12) ** (_Q - 1) * vm / limits.stress)
                     # adjoint right-hand side: dg/du
-                    coef = dg_ds * np.where(counted, xe ** _Q / (vm * limits.stress), 0.0)   # (n,)
-                    dvm_du = (sig @ _VM) @ cbk                                              # d(vm^2)/2du
-                    rhs += np.bincount(mesh.edof.ravel(), weights=(coef[:, None] * dvm_du).ravel(),
+                    coef = dg_ds * (xa ** _Q / (vm * limits.stress))                        # (cells,)
+                    dvm_du = sv @ cbk                                                       # d(vm^2)/2du
+                    rhs += np.bincount(edof.ravel(), weights=(coef[:, None] * dvm_du).ravel(),
                                        minlength=mesh.n_dof)
                 rhs[domain.fixed] = 0.0
                 adj_rhs.append(rhs)
-                partials.append((c, g, g_xe, smax))
+                partials.append((c, g, g_xe, smax, moved))
             lams = fe.resolve(adj_rhs, [l for l in lams] if lams[0] is not None and len(lams) == len(adj_rhs) else None)
-            for (c, g, g_xe, smax), lam in zip(partials, lams):
-                le = lam[mesh.edof]
-                ue = us[c][mesh.edof]
-                g_xe = g_xe - de * np.einsum("ij,jk,ik->i", le, fe.ke, ue)
+            for (c, g, g_xe, smax, moved), lam in zip(partials, lams):
+                edof = mesh.edof[moved]
+                g_xe[moved] -= de[moved] * np.einsum("ij,ij->i", lam[edof] @ fe.ke, us[c][edof])
                 cons.append(g - 1.0)
                 grads.append(to_x(g_xe))
                 record[f"stress.{domain.case_names[c]}"] = smax * limits.stress
