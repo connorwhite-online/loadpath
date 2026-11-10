@@ -2252,6 +2252,27 @@
               "type": "number",
               "exclusiveMinimum": 0,
               "description": "W/(m^2 K) to the room, convection and radiation (default 10)"
+            },
+            "airflow": {
+              "type": "object",
+              "properties": {
+                "speed": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "m/s of air along the outside: flight speed, a rotor's or fan's wash"
+                },
+                "length": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "mm the surface runs along the flow"
+                }
+              },
+              "required": [
+                "speed",
+                "length"
+              ],
+              "additionalProperties": false,
+              "description": "instead of h: forced convection off the outside (flat plate mean, mixed with natural convection) plus radiation"
             }
           },
           "additionalProperties": false

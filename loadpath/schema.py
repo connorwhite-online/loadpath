@@ -1104,7 +1104,14 @@ _COOLING = {
                                                 "(43, 48, 60 C)"},
                      "shape": {"$ref": "#/$defs/shape", "description": "where it is touched (default: all of "
                                                                          "the outside)"},
-                     "h": {**_POS, "description": "W/(m^2 K) to the room, convection and radiation (default 10)"}},
+                     "h": {**_POS, "description": "W/(m^2 K) to the room, convection and radiation (default 10)"},
+                     "airflow": {"type": "object", "properties": {
+                                     "speed": {"type": "number", "minimum": 0, "description": "m/s of air along "
+                                               "the outside: flight speed, a rotor's or fan's wash"},
+                                     "length": {**_POS, "description": "mm the surface runs along the flow"}},
+                                 "required": ["speed", "length"], "additionalProperties": False,
+                                 "description": "instead of h: forced convection off the outside (flat plate "
+                                                "mean, mixed with natural convection) plus radiation"}},
                  "additionalProperties": False},
         "air": {"type": "object", "properties": {
                     "conductivity": {**_POS, "description": "W/(m K) of the air inside (default 0.03)"}},

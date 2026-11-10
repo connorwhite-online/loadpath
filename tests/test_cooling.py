@@ -253,6 +253,26 @@ def test_closed_exterior_keeps_its_cavity():
     assert mesh.is_watertight and mesh.volume < 0.75 * full, (mesh.volume, full)
 
 
+def test_airflow_sets_h_from_the_flat_plate():
+    # still air reads about H_OUT; a 60 mm canopy at 8 m/s, Re 2.9e4, reads
+    # the laminar plate's 0.664 Re^1/2 Pr^1/3 k / L plus radiation
+    still = cooling.forced_h(0.0, 60.0)
+    assert abs(still["h"] - cooling.H_OUT) < 0.25 * cooling.H_OUT, still
+    f = cooling.forced_h(8.0, 60.0)
+    nu = 0.664 * f["re"] ** 0.5 * 0.71 ** (1 / 3)
+    assert abs(f["forced"] - nu * 0.0263 / 0.06) < 0.05 * f["forced"], f
+    assert 4.0 < f["h"] / cooling.H_OUT < 6.0
+    st = study_from_dict(box(skin={"contact": "held", "airflow": {"speed": 8.0, "length": 40.0}}))
+    spec = cooling.cooling_from_study(st)
+    assert abs(spec.h_out - cooling.forced_h(8.0, 40.0)["h"]) < 1e-9
+    assert not lint(box(skin={"airflow": {"speed": 8.0, "length": 40.0}}), "study")
+    try:
+        cooling.cooling_from_study(study_from_dict(box(skin={"h": 20, "airflow": {"speed": 8, "length": 40}})))
+        raise AssertionError("h and airflow together should be refused")
+    except ValueError as exc:
+        assert "airflow" in str(exc)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -61,8 +61,10 @@ mesh on two finer grids (the delivered mesh's own fill, solid where a cell
 is at least half inside it), so a reading is quoted only where the two
 grids agree.
 
-Not modelled: contact resistance between a component and a printed pad
-resting on it (a thermal pad or paste is assumed), forced air (a fan),
+Forced air over the outside (flight, a rotor's wash, a fan blowing on it)
+is `skin.airflow: {speed, length}`: h from the flat plate's correlation
+(forced_h). Not modelled: contact resistance between a component and a printed pad
+resting on it (a thermal pad or paste is assumed), forced air through the inside,
 the hand itself as a heat sink, and sunlight. The structure's own
 softening with temperature (thermal.retention) is in thermal.py's
 `thermal` block, not here.
@@ -79,7 +81,7 @@ from .domain import Domain
 from .fem import HexMesh
 from .thermal import _FACE_M, hex8_kt
 
-__all__ = ["CoolingProblem", "CoolingModel", "cooling_readings", "run_cooling", "TOUCH_LIMITS", "K_AIR", "H_OUT",
+__all__ = ["forced_h", "CoolingProblem", "CoolingModel", "cooling_readings", "run_cooling", "TOUCH_LIMITS", "K_AIR", "H_OUT",
            "COMPONENT_K", "stack_conductance"]
 
 K_AIR = 0.03            # W/(m K): air near 40 C is 0.027; a little for what convection there is
@@ -245,6 +247,15 @@ def cooling_from_study(study) -> CoolingSpec:
         if smax <= ambient:
             raise ValueError(f"cooling.skin.maxTemp {smax:g} C is not over the ambient {ambient:g} C")
     h = _num(sk.get("h", cb.get("h", H_OUT)), "cooling.skin.h")
+    if sk.get("airflow") is not None:
+        if sk.get("h") is not None or cb.get("h") is not None:
+            raise ValueError("cooling.skin: give h or airflow, not both (airflow works h out)")
+        af = sk["airflow"]
+        if not isinstance(af, dict) or "speed" not in af or "length" not in af:
+            raise ValueError("cooling.skin.airflow is {speed (m/s), length (mm, the run of the surface along the "
+                             "flow)}: the stream over the outside (flight speed, a fan's or a rotor's wash)")
+        h = forced_h(_num(af["speed"], "cooling.skin.airflow.speed"), _num(af["length"], "cooling.skin.airflow.length"),
+                     ambient)["h"]
     skin_shape = shape_from_spec(sk["shape"], study.base_dir) if sk.get("shape") else None
     vents = []
     for i, v in enumerate(cb.get("vents") or []):
@@ -258,6 +269,36 @@ def cooling_from_study(study) -> CoolingSpec:
         raise ValueError("cooling: nothing to hold: give a component maxTemp or skin.maxTemp")
     cyc = _cycle_from(cb.get("cycle"), sources) if cb.get("cycle") is not None else None
     return CoolingSpec(ambient, h, k_air, k_mat, sources, smax, skin_shape, vents, up, cb, cyc)
+
+
+def forced_h(speed: float, length: float, ambient: float = 25.0, rise: float = 20.0, emissivity: float = 0.9) -> dict:
+    """Heat transfer off an outside surface in a stream (W/(m^2 K)): air
+    at `speed` m/s along a run of `length` mm, the surface `rise` K over
+    `ambient` C. Forced convection is the flat plate's mean (laminar Nu =
+    0.664 Re^1/2 Pr^1/3; mixed with a turbulent run past Re 5e5, Nu =
+    (0.037 Re^0.8 - 871) Pr^1/3), combined with the natural convection
+    still there at low speed as (Nu_f^3 + Nu_n^3)^1/3 (Churchill), plus
+    radiation 4 e sigma T^3. A canopy 60 mm long at 8 m/s: about 46 + 6,
+    five times still air's 10."""
+    t_film = ambient + 0.5 * rise + 273.15
+    k = 0.0241 * (t_film / 273.15) ** 0.81                     # W/(m K), air
+    nu = 1.33e-5 * (t_film / 273.15) ** 1.75                   # m^2/s
+    pr = 0.71
+    ell = max(float(length), 1e-3) * 1e-3
+    re = max(float(speed), 0.0) * ell / nu
+    if re < 5e5:
+        nu_f = 0.664 * re ** 0.5 * pr ** (1 / 3)
+    else:
+        nu_f = (0.037 * re ** 0.8 - 871.0) * pr ** (1 / 3)
+    # natural convection off the same run (vertical plate, Churchill-Chu laminar)
+    g, beta = 9.81, 1.0 / t_film
+    ra = g * beta * max(rise, 0.1) * ell ** 3 / (nu * nu / pr)
+    nu_n = 0.68 + 0.670 * ra ** 0.25 / (1 + (0.492 / pr) ** (9 / 16)) ** (4 / 9)
+    h_conv = (nu_f ** 3 + nu_n ** 3) ** (1 / 3) * k / ell
+    ts, ta = t_film + 0.5 * rise, ambient + 273.15
+    h_rad = emissivity * 5.670e-8 * (ts ** 2 + ta ** 2) * (ts + ta)
+    return {"h": h_conv + h_rad, "convection": h_conv, "radiation": h_rad, "re": re, "forced": nu_f * k / ell,
+            "natural": nu_n * k / ell}
 
 
 def _cycle_from(cb, sources) -> Cycle:
