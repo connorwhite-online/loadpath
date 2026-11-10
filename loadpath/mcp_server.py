@@ -1057,9 +1057,11 @@ def serve():
         (loadpath_schema('enclosure')). Places each component inside the shell unless given (quarter-turn
         orientations; rules: against a side, alignTo an opening, under a press point, near another part,
         a centre of mass), keeps only positions each part can be assembled into, finds every part's way
-        in (up to four straight legs, checked exactly), puts a cradle under each massed part clear of
+        in (up to four straight legs, or, where none exists, a tilt: slides and pivots up to the brief's
+        `tilt` degrees, every move checked exactly), puts a cradle under each massed part clear of
         every path, and writes a study with drop cases on each face, squeezes, presses, heat, and any
-        switch or feel block. run: then design it and check the delivered part (the exterior untouched
+        switch or feel block. enclosure.json's assembly.steps is the assembly as numbered steps a person
+        can follow. run: then design it and check the delivered part (the exterior untouched
         on the meshes, every load case verified on the part). Starts a job; poll loadpath_status; the
         study is out/<name>.study.json, the report out/enclosure.json, checks out/checks.json."""
         return enclosure(brief, base_dir, run)

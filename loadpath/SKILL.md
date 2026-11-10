@@ -581,7 +581,10 @@ part's study. Parts fitted to another (`installedOn`) are
 drawn in that part's frame and move with it. The `assembly` order
 matters: each part's position is kept only if it can still get there past
 the skin and the parts that went in before it, and its way in (up to four
-straight legs) is checked exactly and swept clear as its keep-out. Each
+straight legs, or slides and pivots up to `tilt` degrees for a part that
+only goes in tilted, such as a board longer than its door) is checked
+exactly and swept clear as its keep-out; `enclosure.json`'s
+`assembly.steps` is the assembly in numbered steps to hand the builder. Each
 massed part gets a preserved cradle (`mount`) on a side that is in no
 other part's way in. `loads`: `drop {g, faces}` (each part's mass at g
 toward the face it lands on, the floor's reaction on that face), `squeeze

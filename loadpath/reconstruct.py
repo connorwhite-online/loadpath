@@ -821,6 +821,16 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     # nothing.
     fine = np.pad(fine, 1)
     origin = origin - step
+    # A node sitting exactly on the level puts the surface's crossings on all
+    # its edges at the node itself: triangles of no area that merge into
+    # edges shared by four faces, which manifold3d refuses. Rare in a
+    # smoothed field, but a keep-out's fade is a clipped ramp, and half of a
+    # fully solid cell is the level to the last bit (a tilted insertion
+    # path's sweep left two such nodes in 1.4M and the whole part failed to
+    # mesh). Move those a hair to the void side.
+    on = np.abs(fine - o.level) < 1e-6
+    if on.any():
+        fine = np.where(on, o.level - 1e-4, fine)
     verts, faces, _, _ = marching_cubes(fine, o.level, spacing=(step, step, step))
     verts = verts + origin
     mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)

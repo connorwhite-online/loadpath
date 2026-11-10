@@ -22,6 +22,11 @@ of thing a designer hands over:
 - **smart-button**: a smart-home button, one piece of SLS TPU 88A over a
   rigid back. A tactile switch under the middle of the dome; the dome
   clicks at a set force anywhere on it (switch.py through handoff).
+- **desk-hub**: a desk USB hub in rigid PA12 (SLS), one piece with a
+  service door underneath. The board is longer than the door and its
+  connector has to reach out through a port in the end wall: there is no
+  straight way in, only nose first at a tilt and then laid flat
+  (motion.py).
 
     from loadpath.evals.products import write
     brief_path = write("remote", "out/remote")
@@ -359,8 +364,49 @@ def smart_button(out):
     }
 
 
+def desk_hub(out):
+    """A desk USB hub, 70 x 34 x 18 mm, rigid PA12 (SLS) in one piece. The
+    board is longer than the service door under it, and its connector has
+    to end up out through the port in the end wall: no straight way in.
+    By hand it goes nose first into the port at a tilt, then is laid flat."""
+    L, W, H = 70.0, 34.0, 18.0
+    ext = _rounded_box((L, W, H), 3.0)
+    port = _box((-L / 2 - 1.0, -6.5, -4.5), (-L / 2 + 2.0, 6.5, 1.5))
+    door = _box((-18.0, -13.5, -H / 2 - 2.0), (31.0, 13.5, -H / 2 + 1.2))
+    f = {"exterior": _stl(ext - port - door, out, "exterior.stl"), "port": _stl(port, out, "port.stl"),
+         "door": _stl(door, out, "service-door.stl"),
+         "foot": _stl(_box((-17.8, -13.3, -H / 2), (30.8, 13.3, -H / 2 + 1.2)), out, "foot.stl")}
+    # the board, and the connector hung under its end (3 mm past the edge)
+    f["board"] = _stl(_box((-27.0, -11.0, 0.0), (27.0, 11.0, 1.6)), out, "board.stl")
+    f["connector"] = _stl(_box((-30.0, -5.0, -3.6), (-21.0, 5.0, 0.0)), out, "connector.stl")
+    return {
+        "name": "desk-hub",
+        "description": "A desk USB hub in rigid PA12 (SLS), one piece: a port in the end wall and a service "
+                       "door underneath that a foot plate closes. Parts: a 54 x 22 mm board with a connector "
+                       "under its end, out through the port. The board is 5 mm longer than the door, so it "
+                       "goes in nose first at a tilt and is laid flat. A drop on its base and a squeeze.",
+        "exterior": f["exterior"], "skin": 1.2,
+        "openings": [{"id": "port", "shape": f["port"], "inward": "+x"},
+                     {"id": "service-door", "shape": f["door"], "inward": "+z"}],
+        "components": [
+            {"id": "board", "shape": f["board"], "mass": 0.014, "rotate": "none", "watts": 0.4},
+            {"id": "connector", "shape": f["connector"], "installedOn": "board", "mass": 0.002,
+             "alignTo": {"opening": "port", "face": "-x", "recess": 0.4}},
+            {"id": "foot", "shape": f["foot"], "place": "given", "external": True, "mount": False}],
+        "assembly": ["board", "foot"],
+        "tilt": 45,
+        # held by its top for the analysis: the door takes the middle of its base
+        "rest": "+z",
+        "loads": {"drop": {"g": 200, "faces": ["-z", "+z"]},
+                  "squeeze": {"axis": "y", "force": 80, "radius": 8}},
+        "material": "pa12", "process": "sls", "minMember": 1.2,
+        "goal": {"safetyFactor": 1.5},
+        "resolution": {"pitch": 0.8},
+    }
+
+
 PRODUCTS = {"remote": remote, "band-pod": band_pod, "speaker": speaker, "tool-grip": tool_grip,
-            "smart-button": smart_button}
+            "smart-button": smart_button, "desk-hub": desk_hub}
 
 
 def write(name: str, out: str) -> str:

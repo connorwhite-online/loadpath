@@ -77,6 +77,15 @@ grid was half a cell too generous it is searched again tighter. The path
 becomes the part's keep-out (`insertFrom`), swept the whole way, so no
 generated material can block it.
 
+A part with no straight way in is tried turning (next section): tilted in
+through an opening shorter than it is, then laid flat; a layout every
+part slides into is always taken first. `tilt` in the brief
+(or on one component) is how far a part may be turned, 45 degrees unless
+said; `false` keeps a part to straight slides.
+
+`enclosure.json` then says the whole assembly as numbered steps a person
+can follow (`assembly.steps`), each part's moves in the order they go in.
+
 **3. It mounts what has mass.** Each part with a mass gets a preserved
 cradle under one face: the side given (`mount.side`), else the side it is
 pushed against, else the side it comes to rest on as it goes in, else its
@@ -146,6 +155,76 @@ engineer would:
 - **every load case on the delivered part**: `verify` on cut cells (or
   tets where installed), not the optimizer's grid, with the safety factor
   per case and no part's keep-out or path intruded on.
+
+## Parts that only go in at a tilt
+
+Some layouts fit and still cannot be put together by sliding. The
+commonest: a board longer than the opening it goes through, with a
+connector that has to end up out through a port in the end wall. No
+sequence of straight slides gets it there, and a search that only slides
+rejects the layout, though anyone assembling it does the obvious thing:
+nose into the port at a tilt, then lay the board flat. Rejecting that
+layout costs a real product a longer door, a split it did not need, or a
+smaller board.
+
+So the way in is a rigid-body motion, turns included (`motion.py`,
+`placement.insertion_motion`):
+
+- **Positions and tilts together.** The straight search tests every
+  position of the part as it sits. The tilt search makes the same test
+  for the part tilted about each axis through its middle, a step at a
+  time (a step moves the part's far end about one grid cell), so each
+  tilt is a layer of free positions. Within a layer the part slides;
+  between neighbouring layers it turns a step where it is. The layers'
+  connected regions are searched breadth first from where the part sits,
+  the three axes taking turns, so the way out found needs the least tilt.
+- **Only as much as it needs.** A layer costs one FFT and is computed
+  only when the search reaches it. A part with a straight way in never
+  gets here; a part that cannot begin to turn costs three layers per
+  axis. The desk hub below takes about 4 s for its final path.
+- **With room first.** The first search grows the part by 0.3 mm and half
+  a cell, so the route has room to spare and its keep-out cuts nothing
+  from the skin. If nothing that comfortable exists it is searched again
+  closer, down to the path tolerance.
+- **A few moves, each checked exactly.** A route off a grid is a staircase
+  of cells and tilt steps. It is reduced to the fewest slides and pivots
+  that are each clear when walked at the part's surface points: between
+  any two poses with different tilts there is one line that stays put,
+  and the move is a turn about it. A part with no way in is still
+  reported with what it hits.
+
+The path is written into the keep-out as legs, as the part leaves:
+
+```json
+"insertFrom": [{"turn": 10.5, "about": "+y", "at": [-33.2, 0.0, -38.0]},
+               {"toward": [0.966, 0.0, -0.258], "length": 10.9},
+               "-z"]
+```
+
+A turn sweeps the keep-out through the arc, so nothing generated stands
+where the part swings. And the same legs, turned round, are the steps in
+`enclosure.json`:
+
+```
+1. Hold board (with connector on it) tilted 10.5° about +y from how it
+   sits (its +x end 5.2 mm toward -z), outside the -z side.
+2. Bring it in toward +z.
+3. Slide it 10.9 mm toward -x, leaning 14.9° toward +z.
+4. Turn it 10.5° about a line along y through x = -33.2, z = -38, its +x
+   end 5.2 mm toward +z, until it sits square: it is home.
+5. Fit foot from outside.
+```
+
+This is the layer between two kinds of tool. A code that optimizes
+material stops at a density field and has no idea a board must get in. A
+scripted or generated CAD model has the board and the door and no idea
+whether one passes the other. Here the layout, the motion that assembles
+it, the space that motion needs and the structure round it are one
+answer, and the motion is handed back in words.
+
+Limits: one tilt axis per path (no compound turns), 45 degrees unless the
+brief says more, and the parts of a split shell still go in by straight
+slides with the cover off.
 
 ## Split shells, cooling, any exterior
 
@@ -231,9 +310,9 @@ The first runs of this example found five bugs, and all of them are fixed:
   0.5 mm margin from the exterior on top of the 0.3 mm recess asked, so it
   stood 0.82 mm back.
 
-## Five more products
+## Six more products
 
-`loadpath/evals/products.py` writes five more generic products, each an
+`loadpath/evals/products.py` writes six more generic products, each an
 exterior, its parts in plain words and a brief, and the evals run each one
 end to end (`python -m loadpath.evals.run enclosure-remote`, and so on):
 placement, ways in, the split where there is one, the design (run, feel,
@@ -248,6 +327,7 @@ faces, debris) that the intake wraps first.
 | speaker | PETG FDM, generated mesh | driver up into the grille, USB-C in its port, a 1 W amp and an 18650 kept cool, the shell cool to hold |
 | tool grip | PA12 MJF, generated mesh, clamshell | motor aimed out the nose, cell in the handle, a trigger where the finger falls, a 250 N grip |
 | smart button | TPU over a rigid back | a tactile switch that fires between 150 and 400 gf from 5 points on the dome |
+| desk hub | PA12 SLS, one piece | a board 5 mm longer than the service door, its connector out through a port: in only at a tilt; a 200 g drop, an 80 N squeeze |
 
 The coarse tier (1.0 to 1.5 mm cells, short design runs, 2026-11-08):
 
@@ -258,6 +338,7 @@ The coarse tier (1.0 to 1.5 mm cells, short design runs, 2026-11-08):
 | speaker | no | 8/9 | 344 g | SF 1.57. The delivered reads now agree (amp 57.1 / 58.8 C, shell 48.8 / 48.9 C at 1.05 / 0.75 mm): the shell is 0.8 C over its 48 C touch limit |
 | remote | yes | 12/12 | 72.8 g | worst SF 1.72 (base, a drop onto the underside) |
 | tool grip | no | 7/9 | 38.6 g base | base SF 0.74 in the coarse run's 10 minutes (was 0.21); the cover's own run check ran past the box's 15 GB, so it has no part this run (its earlier part read 5.56) |
+| desk hub | yes | 9/9 | 19.5 g | the board goes in at 10.5 degrees in three moves; worst SF 1.54 on the delivered part (2026-11-10) |
 
 Every product kept its exterior untouched (0.0 mm proud) and every
 component placed with a clear way in. What fails is strength and heat on

@@ -177,9 +177,19 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     skin_grid = _GridShape(skin_shape)
     fixed_grids = [(f, _GridShape(sh)) for f, sh in fixed]
     tol = float(b.get("pathTolerance", 0.25))
+
+    def tilt_of(cid, quick=False):
+        """How far this part may be turned on its way in (degrees; the
+        brief's `tilt`, or the component's own): None for slides only."""
+        v = byid[cid].get("tilt", b.get("tilt", 45.0))
+        v = 0.0 if v is False else 45.0 if v is True else float(v)
+        if v <= 0:
+            return None
+        # placement asks for every candidate position: a coarser grid there
+        return {"max": v, **({"cells": 600_000, "minStep": 2.0, "tries": ((False, 0.0), (True, 0.0))} if quick else {})}
     rank = {gid: i for i, gid in enumerate(order)}
 
-    def access(gid, sdf, bounds, placed):
+    def access(gid, sdf, bounds, placed, turning=False):
         """Can this part still get to this position, past the skin, the
         fixed geometry and the parts that go in before it?"""
         if byid[gid].get("external") or (byid[gid].get("fixed") and byid[gid].get("insertFrom")):
@@ -197,7 +207,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
             return o
         hint = byid[gid].get("insertFrom") if isinstance(byid[gid].get("insertFrom"), str) else None
         return _way_in(sdf, bounds, None, obstacles, (lo, hi), float(byid[gid].get("pathTolerance", tol)),
-                       hint)["insertFrom"] is not None
+                       hint, tilt_of(gid, quick=True) if turning else None)["insertFrom"] is not None
 
     # a split exterior (shells.py) is assembled with its cover off: its own
     # pass finds the paths into the base and sets insertFrom
@@ -210,10 +220,24 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         wo = pl_opts.pop("wires", None) or {}
         judge = placement_judge(b["wires"], comps, weight=float(wo.get("weight", 0.15)),
                                 physics=bool(wo.get("physics", True)))
-    pr = place(exterior, comps, skin=t_skin, openings=op_place, fixed=fixed, rules=pl_opts, judge=judge,
-               pitch=pl_opts.get("pitch"), beam=int(pl_opts.get("beam", 3)),
-               margin=float(pl_opts.get("margin", 0.5)), on_progress=on_progress,
-               access=access if pl_opts.get("assemblyAware", True) and not split else None)
+    aware = pl_opts.get("assemblyAware", True) and not split
+
+    def lay_out(turning):
+        return place(exterior, comps, skin=t_skin, openings=op_place, fixed=fixed, rules=pl_opts, judge=judge,
+                     pitch=pl_opts.get("pitch"), beam=int(pl_opts.get("beam", 3)),
+                     margin=float(pl_opts.get("margin", 0.5)), on_progress=on_progress,
+                     access=(lambda *a: access(*a, turning=turning)) if aware else None)
+
+    # straight ways in first: a layout every part slides into is the one
+    # to have. Only when some part has no place it can slide into are
+    # positions it must be turned to reach let in
+    pr = lay_out(False)
+    if aware and (pr["best"] is None or pr["blocked"]) and any(tilt_of(c["id"]) for c in comps):
+        if on_progress:
+            on_progress({"stage": "placement", "message": "no layout by straight slides: letting parts turn"})
+        again = lay_out(True)
+        if again["best"] is not None and (pr["best"] is None or len(again["blocked"]) < len(pr["blocked"])):
+            pr = again
     if pr["best"] is None:
         raise ValueError(f"enclosure: no layout fits every component; blocked: {pr['blocked']}")
 
@@ -239,13 +263,14 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
             chosen = (lay, mounts, paths, [], mwarn)
             break
         paths = _paths(a_order, byid, root, comp_shapes, lay, [("skin", skin_grid)] + fixed_grids, [], (lo, hi),
-                       tol, on_progress)
+                       tol, on_progress, tilt_of)
         mounts, mwarn = _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member)
         if mounts:
             # the cradles are printed: every path is checked again with them in
             mount_grids = [(f"mount-{k}", _GridShape(shape_from_spec(v["shape"]))) for k, v in mounts.items()]
             paths = _paths(a_order, byid, root, comp_shapes, lay,
-                           [("skin", skin_grid)] + fixed_grids + mount_grids, [], (lo, hi), tol, on_progress)
+                           [("skin", skin_grid)] + fixed_grids + mount_grids, [], (lo, hi), tol, on_progress,
+                           tilt_of)
         blocked = [k for k, v in paths.items() if v.get("insertFrom") is None]
         tried.append({"layout": li, "cost": lay["cost"], "blocked": blocked})
         if chosen is None or len(blocked) < len(chosen[3]):
@@ -255,7 +280,9 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     lay, mounts, paths, blocked, mwarn = chosen
     warnings = list(mwarn)
     for k in blocked:
-        warnings.append(f"{k}: no clear way in, in up to four straight legs; its keep-out covers where it sits "
+        warnings.append(f"{k}: no clear way in, in up to four straight legs"
+                        + (f" or turning up to {tilt_of(k)['max']:g}°" if tilt_of(k) else "")
+                        + "; its keep-out covers where it sits "
                         "only. The exterior needs an opening (or a split), or the part moves")
     for k, v in pr["blocked"].items():
         warnings.append(f"{k}: no place found inside the exterior ({v['reason']})")
@@ -500,7 +527,8 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
                             "centerOfMass": lay["centerOfMass"], "mass": lay["mass"], "pitch": pr["pitch"],
                             "layoutsTried": tried, "blocked": pr["blocked"], "seconds": pr["seconds"]},
               "assembly": {"order": order, "components": {k: {kk: vv for kk, vv in v.items() if kk != "legs"}
-                                                          for k, v in paths.items()}},
+                                                          for k, v in paths.items()},
+                           "steps": _steps(order, byid, root, paths, lay)},
               "mounts": {k: {"side": v["side"], "massKg": round(v["mass"], 6)} for k, v in mounts.items()},
               "loadCases": [c["name"] for c in cases], "supports": supports,
               **({"handoff": handoff_report} if handoff_report else {}),
@@ -566,7 +594,8 @@ def _group_sdf(ids, shapes):
     return f
 
 
-def _paths(order, byid, root, comp_shapes, lay, fixed, placed0, exit_bounds, tol, on_progress=None) -> dict:
+def _paths(order, byid, root, comp_shapes, lay, fixed, placed0, exit_bounds, tol, on_progress=None,
+           tilt_of=None) -> dict:
     """Each component's way in, in assembly order (placement.insertion_path
     on a grid, then checked exactly along its legs with
     handoff._path_check). A component travels with what is installed on
@@ -606,7 +635,8 @@ def _paths(order, byid, root, comp_shapes, lay, fixed, placed0, exit_bounds, tol
         else:
             hint = c.get("insertFrom") if isinstance(c.get("insertFrom"), str) else None
             pts = np.vstack([_surface_points(lay["meshes"][g]) for g in grp])
-            rec.update(_way_in(_group_sdf(grp, comp_shapes), (blo, bhi), pts, obstacles, exit_bounds, ctol, hint))
+            rec.update(_way_in(_group_sdf(grp, comp_shapes), (blo, bhi), pts, obstacles, exit_bounds, ctol, hint,
+                               tilt_of(cid) if tilt_of else None))
         out[cid] = rec
         placed.append(cid)
     return out
@@ -624,12 +654,13 @@ class _Pen:
         return -self.fn(p), np.zeros(len(p), int)
 
 
-def _way_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, hint=None) -> dict:
+def _way_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, hint=None, tilt=None) -> dict:
     """A part's way in: the fewest straight legs on the grid
     (placement.insertion_path), then checked exactly along those legs at
     the part's surface points (handoff._path_check). The grid can be half a
     cell out, so a path the exact check refuses is searched again with the
-    grid's tolerance tightened."""
+    grid's tolerance tightened. A part with no straight way in is tried
+    turning (`tilt`: {max, cells, minStep}; _tilt_in)."""
     from .handoff import _path_check
     from .placement import insertion_path
 
@@ -663,7 +694,95 @@ def _way_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, hint=None) -> di
             return rec
         last = {"insertFrom": None, "closest": ins, "worstPenetration": round(float(pen), 3),
                 "at": _r(where, 2), "after": round(dist, 2)}
+    if tilt and float(tilt.get("max", 0)) > 0:
+        rec = _tilt_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, tilt)
+        if rec is not None:
+            return rec
     return last or {"insertFrom": None}
+
+
+def _tilt_in(part_sdf, bounds, pts, obstacles, exit_bounds, tol, tilt) -> dict | None:
+    """A way in for a part that has to turn (a board longer than its
+    opening: one end in first at a tilt, then laid flat). The route comes
+    off a grid of positions and tilts (placement.insertion_motion) as a
+    staircase a cell or a tilt step at a time; it is reduced to a few
+    slides and pivots, each walked exactly at the part's surface points
+    (motion.simplify). tilt: {max (degrees), cells, minStep, pitch, tries
+    ((snug, room) per grid search)}."""
+    from .placement import insertion_motion
+
+    pen = _Pen(obstacles).penetration
+    lo, hi = np.asarray(exit_bounds[0], float), np.asarray(exit_bounds[1], float)
+    # with room first (every cell the part touches counts as the part,
+    # grown 0.3 mm: the least tilt that is comfortable, on a route no thin
+    # wall slips through and that cuts nothing as a keep-out), then with
+    # half a cell, then snug (only the cells whose centres are in the part:
+    # gaps under half a cell open up, and the exact check sorts out the rest)
+    few = pts[::max(1, len(pts) // 500)]
+    for snug, room in tilt.get("tries", ((False, 0.3), (False, 0.0), (True, 0.0))):
+        r = insertion_motion(part_sdf, bounds, obstacles, exit_bounds, pitch=float(tilt.get("pitch", 0.5)),
+                             tol=tol, max_tilt=float(tilt["max"]), cells=int(tilt.get("cells", 1_500_000)),
+                             min_step=float(tilt.get("minStep", 1.5)), snug=snug, room=room)
+        if r is None:
+            continue
+        rec = _tilt_legs(r, pts, few, pen, bounds, lo, hi, tol)
+        if rec is not None:
+            return rec
+    return None
+
+
+def _tilt_legs(r, pts, few, pen, bounds, lo, hi, tol) -> dict | None:
+    """A grid route (placement.insertion_motion) as checked legs, or None."""
+    from .motion import end_pose, legs_to_spec, max_tilt, path_check, rotation, settler, simplify
+
+    c = r["centre"]
+    way = []
+    for deg, t in r["way"]:
+        R = rotation(r["axis"], deg)
+        way.append((R, c - R @ c + t))
+    # the grid's poses are a cell out either way: each one a move ends on
+    # is first walked to where the part is clear (a share of the points
+    # finds the way, all of them decide)
+    reach = float(np.linalg.norm(0.5 * (np.asarray(bounds[1], float) - np.asarray(bounds[0], float))))
+
+    def depth(pose, P=few):
+        return float(pen(P @ pose[0].T + pose[1])[0].max())
+
+    # the obstacles are read off distance grids, good to a tenth of a
+    # millimetre at a sharp rim: a path that clears them by that much cuts
+    # nothing as a keep-out (the desk hub's connector, let within 0.03 mm
+    # of the door's rim, took 0.1 mm^3 of it). Asked for first; then no
+    # touch; then the path tolerance. The part may sit closer than that
+    # where it is (in a cradle), so the move away from there is let be as
+    # close as it starts
+    home = depth(way[0], pts)
+    for strict in dict.fromkeys((-0.1, min(tol, 0.05), tol)):
+        nudge = settler(depth, r["axis"], c, reach, r["pitch"], strict)
+        first = max(strict, min(tol, home + 0.05))
+
+        def settle(pose, nudge=nudge, strict=strict):
+            q = nudge(pose)
+            return q if q is not None and depth(q, pts) <= strict else None
+
+        def clear(leg, start, strict=strict, first=first):
+            lim = first if start is way[0] else strict
+            ok, worst = path_check(pts, pen, [leg], lo, hi, max(lim, 0.0), start=start)[:2]
+            return ok and (lim >= 0 or _leg_depth(pts, pen, leg, lo, hi, start) <= lim)
+
+        legs = simplify(way, clear, settle, centre=c, reach=reach)
+        if not legs:
+            continue
+        if len(legs[-1]) == 2:
+            # the last slide goes on out, if on out is clear
+            before = end_pose(legs[:-1])
+            if path_check(pts, pen, [(legs[-1][0], None)], lo, hi, max(strict, 0.0), start=before)[0]:
+                legs[-1] = (legs[-1][0], None)
+        ins = legs_to_spec(legs)
+        ok, worst, _, where, dist = path_check(pts, pen, _legs_of(ins), lo, hi, tol)
+        if ok:
+            return {"insertFrom": ins, "legs": len(legs), "worstPenetration": round(float(worst), 3),
+                    "tilt": round(max_tilt(legs), 1), "how": "tilt"}
+    return None
 
 
 def _settle_legs(pts, obstacles, lg, exit_bounds, pitch):
@@ -705,6 +824,12 @@ def _settle_legs(pts, obstacles, lg, exit_bounds, pitch):
     return best
 
 
+def _leg_depth(pts, pen, leg, lo, hi, start) -> float:
+    """The deepest the points get along one leg (negative: the least room)."""
+    from .motion import poses
+    return max(float(pen(pts @ R.T + t)[0].max()) for R, t, _ in poses([leg], pts, lo, hi, 0.25, start))
+
+
 class _GroupShape:
     def __init__(self, ids, shapes):
         self.f = _group_sdf(ids, shapes)
@@ -713,15 +838,13 @@ class _GroupShape:
         return self.f(p)
 
 
-def _swept_hits(pts, grp_sdf, legs, step: float = 0.5) -> bool:
+def _swept_hits(pts, grp_sdf, legs, step: float = 0.5, reach: float = 30.0) -> bool:
     """Whether any point lies in the volume a part sweeps on its way out."""
-    at = np.zeros(3)
-    for d, L in legs:
-        L = 60.0 if L is None else L
-        for t in np.arange(0.0, L + 1e-9, step):
-            if (grp_sdf(pts - (at + t * d)) <= 0).any():
-                return True
-        at = at + L * d
+    from .motion import poses
+    legs = [(leg[0], 60.0) if len(leg) == 2 and leg[1] is None else leg for leg in legs]
+    for R, t, _ in poses(legs, step=step, reach=reach):
+        if (grp_sdf((pts - t) @ R) <= 0).any():
+            return True
     return False
 
 
@@ -769,18 +892,44 @@ def _drop_spin(pts, floor_force, at_floor, accel) -> list:
     return out
 
 
+def _steps(order, byid, root, paths, lay) -> list:
+    """The product's assembly as numbered steps a person can follow
+    (motion.steps): each part's way in, in the assembly order."""
+    from .motion import steps
+    bounds = {}
+    for cid in paths:
+        grp = [k for k in lay["components"] if root(k) == cid]
+        b = [lay["components"][g]["bounds"] for g in grp]
+        if b:
+            bounds[cid] = (np.min([x[0] for x in b], axis=0), np.max([x[1] for x in b], axis=0))
+    ext = [c for c in order if byid[c].get("external")]
+    # a split shell's parts go in with the cover off: shells.apply_split
+    # finds those ways in, after this
+    known = {k: v for k, v in paths.items() if not str(v.get("how", "")).startswith("split")}
+    return steps([c for c in order if not byid[c].get("installedOn")], known, bounds, ext)
+
+
 def _legs_of(ins):
-    if ins is None:
+    from .motion import legs_from_spec
+    return legs_from_spec(ins)
+
+
+def _first_way(legs, centre):
+    """The side a part first moves toward as it leaves: its first slide's
+    direction, or the way its centre swings in a first turn."""
+    from .motion import Turn
+    if not legs:
         return None
-    if isinstance(ins, str) or (len(ins) == 3 and all(isinstance(v, (int, float)) for v in ins)):
-        return [(_axis_vec(ins), None)]
-    out = []
-    for leg in ins:
-        if isinstance(leg, dict):
-            out.append((_axis_vec(leg["toward"]), float(leg["length"]) if leg.get("length") else None))
-        else:
-            out.append((_axis_vec(leg), None))
-    return out
+    leg = legs[0]
+    if isinstance(leg, Turn):
+        v = np.cross(np.radians(leg.angle) * np.asarray(leg.axis, float), np.asarray(centre, float) - leg.at)
+        if np.linalg.norm(v) < 1e-6:
+            return _first_way(legs[1:], centre)
+        k = int(np.argmax(np.abs(v)))
+        return ("+" if v[k] > 0 else "-") + "xyz"[k]
+    d = leg[0]
+    k = int(np.argmax(np.abs(d)))
+    return ("+" if d[k] > 0 else "-") + "xyz"[k]
 
 
 def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member):
@@ -807,7 +956,7 @@ def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_
                              "block)")
         rb = lay["components"][c["id"]]["bounds"]
         legs = _legs_of(paths.get(c["id"], {}).get("insertFrom"))
-        first = _axis_name(legs[0][0]) if legs else None
+        first = _first_way(legs, lay["components"][c["id"]]["centre"])
         prefs = []
         if mt.get("side"):
             prefs.append(mt["side"])

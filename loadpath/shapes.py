@@ -864,6 +864,7 @@ class Sweep(Shape):
         self.offsets = np.linspace(0.0, self.length, n + 1)
 
         self._grid = None
+        self._frame = None   # the grid's axes when the sweep is along a slant
 
     def _mesh_base(self):
         """(MeshShape, offset) when the base is a mesh, maybe moved."""
@@ -883,8 +884,34 @@ class Sweep(Shape):
         if m._grid is None:
             m._build_grid()
         dist, origin, pitch = m._grid
-        k = int(np.argmax(np.abs(self.direction)))
         n = int(round(self.length / pitch))
+        if np.max(np.abs(self.direction)) <= 1 - 1e-9:
+            # along a slant (a tilted board's slide): the same smear in a
+            # frame whose first axis is the direction, the mesh read once
+            # at that frame's cells. The copies point by point were 2.5 s
+            # per 100k points for an 11 mm slide, and a delivered part's
+            # check asks hundreds of times.
+            d0 = self.direction
+            e1 = np.cross(d0, np.eye(3)[int(np.argmin(np.abs(d0)))])
+            e1 /= np.linalg.norm(e1)
+            Q = np.stack([d0, e1, np.cross(d0, e1)])
+            lo, hi = self.base.bounds()
+            cn = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]) @ Q.T
+            org = cn.min(axis=0) - 8 * pitch
+            dims = np.ceil((cn.max(axis=0) + 8 * pitch - org) / pitch).astype(int)
+            ax = [org[i] + (np.arange(dims[i]) + 0.5) * pitch for i in range(3)]
+            P = np.stack(np.meshgrid(*ax, indexing="ij"), -1).reshape(-1, 3) @ Q
+            solid = np.pad((self.base.sdf(P) <= 0).reshape(tuple(dims)), [(0, n), (0, 0), (0, 0)])
+            c = np.cumsum(solid.astype(np.int32), axis=0)
+            c = np.concatenate([np.zeros_like(c[:1]), c], axis=0)
+            idx = np.arange(solid.shape[0])
+            swept = (c[idx + 1] - c[np.maximum(idx - n, 0)]) > 0
+            d = (ndimage.distance_transform_edt(~swept) - ndimage.distance_transform_edt(swept)) * pitch
+            d -= 0.5 * pitch * np.sign(d)
+            self._grid = (d, org, pitch)
+            self._frame = Q
+            return
+        k = int(np.argmax(np.abs(self.direction)))
         solid = dist <= 0
         pad = [(0, 0)] * 3
         sg = 1 if self.direction[k] > 0 else -1
@@ -911,13 +938,13 @@ class Sweep(Shape):
     def sdf(self, p):
         p = np.asarray(p, float)
         m, _ = self._mesh_base()
-        if m is not None and np.max(np.abs(self.direction)) > 1 - 1e-9:
+        if m is not None:
             from scipy import ndimage
             if self._grid is None:
                 self._build_grid()
             dist, origin, pitch = self._grid
             p = p.reshape(-1, 3)
-            coords = ((p - origin) / pitch - 0.5).T
+            coords = (((p @ self._frame.T if self._frame is not None else p) - origin) / pitch - 0.5).T
             inside = np.all((coords >= 0) & (coords <= (np.asarray(dist.shape)[:, None] - 1)), axis=0)
             out = ndimage.map_coordinates(dist, coords, order=1, mode="nearest")
             lo, hi = self.bounds()
@@ -988,6 +1015,134 @@ class Moved(Shape):
 
     def to_spec(self):
         raise ValueError("a moved shape is derived from a keep-out's insertFrom path and has no JSON form of its own")
+
+
+class Posed(Shape):
+    """A shape turned and moved: a point p of the base is at R p + t (a part
+    part-way along an assembly path that turns it)."""
+
+    kind = "posed"
+
+    def __init__(self, base: Shape, R, t):
+        self.base = base
+        self.R = np.asarray(R, float)
+        self.t = np.asarray(t, float)
+
+    def sdf(self, p):
+        return self.base.sdf((np.asarray(p, float).reshape(-1, 3) - self.t) @ self.R)
+
+    def contains(self, p):
+        return self.sdf(p) <= 0.0
+
+    def bounds(self):
+        lo, hi = self.base.bounds()
+        c = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+        q = c @ self.R.T + self.t
+        return q.min(axis=0), q.max(axis=0)
+
+    def to_manifold(self):
+        return self.base.to_manifold().transform(np.column_stack([self.R, self.t]))
+
+    def to_spec(self):
+        raise ValueError("a posed shape is derived from a keep-out's insertFrom path and has no JSON form of its own")
+
+
+def posed(shape: Shape, R, t) -> Shape:
+    """`shape` with each point p at R p + t. A mesh is turned as a mesh (its
+    own distance grid, so sweeps of it stay cheap); with no turn it is Moved."""
+    R, t = np.asarray(R, float), np.asarray(t, float)
+    if np.allclose(R, np.eye(3), atol=1e-12):
+        return shape if not np.any(t) else Moved(shape, t)
+    if isinstance(shape, Moved):
+        return posed(shape.base, R, R @ shape.offset + t)
+    if isinstance(shape, MeshShape):
+        m = shape.mesh.copy()
+        M = np.eye(4)
+        M[:3, :3], M[:3, 3] = R, t
+        m.apply_transform(M)
+        return MeshShape(m)
+    if isinstance(shape, Union):
+        return Union([posed(s, R, t) for s in shape.shapes])
+    return Posed(shape, R, t)
+
+
+class TurnSweep(Shape):
+    """The space a shape passes through turning `angle` degrees about the
+    line through `at` along `axis`, sliding `along` mm down it as it goes:
+    the pivoting leg of an assembly path (a board's end in first under a
+    rim, then laid flat). Copies of the shape a small turn apart: between
+    two copies the shape's farthest point moves `step` mm, so a board
+    1.6 mm thick swinging broadside leaves no gap between them (a step
+    set by the arc's sag alone left 0.3 mm slots between copies of one,
+    and the mesh through them was not a manifold). A convex shape's copies
+    are joined by their hulls."""
+
+    kind = "turn-sweep"
+
+    def __init__(self, base: Shape, axis, at, angle: float, along: float = 0.0, step: float = 0.2):
+        a = np.asarray(axis, float)
+        self.base = base
+        self.axis = a / np.linalg.norm(a)
+        self.at = np.asarray(at, float)
+        self.angle = float(angle)
+        self.along = float(along)
+        lo, hi = base.bounds()
+        c = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+        q = c - self.at
+        r = float(np.linalg.norm(q - np.outer(q @ self.axis, self.axis), axis=1).max())
+        travel = max(abs(np.radians(self.angle)) * r, abs(self.along))
+        n = int(min(max(np.ceil(travel / step), 1), 400))
+        self.shares = np.linspace(0.0, 1.0, n + 1)
+        self._box = None
+
+    def pose(self, s: float):
+        """(R, t) at the share s of the turn: a point x of the base is at R x + t."""
+        from .motion import rotation
+        Q = rotation(self.axis, s * self.angle)
+        return Q, self.at - Q @ self.at + s * self.along * self.axis
+
+    def sdf(self, p):
+        p = np.asarray(p, float).reshape(-1, 3)
+        # well outside the sweep's box the distance to the box is a fine
+        # lower bound; the copies are only read near it
+        lo, hi = self.bounds()
+        q = np.maximum(np.maximum(lo - p, p - hi), 0.0)
+        far = np.linalg.norm(q, axis=1)
+        out = np.maximum(far, 1.0)
+        near = np.nonzero(far < 2.0)[0]
+        for i in range(0, len(near), 200_000):
+            idx = near[i:i + 200_000]
+            best = None
+            # the base read through each pose (one distance grid, not a mesh per copy)
+            for s in self.shares:
+                Q, t = self.pose(s)
+                v = self.base.sdf((p[idx] - t) @ Q)
+                best = v if best is None else np.minimum(best, v)
+            out[idx] = best
+        return out
+
+    def contains(self, p):
+        return self.sdf(p) <= 0.0
+
+    def bounds(self):
+        if self._box is None:
+            lo, hi = self.base.bounds()
+            c = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+            q = np.vstack([c @ Q.T + t for Q, t in (self.pose(s) for s in self.shares)])
+            # between two copies a corner bulges out by a hair
+            self._box = (q.min(axis=0) - 0.05, q.max(axis=0) + 0.05)
+        return self._box[0].copy(), self._box[1].copy()
+
+    def to_manifold(self):
+        import manifold3d as m3d
+        base = self.base.to_manifold()
+        mans = [base.transform(np.column_stack(self.pose(s))) for s in self.shares]
+        if _convex(self.base):
+            mans = [m3d.Manifold.batch_hull([a, b]) for a, b in zip(mans[:-1], mans[1:])]
+        return m3d.Manifold.batch_boolean(mans, m3d.OpType.Add) if len(mans) > 1 else mans[0]
+
+    def to_spec(self):
+        raise ValueError("a turn sweep is derived from a keep-out's insertFrom and has no JSON form of its own")
 
 
 def _convex(shape) -> bool:

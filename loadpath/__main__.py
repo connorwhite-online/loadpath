@@ -1842,6 +1842,7 @@ def _enclosure(args):
            "placement": {k: {"centre": v["centre"], "roomToSkin": v["roomToSkin"], "auto": v["auto"]}
                          for k, v in rep["placement"]["components"].items()},
            "assembly": {k: v.get("insertFrom") for k, v in rep["assembly"]["components"].items()},
+           "steps": [f"{s['n']}. {s['text']}" for s in rep["assembly"].get("steps") or []],
            "loadCases": rep["loadCases"], "warnings": rep["warnings"],
            **({"lint": rep["lint"]} if rep["lint"] else {})}
     print(json.dumps(out, default=float))

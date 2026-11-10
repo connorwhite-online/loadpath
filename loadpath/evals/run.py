@@ -649,7 +649,8 @@ def run_enclosure_case(raw: dict, base: str, out: str, tier: str = "full") -> di
     switch, feel or cooling targets met.
 
     expect: brief (keys merged into the product's brief: a coarser grid),
-    minSafetyFactor (default the brief's goal), maxKeepOutIntrusion
+    minSafetyFactor (default the brief's goal), minTilt (degrees: some
+    part must turn at least this much on its way in), maxKeepOutIntrusion
     (mm^3, default 1), maxPathsIntoSkin (mm^3, default 0.05), maxMass (g,
     all parts), maxSeconds; designTargets (default true: switch/feel/cooling
     passes). expect.coarse: brief (keys merged into the brief: a coarser
@@ -711,8 +712,13 @@ def run_enclosure_case(raw: dict, base: str, out: str, tier: str = "full") -> di
                             for k, v in rep["placement"]["components"].items()}
         row["assembly"] = {k: v.get("insertFrom") for k, v in rep["assembly"]["components"].items()}
         row["warnings"] = rep.get("warnings")
+        # the most any part is turned on its way in (a case that only
+        # passes with a tilt asks for one: expect.minTilt, degrees)
+        tilt = max([0.0] + [float(v.get("tilt") or 0.0) for v in rep["assembly"]["components"].values()])
+        row["steps"] = [s["text"] for s in rep["assembly"].get("steps") or []]
         checks = [("components placed", placed, ">=", len(comps)),
                   ("ways in blocked", len(blocked), "<=", 0),
+                  ("most tilt on a way in deg", tilt, ">=", expect.get("minTilt")),
                   ("ways in into the skin mm^3", into_skin, "<=", expect.get("maxPathsIntoSkin", 0.05)),
                   ("study lint errors", len(rep.get("lint") or []), "<=", 0)]
         res = design_and_check(r, enc, pitches=pitches, iterations=its, time_limit=tl, quick=quick, on_progress=note)

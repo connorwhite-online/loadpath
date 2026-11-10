@@ -84,6 +84,158 @@ def test_insertion_path_through_an_opening():
     assert insertion_path(part.sdf, part.bounds(), walls.sdf, ([-10, -10, -2], [10, 10, 6])) is None
 
 
+def test_turn_legs():
+    """A path's legs are slides and turns: the pose after them, the one
+    move between two poses (a turn about the line that stays put), their
+    JSON, and the points walked along them against a wall."""
+    from loadpath.motion import Turn, _between, end_pose, legs_from_spec, legs_to_spec, path_check, rotation
+    legs = [Turn(np.array([0.0, 1.0, 0.0]), np.array([10.0, 0.0, 2.0]), 20.0), (np.array([1.0, 0.0, 0.0]), 5.0)]
+    R, t = end_pose(legs)
+    assert np.allclose(R, rotation([0, 1, 0], 20.0))
+    # the pivot stays where it is through the turn, then slides with the part
+    assert np.allclose(R @ np.array([10.0, 0.0, 2.0]) + t, [15.0, 0.0, 2.0])
+    back = _between((np.eye(3), np.zeros(3)), end_pose(legs[:1]))
+    assert isinstance(back, Turn) and abs(back.angle - 20.0) < 1e-9 and abs(back.along) < 1e-9
+    assert np.allclose(back.at[[0, 2]], [10.0, 2.0]) and np.allclose(back.axis, [0, 1, 0])
+    spec = legs_to_spec(legs + [(np.array([0.0, 0.0, -1.0]), None)])
+    assert spec == [{"turn": 20.0, "about": "+y", "at": [10.0, 0.0, 2.0]}, {"toward": "+x", "length": 5.0}, "-z"]
+    again = legs_from_spec(spec)
+    assert isinstance(again[0], Turn) and again[1][1] == 5.0 and again[2][1] is None
+    assert legs_to_spec([(np.array([0.0, 0.0, -1.0]), None)]) == "-z"
+    # a bar's end swings up into a ceiling 3 mm over it: 20 degrees about its other end lifts it 6.8 mm
+    pts = np.array([[x, 0.0, 0.0] for x in np.linspace(0, 20, 41)])
+
+    def ceiling(q):
+        return q[:, 2] - 3.0, np.zeros(len(q), int)
+    up = [Turn(np.array([0.0, 1.0, 0.0]), np.zeros(3), -20.0)]
+    ok, worst, _, where, _ = path_check(pts, ceiling, up, [-1, -1, -1], [21, 1, 4], 0.1)
+    assert not ok and where[2] > 3.0, (ok, worst, where)
+    ok, worst, *_ = path_check(pts, ceiling, [Turn(np.array([0.0, 1.0, 0.0]), np.zeros(3), -8.0)],
+                               [-1, -1, -1], [21, 1, 4], 0.1)
+    assert ok and worst == 0.0, (ok, worst)
+    # a cable followed out along the same legs (wires.py) ends in the same pose
+    from loadpath.wires import _path_leg, rigid
+    Rw, tw = rigid({"type": "path", "legs": [_path_leg(leg) for leg in legs]}, 1.0)
+    assert np.allclose(Rw, R) and np.allclose(tw, t)
+
+
+def _tray():
+    """A board 40 mm long on the floor of a tray whose top is roofed over
+    its +x end: the opening is 30 mm long."""
+    from loadpath.shapes import Box, Union
+    part = Box([-20, -10, 0], [20, 10, 2])
+    walls = Union([Box([-24, -13, -3], [24, 13, -1.0]), Box([-24, -13, -3], [-22, 13, 14]),
+                   Box([22, -13, -3], [24, 13, 14]), Box([-24, -13, -3], [24, -11.5, 14]),
+                   Box([-24, 11.5, -3], [24, 13, 14]), Box([8, -13, 6], [24, 13, 14])])
+    return part, walls, ([-24, -13, -3], [24, 13, 14])
+
+
+def test_a_board_longer_than_its_opening_tilts_in():
+    """No straight slides take the board out from under the roof; turned,
+    it comes out, and the legs found are walked exactly. With tilting off
+    it has no way in."""
+    from loadpath.enclosure import _legs_of, _way_in
+    from loadpath.motion import Turn
+    from loadpath.placement import insertion_motion
+    part, walls, box = _tray()
+    assert insertion_path(part.sdf, part.bounds(), walls.sdf, box) is None
+    r = insertion_motion(part.sdf, part.bounds(), walls.sdf, box)
+    assert r is not None and 5.0 < r["tilt"] <= 45.0 and np.allclose(np.abs(r["axis"]), [0, 1, 0]), r and r["tilt"]
+    assert insertion_motion(part.sdf, part.bounds(), walls.sdf, box, max_tilt=4.0) is None
+    rec = _way_in(part.sdf, part.bounds(), None, walls.sdf, box, 0.25, None, {"max": 45.0})
+    assert rec["insertFrom"] is not None and rec["how"] == "tilt" and rec["tilt"] > 5.0, rec
+    legs = _legs_of(rec["insertFrom"])
+    assert any(isinstance(leg, Turn) for leg in legs) and len(legs) <= 6, rec
+    assert rec["worstPenetration"] <= 0.25
+    assert _way_in(part.sdf, part.bounds(), None, walls.sdf, box, 0.25, None, None)["insertFrom"] is None
+    # sealed, it has no way in however it turns
+    from loadpath.shapes import Box, Union
+    shut = Union([walls, Box([-24, -13, 12], [24, 13, 14])])
+    assert insertion_motion(part.sdf, part.bounds(), shut.sdf, box) is None
+
+
+def test_a_turn_sweeps_the_keep_out():
+    """A keep-out whose way in turns keeps clear the space it turns
+    through: the study lints, and the keep-out reaches where the part's
+    far end swings and no further."""
+    from loadpath.spec import study_from_dict
+    study = {
+        "designSpace": {"type": "box", "min": [-5, -6, -2], "max": [45, 6, 30]},
+        "supports": [{"shape": {"type": "box", "min": [-6, -7, -3], "max": [46, 7, -1.99]}}],
+        "loadCases": [{"name": "press", "loads": [
+            {"shape": {"type": "box", "min": [-6, -7, 29.99], "max": [46, 7, 31]}, "force": [0, 0, -1]}]}],
+        "material": {"E": 2000, "nu": 0.3, "strength": 50, "density": 1.2},
+        "goal": {"volumeFraction": 0.3},
+        "keepOut": [{"id": "board", "bore": False, "shape": {"type": "box", "min": [0, -4, 0], "max": [40, 4, 2]},
+                     "insertFrom": [{"turn": -30, "about": "y", "at": [0, 0, 1]},
+                                    {"toward": [0.866025, 0, 0.5], "length": 6.0}, "+z"]}],
+    }
+    assert not [x for x in lint(study, "study") if x["level"] == "error"], lint(study, "study")
+    ko = study_from_dict(study).keep_out[0].shape
+    # the far end at 15 degrees: (38.6, 0, 11.4); at 30, slid 3 mm: (37.2, 0, 22.5); then on up
+    inside = np.array([[20.0, 0, 1.0], [38.6, 0, 11.4], [37.2, 0, 22.5], [36.0, 0, 28.0]])
+    outside = np.array([[38.0, 0, -1.0], [44.0, 0, 8.0], [20.0, 0, -1.5], [10.0, 5.5, 3.0]])
+    assert (ko.sdf(inside) < 0).all(), ko.sdf(inside)
+    assert (ko.sdf(outside) > 0).all(), ko.sdf(outside)
+    man = ko.to_manifold()
+    assert man.volume() > 40 * 8 * 2 * 3, man.volume()
+    bad = dict(study, keepOut=[dict(study["keepOut"][0], insertFrom=[{"turn": 30, "about": "y"}, "+z"])])
+    assert [x for x in lint(bad, "study") if x["level"] == "error"]
+
+
+def test_assembly_steps_read_in_order():
+    """The steps a person follows are the legs the part leaves by, turned
+    round: held tilted outside, brought in, slid, laid flat."""
+    from loadpath.motion import legs_from_spec, steps
+    ins = [{"turn": 10.0, "about": "+y", "at": [-30.0, 0.0, 0.0]}, {"toward": "+x", "length": 8.0}, "-z"]
+    out = steps(["board", "lid"], {"board": {"insertFrom": ins, "travelsWith": ["conn"]}},
+                {"board": ([-27.0, -11.0, 0.0], [27.0, 11.0, 1.6])}, external=["lid"])
+    assert [s["n"] for s in out] == [1, 2, 3, 4, 5] and [s["component"] for s in out] == ["board"] * 4 + ["lid"]
+    text = [s["text"] for s in out]
+    assert text[0].startswith("Hold board (with conn on it) tilted 10° about +y") and "-z side" in text[0], text
+    assert text[1] == "Bring it in toward +z.", text
+    assert text[2] == "Slide it 8 mm toward -x.", text
+    assert text[3].startswith("Turn it 10° about a line along y through x = -30, z = 0") \
+        and text[3].endswith("until it sits square: it is home."), text
+    assert text[4] == "Fit lid from outside."
+    assert len(legs_from_spec(ins)) == 3
+    one = steps(["cell"], {"cell": {"insertFrom": "-z"}}, {"cell": ([0, 0, 0], [1, 1, 1])})
+    assert [s["text"] for s in one] == ["Hold cell as it will sit, outside the -z side.",
+                                        "Bring it in toward +z: it is home."], one
+
+
+def test_a_product_that_only_goes_together_with_a_tilt():
+    """The desk hub (evals/products.py): its board is longer than the door
+    under it and its connector reaches out through a port, so no straight
+    slides put it in. It is placed with a tilted way in that cuts nothing
+    from the skin, and enclosure.json says how in numbered steps; with
+    tilting off the board cannot be placed."""
+    from loadpath.evals.products import write
+    from loadpath.motion import Turn, legs_from_spec
+    d = tempfile.mkdtemp()
+    brief = json.load(open(write("desk-hub", d)))
+    out = tempfile.mkdtemp()
+    r = enclosure(brief, d, out)
+    st, rep = r["study"], r["report"]
+    assert not rep["lint"] and not rep["warnings"], (rep["lint"], rep["warnings"])
+    way = rep["assembly"]["components"]["board"]
+    assert way["how"] == "tilt" and 5.0 <= way["tilt"] <= 45.0, way
+    legs = legs_from_spec(way["insertFrom"])
+    assert any(isinstance(leg, Turn) for leg in legs) and len(legs) <= 6, way
+    keep = {k["id"]: k for k in st["keepOut"]}
+    assert keep["board"]["insertFrom"] == way["insertFrom"] == keep["connector"]["insertFrom"]
+    steps = rep["assembly"]["steps"]
+    assert [s["n"] for s in steps] == list(range(1, len(steps) + 1)) and steps[-1]["component"] == "foot", steps
+    assert "tilted" in steps[0]["text"] and steps[len(legs)]["text"].endswith("it is home."), steps
+    notch = paths_into_skin(st, out)
+    assert notch and all(v <= 0.05 for v in notch.values()), notch
+    json.dumps(rep, default=float)
+    flat = enclosure(dict(brief, tilt=0), d, tempfile.mkdtemp())["report"]
+    assert "board" not in flat["placement"]["components"] or \
+        flat["assembly"]["components"]["board"]["insertFrom"] is None, flat["assembly"]
+    assert any("board" in w for w in flat["warnings"]), flat["warnings"]
+
+
 def test_placement_rules():
     """The connector ends up out through its port, short of the exterior by
     the recess, and the battery on the floor; every part keeps its margin."""
@@ -285,20 +437,6 @@ def test_drawn_check_flags_a_missing_mount():
     assert isinstance(short, trimesh.Trimesh)
 
 
-if __name__ == "__main__":
-    fails = 0
-    for name, fn in list(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn()
-                print("ok  ", name, flush=True)
-            except Exception:
-                fails += 1
-                print("FAIL", name, flush=True)
-                traceback.print_exc()
-    sys.exit(1 if fails else 0)
-
-
 def test_plug_loads_go_through_the_boards_mount():
     """loads.connector: a USB-C plug pushed in, pulled out and levered across
     both sides at 15 mm, into the board's mount with the moment of its lever,
@@ -345,3 +483,17 @@ def test_keep_out_insert_from_a_vector_is_one_straight_way_out():
     assert b[2] > 9.0 and a[0] < -2.0
     legs = _legs_of([-0.258819, 0.0, 0.965926])
     assert len(legs) == 1 and legs[0][1] is None
+
+
+if __name__ == "__main__":
+    fails = 0
+    for name, fn in list(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print("ok  ", name, flush=True)
+            except Exception:
+                fails += 1
+                print("FAIL", name, flush=True)
+                traceback.print_exc()
+    sys.exit(1 if fails else 0)

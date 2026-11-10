@@ -1,0 +1,24 @@
+{
+ "name": "enclosure-desk-hub",
+ "description": "A desk USB hub, one piece of rigid PA12 (SLS): the board is longer than the service door under it and its connector has to reach out through the port in the end wall, so no straight slide puts it in. It goes in nose first at a tilt and is laid flat (motion.py); with tilting off (tilt: 0) the board has no way in and the case fails. A 200 g drop on its base and its top, an 80 N squeeze.",
+ "enclosure": {
+  "product": "desk-hub"
+ },
+ "expect": {
+  "minSafetyFactor": 1.5,
+  "minTilt": 5,
+  "coarse": {
+   "brief": {
+    "resolution": {
+     "pitch": 1.2
+    }
+   },
+   "timeLimit": 8
+  },
+  "brief": {
+   "resolution": {
+    "pitch": 0.8
+   }
+  }
+ }
+}

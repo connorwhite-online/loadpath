@@ -137,29 +137,13 @@ class _Obstacles:
         return best, who
 
 
-def _path_check(pts, obstacles: _Obstacles, legs, exit_lo, exit_hi, tol: float, step: float = 0.25):
-    """Move the points along legs [(d, length or None)]; the last leg runs
-    until every point is outside the exit box. Returns (clear, worst
-    penetration, obstacle name, where (point), distance travelled)."""
-    at = np.zeros(3)
-    worst, where, who_w, dist = 0.0, None, None, 0.0
-    corners = np.array([[x, y, z] for x in (exit_lo[0], exit_hi[0]) for y in (exit_lo[1], exit_hi[1])
-                        for z in (exit_lo[2], exit_hi[2])])
-    for d, length in legs:
-        if length is None:
-            # until the whole component is past the exterior's bounds
-            length = float((corners @ d).max() - ((pts + at) @ d).min()) + 0.5
-        n = max(int(np.ceil(length / step)), 1)
-        for t in np.linspace(0.0, length, n + 1):
-            q = pts + at + t * d
-            pen, who = obstacles.penetration(q)
-            j = int(np.argmax(pen))
-            if pen[j] > worst:
-                worst, where, who_w, dist = float(pen[j]), q[j], int(who[j]), float(np.linalg.norm(at) + t)
-            if worst > tol:
-                return False, worst, obstacles.names[who_w], where, dist
-        at = at + length * d
-    return True, worst, (obstacles.names[who_w] if who_w is not None else None), where, dist
+def _path_check(pts, obstacles: _Obstacles, legs, exit_lo, exit_hi, tol: float, step: float = 0.25, start=None):
+    """Move the points along legs [(d, length or None) | motion.Turn]; the
+    last leg runs until every point is outside the exit box. Returns (clear,
+    worst penetration, obstacle name, where (point), distance travelled)."""
+    from .motion import path_check
+    ok, worst, who, where, dist = path_check(pts, obstacles.penetration, legs, exit_lo, exit_hi, tol, step, start)
+    return ok, worst, (obstacles.names[who] if who is not None else None), where, dist
 
 
 def assembly_paths(components: list, order: list, fixed: list, exit_bounds, tol: float = 0.25,

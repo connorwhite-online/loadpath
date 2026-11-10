@@ -193,12 +193,30 @@ _KEEP_OUT = {
                                               "toward": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"},
                                                                    _VEC3]},
                                               "length": _POS}, "required": ["toward"],
+                                          "additionalProperties": False}, {
+                                          "type": "object", "properties": {
+                                              "turn": {"type": "number", "minimum": -180, "maximum": 180,
+                                                       "description": "degrees the part turns on this leg, "
+                                                                      "right-handed about `about` (a board "
+                                                                      "tilted out from under a rim)"},
+                                              "about": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"},
+                                                                  _VEC3],
+                                                        "description": "the direction of the line it turns "
+                                                                       "about"},
+                                              "at": {**_VEC3, "description": "a point on that line (mm): the "
+                                                                             "pivot"},
+                                              "along": {"type": "number", "description": "mm it slides down "
+                                                                                         "the line as it turns "
+                                                                                         "(default 0)"}},
+                                          "required": ["turn", "about", "at"],
                                           "additionalProperties": False}]}}],
                                   "description": "Assembly path: the side the component (or a tool) comes in "
                                                  "from, like '-z', or a vector. The keep-out is swept out of the "
                                                  "design space that way, so nothing generated blocks putting "
                                                  "the part together (a board slid in from below, a driver "
-                                                 "reaching a screw)."},
+                                                 "reaching a screw). A path's legs are slides {toward, length} "
+                                                 "and turns {turn, about, at}: a part that only goes in at a "
+                                                 "tilt (motion.py)."},
                    "finish": {"enum": ["auto", "as-built", "ream"],
                               "description": "auto (default): ream when the process cannot hold the fit as "
                                              "printed (the hole is drawn undersize for the reamer); as-built: "
@@ -2746,9 +2764,19 @@ ENCLOSURE_SCHEMA = {
             "insertFrom": {"description": "a hint for its assembly path, tried first"},
             "fixed": {"type": "boolean", "description": "take insertFrom as given"},
             "clearance": {"type": "boolean"},
+            "tilt": {"anyOf": [{"type": "boolean"}, {"type": "number", "minimum": 0, "maximum": 90}],
+                     "description": "how far this part may be turned on its way in, degrees (default the "
+                                    "brief's tilt); false or 0: straight slides only (a cell that must stay "
+                                    "level, a part on a rail)"},
             "pathTolerance": {"type": "number", "minimum": 0}},
             "x-requireOne": [["shape"], ["size"]], "additionalProperties": False}},
         "assembly": {"type": "array", "items": {"type": "string"}, "description": "order the components go in"},
+        "tilt": {"anyOf": [{"type": "boolean"}, {"type": "number", "minimum": 0, "maximum": 90}],
+                 "description": "how far a part may be turned from how it sits on its way in, degrees (default "
+                                "45). A part with no way in by straight slides is tried turning: tilted in "
+                                "through an opening shorter than it is, pivoted about an edge, laid flat "
+                                "(motion.py). The way in found has the least tilt; enclosure.json's "
+                                "assembly.steps says it in numbered steps. false or 0: straight slides only"},
         "placement": {"type": "object", "properties": {
             "pitch": _POS, "beam": {"type": "integer", "minimum": 1, "maximum": 8},
             "margin": {"type": "number", "minimum": 0, "description": "mm round every part (default 0.5)"},

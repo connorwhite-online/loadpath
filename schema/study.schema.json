@@ -4203,12 +4203,60 @@
                       "toward"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "turn": {
+                        "type": "number",
+                        "minimum": -180,
+                        "maximum": 180,
+                        "description": "degrees the part turns on this leg, right-handed about `about` (a board tilted out from under a rim)"
+                      },
+                      "about": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[+-]?[xyz]$"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "[x, y, z]"
+                          }
+                        ],
+                        "description": "the direction of the line it turns about"
+                      },
+                      "at": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "a point on that line (mm): the pivot"
+                      },
+                      "along": {
+                        "type": "number",
+                        "description": "mm it slides down the line as it turns (default 0)"
+                      }
+                    },
+                    "required": [
+                      "turn",
+                      "about",
+                      "at"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               }
             }
           ],
-          "description": "Assembly path: the side the component (or a tool) comes in from, like '-z', or a vector. The keep-out is swept out of the design space that way, so nothing generated blocks putting the part together (a board slid in from below, a driver reaching a screw)."
+          "description": "Assembly path: the side the component (or a tool) comes in from, like '-z', or a vector. The keep-out is swept out of the design space that way, so nothing generated blocks putting the part together (a board slid in from below, a driver reaching a screw). A path's legs are slides {toward, length} and turns {turn, about, at}: a part that only goes in at a tilt (motion.py)."
         },
         "finish": {
           "enum": [

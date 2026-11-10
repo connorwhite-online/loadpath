@@ -89,7 +89,9 @@ Where it is strongest:
   battery, a board and its connector, a motor, with masses), places each
   part inside the shell by rules an agent can state (on the floor, out
   through its port, under a press point, near the board), keeps only
-  places each part can actually be assembled into in order, and designs
+  places each part can actually be assembled into in order (tilting a
+  part in where no straight slide fits, a board longer than its door, and
+  writing the assembly out as numbered steps), and designs
   everything invisible around them for drops, squeezes and presses, with
   the exterior checked untouched on the delivered part
   ([docs/ENCLOSURE.md](docs/ENCLOSURE.md)): a generic sensor puck's

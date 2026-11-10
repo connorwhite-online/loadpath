@@ -786,14 +786,24 @@ def rigid(motion: dict, s: float):
         lo, hi = motion.get("range", [0, 10])
         return np.eye(3), _vec(motion.get("axis", "z")) * (lo + s * (hi - lo))
     if kind == "path":
-        legs = [(_vec(l["toward"]), float(l["length"])) for l in motion["legs"]]
-        tot = sum(L for _, L in legs)
-        d = s * tot
-        t = np.zeros(3)
-        for v, L in legs:
-            t = t + v * min(max(d, 0.0), L)
+        # a leg is a slide {toward, length} or a turn {turn: deg, about,
+        # at, along?, length: its share of the way} (a part tilted in)
+        d = s * sum(float(l["length"]) for l in motion["legs"])
+        R, t = np.eye(3), np.zeros(3)
+        for l in motion["legs"]:
+            L = float(l["length"])
+            u = min(max(d, 0.0), L)
             d -= L
-        return np.eye(3), t
+            if "turn" in l:
+                ax = _vec(l["about"])
+                ang = np.radians(float(l["turn"])) * u / L
+                K = np.array([[0, -ax[2], ax[1]], [ax[2], 0, -ax[0]], [-ax[1], ax[0], 0]])
+                Q = np.eye(3) + np.sin(ang) * K + (1 - np.cos(ang)) * K @ K
+                at = np.asarray(l["at"], float)
+                R, t = Q @ R, Q @ (t - at) + at + float(l.get("along") or 0.0) * u / L * ax
+            else:
+                t = t + _vec(l["toward"]) * u
+        return R, t
     raise ValueError(f"motion type {kind!r} is not revolute, prismatic or path")
 
 
@@ -1389,14 +1399,28 @@ def _judge_one(cab, a, b, room, w, physics):
     return rep["length"] * (1.0 + 2.0 * max(0.0, rep["allowedBendRadius"] / max(rep["minBendRadius"], 1e-6) - 0.6))
 
 
+def _path_leg(leg) -> dict:
+    """A way-in leg as a path motion's: a slide (direction, mm), or a turn
+    (motion.Turn), which counts for the arc it swings at 30 mm plus its
+    slide along the axis."""
+    from .motion import Turn
+    if isinstance(leg, Turn):
+        return {"turn": float(leg.angle), "about": np.asarray(leg.axis, float).tolist(),
+                "at": np.asarray(leg.at, float).tolist(), "along": float(leg.along),
+                "length": max(abs(np.radians(leg.angle)) * 30.0 + abs(leg.along), 1.0)}
+    d, L = leg
+    return {"toward": np.asarray(d, float).tolist(), "length": float(L)}
+
+
 def assembly_follow(lw: Laid, legs: list, moving: list, end: int, travel: float, steps: int = 16) -> dict:
     """A cable already plugged in at both ends, followed as the part at
-    `end` backs out the way it went in (legs: [(direction, mm)]), until it
+    `end` backs out the way it went in (legs: [(direction, mm) or a
+    motion.Turn]), until it
     is `travel` mm out or the cable comes taut, then home again. Says how
     far out the part can be with the cable on, and whether the cable
     stows again without a kink."""
-    motion = {"type": "path", "legs": [{"toward": np.asarray(d, float).tolist(), "length": float(L)} for d, L in legs]}
-    total = sum(float(L) for _, L in legs)
+    motion = {"type": "path", "legs": [_path_leg(leg) for leg in legs]}
+    total = sum(l["length"] for l in motion["legs"])
     travel = min(float(travel), total)
     rod = lw.rod
     lw.history = [{"s": 0.0, **lw.snapshot(), "converged": True}]
@@ -1450,6 +1474,7 @@ def enclosure_wires(brief: dict, comps: list, lay_out: dict, paths: dict, root, 
     back as a keep-out. bodies: {id: (shape with .sdf and .bounds, mesh or
     None)}."""
     from .enclosure import _legs_of
+    from .motion import Turn, rotation
 
     byid = {c["id"]: c for c in comps}
     tf = {cid: (np.asarray(rec["matrix"])[:3, :3], np.asarray(rec["matrix"])[:3, 3])
@@ -1508,7 +1533,15 @@ def enclosure_wires(brief: dict, comps: list, lay_out: dict, paths: dict, root, 
             blo = np.min([lay_out["components"][c]["bounds"][0] for c in grp if c in lay_out["components"]], axis=0)
             bhi = np.max([lay_out["components"][c]["bounds"][1] for c in grp if c in lay_out["components"]], axis=0)
             full, off = [], np.zeros(3)
-            for d, L in legs:
+            for leg in legs:
+                if isinstance(leg, Turn):
+                    # a tilt on the way out: the group's box goes with its centre
+                    c = 0.5 * (blo + bhi) + off
+                    Q = rotation(leg.axis, leg.angle)
+                    off = off + Q @ (c - leg.at) + leg.at + leg.along * np.asarray(leg.axis, float) - c
+                    full.append(leg)
+                    continue
+                d, L = leg
                 if L is None:
                     k = int(np.argmax(np.abs(d)))
                     L = (hi[k] - (blo[k] + off[k])) if d[k] > 0 else ((bhi[k] + off[k]) - lo[k])
@@ -1518,7 +1551,8 @@ def enclosure_wires(brief: dict, comps: list, lay_out: dict, paths: dict, root, 
             later = {c for c in byid if rank.get(root(c), -1) > rank.get(r, -1)}
             moving = [fields[c] for c in grp if c in fields]
             lw.rod.obstacles = [f for bid, f in fields.items() if bid not in later]
-            follow = assembly_follow(lw, full, moving, 0 if mover == 0 else -1, sum(L for _, L in full))
+            follow = assembly_follow(lw, full, moving, 0 if mover == 0 else -1,
+                                     sum(_path_leg(leg)["length"] for leg in full))
             lw.rod.obstacles = static
             st = lw.rod.solve(max_iter=600, tol=1e-6)
             lw.status = {**lw.status, **st}

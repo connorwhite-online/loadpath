@@ -977,3 +977,275 @@ def _trace(k, i_last, reached, per_dir_levels, free, k0, level):
             pass
     legs.reverse()
     return legs
+
+
+# --- assembly paths with a tilt ---------------------------------------------
+
+def _route(mask, src, dst):
+    """The shortest way through the True cells of `mask` (6-connected) from
+    cell `src` to the nearest True cell of `dst`: the cells in order, or
+    None. A breadth-first front, kept as index arrays."""
+    shape = np.asarray(mask.shape)
+    src = tuple(int(v) for v in src)
+    if dst[src]:
+        return [np.asarray(src)]
+    seen = np.full(mask.shape, -1, np.int32)
+    seen[src] = 0
+    front = np.asarray([src])
+    steps = np.array([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]])
+    level, hit = 0, None
+    while len(front) and hit is None:
+        level += 1
+        nb = (front[:, None, :] + steps[None]).reshape(-1, 3)
+        nb = nb[np.all((nb >= 0) & (nb < shape), axis=1)]
+        nb = nb[mask[nb[:, 0], nb[:, 1], nb[:, 2]] & (seen[nb[:, 0], nb[:, 1], nb[:, 2]] < 0)]
+        if not len(nb):
+            return None
+        nb = np.unique(nb, axis=0)
+        seen[nb[:, 0], nb[:, 1], nb[:, 2]] = level
+        at = dst[nb[:, 0], nb[:, 1], nb[:, 2]]
+        if at.any():
+            hit = nb[at][np.argmin(np.abs(nb[at] - np.asarray(src)).sum(axis=1))]
+        front = nb
+    if hit is None:
+        return None
+    path = [hit]
+    cur = hit
+    for lv in range(level - 1, -1, -1):
+        nb = cur + steps
+        nb = nb[np.all((nb >= 0) & (nb < shape), axis=1)]
+        nb = nb[seen[nb[:, 0], nb[:, 1], nb[:, 2]] == lv]
+        # keep going the way it was going: fewer corners for the same length
+        if len(path) > 1:
+            going = path[-2] - path[-1]
+            straight = [q for q in nb if np.array_equal(cur - q, going)]
+            cur = straight[0] if straight else nb[0]
+        else:
+            cur = nb[0]
+        path.append(cur)
+    return path[::-1]
+
+
+class _TiltSearch:
+    """insertion_motion about one axis: the grid, its layers of free
+    positions (one per tilt step, computed when reached) and the breadth-
+    first search over the layers' connected regions, a depth at a time."""
+
+    def __init__(self, a, part_sdf, plo, phi, obstacles_sdf, elo, ehi, pitch, tol, max_tilt, cells, min_step,
+                 max_nodes, thin, snug, room):
+        from scipy import fft as sfft
+
+        from .motion import rotation
+        self.a, self.part_sdf, self.plo, self.phi, self.elo, self.ehi = a, part_sdf, plo, phi, elo, ehi
+        self.rot = lambda deg: rotation(np.eye(3)[a], deg)
+        self.c = 0.5 * (plo + phi)
+        self.corners = np.array([[x, y, z] for x in (plo[0], phi[0]) for y in (plo[1], phi[1])
+                                 for z in (plo[2], phi[2])])
+        # the box the part stays in however it is tilted about this axis
+        vlo, vhi = plo.copy(), phi.copy()
+        for deg in np.linspace(-max_tilt, max_tilt, 31):
+            lo_, hi_ = self.turned_box(deg)
+            vlo, vhi = np.minimum(vlo, lo_), np.maximum(vhi, hi_)
+        ext = vhi - vlo
+        h = float(pitch)
+        # one cell per position the part can be at: the exterior's box and
+        # the tilted part's size once round it (the blocked cells' array
+        # wraps: past the box it is empty either way)
+        span = (ehi - elo) + ext + 2.0 * (2.0 * h + 1.0)
+        n_cells = float(np.prod(span / h))
+        if n_cells > cells:
+            h *= (n_cells / cells) ** (1.0 / 3.0)
+        self.h = h
+        # which cells are the part. snug: those whose centre is in it (a
+        # hair over), so it passes any gap it truly passes, and on a coarse
+        # grid some it does not: a thin board's edge can sit in a thin lip
+        # with no cell centre in both. Not snug: every cell within half a
+        # cell of it (and `room` mm more), which no wall slips through and
+        # a gap under about half a cell stops: the route found has that
+        # much room to spare. A part thinner than a cell is never snug
+        self.thr = 0.15 * h if snug and h <= 0.6 * float((phi - plo).min()) else 0.5 * h + room
+        self.na = na = np.ceil(ext / h).astype(int) + 1
+        o_c = vlo - 0.5 * (na * h - ext)
+        self.Q = np.stack(np.meshgrid(*[o_c[i] + (np.arange(na[i]) + 0.5) * h for i in range(3)], indexing="ij"),
+                          -1).reshape(-1, 3)
+        pad = ext + 2.0 * h + 1.0
+        self.m_lo = m_lo = np.ceil((o_c - (elo - pad)) / h).astype(int)
+        m_hi = np.ceil(((ehi + pad) - (o_c + na * h)) / h).astype(int)
+        g0 = o_c - m_lo * h
+        n = m_lo + m_hi + 1
+        ax = [g0[i] + (np.arange(n[i]) + 0.5) * h for i in range(3)]
+        B = np.zeros(tuple(n), np.float32)
+        # a wall counts where a cell centre is deeper in it than the
+        # tolerance: a wall thinner than a cell plus twice that has no such
+        # centre in some rows and the part steps through it (a 1 mm skin on
+        # 0.9 mm cells). The depth asked for shrinks so the thinnest wall
+        # always shows
+        btol = min(tol, 0.5 * (thin - h))
+        ins = [np.nonzero((a_ >= elo[i] - 0.5) & (a_ <= ehi[i] + 0.5))[0] for i, a_ in enumerate(ax)]
+        if all(len(v) for v in ins):
+            yz = np.stack(np.meshgrid(ax[1][ins[1]], ax[2][ins[2]], indexing="ij"), -1).reshape(-1, 2)
+            for i in ins[0]:
+                P = np.column_stack([np.full(len(yz), ax[0][i]), yz])
+                B[i, ins[1][0]:ins[1][-1] + 1, ins[2][0]:ins[2][-1] + 1] = \
+                    (-obstacles_sdf(P) > btol).reshape(len(ins[1]), len(ins[2]))
+        self.fshape = [sfft.next_fast_len(int(v), real=True) for v in n]
+        self.FB = sfft.rfftn(B, self.fshape, workers=-1)
+        del B
+        self.valid = tuple(slice(0, int(n[i])) for i in range(3))
+        self.k0 = tuple(int(v) for v in m_lo)
+        # the tilt step: the part's farthest point moves about a cell
+        reach = float(np.linalg.norm(0.5 * (phi - plo)))
+        self.dstep = float(np.clip(np.degrees(h / max(reach, 1e-9)), min_step, 6.0))
+        self.K = int(np.floor(max_tilt / self.dstep + 1e-9))
+        self.shifts = [(np.arange(self.valid[i].stop) - m_lo[i]) * h for i in range(3)]
+        self.layers = {}
+        self.max_nodes = max_nodes
+        L0 = self.layer(0)
+        start = (0, int(L0["lab"][self.k0]))
+        self.parent = {start: None}
+        self.entry = {start: np.asarray(self.k0)}
+        self.leave = {}
+        self.front = [start]
+        self.goal = None
+
+    def turned_box(self, deg):
+        q = (self.corners - self.c) @ self.rot(deg).T + self.c
+        return q.min(axis=0), q.max(axis=0)
+
+    def layer(self, k):
+        from scipy import fft as sfft
+        from scipy import ndimage
+        if k in self.layers:
+            return self.layers[k]
+        R = self.rot(k * self.dstep) if k else np.eye(3)
+        A = (self.part_sdf((self.Q - self.c) @ R + self.c) <= self.thr).reshape(tuple(self.na)).astype(np.float32)
+        C = sfft.irfftn(self.FB * np.conj(sfft.rfftn(A, self.fshape, workers=-1)), self.fshape,
+                        workers=-1)[self.valid]
+        free = C < 0.5
+        del C
+        if not k:
+            free[self.k0] = True          # where it sits may read as blocked on the grid: let it start
+        lo_, hi_ = self.turned_box(k * self.dstep) if k else (self.plo, self.phi)
+        out = np.zeros(free.shape, bool)
+        for i in range(3):
+            o = (hi_[i] + self.shifts[i] < self.elo[i]) | (lo_[i] + self.shifts[i] > self.ehi[i])
+            out |= o.reshape([-1 if j == i else 1 for j in range(3)])
+        lab, _ = ndimage.label(free)
+        self.layers[k] = {"lab": lab, "obj": ndimage.find_objects(lab), "out": out,
+                          "outs": set(np.unique(lab[out]).tolist()) - {0}}
+        return self.layers[k]
+
+    def advance(self) -> bool:
+        """One depth of the search (one more tilt step from where it sits).
+        True while there is more to search and no way out yet."""
+        from scipy import ndimage
+        ball = np.ones((3, 3, 3), bool)
+        nxt = []
+        for node in self.front:
+            k, l = node
+            L = self.layers[k]
+            if l in L["outs"]:
+                self.goal = node
+                return False
+            if len(self.parent) > self.max_nodes:
+                continue
+            sl = tuple(slice(max(s.start - 1, 0), min(s.stop + 1, L["lab"].shape[i]))
+                       for i, s in enumerate(L["obj"][l - 1]))
+            off = np.array([s.start for s in sl])
+            mine = L["lab"][sl] == l
+            near = ndimage.binary_dilation(mine, ball)
+            mine_idx = None
+            for k2 in (k + 1, k - 1):
+                if abs(k2) > self.K:
+                    continue
+                lab2 = self.layer(k2)["lab"][sl]
+                for l2 in np.unique(lab2[near & (lab2 > 0)]).tolist():
+                    node2 = (k2, int(l2))
+                    if node2 in self.parent:
+                        continue
+                    # in at the cell nearest where this region was entered;
+                    # out of this region at the cell beside it
+                    cand = np.argwhere(near & (lab2 == l2)) + off
+                    e2 = cand[np.argmin(np.abs(cand - self.entry[node]).sum(axis=1))]
+                    if mine_idx is None:
+                        mine_idx = np.argwhere(mine) + off
+                    x = mine_idx[np.abs(mine_idx - e2).max(axis=1) <= 1]
+                    x = x[np.argmin(np.abs(x - e2).sum(axis=1))]
+                    self.parent[node2] = node
+                    self.entry[node2] = e2
+                    self.leave[node2] = x
+                    nxt.append(node2)
+        self.front = nxt
+        return bool(nxt)
+
+    def way(self):
+        """The route to the goal: [(degrees, t)] a cell or a tilt step apart."""
+        chain = [self.goal]
+        while self.parent[chain[-1]] is not None:
+            chain.append(self.parent[chain[-1]])
+        chain.reverse()
+        way = []
+        for i, node in enumerate(chain):
+            k, l = node
+            L = self.layers[k]
+            mask = L["lab"] == l
+            if i + 1 < len(chain):
+                dst = np.zeros(mask.shape, bool)
+                dst[tuple(self.leave[chain[i + 1]])] = True
+            else:
+                dst = L["out"] & mask
+            cells_ = _route(mask, self.entry[node], dst)
+            if cells_ is None:
+                return None
+            way += [(k * self.dstep, (np.asarray(q) - self.m_lo) * self.h) for q in cells_]
+        return way
+
+
+def insertion_motion(part_sdf, part_bounds, obstacles_sdf, exit_bounds, *, pitch: float = 0.5, tol: float = 0.25,
+                     max_tilt: float = 45.0, cells: int = 2_000_000, min_step: float = 1.5, max_nodes: int = 400,
+                     axes=(0, 1, 2), thin: float = 1.0, snug: bool = True, room: float = 0.0) -> dict | None:
+    """A way out for a part that has to turn: where it sits to outside the
+    exterior's bounds through positions and tilts together, or None.
+
+    insertion_path tests every translation of the part as it sits. Here
+    the same test (the part's cells against the blocked cells, by FFT) is
+    made for the part tilted about an axis through its centre, a step at a
+    time up to `max_tilt` degrees, each tilt a layer of free positions.
+    Within a layer the part slides; between neighbouring layers it turns a
+    step where it is (a cell's slack either way, so a pivot about an edge
+    is a staircase of small turns and slides). The layers' connected
+    regions are searched breadth first from where the part sits, the three
+    axes a tilt step in turn, so the way out found has the least tilting,
+    and a layer is only computed when the search reaches it: a part that
+    cannot begin to turn costs three layers per axis.
+
+    The grid has at most `cells` cells per axis searched (it spans the
+    exterior and the tilted part's size round it; past that the pitch
+    grows); `thin` is the thinnest wall in the way (mm), which a coarse
+    grid must still see. `snug` false counts every cell the part
+    touches as the part, grown by `room` mm: a route found that way has
+    about half a cell and `room` to spare everywhere, and a gap tighter
+    than that reads as shut. Returns {"axis": unit vector, "centre", "pitch", "step", "way":
+    [(degrees, t)]}: the part's pose at each cell or tilt step is x =
+    R(degrees)(p - centre) + centre + t. The route is a staircase on a
+    grid; motion.simplify reduces it to a few slides and pivots, each
+    checked exactly."""
+    plo, phi = np.asarray(part_bounds[0], float), np.asarray(part_bounds[1], float)
+    elo, ehi = np.asarray(exit_bounds[0], float), np.asarray(exit_bounds[1], float)
+    live = [_TiltSearch(int(a), part_sdf, plo, phi, obstacles_sdf, elo, ehi, pitch, tol, max_tilt, cells, min_step,
+                        max_nodes, thin, snug, room) for a in axes]
+    done = None
+    while live and done is None:
+        for sr in list(live):
+            if not sr.advance():
+                live.remove(sr)
+                if sr.goal is not None:
+                    done = sr
+                    break
+    if done is None:
+        return None
+    way = done.way()
+    if way is None:
+        return None
+    return {"axis": np.eye(3)[done.a], "centre": done.c, "pitch": done.h, "step": done.dstep, "way": way,
+            "tilt": max(abs(w[0]) for w in way)}

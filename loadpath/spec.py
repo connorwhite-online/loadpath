@@ -914,7 +914,7 @@ def _assembly_path(shape, side, bounds, label):
     length too (an opening's mouth, swept a skin's depth inward). A board whose
     end sits in a slot in the wall slides back out of it, then drops out
     through the opening: [{"toward": "-y", "length": 3.5}, "-z"]."""
-    from .shapes import Moved, Union, sweep
+    from .shapes import TurnSweep, Union, posed, sweep
 
     # a vector ([x, y, z], as shells.apply_split writes for a tilted
     # parting line) is one straight way out, not a path of three legs
@@ -923,12 +923,28 @@ def _assembly_path(shape, side, bounds, label):
     if isinstance(side, list) and not is_vec:
         if not side:
             raise ValueError(f"{label}: an empty path")
-        parts, cur, at = [], shape, np.zeros(3)
+        parts, cur, at, R = [], shape, np.zeros(3), np.eye(3)
         for j, leg in enumerate(side):
             leg = {"toward": leg} if not isinstance(leg, dict) else leg
-            if "toward" not in leg:
-                raise ValueError(f"{label}[{j}] is {{toward, length}} or an axis")
             last = j == len(side) - 1
+            if "turn" in leg:
+                # a turn about a line: {turn: degrees, about: axis, at: [x, y, z], along?: mm}
+                if not isinstance(leg["turn"], (int, float)) or not leg["turn"] or abs(leg["turn"]) > 180:
+                    raise ValueError(f"{label}[{j}].turn: degrees about the axis (not 0, at most 180 either way)")
+                if leg.get("about") is None or leg.get("at") is None:
+                    raise ValueError(f"{label}[{j}]: a turn needs about (an axis) and at (a point on its line)")
+                a = _leg_direction(leg["about"], f"{label}[{j}].about")
+                p0 = np.asarray(leg["at"], float)
+                if p0.shape != (3,):
+                    raise ValueError(f"{label}[{j}].at: a point [x, y, z] on the turn's axis")
+                ts = TurnSweep(cur, a, p0, float(leg["turn"]), float(leg.get("along") or 0.0))
+                parts.append(ts)
+                Q, t = ts.pose(1.0)
+                R, at = Q @ R, Q @ at + t
+                cur = posed(shape, R, at)
+                continue
+            if "toward" not in leg:
+                raise ValueError(f"{label}[{j}] is {{toward, length}}, an axis, or a turn {{turn, about, at}}")
             if last and leg.get("length") is None:
                 parts.append(_assembly_path(cur, leg["toward"], bounds, f"{label}[{j}]"))
                 break
@@ -937,7 +953,7 @@ def _assembly_path(shape, side, bounds, label):
             d = _leg_direction(leg["toward"], f"{label}[{j}]")
             parts.append(sweep(cur, d, float(leg["length"])))
             at = at + float(leg["length"]) * d
-            cur = Moved(shape, at)
+            cur = posed(shape, R, at)
         return Union(parts)
     d = _leg_direction(side, label)
     lo, hi = bounds
