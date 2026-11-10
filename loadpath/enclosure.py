@@ -339,6 +339,46 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
             {"shape": {"type": "sphere", "center": _r(p), "r": float(pz.get("radius", 5.0))},
              "force": _r(-F * n, 3)},
             {"shape": face_slab(_axis_name(-n), t_skin + 0.5), "force": _r(F * n, 3)}]})
+    # connectors: a plug pushed in, pulled out and levered sideways
+    # (connectors.py), into the mount the socket's board sits on, the hand
+    # holding the face across from the port
+    shift_limits = []
+    for cn in _listify(loads.get("connector")):
+        from .connectors import connector_cases
+        cid = cn["component"]
+        if cid not in byid or cid not in lay["components"]:
+            raise ValueError(f"loads.connector.component {cid!r}: not a placed component")
+        if root(cid) not in mounts:
+            warnings.append(f"loads.connector {cid}: its board ({root(cid)}) has no mount; the plug loads go "
+                            "into the socket's own body, which the interior does not hold")
+        region = f"mount-{root(cid)}" if root(cid) in mounts else None
+        if region is None:
+            continue
+        if cn.get("out"):
+            out = _axis_vec(cn["out"])
+        else:
+            al = byid[cid].get("alignTo") or {}
+            o = next((o for o, p in zip(ops, op_place) if p["id"] == al.get("opening")), None)
+            if o is None:
+                raise ValueError(f"loads.connector {cid}: give `out` (the way the plug comes out), or align the "
+                                 "component to an opening")
+            out = -_axis_vec(o["inward"])
+        blo, bhi = (np.asarray(v, float) for v in lay["components"][cid]["bounds"])
+        c0 = 0.5 * (blo + bhi)
+        k = int(np.argmax(np.abs(out)))
+        mouth = c0.copy()
+        mouth[k] = bhi[k] if out[k] > 0 else blo[k]
+        ext = bhi - blo
+        across = [j for j in range(3) if j != k]
+        wide = np.eye(3)[max(across, key=lambda j: ext[j])]
+        cc, clear = connector_cases(
+            cn.get("type", "usb-c"), region=region, mouth=mouth, out=out, wide=wide,
+            hold={"shape": face_slab(_axis_name(-out), t_skin + 0.5)}, name=cn.get("name", cid),
+            insert=cn.get("insert"), withdraw=cn.get("withdraw"), side=cn.get("side"), lever=cn.get("lever"),
+            abuse=bool(cn.get("abuse", False)), wrench=cn.get("wrench"), max_shift=cn.get("maxShift", 0.1))
+        cases += cc
+        if clear:
+            shift_limits.append(clear)
     # rattle: every mounted component held still in the hand (feel.py
     # isolate with upTo): its resonance above the handling band, and a knock
     # at `g` moving it under maxTravel on its mount
@@ -358,7 +398,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         if not rattle_targets:
             warnings.append("loads.rattle: no component has a mass with a mount; nothing to hold still")
     if not cases and not b.get("switch") and not b.get("feel") and not rattle_targets:
-        raise ValueError("enclosure: nothing to design for; give loads (drop, squeeze, press), loadCases, a "
+        raise ValueError("enclosure: nothing to design for; give loads (drop, squeeze, press, connector), loadCases, a "
                          "switch or a feel block")
 
     study = {"name": b.get("name", "enclosure"),
@@ -368,7 +408,9 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     if cases:
         study["supports"] = supports
         study["loadCases"] = cases
-        study["goal"] = b.get("goal") or {"safetyFactor": 2.0}
+        study["goal"] = dict(b.get("goal") or {"safetyFactor": 2.0})
+        if shift_limits:
+            study["goal"]["clearances"] = list(study["goal"].get("clearances") or []) + shift_limits
     # heat: watts per component into the study's thermal block when the
     # brief has one (verify reports the temperatures); a cooling block
     # passes through untouched

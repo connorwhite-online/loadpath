@@ -551,7 +551,9 @@ straight legs) is checked exactly and swept clear as its keep-out. Each
 massed part gets a preserved cradle (`mount`) on a side that is in no
 other part's way in. `loads`: `drop {g, faces}` (each part's mass at g
 toward the face it lands on, the floor's reaction on that face), `squeeze
-{axis, force}`, `press {at, face, force}`, plus `loadCases`, `switch`
+{axis, force}`, `press {at, face, force}`, `connector {component, type}` (a plug pushed in,
+pulled out and levered sideways at the USB-C, USB-A or Micro-B spec
+forces, into the socket's board mount, its travel capped), plus `loadCases`, `switch`
 (as in handoff) and `feel` blocks. `split` hands the study to shells.py
 (one study per half). Read `enclosure.json` before running: a part with
 no place or no way in is in `warnings`; tell the designer what would fix

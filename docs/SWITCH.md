@@ -640,7 +640,10 @@ backed off one step.
   about 25% at the outer ring would.
 - **The delivered mesh** is the isosurface joined to the exact preserved
   geometry, so the cosmetic skin's outside is the designer's mesh
-  unchanged.
+  unchanged. Inside, every rib, wall and mount meets the skin in a fillet
+  of about 1.5 mm (`ReconstructOptions.skin_fillet`, 1.2 by default; 0
+  for a hard corner), and the preserved mounts in the usual 3 mm one: an
+  interior that read as parts stuck on reads as one moulding.
 - **What the designer drew, on the delivered part** (`drawncheck.py`,
   `exterior` and `drawn` in the report; evals fail a part that misses
   either). `exterior`: the part against the design space's own surface,

@@ -104,6 +104,25 @@ it neither rings nor knocks against its neighbours. The targets are
 designed with everything else and read on the delivered part, modes
 included.
 
+`connector: {component, type}` (one, or a list) is what a user does to a
+port: a plug pushed home, pulled out, and levered sideways while it still
+works, through the mount of the board the socket sits on (`component` is
+the socket, `installedOn` its board), with the moment of the lever arm, and
+the hand holding the face across from the port. `type` picks the spec
+numbers (connectors.py): `usb-c` is 20 N in, 20 N out (the top of the
+spec's 5-20 N and 8-20 N ranges, the stiffest new socket), and 8 N across
+the plug's thin side and 20 N across its wide side, 15 mm out from the
+socket's front edge (the 4-axis continuity test); `usb-a` and
+`usb-micro-b` are there too. Any number overrides (`insert`, `withdraw`,
+`side {thin, wide}`, `lever`). `abuse: true` adds the wrenching moments at
+which the plug itself may break (USB-C 2.0 N·m and 3.5 N·m): several times
+the side load, so off by default. The board's mount may move at most
+`maxShift` mm in those cases (default 0.1; a goal clearance), so the
+socket's solder joints are not flexed. The cases are named
+`<component>-insert`, `-withdraw`, `-side-thin`, `-side-wide`.
+`connectors.connector_cases` writes the same cases for any study, with a
+load target where the board bears on the part.
+
 **5. It writes an ordinary study**: the exterior as its `skin` (preserved,
 never edited, with no skin across the openings), the whole interior as
 design space, components as keep-outs with their paths, cradles as

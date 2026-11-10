@@ -29,7 +29,7 @@ __all__ = ["reconstruct", "ReconstructOptions"]
 class ReconstructOptions:
     def __init__(self, upsample=3, smooth_sigma=0.9, level=0.5, max_triangles=250_000,
                  min_body_fraction=0.002, taubin_iterations=25, blend=None, blend_k=0.8, fillet=True, seat=True,
-                 close=None, axial=True, axial_debias=None):
+                 close=None, axial=True, axial_debias=None, skin_fillet=1.2):
         self.upsample = upsample            # field refinement before meshing
         self.smooth_sigma = smooth_sigma    # in fine cells
         self.level = level
@@ -63,6 +63,9 @@ class ReconstructOptions:
         # Debias that average (see _axial_smooth) so thin members keep their
         # volume; None follows resolution.keepThinMembers (off by default).
         self.axial_debias = axial_debias
+        # Fillet radius (mm, about) where the organic body meets the skin;
+        # 0 or None: a hard inside corner, as before.
+        self.skin_fillet = skin_fillet
 
 
 def _smooth_max(a, b, k):
@@ -593,7 +596,7 @@ def _axial_smooth(fine, coarse, upsample, length=AXIAL_LENGTH, coherence=AXIAL_C
 
 
 def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_out=(), min_member=None,
-                flush=(), preserve=(), design=(), draft=None):
+                flush=(), preserve=(), design=(), draft=None, skin=()):
     import trimesh
     from skimage.measure import marching_cubes
 
@@ -702,6 +705,27 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
         filleted = np.clip(o.level - du / (2.0 * width), 0.0, 1.0)
         if design:
             # after the boundary rounding, and never past the boundary itself
+            filleted = np.minimum(filleted, env.reshape(fine.shape))
+        fine = np.maximum(fine, filleted)
+    if skin and o.fillet and o.skin_fillet and o.skin_fillet > 0:
+        # Blend the organic body into the skin as well: every rib, wall and
+        # mount meets the exterior's inside with a fillet of about
+        # `skin_fillet` mm, as a moulded part's would, not in a hard
+        # inside corner (the touch microphone's interior read as parts
+        # stuck on). The skin's field is drawn `inset` inside the skin
+        # itself, so the fillets leave its inner face at an angle and the
+        # mesh never runs along it (the exact skin goes in afterwards; a
+        # surface lying on it welds into slivers). No run-on to the
+        # boundary: that filled a push pad's whole cavity.
+        sk = sdfs.min(skin).reshape(fine.shape)
+        inset = min(0.35, 0.3 * float(o.skin_fillet))
+        du = _smooth_union(_field_distance(fine, step, o.level), sk + inset, o.skin_fillet)
+        width = 2.0 * step
+        filleted = np.clip(o.level - du / (2.0 * width), 0.0, 1.0)
+        # only the fillets: not the inset skin itself, which the exact skin
+        # covers (a second shell of mesh inside it, for nothing)
+        filleted[sk < -0.5 * inset] = 0.0
+        if design:
             filleted = np.minimum(filleted, env.reshape(fine.shape))
         fine = np.maximum(fine, filleted)
     if o.fillet and o.close and o.close > 0:
@@ -1367,7 +1391,7 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     try:
         iso = _isosurface(domain, xphys, o, [r.shape for r in study.keep_out], study.min_member,
                           flush=flush, preserve=inner, design=list(study.design_space),
-                          draft=draft)
+                          draft=draft, skin=[r.shape for r in study.preserve if r.id == "skin"])
     except ValueError as exc:
         # Nothing designed, but preserved geometry to deliver: a fixed
         # exterior whose bare skin already meets every target (a touch

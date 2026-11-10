@@ -2505,13 +2505,34 @@ _PRESS = {"type": "object", "properties": {
            "description": "a point on the exterior, or its two coordinates across the face"},
     "force": {"type": "number", "exclusiveMinimum": 0}, "radius": _POS},
     "required": ["at", "force"], "additionalProperties": False}
+_CONNECTOR = {"type": "object", "properties": {
+    "component": {"type": "string", "description": "the socket's component id (a board's connector: "
+                                                   "installedOn the board, whose mount takes the loads)"},
+    "type": {"enum": ["usb-c", "usb-a", "usb-micro-b"],
+             "description": "the plug's spec loads (default usb-c: 20 N in, 20 N out, 8 N / 20 N sideways at "
+                            "15 mm); any of the numbers below overrides it"},
+    "name": {"type": "string", "description": "case name prefix (default the component id)"},
+    "out": {**_AXIS, "description": "the way the plug comes out (default: out through the opening the "
+                                    "component is aligned to)"},
+    "insert": {**_POS, "description": "N pushing the plug home"},
+    "withdraw": {**_POS, "description": "N pulling it out"},
+    "side": {"type": "object", "properties": {"thin": _POS, "wide": _POS}, "additionalProperties": False,
+             "description": "N across the plug's thin and wide sides at `lever`, while it still works"},
+    "lever": {**_POS, "description": "mm out from the socket's front edge the side loads act (default 15)"},
+    "abuse": {"type": "boolean", "description": "also the wrenching moments at which the plug may break "
+                                                "(usb-c 2.0 / 3.5 N·m); default false"},
+    "wrench": {"type": "object", "properties": {"thin": _POS, "wide": _POS}, "additionalProperties": False,
+               "description": "N·mm wrenching moments, with abuse"},
+    "maxShift": {"type": "number", "minimum": 0, "description": "mm the board's mount may move in these cases "
+                                                                "(default 0.1; 0 for no cap)"}},
+    "required": ["component"], "additionalProperties": False}
 ENCLOSURE_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "loadpath enclosure brief",
     "description": "`loadpath enclosure`: a product from its outside in (enclosure.py). The designer's exterior is "
                    "fixed (kept as the study's skin, never edited); the components are placed inside it "
                    "(placement.py) or taken as given, each gets its assembly path, a mount, and its share of the "
-                   "loads (drops, squeezes, presses, heat, a push pad, feel targets); the interior is designed.",
+                   "loads (drops, squeezes, presses, plugs, heat, a push pad, feel targets); the interior is designed.",
     "type": "object",
     "properties": {
         "name": {"type": "string"}, "description": {"type": "string"},
@@ -2595,6 +2616,11 @@ ENCLOSURE_SCHEMA = {
                         "description": "a hand squeezing across an axis"},
             "press": {"anyOf": [_PRESS, {"type": "array", "items": _PRESS}],
                       "description": "a finger or a weight on the exterior, held by the far face"},
+            "connector": {"anyOf": [_CONNECTOR, {"type": "array", "items": _CONNECTOR}],
+                          "description": "a plug pushed into a component's socket, pulled out and levered "
+                                         "sideways (connectors.py), through the mount its board sits on, the "
+                                         "hand holding the face across from the port; the board's travel is "
+                                         "capped (maxShift) so the socket's solder joints are not flexed"},
             "rattle": {"type": "object", "properties": {
                 "band": {**_POS, "description": "handling band, Hz: each mounted component's resonance is kept "
                                                 "above it (default 150)"},

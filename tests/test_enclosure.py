@@ -299,6 +299,37 @@ if __name__ == "__main__":
     sys.exit(1 if fails else 0)
 
 
+def test_plug_loads_go_through_the_boards_mount():
+    """loads.connector: a USB-C plug pushed in, pulled out and levered across
+    both sides at 15 mm, into the board's mount with the moment of its lever,
+    the hand on the face across from the port, and the board's travel
+    capped in those cases."""
+    from loadpath.connectors import connector_cases
+    b = product()
+    b["loads"] = {"connector": {"component": "conn"}}
+    assert not [x for x in lint(b, "enclosure") if x["level"] == "error"], lint(b, "enclosure")
+    out = tempfile.mkdtemp()
+    st = enclosure(b, _DIR, out)["study"]
+    cs = {c["name"]: c for c in st["loadCases"]}
+    assert list(cs) == ["conn-insert", "conn-withdraw", "conn-side-thin", "conn-side-wide"], list(cs)
+    ins = cs["conn-insert"]["loads"]
+    assert ins[0]["region"] == "mount-board" and ins[0]["force"] == [0.0, 20.0, 0.0], ins
+    assert ins[1]["force"] == [0.0, -20.0, 0.0] and ins[1]["shape"]["max"][1] > 16, ins   # the far (+y) face
+    assert cs["conn-withdraw"]["loads"][0]["force"] == [0.0, -20.0, 0.0]
+    # the plug's tip: 15 mm out of the socket's front edge (-y); wide is x (8 mm), thin z (3 mm)
+    th, wd = cs["conn-side-thin"]["loads"][0], cs["conn-side-wide"]["loads"][0]
+    mouth_y = ins[0]["at"][1]
+    assert abs(th["at"][1] - (mouth_y - 15.0)) < 1e-6, (th, mouth_y)
+    assert abs(abs(th["force"][2]) - 8.0) < 1e-6 and abs(abs(wd["force"][0]) - 20.0) < 1e-6, (th, wd)
+    cl = st["goal"]["clearances"]
+    assert cl == [{"name": "conn-shift", "region": "mount-board", "maxTravel": 0.1, "cases": list(cs)}], cl
+    assert not [x for x in lint(st, "study") if x["level"] == "error"], lint(st, "study")
+    # abuse: the wrenching moments as a force at the lever
+    cc, _ = connector_cases("usb-c", region="r", mouth=[0, 0, 0], out=[0, -1, 0], wide=[1, 0, 0], abuse=True)
+    w = {c["name"]: c["loads"][0]["force"] for c in cc}
+    assert abs(np.linalg.norm(w["usb-c-wrench-wide"]) - 3500 / 15) < 1e-2, w
+
+
 def test_keep_out_insert_from_a_vector_is_one_straight_way_out():
     # shells.apply_split writes a tilted parting line's way out as a vector;
     # it once read as a path of three legs with no lengths and failed lint
