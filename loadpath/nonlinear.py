@@ -446,7 +446,9 @@ class _Pardiso:
         x = self._s._call_pardiso(self._a, np.asfortranarray(b) if b.ndim == 2 else np.ascontiguousarray(b))
         return np.asarray(x).reshape(b.shape)
 
-    def __del__(self):
+    def close(self):
+        """Release the factor now (a 400k-dof one holds gigabytes) and hand
+        the handle back for the next."""
         if getattr(self, "_s", None) is not None:
             try:
                 self._s.free_memory(everything=True)
@@ -454,6 +456,8 @@ class _Pardiso:
             except Exception:  # noqa: BLE001 - interpreter shutdown
                 pass
             self._s = None
+
+    __del__ = close
 
 
 class _Linear:
@@ -1128,7 +1132,7 @@ def _geometric(stiff, u, mod, nu):
 
 def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force,
                     n_modes: int = 3, springs=None, element: str | None = None,
-                    direct_max_dof: int | None = None, tol: float = 1e-8):
+                    direct_max_dof: int | None = None, tol: float = 1e-8, rough_above: float | None = None):
     """Smallest positive load factors lambda at which lambda * force buckles
     the part (linear eigenvalue buckling: exact for a perfect column, an
     upper bound for real parts with imperfections; take a margin of 2-3 on
@@ -1139,7 +1143,8 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force,
     factorization pays for itself many times over (a 21k-cell bracket: 17 s
     direct, 144 s CG + AMG). A list of forces returns a list of results,
     all on the one factorization. `tol` is the eigensolver's relative
-    tolerance."""
+    tolerance; a first factor over `rough_above` (a load case that is
+    nowhere near buckling) is returned good to about a percent instead."""
     mod = np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,)).copy()
     # solve_nonlinear's element (incompatible modes by default), so the load
     # factor and the post-buckling path it seeds are one model's; the plain
@@ -1154,7 +1159,8 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force,
         else:
             k = (k + sp.diags(np.where(fixed, 0.0, springs))).tocsr()
     free_memory = None
-    if mesh.n_dof <= (DIRECT_MAX_DOF if direct_max_dof is None else direct_max_dof):
+    factored = mesh.n_dof <= (DIRECT_MAX_DOF if direct_max_dof is None else direct_max_dof)
+    if factored:
         # PARDISO when pypardiso is installed (loadpath[fast]), else
         # SuperLU in nested-dissection order, single precision + CG (_splu)
         from .bucklingopt import _factor
@@ -1175,7 +1181,29 @@ def linear_buckling(mesh: HexMesh, nu: float, modulus, fixed: np.ndarray, force,
         kg = _geometric(stiff, u, mod, nu)
         # K phi = lambda (-Kg) phi  <=>  (-Kg) phi = (1 / lambda) K phi: the
         # largest positive 1/lambda are the smallest positive buckling loads.
-        mu, vec = eigsh(-kg, k=nm, M=k, Minv=minv, which="LA", tol=tol)
+        mu = vec = None
+        if factored:
+            # Block iteration on the factorization (bucklingopt.block_modes):
+            # a block of right-hand sides costs little more than one, and it
+            # stops on the residual the eigenvalue's error follows. ARPACK
+            # took about a hundred single solves a case on the wrist yoke's
+            # check (12 s of its 15); this takes ten to fifteen block ones.
+            # Its tolerance is on the residual, the eigenvalue good to its
+            # square: sqrt(tol) keeps the digits tol asked of ARPACK's.
+            from .bucklingopt import BLOCK_TOL, block_modes
+
+            x0 = np.random.default_rng(0).standard_normal((n, min(nm + 4, n)))
+            x0[np.asarray(fixed, bool)] = 0.0
+            try:
+                with np.errstate(all="ignore"):
+                    th, xb, _, ok = block_modes(-kg, kinv, x0, nm, tol=min(BLOCK_TOL, tol ** 0.5), maxiter=60,
+                                                loose_below=1.0 / rough_above if rough_above else 0.0)
+                if ok and np.all(np.isfinite(th[:nm])) and np.all(np.isfinite(xb[:, :nm])):
+                    mu, vec = th[:nm], xb[:, :nm]
+            except Exception:  # noqa: BLE001 - ARPACK below
+                pass
+        if mu is None:
+            mu, vec = eigsh(-kg, k=nm, M=k, Minv=minv, which="LA", tol=tol)
         order = np.argsort(-mu)
         mu, vec = mu[order], vec[:, order]
         pos = mu > 1e-12

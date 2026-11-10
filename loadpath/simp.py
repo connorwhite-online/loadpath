@@ -63,15 +63,30 @@ _CONN26 = np.ones((3, 3, 3), bool)
 # the assembled stiffness and sparse filter cost ~3 KB per cell and pyamg's
 # setup grows faster than the grid. Below it the assembled path stays, so
 # every eval case (all at 80k cells or fewer) runs exactly as before.
-# LOADPATH_SOLVER=mg|assembled forces one or the other.
+# LOADPATH_SOLVER=mg|assembled|direct forces one.
 MG_MIN_CELLS = 100_000
+# From this many cells the multigrid is also the solve of choice for a
+# system too big to factor quickly (direct.small_dofs), on its own grid:
+# it ran the printed hook's 17k- and 71k-cell grids 3x and 13x quicker
+# than AMG-CG. Below, a factorization always is.
+MG_AUTO_CELLS = 20_000
+# ... until it takes this many CG iterations on a design: its coarse grids
+# cannot carry members one or two cells thick (the wrist yoke at 4%: 470-520
+# iterations for AMG's 28, and a delivered design a quarter as stiff). From
+# then on that run factors (or, too big for that, runs AMG-CG).
+MG_SLOW_ITERS = 60
+
+
+def _forced_solver() -> str:
+    force = os.environ.get("LOADPATH_SOLVER", "").lower()
+    return {"multigrid": "mg", "amg": "assembled"}.get(force, force)
 
 
 def _use_mg(n_cells: int) -> bool:
-    force = os.environ.get("LOADPATH_SOLVER", "").lower()
-    if force in ("mg", "multigrid"):
+    force = _forced_solver()
+    if force == "mg":
         return True
-    if force in ("assembled", "amg"):
+    if force in ("assembled", "direct"):
         return False
     return n_cells >= MG_MIN_CELLS
 
@@ -102,15 +117,64 @@ class _Analysis:
         self.last_iters = 0
         self.last_cells = mesh.n_elem
         self._mg = None
+        # multigrid still trusted on this run's designs (MG_SLOW_ITERS)
+        self._mg_ok = True
+        self.last_solver = None
         if _use_mg(mesh.n_elem):
+            self._multigrid()
+
+    def _multigrid(self):
+        if self._mg is None:
             from .mg import GridElasticity
 
-            self._mg = GridElasticity(mesh, nu, domain.fixed, springs=domain.springs, rtol=rtol, maxiter=2000)
+            d = self.domain
+            self._mg = GridElasticity(d.mesh, self.nu, d.fixed, springs=d.springs, rtol=self.rtol, maxiter=2000)
+        return self._mg
+
+    def _route(self, alive) -> str:
+        """Which solver takes this design: "direct" (a sparse factorization,
+        direct.py), "mg" (matrix-free multigrid, mg.py) or "amg" (assembled,
+        AMG-preconditioned CG, fem.Solver). By the size of the system the
+        live cells leave and the grid: see direct.py for the measurements."""
+        from . import direct
+
+        force = _forced_solver()
+        mesh = self.domain.mesh
+        if force == "mg":
+            return "mg"
+        if force == "assembled":
+            return "amg"
+        if alive.mean() < REDUCE_BELOW:
+            nodes = np.zeros(mesh.n_nodes, bool)
+            nodes[mesh.enode[alive].ravel()] = True
+            n_dof = 3 * int(nodes.sum())
+        else:
+            n_dof = mesh.n_dof
+        if force == "direct" or n_dof <= direct.small_dofs():
+            return "direct" if direct.backend() is not None else "amg"
+        if self._mg_ok and mesh.n_elem >= min(MG_AUTO_CELLS, MG_MIN_CELLS):
+            return "mg"
+        if n_dof <= direct.large_dofs():
+            return "direct"
+        return "mg" if self._mg is not None and self._mg_ok else "amg"
+
+    def _solver(self, holder: dict, mesh, mode: str, rtol):
+        """The direct or the AMG solver of a (sub)system, made on first use."""
+        if mode == "direct":
+            if holder.get("direct") is None:
+                from .direct import DirectSolver
+
+                holder["direct"] = DirectSolver(mesh.node_ijk)
+            return holder["direct"]
+        if holder.get("amg") is None:
+            holder["amg"] = Solver(mesh, rtol=rtol)
+        holder["amg"].rtol = rtol
+        return holder["amg"]
 
     def _full_system(self):
         if self._full is None:
             mesh = self.domain.mesh
-            self._full = (Stiffness(mesh, self.nu, self.domain.fixed), Solver(mesh, rtol=self.rtol))
+            self._full = (Stiffness(mesh, self.nu, self.domain.fixed), {})
         return self._full
 
     def _connected(self, alive):
@@ -143,7 +207,7 @@ class _Analysis:
         c = self._sub
         if c is not None and c["age"] < self.REUSE and not np.any(alive & ~c["keep"]):
             c["age"] += 1
-            return c["keep"], c["fd"], c["stiff"], c["solver"]
+            return c["keep"], c["fd"], c["stiff"], (c["solver"], c["mesh"])
         g = np.zeros(d.dims, bool)
         ijk = tuple(mesh.elem_ijk.T)
         g[ijk] = alive
@@ -160,8 +224,8 @@ class _Analysis:
         # (Self-weight on cells left out is negligible: they are below ALIVE
         # density, so it is dropped with them.)
         self._sub = {"keep": keep, "fd": fd, "stiff": Stiffness(sub, self.nu, d.fixed[fd]),
-                     "solver": Solver(sub, rtol=rtol), "age": 0}
-        return keep, fd, self._sub["stiff"], self._sub["solver"]
+                     "solver": {}, "mesh": sub, "age": 0}
+        return keep, fd, self._sub["stiff"], (self._sub["solver"], sub)
 
     def solve(self, e, xp, us, rtol=None, loads=None):
         """Solve every load case for moduli e. Returns per-case displacement on
@@ -176,15 +240,32 @@ class _Analysis:
             # a bought member's cells hold only their printed share of this modulus (stock.py)
             e = e * scale
         alive = (xp > ALIVE) | self.anchor
-        if self._mg is not None:
-            return self._solve_mg(e, alive, us, rtol, loads)
+        mode = self._route(alive)
+        if mode == "mg":
+            try:
+                out = self._solve_mg(e, alive, us, rtol, loads)
+            except RuntimeError:
+                if _forced_solver() == "mg":
+                    raise
+                out = None
+            mg = self._mg
+            if out is not None and not (mg.last_iters > MG_SLOW_ITERS and _forced_solver() != "mg"):
+                self.last_solver = "mg"
+                return out
+            # stalled, or slow enough that its answers are in doubt: this
+            # design and the rest of the run go to a factorization or AMG
+            self._mg_ok = False
+            mode = self._route(alive)
+            if mode == "mg":
+                mode = "amg"
         self._last_e = e
+        self._mg_reduced = False
         if alive.mean() < REDUCE_BELOW:
             sub = self._subsystem(alive, rtol)
             subs = None
             if sub is not None:
-                keep, fd, stiff, solver = sub
-                solver.rtol = rtol
+                keep, fd, stiff, (holder, smesh) = sub
+                solver = self._solver(holder, smesh, mode, rtol)
                 k = stiff.assemble(e[keep])
                 if d.springs is not None:
                     k = (k + d.springs[fd][:, fd]).tocsr()
@@ -204,24 +285,30 @@ class _Analysis:
                     out.append(u)
                 self.last_iters, self.last_cells = solver.last_iters, int(keep.sum())
                 self._last = (k, fd, solver)
+                self.last_solver = mode
                 return out
-        stiff, solver = self._full_system()
-        solver.rtol = rtol
+        stiff, holder = self._full_system()
+        if mode == "direct":
+            from . import direct
+
+            if mesh.n_dof > direct.large_dofs():
+                mode = "amg"
+        solver = self._solver(holder, mesh, mode, rtol)
         k = stiff.assemble(e)
         if d.springs is not None:
             k = (k + d.springs).tocsr()
         out = solver.solve_many(k, list(loads), list(us))
         self.last_iters, self.last_cells = solver.last_iters, mesh.n_elem
         self._last = (k, None, solver)
+        self.last_solver = mode
         return out
 
     def _solve_mg(self, e, alive, us, rtol, loads):
         """The multigrid path: the same reduction (cells below ALIVE and
         islands left out), done by zeroing their moduli on the fixed grid
         rather than building a smaller mesh."""
-        mg = self._mg
+        mg = self._multigrid()
         mg.rtol = rtol
-        self._mg_fallback = False
         keep = self._connected(alive) if alive.mean() < REDUCE_BELOW else np.ones(len(e), bool)
         try:
             mg.set_moduli(np.where(keep, e, 0.0))
@@ -231,7 +318,12 @@ class _Analysis:
             out = mg.solve_many(list(loads), list(us))
         except RuntimeError:
             if keep.all():
-                return self._solve_amg_fallback(e, us, rtol, loads)
+                # stalled on the whole grid (its coarse levels average a
+                # sharp design's moduli and can lose a thin load path: a
+                # drone frame at beta 8, its crash cases on thin duct
+                # skins): solve() sends this design to a factorization or
+                # to AMG-CG, which builds its hierarchy from the matrix
+                raise
             # The live cells hang on the rest by an edge or a corner (a hinge),
             # or a coarse level lost a thin support: singular or stalled. The
             # full grid, void at E_MIN, holds it (as in the direct path).
@@ -244,28 +336,10 @@ class _Analysis:
         self._last_e = e
         return out
 
-    def _solve_amg_fallback(self, e, us, rtol, loads):
-        """Geometric multigrid stalled on the full grid: its coarse levels average a sharp design's moduli and lose
-        a thin load path (seen at beta 8 on a drone frame whose crash cases load thin duct skins). Algebraic
-        multigrid builds its hierarchy from the matrix itself and holds such paths, at several times the cost: used
-        for this solve only, the geometric path is tried again next iteration."""
-        stiff, solver = self._full_system()
-        solver.rtol = rtol
-        k = stiff.assemble(e)
-        if self.domain.springs is not None:
-            k = (k + self.domain.springs).tocsr()
-        out = solver.solve_many(k, list(loads), list(us))
-        self.last_iters, self.last_cells = solver.last_iters, self.domain.mesh.n_elem
-        self._last = (k, None, solver)
-        self._mg_fallback = True
-        self._mg_reduced = False
-        self._last_e = e
-        return out
-
     def resolve(self, rhss, x0s=None):
         """Solve more right-hand sides (adjoints) against the matrix of the
         last solve(); full-size in, full-size out."""
-        if self._mg is not None and not getattr(self, "_mg_fallback", False):
+        if self._last is None:
             try:
                 return self._mg.solve_many(list(rhss), x0s)
             except RuntimeError:
@@ -287,7 +361,13 @@ class _Analysis:
             # a hinge the loads did not excite but an adjoint does (see
             # solve): solve on the full system instead
             self._sub = None
-            stiff, solver = self._full_system()
+            from . import direct
+
+            stiff, holder = self._full_system()
+            mesh = self.domain.mesh
+            mode = "direct" if isinstance(solver, direct.DirectSolver) and mesh.n_dof <= direct.large_dofs() \
+                else "amg"
+            solver = self._solver(holder, mesh, mode, self.rtol)
             k = stiff.assemble(self._last_e)
             if self.domain.springs is not None:
                 k = (k + self.domain.springs).tocsr()

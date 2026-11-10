@@ -164,3 +164,28 @@ def test_pinch_balls_never_stand_in_a_bore():
     assert (out ^ bore).volume() < 1e-9, (out ^ bore).volume()
     unclipped, _ = _fill_pinches(part, rounds=4)
     assert (unclipped ^ bore).volume() > 1e-4   # what the bound keeps out
+
+
+def test_fill_pinches_keeps_only_what_helps():
+    """Two blocks that touch along an edge read as one non-manifold edge
+    once an STL reader welds them: a neck joins them. Where no neck may go
+    (the clip leaves no room at the contact), the contact is opened by a
+    cut instead, and a part with no such contact comes back as it was."""
+    import manifold3d as m3d
+
+    from loadpath.reconstruct import _fill_pinches, _stl_pinches
+
+    a = m3d.Manifold.cube((4.0, 4.0, 0.1))
+    b = m3d.Manifold.cube((4.0, 4.0, 0.1)).translate((4.0, 4.0, 0.0))      # shares the edge x = y = 4, 0.1 mm long
+    part = a + b
+    assert len(_stl_pinches(part)[1]) > 0 and abs(_stl_pinches(part)[2] - 0.1) < 1e-6
+    joined, n = _fill_pinches(part)
+    assert n >= 1 and not len(_stl_pinches(joined)[1])
+    assert len(joined.decompose()) == 1 and abs(joined.volume() - part.volume()) < 0.5
+    # no room for a neck: the clip stops short of the contact
+    clip = m3d.Manifold.cube((3.0, 3.0, 0.1))
+    opened, n = _fill_pinches(part, clip=clip)
+    assert n >= 1 and not len(_stl_pinches(opened)[1])
+    assert opened.volume() < part.volume() and part.volume() - opened.volume() < 0.5
+    same, n = _fill_pinches(a)
+    assert n == 0 and abs(same.volume() - a.volume()) < 1e-9

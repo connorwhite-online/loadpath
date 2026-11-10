@@ -609,17 +609,22 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
             if ld.pressure:
                 fp += pressure_force(sm, study.region_shape(ld.region)[0], ld.pressure)[0]
         rhs = rhs + fp[free]
-    solver = Solver(sm, rtol=1e-7, maxiter=4000)
-    # Rigid-body modes are pinned by the driven nodes; AMG still wants a
-    # near-null space sized to the free unknowns, so use plain CG+AMG on kff.
-    from scipy.sparse.linalg import cg
+    # a box of a few tens of thousands of dofs: one factorization (direct.py)
+    from . import direct
 
-    from .fem import amg_solver
-    ml = amg_solver(kff, symmetry="hermitian", strength="symmetric", max_coarse=400, coarse_solver="splu")
-    uf, info = cg(kff, rhs, rtol=1e-7, maxiter=4000, M=ml.aspreconditioner(cycle="V"))
-    del solver
-    if info != 0:
-        return None
+    got = direct.solve_many(kff.tocsr(), [rhs])
+    if got is not None:
+        uf = got[0]
+    else:
+        # Rigid-body modes are pinned by the driven nodes; AMG still wants a
+        # near-null space sized to the free unknowns, so use plain CG+AMG on kff.
+        from scipy.sparse.linalg import cg
+
+        from .fem import amg_solver
+        ml = amg_solver(kff, symmetry="hermitian", strength="symmetric", max_coarse=400, coarse_solver="splu")
+        uf, info = cg(kff, rhs, rtol=1e-7, maxiter=4000, M=ml.aspreconditioner(cycle="V"))
+        if info != 0:
+            return None
     us = np.zeros(sm.n_dof)
     us[pd] = up
     us[free] = uf
@@ -751,13 +756,17 @@ def _solve_cut(cg, nu, fixed, springs, e_mat, moduli, rhs):
         stiff = GridElasticity(hm, nu, fixed, springs=extra, rtol=1e-6, maxiter=3000)
         stiff.set_moduli(cg.full_moduli(moduli))
     else:
+        from . import direct
+
         stiff = Stiffness(hm, nu, fixed)
         k = cg.assemble(stiff, moduli)
         if springs is not None:
             k = (k + e_mat * springs).tocsr()
-        solver = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
         stiff.cutgrid = cg
-        return stiff, solver.solve_many(k, rhs)
+        us = direct.solve_many(k, rhs, hm.node_ijk)
+        if us is None:
+            us = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000).solve_many(k, rhs)
+        return stiff, us
     stiff.cutgrid = cg
     return stiff, stiff.solve_many(rhs)
 
@@ -866,9 +875,13 @@ def _buckling(study: Study, mesh, vol: float, pitch: float, contact_band: float 
             ks = springs[dofs][:, dofs].tocsr()
         try:
             # one factorization for every case; three to four digits of the
-            # factor are plenty (tol)
+            # factor are plenty (tol), two for a case at over four times
+            # the margin asked (the wrist yoke's lateral case, 207 for 2,
+            # took 13 block iterations of the check's 25)
+            sf = study.goal.safety_factor
             res = linear_buckling(sub, mat.nu, mat.E, fixed, [forces[i] for i in loaded], n_modes=1,
-                                  springs=ks, direct_max_dof=10 ** 6, tol=1e-5)
+                                  springs=ks, direct_max_dof=10 ** 6, tol=1e-5,
+                                  rough_above=4.0 * max(sf, 1.0) if sf else None)
         except (RuntimeError, ValueError, ArithmeticError) as exc:
             for i in loaded:
                 cases[i]["error"] = str(exc)
@@ -1303,11 +1316,16 @@ def _solve_grid(study: Study, g, nu, moduli, rhs):
     k = stiff.assemble(np.broadcast_to(moduli, (hm.n_elem,)).astype(float))
     if bc.springs is not None:
         k = (k + mat.E * bc.springs).tocsr()
-    # 1e-6 is three-plus significant figures of stress; 1e-7 cost a third
-    # more iterations. All cases share one multigrid hierarchy and run on
-    # threads.
-    solver = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000)
-    return stiff, solver.solve_many(k, rhs)
+    # One factorization for every case where the grid is small enough for
+    # it (direct.py). Past that, CG: 1e-6 is three-plus significant figures
+    # of stress; 1e-7 cost a third more iterations. All cases share one
+    # multigrid hierarchy and run on threads.
+    from . import direct
+
+    us = direct.solve_many(k, rhs, hm.node_ijk)
+    if us is None:
+        us = Solver(hm, rtol=1e-6, maxiter=3000, rebuild_after_iters=10_000).solve_many(k, rhs)
+    return stiff, us
 
 
 def _layer_bond(sig, n, body, g_node=None, shear_ratio=float(np.sqrt(3.0))):
