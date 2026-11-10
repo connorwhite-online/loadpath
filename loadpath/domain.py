@@ -390,8 +390,16 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
 
         held = np.any([n for _, n in wet.values()], axis=0) if wet else np.zeros(mesh.n_nodes, bool)
         if study.inertia_relief:
-            # free in space: three nodes of the whole part hold it still
-            held = np.ones(mesh.n_nodes, bool)
+            # free in space: three nodes of the part hold it still, on what
+            # is drawn (preserve) when there is some. On the design space's
+            # far corners, which the optimizer empties, the hold sat on void
+            # cells and the solve could not converge (a drone frame at 30%)
+            held = np.zeros(mesh.n_nodes, bool)
+            for r in study.preserve:
+                held |= r.shape.sdf(mesh.node_xyz) <= 1e-9
+            if held.sum() < 3 or np.ptp(mesh.node_xyz[held], axis=0).max() < 0.25 * np.ptp(mesh.node_xyz,
+                                                                                          axis=0).max():
+                held = np.ones(mesh.n_nodes, bool)
         fixed, support_nodes = stabilize(mesh, held)
     for i, s in enumerate(study.supports):
         label = f"supports[{i}]"
@@ -679,11 +687,18 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     touches |= support_nodes[mesh.enode].any(axis=1)
     keep_lbls = np.unique(el_lbl[touches])
     keep = np.isin(el_lbl, keep_lbls)
-    if not study.supports and ((study.raw or {}).get("feel") or (study.raw or {}).get("cooling")
-                               or study.inertia_relief):
+    if not study.supports and ((study.raw or {}).get("feel") or (study.raw or {}).get("cooling")):
         # a feel study holds the part where each target says (feel.py); a
         # cooling study has no holds (cooling.py)
         keep[:] = True
+    elif study.inertia_relief:
+        # a free part is its largest body: islands (a fastener's ring cut off
+        # by its own head path on a coarse grid, a thin wall the grid loses)
+        # float, and the 3-2-1 hold cannot stop them, so the solve never
+        # converged (a drone frame on a 3 mm coarse start had 88 of them)
+        sizes = np.bincount(el_lbl)
+        sizes[0] = 0
+        keep = el_lbl == int(np.argmax(sizes))
     if (~keep).any():
         dropped = int((~keep).sum())
         if preserve[active][~keep].any():
