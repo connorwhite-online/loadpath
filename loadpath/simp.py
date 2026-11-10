@@ -205,6 +205,7 @@ class _Analysis:
         rather than building a smaller mesh."""
         mg = self._mg
         mg.rtol = rtol
+        self._mg_fallback = False
         keep = self._connected(alive) if alive.mean() < REDUCE_BELOW else np.ones(len(e), bool)
         try:
             mg.set_moduli(np.where(keep, e, 0.0))
@@ -214,7 +215,7 @@ class _Analysis:
             out = mg.solve_many(list(loads), list(us))
         except RuntimeError:
             if keep.all():
-                raise
+                return self._solve_amg_fallback(e, us, rtol, loads)
             # The live cells hang on the rest by an edge or a corner (a hinge),
             # or a coarse level lost a thin support: singular or stalled. The
             # full grid, void at E_MIN, holds it (as in the direct path).
@@ -227,10 +228,28 @@ class _Analysis:
         self._last_e = e
         return out
 
+    def _solve_amg_fallback(self, e, us, rtol, loads):
+        """Geometric multigrid stalled on the full grid: its coarse levels average a sharp design's moduli and lose
+        a thin load path (seen at beta 8 on a drone frame whose crash cases load thin duct skins). Algebraic
+        multigrid builds its hierarchy from the matrix itself and holds such paths, at several times the cost: used
+        for this solve only, the geometric path is tried again next iteration."""
+        stiff, solver = self._full_system()
+        solver.rtol = rtol
+        k = stiff.assemble(e)
+        if self.domain.springs is not None:
+            k = (k + self.domain.springs).tocsr()
+        out = solver.solve_many(k, list(loads), list(us))
+        self.last_iters, self.last_cells = solver.last_iters, self.domain.mesh.n_elem
+        self._last = (k, None, solver)
+        self._mg_fallback = True
+        self._mg_reduced = False
+        self._last_e = e
+        return out
+
     def resolve(self, rhss, x0s=None):
         """Solve more right-hand sides (adjoints) against the matrix of the
         last solve(); full-size in, full-size out."""
-        if self._mg is not None:
+        if self._mg is not None and not getattr(self, "_mg_fallback", False):
             try:
                 return self._mg.solve_many(list(rhss), x0s)
             except RuntimeError:

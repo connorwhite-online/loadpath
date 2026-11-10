@@ -227,7 +227,14 @@ buckling, printability) you can report to the user.
    56}` to the rotor (and `"cruiseSpeed"` m/s to `aero`) and the report
    says what it gives over the open rotor at equal power, credits that in
    `effectiveMass`, and gives the thrust its lip carries (`ductThrust`:
-   put it on the duct as a load) and its drag in forward flight. A link that turns:
+   put it on the duct as a load) and its drag in forward flight.
+   The rotor itself is `loadpath.propeller` (docs/PROPELLERS.md):
+   `pr.design(motor, pack, hover_thrust, max_thrust, r_tip, r_hub)` gives
+   the blade for the least pack watts at hover on its motor, with the
+   spinning blade's untwist, root stress and frequencies solved in, and
+   `pr.rotor_mesh(blade, rotation="cw")` prints it; its hover rpm, thrust
+   and torque are the numbers to put in `aero.rotors` and in the vibration
+   bands. A link that turns:
    `"massProperties": {"axis": {"through": [0, 0, 0], "direction": "z"}}`
    keeps its inertia about the joint down, and every report's
    `massProperties` gives mass, centre of mass and inertia.
