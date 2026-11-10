@@ -49,6 +49,8 @@ Units as everywhere in loadpath: mm, N, MPa.
 """
 from __future__ import annotations
 
+import os
+import threading
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -391,8 +393,6 @@ def mkl_threads(solver) -> None:
     The budget is LOADPATH_THREADS (evals and the study's worker split set
     it), else the cores this process may use. Thread-local, so BLAS stays
     single-threaded."""
-    import os
-
     env = os.environ.get("LOADPATH_THREADS")
     try:
         n = max(1, int(env)) if env else len(os.sched_getaffinity(0))
@@ -404,12 +404,51 @@ def mkl_threads(solver) -> None:
         pass
 
 
+_MKL = None                  # (executor, its thread's ident, the pid that made it)
+_MKL_LOCK = threading.Lock()
+
+
+def on_mkl_thread(fn, *args):
+    """fn(*args) on the one thread this process calls PARDISO from.
+
+    Intel's OpenMP gives every thread that enters MKL a team of workers of
+    its own and does not take the team back when that thread ends. The
+    pools here are made per call (pools.pool), so each factorization from
+    one left its three workers, and the buffers MKL keeps per thread,
+    behind: the wrist yoke's search ended on 229 threads holding 5.9 GB
+    (2.1 GB before direct.py sent the optimizer's and the check's solves
+    here), which left too little free for the constrained method, and it
+    was skipped. Eight 176k-dof factorizations from fresh threads ended on
+    28 threads and growing; from this one thread, 8 and flat. Calls queue:
+    two factorizations at once only shared the cores, and doubled the
+    memory. (A forked child makes its own: the parent's thread is not
+    there.)"""
+    global _MKL
+    m = _MKL
+    if m is None or m[2] != os.getpid():
+        with _MKL_LOCK:
+            m = _MKL
+            if m is None or m[2] != os.getpid():
+                from concurrent.futures import ThreadPoolExecutor
+
+                ex = ThreadPoolExecutor(1, thread_name_prefix="loadpath-mkl")
+                m = _MKL = (ex, ex.submit(threading.get_ident).result(), os.getpid())
+    if threading.get_ident() == m[1]:
+        return fn(*args)
+    try:
+        fut = m[0].submit(fn, *args)
+    except RuntimeError:     # the interpreter is shutting down: its pools are closed
+        return fn(*args)
+    return fut.result()
+
+
 class _Pardiso:
     """A PARDISO factorization of K (`.solve` takes one right-hand side or
     a block). Symmetric K: Cholesky-type (real symmetric positive definite),
     falling back to symmetric indefinite where a Newton tangent past a limit
     point has a negative pivot; unsymmetric K (sliding friction): LU. The
-    factor's memory is released with the object."""
+    factor's memory is released with the object. Every call into MKL runs
+    on one thread (on_mkl_thread)."""
 
     # Solver handles, reused: a new PyPardisoSolver looks for MKL with a
     # recursive glob (0.4 s each, a third of a push pad's check when every
@@ -417,9 +456,12 @@ class _Pardiso:
     _pool: list = []
 
     def __init__(self, k, symmetric=True):
+        self._s = None
+        on_mkl_thread(self._factor, k, symmetric)
+
+    def _factor(self, k, symmetric):
         import pypardiso
 
-        self._s = None
         s = _Pardiso._pool.pop() if _Pardiso._pool else pypardiso.PyPardisoSolver()
         mkl_threads(s)
         for mtype in ((2, -2) if symmetric else (11,)):
@@ -440,22 +482,30 @@ class _Pardiso:
 
     def solve(self, b):
         b = np.asarray(b, float)
+        return on_mkl_thread(self._solve, b)
+
+    def _solve(self, b):
         mkl_threads(self._s)
         # straight to the solve phase: pypardiso.solve() hashes the matrix
         # every call to see whether it is factored already
         x = self._s._call_pardiso(self._a, np.asfortranarray(b) if b.ndim == 2 else np.ascontiguousarray(b))
         return np.asarray(x).reshape(b.shape)
 
+    @staticmethod
+    def _release(s):
+        s.free_memory(everything=True)
+        _Pardiso._pool.append(s)
+
     def close(self):
         """Release the factor now (a 400k-dof one holds gigabytes) and hand
         the handle back for the next."""
-        if getattr(self, "_s", None) is not None:
+        s = getattr(self, "_s", None)
+        if s is not None:
+            self._s = None
             try:
-                self._s.free_memory(everything=True)
-                _Pardiso._pool.append(self._s)
+                on_mkl_thread(_Pardiso._release, s)
             except Exception:  # noqa: BLE001 - interpreter shutdown
                 pass
-            self._s = None
 
     __del__ = close
 
