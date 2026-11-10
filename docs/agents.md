@@ -27,7 +27,7 @@ syntax). `loadpath_guide` returns the same text.
 | Tool | What it does | Time |
 | --- | --- | --- |
 | `loadpath_guide` | The skill and the field reference. Read once. | instant |
-| `loadpath_schema(kind)` | JSON Schema for `study`, `heatExchanger` or `lattice`. | instant |
+| `loadpath_schema(kind)` | JSON Schema for `study`, `heatExchanger`, `lattice`, `enclosure`, `wires` and the rest. | instant |
 | `loadpath_examples(name?)` | The example list, or one example document to adapt. | instant |
 | `loadpath_check(study, base_dir?)` | Every schema problem at once (with "did you mean"), then the voxel problem: cells, pitch, region ids, warnings. | ~1 s |
 | `loadpath_start(study, base_dir?, lattice?)` | Validate and run a study as a job. `lattice` also fills the best outcome with a lattice. | a few minutes (fixed volume fraction) to 10-30 (safety-factor search, 20k cells, one core) |
@@ -39,6 +39,7 @@ syntax). `loadpath_guide` returns the same text.
 | `loadpath_check_printability(path, min_wall?, overhang_deg?, build?, pitch?, slicer?)` | Any STL/3MF/OBJ: wall thickness in mm with its ± (the voxel pitch) and the thinnest spots, overhang area for a build direction, trapped voids. `slicer` adds bridges, islands, support volume and bed contact. `minWallOk: null` means too coarse to judge. | seconds; under a minute at 5M triangles |
 | `loadpath_check_isolation(path, ports, plugs?, min_feature?, pitch?)` | Two-fluid isolation of a mesh: each circuit's ports (`a_in`, `a_out`…) in one void, no void shared, thinnest wall between circuits in mm ±. Plug the port openings or the outside air joins the circuits. | seconds |
 | `loadpath_check_fit(path, components)` | Does a board (with clearance, mounting holes, port cutouts) fit an enclosure's cavity. | seconds |
+| `loadpath_wires(brief, base_dir?)` | Cables as elastic rods: each wire, bundle, coax or flat cable laid between its ports among the bodies round it; tightest bend against the radius it allows, twist, too short, pinched, connector loads; with `motion`, followed through a joint's whole travel. Writes each cable's channel as a keep-out and a viewer ([WIRES.md](WIRES.md)). Inside a product, give `components[].ports` and `wires` in the enclosure brief instead. | seconds to a minute |
 | `loadpath_import_cad(path, out_dir?, space?, material?, force?, grow?)` | A STEP or STL part in: its bores (radius, counterbore steps, through or blind, bolt or bore), flat mounting faces with their bolts, and interfaces; healed if it was an open shell. With `out_dir`, a draft study there (part, hull or box as design space, interfaces preserved, bores kept out, a suggested support and placeholder load): replace the load, then `loadpath_check` / `loadpath_start` with `base_dir` = the returned `baseDir`. | seconds |
 | `loadpath_exterior(path, out_dir?, size?, up?, place?, pitch?, skin?)` | Any exterior in, one watertight skin out: a STEP, a mesh, an AI-generated or scanned mesh (wrapped: holes, double walls, debris, unit scale, Y-up), an `.npz` SDF or `file.py:name` (an SDF function or a build123d part). Reports what was wrong, how far the surface moved, patched holes, and the room inside once the skin is in ([EXTERIOR.md](EXTERIOR.md)). | seconds to a minute |
 | `loadpath_jobs(limit?)` | Recent jobs and their status. | instant |

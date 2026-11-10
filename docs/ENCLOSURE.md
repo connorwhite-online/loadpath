@@ -52,7 +52,9 @@ zero is a fit. Among the fits the rules choose:
 | `against: "-z"` | pushed to that side of the cavity: a battery on the floor |
 | `alignTo: {opening, face, recess}` | that face of the part out through the opening, on its axis, `recess` mm short of the exterior: a connector in its port |
 | `under: {at, direction, gap}` | that face on the line through `at`, `gap` under the skin: a switch under the spot a finger presses |
-| `near: [ids]` | close to other parts: short wires |
+| `near: [ids]` | close to other parts |
+| `ports` and `wires` | the cables between parts, laid as elastic rods for each candidate position: one whose cable is too short or bent past its radius is not a position ([WIRES.md](WIRES.md)) |
+| `watts`, `maxTemp` | a hot part kept off a part with a temperature limit, and hot parts apart (`placement.heat`) |
 | `placement.centerOfMass` | the layout's centre of mass toward a point, or low along an axis |
 
 The parts go in one at a time, the most constrained first, as a beam

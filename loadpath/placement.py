@@ -201,7 +201,7 @@ class _Group:
 
 def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed=None, rules: dict | None = None,
           base_dir=None, pitch: float | None = None, beam: int = 3, margin: float = 0.5,
-          on_progress=None, access=None) -> dict:
+          on_progress=None, access=None, judge=None) -> dict:
     """Place components inside an exterior. See the module docstring.
 
     exterior: a Shape (closed). components: [{id, shape | size, mass?,
@@ -213,7 +213,12 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
     (group id, sdf, bounds, placed {id: (sdf, bounds)}) -> bool, asked of
     each position kept: whether the part can still get there (enclosure
     passes its assembly-path search), so a layout no one can assemble is
-    dropped while there are others.
+    dropped while there are others. judge: optional callable ({transforms:
+    {component id: (R, T)}, new: [ids just placed], room, origin, pitch})
+    -> extra cost, or None to refuse the position: what joins the parts
+    (wires.placement_judge lays each cable between the parts placed so far,
+    so a layout that cannot be wired is dropped, and a shorter, easier
+    harness is preferred). rules.heat: see `_heat_cost`.
 
     Returns {placements: {id: {rotation, translation, matrix, ...}},
     groups, layout cost, clearance per component, blocked, seconds}. The
@@ -341,6 +346,16 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
     com_rule = rules.get("centerOfMass") or {}
     w_com = float(com_rule.get("weight", 1.0)) if com_rule else 0.0
     w_center = float(rules.get("centreWeight", rules.get("centerWeight", 0.02)))
+    heat = rules.get("heat")
+    if heat is None or heat is True:
+        heat = {} if any(c.get("watts") for c in byid.values()) else None
+    elif heat is False:
+        heat = None
+    if heat is not None:
+        heat = {"weight": 30.0, "ambient": 25.0, "conductivity": 0.1, **heat}
+        heat["up"] = _axis_vec(heat["up"]) if heat.get("up") is not None else None
+
+    quick = getattr(judge, "quick", None)
 
     def line_rule(g, R):
         """(member, face point in the pivot frame rotated, axis, line point,
@@ -429,6 +444,15 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
                     continue
                 T, com, cost, fpw = T[keep], com[keep], cost[keep], fpw[keep]
                 cost = cost - fpw @ lr["axis"]
+            if heat is not None:
+                cost = cost + _heat_cost(heat, g, R, T, byid, meshes, placed)
+            if quick is not None:
+                # the cables' straight runs: a pigtail that cannot reach rules a position out here
+                cost = cost + quick(g.members, R, T - R @ g.pivot, placed.get("__tf__") or {})
+                keep = np.isfinite(cost)
+                if not keep.any():
+                    continue
+                T, com, cost = T[keep], com[keep], cost[keep]
             if w_com:
                 pm = placed.get("__mass__", 0.0)
                 pcm = placed.get("__com__", np.zeros(3))
@@ -475,6 +499,8 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
             placed = dict(s["centres"])
             placed["__mass__"] = s["mass"]
             placed["__com__"] = s["com"]
+            if quick is not None:
+                placed["__tf__"] = _member_tf(s["poses"], gb_all, given_shapes)
             cands = candidates(g, s["occ"], placed, max(3 * beam, 6))
             if not cands:
                 continue
@@ -485,29 +511,66 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
             continue
         nxt.sort(key=lambda x: x[0]["cost"] + x[1])
         new_states = []
-        for s, cost, R, t, lr in nxt:
-            if len(new_states) >= beam:
-                break
-            t, fits = _refine(g, R, t, lr, G, exterior, skin, op_shapes, fixed, given_shapes,
-                        s["poses"], groups_by_id={x.id: x for x in groups}, rules_g=g.rules)
-            if not fits:
-                continue        # the grid's fit does not hold on exact distances
+        unwired = 0
+        gbid = {x.id: x for x in groups}
+
+        def admit(s, cost, R, t, occ=None, poses=None):
+            """The state with g at (R, t), or None when it cannot be assembled into."""
             if access is not None:
                 others = {k: (lambda p, gg=gb_all[k], RR=RT[0], tt=RT[1]: gg.sdf(RR, tt, p), _pbounds(gb_all[k], *RT))
                           for k, RT in s["poses"].items()}
                 if not access(g.id, lambda p, RR=R, tt=t: g.sdf(RR, tt, p), _pbounds(g, R, t), others):
                     denied.append(g.id)
-                    continue
+                    return None
+            if poses is None:
+                poses = dict(s["poses"])
+                poses[g.id] = (R, t)
             com = t + R @ g.com
             m_new = s["mass"] + g.mass
             com_tot = (s["mass"] * s["com"] + g.mass * com) / max(m_new, 1e-12)
             centres = dict(s["centres"])
             for m in g.members:
                 centres[m] = t + R @ (np.asarray(meshes[m].bounds).mean(axis=0) - g.pivot)
+            return {"cost": s["cost"] + cost, "occ": stamp(s["occ"], g, R, t) if occ is None else occ, "poses": poses,
+                    "centres": centres, "mass": m_new, "com": com_tot}
+
+        pend = []
+        for s, cost, R, t, lr in nxt:
+            if len(new_states) >= beam or len(pend) >= 2 * beam:
+                break
+            t, fits = _refine(g, R, t, lr, G, exterior, skin, op_shapes, fixed, given_shapes,
+                              s["poses"], groups_by_id=gbid, rules_g=g.rules)
+            if not fits:
+                continue        # the grid's fit does not hold on exact distances
+            if judge is None:
+                st = admit(s, cost, R, t)
+                if st is not None:
+                    new_states.append(st)
+                continue
+            # with a judge, a few more than the beam are judged (cables laid),
+            # ranked with its cost in, and only then asked whether they can be assembled
+            occ = stamp(s["occ"], g, R, t)
             poses = dict(s["poses"])
             poses[g.id] = (R, t)
-            new_states.append({"cost": s["cost"] + cost, "occ": stamp(s["occ"], g, R, t), "poses": poses,
-                               "centres": centres, "mass": m_new, "com": com_tot})
+            extra = judge({"transforms": _member_tf(poses, gb_all, given_shapes), "new": list(g.members),
+                           "room": np.minimum(room_base, occ), "origin": G.lo + 0.5 * G.h, "pitch": G.h})
+            if extra is None:
+                unwired += 1
+                continue
+            pend.append((s["cost"] + cost + float(extra), s, cost + float(extra), R, t, occ, poses))
+        pend.sort(key=lambda x: x[0])
+        for _, s, cost, R, t, occ, poses in pend:
+            if len(new_states) >= beam:
+                break
+            st = admit(s, cost, R, t, occ, poses)
+            if st is not None:
+                new_states.append(st)
+        new_states.sort(key=lambda x: x["cost"])
+        new_states = new_states[:beam]
+        if not new_states and unwired and g.id not in denied:
+            blocked[g.id] = {"reason": "fits, but its cables cannot be laid from any position tried (too short, "
+                                       "or bent past their radius)", "volume": round(g.volume, 1)}
+            continue
         if not new_states:
             why = "no position it fits that it can also be assembled into" if g.id in denied else \
                 "fits on the grid only, not on exact distances"
@@ -522,6 +585,53 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
                                members))
     return {"layouts": layouts, "best": layouts[0] if layouts else None, "blocked": blocked,
             "order": [g.id for g in order], "given": given, "pitch": G.h, "seconds": round(time.time() - t0, 1)}
+
+
+def _member_tf(poses, groups, given):
+    """{component id: (R, T)} of its own frame, from the groups' poses."""
+    tf = {m: (RR, tt - RR @ groups[k].pivot) for k, (RR, tt) in poses.items() for m in groups[k].members}
+    tf.update({m: (np.eye(3), np.zeros(3)) for m in given})
+    return tf
+
+
+def _heat_cost(heat, g, R, T, byid, meshes, placed):
+    """Heat in the search, per candidate position T (n, 3): each pair of a
+    part being placed and a part already in costs the share of the cooler
+    one's temperature budget the other's heat would use up, by a point
+    source in a uniform medium, dT = W / (4 pi k r); half as much again
+    when the heat rises into it (the hot part below, `up` known). A rough
+    ranking (the skin, vents and conduction paths are not in it): it keeps
+    a hot chip off a cell and two hot parts apart; the cooling block
+    (cooling.py) is the check."""
+    k = float(heat["conductivity"])
+    amb = float(heat["ambient"])
+    up = heat.get("up")
+    cost = np.zeros(len(T))
+
+    def budget(c):
+        if c.get("maxTemp") is not None:
+            return max(float(c["maxTemp"]) - amb, 1.0)
+        return 60.0 if c.get("watts") else None
+    for m in g.members:
+        ci = byid[m]
+        wi, bi = float(ci.get("watts") or 0.0), budget(ci)
+        if not wi and bi is None:
+            continue
+        pm = T + R @ (np.asarray(meshes[m].bounds).mean(axis=0) - g.pivot)
+        for n, pc in placed.items():
+            if n.startswith("__") or n in g.members:
+                continue
+            cj = byid.get(n) or {}
+            wj, bj = float(cj.get("watts") or 0.0), budget(cj)
+            d = pc[None, :] - pm
+            r = np.maximum(np.linalg.norm(d, axis=1), 3.0)
+            rise = 1.0 / (4 * np.pi * k * r * 1e-3)
+            cu = (d @ np.asarray(up, float)) / r if up is not None else np.zeros(len(T))
+            if wi and bj is not None:          # this part heats that one (above it: worse)
+                cost += wi / bj * rise * (1.0 + 0.5 * np.maximum(cu, 0.0))
+            if wj and bi is not None:
+                cost += wj / bi * rise * (1.0 + 0.5 * np.maximum(-cu, 0.0))
+    return float(heat["weight"]) * cost
 
 
 def _root(cid, byid):

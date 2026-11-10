@@ -330,6 +330,23 @@ def split(study, split_block: dict | None = None, base_dir: str | None = None) -
     return out
 
 
+def wires(brief, base_dir: str | None = None) -> dict:
+    """Validate a wires brief (wires.py) and lay and check its cables as a
+    background job."""
+    if isinstance(brief, str):
+        from .tasks import read_doc
+        brief, base_dir = read_doc(brief, base_dir)
+    from .schema import format_issues, lint
+    errors = [x for x in lint(brief, "wires") if x["level"] == "error"]
+    if errors:
+        return {"ok": False, "error": format_issues(errors)}
+    args = ["wires", "{dir}/brief.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
+    out = _spawn("wires", brief.get("name") or "wires", {"brief.json": brief}, args,
+                 base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def enclosure(brief, base_dir: str | None = None, run: bool = False) -> dict:
     """Validate an enclosure brief (enclosure.py) and place, path and
     compile it as a background job; run: then design it and check the
@@ -1029,6 +1046,23 @@ def serve():
         on the meshes, every load case verified on the part). Starts a job; poll loadpath_status; the
         study is out/<name>.study.json, the report out/enclosure.json, checks out/checks.json."""
         return enclosure(brief, base_dir, run)
+
+    @tool
+    def loadpath_wires(brief: dict | str, base_dir: str | None = None) -> dict:
+        """Lay and check cables as elastic rods (loadpath_schema('wires')): each wire, bundle, jacketed
+        cable, coax or flat cable (FFC/FPC) from its construction or its datasheet, between two ports
+        (where the connector is and which way the cable leaves it), among `bodies` it may touch but
+        not enter. Finds a way through the free space, lays the cable at its cut length (or cuts it to
+        the route plus slack), and reports what a harness engineer asks: tightest bend against the
+        cable's allowed radius, twist (a flat cable cannot turn in its own plane), whether it is too
+        short, pinched, how hard it pulls on each connector, voltage drop and self-heating. With
+        `motion` (a joint's revolute or sliding range) the cable is followed through the whole travel:
+        flexing radius, the strain swing that fatigues it, coming taut, snapping through. Writes the
+        report (out/wires.json), each cable's swept channel as a solid to keep clear
+        (out/channels/<id>.stl) and a viewer (out/wires.html). Inside a product, give the same wires
+        in an enclosure brief instead (components[].ports, wires): then only layouts that can be wired
+        are kept. Starts a job; poll loadpath_status."""
+        return wires(brief, base_dir)
 
     @tool
     def loadpath_feel(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:

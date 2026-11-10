@@ -568,7 +568,7 @@ def main(argv=None):
     c.add_argument("--base-dir")
     s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
     s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field",
-                                                                "handoff", "split", "enclosure"])
+                                                                "handoff", "split", "enclosure", "wires"])
     e = sub.add_parser("examples", help="list the packaged examples, or print one")
     e.add_argument("name", nargs="?")
     lt = sub.add_parser("lattice", help="fill a finished part with a stress-graded TPMS lattice")
@@ -733,6 +733,15 @@ def main(argv=None):
     shr.add_argument("study", help="a study with a shroud block")
     shr.add_argument("--out", default="loadpath-shroud")
     shr.add_argument("--base-dir", help="where the study's relative paths start (default: its folder)")
+    wi = sub.add_parser("wires", help="lay and check a product's cables with rod physics: wires, bundles and "
+                                      "flat flexes between ports, round the bodies in the way; bend radius, "
+                                      "twist, connector loads; followed through a joint's range or an assembly "
+                                      "path; a channel per cable and a viewer")
+    wi.add_argument("brief", help="the wires brief (`loadpath schema wires`)")
+    wi.add_argument("--out", default="loadpath-wires")
+    wi.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
+    wi.add_argument("--no-viewer", action="store_true")
+    wi.add_argument("--quiet", action="store_true")
     en = sub.add_parser("enclosure", help="a product from its outside in: the designer's exterior fixed, the "
                                           "components placed inside it (or as given), their assembly paths, "
                                           "mounts, drops, squeezes, heat, a push pad or feel targets; a study "
@@ -974,6 +983,8 @@ def main(argv=None):
         return _split(args)
     if args.cmd == "shroud":
         return _shroud(args)
+    if args.cmd == "wires":
+        return _wires(args)
     if args.cmd == "enclosure":
         return _enclosure(args)
     if args.cmd == "explore":
@@ -1650,6 +1661,39 @@ def _shroud(args):
         return 2
     print(json.dumps({"ok": True, **r}, default=float))
     return 0
+
+
+def _wires(args):
+    from .schema import format_issues, lint
+    from .wires import run_harness
+
+    doc = _load(args.brief)
+    errors = [x for x in lint(doc, "wires") if x["level"] == "error"]
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+
+    def prog(ev, *_):
+        if not args.quiet:
+            print(f"  {ev.get('message', '')}", file=sys.stderr, flush=True)
+    try:
+        r = run_harness(args.brief, args.out, base_dir=args.base_dir, on_progress=prog, viewer=not args.no_viewer)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    out = {"ok": r["ok"], "report": os.path.join(args.out, "wires.json"),
+           "wires": {k: {kk: v.get(kk) for kk in ("cable", "length", "minBendRadius", "allowedBendRadius",
+                                                 "maxTwist", "ends", "ok") if kk in v}
+                     | ({"motion": {kk: v["motion"].get(kk) for kk in ("minBendRadius", "allowedBendRadius",
+                                                                       "strainRange", "twistRange", "ok")}}
+                        if v.get("motion") else {})
+                     for k, v in r["wires"].items()},
+           "problems": r["problems"], "seconds": r["seconds"]}
+    if r.get("viewer"):
+        out["viewer"] = os.path.join(args.out, r["viewer"])
+    if not args.quiet:
+        print(json.dumps(out, indent=1))
+    return 0 if r["ok"] else 1
 
 
 def _split(args):

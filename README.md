@@ -177,6 +177,13 @@ There is no GUI on purpose; it's a library.
   and any closed STL, gyroid-cored and drained ones included, becomes one
   valid STEP solid with every tunnel kept (`loadpath step part.stl`, a
   minute for a 500k-triangle link).
+- **Wires and cables as physics** ([docs/WIRES.md](docs/WIRES.md)): each
+  wire, bundle, coax or flat cable is an elastic rod, laid between its
+  connectors among the parts round it and held to its bend radius, twist
+  and length; followed through a joint's travel for flex life; and inside
+  a product, part of the layout search, so components are only placed
+  where their cables can be laid and plugged in, hot parts apart, and the
+  harness's space is kept clear of the structure generated round it.
 - **Mesh checks without a study** (`loadpath.checks`): wall thickness,
   overhangs, trapped voids, fluid-network isolation, component fit.
 
@@ -298,7 +305,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
-  [split shells](docs/SHELLS.md).
+  [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md).
 
 <!-- gallery:start -->
 

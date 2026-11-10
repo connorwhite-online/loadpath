@@ -114,7 +114,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     out_dir: cad/<component>.stl in product coordinates, the study). See the
     module docstring and `loadpath schema enclosure`."""
     from .placement import place
-    from .shapes import MeshShape, shape_from_spec
+    from .shapes import MeshShape, shape_from_spec, trimesh_from_manifold
     from .spec import _skin
 
     t0 = time.time()
@@ -202,7 +202,15 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     # a split exterior (shells.py) is assembled with its cover off: its own
     # pass finds the paths into the base and sets insertFrom
     split = b.get("split")
-    pr = place(exterior, comps, skin=t_skin, openings=op_place, fixed=fixed, rules=pl_opts,
+    judge = None
+    if b.get("wires"):
+        # what joins the parts decides the layout too: every candidate
+        # position's cables are routed and laid (wires.py)
+        from .wires import placement_judge
+        wo = pl_opts.pop("wires", None) or {}
+        judge = placement_judge(b["wires"], comps, weight=float(wo.get("weight", 0.15)),
+                                physics=bool(wo.get("physics", True)))
+    pr = place(exterior, comps, skin=t_skin, openings=op_place, fixed=fixed, rules=pl_opts, judge=judge,
                pitch=pl_opts.get("pitch"), beam=int(pl_opts.get("beam", 3)),
                margin=float(pl_opts.get("margin", 0.5)), on_progress=on_progress,
                access=access if pl_opts.get("assemblyAware", True) and not split else None)
@@ -271,6 +279,24 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     keep += list(b.get("keepOut") or [])
     for k, v in mounts.items():
         preserve.append({"id": f"mount-{k}", "shape": v["shape"]})
+    # the cables: laid in this layout, followed along each part's way in,
+    # and their channels kept clear of the interior
+    wires_report = None
+    if b.get("wires"):
+        from .wires import enclosure_wires
+        wb = {"skin": (skin_shape, None)}
+        wb.update({f: (sh, None) for f, sh in fixed})
+        wb.update({cid: (comp_shapes[cid], lay["meshes"][cid]) for cid in comp_specs})
+        wb.update({f"mount-{k}": (shape_from_spec(v["shape"]), None) for k, v in mounts.items()})
+        try:
+            wb["skin"] = (skin_shape, trimesh_from_manifold(skin_shape.to_manifold()))
+        except Exception:
+            pass
+        wr = enclosure_wires(b, comps, lay, paths, root, wb, order, (lo, hi), out_dir, on_progress=(
+            (lambda ev: on_progress(ev)) if on_progress else None))
+        keep += wr["keepOut"]
+        warnings += wr["warnings"]
+        wires_report = wr["report"]
 
     # 4. supports and loads
     sp = _surface_point(exterior, centre, rest)
@@ -478,6 +504,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
               "mounts": {k: {"side": v["side"], "massKg": round(v["mass"], 6)} for k, v in mounts.items()},
               "loadCases": [c["name"] for c in cases], "supports": supports,
               **({"handoff": handoff_report} if handoff_report else {}),
+              **({"wires": wires_report} if wires_report is not None else {}),
               "warnings": warnings, "lint": issues, "seconds": round(time.time() - t0, 1)}
     return {"study": study, "report": report, "layout": lay}
 

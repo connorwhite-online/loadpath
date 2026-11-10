@@ -543,7 +543,20 @@ the default for a `size` or any rule): `rotate` (any, an axis, none),
 `against` a side (a battery on the floor), `alignTo {opening, face,
 recess}` (a USB-C out through its port), `under {at, direction, gap}` (a
 switch under a press point), `near` other parts, and
-`placement.centerOfMass`. Parts fitted to another (`installedOn`) are
+`placement.centerOfMass`. Give the cables too whenever parts are joined
+by them: each component's `ports` (`{id, at, direction}` in its own
+frame: where the connector is and which way the cable leaves it) and the
+brief's `wires` (`{id, from: "battery.lead", to: "board.batt", cable,
+length?}`; cable: `"awg26-silicone"`, `"ffc-10x0.5"`, a bundle, a
+datasheet's `minBendRadius`). Each candidate position's cables are then
+laid as elastic rods: a pigtail that cannot reach, or would bend past its
+radius, rules the position out; the chosen layout's cables are followed
+along each part's way in (`wires.<id>.assembly.reach`: how far out the
+part can be with the plug mated) and their channels are kept clear.
+`watts` on one part and `maxTemp` on another keeps them apart. Read
+`enclosure.json`'s `wires`; a cable alone, or across a joint over its
+range of motion (flexing radius, coming taut), is `loadpath wires
+brief.json` (MCP `loadpath_wires`, docs/WIRES.md). Parts fitted to another (`installedOn`) are
 drawn in that part's frame and move with it. The `assembly` order
 matters: each part's position is kept only if it can still get there past
 the skin and the parts that went in before it, and its way in (up to four

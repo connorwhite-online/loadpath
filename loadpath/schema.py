@@ -2692,13 +2692,178 @@ ENCLOSURE_SCHEMA = {
     "$defs": {**_SHAPES, "shape": _SHAPE},
 }
 
+
+# --- wires: cables laid with rod physics (wires.py) ---
+
+_CABLE = {"anyOf": [
+    {"type": "string", "description": "a name: awg<N>-<insulation> ('awg26-pvc', 'awg22-silicone'), "
+                                      "ffc-<conductors>x<pitch> ('ffc-10x0.5'), fpc-<width>x<thickness>, usb2, "
+                                      "coax-<od>"},
+    {"type": "object", "properties": {
+        "name": {"type": "string"},
+        "type": {"enum": ["wire", "bundle", "cable", "coax", "ffc", "fpc", "round", "flat"],
+                 "description": "wire: one insulated wire; bundle: `wires` of them side by side in a sleeve; "
+                                "cable: `wires` in a jacket; coax; ffc: a flat flexible cable (conductors, "
+                                "pitch); fpc: a flex circuit (width, thickness); round / flat: by its numbers"},
+        "awg": {"type": "number"}, "conductorArea": {**_POS, "description": "mm^2, instead of awg"},
+        "insulation": {"enum": ["pvc", "pvc105", "silicone", "ptfe", "fep", "tpe", "xlpe", "pur"]},
+        "strands": {"type": "integer", "minimum": 1}, "solid": {"type": "boolean"},
+        "strandCoupling": {**_POS, "description": "stiffness over the slipped-strand bound (default 1)"},
+        "wires": {"type": "integer", "minimum": 1}, "wall": _POS,
+        "jacket": {"enum": ["pvc", "pvc105", "silicone", "ptfe", "fep", "tpe", "xlpe", "pur"]},
+        "jacketWall": _POS, "shield": {"type": "boolean"},
+        "od": {**_POS, "description": "mm across (round cables)"}, "core": _POS,
+        "dielectric": {"type": "string"},
+        "conductors": {"type": "integer", "minimum": 1}, "pitch": _POS,
+        "width": _POS, "thickness": _POS, "copper": {"type": "number", "minimum": 0},
+        "copperFill": {"type": "number", "minimum": 0, "maximum": 1}, "film": {"enum": ["polyimide", "pet"]},
+        "bendStiffness": {"anyOf": [_POS, {"type": "array", "items": _POS, "minItems": 2, "maxItems": 2}],
+                          "description": "N mm^2, measured or from a datasheet (wires.stiffness_from_droop); "
+                                         "[through the thickness, edgewise] for a flat"},
+        "twistStiffness": {**_POS, "description": "N mm^2"},
+        "minBendRadius": {"anyOf": [_POS, {"type": "object", "properties": {"static": _POS, "dynamic": _POS},
+                                           "additionalProperties": False}],
+                          "description": "mm, fixed and flexing; default house rules (3x and 10x a wire's "
+                                         "diameter, 10x and 100x a flat's thickness)"},
+        "maxTwist": {"anyOf": [_POS, {"type": "object", "properties": {"static": _POS, "dynamic": _POS},
+                                      "additionalProperties": False}], "description": "deg per m"},
+        "gramsPerMeter": {"type": "number", "minimum": 0}, "maxTemp": {"type": "number"}},
+     "additionalProperties": False}]}
+_PORT_LIMITS = {
+    "relief": {"type": "number", "minimum": 0, "description": "mm the cable leaves straight (a boot)"},
+    "maxPull": {**_POS, "description": "N the connector takes along its axis"},
+    "maxSide": {**_POS, "description": "N across it"},
+    "maxMoment": {**_POS, "description": "N mm about it"}}
+_SIGNED = {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, _VEC3]}
+_WIRE_PORT = {"type": "object", "properties": {
+    "at": {**_VEC3, "description": "mm: where the cable leaves the connector"},
+    "direction": {**_SIGNED, "description": "the way the cable leaves it"},
+    "up": {**_SIGNED, "description": "a flat cable's face normal there (which way its contacts face)"},
+    "body": {"type": "string", "description": "the body the port is on: it moves with it"},
+    **_PORT_LIMITS}, "required": ["at", "direction"], "additionalProperties": False}
+_VIA = {"type": "array", "items": {"type": "object", "properties": {
+    "at": _VEC3, "along": {"type": "number", "minimum": 0, "description": "mm along the cable (default: its "
+                                                                         "nearest point)"},
+    "body": {"type": "string"}}, "required": ["at"], "additionalProperties": False},
+    "description": "clips: points the cable is held at"}
+
+
+def _wire_item(port):
+    return {"type": "object", "properties": {
+        "id": {"type": "string"}, "cable": _CABLE, "from": port, "to": port,
+        "length": {**_POS, "description": "mm, port to port: a cable cut to length. Default: the shortest way "
+                                          "round plus slack"},
+        "slack": {"type": "number", "minimum": 0, "description": "over the route's length (default 0.08)"},
+        "minLength": _POS,
+        "current": {"type": "number", "minimum": 0, "description": "A: resistance, voltage drop, self-heating"},
+        "via": _VIA,
+        "routes": {"type": "integer", "minimum": 1, "maximum": 4, "description": "ways round to try (default 1)"},
+        "roll": {"type": "boolean", "description": "hold the far end's roll about its own axis (default: a "
+                                                   "flat yes, a round wire no)"},
+        "segments": {"type": "integer", "minimum": 8, "maximum": 400},
+        "reach": {**_POS, "description": "enclosure only: mm the later part must be able to stand out of its "
+                                         "place with the cable already plugged in (default 12): room for "
+                                         "fingers to mate the connector"},
+        "plugged": {"enum": ["before", "after"], "description": "enclosure only: 'before' (default) the cable "
+                                                                "is plugged in while the later part is still "
+                                                                "outside and follows it home; 'after' its "
+                                                                "connector is reached once the part is in"}},
+        "required": ["cable", "from", "to"], "additionalProperties": False}
+
+
+_MOTION = {"type": "object", "properties": {
+    "type": {"enum": ["revolute", "prismatic", "path"]},
+    "axis": _SIGNED, "origin": _VEC3,
+    "range": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
+              "description": "degrees (revolute) or mm (prismatic); the cables are laid at 0"},
+    "legs": {"type": "array", "items": {"type": "object", "properties": {"toward": _SIGNED, "length": _POS},
+                                        "required": ["toward", "length"], "additionalProperties": False},
+             "description": "type path: straight legs the moving bodies travel, in order"},
+    "steps": {"type": "integer", "minimum": 2, "maximum": 200}}, "additionalProperties": False,
+    "description": "what the bodies marked `moves` do; every cable with a port on one is followed through it"}
+WIRES_SCHEMA = {
+    "$schema": _DIALECT,
+    "title": "loadpath wires brief",
+    "description": "`loadpath wires`: a product's cables laid and checked with rod physics (wires.py, rods.py). "
+                   "Each cable is a Cosserat rod with its own bending and twist stiffness, started along the "
+                   "clearance-aware shortest way between its ports and settled against the bodies; checked for "
+                   "bend radius, twist, tension, pinching and connector loads, and followed through a motion "
+                   "(a joint's range, a part's way in).",
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"}, "description": {"type": "string"},
+        "bodies": {"type": "array", "items": {"type": "object", "properties": {
+            "id": {"type": "string"}, "shape": _HANDOFF_SHAPE,
+            "inside": {"type": "boolean", "description": "a cavity the cables must stay in (an exterior)"},
+            "skin": {"type": "number", "minimum": 0, "description": "with inside: wall thickness kept off"},
+            "moves": {"type": "boolean", "description": "goes with the motion"},
+            "color": {"type": "string"}}, "required": ["shape"], "additionalProperties": False},
+            "description": "what the cables must go round (or stay inside)"},
+        "wires": {"type": "array", "minItems": 1, "items": _wire_item(_WIRE_PORT)},
+        "motion": _MOTION,
+        "gravity": {**_SIGNED, "description": "which way is down; cables then carry their weight"},
+        "pitch": {**_POS, "description": "mm: the grid each body's distance field is sampled on (default 0.4)"},
+        "clearance": {"type": "number", "minimum": 0, "description": "mm kept between a cable and a body"},
+        "routes": {"type": "integer", "minimum": 1, "maximum": 4},
+        "wiresCollide": {"type": "boolean", "description": "later cables go round earlier ones (default true; "
+                                                           "not during a motion)"},
+        "channels": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
+            "clearance": {"type": "number", "minimum": 0}}, "additionalProperties": False}],
+            "description": "write each cable's channel (the tube it occupies over the motion) as an STL"}},
+    "required": ["wires"],
+    "additionalProperties": False,
+    "$defs": {**_SHAPES, "shape": _SHAPE},
+}
+
+# an enclosure's cables: ports on its components, wires between them, and
+# heat in the placement search (enclosure.py, placement.py)
+_ENC = ENCLOSURE_SCHEMA["properties"]
+_ENC["components"]["items"]["properties"]["ports"] = {
+    "type": "array", "items": {"type": "object", "properties": {
+        "id": {"type": "string"},
+        "at": {**_VEC3, "description": "mm, in the component's own frame: where a cable leaves it"},
+        "direction": {**_SIGNED, "description": "the way the cable leaves, in the component's own frame"},
+        "up": {**_SIGNED, "description": "a flat cable's face normal there"},
+        **_PORT_LIMITS}, "required": ["id", "at", "direction"], "additionalProperties": False},
+    "description": "its connectors: where cables leave it and which way (wires)"}
+_ENC["wires"] = {
+    "type": "array", "items": _wire_item({"anyOf": [
+        {"type": "string", "pattern": r"^[^.]+\.[^.]+$", "description": "'component.port'"}, _WIRE_PORT]}),
+    "description": "the cables between the components' ports (or fixed points in product coordinates). A "
+                   "layout is kept only if every cable can be laid in it within its bend radius and length; "
+                   "each is then followed along its part's way in, and its channel is kept clear of material"}
+_ENC["placement"]["properties"]["heat"] = {
+    "anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
+        "weight": {"type": "number", "minimum": 0, "description": "mm of layout cost per unit of a part's "
+                                                                  "temperature budget used (default 30)"},
+        "ambient": {"type": "number", "description": "C (default 25)"},
+        "conductivity": {**_POS, "description": "W/(m K) of the stuff between the parts (default 0.1)"},
+        "up": {**_AXIS, "description": "which way is up in use, when there is one: heat rises, so a part "
+                                       "above a hot one is charged half as much again"}},
+        "additionalProperties": False}],
+    "description": "keep parts that make heat (watts) away from each other and from parts with a low maxTemp, "
+                   "more so when the hot one sits below (`up`): a point-source estimate that ranks "
+                   "positions; the cooling block is the real check. Default on when any component has watts"}
+_ENC["wiresOptions"] = {"type": "object", "properties": {
+    "pitch": {**_POS, "description": "mm: the grid each body is sampled on for cable contact (default 0.4)"},
+    "channelClearance": {"type": "number", "minimum": 0, "description": "mm kept clear round each cable "
+                                                                        "(default 0.6)"}},
+    "additionalProperties": False}
+_ENC["placement"]["properties"]["wires"] = {
+    "type": "object", "properties": {
+        "weight": {"type": "number", "minimum": 0, "description": "layout cost per mm of cable (default 0.15)"},
+        "physics": {"type": "boolean", "description": "lay each candidate's cables as rods (default true); "
+                                                      "false: the routed length only"}},
+    "additionalProperties": False}
+
 SCHEMAS = {"study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
            "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA, "split": SPLIT_SCHEMA,
-           "enclosure": ENCLOSURE_SCHEMA}
+           "enclosure": ENCLOSURE_SCHEMA, "wires": WIRES_SCHEMA}
 
 
 def schema(kind: str = "study") -> dict:
-    """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff', 'split' or 'enclosure'."""
+    """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff', 'split', 'enclosure'
+    or 'wires'."""
     if kind not in SCHEMAS:
         raise ValueError(f"schema kind must be one of {sorted(SCHEMAS)}")
     return copy.deepcopy(SCHEMAS[kind])

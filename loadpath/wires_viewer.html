@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cable harness</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: the product fills the window; the cables' checks sit in a panel on the left (a bottom sheet on phones); the motion slider docks under the stage. */
+:root {
+  --ground: #e7ebf0; --panel: #fafbfc; --ink: #17202b; --muted: #5a6575; --line: #d3d9e1; --chip: #edf0f4;
+  --accent: #2c56c9; --warn: #c2410c; --ok: #15803d;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #10151c; --panel: #171e27; --ink: #e3e8ef; --muted: #8d99aa; --line: #283242; --chip: #1f2833;
+    --accent: #86a2f7; --warn: #fb923c; --ok: #4ade80; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #10151c; --panel: #171e27; --ink: #e3e8ef; --muted: #8d99aa; --line: #283242; --chip: #1f2833;
+  --accent: #86a2f7; --warn: #fb923c; --ok: #4ade80; color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 13px/1.45 var(--body); overflow: hidden; }
+#app { height: 100%; display: grid; grid-template-columns: 320px 1fr; }
+#panel { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; min-width: 0;
+  padding: 18px 16px 24px max(16px, env(safe-area-inset-left, 0px)); display: flex; flex-direction: column; gap: 16px; }
+#stage { position: relative; min-width: 0; overflow: hidden; }
+#stage > canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+h1 { font: 600 20px/1.15 var(--display); margin: 0; text-wrap: balance; }
+h2 { margin: 0; font: 500 10.5px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.verdict { font: 500 12px/1.3 var(--mono); margin-top: 6px; }
+.verdict.ok { color: var(--ok); } .verdict.bad { color: var(--warn); }
+.wire { border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; background: var(--chip); cursor: pointer; }
+.wire.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.wire .name { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+.wire .name span:last-child { font: 500 11px/1.6 var(--mono); }
+.wire .cab { color: var(--muted); font-size: 12px; }
+.wire dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 7px 0 0; font-size: 12px; }
+.wire dt { color: var(--muted); white-space: nowrap; } .wire dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.wire ul { margin: 7px 0 0; padding-left: 16px; color: var(--warn); font-size: 12px; }
+.okc { color: var(--ok); } .badc { color: var(--warn); }
+.legend { display: flex; align-items: center; gap: 8px; font: 11px var(--mono); color: var(--muted); }
+.legend i { flex: 1; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #3aa56b, #d8b93a 65%, #d24a2c 100%); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+label.tog { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; }
+#dock { position: absolute; left: 16px; right: 16px; bottom: 14px; display: flex; gap: 12px; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; }
+#dock button { font: inherit; color: inherit; background: var(--chip); border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 12px; cursor: pointer; }
+#dock input { flex: 1; accent-color: var(--accent); min-width: 0; }
+#dock output { font: 12px var(--mono); min-width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: 1fr minmax(180px, 42%); }
+  #panel { order: 2; border-right: 0; border-top: 1px solid var(--line); padding: 14px 16px 20px; }
+}
+</style>
+<div id="app">
+  <aside id="panel">
+    <header><h1 id="title"></h1><div id="verdict" class="verdict"></div></header>
+    <section><h2>Cables</h2><div id="wires" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div></section>
+    <section><h2>Bend against the allowed radius</h2>
+      <div class="legend" style="margin-top:8px"><span>gentle</span><i></i><span>at limit</span></div></section>
+    <section class="row">
+      <label class="tog"><input type="checkbox" id="xray" checked> see through the bodies</label>
+      <label class="tog"><input type="checkbox" id="sweepEnv"> show every pose</label>
+    </section>
+  </aside>
+  <main id="stage"><canvas id="c"></canvas>
+    <div id="dock" hidden><button id="play">Play</button><input id="step" type="range" min="0" value="0"><output id="sv"></output></div>
+  </main>
+</div>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
+
+const DATA = /*DATA*/null;
+const dec = (s, T) => { const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return new T(u.buffer); };
+const q = new URLSearchParams(location.search);
+const dark = () => q.get("theme") ? q.get("theme") === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+if (q.get("theme")) document.documentElement.dataset.theme = q.get("theme");
+
+document.getElementById("title").textContent = DATA.title;
+document.title = DATA.title;
+const vd = document.getElementById("verdict");
+vd.textContent = DATA.ok ? "every cable lays within its limits" : DATA.problems.length + " problem" + (DATA.problems.length > 1 ? "s" : "");
+vd.className = "verdict " + (DATA.ok ? "ok" : "bad");
+
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 5000);
+camera.up.set(0, 0, 1);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x5a6270, 1.15));
+const key = new THREE.DirectionalLight(0xffffff, 1.7); scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.55); scene.add(fill);
+
+const PALETTE = [0x8fa3bf, 0xb9a48a, 0x9bb39a, 0xb59ab5, 0xa9b0b8, 0xc2a37f];
+const box = new THREE.Box3();
+const bodies = DATA.bodies.map((b, i) => {
+  let g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(dec(b.v, Float32Array), 3));
+  g.setIndex(new THREE.BufferAttribute(dec(b.f, Uint32Array), 1));
+  g = toCreasedNormals(g, 0.6);
+  const col = b.color ? new THREE.Color(b.color) : new THREE.Color(b.inside ? 0xcfd5dd : PALETTE[i % PALETTE.length]);
+  const m = new THREE.MeshStandardMaterial({ color: col, roughness: 0.62, metalness: 0.0, transparent: true,
+    opacity: 1, side: THREE.DoubleSide, depthWrite: true });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.matrixAutoUpdate = false;
+  scene.add(mesh);
+  g.computeBoundingBox(); box.union(g.boundingBox);
+  return { mesh, b };
+});
+
+const ramp = (t) => {            // 0 gentle .. 1 at the limit .. beyond
+  const a = new THREE.Color(0x3aa56b), m = new THREE.Color(0xd8b93a), z = new THREE.Color(0xd24a2c);
+  t = Math.min(Math.max(t, 0), 1.25);
+  return t < 0.65 ? a.clone().lerp(m, t / 0.65) : m.clone().lerp(z, Math.min((t - 0.65) / 0.35, 1));
+};
+
+function tube(w, f, alpha) {
+  const n = w.n, P = dec(f.p, Float32Array), D = dec(f.d, Float32Array), S = dec(f.s, Float32Array);
+  const flat = w.kind === "flat", K = flat ? 4 : 14;
+  const pos = new Float32Array(n * K * 3), col = new Float32Array(n * K * 3), idx = [];
+  const t = new THREE.Vector3(), d1 = new THREE.Vector3(), d2 = new THREE.Vector3(), p = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    const a = Math.max(i - 1, 0), b = Math.min(i + 1, n - 1);
+    t.set(P[3 * b] - P[3 * a], P[3 * b + 1] - P[3 * a + 1], P[3 * b + 2] - P[3 * a + 2]).normalize();
+    d1.set(D[3 * i], D[3 * i + 1], D[3 * i + 2]);
+    d1.addScaledVector(t, -d1.dot(t)).normalize();
+    d2.crossVectors(t, d1);
+    const c = ramp(S[i]);
+    for (let k = 0; k < K; k++) {
+      let u, v;
+      if (flat) { u = (k === 0 || k === 3 ? -1 : 1) * w.w; v = (k < 2 ? -1 : 1) * Math.max(w.r, 0.12); }
+      else { const th = 2 * Math.PI * k / K; u = Math.cos(th) * w.r; v = Math.sin(th) * w.r; }
+      p.set(P[3 * i], P[3 * i + 1], P[3 * i + 2]).addScaledVector(d1, u).addScaledVector(d2, v);
+      const o = 3 * (i * K + k);
+      pos[o] = p.x; pos[o + 1] = p.y; pos[o + 2] = p.z; col[o] = c.r; col[o + 1] = c.g; col[o + 2] = c.b;
+    }
+    if (i < n - 1) for (let k = 0; k < K; k++) {
+      const k2 = (k + 1) % K, a0 = i * K + k, a1 = i * K + k2, b0 = a0 + K, b1 = a1 + K;
+      idx.push(a0, b0, a1, a1, b0, b1);
+    }
+  }
+  let g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  g.setIndex(idx);
+  if (flat) g = toCreasedNormals(g, 0.9); else g.computeVertexNormals();
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, transparent: alpha < 1, opacity: alpha, side: THREE.DoubleSide });
+  return new THREE.Mesh(g, m);
+}
+
+const wires = DATA.wires.map((w) => {
+  const grp = new THREE.Group(); scene.add(grp);
+  const ghost = new THREE.Group(); ghost.visible = false; scene.add(ghost);
+  w.frames.forEach((f) => { const P = dec(f.p, Float32Array); for (let i = 0; i < P.length; i += 3) box.expandByPoint(new THREE.Vector3(P[i], P[i + 1], P[i + 2])); });
+  return { w, grp, ghost, built: false };
+});
+
+const fmt = (v, d = 1) => (v === undefined || v === null) ? "-" : Number(v).toFixed(d);
+const list = document.getElementById("wires");
+let selected = null;
+wires.forEach((o) => {
+  const r = o.w.report, m = r.motion;
+  const el = document.createElement("div"); el.className = "wire";
+  const probs = (r.problems || []).concat(m ? m.problems : []);
+  const rad = m ? Math.min(m.minBendRadius, r.minBendRadius) : r.minBendRadius;
+  const allow = m ? m.allowedBendRadius : r.allowedBendRadius;
+  el.innerHTML = `<div class="name"><span>${o.w.id}</span><span class="${o.w.ok ? "okc" : "badc"}">${o.w.ok ? "ok" : "fails"}</span></div>
+    <div class="cab">${o.w.cable}, ${fmt(r.length, 0)} mm</div>
+    <dl><dt>tightest bend</dt><dd>${fmt(rad)} mm <span style="color:var(--muted)">/ ${fmt(allow)} allowed</span></dd>
+    <dt>twist</dt><dd>${fmt(m ? m.maxTwist : r.maxTwist, 0)} deg/m</dd>
+    <dt>connector load</dt><dd>${fmt(Math.max(Math.abs(r.ends.from.pull), r.ends.from.side), 2)} / ${fmt(Math.max(Math.abs(r.ends.to.pull), r.ends.to.side), 2)} N</dd>
+    <dt>wall contact</dt><dd>${fmt(r.contactForce, 2)} N</dd>
+    ${m ? `<dt>curvature swing</dt><dd>${fmt(m.curvatureSwing * 1000, 1)} /m</dd><dt>strain range</dt><dd>${fmt(m.strainRange * 100, 3)} %</dd>` : ""}
+    </dl>${probs.length ? "<ul>" + probs.map((p) => `<li>${p}</li>`).join("") + "</ul>" : ""}`;
+  el.onclick = () => { selected = selected === o ? null : o; document.querySelectorAll(".wire").forEach((e) => e.classList.remove("sel")); if (selected) el.classList.add("sel"); show(cur); };
+  list.appendChild(el);
+});
+
+const nstep = DATA.steps.length;
+let cur = 0;
+function pose(k) {
+  const M = new THREE.Matrix4();
+  if (DATA.poses) M.fromArray(DATA.poses[k]).transpose();
+  return M;
+}
+function show(k) {
+  cur = k;
+  const M = pose(k);
+  bodies.forEach(({ mesh, b }) => { mesh.matrix.copy(b.moves ? M : new THREE.Matrix4()); });
+  wires.forEach((o) => {
+    o.grp.clear();
+    const f = o.w.frames[Math.min(k, o.w.frames.length - 1)];
+    o.grp.add(tube(o.w, f, selected && selected !== o ? 0.25 : 1));
+  });
+  document.getElementById("sv").textContent = DATA.motion ? label(DATA.steps[k]) : "";
+  document.getElementById("step").value = k;
+}
+function label(s) {
+  const m = DATA.motion; if (!m) return "";
+  if (m.type === "path") return "out " + Math.round(s * 100) + " %";
+  const r = m.range || [-90, 90]; const v = r[0] + s * (r[1] - r[0]);
+  return (m.type === "prismatic" ? v.toFixed(1) + " mm" : v.toFixed(0) + " deg");
+}
+const xray = document.getElementById("xray");
+function setXray() {
+  bodies.forEach(({ mesh, b }) => {
+    const on = xray.checked; mesh.material.opacity = on ? (b.inside ? 0.16 : 0.42) : 1;
+    mesh.material.depthWrite = !on; mesh.material.needsUpdate = true; mesh.renderOrder = on ? (b.inside ? 3 : 2) : 0;
+  });
+}
+xray.onchange = setXray; setXray();
+const env = document.getElementById("sweepEnv");
+env.onchange = () => wires.forEach((o) => {
+  if (!o.built) { o.w.frames.forEach((f) => o.ghost.add(tube(o.w, f, 0.16))); o.built = true; }
+  o.ghost.visible = env.checked;
+});
+if (nstep > 1) {
+  document.getElementById("dock").hidden = false;
+  const sl = document.getElementById("step"); sl.max = nstep - 1;
+  sl.oninput = () => show(+sl.value);
+  let timer = null; const pb = document.getElementById("play");
+  pb.onclick = () => {
+    if (timer) { clearInterval(timer); timer = null; pb.textContent = "Play"; return; }
+    pb.textContent = "Pause"; timer = setInterval(() => show((cur + 1) % nstep), 90);
+  };
+} else { env.parentElement.hidden = true; }
+
+const size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
+const span = Math.max(size.x, size.y, size.z);
+function view(az, el, zoom = 1) {
+  const a = az * Math.PI / 180, e = el * Math.PI / 180, d = span * 1.9 / zoom;
+  camera.position.set(centre.x + d * Math.cos(e) * Math.cos(a), centre.y + d * Math.cos(e) * Math.sin(a), centre.z + d * Math.sin(e));
+  controls.target.copy(centre); controls.update();
+}
+view(+(q.get("az") || -58), +(q.get("el") || 28), +(q.get("zoom") || 1));
+function resize() {
+  const s = document.getElementById("stage"); renderer.setSize(s.clientWidth, s.clientHeight, false);
+  camera.aspect = s.clientWidth / s.clientHeight; camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize); resize();
+scene.background = new THREE.Color(dark() ? 0x10151c : 0xe7ebf0);
+show(Math.min(+(q.get("step") || 0), nstep - 1));
+if (q.get("xray") === "0") { xray.checked = false; setXray(); }
+if (q.get("env") === "1") { env.checked = true; env.onchange(); }
+if (q.get("bare") === "1") { document.getElementById("panel").hidden = true; document.getElementById("app").style.gridTemplateColumns = "1fr"; document.getElementById("dock").hidden = true; resize(); }
+window.lp = { show, view, resize };
+renderer.setAnimationLoop(() => {
+  controls.update();
+  key.position.copy(camera.position).add(new THREE.Vector3(0, 0, span)); fill.position.copy(camera.position).multiplyScalar(-0.5).add(new THREE.Vector3(0, 0, span * 2));
+  renderer.render(scene, camera); window.renderDone = true;
+});
+</script>
+</html>
