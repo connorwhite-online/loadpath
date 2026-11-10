@@ -721,7 +721,9 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         bores = [r.shape for r in study.keep_out if getattr(r, "cuts", True) and getattr(r, "bore", True)]
         bore_f = _fraction(bores, centers, pitch) if bores else np.zeros(len(centers))
         preserve |= (_fraction(skin, centers, pitch) >= 0.5) & (bore_f < 0.5)
-    preserve = _face_bridge(preserve, pres_f, dims, (design_f >= 0.5) & (keep_f == 0))
+    # a design cell joins drawn cells only if the drawn shape barely enters it;
+    # one it covers a quarter of is drawn material at this grid
+    preserve = _face_bridge(preserve, pres_f, dims, (design_f >= 0.5) & (keep_f == 0) & (pres_f < 0.25))
     design = (design_f >= 0.5) & ~preserve & (keep_f == 0)
     active = preserve | design
     if not active.any():
