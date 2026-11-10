@@ -971,18 +971,30 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
         if not len(bad):
             break
         mids = m.vertices[bad].mean(axis=1)
-        # one ball per cluster of pinched edges a ball apart: greedy for a
-        # few, one per r-sized grid cell for many (the greedy pass is
-        # quadratic, and an exact skin meeting a field along a long seam can
-        # leave tens of thousands)
-        if len(mids) > 2000:
-            _, first = np.unique(np.floor(mids / r).astype(np.int64), axis=0, return_index=True)
-            keep = list(mids[np.sort(first)])
-        else:
-            keep = []
-            for q in mids:
-                if not keep or np.min(np.linalg.norm(np.asarray(keep) - q, axis=1)) > r:
-                    keep.append(q)
+        # one ball per cluster of pinched edges a ball apart (greedy, in
+        # order; kept points hashed by r-sized cell so each test looks at
+        # 27 cells, not every ball so far: the plain pass was quadratic and
+        # stalled on a generated skin's 25k contacts)
+        keep, grid = [], {}
+        for q in mids:
+            key = tuple(np.floor(q / r).astype(int))
+            near = False
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        for k_ in grid.get((key[0] + dx, key[1] + dy, key[2] + dz), ()):
+                            if np.linalg.norm(keep[k_] - q) <= r:
+                                near = True
+                                break
+                        if near:
+                            break
+                    if near:
+                        break
+                if near:
+                    break
+            if not near:
+                grid.setdefault(key, []).append(len(keep))
+                keep.append(q)
         balls = [m3d.Manifold.sphere(r, 12).translate(tuple(map(float, q))) for q in keep]
         if keep_out is not None:
             at_ko = [b for b in balls if (b ^ keep_out).volume() > 1e-9]
