@@ -385,6 +385,9 @@ def _have_pardiso():
     return True
 
 
+_KERNELS_STARTED = False
+
+
 def mkl_threads(solver) -> None:
     """Give PARDISO the run's cores on the calling thread. loadpath sets
     MKL_NUM_THREADS=1 at import (for BLAS; see __init__.py), which left every
@@ -392,7 +395,25 @@ def mkl_threads(solver) -> None:
     factor of the wrist yoke (395k dofs) took 42.7 s, 12.7 s on 4 threads.
     The budget is LOADPATH_THREADS (evals and the study's worker split set
     it), else the cores this process may use. Thread-local, so BLAS stays
-    single-threaded."""
+    single-threaded.
+
+    Every call into MKL comes through here first, so this is also where
+    the compiled kernels' threads are started before MKL's. numba's OpenMP
+    layer binds to whichever OpenMP runtime is loaded when it starts: MKL's
+    own (libiomp5, loaded by MKL's first call) if that is there already,
+    else GNU's. On MKL's, every kernel called from a pool thread (fem's load
+    cases, verify's boxes: pools.pool makes threads per call) left a team of
+    workers behind, as PARDISO did (on_mkl_thread): the wrist yoke gained 27
+    threads and about 0.7 GB with each constrained part, 177 threads by its
+    fifth. Started first, the kernels stay on GNU's runtime, which ends a
+    team with its thread, as they always were before direct.py made a
+    factorization the optimizer's first solve."""
+    global _KERNELS_STARTED
+    if not _KERNELS_STARTED:
+        from .pools import threading_layer
+
+        threading_layer()
+        _KERNELS_STARTED = True
     env = os.environ.get("LOADPATH_THREADS")
     try:
         n = max(1, int(env)) if env else len(os.sched_getaffinity(0))
