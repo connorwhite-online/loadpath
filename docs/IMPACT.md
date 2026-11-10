@@ -240,6 +240,36 @@ for the same reason it wins on stiffness. Real lattice damping gains need a
 second, lossy material (a TPU core) or unfused powder left in the cells
 (particle damping). Neither is modelled yet.
 
+### Modes inside the optimizer (`modalopt.py`)
+
+A study's `vibration` block is held while the part is being designed, not
+only checked afterwards. Each iteration the optimizer computes the density
+design's own lowest modes on its grid, with everything the check counts:
+the masses it carries, rigid bodies with their inertia, and for a free part
+(`inertiaRelief`, a drone in flight) the free-free modes with the six rigid
+ones left out. An eigenvalue's gradient is exact,
+d(w^2)/dx = phi^T (dK/dx - w^2 dM/dx) phi, checked against finite
+differences. The floor is f_min / f_i - 1 <= 0 over the modes (a smooth
+maximum, since a symmetric part's modes come in pairs and cross); a mode at
+or above an excitation band's bottom is driven over its top. Nothing is
+driven down: the cheapest way to lower a mode is to cut the part in two,
+and an optimizer asked to do it does. Cells below 10% density carry mass
+as x^6 so the empty region's own slow modes are not the ones read.
+
+Why it matters: a free frame carrying a heavy canopy on four posts came out
+of the search with its first mode at 153 Hz against a 546 Hz floor. The
+optimizer had only the flight loads to go by, which the posts carry in
+compression; the canopy rocking on them is a different load path, and it
+was found only on the delivered mesh. On a test craft (thrust at four
+corners, 140 g carried on top of the middle) the same 8% of the design
+space rings at 400 Hz with the floor in the optimizer against 334 Hz
+without, and the min-mass method ends on a 1300 Hz floor (first mode 1320 Hz).
+
+Limits: the optimizer's modes are the cold part's (the check reads each
+cell at its own temperature), and in the volume search the floor is a
+penalty, so a floor the volume cannot reach is missed and the search moves
+to more material.
+
 ## Isolators: TPU lattice feet (`isolator.py`)
 
 An isolator is the one vibration job where a soft lattice is exactly what you

@@ -154,8 +154,10 @@ class Vibration:
     `excitations`: [(name, lo Hz, hi Hz, max amplification or None)], each a
     forcing that sweeps a band (a rotor's once-per-rev and blade-pass lines
     over the throttle range); see modal.band_response.
-    `in_optimizer`: the masses shaken along x, y and z become extra,
-    stiffness-only load cases in the optimizer (domain.inertial_cases)."""
+    `in_optimizer`: the floor and the bands are held in the optimizer on the
+    design's own modes (modalopt.ModalModel), and for a held part the masses
+    shaken along x, y and z become extra, stiffness-only load cases
+    (domain.inertial_cases)."""
     min_frequency: float | None
     masses: list = field(default_factory=list)
     modes: int = 3

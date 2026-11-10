@@ -206,7 +206,9 @@ buckling, printability) you can report to the user.
    that), and the report lists the modes in each band. With a `thermal`
    block the modes are those of the warm part (PA12 under an 80 C motor
    keeps 45% of its stiffness); a free part (`inertiaRelief`) takes a
-   `thermal` block too. Structure under a propeller or in front of a fan blocks thrust:
+   `thermal` block too. The optimizer holds the floor and bands itself,
+   on the design's own modes (a free part's free-free, with what it
+   carries), so list every carried mass. Structure under a propeller or in front of a fan blocks thrust:
    `"aero": {"rotors": [{"center": [52, 52, 12], "axis": "-z", "radius":
    44.5, "hub": 14, "thrust": 0.78, "ducted": true}]}` (thrust at hover, N)
    charges the optimizer for the drag of what each stream meets, as the

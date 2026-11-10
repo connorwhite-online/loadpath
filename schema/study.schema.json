@@ -484,7 +484,7 @@
         },
         "inOptimizer": {
           "type": "boolean",
-          "description": "add the masses' inertial load cases to the optimizer (default true; false: only the check)"
+          "description": "hold the floor and the bands in the optimizer, on the design's own modes (free-free with what it carries for an inertiaRelief part; modalopt.py), and add the masses' inertial load cases for a held part (default true; false: only the check)"
         }
       },
       "x-requireOne": [

@@ -142,6 +142,11 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     if opts.x0 is not None:
         x = np.clip(np.asarray(opts.x0, float), 0.0, 1.0)
     x[pres] = 1.0
+    modal = getattr(domain, "modal", None)
+    modal_last, modal_age = None, 0
+    # (a fixed number of slots: which side of a band a mode is held on can change as the design does)
+    modal_slots = modal.slots() if modal is not None else []
+    m += len(modal_slots)
     mma = MMA(len(free), m, xmin=0.0, xmax=1.0, move=min(opts.move, 0.1))
     move_cap = mma.move
     worst_prev = np.inf
@@ -257,6 +262,29 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                 cons.append(v)
                 grads.append(g)
                 record[f"buckling.{domain.case_names[c]}"] = limits.buckling / (v + 1.0) if v > -1.0 else float("inf")
+
+        if modal is not None:
+            # the vibration block's floor and bands on the design's own modes
+            # (modalopt.py); a reading well inside its limits stands for up
+            # to BUCKLING_SKIP iterations, as buckling's does
+            if modal_last is None or modal_age >= BUCKLING_SKIP or max(v for _, v, _ in modal_last) > -0.3:
+                try:
+                    modal_last = [(nm_, float(v), to_x(g)) for nm_, v, g in modal.evaluate(xe, PENALTY)]
+                    record["frequencies"] = modal.last.get("frequencies")
+                    record["modalSeconds"] = modal.last.get("seconds")
+                except Exception as exc:  # noqa: BLE001 - a failed eigensolve must not end the run
+                    record["modalError"] = f"{type(exc).__name__}: {exc}"
+                    modal_last = modal_last or []
+                modal_age = 0
+            else:
+                modal_age += 1
+            got_m = {nm_: (v, g) for nm_, v, g in modal_last}
+            for nm_ in modal_slots:
+                v, g = got_m.get(nm_, (-1.0, np.zeros(n)))
+                cons.append(v)
+                grads.append(g)
+                if nm_ in got_m:
+                    record[f"vibration.{nm_}"] = v
 
         f0 = 10.0 * float(xp[design].mean())
         g0 = 10.0 * design / design.sum()

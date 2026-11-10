@@ -824,6 +824,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
 
         buck = BucklingModel(domain, nu)
     buck_last, buck_age, buck_nu = None, 0, 0.0
+    modal = getattr(domain, "modal", None) if not robust else None
+    modal_last, modal_age, modal_nu = None, 0, 0.0
 
     ijk = tuple(mesh.elem_ijk.T)
     # The cutter's own fill (manufacture.machinable: slots narrower than the
@@ -1118,6 +1120,42 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                         if v > -BUCKLE_MMA:
                             dc = dc + buck_nu * comp * g
                 buck_rec["bucklingWeight"] = buck_nu
+        if modal is not None:
+            # The vibration block's floor and bands on the design's own modes
+            # (modalopt.py), as a penalty the optimality criteria can take,
+            # like buckling's: compliance + nu c sum(max(g, 0)), nu raised
+            # while a limit is missed and eased off once it is held.
+            from .constrained import BUCKLING_SKIP
+
+            # (a missed limit is read again every other iteration: the eigensolve
+            # costs about a compliance solve, and a penalty steers on a gradient one step old)
+            if modal_last is None or modal_age >= BUCKLING_SKIP or (
+                    max((v for _, v, _ in modal_last), default=1.0) > -0.3 and (modal_age >= 1 or it <= 10)):
+                try:
+                    modal_last = [(nm_, float(v), ht @ (printed_grad(am_e, g) * dproj_e / hs))
+                                  for nm_, v, g in modal.evaluate(xe, PENALTY)]
+                    buck_rec["frequencies"] = modal.last.get("frequencies")
+                    buck_rec["modalSeconds"] = modal.last.get("seconds")
+                except Exception as exc:  # noqa: BLE001 - a failed eigensolve must not end the run
+                    buck_rec["modalError"] = f"{type(exc).__name__}: {exc}"
+                    modal_last = modal_last or []
+                modal_age = 0
+            else:
+                modal_age += 1
+            if modal_last:
+                worst_m = max(v for _, v, _ in modal_last)
+                if modal_age == 0:
+                    if worst_m > 0:
+                        modal_nu = min(max(modal_nu * 1.3, 0.2), 50.0)
+                    elif worst_m < -0.05:
+                        modal_nu *= 0.8
+                if modal_nu > 0:
+                    for _, v, g in modal_last:
+                        if v > -0.05:
+                            # (scaled by its own size: a frequency ratio's gradient, not a compliance's)
+                            dc = dc + modal_nu * comp * g
+                buck_rec["vibration"] = {nm_: round(v, 4) for nm_, v, _ in modal_last}
+                buck_rec["vibrationWeight"] = modal_nu
         dc_raw = dc
         dc = np.minimum(dc, 0.0)
         if robust:

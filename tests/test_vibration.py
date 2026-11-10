@@ -157,3 +157,74 @@ def test_warm_part_rings_lower():
                                         "thermal": {"ambient": 80}}), _bar())
     assert abs((warm["firstFrequency"] / cold["firstFrequency"]) ** 2 - 0.45) < 0.01
     assert warm["thermal"]["maxTemperature"] == 80.0 and "thermal" not in cold
+
+
+def _box(a, b):
+    return {"type": "box", "min": a, "max": b}
+
+
+_MOTORS = [_box([x - 1, y - 1, -1], [x + 7, y + 7, 4]) for x in (0, 54) for y in (0, 54)]
+_TOP = _box([20, 20, 26], [40, 40, 31])
+# a free craft: thrust at four corners, a heavy canopy carried on top of the middle
+CRAFT = {"designSpace": _box([0, 0, 0], [60, 60, 30]),
+         "preserve": [{"shape": m} for m in _MOTORS] + [{"shape": _TOP}],
+         "loadCases": [{"name": "thrust", "loads": [{"shape": m, "force": [0, 0, 3]} for m in _MOTORS]}],
+         "material": "pa12", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 3.0},
+         "inertiaRelief": {"masses": [{"shape": _TOP, "mass": 0.14}] + [{"shape": m, "mass": 0.02} for m in _MOTORS]}}
+
+
+def test_optimizer_modes_have_exact_gradients():
+    # the design's own modes on the optimizer's grid (modalopt.py), free-free with what it
+    # carries and clamped: each limit's gradient against finite differences
+    from loadpath.modalopt import modal_model
+
+    clamped = {k: v for k, v in CRAFT.items() if k != "inertiaRelief"}
+    clamped["supports"] = [{"shape": _MOTORS[0]}]
+    vib = {"minFrequency": 2000, "masses": [{"shape": _TOP, "mass": 0.14}],
+           "excitations": [{"name": "rev", "band": [2500, 4000]}]}
+    for doc in ({**CRAFT, "vibration": vib}, {**clamped, "vibration": vib}):
+        s = study_from_dict(doc)
+        d = build_domain(s)
+        mm = modal_model(s, d)
+        rng = np.random.default_rng(0)
+        x = 0.3 + 0.6 * rng.random(d.mesh.n_elem)
+        f, _, _ = mm.modes(x, 3.0)
+        mm.floor, mm.bands = 0.5 * f[0], [("rev", 0.5 * (f[2] + f[3]), 3.0 * f[3])]     # modes 4.. in the band
+        cons = mm.evaluate(x, 3.0)
+        assert [n for n, _, _ in cons] == ["band.rev", "minFrequency"] and set(mm.slots()) == {"band.rev", "minFrequency"}
+        for e in rng.choice(d.mesh.n_elem, 3, replace=False):
+            xa, xb = x.copy(), x.copy()
+            xa[e] += 1e-4
+            xb[e] -= 1e-4
+            for (n, _, g), (_, va, _), (_, vb, _) in zip(cons, mm.evaluate(xa, 3.0), mm.evaluate(xb, 3.0)):
+                fd = (va - vb) / 2e-4
+                # (small entries carry the eigensolver's own tolerance through the difference)
+                assert abs(fd - g[e]) < 0.03 * abs(fd) + 0.01 * np.abs(g).max(), (n, e, fd, g[e])
+    # a band reaching down to the floor raises the floor to its top; a mode under a band is left alone
+    s = study_from_dict({**CRAFT, "vibration": {"minFrequency": 500, "excitations": [
+        {"name": "blade pass", "band": [400, 900]}, {"name": "far", "band": [1e5, 2e5]}]}})
+    mm = modal_model(s, build_domain(s))
+    cons = mm.evaluate(np.full(mm.domain.mesh.n_elem, 0.5), 3.0)
+    assert [n for n, _, _ in cons] == ["minFrequency"] and mm.last["floor"] == 900.0
+    # nothing to hold, or switched off: no model
+    assert build_domain(study_from_dict({**CRAFT, "vibration": {"minFrequency": 500, "inOptimizer": False}})).modal is None
+    assert build_domain(study_from_dict(CRAFT)).modal is None
+
+
+def test_free_part_is_designed_for_its_first_mode():
+    # the canopy rocks on whatever joins it to the corners: with the floor in the optimizer the
+    # same mass rings higher (the free part's modes were only read after meshing before)
+    from loadpath.modalopt import ModalModel
+    from loadpath.simp import SimpOptions, optimize
+
+    def first(vib):
+        s = study_from_dict({**CRAFT, **({"vibration": vib} if vib else {})})
+        res = optimize(build_domain(s), 0.3, SimpOptions(volume_fraction=0.1, filter_radius=4.5, max_iterations=60))
+        ref = study_from_dict({**CRAFT, "vibration": {"minFrequency": 1}})
+        f, _, _ = ModalModel(ref, build_domain(ref), 1.0).modes(np.where(res.xphys > 0.5, 1.0, 1e-3), 3.0)
+        return float(f[0]), res
+
+    f_plain, _ = first(None)
+    f_held, res = first({"minFrequency": 2.0 * f_plain})
+    assert f_held > 1.1 * f_plain, (f_plain, f_held)
+    assert "vibration" in res.history[-1] and res.history[1].get("frequencies")

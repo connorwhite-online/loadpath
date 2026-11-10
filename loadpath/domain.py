@@ -72,6 +72,8 @@ class Domain:
     # aero.rotors: the drag of the design in each rotor's stream as a cost in
     # the material budget (aero.BlockageCost), or None
     blockage: object = None
+    # the vibration block as optimizer constraints (modalopt.ModalModel), or None
+    modal: object = None
     # massProperties.centerOfMass: (target (3,) with nan on a free axis, tolerance mm), or None
     center_of_mass: tuple | None = None
     # inertiaRelief: the cases' loads as written (BoundaryConditions.raw_loads)
@@ -943,6 +945,9 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         from .aero import BlockageCost
 
         dom.blockage = BlockageCost(dom, aero.rotors, float(study.material.density), aero.grams_per_newton)
+    from .modalopt import modal_model
+
+    dom.modal = modal_model(study, dom)
     return dom
 
 
@@ -973,9 +978,8 @@ def _inertial_cases(study: Study, mesh: HexMesh, fixed: np.ndarray, loads: list)
     the real cases rather than letting either swamp the other."""
     vib = getattr(study, "vibration", None)
     if vib is None or not vib.in_optimizer or not vib.masses or study.inertia_relief:
-        # a free part shaken as a whole only translates: its stiffness
-        # against its masses comes from the real cases, which inertia
-        # relief already balances against them
+        # a free part shaken as a whole only translates: these cases say
+        # nothing about it. Its modes are held directly (modalopt.py).
         return []
     total = sum(kg for _, _, kg in vib.masses)
     real = max((float(np.linalg.norm(f.reshape(-1, 3).sum(axis=0))) for f in loads), default=0.0)

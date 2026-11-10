@@ -476,7 +476,10 @@ _VIBRATION = {
             "x-requireOne": [["region"], ["shape"]], "required": ["mass"], "additionalProperties": False}},
         "modes": {"type": "integer", "minimum": 1, "maximum": 20, "description": "modes reported (default 3; "
                   "with excitations, as many more as it takes to reach the top of the highest band)"},
-        "inOptimizer": {"type": "boolean", "description": "add the masses' inertial load cases to the optimizer "
+        "inOptimizer": {"type": "boolean", "description": "hold the floor and the bands in the optimizer, on the "
+                                                          "design's own modes (free-free with what it carries "
+                                                          "for an inertiaRelief part; modalopt.py), and add the "
+                                                          "masses' inertial load cases for a held part "
                                                           "(default true; false: only the check)"},
     },
     "x-requireOne": [["minFrequency"], ["excitations"]],
