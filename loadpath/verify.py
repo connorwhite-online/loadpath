@@ -374,6 +374,22 @@ def _closed_bores(study: Study, mesh) -> list:
     return out
 
 
+def drawn_kept(study, regions=None):
+    """What of the preserved shapes must be in the part, as one manifold
+    (None if nothing): each less the keep-outs that cut it (spec.cuts_of)."""
+    from .sharp import exact_manifold
+    from .spec import cuts_of
+    out = []
+    for r in (study.preserve if regions is None else regions):
+        p = exact_manifold(r.shape)
+        cut = _union([k.shape for k in cuts_of(study, r)])
+        out.append(p - cut if cut is not None else p)
+    if not out:
+        return None
+    import manifold3d as m3d
+    return m3d.Manifold.batch_boolean(out, m3d.OpType.Add) if len(out) > 1 else out[0]
+
+
 def _union(shapes):
     import manifold3d as m3d
 
@@ -1326,15 +1342,18 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
 
     design = _union(study.design_space + [r.shape for r in study.preserve])
     keep = _union([r.shape for r in study.keep_out])
-    pres = _union([r.shape for r in study.preserve])
     envelope = design - keep if keep is not None else design
     env_vol = float(envelope.volume())
     report["designSpaceMass"] = env_vol * mat.density / 1000.0
     report["massReduction"] = 1.0 - vol / env_vol if env_vol > 0 else None
-    report["keepOutIntrusion"] = float((part ^ keep).volume()) if keep is not None else 0.0
-    if pres is not None:
-        # Preserve minus keep-out is what must survive: a boss keeps its bore.
-        pres_eff = pres - keep if keep is not None else pres
+    # What must survive is each preserve less the keep-outs that cut it (a
+    # boss keeps its bore; rails stand in a board's clear zone, the skin
+    # under a part's way in). Anything else of the part in a keep-out
+    # intrudes.
+    pres_eff = drawn_kept(study)
+    designed = part - pres_eff if pres_eff is not None else part
+    report["keepOutIntrusion"] = float((designed ^ keep).volume()) if keep is not None else 0.0
+    if pres_eff is not None:
         report["preserveMissing"] = _preserve_missing(pres_eff, part, mesh)
     else:
         report["preserveMissing"] = 0.0

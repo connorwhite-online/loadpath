@@ -504,7 +504,18 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     design_f = _fraction(study.design_space, centers, pitch)
     pres_f = _fraction([r.shape for r in study.preserve], centers, pitch)
     keep_f = _fraction([r.shape for r in study.keep_out], centers, pitch)
-    preserve = (pres_f >= 0.5) & (keep_f < 0.5)
+    # Only a keep-out that cuts (a bore, a way in, cutsPreserve) takes
+    # preserved geometry out; a clearance volume keeps the optimizer's
+    # material out and leaves what the designer drew. The skin is cut by
+    # bores alone (spec.cuts_of).
+    cutting = [r.shape for r in study.keep_out if getattr(r, "cuts", True)]
+    cut_f = keep_f if len(cutting) == len(study.keep_out) else _fraction(cutting, centers, pitch)
+    preserve = (pres_f >= 0.5) & (cut_f < 0.5)
+    skin = [r.shape for r in study.preserve if r.id == "skin"]
+    if skin and any(not getattr(r, "bore", True) for r in study.keep_out if getattr(r, "cuts", True)):
+        bores = [r.shape for r in study.keep_out if getattr(r, "cuts", True) and getattr(r, "bore", True)]
+        bore_f = _fraction(bores, centers, pitch) if bores else np.zeros(len(centers))
+        preserve |= (_fraction(skin, centers, pitch) >= 0.5) & (bore_f < 0.5)
     design = (design_f >= 0.5) & ~preserve & (keep_f == 0)
     active = preserve | design
     if not active.any():
@@ -515,19 +526,21 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     # rails that hold it) takes the part out of the analysis without a word:
     # the touch microphone's rails were read as missing except at the wall
     # they hang from, so its board looked held at one end only.
-    lost_cells = (pres_f >= 0.5) & (keep_f >= 0.5)
-    if lost_cells.any() and study.keep_out:
+    lost_cells = (pres_f >= 0.5) & ~preserve
+    if lost_cells.any() and cutting:
         on = np.flatnonzero(pres_f >= 0.5)
         for r in study.preserve:
             mine = on[_fraction([r.shape], centers[on], pitch) >= 0.5]
             gone = mine[lost_cells[mine]]
             if len(mine) and len(gone) >= 4 and len(gone) > 0.25 * len(mine):
-                by = [k.id for k in study.keep_out if _fraction([k.shape], centers[gone], pitch).mean() >= 0.25]
+                by = [k.id for k in study.keep_out if getattr(k, "cuts", True)
+                      and _fraction([k.shape], centers[gone], pitch).mean() >= 0.25]
                 warnings.append(
                     f"preserve {r.id!r}: {100 * len(gone) / len(mine):.0f}% of it is inside keep-out "
                     f"{', '.join(map(repr, by)) or 'regions'} and is left out of the part; a clear zone drawn round "
                     "a preserved part takes the part away with it. Subtract the preserve from the keep-out "
-                    "({\"type\": \"subtract\", \"shapes\": [keep-out, preserve]}) if it is meant to stay.")
+                    "({\"type\": \"subtract\", \"shapes\": [keep-out, preserve]}), or give a clearance keep-out "
+                    "\"bore\": false (it then never cuts what is drawn), if it is meant to stay.")
     for rid, t in study.shells:
         if t < 2.0 * pitch:
             warnings.append(

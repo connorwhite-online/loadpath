@@ -15,10 +15,14 @@ What the study keeps:
 - the exterior surfacing, as a 1.0 mm skin (SLS TPU's minimum wall:
   Materialize lists 0.8 mm, the owner's rule is 1.0);
 - the base ring with the flap's seat, latch groove and feet (z < 3.7),
-  the board rails, and the plunger tip;
+  the board rails, the plunger's skirt, and the plunger tip;
+- the USB-C aperture as drawn (a 9.4 x 3.8 mm stadium, its mouth rounded
+  into the flank), cut through the skin as one of its openings;
 - clear: the opening (the flap's plug fills it), everything over the
   board, the switch column and the stem with its gap, the USB-C plug's
-  path (insertFrom +y).
+  path (insertFrom +y). A clear zone keeps the optimizer out; it never
+  cuts the skin or what is drawn (the first parts lost the port's shape
+  to a square hole, 88% of the rails and the skirt that way).
 
 Everything else is design space: the skin's thickness under the touch area,
 the cone, the rim tube's walls. In round 17 the skin is 1.0 mm, the cone
@@ -55,6 +59,19 @@ bx = board_w / 2 + fit + rail_w + 0.4;
 if (which == "outer") difference() { outer_solid(); rebate_cut(); hole_cut(); latch_cut(); }
 if (which == "base") intersection() { body(); translate([-40, -40, -1]) cube([80, 80, ledge_z + 1]); }
 if (which == "bay") board_bay();
+if (which == "seat") plunger_seat();
+// the USB-C aperture as drawn: a 9.4 x 3.8 stadium with its mouth rounded
+// into the flank (body.scad's own cut, copied)
+if (which == "port") union() {
+    translate([0, usb_y - 3, usb_z]) rotate([-90, 0, 0])
+        hull() for (s = [-1, 1]) translate([s * (9.0 - 3.4) / 2, 0, 0]) cylinder(h = 10, d = 3.4 + 0.4, $fn = 32);
+    let (hw = 9.0 / 2 + 0.2 + port_round, ta = atan(hw / rad(90)),
+         pl = plan_pt(90 + ta), pr = plan_pt(90 - ta), v = pr - pl,
+         y0 = pl[1] - pl[0] * v[1] / v[0])
+        translate([0, y0 + port_lift, usb_z]) rotate([0, 0, atan2(v[1], v[0])])
+            rotate([90, 0, 0]) flare(port_round, n = 10, out = 3)
+                hull() for (s = [-1, 1]) translate([s * (9.0 - 3.4) / 2, 0]) circle(d = 3.4 + 0.4, $fn = 32);
+}
 if (which == "body") body();
 if (which == "opening") translate([0, 0, -2]) linear_extrude(ledge_z + 2.5) plan2(hole_d - 0.5);
 if (which == "boardspace") intersection() { cavity(); translate([-bx, board_y0 - 1.8, -1]) cube([2 * bx, 60, H + 2]); }
@@ -65,9 +82,9 @@ if (which == "receptacle") translate([0, board_y1 + conn_over - 7.35, board_z1 +
     rotate([-90, 0, 0]) hull() for (s = [-1, 1]) translate([s * (8.94 - 3.26) / 2, 0, 0]) cylinder(h = 7.35, d = 3.26, $fn = 24);
 if (which == "chip") translate([-4, board_y0 + 4, board_z1]) cube([8, 8, 1.0]);
 """
-PARTS = ("outer", "base", "bay", "body", "opening", "boardspace", "flap", "switch", "pcb", "receptacle", "chip")
+PARTS = ("outer", "base", "bay", "seat", "port", "body", "opening", "boardspace", "flap", "switch", "pcb", "receptacle", "chip")
 # what the study reads from a case folder (LOADPATH_TOUCH_MIC_STL)
-CASE = ("outer", "base", "bay", "opening", "boardspace", "flap", "switch", "pcb", "receptacle", "chip")
+CASE = ("outer", "base", "bay", "seat", "port", "opening", "boardspace", "flap", "switch", "pcb", "receptacle", "chip")
 
 # round 17's numbers (body.scad echo): actuator top 7.7, cone tip 8.1, skin
 # top at the dish centre 9.6, USB-C centre z 6.6 at y 27.8
@@ -121,10 +138,13 @@ def study(paths: dict, pitch: float = 1.0) -> dict:
         "name": "touch-mic",
         "description": "Touch microphone push pad (round 17 surfacing): interior designed for a fire-force map.",
         "designSpace": {"type": "mesh", "path": paths["outer"]},
-        "skin": {"thickness": 1.0},
+        # the USB-C aperture is the designer's, cut through the skin as drawn;
+        # the plug's path behind it only keeps the optimizer out
+        "skin": {"thickness": 1.0, "openings": [{"shape": {"type": "mesh", "path": paths["port"]}}]},
         "preserve": [
             {"id": "base", "shape": {"type": "mesh", "path": paths["base"]}},
             {"id": "rails", "shape": {"type": "mesh", "path": paths["bay"]}},
+            {"id": "seat", "shape": {"type": "mesh", "path": paths["seat"]}},
             {"id": "tip", "shape": {"type": "cylinder", "p0": [0, 0, TIP], "p1": [0, 0, TOP_C - 1.0], "r": 1.6}},
         ],
         "keepOut": [
@@ -162,7 +182,8 @@ def study(paths: dict, pitch: float = 1.0) -> dict:
         # solid ends there, and a skin lining it was a 0.4 mm membrane
         # across the board bay in the first studies' parts
         doc["skin"] = {"thickness": 1.0, "openings": [{"shape": {"type": "mesh", "path": paths["opening"]},
-                                                       "inward": "+z", "depth": 1.2}]}
+                                                       "inward": "+z", "depth": 1.2},
+                                                      {"shape": {"type": "mesh", "path": paths["port"]}}]}
         doc["switch"]["output"]["bearsOn"] = {"part": {"shape": {"type": "mesh", "path": paths["flap"]},
                                                        "seat": SEAT, "supports": [DESK]}}
         doc["switch"]["clearance"] = [{"component": {"type": "mesh", "path": paths[k]}, "id": k, "margin": 0.2,
@@ -180,9 +201,10 @@ def brief(paths: dict) -> dict:
     return {
         "name": "touch-mic-handoff",
         "description": "Touch microphone push pad (round 17 surfacing) from the designer's handoff.",
-        "exterior": paths["outer"], "skin": 1.0, "openings": [paths["opening"]],
+        "exterior": paths["outer"], "skin": 1.0, "openings": [paths["opening"], paths["port"]],
         "material": "tpu88a", "minMember": 1.0,
-        "fixed": [{"id": "base", "shape": paths["base"]}, {"id": "rails", "shape": paths["bay"]}],
+        "fixed": [{"id": "base", "shape": paths["base"]}, {"id": "rails", "shape": paths["bay"]},
+                  {"id": "seat", "shape": paths["seat"]}],
         "components": [
             {"id": "pcb", "shape": paths["pcb"]},
             {"id": "receptacle", "shape": paths["receptacle"], "installedOn": "pcb"},

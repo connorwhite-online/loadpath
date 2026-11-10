@@ -237,6 +237,54 @@ def test_eval_products_lint():
         assert not errs, (name, errs)
 
 
+def _rail_study(bore):
+    from loadpath.spec import study_from_dict
+    return study_from_dict({
+        "designSpace": {"type": "box", "min": [0, 0, 0], "max": [20, 10, 10]},
+        "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [21, 11, 0.01]}}],
+        "loadCases": [{"name": "press", "loads": [
+            {"shape": {"type": "box", "min": [-1, -1, 9.99], "max": [21, 11, 11]}, "force": [0, 0, -1]}]}],
+        "material": {"E": 2000, "nu": 0.3, "strength": 50, "density": 1.2},
+        "goal": {"safetyFactor": 2, "volumeFraction": 0.3},
+        # a rail the designer drew, and a board's clear zone drawn over it
+        "preserve": [{"id": "rail", "shape": {"type": "box", "min": [2, 2, 2], "max": [18, 4, 5]}}],
+        "keepOut": [{"id": "board", "bore": bore, "shape": {"type": "box", "min": [1, 1, 3], "max": [19, 9, 8]}}],
+    })
+
+
+def test_a_clear_zone_does_not_cut_what_the_designer_drew():
+    """A clearance keep-out ("bore": false) keeps the optimizer out; it
+    does not delete the preserved rail under it, the way the touch
+    microphone's board clear zone took 88% of its rails. A bore still cuts."""
+    from loadpath.domain import build_domain
+    clear, bore = _rail_study(False), _rail_study(True)
+    assert not clear.keep_out[0].cuts and bore.keep_out[0].cuts
+    kept = int(build_domain(clear, 1.0).preserve.sum())
+    cut = int(build_domain(bore, 1.0).preserve.sum())
+    # the bore takes the rail's top two thirds (16 x 2 x 2 cells); the
+    # clear zone takes none of it (the rest are the load and support faces)
+    assert kept - cut >= 60, (cut, kept)
+
+
+def test_drawn_check_flags_a_missing_mount():
+    """drawncheck reads each preserved region on the delivered mesh: the
+    rail whole passes, the rail with its top cut away fails."""
+    import trimesh
+
+    from loadpath.drawncheck import drawn_check
+    from loadpath.shapes import Box
+    from loadpath.shapes import trimesh_from_manifold
+    s = _rail_study(False)
+    base = Box([0, 0, 0], [20, 10, 1.5]).to_manifold()
+    whole = trimesh_from_manifold(base + Box([2, 2, 1], [18, 4, 5]).to_manifold())
+    ok = drawn_check(s, whole)
+    assert ok["ok"] and ok["regions"][0]["missingShare"] < 0.02, ok
+    short = trimesh_from_manifold(base + Box([2, 2, 1], [18, 4, 3]).to_manifold())
+    bad = drawn_check(s, short)
+    assert not bad["ok"] and bad["regions"][0]["missingShare"] > 0.5, bad
+    assert isinstance(short, trimesh.Trimesh)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

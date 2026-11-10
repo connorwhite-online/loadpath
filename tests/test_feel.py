@@ -243,12 +243,17 @@ def test_a_keep_out_round_a_preserved_part_warns():
     doc = {"name": "rails", "material": "pla", "resolution": {"pitch": 1.0}, "goal": {"volumeFraction": 0.3},
            "designSpace": {"type": "box", "min": [0, 0, 0], "max": [20, 10, 10]},
            "preserve": [{"id": "rail", "shape": {"type": "box", "min": [0, 0, 0], "max": [20, 2, 3]}}],
-           "keepOut": [{"id": "clear", "bore": False, "shape": {"type": "box", "min": [5, -1, -1], "max": [21, 6, 11]}}],
+           "keepOut": [{"id": "clear", "shape": {"type": "box", "min": [5, -1, -1], "max": [21, 6, 11]}}],
            "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.5, 11, 11]}}],
            "loadCases": [{"name": "a", "loads": [{"shape": {"type": "box", "min": [19, 7, 0], "max": [20, 10, 10]},
                                                   "force": [0, 0, -1]}]}]}
     w = build_domain(study_from_dict(doc), 1.0).warnings
     assert any("preserve 'rail'" in x and "'clear'" in x for x in w), w
+    # a clearance zone ("bore": false) never cuts what is drawn: nothing to warn of
+    doc["keepOut"][0]["bore"] = False
+    w = build_domain(study_from_dict(doc), 1.0).warnings
+    assert not any("preserve 'rail'" in x for x in w), w
+    del doc["keepOut"][0]["bore"]
     doc["keepOut"][0]["shape"] = {"type": "subtract", "shapes": [doc["keepOut"][0]["shape"], doc["preserve"][0]["shape"]]}
     w = build_domain(study_from_dict(doc), 1.0).warnings
     assert not any("preserve 'rail'" in x for x in w), w

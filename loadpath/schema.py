@@ -159,7 +159,13 @@ _KEEP_OUT = {
                    "bore": {"type": "boolean",
                             "description": "false: a clearance volume (a mating part, a sweep) that may end "
                                            "against material; it is not checked for closed ends. Default true "
-                                           "(false for a pressurized cavity)."},
+                                           "(false for a pressurized cavity). A clearance volume keeps the "
+                                           "designed material out but never cuts what is drawn (preserve)."},
+                   "cutsPreserve": {"type": "boolean",
+                                    "description": "Whether it cuts preserved shapes out of the part. Default: "
+                                                   "true for a bore and for a part's way in (insertFrom), false "
+                                                   "for a clearance volume. Only a bore ever cuts the skin: a way "
+                                                   "in through the exterior is one of skin.openings."},
                    "wall": {**_POS, "description": "mm of material kept round it, pinned solid: a duct's or a "
                                                    "plenum's skin, with only what is behind it designed (ribs). "
                                                    "A pressurized keep-out gets minMember if not set."},

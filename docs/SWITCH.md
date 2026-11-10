@@ -641,6 +641,33 @@ backed off one step.
 - **The delivered mesh** is the isosurface joined to the exact preserved
   geometry, so the cosmetic skin's outside is the designer's mesh
   unchanged.
+- **What the designer drew, on the delivered part** (`drawncheck.py`,
+  `exterior` and `drawn` in the report; evals fail a part that misses
+  either). `exterior`: the part against the design space's own surface,
+  nothing proud and all of it still there bar the skin's declared
+  openings. `drawn`: per preserved region, the share of it missing from
+  the part (2% allowed). Both were added after the touch microphone's
+  part shipped with a square 12 x 6 mm hole where its USB-C port is a
+  rounded 9.4 x 3.8 mm stadium, its board rails 88% gone and its
+  plunger's skirt cut away: every press was in its window, and nothing
+  read the geometry itself. A few minutes on the 0.7 mm part.
+
+## What a keep-out cuts
+
+A keep-out keeps the optimizer's material out. Whether it also cuts what
+the designer drew (`preserve`, the skin) depends on what it is:
+
+| keep-out | designed material | preserved shapes | the skin |
+|---|---|---|---|
+| bore (the default) | out | cut | cut |
+| a part's way in (`insertFrom`) | out | cut | kept: a way in through the exterior is one of `skin.openings` |
+| clearance (`"bore": false`) | out | kept | kept |
+
+`"cutsPreserve": true` or `false` overrides the middle column. A clear
+zone drawn over a part's rails, or a stem's gap round a plunger's skirt,
+no longer takes them with it, and a plug's path no longer cuts the
+exterior where the designer drew a port (the touch microphone lost all
+three that way).
 
 ## Assembly paths
 
@@ -653,7 +680,9 @@ Boxes and cylinders moving along one of their own axes are swept exactly.
 A mesh moving along an axis is swept on its own distance grid (its
 occupancy run along the axis, then one distance transform); anything else
 is swept as a union of copies a fraction of a millimetre apart. A swept
-keep-out is a clearance, not a bore, so it may end against material.
+keep-out is a clearance, not a bore, so it may end against material. It
+cuts preserved shapes on its way but never the skin ("What a keep-out
+cuts", above): a way in through the exterior is drawn as an opening.
 
 A path of legs, as the part leaves its place: `"insertFrom": [{"toward":
 "-y", "length": 8.5}, "-z"]` slides it back 8.5 mm and then drops it out.

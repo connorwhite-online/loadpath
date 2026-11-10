@@ -1555,6 +1555,16 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
     from .reconstruct import _stl_watertight
     rep["watertight"] = bool(mesh.is_watertight) and _stl_watertight(mesh)
     if mesh.is_watertight:
+        # what the designer drew, kept: the exterior bar its openings, and
+        # every preserved region (drawncheck.py)
+        from .drawncheck import drawn_check, exterior_report
+        if on_progress is not None:
+            on_progress({"stage": "verify", "check": "exterior and drawn geometry"})
+        ext = exterior_report(study, mesh)
+        if ext is not None:
+            rep["exterior"] = ext
+        rep["drawn"] = drawn_check(study, mesh)
+    if mesh.is_watertight:
         # drawn: the delivered mesh's volume share per cell over the skin
         # floor (for a feel read-back)
         from .domain import _fraction

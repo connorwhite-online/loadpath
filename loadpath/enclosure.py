@@ -795,13 +795,16 @@ def _listify(v):
     return v if isinstance(v, list) else [v]
 
 
-def exterior_check(mesh, exterior, openings=(), tol: float = 0.05, samples: int = 40_000, region=None) -> dict:
+def exterior_check(mesh, exterior, openings=(), tol: float = 0.05, samples: int = 40_000, region=None,
+                   drawn=()) -> dict:
     """The delivered part against the designer's exterior: nothing proud of
     it, and all of it still there (bar the openings). Read on the meshes
     themselves: points sampled on each surface, distances exact (closest
     point on the triangles), not a grid. With `region` (a split shell's
     half), only the exterior inside it is expected, a skin clear of the
-    cut."""
+    cut. `drawn`: shapes the designer drew into the part (preserved), not
+    read as proud where they stand past the exterior (the touch
+    microphone's rail lips hang down into its underside opening)."""
     import trimesh
 
     from .shapes import shape_from_spec
@@ -809,7 +812,12 @@ def exterior_check(mesh, exterior, openings=(), tol: float = 0.05, samples: int 
     if ext_mesh is None:
         raise ValueError("exterior_check needs the exterior as a mesh")
     pts, _ = trimesh.sample.sample_surface(mesh, samples, seed=1)
-    proud = _signed_distance(ext_mesh, pts)
+    if drawn:
+        mine = np.zeros(len(pts), bool)
+        for d in drawn:
+            mine |= d.sdf(pts) < max(tol, 0.3)     # a mesh shape's sdf is read on a grid
+        pts = pts[~mine]
+    proud = _signed_distance(ext_mesh, pts) if len(pts) else np.zeros(1)
     q, _ = trimesh.sample.sample_surface(ext_mesh, samples, seed=2)
     keep = np.ones(len(q), bool)
     for o in openings:

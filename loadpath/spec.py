@@ -83,6 +83,16 @@ class Region:
     # keepOut only: mm of material kept round it, pinned solid (a duct's or
     # a plenum's wall; see pressure.py). Set for every pressurized keep-out.
     wall: float | None = None
+    # keepOut only: whether it cuts preserved geometry. A bore does (a hole
+    # through a boss), and so does a part's way in (insertFrom: a capsule's
+    # path through its cup's floor); a clearance zone does not: it keeps the
+    # optimizer's material out, never what the designer drew (the touch
+    # microphone's board clear zone deleted 88% of its rails). Only a bore
+    # cuts the skin: the exterior is the designer's, and a way in through
+    # it is one of the skin's openings (the same part's plug path cut a
+    # square hole where its USB-C port is a stadium). `cutsPreserve` sets
+    # it either way; see cuts_of.
+    cuts: bool = True
 
 
 @dataclass
@@ -702,6 +712,13 @@ class Study:
         return np.min(los, axis=0), np.max(his, axis=0)
 
 
+def cuts_of(study, region) -> list:
+    """The keep-outs that cut preserved `region` out of the part: every
+    cutting keep-out (Region.cuts), but for the skin only the bores."""
+    return [k for k in study.keep_out if getattr(k, "cuts", True)
+            and (region.id != "skin" or getattr(k, "bore", True))]
+
+
 def _regions(items, label, base_dir, bounds=None):
     out, seen = [], set()
     for i, item in enumerate(items or []):
@@ -721,8 +738,10 @@ def _regions(items, label, base_dir, bounds=None):
             if bounds is None:
                 raise ValueError(f"{label}[{i}].insertFrom needs the design space")
             shape = _assembly_path(shape, item["insertFrom"], bounds, f"{label}[{i}].insertFrom")
-        out.append(Region(rid, shape, bool(item.get("bore", True)) and item.get("insertFrom") is None,
-                          float(wall) if wall is not None else None))
+        bore = bool(item.get("bore", True)) and item.get("insertFrom") is None
+        cuts = bool(item.get("bore", True)) or item.get("insertFrom") is not None
+        out.append(Region(rid, shape, bore, float(wall) if wall is not None else None,
+                          bool(item.get("cutsPreserve", cuts))))
     return out
 
 

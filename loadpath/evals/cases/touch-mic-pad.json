@@ -15,6 +15,12 @@
     },
     "inward": "+z",
     "depth": 1.2
+   },
+   {
+    "shape": {
+     "type": "mesh",
+     "path": "touch-mic-port.stl"
+    }
    }
   ]
  },
@@ -31,6 +37,13 @@
    "shape": {
     "type": "mesh",
     "path": "touch-mic-bay.stl"
+   }
+  },
+  {
+   "id": "seat",
+   "shape": {
+    "type": "mesh",
+    "path": "touch-mic-seat.stl"
    }
   },
   {
@@ -416,6 +429,8 @@
    "touch-mic-outer.stl",
    "touch-mic-base.stl",
    "touch-mic-bay.stl",
+   "touch-mic-seat.stl",
+   "touch-mic-port.stl",
    "touch-mic-opening.stl",
    "touch-mic-boardspace.stl",
    "touch-mic-flap.stl",

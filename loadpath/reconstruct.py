@@ -879,7 +879,8 @@ def _snap_to_flat_faces(mesh, preserve, reach: float, spread: float):
 
 def _attach_plan(mesh, study, organic):
     """Remember how the part was built, exact shapes and all, for STEP
-    export (step.py): ((organic & envelope) | preserved) - keep-outs."""
+    export (step.py): ((organic & envelope) - clearance keep-outs | preserved)
+    - cutting keep-outs."""
     from .shapes import Union
     from .sharp import Exact, Op, Organic
     from .step import attach_plan
@@ -890,13 +891,22 @@ def _attach_plan(mesh, study, organic):
     org = Organic(None, ["organic"], mesh=trimesh_from_manifold(organic))   # a trimesh: parts cross processes
     env = list(study.design_space) + [r.shape for r in study.preserve]
     p = Op("intersect", [org, Exact(one(env), "envelope")])
+    clear_ko = [r.shape for r in study.keep_out if not getattr(r, "cuts", True)]
+    cut_ko = [r.shape for r in study.keep_out if getattr(r, "cuts", True)]
+    if clear_ko:
+        p = Op("subtract", [p, Exact(one(clear_ko), "keep-out")])
     if study.preserve:
         pres = one([r.shape for r in study.preserve])
         p = Op("union", [p, Exact(pres, "preserve")])
         p.keep_with = pres
-    if study.keep_out:
+    if cut_ko:
         keep = getattr(p, "keep_with", None)
-        p = Op("subtract", [p, Exact(one([r.shape for r in study.keep_out]), "keep-out")])
+        p = Op("subtract", [p, Exact(one(cut_ko), "keep-out")])
+        skin = [r.shape for r in study.preserve if r.id == "skin"]
+        if skin and any(not r.bore for r in study.keep_out if getattr(r, "cuts", True)):
+            bores = [r.shape for r in study.keep_out if getattr(r, "cuts", True) and r.bore]
+            sk = Exact(skin[0], "skin")
+            p = Op("union", [p, Op("subtract", [sk, Exact(one(bores), "keep-out")]) if bores else sk])
         if keep is not None:
             p.keep_with = keep
     attach_plan(mesh, p)
@@ -1417,6 +1427,16 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         m3d.OpType.Add)
     organic_raw = organic
     organic = organic ^ envelope
+    # A clearance keep-out (bore false) keeps the designed material out and
+    # leaves what is drawn (preserved shapes, the skin): the whole zone comes
+    # out of the designed material, then the drawn shapes go in. (Cutting
+    # the zone less the drawn shapes left the designed material meeting the
+    # touch microphone's rails along their edges: a row of necks on each.)
+    # A bore, or one with cutsPreserve, cuts through everything.
+    clear_ko = [r for r in study.keep_out if not getattr(r, "cuts", True)]
+    if clear_ko:
+        ck = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in clear_ko], m3d.OpType.Add)
+        organic = organic - ck
     part = organic
     if study.preserve:
         pres = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
@@ -1425,9 +1445,16 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         part, filled = _fill_unmachinable(part, study, domain, envelope)
         if filled:
             info["unmachinableFilled"] = filled
-    if study.keep_out:
-        ko = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.keep_out], m3d.OpType.Add)
+    cut_ko = [r for r in study.keep_out if getattr(r, "cuts", True)]
+    if cut_ko:
+        ko = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in cut_ko], m3d.OpType.Add)
         part = part - ko
+        skin = [r for r in study.preserve if r.id == "skin"]
+        if skin and any(not r.bore for r in cut_ko):
+            # a way in does not cut the exterior; only a bore does
+            sk = exact_manifold(skin[0].shape)
+            bores = [exact_manifold(r.shape) for r in cut_ko if r.bore]
+            part = part + (sk - m3d.Manifold.batch_boolean(bores, m3d.OpType.Add) if bores else sk)
 
     # decompose() lists an enclosed cavity as a body of negative volume: it
     # is the part's (a sealed plenum's), not a fragment
@@ -1466,13 +1493,22 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         if severed:
             info["severedFragmentVolume"] = float(sum(f["volume"] for f in severed))
 
+    # a neck may stand in a clearance zone (where the drawn shapes it joins
+    # stand too: the touch microphone's rails in its board's clear zone,
+    # met flush there by the cut interior), never in a bore or a way in
     clip, ko_all, hold = envelope, None, None
-    if study.keep_out:
-        ko_all = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.keep_out], m3d.OpType.Add)
+    if cut_ko:
+        ko_all = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in cut_ko], m3d.OpType.Add)
         clip = envelope - ko_all
     if study.preserve:
         hold = m3d.Manifold.batch_boolean([exact_manifold(r.shape) for r in study.preserve], m3d.OpType.Add)
     part, pinches = _fill_pinches(part, clip=clip, keep_out=ko_all, hold=hold)
+    if pinches and not _stl_watertight(_drop_slivers(trimesh_from_manifold(part))):
+        # contacts the clipped balls could not close (where three drawn
+        # surfaces meet, the touch microphone's base, rails and skin):
+        # balls of at most 0.27 mm, unclipped
+        part, more = _fill_pinches(part, rounds=4)
+        pinches += more
     if pinches:
         info["pinchesFilled"] = pinches
     mesh = _drop_slivers(trimesh_from_manifold(part))

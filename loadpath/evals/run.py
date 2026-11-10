@@ -590,6 +590,15 @@ def run_switch_case(raw: dict, base: str, out: str, tier: str = "full") -> dict:
                   ("in window (delivered mesh)", rep["deliveredInWindow"], ">=", expect.get("minDeliveredInWindow")),
                   ("volume mm^3", vol, "<=", expect.get("maxVolume")),
                   ("watertight", bool(rep["watertight"]), "==", True)]
+        # loadpath never edits the exterior or removes what is drawn: a
+        # keep-out crossing the skin (a plug's path) or swallowing a
+        # preserve (a board's clear zone round its rails) fails the case
+        if "exterior" in rep:
+            checks.append(("exterior kept (coverage)", rep["exterior"]["coverage"], ">=", 0.999))
+            checks.append(("exterior kept (max proud mm)", rep["exterior"]["maxProud"], "<=", 0.2))
+        for g in (rep.get("drawn") or {}).get("regions") or []:
+            if "missingShare" in g:
+                checks.append((f"drawn {g['id']} kept (missing share)", g["missingShare"], "<=", 0.02))
         if "nonlinear" in rep:
             # every large-deflection press solved to the click (it crawled
             # and stopped short on thin TPU skins before PARDISO)
