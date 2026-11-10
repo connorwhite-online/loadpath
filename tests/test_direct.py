@@ -281,7 +281,8 @@ def test_simp_direct_matches_assembled():
 def test_slow_multigrid_hands_over():
     """A run whose multigrid takes more than MG_SLOW_ITERS iterations on a
     design finishes on the other solvers, with the same design as a run
-    that never used it."""
+    that never used it. The slow answer itself stands (it converged inside
+    the multigrid's own stall limit): that design is not solved twice."""
     from loadpath import simp
     from loadpath.simp import SimpOptions, optimize
 
@@ -304,15 +305,99 @@ def test_slow_multigrid_hands_over():
     finally:
         simp._Analysis.solve = spy.__wrapped__ if hasattr(spy, "__wrapped__") else solve
         simp.MG_AUTO_CELLS, simp.MG_SLOW_ITERS = old
-    assert seen and "mg" not in seen and set(seen) == {"direct"}, seen
+    assert seen[0] == "mg" and len(seen) > 1 and set(seen[1:]) == {"direct"}, seen
     with _env(LOADPATH_SOLVER="direct", LOADPATH_DIRECT_DOFS=f"10,{10 * dom.mesh.n_dof}"):
         ref = optimize(dom, st.elastic(design=True), opts)
-    assert abs(got.compliance - ref.compliance) < 1e-6 * ref.compliance, (got.compliance, ref.compliance)
+    # (one design read to the multigrid's tolerance, the rest exactly)
+    assert abs(got.compliance - ref.compliance) < 2e-3 * ref.compliance, (got.compliance, ref.compliance)
+
+
+def test_stalled_multigrid_answer_is_not_kept():
+    """Past the multigrid's own stall limit its answer is in doubt: that
+    design is solved again by the solver the run goes on with."""
+    from loadpath import simp
+    from loadpath.mg import GridElasticity
+    from loadpath.simp import SimpOptions, optimize
+
+    st, dom, radius = _mbb()
+    opts = SimpOptions(volume_fraction=0.3, filter_radius=radius, max_iterations=3)
+    old = simp.MG_AUTO_CELLS, simp.MG_SLOW_ITERS, GridElasticity.STALL
+    seen = []
+    solve = simp._Analysis.solve
+
+    def spy(self, *a, **k):
+        # (as if every multigrid solve had run past its stall limit)
+        GridElasticity.STALL = 0
+        try:
+            out = solve(self, *a, **k)
+        finally:
+            GridElasticity.STALL = old[2]
+        seen.append(self.last_solver)
+        return out
+
+    simp.MG_AUTO_CELLS, simp.MG_SLOW_ITERS = 1000, 1
+    simp._Analysis.solve = spy
+    try:
+        with _env(LOADPATH_SOLVER=None, LOADPATH_DIRECT=None, LOADPATH_DIRECT_DOFS=f"10,{10 * dom.mesh.n_dof}"):
+            optimize(dom, st.elastic(design=True), opts)
+    finally:
+        simp._Analysis.solve = solve
+        simp.MG_AUTO_CELLS, simp.MG_SLOW_ITERS, GridElasticity.STALL = old
+    assert seen and set(seen) == {"direct"}, seen
+
+
+def test_stalled_cg_is_factored():
+    """CG that is not going to finish hands its system to a factorization
+    (fem.Solver.STALL): the answer is the factorization's, the factor serves
+    that matrix's further right-hand sides, and a solve that converges is
+    left alone."""
+    mesh, fixed, fs, e = _bar()
+    k = Stiffness(mesh, 0.3, fixed).assemble(e)
+    ref = DirectSolver(mesh.node_ijk).solve_many(k, fs)
+    # a healthy solve: CG's own answer, nothing factored
+    s = Solver(mesh, rtol=1e-8)
+    us = s.solve_many(k, fs)
+    assert s._factored is None and 0 < s.last_iters < s.STALL
+    for u, r in zip(us, ref):
+        assert np.linalg.norm(u - r) < 1e-5 * np.linalg.norm(r)
+    # not there in the iterations it is given
+    for many in (True, False):
+        s = Solver(mesh, rtol=1e-13, maxiter=4000)
+        s.STALL = 3
+        us = s.solve_many(k, fs) if many else [s.solve(k, f) for f in fs]
+        assert s._factored is not None, many
+        for u, r in zip(us, ref):
+            assert np.linalg.norm(u - r) < 1e-9 * np.linalg.norm(r), many
+        f2 = fs[0] + 2.0 * fs[1]
+        it = s.last_iters
+        u2 = s.solve(k, f2)                                   # straight from the factor
+        assert np.linalg.norm(u2 - (ref[0] + 2.0 * ref[1])) < 1e-9 * np.linalg.norm(u2) and s.last_iters == it
+    # nothing to factor with: CG's full allowance, and its own error where it fails
+    with _env(LOADPATH_DIRECT="0"):
+        s = Solver(mesh, rtol=1e-8, maxiter=4000)
+        s.STALL = 3
+        u = s.solve(k, fs[0])
+        assert s._factored is None and np.linalg.norm(u - ref[0]) < 1e-5 * np.linalg.norm(ref[0])
+    # a mechanism is still reported as one
+    mesh, fixed, fs, e = _bar(loose=True)
+    k = Stiffness(mesh, 0.3, fixed).assemble(e)
+    f = fs[2].copy()
+    far = np.nonzero(mesh.node_ijk[:, 0] > 24 + 2)[0]
+    f[3 * far + 2] = -1.0            # pushes the loose block
+    s = Solver(mesh, rtol=1e-8, maxiter=60)
+    s.STALL = 20
+    try:
+        s.solve_many(k, [f, fs[0]])
+    except RuntimeError as exc:
+        assert "mechanism" in str(exc)
+    else:
+        raise AssertionError("a part no support holds solved")
 
 
 TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix, test_threads_do_not_pile_up,
          test_kernels_after_a_factorization_do_not_pile_up, test_mechanism_raises,
-         test_sizes_and_switches, test_route, test_simp_direct_matches_assembled, test_slow_multigrid_hands_over]
+         test_sizes_and_switches, test_route, test_simp_direct_matches_assembled, test_slow_multigrid_hands_over,
+         test_stalled_multigrid_answer_is_not_kept, test_stalled_cg_is_factored]
 
 
 def main():
