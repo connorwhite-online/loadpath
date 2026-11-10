@@ -722,25 +722,45 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres, soften=None):
         if not dead.any():
             break
         before = (xp, us)
+        held = _held_pieces(fe, domain, xp)
         xp = xp.copy()
         xp[dead] = 0.0
         # and whatever that cut loose from the supports (a tip whose root
         # was a dead cluster under the size floor)
         loose = (xp > 0.5) & ~fe._connected((xp > 0.5) | fe.anchor) & ~pres
         xp[loose] = 0.0
+        if _held_pieces(fe, domain, xp) > held:
+            # the cut parted the design: a drawn piece, a load or a support
+            # that was joined to the rest through members with next to no
+            # energy in them (a free frame's ducts, held on against their
+            # own inertia alone) is now on its own. Pruning is a clean-up:
+            # the pass is undone. Asked of the shape, not of the solve: a
+            # factorization returns the floating piece's displacement on
+            # the void's stiffness where CG ran out of iterations.
+            xp, us = before
+            break
         e = E_MIN + xp ** PENALTY * (1 - E_MIN)
         if soften is not None:
             e = e * soften          # each cell's modulus at its temperature (thermal.StudyHeat.g)
         try:
             us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
         except RuntimeError:
-            # the cut left a mechanism: a free part (inertiaRelief) whose
-            # low-energy members held a drawn piece on, now floating on void
-            # (a drone frame's ducts, iteration 50). Pruning is a clean-up,
-            # so the last pass is undone rather than the run lost.
+            # the cut left a mechanism some other way (a hinge): undone too,
+            # rather than the run lost (a drone frame, iteration 50)
             xp, us = before
             break
     return xp, us
+
+
+def _held_pieces(fe, domain, xp) -> int:
+    """How many separate pieces of the design hold something: a drawn
+    region, a load or a support (fe.anchor). One for a sound part."""
+    solid = (xp > 0.5) | fe.anchor
+    g = np.zeros(domain.dims, bool)
+    ijk = tuple(domain.mesh.elem_ijk.T)
+    g[ijk] = solid
+    lbl, _ = ndimage.label(g, structure=_CONN26)
+    return len(np.unique(lbl[ijk][fe.anchor]))
 
 
 def _heat_state(heat, x, fg, reuse=False):

@@ -428,6 +428,23 @@ def test_union_region_and_dead_material_pruning():
     # (stress dies away over about one strut width from the root)
     assert (out[strut & (c[:, 2] > 18)] == 0.0).all()
 
+    # The same strut with a drawn block at its end: it still carries next to
+    # nothing, but cutting it would leave the block on its own. The pass is
+    # undone and the design comes back as it went in (asked of the shape: a
+    # factorization solves the floating block on the void's stiffness where
+    # CG would have run out of iterations and raised).
+    spec2 = dict(spec, preserve=[{"id": "block", "shape": {"type": "box", "min": [44, 0, 24], "max": [56, 10, 30]}}])
+    d2 = build_domain(study_from_dict(spec2))
+    assert d2.preserve[(np.abs(c[:, 0] - 50) < 6) & (c[:, 2] > 24)].all()
+    xp2 = np.where(beam | strut | d2.preserve, 1.0, 0.0)
+    fe2 = _Analysis(d2, 0.3, 1e-8)
+    us2 = fe2.solve(E_MIN + xp2 ** PENALTY * (1 - E_MIN), xp2, [None] * len(d2.loads), rtol=1e-8)
+    from loadpath.simp import _held_pieces
+    assert _held_pieces(fe2, d2, xp2) == 1
+    out2, _ = _prune_dead(fe2, d2, xp2, us2, d2.loads, ~d2.preserve, d2.preserve)
+    assert (out2 == xp2).all()
+    assert _held_pieces(fe2, d2, np.where(strut & (c[:, 2] > 18), 0.0, xp2)) == 2
+
 
 def test_compliant_inverter():
     # Sigmund's force inverter, small: push right at the left middle, and the
