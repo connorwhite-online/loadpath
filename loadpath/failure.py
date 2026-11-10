@@ -55,7 +55,7 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = ["COMPRESSION", "compression_ratio", "equivalent_stress", "bond_stress", "bond_shear_ratio",
-           "criterion"]
+           "criterion", "MATERIAL_LENGTH", "material_length"]
 
 _RAGHAVA = "Raghava, Caddell & Yeh, J. Mater. Sci. 8 (1973): compressive / tensile yield 1.2-1.35 for glassy polymers"
 
@@ -67,6 +67,50 @@ COMPRESSION = {
     "elastomer": (1.0, "elastomers are strain-governed: no asymmetry taken", "assumed"),
     "metal": (1.0, "metals yield alike in tension and compression", "measured"),
 }
+
+_AVANZINI = ("Avanzini, Tomasoni, Xu, Berto & Razavi, Eng. Fract. Mech. 303 (2024) 110118: notched and cracked "
+             "MJF PA 12 breaks when the strain energy averaged over a control volume of radius 0.86 mm round the "
+             "notch reaches the plain material's (1.33 mm from K_Ic = 101 MPa mm^0.5 and the tensile strength; "
+             "0.86 mm fitted to the sharp notches)")
+
+# The length a material reads stress over, mm, by family: (radius, source,
+# quality).
+#
+# A part does not fail when one point of it reaches the strength. It fails
+# when a volume of material large enough to open a crack or a shear band
+# does: the stress at the very root of a notch, at a re-entrant corner or
+# at the edge of a clamp can be many times the strength (in linear
+# elasticity it is unbounded at a sharp corner) over a few microns without
+# anything happening. Neuber's micro-support, Peterson's notch sensitivity
+# and Taylor's theory of critical distances (The Theory of Critical
+# Distances, Elsevier 2007) all say the same thing: the stress that
+# predicts failure is the stress averaged over a material length, which is
+# set by the toughness and the strength, L = (K_Ic / sigma_0)^2 / pi. It is
+# also the only peak a finite-element mesh can agree with itself about: the
+# value at a node next to a corner is the mesh's, the average over a fixed
+# volume converges.
+#
+# The radius is the one measured on printed PA 12. Printed PLA's length is
+# longer (Ahmed & Susmel, Fatigue Fract. Eng. Mater. Struct. 41 (2018)
+# 2071: L = 4.6 mm at an inherent strength equal to the tensile strength),
+# so taking PA 12's for the glassy thermoplastics averages over less than
+# they would allow (conservative). It agrees with what a datasheet's
+# bending test says: EOS PA 2200 (data sheet of 01.09) breaks at 58 MPa
+# outer-fibre stress in a 4 mm bar (ISO 178) against 48 MPa in tension, which is the tensile strength reached
+# by the average over a 0.9 mm hemisphere at the surface. Brittle resins
+# (PMMA's length is about 0.1 mm), metals (tens of microns) and elastomers
+# (strain-governed) get none: for them the stress is read as finely as the
+# analysis resolves it.
+MATERIAL_LENGTH = {
+    "semicrystalline": (0.86, _AVANZINI, "measured (PA 12)"),
+    "glassy": (0.86, _AVANZINI + "; printed PLA's is longer (Ahmed & Susmel 2018: 4.6 mm), so this is "
+                                 "the conservative one", "assumed"),
+    "elastomer": (0.0, "elastomers are strain-governed: stress read at the analysis's resolution", "assumed"),
+    "metal": (0.0, "a metal's critical distance is tens of microns: stress read at the analysis's resolution",
+              "assumed"),
+}
+# brittle thermosets: no measured length, and PMMA's is about 0.1 mm
+_BRITTLE = ("resin", "vero")
 
 _FAMILY = {
     "pla": "glassy", "petg": "glassy", "abs": "glassy", "asa": "glassy", "resin": "glassy", "vero": "glassy",
@@ -104,6 +148,23 @@ def compression_ratio(material) -> tuple:
     if own is not None:
         return float(own), "given with the material", "study"
     return COMPRESSION[_family(material)]
+
+
+def material_length(material) -> tuple:
+    """(radius in mm of the volume stress is averaged over before it is read
+    against strength, source, quality) for a materials.Material: its family's
+    (MATERIAL_LENGTH). 0 means the analysis's own resolution."""
+    fam = _family(material)
+    try:
+        from .thermal import _material_key
+
+        key = _material_key(material)
+    except Exception:
+        key = str(getattr(material, "name", material)).lower()
+    if fam == "glassy" and any(key == b or key.startswith(b + "-") for b in _BRITTLE):
+        return (0.0, "a brittle thermoset: no measured length (PMMA's is about 0.1 mm), stress read at the "
+                     "analysis's resolution", "assumed")
+    return MATERIAL_LENGTH[fam]
 
 
 def equivalent_stress(sig: np.ndarray, m: float = 1.0) -> np.ndarray:

@@ -621,6 +621,71 @@ def _available_bytes() -> float | None:
     return min(avail, cap) if cap is not None else avail
 
 
+def _machine_bytes() -> float | None:
+    """The memory this machine (or container) has in all: what a grid is
+    sized to. Not what is free at the moment, which is different every run
+    (page cache, the search's own heap, a neighbour), and a grid sized from
+    it is a different grid every run: the robot-arm wrist link's
+    constrained run got 130k cells one time and another count the next,
+    and every number after it moved with the pitch."""
+    total = None
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total = float(line.split()[1]) * 1024.0
+                    break
+    except OSError:
+        pass
+    if total is None:
+        try:
+            total = float(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
+        except (ValueError, OSError, AttributeError):
+            total = None
+    lim = _cgroup_limit()
+    if lim and (total is None or lim < total):
+        total = lim
+    return total
+
+
+# the share of the machine's memory a run plans its grids on (the rest is
+# the system's, the page cache's and the run's own other stages')
+_PLAN_SHARE = 0.7
+
+
+def _own_bytes() -> float:
+    """This process's resident memory: the heap it can reuse."""
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return float(line.split()[1]) * 1024.0
+    except OSError:
+        pass
+    return 0.0
+
+
+def _plan_bytes(need=None) -> float | None:
+    """Bytes a run may plan a grid on: _PLAN_SHARE of the machine's memory,
+    the same every run. `need` (budget in bytes -> bytes the caller would
+    then really use) is checked against the memory there now (free, plus
+    this process's own heap, which it reuses): only when what the plan's
+    grid needs would not fit in 85% of that is the smaller figure returned.
+    A neighbour holding memory is a fact, but it must not move the grid
+    when the grid fits anyway."""
+    total = _machine_bytes()
+    if not total:
+        return _available_bytes()
+    plan = _PLAN_SHARE * total
+    avail = _available_bytes()
+    if avail is None:
+        return plan
+    now = avail + _own_bytes()
+    if (need(plan) if need is not None else plan) <= 0.85 * now:
+        return plan
+    return min(plan, _PLAN_SHARE * now)
+
+
 def _meminfo_available() -> float | None:
     try:
         with open("/proc/meminfo") as f:
@@ -1511,7 +1576,7 @@ _CONSTRAINED_MEMORY = 1.3
 
 
 def _constrained_fit(study: Study) -> dict | None:
-    """Whether goal.method auto's constrained run fits the free memory:
+    """Whether goal.method auto's constrained run fits the machine's memory:
     None (it fits, or nothing to go by), {"pitch": p} for a coarser grid
     that fits, or {"skip": why} when even that would be under 1.5x the
     search's cells (no finer than the search, so no point)."""
@@ -1519,21 +1584,28 @@ def _constrained_fit(study: Study) -> dict | None:
 
     if study.pitch:
         return None
-    avail = _available_bytes()
-    if not avail:
-        return None
     from .domain import build_domain, cell_cap, choose_pitch
 
     p = choose_pitch(study)
     n = build_domain(study, p).n_elem
-    budget = 0.85 * avail   # only near the edge: evals size these grids on purpose
+
+    def cells_in(budget):
+        return min(n, (budget / _CONSTRAINED_MEMORY - _RUN_BASE_BYTES) / _RUN_CELL_BYTES)
+
+    # the machine's memory, not what is free this minute: the grid is the
+    # same every run (_plan_bytes), and coarser than that only when the
+    # memory there now would not hold it
+    budget = _plan_bytes(lambda b: _CONSTRAINED_MEMORY * _run_bytes(cells_in(b)))
+    if not budget:
+        return None
+    avail = budget / _PLAN_SHARE
     if _CONSTRAINED_MEMORY * _run_bytes(n) <= budget:
         return None
-    cells = (budget / _CONSTRAINED_MEMORY - _RUN_BASE_BYTES) / _RUN_CELL_BYTES
+    cells = cells_in(budget)
     search_cells = cell_cap(dataclasses.replace(study, goal=dataclasses.replace(study.goal, method="search")))
     if cells < 1.5 * search_cells:
         return {"skip": f"the constrained method's {n}-cell grid needs about "
-                        f"{_CONSTRAINED_MEMORY * _run_bytes(n) / 1e9:.1f} GB and {avail / 1e9:.1f} GB is free: "
+                        f"{_CONSTRAINED_MEMORY * _run_bytes(n) / 1e9:.1f} GB and this machine has {avail / 1e9:.1f} GB: "
                         "skipped, the search's part stands"}
     return {"pitch": p * (n / cells) ** (1.0 / 3.0) * 1.01}
 
@@ -2183,6 +2255,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         r["confirm"] = {"method": "tet", "safetyFactor": cc["safetyFactor"], "margin": mt,
                         "voxelSafetyFactor": o.voxel_sf, "tetOverVoxel": o.tet_k,
                         "elementSize": cc["elementSize"], "contactBand": band, "nodes": cc["nodes"], "elements": cc["elements"],
+                        **({"stressReading": cc["stressReading"]} if "stressReading" in cc else {}),
                         "seconds": cc["seconds"],
                         "cases": [{k: c[k] for k in ("name", "peakStress", "peakAt", "deflection")}
                                   for c in cc["cases"]]}

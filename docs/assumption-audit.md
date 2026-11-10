@@ -156,6 +156,10 @@ per case on average. What was learned:
   voxel one). At the 1.3 mm voxel band the MBB beam's peak was the edge of
   its rigid support and read SF 1.62-2.07 on three meshes of one part
   (fTetWild is not deterministic, even single-threaded); at 3 mm, 3.00-3.05.
+  Since 2026-11-10 the peak is the stress averaged over the material's
+  length (0.86 mm for the nylons; docs/PHYSICS.md section 8) and the band is
+  measured to the regions as drawn: one wrist-yoke surface reads SF 3.65 to
+  3.73 on three meshes where it read 3.23 to 3.66.
   A mesh twice as fine moved the peak under 8%, inside the 1.15 allowance.
 - The ratio moves with the design (1.39-1.81 across MBB fractions), so
   every step down is confirmed on tets, not trusted to the ratio. Several

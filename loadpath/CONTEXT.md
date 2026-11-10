@@ -65,7 +65,7 @@ metric.
 | `verify.py` | independent voxelization + FEA of the delivered mesh, hotspot submodels, layer-bond check, boundary-cut metric, stress fields |
 | `failure.py` | what breaks a printed part: the pressure-modified von Mises stress (compressive over tensile strength by material family, `material.compressionRatio`) read against tensile strength, and the layer bond's tension and shear together (`process.interlayerShear`); verify.py and crosscheck.py both read it; `report["failure"]` (and `layers.ifBuiltAlong` when a study gives no build direction). docs/PHYSICS.md |
 | `convection.py` | still air (`thermal.convection: "natural"`, the default): per-face natural convection by direction and film temperature, choked between facing walls, plus radiation by emissivity and each face's view of the room (rays through the voxel grid); thermal.StudyHeat iterates it with its own temperatures |
-| `crosscheck.py` | second opinion on a tet mesh: gmsh + native P2 assembly + p-multigrid; CalculiX deck writer |
+| `crosscheck.py` | second opinion on a tet mesh: fTetWild or gmsh + native P2 assembly + p-multigrid; CalculiX deck writer. Reads stress averaged over the material's length (`failure.material_length`, 0.86 mm for nylons), so the peak is the same on any mesh |
 | `study.py` | the search on safety factor / deflection, fine-grid confirm of the pick, multi-material, parallel |
 | `render.py` | clay renders, stress maps, interface close-ups |
 | `viewer.py`, `viewer.html` | interactive HTML viewer (three.js): stress / safety factor / displacement fields, deformation, section plane, compare, optimization playback, heat exchanger fluids |

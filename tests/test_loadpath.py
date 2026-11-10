@@ -466,8 +466,12 @@ def test_crosscheck_cantilever():
     c = r["cases"][0]
     # tip deflection F L^3 / 3 E I = 2.0 mm (a clamped face reads a little stiff)
     assert 1.8 < c["deflection"] < 2.1, c["deflection"]
-    # bending stress just outside the band: M c / I at x = 15 is 5.1 MPa
-    assert abs(c["peakStress"] - 5.1) < 0.4, c["peakStress"]
+    # bending stress at the band's edge (12 mm from the clamp as drawn): M c /
+    # I there is 5.28 MPa at the surface, and the reading is its average over
+    # the material within 1.25 mm (half an element here; crosscheck.
+    # _averaged_stress), a hemisphere whose centroid is 3/8 of that deep in a
+    # 10 mm section: 5.28 x (1 - 0.375 x 1.25 / 5) = 4.79 MPa
+    assert abs(c["peakStress"] - 4.79) < 0.25, c["peakStress"]
 
 
 def test_crosscheck_layered_beam():
@@ -476,7 +480,8 @@ def test_crosscheck_layered_beam():
     # layers 0.85 E, interlayer shear 0.75 G) and checks the bending tension
     # pulling the layers apart against interlayer (0.6) x strength.
     # Timoshenko: 1000e3 / (3 * 1700 * 833.3) + 10 * 100 / (5/6 * 577 * 100)
-    # = 2.37 mm; M c / I at the band's edge (x = 12) is 5.28 MPa.
+    # = 2.37 mm; M c / I at the band's edge (x = 12) is 5.28 MPa, read as its
+    # average over 1.25 mm of material (as test_crosscheck_cantilever): 4.79 MPa.
     try:
         from loadpath.crosscheck import mesher_missing
         if mesher_missing():
@@ -494,9 +499,9 @@ def test_crosscheck_layered_beam():
     r = crosscheck(st, mesh, size=2.5, contact_band=12)
     c = r["cases"][0]
     assert 2.25 < c["deflection"] < 2.45, c["deflection"]
-    assert abs(c["interlayerStress"] - 5.28) < 0.4, c["interlayerStress"]
-    # the bond governs: 0.6 * 50 / (5.28 * allowance)
-    assert abs(r["safetyFactor"] - 0.6 * 50 / (5.28 * STRESS_ALLOWANCE)) < 0.08 * r["safetyFactor"], r["safetyFactor"]
+    assert abs(c["interlayerStress"] - 4.79) < 0.25, c["interlayerStress"]
+    # the bond governs: 0.6 * 50 / (4.79 * allowance)
+    assert abs(r["safetyFactor"] - 0.6 * 50 / (4.79 * STRESS_ALLOWANCE)) < 0.06 * r["safetyFactor"], r["safetyFactor"]
 
 
 def test_crosscheck_calculix_layered():

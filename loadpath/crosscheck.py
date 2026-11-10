@@ -87,21 +87,33 @@ _TETS_PER_VOLUME = 10.0
 _BYTES_PER_TET = 7_500
 
 
-def memory_budget() -> float:
+def memory_budget(volume: float | None = None, size: float | None = None) -> float:
     """Bytes a tet solve may use: LOADPATH_TET_MEMORY (GB), else 40% of
-    the memory free now (in a container, its limit less its use), at most 8 GB."""
+    the machine's memory (a container's limit), at most 8 GB. The machine's,
+    not what is free this minute (study._plan_bytes): the element size it
+    sets is then the same every run, and so is the mesh."""
     env = os.environ.get("LOADPATH_TET_MEMORY")
     if env:
         return float(env) * 1e9
-    from .study import _available_bytes   # MemAvailable, and the container's free share
+    from .study import _PLAN_SHARE, _plan_bytes
 
-    avail = _available_bytes() or 8e9
-    return min(8e9, 0.4 * avail)
+    def budget(plan):
+        return min(8e9, 0.4 * plan / _PLAN_SHARE)
+
+    def need(plan):
+        # what the solve would take at the size this budget allows
+        if volume is None or size is None:
+            return budget(plan)
+        h = fit_size(volume, size, budget(plan))
+        return _TETS_PER_VOLUME * abs(volume) / h ** 3 * _BYTES_PER_TET
+
+    plan = _plan_bytes(need)
+    return budget(plan) if plan else 8e9
 
 
 def fit_size(volume: float, size: float, budget: float | None = None) -> float:
     """`size`, coarsened just enough that the solve fits `budget` bytes."""
-    budget = memory_budget() if budget is None else budget
+    budget = memory_budget(volume, size) if budget is None else budget
     need = (_TETS_PER_VOLUME * abs(volume) * _BYTES_PER_TET / max(budget, 1e8)) ** (1.0 / 3.0)
     return max(size, need)
 
@@ -320,13 +332,16 @@ def _tetwild(mesh, size):
 
 def _mesher_budget() -> float:
     """Bytes fTetWild may use before it is stopped: LOADPATH_TET_MESH_MEMORY
-    (GB), else 60% of the memory free now, at least 2 GB."""
+    (GB), else 60% of the machine's memory (study._plan_bytes: past the
+    limit the surface is meshed again without the sizing field, a
+    different mesh, so the limit must not move run to run), at least 2 GB."""
     env = os.environ.get("LOADPATH_TET_MESH_MEMORY")
     if env:
         return float(env) * 1e9
-    from .study import _available_bytes
+    from .study import _PLAN_SHARE, _plan_bytes
 
-    return max(2e9, 0.6 * (_available_bytes() or 8e9))
+    plan = _plan_bytes(lambda b: 2e9)   # (what fTetWild usually takes: under 1 GB on the robot arm's parts)
+    return max(2e9, 0.6 * plan / _PLAN_SHARE) if plan else 8e9
 
 
 def _rss(pid: int) -> float | None:
@@ -462,7 +477,7 @@ def _supports_on(study, pts, nodes, edges, surf, tol):
     supports, pin_blocks, fixed_nodes = [], [], []
     for i, sup in enumerate(study.supports):
         sh = sup.shape if sup.shape is not None else study.region_shape(sup.region)[0]
-        vn = np.intersect1d(_region_nodes(study, sh, pts, tol), surf)
+        vn = _region_nodes(study, sh, pts, tol, surf)
         if len(vn) == 0:
             raise ValueError(f"supports[{i}] touches no surface node of the part")
         on = np.zeros(len(pts), bool)
@@ -521,8 +536,19 @@ def _area_shares(pts, faces, nodes):
     return w / w.sum()
 
 
-def _region_nodes(study, shape, pts, tol):
-    return np.nonzero(shape.sdf(pts) <= tol)[0]
+def _region_nodes(study, shape, pts, tol, among=None):
+    """The points within `tol` of `shape` (indices). With `among` (the
+    surface's nodes), the ones of those; and when a region drawn a little
+    off the surface catches none of them at `tol`, at up to three times it
+    (_CAPTURE_WIDE elements: what every region was given before)."""
+    d = shape.sdf(pts)
+    if among is None:
+        return np.nonzero(d <= tol)[0]
+    for wide in (1.0, 2.0, _CAPTURE_WIDE / _CAPTURE):
+        got = among[d[among] <= wide * tol]
+        if len(got):
+            break
+    return got
 
 
 def _load_vectors(study, pts, surf, tol, faces=None):
@@ -537,7 +563,7 @@ def _load_vectors(study, pts, surf, tol, faces=None):
             if ld.pressure:
                 raise ValueError("the tetrahedral cross-check does not apply pressure loads yet")
             shape = ld.shape if ld.shape is not None else study.region_shape(ld.region)[0]
-            nodes = np.intersect1d(_region_nodes(study, shape, pts, tol), surf)
+            nodes = _region_nodes(study, shape, pts, tol, surf)
             if len(nodes) == 0:
                 raise ValueError(f"load in case {case.name!r} touches no surface node of the part")
             nodes_all.append(nodes)
@@ -871,40 +897,142 @@ def _rigid_modes(xyz, comp):
     return b
 
 
-def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices, normal=None, chunk=50_000, ratio=1.0,
-                     shear_ratio=float(np.sqrt(3.0))):
-    """The equivalent stress at each vertex (failure.equivalent_stress: von
-    Mises when `ratio`, compressive over tensile strength, is 1): the P2
-    field's stress at each element's own vertices, averaged over the
-    elements sharing it. With `normal` (the build direction, unit), also the
-    layer bond's equivalent stress there (failure.bond_stress: tension
-    across the layers and shear along them), (vm, bond)."""
-    from .failure import bond_stress, equivalent_stress
+# Where an element's stress is sampled for the average: the centroids of the
+# eight tetrahedra its edge midpoints cut it into (barycentric), an eighth
+# of its volume each. A quadratic element's stress is linear inside it, so
+# these carry it exactly; eight of them put samples about half an element
+# apart, enough for a ball one element across to hold a few dozen.
+def _subtet_centroids():
+    v = np.eye(4)
+    m = {(i, j): 0.5 * (v[i] + v[j]) for i in range(4) for j in range(i + 1, 4)}
+    sub = [[v[0], m[0, 1], m[0, 2], m[0, 3]], [v[1], m[0, 1], m[1, 2], m[1, 3]],
+           [v[2], m[0, 2], m[1, 2], m[2, 3]], [v[3], m[0, 3], m[1, 3], m[2, 3]],
+           [m[0, 1], m[0, 2], m[0, 3], m[1, 3]], [m[0, 1], m[0, 2], m[1, 2], m[1, 3]],
+           [m[0, 2], m[0, 3], m[1, 3], m[2, 3]], [m[0, 2], m[1, 2], m[1, 3], m[2, 3]]]
+    return np.array([np.mean(q, axis=0) for q in sub])
+
+
+_SAMPLES = _subtet_centroids()
+
+# The least radius the stress is averaged over, in element sizes: half an
+# element, the spacing of a quadratic mesh's nodes. Below it the "average"
+# is one element's own value again, which is the mesh's, not the part's.
+_RESOLVED = 0.5
+
+
+def stress_radius(study: Study, size: float) -> tuple:
+    """(radius in mm of the ball stress is averaged over, why): the
+    material's own length (failure.material_length), and no less than the
+    mesh resolves (_RESOLVED elements)."""
+    from .failure import material_length
+
+    own, source, quality = material_length(study.material)
+    floor = _RESOLVED * size
+    if own >= floor:
+        return own, {"radius": own, "of": "material", "source": source, "quality": quality}
+    return floor, {"radius": floor, "of": "mesh", "materialLength": own, "source": source, "quality": quality}
+
+
+def _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius, chunk=50_000):
+    """Per displacement field in `us`: the stress tensor at each vertex
+    (n_vertices, 6), averaged over the material within `radius` of it.
+
+    The stress that is read against strength (failure.MATERIAL_LENGTH says
+    why a material answers to an average and not to a point). It is also
+    what makes the reading the part's and not the mesh's: the nodal peak
+    next to a re-entrant corner or the rim of a held face grows without
+    limit as the mesh is refined and moves with every remesh (the robot-arm
+    wrist yoke's read 31, 44 and 71 MPa at its hub's rim on three meshes of
+    one surface), while the integral of the same field over a fixed ball is
+    finite and converges (11.1, 11.3, 11.4 MPa there).
+
+    The ball is cut by the part's surface on its own, because only material
+    is sampled: each element's stress at its eight _SAMPLES, weighted by an
+    eighth of its volume. On a smooth field of gradient g (MPa/mm) a
+    surface point reads 3/8 radius x g below its own value, which is the
+    support a bending member has over a pulled one."""
+    from scipy.spatial import cKDTree
 
     c = _elastic(E, nu)
-    acc = np.zeros(n_vertices)
-    acc_n = np.zeros(n_vertices)
-    cnt = np.zeros(n_vertices)
-    # in chunks: the strain matrices of every element at once are 1.4 kB
-    # each (0.7 GB on the upper arm)
+    pts = nodes[:n_vertices]
+    ns = len(_SAMPLES)
+    xs = np.einsum("sk,ekd->esd", _SAMPLES, pts[conn[:, :4]]).reshape(-1, 3)
+    w = np.empty(len(conn) * ns)
+    sigs = [np.empty((len(conn) * ns, 6)) for _ in us]
     for s0 in range(0, len(conn), chunk):
         cc = conn[s0:s0 + chunk]
-        _vol, g = _grads(nodes, cc)
-        ue = u.reshape(-1, 3)[cc].reshape(len(cc), 30)
-        for i in range(4):
-            lam = np.zeros(4)
-            lam[i] = 1.0
-            b = _b_matrices(_shape_grads(g, lam))
-            sig = np.einsum("kl,eli,ei->ek", c, b, ue, optimize=True)
-            np.add.at(acc, cc[:, i], equivalent_stress(sig, ratio))
-            if normal is not None:
-                # the bond's tension and shear, as verify.py reads them
-                np.add.at(acc_n, cc[:, i], bond_stress(sig, normal, shear_ratio)[0])
-            np.add.at(cnt, cc[:, i], 1)
-    vm = acc / np.maximum(cnt, 1)
-    if normal is None:
-        return vm
-    return vm, acc_n / np.maximum(cnt, 1)
+        vol, g = _grads(nodes, cc)
+        w[s0 * ns:(s0 + len(cc)) * ns] = np.repeat(np.abs(vol) / ns, ns)
+        ues = [np.asarray(u).reshape(-1, 3)[cc].reshape(len(cc), 30) for u in us]
+        for k, lam in enumerate(_SAMPLES):
+            cb = np.einsum("kl,eli->eki", c, _b_matrices(_shape_grads(g, lam)), optimize=True)
+            for sig, ue in zip(sigs, ues):
+                sig[s0 * ns + k:(s0 + len(cc)) * ns:ns] = np.einsum("eki,ei->ek", cb, ue)
+    import scipy.sparse as sp
+
+    pairs = cKDTree(pts).sparse_distance_matrix(cKDTree(xs), radius, output_type="coo_matrix")
+    a = sp.csr_matrix((w[pairs.col], (pairs.row, pairs.col)), shape=(len(pts), len(xs)))
+    tot = np.asarray(a.sum(axis=1)).ravel()
+    # (a vertex whose ball holds no sample, at a needle's tip: the nearest one)
+    lone = np.nonzero(tot <= 0)[0]
+    if len(lone):
+        j = cKDTree(xs).query(pts[lone])[1]
+        a = (a + sp.csr_matrix((w[j], (lone, j)), shape=a.shape)).tocsr()
+        tot[lone] = w[j]
+    return [np.asarray(a @ sig) / tot[:, None] for sig in sigs]
+
+
+def _read_stress(nodes, conn, us, E, nu, n_vertices, radius, normal=None, ratio=1.0,
+                 shear_ratio=float(np.sqrt(3.0))):
+    """Per displacement field: (u, equivalent stress at the vertices), and
+    with `normal` (the build direction, unit) the layer bond's equivalent
+    stress too, each from the stress averaged over `radius`
+    (_averaged_stress; failure.equivalent_stress and failure.bond_stress)."""
+    from .failure import bond_stress, equivalent_stress
+
+    out = []
+    for u, sig in zip(us, _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius)):
+        row = (u, equivalent_stress(sig, ratio))
+        if normal is not None:
+            row += (bond_stress(sig, normal, shear_ratio)[0],)
+        out.append(row)
+    return out
+
+
+# How far outside a region a surface node may sit and still be loaded or
+# held by it, in element sizes, and (_CAPTURE_WIDE) what it is widened to
+# for a region that catches nothing at that.
+_CAPTURE = 0.2
+_CAPTURE_WIDE = 0.6
+
+
+def _capture_tolerance(mesh, size: float) -> float:
+    """How far outside a support's or a load's region a surface node still
+    belongs to it, mm: what the mesh's surface may be off the part's by
+    (twice fTetWild's envelope), and no less than a fifth of an element.
+
+    It was 0.6 elements (0.9 mm at the default size), which held a ring of
+    the part beyond every support, one row of nodes wide where the mesh
+    happened to put a row there and none where it did not: the robot-arm
+    wrist yoke, held at one hub, deflected 0.284 to 0.308 mm on six meshes
+    of one surface (8%); at this tolerance 0.323 to 0.327 (1%)."""
+    diag = float(np.linalg.norm(np.ptp(np.asarray(mesh.vertices, float), axis=0)))
+    return max(2.0 * TETWILD_EPSILON * diag, _CAPTURE * size)
+
+
+def _held_distance(study, pts):
+    """Each point's distance (mm, signed) to the nearest region a support
+    or a load of any case is applied over: the regions as the study draws
+    them, not the nodes a mesh happened to put in them."""
+    d = np.full(len(pts), np.inf)
+    for sup in study.supports:
+        sh = sup.shape if sup.shape is not None else study.region_shape(sup.region)[0]
+        d = np.minimum(d, sh.sdf(pts))
+    for case in study.load_cases:
+        for ld in case.loads:
+            sh = ld.shape if ld.shape is not None else study.region_shape(ld.region)[0]
+            d = np.minimum(d, sh.sdf(pts))
+    return d
 
 
 def crosscheck(study: Study, mesh, size: float | None = None, contact_band: float | None = None,
@@ -964,7 +1092,7 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     from scipy.spatial import cKDTree
     bfaces = _boundary_faces(tets)
     surf = np.unique(bfaces)
-    tol = 0.6 * size
+    tol = _capture_tolerance(mesh, size)
     loads = _load_vectors(study, pts, surf, tol, bfaces)
 
     t1 = time.time()
@@ -972,7 +1100,37 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     fixed_dof, supports, pin_blocks, fixed_nodes = _supports_on(study, pts, nodes, edges, surf, tol)
     fixed_nodes = np.unique(np.concatenate(fixed_nodes))
     contact = np.unique(np.concatenate([fixed_nodes] + [l[2] for l in loads]))
-    far = cKDTree(pts[contact]).query(pts, distance_upper_bound=band)[0] == np.inf
+    # Left out of the peak: within `band` of a region a load or a support is
+    # applied over, measured to the region as drawn. (It was measured to the
+    # nodes the mesh put in the region, and those move a whole element from
+    # one mesh to the next: the edge of the band moved with them, across the
+    # steepest stress in the part.) A region can reach deep into the part,
+    # away from the surface it acts on; only what is also near a loaded or
+    # held node is left out.
+    # As a level set (positive = counted), so the peak can be read on the
+    # band's edge itself, between nodes: a hot spot the edge passes through
+    # (the root of a loaded boss, 3.5 mm from it on the wrist yoke) read
+    # 10.8 or 11.4 MPa as a node did or did not fall just outside.
+    level = np.maximum(_held_distance(study, pts) - band,
+                       cKDTree(pts[contact]).query(pts)[0] - (band + size))
+    far = level > 0
+    cut = edges[far[edges[:, 0]] != far[edges[:, 1]]]
+    cut_t = level[cut[:, 0]] / (level[cut[:, 0]] - level[cut[:, 1]])
+    cut_x = pts[cut[:, 0]] + cut_t[:, None] * (pts[cut[:, 1]] - pts[cut[:, 0]])
+
+    def peak_of(field):
+        """(value, where) of the largest `field` (per vertex) over the
+        counted region: at a counted vertex, or on the band's edge."""
+        i = int(np.argmax(np.where(far, field, -np.inf))) if far.any() else int(np.argmax(field))
+        best, at = float(field[i]), pts[i]
+        if len(cut):
+            on_edge = field[cut[:, 0]] + cut_t * (field[cut[:, 1]] - field[cut[:, 0]])
+            j = int(np.argmax(on_edge))
+            if on_edge[j] > best:
+                best, at = float(on_edge[j]), cut_x[j]
+        return best, at
+
+    radius, reading = stress_radius(study, size)
 
     def summarize(results):
         cases = []
@@ -980,28 +1138,25 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         for (name, f, lnodes), res in zip(loads, results):
             u, vm = res[0], res[1]
             sn = res[2] if len(res) > 2 else None
-            i = int(np.argmax(np.where(far, vm, -1)))
+            peak, peak_at = peak_of(vm)
             # where the stress is within half of the peak: the next pass refines there
             order = np.argsort(-np.where(far, vm, -1))[:200]
-            hot = pts[order[vm[order] > 0.5 * vm[i]]]
-            peak = float(vm[i])
+            hot = pts[order[vm[order] > 0.5 * peak]]
             raw = mat.strength / peak if peak > 0 else float("inf")
             row = {}
             if sn is not None:
                 # layers part along their bond: tension across them against
                 # interlayer x strength, beside von Mises against strength
                 # (verify.py's check, the same allowance)
-                tens = np.where(far, np.maximum(sn, 0.0), 0.0)
-                j = int(np.argmax(tens))
-                inter = float(tens[j])
+                inter, inter_at = peak_of(np.maximum(sn, 0.0))
                 raw_i = interlayer * mat.strength / inter if inter > 0 else float("inf")
-                row = {"interlayerStress": inter, "interlayerAt": pts[j].tolist(),
+                row = {"interlayerStress": inter, "interlayerAt": np.asarray(inter_at).tolist(),
                        "interlayerSafetyFactor": raw_i / STRESS_ALLOWANCE}
                 raw = min(raw, raw_i)
             cf = study.case_factor(name) if hasattr(study, "case_factor") else 1.0
             sfs_raw.append(raw * cf)
             sfs.append(raw * cf / STRESS_ALLOWANCE)
-            cases.append({"name": name, "peakStress": peak, "peakAt": pts[i].tolist(),
+            cases.append({"name": name, "peakStress": peak, "peakAt": np.asarray(peak_at).tolist(),
                           "hotspots": hot.tolist(),
                           "deflection": float(np.linalg.norm(u[lnodes].mean(axis=0))),
                           "maxDisplacement": float(np.linalg.norm(u, axis=1).max()),
@@ -1012,20 +1167,19 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     if backend in ("native", "both"):
         us = _solve(nodes, conn, mat.E, el, fixed_dof, _pin_springs(pin_blocks, mat.E * size, len(nodes)),
                     loads, len(pts), edges)
-        if normal is None:
-            out["native"] = summarize([(u, _nodal_von_mises(nodes, conn, u.ravel(), mat.E, el, len(pts), ratio=m_c))
-                                       for u in us])
-        else:
-            out["native"] = summarize([(u, *_nodal_von_mises(nodes, conn, u.ravel(), mat.E, el, len(pts), normal,
-                                                             ratio=m_c, shear_ratio=shear_ratio))
-                                       for u in us])
+        out["native"] = summarize(_read_stress(nodes, conn, us, mat.E, el, len(pts), radius, normal, m_c,
+                                               shear_ratio))
         timings["native"] = time.time() - t1
     if backend in ("ccx", "both"):
         # the same quadratic mesh, held nodes and nodal forces: only the
         # solver and its stress recovery differ (a layered material as
         # engineering constants in the frame of its layers)
         t2 = time.time()
-        out["ccx"] = summarize(_solve_ccx(mat, nodes, conn, supports, loads, len(pts), el, normal, m_c, shear_ratio))
+        # (its stress read from its displacements the way the native one's
+        # is, averaged over the same radius: CalculiX's own nodal stress,
+        # extrapolated from its integration points, is a point value)
+        us_c = [r[0] for r in _solve_ccx(mat, nodes, conn, supports, loads, len(pts), el, normal, m_c, shear_ratio)]
+        out["ccx"] = summarize(_read_stress(nodes, conn, us_c, mat.E, el, len(pts), radius, normal, m_c, shear_ratio))
         timings["ccx"] = time.time() - t2
     if not out:
         raise ValueError(f"backend must be 'native', 'ccx' or 'both', not {backend!r}")
@@ -1038,7 +1192,8 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                                 "deflection": b["deflection"] / a["deflection"]}
                                for a, b in zip(out["native"]["cases"], out["ccx"]["cases"])]
     return result | {"timings": timings, "backend": backend, "nodes": int(len(pts)), "elements": int(len(tets)),
-                     "elementSize": size, "contactBand": band, "adaptive": bool(adaptive),
+                     "elementSize": size, "contactBand": band, "stressRadius": radius, "stressReading": reading,
+                     "adaptive": bool(adaptive),
                      **({"coarsenedFrom": asked} if size > asked else {}),
                      "mesher": mesher or ("tetwild" if _has_tetwild() and not adaptive else "gmsh"),
                      "seconds": time.time() - t0}
@@ -1110,8 +1265,9 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=No
     the vertices)] per case, as the native solve does, and with `normal`
     (a layered study's build direction) the normal stress across the
     layers too, (u, vm, sn). CalculiX recovers stress at its integration
-    points and extrapolates to the nodes, a different route from
-    _nodal_von_mises; its nodal stresses are in the global frame."""
+    points and extrapolates to the nodes: point values, which crosscheck()
+    does not read (it averages the stress of these displacements,
+    _read_stress); its nodal stresses are in the global frame."""
     exe = shutil.which("ccx")
     if exe is None:
         raise RuntimeError("CalculiX (ccx) is not on PATH; install it (Debian: apt install calculix-ccx) "

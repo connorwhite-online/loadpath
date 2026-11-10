@@ -45,7 +45,7 @@ A check that reads a proxy (von Mises for "breaks", area for "cools",
 
 ## What this pass found and fixed
 
-Seven things, in the order they distort real parts. Numbers are from
+Eight things, the first seven in the order they distort real parts. Numbers are from
 `bench/physics_audit.py` (`bench/results/physics_audit.json`) on the
 4-core cloud box.
 
@@ -281,6 +281,71 @@ margin of nearly 3 is about 2,400 load cycles, and the hook's hold time
 is a day. How long a part must last is the user's intent, so the agent
 declares it; the report's job is to make the trade impossible to miss.
 
+### 8. A part answers to stress over a volume, not at a point (`failure.MATERIAL_LENGTH`, `crosscheck.py`)
+
+The tetrahedral re-check read its peak at one mesh node. At a re-entrant
+corner or the rim of a held face linear elasticity has no peak to read: the
+stress grows without limit as the mesh is refined, and the value at the
+nearest node is a property of where the mesher happened to put that node.
+One wrist-yoke surface, meshed six times, read SF 3.23 to 3.66; its hub's
+rim read 31, 44 and 71 MPa on three of those meshes; lighter parts in the
+constrained method's loop read 1.77, 2.07 and 3.09 for one design. The
+search steers on that number.
+
+A material does not answer to a point either. It fails when a volume large
+enough to open a crack or a shear band reaches its strength (Neuber's
+micro-support, Peterson's notch sensitivity, Taylor's theory of critical
+distances), and that volume has been measured for printed polymers: MJF
+PA 12 breaks at notches and cracks when the strain energy averaged over a
+control volume of 0.86 mm radius reaches the plain material's (Avanzini et
+al., Eng. Fract. Mech. 303, 2024), and printed PLA's critical distance is
+4.6 mm (Ahmed & Susmel, FFEMS 41, 2018). So the re-check now reads the
+stress tensor averaged over the material within that radius of each point
+(the ball is cut by the part's surface, so at a surface it is the half
+inside), and then the failure criteria of section 1 on the average.
+
+| Wrist yoke, one surface | before | now |
+| --- | --- | --- |
+| SF on three 1.5 mm meshes | 3.39, 3.64, 3.62 (3.23 to 3.66 over six) | 3.73, 3.65, 3.73 |
+| SF on a 1.0 mm mesh | 3.09 | 3.68 |
+| Deflection on the three meshes, mm | 0.294, 0.303, 0.303 (0.284 to 0.308 over six) | 0.325, 0.327, 0.323 |
+
+What changed with it:
+
+- **The radius is material data** (`failure.material_length`): 0.86 mm for
+  the nylons (measured on PA 12) and for the glassy thermoplastics (assumed:
+  PLA's own is longer, so this averages over less than it would allow). For
+  metals, brittle resins and elastomers no length is taken, and the stress
+  is read at what the mesh resolves, half an element, which is also the
+  floor for every material. The report says which
+  (`confirm.stressReading`).
+- **Bending members gain what bending bars gain.** On a smooth gradient the
+  average at a surface sits 3/8 of the radius deep. For EOS PA 2200's 4 mm
+  flexural bar that predicts failure at 1.19x the tensile strength; the
+  data sheet says 58 against 48 MPa, 1.21x. A 3 mm member in pure bending
+  reads 21% lower than its outer fibre; a member in tension reads the
+  same.
+- **The band left out near loads and supports is measured to the regions
+  as drawn**, not to the nodes a mesh put in them, and the peak is read on
+  the band's edge itself, between nodes. A hot spot the edge passes through
+  no longer counts or not as a node falls inside or outside.
+- **Supports and loads take the surface nodes within the surface's own
+  fidelity of their region** (twice the mesher's envelope, at least a fifth
+  of an element), not within 0.6 elements. The wider catch held a ring of
+  the part beyond every support wherever the mesh had a row of nodes there.
+  Held closer to how it is drawn, the yoke reads 8% lower, and that is the
+  more honest number.
+- **Grids are sized from the machine's memory, not from what is free that
+  minute** (`study._plan_bytes`): the constrained method's grid and the tet
+  element size were set from free memory at the moment they started, so
+  the same study got a different pitch every run (the wrist link 130k cells
+  one time). Only when the memory really there cannot hold the planned grid
+  is it made coarser.
+
+The idealized clamp is still there (row 1 below): the band still hides what
+a rigid support does to the stress beside it. What is new is that
+everything outside the band is a number the part has, on any mesh.
+
 ## What is still a convenience, ranked
 
 Not fixed in this pass. Ranked by how much each distorts a real part;
@@ -289,7 +354,7 @@ Not fixed in this pass. Ranked by how much each distorts a real part;
 | # | Where | What the code assumes | What happens to a real part | Distortion | Owner |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Supports (`domain.py`) | Every held node is fixed: a rigid, bonded clamp | A mount is a bolted joint: it presses only where it touches, slides unless friction holds, and gives. Rigid clamps over-stiffen the part (the calibration yoke read 3x too stiff bonded to its dummy) and put singular stress at their edges | High: stiffness, load sharing between supports and every near-support peak | new thread: one-sided, compliant supports in the linear check |
-| 2 | Contact band (`verify.py`) | Stress within a band of loads and supports is left out of the peak | Parts often break exactly there: under a bolt head, at a clamp's edge. The band hides the solver's artefact and the real concentration together | High where interfaces govern (turret: 76% of mass is interfaces) | follows #1: with real contact and uniform tractions (done) the band can shrink |
+| 2 | Contact band (`verify.py`) | Stress within a band of loads and supports is left out of the peak | Parts often break exactly there: under a bolt head, at a clamp's edge. The band hides the solver's artefact and the real concentration together | High where interfaces govern (turret: 76% of mass is interfaces) | follows #1: with real contact and uniform tractions (done) the band can shrink. Outside it the tet re-check reads stress over the material's length (section 8), so the band no longer has to hide mesh noise |
 | 3 | Thin members (`verify.py`, `fits.py`) | The delivered geometry is the printed geometry | A 1.4 mm member printed 0.2 mm under is 37% less stiff in bending and 27% weaker; FDM walls come in whole bead widths; thin SLS walls are weaker than thick ones. Only bores carry a tolerance today | High for parts sized by the minimum member | new: as-printed section on thin members (calibration coupons S, T) |
 | 4 | The search (`study.py`) | A study that times none of its loads is still designed as applied once | A part an agent ships without answering the check's question lasts ~600 cycles | High, but asked and priced | no library default (decided): the agent declares the life from the user's intent, and a declared life is designed for |
 | 5 | Process (`spec.py`) | A process named without `buildDirection` still builds along +z (fdm, lpbf) | The study's z is taken for the printer's; the best direction can be 2x stronger across the bonds | Medium (no process at all now takes the material's and chooses) | default `buildDirection` to `"auto"`; costs six coarse designs per run |
