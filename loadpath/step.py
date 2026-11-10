@@ -12,6 +12,16 @@ the exact shapes from the facets, so the seam where a bore meets the organic
 body is an exact intersection curve on the cylinder, and coplanar facets
 merge into single faces.
 
+Facets against facets (the organic body against a meshed design space, or a
+kept pad that came in as a mesh) are manifold3d's work, done first: those
+booleans always end and are always closed, and there is no exact face in
+them to keep. OpenCascade gets the one job it is needed for, the faceted
+body less the exact cutters. Each cutter is tried alone against the piece of
+the body around it; the ones OpenCascade cannot cut cleanly (a counterbore
+grazing a sliver) are cut by manifold3d as facets and noted, the rest are
+cut exactly. Every boolean on a big faceted solid runs in a process of its
+own under a clock, because some never return.
+
 A mesh with no plan (any STL) exports fully faceted.
 
 Needs OpenCascade's Python bindings (`pip install "loadpath[step]"`, which is
@@ -29,6 +39,9 @@ DEFAULT_FACES = 20_000      # organic facets in the B-rep: ~14 MB of STEP, ~20 s
 FUZZY = 1e-4                # boolean fuzz (mm): facets snapped onto exact faces
 POINT_DECIMALS = 5          # mm places for written points (10 nm)
 DEFAULT_PATCHES = 2000      # surface="smooth": organic triangles to start the patch layout from (refined where it misses)
+BOOL_SECONDS = 60.0         # one OpenCascade boolean on a big faceted solid: 5-15 s when it works; some never return
+BOOL_SECONDS_PER_FACE = 2e-3   # ... plus this for each face past BOOL_INLINE (a lattice core is 500k faces)
+BOOL_INLINE = 2000          # faces: below this a boolean runs in this process (it cannot be stopped there)
 TOPOLOGY_TOL = 0.05         # mm: how far facets may move when a TPMS-cored body must keep every tunnel (_keep_topology)
 
 
@@ -63,9 +76,44 @@ def _pnt(v):
     return gp_Pnt(*(float(x) for x in v))
 
 
+def _bodies(mesh):
+    """`mesh` as its separate closed bodies, when it is several solid
+    ones (four screw pads kept as one region); a body with a void in it
+    (an inward-facing piece) stays whole."""
+    if len(mesh.faces) < 8:
+        return [mesh]
+    parts = mesh.split(only_watertight=False)
+    if len(parts) < 2 or any((not p.is_watertight) or p.volume <= 0 for p in parts):
+        return [mesh]
+    return list(parts)
+
+
+def _solids(mesh):
+    """A closed trimesh as OpenCascade solids, one for each separate body:
+    one solid whose single shell holds several closed surfaces is not a
+    valid solid, and every boolean it enters comes out invalid."""
+    return [_faceted1(b) for b in _bodies(mesh)]
+
+
 def _faceted(mesh):
-    """A closed trimesh as an OpenCascade solid, one planar face per
-    triangle, sharing edges (BRepBuilderAPI_MakeShapeOnMesh)."""
+    """A closed trimesh as one OpenCascade shape: a solid, or a compound of
+    solids when the mesh is several bodies."""
+    from OCP.BRep import BRep_Builder
+    from OCP.TopoDS import TopoDS_Compound
+
+    solids = _solids(mesh)
+    if len(solids) == 1:
+        return solids[0]
+    b, comp = BRep_Builder(), TopoDS_Compound()
+    b.MakeCompound(comp)
+    for s in solids:
+        b.Add(comp, s)
+    return comp
+
+
+def _faceted1(mesh):
+    """A closed one-body trimesh as an OpenCascade solid, one planar face
+    per triangle, sharing edges (BRepBuilderAPI_MakeShapeOnMesh)."""
     from OCP.BRep import BRep_Builder
     from OCP.BRepBuilderAPI import (
         BRepBuilderAPI_MakeShapeOnMesh,
@@ -421,10 +469,12 @@ def _pieces(shape, faces):
     booleans take them as separate tools, which survives members that share
     faces (a motor box against its driver's box) where a pre-fused union
     can come out invalid."""
-    from .shapes import Union
+    from .shapes import MeshShape, Union
 
     if isinstance(shape, Union):
         return [p for s in shape.shapes for p in _pieces(s, faces)]
+    if isinstance(shape, MeshShape):
+        return _solids(_decimate(shape.mesh, faces))
     return [_exact(shape, faces)]
 
 
@@ -468,16 +518,229 @@ def _build(plan, budget, faces, notes):
     if plan.op == "union":
         first, tools = kids[0][0][:1], kids[0][0][1:] + [s for k in kids[1:] for s in k[0]]
     else:
-        first = [_fuse_all(kids[0][0])]
+        first = [_fuse_all(kids[0][0], kids[0][1])]
         tools = [s for k in kids[1:] for s in k[0]]
         if plan.op == "intersect":
-            tools = [_fuse_all(tools)]
-    shape = _referee(plan.op, first, tools, want.volume(), notes)
+            tools = [_fuse_all(tools, m3d.Manifold.batch_boolean([k[1] for k in kids[1:]], m3d.OpType.Add))]
+    shape = _referee(plan.op, first, tools, want, notes)
     return [shape], want
 
 
-def _fuse_all(shapes):
-    return shapes[0] if len(shapes) == 1 else _bool1(_cls("union"), shapes[:1], shapes[1:])
+def _primitive(shape):
+    from .shapes import Box, Cylinder, Shell, Sphere
+
+    return isinstance(shape, (Box, Cylinder, Sphere, Shell))
+
+
+def _flat(shape):
+    from .shapes import Union
+
+    if isinstance(shape, Union):
+        return [p for s in shape.shapes for p in _flat(s)]
+    return [shape]
+
+
+OVERLAP = 2e-3      # of the smaller volume: a cutter and a kept mesh that share less than this only touch
+                    # (a drawn bore's facets against its exact cylinder)
+
+
+def _normal(plan, budget, faces, notes):
+    """The plan as (a faceted body, exact cutters): body - cutters, each
+    cutter (its OpenCascade solids, its manifold). Facets against facets
+    (the organic body, a meshed design space, kept regions that came in as
+    meshes) are manifold3d's work, which always ends and is always closed;
+    OpenCascade is left the one boolean it is needed for and does well, the
+    faceted body less the exact cylinders, boxes and spheres. Its booleans
+    between two faceted solids whose faces lie on each other (the body was
+    clipped to a kept pad, then the pad unioned back) come out empty, or
+    invalid, or never come out. None when the plan has an exact shape as a
+    positive body (a box envelope): that goes the general way (_build)."""
+    import manifold3d as m3d
+
+    from .shapes import manifold_from_trimesh
+    from .sharp import Exact, Organic, exact_manifold
+
+    add = m3d.OpType.Add
+    if isinstance(plan, Organic):
+        m = _on_float32(plan.mesh)
+        d = _decimate(m, budget.get(id(plan), faces))
+        if len(d.faces) < len(m.faces):
+            notes.append({"leaf": ",".join(plan.names) or "organic", "faces": len(m.faces),
+                          "stepFaces": len(d.faces), "deviation": _deviation(m, d)})
+        return manifold_from_trimesh(d), []
+    if isinstance(plan, Exact):
+        pieces = _flat(plan.shape)
+        if any(_primitive(q) for q in pieces):
+            return None
+        return m3d.Manifold.batch_boolean([exact_manifold(q) for q in pieces], add), []
+    first = _normal(plan.kids[0], budget, faces, notes)
+    if first is None:
+        return None
+    body, tools = first[0], list(first[1])
+    for kid in plan.kids[1:]:
+        if plan.op == "subtract":
+            if not isinstance(kid, Exact):
+                return None
+            for q in _flat(kid.shape):
+                if _primitive(q):
+                    tools.append(([_exact(q, faces)], exact_manifold(q)))
+                else:
+                    body = body - exact_manifold(q)
+            continue
+        other = _normal(kid, budget, faces, notes)
+        if other is None:
+            return None
+        if plan.op == "intersect":            # (A - T) & (B - U) = (A & B) - T - U
+            body, tools = body ^ other[0], tools + list(other[1])
+            continue
+        if other[1]:                          # union: (A - T) | B = (A | B) - (T - B)
+            return None
+        kept = []
+        for occ, man in tools:
+            shared = (man ^ other[0]).volume()
+            if shared > OVERLAP * min(man.volume(), other[0].volume()):
+                less = man - other[0]
+                if less.is_empty():
+                    continue
+                pads = [x for b in other[0].decompose() for x in _solids(_on_float32(_mesh_of(b)))]
+                occ = [_referee("subtract", [_fuse_all(occ)], pads, less, notes)]
+                man = less
+            kept.append((occ, man))
+        body, tools = body + other[0], kept
+    return body, tools
+
+
+def _mesh_of(man):
+    import trimesh
+
+    from .shapes import trimesh_from_manifold
+
+    out = trimesh_from_manifold(man)
+    return trimesh.Trimesh(np.array(out.vertices, np.float64), np.array(out.faces, np.int64), process=False)
+
+
+def _build_normal(plan, budget, faces, notes):
+    """The OpenCascade shape of a plan in normal form (_normal), or None."""
+    got = _normal(plan, budget, faces, notes)
+    if got is None or got[0].is_empty():
+        return None
+    body, tools = got
+    clean = body.simplify(1e-4)               # slivers the booleans left: each would be a degenerate face
+    if not clean.is_empty():
+        body = clean
+    return _cut_exact(body, [t for t in tools if (t[1] ^ body).volume() > 1e-9], notes)
+
+
+SCREEN_PAD = 2.0            # mm of the body kept around a cutter when it is tried alone (_screen)
+CUT_FUZZ = (FUZZY, 1e-6, 1e-5)
+
+
+def _body_shape(man):
+    mesh = _on_float32(_mesh_of(man))
+    return _faceted(mesh if mesh.is_watertight else _mesh_of(man))
+
+
+def _try_cut(shape, n_faces, occ, fuzzy, want, removed):
+    """`shape` less the OpenCascade solids `occ`, or None unless it is valid
+    and took out what manifold3d says it should (`removed` mm^3, leaving
+    `want`): a cutter that grazes the body often comes back valid and uncut."""
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
+    try:
+        if n_faces <= BOOL_INLINE:
+            r = _bool1(_cls("subtract"), [shape], occ, fuzzy)
+        else:
+            r = _bool_timed("subtract", [shape], occ, fuzzy, _bool_seconds(n_faces))
+    except RuntimeError:
+        return None
+    if abs(_volume(r) - want) > min(2e-3 * want, 0.25 * removed) + 1e-6:
+        return None
+    return r if BRepCheck_Analyzer(r).IsValid() else None
+
+
+def _screen(body, tools):
+    """{fuzz: [tool indices]} and the indices OpenCascade cannot cut at any
+    fuzz, each cutter tried alone against the piece of the body around it
+    (a second or less; the whole body is ten). Which cutters fail is not
+    predictable from their size or what they remove: a counterbore grazing
+    1.3 mm^3 of a pad came back invalid at every fuzz, its neighbour taking
+    1.4 mm^3 was clean, and a bore through solid needed the smaller fuzz."""
+    import manifold3d as m3d
+
+    groups, bad = {}, []
+    for i, (occ, man) in enumerate(tools):
+        box = man.bounding_box()
+        lo, hi = np.array(box[:3]) - SCREEN_PAD, np.array(box[3:]) + SCREEN_PAD
+        local = body ^ m3d.Manifold.cube(tuple(hi - lo)).translate(tuple(lo))
+        left = local - man
+        removed = local.volume() - left.volume()
+        if local.is_empty() or removed <= 1e-9:
+            continue
+        shape = _body_shape(local)
+        for fuzzy in CUT_FUZZ:
+            if _try_cut(shape, local.num_tri(), occ, fuzzy, left.volume(), removed) is not None:
+                groups.setdefault(fuzzy, []).append(i)
+                break
+        else:
+            bad.append(i)
+    return groups, bad
+
+
+def _cut_exact(body, tools, notes):
+    """The manifold `body` less the exact cutters `tools`, as an OpenCascade
+    shape: the cutters OpenCascade can do are cut exactly (their faces are
+    cylinders and planes in the file), together where they share a fuzz;
+    the others are cut by manifold3d first, as facets, and noted."""
+    import manifold3d as m3d
+
+    def union(idx):
+        return m3d.Manifold.batch_boolean([tools[i][1] for i in idx], m3d.OpType.Add)
+
+    if not tools:
+        return _body_shape(body)
+    groups, facets = _screen(body, tools)
+    while True:
+        base = body - union(facets) if facets else body
+        shape, now, n = _body_shape(base), base, base.num_tri()
+        for fuzzy, idx in list(groups.items()):
+            left = now - union(idx)
+            removed = now.volume() - left.volume()
+            if removed <= 1e-9:
+                continue
+            r = _try_cut(shape, n, [x for i in idx for x in tools[i][0]], fuzzy, left.volume(), removed)
+            if r is None:                    # clean alone, not together: these go as facets, and start again
+                facets += groups.pop(fuzzy)
+                break
+            shape, now = r, left
+        else:
+            break
+    if facets:
+        notes.append({"warning": f"{len(facets)} of {len(tools)} exact cutters had no clean OpenCascade cut "
+                                 "and are facets in the file; the rest are exact"})
+    return shape
+
+
+def _fuse_all(shapes, man=None):
+    """`shapes` as one. Big faceted ones are fused under the clock
+    (_bool_timed); with `man` (the same union as a manifold) a fuse that
+    fails or runs out of time is that manifold's facets instead."""
+    if len(shapes) == 1:
+        return shapes[0]
+    n = _n_faces(shapes)
+    if n <= BOOL_INLINE:
+        return _bool1(_cls("union"), shapes[:1], shapes[1:])
+    try:
+        return _bool_timed("union", shapes[:1], shapes[1:], FUZZY, _bool_seconds(n))
+    except RuntimeError:
+        if man is None:
+            raise
+        from .shapes import trimesh_from_manifold
+
+        return _faceted(_on_float32(trimesh_from_manifold(man)))
+
+
+def _bool_seconds(n_faces):
+    return float(os.environ.get("LOADPATH_STEP_BOOL_SECONDS", BOOL_SECONDS + BOOL_SECONDS_PER_FACE * n_faces))
 
 
 def _cls(op):
@@ -486,29 +749,115 @@ def _cls(op):
     return {"union": BRepAlgoAPI_Fuse, "intersect": BRepAlgoAPI_Common, "subtract": BRepAlgoAPI_Cut}[op]
 
 
+def _n_faces(shapes):
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+
+    n = 0
+    for s in shapes:
+        ex = TopExp_Explorer(s, TopAbs_FACE)
+        while ex.More():
+            n += 1
+            ex.Next()
+    return n
+
+
+class _TimedOut(RuntimeError):
+    pass
+
+
+def _bool_timed(op, first, tools, fuzzy, seconds):
+    """`_bool1` in a process of its own, stopped after `seconds`.
+    OpenCascade's boolean on two faceted solids with faces lying on each
+    other (a kept pad's base on the design space's) sometimes never
+    returns (hours in BOPAlgo_ShellSplitter), and it cannot be interrupted
+    from the thread that called it."""
+    import subprocess
+    import sys
+    import tempfile
+
+    from OCP.BinTools import BinTools
+    from OCP.TopoDS import TopoDS_Shape
+
+    with tempfile.TemporaryDirectory(prefix="loadpath-step-") as d:
+        for i, sh in enumerate(first):
+            BinTools.Write_s(sh, os.path.join(d, f"a{i}.bin"))
+        for i, sh in enumerate(tools):
+            BinTools.Write_s(sh, os.path.join(d, f"t{i}.bin"))
+        env = dict(os.environ)
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+        code = ("import sys; from loadpath.step import _bool_child; "
+                "_bool_child(sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), float(sys.argv[5]))")
+        try:
+            done = subprocess.run([sys.executable, "-c", code, d, op, str(len(first)), str(len(tools)), repr(fuzzy)],
+                                  env=env, timeout=seconds, check=False,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            raise _TimedOut(f"OpenCascade {op} did not finish in {seconds:.0f} s") from None
+        out = os.path.join(d, "out.bin")
+        if done.returncode != 0 or not os.path.exists(out):
+            raise RuntimeError(f"OpenCascade {op} failed")
+        r = TopoDS_Shape()
+        BinTools.Read_s(r, out)
+        return r
+
+
+def _bool_child(d, op, n_first, n_tools, fuzzy):
+    from OCP.BinTools import BinTools
+    from OCP.TopoDS import TopoDS_Shape
+
+    def read(name):
+        sh = TopoDS_Shape()
+        BinTools.Read_s(sh, os.path.join(d, name))
+        return sh
+
+    r = _bool1(_cls(op), [read(f"a{i}.bin") for i in range(n_first)],
+               [read(f"t{i}.bin") for i in range(n_tools)], fuzzy)
+    BinTools.Write_s(r, os.path.join(d, "out.bin"))
+
+
 def _referee(op, first, tools, want, notes):
+    """The OpenCascade boolean that is valid and whose volume agrees with
+    manifold3d's `want`; failing that, `want` itself as facets. An invalid
+    or empty B-rep is never passed on: every later boolean fails on it, and
+    the file that results has no solid in it."""
     from OCP.BRepCheck import BRepCheck_Analyzer
 
+    from .shapes import trimesh_from_manifold
+
+    volume = want.volume()
+    n = _n_faces(first) + _n_faces(tools)
+    seconds = _bool_seconds(n)
     tries = [(FUZZY, False), (1e-6, False), (FUZZY, True), (0.0, False), (1e-3, False)]
-    best = None
+    closest, why = None, "no clean OpenCascade result"
     for fuzzy, fused in tries:
-        t = [_fuse_all(tools)] if fused and len(tools) > 1 else tools
         try:
-            r = _bool1(_cls(op), first, t, fuzzy)
+            t = [_fuse_all(tools)] if fused and len(tools) > 1 else tools
+            if n <= BOOL_INLINE:
+                r = _bool1(_cls(op), first, t, fuzzy)
+            else:
+                r = _bool_timed(op, first, t, fuzzy, seconds)
+        except _TimedOut as e:
+            why = str(e)          # these operands are the kind that hang: the next try is as likely to
+            break
         except RuntimeError:
             continue
         ok = bool(BRepCheck_Analyzer(r).IsValid())
-        err = abs(_volume(r) - want) / max(abs(want), 1e-9)
+        err = abs(_volume(r) - volume) / max(abs(volume), 1e-9)
         if ok and err < 2e-3:
             return r
-        score = (not ok, err)
-        if best is None or score < best[0]:
-            best = (score, r)
-    if best is None:
+        if ok and (closest is None or err < closest[0]):
+            closest = (err, r)
+    if closest is not None and closest[0] < 2e-2:
+        notes.append({"warning": f"{op}: {why}; kept the closest (volume off {closest[0]:.2%})"})
+        return closest[1]
+    mesh = _on_float32(trimesh_from_manifold(want))
+    if not len(mesh.faces):
         raise RuntimeError(f"OpenCascade could not {op} the part")
-    notes.append({"warning": f"{op}: no clean OpenCascade result; kept the closest "
-                             f"(valid {not best[0][0]}, volume off {best[0][1]:.2%})"})
-    return best[1]
+    notes.append({"warning": f"{op}: {why}; this step is written as facets ({len(mesh.faces)}), "
+                             "so exact faces cut before it are facets in the file"})
+    return _faceted(mesh)
 
 
 def _deviation(full, coarse, n=4000):
@@ -719,8 +1068,10 @@ def export_step(part, path, faces=DEFAULT_FACES, name=None, unify=True, check=Tr
     if surface == "smooth":
         shape = _smooth_shape(part, mesh_plan if mesh_volume is not None else None, patches, notes, degree)
     if shape is None:
-        shapes, _ = _build(plan, budget, faces, notes)
-        shape = _fuse_all(shapes) if len(shapes) > 1 else shapes[0]
+        shape = _build_normal(plan, budget, faces, notes)
+        if shape is None:
+            shapes, _ = _build(plan, budget, faces, notes)
+            shape = _fuse_all(shapes) if len(shapes) > 1 else shapes[0]
         dropped = 0
         if keep is not None:
             keep_with = _exact(keep, faces)
