@@ -1477,6 +1477,16 @@ STUDY_SCHEMA = {
                        "seedCells": {"type": "integer", "minimum": 1000,
                                      "description": "cells of the seed grid (default 60000)"},
                        "seedIterations": {"type": "integer", "minimum": 5},
+                       "soft": {"type": "number", "minimum": 0,
+                                "description": "mm the wrap is inflated and rounded by, for a soft, full form "
+                                               "round the parts, like a volume drawn over them and smoothed "
+                                               "hard (default 0: as tight as the loads allow; with soft the "
+                                               "shape steps are off unless rounds is given). The skin and "
+                                               "the interior are designed as usual"},
+                       "rounds": {"type": "integer", "minimum": 0,
+                                  "description": "shape steps from the skin's load share (default 10; 0: the "
+                                                 "seed's smoothed hull)"},
+                       "step": {**_POS, "description": "mm, the largest move of a shape step (default 1.5)"},
                        "pitch": {**_POS, "description": "mm, the envelope's grid (default half the seed's, "
                                                         "at most half the skin + 0.25)"}},
                        "additionalProperties": False}],

@@ -49,8 +49,12 @@ with [render.py](../examples/shroud/render.py).*
    between members narrower than about twice that are bridged. Cavities
    are then filled, and the signed distance is smoothed over `smooth`
    (8 mm), so the surface sweeps instead of following every member.
-   Interfaces and concealed regions are blended back in with a smooth
-   union. A `bore: false` keep-out that is not concealed, such as a
+   Each interface joins the skin with a true circular root fillet of
+   0.3 times its own size (twice its inscribed radius: 2.7 mm on a 9 mm
+   post), where a shoulder's stress concentration levels off near 1.2
+   (Peterson); concealed regions are blended back in with a smooth union.
+   After the shape steps the surface is faired once and the fillets put
+   back. A `bore: false` keep-out that is not concealed, such as a
    neighbour's swept volume, is blended out. The result is clipped to
    the design space with a rounded edge.
 3. **Shape steps** (`rounds`, 10). The skin alone is analysed, and every
@@ -183,6 +187,7 @@ counterflow core with long header runs, may come out differently, and
 | `gap` | 1 | mm the skin keeps off a concealed region |
 | `rounds` | 10 | shape steps from the skin's load share (0: the seed's smoothed hull) |
 | `step` | 1.5 | mm, the largest move of a shape step |
+| `soft` | 0 | mm: grow the wrap by this much and smooth it over as much again, for a full, soft form (shape steps default to 0 with it, since they pull it back to the load paths) |
 | `seedFraction`, `seedCells`, `seedIterations` | 0.15, 25000, 70 | the coarse free design |
 | `openings` | [] | as `skin.openings`: where the skin is left open |
 | `pitch` | auto | mm, the envelope's grid |

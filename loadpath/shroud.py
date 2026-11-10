@@ -69,7 +69,7 @@ from scipy import ndimage
 
 __all__ = ["expand_shroud", "envelope_sdf", "write_shroud", "DEFAULTS"]
 
-VERSION = 1
+VERSION = 4
 DEFAULTS = {
     "thickness": 2.0,        # mm of skin
     "reach": 12.0,           # mm, closing radius
@@ -80,6 +80,7 @@ DEFAULTS = {
     "seedIterations": 70,
     "rounds": 10,            # shape steps on the envelope from the skin's load share (0: the seed's hull)
     "step": 1.5,             # mm, the largest move of a shape step
+    "soft": 0.0,             # mm: inflate and round the wrap by this much (a soft, full form; 0: as tight as the load allows)
 }
 
 
@@ -117,6 +118,12 @@ def _options(v) -> dict:
         raise ValueError("shroud.seedFraction is a volume fraction between 0 and 1")
     if o["gap"] < 0:
         raise ValueError("shroud.gap is mm (>= 0)")
+    if not isinstance(o["soft"], (int, float)) or o["soft"] < 0:
+        raise ValueError("shroud.soft is mm (>= 0)")
+    if float(o["soft"]) > 0 and "rounds" not in v:
+        # a soft form is the designer's choice of fullness: shape steps
+        # would pull it back in to the load paths
+        o["rounds"] = 0
     o["conceal"] = list(v.get("conceal") or [])
     o["openings"] = list(v.get("openings") or [])
     o["pitch"] = v.get("pitch")
@@ -141,6 +148,32 @@ def _smin(a, b, k):
         return np.minimum(a, b)
     h = np.clip(0.5 + 0.5 * (b - a) / k, 0.0, 1.0)
     return b + (a - b) * h - k * h * (1.0 - h)
+
+
+# A boss's root fillet sized by its stress concentration: a shoulder of
+# radius r on a member of diameter d holds Kt near 1.2 at r/d = 0.3 and
+# gains little past it (Peterson's charts, stepped bar in bending)
+_FILLET_RATIO = 0.3
+
+
+def _round_union(a, b, r):
+    """Union with an exact circular fillet of radius r where the two
+    surfaces meet (both near-distances)."""
+    if r <= 0:
+        return np.minimum(a, b)
+    u = np.maximum(r - a, 0.0)
+    v = np.maximum(r - b, 0.0)
+    return (np.maximum(r, np.minimum(a, b)) - np.sqrt(u * u + v * v)).astype(np.float32)
+
+
+def _join_parts(F, parts):
+    """The envelope joined to every interface by its own root fillet, and to
+    what it conceals by the envelope's blend."""
+    for g, r in parts.get("fillets") or ():
+        F = _round_union(F, g, r)
+    if parts.get("conceal") is not None:
+        F = _smin(F, parts["conceal"], parts["k"])
+    return F
 
 
 def _smax(a, b, k):
@@ -215,25 +248,42 @@ def envelope_sdf(solid_fn, study, opts: dict, pitch: float, refine=None):
         if keep.size:
             closed = np.isin(lab, keep)
     F = _sdf_from_mask(closed, pitch)
-    if sm > 0:
-        F = ndimage.gaussian_filter(F, sigma=sm / pitch / 2.0, mode="nearest").astype(np.float32)
+    soft = float(opts.get("soft") or 0.0)
+    if soft > 0:
+        # a soft form: the wrap grown by `soft` and smoothed over it as well,
+        # so it swells round the parts like a drawn volume smoothed hard
+        F = F - np.float32(soft)
+    if sm + soft > 0:
+        F = ndimage.gaussian_filter(F, sigma=(sm + soft) / pitch / 2.0, mode="nearest").astype(np.float32)
     k = 0.5 * sm
-    need_sdf = _sdf_from_mask(pres, pitch) if pres.any() else None
+    # (the interfaces by their own distance too: from their grid nodes they
+    # came out faceted, and every post read as a lumpy cylinder stuck on)
+    # Each joins the skin with a root fillet of 0.3 x its own size (twice its
+    # inscribed radius): a smooth-min of the envelope's blend moved the
+    # surface k/4, and the posts read as stubs stuck on.
+    fillets = []
+    for r in study.preserve:
+        g = np.asarray(r.shape.sdf(P), np.float32).reshape(dims)
+        fillets.append((g, _FILLET_RATIO * 2.0 * max(-float(g.min()), pitch)))
+    need_sdf = np.min([g for g, _ in fillets], axis=0) if fillets else None
     if need_d is not None:
         need_sdf = need_d if need_sdf is None else np.minimum(need_sdf, need_d)
-    if need_sdf is not None:
-        F = _smin(F, need_sdf, k)
+    F = _join_parts(F, {"fillets": fillets, "conceal": need_d, "k": k})
     if excl.any():
         F = _smax(F, -_sdf_from_mask(excl, pitch), min(k, 1.0))
     # inside the design space, its edges rounded off a little
     F = _smax(F, _sdf_from_mask(in_ds, pitch), k)
-    parts = {"need": need_sdf,
+    parts = {"need": need_sdf, "fillets": fillets, "conceal": need_d,
              "excl": -_sdf_from_mask(excl, pitch) if excl.any() else None,
              "ds": _sdf_from_mask(in_ds, pitch), "k": k}
     F = _hold_need(F, parts).astype(np.float32)
     if refine is not None and int(opts.get("rounds", 0)) > 0:
         F, rinfo = refine(F, lo, pitch, parts)
-        F = _hold_need(F, parts).astype(np.float32)
+        # faired after the steps: each moved the surface by a velocity read
+        # on the coarse analysis grid, and together they leave waves a few
+        # cells long (the arm link's top read as rippled close up)
+        F = ndimage.gaussian_filter(F, sigma=max(0.25 * sm, pitch) / pitch, mode="nearest")
+        F = _blend(F, parts, min(k, 1.0))
     else:
         rinfo = None
     inside = F <= 0
@@ -308,8 +358,7 @@ def _solid_fn(grid, origin, pitch):
 def _blend(F, parts, k_small):
     """Put back what the envelope must hold and keep out, and the design
     space's rounded edge, after a shape step."""
-    if parts["need"] is not None:
-        F = _smin(F, parts["need"], parts["k"])
+    F = _join_parts(F, parts)
     if parts["excl"] is not None:
         F = _smax(F, parts["excl"], k_small)
     return _hold_need(_smax(F, parts["ds"], parts["k"]), parts).astype(np.float32)
