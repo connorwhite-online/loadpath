@@ -42,6 +42,7 @@ jobs:
       - run: python tests/test_rods.py
       - run: python tests/test_wires.py
       - run: python tests/test_stack.py
+      - run: python tests/test_kicad.py
       - run: pip install pytest && python -m pytest -q tests/test_pools.py tests/test_bucklingopt.py
       - run: python -m pytest -q tests/test_vibration.py tests/test_mass_properties.py tests/test_inertia_relief.py tests/test_point_maps.py tests/test_lattice_library.py tests/test_textures.py tests/test_layerfiles.py tests/test_reactions.py tests/test_nesting.py tests/test_fe_export.py tests/test_tpms_more.py tests/test_aero.py tests/test_ribs.py tests/test_patterns.py tests/test_vdb.py tests/test_reconstruct_fragments.py tests/test_study_limits.py tests/test_rotor_blockage.py tests/test_face_bridge.py
       # libigl (the exterior extra) last: the steps above check the paths without it

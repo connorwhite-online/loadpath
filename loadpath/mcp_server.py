@@ -357,7 +357,7 @@ def stack(brief, base_dir: str | None = None) -> dict:
     errors = [x for x in lint(brief, "stack") if x["level"] == "error"]
     if errors:
         return {"ok": False, "error": format_issues(errors)}
-    args = ["stack", "{dir}/brief.json", "--out", "{dir}/out"]
+    args = ["stack", "{dir}/brief.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
     out = _spawn("stack", brief.get("name") or "stack", {"brief.json": brief}, args,
                  base_dir=base_dir or os.getcwd())
     out["next"] = _POLL_HINT
@@ -1097,6 +1097,31 @@ def serve():
         board sits, for a wires brief of the leads that leave the stack. Starts a job; poll
         loadpath_status; the report is out/stack.json."""
         return stack(brief, base_dir)
+
+    @tool
+    def loadpath_kicad(board: str, base_dir: str | None = None, power: dict | None = None,
+                       heights: dict | None = None, models: list | None = None) -> dict:
+        """Read a KiCad board (.kicad_pcb) the way an enclosure or a stack needs it: the Edge.Cuts outline
+        with its cut-outs, the stackup thickness, every footprint's body (its 3D model when the file is
+        found, else its fab outline at the package's standard height, each with heightFrom), its mass
+        (massFrom), the mounting holes and their screw sizes, each connector and which way it faces (out
+        over the board edge it overhangs; USB-C, USB-A and micro-B typed for their plug loads) and any
+        heat (a footprint Power field, or `power` {ref: W}). Returns the summary; in an enclosure brief
+        give the component {"id": "board", "kicad": {"file", "connectors": {"J1": {"opening": "usb"}},
+        "power"}} and in a stack board {"id", "kicad"} to use it directly. Reads only; quick."""
+        from .kicad import load_board, _public
+        f = board if os.path.isabs(board) or not base_dir else os.path.join(base_dir, board)
+        try:
+            b = load_board({"kicad": {"file": f, "power": power or {}, "heights": heights or {},
+                                      "models": models or []}})
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+        pb = _public(b)
+        return {"ok": True, "size": pb["size"], "thicknessFrom": pb["thicknessFrom"], "massKg": pb["mass"],
+                "conductivity": pb["conductivity"], "holes": pb["holes"],
+                "parts": [{k: p[k] for k in ("ref", "footprint", "side", "height", "heightFrom", "mass", "massFrom",
+                                             "connector", "watts", "maxTemp") if k in p} for p in pb["parts"]],
+                "warnings": pb["warnings"]}
 
     @tool
     def loadpath_feel(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:

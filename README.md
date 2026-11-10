@@ -197,6 +197,15 @@ There is no GUI on purpose; it's a library.
   a product, part of the layout search, so components are only placed
   where their cables can be laid and plugged in, hot parts apart, and the
   harness's space is kept clear of the structure generated round it.
+- **KiCad boards in** ([docs/KICAD.md](docs/KICAD.md)): a `.kicad_pcb`
+  read for its outline, stackup thickness, every part's body and height
+  (its 3D model, else the package's standard height), mass, mounting
+  holes, connectors and which edge each faces, and heat. Named in an
+  enclosure brief, the board is screwed down through its own holes, its
+  USB-C seated in its port with the plug's loads through those screws, and
+  its hot parts are heat sources where they sit; named in a stack, its
+  size, heights, ports and watts come off the file. An agent can design
+  the board; loadpath designs the part it lives in.
 - **Mesh checks without a study** (`loadpath.checks`): wall thickness,
   overhangs, trapped voids, fluid-network isolation, component fit.
 
@@ -322,7 +331,8 @@ print(best.report["mass"], best.report["safetyFactor"])
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
-  [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md).
+  [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md),
+  [KiCad boards](docs/KICAD.md).
 
 <!-- gallery:start -->
 

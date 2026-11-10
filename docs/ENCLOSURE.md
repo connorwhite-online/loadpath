@@ -34,6 +34,14 @@ the components and what the product has to survive:
 }
 ```
 
+A board can be its KiCad file instead of an STL and a mass:
+`{"id": "board", "kicad": {"file": "board.kicad_pcb", "connectors": {"J1":
+{"opening": "usb-port"}}}}` reads the outline, every part's height and
+mass, the mounting holes it is screwed down by, which edge each connector
+faces and the heat its parts give off, and becomes the board, its
+connectors and hot parts on it, screw sleeves under its holes and the
+USB-C plug loads ([KICAD.md](KICAD.md)).
+
 ## What it does
 
 **1. It places the parts** (`placement.py`), unless the designer drew

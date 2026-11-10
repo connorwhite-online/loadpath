@@ -747,6 +747,18 @@ def main(argv=None):
                                        "between boards laid as rods; the stack as a carried mass for the frame")
     stk.add_argument("brief", help="the stack brief (`loadpath schema stack`)")
     stk.add_argument("--out", default="loadpath-stack")
+    stk.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
+    kc = sub.add_parser("kicad", help="read a KiCad board (.kicad_pcb): outline, stackup thickness, every part's "
+                                      "body and height (3D model, else package), mass, mounting holes, "
+                                      "connectors and which way they face, heat; writes the board as an STL, "
+                                      "board.json, and the components an enclosure brief or a stack takes")
+    kc.add_argument("board", help="the .kicad_pcb file")
+    kc.add_argument("--out", default="loadpath-kicad")
+    kc.add_argument("--id", default="board", help="the board's component id (default board)")
+    kc.add_argument("--models", action="append", default=[], help="a folder of 3D models (repeatable; KiCad's "
+                                                                   "model folder variables are read too)")
+    kc.add_argument("--power", action="append", default=[], metavar="REF=W", help="a part's heat, e.g. U3=0.6")
+    kc.add_argument("--height", action="append", default=[], metavar="REF=MM", help="a part's height off its face")
     en = sub.add_parser("enclosure", help="a product from its outside in: the designer's exterior fixed, the "
                                           "components placed inside it (or as given), their assembly paths, "
                                           "mounts, drops, squeezes, heat, a push pad or feel targets; a study "
@@ -992,6 +1004,8 @@ def main(argv=None):
         return _wires(args)
     if args.cmd == "stack":
         return _stack(args)
+    if args.cmd == "kicad":
+        return _kicad(args)
     if args.cmd == "enclosure":
         return _enclosure(args)
     if args.cmd == "explore":
@@ -1680,7 +1694,7 @@ def _stack(args):
         print(json.dumps({"ok": False, "error": format_issues(errors)}))
         return 2
     try:
-        r = run_stack(args.brief, args.out,
+        r = run_stack(args.brief, args.out, base_dir=getattr(args, "base_dir", None),
                       on_progress=lambda ev, *_: print(f"  {ev.get('message', '')}", file=sys.stderr, flush=True))
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
@@ -1689,6 +1703,48 @@ def _stack(args):
                       "asGiven": r.get("asGiven"), "inertiaRelief": r.get("inertiaRelief"),
                       "envelope": r.get("envelope"), "tried": r["tried"], "seconds": r["seconds"]}, indent=1))
     return 0 if r["ok"] else 1
+
+
+def _kicad(args):
+    from .kicad import enclosure_components, stack_board
+
+    def pairs(items, what):
+        out = {}
+        for it in items:
+            k, _, v = it.partition("=")
+            try:
+                out[k.strip()] = float(v)
+            except ValueError:
+                raise SystemExit(f"--{what} {it!r}: give REF=number")
+        return out
+    spec = {"id": args.id, "kicad": {"file": os.path.abspath(args.board), "models": [os.path.abspath(m) for m in
+                                                                                    args.models],
+                                     "power": pairs(args.power, "power"), "heights": pairs(args.height, "height")}}
+    try:
+        comps, loads, rep = enclosure_components(spec, None, args.out)
+        sb = stack_board(spec)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    info = sb.pop("_kicad")
+    import shutil
+    kdir = os.path.join(args.out, "cad", "kicad")
+    shutil.copy(os.path.join(kdir, f"{args.id}.json"), os.path.join(args.out, "board.json"))
+    from .kicad import board_manifold, load_board, _write_stl
+    _write_stl(board_manifold(load_board(spec)), os.path.join(args.out, f"{args.id}-assembled.stl"))
+    with open(os.path.join(args.out, "components.json"), "w") as fh:
+        json.dump({"components": comps, "loads": {"connector": loads} if loads else {}}, fh, indent=1)
+    with open(os.path.join(args.out, "stack-board.json"), "w") as fh:
+        json.dump(sb, fh, indent=1)
+    conns = {p["ref"]: p["connector"] for p in rep["parts"] if p.get("connector")}
+    print(json.dumps({"ok": True, "board": os.path.join(args.out, "board.json"),
+                      "stl": os.path.join(args.out, f"{args.id}-assembled.stl"),
+                      "components": os.path.join(args.out, "components.json"),
+                      "stackBoard": os.path.join(args.out, "stack-board.json"),
+                      "size": rep["size"], "massKg": rep["mass"], "watts": rep["watts"],
+                      "holes": [{k: h[k] for k in ("ref", "at", "screw")} for h in info["holes"]],
+                      "connectors": conns, "warnings": rep["warnings"]}, indent=1))
+    return 0
 
 
 def _wires(args):

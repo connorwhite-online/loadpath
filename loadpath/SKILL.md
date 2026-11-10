@@ -567,7 +567,16 @@ laid as elastic rods: a pigtail that cannot reach, or would bend past its
 radius, rules the position out; the chosen layout's cables are followed
 along each part's way in (`wires.<id>.assembly.reach`: how far out the
 part can be with the plug mated) and their channels are kept clear.
-`watts` on one part and `maxTemp` on another keeps them apart. Read
+`watts` on one part and `maxTemp` on another keeps them apart. When the
+board exists in KiCad, give the file instead of a box: `{"id": "board",
+"kicad": {"file": "board.kicad_pcb", "connectors": {"J1": {"opening":
+"usb-port"}}, "power": {"U3": 0.6}, "maxTemp": {"U3": 85}}}` (docs/KICAD.md;
+`loadpath kicad board.kicad_pcb --out dir` or MCP `loadpath_kicad` to look
+first): outline, part heights (3D models, else package heights; read
+`heightFrom` and give `heights` for any "assumed"), masses, its connectors
+(each its own component facing out over its edge, plug loads written when
+aligned to an opening), heat, and screw sleeves under its mounting holes
+instead of a cradle. A stack board takes `{"id", "kicad"}` the same way. Read
 `enclosure.json`'s `wires`; a cable alone, or across a joint over its
 range of motion (flexing radius, coming taut), is `loadpath wires
 brief.json` (MCP `loadpath_wires`, docs/WIRES.md): its `ends.<end>.force`

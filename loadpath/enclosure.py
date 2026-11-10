@@ -118,8 +118,11 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     from .spec import _skin
 
     t0 = time.time()
-    b = brief
     os.makedirs(out_dir, exist_ok=True)
+    # a KiCad board stands for several components: the board with the
+    # parts that stay on it, and its connectors and hot parts on it
+    from .kicad import expand_brief
+    b, boards = expand_brief(brief, base_dir, out_dir)
     cad = os.path.join(out_dir, "cad")
     ext_spec = _shape_spec(b["exterior"], base_dir)
     exterior = _fine_mesh_shape(ext_spec, None)
@@ -259,12 +262,12 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         if split:
             paths = {o: {"insertFrom": None, "how": "split: set by shells.apply_split"} for o in a_order
                      if not byid[o].get("installedOn")}
-            mounts, mwarn = _mounts(comps, byid, root, lay, {}, comp_shapes, exterior, ext_spec, min_member)
+            mounts, mwarn = _mounts(comps, byid, root, lay, {}, comp_shapes, exterior, ext_spec, min_member, t_skin)
             chosen = (lay, mounts, paths, [], mwarn)
             break
         paths = _paths(a_order, byid, root, comp_shapes, lay, [("skin", skin_grid)] + fixed_grids, [], (lo, hi),
                        tol, on_progress, tilt_of)
-        mounts, mwarn = _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member)
+        mounts, mwarn = _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member, t_skin)
         if mounts:
             # the cradles are printed: every path is checked again with them in
             mount_grids = [(f"mount-{k}", _GridShape(shape_from_spec(v["shape"]))) for k, v in mounts.items()]
@@ -306,6 +309,8 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
     keep += list(b.get("keepOut") or [])
     for k, v in mounts.items():
         preserve.append({"id": f"mount-{k}", "shape": v["shape"]})
+        # a board on screws: the taps, shanks, heads and drivers kept clear
+        keep += v.get("keepOut") or []
     # the cables: laid in this layout, followed along each part's way in,
     # and their channels kept clear of the interior
     wires_report = None
@@ -529,12 +534,16 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
               "assembly": {"order": order, "components": {k: {kk: vv for kk, vv in v.items() if kk != "legs"}
                                                           for k, v in paths.items()},
                            "steps": _steps(order, byid, root, paths, lay)},
-              "mounts": {k: {"side": v["side"], "massKg": round(v["mass"], 6)} for k, v in mounts.items()},
+              "mounts": {k: {"side": v["side"], "massKg": round(v["mass"], 6),
+                             **({kk: v[kk] for kk in ("type", "screws") if kk in v})} for k, v in mounts.items()},
+              **({"boards": boards} if boards else {}),
               "loadCases": [c["name"] for c in cases], "supports": supports,
               **({"handoff": handoff_report} if handoff_report else {}),
               **({"wires": wires_report} if wires_report is not None else {}),
               "warnings": warnings, "lint": issues, "seconds": round(time.time() - t0, 1)}
-    return {"study": study, "report": report, "layout": lay}
+    if boards:
+        warnings += [f"{r['id']} (KiCad): {w}" for r in boards for w in r["warnings"]]
+    return {"study": study, "report": report, "layout": lay, "brief": b}
 
 
 class _GridShape:
@@ -932,11 +941,13 @@ def _first_way(legs, centre):
     return ("+" if d[k] > 0 else "-") + "xyz"[k]
 
 
-def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member):
+def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_member, skin=1.0):
     """A cradle under each component with a mass: on the side given, else
     the side it is pushed against (`against`, unless it leaves that way),
     else the side it comes to rest on as it goes in (opposite its first
-    leg out), else its nearest wall; never in another part's way in."""
+    leg out), else its nearest wall; never in another part's way in. A
+    board with mounting holes (`mount.type: holes`, as a KiCad board gets)
+    is held on screws through them instead (_hole_mount)."""
     from .shapes import shape_from_spec
     groups = {}
     for cid in byid:
@@ -951,9 +962,16 @@ def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_
         if not mt:
             continue
         mt = {"type": mt} if isinstance(mt, str) else dict(mt)
-        if mt.get("type", "cradle") != "cradle":
-            raise ValueError(f"{c['id']}.mount.type: only 'cradle' here (screw bosses and snaps come with a split "
-                             "block)")
+        if mt.get("type") == "holes":
+            hm, why = _hole_mount(c, mt, lay, groups, paths, comp_shapes, exterior, skin)
+            if hm is not None:
+                mounts[c["id"]] = {**hm, "mass": gmass}
+                continue
+            warn.append(f"{c['id']}: not held on its mounting holes ({why}); a cradle instead")
+            mt = {k: v for k, v in mt.items() if k in ("side",)}
+        elif mt.get("type", "cradle") != "cradle":
+            raise ValueError(f"{c['id']}.mount.type: 'cradle' or 'holes' here (bosses and snaps between halves "
+                             "come with a split block)")
         rb = lay["components"][c["id"]]["bounds"]
         legs = _legs_of(paths.get(c["id"], {}).get("insertFrom"))
         first = _first_way(legs, lay["components"][c["id"]]["centre"])
@@ -1005,6 +1023,86 @@ def _mounts(comps, byid, root, lay, paths, comp_shapes, exterior, ext_spec, min_
             continue
         mounts[c["id"]] = {"side": chosen[0], "mass": gmass, "shape": chosen[1]}
     return mounts, warn
+
+
+def _hole_mount(c, mt, lay, groups, paths, comp_shapes, exterior, skin):
+    """A board held by screws through its mounting holes: under each hole
+    a threaded sleeve the board's pad bears on (as fasteners.py draws a
+    thread: tap drill 0.84 d, wall max(1.5, 0.35 d), engagement 2 d unless
+    `threadLength`), and kept clear of material the screw's shank through
+    the board, its head (ISO 4762 head, d high) and the driver's line from
+    the head to the skin. The sleeves go on the board's underside unless
+    `side` (a product axis) is nearer its top, or the underside's sleeves
+    would land in another part or its way in. The optimizer grows what
+    carries them to the skin. Returns (mount, None) or (None, why)."""
+    from .fasteners import METRIC
+
+    rec = lay["components"][c["id"]]
+    M = np.asarray(rec["matrix"], float)
+    R, T = M[:3, :3], M[:3, 3]
+    t = float(mt.get("thickness", 1.6))
+    holes = [h for h in mt.get("holes") or [] if h.get("screw") in METRIC or h.get("diameter")]
+    if not holes:
+        return None, "no hole with a screw size"
+    normals = [np.array([0.0, 0.0, -1.0]), np.array([0.0, 0.0, 1.0])]
+    if mt.get("side") is not None:
+        want = _axis_vec(mt["side"])
+        normals.sort(key=lambda n: -float((R @ n) @ want))
+    others = [g for g in groups if g != c["id"]]
+    why = "every side"
+    for nl in normals:
+        d = R @ nl
+        tubes, keep, clash = [], [], None
+        for i, h in enumerate(holes):
+            nom = float(h.get("diameter") or h["screw"][1:])
+            _, head = METRIC.get(h.get("screw"), (1.1 * nom, 1.8 * nom))
+            x, y = (list(h["at"]) + [0.0])[:2]
+            P = R @ np.array([x, y, 0.0 if nl[2] < 0 else t]) + T           # the face the sleeve meets
+            F = P - d * t                                                    # the face the head is on
+            room = float(np.linalg.norm(_surface_point(exterior, P, d) - P))
+            tl = min(float(mt.get("threadLength", 2.0 * nom)), max(room, 0.5))
+            r_tap = 0.42 * nom
+            r_sl = max(0.5 * nom + max(1.5, 0.35 * nom), 0.5 * float(h.get("pad") or 0.0))
+            tubes.append({"type": "cylinder", "p0": _r(P), "p1": _r(P + d * tl), "r": round(r_sl, 4),
+                          "rInner": round(r_tap, 4)})
+            hid = h.get("ref") or str(i + 1)
+            keep.append({"id": f"mount-{c['id']}-{hid}-screw", "bore": False, "shape": {
+                "type": "cylinder", "p0": _r(F - d * 0.2), "p1": _r(P + d * (tl + 1.0)), "r": round(r_tap, 4)}})
+            k_head = nom
+            r_head = 0.5 * head + 0.5
+            keep.append({"id": f"mount-{c['id']}-{hid}-head", "bore": False, "shape": {
+                "type": "cylinder", "p0": _r(F + d * 0.05), "p1": _r(F - d * k_head), "r": round(r_head, 4)}})
+            reach = float(np.linalg.norm(_surface_point(exterior, F, -d) - F)) - skin - k_head - 0.2
+            if mt.get("driver", True) and reach > 0.5:
+                keep.append({"id": f"mount-{c['id']}-{hid}-driver", "bore": False, "shape": {
+                    "type": "cylinder", "p0": _r(F - d * k_head), "p1": _r(F - d * (k_head + reach)),
+                    "r": round(r_head, 4)}})
+        # the sleeves must not land in another part or in its way in
+        spec = {"type": "union", "shapes": tubes}
+        Pq = []
+        for tb in tubes:
+            p0, p1 = np.asarray(tb["p0"]), np.asarray(tb["p1"])
+            u = np.cross(d, [1.0, 0.0, 0.0] if abs(d[0]) < 0.9 else [0.0, 1.0, 0.0])
+            u /= np.linalg.norm(u)
+            v = np.cross(d, u)
+            for s_ in np.linspace(0.05, 0.95, 5):
+                for rr in (0.5 * (tb["r"] + tb["rInner"]), 0.95 * tb["r"]):
+                    for a_ in np.linspace(0.0, 2 * np.pi, 8, endpoint=False):
+                        Pq.append(p0 + s_ * (p1 - p0) + rr * (np.cos(a_) * u + np.sin(a_) * v))
+        Pq = np.asarray(Pq)
+        for o in others:
+            if any(comp_shapes[m].sdf(Pq).min() < -0.05 for m in groups[o] if m in comp_shapes):
+                clash = f"its sleeves {'under' if nl[2] < 0 else 'over'} it land in {o}"
+                break
+            lg = _legs_of((paths.get(o) or {}).get("insertFrom"))
+            if lg and _swept_hits(Pq, _group_sdf(groups[o], comp_shapes), lg):
+                clash = f"its sleeves {'under' if nl[2] < 0 else 'over'} it are in {o}'s way in"
+                break
+        if clash is None:
+            return {"type": "holes", "side": _axis_name(d), "shape": spec, "keepOut": keep,
+                    "screws": [h.get("screw") or f"{h.get('diameter')} mm" for h in holes]}, None
+        why = clash
+    return None, why
 
 
 def _listify(v):
@@ -1148,7 +1246,7 @@ def run_enclosure(brief_path: str, out_dir: str, base_dir: str | None = None, on
         except ImportError:
             r["report"]["warnings"].append("split: this loadpath has no shells.py; the study is written whole")
         else:
-            cids = {c.get("id"): c for c in brief.get("components") or []}
+            cids = {c.get("id"): c for c in r.get("brief", brief).get("components") or []}
             parts = [{"id": k["id"], "shape": k["shape"],
                       **({"installedOn": cids[k["id"]]["installedOn"]} if cids[k["id"]].get("installedOn") else {})}
                      for k in study["keepOut"] if k["id"] in cids and not cids[k["id"]].get("external")]

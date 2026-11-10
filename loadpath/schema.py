@@ -2699,6 +2699,54 @@ _CONNECTOR = {"type": "object", "properties": {
     "maxShift": {"type": "number", "minimum": 0, "description": "mm the board's mount may move in these cases "
                                                                 "(default 0.1; 0 for no cap)"}},
     "required": ["component"], "additionalProperties": False}
+_MOUNT_HOLE = {"type": "object", "properties": {
+    "at": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 3,
+           "description": "mm: the hole's centre, [x, y] on the board (z = 0 its underside)"},
+    "screw": {"type": "string", "pattern": "^M\\d+(\\.\\d+)?$", "description": "ISO metric size, e.g. 'M2.5'"},
+    "diameter": {**_POS, "description": "mm, a screw with no ISO size"},
+    "pad": {"type": "number", "minimum": 0, "description": "mm across the copper pad the sleeve bears on"},
+    "drill": _POS, "ref": {"type": "string"}}, "required": ["at"], "additionalProperties": False}
+_REF_MAP = {"type": "object", "additionalProperties": {"type": "number"}}
+_KICAD = {"anyOf": [{"type": "string", "description": "the .kicad_pcb file"}, {"type": "object", "properties": {
+    "file": {"type": "string", "description": "the .kicad_pcb file"},
+    "models": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+               "description": "folders to find the footprints' 3D models in (also KiCad's own model folder "
+                              "variables and the board's folder)"},
+    "useModels": {"type": "boolean", "description": "read 3D models for part bodies and heights (default true)"},
+    "heights": {**_REF_MAP, "description": "mm a part stands off its face, by reference (over model and "
+                                           "package)"},
+    "power": {**_REF_MAP, "description": "W of heat a part gives off, by reference (over a footprint Power "
+                                         "field)"},
+    "maxTemp": {**_REF_MAP, "description": "C a part must stay under, by reference"},
+    "masses": {**_REF_MAP, "description": "g, by reference (over the volume estimate)"},
+    "connectors": {"type": "object", "additionalProperties": {"type": "object", "properties": {
+        "opening": {"type": "string", "description": "the exterior opening it faces out through (alignTo)"},
+        "recess": {"type": "number", "minimum": 0, "description": "mm short of the exterior (default 0.3)"},
+        "out": {**_SIGNED_AXIS, "description": "which way it faces on the board, when the board cannot say"},
+        "type": {"enum": ["usb-c", "usb-a", "usb-micro-b"], "description": "the plug, when the footprint name "
+                                                                         "does not say"},
+        "plugLoads": {"type": "boolean", "description": "write its plug loads (loads.connector) when aligned "
+                                                        "to an opening and typed (default true)"},
+        "insert": _POS, "withdraw": _POS, "side": {"type": "object"}, "lever": _POS, "abuse": {"type": "boolean"},
+        "wrench": {"type": "object"}, "maxShift": {"type": "number", "minimum": 0}},
+        "additionalProperties": False}, "description": "by reference: what each connector faces and carries"},
+    "separate": {"type": "array", "items": {"type": "string"},
+                 "description": "more parts (references) to make components of their own, installed on the "
+                                "board (connectors and parts with power always are)"},
+    "defaultHeight": {**_POS, "description": "mm for a part with no model, field or known package (default 3; "
+                                             "each one is listed)"},
+    "leadProtrusion": {"type": "number", "minimum": 0, "description": "mm through-hole leads stand out of the far "
+                                                                      "face (default 1.5)"},
+    "edgeReach": {"type": "number", "minimum": 0, "description": "mm from the board edge a connector faces out "
+                                                                 "over it (default 2)"},
+    "copperFill": {"type": "number", "minimum": 0, "maximum": 1,
+                   "description": "copper area fraction per layer, for mass and conductivity (default 0.5)"}},
+    "required": ["file"], "additionalProperties": False}],
+    "description": "a KiCad board (loadpath/kicad.py): the outline, stackup thickness and every part's body "
+                   "(3D model, else footprint outline at its package height), mass, the mounting holes it is "
+                   "screwed down by, its connectors (each its own component on the board, facing out over its "
+                   "edge, with plug loads when aligned to an opening) and the heat its parts give off"}
+
 ENCLOSURE_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "loadpath enclosure brief",
@@ -2756,11 +2804,20 @@ ENCLOSURE_SCHEMA = {
                                                                       "placement.margin)"},
             "installedOn": {"type": "string", "description": "fitted to another component first and placed and "
                                                              "assembled with it; its CAD in that one's frame"},
-            "mount": {"anyOf": [{"type": "boolean"}, {"enum": ["cradle"]}, {"type": "object", "properties": {
-                "type": {"enum": ["cradle"]}, "side": _AXIS, "thickness": _POS}, "additionalProperties": False}],
+            "mount": {"anyOf": [{"type": "boolean"}, {"enum": ["cradle", "holes"]}, {"type": "object", "properties": {
+                "type": {"enum": ["cradle", "holes"]}, "side": _AXIS, "thickness": _POS,
+                "holes": {"type": "array", "items": _MOUNT_HOLE,
+                          "description": "holes: the screw holes, in the component's own frame"},
+                "threadLength": {**_POS, "description": "holes: mm of thread each screw engages (default 2 d)"},
+                "driver": {"type": "boolean", "description": "holes: keep the driver's line from each head to "
+                                                             "the skin clear (default true)"}},
+                "additionalProperties": False}],
                 "description": "how it is held: a preserved cradle under its face on `side` (default the "
-                               "`against` side, else its nearest wall); false for none. Its group's mass is "
-                               "carried through it"},
+                               "`against` side, else its nearest wall), or (`holes`, a KiCad board's default "
+                               "when it has mounting holes) screws through its holes into threaded sleeves "
+                               "on its underside (or the side nearest `side`), shank, head and driver kept "
+                               "clear; false for none. Its group's mass is carried through it"},
+            "kicad": _KICAD,
             "role": {"enum": ["switch", "seat", "part"], "description": "with a switch block (see handoff)"},
             "external": {"type": "boolean", "description": "put on from outside (a door, a plug): no path search"},
             "insertFrom": {"description": "a hint for its assembly path, tried first"},
@@ -2771,7 +2828,7 @@ ENCLOSURE_SCHEMA = {
                                     "brief's tilt); false or 0: straight slides only (a cell that must stay "
                                     "level, a part on a rail)"},
             "pathTolerance": {"type": "number", "minimum": 0}},
-            "x-requireOne": [["shape"], ["size"]], "additionalProperties": False}},
+            "x-requireOne": [["shape"], ["size"], ["kicad"]], "additionalProperties": False}},
         "assembly": {"type": "array", "items": {"type": "string"}, "description": "order the components go in"},
         "tilt": {"anyOf": [{"type": "boolean"}, {"type": "number", "minimum": 0, "maximum": 90}],
                  "description": "how far a part may be turned from how it sits on its way in, degrees (default "
@@ -3028,8 +3085,10 @@ STACK_SCHEMA = {
             "above": {"type": "number", "minimum": 0, "description": "mm its tallest part stands over its top face"},
             "below": {"type": "number", "minimum": 0, "description": "mm its tallest part hangs under it"},
             "position": {"enum": ["top", "bottom"], "description": "where it has to be (a gyro on top, say)"},
-            "ports": {"type": "array", "items": _STACK_PORT}},
-            "required": ["id", "size"], "additionalProperties": False}},
+            "ports": {"type": "array", "items": _STACK_PORT},
+            "kicad": {**_KICAD, "description": "a KiCad board: size, mass, watts, maxTemp, above, below and ports "
+                                               "read off it (kicad.stack_board); what the entry says wins"}},
+            "required": ["id"], "x-requireOne": [["size"], ["kicad"]], "additionalProperties": False}},
         "space": {"type": "object", "properties": {
             "height": {**_POS, "description": "mm: z the stack must stay under (the keep-out box's top)"},
             "base": {"type": "number", "description": "mm: z of the plate it stands on (default 0)"},

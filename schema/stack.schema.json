@@ -140,11 +140,189 @@
               ],
               "additionalProperties": false
             }
+          },
+          "kicad": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "the .kicad_pcb file"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "description": "the .kicad_pcb file"
+                  },
+                  "models": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ],
+                    "description": "folders to find the footprints' 3D models in (also KiCad's own model folder variables and the board's folder)"
+                  },
+                  "useModels": {
+                    "type": "boolean",
+                    "description": "read 3D models for part bodies and heights (default true)"
+                  },
+                  "heights": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "number"
+                    },
+                    "description": "mm a part stands off its face, by reference (over model and package)"
+                  },
+                  "power": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "number"
+                    },
+                    "description": "W of heat a part gives off, by reference (over a footprint Power field)"
+                  },
+                  "maxTemp": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "number"
+                    },
+                    "description": "C a part must stay under, by reference"
+                  },
+                  "masses": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "number"
+                    },
+                    "description": "g, by reference (over the volume estimate)"
+                  },
+                  "connectors": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "opening": {
+                          "type": "string",
+                          "description": "the exterior opening it faces out through (alignTo)"
+                        },
+                        "recess": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "mm short of the exterior (default 0.3)"
+                        },
+                        "out": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^[+-]?[xyz]$",
+                              "description": "like '-x' or '+z'"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 3,
+                              "maxItems": 3,
+                              "description": "[x, y, z]"
+                            }
+                          ],
+                          "description": "which way it faces on the board, when the board cannot say"
+                        },
+                        "type": {
+                          "enum": [
+                            "usb-c",
+                            "usb-a",
+                            "usb-micro-b"
+                          ],
+                          "description": "the plug, when the footprint name does not say"
+                        },
+                        "plugLoads": {
+                          "type": "boolean",
+                          "description": "write its plug loads (loads.connector) when aligned to an opening and typed (default true)"
+                        },
+                        "insert": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "withdraw": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "side": {
+                          "type": "object"
+                        },
+                        "lever": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "abuse": {
+                          "type": "boolean"
+                        },
+                        "wrench": {
+                          "type": "object"
+                        },
+                        "maxShift": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "description": "by reference: what each connector faces and carries"
+                  },
+                  "separate": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "more parts (references) to make components of their own, installed on the board (connectors and parts with power always are)"
+                  },
+                  "defaultHeight": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "mm for a part with no model, field or known package (default 3; each one is listed)"
+                  },
+                  "leadProtrusion": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "mm through-hole leads stand out of the far face (default 1.5)"
+                  },
+                  "edgeReach": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "mm from the board edge a connector faces out over it (default 2)"
+                  },
+                  "copperFill": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "copper area fraction per layer, for mass and conductivity (default 0.5)"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "additionalProperties": false
+              }
+            ],
+            "description": "a KiCad board: size, mass, watts, maxTemp, above, below and ports read off it (kicad.stack_board); what the entry says wins"
           }
         },
         "required": [
-          "id",
-          "size"
+          "id"
+        ],
+        "x-requireOne": [
+          [
+            "size"
+          ],
+          [
+            "kicad"
+          ]
         ],
         "additionalProperties": false
       }

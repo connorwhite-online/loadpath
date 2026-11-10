@@ -175,12 +175,43 @@ def _axis(v, default=0):
     return _AX[str(v).strip().lstrip("+-").lower()]
 
 
-def stack(brief: dict, on_progress=None) -> dict:
+def expand_boards(brief: dict, base_dir: str | None = None) -> dict:
+    """The brief with each board that names a KiCad file (`kicad`) filled
+    from it: size, mass, watts, maxTemp, above, below, ports
+    (kicad.stack_board), and standoffs.count from its mounting holes when
+    the brief does not say."""
+    if not any(b.get("kicad") for b in brief.get("boards") or []):
+        return brief
+    from .kicad import stack_board
+    out = dict(brief)
+    boards, notes = [], []
+    for b in brief["boards"]:
+        if b.get("kicad"):
+            nb = stack_board(b, base_dir)
+            info = nb.pop("_kicad")
+            notes.append({"id": b["id"], "file": info["file"], "holes": len(info["holes"]),
+                          "warnings": info["warnings"]})
+            boards.append(nb)
+        else:
+            boards.append(b)
+    out["boards"] = boards
+    so = dict(out.get("standoffs") or {})
+    if "count" not in so:
+        n = {x["holes"] for x in notes if x["holes"]}
+        if len(n) == 1:
+            so["count"] = n.pop()
+            out["standoffs"] = so
+    out["_kicad"] = notes
+    return out
+
+
+def stack(brief: dict, on_progress=None, base_dir: str | None = None) -> dict:
     """Search a board stack's order and gaps. See the module docstring and
     `loadpath schema stack`. Returns {best, alternatives, rejected (better
     on paper, with why not), asGiven, inertiaRelief, envelope, tried,
-    seconds}."""
+    seconds}. A board may be a KiCad file (expand_boards)."""
     t0 = time.time()
+    brief = expand_boards(brief, base_dir)
     boards = [dict(b) for b in brief["boards"]]
     ids = [b["id"] for b in boards]
     if len(set(ids)) != len(ids):
@@ -346,6 +377,9 @@ def stack(brief: dict, on_progress=None) -> dict:
             out["laid"] = laid_best
     if not out["ok"] and best:
         out["problems"] = best["problems"]
+    if brief.get("_kicad"):
+        out["boards"] = {x["id"]: {**{k: v for k, v in byid[x["id"]].items() if k != "ports"},
+                                   "file": x["file"], "warnings": x["warnings"]} for x in brief["_kicad"]}
     return out
 
 
@@ -397,12 +431,13 @@ def _stack_wires(wires, byid, r, centre, on_progress=None):
     return out, laid
 
 
-def run_stack(brief_path: str, out_dir: str, on_progress=None) -> dict:
+def run_stack(brief_path: str, out_dir: str, on_progress=None, base_dir: str | None = None) -> dict:
     """`loadpath stack brief.json --out dir`: writes stack.json (and
     wires.html when the brief has cables)."""
     with open(brief_path) as fh:
         brief = json.load(fh)
     os.makedirs(out_dir, exist_ok=True)
+    brief = expand_boards(brief, base_dir or os.path.dirname(os.path.abspath(brief_path)))
     res = stack(brief, on_progress)
     laid = res.pop("laid", None)
     if laid and res.get("best"):
