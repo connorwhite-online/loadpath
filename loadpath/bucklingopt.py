@@ -46,9 +46,6 @@ from .fem import HexMesh, Stiffness, _hex8_parts, hex8_element
 
 __all__ = ["BucklingModel", "block_modes", "geometric_parts"]
 
-_CONN26 = np.ones((3, 3, 3), bool)
-
-
 def _factor(k: sp.csr_matrix, node_ijk=None):
     """A solve with K for one right-hand side or a block of them: PARDISO
     when available (symmetric positive definite, upper triangle; 10-30x
@@ -206,6 +203,12 @@ def block_modes(a, solve, x0, nm: int, tol: float = BLOCK_TOL, maxiter: int = BL
     return th, x, maxiter, False
 
 
+# A piece is held when its least-stopped rigid motion keeps this share of
+# its most-stopped one's energy in the supports (BucklingModel._held). Fixed
+# nodes on one line, or one pin, read zero to rounding (1e-16); a support
+# patch two cells across at the far end of a 90-cell part reads 5e-4.
+_HELD_TOL = 1e-8
+
 # Cells under this density are left out of the buckling model: x^3 there is
 # under the void floor every cell is given anyway (simp.E_MIN, 1e-6), and
 # the stress stiffness faded to nothing well above it (BucklingModel.interp).
@@ -318,15 +321,60 @@ class BucklingModel:
             pass
 
     def _live(self, xe):
+        """The cells the model is made of: live ones (over `alive`, or drawn
+        in) in pieces the supports hold still.
+
+        A piece is cells joined face to face. A clump that meets the part
+        only along an edge or at a corner is hinged there: hex8 cells share
+        those nodes and nothing that carries a moment, the printed part has
+        no material across such a contact at all, and one hinge is a
+        singular K. The wrist link's first constrained part (130k cells) had
+        23 such clumps of 4-14 cells at iteration 39, remnants of members on
+        their way out: mu read 1e15 with modes of negative stiffness, the
+        constraint 1e11 over its limit with overflowing gradients, and the
+        optimizer never came back (a 650 s part and a 2130 s one, 4-11 g
+        heavier than the search's). At `alive` 1e-3 a few more fringe cells
+        tied the same clumps in.
+
+        Held still means every rigid motion of the piece is stopped by its
+        fixed dofs and pin springs (_held): a piece on a pin alone turns
+        about it, and that is singular too."""
         mesh = self.domain.mesh
         alive = (xe > self.alive) | self.anchor
         g = np.zeros(self.domain.dims, bool)
         ijk = tuple(mesh.elem_ijk.T)
         g[ijk] = alive
-        lbl, _ = ndimage.label(g, structure=_CONN26)
+        lbl, _ = ndimage.label(g)       # face neighbours
         el = lbl[ijk]
-        keep_l = np.unique(el[alive & self.support_touch])
-        return alive & np.isin(el, keep_l[keep_l > 0])
+        keep = np.zeros(len(xe), bool)
+        for piece in np.unique(el[alive & self.support_touch]):
+            cells = el == piece
+            if piece > 0 and self._held(cells):
+                keep |= cells
+        return keep
+
+    def _held(self, cells) -> bool:
+        """Whether the supports stop all six rigid motions of these cells:
+        the motions' energy in the fixed dofs (as unit springs) and the pin
+        springs has no zero direction."""
+        from .fem import rigid_body_modes
+
+        d = self.domain
+        mesh = d.mesh
+        nodes = np.unique(mesh.enode[cells])
+        xyz = mesh.node_xyz[nodes]
+        span = float(np.ptp(xyz, axis=0).max()) or 1.0
+        r = rigid_body_modes(xyz / span)
+        dofs = (3 * nodes[:, None] + np.arange(3)).ravel()
+        rf = r[d.fixed[dofs]]
+        g = rf.T @ rf
+        if d.springs is not None:
+            ks = d.springs[dofs][:, dofs]
+            top = ks.diagonal().max() if ks.nnz else 0.0
+            if top > 0:
+                g = g + r.T @ (ks @ r) / top
+        w = np.linalg.eigvalsh(g)
+        return bool(w[0] > _HELD_TOL * max(w[-1], 1e-300))
 
     def evaluate(self, xe: np.ndarray, p: float, cases=None, gradient: bool = True, relax=None):
         """For each load case (default all): (mu_ks, dmu_ks/dxe (n,), mus),
@@ -389,6 +437,18 @@ class BucklingModel:
                 lap("stress")
                 nm = min(self.n_modes, ndof - 2)
                 mu, vec = self._modes(c, -kg, k, minv, nm, fd, mesh.n_dof, mu_loose)
+                # phi^T K phi is positive for every mode of a K that holds
+                # its cells. Where it is not, K was singular (a mechanism
+                # _live did not see) and what came back is not a reading:
+                # the wrist link's hinged clumps gave mu 1e15 at norms of
+                # -0.97 and -7.7. Nothing is kept of it, the caller's last
+                # reading stands.
+                kn = np.einsum("ij,ij->j", vec, np.asarray(k @ vec))
+                if not (np.all(np.isfinite(mu)) and np.all(np.isfinite(kn)) and np.all(kn > 0)):
+                    self._v0.pop(c, None)
+                    self._mu0.pop(c, None)
+                    raise RuntimeError(f"no buckling reading for load case {c}: the live cells move freely "
+                                       f"(a mode's stiffness reads {float(np.min(kn)):.3g})")
                 lap("modes")
                 if mu[0] <= 0:
                     out.append((0.0, np.zeros(mesh.n_elem), mu))
@@ -404,10 +464,7 @@ class BucklingModel:
                 wts = wts / wts.sum()
                 use = [i for i in range(nm) if wts[i] >= 1e-6]
                 # modes normalized phi^T K phi = 1
-                phis = []
-                for i in use:
-                    ph = vec[:, i]
-                    phis.append(ph / np.sqrt(max(float(ph @ (k @ ph)), 1e-300)))
+                phis = [vec[:, i] / np.sqrt(kn[i]) for i in use]
                 ue = u[sub.edof]
                 parts = geometric_parts(ue, [ph[sub.edof] for ph in phis], mesh.pitch, self.nu)
                 # the adjoints of every counted mode in one block solve
