@@ -57,3 +57,13 @@ large-eddy simulation, not a design-grade aerodynamics code:
 That is the gap it closes in [NTOP-PARITY.md](NTOP-PARITY.md): nTop's
 external CFD feeds loads to its structural blocks; this does the same for
 an agent, in one command, and says how far to trust it.
+
+## Structure in a rotor's stream
+
+`aero.rotor_blockage(mesh, center, axis, radius, thrust, hub=, ducted=)` prices what a part costs a propeller or fan by
+sitting in its air: each column of the disk is followed up and downstream to the first material it meets, and that
+patch drags `cd q dA` against the thrust, with q from the actuator-disk speed at that distance (v_i at the disk, 2 v_i
+far behind, falling off ahead; `ducted` holds it at sqrt(2) v_i, a duct with no diffuser). It returns the blocked
+area, the drag, the share of thrust lost and the carried mass that would cost as much. On a 3.5 in drone a 4 x 35 mm
+arm 10 mm under a prop at hover loses 1% of that motor's thrust (0.8 g of equivalent payload); at full throttle the
+wake is 2.8 times faster and the drag 7.7 times larger.

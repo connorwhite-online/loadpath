@@ -282,3 +282,101 @@ def _load_case(xyz, fw, h, patches, speed):
         loads.append({"shape": {"type": "box", "min": lo.round(4).tolist(), "max": hi.round(4).tolist()},
                       "force": [float(v) for v in F]})
     return {"name": f"flow-{speed:g}ms", "loads": loads}
+
+
+# --- structure in a rotor's or fan's stream --------------------------------
+
+def _actuator_speed(v_i: float, radius: float, s):
+    """Axial speed on a rotor's axis at signed distance s (mm, + downstream)
+    from an actuator disk inducing v_i at the disk: v_i (1 + s / sqrt(R^2 +
+    s^2)) downstream (2 v_i far behind), v_i (1 + s / sqrt(R^2 + s^2))
+    upstream too (s < 0: it falls off to nothing far ahead)."""
+    s = np.asarray(s, float)
+    return v_i * (1.0 + s / np.sqrt(radius * radius + s * s))
+
+
+def rotor_blockage(mesh, center, axis, radius: float, thrust: float, hub: float = 0.0, cd: float = 1.2,
+                   rho: float = 1.2, reach: float | None = None, pitch: float = 0.5, ducted: bool = False) -> dict:
+    """What a part costs a rotor by sitting in its stream (drone arms and
+    motor mounts under a prop, a bracket in front of a fan): the drag of the
+    material the disk's air meets, from momentum theory.
+
+    The disk (centre, unit `axis` pointing the way the air goes, radius mm,
+    hub mm left out) takes in v_i = sqrt(T / (2 rho A)) at `thrust` N. Each
+    column of the disk's area is followed up and downstream (to `reach`,
+    default 3 radii) to the first material it meets at distance s; that
+    patch of area dA carries the dynamic pressure of the stream there,
+    q = rho v(s)^2 / 2 with v from the actuator-disk speed on the axis
+    (2 v_i far behind, falling off ahead), and drags cd q dA along the
+    stream, against the thrust. Only the nearest material in each column
+    counts: what hides behind it sits in its wake. `ducted`: a duct with no
+    diffuser holds the stream at the disk's area, so it leaves at v_e =
+    sqrt(T / (rho A)) (all the thrust on the rotor) and the material under
+    it meets that.
+
+    Returns the blocked area (mm^2, and as a share of the disk), the drag
+    (N) and the same as thrust lost (share) and as a carried mass that
+    would cost as much (g, drag / 9.81 at this thrust), upstream and
+    downstream apart. A slender member's cd is 1.0-1.2 (round to square),
+    a flat plate face on 1.28; a streamlined one is about 0.1."""
+    import trimesh
+
+    from .verify import voxelize
+
+    a = np.asarray(axis, float)
+    a = a / np.linalg.norm(a)
+    c = np.asarray(center, float)
+    reach = 3.0 * radius if reach is None else float(reach)
+    # turn the part so the stream runs along +z through the origin
+    z = np.array([0.0, 0.0, 1.0])
+    v = np.cross(a, z)
+    s, cth = np.linalg.norm(v), float(a @ z)
+    if s < 1e-12:
+        rot = np.eye(3) if cth > 0 else np.diag([1.0, -1.0, -1.0])
+    else:
+        k = v / s
+        kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+        rot = np.eye(3) + s * kx + (1 - cth) * kx @ kx
+    m = mesh.copy() if isinstance(mesh, trimesh.Trimesh) else trimesh.Trimesh(*mesh)
+    m.vertices = (np.asarray(m.vertices) - c) @ rot.T
+    lo = np.array([-radius, -radius, -reach])
+    hi = np.array([radius, radius, reach])
+    mlo, mhi = np.asarray(m.bounds, float)
+    if np.any(mhi < lo) or np.any(mlo > hi):
+        solid = np.zeros((1, 1, 1), bool)
+        origin = lo
+    else:
+        solid, origin = voxelize(m, pitch, box=(np.maximum(lo, mlo - pitch), np.minimum(hi, mhi + pitch)))
+    v_i = float(np.sqrt(max(thrust, 0.0) / (2.0 * rho * np.pi * (radius * 1e-3) ** 2)))
+    nx, ny, nz = solid.shape
+    xc = origin[0] + (np.arange(nx) + 0.5) * pitch
+    yc = origin[1] + (np.arange(ny) + 0.5) * pitch
+    zc = origin[2] + (np.arange(nz) + 0.5) * pitch
+    rr = np.hypot(xc[:, None], yc[None, :])
+    disk = (rr <= radius) & (rr >= hub)
+    out = {"inducedVelocity": round(v_i, 3), "diskArea": round(float(np.pi * (radius ** 2 - hub ** 2)), 1)}
+    dA = pitch * pitch
+    for side, sel in (("downstream", zc >= 0), ("upstream", zc < 0)):
+        area = 0.0
+        drag = 0.0
+        if sel.any() and solid.any():
+            sub = solid[:, :, sel]
+            zs = zc[sel]
+            order = np.argsort(np.abs(zs))           # nearest the disk first
+            sub, zs = sub[:, :, order], zs[order]
+            hit = sub.any(axis=2) & disk
+            first = np.argmax(sub, axis=2)
+            dist = zs[first]
+            vel = _actuator_speed(v_i, radius, dist)
+            if ducted and side == "downstream":
+                vel = np.full_like(vel, np.sqrt(2.0) * v_i)
+            q = 0.5 * rho * vel ** 2                 # Pa = N/m^2
+            area = float(hit.sum() * dA)
+            drag = float((cd * q * dA * 1e-6)[hit].sum())
+        out[side] = {"blockedArea": round(area, 1), "drag": round(drag, 5)}
+    total = out["downstream"]["drag"] + out["upstream"]["drag"]
+    out.update({"blockedShare": round((out["downstream"]["blockedArea"] + out["upstream"]["blockedArea"])
+                                      / max(out["diskArea"], 1e-9), 4),
+                "drag": round(total, 5), "thrustLost": round(total / thrust, 4) if thrust > 0 else 0.0,
+                "equivalentMass": round(total / 9.81 * 1000.0, 2), "cd": cd})
+    return out
