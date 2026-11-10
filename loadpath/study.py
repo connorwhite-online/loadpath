@@ -742,7 +742,11 @@ def _save_partial(o, pitch: float | None = None) -> None:
     """With LOADPATH_PARTIAL_DIR set (`loadpath run` sets it to out/partial),
     write each outcome's STL and summary as the search finds it: four
     brief-eval runs were killed in their last stage and kept nothing of
-    half an hour of verified outcomes."""
+    half an hour of verified outcomes. Called again when an outcome is
+    read again (the tet cross-check, the finer-grid confirm), it adds a
+    line under the same "stl": the last line for a part is the one that
+    stands, which is how `loadpath status` can say that its bestSoFar is
+    a confirmed part, to hand over while the run looks for a lighter one."""
     d = os.environ.get("LOADPATH_PARTIAL_DIR")
     if not d or o.mesh is None:
         return
@@ -750,12 +754,29 @@ def _save_partial(o, pitch: float | None = None) -> None:
         import json
 
         os.makedirs(d, exist_ok=True)
-        stem = f"vf{o.volume_fraction:.4f}".replace(".", "p")
-        o.mesh.export(os.path.join(d, stem + ".stl"))
-        field = save_field(os.path.join(d, stem + ".field.npz"), o.xphys, pitch) if pitch else None
+        stem = getattr(o, "partial_stem", None)
+        if stem is None:
+            # A name of its own: every pitch start begins at the study's
+            # fraction, and a layout search runs a fraction a second time,
+            # so "vf0p2000.stl" was overwritten by the next part there and
+            # the earlier line's numbers described another mesh. Claimed
+            # before it is written (the grids run in processes).
+            base = stem = f"vf{o.volume_fraction:.4f}".replace(".", "p")
+            n = 1
+            while True:
+                try:
+                    os.close(os.open(os.path.join(d, stem + ".stl"), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                    break
+                except FileExistsError:
+                    n += 1
+                    stem = f"{base}-{n}"
+            o.mesh.export(os.path.join(d, stem + ".stl"))
+            o.partial_field = save_field(os.path.join(d, stem + ".field.npz"), o.xphys, pitch) if pitch else None
+            o.partial_stem = stem
+        field = getattr(o, "partial_field", None)
         with open(os.path.join(d, "outcomes.jsonl"), "a") as fh:
             fh.write(json.dumps({"stl": stem + ".stl", **({"field": stem + ".field.npz"} if field else {}),
-                                 **o.summary()}, default=str) + "\n")
+                                 "at": round(time.time(), 1), **o.summary()}, default=str) + "\n")
     except Exception:  # noqa: BLE001  (a convenience: never fail the run for it)
         pass
 
@@ -2241,6 +2262,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             except RuntimeError as exc:
                 o.report.setdefault("warnings", []).append(f"confirmation failed: {exc}")
                 o.report["margin"] = 0.0
+                o.passes = False
+                _save_partial(o, domain.pitch)
                 return 0.0
             if memory is not None:
                 memory.confirmed(o.volume_fraction, rep)
@@ -2265,6 +2288,9 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             for k in ("thermal", "durability"):
                 if k in rep:
                     o.report[k] = rep[k]
+        if mc < 1.0:
+            o.passes = False     # (as every caller does)
+        _save_partial(o, domain.pitch)
         return mc
 
     def tet_confirm(o: Outcome) -> float | None:
@@ -2306,6 +2332,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                                   for c in cc["cases"]]}
         o.passes = bool(mt >= 1.0) and _whole(r)
         emit({"stage": "confirmed", "volumeFraction": o.volume_fraction, "margin": mt, "method": "tet"})
+        _save_partial(o, domain.pitch)
         return mt
 
     def untet(o: Outcome):
@@ -2325,6 +2352,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             f"{worst['peakStress']:.1f} MPa in {worst['name']!r} at "
             f"({', '.join(f'{v:.1f}' for v in worst['peakAt'])}): a stress the voxel grid does not resolve. "
             "Check it there (a fillet, a thicker wall, or how the part is really held).")
+        _save_partial(o, domain.pitch)
 
     def layout_search(k: float):
         """Other layouts below a tet-confirmed pick with margin to spare.
@@ -2481,6 +2509,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             else:
                 prefetch.drop(job)     # not one the loop below confirms
         emit({"stage": "outcome", **o.summary()})
+        _save_partial(o, domain.pitch)     # (these parts were never written: a run killed here kept none)
         return o
 
     tets_on = [False]     # the constrained loop's tet confirms (run_constrained starts them early)

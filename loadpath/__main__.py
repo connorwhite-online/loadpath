@@ -603,23 +603,32 @@ def run_status(out: str) -> dict:
         st = json.load(fh)
     part = os.path.join(out, "partial", "outcomes.jsonl")
     if os.path.exists(part):
-        rows = []
+        rows = {}      # by STL: a part read again (its tet check) is written again, and the last line stands
         with open(part) as fh:
             for line in fh:
                 try:
-                    rows.append(json.loads(line))
+                    o = json.loads(line)
                 except json.JSONDecodeError:
-                    pass
+                    continue
+                rows[o.get("stl") or len(rows)] = o
         st["partialOutcomes"] = len(rows)
-        ok = [o for o in rows if o.get("passes") and o.get("mass") is not None]
+        ok = [o for o in rows.values() if o.get("passes") and o.get("mass") is not None]
         if ok and st.get("state") != "done":
-            # the lightest verified passing part so far: what to hand over if
-            # the run has to stop (it may still get lighter, or fail its fine
-            # re-check: `loadpath verify` it before delivering)
-            b = min(ok, key=lambda o: o["mass"])
+            # The lightest passing part so far, a confirmed one when there
+            # is one: `confirmed` true means it has passed the re-check the
+            # delivered part gets (the tet cross-check, or the finer grid
+            # where that does not run), so it can be handed over now and
+            # the run left to look for a lighter one. Unconfirmed, it has
+            # passed its analysis grid only and may still fail the
+            # re-check: `loadpath verify` it before delivering.
+            conf = [o for o in ok if o.get("confirm")]
+            b = min(conf or ok, key=lambda o: o["mass"])
             st["bestSoFar"] = {"stl": os.path.join(os.path.abspath(out), "partial", b.get("stl", "")),
                                "mass": b["mass"], "safetyFactor": b.get("safetyFactor"),
-                               "volumeFraction": b.get("volumeFraction")}
+                               "volumeFraction": b.get("volumeFraction"), "confirmed": bool(conf),
+                               **({"confirmedBy": b["confirm"].get("method") or "voxel-fine"} if conf else {}),
+                               **({"afterSeconds": round(float(b["at"]) - float(st["started"]))}
+                                  if b.get("at") and st.get("started") else {})}
     if st.get("state") == "running" and st.get("pid"):
         alive = True
         try:

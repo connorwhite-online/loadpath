@@ -872,8 +872,22 @@ def status(job_id: str) -> tuple[dict, list]:
         latest = None
     if _alive(job_id, meta):
         el = time.time() - meta["started"] if meta.get("started") else None
-        return {"status": "running", "kind": kind, "name": meta.get("name"),
-                "elapsedSeconds": round(el) if el else None, "latest": _round(latest), "next": _POLL_HINT}, []
+        out = {"status": "running", "kind": kind, "name": meta.get("name"),
+               "elapsedSeconds": round(el) if el else None, "latest": _round(latest), "next": _POLL_HINT}
+        if kind == "study":
+            # the lightest passing part so far (`loadpath status` shows the
+            # same): a confirmed one is a part to hand over while the
+            # search goes on, minutes into a run that may take many more
+            from .__main__ import run_status
+
+            best = run_status(os.path.join(d, "out")).get("bestSoFar")
+            if best:
+                out["bestSoFar"] = _round(best)
+                out["next"] += (" bestSoFar has passed the re-check the delivered part gets: hand it over now if "
+                                "the user is waiting; the run goes on looking for a lighter part."
+                                if best.get("confirmed") else
+                                " bestSoFar has passed its analysis grid only, not the re-check yet.")
+        return out, []
     if not os.path.exists(report):
         err = _read(os.path.join(d, "stdout.json")).strip()
         tail = [ln for ln in _read(os.path.join(d, "progress.jsonl")).splitlines() if ln.strip()][-15:]
