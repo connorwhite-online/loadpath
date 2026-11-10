@@ -1466,7 +1466,8 @@ def _probe_won(event: dict, search_mass: float, margin: float | None = None) -> 
     margin and decides over the voxel one."""
     m = event.get("mass")
     mg = margin if margin is not None else event.get("margin")
-    return m is not None and mg is not None and m < search_mass and mg >= 1.0
+    return m is not None and mg is not None and m < search_mass and mg >= 1.0 \
+        and (event.get("bodies") or 1) <= 1
 
 
 def _probe_settled(won: bool, start: float, deadline: float, done: int, now: float | None = None) -> bool:
@@ -2334,7 +2335,8 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         o.voxel_sf = report.get("safetyFactor")
         m = _margin(study, report)
         report["margin"] = m
-        o.passes = bool(m >= 1.0)
+        # in pieces (a mounting pad left loose) is not a part, whatever its margin
+        o.passes = bool(m >= 1.0) and _whole(report)
         o.x = res.x
         emit({"stage": "outcome", **o.summary()})
         return o
