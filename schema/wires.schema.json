@@ -658,6 +658,10 @@
           "type": "integer",
           "minimum": 2,
           "maximum": 200
+        },
+        "flexing": {
+          "type": "boolean",
+          "description": "false: a move made once (a crash, a part shifting on its strap, a lid opened for service), held to the cable's fixed bend radius; default true: a joint that cycles, held to its flexing radius"
         }
       },
       "additionalProperties": false,

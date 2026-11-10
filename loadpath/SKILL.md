@@ -556,7 +556,14 @@ part can be with the plug mated) and their channels are kept clear.
 `watts` on one part and `maxTemp` on another keeps them apart. Read
 `enclosure.json`'s `wires`; a cable alone, or across a joint over its
 range of motion (flexing radius, coming taut), is `loadpath wires
-brief.json` (MCP `loadpath_wires`, docs/WIRES.md). Parts fitted to another (`installedOn`) are
+brief.json` (MCP `loadpath_wires`, docs/WIRES.md): its `ends.<end>.force`
+is the strain-relief load on a connector or solder pads, `clips` the load
+on each `via` tie, and `motion.flexing: false` marks a one-off move. Boards
+on standoffs (a flight controller over a speed controller) are `loadpath
+stack brief.json` (MCP `loadpath_stack`): order and gaps by heat in the
+real airflow, centre of mass and whether the harness between boards can
+bend; put its `inertiaRelief.masses` entry and `envelope` in the carrying
+part's study. Parts fitted to another (`installedOn`) are
 drawn in that part's frame and move with it. The `assembly` order
 matters: each part's position is kept only if it can still get there past
 the skin and the parts that went in before it, and its way in (up to four

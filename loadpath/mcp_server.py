@@ -347,6 +347,23 @@ def wires(brief, base_dir: str | None = None) -> dict:
     return out
 
 
+def stack(brief, base_dir: str | None = None) -> dict:
+    """Validate a stack brief (stack.py) and search its board order and
+    gaps as a background job."""
+    if isinstance(brief, str):
+        from .tasks import read_doc
+        brief, base_dir = read_doc(brief, base_dir)
+    from .schema import format_issues, lint
+    errors = [x for x in lint(brief, "stack") if x["level"] == "error"]
+    if errors:
+        return {"ok": False, "error": format_issues(errors)}
+    args = ["stack", "{dir}/brief.json", "--out", "{dir}/out"]
+    out = _spawn("stack", brief.get("name") or "stack", {"brief.json": brief}, args,
+                 base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def enclosure(brief, base_dir: str | None = None, run: bool = False) -> dict:
     """Validate an enclosure brief (enclosure.py) and place, path and
     compile it as a background job; run: then design it and check the
@@ -1063,6 +1080,21 @@ def serve():
         in an enclosure brief instead (components[].ports, wires): then only layouts that can be wired
         are kept. Starts a job; poll loadpath_status."""
         return wires(brief, base_dir)
+
+    @tool
+    def loadpath_stack(brief: dict | str, base_dir: str | None = None) -> dict:
+        """Order and space a stack of boards on standoffs (loadpath_schema('stack')): a flight controller
+        over a speed controller, a carrier and its modules. Every order and gap is solved as a thermal
+        network (the air speed each gap really gets from the stream past it, developing-flow convection,
+        radiation between facing boards, conduction down the standoffs), scored by how much of each
+        board's temperature limit it uses, the height and the centre of mass, and the cables between
+        the boards (`wires`, ports in each board's frame) are laid as elastic rods: a gap too small for
+        its harness to bend in is refused, with that reason, in `rejected`. The result's
+        `inertiaRelief.masses` entry (the stack's mass at its centre of mass, on the `mount` region)
+        goes into the carrying part's study, `envelope` is its keep-out box, and `best.z` is where each
+        board sits, for a wires brief of the leads that leave the stack. Starts a job; poll
+        loadpath_status; the report is out/stack.json."""
+        return stack(brief, base_dir)
 
     @tool
     def loadpath_feel(study: dict | str, base_dir: str | None = None, pitches: list | None = None) -> dict:

@@ -487,6 +487,17 @@ class GridField:
         v = np.concatenate([sdf(P[i:i + 400_000]) for i in range(0, len(P), 400_000)])
         return cls(v.reshape(tuple(n)), lo, pitch)
 
+    def reach(self, p):
+        """Distance for path finding: as eval, but outside the sampled box
+        a free point's distance grows with how far out it is (eval carries
+        the edge value on, which is right for contact and too small for
+        asking how much room there is)."""
+        p = np.asarray(p, float)
+        d = self.eval(p)[0]
+        lo, hi = self.o + self.h, self.o + (self.shape - 2) * self.h
+        out = np.linalg.norm(p - np.clip(p, lo, hi), axis=1)
+        return np.where(d > 0, d + out, d)
+
     def eval(self, p):
         p = np.ascontiguousarray(p, float)
         if _HAVE_NB and self.fast:
@@ -526,6 +537,10 @@ class MovingField:
     def eval(self, p):
         d, g = self.field.eval((np.asarray(p, float) - self.t) @ self.R)
         return d, g @ self.R.T
+
+    def reach(self, p):
+        q = (np.asarray(p, float) - self.t) @ self.R
+        return self.field.reach(q) if hasattr(self.field, "reach") else self.field.eval(q)[0]
 
 
 # --- the rod --------------------------------------------------------------------

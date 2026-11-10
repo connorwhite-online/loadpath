@@ -198,6 +198,72 @@ of it under `wires`, the study keeps `wire-battery-lead` and
 brief of its own, to try another cable or connector direction with
 `loadpath wires` in seconds without placing the parts again.
 
+## A stack of boards
+
+A flight controller over a speed controller, a carrier and its modules:
+boards on standoffs, one above another. Which goes where, and how far
+apart, is usually copied from the last build. It is a physics question
+with three answers that pull against each other, and `loadpath stack`
+asks all three of every order and gap:
+
+```
+python -m loadpath stack brief.json --out out/        # MCP: loadpath_stack
+```
+
+- **Heat.** Each gap is a slot the stream blows through. Its air speed
+  is solved, not assumed: the stream's dynamic pressure against the
+  slot's entry and exit loss and its laminar friction, so a 1 mm gap in
+  an 8 m/s wash gets 3.9 m/s and a 4 mm gap 6.3. Convection is the
+  developing flow between parallel plates, the air warms as it crosses
+  the board, facing boards exchange radiation, standoffs conduct, and in
+  still air the gap is a layer of conducting air. The result is every
+  board's temperature against its `maxTemp`.
+- **Mass.** The stack's height and centre of mass, with `goal.centerOfMass`
+  to pull it low or toward a point.
+- **Cables.** The harness between two boards (`wires`, with `ports` in
+  each board's own frame) is laid as a rod in every candidate. A gap its
+  cable cannot bend in is refused, and the refusal is in `rejected` with
+  its reason.
+
+`examples/wires/drone.py` is a 20 x 20 stack for a small quadcopter: a
+flight controller (0.8 W) and a four-in-one speed controller (7.5 W in a
+climb) in 22 mm under a canopy, in 8 m/s of prop wash.
+
+| question | answer |
+|---|---|
+| does the order matter for heat? | hardly: the speed controller sits at about 100 C against 105 on the bottom or the top, because each board has a stream on one face either way |
+| does the gap? | not above about 4 mm: the slot already gets 6.3 of the stream's 8 m/s |
+| what decides, then? | the eight-wire signal harness. With the speed controller on the bottom the lowest stack (12.4 mm) folds it to 1.8 mm against the 3.7 it allows; the stack that can be wired is the flight controller below, 6.0 mm apart, 13.7 mm tall |
+| in still air? | 7.5 W on a 27 mm board passes 300 C: reported as not feasible, not as a layout |
+
+The answer hands two things to the frame's study: `inertiaRelief.masses`
+(the stack's 13.3 g at its centre of mass, on the `mount` region) and
+`envelope`, its keep-out box. `best.z` is where each board sits, for the
+leads that leave the stack.
+
+## Strain relief: what a lead asks of its pads
+
+Every report gives the load on each connector as a vector (`ends.from.force`,
+with `pull`, `side` and `moment`), and on each clip a cable is tied to
+(`via`, reported under `clips`). Through a `motion` these are the worst
+over the travel, checked against the port's `maxPull`, `maxSide` and
+`maxMoment`. A move that happens once (a battery sliding on its strap in
+a crash) is marked `"flexing": false` and judged by the fixed radius, not
+the flexing one.
+
+The same example lays the quadcopter's leads in the stack that came out:
+
+| lead | result |
+|---|---|
+| motor, 3 x 22 AWG, 60 mm, one clip on the arm | tightest bend 7.8 mm against 5.6; the clip holds 0.8 N; the pads see under 1 N |
+| battery, 2 x 12 AWG to a pack carried above the stack, 48 mm | bends to 14.0 mm against 13.8 through a 6 mm slide of the pack; the pads see 7 N along the board and 4 N of peel, 38 N mm, inside their 15 N and 150 N mm |
+| battery, pack in line behind the stack on a 38 mm lead | comes taut when the pack slides: the pads would stop the battery. Refused |
+
+![the quadcopter's battery lead through the pack's slide, and a motor lead clipped to its arm](images/wires/drone.png)
+
+Those pad forces are the load case for the board's mount, and the clip's
+is the load on the arm where it is tied.
+
 ## What it is not
 
 - Contact has no friction, and a cable is not held by clips unless a
@@ -206,6 +272,13 @@ brief of its own, to try another cable or connector direction with
   later one.
 - A stranded wire's stiffness is an estimate (above), and so are the
   house-rule radii. Both are stated in every report that uses them.
+- The stack's thermal model is a resistance network: each board is one
+  temperature and the stream is uniform. It ranks orders and gaps and
+  finds the infeasible ones; a hot spot on a board is the `cooling`
+  block's job ([COOLING.md](COOLING.md)).
+- A cable that comes taut is reported as taut. The force printed beside
+  it is not a prediction (the rod's stretch stiffness is capped to keep
+  the solve well conditioned).
 - No electromagnetic view: nothing here knows that a motor lead should
   not run beside an antenna.
 - The placement judge works on the placement grid, coarser than the
@@ -222,5 +295,7 @@ laid = wires.lay(cab, {"at": [0, 0, 0], "direction": "+x"},
 print(laid.report())
 ```
 
+`loadpath.stack.stack(brief)` searches a board stack (`stack.temperatures`
+and `stack.gap_flow` are the network and the slot flow on their own),
 `wires.harness(brief)` runs a whole brief, `wires.sweep` a motion,
 `wires.channel_mesh` the keep-out, `loadpath.rods.Rod` is the rod itself.

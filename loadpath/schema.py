@@ -2779,7 +2779,11 @@ _MOTION = {"type": "object", "properties": {
     "legs": {"type": "array", "items": {"type": "object", "properties": {"toward": _SIGNED, "length": _POS},
                                         "required": ["toward", "length"], "additionalProperties": False},
              "description": "type path: straight legs the moving bodies travel, in order"},
-    "steps": {"type": "integer", "minimum": 2, "maximum": 200}}, "additionalProperties": False,
+    "steps": {"type": "integer", "minimum": 2, "maximum": 200},
+    "flexing": {"type": "boolean", "description": "false: a move made once (a crash, a part shifting on its "
+                                                  "strap, a lid opened for service), held to the cable's fixed "
+                                                  "bend radius; default true: a joint that cycles, held to its "
+                                                  "flexing radius"}}, "additionalProperties": False,
     "description": "what the bodies marked `moves` do; every cable with a port on one is followed through it"}
 WIRES_SCHEMA = {
     "$schema": _DIALECT,
@@ -2856,14 +2860,74 @@ _ENC["placement"]["properties"]["wires"] = {
                                                       "false: the routed length only"}},
     "additionalProperties": False}
 
-SCHEMAS = {"study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
+_STACK_PORT = {"type": "object", "properties": {
+    "id": {"type": "string"},
+    "at": {**_VEC3, "description": "mm in the board's frame: the origin at its centre, z = 0 its underside"},
+    "direction": {**_SIGNED, "description": "the way the cable leaves it"},
+    "up": _SIGNED, **_PORT_LIMITS}, "required": ["id", "at", "direction"], "additionalProperties": False}
+STACK_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "loadpath stack",
+    "description": "Boards on standoffs: the order and the gaps searched for board temperature, centre of mass "
+                   "and height, with the cables between boards laid as rods (stack.py).",
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"}, "description": {"type": "string"},
+        "boards": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "size": {**_VEC3, "description": "mm: [x, y, thickness]"},
+            "mass": {"type": "number", "minimum": 0, "description": "kg"},
+            "watts": {"type": "number", "minimum": 0, "description": "W of heat it gives off"},
+            "maxTemp": {"type": "number", "description": "C the board may run at"},
+            "above": {"type": "number", "minimum": 0, "description": "mm its tallest part stands over its top face"},
+            "below": {"type": "number", "minimum": 0, "description": "mm its tallest part hangs under it"},
+            "position": {"enum": ["top", "bottom"], "description": "where it has to be (a gyro on top, say)"},
+            "ports": {"type": "array", "items": _STACK_PORT}},
+            "required": ["id", "size"], "additionalProperties": False}},
+        "space": {"type": "object", "properties": {
+            "height": {**_POS, "description": "mm: z the stack must stay under (the keep-out box's top)"},
+            "base": {"type": "number", "description": "mm: z of the plate it stands on (default 0)"},
+            "baseGap": {"type": "number", "minimum": 0, "description": "mm under the bottom board (default 2)"},
+            "center": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+            "openTop": {"type": "boolean", "description": "the top board's top face sees the air (default true)"},
+            "openBottom": {"type": "boolean"}}, "additionalProperties": False},
+        "standoffs": {"type": "object", "properties": {
+            "pattern": _POS, "count": {"type": "integer", "minimum": 0}, "diameter": _POS,
+            "material": {"enum": ["nylon", "aluminium", "aluminum", "brass", "steel", "tpu"]},
+            "fill": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
+                     "description": "solid fraction of the standoff's section (default 0.6: a threaded spacer)"},
+            "baseGap": {"type": "number", "minimum": 0}}, "additionalProperties": False},
+        "airflow": {"type": "object", "properties": {
+            "speed": {"type": "number", "minimum": 0, "description": "m/s of the stream the stack sits in"},
+            "direction": {"type": "string", "pattern": "^[+-]?[xy]$", "description": "along the boards"}},
+            "additionalProperties": False},
+        "ambient": {"type": "number", "description": "C (default 25)"},
+        "clearance": {"type": "number", "minimum": 0, "description": "mm between one board's parts and the next's"},
+        "gapStep": _POS, "maxExtraGap": {"type": "number", "minimum": 0},
+        "alternatives": {"type": "integer", "minimum": 0}, "maxLays": {"type": "integer", "minimum": 1},
+        "goal": {"type": "object", "properties": {
+            "centerOfMass": {"anyOf": [{"enum": ["low", "high"]}, {"type": "number", "description": "mm: target z"}]},
+            "weights": {"type": "object", "properties": {
+                "temperature": {"type": "number", "minimum": 0}, "centerOfMass": {"type": "number", "minimum": 0},
+                "height": {"type": "number", "minimum": 0}}, "additionalProperties": False}},
+            "additionalProperties": False},
+        "mount": {"anyOf": [{"type": "string"}, {"type": "object"}],
+                  "description": "the frame's region id (or a shape) the stack stands on: copied into the result's "
+                                 "inertiaRelief.masses entry"},
+        "wires": {"type": "array", "items": _wire_item({"anyOf": [
+            {"type": "string", "pattern": "^[^.]+\\.[^.]+$", "description": "'board.port'"}, _WIRE_PORT]})}},
+    "required": ["boards"],
+    "additionalProperties": False,
+}
+
+SCHEMAS = {"stack": STACK_SCHEMA, "study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
            "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA, "split": SPLIT_SCHEMA,
            "enclosure": ENCLOSURE_SCHEMA, "wires": WIRES_SCHEMA}
 
 
 def schema(kind: str = "study") -> dict:
-    """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff', 'split', 'enclosure'
-    or 'wires'."""
+    """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff', 'split', 'enclosure',
+    'wires' or 'stack'."""
     if kind not in SCHEMAS:
         raise ValueError(f"schema kind must be one of {sorted(SCHEMAS)}")
     return copy.deepcopy(SCHEMAS[kind])

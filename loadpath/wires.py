@@ -421,7 +421,8 @@ class _Room:
         v = np.full(len(P), 1e3)
         for f in fields:
             for i in range(0, len(P), 200_000):
-                v[i:i + 200_000] = np.minimum(v[i:i + 200_000], f.eval(P[i:i + 200_000])[0])
+                q = P[i:i + 200_000]
+                v[i:i + 200_000] = np.minimum(v[i:i + 200_000], f.reach(q) if hasattr(f, "reach") else f.eval(q)[0])
         return cls(v.reshape(tuple(n)), lo, pitch)
 
     def cell(self, p):
@@ -554,7 +555,30 @@ class Laid:
         k = r.curvature()
         strain = float(np.max(np.linalg.norm(np.diff(r.x, axis=0), axis=1) / r.l - 1.0))
         return {"points": r.x.copy(), "quats": r.q.copy(), "curvature": k,
-                "radius": r.bend_radius(), "contact": r.contact_state(), "stretch": strain}
+                "radius": r.bend_radius(), "contact": r.contact_state(), "stretch": strain,
+                "ends": self.end_loads(), "clips": self.clip_loads()}
+
+    def end_loads(self):
+        """On each connector: the force the cable puts on it (N, world axes)
+        and, from that, its pull along the connector's axis, side load and
+        moment (N mm)."""
+        out = []
+        for e in (0, -1):
+            F, Mo = self.rod.end_load(e)
+            # the way the cable leaves the connector, where the connector is now
+            d = quat_matrix(self.rod.q[e:e + 1] if e == 0 else self.rod.q[-1:])[0][:, 2] * (1.0 if e == 0 else -1.0)
+            pull = float(-F @ d)
+            out.append({"force": -F, "pull": pull, "side": float(np.linalg.norm(-F - pull * d)),
+                        "moment": float(np.linalg.norm(Mo))})
+        return out
+
+    def clip_loads(self):
+        """The force (N) the cable puts on each clip (`via`)."""
+        holds = getattr(self, "holds", [])
+        if not holds:
+            return []
+        _, g, _ = self.rod.assemble(hessian=False)
+        return [-g[6 * i:6 * i + 3] for i, _, _ in holds]
 
     def report(self, dynamic: bool = False, port_limits=None) -> dict:
         """What the cable is asked to do, against what it allows."""
@@ -568,14 +592,10 @@ class Laid:
         tension = np.einsum("ni,ni->n", nf, R[:, :, 2])
         strain = float(np.max(np.linalg.norm(np.diff(r.x, axis=0), axis=1) / r.l - 1.0))
         cs = r.contact_state()
-        ends = []
-        for e in (0, -1):
-            F, Mo = r.end_load(e)
-            d = self.ends[0 if e == 0 else 1]["direction"]
-            # on the connector: the cable pulls it along its own way out
-            pull = float(-F @ d)
-            side = float(np.linalg.norm(-F - pull * d))
-            ends.append({"pull": round(pull, 4), "side": round(side, 4), "moment": round(float(np.linalg.norm(Mo)), 3)})
+        # on the connector: the cable pulls it along its own way out; `force` is
+        # that load in world axes, to put on the part that holds the connector
+        ends = [{"pull": round(e["pull"], 4), "side": round(e["side"], 4), "moment": round(e["moment"], 3),
+                 "force": np.round(e["force"], 4).tolist()} for e in self.end_loads()]
         s = np.concatenate([[0], np.cumsum(r.l)])
         out = {"cable": c.name, "length": round(float(r.l.sum()), 2),
                "minBendRadius": round(float(rad[i]), 3), "allowedBendRadius": round(allow, 3),
@@ -591,6 +611,11 @@ class Laid:
                "stable": bool(self.status.get("stable", False))}
         if self.route_length is not None:
             out["routeLength"] = round(self.route_length, 2)
+        clips = self.clip_loads()
+        if clips:
+            out["clips"] = [{"at": np.round(r.x[i], 3).tolist(), "force": np.round(f, 4).tolist(),
+                             "newtons": round(float(np.linalg.norm(f)), 4)}
+                            for (i, _, _), f in zip(self.holds, clips)]
         problems = []
         if not out["converged"]:
             problems.append("no equilibrium found: the cable does not settle in this space")
@@ -664,7 +689,7 @@ def lay(cab, a: dict, b: dict, fields=(), *, room: _Room | None = None, length: 
             lo = np.minimum(a["at"], b["at"])
             hi = np.maximum(a["at"], b["at"])
             padv = max(15.0, 0.6 * float(np.linalg.norm(b["at"] - a["at"])), (length or 0.0) * 0.5)
-            room = _Room.of(fields, lo - padv, hi + padv, max(0.6, cab.radius))
+            room = _Room.of(fields, lo - padv, hi + padv, float(np.clip(cab.radius, 0.6, 1.2)))
         launch = max(1.5 * room.h, cab.rmin_static * 0.8, a["relief"], b["relief"])
         path = route(room, a["at"], a["direction"], b["at"], b["direction"], r, launch, avoid=avoid,
                      prefer=cab.half_width + clearance)
@@ -872,7 +897,7 @@ def motion_report(w: Laid, limits=None) -> dict:
     pen = max(float(h["contact"]["penetration"].max()) for h in H)
     stretch = np.array([h["stretch"] for h in H])
     i = np.unravel_index(int(np.argmin(rad)), rad.shape)
-    flexes = bool(swing.max() * c.rmin_dynamic > 0.05)
+    flexes = bool(swing.max() * c.rmin_dynamic > 0.05) and bool(getattr(w, "flexing", True))
     allow = c.rmin_dynamic if flexes else c.rmin_static
     out = {"steps": len(H), "minBendRadius": round(float(rad.min()), 3), "allowedBendRadius": round(allow, 3),
            "at": {"s": round(float(H[i[0]]["s"]), 4)},
@@ -882,7 +907,27 @@ def motion_report(w: Laid, limits=None) -> dict:
            "maxTwist": round(float(np.abs(tw).max()), 1),
            "stretch": round(float(stretch.max()), 6),
            "penetration": round(pen, 4), "flexes": flexes, "snaps": [round(v, 3) for v in getattr(w, "snaps", [])]}
+    names = ("from", "to")
+    out["ends"] = {}
+    for k, nm in enumerate(names):
+        E = [h["ends"][k] for h in H if h.get("ends")]
+        if E:
+            j = int(np.argmax([np.linalg.norm(e["force"]) for e in E]))
+            out["ends"][nm] = {"pull": round(max(e["pull"] for e in E), 4), "side": round(max(e["side"] for e in E), 4),
+                               "moment": round(max(e["moment"] for e in E), 3),
+                               "force": np.round(E[j]["force"], 4).tolist()}
+    C = [h["clips"] for h in H if h.get("clips")]
+    if C:
+        out["clips"] = [{"newtons": round(float(max(np.linalg.norm(c[i]) for c in C)), 4),
+                         "force": np.round(max((c[i] for c in C), key=np.linalg.norm), 4).tolist()}
+                        for i in range(len(C[0]))]
     problems = []
+    for nm, lim in zip(names, limits or (None, None)):
+        e = out["ends"].get(nm)
+        for key, lab, unit in (("maxPull", "pull", "N"), ("maxSide", "side", "N"), ("maxMoment", "moment", "N mm")):
+            if e and lim and lim.get(key) is not None and e[lab] > float(lim[key]):
+                problems.append(f"{lab} on the '{nm}' connector reaches {e[lab]:.2f} {unit} during the motion; "
+                                f"it allows {lim[key]}")
     fa = getattr(w, "failed_at", None)
     if fa is not None:
         problems.append(f"the cable cannot follow the motion past s = {fa:.3f}: it snags or runs out of length")
@@ -1034,7 +1079,7 @@ def harness(brief: dict, base_dir=None, on_progress=None, fields: dict | None = 
             if on_progress:
                 on_progress({"stage": "wires", "message": f"sampling {bid}"})
             f = body_field(sh, pitch, inside=bool(b.get("inside")), skin=float(b.get("skin", 0.0)),
-                           pad=4.0 + clearance)
+                           pad=4.0 + clearance + max(cable(w["cable"]).radius for w in brief.get("wires") or [{}]))
         moves = bool(b.get("moves")) and motion is not None
         bodies[bid] = {"field": MovingField(f) if moves else f, "moves": moves, "inside": bool(b.get("inside")),
                        "shape": sh, "spec": b}
@@ -1068,7 +1113,7 @@ def harness(brief: dict, base_dir=None, on_progress=None, fields: dict | None = 
             blo, bhi = b["shape"].bounds()
             lo, hi = np.maximum(lo, np.asarray(blo) - 1.0), np.minimum(hi, np.asarray(bhi) + 1.0)
     rmin = min(cable(w["cable"]).radius for w in wires)
-    room = _Room.of(static, lo, hi, max(0.5, rmin))
+    room = _Room.of(static, lo, hi, float(np.clip(rmin, 0.5, 1.0)))
     out, laid, problems = {}, [], []
     extra = []
     for w, (a, b) in zip(wires, ends):
@@ -1093,9 +1138,11 @@ def harness(brief: dict, base_dir=None, on_progress=None, fields: dict | None = 
     if motion is not None and laid:
         if on_progress:
             on_progress({"stage": "wires", "message": f"following the motion ({motion.get('type', 'revolute')})"})
+        for lw in laid:
+            lw.flexing = bool(motion.get("flexing", True))
         info = sweep(laid, motion, steps=int(motion.get("steps", 24)), moving=moving)
         for lw in laid:
-            mr = motion_report(lw)
+            mr = motion_report(lw, limits=[e["limits"] for e in lw.ends])
             out[lw.id]["motion"] = mr
             if not mr["ok"]:
                 out[lw.id]["ok"] = False
@@ -1423,7 +1470,7 @@ def enclosure_wires(brief: dict, comps: list, lay_out: dict, paths: dict, root, 
     ends = [(_port_world(w["from"], byid, tf), _port_world(w["to"], byid, tf)) for w in wires]
     pts = np.array([e["at"] for pr in ends for e in pr if e is not None])
     lo, hi = np.asarray(exit_bounds[0], float) - 1.0, np.asarray(exit_bounds[1], float) + 1.0
-    room = _Room.of(list(fields.values()), lo, hi, max(0.5, min(cable(w["cable"]).radius for w in wires)))
+    room = _Room.of(list(fields.values()), lo, hi, float(np.clip(min(cable(w["cable"]).radius for w in wires), 0.5, 1.0)))
     report, laid, keep, warnings, extra = {}, [], [], [], []
     for i, (w, (a, b)) in enumerate(zip(wires, ends)):
         wid = w.get("id") or f"wire-{i}"

@@ -1,0 +1,797 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "loadpath stack",
+  "description": "Boards on standoffs: the order and the gaps searched for board temperature, centre of mass and height, with the cables between boards laid as rods (stack.py).",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "boards": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "size": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "mm: [x, y, thickness]"
+          },
+          "mass": {
+            "type": "number",
+            "minimum": 0,
+            "description": "kg"
+          },
+          "watts": {
+            "type": "number",
+            "minimum": 0,
+            "description": "W of heat it gives off"
+          },
+          "maxTemp": {
+            "type": "number",
+            "description": "C the board may run at"
+          },
+          "above": {
+            "type": "number",
+            "minimum": 0,
+            "description": "mm its tallest part stands over its top face"
+          },
+          "below": {
+            "type": "number",
+            "minimum": 0,
+            "description": "mm its tallest part hangs under it"
+          },
+          "position": {
+            "enum": [
+              "top",
+              "bottom"
+            ],
+            "description": "where it has to be (a gyro on top, say)"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "mm in the board's frame: the origin at its centre, z = 0 its underside"
+                },
+                "direction": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[+-]?[xyz]$"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "[x, y, z]"
+                    }
+                  ],
+                  "description": "the way the cable leaves it"
+                },
+                "up": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[+-]?[xyz]$"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "[x, y, z]"
+                    }
+                  ]
+                },
+                "relief": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "mm the cable leaves straight (a boot)"
+                },
+                "maxPull": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "N the connector takes along its axis"
+                },
+                "maxSide": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "N across it"
+                },
+                "maxMoment": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "N mm about it"
+                }
+              },
+              "required": [
+                "id",
+                "at",
+                "direction"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "size"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "space": {
+      "type": "object",
+      "properties": {
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm: z the stack must stay under (the keep-out box's top)"
+        },
+        "base": {
+          "type": "number",
+          "description": "mm: z of the plate it stands on (default 0)"
+        },
+        "baseGap": {
+          "type": "number",
+          "minimum": 0,
+          "description": "mm under the bottom board (default 2)"
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "openTop": {
+          "type": "boolean",
+          "description": "the top board's top face sees the air (default true)"
+        },
+        "openBottom": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "standoffs": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "diameter": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "enum": [
+            "nylon",
+            "aluminium",
+            "aluminum",
+            "brass",
+            "steel",
+            "tpu"
+          ]
+        },
+        "fill": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "solid fraction of the standoff's section (default 0.6: a threaded spacer)"
+        },
+        "baseGap": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "airflow": {
+      "type": "object",
+      "properties": {
+        "speed": {
+          "type": "number",
+          "minimum": 0,
+          "description": "m/s of the stream the stack sits in"
+        },
+        "direction": {
+          "type": "string",
+          "pattern": "^[+-]?[xy]$",
+          "description": "along the boards"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ambient": {
+      "type": "number",
+      "description": "C (default 25)"
+    },
+    "clearance": {
+      "type": "number",
+      "minimum": 0,
+      "description": "mm between one board's parts and the next's"
+    },
+    "gapStep": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "maxExtraGap": {
+      "type": "number",
+      "minimum": 0
+    },
+    "alternatives": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "maxLays": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "goal": {
+      "type": "object",
+      "properties": {
+        "centerOfMass": {
+          "anyOf": [
+            {
+              "enum": [
+                "low",
+                "high"
+              ]
+            },
+            {
+              "type": "number",
+              "description": "mm: target z"
+            }
+          ]
+        },
+        "weights": {
+          "type": "object",
+          "properties": {
+            "temperature": {
+              "type": "number",
+              "minimum": 0
+            },
+            "centerOfMass": {
+              "type": "number",
+              "minimum": 0
+            },
+            "height": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "mount": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object"
+        }
+      ],
+      "description": "the frame's region id (or a shape) the stack stands on: copied into the result's inertiaRelief.masses entry"
+    },
+    "wires": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "cable": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "a name: awg<N>-<insulation> ('awg26-pvc', 'awg22-silicone'), ffc-<conductors>x<pitch> ('ffc-10x0.5'), fpc-<width>x<thickness>, usb2, coax-<od>"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "wire",
+                      "bundle",
+                      "cable",
+                      "coax",
+                      "ffc",
+                      "fpc",
+                      "round",
+                      "flat"
+                    ],
+                    "description": "wire: one insulated wire; bundle: `wires` of them side by side in a sleeve; cable: `wires` in a jacket; coax; ffc: a flat flexible cable (conductors, pitch); fpc: a flex circuit (width, thickness); round / flat: by its numbers"
+                  },
+                  "awg": {
+                    "type": "number"
+                  },
+                  "conductorArea": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "mm^2, instead of awg"
+                  },
+                  "insulation": {
+                    "enum": [
+                      "pvc",
+                      "pvc105",
+                      "silicone",
+                      "ptfe",
+                      "fep",
+                      "tpe",
+                      "xlpe",
+                      "pur"
+                    ]
+                  },
+                  "strands": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "solid": {
+                    "type": "boolean"
+                  },
+                  "strandCoupling": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "stiffness over the slipped-strand bound (default 1)"
+                  },
+                  "wires": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "wall": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "jacket": {
+                    "enum": [
+                      "pvc",
+                      "pvc105",
+                      "silicone",
+                      "ptfe",
+                      "fep",
+                      "tpe",
+                      "xlpe",
+                      "pur"
+                    ]
+                  },
+                  "jacketWall": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "shield": {
+                    "type": "boolean"
+                  },
+                  "od": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "mm across (round cables)"
+                  },
+                  "core": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "dielectric": {
+                    "type": "string"
+                  },
+                  "conductors": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "pitch": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "width": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "thickness": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "copper": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "copperFill": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "film": {
+                    "enum": [
+                      "polyimide",
+                      "pet"
+                    ]
+                  },
+                  "bendStiffness": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      }
+                    ],
+                    "description": "N mm^2, measured or from a datasheet (wires.stiffness_from_droop); [through the thickness, edgewise] for a flat"
+                  },
+                  "twistStiffness": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "N mm^2"
+                  },
+                  "minBendRadius": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "static": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          "dynamic": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ],
+                    "description": "mm, fixed and flexing; default house rules (3x and 10x a wire's diameter, 10x and 100x a flat's thickness)"
+                  },
+                  "maxTwist": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "static": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          "dynamic": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ],
+                    "description": "deg per m"
+                  },
+                  "gramsPerMeter": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "maxTemp": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[^.]+\\.[^.]+$",
+                "description": "'board.port'"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "mm: where the cable leaves the connector"
+                  },
+                  "direction": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[+-]?[xyz]$"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "[x, y, z]"
+                      }
+                    ],
+                    "description": "the way the cable leaves it"
+                  },
+                  "up": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[+-]?[xyz]$"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "[x, y, z]"
+                      }
+                    ],
+                    "description": "a flat cable's face normal there (which way its contacts face)"
+                  },
+                  "body": {
+                    "type": "string",
+                    "description": "the body the port is on: it moves with it"
+                  },
+                  "relief": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "mm the cable leaves straight (a boot)"
+                  },
+                  "maxPull": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "N the connector takes along its axis"
+                  },
+                  "maxSide": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "N across it"
+                  },
+                  "maxMoment": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "N mm about it"
+                  }
+                },
+                "required": [
+                  "at",
+                  "direction"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[^.]+\\.[^.]+$",
+                "description": "'board.port'"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "mm: where the cable leaves the connector"
+                  },
+                  "direction": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[+-]?[xyz]$"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "[x, y, z]"
+                      }
+                    ],
+                    "description": "the way the cable leaves it"
+                  },
+                  "up": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[+-]?[xyz]$"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "[x, y, z]"
+                      }
+                    ],
+                    "description": "a flat cable's face normal there (which way its contacts face)"
+                  },
+                  "body": {
+                    "type": "string",
+                    "description": "the body the port is on: it moves with it"
+                  },
+                  "relief": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "mm the cable leaves straight (a boot)"
+                  },
+                  "maxPull": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "N the connector takes along its axis"
+                  },
+                  "maxSide": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "N across it"
+                  },
+                  "maxMoment": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "N mm about it"
+                  }
+                },
+                "required": [
+                  "at",
+                  "direction"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "length": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "mm, port to port: a cable cut to length. Default: the shortest way round plus slack"
+          },
+          "slack": {
+            "type": "number",
+            "minimum": 0,
+            "description": "over the route's length (default 0.08)"
+          },
+          "minLength": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "current": {
+            "type": "number",
+            "minimum": 0,
+            "description": "A: resistance, voltage drop, self-heating"
+          },
+          "via": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "[x, y, z]"
+                },
+                "along": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "mm along the cable (default: its nearest point)"
+                },
+                "body": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "additionalProperties": false
+            },
+            "description": "clips: points the cable is held at"
+          },
+          "routes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "ways round to try (default 1)"
+          },
+          "roll": {
+            "type": "boolean",
+            "description": "hold the far end's roll about its own axis (default: a flat yes, a round wire no)"
+          },
+          "segments": {
+            "type": "integer",
+            "minimum": 8,
+            "maximum": 400
+          },
+          "reach": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "enclosure only: mm the later part must be able to stand out of its place with the cable already plugged in (default 12): room for fingers to mate the connector"
+          },
+          "plugged": {
+            "enum": [
+              "before",
+              "after"
+            ],
+            "description": "enclosure only: 'before' (default) the cable is plugged in while the later part is still outside and follows it home; 'after' its connector is reached once the part is in"
+          }
+        },
+        "required": [
+          "cable",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "boards"
+  ],
+  "additionalProperties": false
+}

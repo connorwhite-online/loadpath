@@ -568,7 +568,7 @@ def main(argv=None):
     c.add_argument("--base-dir")
     s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
     s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field",
-                                                                "handoff", "split", "enclosure", "wires"])
+                                                                "handoff", "split", "enclosure", "wires", "stack"])
     e = sub.add_parser("examples", help="list the packaged examples, or print one")
     e.add_argument("name", nargs="?")
     lt = sub.add_parser("lattice", help="fill a finished part with a stress-graded TPMS lattice")
@@ -742,6 +742,11 @@ def main(argv=None):
     wi.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
     wi.add_argument("--no-viewer", action="store_true")
     wi.add_argument("--quiet", action="store_true")
+    stk = sub.add_parser("stack", help="boards on standoffs: search the order and the gaps for board temperature "
+                                       "(airflow through each gap solved), centre of mass and height; the cables "
+                                       "between boards laid as rods; the stack as a carried mass for the frame")
+    stk.add_argument("brief", help="the stack brief (`loadpath schema stack`)")
+    stk.add_argument("--out", default="loadpath-stack")
     en = sub.add_parser("enclosure", help="a product from its outside in: the designer's exterior fixed, the "
                                           "components placed inside it (or as given), their assembly paths, "
                                           "mounts, drops, squeezes, heat, a push pad or feel targets; a study "
@@ -985,6 +990,8 @@ def main(argv=None):
         return _shroud(args)
     if args.cmd == "wires":
         return _wires(args)
+    if args.cmd == "stack":
+        return _stack(args)
     if args.cmd == "enclosure":
         return _enclosure(args)
     if args.cmd == "explore":
@@ -1661,6 +1668,27 @@ def _shroud(args):
         return 2
     print(json.dumps({"ok": True, **r}, default=float))
     return 0
+
+
+def _stack(args):
+    from .schema import format_issues, lint
+    from .stack import run_stack
+
+    doc = _load(args.brief)
+    errors = [x for x in lint(doc, "stack") if x["level"] == "error"]
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+    try:
+        r = run_stack(args.brief, args.out,
+                      on_progress=lambda ev, *_: print(f"  {ev.get('message', '')}", file=sys.stderr, flush=True))
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(json.dumps({"ok": r["ok"], "report": os.path.join(args.out, "stack.json"), "best": r.get("best"),
+                      "asGiven": r.get("asGiven"), "inertiaRelief": r.get("inertiaRelief"),
+                      "envelope": r.get("envelope"), "tried": r["tried"], "seconds": r["seconds"]}, indent=1))
+    return 0 if r["ok"] else 1
 
 
 def _wires(args):

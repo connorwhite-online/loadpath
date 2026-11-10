@@ -76,7 +76,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | Static analysis with inertia relief (unsupported bodies) | `inertiaRelief: true`: loads balanced by the part's own rigid-body inertia, in the check and the optimizer ([README](../loadpath/README.md#the-study)) | Have (new) |
 | CFD | lattice-Boltzmann flow for exchangers and lattice cells (`flow.py`, `conjugate.py`); `loadpath external-flow` puts any part in a wind or water tunnel and writes the surface forces as a load case ([EXTERNAL-FLOW.md](EXTERNAL-FLOW.md); coarse LES, reads high, capped Reynolds number) | Have (new, coarse) |
 | Nonlinear, contact, fatigue, creep, impact | `nonlinear.py`, `contact.py`, `durability.py`, `impact.py` | Beyond nTop |
-| (none: nTop has no cable or harness model) | `wires.py`, `rods.py`: wires, bundles and flat cables as Cosserat rods with contact, bend radius, twist and flex-life checks through a joint's motion; cables inside the enclosure placement search and their channels kept clear ([WIRES.md](WIRES.md)) | Beyond nTop (new) |
+| (none: nTop has no cable or harness model) | `wires.py`, `rods.py`: wires, bundles and flat cables as Cosserat rods with contact, bend radius, twist and flex-life checks through a joint's motion; cables inside the enclosure placement search and their channels kept clear; connector and clip loads; board stacks ordered and spaced by heat, centre of mass and whether their harness can bend ([WIRES.md](WIRES.md)) | Beyond nTop (new) |
 
 ## Design for additive manufacturing
 
