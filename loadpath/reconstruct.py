@@ -1265,6 +1265,19 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
     import manifold3d as m3d
 
     o = opts or ReconstructOptions()
+    mesh_block = (getattr(study, "raw", None) or {}).get("mesh") or {}
+    if mesh_block:
+        # a study's own say over the delivered surface: bigger blends read as grown, not assembled
+        import copy
+        o = copy.copy(o)
+        if mesh_block.get("close") is not None:
+            o.close = float(mesh_block["close"])
+        if mesh_block.get("fillet") is not None:
+            o.blend = float(mesh_block["fillet"])
+        if mesh_block.get("smooth") is not None:
+            o.smooth_sigma = float(mesh_block["smooth"])
+        if mesh_block.get("taubin") is not None:
+            o.taubin_iterations = int(mesh_block["taubin"])
     if o.blend is None:
         import copy
         o = copy.copy(o)

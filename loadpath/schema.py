@@ -1357,6 +1357,21 @@ STUDY_SCHEMA = {
                            "wall is thin and the strain energy low, then the design re-converges round them."},
         "symmetry": {"type": "array", "items": {"enum": ["x", "y", "z"]},
                      "description": "Planes through the design-space centre, by normal axis."},
+        "mesh": {"type": "object",
+                 "description": "How the delivered surface is drawn from the optimized field. Larger radii give "
+                                "joints that read as grown rather than assembled; both only ever add material.",
+                 "properties": {
+                     "close": {"type": "number", "minimum": 0,
+                               "description": "Round every concave edge of the organic body by this radius (mm): "
+                                              "a closing in distance space. Default half the minMember, at least 1."},
+                     "fillet": {"type": "number", "minimum": 0,
+                                "description": "Fillet radius (mm) where the organic body meets preserved "
+                                               "geometry. Default 1.5 x minMember, at least 3."},
+                     "smooth": {"type": "number", "minimum": 0,
+                                "description": "Gaussian smoothing of the refined field, in fine cells (default 0.9)."},
+                     "taubin": {"type": "integer", "minimum": 0,
+                                "description": "Volume-keeping Taubin smoothing passes on the organic surface "
+                                               "before the exact booleans (default 25)."}}},
         "resolution": {"type": "object",
                        "properties": {"maxElements": {"type": "integer", "minimum": 1, "maximum": 4000000},
                                       "pitch": _POS,
