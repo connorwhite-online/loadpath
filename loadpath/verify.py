@@ -1653,9 +1653,12 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             cyc_row = {"coldSafetyFactor": sf_c, "coldPeakStress": float(util_c[pk_c] * g_c[pk_c]),
                        "cycleStress": float(seq[pc]), "cycleStressRange": float(rng[pc]),
                        "cycleAt": hm.node_xyz[pc].tolist()}
-        worst_sf = min(worst_sf, sf)
+        cf = study.case_factor(case.name)
+        worst_sf = min(worst_sf, sf * cf)
         cases.append({
             "name": case.name,
+            **({"requiredSafetyFactor": float(case.safety_factor), "countsAs": float(sf * cf)}
+               if getattr(case, "safety_factor", None) and cf != 1.0 else {}),
             "peakStress": peak,
             "peakAt": at,
             "globalPeakStress": global_peak,

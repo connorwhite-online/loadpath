@@ -140,6 +140,10 @@ buckling, printability) you can report to the user.
    bore: add `"distribution": "bearing"` so a radial force presses on the
    half of the bore it pushes, as a real shaft does. Add a sideways or torsional case if the part
    can see one; a design optimized for one direction is weak in the others.
+   A rare event the part may use most of its strength for (a crash, a
+   drop, a hard landing) beside service loads: give that case its own
+   `"safetyFactor": 1.25`; the search counts its reading times goal / 1.25,
+   so service cases keep the goal's factor and the crash its own.
    A link that carries or is driven by a servo or motor: add a case with
    its full stall torque about the joint axis at that interface (a 1.5 N·m
    servo is `"moment": [0, 1500, 0]` about y), since a jam or a hard stop

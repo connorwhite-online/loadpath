@@ -284,7 +284,11 @@ _LOAD_CASE = {
                    "hours": {**_POS, "description": "Hours this load is held over the part's life: adds creep "
                                                     "rupture and crept deflection."},
                    "temperature": {"type": "number",
-                                   "description": "C while this load acts (default durability.temperature)."}},
+                                   "description": "C while this load acts (default durability.temperature)."},
+                   "safetyFactor": {**_POS, "description": "This case's own safety factor in place of the goal's: "
+                                                           "a rare crash or drop held to 1.25 beside service loads "
+                                                           "at the goal's 2. The search counts the case's reading "
+                                                           "times goal / this."}},
     "required": ["loads"],
     "additionalProperties": False,
 }

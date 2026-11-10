@@ -4171,6 +4171,11 @@
         "temperature": {
           "type": "number",
           "description": "C while this load acts (default durability.temperature)."
+        },
+        "safetyFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "This case's own safety factor in place of the goal's: a rare crash or drop held to 1.25 beside service loads at the goal's 2. The search counts the case's reading times goal / this."
         }
       },
       "required": [

@@ -962,8 +962,9 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
                 row = {"interlayerStress": inter, "interlayerAt": pts[j].tolist(),
                        "interlayerSafetyFactor": raw_i / STRESS_ALLOWANCE}
                 raw = min(raw, raw_i)
-            sfs_raw.append(raw)
-            sfs.append(raw / STRESS_ALLOWANCE)
+            cf = study.case_factor(name) if hasattr(study, "case_factor") else 1.0
+            sfs_raw.append(raw * cf)
+            sfs.append(raw * cf / STRESS_ALLOWANCE)
             cases.append({"name": name, "peakStress": peak, "peakAt": pts[i].tolist(),
                           "hotspots": hot.tolist(),
                           "deflection": float(np.linalg.norm(u[lnodes].mean(axis=0))),

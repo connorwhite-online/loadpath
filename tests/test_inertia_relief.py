@@ -176,6 +176,28 @@ def test_carried_body_off_its_mounts():
     assert d.bodies and len(d.bodies) == 2
 
 
+def test_case_with_its_own_safety_factor():
+    # a held bar: a 10 N service case and a 40 N crash allowed SF 1.25
+    # against the goal's 2. The crash reads a quarter of the service SF, and
+    # counts as that x 2 / 1.25 in the part's safety factor
+    from loadpath.spec import study_from_dict as sfd
+    held = {k: v for k, v in FREE_BAR.items() if k != "inertiaRelief"}
+    held["supports"] = [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 11, 11]}}]
+    held["loadCases"] = [{"name": "service", "loads": [{"shape": TIP, "force": [0, 0, -10]}]},
+                         {"name": "crash", "safetyFactor": 1.25, "loads": [{"shape": TIP, "force": [0, 0, -40]}]}]
+    s = sfd(held)
+    assert s.case_factor("crash") == 2 / 1.25 and s.case_factor("service") == 1.0
+    bar = trimesh.creation.box(extents=[100, 10, 10])
+    bar.apply_translation([50, 5, 5])
+    rep = verify_part(s, bar, max_cells=20_000, refine=0)
+    by = {c["name"]: c for c in rep["cases"]}
+    assert abs(by["crash"]["safetyFactor"] * 4 - by["service"]["safetyFactor"]) < 0.02 * by["service"]["safetyFactor"]
+    assert abs(rep["safetyFactor"] - by["crash"]["safetyFactor"] * 1.6) < 1e-9
+    assert by["crash"]["requiredSafetyFactor"] == 1.25
+    with pytest.raises(ValueError, match="own factor"):
+        sfd({**held, "loadCases": [{**held["loadCases"][1], "safetyFactor": -1}]})
+
+
 def test_inertia_relief_spec_errors():
     with pytest.raises(ValueError, match="Drop the supports"):
         study_from_dict({**FREE_BAR, "supports": [{"shape": TIP}]})

@@ -125,6 +125,9 @@ class LoadCase:
     cycles: float | None = None
     hours: float | None = None
     temperature: float | None = None
+    # this case's own safety factor (a crash that may use most of the
+    # strength, beside service loads held to the goal's): None takes the goal's
+    safety_factor: float | None = None
 
 
 @dataclass
@@ -683,6 +686,20 @@ class Study:
         """No supports: the part floats free and its own inertia balances
         the loads (study `inertiaRelief`)."""
         return bool((self.raw or {}).get("inertiaRelief"))
+
+    def case_factor(self, name: str) -> float:
+        """How much a case's safety factor counts for against the goal's:
+        goal / the case's own (loadCases[].safetyFactor), 1 without one. A
+        case's reading times this is what the search compares to the goal
+        (a crash at SF 1.3 with its own 1.25 counts as 2.08 against a goal
+        of 2). Cases a load of unknown plane split (`case@angle`) take the
+        written case's."""
+        g = self.goal.safety_factor
+        base = str(name).split("@")[0]
+        for c in self.load_cases:
+            if (c.name == name or c.name == base) and c.safety_factor and g:
+                return float(g) / float(c.safety_factor)
+        return 1.0
 
     @property
     def carried_mass(self) -> float:
@@ -1272,6 +1289,12 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
                 life[key] = float(v)
         if c.get("temperature") is not None:
             life["temperature"] = float(c["temperature"])
+        if c.get("safetyFactor") is not None:
+            v = c["safetyFactor"]
+            if not isinstance(v, (int, float)) or not np.isfinite(v) or v <= 0:
+                raise ValueError(f"loadCases[{ci}].safetyFactor is this case's own factor (> 0), in place of the "
+                                 "goal's: a rare crash held to 1.25 beside service loads at 2")
+            life["safety_factor"] = float(v)
         cases.append(LoadCase(str(c.get("name") or f"case-{ci}"), loads, float(c.get("weight", 1.0)), **life))
     # A `feel` block brings its own loads and holds (feel.py), and a
     # `cooling` block its own heat (cooling.py): a study that only asks for
