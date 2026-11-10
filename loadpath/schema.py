@@ -543,8 +543,9 @@ _DURABILITY = {
         "temperature": {"type": "number", "description": "Service temperature, C (default 23)."},
         "safetyFactor": {**_POS, "description": "Target fatigue/creep safety factor, on the loads (default 1.5; "
                                                 "the fatigue curve is already a >90% survival design curve)."},
-        "constrain": {"type": "boolean", "description": "true: the safety-factor search also sizes the part for "
-                                                        "fatigue and creep (default false: report only)."},
+        "constrain": {"type": "boolean", "description": "The search sizes the part for the life its load "
+                                                        "cases declare (fatigue and creep; default true). "
+                                                        "false: report only."},
         "preloadHours": {**_POS, "description": "Hours fasteners hold their preload, for relaxation (default 8760)."},
         "fatigueStrength": {**_POS, "description": "Override: max stress survived for 2e6 cycles, as a share of "
                                                    "the material's strength."},

@@ -140,8 +140,28 @@ a safety factor of 2.3 survives about 600 applications of that load on the
 design curve (Ezeh and Susmel's for PLA, scaled by strength: 90% survival,
 so most parts last longer, but it is what the data supports). Nothing was
 wrong with the static check; the question it answered was not the one a
-latch asks. Declaring the case's `cycles` makes the durability check hold
-it, and `durability.constrain` sizes the part for it.
+latch asks.
+
+How long a part must last is not physics, it is what the part is for, so
+the library does not pick a default. It makes the question impossible to
+miss and cheap to answer:
+
+- `loadpath check` returns `questions` when a load case gives neither
+  `hours` nor `cycles`: which cases, what to decide, and the static safety
+  factor each life needs in this material.
+- `serviceEnvelope.trade` prices each life on the delivered part: 10^3 to
+  10^6 cycles, a month, a year and ten years under load, each with the
+  share of the strength the stress may reach, whether the part meets it,
+  and how far its peak stress has to fall. A member sized by stress grows
+  by about the inverse of that in section, which is the mass the life
+  costs.
+- A case that declares its life is designed for it. The search holds the
+  fatigue and creep safety factor (`durability.safetyFactor`, 1.5) without
+  a second switch; `durability.constrain: false` goes back to reporting
+  only.
+
+For PETG the trade reads: 1,000 cycles need a static safety factor of 2.5,
+100,000 need 5.8, a million need 8.8; a year under load needs 2.0.
 
 ### 4. A printed part with no build direction is still printed in layers (`report["failure"]["layers"]`)
 
@@ -257,7 +277,7 @@ Not fixed in this pass. Ranked by how much each distorts a real part;
 | 1 | Supports (`domain.py`) | Every held node is fixed: a rigid, bonded clamp | A mount is a bolted joint: it presses only where it touches, slides unless friction holds, and gives. Rigid clamps over-stiffen the part (the calibration yoke read 3x too stiff bonded to its dummy) and put singular stress at their edges | High: stiffness, load sharing between supports and every near-support peak | new thread: one-sided, compliant supports in the linear check |
 | 2 | Contact band (`verify.py`) | Stress within a band of loads and supports is left out of the peak | Parts often break exactly there: under a bolt head, at a clamp's edge. The band hides the solver's artefact and the real concentration together | High where interfaces govern (turret: 76% of mass is interfaces) | follows #1: with real contact and uniform tractions (done) the band can shrink |
 | 3 | Thin members (`verify.py`, `fits.py`) | The delivered geometry is the printed geometry | A 1.4 mm member printed 0.2 mm under is 37% less stiff in bending and 27% weaker; FDM walls come in whole bead widths; thin SLS walls are weaker than thick ones. Only bores carry a tolerance today | High for parts sized by the minimum member | new: as-printed section on thin members (calibration coupons S, T) |
-| 4 | The search (`study.py`) | The service envelope is reported, not designed for, unless a case declares its life | A part an agent ships without reading `attention` still lasts ~600 cycles | High, but now visible | decided: no library default. Service life is intent, so the agent declares it; the check should flag an undeclared life and the report should give the life-versus-margin trade (next) |
+| 4 | The search (`study.py`) | A study that times none of its loads is still designed as applied once | A part an agent ships without answering the check's question lasts ~600 cycles | High, but asked and priced | no library default (decided): the agent declares the life from the user's intent, and a declared life is designed for |
 | 5 | Process (`spec.py`) | No `process` means isotropic; the bond reading is a report | The part is designed as a solid and printed in layers | High on FDM, now visible | decided: infer the process from the material and choose the layer orientation by default (next) |
 | 6 | Load direction (`spec.py`) | A force points exactly where the study says | Nobody loads a hook within 0° of vertical. `direction: cone` exists; nothing applies it by default | Medium to high on slender, single-direction parts | new: a default misalignment, or an off-axis capacity reading (three extra solves) |
 | 7 | Incidental loads | Only declared cases exist | Parts are dropped, plugged into, leaned on and shipped. `feel.drop` covers a part on a mount inside an enclosure; structural studies have nothing | Medium to high for handheld parts | partly in flight (touch-mic USB insertion load); general handling case is new |
@@ -299,7 +319,9 @@ Nothing to turn on. A study run or `loadpath verify` now returns:
 - `cases[].interlayerTension`, `interlayerShear`, `interlayerAt`,
   `limitedBy` on layered parts.
 - `serviceEnvelope`: `heldHours`, `cycles`, `maxTemperature`, per case and
-  worst, and the `note` that goes to `deliver.attention`.
+  worst, `trade` (what each service life costs), and the `note` that goes
+  to `deliver.attention`. `loadpath check` returns `questions` for loads
+  nobody timed.
 - `thermal.convection` when the block's convection is `"natural"` (the
   default): mean, least and most h, the share of faces looking into a gap
   and the mean view of the room.

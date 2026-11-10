@@ -156,7 +156,13 @@ def test_margin_includes_durability_only_when_constrained():
 
     report = {"safetyFactor": 4.0, "cases": [{"deflection": 0.1}],
               "durability": {"safetyFactor": 0.75, "target": 1.5, "cases": [{"creepDeflection": 0.3}]}}
-    off = study_from_dict(_bar(case={"cycles": 1e6}, goal={"safetyFactor": 2, "maxDeflection": 0.2}))
+    off = study_from_dict(_bar(case={"cycles": 1e6}, goal={"safetyFactor": 2, "maxDeflection": 0.2},
+                               durability={"constrain": False}))
+    # a declared life is designed for without being asked twice
+    assert _margin(study_from_dict(_bar(case={"cycles": 1e6}, goal={"safetyFactor": 2, "maxDeflection": 0.2})),
+                   report) == 0.5
+    # and a study that declares none is held to its static goal only
+    assert _margin(study_from_dict(_bar(goal={"safetyFactor": 2, "maxDeflection": 0.2})), report) == 2.0
     on = study_from_dict(_bar(case={"cycles": 1e6}, goal={"safetyFactor": 2, "maxDeflection": 0.2},
                               durability={"constrain": True}))
     assert _margin(off, report) == 2.0

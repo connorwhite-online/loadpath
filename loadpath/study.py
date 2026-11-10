@@ -12,9 +12,10 @@ Two kinds of goal:
   fractions, verifying the delivered mesh at each step, and returns the
   lightest outcome that passes. Each step warm-starts from the nearest
   fraction above it already run.
-  With `durability.constrain` the search also holds the fatigue and creep
-  safety factor to `durability.safetyFactor` (and a held load's crept
-  deflection to `maxDeflection`); see durability.py.
+  When a load case declares its life (`hours`, `cycles`) the search also
+  holds the fatigue and creep safety factor to `durability.safetyFactor`
+  (and a held load's crept deflection to `maxDeflection`), unless
+  `durability.constrain` is false; see durability.py.
 
 The search works on one number, the margin: the worst of (safety factor /
 target) and (deflection limit / deflection). Both scale roughly linearly with
@@ -286,7 +287,12 @@ def _weigh(report: dict) -> float:
 
 
 def _durability_drives(study: Study) -> bool:
-    return study.durability is not None and study.durability.constrain
+    """A life the study declares (hours, cycles, a durability block) is
+    intent: the search sizes the part for it unless durability.constrain is
+    false (report only)."""
+    from .durability import active
+
+    return active(study) and (study.durability is None or study.durability.constrain)
 
 
 def _margin(study: Study, report: dict) -> float | None:

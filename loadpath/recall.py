@@ -163,7 +163,8 @@ class Recall:
         g = st.goal
         mat = st.material
         k = self.scale / e["loadScale"]
-        if st.durability is not None and st.durability.constrain:
+        from .study import _durability_drives
+        if _durability_drives(st):
             return None
         ms = []
         if g.safety_factor is not None:

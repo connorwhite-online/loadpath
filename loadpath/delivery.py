@@ -61,7 +61,7 @@ def attention(o: dict, study: dict) -> list[str]:
     dur = o.get("durability") or {}
     if dur.get("safetyFactor") is not None and dur["safetyFactor"] < dur.get("target", 1.5):
         out.append(f"durability safety factor {dur['safetyFactor']:.2f} (fatigue/creep) is under "
-                   f"{dur.get('target', 1.5):g}: set durability.constrain to size for it")
+                   f"{dur.get('target', 1.5):g}: durability.constrain is false, so the part was not sized for it")
     out.extend(dur.get("warnings") or [])
     lay = ((o.get("failure") or {}).get("layers") or {}).get("note")
     if lay:
@@ -171,8 +171,8 @@ def delivery(summary: dict, study: dict) -> dict | None:
         # at creep SF 1.09; "passes" means the whole part, durability included
         d["passes"] = False
         d["warnings"].insert(0, f"fails on durability: fatigue/creep safety factor {dur['safetyFactor']:.2f} is "
-                                f"under {dur.get('target', 1.5):g} (the static goal passes); set "
-                                "durability.constrain: true to size the part for it")
+                                f"under {dur.get('target', 1.5):g} (the static goal passes); "
+                                "durability.constrain is false, so the part was not sized for it")
     proc = study.get("process")
     kind = proc.get("type") if isinstance(proc, dict) else proc
     if str(kind or "").lower() == "fdm" and "slicer" not in o:

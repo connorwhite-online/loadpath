@@ -236,6 +236,36 @@ def test_envelope_reads_what_an_untimed_load_allows():
                                                                 "hours": 100}]}), mesh, max_cells=6000, refine=0)
     assert rep2["serviceEnvelope"]["undeclared"] == [] and "note" not in rep2["serviceEnvelope"]
     assert rep2["serviceEnvelope"]["cases"][0]["declared"] == {"hours": 100.0, "cycles": 1000.0}
+    # the trade: each life as the static margin it needs, and whether the
+    # part as delivered has it
+    trade = env["trade"]
+    c5 = next(r for r in trade if r.get("cycles") == 1e5)
+    yr = next(r for r in trade if r.get("hours") == 8760.0)
+    assert not c5["met"] and 0 < c5["stressTo"] < 1 and c5["staticSafetyFactor"] > 1 / u
+    assert yr["met"] == (env["heldHours"] is None or env["heldHours"] >= 8760) and yr["stressTo"] <= 1
+    assert [r["allowed"] for r in trade[:4]] == sorted((r["allowed"] for r in trade[:4]), reverse=True)
+
+
+def test_an_untimed_study_is_asked_its_service_life_and_a_declared_one_is_designed_for():
+    """How long a part must last is intent: there is no default. The check
+    asks, with the price of each answer; a declared life drives the search."""
+    from loadpath.study import _durability_drives
+    from loadpath.tasks import check_study
+
+    base = {"designSpace": {"type": "box", "min": [0, 0, 0], "max": [10, 10, 40]},
+            "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [11, 11, 0.1]}}],
+            "material": "petg", "goal": {"safetyFactor": 2}}
+    load = {"shape": {"type": "box", "min": [-1, -1, 39.9], "max": [11, 11, 41]}, "force": [0, 0, 500]}
+    r = check_study({**base, "loadCases": [{"name": "pull", "loads": [load]}]})
+    assert r["ok"], r
+    q = r["questions"][0]
+    assert q["about"] == "serviceLife" and q["cases"] == ["pull"] and "1e+06 cycles" in q["trade"]
+    assert not _durability_drives(study_from_dict({**base, "loadCases": [{"name": "pull", "loads": [load]}]}))
+    timed = {**base, "loadCases": [{"name": "pull", "loads": [load], "cycles": 1e5, "hours": 8760}]}
+    r = check_study(timed)
+    assert r["ok"] and "questions" not in r, r
+    assert _durability_drives(study_from_dict(timed))
+    assert not _durability_drives(study_from_dict({**timed, "durability": {"constrain": False}}))
 
 
 def test_no_build_direction_still_reads_the_layer_bonds():

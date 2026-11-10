@@ -158,8 +158,9 @@ _GENERIC = DurabilityData(*_PLA_CURVE, 0.50, 0.20, 0.10,
 class Durability:
     temperature: float = T_REF
     safety_factor: float = 1.5
-    # True: the safety-factor search sizes the part for fatigue and creep too
-    constrain: bool = False
+    # True (the default): a life the study declares is designed for, the
+    # search holding the fatigue and creep safety factor; False reports only
+    constrain: bool = True
     preload_hours: float = 8760.0
     overrides: dict = field(default_factory=dict)
 
@@ -189,7 +190,7 @@ def durability_from_spec(spec) -> Durability | None:
             if v < 0 or (key in ("fatigueStrength", "fatigueSlope", "creepExponent") and v <= 0):
                 raise ValueError(f"durability.{key} must be positive")
             over[attr] = v
-    return Durability(t, sf, bool(spec.get("constrain", False)), ph, over)
+    return Durability(t, sf, bool(spec.get("constrain", True)), ph, over)
 
 
 def _key(material) -> str:
@@ -331,6 +332,9 @@ def envelope(study, cases: list, allowance: float = 1.0) -> dict:
     for key in ("heldHours", "cycles", "maxTemperature"):
         vals = [r[key] for r in rows if r[key] is not None]
         out[key] = min(vals) if vals else None
+    u_now = max((r["utilization"] for r in rows), default=0.0)
+    if rows and u_now > 0:
+        out["trade"] = service_trade(data, u_now)
     if undeclared and rows:
         def span(h):
             if h is None:
@@ -344,8 +348,59 @@ def envelope(study, cases: list, allowance: float = 1.0) -> dict:
                        "repeat count given, so checked as applied once, briefly, at room temperature. As "
                        f"delivered the material data puts the limits at: {'; '.join(parts)} (each alone, at a "
                        f"safety factor of 1; {data.quality} data). Give the case `hours`, `cycles` or "
-                       "`temperature` to design for its real service.")
+                       "`temperature` to design for its real service; serviceEnvelope.trade lists what "
+                       "each life costs.")
     return out
+
+
+# the lives the trade table prices: (key, value, label)
+TRADE_CYCLES = (1e3, 1e4, 1e5, 1e6)
+TRADE_HOURS = ((720.0, "a month"), (8760.0, "a year"), (87600.0, "ten years"))
+
+
+def service_trade(data: DurabilityData, utilization: float) -> list:
+    """What each service life costs, from the laws the checks use: for a
+    count of load cycles or a time under load, the share of the short-term
+    strength the stress may reach (`allowed`), the static safety factor
+    that is (`staticSafetyFactor` = 1 / allowed), whether the part as
+    delivered meets it, and `stressTo`: the share its peak stress has to
+    fall to. A member sized by its stress grows by about 1 / stressTo in
+    section (a tie or strut in proportion; a beam's depth by its square
+    root), which is the mass the life costs. At a safety factor of 1 on the
+    life: durability.safetyFactor comes on top."""
+    rows = []
+    for n in TRADE_CYCLES:
+        rows.append({"cycles": n, "allowed": fatigue_strength(data, 1.0, n)})
+    for h, label in TRADE_HOURS:
+        rows.append({"hours": h, "label": label, "allowed": rupture_strength(data, 1.0, h)})
+    for r in rows:
+        a = r["allowed"]
+        r["staticSafetyFactor"] = 1.0 / a if a > 0 else None
+        r["met"] = bool(utilization <= a)
+        r["stressTo"] = min(1.0, a / utilization) if utilization > 0 else 1.0
+    return rows
+
+
+def service_question(study) -> list:
+    """The question a study that times none of its loads leaves open, for
+    whoever wrote it to answer from what the part is for: how long is each
+    load held, how often is it applied, how warm does it get? A life is
+    intent, so there is no default to fall back on; the answer goes on the
+    load case and the search designs for it. A study that declares a
+    life for every case asks nothing."""
+    names = [c.name for c in study.load_cases if not c.hours and not c.cycles]
+    if not names:
+        return []
+    data = durability_data(study.material, (study.durability or Durability()).overrides)
+    lives = [f"{n:.0e} cycles: {1 / fatigue_strength(data, 1.0, n):.1f}" for n in TRADE_CYCLES] + \
+            [f"{label} held: {1 / rupture_strength(data, 1.0, h):.1f}" for h, label in TRADE_HOURS]
+    return [{"about": "serviceLife", "cases": names,
+             "ask": "How long is each of these loads held, and how many times is it applied over the part's "
+                    "life? Nothing in the study says, so it is designed as applied once, briefly. Decide from "
+                    "what the part is for and put `hours` and/or `cycles` (and `temperature`) on the load "
+                    "case; the search then sizes the part for it.",
+             "trade": f"static safety factor each life needs in {study.material.name} ({data.quality} data): "
+                      + "; ".join(lives)}]
 
 
 def _thermal_cycles(study):

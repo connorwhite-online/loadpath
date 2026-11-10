@@ -221,13 +221,17 @@ def check_study(raw, base_dir: str | None = None) -> dict:
                 warnings.append(f"loadCases[{ci}].loads[{li}].moment: {mm:g} N·mm is tiny; moments are in N·mm, "
                                 f"so {mm:g} N·m is {mm * 1000:g}")
     dur = raw.get("durability") if isinstance(raw, dict) else None
-    if isinstance(dur, dict) and not dur.get("constrain"):
-        notes.append("durability is checked on the delivered part, not designed for: the search picks the "
-                     "lightest static pass, whose fatigue/creep safety factor can be under target. Set "
-                     "durability.constrain: true to size the part for it"
-                     + ("" if "safetyFactor" in dur else
-                        f" (durability.safetyFactor defaults to 1.5, not the goal's {s.goal.safety_factor:g})"
-                        if s.goal.safety_factor else ""))
+    if isinstance(dur, dict) and dur.get("constrain") is False:
+        notes.append("durability.constrain is false: fatigue and creep are checked on the delivered part, not "
+                     "designed for; the search picks the lightest static pass, whose fatigue/creep safety "
+                     "factor can be under target")
+    from .durability import active as _life_declared, service_question
+    if _life_declared(s) and not (isinstance(dur, dict) and "safetyFactor" in dur) and s.goal.safety_factor \
+            and not (isinstance(dur, dict) and dur.get("constrain") is False):
+        notes.append(f"the declared life is designed for at a fatigue/creep safety factor of 1.5 "
+                     f"(durability.safetyFactor), not the goal's {s.goal.safety_factor:g}: the fatigue curve is "
+                     "already a design curve")
+    questions = service_question(s)
     if not s.pitch and s.min_member and abs(d.pitch - 0.65 * s.min_member) <= 1e-3 * d.pitch:
         notes.append(f"pitch {d.pitch:.2f} mm is set by minMember {s.min_member:g} mm (two cells per filter "
                      f"radius; finer cells only cost time), so the grid has {d.n_elem} cells, fewer than "
@@ -273,6 +277,7 @@ def check_study(raw, base_dir: str | None = None) -> dict:
              **({"distribution": ld.distribution} if ld.distribution != "uniform" else {})}
             for ld in c.loads if not ld.pressure]} for c in s.load_cases],
         "minMember": s.min_member, "warnings": warnings, "notes": notes,
+        **({"questions": questions} if questions else {}),
     })
 
 
