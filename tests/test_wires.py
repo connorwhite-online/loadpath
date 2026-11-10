@@ -157,7 +157,11 @@ def test_placement_judge():
 
 
 def test_brief_schema():
-    import jsonschema
+    try:
+        import jsonschema
+    except ImportError:
+        print("brief schema: jsonschema not installed, skipped")
+        return
     from loadpath.schema import SCHEMAS
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "examples", "wires"))
     import joint
