@@ -268,6 +268,40 @@ def test_an_untimed_study_is_asked_its_service_life_and_a_declared_one_is_design
     assert not _durability_drives(study_from_dict({**timed, "durability": {"constrain": False}}))
 
 
+def test_a_study_with_no_process_takes_its_material_s():
+    """PETG is a filament and AlSi10Mg a laser-melted powder whether or not
+    the study says so: the process comes from the material, the layer
+    direction is left for the library to choose, and "none" is the way to
+    ask for an ideal solid."""
+    from loadpath.tasks import check_study
+
+    base = {"designSpace": {"type": "box", "min": [0, 0, 0], "max": [10, 10, 40]},
+            "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [11, 11, 0.1]}}],
+            "loadCases": [{"name": "pull", "loads": [{"shape": {"type": "box", "min": [-1, -1, 39.9],
+                                                                "max": [11, 11, 41]}, "force": [0, 0, 500]}]}],
+            "goal": {"volumeFraction": 0.5}}
+    want = {"petg": ("fdm", "auto"), "alsi10mg": ("lpbf", "auto"), "pa12": ("sls", None), "resin": ("sla", None)}
+    for mat, (kind, build) in want.items():
+        p = study_from_dict({**base, "material": mat}).process
+        assert p is not None and p.inferred and (p.kind, p.build) == (kind, build), (mat, p)
+    st = study_from_dict({**base, "material": "petg"})
+    assert st.min_member == 2.0 and st.raw["_inferredProcess"] == "fdm"
+    # a wrought alloy has no printing process; a milled study is milled
+    assert study_from_dict({**base, "material": "6061-t6"}).process is None
+    assert study_from_dict({**base, "material": "petg", "milling": {"axes": 3}}).process is None
+    # declared wins, and is not marked inferred
+    p = study_from_dict({**base, "material": "petg", "process": {"type": "fdm", "buildDirection": "+x"}}).process
+    assert not p.inferred and p.build == (0, 1)
+    assert study_from_dict({**base, "material": "petg", "process": "none"}).process is None
+    # a study parsed again from its raw keeps the same answer
+    again = study_from_dict(st.raw)
+    assert again.process.kind == "fdm" and again.process.inferred
+    r = check_study({**base, "material": "petg"})
+    assert r["ok"] and any("no process named" in n and "fdm" in n for n in r["notes"]), r["notes"]
+    assert not any("no process named" in n for n in check_study({**base, "material": "petg",
+                                                                 "process": "none"})["notes"])
+
+
 def test_no_build_direction_still_reads_the_layer_bonds():
     """PETG with no process is still printed in layers: the report says
     what the bonds would hold for layers stacked along each axis."""

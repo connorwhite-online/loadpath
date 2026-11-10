@@ -17,6 +17,8 @@
   - corpus-bracket-4 48.1 -> 40.1 g, corpus-tri-mount-5 77.2 -> 68.9 g: constrained runs that vary 13-17% run to run on these two; corpus-bracket-1 7%. A flag on these alone needs a rerun.
   - Search cases move 0-2.5% between cold-cache runs.
 
+- **2026-11-10 (process taken from the material, docs/PHYSICS.md).** A case that names no process is now designed for its material's (PETG and PLA: FDM, with the layer direction chosen; PA12: SLS; AlSi10Mg: LPBF). printed-hook and wall-bracket rows re-run and replaced: printed-hook 25.4 -> 42.4 g massAtTarget (best 44.7 g, SF 2.84), wall-bracket 27.2 -> 44.5 g (best 48.5 g, SF 3.01). Intended: the old rows were ideal solids, strong only if the layers happened to run the right way (the delivered hook's bonds read 0.49 built along x or z). The other six cases run moved inside their spread (arm-link +2.9%, bell-crank -3.9%, mbb-beam -3.3%, motor-mount -0.9%; robot-wrist-yoke -24%, its constrained probe ran). **full.json's rows for the same two cases are stale** until the full tier is run again.
+
 ## full.json history
 
 - **2026-11-04 (buckling in the constrained optimizer, bucklingopt.py).** First full re-save with the buckling check on, 15/15 pass, two cases at a time; wall-bracket and wall-bracket-fasteners rows are from reruns with the final code (faster eigensolve, PARDISO fallback on hinged designs). Moves vs 33ced02 (massAtTarget):

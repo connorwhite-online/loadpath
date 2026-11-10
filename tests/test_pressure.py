@@ -88,7 +88,9 @@ def test_pressure_validation_messages():
     bad = dict(base, loadCases=[{"name": "p", "loads": [{"shape": {"type": "sphere", "center": [0, 0, 0], "r": 5},
                                                          "pressure": 1.0}]}])
     for doc, words in ((bad, "keepOut"),
-                       (dict(base, keepOut=[{"id": "cav", "shape": base["keepOut"][0]["shape"]}]), "wall"),
+                       # an ideal solid has no minimum wall to fall back on (a process gives one)
+                       (dict(base, process="none", keepOut=[{"id": "cav", "shape": base["keepOut"][0]["shape"]}]),
+                        "wall"),
                        (dict(base, gravity=[0, 0, -9.81]), "supports")):
         try:
             study_from_dict(doc)

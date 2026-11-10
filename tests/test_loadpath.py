@@ -135,7 +135,9 @@ def test_deflation_finds_another_layout_at_the_same_volume():
 
 
 def test_reconstruct_keeps_bores_exact_and_preserve_whole():
-    s = study_from_dict(LUG)
+    # "none": the bore as drawn. PA12 with no process named is taken as SLS
+    # (spec._infer_process), whose holes are opened for the powder's shrink
+    s = study_from_dict({**LUG, "process": "none"})
     d = build_domain(s)
     res = optimize(d, 0.39, SimpOptions(volume_fraction=0.35, filter_radius=filter_radius(d, None),
                                         max_iterations=60))

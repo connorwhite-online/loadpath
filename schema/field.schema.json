@@ -1366,7 +1366,8 @@
             "dlp",
             "volumetric",
             "jetting",
-            "lpbf"
+            "lpbf",
+            "none"
           ]
         },
         {

@@ -74,7 +74,13 @@ class LatticeOptions:
         import copy
         o = copy.copy(self)
         if o.wall_min is None:
-            o.wall_min = float(study.min_member or 0.8)
+            # a lattice wall is one printed feature: the process's minimum
+            # feature, not the two-feature member an optimized solid keeps
+            proc = getattr(study, "process", None)
+            if proc is not None:
+                o.wall_min = max(float(proc.min_feature), float((study.raw or {}).get("minMember") or 0.0))
+            else:
+                o.wall_min = float(study.min_member or 0.8)
         if o.wall_max is None:
             o.wall_max = 0.4 * o.cell
         if o.grade_radius is None:

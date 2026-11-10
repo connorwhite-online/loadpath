@@ -152,6 +152,11 @@ Things to know:
   fatigue data were found, so the reading is the mechanical design curve at
   the thermal stress (loadpath/durability.py); treat a factor of 1.25 as a
   warning, not a life.
+- **The mount is treated as an ideal solid** (`"process": "none"` in the
+  studies), to keep this tutorial about heat. Left out, the process is taken
+  from the material (FDM for PETG and PA-CF) and the mount is designed for
+  its layer bonds and overhangs in the direction loadpath chooses: heavier,
+  and what you would print.
 - **The bolts relax too.** PETG near 75 C creeps under a bolt's clamp; add a
   `durability.preloadHours` and fasteners to see it, or put metal inserts in
   the pads.

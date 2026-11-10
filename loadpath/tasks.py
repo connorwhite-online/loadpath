@@ -200,6 +200,14 @@ def check_study(raw, base_dir: str | None = None) -> dict:
         return {"ok": False, "error": str(exc) or type(exc).__name__, "issues": issues}
     warnings = [f"{i['path']}: {i['message']}" for i in issues] + list(d.warnings)
     notes = []
+    if s.process is not None and getattr(s.process, "inferred", False):
+        how = (" The layer direction is chosen by designing for each of the six axis directions on a coarse grid "
+               "and keeping the strongest per gram (process.buildDirection to fix it)."
+               if s.process.build == "auto" else "")
+        notes.append(f"no process named: {s.material.name} is taken as {s.process.kind} (the material's own "
+                     f"process), with its minimum wall {s.process.min_feature:g} mm, hole {s.process.min_hole:g} mm "
+                     f"and layer bond {s.process.interlayer:g} of the in-plane strength.{how} Name the process "
+                     "if it is made another way, or \"process\": \"none\" for an ideal solid.")
     warnings += _preserve_cut(s)
     notes += _resting_supports(s)
     notes += _glued_faces(s, warnings)

@@ -36,6 +36,7 @@
     {"name": "belt-up", "loads": [{"region": "m3-a", "force": [0, 0, 25]}, {"region": "m3-b", "force": [0, 0, 25]}, {"region": "m3-c", "force": [0, 0, 25]}, {"region": "m3-d", "force": [0, 0, 25]}]}
   ],
   "material": "pa-cf",
+  "process": "none",
   "goal": {"safetyFactor": 3.0},
   "minMember": 3.0,
   "symmetry": ["x"],

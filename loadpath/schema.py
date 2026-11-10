@@ -839,7 +839,7 @@ _EXPLORE_METHODS = ["unrestricted", "fdm", "sls", "mjf", "sla", "dlp", "jetting"
                     "milled-3axis", "milled-5axis"]
 _PROCESS_KINDS = ["fdm", "sls", "mjf", "sla", "dlp", "volumetric", "jetting", "lpbf"]
 _PROCESS = {"anyOf": [
-    {"enum": _PROCESS_KINDS},
+    {"enum": _PROCESS_KINDS + ["none"]},
     {"type": "object",
      "properties": {"type": {"enum": _PROCESS_KINDS},
                     "buildDirection": {"anyOf": [

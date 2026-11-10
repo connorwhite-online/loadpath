@@ -190,8 +190,19 @@ def _row(c, o, proc, study):
     return {"direction": direction_label(c), "build": c, "safetyFactor": rep["safetyFactor"],
             "mass": rep["mass"], "interlayerStress": max(inter) if inter else None,
             "supportVolume": pc["supportVolume"], "supportArea": pc["supportArea"],
-            "height": pc["height"], "bed": pc["bed"], "cost": _cost(pc),
+            "height": pc["height"], "bed": pc["bed"], "cost": _cost(pc), "bodies": rep.get("bodies", 1),
             "efficiency": rep["safetyFactor"] / max(rep["mass"], 1e-9)}
+
+
+def _sound(r) -> bool:
+    """A direction whose design is one piece and stands on the bed. Grown
+    under a direction's overhang rule a design can leave a mount it cannot
+    reach without an unsupported span (the wall bracket standing on its
+    tip, its lower boss loose, read 10x the strength per gram of any real
+    part), and a part whose centre of mass is outside its footprint falls
+    over before it is finished."""
+    bed = r.get("bed") or {}
+    return (r.get("bodies") or 1) <= 1 and (bed.get("comMargin") is None or bed["comMargin"] >= 0.0)
 
 
 def _run_all(jobs, workers):
@@ -285,9 +296,11 @@ def choose_build_direction(study, candidates=None, max_elements: int = _COMPARE_
                              workers)
             screen = [_row(c, o, proc, study) for c, o in zip(cands, first)]
             emit({"screen": [(r["direction"], round(r["safetyFactor"], 2)) for r in screen]})
-            lead = max(r["efficiency"] for r in screen)
-            order = sorted(range(len(cands)), key=lambda i: -screen[i]["efficiency"])
-            go = [i for i in order[:_FINALISTS] if screen[i]["efficiency"] >= _FINALIST_FLOOR * lead]
+            ok = [r for r in screen if _sound(r)] or screen
+            lead = max(r["efficiency"] for r in ok)
+            order = sorted(range(len(cands)), key=lambda i: (not _sound(screen[i]), -screen[i]["efficiency"]))
+            go = [i for i in order[:_FINALISTS]
+                  if screen[i]["efficiency"] >= _FINALIST_FLOOR * lead or not _sound(screen[i])]
             # carry each finalist on from where it stopped: its design and
             # its projection sharpness
             jobs = [(variant(cands[i]), first[i].x, first[i].optimizer.get("beta", _WARM_BETA),
@@ -304,8 +317,9 @@ def choose_build_direction(study, candidates=None, max_elements: int = _COMPARE_
     if not designed:
         raise RuntimeError("no build direction produced a design")
     # strength per gram decides; within 5% of the best, print cost does
-    top = max(r["efficiency"] for r in designed)
-    designed.sort(key=lambda r: (r["efficiency"] < 0.95 * top, r["cost"], -r["efficiency"]))
+    # among directions that give one piece standing on the bed (_sound)
+    top = max(r["efficiency"] for r in ([r for r in designed if _sound(r)] or designed))
+    designed.sort(key=lambda r: (not _sound(r), r["efficiency"] < 0.95 * top, r["cost"], -r["efficiency"]))
     dropped = sorted((r for r in rows if not r["designed"]), key=lambda r: -r["screenSafetyFactor"])
     rows = designed + dropped
     best = rows[0]

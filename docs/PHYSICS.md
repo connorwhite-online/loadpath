@@ -178,6 +178,20 @@ below the reported safety factor. The same boss, pulled, with no process:
 safety factor 7.8 as a solid; 3.3 if the layers stack along z. Declaring
 `process.buildDirection` (or `"auto"`) designs for it, as before.
 
+That reading is for a part handed to `verify`. A study that is designed no
+longer gets there as a solid at all: a material says how it is made. PETG
+is a filament, PA12 a sintered powder, AlSi10Mg a laser-melted one, so a
+study that names no `process` takes its material's (`spec._infer_process`),
+with that process's minimum wall and hole, its layer bond, its powder
+escapes. Where layers matter (fdm, lpbf) the direction is not assumed to
+be +z: `orient.choose_build_direction` designs for each of the six axis
+directions on a coarse grid and keeps the one the loads are carried best
+in, per gram. Which process is intent, and a study that names one keeps
+it; which way the layers should run is physics, so the library decides.
+`loadpath check` says what it took. `"process": "none"` asks for an ideal
+isotropic solid on purpose (a benchmark, a part made some other way), and a
+study with a `milling` or `casting` block is milled or cast.
+
 ### 5. Still air is a result, not an input (`convection.py`)
 
 A `thermal` block that named no convection got 8 W/(m² K) on every face.
@@ -278,7 +292,7 @@ Not fixed in this pass. Ranked by how much each distorts a real part;
 | 2 | Contact band (`verify.py`) | Stress within a band of loads and supports is left out of the peak | Parts often break exactly there: under a bolt head, at a clamp's edge. The band hides the solver's artefact and the real concentration together | High where interfaces govern (turret: 76% of mass is interfaces) | follows #1: with real contact and uniform tractions (done) the band can shrink |
 | 3 | Thin members (`verify.py`, `fits.py`) | The delivered geometry is the printed geometry | A 1.4 mm member printed 0.2 mm under is 37% less stiff in bending and 27% weaker; FDM walls come in whole bead widths; thin SLS walls are weaker than thick ones. Only bores carry a tolerance today | High for parts sized by the minimum member | new: as-printed section on thin members (calibration coupons S, T) |
 | 4 | The search (`study.py`) | A study that times none of its loads is still designed as applied once | A part an agent ships without answering the check's question lasts ~600 cycles | High, but asked and priced | no library default (decided): the agent declares the life from the user's intent, and a declared life is designed for |
-| 5 | Process (`spec.py`) | No `process` means isotropic; the bond reading is a report | The part is designed as a solid and printed in layers | High on FDM, now visible | decided: infer the process from the material and choose the layer orientation by default (next) |
+| 5 | Process (`spec.py`) | A process named without `buildDirection` still builds along +z (fdm, lpbf) | The study's z is taken for the printer's; the best direction can be 2x stronger across the bonds | Medium (no process at all now takes the material's and chooses) | default `buildDirection` to `"auto"`; costs six coarse designs per run |
 | 6 | Load direction (`spec.py`) | A force points exactly where the study says | Nobody loads a hook within 0° of vertical. `direction: cone` exists; nothing applies it by default | Medium to high on slender, single-direction parts | new: a default misalignment, or an off-axis capacity reading (three extra solves) |
 | 7 | Incidental loads | Only declared cases exist | Parts are dropped, plugged into, leaned on and shipped. `feel.drop` covers a part on a mount inside an enclosure; structural studies have nothing | Medium to high for handheld parts | partly in flight (touch-mic USB insertion load); general handling case is new |
 | 8 | Moisture (`material_library.py`) | Nylon cards are dry as printed | Nylons lose stiffness and strength as they take up water: a little for PA12, about half for PA6-based filaments | Medium for nylons in service | new: `conditioned` values on the cards |
@@ -290,6 +304,7 @@ Not fixed in this pass. Ranked by how much each distorts a real part;
 | 14 | Linear elasticity | Stress and deflection scale with load up to failure | PETG and nylons soften well before their tensile strength; deflection near a low safety factor is under-read | Low at SF ≥ 2 | nonlinear verify exists (opt-in) |
 | 15 | Exchanger flow (`flow.py`, `porous.py`) | Constant properties along the pass (now at the mean), incompressible | A gas accelerates as it cools or heats; 2-5% on pressure drop | Low | flow thread |
 | 16 | Ageing | None | UV, hydrolysis (PLA, PETG outdoors), plasticizer loss | Unknown, slow | not planned |
+| 17 | Thermal duty cycle tutorial and `examples/thermal` | Their mounts are declared ideal solids (`"process": "none"`) so the tutorial stays about heat | Designed as printed, the cold-designed PETG mount comes out 27 g and survives the cycle it is meant to fail | Low (a tutorial, declared) | redo the tutorial as a printed part, with its full-grid numbers |
 
 In flight elsewhere and left to their threads: wire and flex-cable physics,
 tilted insertion paths, the generated shell (physics-shaped exchanger
@@ -330,10 +345,13 @@ Nothing to turn on. A study run or `loadpath verify` now returns:
 
 New study fields: `material.compressionRatio`, `process.interlayerShear`,
 `thermal.convection: "natural"` or `{"type": "natural", "emissivity",
-"up", "pressure"}`, and `pressure` on a duty's fluid.
+"up", "pressure"}`, and `pressure` on a duty's fluid; `"process": "none"`.
 
 Results move for existing studies in three ways: loaded faces are no
 longer over-stressed at their edges (peaks near loads fall, deflections
 shift by a few percent), layered parts with shear across their layers read
 lower, and a `thermal` block with no `convection` now solves still air
-instead of 8 W/(m² K). Tests: `tests/test_physics.py`.
+instead of 8 W/(m² K). A study with no `process` is now designed for its
+material's process and a chosen layer direction, so FDM and LPBF parts
+that were designed as solids come out heavier and printable. Tests:
+`tests/test_physics.py`.

@@ -426,10 +426,12 @@ class Process:
     # the layer bond's shear strength / in-plane tensile strength; None =
     # interlayer / sqrt(3) (failure.py)
     interlayer_shear: float | None = None
+    # taken from the material because the study named none (_infer_process)
+    inferred: bool = False
 
 
 def _process(spec) -> Process | None:
-    if spec is None:
+    if _no_process(spec):
         return None
     if isinstance(spec, str):
         spec = {"type": spec}
@@ -1364,7 +1366,7 @@ def _expand_planar(d: dict) -> dict:
         # of the bore, other loads add, a moment does not turn round, and a
         # layered process fails on interlayer tension: the full circle then.
         full = (len(loads) > 1 or ld.get("distribution") == "bearing" or ld.get("moment") is not None
-                or d.get("process") is not None or d.get("printDirection") is not None)
+                or not _no_process(d.get("process")) or d.get("printDirection") is not None)
         steps, span = (2 * _PLANAR_STEPS, 2 * np.pi) if full else (_PLANAR_STEPS, np.pi)
         for k in range(steps):
             t = span * k / steps
@@ -1382,6 +1384,40 @@ def _expand_planar(d: dict) -> dict:
     return {**d, "loadCases": out}
 
 
+def _no_process(spec) -> bool:
+    return spec is None or (isinstance(spec, str) and spec.strip().lower() == "none")
+
+
+def _infer_process(d: dict) -> dict:
+    """A study that names a material and no process is still made somehow,
+    and the material says how: PETG is a filament, PA12 a powder, AlSi10Mg
+    a laser-melted alloy. Designing it as an ideal isotropic solid ignores
+    the layers it will be built in, so the process is taken from the
+    material (its first listed one) and, where the layers matter (fdm,
+    lpbf), the build direction is left to orient.choose_build_direction,
+    which picks the one the loads are best carried in. `"process": "none"`
+    declares an ideal solid on purpose (a benchmark, a part made some other
+    way). Recorded in the study's raw as `_inferredProcess`."""
+    if d.get("process") is not None or d.get("_inferredProcess") \
+            or d.get("milling") is not None or d.get("casting") is not None:
+        return d    # declared, or the study says it is milled or cast
+    from .materials import material_from_spec
+    m = d.get("material", "pla")
+    try:
+        mat = material_from_spec(m[0] if isinstance(m, list) and m else m)
+    except (ValueError, KeyError, TypeError):
+        return d    # the material's own error is raised where it is parsed
+    kind = next((k for k in mat.processes if k in PROCESSES), None)
+    if kind is None:
+        return d
+    proc = {"type": kind}
+    if kind in ("fdm", "lpbf") and d.get("printDirection") is None:
+        proc["buildDirection"] = "auto"
+    elif d.get("printDirection") is not None:
+        proc["buildDirection"] = d["printDirection"]
+    return {**d, "process": proc, "_inferredProcess": kind}
+
+
 def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     """Validate and parse a study. Every error names the field to fix."""
     if not isinstance(d, dict):
@@ -1389,6 +1425,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     from . import quick
     from .fasteners import expand_fasteners
     d = quick.study(d)
+    d = _infer_process(d)
     d = expand_fasteners(d)
     d = _expand_planar(d)
     from .fits import expand_fits
@@ -1661,6 +1698,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
 
     min_member = d.get("minMember")
     process = _process(d.get("process"))
+    if process is not None:
+        process.inferred = bool(d.get("_inferredProcess"))
     process = _card_process(process, materials[0], d.get("process"))
     process = _calibrated_process(process, mat_in, d.get("process"))
     print_direction = parse_build_direction(d.get("printDirection"))
