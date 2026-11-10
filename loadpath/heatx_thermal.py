@@ -66,7 +66,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-__all__ = ["Fluid", "FLUIDS", "WALL_CONDUCTIVITY", "tpms_geometry", "rate", "rate_design", "size_core"]
+__all__ = ["Fluid", "FLUIDS", "WALL_CONDUCTIVITY", "tpms_geometry", "rate", "rate_design", "size_core",
+           "fluid_at", "duty_fluid"]
 
 
 @dataclass
@@ -82,7 +83,9 @@ class Fluid:
         return self.cp * self.mu / self.k
 
 
-# near room temperature; pass a Fluid for anything else
+# near room temperature: what a named fluid is when its duty gives no
+# temperature. With one (tIn), air, water and glycol50 are taken at their
+# own state (fluid_at); "water60" and "oil" stay as listed.
 FLUIDS = {
     "water": Fluid("water", 997.0, 4180.0, 0.60, 0.89e-3),
     "water60": Fluid("water60", 983.0, 4185.0, 0.65, 0.47e-3),
@@ -90,6 +93,84 @@ FLUIDS = {
     "glycol50": Fluid("glycol50", 1065.0, 3300.0, 0.38, 3.5e-3),
     "oil": Fluid("oil", 870.0, 1900.0, 0.14, 0.03),
 }
+
+# 50% ethylene glycol in water by volume (ASHRAE Handbook, Fundamentals, ch. 31, rounded):
+# C, kg/m^3, J/(kg K), W/(m K), Pa s
+_GLYCOL50 = np.array([
+    (0.0, 1082.0, 3205.0, 0.364, 7.9e-3),
+    (20.0, 1071.0, 3283.0, 0.380, 3.94e-3),
+    (40.0, 1060.0, 3358.0, 0.394, 2.26e-3),
+    (60.0, 1048.0, 3435.0, 0.404, 1.46e-3),
+    (80.0, 1034.0, 3511.0, 0.411, 1.02e-3),
+    (100.0, 1020.0, 3587.0, 0.415, 0.76e-3),
+])
+ATMOSPHERE = 1.01325   # bar
+
+
+def fluid_at(name: str, t: float, pressure: float | None = None) -> Fluid | None:
+    """A named fluid's properties at `t` (C) and, for a gas, `pressure`
+    (bar absolute; one atmosphere when None). None for a name with no
+    state model ("oil", "water60": they stay as listed in FLUIDS).
+
+    A fluid at 20 C is not the fluid in the exchanger. Water's viscosity
+    halves between 25 and 60 C and halves again by 100 C; charge air at
+    2.5 bar and 150 C is 1.75x as dense as room air and 30% more viscous.
+    Reynolds number, pressure drop and h all follow.
+
+    air: dry, ideal gas (R = 287.05 J/(kg K)); viscosity and conductivity by
+    Sutherland's law (White, Viscous Fluid Flow: mu0 1.716e-5 Pa s, S 110.4 K;
+    k0 0.0241 W/(m K), S 194 K, both at 273.15 K); cp a parabola through the
+    table values at 250-600 K (within 0.5%).
+    water: liquid, 0-150 C. Density by Kell's fit shortened (within 0.1% to
+    100 C), viscosity by Vogel's equation mu = 2.414e-5 * 10^(247.8 / (T -
+    140 K)) (within 2.5% over 0-370 C), conductivity a parabola through the
+    IAPWS table (within 1% to 100 C), cp within 1%.
+    glycol50: ASHRAE's table for 50% ethylene glycol by volume, 0-100 C,
+    interpolated (viscosity on a log scale)."""
+    tk = float(t) + 273.15
+    if name == "air":
+        if not 150.0 < tk < 1500.0:
+            raise ValueError(f"air at {t:g} C is outside the property model (-120 to 1200 C)")
+        p = (ATMOSPHERE if pressure is None else float(pressure)) * 1e5
+        rho = p / (287.05 * tk)
+        mu = 1.716e-5 * (tk / 273.15) ** 1.5 * (273.15 + 110.4) / (tk + 110.4)
+        k = 0.0241 * (tk / 273.15) ** 1.5 * (273.15 + 194.0) / (tk + 194.0)
+        cp = 1002.5 + 2.75e-4 * (tk - 200.0) ** 2
+        return Fluid("air", rho, cp, k, mu)
+    if name == "water":
+        tc = float(np.clip(t, 0.0, 150.0))
+        rho = 1000.0 * (1.0 - (tc + 288.9414) / (508929.2 * (tc + 68.12963)) * (tc - 3.9863) ** 2)
+        mu = 2.414e-5 * 10.0 ** (247.8 / (tc + 273.15 - 140.0))
+        k = 0.5706 + 1.756e-3 * tc - 6.46e-6 * tc * tc
+        cp = 4180.0 + 0.0105 * (tc - 35.0) ** 2
+        return Fluid("water", rho, cp, k, mu)
+    if name == "glycol50":
+        tc = float(np.clip(t, _GLYCOL50[0, 0], _GLYCOL50[-1, 0]))
+        tt = _GLYCOL50[:, 0]
+        rho, cp, k = (float(np.interp(tc, tt, _GLYCOL50[:, j])) for j in (1, 2, 3))
+        mu = float(np.exp(np.interp(tc, tt, np.log(_GLYCOL50[:, 4]))))
+        return Fluid("glycol50", rho, cp, k, mu)
+    return None
+
+
+def duty_fluid(side: dict, t: float | None = None) -> Fluid:
+    """The fluid of one side of a duty ({"fluid", "tIn", "pressure"?, ...})
+    at its state: a named fluid with a state model at `t` (default the
+    side's tIn) and the side's `pressure` (bar absolute, gases); properties
+    given as a Fluid or a dict are used as given, and a duty with no
+    temperature gets the room-temperature table."""
+    v = side.get("fluid", "water")
+    if isinstance(v, (Fluid, dict)):
+        return _fluid(v)
+    t = side.get("tIn") if t is None else t
+    if t is not None and isinstance(v, str):
+        fl = fluid_at(v, float(t), side.get("pressure"))
+        if fl is not None:
+            return fl
+    if side.get("pressure") is not None and isinstance(v, str) and v == "air":
+        return fluid_at("air", 20.0, side["pressure"])
+    return _fluid(v)
+
 
 # W/m K, as printed (dense). Polymers: Tychanicz-Kwiecien et al. 2025 for PLA
 # and PETG; PA, PP and PA-CF from datasheets. Metals: LPBF as built.
@@ -293,19 +374,48 @@ def rate(kind, cell, wall, core_volume, lengths, duty, arrangement="cross", port
     `split`: the first fluid's share of the void (the sheet moved toward the
     second). The result's "range" rates the design again at the low and
     high ends of the Nu band (effectivenessRange, tOutRange)."""
-    kw = duty.get("wall", "petg")
-    k_wall = float(WALL_CONDUCTIVITY[kw] if isinstance(kw, str) else kw)
     names = [n for n in duty if n != "wall"]
     if len(names) != 2:
         raise ValueError("duty names two fluids, e.g. {\"A\": {...}, \"B\": {...}}")
+    # Each fluid at its own state. The mass flows are fixed by the inlet
+    # state (a litre a minute is measured where it comes in); the channel's
+    # Re, h and pressure drop are read at the mean of inlet and outlet,
+    # which the rating itself gives: a few passes settle it.
+    inlet = [duty_fluid(duty[n]) for n in names]
+    flows = [_flow(duty[n], fl) for n, fl in zip(names, inlet)]
+    fls = inlet
+    out = None
+    for _ in range(4):
+        out = _rate_at(kind, cell, wall, core_volume, lengths, duty, names, fls, flows, arrangement,
+                       port_diameter, geometry, mouth_radius, split)
+        if "tOut" not in out:
+            break
+        mean = [0.5 * (duty[n]["tIn"] + out["tOut"][n]) for n in names]
+        nxt = [duty_fluid(duty[n], t) for n, t in zip(names, mean)]
+        moved = max(abs(a.mu / b.mu - 1.0) + abs(a.rho / b.rho - 1.0) for a, b in zip(nxt, fls))
+        fls = nxt
+        if moved < 1e-3:
+            break
+    for n, fl, f0 in zip(names, fls, inlet):
+        out["fluids"][n]["properties"] = {"rho": fl.rho, "cp": fl.cp, "k": fl.k, "mu": fl.mu,
+                                          "inletDensity": f0.rho,
+                                          **({"pressure": duty[n]["pressure"]} if duty[n].get("pressure") else {})}
+    return out
+
+
+def _rate_at(kind, cell, wall, core_volume, lengths, duty, names, fls, flows, arrangement, port_diameter,
+             geometry, mouth_radius, split):
+    """rate() with each fluid's properties and mass flow given."""
+    kw = duty.get("wall", "petg")
+    k_wall = float(WALL_CONDUCTIVITY[kw] if isinstance(kw, str) else kw)
     base = tpms_geometry(kind, cell, wall, split)
     sides, caps, areas = {}, [], []
     for i, n in enumerate(names):
         geo = dict(base["sides"][i])
         if geometry is not None:
             geo.update(geometry[i])
-        fl = _fluid(duty[n].get("fluid", "water"))
-        m = _flow(duty[n], fl)
+        fl = fls[i]
+        m = flows[i]
         frontal = core_volume / lengths[i] * 1e-6        # m^2
         pd = port_diameter[i] if isinstance(port_diameter, (tuple, list)) else port_diameter
         port_area = np.pi * (0.5 * pd * 1e-3) ** 2

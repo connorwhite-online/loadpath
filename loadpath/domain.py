@@ -444,6 +444,13 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
         springs = sp.csr_matrix((vals[keep], (rows[keep], cols[keep])), shape=(mesh.n_dof, mesh.n_dof))
 
     load_nodes = np.zeros(mesh.n_nodes, bool)
+    # A force "over a region" is a uniform traction on it (or a uniform body
+    # force through it), so each node takes the share of the surface that is
+    # its own: on a loaded face a corner node stands for a quarter of an
+    # interior node's area and an edge node for half. Equal shares per node
+    # put 4x the traction on the corners and 2x on the edges of every
+    # loaded face. The share is the count of cells the node touches.
+    tributary = np.bincount(mesh.enode.ravel(), minlength=mesh.n_nodes).astype(float)
     loads, case_nodes, case_wet, imbalance, spreads = [], [], [], [], []
     for ci, case in enumerate(study.load_cases):
         f = np.zeros(mesh.n_dof)
@@ -463,6 +470,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             idx = np.nonzero(nodes)[0]
             cn[idx] = True
             pts = xyz[idx]
+            share = tributary[idx] / tributary[idx].sum()
             force = ld.force
             if ld.direction is not None:
                 # the uncertain force, spread evenly, one vector per axis
@@ -470,7 +478,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
                 basis = []
                 for a in range(3):
                     b = np.zeros(mesh.n_dof)
-                    b.reshape(-1, 3)[idx, a] = size / len(idx)
+                    b.reshape(-1, 3)[idx, a] = size * share
                     basis.append(b)
                 cos_half = -1.0 if ld.direction == "any" else float(np.cos(np.radians(ld.cone)))
                 spread = (basis, force / size, cos_half)
@@ -485,20 +493,21 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
                     d = pts - p0
                     rad = d - (d @ ax)[:, None] * ax
                     rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
-                    w = np.maximum(rad @ (radial / np.linalg.norm(radial)), 0.0)
+                    w = np.maximum(rad @ (radial / np.linalg.norm(radial)), 0.0) * share
                     if w.sum() <= 0:
                         raise ValueError(f"{label}: no material on the loaded side of the bore")
                     f.reshape(-1, 3)[idx] += (w / w.sum())[:, None] * radial[None]
                 force = axial
             if np.any(force):
-                f.reshape(-1, 3)[idx] += force / len(idx)
+                f.reshape(-1, 3)[idx] += force[None] * share[:, None]
             if np.any(ld.moment):
-                # Forces that carry the moment and nothing else: the rigid
-                # rotation field w x r, with w from the nodes' polar inertia.
-                r = pts - pts.mean(axis=0)
-                inertia = (r * r).sum() * np.eye(3) - r.T @ r
+                # Tractions that carry the moment and nothing else: the rigid
+                # rotation field w x r about the region's centroid, with w
+                # from its polar inertia (each node at its share of the area).
+                r = pts - share @ pts
+                inertia = (share * (r * r).sum(axis=1)).sum() * np.eye(3) - (r * share[:, None]).T @ r
                 omega = np.linalg.lstsq(inertia, ld.moment, rcond=None)[0]
-                f.reshape(-1, 3)[idx] += np.cross(omega, r)
+                f.reshape(-1, 3)[idx] += share[:, None] * np.cross(omega, r)
         if cw.any():
             fv = fp.reshape(-1, 3)
             imb = float(np.linalg.norm(fv.sum(axis=0)) / max(np.abs(fv).sum(), 1e-300))

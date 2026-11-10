@@ -77,7 +77,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import ndimage, sparse
 
-from .heatx_thermal import WALL_CONDUCTIVITY, _flow, _fluid
+from .heatx_thermal import WALL_CONDUCTIVITY, _flow, _fluid, duty_fluid
 
 __all__ = ["PorousDomain", "Medium", "exchanger_domain", "box_domain", "simulate_domain", "simulate_box", "solve_flow", "solve_heat", "simulate_exchanger",
            "simulate_design", "sweep", "savoldi_medium", "lbm_medium", "summarize", "plot_fields"]
@@ -814,7 +814,7 @@ def simulate_domain(dom, duty, closures="design", progress=None, fields=False, t
         names = dom.names
     kw = duty.get("wall", "petg")
     k_wall = float(WALL_CONDUCTIVITY[kw] if isinstance(kw, str) else kw)
-    fluids = [_fluid(duty[n].get("fluid", "water")) for n in hx.names]
+    fluids = [duty_fluid(duty[n]) for n in hx.names]
     flows_kg = [_flow(duty[n], fl) for n, fl in zip(hx.names, fluids)]
     flows = []
     for f in (0, 1):

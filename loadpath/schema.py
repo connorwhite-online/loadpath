@@ -306,6 +306,9 @@ _CUSTOM_MATERIAL = {
     "properties": {"name": {"type": "string"}, "base": {"type": "string"},
                    "E": _POS, "nu": {"type": "number", "minimum": 0, "maximum": 0.4999},
                    "strength": _POS, "density": _POS, "EZ": _POS, "strengthZ": _POS,
+                   "compressionRatio": {"type": "number", "minimum": 1, "maximum": 3,
+                                        "description": "compressive over tensile strength (default: the "
+                                                       "material family's, failure.py)"},
                    "measured": {"type": "string"}, "note": {"type": "string"}},
     "x-requireOne": [["E", "strength", "density"], ["base"]],
     "additionalProperties": False,
@@ -548,6 +551,15 @@ _THERMAL = {
                      "required": ["watts"], "x-requireOne": [["region"], ["shape"]],
                      "additionalProperties": False}},
         "convection": {"anyOf": [
+            {"const": "natural", "description": "still air: natural convection and radiation, solved per face "
+                                                "from its own temperature, direction and what it faces"},
+            {"type": "object", "description": "still air with its settings",
+             "properties": {"type": {"const": "natural"},
+                            "emissivity": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
+                                           "description": "the surface's (default 0.9 polymer, 0.25 bare metal)"},
+                            "up": {"description": "the direction opposing gravity (default '+z')"},
+                            "pressure": {**_POS, "description": "bar absolute (default 1.013)"}},
+             "required": ["type"], "additionalProperties": False},
             {"type": "number", "minimum": 0, "description": "W/(m² K) off every exposed surface"},
             {"type": "array", "items": {"type": "object", "properties": {
                 **_THERMAL_REGION,
@@ -555,8 +567,11 @@ _THERMAL = {
                       "description": "W/(m² K): ~5-10 still air, 20-50 a fan, 500+ water"},
                 "fluid": {"type": "number", "description": "C of the fluid (default ambient)"}},
                 "required": ["h"], "additionalProperties": False}}],
-            "description": "Heat carried off the surface the design exposes (default 8 W/(m² K), still air). "
-                           "An entry without region or shape covers every surface."},
+            "description": "Heat carried off the surface the design exposes. Default \"natural\": still air, "
+                           "the coefficient a result of each face's temperature and surroundings "
+                           "(convection.py; typically 6-14 W/(m² K) on a polymer, radiation included). A "
+                           "number or a list fixes it: a fan, a liquid, a measured value. An entry without "
+                           "region or shape covers every surface."},
         "conductivity": {**_POS, "description": "W/(m K) override (default the material card's)."},
         "expansion": {"anyOf": [{"type": "boolean"}, {"type": "number", "minimum": 0}],
                       "description": "true (default): the material card's expansion coefficient; a number: 1/K "
@@ -747,6 +762,9 @@ _PROCESS = {"anyOf": [
                                                         "'designed' (1), or a measured factor"},
                     "anisotropic": {"anyOf": [{"type": "boolean"}, {"const": "bond"}]},
                     "interlayer": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                    "interlayerShear": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
+                                        "description": "the layer bond's shear strength over the in-plane tensile "
+                                                       "strength (default interlayer / sqrt(3))"},
                     "minFeature": _POS, "overhangs": {"type": "boolean"},
                     "minHole": {**_POS, "description": "mm: narrowest hole or gap the optimizer may leave "
                                                        "(default FDM/SLS/MJF 2, SLA/DLP/LPBF 1, volumetric 0.6)"},
@@ -1638,7 +1656,11 @@ _DUTY_SIDE = {
                         "properties": {"name": {"type": "string"}, "rho": _POS, "cp": _POS, "k": _POS, "mu": _POS},
                         "required": ["rho", "cp", "k", "mu"], "additionalProperties": False}]},
                    "lPerMin": _POS, "kgPerS": _POS,
-                   "tIn": {"type": "number", "description": "°C"}},
+                   "tIn": {"type": "number", "description": "°C. A named fluid (air, water, glycol50) is taken "
+                                                            "at its own state: this temperature, then the mean of "
+                                                            "inlet and outlet"},
+                   "pressure": {**_POS, "description": "bar absolute, for a gas (default 1.013): boost air at "
+                                                       "2.5 bar is 2.5x as dense"}},
     "x-requireOne": [["lPerMin"], ["kgPerS"]],
     "additionalProperties": False,
 }

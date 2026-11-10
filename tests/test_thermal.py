@@ -365,7 +365,10 @@ def test_verify_thermal_stress_matches_a_held_bar():
     m.apply_translation([L / 2, 5, 5])
     r = verify_part(st, m, max_cells=20000, refine=0, fields=True)
     g = T.retention("petg", 45.0)[0]
-    exact = st.material.E * g * T.expansion("petg") * 20
+    # the bar is squeezed, and PETG is 1.2x as strong in compression as in
+    # tension (failure.py): the equivalent stress is the compression / 1.2
+    from loadpath.failure import compression_ratio
+    exact = st.material.E * g * T.expansion("petg") * 20 / compression_ratio(st.material)[0]
     x, vm = r["fields"]["nodes"], r["fields"]["cases"][0]["vonMises"]
     mid = np.abs(x[:, 0] - 20) < 1
     # cut cells (verify's default) read 0.14% high: the bar's faces fall

@@ -44,7 +44,7 @@ import itertools
 
 import numpy as np
 
-from .heatx_thermal import WALL_DENSITY, _flow, _fluid, rate, tpms_geometry
+from .heatx_thermal import WALL_DENSITY, _flow, duty_fluid, rate, tpms_geometry
 
 __all__ = ["PROCESS_LIMITS", "size_exchanger", "verify"]
 
@@ -131,7 +131,7 @@ def size_exchanger(duty: dict, envelope, *, process: str = "fdm", max_pressure_d
     names = [n for n in duty if n != "wall"]
     if len(names) != 2:
         raise ValueError("duty names two fluids")
-    fls = [_fluid(duty[n].get("fluid", "water")) for n in names]
+    fls = [duty_fluid(duty[n]) for n in names]
     ms = [_flow(duty[n], f) for n, f in zip(names, fls)]
     t_in = [duty[n].get("tIn") for n in names]
     caps = [m * f.cp for m, f in zip(ms, fls)]

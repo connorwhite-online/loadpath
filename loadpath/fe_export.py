@@ -31,15 +31,16 @@ def fe_model(study: Study, mesh, size: float | None = None, mesher: str | None =
     then edge mid-nodes), conn (n, 10), supports [(held, fix, pin)],
     loads [(name, force per node (n, 3), load vertices)], el (elasticity),
     size."""
-    from .crosscheck import (_boundary_nodes, _load_vectors, _p2_mesh, _supports_on, _tet_mesh,
+    from .crosscheck import (_boundary_faces, _load_vectors, _p2_mesh, _supports_on, _tet_mesh,
                              element_size, fit_size)
 
     asked = size or element_size(study)
     size = asked if size else fit_size(float(mesh.volume), asked)
     pts, tets = _tet_mesh(mesh, size, mesher=mesher)
-    surf = _boundary_nodes(tets)
+    bfaces = _boundary_faces(tets)
+    surf = np.unique(bfaces)
     tol = 0.6 * size
-    loads = _load_vectors(study, pts, surf, tol)
+    loads = _load_vectors(study, pts, surf, tol, bfaces)
     nodes, conn, edges = _p2_mesh(pts, tets)
     # a load on a corner node only (the cross-check's lumping): the
     # mid-nodes carry none, as the native solve has it

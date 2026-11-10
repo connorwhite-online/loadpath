@@ -484,21 +484,51 @@ def _supports_on(study, pts, nodes, edges, surf, tol):
     return fixed_dof, supports, pin_blocks, fixed_nodes
 
 
+def _boundary_faces(tets):
+    """The mesh's boundary triangles: the faces only one tet owns."""
+    f = np.sort(tets[:, [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]]].reshape(-1, 3), axis=1)
+    uniq, count = np.unique(f, axis=0, return_counts=True)
+    return uniq[count == 1]
+
+
 def _boundary_nodes(tets):
     """Vertices on the mesh's boundary: of the faces only one tet owns.
     (A distance to the input surface took 7 s on the motor-mount and misses
     nodes fTetWild leaves inside its envelope.)"""
-    f = np.sort(tets[:, [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]]].reshape(-1, 3), axis=1)
-    uniq, count = np.unique(f, axis=0, return_counts=True)
-    return np.unique(uniq[count == 1])
+    return np.unique(_boundary_faces(tets))
+
+
+def _area_shares(pts, faces, nodes):
+    """Each loaded vertex's share of the loaded surface: a third of the
+    area of every boundary triangle whose three corners are loaded, so a
+    force over a region is a uniform traction whatever the mesh density
+    (equal shares per vertex put more force where the mesh is finer).
+    Falls back to equal shares where the region holds no whole triangle."""
+    w = np.zeros(len(pts))
+    if faces is not None and len(faces):
+        inside = np.zeros(len(pts), bool)
+        inside[nodes] = True
+        tri = faces[inside[faces].all(axis=1)]
+        if len(tri):
+            area = 0.5 * np.linalg.norm(np.cross(pts[tri[:, 1]] - pts[tri[:, 0]], pts[tri[:, 2]] - pts[tri[:, 0]]),
+                                        axis=1)
+            np.add.at(w, tri.ravel(), np.repeat(area / 3.0, 3))
+    w = w[nodes]
+    if not np.all(w > 0):
+        # vertices of the region on no fully loaded triangle (its rim): the
+        # smallest share present, so they carry something
+        w = np.where(w > 0, w, w[w > 0].min() if np.any(w > 0) else 1.0)
+    return w / w.sum()
 
 
 def _region_nodes(study, shape, pts, tol):
     return np.nonzero(shape.sdf(pts) <= tol)[0]
 
 
-def _load_vectors(study, pts, surf, tol):
-    """Per load case: nodal force array (n, 3), and the load node indices."""
+def _load_vectors(study, pts, surf, tol, faces=None):
+    """Per load case: nodal force array (n, 3), and the load node indices.
+    `faces`: the boundary triangles, for each vertex's share of a loaded
+    surface (equal shares without)."""
     cases = []
     for case in study.load_cases:
         f = np.zeros((len(pts), 3))
@@ -511,6 +541,7 @@ def _load_vectors(study, pts, surf, tol):
             if len(nodes) == 0:
                 raise ValueError(f"load in case {case.name!r} touches no surface node of the part")
             nodes_all.append(nodes)
+            share = _area_shares(pts, faces, nodes)
             force = np.asarray(ld.force, float)
             if ld.distribution == "bearing":
                 # as domain.py: the shaft pushes on the half of the bore facing
@@ -524,19 +555,19 @@ def _load_vectors(study, pts, surf, tol):
                     d = pts[nodes] - p0
                     rad = d - (d @ ax)[:, None] * ax
                     rad /= np.maximum(np.linalg.norm(rad, axis=1, keepdims=True), 1e-12)
-                    w = np.maximum(rad @ (radial / np.linalg.norm(radial)), 0.0)
+                    w = np.maximum(rad @ (radial / np.linalg.norm(radial)), 0.0) * share
                     if w.sum() > 0:
                         f[nodes] += (w / w.sum())[:, None] * radial[None]
                         force = axial
             if np.any(force):
-                f[nodes] += force / len(nodes)
+                f[nodes] += force[None] * share[:, None]
             if ld.moment is not None and np.any(ld.moment):
-                # a couple as a rigid rotation's forces about the nodes' centroid
-                r = pts[nodes] - pts[nodes].mean(axis=0)
+                # a couple as a rigid rotation's tractions about the region's centroid
+                r = pts[nodes] - share @ pts[nodes]
                 m = np.asarray(ld.moment, float)
-                j = np.einsum("ij,ij->", r, r) * np.eye(3) - r.T @ r
+                j = (share * np.einsum("ij,ij->i", r, r)).sum() * np.eye(3) - (r * share[:, None]).T @ r
                 w = np.linalg.solve(j + 1e-9 * np.trace(j) * np.eye(3), m)
-                f[nodes] += np.cross(w, r)
+                f[nodes] += share[:, None] * np.cross(w, r)
         cases.append((case.name, f, np.unique(np.concatenate(nodes_all))))
     return cases
 
@@ -840,11 +871,16 @@ def _rigid_modes(xyz, comp):
     return b
 
 
-def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices, normal=None, chunk=50_000):
-    """Von Mises at each vertex: the P2 field's stress at each element's own
-    vertices, averaged over the elements sharing it. With `normal` (the
-    build direction, unit), also the normal stress across the layers there,
-    (vm, sn)."""
+def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices, normal=None, chunk=50_000, ratio=1.0,
+                     shear_ratio=float(np.sqrt(3.0))):
+    """The equivalent stress at each vertex (failure.equivalent_stress: von
+    Mises when `ratio`, compressive over tensile strength, is 1): the P2
+    field's stress at each element's own vertices, averaged over the
+    elements sharing it. With `normal` (the build direction, unit), also the
+    layer bond's equivalent stress there (failure.bond_stress: tension
+    across the layers and shear along them), (vm, bond)."""
+    from .failure import bond_stress, equivalent_stress
+
     c = _elastic(E, nu)
     acc = np.zeros(n_vertices)
     acc_n = np.zeros(n_vertices)
@@ -860,15 +896,10 @@ def _nodal_von_mises(nodes, conn, u, E, nu, n_vertices, normal=None, chunk=50_00
             lam[i] = 1.0
             b = _b_matrices(_shape_grads(g, lam))
             sig = np.einsum("kl,eli,ei->ek", c, b, ue, optimize=True)
-            sx, sy, sz, txy, tyz, tzx = sig.T
-            vm = np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2) + 3 * (txy ** 2 + tyz ** 2 + tzx ** 2))
-            np.add.at(acc, cc[:, i], vm)
+            np.add.at(acc, cc[:, i], equivalent_stress(sig, ratio))
             if normal is not None:
-                n = normal
-                # n . sigma . n, as verify.py reads it (shear terms counted twice)
-                sn = (sx * n[0] ** 2 + sy * n[1] ** 2 + sz * n[2] ** 2
-                      + 2.0 * (txy * n[0] * n[1] + tyz * n[1] * n[2] + tzx * n[2] * n[0]))
-                np.add.at(acc_n, cc[:, i], sn)
+                # the bond's tension and shear, as verify.py reads them
+                np.add.at(acc_n, cc[:, i], bond_stress(sig, normal, shear_ratio)[0])
             np.add.at(cnt, cc[:, i], 1)
     vm = acc / np.maximum(cnt, 1)
     if normal is None:
@@ -893,6 +924,10 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
     # a layered part the same way
     el = study.elastic(mat)
     proc = study.process
+    from .failure import bond_shear_ratio, compression_ratio
+
+    m_c = compression_ratio(mat)[0]
+    shear_ratio = bond_shear_ratio(proc) if proc is not None else float(np.sqrt(3.0))
     normal, interlayer = None, 1.0
     if proc is not None and proc.build not in (None, "auto") and proc.interlayer < 1.0:
         from .am import build_vector
@@ -927,9 +962,10 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         pts, tets = _tet_mesh(mesh, size, mesher=mesher)
     timings = {"mesh": time.time() - t0}
     from scipy.spatial import cKDTree
-    surf = _boundary_nodes(tets)
+    bfaces = _boundary_faces(tets)
+    surf = np.unique(bfaces)
     tol = 0.6 * size
-    loads = _load_vectors(study, pts, surf, tol)
+    loads = _load_vectors(study, pts, surf, tol, bfaces)
 
     t1 = time.time()
     nodes, conn, edges = _p2_mesh(pts, tets)
@@ -977,10 +1013,11 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         us = _solve(nodes, conn, mat.E, el, fixed_dof, _pin_springs(pin_blocks, mat.E * size, len(nodes)),
                     loads, len(pts), edges)
         if normal is None:
-            out["native"] = summarize([(u, _nodal_von_mises(nodes, conn, u.ravel(), mat.E, el, len(pts)))
+            out["native"] = summarize([(u, _nodal_von_mises(nodes, conn, u.ravel(), mat.E, el, len(pts), ratio=m_c))
                                        for u in us])
         else:
-            out["native"] = summarize([(u, *_nodal_von_mises(nodes, conn, u.ravel(), mat.E, el, len(pts), normal))
+            out["native"] = summarize([(u, *_nodal_von_mises(nodes, conn, u.ravel(), mat.E, el, len(pts), normal,
+                                                             ratio=m_c, shear_ratio=shear_ratio))
                                        for u in us])
         timings["native"] = time.time() - t1
     if backend in ("ccx", "both"):
@@ -988,7 +1025,7 @@ def crosscheck(study: Study, mesh, size: float | None = None, contact_band: floa
         # solver and its stress recovery differ (a layered material as
         # engineering constants in the frame of its layers)
         t2 = time.time()
-        out["ccx"] = summarize(_solve_ccx(mat, nodes, conn, supports, loads, len(pts), el, normal))
+        out["ccx"] = summarize(_solve_ccx(mat, nodes, conn, supports, loads, len(pts), el, normal, m_c, shear_ratio))
         timings["ccx"] = time.time() - t2
     if not out:
         raise ValueError(f"backend must be 'native', 'ccx' or 'both', not {backend!r}")
@@ -1066,7 +1103,8 @@ def write_abaqus(fh, mat, nodes, conn, supports, loads, el=None, solver=None, he
         fh.write("*NODE FILE\nU\n*NODE FILE\nS\n*END STEP\n")
 
 
-def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=None):
+def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=None, ratio=1.0,
+               shear_ratio=float(np.sqrt(3.0))):
     """The quadratic system solved by CalculiX (ccx on PATH): one Abaqus-
     style deck, one static step per load case. Returns [(u, von Mises at
     the vertices)] per case, as the native solve does, and with `normal`
@@ -1102,16 +1140,12 @@ def _solve_ccx(mat, nodes, conn, supports, loads, n_vertices, el=None, normal=No
         steps = _read_frd(deck + ".frd", len(nodes))
     if len(steps) != len(loads):
         raise RuntimeError(f"CalculiX returned {len(steps)} steps for {len(loads)} load cases")
+    from .failure import bond_stress, equivalent_stress
+
     if normal is None:
-        return [(u, vm[:n_vertices]) for u, vm, _s in steps]
-    n = np.asarray(normal, float)
-    out = []
-    for u, vm, sig in steps:
-        sx, sy, sz, sxy, syz, szx = sig[:n_vertices].T
-        sn = (sx * n[0] ** 2 + sy * n[1] ** 2 + sz * n[2] ** 2
-              + 2.0 * (sxy * n[0] * n[1] + syz * n[1] * n[2] + szx * n[2] * n[0]))
-        out.append((u, vm[:n_vertices], sn))
-    return out
+        return [(u, equivalent_stress(sig[:n_vertices], ratio)) for u, _vm, sig in steps]
+    return [(u, equivalent_stress(sig[:n_vertices], ratio), bond_stress(sig[:n_vertices], normal, shear_ratio)[0])
+            for u, _vm, sig in steps]
 
 
 # CalculiX's solver: its direct SPOOLES factorization up to this many

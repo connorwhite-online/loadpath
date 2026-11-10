@@ -734,6 +734,37 @@
         "convection": {
           "anyOf": [
             {
+              "const": "natural",
+              "description": "still air: natural convection and radiation, solved per face from its own temperature, direction and what it faces"
+            },
+            {
+              "type": "object",
+              "description": "still air with its settings",
+              "properties": {
+                "type": {
+                  "const": "natural"
+                },
+                "emissivity": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1,
+                  "description": "the surface's (default 0.9 polymer, 0.25 bare metal)"
+                },
+                "up": {
+                  "description": "the direction opposing gravity (default '+z')"
+                },
+                "pressure": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "bar absolute (default 1.013)"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": false
+            },
+            {
               "type": "number",
               "minimum": 0,
               "description": "W/(m\u00b2 K) off every exposed surface"
@@ -766,7 +797,7 @@
               }
             }
           ],
-          "description": "Heat carried off the surface the design exposes (default 8 W/(m\u00b2 K), still air). An entry without region or shape covers every surface."
+          "description": "Heat carried off the surface the design exposes. Default \"natural\": still air, the coefficient a result of each face's temperature and surroundings (convection.py; typically 6-14 W/(m\u00b2 K) on a polymer, radiation included). A number or a list fixes it: a fan, a liquid, a measured value. An entry without region or shape covers every surface."
         },
         "conductivity": {
           "type": "number",
@@ -2680,6 +2711,12 @@
               "exclusiveMinimum": 0,
               "maximum": 1
             },
+            "interlayerShear": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "description": "the layer bond's shear strength over the in-plane tensile strength (default interlayer / sqrt(3))"
+            },
             "minFeature": {
               "type": "number",
               "exclusiveMinimum": 0
@@ -4347,6 +4384,12 @@
             "strengthZ": {
               "type": "number",
               "exclusiveMinimum": 0
+            },
+            "compressionRatio": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 3,
+              "description": "compressive over tensile strength (default: the material family's, failure.py)"
             },
             "measured": {
               "type": "string"

@@ -867,7 +867,12 @@
         },
         "tIn": {
           "type": "number",
-          "description": "\u00b0C"
+          "description": "\u00b0C. A named fluid (air, water, glycol50) is taken at its own state: this temperature, then the mean of inlet and outlet"
+        },
+        "pressure": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "bar absolute, for a gas (default 1.013): boost air at 2.5 bar is 2.5x as dense"
         }
       },
       "x-requireOne": [

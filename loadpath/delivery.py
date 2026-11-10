@@ -63,6 +63,13 @@ def attention(o: dict, study: dict) -> list[str]:
         out.append(f"durability safety factor {dur['safetyFactor']:.2f} (fatigue/creep) is under "
                    f"{dur.get('target', 1.5):g}: set durability.constrain to size for it")
     out.extend(dur.get("warnings") or [])
+    lay = ((o.get("failure") or {}).get("layers") or {}).get("note")
+    if lay:
+        out.append(lay)
+    env = o.get("serviceEnvelope") or {}
+    if env.get("note"):
+        # loads nobody timed: what the delivered stresses allow (durability.envelope)
+        out.append(env["note"])
     return out
 
 

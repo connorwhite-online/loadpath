@@ -93,7 +93,7 @@ import numpy as np
 
 __all__ = ["DurabilityData", "DURABILITY", "Durability", "durability_from_spec", "durability_data",
            "strength_retention", "fatigue_strength", "cycles_to_failure", "creep_ratio", "rupture_strength",
-           "assess"]
+           "assess", "hold_life", "temperature_ceiling", "envelope"]
 
 N_REF = 2e6           # cycles at which fatigue strength is quoted
 T_REF = 23.0          # C
@@ -255,6 +255,97 @@ def rupture_strength(data: DurabilityData, strength: float, hours: float) -> flo
         return float(strength)
     f = max(RUPTURE_FLOOR, 1.0 - data.rupture_per_decade * np.log10(hours / RUPTURE_T0))
     return float(strength * f)
+
+
+def hold_life(data: DurabilityData, utilization: float) -> float | None:
+    """Hours a stress of `utilization` x the short-term strength is held
+    before creep rupture (rupture_strength, inverted). None: no rupture
+    predicted (a metal, or a stress under the law's long-term floor)."""
+    if utilization >= 1.0:
+        return 0.0
+    if data.rupture_per_decade <= 0 or utilization <= RUPTURE_FLOOR:
+        return None
+    return float(RUPTURE_T0 * 10.0 ** ((1.0 - utilization) / data.rupture_per_decade))
+
+
+def temperature_ceiling(material, utilization: float) -> float | None:
+    """The temperature (C) at which a part worked to `utilization` of its
+    room-temperature strength has no margin left: where the retention curve
+    falls to that share. None without a curve; the curve's last point when
+    the stress is under everything it lists."""
+    from .thermal import MODULUS_RETENTION
+
+    pts = MODULUS_RETENTION.get(_key(material))
+    if not pts or utilization >= 1.0:
+        return None if not pts else float(pts[0][0])
+    tt = np.array([p[0] for p in pts], float)
+    gg = np.array([p[1] for p in pts], float)
+    if utilization <= gg[-1]:
+        return float(tt[-1])
+    # retention falls with temperature: interpolate on the reversed curve
+    return float(np.interp(utilization, gg[::-1], tt[::-1]))
+
+
+def envelope(study, cases: list, allowance: float = 1.0) -> dict:
+    """What the delivered part's stresses mean for loads nobody timed.
+
+    A static check reads every load as applied once, briefly, at room
+    temperature. Real loads are held (a shelf bracket for years), repeated
+    (a latch every day) and warm (a car in the sun), whether or not the
+    study says so. This turns each case's verified stress into the three
+    limits the same material data already implies, at no extra solve: the
+    hours the load can be held before creep rupture, the times it can be
+    applied before fatigue, and the temperature at which the short-term
+    margin is gone. They are estimates at a safety factor of 1, with the
+    scatter durability.py describes; a case that declares `hours`,
+    `cycles` or `temperature` is held to them by the durability check."""
+    dur = study.durability or Durability()
+    mat = study.material
+    data = durability_data(mat, dur.overrides)
+    proc = study.process
+    inter = proc.interlayer if proc is not None and proc.build not in (None, "auto") else None
+    heated = getattr(study, "thermal", None) is not None
+    rows, undeclared = [], []
+    for lc, c in zip(study.load_cases, cases):
+        s = mat.strength * (c.get("strengthRetention") or 1.0)
+        peak = (c.get("peakStress") or 0.0) * allowance
+        tens = (c.get("interlayerStress") or 0.0) * allowance if inter is not None else 0.0
+        u_in = peak / s if s > 0 else 0.0
+        u_bond = tens / (inter * s) if inter and s > 0 else 0.0
+        u = max(u_in, u_bond)
+        life = cycles_to_failure(data, s, peak)
+        if u_bond > 0:
+            life = min(life, cycles_to_failure(data, inter * s, tens))
+        row = {"name": lc.name, "utilization": u,
+               "limitedBy": "layer bond" if u_bond > u_in else "in-plane",
+               "heldHours": hold_life(data, u),
+               "cycles": life if np.isfinite(life) else None,
+               # a study with heat has solved its own temperatures
+               "maxTemperature": None if heated else temperature_ceiling(mat, u),
+               "declared": {k: v for k, v in (("hours", lc.hours), ("cycles", lc.cycles),
+                                              ("temperature", lc.temperature)) if v is not None}}
+        rows.append(row)
+        if not lc.hours and not lc.cycles:
+            undeclared.append(lc.name)
+    out = {"cases": rows, "data": data.to_dict(), "undeclared": undeclared}
+    for key in ("heldHours", "cycles", "maxTemperature"):
+        vals = [r[key] for r in rows if r[key] is not None]
+        out[key] = min(vals) if vals else None
+    if undeclared and rows:
+        def span(h):
+            if h is None:
+                return "indefinitely"
+            return f"about {h:.2g} h" if h < 8760 else f"about {h / 8760:.2g} years"
+        n = out["cycles"]
+        parts = [f"held {span(out['heldHours'])}", "applied without limit" if n is None else f"applied about {n:.2g} times"]
+        if out["maxTemperature"] is not None:
+            parts.append(f"up to about {out['maxTemperature']:.0f} C")
+        out["note"] = (f"{', '.join(undeclared[:4])}{' ...' if len(undeclared) > 4 else ''}: no duration or "
+                       "repeat count given, so checked as applied once, briefly, at room temperature. As "
+                       f"delivered the material data puts the limits at: {'; '.join(parts)} (each alone, at a "
+                       f"safety factor of 1; {data.quality} data). Give the case `hours`, `cycles` or "
+                       "`temperature` to design for its real service.")
+    return out
 
 
 def _thermal_cycles(study):

@@ -911,7 +911,7 @@ def exchanger_flow(hx, fluid: str, duty: dict | None = None, *, pitch: float | N
     from scipy import ndimage
 
     from .heatx import design_heat_exchanger, heat_exchanger_from_spec
-    from .heatx_thermal import _fluid, _flow, rate_design
+    from .heatx_thermal import _flow, duty_fluid, rate_design
     from .voxels import mesh_solid
 
     spec_duty = None
@@ -928,7 +928,7 @@ def exchanger_flow(hx, fluid: str, duty: dict | None = None, *, pitch: float | N
     mesh, report, spaces = design
     pitch = pitch or hx.wall / 2.5
     solid, origin, _ = mesh_solid(spaces[fluid], pitch, pad=1)
-    med = _fluid(duty[fluid].get("fluid", "water"))
+    med = duty_fluid(duty[fluid])
     m = _flow(duty[fluid], med)
 
     idx = np.indices(solid.shape).reshape(3, -1).T

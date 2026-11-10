@@ -294,6 +294,10 @@ print(best.report["mass"], best.report["safetyFactor"])
   report, the limits.
 - [Validation](docs/VALIDATION.md): what each model has been checked
   against.
+- [Physics](docs/PHYSICS.md): the rule the library is built on (every
+  default, boundary condition and check is a claim about the real world),
+  what a full pass of it found, what was fixed with before-and-after
+  numbers, and what is still a convenience, ranked.
 - [loadpath against nTop](docs/NTOP-PARITY.md): nTop's block reference
   row by row (implicit modelling, lattices, topology optimization,
   simulation, print preparation, export), what loadpath has, what it has

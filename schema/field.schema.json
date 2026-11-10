@@ -244,6 +244,12 @@
               "type": "number",
               "exclusiveMinimum": 0
             },
+            "compressionRatio": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 3,
+              "description": "compressive over tensile strength (default: the material family's, failure.py)"
+            },
             "measured": {
               "type": "string"
             },
@@ -325,6 +331,12 @@
                         "type": "number",
                         "exclusiveMinimum": 0
                       },
+                      "compressionRatio": {
+                        "type": "number",
+                        "minimum": 1,
+                        "maximum": 3,
+                        "description": "compressive over tensile strength (default: the material family's, failure.py)"
+                      },
                       "measured": {
                         "type": "string"
                       },
@@ -388,6 +400,12 @@
                         "strengthZ": {
                           "type": "number",
                           "exclusiveMinimum": 0
+                        },
+                        "compressionRatio": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 3,
+                          "description": "compressive over tensile strength (default: the material family's, failure.py)"
                         },
                         "measured": {
                           "type": "string"
@@ -1381,6 +1399,12 @@
               "type": "number",
               "exclusiveMinimum": 0,
               "maximum": 1
+            },
+            "interlayerShear": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "description": "the layer bond's shear strength over the in-plane tensile strength (default interlayer / sqrt(3))"
             },
             "minFeature": {
               "type": "number",

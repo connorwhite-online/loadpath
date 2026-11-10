@@ -63,6 +63,8 @@ metric.
 | `costing.py` | service-bureau cost and lead-time estimate per method from the delivered mesh (filament + printer hours, powder + build share, resin + layers, LPBF powder + melt and recoat hours + post-processing, casting tooling + metal + foundry, milling programming + set-ups + stock + roughing/finishing hours); every rate in `RATES`/`MATERIAL_PRICE`, overridable (`explore.costs`) |
 | `reconstruct.py` | field -> printable mesh: cubic upsampling, opening at min member, fade at keep-outs, smooth-min rounding at the design boundary (flush at supports and loads), 3 mm fillets into preserved geometry, exact booleans |
 | `verify.py` | independent voxelization + FEA of the delivered mesh, hotspot submodels, layer-bond check, boundary-cut metric, stress fields |
+| `failure.py` | what breaks a printed part: the pressure-modified von Mises stress (compressive over tensile strength by material family, `material.compressionRatio`) read against tensile strength, and the layer bond's tension and shear together (`process.interlayerShear`); verify.py and crosscheck.py both read it; `report["failure"]` (and `layers.ifBuiltAlong` when a study gives no build direction). docs/PHYSICS.md |
+| `convection.py` | still air (`thermal.convection: "natural"`, the default): per-face natural convection by direction and film temperature, choked between facing walls, plus radiation by emissivity and each face's view of the room (rays through the voxel grid); thermal.StudyHeat iterates it with its own temperatures |
 | `crosscheck.py` | second opinion on a tet mesh: gmsh + native P2 assembly + p-multigrid; CalculiX deck writer |
 | `study.py` | the search on safety factor / deflection, fine-grid confirm of the pick, multi-material, parallel |
 | `render.py` | clay renders, stress maps, interface close-ups |
@@ -170,6 +172,8 @@ Python API worth knowing: `run_study`, `verify_part(..., fields=True)`,
 ## Open problems
 
 Current gaps and their evidence are tracked in docs/VALIDATION.md (what each
-model has been checked against) and docs/assumption-audit.md (assumptions
-still standing), and docs/NTOP-PARITY.md holds the whole library against
+model has been checked against), docs/assumption-audit.md (assumptions
+still standing) and docs/PHYSICS.md (the physics lens: every default,
+boundary condition and check held against what happens to a real part,
+with the ranked list of what is still a convenience), and docs/NTOP-PARITY.md holds the whole library against
 nTop's block reference. Physical validation of printed parts is the largest one.

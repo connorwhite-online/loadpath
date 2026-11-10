@@ -1,0 +1,316 @@
+{
+ "exchanger": {
+  "before": {
+   "effectiveness": 0.951,
+   "duty": 8043,
+   "airRe": 1493,
+   "airPressureDrop": 1798,
+   "airH": 260,
+   "coolantRe": 42,
+   "coolantPressureDrop": 1226,
+   "coolantH": 1862
+  },
+  "after": {
+   "effectiveness": 0.962,
+   "duty": 8171,
+   "airRe": 1272,
+   "airPressureDrop": 913,
+   "airH": 283,
+   "coolantRe": 78,
+   "coolantPressureDrop": 1184,
+   "coolantH": 2209
+  }
+ },
+ "boss": {
+  "twist 3 N\u00b7m": {
+   "before": {
+    "safetyFactor": 3.274,
+    "limitedBy": "in-plane",
+    "peakStress": 12.48,
+    "interlayerStress": 0.05,
+    "heldHours": 882579.7685479869,
+    "cycles": 4305.840067951563,
+    "maxTemperature": 73.41643990815851
+   },
+   "after": {
+    "safetyFactor": 2.292,
+    "limitedBy": "layer bond",
+    "peakStress": 11.34,
+    "interlayerStress": 6.83,
+    "heldHours": 43441.49825889706,
+    "cycles": 606.3267452879581,
+    "maxTemperature": 69.67972798649171
+   }
+  },
+  "pull 800 N": {
+   "before": {
+    "safetyFactor": 3.364,
+    "limitedBy": "layer bond",
+    "peakStress": 5.12,
+    "interlayerStress": 4.65,
+    "heldHours": 1064366.4005961982,
+    "cycles": 4994.951028893357,
+    "maxTemperature": 73.6488318757073
+   },
+   "after": {
+    "safetyFactor": 3.363,
+    "limitedBy": "layer bond",
+    "peakStress": 5.2,
+    "interlayerStress": 4.65,
+    "heldHours": 1062599.8461886737,
+    "cycles": 4988.2898557029785,
+    "maxTemperature": 73.64677071059884
+   }
+  },
+  "push 800 N": {
+   "before": {
+    "safetyFactor": 7.976,
+    "limitedBy": "in-plane",
+    "peakStress": 5.12,
+    "interlayerStress": 0.0,
+    "heldHours": null,
+    "cycles": 576756.7738079715,
+    "maxTemperature": 81.23157256316902
+   },
+   "after": {
+    "safetyFactor": 9.693,
+    "limitedBy": "in-plane",
+    "peakStress": 4.22,
+    "interlayerStress": 0.37,
+    "heldHours": null,
+    "cycles": 1684939.6692096523,
+    "maxTemperature": 82.34171212925568
+   }
+  },
+  "side 60 N": {
+   "before": {
+    "safetyFactor": 2.975,
+    "limitedBy": "layer bond",
+    "peakStress": 5.52,
+    "interlayerStress": 5.26,
+    "heldHours": 435643.1330825258,
+    "cycles": 2544.1703587131865,
+    "maxTemperature": 72.54037392218564
+   },
+   "after": {
+    "safetyFactor": 2.975,
+    "limitedBy": "layer bond",
+    "peakStress": 5.54,
+    "interlayerStress": 5.26,
+    "heldHours": 435544.20105671394,
+    "cycles": 2543.759724140174,
+    "maxTemperature": 72.54009210231328
+   }
+  }
+ },
+ "heatSink": {
+  "0": {
+   "area": 3840,
+   "fixed": 73.3,
+   "natural": 60.1,
+   "h": {
+    "mean": 11.24,
+    "min": 7.06,
+    "max": 18.36
+   },
+   "view": 1.0
+  },
+  "4": {
+   "area": 10480,
+   "fixed": 42.9,
+   "natural": 43.0,
+   "h": {
+    "mean": 7.97,
+    "min": 6.11,
+    "max": 10.57
+   },
+   "view": 0.63
+  },
+  "8": {
+   "area": 17120,
+   "fixed": 36.0,
+   "natural": 40.5,
+   "h": {
+    "mean": 5.67,
+    "min": 4.12,
+    "max": 10.26
+   },
+   "view": 0.41
+  },
+  "14": {
+   "area": 27080,
+   "fixed": 32.0,
+   "natural": 46.5,
+   "h": {
+    "mean": 2.55,
+    "min": 0.36,
+    "max": 11.05
+   },
+   "view": 0.27
+  }
+ },
+ "delivered": {
+  "printed-hook": {
+   "material": "petg",
+   "before": {
+    "safetyFactor": 1.322,
+    "limitedBy": null,
+    "peakStress": 30.91,
+    "interlayerStress": null,
+    "heldHours": 27.36576295238641,
+    "cycles": 29.395306861567903,
+    "maxTemperature": 57.18603780348387
+   },
+   "after": {
+    "safetyFactor": 1.312,
+    "limitedBy": null,
+    "peakStress": 31.15,
+    "interlayerStress": null,
+    "heldHours": 23.89709281934971,
+    "cycles": 28.168190136187487,
+    "maxTemperature": 56.891725352165416
+   },
+   "ifBuiltAlong": {
+    "x": 0.49,
+    "y": 1.31,
+    "z": 0.49
+   },
+   "compressionRatio": 1.2
+  },
+  "wall-bracket": {
+   "material": "pla",
+   "before": {
+    "safetyFactor": 2.76,
+    "limitedBy": null,
+    "peakStress": 16.07,
+    "interlayerStress": null,
+    "heldHours": 237925.50239193212,
+    "cycles": 1681.8437229571362,
+    "maxTemperature": 57.970551243774494
+   },
+   "after": {
+    "safetyFactor": 2.946,
+    "limitedBy": null,
+    "peakStress": 15.05,
+    "interlayerStress": null,
+    "heldHours": 402976.40359402215,
+    "cycles": 2407.730926777978,
+    "maxTemperature": 58.25659952080004
+   },
+   "ifBuiltAlong": {
+    "x": 1.08,
+    "y": 1.08,
+    "z": 1.08
+   },
+   "compressionRatio": 1.2
+  },
+  "motor-mount": {
+   "material": "petg",
+   "before": {
+    "safetyFactor": 4.489,
+    "limitedBy": null,
+    "peakStress": 9.1,
+    "interlayerStress": null,
+    "heldHours": null,
+    "cycles": 24438.319156848964,
+    "maxTemperature": 76.36268070978124
+   },
+   "after": {
+    "safetyFactor": 5.179,
+    "limitedBy": null,
+    "peakStress": 7.89,
+    "interlayerStress": null,
+    "heldHours": null,
+    "cycles": 53599.31013710556,
+    "maxTemperature": 77.84472396281754
+   },
+   "ifBuiltAlong": {
+    "x": 3.5,
+    "y": 2.32,
+    "z": 2.19
+   },
+   "compressionRatio": 1.2
+  },
+  "bell-crank": {
+   "material": "alsi10mg",
+   "before": {
+    "safetyFactor": 3.143,
+    "limitedBy": null,
+    "peakStress": 76.08,
+    "interlayerStress": null,
+    "heldHours": null,
+    "cycles": 1406270.78533655,
+    "maxTemperature": 300.0
+   },
+   "after": {
+    "safetyFactor": 3.143,
+    "limitedBy": null,
+    "peakStress": 76.08,
+    "interlayerStress": null,
+    "heldHours": null,
+    "cycles": 1406270.78533655,
+    "maxTemperature": 300.0
+   },
+   "ifBuiltAlong": {
+    "x": 3.5,
+    "y": 2.8,
+    "z": 10.5
+   },
+   "compressionRatio": 1.0
+  },
+  "mbb-beam": {
+   "material": "pa12",
+   "before": {
+    "safetyFactor": 0.817,
+    "limitedBy": null,
+    "peakStress": 53.23,
+    "interlayerStress": null,
+    "heldHours": 0.0,
+    "cycles": 1.0,
+    "maxTemperature": 23.0
+   },
+   "after": {
+    "safetyFactor": 0.794,
+    "limitedBy": null,
+    "peakStress": 54.76,
+    "interlayerStress": null,
+    "heldHours": 0.0,
+    "cycles": 1.0,
+    "maxTemperature": 23.0
+   },
+   "ifBuiltAlong": {
+    "x": 1.3,
+    "y": 4.38,
+    "z": 0.92
+   },
+   "compressionRatio": 1.15
+  },
+  "robot-wrist-yoke": {
+   "material": "pa12-gf",
+   "before": {
+    "safetyFactor": 1.835,
+    "limitedBy": null,
+    "peakStress": 24.17,
+    "interlayerStress": null,
+    "heldHours": 3549.215203364179,
+    "cycles": 5109.5537703038535,
+    "maxTemperature": null
+   },
+   "after": {
+    "safetyFactor": 1.784,
+    "limitedBy": null,
+    "peakStress": 24.85,
+    "interlayerStress": null,
+    "heldHours": 2489.1851753577785,
+    "cycles": 3866.389563811209,
+    "maxTemperature": null
+   },
+   "ifBuiltAlong": {
+    "x": 3.38,
+    "y": 3.11,
+    "z": 2.4
+   },
+   "compressionRatio": 1.15
+  }
+ }
+}

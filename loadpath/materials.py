@@ -43,6 +43,9 @@ class Material:
     # mm: the thinnest wall this material is trusted to print, when it is
     # more than its process's (a thin flexible skin); None = the process's
     min_wall: float | None = None
+    # compressive / tensile strength, when measured (failure.py); None =
+    # the material family's ratio
+    compression: float | None = None
 
     def to_dict(self):
         out = {"name": self.name, "E": self.E, "nu": self.nu,
@@ -56,6 +59,8 @@ class Material:
             out["measured"] = self.measured
         if self.min_wall is not None:
             out["minWall"] = self.min_wall
+        if self.compression is not None:
+            out["compressionRatio"] = self.compression
         return out
 
     def across_layers(self):
@@ -71,7 +76,8 @@ def _from_card(name, c):
     get = (lambda k: float(v[k][0]) if k in v else None)
     return Material(name, get("E"), get("nu"), get("strength"), get("density"), c["title"],
                     c["processes"], E_z=get("EZ"), strength_z=get("strengthZ"),
-                    measured=c.get("measured", c["processes"][0]), min_wall=get("minWall"))
+                    measured=c.get("measured", c["processes"][0]), min_wall=get("minWall"),
+                    compression=get("compressionRatio"))
 
 
 # every value sourced: material_library.py (`loadpath materials <name>`)
@@ -130,7 +136,8 @@ def material_from_spec(spec) -> Material:
                          tuple(d.get("processes") or ()),
                          E_z=float(d["EZ"]) if d.get("EZ") is not None else None,
                          strength_z=float(d["strengthZ"]) if d.get("strengthZ") is not None else None,
-                         measured=str(d.get("measured") or ""))
+                         measured=str(d.get("measured") or ""),
+                         compression=float(d["compressionRatio"]) if d.get("compressionRatio") is not None else None)
         except KeyError as exc:
             raise ValueError(f"custom material is missing {exc.args[0]!r} (needs E, strength, density, "
                              "or a base material)") from None
@@ -138,6 +145,8 @@ def material_from_spec(spec) -> Material:
             raise ValueError("custom material needs E, strength, density > 0 and 0 <= nu < 0.5")
         if (m.E_z is not None and m.E_z <= 0) or (m.strength_z is not None and m.strength_z <= 0):
             raise ValueError("custom material EZ and strengthZ must be > 0")
+        if m.compression is not None and not 1.0 <= m.compression <= 3.0:
+            raise ValueError("custom material compressionRatio is compressive over tensile strength, in [1, 3]")
         return m
     raise ValueError("material must be a name or {E, nu, strength, density}")
 

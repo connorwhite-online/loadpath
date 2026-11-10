@@ -520,7 +520,7 @@ _MESH_QUERY = threading.Lock()
 
 
 def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, band, case=None, edges=None,
-                   cut=False):
+                   cut=False, ratio=1.0):
     """Re-solve a small box around a global hotspot at a finer pitch, driven by
     the global displacement field on the box's cut faces (classic FE
     submodeling). Voxel stress converges only with about 8 cells across a
@@ -587,7 +587,9 @@ def _submodel_peak(study, mesh, hm, u, center, half, pitch, mat, contact_xyz, ba
     us = np.zeros(sm.n_dof)
     us[pd] = up
     us[free] = uf
-    vm = von_mises(cgrid.nodal_stress(us, mat.E)) if cgrid is not None else nodal_von_mises(st, us, mat.E)
+    from .failure import equivalent_stress
+
+    vm = equivalent_stress(cgrid.nodal_stress(us, mat.E) if cgrid is not None else nodal_stress(st, us, mat.E), ratio)
     if case is not None and fp.any():
         # over the global grid's reach: a finer staircase is no smoother
         vm = _smooth_wetted(sm.node_xyz, vm, np.abs(fp.reshape(-1, 3)).sum(axis=1) > 0, hm.pitch)
@@ -1187,15 +1189,19 @@ def _solve_grid(study: Study, g, nu, moduli, rhs):
     return stiff, solver.solve_many(k, rhs)
 
 
-def _layer_tension(sig, n, body, g_node=None):
-    """The tension pulling layers apart (stress normal to layers stacked
-    along unit `n`) at its worst node of `body`: (stress, strength
-    retention there, node). With g_node (hot parts) worst means stress over
-    retention."""
-    sn = sig[:, :3] @ (n * n) + 2.0 * (sig[:, 3] * n[0] * n[1] + sig[:, 4] * n[1] * n[2] + sig[:, 5] * n[2] * n[0])
-    tens = np.where(body, np.maximum(sn, 0.0), 0.0)
-    ti = int(np.argmax(tens if g_node is None else tens / np.maximum(g_node, 1e-3)))
-    return float(tens[ti]), (1.0 if g_node is None else float(g_node[ti])), ti
+def _layer_bond(sig, n, body, g_node=None, shear_ratio=float(np.sqrt(3.0))):
+    """What loads the bond between layers stacked along unit `n`, at its
+    worst node of `body`: the tension pulling the layers apart and the shear
+    sliding them, combined (failure.bond_stress; read against the bond's
+    tensile strength). Returns (stress, strength retention there, node,
+    the tension there, the shear there). With g_node (hot parts) worst means
+    stress over retention."""
+    from .failure import bond_stress
+
+    eq, tens, tau = bond_stress(sig, n, shear_ratio)
+    eq = np.where(body, eq, 0.0)
+    ti = int(np.argmax(eq if g_node is None else eq / np.maximum(g_node, 1e-3)))
+    return float(eq[ti]), (1.0 if g_node is None else float(g_node[ti])), ti, float(tens[ti]), float(tau[ti])
 
 
 def interlayer_readings(study: Study, mesh, builds, max_cells: int = 60_000, min_pitch: float | None = None,
@@ -1234,6 +1240,8 @@ def interlayer_readings(study: Study, mesh, builds, max_cells: int = 60_000, min
         return dataclasses.replace(study, process=dataclasses.replace(
             proc, build=b)).elastic(mat)
 
+    from .failure import bond_shear_ratio
+    shear_ratio = bond_shear_ratio(proc) if proc is not None else float(np.sqrt(3.0))
     g = _analysis_grid(study, mesh, vol, max_cells, min_pitch, contact_band, cut_cells, nu=mat.nu)
     hm, bc = g.hm, g.bc
     fg = gravity_force(hm, np.ones(hm.n_elem) if g.fill is None else g.fill, bc.gravity, bc.fixed) \
@@ -1280,14 +1288,35 @@ def interlayer_readings(study: Study, mesh, builds, max_cells: int = 60_000, min
                 u = sum(direction[j] * disp[i] for j, i in enumerate(idx[1:]))
                 if idx[0] is not None:
                     u = u + disp[idx[0]]
-            t, _, ti = _layer_tension(nodal_stress(stiff, u, mat.E), n, bodies[ci])
-            cases.append({"name": case.name, "interlayerStress": t, "at": hm.node_xyz[ti].tolist()})
+            t, _, ti, tn, ts = _layer_bond(nodal_stress(stiff, u, mat.E), n, bodies[ci], None, shear_ratio)
+            cases.append({"name": case.name, "interlayerStress": t, "interlayerTension": tn,
+                          "interlayerShear": ts, "at": hm.node_xyz[ti].tolist()})
             worst = max(worst, t)
         ratio = proc.interlayer if proc is not None else 1.0
         out.append({"interlayerStress": worst, "cases": cases,
                     "interlayerSafetyFactor": (ratio * mat.strength / (worst * STRESS_ALLOWANCE)
                                                if worst > 0 else float("inf"))})
     return out
+
+
+def _undeclared_layers(study):
+    """(process kind, bond strength ratio) when the study names no build
+    direction but its material is made by a layered process whose bonds are
+    weaker than the layers; None when the direction is given (the bond is
+    checked for it) or nothing says the part is layered."""
+    from .spec import PROCESSES
+
+    proc = study.process
+    if proc is not None and proc.build not in (None, "auto"):
+        return None
+    mat = study.material
+    kind = proc.kind if proc is not None else (mat.processes[0] if mat.processes else None)
+    if kind not in PROCESSES:
+        return None
+    ratio = proc.interlayer if proc is not None else PROCESSES[kind]["interlayer"]
+    if proc is None and mat.measured == kind and mat.across_layers()[0] is not None:
+        ratio = mat.across_layers()[0]
+    return (kind, float(ratio)) if ratio < 1.0 else None
 
 
 def support_reactions(stiff, hm, u, f, moduli, nodes_of, fill=None, cg=None):
@@ -1495,7 +1524,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
                              "minRetention": float(heat.g.min()),
                              "expansion": heat.alpha if heat.expands else 0.0,
                              "stressFree": heat.t_ref,
-                             "heatIn": float(heat.bc.power)}
+                             "heatIn": float(heat.bc.power),
+                             **({"convection": heat.convection} if heat.convection is not None else {})}
         cyc = heat.cycle_result
         if cyc is not None:
             report["thermal"].update(
@@ -1506,6 +1536,17 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     # A force of unknown direction is solved along each axis and judged in
     # the direction that stresses the part most (directions.py).
     from .directions import expand, worst_stress_direction
+    from .failure import bond_shear_ratio, compression_ratio, criterion, equivalent_stress
+    # what breaks it (failure.py): the pressure-modified von Mises stress
+    # against the tensile strength (a polymer is stronger squeezed than
+    # pulled), and on layered parts the bond's tension and shear together
+    m_c = compression_ratio(mat)[0]
+    report["failure"] = criterion(mat, study.process)
+    # A part with no build direction is still printed in layers: read what
+    # the bond would carry for layers stacked along each axis, from the
+    # same stresses (failure block, below)
+    layers = _undeclared_layers(study)
+    axis_bond = np.zeros(3)
     spreads = bc.spreads or [None] * len(study.load_cases)
     rhs, layout = expand(bc.loads, spreads, fg)
 
@@ -1583,7 +1624,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         worst_dirs.append(direction)
         if sup_nodes and not study.self_equilibrated:
             reaction_rows.append((case.name, support_reactions(stiff, hm, u, f, moduli, sup_nodes, fill, cg)))
-        vm = nodal_von_mises(stiff, u, moduli, eps)
+        sig_u = nodal_stress(stiff, u, moduli, eps)
+        vm = equivalent_stress(sig_u, m_c)
         env = vm if env is None else np.maximum(env, vm)
         if bc.case_pressure_nodes[ci].any():
             vm = _smooth_wetted(hm.node_xyz, vm, bc.case_pressure_nodes[ci], pitch)
@@ -1606,7 +1648,8 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
 
             def sub(c, u=u, case=case, half=half, contact=contact):
                 return _submodel_peak(study, mesh, hm, u, c, half, pitch / 2.5, mat,
-                                      hm.node_xyz[contact], band, case, edges=edges, cut=cg is not None)
+                                      hm.node_xyz[contact], band, case, edges=edges, cut=cg is not None,
+                                      ratio=m_c)
             if len(spots) > 1:
                 # independent boxes, on threads (the solves release the GIL;
                 # amg_solver sets up one at a time, so the same numbers)
@@ -1653,7 +1696,11 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         # hole. Under-reading stress is the unsafe direction, so the factor
         # is computed against peak * STRESS_ALLOWANCE.
         sf = keep * mat.strength / (peak * STRESS_ALLOWANCE) if peak > 0 else np.inf
-        inter = None
+        if layers is not None:
+            for ax in range(3):
+                b_eq, b_keep = _layer_bond(sig_u, np.eye(3)[ax], body, g_node)[:2]
+                axis_bond[ax] = max(axis_bond[ax], b_eq / max(b_keep, 1e-3))
+        inter, bond_row = None, {}
         proc = study.process
         if proc is not None and proc.build not in (None, "auto") and proc.interlayer < 1.0:
             # Layered parts part along their layers: the tension pulling
@@ -1661,9 +1708,12 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             # strength, a fraction of the in-plane one.
             from .am import build_vector
 
-            sig = nodal_stress(stiff, u, moduli, eps)
-            inter, k_in, _ = _layer_tension(sig, build_vector(proc.build), body, g_node)
+            inter, k_in, bi, b_tens, b_shear = _layer_bond(sig_u, build_vector(proc.build), body, g_node,
+                                                           bond_shear_ratio(proc))
             sf_inter = k_in * proc.interlayer * mat.strength / (inter * STRESS_ALLOWANCE) if inter > 0 else np.inf
+            bond_row = {"interlayerTension": b_tens, "interlayerShear": b_shear,
+                        "interlayerAt": hm.node_xyz[bi].tolist(), "interlayerSafetyFactor": sf_inter,
+                        "limitedBy": "layer bond" if sf_inter < sf else "in-plane"}
             sf = min(sf, sf_inter)
         cyc_row = {}
         if cold is not None:
@@ -1676,7 +1726,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
                     u_c = u_c + disp_c[idx[0]]
             s_h = nodal_stress(stiff, u, moduli, eps) / np.maximum(g_node, 1e-3)[:, None]
             s_c = nodal_stress(stiff_c, u_c, mod_c, eps_c) / np.maximum(g_c, 1e-3)[:, None]
-            util_c = von_mises(s_c)
+            util_c = equivalent_stress(s_c, m_c)
             pk_c = int(np.argmax(np.where(body, util_c, -1))) if body.any() else int(np.argmax(util_c))
             sf_c = mat.strength / (util_c[pk_c] * STRESS_ALLOWANCE) if util_c[pk_c] > 0 else np.inf
             sf = min(sf, sf_c)
@@ -1686,7 +1736,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
             # creep, not fatigue, so above that the swing counts: the
             # equivalent is min(max, range / 0.7). Stresses over retention,
             # so they read against room-temperature strength.
-            smax = np.maximum(von_mises(s_h), util_c)
+            smax = np.maximum(equivalent_stress(s_h, m_c), util_c)
             rng = von_mises(s_h - s_c)
             seq = np.where(body, np.minimum(smax, rng / 0.7), 0.0)
             pc = int(np.argmax(seq))
@@ -1711,6 +1761,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
                if g_node is not None else {}),
             **cyc_row,
             "interlayerStress": inter,
+            **bond_row,
             "deflection": defl,
             "maxDisplacement": float(np.linalg.norm(disp, axis=1).max()),
             **({"clearances": clear_rows} if clear_rows else {}),
@@ -1722,6 +1773,24 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         })
     report["cases"] = cases
     report["safetyFactor"] = worst_sf
+    if layers is not None:
+        kind, ratio = layers
+        sfs = {a: (float(ratio * mat.strength / (axis_bond[i] * STRESS_ALLOWANCE)) if axis_bond[i] > 0 else None)
+               for i, a in enumerate("xyz")}
+        low = min((v for v in sfs.values() if v is not None), default=None)
+        report["failure"]["layers"] = {
+            "checked": False, "process": kind, "interlayer": ratio,
+            "ifBuiltAlong": {a: {"interlayerStress": float(axis_bond[i]), "safetyFactor": sfs[a]}
+                             for i, a in enumerate("xyz")}}
+        if low is not None and low < worst_sf:
+            worst_ax = min((a for a in "xyz" if sfs[a] is not None), key=lambda a: sfs[a])
+            best_ax = max((a for a in "xyz" if sfs[a] is not None), key=lambda a: sfs[a])
+            report["failure"]["layers"]["note"] = (
+                f"no build direction given, so the layer bonds were not checked and the safety factor "
+                f"{worst_sf:.2f} is the solid material's. {mat.name} is printed in layers ({kind}: bonds about "
+                f"{ratio:.0%} of the in-plane strength): built along {worst_ax} the bonds would hold "
+                f"{sfs[worst_ax]:.2f}x the loads, along {best_ax} {sfs[best_ax]:.2f}x. Give the study "
+                "process.buildDirection (or 'auto') to design for it.")
     if reaction_rows:
         report["reactions"] = _reaction_report(study, reaction_rows)
         for r in report["reactions"]:
@@ -1791,7 +1860,13 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
                     report.setdefault("warnings", []).append(
                         f"the {len(vib['frequencies'])} modes computed stop at {vib['frequencies'][-1]:.0f} Hz, "
                         f"short of the top of '{row['name']}' ({hi:.0f} Hz): the band is not shown clear")
-    from .durability import active, assess
+    from .durability import active, assess, envelope
+    try:
+        # held how long, repeated how often, how warm: the limits the
+        # delivered stresses imply for loads nobody timed (durability.envelope)
+        report["serviceEnvelope"] = envelope(study, cases, STRESS_ALLOWANCE)
+    except (KeyError, ValueError, ZeroDivisionError) as exc:
+        report.setdefault("warnings", []).append(f"service envelope failed: {exc}")
     if active(study):
         # fatigue (cases with cycles), creep and relaxation (hours, preload)
         report["durability"] = assess(study, cases, STRESS_ALLOWANCE)

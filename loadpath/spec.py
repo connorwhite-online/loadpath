@@ -291,6 +291,9 @@ class Process:
     # lattice stiffness as printed over designed: None = the published-test
     # fit (lattice_print.print_factor), a number, or "designed" (1)
     lattice_stiffness: Any = None
+    # the layer bond's shear strength / in-plane tensile strength; None =
+    # interlayer / sqrt(3) (failure.py)
+    interlayer_shear: float | None = None
 
 
 def _process(spec) -> Process | None:
@@ -309,6 +312,10 @@ def _process(spec) -> Process | None:
     inter = float(spec.get("interlayer", base["interlayer"]))
     if not 0.0 < inter <= 1.0:
         raise ValueError("process.interlayer is a fraction of the in-plane strength, in (0, 1]")
+    ish = spec.get("interlayerShear")
+    if ish is not None and not 0.0 < float(ish) <= 1.0:
+        raise ValueError("process.interlayerShear is the layer bond's shear strength as a fraction of the "
+                         "in-plane tensile strength, in (0, 1]")
     stiff = {}
     for key, name in (("ez", "stiffnessAcrossLayers"), ("gz", "shearAcrossLayers")):
         if spec.get(name) is not None:
@@ -338,7 +345,8 @@ def _process(spec) -> Process | None:
                    anisotropic=_anisotropic(spec.get("anisotropic", False)),
                    escape_hole=float(esc) if esc is not None else None,
                    min_hole=float(spec.get("minHole", base["minHole"])),
-                   bridge_span=float(span) if span is not None else None, lattice_stiffness=lat_k, **stiff)
+                   bridge_span=float(span) if span is not None else None, lattice_stiffness=lat_k,
+                   interlayer_shear=float(ish) if ish is not None else None, **stiff)
 
 
 def _drains(spec, process):
@@ -498,13 +506,18 @@ class Thermal:
     soften: bool = True
     specific_heat: float | None = None        # J/(kg K); None: the material card's
     cycle: Any = None                         # thermal.Cycle: heat switched on and off, or None (steady)
+    # convection.NaturalConvection: still air, the coefficient solved per
+    # face from its own temperature (thermal.StudyHeat); None: as listed
+    natural: Any = None
 
     @property
     def t_ref(self):
         return self.ambient if self.stress_free is None else self.stress_free
 
 
-STILL_AIR = 8.0     # W/(m^2 K): the convection a thermal block gets when it names none
+# W/(m^2 K): where a still-air solve starts before it has temperatures to
+# read its own coefficient from (convection.py)
+STILL_AIR = 8.0
 
 
 def _thermal(t, base_dir) -> Thermal | None:
@@ -532,11 +545,38 @@ def _thermal(t, base_dir) -> Thermal | None:
         if spread not in ("surface", "volume"):
             raise ValueError(f"{label}.spread must be 'surface' or 'volume'")
         out.heat.append((region, shape, num(it.get("watts"), f"{label}.watts", True), spread))
-    conv = t.get("convection", STILL_AIR)
+    conv = t.get("convection", "natural")
+    if isinstance(conv, str) or (isinstance(conv, dict) and conv.get("type") == "natural"):
+        # still air: the coefficient is not an input but a result of the
+        # surface's temperature, direction and surroundings
+        from .am import build_vector, parse_build_direction
+        from .convection import NaturalConvection
+
+        if isinstance(conv, str) and conv.strip().lower() != "natural":
+            raise ValueError('thermal.convection is "natural", a coefficient in W/(m² K) or a list of '
+                             "{h, region|shape, fluid}")
+        opts = conv if isinstance(conv, dict) else {}
+        bad = set(opts) - {"type", "emissivity", "up", "pressure"}
+        if bad:
+            raise ValueError(f"thermal.convection (natural): unknown key(s) {sorted(bad)}; it takes emissivity, "
+                             "up and pressure")
+        em = opts.get("emissivity")
+        if em is not None and not 0.0 < num(em, "thermal.convection.emissivity") <= 1.0:
+            raise ValueError("thermal.convection.emissivity is in (0, 1]")
+        try:
+            up = build_vector(parse_build_direction(opts.get("up", "+z")))
+        except (ValueError, TypeError):
+            raise ValueError("thermal.convection.up is the direction opposing gravity: '+z', '-y', ... or "
+                             "[x, y, z]") from None
+        out.natural = NaturalConvection(None if em is None else float(em),
+                                        tuple(float(v) for v in up / np.linalg.norm(up)),
+                                        num(opts.get("pressure", 1.01325), "thermal.convection.pressure (bar)", True))
+        conv = STILL_AIR
     if isinstance(conv, (int, float)) and not isinstance(conv, bool):
         conv = [{"h": conv}]
     if not isinstance(conv, list):
-        raise ValueError("thermal.convection is a coefficient in W/(m² K) or a list of {h, region|shape, fluid}")
+        raise ValueError('thermal.convection is "natural", a coefficient in W/(m² K) or a list of '
+                         "{h, region|shape, fluid}")
     for i, it in enumerate(conv):
         label = f"thermal.convection[{i}]"
         h = num(it.get("h"), f"{label}.h (W/(m² K))")

@@ -233,6 +233,8 @@ class Outcome:
             **({"fits": r["fits"]} if r.get("fits") else {}),
             **({"thermal": r["thermal"]} if "thermal" in r else {}),
             **({"durability": r["durability"]} if "durability" in r else {}),
+            **({"serviceEnvelope": r["serviceEnvelope"]} if "serviceEnvelope" in r else {}),
+            **({"failure": r["failure"]} if "failure" in r else {}),
             **({"print": {k: v for k, v in r["print"].items() if k != "bridgeList"}} if "print" in r else {}),
             **({"process": r["process"]} if "process" in r else {}),
             **({"manufacturing": r["manufacturing"]} if "manufacturing" in r else {}),

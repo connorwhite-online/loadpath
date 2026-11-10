@@ -1330,6 +1330,13 @@ class StudyHeat:
         self.alpha = (_card(expansion, mat, "expansion coefficient") if a is True else float(a)) if a else None
         self.E0 = float(mat.E if modulus is None else modulus)
         self.bc = study_thermal_bc(study, mesh)
+        # still air: each outside face's coefficient is solved from its own
+        # temperature (convection.py); _natural holds what does not change
+        self.natural = getattr(th, "natural", None)
+        self._natural = None
+        self.convection = None
+        if self.natural is not None:
+            self._natural_setup(mat)
         self.cycle = th.cycle
         if self.cycle is not None:
             cp = th.specific_heat if th.specific_heat is not None else _card(specific_heat, mat, "specific heat")
@@ -1370,6 +1377,53 @@ class StudyHeat:
     def expands(self):
         return self.alpha is not None and self.alpha > 0
 
+    def _natural_setup(self, mat):
+        """Per face: which way it looks, what it looks at, and the lengths
+        its boundary layer grows over."""
+        from .convection import openness
+
+        mesh, faces = self.mesh, self.bc.faces
+        up = np.asarray(self.natural.up, float)
+        ijk = mesh.elem_ijk
+        dims = mesh.node_dims - 1
+        solid = np.zeros(tuple(dims), bool)
+        solid[tuple(ijk.T)] = True
+        sel = np.nonzero(self.bc.face_h > 0)[0]
+        outer = sel[faces.boundary[sel]]
+        gap = np.full(len(faces), np.inf)
+        view = np.ones(len(faces))
+        if len(outer):
+            gap[outer], view[outer] = openness(solid, ijk[faces.a[outer]], faces.normal[outer], mesh.pitch)
+        ext = (ijk.max(axis=0) - ijk.min(axis=0) + 1) * mesh.pitch
+        height = float(np.abs(up) @ ext)
+        # plan area over plan perimeter of the part's box, seen from above
+        ax = int(np.argmax(np.abs(up)))
+        a, b = np.delete(ext, ax)
+        self._natural = {"faces": sel, "facing": faces.normal[sel] @ up, "gap": gap[sel], "view": view[sel],
+                         "height": height, "width": float(a * b / (2.0 * (a + b))),
+                         "emissivity": self.natural.emissivity_for(mat)}
+
+    def _natural_update(self, theta) -> float:
+        """Set each still-air face's coefficient from the temperatures just
+        solved; returns the largest relative change."""
+        from .convection import natural_h
+
+        n = self._natural
+        sel = n["faces"]
+        ts = theta[self.bc.faces.nodes[sel]].mean(axis=1) + self.bc.ambient
+        h = natural_h(ts, self.bc.ambient, n["facing"], n["height"], n["width"], n["gap"], n["view"],
+                      n["emissivity"], self.natural.pressure) * 1e-6
+        old = self.bc.face_h[sel]
+        self.bc.face_h[sel] = h
+        wet = self.bc.faces.boundary[sel]
+        self.convection = {"model": "natural", "emissivity": n["emissivity"],
+                           "h": {"mean": float(h[wet].mean() * 1e6) if wet.any() else None,
+                                 "min": float(h[wet].min() * 1e6) if wet.any() else None,
+                                 "max": float(h[wet].max() * 1e6) if wet.any() else None},
+                           "chokedShare": float(np.mean(np.isfinite(n["gap"][wet]))) if wet.any() else 0.0,
+                           "meanView": float(n["view"][wet].mean()) if wet.any() else 1.0}
+        return float(np.max(np.abs(h - old) / np.maximum(old, 1e-12)))
+
     def temperature(self, rho=None, reuse=False):
         """Solve at densities rho (default solid): per-element C, and sets
         g, dg, eps. With a duty cycle: the cycle's hottest moment (and
@@ -1385,6 +1439,15 @@ class StudyHeat:
             theta = self.bc.fixed_t - self.bc.ambient
         else:
             theta = self.th.solve(rho)
+            if self._natural is not None:
+                # still air: the coefficients follow the temperatures they
+                # set. The first call iterates to agreement; later ones (an
+                # optimizer's next design) start from the last coefficients
+                # and take a step or two
+                for _ in range(8 if self.convection is None else 2):
+                    if self._natural_update(theta) < 0.02:
+                        break
+                    theta = self.th.solve(rho)
         if self.cycle is not None:
             self._calls += 1
             if not (reuse and self.r is not None and (self._calls - 1) % self.REFRESH):
