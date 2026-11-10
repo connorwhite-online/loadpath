@@ -189,7 +189,8 @@ def test_simp_direct_matches_assembled():
     opts = SimpOptions(volume_fraction=0.3, filter_radius=radius, max_iterations=25)
     out = {}
     for mode in ("assembled", "direct"):
-        with _env(LOADPATH_SOLVER=mode):
+        # (the sizes: SuperLU, where there is no PARDISO, factors this grid too)
+        with _env(LOADPATH_SOLVER=mode, LOADPATH_DIRECT_DOFS=f"10,{10 * dom.mesh.n_dof}"):
             t = time.time()
             out[mode] = optimize(dom, st.elastic(design=True), opts)
             out[mode + "_s"] = time.time() - t
@@ -226,7 +227,7 @@ def test_slow_multigrid_hands_over():
         simp._Analysis.solve = spy.__wrapped__ if hasattr(spy, "__wrapped__") else solve
         simp.MG_AUTO_CELLS, simp.MG_SLOW_ITERS = old
     assert seen and "mg" not in seen and set(seen) == {"direct"}, seen
-    with _env(LOADPATH_SOLVER="direct"):
+    with _env(LOADPATH_SOLVER="direct", LOADPATH_DIRECT_DOFS=f"10,{10 * dom.mesh.n_dof}"):
         ref = optimize(dom, st.elastic(design=True), opts)
     assert abs(got.compliance - ref.compliance) < 1e-6 * ref.compliance, (got.compliance, ref.compliance)
 
