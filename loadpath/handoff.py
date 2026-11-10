@@ -498,7 +498,7 @@ def handoff(brief: dict, base_dir: str | None = None) -> dict:
              "description": b.get("description", "push pad from a designer's handoff (loadpath handoff)"),
              "designSpace": ext_spec, "skin": skin_v, "preserve": preserve, "keepOut": keep,
              "supports": supports, "material": b.get("material", "tpu88a"), "switch": sw_block}
-    for k in ("minMember", "process", "goal", "resolution", "loadCases"):
+    for k in ("minMember", "process", "goal", "resolution", "loadCases", "expect"):
         if b.get(k) is not None:
             study[k] = b[k]
     study.setdefault("goal", {"volumeFraction": 0.2})

@@ -218,6 +218,12 @@ def main():
         "description": "Bluetooth shutter remote: dished button on top, coin cell, door underneath (layout.py)",
         "exterior": os.path.relpath(a.exterior, a.out), "skin": SKIN, "openings": [files["opening"]],
         "material": "tpu88a", "process": "sls", "minMember": 1.0, "restDepth": 1.5,
+        # Quick mode's usual 6000 cells put this 1.0 mm skin on 1.8 mm cells,
+        # where the design read the pocket press behind the button 26% stiff:
+        # it met 1200 gf on the design and the delivered part buckled there
+        # (680 gf, 7.9 mm of travel). On 1.3 mm cells, the full run's grid, the
+        # optimizer holds that press itself (1243 gf delivered, no buckling).
+        "expect": {"coarse": {"maxElements": 15000}},
         "components": [
             {"id": "door", "shape": files["door"], "external": True},
             {"id": "board", "shape": files["board"], "installedOn": "door"},

@@ -2617,6 +2617,8 @@ HANDOFF_SCHEMA = {
             "additionalProperties": False}]},
             "description": "where the exterior opens into the interior: no skin across their inner ends "
                            "(skin.openings, swept a skin and 0.2 mm inward by default)"},
+        "expect": {"type": "object", "description": "eval and tutorial criteria, passed to the study (expect.coarse."
+                                                 "maxElements: the grid quick mode may not go coarser than)"},
         "fixed": {"type": "array", "items": {"type": "object", "properties": {
             "id": {"type": "string"}, "shape": _HANDOFF_SHAPE}, "required": ["shape"],
             "additionalProperties": False},

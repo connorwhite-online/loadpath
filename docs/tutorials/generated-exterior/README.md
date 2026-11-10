@@ -7,7 +7,7 @@ device does. loadpath cleans the mesh into a skin it can trust, the agent
 (here a short script, [`layout.py`](layout.py)) decides what goes inside
 and where from the description, and `loadpath handoff` designs everything
 invisible so the button clicks where and how it should, checked on the
-printable mesh. The exterior stays exactly as generated. About 5 minutes
+printable mesh. The exterior stays exactly as generated. About 10 minutes
 with `--quick` (`LOADPATH_QUICK=1`), on 4 cores.
 
 ![the generated mesh as it came, and the skin made of it](images/exterior.png)
@@ -111,18 +111,26 @@ the least material (`handoff/handoff.json`, then `handoff/switch/`):
 
 ![force to click at each press](images/forces.png)
 
-| | quick (1.8 mm cells) | full (1.04 mm cells, 8.5 min on 4 cores) |
-|---|---|---|
-| press windows met, design | 9 of 9 | 9 of 9 |
-| button, design | 351 gf at the middle, 352-450 gf 5 mm out | 311 gf at the middle, 345-423 gf 5 mm out |
-| off the button, design | 1200 gf or more everywhere | 1198 gf just behind the button, 1970-4150 gf elsewhere |
-| delivered mesh | one watertight body, 6.8 g of TPU 88A | one watertight body, 6.8 g of TPU 88A |
-| delivered, read on 0.5 mm cut cells | | 9 of 9: button 331-457 gf, elsewhere 1214 gf and up (the chart) |
-| skin review | the bare 1.0 mm skin is 2% over the ceiling by the rim (460 gf): the exterior's own stiffness, for the designer | the same: 460 gf on the rim side on 0.5 mm cells |
+| | 1.3 mm cells, 10 min on 4 cores (quick and full alike) |
+|---|---|
+| press windows met, design | 9 of 9 |
+| button, design | 339 gf at the middle, 370-449 gf 5 mm out |
+| off the button, design | 1279 gf just behind the button, 2796-4215 gf elsewhere |
+| delivered mesh | one watertight body, 6.8 g of TPU 88A |
+| delivered, read on cut cells | 9 of 9: button 354-441 gf, 1243 gf just behind it, 2687 gf and up elsewhere |
+| large deflection | the click at the middle 326 gf; behind the button it still holds at 11 kgf |
+| skin review | the bare 1.0 mm skin alone reads 460 gf on the rim side, 2% over the 450 ceiling: the exterior's own stiffness, for the designer |
 
-The rim side of the button reads 457 gf delivered against the bare skin's
-460: the interior adds almost nothing there, the skin sets it. The press
-over the coin cell reads over 4 kgf: the cell carries the skin there,
+Quick mode keeps 15,000 cells here (`expect.coarse.maxElements` in the
+brief) instead of its usual 6,000. On 6,000 the 1.0 mm skin sits on 1.8 mm
+cells, and the design read the press just behind the button 26% stiff: it
+met 1200 gf on the design, while the part as delivered read 869 gf, and
+under a large-deflection press the skin there buckled (680 gf, 7.9 mm of
+travel). On 1.3 mm cells the optimizer holds that press itself.
+
+The rim side of the button reads 441 gf delivered, with the bare skin
+alone at 460: the interior can only soften it so far, the skin sets it. The press
+near the far end reads over 4 kgf, the end walls carrying the skin there,
 which is what "not in a pocket" wants.
 
 ## What the agent did and did not decide

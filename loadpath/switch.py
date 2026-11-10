@@ -1334,6 +1334,14 @@ def check_fire_nonlinear(domain: Domain, nu, spec: SwitchSpec, xphys: np.ndarray
             continue
         a, c = float(l @ u), float(l @ lam)
         f_lin = (target + spec.trigger * c) / max(a, 1e-12)
+        if a <= 1e-9 * abs(c) or not np.isfinite(f_lin):
+            # pressing here does not move the plunger toward the switch (a
+            # press over a standoff, a part the skin rests on): it cannot
+            # fire, however hard, and there is no click to ramp up to
+            out.append({"press": int(i), "at": spec.presses[i].at.tolist(), "linear": float("inf"),
+                        "nonlinear": float("inf"), "nonlinearOverLinear": 1.0, "converged": True,
+                        "cannotFire": True, "plungerResponse": a, "cells": int(sub.n_elem)})
+            continue
 
         def tip(P, start=None):
             load = P * f - spec.trigger * l
@@ -1547,6 +1555,19 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
         on_progress({"stage": "mesh"})
     np.save(os.path.join(out_dir, "xphys.npy"), r.xphys)
     mesh_field, mesh_study = _skin_lining(study, r.domain, extra)
+    if mesh_options is None or getattr(mesh_options, "axial_debias", None) is None:
+        # A push pad's interior is posts and ribs a cell or two across on
+        # its grid, and the fire forces count every one. The shrinking
+        # one-pass smoothing took a one-cell post (1.8 mm on the shutter
+        # remote's quick grid, over the minimum member) under the surface
+        # level, and the member pass then dropped it: the design held a
+        # pocket press on it, the delivered part had none. Thin members keep
+        # their volume here unless the study says otherwise.
+        from .reconstruct import ReconstructOptions
+        import copy
+        mesh_options = copy.copy(mesh_options) if mesh_options is not None else ReconstructOptions()
+        keep = (study.raw.get("resolution") or {}).get("keepThinMembers")
+        mesh_options.axial_debias = True if keep is None else bool(keep)
     mesh, info = reconstruct(mesh_study, r.domain, mesh_field, mesh_options)
     path = os.path.join(out_dir, f"{study.name}.stl")
     mesh.export(path)
