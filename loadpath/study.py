@@ -2281,8 +2281,10 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         # read 23-26 MPa there on three meshes of one part, and 13.7-13.9
         # MPa at its real peak mid-span beyond the band.)
         band = max(2.0 * element_size(study), 1.5 * domain.pitch)
+        job = getattr(o, "tet_job", None)     # a constrained part's, started beside its voxel check
+        o.tet_job = None
         try:
-            cc = prefetch.take(o)
+            cc = prefetch.take(job or o)
             if cc is None:
                 cc = crosscheck(study, o.mesh, contact_band=band)
         except Exception as exc:  # noqa: BLE001 - a mesher or solver failure means: confirm on voxels instead
@@ -2436,8 +2438,26 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                         build_direction=study.print_direction),
             limits, on_iter=on_iter, should_stop=should_stop)
         mesh, rinfo = reconstruct(study, domain, res.xphys, ReconstructOptions())
-        report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch,
+        # The tet cross-check starts beside the voxel check, not after it:
+        # every constrained part with a voxel reading is read on tets
+        # (below), the mesher is most of that minute and a half, and it
+        # ran while three cores sat idle (the wrist yoke: 85 s a part
+        # after a 117 s check).
+        job = None
+        if tets_on[0] and prefetch.on:
+            from types import SimpleNamespace
+
+            from .crosscheck import element_size
+
+            job = SimpleNamespace(mesh=mesh)
+            prefetch.submit(study, job, max(2.0 * element_size(study), 1.5 * domain.pitch))
+        try:
+            report = verify_part(study, mesh, min_pitch=0.5 * domain.pitch, contact_band=domain.pitch,
                                  max_pitch=domain.pitch)
+        except BaseException:
+            if job is not None:
+                prefetch.drop(job)
+            raise
         report.setdefault("warnings", []).extend(fragment_warnings(rinfo, mesh))
         opt = {"iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                "achievedVolumeFraction": res.volume_fraction, "method": "constrained",
@@ -2455,9 +2475,15 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         # in pieces (a mounting pad left loose) is not a part, whatever its margin
         o.passes = bool(m >= 1.0) and _whole(report)
         o.x = res.x
+        if job is not None:
+            if o.voxel_sf and report.get("bodies", 1) <= 1:
+                o.tet_job = job
+            else:
+                prefetch.drop(job)     # not one the loop below confirms
         emit({"stage": "outcome", **o.summary()})
         return o
 
+    tets_on = [False]     # the constrained loop's tet confirms (run_constrained starts them early)
     goal = study.goal
     if goal.method == "constrained" and _constrained_applies(study):
         from .constrained import Limits
@@ -2479,6 +2505,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         # and t is steered by that reading: the voxel one left the wall
         # brackets at SF 2.7-2.8 on voxels and 3.6 on tets for 2.5.
         tets = goal.safety_factor is not None and _confirm_on_tets(study, outcomes)
+        tets_on[0] = tets
         # Buckling (goal.buckling): the optimizer holds the design's smallest
         # buckling load factor at sf * kb / t (bucklingopt.py), so t relaxes
         # or tightens stress and stability together and the bisection below
@@ -2514,7 +2541,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 continue
             outcomes.append(o)
             if tets and o.voxel_sf and o.report.get("bodies", 1) <= 1 and tet_confirm(o) is None:
-                tets = False   # the mesher failed: voxels from here on
+                tets = tets_on[0] = False   # the mesher failed: voxels from here on
             r = o.report
             rs = r["safetyFactor"] / goal.safety_factor if goal.safety_factor else None
             rd = goal.max_deflection / max(c["deflection"] for c in r["cases"]) if goal.max_deflection else None

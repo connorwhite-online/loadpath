@@ -22,6 +22,7 @@ loop in study.py closes the remaining gap against the verified mesh.
 """
 from __future__ import annotations
 
+import os
 import time
 
 import numpy as np
@@ -42,8 +43,39 @@ __all__ = ["Limits", "optimize_constrained"]
 # density and the run converges onto the limit.
 _Q = 1.0
 _P = 8.0
-# iterations an inactive buckling constraint keeps its last reading
+# iterations an inactive buckling constraint (load factor over twice the one
+# asked) keeps its last reading
 BUCKLING_SKIP = 3
+# ... one with a third to spare (BUCKLING_NEAR or under): every other
+# iteration, where the printed hook's sat for most of a run at 10 s a reading
+BUCKLING_NEAR = -0.25
+# ... and one at BUCKLING_FAR or under (five times the load factor asked),
+# unless the projection sharpened or the volume moved by BUCKLING_VOLUME_STEP
+# since: a strut's Euler load goes with its section squared, so a design
+# cannot shed that margin in fewer steps than that
+BUCKLING_FAR = -0.8
+BUCKLING_SKIP_FAR = 7
+BUCKLING_VOLUME_STEP = 0.1
+# The buckling constraint reads the eroded, grey design, as stress and
+# stiffness do, and that design buckles far sooner than the part delivered:
+# its members are thinner by the erosion and softer by the penalization, and
+# a strut's Euler load goes with its thickness to the fourth power. The
+# wrist yoke's optimizer read 2.6 on a part that verified at 15.9, the
+# printed hook's parts came out at 44 g holding a limit they passed four
+# times over (the search's: 32 g), and a limit that looked active was
+# re-read every iteration, 10 s of an iteration's 12. So the reading is
+# scaled to the design that will be delivered: the same model on the crisp
+# blueprint (xp > 0.5), read once the projection has reached BUCKLING_CRISP_BETA
+# and again at each sharpening (and every BUCKLING_CRISP_EVERY readings),
+# gives the ratio crisp / eroded (never under 1, at most BUCKLING_CRISP_MAX,
+# averaged with the last so the constraint does not jump). What is left
+# between that and the verified part is the study's own correction
+# (study._BUCKLING_START, then each run's ratio). LOADPATH_BUCKLING_CRISP=0
+# reads the eroded design alone, as before.
+BUCKLING_CRISP = os.environ.get("LOADPATH_BUCKLING_CRISP", "1") != "0"
+BUCKLING_CRISP_BETA = 4.0
+BUCKLING_CRISP_EVERY = 12
+BUCKLING_CRISP_MAX = 8.0
 STRESS_POINTS = "corners"     # where cell stress is sampled: "corners" or "center"
 _VM = np.array([
     [1.0, -0.5, -0.5, 0, 0, 0],
@@ -96,6 +128,12 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
 
         buck = BucklingModel(domain, nu)
     buck_last, buck_age = None, 0
+    buck_beta, buck_vol = None, None
+    # crisp / eroded reading per buckling case (BUCKLING_CRISP), its own
+    # model (the crisp design's modes warm-start from the crisp design's)
+    buck_crisp = BucklingModel(domain, nu) if buck is not None and BUCKLING_CRISP else None
+    crisp_ratio = [1.0] * len(buck_cases)
+    crisp_beta, crisp_age = None, 0
 
     # Stress is not counted in cells where loads and supports are applied.
     contact = (domain.support_nodes | domain.load_nodes)[mesh.enode].any(axis=1)
@@ -238,20 +276,55 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
             # read it (bucklingopt.py): lambda_min >= limits.buckling as
             # limits.buckling * mu_ks - 1 <= 0
             # (at unit modulus the load factor is lambda / E)
-            # Far from the limit (load factor over twice the one asked)
-            # the last reading stands for up to BUCKLING_SKIP iterations:
-            # the eigensolve is most of an iteration on a big grid, and an
-            # inactive constraint's stale value and gradient do not steer.
+            # Away from the limit the last reading stands: one iteration
+            # with a third to spare, BUCKLING_SKIP at twice the load factor
+            # asked, BUCKLING_SKIP_FAR at five times. The eigensolve is most
+            # of an iteration on a big grid, and an inactive constraint's
+            # stale value and gradient do not steer. From twice on the
+            # reading is also taken loosely (bucklingopt.evaluate's `relax`):
+            # its value to a percent, and past BUCKLING_FAR no gradient.
             req = limits.buckling / limits.modulus
-            if buck_last is None or buck_age >= BUCKLING_SKIP or max(v for v, _ in buck_last) > -0.5:
+            worst_b = max(v for v, _ in buck_last) if buck_last is not None else 0.0
+            vol_now = float(xp[design].mean())
+            hold = 0 if worst_b > BUCKLING_NEAR else 1 if worst_b > -0.5 else BUCKLING_SKIP
+            if worst_b <= BUCKLING_FAR and buck_beta == beta \
+                    and abs(vol_now - buck_vol) <= BUCKLING_VOLUME_STEP * buck_vol:
+                hold = BUCKLING_SKIP_FAR
+            if buck_last is None or buck_age >= hold:
+                # (v = req / cr * mu - 1: the mu at v = -0.5 and at BUCKLING_FAR)
+                relax = [(0.5 * cr / req, (1.0 + BUCKLING_FAR) * cr / req) for cr in crisp_ratio]
                 try:
-                    got = buck.evaluate(xe, PENALTY, buck_cases)
+                    got = buck.evaluate(xe, PENALTY, buck_cases, relax=relax)
                 except Exception as exc:  # noqa: BLE001 - a failed eigensolve must not end the run
                     got = None
                     record["bucklingError"] = f"{type(exc).__name__}: {exc}"
                 if got is not None:
-                    buck_last = [(req * mu_ks - 1.0, to_x(req * dmu)) for mu_ks, dmu, _mus in got]
+                    buck_beta, buck_vol = beta, vol_now
+                    crisp_age += 1
+                    if buck_crisp is not None and beta >= BUCKLING_CRISP_BETA \
+                            and (crisp_beta != beta or crisp_age >= BUCKLING_CRISP_EVERY):
+                        xc = (xp > 0.5).astype(float)
+                        xc[pres] = 1.0
+                        buck_crisp.seed(buck)
+                        try:
+                            # (a reading alone: the loose tolerance whatever it reads)
+                            ref = buck_crisp.evaluate(xc, PENALTY, buck_cases, gradient=False,
+                                                      relax=[(np.inf, 0.0)] * len(buck_cases))
+                        except Exception:  # noqa: BLE001 - no reading: the last ratio stands
+                            ref = None
+                        if ref is not None:
+                            for j, ((mu_e, _, _), (mu_c, _, _)) in enumerate(zip(got, ref)):
+                                # (a crisp design that let go of the load reads 0: no reading)
+                                if mu_e > 0 and mu_c > 0:
+                                    r = float(np.clip(mu_e / mu_c, 1.0, BUCKLING_CRISP_MAX))
+                                    crisp_ratio[j] = r if crisp_beta is None else 0.5 * (crisp_ratio[j] + r)
+                            crisp_beta, crisp_age = beta, 0
+                            record["bucklingCrispSeconds"] = buck_crisp.last.get("seconds")
+                    buck_last = [(req / cr * mu_ks - 1.0, to_x(req / cr * dmu))
+                                 for (mu_ks, dmu, _mus), cr in zip(got, crisp_ratio)]
                     record["bucklingSeconds"] = buck.last.get("seconds")
+                    if buck_crisp is not None:
+                        record["bucklingCrispRatio"] = [float(v) for v in crisp_ratio]
                 elif buck_last is None:
                     # nothing read yet: inactive this iteration (verify still checks the part)
                     buck_last = [(-1.0, np.zeros(n)) for _ in buck_cases]
@@ -361,6 +434,8 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     xp = _project((h @ x) / hs, beta, opts.eta)
     xp[pres] = 1.0
     xp = printed(am_b, xp)
+    if buck is not None:
+        buck.keep()     # the study's next run on this grid starts from these modes
     return SimpResult(x=x, xphys=xp, compliance=float("nan"), case_compliance=[],
                       volume_fraction=float(xp[design].mean()), iterations=it,
                       converged=converged, seconds=time.time() - t0, history=history)

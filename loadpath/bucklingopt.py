@@ -40,11 +40,11 @@ import time
 import numpy as np
 import scipy.sparse as sp
 from scipy import ndimage
-from scipy.sparse.linalg import LinearOperator, eigsh, lobpcg
+from scipy.sparse.linalg import LinearOperator, eigsh
 
 from .fem import HexMesh, Stiffness, _hex8_parts, hex8_element
 
-__all__ = ["BucklingModel", "geometric_parts"]
+__all__ = ["BucklingModel", "block_modes", "geometric_parts"]
 
 _CONN26 = np.ones((3, 3, 3), bool)
 
@@ -54,41 +54,21 @@ def _factor(k: sp.csr_matrix, node_ijk=None):
     when available (symmetric positive definite, upper triangle; 10-30x
     SuperLU on 3D hex meshes, and a block of eight costs about two single
     solves), else SuperLU in nested-dissection order (node_ijk, the grid
-    nodes the dofs belong to; nonlinear._splu)."""
-    try:
-        import pypardiso
-    except ImportError:
-        from .nonlinear import _splu
+    nodes the dofs belong to; nonlinear._splu). Returns (solve, release)."""
+    from .nonlinear import _Pardiso, _have_pardiso, _splu
 
+    if not _have_pardiso():
         lu = _splu(k, node_ijk)
         return lu.solve, None
-    from .nonlinear import mkl_threads
-
-    a = sp.triu(k, format="csr")
-    a.sort_indices()
-    solver = pypardiso.PyPardisoSolver()
-    mkl_threads(solver)
-    solver.set_matrix_type(2)
     try:
-        solver.factorize(a)
-    except Exception:  # noqa: BLE001 - a zero pivot (a hinge in the live cells): pivoting LU
-        solver.free_memory(everything=True)
-        a = k.tocsr()
-        a.sort_indices()
-        solver = pypardiso.PyPardisoSolver()
-        mkl_threads(solver)
-        solver.set_matrix_type(11)
-        solver.factorize(a)
-    solver.set_phase(33)
-
-    def solve(b):
-        b = np.asarray(b, float)
-        mkl_threads(solver)
-        # straight to the solve phase: pypardiso.solve() hashes the matrix
-        # every call to see whether it is factored already
-        return solver._call_pardiso(a, np.asfortranarray(b) if b.ndim == 2 else np.ascontiguousarray(b))
-
-    return solve, lambda: solver.free_memory(everything=True)
+        # positive definite, else symmetric indefinite (a zero pivot: a
+        # hinge in the live cells), both on the upper triangle. The handle
+        # comes from nonlinear's pool: a new one looks for MKL with a
+        # recursive glob, 0.3-0.5 s of every evaluation
+        fac = _Pardiso(k)
+    except RuntimeError:
+        fac = _Pardiso(k, symmetric=False)      # pivoting LU: twice the factor
+    return fac.solve, fac.close
 
 
 def _gauss_im():
@@ -128,13 +108,122 @@ def geometric_parts(ue, phis, h, nu):
     return out
 
 
+# block_modes' iteration caps from the last design's modes / from nothing
+BLOCK_ITERS_WARM = 30
+BLOCK_ITERS_COLD = 60
+# ... and how far a wanted mode's residual may be from zero, in the K^-1
+# norm over mu_max (the eigenvalue is then good to about its square)
+BLOCK_TOL = 3e-3
+# ... and for a reading alone, where the modes' shapes do not matter (a
+# constraint far from its limit, the crisp reference): mu is good to a
+# percent here, in a third of the iterations (the wrist yoke, warm: 0.9% off
+# after one iteration at 0.10-0.12, six to reach BLOCK_TOL)
+BLOCK_TOL_LOOSE = 0.1
+
+
+def block_modes(a, solve, x0, nm: int, tol: float = BLOCK_TOL, maxiter: int = BLOCK_ITERS_WARM, k=None,
+                loose_below: float = 0.0):
+    """The largest eigenpairs of a phi = mu K phi for symmetric a and a K
+    given by its inverse (`solve`: a block of right-hand sides in, K^-1 of
+    them out), by locally optimal block iteration from the columns of x0:
+    Rayleigh-Ritz on [X, W, P], W = K^-1 (a X - K X mu) and P the last
+    step. Returns (mu (p,), X (n, p), iterations, converged), mu largest
+    first, X^T K X = I; converged means the first nm. With `k` (the matrix
+    itself) x0 is taken as it stands, which is right for the last design's
+    modes: a design one optimizer step on is then confirmed with a single
+    block solve. Without it x0 goes through one power step first (a random
+    start is all stiff-dof noise until it has). While the largest mu reads
+    under `loose_below`, BLOCK_TOL_LOOSE stands in for tol.
+
+    scipy's lobpcg does the same with K's inverse as its preconditioner,
+    but multiplies every block by K as well as a (here K W is the residual
+    itself and K X, K P follow from the combinations), and it judges
+    convergence on the residual's 2-norm, which the stiffest dofs dominate:
+    on the wrist yoke it ran its 25 iterations whether or not the modes had
+    settled, then fell back to ARPACK. The residual is measured here in the
+    K^-1 norm, r^T K^-1 r = r^T w, which costs nothing and is the one the
+    eigenvalue's error follows."""
+    from scipy.linalg import LinAlgError, eigh
+
+    def ritz(s, a_s, k_s, take):
+        g = s.T @ a_s
+        m = s.T @ k_s
+        g, m = 0.5 * (g + g.T), 0.5 * (m + m.T)
+        d = np.diag(m)
+        if not np.all(d > 0):
+            return None
+        d = 1.0 / np.sqrt(d)
+        try:
+            th, cv = eigh(g * d[:, None] * d[None, :], m * d[:, None] * d[None, :])
+        except (LinAlgError, ValueError):
+            return None
+        o = np.argsort(-th)[:take]
+        return th[o], d[:, None] * cv[:, o]
+
+    p = x0.shape[1]
+    got = None
+    if k is not None:
+        x = np.asarray(x0, float)
+        kx = np.asarray(k @ x)
+        ax = np.asarray(a @ x)
+        got = ritz(x, ax, kx, p)
+    if got is None:
+        # one power step: X = K^-1 a x0, so K X = a x0 without multiplying
+        # by K (and X is zero on held dofs, as a's rows are)
+        kx = np.asarray(a @ x0)
+        x = np.asarray(solve(kx)).reshape(kx.shape)
+        ax = np.asarray(a @ x)
+        got = ritz(x, ax, kx, p)
+    if got is None:
+        return np.zeros(p), x, 0, False
+    th, cv = got
+    x, ax, kx = x @ cv, ax @ cv, kx @ cv
+    pk = apk = kpk = None
+    for it in range(1, maxiter + 1):
+        r = ax - kx * th
+        w = np.asarray(solve(r)).reshape(r.shape)
+        rn = np.sqrt(np.maximum(np.einsum("ij,ij->j", r, w), 0.0))
+        if th[0] > 0 and np.all(rn[:nm] <= (max(tol, BLOCK_TOL_LOOSE) if th[0] < loose_below else tol) * th[0]):
+            return th, x, it - 1, True
+        aw = np.asarray(a @ w)
+        got = None
+        if pk is not None:
+            got = ritz(np.hstack([x, w, pk]), np.hstack([ax, aw, apk]), np.hstack([kx, r, kpk]), p)
+            if got is not None:
+                th_n, cv = got
+                cx, cw, cp = cv[:p], cv[p:2 * p], cv[2 * p:]
+                pn, apn, kpn = w @ cw + pk @ cp, aw @ cw + apk @ cp, r @ cw + kpk @ cp
+        if got is None:
+            got = ritz(np.hstack([x, w]), np.hstack([ax, aw]), np.hstack([kx, r]), p)
+            if got is None:
+                return th, x, it, False
+            th_n, cv = got
+            cx, cw = cv[:p], cv[p:]
+            pn, apn, kpn = w @ cw, aw @ cw, r @ cw
+        x, ax, kx = x @ cx + pn, ax @ cx + apn, kx @ cx + kpn
+        pk, apk, kpk = pn, apn, kpn
+        th = th_n
+    return th, x, maxiter, False
+
+
+# Cells under this density are left out of the buckling model: x^3 there is
+# under the void floor every cell is given anyway (simp.E_MIN, 1e-6), and
+# the stress stiffness faded to nothing well above it (BucklingModel.interp).
+# At simp.ALIVE (1e-3) a run started from the last passing design factored
+# the whole grid on its first reading: resumed at a soft projection, the
+# void of that design sits at 0.001-0.01 everywhere (the wrist yoke: 116,833
+# of 119,398 cells over 1e-3, 21,906 over 1e-2), a 400k-dof factorization
+# and its 3.4 GB for cells that carry nothing: 97 s of a 245 s run.
+ALIVE = 1e-2
+
+
 class BucklingModel:
     """Buckling load factors and their gradients for density designs on
     `domain`'s grid. `n_modes` modes per load case are computed and
     aggregated (KS, `rho`)."""
 
     def __init__(self, domain, nu: float, n_modes: int = 4, rho: float = 40.0, cutoff: float = 0.3,
-                 alive: float = 1e-3):
+                 alive: float = ALIVE):
         self.domain = domain
         self.nu = nu
         self.n_modes = n_modes
@@ -144,7 +233,10 @@ class BucklingModel:
         mesh = domain.mesh
         self.support_touch = domain.support_nodes[mesh.enode].any(axis=1)
         self.anchor = self.support_touch | domain.load_nodes[mesh.enode].any(axis=1) | domain.preserve
-        self._v0 = {}
+        # the last design's modes per load case, where the next solve
+        # starts; a model made later on the same domain (the study's next
+        # constrained run) starts from them too
+        self._v0 = dict(getattr(domain, "_buckling_modes", None) or {})
         self._mu0 = {}
         self.last = {}
 
@@ -167,39 +259,34 @@ class BucklingModel:
         deg = p * xe ** (p - 1) * f + xe ** p * df
         return e, de, eg, deg
 
-    def _modes(self, c, a, k, minv, nm, fd, n_full):
-        """The nm largest mu of a phi = mu k phi, largest first. Warm
-        (LOBPCG from the last iteration's modes, preconditioned with the
-        factorization: a few block solves) when there are last modes,
-        else ARPACK in shift-invert-like mode 2 (tens of solves)."""
+    def _modes(self, c, a, k, minv, nm, fd, n_full, loose_below=0.0):
+        """The nm largest mu of a phi = mu k phi, largest first: block
+        iteration on the factorization (block_modes), from the last
+        iteration's modes when there are any, else ARPACK in shift-invert-like
+        mode 2 (tens of solves) if the block iteration does not settle."""
         prev = self._v0.get(c)
+        p = nm + 2
+        warm = False
         if prev is not None:
-            p = nm + 2
             x0 = prev[fd]
-            if x0.shape[1] < p:
+            warm = x0.shape[1] >= p
+            if not warm:
                 x0 = np.hstack([x0, np.random.default_rng(c).standard_normal((len(fd), p - x0.shape[1]))])
-            try:
-                with np.errstate(all="ignore"):
-                    import warnings
-
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")
-                        # residuals to 0.3% of mu: the eigenvalues come out
-                        # good to about the square of that
-                        tol = 3e-3 * self._mu0.get(c, 1.0)
-                        mu, vec, res = lobpcg(a, x0, B=k, M=minv, largest=True, tol=tol, maxiter=25,
-                                              retResidualNormsHistory=True)
-                order = np.argsort(-mu)
-                mu, vec = mu[order], vec[:, order]
-                # converged on the wanted modes (relative to mu_max)?
-                r = np.asarray(res[-1])[order][:nm] if len(res) else np.full(nm, np.inf)
-                if mu[0] > 0 and np.all(np.isfinite(mu)) and np.all(r < 1e-2 * abs(mu[0])):
-                    self._mu0[c] = float(mu[0])
-                    self._store(c, vec, fd, n_full)
-                    self.last_method = "lobpcg"
-                    return mu[:nm], vec[:, :nm]
-            except Exception:  # noqa: BLE001 - fall back to ARPACK below
-                pass
+        else:
+            x0 = np.random.default_rng(c).standard_normal((len(fd), p))
+        try:
+            with np.errstate(all="ignore"):
+                mu, vec, its, ok = block_modes(a, minv.matmat, x0[:, :p], nm,
+                                               maxiter=BLOCK_ITERS_WARM if prev is not None else BLOCK_ITERS_COLD,
+                                               k=k if warm else None, loose_below=loose_below)
+            self.last_its = its
+            if ok and mu[0] > 0 and np.all(np.isfinite(mu)):
+                self._mu0[c] = float(mu[0])
+                self._store(c, vec, fd, n_full)
+                self.last_method = "block"
+                return mu[:nm], vec[:, :nm]
+        except Exception:  # noqa: BLE001 - fall back to ARPACK below
+            pass
         try:
             mu, vec = eigsh(a, k=nm, M=k, Minv=minv, which="LA", tol=1e-4, maxiter=2000)
         except Exception:  # noqa: BLE001 - ARPACK did not converge: once more, looser
@@ -216,6 +303,20 @@ class BucklingModel:
         full[fd] = vec
         self._v0[c] = full
 
+    def seed(self, other: "BucklingModel") -> None:
+        """Start the cases this model has no modes for from `other`'s (the
+        crisp blueprint's from the eroded design's: the same members,
+        thicker): 6 iterations where a random start took 22."""
+        for c, v in other._v0.items():
+            self._v0.setdefault(c, v)
+
+    def keep(self) -> None:
+        """Leave the modes on the domain for the next model made on it."""
+        try:
+            self.domain._buckling_modes = dict(self._v0)
+        except AttributeError:
+            pass
+
     def _live(self, xe):
         mesh = self.domain.mesh
         alive = (xe > self.alive) | self.anchor
@@ -227,11 +328,26 @@ class BucklingModel:
         keep_l = np.unique(el[alive & self.support_touch])
         return alive & np.isin(el, keep_l[keep_l > 0])
 
-    def evaluate(self, xe: np.ndarray, p: float, cases=None):
+    def evaluate(self, xe: np.ndarray, p: float, cases=None, gradient: bool = True, relax=None):
         """For each load case (default all): (mu_ks, dmu_ks/dxe (n,), mus),
         where 1 / mu_ks is the aggregated smallest buckling load factor
-        (inf when the case does not compress anything)."""
+        (inf when the case does not compress anything). `gradient` False
+        skips the sensitivities (zeros): the adjoint block solve and the
+        modes' element products, for a reading alone. `relax` gives, per
+        case, (mu_loose, mu_far): a case whose largest mu reads under
+        mu_loose is solved to BLOCK_TOL_LOOSE (its value is good to a
+        percent, its gradient rough), and one whose mu_ks is under mu_far
+        gets no gradient at all. For a constraint that far from its limit
+        neither steers the optimizer."""
         t0 = time.time()
+        tm = {"setup": 0.0, "factor": 0.0, "stress": 0.0, "modes": 0.0, "gradient": 0.0}
+        tl = t0
+
+        def lap(key):
+            nonlocal tl
+            now = time.time()
+            tm[key] += now - tl
+            tl = now
         d = self.domain
         mesh = d.mesh
         if cases is None:
@@ -251,13 +367,16 @@ class BucklingModel:
         if d.springs is not None:
             free = sp.diags((~fixed).astype(float))
             k = (k + free @ d.springs[fd][:, fd] @ free).tocsr()
+        lap("setup")
         solve, free_memory = _factor(k, sub.node_ijk)
+        lap("factor")
         try:
             ndof = sub.n_dof
             minv = LinearOperator((ndof, ndof), matvec=solve, matmat=solve, dtype=float)
             ke = stiff.ke
             out = []
-            for c in cases:
+            for j, c in enumerate(cases):
+                mu_loose, mu_far = relax[j] if relax is not None else (0.0, 0.0)
                 f = d.loads[c][fd].copy()
                 f[fixed] = 0.0
                 if not np.any(f):
@@ -267,8 +386,10 @@ class BucklingModel:
                 from .nonlinear import _geometric
 
                 kg = _geometric(stiff, u, eg, self.nu)
+                lap("stress")
                 nm = min(self.n_modes, ndof - 2)
-                mu, vec = self._modes(c, -kg, k, minv, nm, fd, mesh.n_dof)
+                mu, vec = self._modes(c, -kg, k, minv, nm, fd, mesh.n_dof, mu_loose)
+                lap("modes")
                 if mu[0] <= 0:
                     out.append((0.0, np.zeros(mesh.n_elem), mu))
                     continue
@@ -277,6 +398,9 @@ class BucklingModel:
                 mmax = float(mu[0])
                 wts = np.exp(self.rho * (mu / mmax - 1.0))
                 ks = mmax * (1.0 + np.log(wts.sum()) / self.rho)
+                if not gradient or ks < mu_far:
+                    out.append((ks, np.zeros(mesh.n_elem), mu))
+                    continue
                 wts = wts / wts.sum()
                 use = [i for i in range(nm) if wts[i] >= 1e-6]
                 # modes normalized phi^T K phi = 1
@@ -288,20 +412,22 @@ class BucklingModel:
                 parts = geometric_parts(ue, [ph[sub.edof] for ph in phis], mesh.pitch, self.nu)
                 # the adjoints of every counted mode in one block solve
                 arhs = np.zeros((ndof, len(use)))
-                for j, (_, a_e) in enumerate(parts):
-                    arhs[:, j] = np.bincount(sub.edof.ravel(), weights=(eg[:, None] * a_e).ravel(), minlength=ndof)
+                for q, (_, a_e) in enumerate(parts):
+                    arhs[:, q] = np.bincount(sub.edof.ravel(), weights=(eg[:, None] * a_e).ravel(), minlength=ndof)
                 arhs[fixed] = 0.0
                 wsol = np.asarray(solve(arhs)).reshape(ndof, len(use))
                 grad = np.zeros(mesh.n_elem)
-                for j, i in enumerate(use):
-                    pe = phis[j][sub.edof]
-                    g_e = parts[j][0]
+                for q, i in enumerate(use):
+                    pe = phis[q][sub.edof]
+                    g_e = parts[q][0]
                     kphi = np.einsum("mi,mi->m", pe @ ke, pe)
-                    term = np.einsum("mi,mi->m", wsol[:, j][sub.edof] @ ke, ue)
+                    term = np.einsum("mi,mi->m", wsol[:, q][sub.edof] @ ke, ue)
                     grad[el] += wts[i] * (-deg * g_e - mu[i] * de * kphi + de * term)
                 out.append((ks, grad, mu))
+                lap("gradient")
         finally:
             if free_memory is not None:
                 free_memory()
-        self.last = {"cells": int(len(el)), "seconds": time.time() - t0}
+        self.last = {"cells": int(len(el)), "seconds": time.time() - t0, "parts": tm,
+                     "method": getattr(self, "last_method", None), "eigIterations": getattr(self, "last_its", None)}
         return out

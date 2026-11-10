@@ -962,6 +962,26 @@ def _attach_plan(mesh, study, organic):
 PINCH_R = 0.08
 
 
+def _stl_pinches(part):
+    """`part` as an STL stores it (float32, welded by position) and the
+    edges of it that are not on exactly two faces: kissing edges, and slits
+    a weld opens. Returns (trimesh, (n, 2) vertex pairs, their length
+    together in mm)."""
+    m = trimesh_from_manifold(part)
+    m.vertices = m.vertices.astype(np.float32).astype(float)
+    m.merge_vertices()
+    e = m.edges_sorted
+    if not len(e):
+        return m, np.zeros((0, 2), np.int64), 0.0
+    u, c = np.unique(e, axis=0, return_counts=True)
+    bad = u[c != 2]
+    return m, bad, float(np.linalg.norm(m.vertices[bad[:, 0]] - m.vertices[bad[:, 1]], axis=1).sum())
+
+
+# pinches tried one at a time in a round whose necks, together, did not help
+PINCH_SINGLY = 12
+
+
 def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
     """Join bodies that touch along an edge or at a point (balls PINCH_R, then 1.5x larger each round a
     contact is left). manifold3d keeps
@@ -975,24 +995,51 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
     material in a keep-out or proud of a preserved skin. A contact on a
     keep-out's face (`keep_out`) cannot be filled there, so it is opened
     instead: the ball is cut away, all but what `hold` (the preserved
-    shapes) keeps. Returns (part, count)."""
+    shapes) keeps.
+
+    A round's necks are kept only if they leave less such edge (by length)
+    than they found. Where they leave as much or more, one of the contacts
+    is a void under the surface that reaches a flat face along a line, and
+    a ball in it ends tangent to the void's walls: the wrist yoke's 12%
+    part went from 2 edges to 133 in six rounds, the mesh came out one
+    manifold3d refuses, and the search lost the outcome to "verification
+    failed".
+    The contacts are then taken one at a time (PINCH_SINGLY of them): the
+    neck if it helps, else the ball cut away (all but what `hold` keeps),
+    which opens the void with a pit a printer does not resolve, else the
+    same two with a block in place of the ball (six faces off the grid's
+    axes cross the surface in a few long edges where a ball's facets leave
+    dozens of short ones for the weld to merge: on that yoke, 547 mm from
+    the origin where float32 resolves 0.06 microns, every ball left 3 to
+    29 edges and a block none), else left alone. Returns (part, count)."""
     import manifold3d as m3d
 
+    def ball(q, r, block=False):
+        b = m3d.Manifold.cube((2 * r, 2 * r, 2 * r), True).rotate((17.0, 31.0, 43.0)) if block \
+            else m3d.Manifold.sphere(r, 12)
+        return b.translate(tuple(map(float, q)))
+
+    def cut(part, balls):
+        c = m3d.Manifold.batch_boolean(balls, m3d.OpType.Add)
+        return part - (c - hold if hold is not None else c)
+
+    def neck(part, balls):
+        if keep_out is not None:
+            at_ko = [b for b in balls if (b ^ keep_out).volume() > 1e-9]
+            balls = [b for b in balls if (b ^ keep_out).volume() <= 1e-9]
+            if at_ko:
+                part = cut(part, at_ko)
+        if clip is not None and balls:
+            balls = [m3d.Manifold.batch_boolean(balls, m3d.OpType.Add) ^ clip]
+        return m3d.Manifold.batch_boolean([part] + balls, m3d.OpType.Add)
+
     total = 0
+    m, bad, length = _stl_pinches(part)
     for k in range(rounds):
-        # a ball can leave a contact of its own: each round a size larger
-        r = PINCH_R * 1.5 ** k
-        m = trimesh_from_manifold(part)
-        # as an STL stores it: float32, then welded by position
-        m.vertices = m.vertices.astype(np.float32).astype(float)
-        m.merge_vertices()
-        e = m.edges_sorted
-        if not len(e):
-            break
-        u, inv, c = np.unique(e, axis=0, return_inverse=True, return_counts=True)
-        bad = u[(c > 2) | (c == 1)]   # kissing edges, and slits a weld opens
         if not len(bad):
             break
+        # a ball can leave a contact of its own: each round a size larger
+        r = PINCH_R * 1.5 ** k
         mids = m.vertices[bad].mean(axis=1)
         # one ball per cluster of pinched edges a ball apart (greedy, in
         # order; kept points hashed by r-sized cell so each test looks at
@@ -1018,17 +1065,20 @@ def _fill_pinches(part, rounds: int = 6, clip=None, keep_out=None, hold=None):
             if not near:
                 grid.setdefault(key, []).append(len(keep))
                 keep.append(q)
-        balls = [m3d.Manifold.sphere(r, 12).translate(tuple(map(float, q))) for q in keep]
-        if keep_out is not None:
-            at_ko = [b for b in balls if (b ^ keep_out).volume() > 1e-9]
-            balls = [b for b in balls if (b ^ keep_out).volume() <= 1e-9]
-            if at_ko:
-                cut = m3d.Manifold.batch_boolean(at_ko, m3d.OpType.Add)
-                part = part - (cut - hold if hold is not None else cut)
-        if clip is not None and balls:
-            balls = [m3d.Manifold.batch_boolean(balls, m3d.OpType.Add) ^ clip]
-        part = m3d.Manifold.batch_boolean([part] + balls, m3d.OpType.Add)
-        total += len(keep)
+        cand = neck(part, [ball(q, r) for q in keep])
+        got = _stl_pinches(cand)
+        if got[2] < length - 1e-9:
+            part, (m, bad, length) = cand, got
+            total += len(keep)
+            continue
+        for q in keep[:PINCH_SINGLY]:
+            for op, block in ((neck, False), (cut, False), (neck, True), (cut, True)):
+                cand = op(part, [ball(q, r, block)])
+                got = _stl_pinches(cand)
+                if got[2] < length - 1e-9:
+                    part, (m, bad, length) = cand, got
+                    total += 1
+                    break
     return part, total
 
 
