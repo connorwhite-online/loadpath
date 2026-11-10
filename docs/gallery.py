@@ -201,17 +201,18 @@ def render_heatx(name, spec, step, normal=None, view=(28, -55)):
     return s.render(os.path.join(IMAGES, "heatx", f"{name}.png"))
 
 
-def render_metal_ceilings(flat=20.0, view=(30, -55)):
+def render_metal_ceilings(flat=5.0, view=(30, -55)):
     """The lpbf eval exchanger's fluid spaces with and without channel
-    closure, flat internal ceilings (within `flat` degrees of level, facing
-    down onto the fluid from the metal above) in red."""
+    closure, level internal ceilings (within `flat` degrees of level, facing
+    down onto the fluid from the metal above) in red, and the report's
+    ceiling no edge holds up (heatx _ceiling_spans) in each label."""
     from loadpath.heatx import design_heat_exchanger, heat_exchanger_from_spec
 
     with open(os.path.join(CASES, f"{METAL_CASE}.json")) as fh:
         spec = json.load(fh)
     step = spec.get("step", 0.45)
     spec = {k: v for k, v in spec.items() if k not in ("name", "description", "duty", "step", "expect")}
-    s = Scene("AlSi10Mg intercooler core built +z: fluid spaces, flat ceilings in red (unsupportable in metal)",
+    s = Scene("AlSi10Mg intercooler core built +z: fluid spaces, level ceilings in red",
               panel_size=(620, 540))
     up = np.array([0.0, 0.0, 1.0])
     red = np.array([0.85, 0.10, 0.08])
@@ -219,9 +220,10 @@ def render_metal_ceilings(flat=20.0, view=(30, -55)):
         hx = heat_exchanger_from_spec({**spec, "closure": closure, "cleanouts": 0})
         hx.step = step
         _, rep, spaces = design_heat_exchanger(hx, fluid_meshes=True)
-        flat_cm2 = rep["internalCeilings"]["flatArea"] / 100.0
+        ic = rep["internalCeilings"]
         p = s.panel(("channels close into peaked roofs" if closure else "flat skin over the channels")
-                    + f": {flat_cm2:.1f} cm² flat inside", view=view)
+                    + f": {ic['unbuildableArea'] / 100.0:.1f} cm² unheld, widest span {ic['widestSpan']:.1f} mm",
+                    view=view)
         for i, m in enumerate(spaces.values()):
             ceil = (m.face_normals @ up) > np.cos(np.radians(flat))
             p.mesh(m, face_colors=np.where(ceil[:, None], red[None], np.asarray(FLUIDS[i % 2])[None]))
@@ -303,7 +305,8 @@ def write_docs(rows, evals):
     if hx:
         n, cap = hx[0]
         readme += ["", "Two-fluid heat exchangers: two isolated channel networks through one sheet gyroid, "
-                   "with headers that print without support.", "", f"![{n}](docs/images/heatx/{n}.png)"]
+                   "with round-vaulted headers and round ports, shaped for the build only where the process "
+                   "needs it.", "", f"![{n}](docs/images/heatx/{n}.png)"]
     if exist("heatx", "lpbf-ceilings.png"):
         readme += ["", "Printed in metal, nothing inside can be supported: the channels end in peaked roofs "
                    "instead of flat ceilings (red).", "", "![metal ceilings](docs/images/heatx/lpbf-ceilings.png)"]
@@ -348,8 +351,11 @@ def write_docs(rows, evals):
     if exist("heatx", "lpbf-ceilings.png"):
         g += ["### Printed in metal", "",
               f"The `{METAL_CASE}` eval case built along +z in AlSi10Mg. Nothing inside a metal part can be "
-              "supported, so every flat ceiling over a channel is a defect: with `closure` the channels end in "
-              "peaked roofs under the top skin and flare open over plenums below.", "",
+              "supported, so a ceiling is a defect wherever it reaches farther from a wall that holds it than "
+              "half the span an arch closes in powder-bed metal (an 8 mm round hole builds as drawn). The "
+              "plenums are round vaults and the ports round, rising into a smooth egg only past 8 mm; with "
+              "`closure` the channels end in peaked roofs under the top skin and flare open over plenums "
+              "below.", "",
               "![lpbf ceilings](images/heatx/lpbf-ceilings.png)", ""]
     if exist("manufacturing", "arm-link.png"):
         g += ["## Manufacturing constraints", "", MFG_GALLERY, "",

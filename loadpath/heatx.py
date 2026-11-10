@@ -31,17 +31,23 @@ every point in space through its nearest surface point. Then:
   outside its own zones, so the other fluid's plenum only sees its own
   channels' mouths;
 - each zone gets a plenum: the space over the zone out to `header` from the
-  surface, inset `cap` from the zone's edge, its edges leaning in at 50
-  degrees from level (more along a top edge over surface tilted up) so they
-  never make a flat ceiling;
-- a zone that faces up or down (along `build`) gets a vertical cone at 50
-  degrees instead, over a level circle inside the zone (so a tilted top
-  works too), rising (or falling) to its port: no plenum needs support in
-  FDM, an upward port is the top of a roof and a downward one the foot the
+  surface, inset `cap` from the zone's edge, whose edges are round vaults
+  (a half circle from the core to the lid), so it has no corners or chamfers
+  inside or out;
+- what the build needs is shaped only where the chosen process demonstrably
+  needs it (selfsupport.py): nothing for powder-bed polymer (SLS, MJF), whose
+  powder carries every layer; for FDM, resin and powder-bed metal, a round
+  span builds up to a size (about 8 mm in metal, 21 mm in FDM), and only a
+  vault or level bore wider than that rises over its axis as a half
+  ellipse instead of a half circle: a smooth egg, never a peak;
+- a zone that faces up or down (along `build`, for a process that needs
+  shaping) gets a vertical cone at 55 degrees instead, over a level circle
+  inside the zone (so a tilted top works too), rising (or falling) to its
+  port: an upward port is the top of a roof and a downward one the foot the
   part stands on;
 - sideways zones keep only surface facing at most 20 degrees above level
-  (a roof over more would lean over its fluid), their ports run level with
-  a teardrop bore and a 45 degree gusset under the tube, and with `skirt`
+  (a roof over more would lean over its fluid), their ports run level, and
+  in FDM (`skirt`, FDM only) a 45 degree gusset holds each tube up and
   everything that overhangs the outside gets a 45 degree fill to the bed;
 - each port is a tube on the zone's centre (its point farthest from the
   edge);
@@ -76,6 +82,7 @@ from scipy import ndimage
 
 from .lattice import tpms
 from .reconstruct import _smooth_union
+from .selfsupport import crown_height, needs_shaping
 from .shapes import Cylinder, Shape, shape_from_spec
 
 __all__ = ["HeatExchangerSpec", "Zone", "design_heat_exchanger", "grid_plan", "heat_exchanger_from_spec",
@@ -88,13 +95,14 @@ _SQRT2 = np.sqrt(2.0)
 # 350-400 B a point while the grid was float64, which put that core out of a 15 GB machine)
 _BYTES_PER_POINT = 270.0
 _BASE_BYTES = 0.25e9
-# report warnings, per process: an internal ceiling area (mm^2, faces within 20 degrees
-# of level over a fluid) and trapped open space (mm^3) past which powder-bed metal
-# needs a look (the eval briefs' limits)
+# report warnings, per process: an internal ceiling area no edge holds up (mm^2, faces
+# flatter than the critical angle farther than half the arch chord the process closes
+# from any edge: _ceiling_spans) and trapped open space (mm^3) past which powder-bed
+# metal needs a look
 _LPBF_FLAT_CEILING = 300.0
 _LPBF_TRAPPED = 20.0
-# plenum edges and roofs lean at 55 degrees from level, a margin on FDM's 45 (an edge's
-# lean is set on the surface, and spreads out over a convex one)
+# the cone roofs over zones that face up or down lean at 55 degrees from level, a margin
+# on the 45 degrees FDM and powder-bed metal build unsupported
 _LEAN = 55.0
 # a sideways zone keeps the surface facing at most 20 degrees above level
 _MAX_UP = np.sin(np.radians(20.0))
@@ -135,7 +143,7 @@ class HeatExchangerSpec:
     zones: list | None = None       # explicit zones, instead of the layout's
     build: int | None = 2           # build axis for self-supporting roofs (None: no roof shaping)
     skirt: bool = True              # with build: fill under the outside at 45 degrees to the bed
-    process: str = "fdm"            # "fdm" or "lpbf" (powder-bed metal: no skirt, ceilings must self-support)
+    process: str = "fdm"            # selfsupport.SELF_SUPPORT: fdm, lpbf (powder-bed metal), sls, mjf, sla, dlp
     split: float = 0.5              # fluid A's share of the void (the sheet moves toward B)
     closure: bool = True            # with build: channels close gently under surfaces that look up, and flare open over plenums below
     cleanouts: int = 0              # powder clean-out ports per fluid, at the points farthest from its ports (plugged after)
@@ -239,11 +247,15 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
                              "(or null for no print shaping); turn the core to print it another way up")
         hx.build = None if b in (None, False, "none") else "xyz".index(b)
     if "process" in spec:
+        from .selfsupport import SELF_SUPPORT
+
         hx.process = str(spec["process"])
-        if hx.process not in ("fdm", "lpbf"):
-            raise ValueError("heatExchanger.process is \"fdm\" or \"lpbf\" (laser powder-bed metal)")
-        if hx.process == "lpbf":
-            # supports outside a metal part are cut off anyway; a skirt is only weight
+        if hx.process not in SELF_SUPPORT:
+            raise ValueError(f"heatExchanger.process is one of {sorted(SELF_SUPPORT)} (lpbf: laser powder-bed "
+                             "metal, SLM / DMLS)")
+        if hx.process != "fdm":
+            # only FDM cannot grow an outside overhang off removable supports (powder holds it in
+            # SLS and MJF; supports outside a metal or resin part come off): a skirt is only weight
             hx.skirt = False
     if "skirt" in spec:
         hx.skirt = bool(spec["skirt"])
@@ -352,13 +364,10 @@ def _surface_zones(hx, zones, pitch, lo, hi, up=None):
         lk = ndimage.gaussian_filter(lk, 1.0)
         ell.append(lk)
         if up is not None:
-            # how steeply this zone's plenum edge must lean out (mm in per mm out): 50
-            # degrees from level on a level surface, more where the edge is a top edge
-            # over a surface that faces up a little
+            # how much this zone's plenum edge is a top edge (1: the edge runs level over the
+            # plenum, its vault a ceiling; 0: a side or the bottom)
             ge = np.stack(np.gradient(lk, pitch), -1)
-            top_edge = np.clip(-(ge @ up) / np.maximum(np.linalg.norm(ge, axis=-1), 1e-9), 0.0, 1.0)
-            tilt = np.degrees(np.arcsin(np.clip(n[near[0], near[1], near[2]] @ up, 0.0, 1.0)))
-            slopes.append(np.tan(np.radians(np.minimum(_LEAN + top_edge * tilt, 75.0))))
+            slopes.append(np.clip(-(ge @ up) / np.maximum(np.linalg.norm(ge, axis=-1), 1e-9), 0.0, 1.0))
         # the zone's centre: its surface point farthest from the edge
         # (the middle of its ridge, so a rectangle's port sits on its centre)
         vals = np.where(zk, inside, -1.0)
@@ -395,8 +404,8 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     span = float((chi - clo).max())
     reach_c = max(hx.header, 0.5 * span) + hx.shell + hx.port_length + 6.0
     pitch = max(2.0 * step, 0.4, (float(np.prod(chi - clo + 2 * reach_c)) / 6e6) ** (1.0 / 3.0))
-    up = _unit(hx.build) if hx.build is not None else None
-    ell_grids, slope_grids, far, c_lo, pitch, zinfo = _surface_zones(hx, zones, pitch, clo - reach_c, chi + reach_c, up)
+    up = _shaping_up(hx)
+    ell_grids, top_grids, far, c_lo, pitch, zinfo = _surface_zones(hx, zones, pitch, clo - reach_c, chi + reach_c, up)
 
     # roofs: a zone facing up along `build` gets a cone at 55 degrees rising to its port, a
     # zone facing down the same cone upside down, standing on its port
@@ -432,9 +441,11 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
             zi["exit"] = zi["center"] + a * h
         else:
             h = hx.header
+            # the plenum's edges are vaults of radius h / 2 (round over the zone's edge, from the
+            # core to the lid): at the lid it spans the zone less h / 2 all round
             if zi["ellMax"] - cap - 0.5 * h < r_port:
                 warnings.append(f"{hx.names[z.fluid]}-{z.end}: the {zi['portDiameter']:g} mm port is wider than "
-                                f"the plenum at its centre ({2 * (zi['ellMax'] - cap - 0.5 * h):.1f} mm); "
+                                f"the plenum at its lid ({2 * (zi['ellMax'] - cap - 0.5 * h):.1f} mm); "
                                 "use a smaller port or a larger zone")
             a = zi["normal"]
             p0 = zi["center"] + a * 0.5 * h
@@ -445,9 +456,36 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
             reach_out = 0.5 * h / max(float(a @ zi["normal"]), 0.3)
             zi["port"] = (p0, p0 + a * (reach_out + hx.shell + hx.port_length))
             zi["exit"] = p0 + a * reach_out
-        zi["roof"] = "pyramid" if pyramid else "flat"
+        zi["roof"] = "pyramid" if pyramid else "vault"
+        # how far the bore rises over its axis: round, unless it runs level and the process
+        # cannot build a round top that size (selfsupport: then a smooth egg, never a point)
+        level = up is not None and abs(float(a @ up)) <= 0.7
+        zi["crown"] = crown_height(r_port, hx.process) if level else r_port
         zi["height"] = float(h)
         zi["axis"] = a
+        if not pyramid:
+            # a top edge's vault spans the plenum's depth h: a half circle where the process
+            # builds a round span that wide, else a half ellipse just tall enough
+            zi["vaultRise"] = crown_height(0.5 * h, hx.process) / (0.5 * h) if up is not None else 1.0
+            if level and zi["crown"] > r_port + 1e-9:
+                # an egg-crowned bore leaves through the lid under the top edge's vault: were its
+                # crown to reach into the vault, the two crowns would meet in a ceiling wider
+                # than either, which the process cannot close. Lowered just enough, if need be
+                pp, depth = zi["patch"]
+                top = float(((pp[depth >= 0.0] - zi["center"]) @ up).max())
+                bottom = float(((pp[depth >= 0.0] - zi["center"]) @ up).min())
+                spring = top - cap - 0.5 * h * zi["vaultRise"]
+                drop = min(spring - zi["crown"] - hx.wall, 0.0)
+                if drop < 0.0:
+                    if drop - r_port < bottom + cap:
+                        warnings.append(f"{hx.names[z.fluid]}-{z.end}: the {zi['portDiameter']:g} mm level port's "
+                                        f"crown ({zi['crown']:.1f} mm over its axis, for {hx.process}) does not fit "
+                                        "under the plenum's top vault: use a smaller port, a taller zone, or a "
+                                        "build that leaves the port tilted")
+                    shift = up * max(drop, bottom + cap + r_port)
+                    zi["port"] = (zi["port"][0] + shift, zi["port"][1] + shift)
+                    zi["exit"] = zi["exit"] + shift
+                    zi["portDrop"] = float(-np.linalg.norm(shift))
 
     reach = max(zi["height"] for zi in zinfo) + hx.shell + hx.port_length + 4.0
     # off the round numbers a core's faces sit on, so no face lands on a sample plane
@@ -518,12 +556,18 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                 body.append(hull - hx.shell)
                 del hull
             else:
-                # a sideways zone's top edge leans out over the wall below it at 55 degrees
-                slope = ndimage.map_coordinates(slope_grids[k], coords, order=1, mode="nearest", output=np.float32) \
-                    if up is not None else 1.0
-                lateral = (cap + slope * d - ell[k]) / np.hypot(1.0, slope)
-                void = np.minimum(void, np.maximum(np.maximum(-d, d - zi["height"]), lateral))
-                body.append(np.maximum(d - zi["height"] - hx.shell, lateral - hx.shell))
+                # a plenum of even depth whose edges are round vaults from the core to the lid,
+                # a half circle over the zone's edge; over a top edge the vault rises as a half
+                # ellipse where the process cannot build that round span (selfsupport)
+                rise = 1.0
+                if up is not None:
+                    top = ndimage.map_coordinates(top_grids[k], coords, order=1, mode="nearest", output=np.float32)
+                    rise = 1.0 + (zi["vaultRise"] - 1.0) * top
+                    del top
+                vault = _vault(d, ell[k], cap, 0.5 * zi["height"], rise)
+                void = np.minimum(void, vault)
+                body.append(vault - hx.shell)
+                del vault
             # evaluated only near the port: its fields are far positive elsewhere
             sel = _port_box(hx, zi, pts, up, bed)
             bore, tube = _port(hx, zi, pts[sel], up, bed)
@@ -618,7 +662,12 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
         grid, cleanouts, powder = _cleanouts(hx, zones, zinfo, grid, masks0, d_body, d, lo, step, dims)
         del masks0
 
-    grid[grid == 0.0] = 1e-6                        # no vertex exactly on a grid point: keeps the mesh manifold
+    # no vertex on (or within rounding of) a grid point: two edges' vertices there would merge
+    # and leave the mesh non-manifold (a round vault's crown can sit a hair off a sample plane)
+    eps = np.float32(1e-3 * step)
+    near0 = np.abs(grid) < eps
+    grid[near0] = np.where(grid[near0] < 0, -eps, eps)
+    del near0
     verts, faces, _, _ = marching_cubes(grid, 0.0, spacing=(step, step, step), allow_degenerate=False)
     mesh = trimesh.Trimesh(verts + lo + 0.5 * step, faces[:, ::-1], process=True)
     if mesh.volume < 0:
@@ -639,7 +688,9 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                    "zones": {f"{hx.names[z.fluid]}-{z.end}": {
                        "roof": zi["roof"], "center": np.round(zi["center"], 2).tolist(), "plenumHeight": round(zi["height"], 2),
                        "port": [np.round(zi["port"][1], 2).tolist(), np.round(zi["axis"], 3).tolist()],
-                       "portDiameter": zi["portDiameter"]}
+                       "portDiameter": zi["portDiameter"],
+                       "portCrown": round(float(zi["crown"]), 2), "vaultRise": round(float(zi.get("vaultRise", 1.0)), 3),
+                       "portDrop": round(float(zi.get("portDrop", 0.0)), 2)}
                        for z, zi in zip(zones, zinfo)},
                    "warnings": warnings})
     if hx.header_ribs:
@@ -672,6 +723,32 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     return (mesh, report, spaces, *extra)
 
 
+def _shaping_up(hx):
+    """The build direction the design shapes for (roofs, closure, egg crowns),
+    or None: no build axis, or a process that builds anything unsupported
+    (SLS, MJF: the powder carries every layer)."""
+    if hx.build is None or not needs_shaping(hx.process):
+        return None
+    return _unit(hx.build)
+
+
+def _vault(d, ell, cap, R, rise=1.0):
+    """A plenum of depth 2R over its zone whose edges are round vaults: in the
+    plane across an edge (x = d - R from the plenum's middle, y = how far past
+    the vault's spring line toward the zone's edge), a half circle of radius R,
+    or a half ellipse R wide and R * rise tall. The spring line sits R * rise in
+    from the zone's edge less `cap`, so the vault's top never leaves the zone.
+    Near-distance (mm), < 0 inside."""
+    x = d - np.float32(R)
+    y = np.float32(cap) + np.float32(R) * rise - ell
+    slab = np.abs(x) - np.float32(R)
+    ry = np.float32(R) * rise
+    q = np.sqrt((x / R) ** 2 + (np.maximum(y, 0.0) / ry) ** 2)
+    g = np.sqrt((x / R ** 2) ** 2 + (np.maximum(y, 0.0) / ry ** 2) ** 2)
+    arch = (q - 1.0) * q / np.maximum(g, np.float32(1e-6))
+    return np.where(y > 0.0, arch, slab).astype(np.float32, copy=False)
+
+
 def _too_coarse(hx, volume, step):
     need = volume / (0.5 * hx.wall) ** 3
     return (f"the heat exchanger needs a {step:.2f} mm grid for its size within its point cap "
@@ -689,7 +766,7 @@ def _reach_estimate(hx, zones=None):
     clo, chi = (np.asarray(b, float) for b in hx.core.bounds())
     ext = chi - clo
     cap = hx.cap if hx.cap is not None else hx.wall + 1.0
-    up = _unit(hx.build) if hx.build is not None else None
+    up = _shaping_up(hx)
     heights = [hx.header]
     for z in zones:
         if up is not None and abs(float(_unit(z.direction) @ up)) > 0.6:
@@ -735,10 +812,13 @@ def _process_warnings(hx, report) -> list[str]:
                    f"under {hx.process}'s {lim['minWall']:g} mm minimum: raise shell (now {hx.shell:g} mm)")
     if hx.process == "lpbf":
         ic = report.get("internalCeilings") or {}
-        if (ic.get("flatArea") or 0.0) > _LPBF_FLAT_CEILING:
-            out.append(f"{ic['flatArea']:.0f} mm^2 of internal ceiling within 20 degrees of level (worst near "
-                       f"{ic.get('worstAt')}), over {_LPBF_FLAT_CEILING:g} mm^2: lpbf cannot support anything "
-                       "inside. Keep closure on, try another build axis, a smaller cell or phase")
+        if (ic.get("unbuildableArea") or 0.0) > _LPBF_FLAT_CEILING:
+            at = (ic.get("unbuildableAt") or [{}])[0]
+            out.append(f"{ic['unbuildableArea']:.0f} mm^2 of internal ceiling lies farther than half the "
+                       f"{ic.get('buildableChord')} mm chord lpbf closes over an arch from any edge that holds it "
+                       f"(widest {ic.get('widestSpan')} mm, near {at.get('from')} to {at.get('to')}), over "
+                       f"{_LPBF_FLAT_CEILING:g} mm^2: lpbf cannot support anything inside. Keep closure on, try "
+                       "another build axis, a smaller cell or phase")
         tv = report.get("trappedVolume") or 0.0
         if tv > _LPBF_TRAPPED:
             lt = report.get("largestTrapped") or {}
@@ -807,6 +887,7 @@ def _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap, sheet_c=0.0):
     # the sheet as the TPMS shapes it (not where a closure has moved it)
     inside = hx.core.sdf(c) < -step
     sheet = np.abs(np.abs(tpms(hx.kind, c - clo - np.asarray(hx.phase, float), hx.cell) - sheet_c) - 0.5 * hx.wall) < 1.5 * step
+    wet_all = wet.copy()
     wet &= ~(inside & sheet)
     down = -(n @ up)
     a = mesh.area_faces
@@ -815,6 +896,87 @@ def _internal_ceilings(hx, mesh, masks, lo, step, up, clo, cap, sheet_c=0.0):
     out = {"overhangArea": float(a[over].sum()), "flatArea": float(a[flat].sum())}
     if flat.any():
         out["worstAt"] = _densest(c[flat], a[flat], hx.cell)
+    # an arch closes its crown: a round top D_max across is flatter than any angle t over a
+    # chord D_max sin t, so the ceiling is checked at a few angles up to the critical one,
+    # each against its own chord (a flat cap fails at the shallow ones, a round crown passes)
+    crit = _critical_angle(hx)
+    # (the sheet counts here: it only holds a ceiling up where it is itself steep enough)
+    spans = [_ceiling_spans(hx, mesh, wet_all & (down > np.cos(np.radians(t))), t)
+             for t in sorted({min(5.0, crit), min(15.0, crit), min(30.0, crit), crit}) if t > 0]
+    if spans:
+        out.update(max(spans, key=lambda r: (r["unbuildableArea"], r["ceilingAngle"])))
+    return out
+
+
+def _critical_angle(hx):
+    from .selfsupport import SELF_SUPPORT
+
+    return float(SELF_SUPPORT[hx.process]["criticalAngle"]) if needs_shaping(hx.process) else 0.0
+
+
+def _ceiling_spans(hx, mesh, over, angle):
+    """How far each point of ceiling flatter than `angle` from level lies
+    from the edge of its patch (where the surface turns steeper, or the sheet
+    holds it up), against half the chord the process closes over a round arch
+    at that angle (selfsupport: round limit x sin(angle); 5.7 mm at 45
+    degrees in powder-bed metal, 2.1 mm at 15), or the flat span it bridges
+    outright if that is more (printcheck.BRIDGE_SPAN, 2 mm). A round bore's or vault's crown is such a patch and
+    builds while it is that narrow; a layer farther than half that chord from
+    any edge has nothing to grow from. "unbuildableArea" (mm^2: faces past
+    half the chord, half a mesh edge of slack), "widestSpan" (mm, twice the
+    farthest), "unbuildableAt" (the worst patches)."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    from .selfsupport import round_limit
+
+    from .printcheck import BRIDGE_SPAN
+
+    # never less than the flat span the process bridges outright (printcheck: 2 mm in metal)
+    chord = max(round_limit(hx.process) * np.sin(np.radians(angle)), BRIDGE_SPAN.get(hx.process, 0.0))
+    out = {"widestSpan": 0.0, "unbuildableArea": 0.0, "buildableChord": round(float(chord), 2),
+           "ceilingAngle": float(angle)}
+    if not over.any():
+        return out
+    faces = mesh.faces[over]
+    verts = np.unique(faces)
+    vid = np.full(len(mesh.vertices), -1)
+    vid[verts] = np.arange(len(verts))
+    f = vid[faces]
+    on_other = np.zeros(len(mesh.vertices), bool)
+    on_other[np.unique(mesh.faces[~over])] = True
+    edge = on_other[verts]
+    e = np.vstack([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    g = coo_matrix((np.ones(len(e)), (e[:, 0], e[:, 1])), shape=(len(verts), len(verts)))
+    _, comp = connected_components(g, directed=False)
+    xyz = mesh.vertices[verts]
+    dist = np.zeros(len(verts))
+    order = np.argsort(comp, kind="stable")
+    cuts = np.flatnonzero(np.diff(comp[order])) + 1
+    for idx in np.split(order, cuts):
+        b = idx[edge[idx]]
+        if len(b) == 0:
+            dist[idx] = np.inf
+            continue
+        dist[idx] = cKDTree(xyz[b]).query(xyz[idx])[0]
+    fd = dist[f].mean(axis=1)
+    # half a mesh edge of slack: marching cubes moves a surface about that much
+    tol = 0.5 * float(np.mean(mesh.edges_unique_length)) if len(mesh.edges_unique) else 0.0
+    wide = fd > 0.5 * chord + tol
+    area = mesh.area_faces[over]
+    out["widestSpan"] = round(float(min(2.0 * dist.max(), 1e9)), 2)
+    out["unbuildableArea"] = float(area[wide].sum())
+    if wide.any():
+        c = mesh.triangles_center[over]
+        fc = comp[f[:, 0]]
+        worst = []
+        for k in np.unique(fc[wide]):
+            s_ = wide & (fc == k)
+            worst.append({"area": round(float(area[s_].sum()), 1), "span": round(float(2.0 * fd[fc == k].max()), 2),
+                          "from": np.round(c[s_].min(axis=0), 1).tolist(),
+                          "to": np.round(c[s_].max(axis=0), 1).tolist()})
+        out["unbuildableAt"] = sorted(worst, key=lambda w: -w["area"])[:6]
     return out
 
 
@@ -1033,7 +1195,7 @@ def _port_box(hx, zi, pts, up, bed):
     p0, p1 = zi["port"]
     ax = (p1 - p0) / np.linalg.norm(p1 - p0)
     ends = np.array([p0, p1 + ax * 3.0])
-    pad = _SQRT2 * 0.5 * zi["portDiameter"] + hx.shell + 1.0
+    pad = max(0.5 * zi["portDiameter"], zi.get("crown", 0.0)) + hx.shell + 1.0
     blo, bhi = ends.min(axis=0) - pad, ends.max(axis=0) + pad
     if up is not None and abs(float(ax @ up)) <= 0.7:
         k = int(np.argmax(np.abs(up)))
@@ -1041,11 +1203,25 @@ def _port_box(hx, zi, pts, up, bed):
     return np.all((pts >= blo) & (pts <= bhi), axis=1)
 
 
+def _egg(u, l, r, h):
+    """Across a bore: a circle of radius r under its axis (u <= 0) and a half
+    ellipse r wide, h tall over it; tangent where they meet. Near-distance."""
+    if h <= r + 1e-9:
+        return np.sqrt(u * u + l * l) - np.float32(r)
+    up_ = np.maximum(u, 0.0)
+    q = np.sqrt((l / r) ** 2 + (up_ / h) ** 2)
+    g = np.sqrt((l / r ** 2) ** 2 + (up_ / h ** 2) ** 2)
+    top = (q - 1.0) * q / np.maximum(g, np.float32(1e-6))
+    return np.where(u > 0.0, top, np.sqrt(u * u + l * l) - np.float32(r)).astype(np.float32, copy=False)
+
+
 def _port(hx, zi, pts, up, bed):
-    """A port's bore (void) and tube (solid) fields. A port that runs
-    sideways to the build direction gets a teardrop bore, peaked at 45
-    degrees, and a gusset under its tube that rises at 45 degrees from the
-    plenum wall, so FDM prints it without support."""
+    """A port's bore (void) and tube (solid) fields. The bore is round. One
+    that runs level, wider than the process builds round (selfsupport), keeps
+    its round bottom and sides and rises over its axis as a half ellipse
+    (zi["crown"]): smooth all round, an egg, never a point. With a skirt (FDM:
+    an outside overhang cannot grow off removable supports), a gusset under
+    the tube rises at 45 degrees from the plenum wall."""
     r = 0.5 * zi["portDiameter"]
     ro = r + hx.shell
     p0, p1 = zi["port"]
@@ -1061,21 +1237,21 @@ def _port(hx, zi, pts, up, bed):
     q = pts - p0
     a, u, l = q @ ax, q @ v, np.abs(q @ w)
     del q
-    # teardrop: a 45 degree peak over the bore's top
-    peak = np.maximum(np.maximum((l + u) / _SQRT2 - r, (l - u) / _SQRT2), np.maximum(-a, a - length - 2.0))
-    bore = np.minimum(bore, peak)
-    # and the tube peaked the same over it, so its wall keeps its thickness there; it starts
-    # a shell back toward the core, so where the peak rises over a plenum's leaning top edge
-    # the bore's root is closed, not open to the air
-    back = hx.shell + 1.0
-    tube = np.minimum(np.minimum(tube, Cylinder(p0 - ax * back, p0, ro).sdf(pts)),
-                      np.maximum(np.maximum((l + u) / _SQRT2 - ro, (l - u) / _SQRT2), np.maximum(-a - back, a - length)))
-    # gusset: under the tube, its underside rising 45 degrees from the wall to the tube's end
-    under = (a - length - u - ro) / _SQRT2         # < 0 above the 45 degree plane
-    gus = np.maximum(np.maximum(l - ro, u), np.maximum(np.maximum(-a, a - length), under))
-    if bed is not None:
-        gus = np.maximum(gus, bed - (pts @ up))
-    return bore, np.minimum(tube, gus)
+    hc = float(zi.get("crown", r))
+    if hc > r + 1e-9:
+        bore = np.maximum(_egg(u, l, r, hc), np.maximum(-a, a - length - 2.0))
+        # the tube follows the egg, a shell over it; it starts a shell back toward the core,
+        # so where the crown rises past the plenum's vault the bore's root is closed, not open
+        back = hx.shell + 1.0
+        tube = np.minimum(tube, np.maximum(_egg(u, l, ro, hc + hx.shell), np.maximum(-a - back, a - length)))
+    if hx.skirt:
+        # gusset: under the tube, its underside rising 45 degrees from the wall to the tube's end
+        under = (a - length - u - ro) / _SQRT2         # < 0 above the 45 degree plane
+        gus = np.maximum(np.maximum(l - ro, u), np.maximum(np.maximum(-a, a - length), under))
+        if bed is not None:
+            gus = np.maximum(gus, bed - (pts @ up))
+        tube = np.minimum(tube, gus)
+    return bore, tube
 
 
 def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap, mouths=()):
@@ -1132,13 +1308,12 @@ def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap, 
     dist_out = ndimage.distance_transform_edt(~outside).astype(np.float32) * np.float32(step)
     near_mouth = np.zeros(int(np.prod(dims)), bool)
     pts = _grid_points(lo, dims, step, np.float32)
-    up = _unit(hx.build) if hx.build is not None else None
     for zi in zinfo:
         p0, p1 = zi["port"]
         ax = (p1 - p0) / np.linalg.norm(p1 - p0)
-        # a sideways port's teardrop bore peaks r sqrt(2) over its axis (_port): its mouth
+        # a level port's egg-crowned bore rises zi["crown"] over its axis (_port): its mouth
         # reaches that far, so the check leaves out that far too
-        r_m = 0.5 * zi["portDiameter"] * (_SQRT2 if up is not None and abs(float(ax @ up)) <= 0.7 else 1.0)
+        r_m = max(0.5 * zi["portDiameter"], zi.get("crown", 0.0))
         sel = _port_box(hx, zi, pts, None, None)
         near_mouth[sel] |= Cylinder(zi["exit"], p1 + ax * 3.0, r_m + hx.shell + 2 * step).sdf(pts[sel]) < 0
     for a_, b_, r_ in mouths:

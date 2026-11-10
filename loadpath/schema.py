@@ -1826,10 +1826,15 @@ HEAT_EXCHANGER_SCHEMA = {
         "split": {"type": "number", "exclusiveMinimum": 0.05, "exclusiveMaximum": 0.95,
                   "description": "the first fluid's share of the void (default 0.5): the sheet moves toward the "
                                  "second. An air side against a liquid wants more, e.g. 0.66"},
-        "process": {"enum": ["fdm", "lpbf"],
-                    "description": "fdm (default) or lpbf: laser powder-bed metal (AlSi10Mg, Ti64, 316L). "
-                                   "lpbf drops the skirt (outside supports are cut off) and the report's "
-                                   "internalCeilings must be near zero: nothing inside can be supported."},
+        "process": {"enum": ["fdm", "lpbf", "sls", "mjf", "sla", "dlp"],
+                    "description": "what builds it (default fdm); sets what is shaped for the build "
+                                   "(selfsupport.py). Plenums are round-vaulted and ports round for every "
+                                   "process; sls / mjf get no build shaping at all (the powder holds every "
+                                   "layer); fdm, lpbf (laser powder-bed metal, SLM / DMLS: AlSi10Mg, Ti64, "
+                                   "316L), sla and dlp raise a level bore or vault into a smooth egg only past "
+                                   "the round span they build (lpbf ~8 mm). Only fdm keeps the skirt and port "
+                                   "gussets. In lpbf the report's internalCeilings.unbuildableArea must be near "
+                                   "zero: nothing inside can be supported."},
         "maxPoints": {"type": "integer", "minimum": 100000,
                       "description": "cap on the design grid's points (default 16M, about 270 bytes each at the "
                                      "peak; a design over the free memory is refused): a car-sized core at a "

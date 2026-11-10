@@ -150,7 +150,7 @@ Gyroid counterflow in a cylinder: A through the ends, B in and out the side
 
 ### Printed in metal
 
-The `lpbf-intercooler-core` eval case built along +z in AlSi10Mg. Nothing inside a metal part can be supported, so every flat ceiling over a channel is a defect: with `closure` the channels end in peaked roofs under the top skin and flare open over plenums below.
+The `lpbf-intercooler-core` eval case built along +z in AlSi10Mg. Nothing inside a metal part can be supported, so a ceiling is a defect wherever it reaches farther from a wall that holds it than half the span an arch closes in powder-bed metal (an 8 mm round hole builds as drawn). The plenums are round vaults and the ports round, rising into a smooth egg only past 8 mm; with `closure` the channels end in peaked roofs under the top skin and flare open over plenums below.
 
 ![lpbf ceilings](images/heatx/lpbf-ceilings.png)
 

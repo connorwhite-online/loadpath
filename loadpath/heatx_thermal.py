@@ -480,8 +480,24 @@ def rate_design(hx, report, duty):
     duty = {**{k: v_ for k, v_ in duty.items() if k == "wall"},
             **{n: duty[n] for n in hx.names}}
     return rate(hx.kind, hx.cell, hx.wall, v, _lengths(hx, report), duty,
-                "counter" if hx.layout == "counter" else "cross", hx.port_diameter, geo,
+                "counter" if hx.layout == "counter" else "cross", _port_bores(hx, report), geo,
                 1.2 * float(report.get("blend", 0.0)))      # a smooth union of radius k rounds about 1.2 k
+
+
+def _port_bores(hx, report):
+    """Each fluid's port as a round bore of the same flow area: an egg-crowned
+    bore (heatx: a level port past the round span its process builds) is a
+    half circle under its axis and a half ellipse over it, area
+    pi r (r + crown) / 2. The narrower of a fluid's two ports sets its loss."""
+    from .heatx import port_diameter
+
+    out = []
+    for f, n in enumerate(hx.names):
+        r = 0.5 * port_diameter(hx, f)
+        crowns = [z.get("portCrown", r) for k, z in (report.get("zones") or {}).items() if k.startswith(n + "-")]
+        h = min(crowns) if crowns else r
+        out.append(2.0 * np.sqrt(0.5 * r * (r + max(h, r))))
+    return tuple(out)
 
 
 # g/cm^3, for the core's mass in sizing (as printed, dense)

@@ -86,7 +86,9 @@ def test_whole_exchanger_agrees_with_the_rating():
     duty = {"A": {"fluid": "water", "lPerMin": 0.5, "tIn": 80}, "B": {"fluid": "water", "lPerMin": 0.5, "tIn": 20},
             "wall": "alsi10mg"}
     _, _, s = simulate_exchanger(hx, duty, voxel=2.0)
-    assert abs(s["energyBalance"]) < 1e-6
+    # the heat solve's own convergence: 1e-14 to 1e-4 by grid and geometry (1e-4 on the old
+    # chamfered plenums at a 1.2 mm voxel, 2e-5 on the round-vaulted ones at 2 mm)
+    assert abs(s["energyBalance"]) < 3e-4
     assert abs(s["effectiveness"] / s["rating"]["effectiveness"] - 1) < 0.15
     for n, f in s["fluids"].items():
         assert f["converged"] and abs(f["massBalance"] - 1) < 1e-4

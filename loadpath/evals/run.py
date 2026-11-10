@@ -38,7 +38,9 @@ instead, scored on its own checks (HX_CHECKS):
     "expect": {
       "maxMass": 140,                  # g, solid volume x the duty's wall material
       "minWallBetweenFluids": 0.9,     # mm, measured on the grid
-      "maxInternalFlatArea": 200,      # mm^2 of flat ceiling inside (unsupportable in metal)
+      "maxUnbuildableCeiling": 50,     # mm^2 of ceiling inside no edge holds up (heatx _ceiling_spans:
+                                       # farther than half the arch chord the process closes)
+      "maxInternalFlatArea": 2000,     # mm^2 within 20 degrees of level (round crowns count: a looser proxy)
       "maxTrappedVolume": 5,           # mm^3 of open space no port reaches (trapped powder)
       "minEffectiveness": 0.5,         # rated (needs duty)
       "maxPressureDrop": {"air": 20000},  # Pa per fluid
@@ -226,6 +228,8 @@ HX_CHECKS = {
     "wallBetweenFluids": ("minWallBetweenFluids", lambda r: r["report"].get("minWallBetweenFluids"), ">="),
     "internalFlatArea": ("maxInternalFlatArea",
                          lambda r: (r["report"].get("internalCeilings") or {}).get("flatArea"), "<="),
+    "unbuildableCeiling": ("maxUnbuildableCeiling",
+                           lambda r: (r["report"].get("internalCeilings") or {}).get("unbuildableArea"), "<="),
     "trappedVolume": ("maxTrappedVolume", lambda r: r["report"].get("trappedVolume"), "<="),
     "effectiveness": ("minEffectiveness", lambda r: (r.get("rating") or {}).get("effectiveness"), ">="),
 }
@@ -340,6 +344,7 @@ def score_hx_case(raw: dict, out: dict, seconds: float, tier: str = "full") -> d
     row["exchanger"] = {"mass": r["mass"], "solidVolume": rep["solidVolume"],
                         "minWallBetweenFluids": rep.get("minWallBetweenFluids"),
                         "internalFlatArea": ic.get("flatArea"), "internalOverhangArea": ic.get("overhangArea"),
+                        "unbuildableCeiling": ic.get("unbuildableArea"), "widestCeilingSpan": ic.get("widestSpan"),
                         "trappedVolume": rep.get("trappedVolume"), "effectiveness": rt.get("effectiveness"),
                         "duty": rt.get("duty"),
                         "pressureDrop": {k: v.get("pressureDrop") for k, v in (rt.get("fluids") or {}).items()},
@@ -348,9 +353,9 @@ def score_hx_case(raw: dict, out: dict, seconds: float, tier: str = "full") -> d
 
 
 def _md_hx(rows):
-    lines = ["| Exchanger | Pass | Mass g | Wall mm | Flat ceiling mm² | Trapped mm³ | Effectiveness | "
-             "Pressure drop Pa | Time s | Failed checks |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    lines = ["| Exchanger | Pass | Mass g | Wall mm | Unheld ceiling mm² | Flat ceiling mm² | Trapped mm³ | "
+             "Effectiveness | Pressure drop Pa | Time s | Failed checks |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     fmt = lambda v, f: (f.format(v) if v is not None else "-")  # noqa: E731
     for r in rows:
         x = r.get("exchanger") or {}
@@ -360,7 +365,8 @@ def _md_hx(rows):
             failed = (r["error"] + "; " + failed).strip("; ")
         dp = ", ".join(f"{k} {v:.0f}" for k, v in (x.get("pressureDrop") or {}).items() if v is not None) or "-"
         lines.append(f"| {r['case']} | {'yes' if r.get('pass') else 'NO'} | {fmt(x.get('mass'), '{:.1f}')} | "
-                     f"{fmt(x.get('minWallBetweenFluids'), '{:.2f}')} | {fmt(x.get('internalFlatArea'), '{:.0f}')} | "
+                     f"{fmt(x.get('minWallBetweenFluids'), '{:.2f}')} | {fmt(x.get('unbuildableCeiling'), '{:.0f}')} | "
+                     f"{fmt(x.get('internalFlatArea'), '{:.0f}')} | "
                      f"{fmt(x.get('trappedVolume'), '{:.1f}')} | {fmt(x.get('effectiveness'), '{:.2f}')} | {dp} | "
                      f"{r['seconds']:.0f} | {failed} |")
     return "\n".join(lines) + "\n"

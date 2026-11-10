@@ -437,7 +437,7 @@ Where the load goes: von Mises stress, blue (none) to red (the part's 98th perce
 </tr>
 </table>
 
-Two-fluid heat exchangers: two isolated channel networks through one sheet gyroid, with headers that print without support.
+Two-fluid heat exchangers: two isolated channel networks through one sheet gyroid, with round-vaulted headers and round ports, shaped for the build only where the process needs it.
 
 ![box-crossflow](docs/images/heatx/box-crossflow.png)
 

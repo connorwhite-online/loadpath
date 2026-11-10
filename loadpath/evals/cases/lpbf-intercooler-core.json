@@ -1,6 +1,6 @@
 {
   "name": "lpbf-intercooler-core",
-  "description": "A small air-to-coolant intercooler core printed in AlSi10Mg by laser powder-bed fusion, built along +z: hot boost air across x (150 C at 2.3 bar absolute: what a compressor of 70% efficiency delivers from 35 C intake, pressure ratio 2.25), 50% glycol across y. Nothing inside a metal part can be supported, so the internal flat ceiling must stay near zero; each fluid gets one plugged powder clean-out.",
+  "description": "A small air-to-coolant intercooler core printed in AlSi10Mg by laser powder-bed fusion, built along +z: hot boost air across x (150 C at 2.3 bar absolute: what a compressor of 70% efficiency delivers from 35 C intake, pressure ratio 2.25), 50% glycol across y. Nothing inside a metal part can be supported, so no internal ceiling may be wider than the arch powder-bed metal closes (round plenum vaults and ports, egg-crowned only past ~8 mm); each fluid gets one plugged powder clean-out.",
   "core": {
     "type": "box",
     "min": [
@@ -24,7 +24,8 @@
   "cell": 8,
   "wall": 1.0,
   "shell": 1.6,
-  "header": 8,
+  "exteriorBlend": 2.0,
+  "header": 6,
   "portDiameter": 12,
   "portLength": 6,
   "build": "z",
@@ -48,7 +49,7 @@
   "expect": {
     "maxMass": 140,
     "minWallBetweenFluids": 0.9,
-    "maxInternalFlatArea": 200,
+    "maxUnbuildableCeiling": 50,
     "maxTrappedVolume": 5,
     "minEffectiveness": 0.7,
     "maxPressureDrop": {

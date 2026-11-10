@@ -38,7 +38,10 @@ on 4 cores.
   retired: it placed fins by hand, sized by no load.);
 - `build: "z"`, `process: "lpbf"`: printed upright in metal, so nothing
   inside may need support (the channels close in peaked roofs, not flat
-  ceilings) and no skirt;
+  ceilings) and no skirt. The plenums are round vaults and the ports round
+  whatever the process; only a level bore or vault wider than the process
+  builds round (about 8 mm in powder-bed metal) rises into a smooth egg, and
+  SLS or MJF (`process: "sls"`) shapes nothing at all;
 - `duty`: the two streams and the wall material, which turns the design
   into a rating;
 - `simulate: true`: also simulate the whole exchanger (`loadpath/porous.py`).
@@ -100,9 +103,9 @@ Full grid, as the commands above run:
 |---|---|
 | fluids isolated / each connected / watertight | **yes / yes / yes** |
 | thinnest wall between the fluids | 0.94 mm (1.0 drawn, measured on a 0.47 mm grid) |
-| part | 65 x 43 x 131 mm overall, 77.1 cm³ of aluminium: **206 g** |
-| internal flat ceiling (metal) | 115 mm² |
-| trapped pockets | 15, 5.0 mm³ in all |
+| part | 65 x 46 x 131 mm overall, 78.6 cm³ of aluminium: **210 g** |
+| internal ceiling no edge holds up (metal) | 0 mm² (315 mm² lies within 20° of level, almost all of it the round vaults' and ports' crowns, which build) |
+| trapped pockets | 19, 7.3 mm³ in all |
 
 |  | sizing (step 1) | rating (as designed) | whole-exchanger simulation |
 |---|---|---|---|
@@ -111,7 +114,7 @@ Full grid, as the commands above run:
 | oil out | | 55.1 °C | 56.4 °C |
 | water out | | 33.9 °C | 33.3 °C |
 | oil pressure drop | 4.6 kPa | **6.97 kPa** | **8.56 kPa** (7.53 core + 1.03 headers) |
-| water pressure drop | 2.3 kPa | **2.42 kPa** | **3.98 kPa** (3.05 core + 0.93 headers) |
+| water pressure drop | 2.3 kPa | **2.42 kPa** | **4.10 kPa** (3.11 core + 0.99 headers) |
 
 ![whole-exchanger simulation, a section through the axis](images/oil-cooler-simulation.png)
 
@@ -143,10 +146,16 @@ How to read it:
   rating says so in `rating.fluids.oil.flags` and its effectiveness range
   (0.23-0.50) is wide for that reason. Treat 0.5 as the optimistic end until
   a printed core is measured.
-- **Metal printing:** 115 mm² of internal flat ceiling and 5.0 mm³ of trapped
-  pockets are within loadpath's own bars for a metal core (200 mm² and 5 mm³,
-  `loadpath/evals/cases/lpbf-intercooler-core.json`), and the oil and water
-  spaces drain to a port everywhere (`report.powder`: no unreached space).
+- **Metal printing:** no internal ceiling lies farther from a wall that holds
+  it than half the span powder-bed metal closes over an arch
+  (`report.internalCeilings.unbuildableArea` 0 mm², widest span 6 mm against
+  the 5.7 mm an 8 mm round hole closes at 45 degrees): the plenums are round
+  vaults and the 8 mm side ports round, which is the largest round bore
+  metal builds as drawn. 7.3 mm³ of trapped pockets is a little over
+  loadpath's 5 mm³ bar for a metal core
+  (`loadpath/evals/cases/lpbf-intercooler-core.json`); the final design below
+  is at 4.2. The oil and water spaces drain to a port everywhere
+  (`report.powder`: no unreached space).
   Add `"cleanouts": 1` for a tapped powder clean-out per fluid.
 
 ## 3. Bring the oil back inside its budget
@@ -174,13 +183,13 @@ loadpath heatx spec-final.json --out hx-final/
 | | first design (step 2) | 6 mm cell | **6 mm cell, 1.5 mm cap (final)** |
 |---|---|---|---|
 | oil pressure drop, simulated | 8.56 kPa | 4.75 kPa | **3.86 kPa** (3.01 core + 0.84 headers) |
-| water pressure drop, simulated | 3.98 kPa | 2.44 kPa | **2.02 kPa** |
+| water pressure drop, simulated | 4.10 kPa | 2.44 kPa | **2.10 kPa** |
 | effectiveness, simulated (rated) | 0.480 (0.499) | 0.393 (0.407) | **0.404** (0.409) |
 | heat duty, simulated | 1.85 kW | 1.51 kW | **1.56 kW**: oil 90 → 61.7 °C, water 20 → 31.2 °C |
-| trapped pockets | 5.0 mm³ | 6.0 mm³ | **4.1 mm³** |
-| internal flat ceiling | 115 mm² | 130 mm² | **115 mm²** |
+| trapped pockets | 7.3 mm³ | 6.0 mm³ | **4.2 mm³** |
+| internal ceiling no edge holds up | 0 mm² | | **0 mm²** |
 | thinnest wall between the fluids | 0.94 mm | 0.94 mm | **0.95 mm** |
-| part mass (AlSi10Mg) | 206 g | | **190 g** |
+| part mass (AlSi10Mg) | 210 g | | **195 g** |
 | fluids isolated, connected, watertight | yes | yes | **yes** |
 
 Both fluids are now inside 5 kPa with room to spare (oil 23%, water 60%),

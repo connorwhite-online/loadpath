@@ -110,7 +110,7 @@ def test_rated_duty_is_a_magnitude_whichever_fluid_comes_first():
 
 
 def test_design_reports_mass_warnings_and_status(tmp_path):
-    # cold fluid listed first, a shell under lpbf's minimum (Materialize: 1 mm), a big sideways port (its teardrop)
+    # cold fluid listed first, a shell under lpbf's minimum (Materialize: 1 mm), a big sideways port (its egg crown)
     spec = {"name": "thin", "core": {"type": "box", "min": [0, 0, 0], "max": [24, 24, 20]}, "layout": "cross",
             "fluids": ["cold", "hot"], "cell": 8, "wall": 1.0, "header": 6, "shell": 0.35, "portDiameter": 10,
             "portLength": 3, "process": "lpbf", "step": 0.3,
@@ -128,16 +128,18 @@ def test_design_reports_mass_warnings_and_status(tmp_path):
     assert any("outer wall" in w and "1 mm" in w for w in r["warnings"]), r["warnings"]
 
 
-def test_sideways_teardrop_port_has_no_thin_outer_wall():
-    """A 14 mm port run level: its teardrop bore peaks r sqrt(2) over the axis.
-    The mouth's check leaves that far out, and the tube closes the bore's
-    root where the peak rises over the plenum's leaning top edge."""
+def test_sideways_egg_port_has_no_thin_outer_wall():
+    """A 14 mm port run level in powder-bed metal, past the ~8 mm it builds
+    round: its bore rises over the axis as a half ellipse (selfsupport). The
+    mouth's check leaves that far out, and the tube closes the bore's root
+    where the crown rises over the plenum's vault."""
     hx = heat_exchanger_from_spec({"core": {"type": "box", "min": [0, 0, 0], "max": [36, 36, 30]},
                                    "layout": "cross", "cell": 8, "wall": 1.0, "header": 8, "portDiameter": 14,
                                    "portLength": 4, "process": "lpbf"})
     hx.step = 0.45
     _, rep = design_heat_exchanger(hx)
     assert rep["isolated"] and all(rep["connected"].values())
+    assert all(z["portCrown"] > 7.0 for z in rep["zones"].values())
     assert rep["minOuterWall"] > 0.9 * hx.shell, (rep["minOuterWall"], rep["minOuterWallAt"])
     assert not any("outer wall" in w for w in rep["warnings"])
 

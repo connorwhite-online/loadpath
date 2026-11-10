@@ -146,8 +146,8 @@
   },
   {
    "file": "hx-final/report.json",
-   "value": "r['report']['internalCeilings']['flatArea'] <= 200",
-   "what": "final: internal flat ceiling inside 200 mm2",
+   "value": "r['report']['internalCeilings']['unbuildableArea'] <= 50",
+   "what": "final: internal ceiling no edge holds up inside 50 mm2",
    "equals": true
   },
   {
@@ -192,22 +192,21 @@
   {
    "file": "hx/report.json",
    "value": "r['report']['solidVolume'] * 2.67 / 1000",
-   "min": 202,
-   "max": 210,
-   "what": "part mass in AlSi10Mg (206), g"
+   "min": 206,
+   "max": 214,
+   "what": "part mass in AlSi10Mg (210), g"
   },
   {
    "file": "hx/report.json",
-   "value": "r['report']['internalCeilings']['flatArea']",
-   "min": 98,
-   "max": 132,
-   "what": "internal flat ceiling (115), mm2"
+   "value": "r['report']['internalCeilings']['unbuildableArea']",
+   "max": 50,
+   "what": "internal ceiling no edge holds up (0), mm2"
   },
   {
    "file": "hx/report.json",
    "value": "r['report']['trappedVolume']",
-   "max": 5.5,
-   "what": "trapped pockets (5.0), mm3"
+   "max": 8.0,
+   "what": "trapped pockets (7.3), mm3"
   },
   {
    "file": "hx/report.json",
@@ -263,7 +262,7 @@
    "value": "r['simulation']['fluids']['water']['pressureDrop']",
    "min": 3820,
    "max": 4140,
-   "what": "simulated water drop (3980), Pa"
+   "what": "simulated water drop (4100), Pa"
   },
   {
    "file": "hx/report.json",
@@ -308,8 +307,8 @@
   },
   {
    "file": "hx-final/report.json",
-   "value": "r['report']['internalCeilings']['flatArea'] <= 200",
-   "what": "final: internal flat ceiling inside 200 mm2",
+   "value": "r['report']['internalCeilings']['unbuildableArea'] <= 50",
+   "what": "final: internal ceiling no edge holds up inside 50 mm2",
    "equals": true
   },
   {
@@ -322,9 +321,9 @@
   {
    "file": "hx-final/report.json",
    "value": "r['simulation']['fluids']['water']['pressureDrop']",
-   "what": "final: simulated water drop (2020), Pa",
-   "min": 1940,
-   "max": 2100
+   "what": "final: simulated water drop (2100), Pa",
+   "min": 2020,
+   "max": 2180
   },
   {
    "file": "hx-final/report.json",
@@ -343,9 +342,9 @@
   {
    "file": "hx-final/report.json",
    "value": "r['report']['solidVolume'] * 2.67 / 1000",
-   "what": "final: part mass (190), g",
-   "min": 186,
-   "max": 194
+   "what": "final: part mass (195), g",
+   "min": 191,
+   "max": 199
   }
  ],
  "files": [

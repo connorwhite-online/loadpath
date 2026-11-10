@@ -836,7 +836,10 @@ def test_heat_exchanger_on_a_cylinder_counterflow():
     z = rep["zones"]
     assert z["A-in"]["roof"] == z["A-out"]["roof"] == "pyramid"
     assert z["A-out"]["port"][1] == [0.0, 0.0, 1.0] and abs(z["B-in"]["port"][1][2]) < 1e-6
-    assert rep["overhangArea"] < 80.0, rep["overhangArea"]
+    # what leans past 45 degrees is the side plenums' round vault crowns (4 mm spans FDM bridges):
+    # nothing inside is wider than a crown the process closes
+    assert rep["overhangArea"] < 250.0, rep["overhangArea"]
+    assert rep["internalCeilings"]["unbuildableArea"] < 10.0, rep["internalCeilings"]
     assert min(rep["A"]["coreReached"], rep["B"]["coreReached"]) > 0.95
 
 

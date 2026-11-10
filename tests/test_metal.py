@@ -98,7 +98,9 @@ def test_heatx_closure_cuts_internal_ceilings_and_keeps_the_fluids_apart():
         assert rep["minWallBetweenFluids"] > 0.9
         flat[closure] = rep["internalCeilings"]["flatArea"]
     assert not hx.skirt                       # lpbf: outside supports are cut off anyway
-    assert flat[True] < 0.4 * flat[False], flat
+    # (both keep the plenum vaults' round crowns, which build: about 150 mm^2 here)
+    assert flat[True] < 0.6 * flat[False], flat
+    assert rep["internalCeilings"]["unbuildableArea"] < 20.0, rep["internalCeilings"]
 
 
 def test_heatx_cleanouts_open_each_fluid_to_the_outside_and_nothing_else():

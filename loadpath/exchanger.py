@@ -29,6 +29,7 @@ import numpy as np
 
 from itertools import permutations
 
+from .selfsupport import crown_height, needs_shaping
 from .sdf_kit import (
     box, capsule, dual_sheet, mask, seal_ramp, smin, subtract, tpms_dist, union,
 )
@@ -45,7 +46,7 @@ def _require(cond, msg):
 def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
                    skin=None, plenum=None, port_r=None, seal_len=None,
                    margin=None, hose=None, blend=None, a_face=None,
-                   b_face=None, build=None, split=0.5):
+                   b_face=None, build=None, split=0.5, process="lpbf"):
     """Build a complete dual-fluid TPMS heat-exchanger block.
 
     size:     (sx, sy, sz) mm — the TPMS core box, centered at the origin.
@@ -83,6 +84,8 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
               message. The cheap insurance against the recurring bug of
               hot ports landing on the wrong faces.
     b_face:   same for fluid B.
+    process:  what `build` shapes for (selfsupport.SELF_SUPPORT: "lpbf",
+              "fdm", "sla", "dlp"; "sls" / "mjf" need no shaping at all).
     split:    fluid A's share of the void (default 0.5). The sheet moves off
               the mid-surface toward B, as an air side wants against a
               liquid (e.g. 0.66: air gets about twice the coolant's volume).
@@ -98,7 +101,10 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
                 - core faces that look up (the channels' ceilings) close both
                   labyrinths over a gentle ramp instead of a flat skin, so
                   each channel ends in a peaked roof rather than a ceiling;
-                - port bores that run sideways get a 50 degree teardrop peak.
+                - port bores that run sideways stay round up to the size
+                  `process` builds round (selfsupport: ~8 mm in powder-bed
+                  metal), and past it rise over their axis as a half ellipse
+                  (a smooth egg, no peak).
               Built along a cube diagonal (e.g. [1, 1, 1]) every face of a box
               plenum already leans 54.7 degrees and almost nothing changes.
               `field.exclude` marks the untouched TPMS core, for
@@ -244,7 +250,7 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
              (hx + 0.5 * plenum, 0.5 * wy, -zc - 0.5 * zh), min(wy, zh)),
         ]
 
-    up = _up_vector(build)
+    up = _up_vector(build) if needs_shaping(process) else None   # SLS, MJF: the powder holds every layer
     offset = 0.0
     if abs(float(split) - 0.5) > 1e-9:
         from .heatx_thermal import sheet_offset
@@ -426,14 +432,16 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
             continue
         r = per_port_r[name]
         exit_pt = mouth + axis * (skin + 2.0)
-        # a teardrop bore's peak reaches r / cos(lean) over its axis: the plug covers it
-        tear = up is not None and abs(float(axis @ up)) < 0.7
-        bores.append((c, exit_pt, r, tear))
+        # a level bore wider than the process builds round rises to its crown over its axis
+        # (an egg): the plug covers it
+        crown = crown_height(r, process) if up is not None and abs(float(axis @ up)) < 0.7 else r
+        tear = crown > r + 1e-9
+        bores.append((c, exit_pt, r, crown if tear else None))
         if hips[name] is not None:
             # a wide bore cuts the roof's sides below the ridge: a tube walls it in
             tubes.append((hips[name]["fc"], exit_pt, r + skin))
         plugs.append({"a": mouth.tolist(), "b": exit_pt.tolist(),
-                      "r": r / np.cos(np.radians(_ROOF_LEAN)) if tear else r, "ends": "flat"})
+                      "r": crown if tear else r, "ends": "flat"})
     for b in barbs:
         i, sign = b["i"], b["sign"]
         half_len = 0.5 * (skin * 0.5 + b["neck"] + b["barb"] + 2.0)
@@ -536,10 +544,10 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
             if hip is not None:
                 hole = np.minimum(hole, _hip(P, hip, 0.0))
             solid = subtract(solid, hole)
-        for a, b, r, tear in bores:
+        for a, b, r, crown in bores:
             hole = capsule(P, a, b, r)
-            if tear:
-                hole = np.minimum(hole, _teardrop(P, np.asarray(a, float), np.asarray(b, float), r, up))
+            if crown is not None:
+                hole = np.minimum(hole, _egg_crown(P, np.asarray(a, float), np.asarray(b, float), r, crown, up))
             solid = subtract(solid, hole)
         # Hoods join with a smooth union (exterior fillet) so the loft reads
         # as one continuous form, not a pipe glued onto a box. Only ever ADDS
@@ -590,7 +598,7 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
 
 
 # ---- print shaping along a build direction ----------------------------------
-# roofs and teardrops lean at 50 degrees from level: a margin on the 45 that
+# roofs lean at 50 degrees from level: a margin on the 45 that
 # powder-bed metal and FDM hold unsupported (a cube-diagonal build leaves box
 # faces at 54.7, which pass untouched)
 _ROOF_LEAN = 50.0
@@ -747,9 +755,10 @@ def _roomiest(cav, c, half, out, n=9):
     return Q[int(np.argmin(d))]
 
 
-def _teardrop(P, a, b, r, up):
-    """The 50 degree peak over a sideways bore from a to b (the bore's own
-    capsule supplies the round part)."""
+def _egg_crown(P, a, b, r, h, up):
+    """Over a level bore from a to b: a half ellipse r wide and h tall above
+    its axis (the bore's own capsule supplies the round bottom), tangent to
+    the circle at its sides, so the bore is a smooth egg."""
     length = float(np.linalg.norm(b - a))
     ax = (b - a) / length
     v = up - (up @ ax) * ax
@@ -757,8 +766,11 @@ def _teardrop(P, a, b, r, up):
     w = np.cross(ax, v)
     q = P - a
     t, u, l = q @ ax, q @ v, np.abs(q @ w)
-    sa, ca = np.sin(np.radians(_ROOF_LEAN)), np.cos(np.radians(_ROOF_LEAN))
-    return np.maximum(np.maximum(l * sa + u * ca - r, -u), np.maximum(-t, t - length))
+    uu = np.maximum(u, 0.0)
+    qq = np.sqrt((l / r) ** 2 + (uu / h) ** 2)
+    g = np.sqrt((l / r ** 2) ** 2 + (uu / h ** 2) ** 2)
+    egg = (qq - 1.0) * qq / np.maximum(g, 1e-9)
+    return np.maximum(np.maximum(egg, -u), np.maximum(-t, t - length))
 
 
 # Hood/barb geometry constants shared by the profile helpers below (defined
