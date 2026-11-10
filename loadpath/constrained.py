@@ -56,6 +56,15 @@ BUCKLING_NEAR = -0.25
 BUCKLING_FAR = -0.8
 BUCKLING_SKIP_FAR = 7
 BUCKLING_VOLUME_STEP = 0.1
+# The run is over when the lightest design inside the limits, at the
+# sharpest projection, has gained less than this (relative) in
+# `stall_window` iterations. The rule before it called a volume that moved
+# under 0.002 of the box a stall: 4% of a part that fills 5% of its box,
+# measured over a window that reached back across the last sharpening,
+# where the volume steps the other way. The wrist yoke's first part stopped
+# at iteration 35 with 5-7% of its stress allowance unused, 19.0 g; run on
+# at the same limits it is 15.2 g with members 2.6 mm across against 1 mm.
+STALL_GAIN = 5e-3
 # The buckling constraint reads the eroded, grey design, as stress and
 # stiffness do, and that design buckles far sooner than the part delivered:
 # its members are thinner by the erosion and softer by the penalization, and
@@ -196,10 +205,15 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     history = []
     converged = False
     it = 0
+    # the lightest design inside the limits at the sharpest projection
+    # (its variables, its record), and its volume after each iteration there
+    best = None
+    trail = []
 
     for it in range(1, opts.max_iterations + 1):
         if should_stop is not None and should_stop():
             break
+        x_now = x
         xt = (h @ x) / hs
         xp = _project(xt, beta, opts.eta)
         xp[pres] = 1.0
@@ -429,10 +443,13 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
             # disconnected it. Shrink the steps instead of resetting them.
             move_cap = max(0.02, move_cap * 0.6)
             mma.move = min(mma.move, move_cap)
-        elif beta >= opts.beta_max and since_beta >= 5 and feasible:
+        elif beta >= opts.beta_max:
+            if feasible and (best is None or rec["volume"] < best[1]["volume"]):
+                best = (x_now, rec)
+            trail.append(best[1]["volume"] if best is not None else np.inf)
             w = opts.stall_window
-            if change < opts.tol or (len(history) > w and
-                                     abs(history[-1]["volume"] - history[-1 - w]["volume"]) < 2e-3):
+            if best is not None and ((feasible and change < opts.tol) or (
+                    len(trail) > w and trail[-1] > (1.0 - STALL_GAIN) * trail[-1 - w])):
                 converged = True
                 break
 
@@ -441,6 +458,11 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     # (simp.optimize), but here that reshaped thin members after their stress
     # was checked: on the L-bracket the opening read up to 4x the limit where
     # the blueprint reads within about 10% of it, at the same volume.
+    # And of the designs checked at the sharpest projection, the lightest one
+    # inside the limits: the last iterate is a step nobody has checked, and
+    # MMA walks along the limit with every few steps a little over it.
+    if best is not None:
+        x = best[0]
     xp = _project((h @ x) / hs, beta, opts.eta)
     xp[pres] = 1.0
     xp = printed(am_b, xp)
@@ -448,5 +470,6 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
         buck.keep()     # the study's next run on this grid starts from these modes
     return SimpResult(x=x, xphys=xp, compliance=float("nan"), case_compliance=[],
                       volume_fraction=float(xp[design].mean()), iterations=it,
-                      converged=converged, seconds=time.time() - t0, history=history)
+                      converged=converged, seconds=time.time() - t0, history=history,
+                      delivered=best[1] if best is not None else None)
 

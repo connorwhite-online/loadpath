@@ -2511,7 +2511,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                "achievedVolumeFraction": res.volume_fraction, "method": "constrained",
                "limits": {"stress": limits.stress, "deflection": limits.deflection,
                           **({"buckling": limits.buckling} if limits.buckling is not None else {})}}
-        last = res.history[-1] if res.history else {}
+        last = res.delivered or (res.history[-1] if res.history else {})
         bks = [v for kk, v in last.items() if kk.startswith("buckling.")]
         if bks:
             opt["bucklingFactor"] = float(min(bks))   # the optimizer's own reading, eroded grey design

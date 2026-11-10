@@ -564,6 +564,10 @@ class SimpResult:
     escape: dict | None = None
     # buildSim warp design: the delivered field's as-built measures, or None
     warp: dict | None = None
+    # constrained: the history record of the delivered design (the lightest
+    # one inside the limits at the sharpest projection), or None when the run
+    # ended before there was one and the last iterate is delivered
+    delivered: dict | None = None
 
 
 def filter_radius(domain: Domain, min_member: float | None, min_hole: float | None = None) -> float:

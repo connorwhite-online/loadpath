@@ -400,6 +400,30 @@ def test_constrained_deflection_limit_is_met():
                                Limits(None, 0.3, s.material.E))
     last = res.history[-1]
     assert abs(last["deflection.pull"] - 0.3) < 0.03, last
+
+
+def test_constrained_runs_until_the_lightest_design_stops_gaining():
+    # A part that fills a few percent of its box: the stop rule called a
+    # volume that moved under 0.002 of the box a stall, which is 5% of this
+    # part, and it stopped at 0.042 with the design still shedding 1% an
+    # iteration. What is delivered is the lightest design the run checked
+    # inside the limit at the sharpest projection, not the step after it.
+    from loadpath.constrained import STALL_GAIN, Limits, optimize_constrained
+    spec = dict(LUG, designSpace={"type": "box", "min": [0, -30, -4], "max": [60, 30, 4]},
+                supports=[{"shape": {"type": "box", "min": [-1, -31, -5], "max": [0.01, 31, 5]}}])
+    s = study_from_dict(spec)
+    d = build_domain(s)
+    opts = SimpOptions(volume_fraction=0.5, filter_radius=filter_radius(d, None), max_iterations=200)
+    res = optimize_constrained(d, s.material.nu, opts, Limits(None, 1.0, s.material.E))
+    assert res.converged and res.delivered is not None, res.iterations
+    inside = [r for r in res.history if r["beta"] >= opts.beta_max and max(r["constraints"]) <= 0.02]
+    assert res.delivered["volume"] == min(r["volume"] for r in inside)
+    assert abs(res.volume_fraction - res.delivered["volume"]) < 1e-12
+    assert abs(res.delivered["deflection.pull"] - 1.0) < 0.03, res.delivered
+    assert res.volume_fraction < 0.039, res.volume_fraction
+    # over: the lightest design a window back was within STALL_GAIN of it
+    back = [r for r in inside if r["iteration"] <= res.iterations - opts.stall_window]
+    assert res.delivered["volume"] > (1 - STALL_GAIN) * min(r["volume"] for r in back)
     assert res.volume_fraction < 0.5
 
 def test_union_region_and_dead_material_pruning():
