@@ -457,7 +457,9 @@ buckling, printability) you can report to the user.
   `goal.method` (default `auto`) picks the optimizer: the volume-fraction
   search first, then the stress-constrained method (MMA, finer grid) when
   the search's part idles (`stressUtilization`, mean over near-peak von
-  Mises, under 0.15) and stiffness is not what sets its mass; the lighter
+  Mises, under 0.15) and stiffness is not what sets its mass, or when the
+  search's part passes with strength to spare (1.3x the goal or more, one
+  trial part); the lighter
   part is kept and `methodChoice` says which and why. Brackets with one
   hot corner come out 20-55% lighter that way, at up to 4.5x the time.
   `"search"` or `"constrained"` force one.

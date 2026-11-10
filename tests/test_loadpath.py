@@ -560,20 +560,31 @@ def test_auto_method_keeps_the_lighter():
     def fake(st, on_progress=None, should_stop=None, fallback=True):
         calls.append(st.goal.method)
         mass, util = {"search": (30.0, U[0]), "constrained": (20.0, 0.3)}[st.goal.method]
-        o = Outcome(0.2, None, {"mass": mass, "stressUtilization": util}, {}, {}, passes=True)
+        o = Outcome(0.2, None, {"mass": mass, "stressUtilization": util, "safetyFactor": SF[0], "cases": []},
+                    {}, {}, passes=True)
         return StudyResult(st, {}, [o], 0, 1.0)
 
     real = ST._run_single
     try:
         ST._run_single = lambda st, *a, **k: real(st, *a, **k) if st.goal.method == "auto" else fake(st, *a, **k)
-        U = [0.1]
+        U, SF = [0.1], [2.1]
         r = ST._run_single(s)
         assert calls == ["search", "constrained"] and r.choice["method"] == "constrained", r.choice
         assert r.outcomes[r.best].report["mass"] == 20.0
         calls.clear()
-        U = [0.36]   # past the probe's outer band
+        U = [0.36]   # past the probe's outer band, and close to its limit (margin 1.05)
         r = ST._run_single(s)
         assert calls == ["search"] and r.choice["method"] == "search", r.choice
+        calls.clear()
+        # ... the same part with strength to spare (the search stepped over a
+        # cliff: safety factor 7.7 for a goal of 3 on the bell crank): however
+        # evenly it is worked, the constrained method gets a part
+        SF = [5.2]
+        r = ST._run_single(s)
+        assert calls == ["search", "constrained"] and r.choice["method"] == "constrained", r.choice
+        assert r.outcomes[r.best].report["mass"] == 20.0 and abs(r.choice["searchMargin"] - 2.6) < 1e-9
+        assert ST._strength_to_spare(1.3) and not ST._strength_to_spare(1.29)
+        assert not ST._strength_to_spare(None) and not ST._strength_to_spare(float("inf"))
     finally:
         ST._run_single = real
 
