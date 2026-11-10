@@ -541,6 +541,33 @@ _AERO = {
                 "ducted": {"type": "boolean", "description": "a duct with no diffuser: the stream leaves at the "
                                                              "disk's area (default false: an open rotor, whose "
                                                              "wake narrows to 0.71 R)"},
+                "duct": {
+                    "type": "object",
+                    "description": "the duct's geometry (implies ducted), for what it gives and costs "
+                                   "(aero.duct_performance; report.aero.rotors[].duct): thrust against the same "
+                                   "rotor in the open at equal induced power, from momentum theory less the lip's "
+                                   "entrance loss, wall friction, the diffuser's loss and the tip gap's leak; the "
+                                   "share of the thrust the duct's lip carries (a load on the frame); and at "
+                                   "aero.cruiseSpeed its drag. `thrust` is then the whole unit's, rotor and duct. "
+                                   "The gain is credited in report.effectiveMass at gramsPerNewton.",
+                    "properties": {
+                        "tipGap": {"type": "number", "minimum": 0, "description": "blade tip to wall, mm"},
+                        "lipRadius": {"type": "number", "minimum": 0,
+                                      "description": "radius of the inlet lip, mm (0: a sharp edge)"},
+                        "lengthAbove": {"type": "number", "minimum": 0,
+                                        "description": "wall ahead of the disk, mm (with lengthBelow, the "
+                                                       "height its outside shows a cross wind)"},
+                        "lengthBelow": {"type": "number", "minimum": 0,
+                                        "description": "wall behind the disk, mm: friction, and the diffuser's "
+                                                       "length"},
+                        "diffuserAngle": {"type": "number", "minimum": 0,
+                                          "description": "half-angle of the wall behind the disk, degrees "
+                                                         "(default 0; the flow follows it to about 7)"},
+                        "outerRadius": {**_POS, "description": "the duct's outside radius, mm: its profile in "
+                                                               "a cross wind, and the open rotor that would "
+                                                               "fit in its place"},
+                    },
+                    "additionalProperties": False},
                 "cd": {**_POS, "description": "drag coefficient of what the stream meets (default 1.2: a "
                                               "slender bluff member; a streamlined one is about 0.1)"},
                 "airDensity": {**_POS, "description": "kg/m^3 (default 1.2)"},
@@ -552,6 +579,10 @@ _AERO = {
                                                           "false: only the report)"},
         "gramsPerNewton": {**_POS, "description": "what a newton of drag is worth in carried mass (default "
                                                   "102: 1000 / 9.81, a craft hovering on these rotors)"},
+        "cruiseSpeed": {**_POS, "description": "m/s edgewise (a multirotor flying forward): each duct's drag "
+                                               "is reported there (report.aero.cruise), with the thrust the "
+                                               "craft adds to hold it. Reported, not charged: how much of a "
+                                               "flight is cruise is the mission's to say"},
     },
     "required": ["rotors"],
     "additionalProperties": False,

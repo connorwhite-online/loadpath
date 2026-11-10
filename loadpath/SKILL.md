@@ -222,7 +222,12 @@ buckling, printability) you can report to the user.
    44.5, "hub": 14, "thrust": 0.78, "ducted": true}]}` (thrust at hover, N)
    charges the optimizer for the drag of what each stream meets, as the
    mass a hovering craft would carry instead, and the report gives
-   `aero` and `effectiveMass`. A link that turns:
+   `aero` and `effectiveMass`. A drawn duct: add `"duct": {"tipGap": 1,
+   "lipRadius": 6.5, "lengthAbove": 6.5, "lengthBelow": 16, "outerRadius":
+   56}` to the rotor (and `"cruiseSpeed"` m/s to `aero`) and the report
+   says what it gives over the open rotor at equal power, credits that in
+   `effectiveMass`, and gives the thrust its lip carries (`ductThrust`:
+   put it on the duct as a load) and its drag in forward flight. A link that turns:
    `"massProperties": {"axis": {"through": [0, 0, 0], "direction": "z"}}`
    keeps its inertia about the joint down, and every report's
    `massProperties` gives mass, centre of mass and inertia.

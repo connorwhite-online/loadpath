@@ -91,5 +91,53 @@ that is not holding a craft up.
 
 What it leaves out: the stream is the actuator disk's (uniform over the disk, speed from the axis formula, no swirl,
 no tip vortices), every member is a bluff body at one `cd` (1.2; a streamlined section is about 0.1 and the model
-does not know the section), a blocked rotor's own loss of efficiency is not counted, and neither is a duct's inlet
-lip, which makes thrust of its own.
+does not know the section), and a blocked rotor's own loss of efficiency is not counted.
+
+## What a duct gives and costs
+
+A duct round a rotor keeps the wake from narrowing, so the same power moves more air more slowly: momentum theory
+gives a duct with no diffuser 2^(1/3) = 1.26 times an open rotor's thrust at equal induced power, with the rotor
+carrying half of it and suction on the inlet lip the rest. Whether a small printed duct earns its grams is what it
+loses of that. `aero.duct_performance(radius, thrust, tip_gap=, lip_radius=, length=, diffuser_angle=,
+outer_radius=, height=, hub=)` takes the ideal and charges each loss as pressure the rotor must make up or flow it
+must pump twice:
+
+- the lip is a pipe entrance of that radius (`inlet_loss`: half a dynamic head at a sharp edge, 0.13 at a radius of
+  7% of the bore, 0.03 at a bellmouth);
+- the wall is pipe friction over the length behind the disk;
+- a diffuser widens the exit only as far as its wall holds the flow (7 degrees of half-angle) and recovers 85% of
+  the ideal;
+- the tip gap leaks: the rotor's pressure rise drives a jet back through the gap's ring, air that is pumped and
+  makes no thrust.
+
+It returns the thrust against the same rotor in the open at equal induced power (`thrustRatio`, `thrustGained`),
+against an open rotor as big as the duct's outside (`thrustRatioSameSize`: the same width spent on blade), the
+thrust the duct's lip carries (`ductThrust`, which is a load on whatever holds the duct, along the thrust) and what
+is left on the blades (`rotorThrust`). With `cruise=` (m/s, edgewise) it adds the drag: the momentum drag of
+turning the swallowed air to the duct's axis, a bound a short duct does not reach, and the duct's outside as a
+cylinder in cross flow.
+
+A 3.5 in drone's duct (89 mm prop, 1 mm tip gap, 6.5 mm lip, 16 mm of wall behind the disk, 112 mm outside) at
+0.78 N of hover: 1.125 times the open prop's thrust at equal power, of an ideal 1.26; the lip costs most (0.13 of a
+dynamic head), the gap leaks 4% of the flow; 43% of the thrust is on the lip. Doubling the gap to 2 mm leaves 1.09,
+a sharp lip 0.93: worse than no duct. And an open prop filling the duct's 112 mm outside makes 5% more thrust than
+the ducted 89 mm one (`thrustRatioSameSize` 0.95): where a bigger prop fits, it beats the duct, and the duct's
+case is what else it does (guarding the blades, carrying load). At 15 m/s of forward flight the same duct drags up
+to 1.4 N, more than it lifts, with the cross flow at 1.4 times the disk speed, past where the windward lip stalls.
+
+In a study, `aero.rotors[].duct` `{tipGap, lipRadius, lengthAbove, lengthBelow, diffuserAngle, outerRadius}` puts
+this in the report (`report.aero.rotors[].duct`), with the rotor's `thrust` then the whole unit's. The gain is
+credited in `report.effectiveMass` in the same currency as blockage (`thrustGained` x `gramsPerNewton`,
+`report.aero.ductEquivalentMass`), so a ducted design and an open one compare on one number: structure, plus thrust
+blocked, less thrust gained. `aero.cruiseSpeed` adds `report.aero.cruise`: the ducts' drag there and the thrust a
+craft in level flight adds to hold it (thrust holds weight and drag at right angles, so sqrt(T^2 + D^2) - T). That
+is reported and not charged: how much of a flight is cruise is the mission's to say. A drawn duct is the same in
+every design the optimizer tries, so its credit is a constant there; it decides between studies, not within one.
+
+What it leaves out: both rotors are ideal disks, so the open rotor's tip loss, which a duct's wall stops, is not
+credited (`open_factor` takes it from a blade model: the ratio rises by its 2/3 power); profile power is in neither,
+so at equal shaft power the gain is smaller by the share of power that is not induced; a gap wide enough for the tip
+vortex to re-form (a few percent of the radius) loses more than the leak alone; a duct too short for its exit to
+reach ambient pressure, and a lip stalled by cross wind, are not modelled. The numbers sit inside what small ducts
+measure (Pereira 2008: gains from none to tens of percent, falling with the gap and the lip radius), but no duct of
+ours has been on a thrust stand yet.

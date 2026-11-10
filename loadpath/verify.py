@@ -1490,6 +1490,35 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                           "equivalentMass": round(drag * aero.grams_per_newton, 3),
                           "gramsPerNewton": round(aero.grams_per_newton, 2)}
         report["effectiveMass"] = report["mass"] + drag * aero.grams_per_newton
+        # what each drawn duct gives (thrust over the same rotor in the open
+        # at equal induced power: a credit in the same currency) and, at a
+        # declared cruise speed, costs
+        from .aero import duct_performance
+
+        gained = cruise_drag = 0.0
+        for r, row in zip(aero.rotors, rows):
+            if r.duct is None:
+                continue
+            d = r.duct
+            perf = duct_performance(r.radius, r.thrust, d.get("tipGap", 0.0), d.get("lipRadius", 0.0),
+                                    d.get("lengthBelow", 0.0), d.get("diffuserAngle", 0.0), d.get("outerRadius"),
+                                    d.get("lengthAbove", 0.0) + d.get("lengthBelow", 0.0), r.hub, r.rho,
+                                    cruise=aero.cruise_speed)
+            row["duct"] = {k: ({kk: round(vv, 4) for kk, vv in v.items()} if isinstance(v, dict) else round(v, 4))
+                           for k, v in perf.items()}
+            gained += perf["thrustGained"]
+            cruise_drag += perf.get("drag", 0.0)
+        if any(r.duct is not None for r in aero.rotors):
+            report["aero"]["ductThrustGained"] = round(gained, 5)
+            report["aero"]["ductEquivalentMass"] = round(-gained * aero.grams_per_newton, 3)
+            report["effectiveMass"] -= gained * aero.grams_per_newton
+            if aero.cruise_speed is not None:
+                # level flight: thrust holds the weight and the drag at right angles
+                hover = float(sum(r.thrust for r in aero.rotors))
+                extra = float(np.hypot(hover, cruise_drag) - hover)
+                report["aero"]["cruise"] = {"speed": aero.cruise_speed, "ductDrag": round(cruise_drag, 4),
+                                            "extraThrust": round(extra, 4),
+                                            "equivalentMass": round(extra * aero.grams_per_newton, 3)}
 
     design = _union(study.design_space + [r.shape for r in study.preserve])
     keep = _union([r.shape for r in study.keep_out])
