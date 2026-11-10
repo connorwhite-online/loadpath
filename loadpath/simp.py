@@ -81,6 +81,18 @@ MG_AUTO_CELLS = 20_000
 # error 7e-5 against 5e-5), and solving that system again by AMG-CG with its
 # adjoints was 75 s of the part's 340 against 20.
 MG_SLOW_ITERS = 60
+# A slow multigrid gives way to a factorization wherever one fits. Where the
+# live system is too big for that, it gives way to AMG-CG only once less
+# than this share of the grid is live. The multigrid's work is the whole
+# grid's whatever is live; AMG-CG's is the live cells', four to five times
+# as much per dof plus a hierarchy to build for each design. A free-flying
+# frame (130k cells, seven load cases on a 3-2-1 hold, its inertia loads on
+# every node so the whole grid is the system at any design, _live_nodes):
+# the multigrid 13-20 s an iteration at 65-80 CG iterations, AMG-CG 20-44 s.
+# The wrist yoke at 4% (1,650 live cells of 27,634): the multigrid's 470-520
+# iterations against AMG-CG's 28 on the live cells alone. They cross near
+# half the grid.
+MG_SLOW_LIVE = 0.5
 
 
 def _forced_solver() -> str:
@@ -129,6 +141,10 @@ class _Analysis:
         # fit in the memory that is free (direct.factor_budget)
         self._direct_ok = True
         self.last_solver = None
+        # nodes that carry a load in any case (_live_nodes)
+        self._loaded = np.zeros(mesh.n_nodes, bool)
+        for f in domain.loads:
+            self._loaded |= (np.asarray(f).reshape(-1, 3) != 0).any(axis=1)
         if _use_mg(mesh.n_elem):
             self._multigrid()
 
@@ -139,6 +155,22 @@ class _Analysis:
             d = self.domain
             self._mg = GridElasticity(d.mesh, self.nu, d.fixed, springs=d.springs, rtol=self.rtol, maxiter=2000)
         return self._mg
+
+    def _live_nodes(self, alive):
+        """The nodes of the system the live cells leave, or None where the
+        whole grid is solved: most of it live (REDUCE_BELOW), or a load on a
+        node none of them touches. A free-flying part's loads are balanced by
+        its inertia on every node of the grid, so it is always the whole
+        grid, and a route chosen by its live cells would be for a system
+        that is never solved."""
+        if alive.mean() >= REDUCE_BELOW:
+            return None
+        mesh = self.domain.mesh
+        nodes = np.zeros(mesh.n_nodes, bool)
+        nodes[mesh.enode[alive].ravel()] = True
+        if self._loaded[~nodes].any():
+            return None
+        return nodes
 
     def _route(self, alive) -> str:
         """Which solver takes this design: "direct" (a sparse factorization,
@@ -153,21 +185,27 @@ class _Analysis:
             return "mg"
         if force == "assembled":
             return "amg"
-        if not self._direct_ok:
-            return "mg" if self._mg_ok and (self._mg is not None or mesh.n_elem >= MG_AUTO_CELLS) else "amg"
-        if alive.mean() < REDUCE_BELOW:
-            nodes = np.zeros(mesh.n_nodes, bool)
-            nodes[mesh.enode[alive].ravel()] = True
-            n_dof = 3 * int(nodes.sum())
+        nodes = self._live_nodes(alive)
+        if nodes is None:
+            live, n_dof = 1.0, mesh.n_dof
         else:
-            n_dof = mesh.n_dof
-        if force == "direct" or n_dof <= direct.small_dofs():
-            return "direct" if direct.backend() is not None else "amg"
-        if self._mg_ok and mesh.n_elem >= min(MG_AUTO_CELLS, MG_MIN_CELLS):
-            return "mg"
-        if n_dof <= direct.large_dofs():
+            live, n_dof = float(alive.mean()), 3 * int(nodes.sum())
+        factor = self._direct_ok and direct.backend() is not None
+        has_mg = mesh.n_elem >= min(MG_AUTO_CELLS, MG_MIN_CELLS)
+        if factor and (force == "direct" or n_dof <= direct.small_dofs()):
             return "direct"
-        return "mg" if self._mg is not None and self._mg_ok else "amg"
+        if force == "direct" and direct.backend() is None:
+            return "amg"
+        if self._mg_ok and has_mg:
+            return "mg"
+        if factor and n_dof <= direct.large_dofs():
+            return "direct"
+        # Nothing to factor with, or too big for it. The multigrid if it
+        # still suits this run, and, slow, while most of the grid is live
+        # (MG_SLOW_LIVE); AMG-CG on what is live otherwise.
+        if (self._mg is not None or has_mg) and (self._mg_ok or live >= MG_SLOW_LIVE):
+            return "mg"
+        return "amg"
 
     def _solver(self, holder: dict, mesh, mode: str, rtol):
         """The direct or the AMG solver of a (sub)system, made on first use."""
@@ -262,20 +300,21 @@ class _Analysis:
             if out is not None and not (mg.last_iters > MG_SLOW_ITERS and _forced_solver() != "mg"):
                 self.last_solver = "mg"
                 return out
-            # stalled, or slow enough that its answers are in doubt: the
-            # rest of the run goes to a factorization or AMG, and so does
-            # this design unless the multigrid converged within its own
-            # stall limit (MG_SLOW_ITERS)
+            # Stalled or slow: the rest of the run leaves the multigrid for
+            # a factorization where one fits, for AMG-CG where little of the
+            # grid is live (_route). This design's answer stands if the
+            # multigrid converged and is to carry on, or converged within
+            # its own stall limit (MG_SLOW_ITERS).
             self._mg_ok = False
-            if out is not None and mg.last_iters <= mg.STALL:
+            mode = self._route(alive)
+            if out is not None and (mode == "mg" or mg.last_iters <= mg.STALL):
                 self.last_solver = "mg"
                 return out
-            mode = self._route(alive)
             if mode == "mg":
-                mode = "amg"
+                mode = "amg"         # (it did not converge on this design)
         self._last_e = e
         self._mg_reduced = False
-        if alive.mean() < REDUCE_BELOW:
+        if self._live_nodes(alive) is not None:
             sub = self._subsystem(alive, rtol)
             subs = None
             if sub is not None:

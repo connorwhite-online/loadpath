@@ -227,15 +227,23 @@ def test_route():
     """Small or thin: a factorization. A grid of MG_AUTO_CELLS or more with
     a system too big to factor quickly: the multigrid, until it has taken
     MG_SLOW_ITERS iterations on a design; then a factorization again while
-    it fits, AMG-CG beyond. LOADPATH_SOLVER overrides."""
+    it fits. Beyond that the multigrid still, while most of the grid is
+    live, and AMG-CG on the live cells once little of it is. A design
+    with a load on cells that are not live is the whole grid's system.
+    LOADPATH_SOLVER overrides."""
     from loadpath import simp
     from loadpath.simp import _Analysis
 
     st, dom, _ = _mbb()
     fe = _Analysis(dom, st.elastic(design=True), 1e-3)
     full = np.ones(dom.n_elem, bool)
-    thin = np.zeros(dom.n_elem, bool)
+    thin = fe.anchor.copy()            # (the cells at loads and supports are always live)
     thin[: dom.n_elem // 10] = True
+    assert thin.mean() < 0.5
+    # the same without the cells under the load: a system that cannot be cut
+    # down to the live cells, so the whole grid's
+    bare = thin & ~dom.load_nodes[dom.mesh.enode].any(axis=1)
+    assert fe._live_nodes(thin) is not None and fe._live_nodes(bare) is None and fe._live_nodes(full) is None
     with _env(LOADPATH_SOLVER=None, LOADPATH_DIRECT=None, LOADPATH_DIRECT_DOFS="1000000,2000000"):
         assert fe._route(full) == "direct" and fe._route(thin) == "direct"
     with _env(LOADPATH_SOLVER=None, LOADPATH_DIRECT="0"):
@@ -252,9 +260,18 @@ def test_route():
             fe._mg_ok = False
             assert fe._route(full) == "direct"         # ... and the whole grid still under `large`
         with _env(LOADPATH_SOLVER=None, LOADPATH_DIRECT=None, LOADPATH_DIRECT_DOFS="10,20"):
-            assert fe._route(full) == "amg"
-            fe._mg_ok = True
+            # too big to factor: the multigrid, slow as it has been, while
+            # most of the grid is live; AMG-CG on what is live once little is
             assert fe._route(full) == "mg"
+            assert fe._route(thin) == "amg"
+            assert fe._route(bare) == "mg"             # (a free-flying part: loads on every node)
+            fe._mg_ok = True
+            assert fe._route(full) == "mg" and fe._route(thin) == "mg"
+            fe._direct_ok = False          # (a factor that would not fit in memory)
+        with _env(LOADPATH_SOLVER=None, LOADPATH_DIRECT=None, LOADPATH_DIRECT_DOFS="1000000,2000000"):
+            assert fe._route(full) == "mg"
+            fe._mg_ok = False
+            assert fe._route(full) == "mg" and fe._route(thin) == "amg"
     finally:
         simp.MG_AUTO_CELLS = old
 
