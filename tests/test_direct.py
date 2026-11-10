@@ -133,6 +133,53 @@ def test_threads_do_not_pile_up():
     assert all(np.abs(u - out[0]).max() == 0.0 for u in out)
 
 
+_KERNELS_AFTER_MKL = """
+import os, sys, threading
+sys.path.insert(0, sys.argv[1])
+import numpy as np, scipy.sparse as sp
+from numba import njit, prange
+from loadpath.direct import DirectSolver
+
+@njit(parallel=True)
+def kern(a):
+    s = 0.0
+    for i in prange(a.shape[0]):
+        s += a[i] * a[i]
+    return s
+
+n = 4000
+k = (sp.identity(n) * 4.0 - sp.eye(n, k=1) - sp.eye(n, k=-1)).tocsr()
+DirectSolver().solve(k, np.ones(n))          # MKL first, as the optimizer's first solve is
+a = np.ones(200000)
+def run():
+    t = threading.Thread(target=kern, args=(a,)); t.start(); t.join()
+run()
+n0 = len(os.listdir("/proc/self/task"))
+for _ in range(6):
+    run()
+print(n0, len(os.listdir("/proc/self/task")))
+"""
+
+
+def test_kernels_after_a_factorization_do_not_pile_up():
+    """numba's kernels bind to the OpenMP runtime that is loaded when they
+    start. After MKL's, each kernel called from a pool thread left a team
+    behind (the wrist yoke: 27 threads a constrained part), so MKL's first
+    call starts the kernels' threads first (nonlinear.mkl_threads). In a
+    fresh interpreter: a factorization, then kernels from short-lived
+    threads."""
+    import subprocess
+
+    if direct.backend() != "pardiso" or not os.path.isdir("/proc/self/task"):
+        return
+    env = dict(os.environ, LOADPATH_THREADS="3")
+    run = subprocess.run([sys.executable, "-c", _KERNELS_AFTER_MKL, str(Path(__file__).resolve().parents[1])],
+                         capture_output=True, text=True, timeout=300, env=env)
+    assert run.returncode == 0, run.stderr[-2000:]
+    n0, n1 = (int(v) for v in run.stdout.split()[-2:])
+    assert n1 <= n0, (n0, n1)
+
+
 def test_mechanism_raises():
     """A block nothing holds makes K singular. The factorization may or may
     not notice; the residual check must, with the RuntimeError the iterative
@@ -264,7 +311,7 @@ def test_slow_multigrid_hands_over():
 
 
 TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix, test_threads_do_not_pile_up,
-         test_mechanism_raises,
+         test_kernels_after_a_factorization_do_not_pile_up, test_mechanism_raises,
          test_sizes_and_switches, test_route, test_simp_direct_matches_assembled, test_slow_multigrid_hands_over]
 
 
