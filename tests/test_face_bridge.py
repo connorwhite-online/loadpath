@@ -39,3 +39,13 @@ def test_joined_geometry_is_left_alone():
     g[1:4, 1:4, 2] = True
     out = _face_bridge(g.reshape(-1), np.zeros(g.size), dims)
     assert (out == g.reshape(-1)).all()
+
+
+def test_a_cell_the_design_may_fill_is_left_to_the_design():
+    dims = (4, 4, 1)
+    g = np.zeros(dims, bool)
+    g[1, 1, 0] = g[2, 2, 0] = True
+    open_cells = np.zeros(dims, bool)
+    open_cells[2, 1, 0] = True
+    out = _face_bridge(g.reshape(-1), np.zeros(g.size), dims, open_cells.reshape(-1))
+    assert (out == g.reshape(-1)).all()

@@ -590,7 +590,7 @@ def build_domain(study: Study, pitch: float | None = None) -> Domain:
     return d
 
 
-def _face_bridge(preserve, pres_f, dims):
+def _face_bridge(preserve, pres_f, dims, open_cells=None):
     """Drawn geometry joined through faces. A wall thinner than a cell and
     curved across the grid (a 1.2 mm duct at 1.5 mm pitch) comes out as a
     staircase of cells touching only along edges or at corners, each a hinge:
@@ -599,8 +599,11 @@ def _face_bridge(preserve, pres_f, dims):
     never converged (a drone frame, 96 such pieces). Each edge or corner
     contact between preserved cells gets the cells that join it through faces,
     the ones most inside the drawn shape: the wall is there, the grid only
-    lost it."""
+    lost it. Where a cell the optimizer may fill (open_cells) already joins
+    them, nothing is added: the design decides that joint, and at a near-void
+    density it still carries a little stiffness."""
     g = preserve.reshape(dims).copy()
+    o = (np.zeros(dims, bool) if open_cells is None else open_cells.reshape(dims)) | g
     if not g.any():
         return preserve
     f = pres_f.reshape(dims)
@@ -614,6 +617,13 @@ def _face_bridge(preserve, pres_f, dims):
         out[dst] = g[src]
         return out
 
+    def shifted_o(d):
+        out = np.zeros(n, bool)
+        src = tuple(slice(max(0, di), n[k] + min(0, di)) for k, di in enumerate(d))
+        dst = tuple(slice(max(0, -di), n[k] + min(0, -di)) for k, di in enumerate(d))
+        out[dst] = o[src]
+        return out
+
     for _ in range(3):
         added = False
         # edge contacts: cells c and c+a+b, both a, b unit steps on two axes
@@ -622,7 +632,7 @@ def _face_bridge(preserve, pres_f, dims):
                 a = [0, 0, 0]; a[ax] = 1
                 b = [0, 0, 0]; b[bx] = sb
                 ab = [a[k] + b[k] for k in range(3)]
-                diag = g & shifted(ab) & ~shifted(a) & ~shifted(b)
+                diag = g & shifted(ab) & ~shifted_o(a) & ~shifted_o(b)
                 if not diag.any():
                     continue
                 # candidates: c+a (shifted by a) and c+b; take the one more inside
@@ -633,6 +643,7 @@ def _face_bridge(preserve, pres_f, dims):
                 fb = f[tuple(pb.T)]
                 pick = np.where((fa >= fb)[:, None], pa, pb)
                 g[tuple(pick.T)] = True
+                o[tuple(pick.T)] = True
                 added = True
         # corner contacts: c and c+(1,+-1,+-1) with no face path through the
         # six cells between: join through the two most inside
@@ -647,7 +658,7 @@ def _face_bridge(preserve, pres_f, dims):
                          ((0, sy, 0), (0, sy, sz)), ((0, 0, sz), (1, 0, sz)), ((0, 0, sz), (0, sy, sz))]
                 ok = np.zeros(len(ic), bool)
                 for p1, p2 in paths:
-                    ok |= g[tuple((ic + p1).T)] & g[tuple((ic + p2).T)]
+                    ok |= o[tuple((ic + p1).T)] & o[tuple((ic + p2).T)]
                 if ok.all():
                     continue
                 ic = ic[~ok]
@@ -655,13 +666,14 @@ def _face_bridge(preserve, pres_f, dims):
                 choice = np.zeros((len(ic), 2, 3), int)
                 for p1, p2 in paths:
                     q1, q2 = ic + p1, ic + p2
-                    sc = f[tuple(q1.T)] + f[tuple(q2.T)] + 2.0 * (g[tuple(q1.T)] | g[tuple(q2.T)])
+                    sc = f[tuple(q1.T)] + f[tuple(q2.T)] + 2.0 * (o[tuple(q1.T)] | o[tuple(q2.T)])
                     better = sc > best
                     best = np.where(better, sc, best)
                     choice[better, 0] = q1[better]
                     choice[better, 1] = q2[better]
-                g[tuple(choice[:, 0].T)] = True
-                g[tuple(choice[:, 1].T)] = True
+                for q in (choice[:, 0], choice[:, 1]):
+                    g[tuple(q.T)] = True
+                    o[tuple(q.T)] = True
                 added = True
         if not added:
             break
@@ -697,7 +709,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         bores = [r.shape for r in study.keep_out if getattr(r, "cuts", True) and getattr(r, "bore", True)]
         bore_f = _fraction(bores, centers, pitch) if bores else np.zeros(len(centers))
         preserve |= (_fraction(skin, centers, pitch) >= 0.5) & (bore_f < 0.5)
-    preserve = _face_bridge(preserve, pres_f, dims)
+    preserve = _face_bridge(preserve, pres_f, dims, (design_f >= 0.5) & (keep_f == 0))
     design = (design_f >= 0.5) & ~preserve & (keep_f == 0)
     active = preserve | design
     if not active.any():
