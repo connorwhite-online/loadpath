@@ -827,10 +827,15 @@ def _isosurface(domain: Domain, xphys: np.ndarray, o: ReconstructOptions, keep_o
     # smoothed field, but a keep-out's fade is a clipped ramp, and half of a
     # fully solid cell is the level to the last bit (a tilted insertion
     # path's sweep left two such nodes in 1.4M and the whole part failed to
-    # mesh). Move those a hair to the void side.
-    on = np.abs(fine - o.level) < 1e-6
+    # mesh). Move those a hair to the void side. "On the level" is as an STL
+    # stores it: a crossing within a millionth of a cell of its node lands on
+    # the node once the vertices are float32 and welded (the shrouded arm
+    # link: 2,964 such triangles where its interior met the skin, 1,887 open
+    # edges, at a guard of 1e-6). At 1e-3 the surface moves well under a
+    # thousandth of a cell.
+    on = np.abs(fine - o.level) < 1e-3
     if on.any():
-        fine = np.where(on, o.level - 1e-4, fine)
+        fine = np.where(on, o.level - 1e-3, fine)
     verts, faces, _, _ = marching_cubes(fine, o.level, spacing=(step, step, step))
     verts = verts + origin
     mesh = trimesh.Trimesh(verts, faces[:, ::-1], process=True)
