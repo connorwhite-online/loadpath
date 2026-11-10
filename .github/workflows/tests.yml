@@ -6,10 +6,54 @@ on:
   pull_request:
 
 jobs:
+  # The suite is split by file into groups that each take 10-15 minutes on a
+  # 4-core runner (timings in the comments, from a run on 2026-11-10); in one
+  # job it outgrew 55 minutes and the later files stopped being run at all.
+  # A group runs every file in it and fails if any failed, so one red file
+  # does not hide the rest. A new test file goes in the group it fits, or a
+  # new one if a group would pass ~20 minutes.
   tests:
+    name: tests (${{ matrix.group }})
     runs-on: ubuntu-latest
-    # the steps take ~25 min; apt alone has taken 12 on a slow mirror
-    timeout-minutes: 90
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: core            # run_tests 0.5 min, test_loadpath 12
+            files: tests/run_tests.py tests/test_loadpath.py
+          - group: solvers         # ~9 min
+            files: >-
+              tests/test_nonlinear.py tests/test_interface.py tests/test_dfm.py tests/test_voxels.py
+              tests/test_pressure.py tests/test_durability.py tests/test_physics.py tests/test_calibration.py
+              tests/test_impact.py tests/test_switch.py tests/test_switch_lattice.py
+          - group: products        # ~13 min (handoff 3.5, kicad 3.3)
+            files: >-
+              tests/test_handoff.py tests/test_shells.py tests/test_shroud.py tests/test_feel.py
+              tests/test_touch_zones.py tests/test_cooling.py tests/test_rods.py tests/test_wires.py
+              tests/test_stack.py tests/test_kicad.py
+          - group: enclosure       # ~11 min
+            files: tests/test_enclosure.py
+          - group: vibration       # vibration 9.5 min
+            pytest: tests/test_pools.py tests/test_bucklingopt.py tests/test_vibration.py
+          - group: analysis        # ~12 min (study_limits 3, reactions 2)
+            pytest: >-
+              tests/test_mass_properties.py tests/test_inertia_relief.py tests/test_point_maps.py
+              tests/test_lattice_library.py tests/test_textures.py tests/test_layerfiles.py
+              tests/test_reactions.py tests/test_nesting.py tests/test_fe_export.py tests/test_tpms_more.py
+              tests/test_aero.py tests/test_ribs.py tests/test_patterns.py tests/test_vdb.py
+              tests/test_reconstruct_fragments.py tests/test_study_limits.py tests/test_rotor_blockage.py
+              tests/test_face_bridge.py
+          # libigl (the exterior extra) only here: the groups above check the
+          # paths without it
+          - group: exterior
+            extras: ",exterior"
+            files: tests/test_exterior.py
+            pytest: >-
+              tests/test_materials.py tests/test_preview.py tests/test_interfaces.py tests/test_multimat.py
+              tests/test_interlock.py tests/test_threemf_multi.py tests/test_voxelprint.py
+              tests/test_field_materials.py tests/test_published_experiments.py tests/test_fieldjit.py
+              tests/test_print.py tests/test_mixed_lu.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,36 +62,24 @@ jobs:
           cache: pip
       # gmsh needs libGLU; CalculiX for the cross-check's second solver
       - run: sudo apt-get update -q && sudo apt-get install -y -q libglu1-mesa calculix-ccx
-      - run: pip install -e ".[render,crosscheck]"
-      - run: python tests/run_tests.py
-      - run: python tests/test_loadpath.py
-      - run: python tests/test_nonlinear.py
-      - run: python tests/test_interface.py
-      - run: python tests/test_dfm.py
-      - run: python tests/test_voxels.py
-      - run: python tests/test_pressure.py
-      - run: python tests/test_durability.py
-      - run: python tests/test_physics.py
-      - run: python tests/test_calibration.py
-      - run: python tests/test_impact.py
-      - run: python tests/test_switch.py
-      - run: python tests/test_switch_lattice.py
-      - run: python tests/test_handoff.py
-      - run: python tests/test_shells.py
-      - run: python tests/test_shroud.py
-      - run: python tests/test_enclosure.py
-      - run: python tests/test_feel.py
-      - run: python tests/test_touch_zones.py
-      - run: python tests/test_cooling.py
-      - run: python tests/test_rods.py
-      - run: python tests/test_wires.py
-      - run: python tests/test_stack.py
-      - run: python tests/test_kicad.py
-      - run: pip install pytest && python -m pytest -q tests/test_pools.py tests/test_bucklingopt.py
-      - run: python -m pytest -q tests/test_vibration.py tests/test_mass_properties.py tests/test_inertia_relief.py tests/test_point_maps.py tests/test_lattice_library.py tests/test_textures.py tests/test_layerfiles.py tests/test_reactions.py tests/test_nesting.py tests/test_fe_export.py tests/test_tpms_more.py tests/test_aero.py tests/test_ribs.py tests/test_patterns.py tests/test_vdb.py tests/test_reconstruct_fragments.py tests/test_study_limits.py tests/test_rotor_blockage.py tests/test_face_bridge.py
-      # libigl (the exterior extra) last: the steps above check the paths without it
-      - run: pip install -e ".[exterior]" && python tests/test_exterior.py
-      - run: pip install pytest lxml && python -m pytest -q tests/test_materials.py tests/test_preview.py tests/test_interfaces.py tests/test_multimat.py tests/test_interlock.py tests/test_threemf_multi.py tests/test_voxelprint.py tests/test_field_materials.py tests/test_published_experiments.py tests/test_fieldjit.py tests/test_print.py tests/test_mixed_lu.py
+      - run: pip install -e ".[render,crosscheck${{ matrix.extras }}]" pytest lxml
+      - name: plain-python test files
+        if: matrix.files
+        env:
+          FILES: ${{ matrix.files }}
+        run: |
+          rc=0
+          for f in $FILES; do
+            echo "::group::$f"; s=$SECONDS
+            python "$f" || { rc=1; echo "::error::$f failed"; }
+            echo "::endgroup::"; echo "$f: $((SECONDS - s)) s"
+          done
+          exit $rc
+      - name: pytest files
+        if: matrix.pytest && (success() || failure())
+        env:
+          FILES: ${{ matrix.pytest }}
+        run: python -m pytest -q --durations=10 $FILES
 
   # macOS arm64 with pip's numba and no libomp or tbb: numba falls back to
   # its workqueue threading layer, which aborts the process (SIGABRT, no
