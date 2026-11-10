@@ -58,3 +58,15 @@ def test_joints_are_the_cells_between_a_staircase():
     ijk = np.argwhere(np.ones((3, 3, 1), bool))
     j = drawn_joints(g, ijk).reshape(3, 3, 1)
     assert j[1, 0, 0] and j[0, 1, 0] and not j[2, 2, 0]
+
+
+def test_verify_joins_a_staircase_wall():
+    import trimesh
+    from loadpath.verify import _joined_through_faces, voxelize
+    # a thin tilted plate: at this pitch its whole cells meet along edges
+    m = trimesh.creation.box([40.0, 1.0, 10.0])
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.radians(45), [0, 0, 1]))
+    solid, origin = voxelize(m, 1.0)
+    out = _joined_through_faces(m, 1.0, solid, origin)
+    assert _faces(out) == 1
+    assert out[solid].all()

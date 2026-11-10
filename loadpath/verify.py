@@ -1083,6 +1083,24 @@ def _clearance_rows(study: Study, case_name: str, xyz, disp, nodes_per) -> list:
     return rows
 
 
+def _joined_through_faces(mesh, pitch, solid, origin):
+    """Whole cells (half full or more) of a wall about a cell thick and
+    curved across the grid meet only along edges: hinges the solve cannot
+    hold, so verification kept one sliver and dropped the rest (a drone
+    frame's 1.2 mm ducts at 1.15 mm cells, its crash load then on nothing).
+    Where that happens the cell the part fills most joins them
+    (domain._face_bridge), as cut cells do by keeping every cell it enters."""
+    from .domain import _face_bridge
+
+    six = ndimage.label(solid)[1]
+    if six <= ndimage.label(solid, structure=np.ones((3, 3, 3)))[1]:
+        return solid
+    share, o2 = voxelize(mesh, pitch, fractional=True)
+    if share.shape != solid.shape or not np.allclose(o2, origin):
+        return solid
+    return _face_bridge(solid.reshape(-1), share.reshape(-1), solid.shape).reshape(solid.shape)
+
+
 def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=None, contact_band=None,
                    cut_cells=None, fractional: bool = False, nu=None, max_pitch=None):
     """The grid a finished part is analyzed on (verify_part's, and the
@@ -1124,6 +1142,7 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
         solid = share >= 0.05
     else:
         solid, origin = voxelize(mesh, pitch)
+        solid = _joined_through_faces(mesh, pitch, solid, origin)
 
     # Face connectivity: cells that meet only at an edge or a corner share
     # two nodes or one, a hinge the stiffness matrix cannot hold, and CG
@@ -1136,6 +1155,14 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
     # Material not connected to a support would float; it is reported as a
     # separate body and left out of the stress analysis.
     supported_lbls = np.unique(lbl[tuple(elem_ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
+    if study.inertia_relief and nlab > 1:
+        # a free part is held by three nodes it is free to put anywhere: the
+        # part is its largest body, as on the design grid (domain), not
+        # whichever piece the hold happened to land on (a drone frame's
+        # verify analyzed an 884-cell sliver of one duct)
+        sizes = np.bincount(lbl[tuple(elem_ijk.T)], minlength=nlab + 1)
+        sizes[0] = 0
+        supported_lbls = np.array([int(np.argmax(sizes))])
     keep_el = np.isin(lbl[tuple(elem_ijk.T)], supported_lbls)
     if not keep_el.all():
         hm = HexMesh(elem_ijk[keep_el], pitch, origin)
