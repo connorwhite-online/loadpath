@@ -21,9 +21,9 @@ Each connector type has
   safety factor;
 - **wrench** (optional, `abuse`): the moment at which the plug itself is
   allowed to break or come out (USB-C's wrenching strength test). Past this
-  the cable is the weak link; the product should hold up to it. Off by
-  default: it is several times the side load, and a design held to the
-  study's safety factor at it is far heavier than one that survives use.
+  the cable is the weak link; the product should hold up to it, so these
+  cases carry their own safety factor of 1 (`abuse_factor`), not the
+  goal's. Off by default: several times the side load.
 
 The forces go into `region`, the thing the socket is fixed to (a board's
 mount, or the socket's own preserved body), with `at` set to where the plug
@@ -70,7 +70,7 @@ def _r(v, n=4):
 
 def connector_cases(kind: str = "usb-c", *, region, mouth, out, wide=None, hold=None, name: str | None = None,
                     insert: float | None = None, withdraw: float | None = None, side: dict | None = None,
-                    lever: float | None = None, abuse: bool = False, wrench: dict | None = None,
+                    lever: float | None = None, abuse: bool = False, wrench: dict | None = None, abuse_factor: float = 1.0,
                     max_shift: float | None = None):
     """Load cases for a plug in a socket.
 
@@ -126,7 +126,11 @@ def connector_cases(kind: str = "usb-c", *, region, mouth, out, wide=None, hold=
             raise ValueError(f"connector type {kind!r} has no wrenching strength; give wrench {{thin, wide}} N·mm")
         for k in ("thin", "wide"):
             if wr.get(k):
-                cases.append(case(f"wrench-{k}", float(wr[k]) / L * across[k], tip))
+                c = case(f"wrench-{k}", float(wr[k]) / L * across[k], tip)
+                # the plug is allowed to give here; the product only has to
+                # outlast it (a case safety factor of 1, not the goal's)
+                c["safetyFactor"] = float(abuse_factor)
+                cases.append(c)
     clearance = None
     if max_shift:
         clearance = {"name": f"{name}-shift", **target, "maxTravel": float(max_shift),

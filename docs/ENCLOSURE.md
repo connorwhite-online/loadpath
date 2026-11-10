@@ -115,8 +115,9 @@ the plug's thin side and 20 N across its wide side, 15 mm out from the
 socket's front edge (the 4-axis continuity test); `usb-a` and
 `usb-micro-b` are there too. Any number overrides (`insert`, `withdraw`,
 `side {thin, wide}`, `lever`). `abuse: true` adds the wrenching moments at
-which the plug itself may break (USB-C 2.0 N·m and 3.5 N·m): several times
-the side load, so off by default. The board's mount may move at most
+which the plug itself may break (USB-C 2.0 N·m and 3.5 N·m), held to a
+safety factor of 1 of their own (the product only has to outlast the
+plug); several times the side load, so off by default. The board's mount may move at most
 `maxShift` mm in those cases (default 0.1; a goal clearance), so the
 socket's solder joints are not flexed. The cases are named
 `<component>-insert`, `-withdraw`, `-side-thin`, `-side-wide`.

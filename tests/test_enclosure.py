@@ -328,6 +328,7 @@ def test_plug_loads_go_through_the_boards_mount():
     cc, _ = connector_cases("usb-c", region="r", mouth=[0, 0, 0], out=[0, -1, 0], wide=[1, 0, 0], abuse=True)
     w = {c["name"]: c["loads"][0]["force"] for c in cc}
     assert abs(np.linalg.norm(w["usb-c-wrench-wide"]) - 3500 / 15) < 1e-2, w
+    assert [c.get("safetyFactor") for c in cc][-2:] == [1.0, 1.0], cc
 
 
 def test_keep_out_insert_from_a_vector_is_one_straight_way_out():
