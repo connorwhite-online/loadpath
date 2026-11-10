@@ -99,6 +99,16 @@ _AUTO_PROBE_UTILIZATION = 0.28
 # skipped a 2-3 g gain at random. The hook (0.30-0.35) and bell crank
 # (0.32) pay a constrained part or two (full tier: +1500 s, +640 s).
 _AUTO_PROBE_OUTER = 0.34
+# ... unless the search's part has strength to spare: its margin on the
+# goal at or over _PROBE_ROOM. The search steps the volume fraction, and a
+# step can fall off a cliff: the full-tier bell crank's 7.8% part failed
+# (margin 0.68) and its 8.6% part passed at 2.57, so 27.6 g went out at a
+# safety factor of 7.7 for a goal of 3. Its utilization read 0.339 on one
+# run and 0.342 on another (the same part to four digits of mass): the
+# constrained method ran on the first, 22.9 g, and not on the second.
+# Utilization says how evenly a part is worked, not how hard: a part that
+# far inside every limit is one a method sized on the limits can lighten,
+# and it gets the outer band's single part to show it.
 # "promising" there: a part that passes lighter than the search's, or with
 # this margin to spare under this times its mass (the yoke's first
 # constrained part: 17.6 g against 17.2-18.1, tet margin 1.6-2.7; its later
@@ -1456,11 +1466,14 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     limit = _AUTO_UTILIZATION_CUT if use_cut_cells(study) else _AUTO_UTILIZATION
     probe = u >= limit
     outer = u >= _AUTO_PROBE_UTILIZATION
-    if u >= _AUTO_PROBE_OUTER:
+    spare = _margin(study, rep)
+    if u >= _AUTO_PROBE_OUTER and not _strength_to_spare(spare):
         choice["reason"] = (f"stress utilization {u:.2f} >= {_AUTO_PROBE_OUTER}: "
                             "the search part is worked evenly")
         r.choice = choice
         return r
+    if u >= _AUTO_PROBE_OUTER:
+        choice["searchMargin"] = spare
     if should_stop is not None and should_stop():
         r.choice = choice
         return r
@@ -1601,6 +1614,13 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     r.choice = choice
     r.seconds += rc.seconds
     return r
+
+
+def _strength_to_spare(margin: float | None) -> bool:
+    """Whether the search's part sits far enough inside its limits (its
+    margin on the goal, tet-confirmed where it was) for the constrained
+    method to be worth a part whatever its utilization (_AUTO_PROBE_OUTER)."""
+    return margin is not None and np.isfinite(margin) and margin >= _PROBE_ROOM
 
 
 def _probe_won(event: dict, search_mass: float, margin: float | None = None) -> bool:
