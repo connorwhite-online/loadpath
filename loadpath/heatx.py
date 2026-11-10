@@ -127,7 +127,7 @@ class HeatExchangerSpec:
     blend: float | None = None      # mm, smooth-union radius from plenum into its channels (default cell / 4; 0: sharp)
     exterior_blend: float = 0.0     # mm, fillet radius where the outside of headers, ports and core meet (0: sharp)
     headers: str = "flat"           # "flat": a plenum of even depth over its zone; "loft": a smooth funnel from the zone to its port
-    header_ribs: int = 0            # with loft headers: stiffening ribs along each funnel, from the core to the port
+    header_ribs: int = 0            # retired (ignored, with a warning): hand-placed fins no load sized
     port_diameter: float = 8.0      # mm; or one per fluid, (A, B): an air side wants a far bigger port
     port_length: float = 8.0
     axes: tuple = (0, 1)            # cross: A along axes[0], B along axes[1]; counter: A along axes[0], B's side ports along axes[1]
@@ -215,9 +215,11 @@ def heat_exchanger_from_spec(spec: dict, base_dir=None) -> HeatExchangerSpec:
             raise ValueError("heatExchanger.headers is \"flat\" (even depth over the zone) or \"loft\" (a funnel to the port)")
         hx.headers = str(spec["headers"])
     if "headerRibs" in spec:
-        hx.header_ribs = int(spec["headerRibs"])
-        if hx.header_ribs < 0:
+        if int(spec["headerRibs"]) < 0:
             raise ValueError("headerRibs must be 0 or more")
+        # retired: the fins were placed and sized by hand, not by any load
+        # (heatx.py, "The outside"); kept readable so older specs still parse
+        hx.header_ribs = int(spec["headerRibs"])
     if "type" in spec:
         hx.kind = str(spec["type"])
     if "layout" in spec:
@@ -478,7 +480,6 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
     half = 0.5 * hx.wall
     fluid = []
     body = [d - hx.shell]
-    ribs = []
     shape = _closure(hx, zones, ell, d, dims, step, up, cap) if up is not None and hx.closure else None
     for f in (0, 1):
         ks = [k for k, z in enumerate(zones) if z.fluid == f]
@@ -515,8 +516,6 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                 hull = ndimage.gaussian_filter(hull.reshape(dims), _LOFT_SMOOTH / step).ravel()
                 void = np.minimum(void, np.maximum(hull, -d))
                 body.append(hull - hx.shell)
-                if hx.header_ribs > 0:
-                    ribs.append(_loft_ribs(hx, zi, pts, hull, pad - 0.5))
                 del hull
             else:
                 # a sideways zone's top edge leans out over the wall below it at 55 degrees
@@ -583,16 +582,6 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
         keep = np.where(d_body <= 0.0, np.maximum(d_body, np.minimum(fluid[0], fluid[1]) - hx.shell), np.inf)
         d_body = np.minimum(ndimage.gaussian_filter(d_body.reshape(dims), _LOFT_SMOOTH / step).ravel(), keep)
         del keep
-        if ribs:
-            # the ribs go on after the smoothing, standing their height off the finished
-            # outside, their edges rounded over a little, with small fillets at their roots
-            rib = np.full(len(d_body), 10.0, np.float32)
-            for near, fins, height in ribs:
-                rib[near] = np.minimum(rib[near], np.maximum(fins, d_body[near] - height))
-            rib = ndimage.gaussian_filter(rib.reshape(dims), 0.5 / step).ravel()
-            d_body = _smooth_union(d_body, rib, 0.8)
-            del rib
-        del ribs
         # and each port's tube left as drawn: a true cylinder, cut square at its end
         for zi in zinfo:
             sel = _port_box(hx, zi, pts, up, bed)
@@ -603,6 +592,22 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
             d_body[sel] = np.minimum(np.maximum(d_body[sel], (q - p1) @ ax), tube)
             del q, tube
     del body, ell, coords
+    # No wall thicker than it has to be. The outside is a blend of the core's,
+    # headers' and ports' own outsides, and the blend and the smoothing fill
+    # every concave junction between them (where a plenum meets the core's
+    # corner, or two plenums meet) with solid metal: up to 6 mm where the
+    # walls are 1.6, weight that holds no pressure and moves no heat. The
+    # outside is held to what needs a wall: the fluid spaces grown by the
+    # shell, and the core grown by the shell over its seal; their union
+    # blended over `exteriorBlend`, so a junction keeps its fillet and
+    # nothing more.
+    xb = hx.exterior_blend
+    walls = [fluid[0] - np.float32(hx.shell + step), fluid[1] - np.float32(hx.shell + step), d - np.float32(hx.shell)]
+    need = walls[0]
+    for w in walls[1:]:
+        need = _smooth_union(need, w, xb) if xb > 0 else np.minimum(need, w)
+    d_body = np.maximum(d_body, need)
+    del walls, need
     grid = np.maximum(d_body, -np.minimum(fluid[0], fluid[1])).reshape(dims)
     if up is not None and hx.skirt:
         grid = _skirt(grid, d_body.reshape(dims), int(np.argmax(np.abs(up))), step)
@@ -637,6 +642,9 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                        "portDiameter": zi["portDiameter"]}
                        for z, zi in zip(zones, zinfo)},
                    "warnings": warnings})
+    if hx.header_ribs:
+        warnings.append("headerRibs is retired and ignored: the fins were placed and sized by hand, not by a load; "
+                        "the plenum walls are the shell everywhere")
     warnings += _process_warnings(hx, report)
     # the design's full-grid fields are done with: free them before the fluid spaces
     del side_a, g, d, pts, fluid, shape
@@ -999,37 +1007,6 @@ def _loft_planes(zi, cap, n_patch=700, n_rim=64):
     r = 0.5 * zi["portDiameter"]
     rim = zi["exit"] + r * (np.outer(np.cos(th), u) + np.outer(np.sin(th), v))
     return ConvexHull(np.vstack([pp, rim]))
-
-
-_RIB_HEIGHT = 3.5                  # mm a lofted header's ribs stand off its wall
-
-
-def _loft_ribs(hx, zi, pts, hull, reach):
-    """Where a lofted header's ribs go: `header_ribs` fins evenly round its
-    port's axis (the first on the side nearest +z), each 1.25 shells thick, from
-    the core to the port's root. Returns (grid indices, the fins' field
-    without their height, the height there), the height swelling from nothing
-    at either end to `_RIB_HEIGHT` midway; `_rib_field` stands them off the
-    finished outside."""
-    a = zi["axis"]
-    z = np.array([0.0, 0.0, 1.0]) - a[2] * a
-    u = z / np.linalg.norm(z) if np.linalg.norm(z) > 1e-6 else np.cross(a, [1.0, 0.0, 0.0])
-    u /= np.linalg.norm(u)
-    v = np.cross(a, u)
-    near = np.flatnonzero(hull < reach)
-    q = pts[near] - zi["exit"]
-    along = q @ a
-    span = max(float((zi["exit"] - zi["center"]) @ a), 1e-3)
-    s_ = np.clip(1.0 + along / span, 0.0, 1.0)           # 0 at the zone, 1 at the port's root
-    height = (_RIB_HEIGHT * np.minimum(1.0, 4.0 * s_ * (1.0 - s_) * 1.6)).astype(np.float32)
-    fins = np.full(len(near), np.inf, np.float32)
-    for k in range(hx.header_ribs):
-        th = 2.0 * np.pi * k / hx.header_ribs
-        e = np.cos(th) * u + np.sin(th) * v
-        n = np.cross(a, e)
-        fin = np.maximum(np.abs(q @ n) - 0.625 * hx.shell, -(q @ e))   # a slab, one side of the axis
-        fins = np.minimum(fins, fin.astype(np.float32))
-    return near, fins, height
 
 
 def _planes_sdf(hull, pts, pad, soft=0.0, chunk=32768):

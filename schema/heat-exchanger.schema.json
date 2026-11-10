@@ -58,7 +58,7 @@
     "headerRibs": {
       "type": "integer",
       "minimum": 0,
-      "description": "with headers: loft, stiffening ribs along each funnel from the core to its port, evenly round the port's axis (default 0)"
+      "description": "retired and ignored (with a warning): it stood hand-placed fins on each lofted header that no load sized; the plenum walls are the shell everywhere"
     },
     "exteriorBlend": {
       "type": "number",

@@ -192,19 +192,32 @@ def test_loft_headers_funnel_each_zone_into_its_port():
         heat_exchanger_from_spec({**spec, "headers": "domed"})
 
 
-def test_header_ribs_add_material_and_keep_the_part_sound():
-    """headerRibs stand fins on each lofted plenum: more metal on the outside,
-    the part still isolated, connected and watertight, and negative counts refused."""
+def test_header_ribs_are_retired_and_no_wall_is_thicker_than_it_needs():
+    """headerRibs no longer adds hand-placed fins (a warning says so), and
+    the outside of a lofted, blended exchanger stays within a shell of the
+    fluid spaces or the core: the blend keeps fillets, not lumps of metal."""
+    from scipy import ndimage
+
     spec = {**{k: v for k, v in CUBE.items() if k not in ("name", "step")}, "build": "none",
-            "core": {"type": "box", "min": [0, 0, 0], "max": [30, 30, 24], "radius": 6}, "headers": "loft"}
+            "core": {"type": "box", "min": [0, 0, 0], "max": [30, 30, 24], "radius": 6}, "headers": "loft",
+            "exteriorBlend": 6}
     vols = []
     for ribs in (0, 4):
         hx = heat_exchanger_from_spec({**spec, "headerRibs": ribs})
         hx.step = 0.45
-        mesh, rep = design_heat_exchanger(hx)[:2]
+        mesh, rep, extra = design_heat_exchanger(hx, grids=True)
         assert rep["isolated"] and all(rep["connected"].values()) and rep["watertight"]
         vols.append(mesh.volume)
-    assert vols[1] > vols[0]
+    assert abs(vols[1] - vols[0]) < 1e-6 * vols[0]
+    assert any("headerRibs is retired" in w for w in rep["warnings"])
+    # the thickest metal outside the core: no deeper than the shell plus a fillet's worth
+    step = extra["step"]
+    vox = mesh.voxelized(step).fill()
+    inside = vox.matrix
+    depth = ndimage.distance_transform_edt(inside) * step
+    pts = vox.indices_to_points(np.argwhere(inside))
+    core = hx.core.sdf(pts) > hx.shell + step
+    assert depth[inside][core].max() < 2.0 * hx.shell + 2 * step, depth[inside][core].max()
     with pytest.raises(ValueError):
         heat_exchanger_from_spec({**spec, "headerRibs": -1})
 
