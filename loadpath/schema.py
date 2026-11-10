@@ -1409,11 +1409,22 @@ STUDY_SCHEMA = {
         "maxIterations": {"type": "integer", "minimum": 1},
         "gravity": {**_VEC3, "description": "m/s², the part's own weight in every load case"},
         "vibration": _VIBRATION,
-        "inertiaRelief": {"type": "boolean",
-                          "description": "A part nothing holds (a drone arm, a dropped or thrown part): no supports; "
-                                         "its own inertia balances each case's loads (inertia relief) and a 3-2-1 "
-                                         "hold that takes nothing keeps it still. Not with gravity, thermal or "
-                                         "loads of unknown direction."},
+        "inertiaRelief": {"anyOf": [{"type": "boolean"}, {"type": "object", "properties": {
+                              "masses": {"type": "array", "items": {
+                                  "type": "object",
+                                  "description": "What the free part carries (a motor, a battery, a camera) on "
+                                                 + _TARGET + ": its inertia takes its share of every load",
+                                  "properties": {"region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"},
+                                                 "mass": {**_POS, "description": "kg"}},
+                                  "x-requireOne": [["region"], ["shape"]], "required": ["mass"],
+                                  "additionalProperties": False}}},
+                              "additionalProperties": False}],
+                          "description": "A part nothing holds (a drone frame, a dropped or thrown part): no "
+                                         "supports; inertia balances each case's loads (inertia relief) and a 3-2-1 "
+                                         "hold that takes nothing keeps it still. {masses: [...]} adds what it "
+                                         "carries (a drone's motors and battery outweigh its frame), and a "
+                                         "vibration block then reads its free-free modes. Not with gravity, "
+                                         "thermal or loads of unknown direction."},
         "massProperties": _MASS_PROPERTIES,
         "thermal": _THERMAL,
         "printDirection": {"type": "string", "pattern": "^[+-]?[xyz]$",

@@ -253,6 +253,32 @@
       },
       "description": "Planes through the design-space centre, by normal axis."
     },
+    "mesh": {
+      "type": "object",
+      "description": "How the delivered surface is drawn from the optimized field. Larger radii give joints that read as grown rather than assembled; both only ever add material.",
+      "properties": {
+        "close": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Round every concave edge of the organic body by this radius (mm): a closing in distance space. Default half the minMember, at least 1."
+        },
+        "fillet": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Fillet radius (mm) where the organic body meets preserved geometry. Default 1.5 x minMember, at least 3."
+        },
+        "smooth": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Gaussian smoothing of the refined field, in fine cells (default 0.9)."
+        },
+        "taubin": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Volume-keeping Taubin smoothing passes on the organic surface before the exact booleans (default 25)."
+        }
+      }
+    },
     "resolution": {
       "type": "object",
       "properties": {
@@ -360,8 +386,50 @@
       "additionalProperties": false
     },
     "inertiaRelief": {
-      "type": "boolean",
-      "description": "A part nothing holds (a drone arm, a dropped or thrown part): no supports; its own inertia balances each case's loads (inertia relief) and a 3-2-1 hold that takes nothing keeps it still. Not with gravity, thermal or loads of unknown direction."
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "masses": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "description": "What the free part carries (a motor, a battery, a camera) on A 'region' (a preserve or keepOut id, or one a fastener adds such as 'w1-bore') or an inline 'shape'.: its inertia takes its share of every load",
+                "properties": {
+                  "region": {
+                    "type": "string"
+                  },
+                  "shape": {
+                    "$ref": "#/$defs/shape"
+                  },
+                  "mass": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "kg"
+                  }
+                },
+                "x-requireOne": [
+                  [
+                    "region"
+                  ],
+                  [
+                    "shape"
+                  ]
+                ],
+                "required": [
+                  "mass"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "A part nothing holds (a drone frame, a dropped or thrown part): no supports; inertia balances each case's loads (inertia relief) and a 3-2-1 hold that takes nothing keeps it still. {masses: [...]} adds what it carries (a drone's motors and battery outweigh its frame), and a vibration block then reads its free-free modes. Not with gravity, thermal or loads of unknown direction."
     },
     "massProperties": {
       "type": "object",

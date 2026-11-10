@@ -649,7 +649,7 @@ def _relieved(domain, xe):
     from .domain import inertia_balance, node_mass
 
     phi = _rigid_modes(domain)
-    m = node_mass(domain.mesh, np.maximum(xe, 1e-3))
+    m = node_mass(domain.mesh, np.maximum(xe, 1e-3)) + _carried(domain)
     loads, accs = [], []
     for f in raw:
         fb, acc = inertia_balance(f, m, phi)
@@ -668,13 +668,19 @@ def _rigid_modes(domain):
     return phi
 
 
+def _carried(domain):
+    """inertiaRelief.masses per node (domain.carried_volume), or 0."""
+    c = getattr(domain, "carried", None)
+    return 0.0 if c is None else c
+
+
 def _rigid_free_m(domain, xe, u):
     """u less its mass-weighted rigid motion (M-orthogonal to the rigid
     modes, M from the densities)."""
     from .domain import node_mass
 
     phi = _rigid_modes(domain)
-    m = np.repeat(node_mass(domain.mesh, np.maximum(xe, 1e-3)), 3)
+    m = np.repeat(node_mass(domain.mesh, np.maximum(xe, 1e-3)) + _carried(domain), 3)
     mphi = phi * m[:, None]
     c = np.linalg.solve(phi.T @ mphi, mphi.T @ u)
     return u - phi @ c

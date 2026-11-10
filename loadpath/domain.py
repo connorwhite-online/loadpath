@@ -74,6 +74,8 @@ class Domain:
     # inertiaRelief: the cases' loads as written (BoundaryConditions.raw_loads)
     # so the optimizer rebalances them against the design's own mass
     raw_loads: list | None = None
+    # inertiaRelief.masses per node (carried_volume), or None
+    carried: np.ndarray | None = None
 
     @property
     def n_elem(self):
@@ -234,13 +236,36 @@ def inertia_balance(f: np.ndarray, m_node: np.ndarray, phi: np.ndarray):
     return f - m * acc, acc
 
 
-def _inertia_relief(study: Study, mesh: HexMesh, loads: list, fixed: np.ndarray):
+def carried_volume(study: Study, mesh: HexMesh, tol_floor: float = 0.0) -> np.ndarray | None:
+    """inertiaRelief.masses on a mesh's nodes, as the volume of the study's
+    material that weighs the same (mm^3 per node, node_mass's unit), each
+    spread evenly over its region's nodes; None when it carries nothing.
+    A drone's motors and battery are most of its mass: balanced by the
+    frame's own inertia alone, a thrust case pulls on the frame's far
+    corners instead of on the battery in its middle."""
+    masses = getattr(study, "inertia_masses", None) or []
+    if not masses:
+        return None
+    rho = float(study.material.density) * 1e-6           # kg per mm^3
+    out = np.zeros(mesh.n_nodes)
+    for i, (region, shape, kg) in enumerate(masses):
+        nodes = np.flatnonzero(_region_nodes(study, mesh, region, shape, f"inertiaRelief.masses[{i}]",
+                                             tol_floor))
+        out[nodes] += kg / rho / len(nodes)
+    return out
+
+
+def _inertia_relief(study: Study, mesh: HexMesh, loads: list, fixed: np.ndarray, tol_floor: float = 0.0):
     """Every case balanced by the part's own inertia, the mesh taken as
-    solid; the 3-2-1 support then takes nothing."""
+    solid, plus what it carries (inertiaRelief.masses); the 3-2-1 support
+    then takes nothing."""
     from .fem import rigid_body_modes
 
     phi = rigid_body_modes(mesh.node_xyz)
     m = node_mass(mesh, 1.0)
+    carried = carried_volume(study, mesh, tol_floor)
+    if carried is not None:
+        m = m + carried
     out = []
     for f in loads:
         fb, _ = inertia_balance(f, m, phi)
@@ -441,7 +466,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
     raw = None
     if study.inertia_relief:
         raw = [f.copy() for f in loads]
-        loads = _inertia_relief(study, mesh, loads, fixed)
+        loads = _inertia_relief(study, mesh, loads, fixed, tol_floor)
     return BoundaryConditions(fixed, springs, support_nodes, loads, case_nodes, load_nodes, gravity, regions,
                               case_wet, imbalance, spreads, raw)
 
@@ -701,6 +726,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                   center_of_mass=(None if getattr(getattr(study, "mass_properties", None), "com_target", None) is None
                                   else (study.mass_properties.com_target, study.mass_properties.com_tolerance)),
                   raw_loads=list(bc.raw_loads) if bc.raw_loads else None,
+                  carried=carried_volume(study, mesh) if bc.raw_loads else None,
                   thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
                                      near=_near_cells(mesh, support_nodes | load_nodes)),
                   warp=_warp_term(study, mesh))
@@ -732,7 +758,10 @@ def _inertial_cases(study: Study, mesh: HexMesh, fixed: np.ndarray, loads: list)
     matches the largest real load case: the objective weighs them alongside
     the real cases rather than letting either swamp the other."""
     vib = getattr(study, "vibration", None)
-    if vib is None or not vib.in_optimizer or not vib.masses:
+    if vib is None or not vib.in_optimizer or not vib.masses or study.inertia_relief:
+        # a free part shaken as a whole only translates: its stiffness
+        # against its masses comes from the real cases, which inertia
+        # relief already balances against them
         return []
     total = sum(kg for _, _, kg in vib.masses)
     real = max((float(np.linalg.norm(f.reshape(-1, 3).sum(axis=0))) for f in loads), default=0.0)

@@ -184,7 +184,13 @@ buckling, printability) you can report to the user.
    keeps its outer surface and ribs the inside.
    A part nothing holds (a drone arm between motors, a part that is
    dropped or thrown): `"inertiaRelief": true` and no supports; its own
-   inertia balances the loads. A part that carries a motor or a camera
+   inertia balances the loads. When it carries more than it weighs (a
+   drone frame's motors and battery), say so:
+   `"inertiaRelief": {"masses": [{"region": "battery", "mass": 0.1}]}`, or a
+   thrust case pulls against the frame's own corners instead of the battery
+   (a dumbbell bar read half its bending moment without its end masses). A
+   `vibration` block on such a part reads its free-free modes, carried
+   masses included. A part that carries a motor or a camera
    and must not ring: `"vibration": {"minFrequency": 60, "masses":
    [{"region": "motor-seat", "mass": 0.12}]}` (Hz, kg) holds its first
    natural frequency with the safety factor. A link that turns:

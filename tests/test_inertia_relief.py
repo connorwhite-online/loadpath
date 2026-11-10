@@ -77,6 +77,50 @@ def test_optimizer_designs_a_free_part():
     assert mid > far, (mid, far)
 
 
+END_A = {"type": "box", "min": [-1, -1, -1], "max": [2.01, 11, 11]}
+END_B = {"type": "box", "min": [97.99, -1, -1], "max": [101, 11, 11]}
+MID = {"type": "box", "min": [49, -1, 9.99], "max": [51, 11, 11]}
+
+
+def test_carried_masses_take_the_inertia():
+    # a dumbbell: 1 kg at each end of a 12 g bar, pushed down in the middle.
+    # The ends' inertia reacts the push, so the bar bends as if simply
+    # supported there, M = F/2 x 49 mm; balanced by the bar's own mass alone
+    # the middle would read far less
+    s = study_from_dict({**FREE_BAR, "loadCases": [{"name": "mid", "loads": [{"shape": MID, "force": [0, 0, -10]}]}],
+                         "inertiaRelief": {"masses": [{"shape": END_A, "mass": 1.0}, {"shape": END_B, "mass": 1.0}]}})
+    assert abs(s.carried_mass - 2.0) < 1e-12
+    bar = trimesh.creation.box(extents=[100, 10, 10])
+    bar.apply_translation([50, 5, 5])
+    rep = verify_part(s, bar, max_cells=40_000, refine=0)
+    sigma = 5.0 * 49.0 * 5 / (10 * 10 ** 3 / 12)                     # 1.47 MPa
+    peak = 50.0 / rep["safetyFactor"]
+    assert abs(peak - sigma) / sigma < 0.15, (peak, sigma)
+    bare = study_from_dict({**FREE_BAR, "loadCases": s.raw["loadCases"]})
+    rep2 = verify_part(bare, bar, max_cells=40_000, refine=0)
+    assert 50.0 / rep2["safetyFactor"] < 0.6 * sigma
+    # the optimizer's rebalancing on a design sees them too
+    d = build_domain(s)
+    assert d.carried is not None and abs(d.carried.sum() * 1.2e-6 - 2.0) < 1e-9
+
+
+def test_free_free_modes():
+    # a free-free bar's first bending mode, (4.730^2 / 2 pi L^2) sqrt(EI / rho A)
+    from loadpath.verify import modal_check
+    s = study_from_dict({**FREE_BAR, "vibration": {"minFrequency": 100, "modes": 2}})
+    bar = trimesh.creation.box(extents=[100, 10, 10])
+    bar.apply_translation([50, 5, 5])
+    out = modal_check(s, bar)
+    ei, rho_a, length = 2e9 * (0.01 ** 4 / 12), 1200 * 1e-4, 0.1
+    f1 = 4.730 ** 2 / (2 * np.pi * length ** 2) * np.sqrt(ei / rho_a)          # 1327 Hz
+    assert out["free"] and abs(out["firstFrequency"] - f1) / f1 < 0.08, (out["firstFrequency"], f1)
+    # 1 kg on each end pulls it far down: a carried mass is in the modes too
+    sm = study_from_dict({**FREE_BAR, "vibration": {"minFrequency": 100},
+                          "inertiaRelief": {"masses": [{"shape": END_A, "mass": 1.0}, {"shape": END_B, "mass": 1.0}]}})
+    out2 = modal_check(sm, bar)
+    assert out2["carried"] == 2.0 and out2["firstFrequency"] < 0.2 * out["firstFrequency"]
+
+
 def test_inertia_relief_spec_errors():
     with pytest.raises(ValueError, match="Drop the supports"):
         study_from_dict({**FREE_BAR, "supports": [{"shape": TIP}]})
@@ -84,6 +128,10 @@ def test_inertia_relief_spec_errors():
         study_from_dict({**FREE_BAR, "gravity": [0, 0, -9.81]})
     with pytest.raises(ValueError, match="inertiaRelief"):
         study_from_dict({k: v for k, v in FREE_BAR.items() if k != "inertiaRelief"})
+    with pytest.raises(ValueError, match="carried mass"):
+        study_from_dict({**FREE_BAR, "inertiaRelief": {"masses": [{"shape": TIP, "mass": 0}]}})
+    with pytest.raises(ValueError, match="unknown"):
+        study_from_dict({**FREE_BAR, "inertiaRelief": {"mass": 1}})
 
 
 if __name__ == "__main__":

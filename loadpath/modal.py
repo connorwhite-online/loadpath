@@ -96,16 +96,20 @@ def _lumped_mass(mesh: HexMesh, density):
 
 
 def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray, n_modes: int = 6,
-                   point_masses: list | None = None, springs=None) -> ModalResult:
+                   point_masses: list | None = None, springs=None, free: bool = False) -> ModalResult:
     """Lowest `n_modes` natural frequencies (Hz) of a voxel model.
 
     modulus: E per element (MPa) or scalar; density: g/cm^3 per element or
     scalar; fixed: bool per dof (clamped). point_masses: [(node_ids, kg)],
     each spread evenly over its nodes (all three directions). springs: an
-    (n_dof x n_dof) sparse stiffness added to K (pin supports)."""
+    (n_dof x n_dof) sparse stiffness added to K (pin supports).
+    free=True: nothing holds it (a drone in flight); `fixed` is ignored, K
+    is shifted by s M to factor it, and the six rigid-body modes (at zero)
+    are left out of the result: its first frequency is the first flexible
+    mode."""
     from scipy.sparse.linalg import eigsh
 
-    fixed = np.asarray(fixed, bool)
+    fixed = np.zeros(mesh.n_dof, bool) if free else np.asarray(fixed, bool)
     st = Stiffness(mesh, nu, fixed)
     k = st.assemble(np.broadcast_to(np.asarray(modulus, float), (mesh.n_elem,)))
     if springs is not None:
@@ -116,10 +120,18 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
         nodes = np.asarray(nodes, np.int64)
         m_node[nodes] += kg * 1e-3 / len(nodes)
     m = np.repeat(m_node, 3)
+    free_dofs = free
     free = np.flatnonzero(~fixed)
-    kf = k[free][:, free].tocsc()
     mf = m[free]
-    nm = min(n_modes, len(free) - 2)
+    rigid = 6 if free_dofs else 0
+    shift = 0.0
+    if free_dofs:
+        # K + s M is positive definite with the same modes, each at w^2 + s;
+        # s at (2 pi 10 Hz)^2 (N/mm per tonne is 1/s^2)
+        shift = (2 * np.pi * 10.0) ** 2
+        k = (k + sp.diags(m * shift)).tocsr()
+    kf = k[free][:, free].tocsc()
+    nm = min(n_modes + rigid, len(free) - 2)
     if len(free) <= DIRECT_EIG_DOFS:
         w, v = eigsh(kf, k=nm, M=sp.diags(mf).tocsc(), sigma=0.0, which="LM")
     elif os.environ.get("LOADPATH_MODAL_LOBPCG") != "1":
@@ -158,7 +170,11 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
         w, v = lobpcg(kf, x0, B=sp.diags(mf), M=ml.aspreconditioner(), largest=False, tol=1e-6, maxiter=400)
         w, v = w[:nm], v[:, :nm]
     order = np.argsort(w)
-    w, v = np.maximum(w[order], 0.0), v[:, order]
+    w, v = w[order] - shift, v[:, order]
+    if rigid:
+        w, v = w[rigid:], v[:, rigid:]
+        nm -= rigid
+    w = np.maximum(w, 0.0)
     # mass-normalize (phi^T M phi = 1)
     v = v / np.sqrt(np.einsum("ik,i,ik->k", v, mf, v))[None, :]
     modes = np.zeros((mesh.n_dof, nm))

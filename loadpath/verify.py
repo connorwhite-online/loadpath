@@ -906,11 +906,18 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
     solid = share > 0.02
     hm = HexMesh(np.argwhere(solid), pm, origin)
     bc = boundary_conditions(study, hm, check_loads=False, tol_floor=0.5 * pm)
-    if not bc.fixed.any() and bc.springs is None:
+    free = bool(study.inertia_relief)
+    if not free and not bc.fixed.any() and bc.springs is None:
         return None
-    lbl, _ = ndimage.label(solid)
+    lbl, nb = ndimage.label(solid)
     ijk = hm.elem_ijk
-    held = np.unique(lbl[tuple(ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
+    if free:
+        # free-free: the largest body (loose crumbs would add zero modes)
+        sizes = np.bincount(lbl[tuple(ijk.T)], minlength=nb + 1)
+        sizes[0] = 0
+        held = np.array([int(np.argmax(sizes))])
+    else:
+        held = np.unique(lbl[tuple(ijk[bc.support_nodes[hm.enode].any(axis=1)].T)])
     keep = np.isin(lbl[tuple(ijk.T)], held)
     if not keep.all():
         hm = HexMesh(ijk[keep], pm, origin)
@@ -921,13 +928,25 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
         nodes = np.flatnonzero(_region_nodes(study, hm, region, shape, f"vibration.masses[{i}]", tol_floor=pm))
         masses.append((nodes, kg))
     springs = mat.E * bc.springs if bc.springs is not None else None
+    if free:
+        # a free part also carries inertiaRelief.masses, unless the vibration
+        # block names them itself
+        named = {(r, id(sh)) for r, sh, _ in vib.masses}
+        for i, (region, shape, kg) in enumerate(getattr(study, "inertia_masses", []) or []):
+            if (region, id(shape)) in named or (region is not None and region in {r for r, _, _ in vib.masses}):
+                continue
+            nodes = np.flatnonzero(_region_nodes(study, hm, region, shape, f"inertiaRelief.masses[{i}]",
+                                                 tol_floor=pm))
+            masses.append((nodes, kg))
     res = modal_analysis(hm, float(mat.E) * fill, float(mat.density) * fill, float(mat.nu), bc.fixed, vib.modes,
                          masses,
-                         springs=springs)
+                         springs=None if free else springs, free=free)
     f1 = float(res.frequencies[0])
     out = {**res.to_dict(), "minFrequency": vib.min_frequency, "firstFrequency": round(f1, 2),
            "ok": bool(f1 >= vib.min_frequency), "pitch": pm, "cells": int(hm.n_elem),
-           "carried": round(sum(kg for _, _, kg in vib.masses), 5), "seconds": round(time.time() - t0, 2)}
+           "carried": round(sum(kg for _, kg in masses), 5), "seconds": round(time.time() - t0, 2)}
+    if free:
+        out["free"] = True
     # which way the first mode moves most: what to brace
     part = res.participation[0]
     out["firstModeAxis"] = "xyz"[int(np.argmax(part))] if part.sum() > 0.05 else "rotation"

@@ -658,6 +658,10 @@ class Study:
     vibration: Any = None
     # an axis to keep the inertia down about (MassProperties), or None
     mass_properties: Any = None
+    # inertiaRelief.masses: what the free part carries, [(region id or None,
+    # shape or None, kg)]. A drone frame's motors and battery outweigh it,
+    # so they, not the frame, take most of the thrust's inertia.
+    inertia_masses: list = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
     # where the study's relative mesh paths start (blocks read later:
     # switch.output.bearsOn, switch.clearance, skin.openings)
@@ -676,6 +680,11 @@ class Study:
         """No supports: the part floats free and its own inertia balances
         the loads (study `inertiaRelief`)."""
         return bool((self.raw or {}).get("inertiaRelief"))
+
+    @property
+    def carried_mass(self) -> float:
+        """kg the free part carries (inertiaRelief.masses)."""
+        return float(sum(kg for _, _, kg in self.inertia_masses))
 
     @property
     def self_equilibrated(self) -> bool:
@@ -994,13 +1003,14 @@ def _clearances(items, base_dir):
     return out
 
 
-def _vibration(v, goal, supports, base_dir):
+def _vibration(v, goal, supports, base_dir, free=False):
     if v is None:
         return None
     if not isinstance(v, dict) or not isinstance(v.get("minFrequency"), (int, float)) or v["minFrequency"] <= 0:
         raise ValueError("vibration needs minFrequency: the Hz the part's first natural frequency must reach")
-    if not supports:
-        raise ValueError("vibration needs supports: natural frequencies are of the part clamped where it is held")
+    if not supports and not free:
+        raise ValueError("vibration needs supports (natural frequencies of the part clamped where it is held), "
+                         "or inertiaRelief for a part that flies free (its free-free modes)")
     if goal.safety_factor is None and goal.max_deflection is None:
         raise ValueError("vibration.minFrequency is held by the search for the lightest passing part: give the "
                          "goal a safetyFactor or maxDeflection too")
@@ -1272,8 +1282,20 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError(f"pressure on {rid!r}: a pressure acts in a keepOut (the fluid's volume); "
                          f"keepOut ids: {sorted(ko_ids)}")
     relief = d.get("inertiaRelief")
-    if relief is not None and not isinstance(relief, bool):
-        raise ValueError("inertiaRelief is true or false")
+    inertia_masses = []
+    if isinstance(relief, dict):
+        unknown = set(relief) - {"masses"}
+        if unknown:
+            raise ValueError(f"inertiaRelief takes masses (what the free part carries); unknown: {sorted(unknown)}")
+        for i, m in enumerate(relief.get("masses") or []):
+            label = f"inertiaRelief.masses[{i}]"
+            if not isinstance(m, dict) or not isinstance(m.get("mass"), (int, float)) or m["mass"] <= 0:
+                raise ValueError(f"{label}.mass is the carried mass in kg (> 0): a motor, a battery, a camera")
+            region, shape = _target(m, label, base_dir)
+            inertia_masses.append((region, shape, float(m["mass"])))
+        relief = True
+    elif relief is not None and not isinstance(relief, bool):
+        raise ValueError("inertiaRelief is true, false or {masses: [{region, mass}]}")
     if relief:
         if supports:
             raise ValueError("inertiaRelief is for a part nothing holds (a drone frame, a thrown or dropped part, a "
@@ -1428,7 +1450,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         if min_member is not None and max_member < 2.0 * float(min_member):
             raise ValueError(f"maxMember ({max_member:g}mm) must be at least twice minMember "
                              f"({float(min_member):g}mm) to leave the optimizer room")
-    vibration = _vibration(d.get("vibration"), goal, supports, base_dir)
+    vibration = _vibration(d.get("vibration"), goal, supports, base_dir, free=bool(relief))
     mass_properties = _mass_properties(d.get("massProperties"), goal)
     st = Study(
         name=str(d.get("name") or "study"),
@@ -1463,6 +1485,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         fits=fits,
         vibration=vibration,
         mass_properties=mass_properties,
+        inertia_masses=inertia_masses,
         raw=d,
     )
     if d.get("multiMaterial") is not None:
