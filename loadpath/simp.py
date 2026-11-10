@@ -73,7 +73,13 @@ MG_AUTO_CELLS = 20_000
 # ... until it takes this many CG iterations on a design: its coarse grids
 # cannot carry members one or two cells thick (the wrist yoke at 4%: 470-520
 # iterations for AMG's 28, and a delivered design a quarter as stiff). From
-# then on that run factors (or, too big for that, runs AMG-CG).
+# then on that run factors (or, too big for that, runs AMG-CG). The slow
+# answer itself stands where the multigrid still converged inside its own
+# stall limit (mg.GridElasticity.STALL): the first solve of the yoke's later
+# trial parts, the whole 119k-cell grid live at a soft projection, took 65
+# iterations and came as close to a factorization's as AMG-CG's does (energy
+# error 7e-5 against 5e-5), and solving that system again by AMG-CG with its
+# adjoints was 75 s of the part's 340 against 20.
 MG_SLOW_ITERS = 60
 
 
@@ -252,9 +258,14 @@ class _Analysis:
             if out is not None and not (mg.last_iters > MG_SLOW_ITERS and _forced_solver() != "mg"):
                 self.last_solver = "mg"
                 return out
-            # stalled, or slow enough that its answers are in doubt: this
-            # design and the rest of the run go to a factorization or AMG
+            # stalled, or slow enough that its answers are in doubt: the
+            # rest of the run goes to a factorization or AMG, and so does
+            # this design unless the multigrid converged within its own
+            # stall limit (MG_SLOW_ITERS)
             self._mg_ok = False
+            if out is not None and mg.last_iters <= mg.STALL:
+                self.last_solver = "mg"
+                return out
             mode = self._route(alive)
             if mode == "mg":
                 mode = "amg"

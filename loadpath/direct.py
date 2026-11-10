@@ -39,10 +39,17 @@ import os
 
 import numpy as np
 
-__all__ = ["DirectSolver", "backend", "small_dofs", "large_dofs", "solve_many"]
+__all__ = ["DirectSolver", "backend", "small_dofs", "large_dofs", "rescue_dofs", "solve_many"]
 
 # dofs up to which a factorization is the first choice / still beats AMG-CG
 _SIZES = {"pardiso": (110_000, 300_000), "superlu": (9_000, 9_000)}
+# ... and up to which one takes over from a CG that has not converged in
+# fem.Solver.STALL iterations: slower than a CG that converges, but it ends,
+# and by then it costs less than the iterations already spent. A solid
+# block of 212k dofs: 400 AMG-CG iterations 118 s, PARDISO 9 s, SuperLU 72 s
+# (and 0.8 GB); PARDISO on the wrist yoke's whole 119k-cell grid, 398k dofs,
+# 19 s and 3.4 GB.
+_RESCUE = {"pardiso": 450_000, "superlu": 200_000}
 # relative residual a solve must reach (after one refinement step at most);
 # the callers' own tolerances are 1e-3 to 1e-6
 RTOL = 1e-7
@@ -83,6 +90,13 @@ def small_dofs() -> int:
 def large_dofs() -> int:
     """Up to this many it still beats AMG-preconditioned CG."""
     return _sizes()[1]
+
+
+def rescue_dofs() -> int:
+    """Up to this many a factorization takes over from a CG that has
+    stalled (fem.Solver.STALL)."""
+    b = backend()
+    return max(_RESCUE[b], large_dofs()) if b is not None else 0
 
 
 class DirectSolver:

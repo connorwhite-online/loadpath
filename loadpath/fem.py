@@ -565,8 +565,11 @@ class Solver:
         self.maxiter = maxiter
         self.rebuild_after_iters = rebuild_after_iters
         self._b = rigid_body_modes(mesh.node_xyz)
+        self._node_ijk = getattr(mesh, "node_ijk", None)
         self._ml = None
         self._age = 0
+        self._factored = None      # a direct.DirectSolver holding the matrix CG stalled on
+        self._unfactored = None    # ... or the matrix that would not factor
         self.last_iters = 0
         self.use_amg = True
         try:
@@ -608,30 +611,91 @@ class Solver:
             self._age = 0
         return self._ml.aspreconditioner(cycle="V")
 
-    def _maxiter(self):
+    # CG iterations a system small enough to factor (direct.rescue_dofs) gets
+    # before it is factored instead. A solve the hierarchy suits takes
+    # 20-150. One it does not suit ran to maxiter, was rebuilt and ran to
+    # maxiter again, for every right-hand side: a soft part's check (TPU 88A
+    # round stiff inserts, 8k cells) was still going after 50 minutes where
+    # one factorization of that matrix takes seconds. No reading of the
+    # residual says sooner which kind a solve is: on a design with soft cells
+    # through it the residual climbs to 60 times where it began and swings
+    # for 80 iterations before it falls in the last 10. So the count decides,
+    # set where the iterations already spent cost about what the
+    # factorization will (direct._RESCUE): at worst twice the better choice.
+    STALL = 400
+
+    def _spent(self):
+        """The hierarchy was slow on this matrix: the next matrix gets a new
+        one. One built for this very matrix stays for its further right-hand
+        sides (the adjoints of the same design), where dropping it only
+        built the same one again: 10 s on the wrist yoke's 398k dofs."""
+        if self._ml is not None and self._age == 0:
+            self._age = self.max_age
+        else:
+            self._ml = None
+
+    def _maxiter(self, n=None):
         """A refreshed hierarchy that stops working (the design moved too far
         from the one it was aggregated on) gives up early and is rebuilt,
-        rather than running to maxiter."""
+        rather than running to maxiter. A fresh one gets STALL iterations
+        where a factorization can take over (`n` dofs), maxiter where not."""
         if self._age == 0:
-            return self.maxiter
+            from . import direct
+
+            return min(self.maxiter, self.STALL) if n is not None and n <= direct.rescue_dofs() else self.maxiter
         return min(self.maxiter, 3 * self.rebuild_after_iters)
 
+    def _rescued(self, k, fs):
+        """k x = f by a factorization where CG stalled, or None (too big to
+        factor, or the factor did not hold its residual: a mechanism). The
+        factor stays for this matrix's further right-hand sides."""
+        from . import direct
+
+        if self._factored is not None and self._factored._k is k:
+            return self._factored.solve_many(k, fs)
+        self._factored = None
+        if self._unfactored is k or not 0 < k.shape[0] <= direct.rescue_dofs():
+            return None
+        solver = direct.DirectSolver(self._node_ijk)
+        try:
+            out = solver.solve_many(k, fs)
+        except (RuntimeError, MemoryError):
+            self._unfactored = k
+            return None
+        self._factored, self._unfactored = solver, None
+        return out
+
     def solve(self, k, f, x0=None):
+        if self._factored is not None:
+            if self._factored._k is k:
+                return self._factored.solve_many(k, [f])[0]
+            self._factored = None
         count = [0]
 
         def cb(_):
             count[0] += 1
 
         m = self._precond(k)
-        u, info = cg(k, f, x0=x0, rtol=self.rtol, maxiter=self._maxiter(), M=m, callback=cb)
-        if info != 0 and self._ml is not None:
+        aged = self._age > 0
+        u, info = cg(k, f, x0=x0, rtol=self.rtol, maxiter=self._maxiter(k.shape[0]), M=m, callback=cb)
+        if info != 0 and aged and self._ml is not None:
             # Stale hierarchy: rebuild once and retry from where we got to.
             self._ml = None
             count[0] = 0
+            u, info = cg(k, f, x0=u, rtol=self.rtol, maxiter=self._maxiter(k.shape[0]), M=self._precond(k),
+                         callback=cb)
+        if info != 0:
+            got = self._rescued(k, [f])
+            if got is not None:
+                self.last_iters = count[0]
+                self._ml = None
+                return got[0]
+            # no factorization on offer: CG's full allowance
+            self._ml = None
             u, info = cg(k, f, x0=u, rtol=self.rtol, maxiter=self.maxiter, M=self._precond(k), callback=cb)
         self.last_iters = count[0]
         if count[0] > self.rebuild_after_iters:
-            self._ml = None
+            self._spent()
         if info != 0:
             raise RuntimeError(f"linear solve did not converge ({count[0]} iterations); "
                                "the structure may be a mechanism (check supports)")
@@ -647,6 +711,10 @@ class Solver:
         x0s = x0s or [None] * len(fs)
         if len(fs) == 1:
             return [self.solve(k, fs[0], x0s[0])]
+        if self._factored is not None:
+            if self._factored._k is k:
+                return self._factored.solve_many(k, fs)
+            self._factored = None
         from .pools import pool
 
         m = self._precond(k)
@@ -656,7 +724,7 @@ class Solver:
         # level is a 60-125 MB LU; resident memory grew ~0.5 GB per design,
         # 3 to 7 GB over a search). One cycle here factors it once.
         m @ np.zeros(k.shape[0])   # (a LinearOperator or, for Jacobi, a sparse matrix: scipy 1.18 sparse has no matvec)
-        maxiter = self._maxiter()
+        maxiter = self._maxiter(k.shape[0])
         counts = [0] * len(fs)
 
         def one(i):
@@ -669,6 +737,14 @@ class Solver:
         with pool(min(len(fs), 4)) as ex:
             res = list(ex.map(one, range(len(fs))))
         out = []
+        if self._age == 0 and any(info != 0 for _, info in res):
+            # stalled on a hierarchy built for this very matrix: one
+            # factorization for every case, where the system is small enough
+            got = self._rescued(k, fs)
+            if got is not None:
+                self.last_iters = max(counts)
+                self._ml = None
+                return got
         for i, (u, info) in enumerate(res):
             if info != 0:
                 # Fall back to the single-solve path, which rebuilds a stale
@@ -678,5 +754,5 @@ class Solver:
             out.append(u)
         self.last_iters = max(counts)
         if self.last_iters > self.rebuild_after_iters:
-            self._ml = None
+            self._spent()
         return out
