@@ -46,7 +46,13 @@ as a power `skew_exp`) and leaned along it (`lean`, mm). In this blade-element m
 so skew and lean leave the curve as it is; what they change is noise and stress. `tonal_coherence` scores the first:
 how much of each blade's pass across a fixed strut (a bracket arm upstream) arrives in step along the span, for each
 blade-passing harmonic (1 for a straight leading edge; skew of about a blade pitch spreads it toward 0, the phase
-cancellation skewed fan blades are drawn for). `strength` counts the second: a skewed blade's spin pull bends its root.
+cancellation skewed fan blades are drawn for). `strength` counts the second: a skewed blade's spin pull, which runs
+through the axis, bends its root over r_hub sin(skew), and a lean toward the inlet lets that pull offset the
+thrust's bending (a little goes a long way: on a 175 mm rotor at 4,500 rpm the pull is about 50 N a blade, the
+thrust 0.2 N). Bending is solved on the root section's own second moments, so a thin cambered root reads its
+weak-axis stress. `size_root(rotor, op, max_stress)` thickens the root (a taper to the tip's ratio) only as far as
+a stress limit needs, and `optimize(..., max_stress=, strength_kw={"retention": 0.4})` does that for every
+candidate and penalizes what still can't meet it.
 
 **Size.** `optimize` takes `r_tip` and `r_hub` as ranges as well as values, and the system and objective may take
 the rotor (`system(q, rotor)`, `objective(op, rotor)`) when its size changes what it works against, as a fan that

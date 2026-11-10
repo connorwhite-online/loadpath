@@ -330,15 +330,16 @@ def design(q: float, dp: float, rpm: float, r_tip: float, r_hub: float, blades: 
            diffusion: float = 0.45, air: dict | None = None, tip: str = "band", gap: float = 0.0,
            band: tuple = (1.6, 18.0), n: int = 15, incidence: float = 0.0, t_ratio: float = 0.07,
            t_min: float = 1.4, te: float = 0.8, sigma_range: tuple = (0.3, 2.2), static: bool = True,
-           exit: str = "sre") -> Rotor:
+           exit: str = "sre", t_root: float | None = None) -> Rotor:
     """Blades for dp (Pa, total-to-static if `static`, else total) at flow q (m^3/s) and rpm.
 
     `diffusion` is one number or (hub, tip): the chord follows it, so a pair shapes the blade's planform.
     The work varies with radius as (r / r_tip)^work_exp: 0 is a free vortex (uniform work, the only loading a free
     duct leaves evenly spread at a low flow coefficient), 1-2 put it outboard where the blade speed is and spare the
     hub, which suits `exit="uniform"` (a resistance close behind holds the flow even). Solidity from the diffusion
-    factor; incidence (deg) onto the camber line at the leading edge. Thickness t_ratio of the chord but never under
-    t_min, trailing edge te (mm): printable sections. Returns a Rotor; `design_point` records the aim, the diffusion
+    factor; incidence (deg) onto the camber line at the leading edge. Thickness t_ratio of the chord (t_root at the
+    hub, if given, running straight to t_ratio at the tip) but never under t_min, trailing edge te (mm): printable
+    sections. Returns a Rotor; `design_point` records the aim, the diffusion
     it hit, and whether it converged."""
     air = air or globals()["air"]()
     rho, nu = air["rho"], air["nu"]
@@ -392,7 +393,7 @@ def design(q: float, dp: float, rpm: float, r_tip: float, r_hub: float, blades: 
         theta = np.clip(k1 - k2, -0.5, 1.4)
         k2 = 0.5 * k2 + 0.5 * (b2 - (_carter_m(k2) * np.abs(theta) / np.sqrt(sig) + _re_deviation(re)))
     chord = sig * pitch * 1e3
-    rotor = Rotor(r=rr, chord=chord, kappa1=k1, kappa2=k2, thickness=np.maximum(t_ratio * chord, t_min), te=te,
+    rotor = Rotor(r=rr, chord=chord, kappa1=k1, kappa2=k2, thickness=_thickness(chord, t_ratio, t_min, t_root), te=te,
                   blades=blades, r_hub=r_hub, r_tip=r_tip, rpm=rpm, tip=tip, gap=gap, band=band, exit=exit)
     rotor.design_point = {"q": q, "dp": dp, "static": static, "rpm": rpm, "work_exp": work_exp, "diffusion": diffusion,
                           "D_max": float(d.max()), "sigma_clipped": bool(np.any(sig >= sigma_range[1] - 1e-9)),
@@ -400,6 +401,27 @@ def design(q: float, dp: float, rpm: float, r_tip: float, r_hub: float, blades: 
                           "flow_coefficient": float(cx1 / u[-1]),
                           "pressure_coefficient": float(dp / (0.5 * rho * u[-1] ** 2))}
     return rotor
+
+
+def _thickness(chord, t_ratio, t_min, t_root=None):
+    tr = np.linspace(t_root, t_ratio, len(chord)) if t_root is not None else t_ratio
+    return np.maximum(tr * chord, t_min)
+
+
+def size_root(rotor: Rotor, op: dict, max_stress: float, t_ratio: float = 0.07, t_min: float = 1.4,
+              t_root_max: float = 0.20, steps: int = 14, **strength_kw) -> tuple:
+    """The thinnest root (thickness ratio at the hub, tapering straight to t_ratio at the tip) that keeps the root
+    stress at the operating point within max_stress (MPa). Thickness costs this blade-element model nothing, so it is
+    sized here rather than searched: the root grows only as thick as the stress needs. Returns (rotor, strength); the
+    strength's root_stress still over max_stress when even t_root_max can't hold it."""
+    import dataclasses
+    for tr in np.linspace(t_ratio, t_root_max, steps):
+        r2 = dataclasses.replace(rotor, thickness=_thickness(rotor.chord, t_ratio, t_min, tr))
+        st = strength(r2, op=op, **strength_kw)
+        if st["root_stress"] <= max_stress:
+            break
+    r2.design_point = {**rotor.design_point, "t_root": float(tr)}
+    return r2, st
 
 
 def _with_rotor(f):
@@ -416,7 +438,8 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
              axial: float | None = None, air: dict | None = None, tip: str = "band", gap: float = 0.0,
              band: tuple = (1.6, 18.0), stall_margin: float = 0.15, t_min: float = 1.4, te: float = 0.8,
              starts: int = 3, seed: int = 0, objective=None, exit: str = "sre", hub_ratio_max: float = 0.55,
-             iters: int = 220) -> tuple:
+             iters: int = 220, max_stress: float | None = None, t_ratio: float = 0.07, t_root_max: float = 0.20,
+             strength_kw: dict | None = None) -> tuple:
     """Blades that move the most air through `system` (q -> static Pa the system needs at fan flow q; or
     (q, rotor) -> Pa when the rotor's size changes the system, as a fan covering more of a core does).
 
@@ -426,7 +449,9 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
     tip. Searches blade count and, for each, the design flow and pressure, the spanwise work, the diffusion at hub and
     tip (the planform), speed, diameter and hub (Nelder-Mead from a start where the system takes about a third of
     the shaft power as air power, warm-started across blade counts, the winner polished). `objective(op)` or
-    `objective(op, rotor)` to maximize instead of the operating flow. Returns (rotor, report)."""
+    `objective(op, rotor)` to maximize instead of the operating flow. With `max_stress` (MPa, `strength` at the
+    operating point with `strength_kw`, e.g. {"retention": 0.4}) each candidate's root is thickened as far as
+    t_root_max (size_root) and a design still over the limit is penalized. Returns (rotor, report)."""
     from scipy.optimize import minimize
 
     air = air or globals()["air"]()
@@ -452,7 +477,7 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
         return design(q_ref * math.exp(qd), dp_ref * math.exp(dpd), unit(sp, lo_rpm, hi_rpm), rt_, rh_, z,
                       work_exp=float(np.clip(wexp, 0, 3)),
                       diffusion=(float(np.clip(dh, 0.30, 0.55)), float(np.clip(dt, 0.30, 0.55))), air=air, tip=tip,
-                      gap=gap, band=band, t_min=t_min, te=te, exit=exit)
+                      gap=gap, band=band, t_min=t_min, te=te, exit=exit, t_ratio=t_ratio)
 
     def score(x, z):
         try:
@@ -460,8 +485,6 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
         except (FloatingPointError, ValueError, ZeroDivisionError):
             return 1e6, None, None
         pen = 0.0
-        if axial is not None:
-            pen += 50 * max(0.0, float(rot.axial_depth.max()) - axial) / axial
         if rot.design_point["sigma_clipped"]:
             pen += 0.2
         dpt = rot.design_point
@@ -471,6 +494,12 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
         op = operating_point(rot, sy, air=air)
         if op is None:
             return 50.0 + pen, None, None
+        if max_stress is not None:
+            rot, st = size_root(rot, op, max_stress, t_ratio=t_ratio, t_min=t_min, t_root_max=t_root_max,
+                                **(strength_kw or {}))
+            pen += 10 * max(0.0, st["root_stress"] / max_stress - 1)
+        if axial is not None:
+            pen += 50 * max(0.0, float(rot.axial_depth.max()) - axial) / axial
         if op["stalled"]:
             return 10.0 + 10 * op["D_max"] + pen, rot, op
         if op["hub_stall"]:
@@ -530,7 +559,8 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
         raise RuntimeError("no unstalled design meets the system within the limits")
     report = {"operating": op, "stall_flow": stall_flow(rot, air=air, q_hi=op["q"]), "tried": tried,
               "limits": {"power": power, "rpm": [lo_rpm, hi_rpm], "r_tip": [lo_rt, hi_rt], "r_hub": [lo_rh, hi_rh],
-                         "axial": axial, "stall_margin": stall_margin},
+                         "axial": axial, "stall_margin": stall_margin, "max_stress": max_stress},
+              "strength": strength(rot, op=op, **(strength_kw or {})),
               "axial_depth_max": float(rot.axial_depth.max())}
     return rot, report
 
@@ -579,39 +609,55 @@ def explore(system, variants, **common) -> list:
 def strength(rotor: Rotor, rpm: float | None = None, op: dict | None = None, density: float = 1010.0,
              yield_mpa: float = 48.0, retention: float = 1.0, hub_floor: float = 0.0) -> dict:
     """Stresses at speed (MPa) for a printed rotor: the band's hoop stress (rho w^2 r^2), and at each blade's root the
-    pull of its own spin plus its share of the band, and bending from its share of the torque and thrust (a cantilever
-    from the hub: conservative for a banded rotor, whose tips are held). Safety factor on yield x retention."""
+    pull of its own spin plus its share of the band, and bending (a cantilever from the hub: conservative for a banded
+    rotor, whose tips are held). The bending comes from the blade's share of the torque and thrust, resolved on the
+    root section's own second moments (sigma = k_a a + k_z z over the section, a along the rotation, z along the axis);
+    a skewed blade's spin pull, which runs through the axis, bends the root over r_hub sin(skew); a lean toward the
+    inlet lets the pull offset the thrust's bending, as leaned fan blades are drawn to. Safety factor on yield x
+    retention."""
     rpm = rpm or rotor.rpm
     om = rpm * 2 * np.pi / 60
     secs = [_section(rotor, i) for i in range(len(rotor.r))]
     areas = np.array([_poly_area(s) for s in secs]) * 1e-6                     # m^2
     r = rotor.r * 1e-3
-    pull = density * om ** 2 * _trapz(areas * r, r)                              # N, the blade's own spin
+    own = density * om ** 2 * _trapz(areas * r, r)                               # N, the blade's own spin
+    rcg = _trapz(areas * r * r, r) / max(_trapz(areas * r, r), 1e-12) * 1e3     # mm
     out = {"rpm": rpm}
+    band_pull = 0.0
     if rotor.tip == "band":
         t, h = rotor.band
         rb = (rotor.r_tip + 0.5 * t) * 1e-3
         mb = density * 2 * np.pi * rb * t * h * 1e-6
         out["band_hoop"] = density * (om * rb) ** 2 / 1e6
-        pull += mb * om ** 2 * rb / rotor.blades
+        band_pull = mb * om ** 2 * rb / rotor.blades
+    pull = own + band_pull
     root = secs[0]
     a_root = areas[0]
-    ix, iy, cmax = _poly_bending(root)
-    span = (rotor.r_tip - rotor.r_hub) * 1e-3
+    span = rotor.r_tip - rotor.r_hub                                            # mm
     if op is not None:
-        ft = op["torque"] / (rotor.blades * (rotor.r_hub + 0.7 * (rotor.r_tip - rotor.r_hub)) * 1e-3)
-        fa = op["thrust"] / rotor.blades
+        ft = op["torque"] / (rotor.blades * (rotor.r_hub + 0.7 * span) * 1e-3)   # N, against the rotation
+        fa = op["thrust"] / rotor.blades                                         # N, toward the inlet
     else:
         ft = fa = 0.0
-    m = math.hypot(ft, fa) * 0.6 * span                                         # resultant at 60 % span from the root
-    if rotor.skew:                                                               # a skewed blade's spin pull bends it
-        rcg = _trapz(areas * r * r, r) / max(_trapz(areas * r, r), 1e-12)
-        m += pull * rcg * abs(math.sin(float(rotor.skew_at(rcg * 1e3) - rotor.skew_at(rotor.r_hub))))
-    i_min = min(ix, iy) * 1e-12
-    sig = pull / a_root / 1e6 + (m * cmax * 1e-3 / i_min) / 1e6
+    # moments at the root (N mm), as the load's lever about the a and z directions: m_a from loads along a,
+    # m_z from loads along z. Aero: the resultant at 60 % span.
+    lever = 0.6 * span
+    m_a = -ft * lever
+    m_z = fa * lever
+    phi_cg = float(rotor.skew_at(rcg) - rotor.skew_at(rotor.r_hub))
+    phi_tip = float(rotor.skew_at(rotor.r_tip) - rotor.skew_at(rotor.r_hub))
+    m_a += rotor.r_hub * (own * math.sin(phi_cg) + band_pull * math.sin(phi_tip))
+    m_z -= own * float(rotor.lean_at(rcg)) + band_pull * float(rotor.lean_at(rotor.r_tip))
+    iaa, izz, iaz = _poly_moments(root)                                         # mm^4: int a^2, int z^2, int a z
+    k_a, k_z = np.linalg.solve(np.array([[iaa, iaz], [iaz, izz]]), np.array([m_a, m_z]))
+    s_bend = float(np.abs(k_a * root[:, 0] + k_z * root[:, 1]).max())            # N/mm^2 = MPa
+    s_pull = pull / a_root / 1e6
+    sig = s_pull + s_bend
     allow = yield_mpa * retention
-    out.update({"blade_pull_N": pull, "root_area_mm2": a_root * 1e6, "root_bending_Nm": m, "root_stress": sig,
-                "allowable": allow, "safety_factor": allow / max(sig, out.get("band_hoop", 0.0), 1e-9),
+    out.update({"blade_pull_N": pull, "root_area_mm2": a_root * 1e6, "root_bending_Nm": math.hypot(m_a, m_z) * 1e-3,
+                "root_stress": sig, "root_stress_pull": s_pull, "root_stress_bending": s_bend,
+                "root_thickness_mm": float(rotor.thickness[0]), "allowable": allow,
+                "safety_factor": allow / max(sig, out.get("band_hoop", 0.0), 1e-9),
                 "rotor_mass_g": (density * _trapz(areas, r) * rotor.blades + (mb if rotor.tip == "band" else 0.0)) * 1e3})
     return out
 
@@ -621,8 +667,9 @@ def _poly_area(p):
     return 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
 
 
-def _poly_bending(p):
-    """Second moments about the centroid's principal axes and the largest distance to the fibre (mm units)."""
+def _poly_moments(p):
+    """Second moments of a closed loop about its centroid (mm^4): int a^2 dA, int z^2 dA, int a z dA, with (a, z) the
+    loop's own coordinates."""
     x, y = p[:, 0], p[:, 1]
     x1, y1 = np.roll(x, -1), np.roll(y, -1)
     cr = x * y1 - x1 * y
@@ -630,15 +677,12 @@ def _poly_bending(p):
     cx, cy = ((x + x1) * cr).sum() / (6 * a), ((y + y1) * cr).sum() / (6 * a)
     x, y, x1, y1 = x - cx, y - cy, x1 - cx, y1 - cy
     cr = x * y1 - x1 * y
-    ixx = ((y * y + y * y1 + y1 * y1) * cr).sum() / 12
-    iyy = ((x * x + x * x1 + x1 * x1) * cr).sum() / 12
-    ixy = ((x * y1 + 2 * x * y + 2 * x1 * y1 + x1 * y) * cr).sum() / 24
-    avg, dif = 0.5 * (ixx + iyy), math.hypot(0.5 * (ixx - iyy), ixy)
-    i1, i2 = abs(avg + dif), abs(avg - dif)
-    return i1, i2, float(np.hypot(x, y).max())
+    s = 1.0 if a > 0 else -1.0
+    ixx = s * ((x * x + x * x1 + x1 * x1) * cr).sum() / 12
+    iyy = s * ((y * y + y * y1 + y1 * y1) * cr).sum() / 12
+    ixy = s * ((x * y1 + 2 * x * y + 2 * x1 * y1 + x1 * y) * cr).sum() / 24
+    return ixx, iyy, ixy
 
-
-# ----------------------------------------------------------------- geometry
 
 def _section(rotor: Rotor, i: int, n: int = 40, chord=None, kappa1=None, kappa2=None, thick=None):
     """The blade section at station i as a closed loop (mm) in (a, z): a along the direction of rotation on the

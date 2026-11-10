@@ -108,6 +108,22 @@ def test_strength_at_speed():
     assert s["safety_factor"] > 1.0 and 5 < s["rotor_mass_g"] < 80
 
 
+def test_root_section_moments_and_sizing():
+    import dataclasses
+    rect = np.array([[-1.0, -10.0], [1.0, -10.0], [1.0, 10.0], [-1.0, 10.0]])  # 2 wide along a, 20 along z
+    iaa, izz, iaz = fan._poly_moments(rect)
+    assert abs(iaa - 20 * 2 ** 3 / 12) < 1e-9 and abs(izz - 2 * 20 ** 3 / 12) < 1e-9 and abs(iaz) < 1e-9
+    assert np.allclose(fan._poly_moments(rect[::-1]), (iaa, izz, iaz))       # either winding
+    rot = _rotor()
+    op = fan.performance(rot, 0.030, air=AIR)
+    swept = dataclasses.replace(rot, skew=-360.0 / rot.blades)
+    s0 = fan.strength(swept, op=op, retention=0.40)
+    limit = 0.6 * s0["root_stress"]
+    thick, s1 = fan.size_root(swept, op, limit, t_root_max=0.30, retention=0.40)
+    assert s1["root_stress"] <= limit and thick.thickness[0] > swept.thickness[0]
+    assert np.allclose(thick.thickness[-1], swept.thickness[-1])              # only the root grows
+
+
 def test_skew_spreads_the_pass_and_still_meshes():
     import dataclasses
     rot = _rotor()
