@@ -143,7 +143,16 @@ buckling, printability) you can report to the user.
    A rare event the part may use most of its strength for (a crash, a
    drop, a hard landing) beside service loads: give that case its own
    `"safetyFactor": 1.25`; the search counts its reading times goal / 1.25,
-   so service cases keep the goal's factor and the crash its own.
+   so service cases keep the goal's factor and the crash its own. If the
+   crash is an energy to stop and not a known force, say so: add
+   `"impact": {"velocity": 4.0, "mass": 0.3, "crusher": {"distance":
+   [...], "force": [...]}}` to the case (or `"energy"` in J; the crusher is
+   a bumper's force-crush curve, left out when nothing is in between; on
+   an `inertiaRelief` part leave `mass` out). The force then comes from
+   the bumper and the part giving together, in the optimizer and the
+   check: a stiff part sees the bumper's full force, a soft one far less,
+   and a bumper force applied as if the part were rigid asks for a part
+   that cannot be built.
    A link that carries or is driven by a servo or motor: add a case with
    its full stall torque about the joint axis at that interface (a 1.5 N·m
    servo is `"moment": [0, 1500, 0]` about y), since a jam or a hard stop

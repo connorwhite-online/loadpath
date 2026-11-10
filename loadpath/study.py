@@ -1260,6 +1260,7 @@ def _constrained_applies(study: Study) -> bool:
     return (goal.safety_factor is not None or goal.max_deflection is not None) \
         and study.gravity is None and not _durability_drives(study) and not goal.clearances \
         and study.access is None and study.max_member is None and not study.inertia_relief \
+        and not any(getattr(c, "impact", None) is not None for c in study.load_cases) \
         and not any(ld.direction for c in study.load_cases for ld in c.loads) \
         and not any(getattr(c, "safety_factor", None) for c in study.load_cases)
 

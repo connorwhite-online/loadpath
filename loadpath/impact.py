@@ -61,7 +61,7 @@ import numpy as np
 from .lattice import relative_density, sheet_modulus, tpms
 
 __all__ = ["CRUSH", "CRUSH_DATA", "crush_law", "ELASTOMERS", "HYSTERESIS", "collapse_strength", "plateau_stress", "density_for_plateau", "densification_strain",
-           "CrushCurve", "crush_curve", "Columns", "contact_columns", "contact_curve", "grade_for_contact", "layer_profile", "impact_response", "grade_for_impact", "solid_impact",
+           "CrushCurve", "crush_curve", "Columns", "contact_columns", "contact_curve", "grade_for_contact", "series_impact", "layer_profile", "impact_response", "grade_for_impact", "solid_impact",
            "limit_load", "foam_stress", "face_load", "grade_3d", "save_density_grid", "impact_report", "sample_core", "DENSIFICATION_ALPHA"]
 
 DENSIFICATION_ALPHA = 1.4    # Gibson & Ashby, open-cell foams: eps_D = 1 - 1.4 rho
@@ -552,6 +552,67 @@ def grade_for_contact(kind: str, layers: Columns, n_layers: int, sigma_y: float,
     w = np.array([float((layers.area[:, None] * ((idx == k) & live)).sum()) for k in range(n_layers)])
     return {"ok": ok, "force": float(peak) if peak is not None else None, "rho": table, "curve": cv,
             "response": resp, "meanRho": float(np.sum(table * w) / max(np.sum(w), 1e-12)), "layerArea": w}
+
+
+def series_impact(energy: float, compliance: float, distance=None, force=None, points: int = 4000) -> dict:
+    """A crusher and the structure behind it as springs in series, stopping
+    `energy` (N mm).
+
+    A bumper's force-crush curve is measured against a rigid backing. On a
+    part that gives, the same force also bends the part: the striker's
+    travel is the crush plus the part's own deflection at the patch,
+    compliance x F (mm/N: the part's f.u / F^2 under the hit, with inertia
+    relief for a free body, so its own mass and what it carries take
+    part). Quasi-static, the energy at crush d is
+
+        E(d) = integral of F dd  +  1/2 compliance F(d)^2
+
+    and the hit stops where that reaches `energy`. The peak force is the
+    highest the curve reads on the way. A stiff part leaves the bumper its
+    rigid-backing answer; a soft one takes most of the energy itself at a
+    force far below the bumper's plateau (a 5.5 N/mm ring stops 6.2 J at
+    261 N, never reaching an 800 N crush force).
+
+    `distance`, `force`: the crusher's curve (mm, N; CrushCurve.d, .f), or
+    None for a hit with nothing in between: the part alone, F = sqrt(2 E /
+    compliance). Past the curve's end the crusher is solid and the part
+    takes what is left as a spring (`bottomedOut`)."""
+    c = max(float(compliance), 0.0)
+    if distance is None or force is None or len(distance) < 2:
+        if c <= 0:
+            raise ValueError("a rigid part hit with no crusher has no finite force: give the crusher's curve")
+        f = float(np.sqrt(2.0 * energy / c))
+        return {"peakForce": f, "crush": 0.0, "deflection": c * f, "crusherEnergy": 0.0,
+                "structureEnergy": float(energy), "structureShare": 1.0, "bottomedOut": False}
+    d = np.asarray(distance, float)
+    fc = np.maximum(np.asarray(force, float), 0.0)
+    dd = np.unique(np.concatenate([np.linspace(d[0], d[-1], points), d]))
+    ff = np.interp(dd, d, fc)
+    ec = np.concatenate([[0.0], np.cumsum(0.5 * (ff[1:] + ff[:-1]) * np.diff(dd))])
+    tot = ec + 0.5 * c * ff ** 2
+    over = np.flatnonzero(tot >= energy)
+    if len(over) == 0:
+        # the crusher is used up: what is left goes into the part as a spring
+        rest = float(energy - ec[-1])
+        if c <= 0:
+            return {"peakForce": None, "crush": float(dd[-1]), "deflection": 0.0, "crusherEnergy": float(ec[-1]),
+                    "structureEnergy": 0.0, "structureShare": 0.0, "bottomedOut": True,
+                    "residualEnergy": rest}
+        f = float(max(np.sqrt(2.0 * rest / c), ff.max()))
+        return {"peakForce": f, "crush": float(dd[-1]), "deflection": c * f, "crusherEnergy": float(ec[-1]),
+                "structureEnergy": rest, "structureShare": rest / float(energy), "bottomedOut": True}
+    k = int(over[0])
+    if k == 0:
+        t, dk, fk, ek = 0.0, float(dd[0]), float(ff[0]), 0.0
+    else:
+        t = float((energy - tot[k - 1]) / max(tot[k] - tot[k - 1], 1e-300))
+        dk = float(dd[k - 1] + t * (dd[k] - dd[k - 1]))
+        fk = float(ff[k - 1] + t * (ff[k] - ff[k - 1]))
+        ek = float(ec[k - 1] + t * (ec[k] - ec[k - 1]))
+    peak = float(max(ff[:k].max(initial=0.0), fk))
+    es = float(energy - ek)
+    return {"peakForce": peak, "crush": dk, "deflection": c * peak, "crusherEnergy": ek, "structureEnergy": es,
+            "structureShare": es / float(energy) if energy > 0 else 0.0, "bottomedOut": False}
 
 
 def impact_response(curve: CrushCurve, energy: float, mass: float | None = None) -> dict:

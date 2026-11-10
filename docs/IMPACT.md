@@ -337,6 +337,63 @@ creep rate is a published value for printed TPU until a K-25 coupon is
 measured (CALIBRATION.md). The example writes the graded feet as an STL
 with 1 mm end plates.
 
+## A hit on a part that gives (`loadCases[].impact`)
+
+A bumper's crush force is measured against a rigid backing. Put that force
+on a structural study as a static load and the part is asked to stand still
+while it is hit. A drone frame sized that way for an 800 N corner drop came
+out needing a ring beam no one could print, while the optimizer's own best
+design read 145 mm of deflection at 800 N: a 5.5 N/mm spring, which stops
+the same 6.2 J by itself at 261 N.
+
+The bumper and the part are springs in series (`impact.series_impact`).
+The striker's travel is the bumper's crush plus the part's own deflection
+at the patch, and the hit stops where
+
+    integral of F dd (bumper)  +  1/2 c F^2 (part)  =  energy
+
+with c the part's compliance at the patch, f.u / F^2 under the hit. A stiff
+part leaves the bumper its rigid-backing answer; a soft one takes most of
+the energy at a force far below the bumper's plateau; in between both take
+part. With no crusher the part stops the hit alone, F = sqrt(2 E / c).
+
+```json
+{"name": "drop-corner", "safetyFactor": 1.25,
+ "loads": [{"shape": {"...": "the tyre's seat"}, "force": [0, 0, 800]}],
+ "impact": {"velocity": 6.26, "crusher": {"distance": [0, 0.2, 7.9], "force": [0, 780, 800]}}}
+```
+
+The loads say where and which way; their size is only a first guess.
+`energy` (J) or `velocity` with `mass`; on a free part (`inertiaRelief`)
+leave the mass out and it is the mass the body presents at the patch along
+the hit, 1 / m = f . Phi (Phi^T M Phi)^-1 Phi^T f over F^2, from its own
+inertia and what it carries: a bar hit on its end presents a quarter of its
+mass, at its middle all of it. A corner hit spins the body, and what it
+keeps spinning with is not the bumper's to stop.
+
+- **In the optimizer** the case is weighed at the coupled force of the
+  design as it stands, re-read every iteration. The design is then the
+  stiffest for the force it will actually see, which spreads the energy it
+  must store as evenly as its volume allows.
+- **On the delivered part** the compliance is read on the analysis grid
+  (with inertia relief on a free part), the series is solved, and the
+  case's loads are scaled to the coupled peak force for the stress,
+  deflection, buckling and reaction checks. `report.cases[].impact` gives
+  the peak force, the bumper's rigid-backing force beside it, the energy
+  split, crush, deflection, the stop time, and `linear`.
+
+Checked: a cantilever with nothing in between stops at sqrt(2 E k) with k
+within 2% of 3 E I / L^3; behind a soft bumper it sees the plateau and
+holds 1/2 F^2 / k itself; the energies add up to the hit's.
+
+What it does not do yet: the reading is quasi-static and linear. It is
+right while the hit lasts several periods of the part's first mode
+(`stopSeconds` against the vibration report), and while the deflection is
+small beside the part (`linear` goes false past 5% of its size, where a
+ring stiffens or snaps through and only the large-deflection solver would
+tell). An elastomer bumper's curve should be the one for the hit's own
+crush time, which changes once the part shares the stop.
+
 ## Field graph blocks
 
 ```json

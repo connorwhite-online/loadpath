@@ -74,6 +74,10 @@ class Domain:
     blockage: object = None
     # the vibration block as optimizer constraints (modalopt.ModalModel), or None
     modal: object = None
+    # impact load cases: [(case index, spec.LoadCase)], and the material's modulus and density for them
+    impacts: list = field(default_factory=list)
+    impact_material: tuple = (1.0, 1.0)
+    impact_study: object = None
     # massProperties.centerOfMass: (target (3,) with nan on a free axis, tolerance mm), or None
     center_of_mass: tuple | None = None
     # inertiaRelief: the cases' loads as written (BoundaryConditions.raw_loads)
@@ -352,6 +356,39 @@ def _inertia_relief(study: Study, mesh: HexMesh, loads: list, fixed: np.ndarray,
     return out
 
 
+def impact_energy(study: Study, case, f_raw: np.ndarray, acc: np.ndarray | None):
+    """An impact case's (energy N mm, mass kg it is the kinetic energy of or
+    None). With a velocity and no mass on a free part, the mass is what the
+    body presents at the patch along the hit: 1 / m = f^ . Phi (Phi^T M
+    Phi)^-1 Phi^T f^, the acceleration a unit force gives the patch (`acc`:
+    inertia_balance's Phi a for `f_raw`, masses in mm^3 of the material). A
+    hit through the centre of mass stops the whole mass; a corner hit spins
+    the body and stops less."""
+    ic = case.impact
+    if ic.energy is not None:
+        return float(ic.energy), None
+    mass = ic.mass
+    if mass is None:
+        if acc is None:
+            raise ValueError(f"load case {case.name!r}: impact.mass is needed (no inertiaRelief to take it from)")
+        fn2 = float(np.sum(f_raw.reshape(-1, 3).sum(axis=0) ** 2))
+        mass = float(study.material.density) * 1e-6 * fn2 / max(float(f_raw @ acc), 1e-300)
+    return 1000.0 * 0.5 * mass * ic.velocity ** 2, float(mass)
+
+
+def patch_acceleration(study: Study, mesh: HexMesh, f_raw: np.ndarray, density=1.0, tol_floor: float = 0.0):
+    """Phi a for `f_raw` on a free part (see impact_energy): the mesh at
+    `density` plus what it carries."""
+    from .fem import rigid_body_modes
+
+    phi = rigid_body_modes(mesh.node_xyz)
+    m = node_mass(mesh, density)
+    carried = carried_volume(study, mesh, tol_floor)
+    if carried is not None:
+        m = m + carried
+    return inertia_balance(f_raw, m, phi, carried_bodies(study, mesh, phi, tol_floor))[1]
+
+
 def _cylinder_of(study: Study, region, shape, label):
     sh = shape if shape is not None else study.region_shape(region)[0]
     if not hasattr(sh, "axis"):
@@ -549,7 +586,7 @@ def boundary_conditions(study: Study, mesh: HexMesh, check_loads=True, tol_floor
             raise ValueError(f"load case {case.name!r} acts only on fixed nodes; "
                              "a load applied where the part is held does nothing: load a region the supports "
                              "do not cover")
-        loads.append(f)
+        loads.append(f * float(getattr(study, "impact_scale", {}).get(case.name, 1.0)))
         case_nodes.append(cn)
         case_wet.append(cw)
         load_nodes |= cn
@@ -948,6 +985,9 @@ def _build_domain(study: Study, pitch: float) -> Domain:
     from .modalopt import modal_model
 
     dom.modal = modal_model(study, dom)
+    dom.impacts = [(ci, c) for ci, c in enumerate(study.load_cases) if getattr(c, "impact", None) is not None]
+    dom.impact_material = (float(study.material.E), float(study.material.density))
+    dom.impact_study = study
     return dom
 
 

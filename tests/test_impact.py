@@ -394,6 +394,84 @@ def test_field_graph_striker_block():
         pass
 
 
+def test_series_impact_splits_the_energy():
+    from loadpath.impact import series_impact
+
+    d, f = np.array([0.0, 0.5, 8.0, 8.5]), np.array([0.0, 800.0, 800.0, 20000.0])
+    e = 6200.0
+    # rigid backing: the bumper's own answer (its plateau)
+    r = series_impact(e, 0.0, d, f)
+    assert approx(r["peakForce"], 800.0, rel=1e-6) and approx(r["crusherEnergy"], e, rel=1e-6)
+    # a soft part stops the hit itself, far under the plateau: F = sqrt(2 E k)
+    soft = series_impact(e, 1 / 5.5, d, f)
+    assert soft["peakForce"] < 1.001 * np.sqrt(2 * e * 5.5) < 265 and soft["structureShare"] > 0.99
+    # in between both take part and the energies add up
+    mid = series_impact(e, 1 / 500.0, d, f)
+    assert approx(mid["peakForce"], 800.0, rel=1e-6)
+    assert approx(mid["structureEnergy"], 0.5 * 800.0 ** 2 / 500.0, rel=1e-3)
+    assert approx(mid["crusherEnergy"] + mid["structureEnergy"], e, rel=1e-9) and mid["crush"] < r["crush"]
+    # nothing in between: the part alone; a used-up crusher hands the rest to the part
+    assert approx(series_impact(e, 0.01)["peakForce"], np.sqrt(2 * e / 0.01), rel=1e-9)
+    out = series_impact(20000.0, 1 / 500.0, d[:3], f[:3])
+    assert out["bottomedOut"] and approx(out["crusherEnergy"] + out["structureEnergy"], 20000.0, rel=1e-9)
+    assert approx(out["peakForce"], np.sqrt(2 * out["structureEnergy"] * 500.0), rel=1e-9)
+
+
+def test_impact_load_case_on_a_cantilever_and_a_free_bar():
+    import trimesh
+
+    from loadpath.domain import build_domain
+    from loadpath.simp import SimpOptions, optimize
+    from loadpath.spec import study_from_dict
+    from loadpath.verify import verify_part
+
+    end = {"type": "box", "min": [98, -1, -1], "max": [101, 11, 11]}
+    mid = {"type": "box", "min": [48, -1, -1], "max": [52, 11, 11]}
+    base = {"designSpace": {"type": "box", "min": [0, 0, 0], "max": [100, 10, 10]},
+            "material": {"E": 2000, "nu": 0.3, "strength": 50, "density": 1.2},
+            "goal": {"safetyFactor": 2}, "resolution": {"pitch": 2.0}}
+    held = {**base, "supports": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 11, 11]}}]}
+    bar = trimesh.creation.box(extents=[100, 10, 10])
+    bar.apply_translation([50, 5, 5])
+
+    def case(doc, shape, impact, force=10.0):
+        s = study_from_dict({**doc, "loadCases": [{"name": "hit", "loads": [{"shape": shape, "force": [0, 0, -force]}],
+                                                   "impact": impact}]})
+        return s, verify_part(s, bar, refine=0)["cases"][0]
+
+    # a cantilever stopping 0.05 J on its tip with nothing in between: F = sqrt(2 E k), k near 3 E I / L^3 = 5 N/mm
+    s, c = case(held, end, {"energy": 0.05})
+    k = c["impact"]["stiffness"]
+    assert 4.6 < k < 5.1 and approx(c["impact"]["peakForce"], np.sqrt(2 * 50.0 * k), rel=1e-6)
+    # the size the load was written at does not matter, and the stress is the coupled force's
+    _, c4 = case(held, end, {"energy": 0.05}, force=40.0)
+    assert approx(c4["impact"]["peakForce"], c["impact"]["peakForce"], rel=1e-6)
+    assert approx(c4["peakStress"], c["peakStress"], rel=1e-6) and s.impact_scale == {}
+    # behind a soft bumper the bar sees the bumper's plateau, and takes its share of the energy
+    cr = {"distance": [0, 0.5, 8, 8.5], "force": [0, 4, 4, 400]}
+    _, cb = case(held, end, {"energy": 0.02, "crusher": cr})
+    assert approx(cb["impact"]["peakForce"], 4.0, rel=1e-6) and approx(cb["impact"]["rigidBackingForce"], 4.0, rel=1e-6)
+    assert approx(cb["impact"]["structureEnergy"], 0.5 * 16 / k / 1000, rel=1e-3) and cb["impact"]["linear"]
+    # a free bar: hit on its end it presents a quarter of its mass, at its middle all of it
+    free = {**base, "inertiaRelief": True}
+    m = 1.2e-6 * 100 * 10 * 10
+    assert approx(case(free, end, {"velocity": 2.0})[1]["impact"]["mass"], m / 4, rel=0.03)
+    assert approx(case(free, mid, {"velocity": 2.0})[1]["impact"]["mass"], m, rel=0.03)
+    # the optimizer weighs the case at the coupled force, which rises as the design stiffens
+    sd = study_from_dict({**held, "loadCases": [{"name": "hit", "loads": [{"shape": end, "force": [0, 0, -10]}],
+                                                 "impact": {"energy": 0.05, "crusher": cr}}]})
+    res = optimize(build_domain(sd), 0.3, SimpOptions(volume_fraction=0.4, filter_radius=3.0, max_iterations=25))
+    f_first, f_last = res.history[0]["impact"]["hit"]["peakForce"], res.history[-1]["impact"]["hit"]["peakForce"]
+    assert f_first < f_last and 4.0 <= f_last < 400
+    for bad in ({"energy": 1, "velocity": 2, "mass": 1}, {"velocity": 2}, {"energy": 1, "crusher": {"distance": [0, 1]}}):
+        try:
+            study_from_dict({**held, "loadCases": [{"name": "hit", "loads": [{"shape": end, "force": [0, 0, -1]}],
+                                                    "impact": bad}]})
+            raise AssertionError(bad)
+        except ValueError:
+            pass
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 

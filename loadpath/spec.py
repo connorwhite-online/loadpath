@@ -128,6 +128,24 @@ class LoadCase:
     # this case's own safety factor (a crash that may use most of the
     # strength, beside service loads held to the goal's): None takes the goal's
     safety_factor: float | None = None
+    # an impact (ImpactCase): the loads give where and which way it hits,
+    # their size comes from the energy, the crusher and the part's own give
+    impact: object = None
+
+
+@dataclass
+class ImpactCase:
+    """A load case that is a hit, not a force: `energy` (N mm) to stop, or
+    `velocity` (m/s) with `mass` (kg; None on a free part: the mass the
+    body presents at the patch along the hit, from its own inertia), through
+    a crusher whose force-crush curve is `distance` (mm), `force` (N) (None:
+    nothing in between). impact.series_impact puts the curve in series with
+    the part's compliance at the patch."""
+    energy: float | None = None
+    velocity: float | None = None
+    mass: float | None = None
+    distance: np.ndarray | None = None
+    force: np.ndarray | None = None
 
 
 @dataclass
@@ -194,6 +212,35 @@ class Aero:
     rotors: list = field(default_factory=list)
     in_optimizer: bool = True
     grams_per_newton: float = 1000.0 / 9.81
+
+
+def _impact_case(b, ci, loads, free):
+    lab = f"loadCases[{ci}].impact"
+    if not isinstance(b, dict):
+        raise ValueError(f"{lab} is {{energy | velocity (+ mass), crusher: {{distance: [...], force: [...]}}}}")
+    if any(ld.direction is not None for ld in loads):
+        raise ValueError(f"{lab}: the hit has a known direction (its loads' forces); give each direction as a case")
+    energy, vel, mass = b.get("energy"), b.get("velocity"), b.get("mass")
+    for key, v in (("energy", energy), ("velocity", vel), ("mass", mass)):
+        if v is not None and (not isinstance(v, (int, float)) or not np.isfinite(v) or v <= 0):
+            raise ValueError(f"{lab}.{key} must be a positive number (J, m/s, kg)")
+    if (energy is None) == (vel is None):
+        raise ValueError(f"{lab} needs energy (J), or velocity (m/s) with mass (kg), not both")
+    if vel is not None and mass is None and not free:
+        raise ValueError(f"{lab}.mass (kg) is needed with velocity: only a free part (inertiaRelief) has a mass "
+                         "of its own to present at the patch")
+    dist = force = None
+    cr = b.get("crusher")
+    if cr is not None:
+        if not isinstance(cr, dict) or cr.get("distance") is None or cr.get("force") is None:
+            raise ValueError(f"{lab}.crusher is a force-crush curve {{distance: [mm...], force: [N...]}} (an impact "
+                             "report's curve)")
+        dist, force = np.asarray(cr["distance"], float).ravel(), np.asarray(cr["force"], float).ravel()
+        if len(dist) != len(force) or len(dist) < 2 or np.any(np.diff(dist) <= 0) or np.any(force < 0) \
+                or not np.all(np.isfinite(dist)) or not np.all(np.isfinite(force)):
+            raise ValueError(f"{lab}.crusher: distance must rise, force be >= 0, the two the same length (>= 2)")
+    return ImpactCase(None if energy is None else 1000.0 * float(energy), None if vel is None else float(vel),
+                      None if mass is None else float(mass), dist, force)
 
 
 def _aero(v):
@@ -818,6 +865,10 @@ class Study:
         """No supports: the part floats free and its own inertia balances
         the loads (study `inertiaRelief`)."""
         return bool((self.raw or {}).get("inertiaRelief"))
+
+    # impact cases' loads scaled to the coupled peak force while a part is
+    # verified ({case name: factor on the loads as written}; verify_part)
+    impact_scale: dict = field(default_factory=dict)
 
     def case_factor(self, name: str) -> float:
         """How much a case's safety factor counts for against the goal's:
@@ -1469,6 +1520,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
                 raise ValueError(f"loadCases[{ci}].safetyFactor is this case's own factor (> 0), in place of the "
                                  "goal's: a rare crash held to 1.25 beside service loads at 2")
             life["safety_factor"] = float(v)
+        if c.get("impact") is not None:
+            life["impact"] = _impact_case(c["impact"], ci, loads, bool(d.get("inertiaRelief")))
         cases.append(LoadCase(str(c.get("name") or f"case-{ci}"), loads, float(c.get("weight", 1.0)), **life))
     # A `feel` block brings its own loads and holds (feel.py), and a
     # `cooling` block its own heat (cooling.py): a study that only asks for
@@ -1529,6 +1582,9 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             raise ValueError("inertiaRelief takes forces of a known direction: give each direction as a load case")
         if (d.get("goal") or {}).get("method") == "constrained":
             raise ValueError("inertiaRelief runs with the search (goal.method search or auto)")
+    if any(c.impact is not None for c in cases) and (d.get("goal") or {}).get("method") == "constrained":
+        raise ValueError("impact load cases run with the search (goal.method search or auto): the force changes "
+                         "with the design")
     if not supports and not feel_only and not relief and not all(ld.pressure for c in cases for ld in c.loads):
         raise ValueError("at least one support is required (where the part is held); only a study whose "
                          "every load is a pressure may leave supports out, or one with inertiaRelief: true (a "

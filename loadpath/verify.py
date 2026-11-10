@@ -1423,9 +1423,19 @@ def reaction_margin(reactions) -> float | None:
     return min(ms) if ms else None
 
 
-def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
-                contact_band: float | None = None, refine: int = 3, fields: bool = False,
-                fractional: bool = False, cut_cells: bool | None = None, max_pitch: float | None = None) -> dict:
+def verify_part(study: Study, mesh, *args, **kwargs) -> dict:
+    """verify_part_ with the study's impact cases at their coupled forces
+    for this part only (study.impact_scale is cleared before and after)."""
+    study.impact_scale = {}
+    try:
+        return _verify_part(study, mesh, *args, **kwargs)
+    finally:
+        study.impact_scale = {}
+
+
+def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | None = None,
+                 contact_band: float | None = None, refine: int = 3, fields: bool = False,
+                 fractional: bool = False, cut_cells: bool | None = None, max_pitch: float | None = None) -> dict:
     """Analyze a finished part (trimesh) against the study. Returns a JSON-able
     report. `contact_band` (mm) is how far from applied loads and supports
     stress is left out of the peak; it defaults to 1.5 analysis cells, and the
@@ -1591,10 +1601,63 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     layers = _undeclared_layers(study)
     axis_bond = np.zeros(3)
     spreads = bc.spreads or [None] * len(study.load_cases)
-    rhs, layout = expand(bc.loads, spreads, fg)
 
     def solve(moduli, rhs):
         return _solve_grid(study, g, study.elastic(mat), moduli, rhs)
+
+    # Impact cases (loadCases[].impact): the force is what stops the energy
+    # through the crusher and this part together, springs in series. The
+    # part's give at the patch is its own f.u / F^2 under the hit as written
+    # (a free part's with inertia relief: its mass and what it carries take
+    # part); the case's loads are then scaled to the coupled peak force, here
+    # and wherever the study's loads are built again (study.impact_scale).
+    impact_rows = {}
+    for ci, case in enumerate(study.load_cases):
+        if getattr(case, "impact", None) is None:
+            continue
+        from .domain import impact_energy, patch_acceleration
+        from .impact import series_impact
+
+        f0 = bc.loads[ci]
+        f_raw = bc.raw_loads[ci] if bc.raw_loads else f0
+        fn = float(np.linalg.norm(f_raw.reshape(-1, 3).sum(axis=0)))
+        if fn <= 0:
+            continue
+        u0 = solve(moduli, [f0])[1][0]
+        c_f = max(float(f0 @ u0), 0.0) / fn ** 2
+        acc = patch_acceleration(study, hm, f_raw, 1.0 if fill is None else fill, 0.5 * pitch) \
+            if study.inertia_relief else None
+        energy, m_eff = impact_energy(study, case, f_raw, acc)
+        ic = case.impact
+        r = series_impact(energy, c_f, ic.distance, ic.force)
+        rigid = series_impact(energy, 0.0, ic.distance, ic.force) if ic.distance is not None else None
+        row = {"energy": energy / 1000.0, "compliance": c_f, "stiffness": 1.0 / c_f if c_f > 0 else None,
+               "peakForce": r["peakForce"], "crush": r["crush"], "deflection": r["deflection"],
+               "crusherEnergy": r["crusherEnergy"] / 1000.0, "structureEnergy": r["structureEnergy"] / 1000.0,
+               "structureShare": r["structureShare"], "bottomedOut": r["bottomedOut"],
+               "rigidBackingForce": rigid["peakForce"] if rigid is not None else None,
+               "forceAsWritten": fn}
+        if m_eff is not None:
+            row["mass"] = m_eff
+        if ic.velocity is not None:
+            # (the time to stop at a steady deceleration: for judging the quasi-static reading
+            # against the part's first period)
+            row["stopSeconds"] = 2.0 * (r["crush"] + r["deflection"]) * 1e-3 / ic.velocity
+        size = float(np.ptp(hm.node_xyz, axis=0).max())
+        # past a few percent of the part's size the linear reading stiffens or buckles in ways it cannot show
+        row["linear"] = bool(r["deflection"] <= 0.05 * size)
+        if not row["linear"]:
+            report.setdefault("warnings", []).append(
+                f"impact case {case.name!r}: the part gives {r['deflection']:.1f} mm at the patch, over 5% of its "
+                f"{size:.0f} mm size; the linear reading of its force and stress is rough")
+        if r["peakForce"] is not None:
+            sc = r["peakForce"] / fn
+            bc.loads[ci] = f0 * sc
+            if bc.raw_loads:
+                bc.raw_loads[ci] = f_raw * sc
+            study.impact_scale[case.name] = sc
+        impact_rows[ci] = row
+    rhs, layout = expand(bc.loads, spreads, fg)
 
     # The buckling check (below) needs the stress solve only for a force of
     # unknown direction (its worst direction): otherwise it runs on a
@@ -1790,6 +1853,7 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         worst_sf = min(worst_sf, sf * cf)
         cases.append({
             "name": case.name,
+            **({"impact": impact_rows[ci]} if ci in impact_rows else {}),
             **({"requiredSafetyFactor": float(case.safety_factor), "countsAs": float(sf * cf)}
                if getattr(case, "safety_factor", None) and cf != 1.0 else {}),
             "peakStress": peak,

@@ -808,6 +808,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     robust = any(s is not None for s in spreads)
     dc_prev = None
     weights = np.asarray(domain.case_weights, float)
+    weights0 = weights.copy()
+    impacts = getattr(domain, "impacts", None) or []
     history = []
     c0 = None
     converged = False
@@ -962,6 +964,32 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                 ur = _rigid_free_m(domain, xe, wc.u_mean)
                 au = (accs[ci].reshape(-1, 3) * ur.reshape(-1, 3)).sum(axis=1)
                 dc_xp -= weights[ci] * 2.0 * au[mesh.enode].sum(axis=1) * mesh.pitch ** 3 / 8.0
+        imp_rec = {}
+        if impacts:
+            # impact cases (loadCases[].impact): the force is what stops the
+            # energy through the crusher and this design together
+            # (impact.series_impact); the case is weighed at that force from
+            # the next iteration on. The design is then the stiffest for the
+            # force it will see, which spreads the energy it has to store as
+            # evenly as its volume allows: the lowest peak stress.
+            from .domain import impact_energy
+            from .impact import series_impact
+
+            e_mat, _ = domain.impact_material
+            raw_l = getattr(domain, "raw_loads", None) or domain.loads
+            scale = np.ones(len(weights0))
+            for ci, case in impacts:
+                fn2 = float(np.sum(raw_l[ci].reshape(-1, 3).sum(axis=0) ** 2))
+                if fn2 <= 0 or ci >= len(case_c):
+                    continue
+                c_f = max(float(case_c[ci]), 0.0) / (e_mat * fn2)
+                en, _ = impact_energy(domain.impact_study, case, raw_l[ci], accs[ci] if accs is not None else None)
+                r = series_impact(en, c_f, case.impact.distance, case.impact.force)
+                if r["peakForce"] is None:
+                    continue
+                scale[ci] = r["peakForce"] ** 2 / fn2
+                imp_rec[case.name] = {"peakForce": round(r["peakForce"], 2), "structureShare": round(r["structureShare"], 3)}
+            weights = weights0 * scale
         warp_v = None
         if domain.warp is not None:
             # buildSim warp design (buildsim.WarpTerm on the build axis):
@@ -1278,6 +1306,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if swing_step and "swing_max" in heat_state:
             rec.update(swing_rec)
         rec.update(buck_rec)
+        if imp_rec:
+            rec["impact"] = imp_rec
         if blk_rec is not None:
             rec.update(blk_rec)
         if com_rec is not None:

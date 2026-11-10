@@ -4526,6 +4526,55 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "This case's own safety factor in place of the goal's: a rare crash or drop held to 1.25 beside service loads at the goal's 2. The search counts the case's reading times goal / this."
+        },
+        "impact": {
+          "type": "object",
+          "description": "This case is a hit, not a force: its loads say where and which way (their size is only a first guess), and the force comes from stopping the energy through the crusher and the part together, springs in series (impact.series_impact). A bumper's crush force is measured on a rigid backing; a part that gives takes some of the energy itself and the peak force falls (a soft ring can stop a drop far below the bumper's plateau), while a stiff one sees the bumper's full force. The part's compliance at the patch is read from the design itself (with inertiaRelief: the free body, its own mass and what it carries taking part), so the optimizer and the check both see the coupled force. report.cases[].impact gives the peak force, the energy split and whether the linear reading holds.",
+          "properties": {
+            "energy": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "J to stop"
+            },
+            "velocity": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "m/s at the hit, in place of energy"
+            },
+            "mass": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "kg moving at that velocity. Leave out on a free part (inertiaRelief): the mass the body presents at the patch along the hit is worked out from its inertia (a corner hit spins the body, and stops less than its whole mass)"
+            },
+            "crusher": {
+              "type": "object",
+              "properties": {
+                "distance": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "description": "mm of crush, rising"
+                },
+                "force": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "minItems": 2,
+                  "description": "N at each distance"
+                }
+              },
+              "required": [
+                "distance",
+                "force"
+              ],
+              "description": "what is between the part and what it hits: a force-crush curve, e.g. a field graph's impact report curve (graded.curve). Left out: nothing in between, the part alone stops the hit"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "required": [
