@@ -535,10 +535,27 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
         x = full(res.x)
         return x, score(x, z)
 
+    def seed(z):
+        # the start can ask for a pressure the blades can't make at that speed (a sealed core behind a 175 mm rotor
+        # wanted 345 Pa at a flow coefficient of 0.06): every neighbour then scores the same and the simplex never
+        # moves. A coarse grid of speed, pressure and flow round it, and the best of those.
+        cands = [x_t]
+        for sp in (0.3, 0.6, 0.9, 1.0):
+            for ddp in (-0.6, -0.2, 0.2):
+                for dq in (-0.4, 0.0, 0.4):
+                    x = x_t.copy()
+                    x[0] += dq
+                    x[1] += ddp
+                    if steps[5] > 0:
+                        x[5] = sp
+                    cands.append(x)
+        scored = [(score(x, z)[0], i) for i, x in enumerate(cands)]
+        return cands[min(scored)[1]].copy()
+
     for z in blades:
         for k in range(starts):
             if k == 0:
-                x0 = x_t.copy()
+                x0 = seed(z)
             elif k == 1 and best_x is not None:
                 x0 = best_x.copy()                         # the best so far, at this blade count
             else:
