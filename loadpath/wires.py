@@ -978,7 +978,9 @@ def channel_mesh(wires_or_points, radius: float | None = None, clearance: float 
         parts += [m3d.Manifold.batch_hull([balls[i], balls[i + 1]]) for i in range(len(pts) - 1)]
     man = m3d.Manifold.batch_boolean(parts, m3d.OpType.Add)
     m = man.to_mesh()
-    return trimesh.Trimesh(np.asarray(m.vert_properties)[:, :3], np.asarray(m.tri_verts))
+    # as the boolean left it: merging vertices by position (trimesh's default) can weld two sheets
+    # that only touch, where consecutive tubes share a ball, and open a closed solid
+    return trimesh.Trimesh(np.asarray(m.vert_properties)[:, :3], np.asarray(m.tri_verts), process=False)
 
 
 def _simplify(pts, tol):

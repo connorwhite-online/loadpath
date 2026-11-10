@@ -90,7 +90,8 @@ def test_lay_round_a_block():
     assert d.min() > cab.radius - 0.2, d.min()
     # the space it needs, as a solid to keep clear
     ch = W.channel_mesh([lw], clearance=0.5)
-    assert ch.is_watertight and ch.volume > np.pi * cab.radius ** 2 * rep["length"]
+    assert ch.is_watertight, (len(ch.vertices), len(ch.faces), ch.euler_number)
+    assert ch.volume > np.pi * cab.radius ** 2 * rep["length"], ch.volume
     # walled in: no way
     wall = shape_from_spec({"type": "box", "min": [14, -40, -40], "max": [26, 40, 40]})
     fw = W.body_field(wall, 0.5)
