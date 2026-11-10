@@ -529,6 +529,8 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres, soften=None):
                 break
             live |= w >= PRUNE_BELOW * ref
         dead = solid & ~live
+        if getattr(domain, "joints", None) is not None:
+            dead &= ~domain.joints        # what holds a thin drawn wall together
         # skip specks: a lone low-energy cell inside a member is a numerical
         # neutral axis, not a dead end
         if dead.sum() < 0.002 * solid.sum():
@@ -544,6 +546,7 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres, soften=None):
         dead &= sizes[el] >= 4
         if not dead.any():
             break
+        before = (xp, us)
         xp = xp.copy()
         xp[dead] = 0.0
         # and whatever that cut loose from the supports (a tip whose root
@@ -553,7 +556,15 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres, soften=None):
         e = E_MIN + xp ** PENALTY * (1 - E_MIN)
         if soften is not None:
             e = e * soften          # each cell's modulus at its temperature (thermal.StudyHeat.g)
-        us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
+        try:
+            us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
+        except RuntimeError:
+            # the cut left a mechanism: a free part (inertiaRelief) whose
+            # low-energy members held a drawn piece on, now floating on void
+            # (a drone frame's ducts, iteration 50). Pruning is a clean-up,
+            # so the last pass is undone rather than the run lost.
+            xp, us = before
+            break
     return xp, us
 
 

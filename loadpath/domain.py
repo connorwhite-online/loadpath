@@ -81,6 +81,9 @@ class Domain:
     carried: np.ndarray | None = None
     # inertiaRelief.masses with a centre: rigid bodies (carried_bodies)
     bodies: list = field(default_factory=list)
+    # design cells that join drawn cells through faces where the drawn cells
+    # meet only at an edge or corner (drawn_joints): never pruned
+    joints: np.ndarray | None = None
 
     @property
     def n_elem(self):
@@ -692,6 +695,21 @@ def _face_bridge(preserve, pres_f, dims, open_cells=None):
     return g.reshape(-1)
 
 
+def drawn_joints(pres_grid, elem_ijk):
+    """Cells (elem_ijk order) with drawn cells on two or more faces: where
+    a staircase of drawn cells (a thin curved wall) meets only at edges, these
+    are what join it through faces (see _face_bridge). The optimizer may keep
+    or empty them; once kept they must not be pruned as carrying nothing (a
+    duct that carries only its own inertia), or the wall falls apart into
+    hinged pieces and the solve cannot converge."""
+    p = np.pad(pres_grid, 1)
+    i, j, k = (elem_ijk + 1).T
+    n = np.zeros(len(elem_ijk), int)
+    for d in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+        n += p[i + d[0], j + d[1], k + d[2]]
+    return n >= 2
+
+
 def _build_domain(study: Study, pitch: float) -> Domain:
     lo, hi = study.bounds()
     center = 0.5 * (lo + hi)
@@ -721,9 +739,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         bores = [r.shape for r in study.keep_out if getattr(r, "cuts", True) and getattr(r, "bore", True)]
         bore_f = _fraction(bores, centers, pitch) if bores else np.zeros(len(centers))
         preserve |= (_fraction(skin, centers, pitch) >= 0.5) & (bore_f < 0.5)
-    # a design cell joins drawn cells only if the drawn shape barely enters it;
-    # one it covers a quarter of is drawn material at this grid
-    preserve = _face_bridge(preserve, pres_f, dims, (design_f >= 0.5) & (keep_f == 0) & (pres_f < 0.25))
+    preserve = _face_bridge(preserve, pres_f, dims, (design_f >= 0.5) & (keep_f == 0))
     design = (design_f >= 0.5) & ~preserve & (keep_f == 0)
     active = preserve | design
     if not active.any():
@@ -815,6 +831,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
         mesh = HexMesh(ijk[active], pitch, origin)
 
     pres_el = preserve[active]
+    joints = drawn_joints(preserve.reshape(dims), mesh.elem_ijk) & ~pres_el
     try:
         bc = boundary_conditions(study, mesh)
     except _HeldPreload:
@@ -920,7 +937,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                   bodies=carried_bodies(study, mesh, _rbm(mesh.node_xyz)) if bc.raw_loads else [],
                   thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
                                      near=_near_cells(mesh, support_nodes | load_nodes)),
-                  warp=_warp_term(study, mesh))
+                  warp=_warp_term(study, mesh), joints=joints)
     aero = getattr(study, "aero", None)
     if aero is not None and aero.in_optimizer:
         from .aero import BlockageCost

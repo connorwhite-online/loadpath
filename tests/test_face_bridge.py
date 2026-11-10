@@ -49,3 +49,12 @@ def test_a_cell_the_design_may_fill_is_left_to_the_design():
     open_cells[2, 1, 0] = True
     out = _face_bridge(g.reshape(-1), np.zeros(g.size), dims, open_cells.reshape(-1))
     assert (out == g.reshape(-1)).all()
+
+
+def test_joints_are_the_cells_between_a_staircase():
+    from loadpath.domain import drawn_joints
+    g = np.zeros((3, 3, 1), bool)
+    g[0, 0, 0] = g[1, 1, 0] = True
+    ijk = np.argwhere(np.ones((3, 3, 1), bool))
+    j = drawn_joints(g, ijk).reshape(3, 3, 1)
+    assert j[1, 0, 0] and j[0, 1, 0] and not j[2, 2, 0]
