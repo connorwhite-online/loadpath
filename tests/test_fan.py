@@ -149,6 +149,19 @@ def test_optimizer_uses_diameter_when_coverage_pays():
     assert rot.r_tip > 70.0 and rep["operating"]["q"] > rs["operating"]["q"]
 
 
+def test_optimizer_holds_a_solidity_cap_and_diffusion_range():
+    def system(q, rotor=None):
+        return 9000 * q * q
+    kw = dict(r_tip=57.0, r_hub=(20.0, 30.0), power=8.0, rpm=(2000, 6400), blades=[7], axial=14.0, air=AIR,
+              starts=1, exit="uniform", iters=120)
+    rot, rep = fan.optimize(system, solidity_max=(0.8, 0.5), **kw)
+    lim = np.linspace(0.8, 0.5, len(rot.r))
+    assert np.all(rot.solidity <= 1.03 * lim)
+    rot2, rep2 = fan.optimize(system, diffusion_range=((0.55, 0.60), (0.40, 0.45)), **kw)
+    d = rot2.design_point["diffusion"]
+    assert 0.55 - 1e-9 <= d[0] <= 0.60 + 1e-9 and 0.40 - 1e-9 <= d[1] <= 0.45 + 1e-9
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

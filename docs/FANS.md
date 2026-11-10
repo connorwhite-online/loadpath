@@ -54,6 +54,14 @@ weak-axis stress. `size_root(rotor, op, max_stress)` thickens the root (a taper 
 a stress limit needs, and `optimize(..., max_stress=, strength_kw={"retention": 0.4})` does that for every
 candidate and penalizes what still can't meet it.
 
+**Rules from practice.** `optimize(diffusion_range=((0.55, 0.60), (0.40, 0.45)))` holds the diffusion factor to
+rotor-only fan practice (root, tip; Castegnaro 2018 after Lieblein), and `solidity_max` caps the solidity (one
+number, or root and tip run straight between): practice caps the root at 1.2 and grows the hub rather than crowd
+it, and a low cap draws an open rotor, so its cost can be read off the same model. On a 196 mm rotor against
+~140 Pa at 71 L/s (speed number 0.8, diameter number 2.8 on Cordier's diagram, the high-pressure end of axial
+fans) capping the solidity at 0.8 root / 0.5 tip cost about 1 C of 15 in the charge temperature it was for, and
+opened 43 % of the disc.
+
 **Size.** `optimize` takes `r_tip` and `r_hub` as ranges as well as values, and the system and objective may take
 the rotor (`system(q, rotor)`, `objective(op, rotor)`) when its size changes what it works against, as a fan that
 covers more of a heat exchanger's face does. Nelder-Mead over diameter alongside the blade variables finds local

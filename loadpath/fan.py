@@ -439,7 +439,8 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
              band: tuple = (1.6, 18.0), stall_margin: float = 0.15, t_min: float = 1.4, te: float = 0.8,
              starts: int = 3, seed: int = 0, objective=None, exit: str = "sre", hub_ratio_max: float = 0.55,
              iters: int = 220, max_stress: float | None = None, t_ratio: float = 0.07, t_root_max: float = 0.20,
-             strength_kw: dict | None = None) -> tuple:
+             strength_kw: dict | None = None, diffusion_range=((0.30, 0.55), (0.30, 0.55)),
+             solidity_max=None) -> tuple:
     """Blades that move the most air through `system` (q -> static Pa the system needs at fan flow q; or
     (q, rotor) -> Pa when the rotor's size changes the system, as a fan covering more of a core does).
 
@@ -451,7 +452,11 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
     the shaft power as air power, warm-started across blade counts, the winner polished). `objective(op)` or
     `objective(op, rotor)` to maximize instead of the operating flow. With `max_stress` (MPa, `strength` at the
     operating point with `strength_kw`, e.g. {"retention": 0.4}) each candidate's root is thickened as far as
-    t_root_max (size_root) and a design still over the limit is penalized. Returns (rotor, report)."""
+    t_root_max (size_root) and a design still over the limit is penalized. `diffusion_range` bounds the diffusion
+    factor at (hub, tip): rotor-only fan practice is 0.55-0.6 at the root and 0.40-0.45 at the tip (Castegnaro 2018,
+    after Lieblein). `solidity_max` (one number, or (hub, tip) run straight between them) caps the solidity: that
+    practice holds the root at 1.2 and grows the hub rather than crowd it; a low cap gives an open rotor, at what
+    it costs. Returns (rotor, report)."""
     from scipy.optimize import minimize
 
     air = air or globals()["air"]()
@@ -476,7 +481,8 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
         rh_ = min(unit(rh, lo_rh, hi_rh), hub_ratio_max * rt_)
         return design(q_ref * math.exp(qd), dp_ref * math.exp(dpd), unit(sp, lo_rpm, hi_rpm), rt_, rh_, z,
                       work_exp=float(np.clip(wexp, 0, 3)),
-                      diffusion=(float(np.clip(dh, 0.30, 0.55)), float(np.clip(dt, 0.30, 0.55))), air=air, tip=tip,
+                      diffusion=(float(np.clip(dh, *diffusion_range[0])), float(np.clip(dt, *diffusion_range[1]))),
+                      air=air, tip=tip,
                       gap=gap, band=band, t_min=t_min, te=te, exit=exit, t_ratio=t_ratio)
 
     def score(x, z):
@@ -485,6 +491,9 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
         except (FloatingPointError, ValueError, ZeroDivisionError):
             return 1e6, None, None
         pen = 0.0
+        if solidity_max is not None:
+            lim = np.linspace(*solidity_max, len(rot.r)) if np.ndim(solidity_max) else np.full(len(rot.r), solidity_max)
+            pen += 5 * max(0.0, float(np.max(rot.solidity / lim)) - 1)
         if rot.design_point["sigma_clipped"]:
             pen += 0.2
         dpt = rot.design_point
@@ -517,8 +526,8 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
         for _ in range(60):
             q_t = math.sqrt(lo_q * hi_q)
             lo_q, hi_q = (q_t, hi_q) if q_t * sysr(q_t, None) < 0.35 * power else (lo_q, q_t)
-    x_t = np.array([math.log(q_t / q_ref), math.log(max(sysr(q_t, None), 1.0) * 1.15 / dp_ref), 1.4, 0.45, 0.5, 0.6,
-                    0.8, 0.2])
+    x_t = np.array([math.log(q_t / q_ref), math.log(max(sysr(q_t, None), 1.0) * 1.15 / dp_ref), 1.4,
+                    float(np.mean(diffusion_range[0])), float(np.mean(diffusion_range[1])), 0.6, 0.8, 0.2])
     fixed = [lo_rpm == hi_rpm, lo_rt == hi_rt, lo_rh == hi_rh]
     steps = np.array([0.15, 0.2, 0.4, 0.05, 0.05, 0.25, 0.2, 0.25])
     for i, f in zip((5, 6, 7), fixed):
@@ -576,7 +585,8 @@ def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, bl
         raise RuntimeError("no unstalled design meets the system within the limits")
     report = {"operating": op, "stall_flow": stall_flow(rot, air=air, q_hi=op["q"]), "tried": tried,
               "limits": {"power": power, "rpm": [lo_rpm, hi_rpm], "r_tip": [lo_rt, hi_rt], "r_hub": [lo_rh, hi_rh],
-                         "axial": axial, "stall_margin": stall_margin, "max_stress": max_stress},
+                         "axial": axial, "stall_margin": stall_margin, "max_stress": max_stress,
+                         "diffusion_range": diffusion_range, "solidity_max": solidity_max},
               "strength": strength(rot, op=op, **(strength_kw or {})),
               "axial_depth_max": float(rot.axial_depth.max())}
     return rot, report
