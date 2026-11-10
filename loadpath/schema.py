@@ -1518,6 +1518,23 @@ STUDY_SCHEMA = {
                                   "description": "shape steps from the skin's load share (default 10; 0: the "
                                                  "seed's smoothed hull)"},
                        "step": {**_POS, "description": "mm, the largest move of a shape step (default 1.5)"},
+                       "place": {"anyOf": [{"type": "array", "items": {"type": "object"}}, {"type": "object", "properties": {
+                                     "components": {"type": "array", "items": {"type": "object"}},
+                                     "rules": {"type": "object", "description": "as enclosure.placement: "
+                                               "centerOfMass {target | low, weight}, heat {weight, ambient, "
+                                               "conductivity, up}"},
+                                     "wires": {"type": "array", "items": {"type": "object"},
+                                               "description": "as enclosure.wires: each layout's cables are "
+                                                              "laid, and one that cannot be wired is dropped"},
+                                     "pitch": _POS, "beam": {"type": "integer", "minimum": 1},
+                                     "margin": {"type": "number", "minimum": 0}},
+                                     "required": ["components"], "additionalProperties": False}],
+                                 "description": "parts with no drawn outside to go in: each {id, size | shape, "
+                                                "mass, watts, maxTemp, against, near, rotate, installedOn} is "
+                                                "placed in the design space (heat, centre of mass, wires; "
+                                                "placement.py), kept the skin and its gap off its walls, then "
+                                                "concealed: the skin is grown round them. Parts with watts or "
+                                                "maxTemp join the cooling block"},
                        "pitch": {**_POS, "description": "mm, the envelope's grid (default half the seed's, "
                                                         "at most half the skin + 0.25)"}},
                        "additionalProperties": False}],

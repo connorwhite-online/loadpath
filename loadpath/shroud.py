@@ -507,6 +507,83 @@ def _key(d: dict) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
 
+def _place_parts(d, opts, base_dir, emit=None):
+    """shroud.place: the parts have no drawn outside to go in, only the room
+    the product may take (the design space). placement.place lays them out
+    in it as it would inside an exterior: heat (a hot part kept off a cool
+    one), the centre of mass, `near`, `against`, wires when given; each
+    kept off the room's walls by the skin and its gap, since the skin will
+    wrap them there. The placed parts become concealed keep-outs, so the
+    envelope is grown round them and the skin holds them, and a part with
+    `watts` or `maxTemp` joins the cooling block. Returns the study with
+    them, the options and the placement report."""
+    import base64
+    import io
+
+    from .placement import place
+    from .shapes import shape_from_spec
+
+    sp = d["shroud"]["place"]
+    sp = {"components": sp} if isinstance(sp, list) else dict(sp)
+    comps = []
+    for i, c in enumerate(sp.get("components") or []):
+        c = dict(c)
+        c["id"] = c.get("id") or f"part-{i}"
+        c.setdefault("place", "auto")
+        comps.append(c)
+    if not comps:
+        raise ValueError("shroud.place: give the parts to place (a list of {id, size | shape, mass, watts, ...})")
+    ids = {c["id"] for c in comps}
+    taken = {r.get("id") for r in (d.get("preserve") or []) + (d.get("keepOut") or [])}
+    if ids & taken:
+        raise ValueError(f"shroud.place: {sorted(ids & taken)} already name a preserve or keep-out")
+    ds = d["designSpace"]
+    room = shape_from_spec({"type": "union", "shapes": ds} if isinstance(ds, list) else ds, base_dir)
+    fixed = [(r.get("id") or f"fixed-{i}", shape_from_spec(r["shape"], base_dir))
+             for i, r in enumerate((d.get("preserve") or []) + (d.get("keepOut") or []))
+             if isinstance(r.get("shape"), dict)]
+    rules = dict(sp.get("rules") or {})
+    judge = None
+    if sp.get("wires"):
+        from .wires import placement_judge
+        judge = placement_judge(sp["wires"], comps)
+    if emit:
+        emit({"stage": "shroud-place", "components": len(comps)})
+    pr = place(room, comps, skin=float(opts["thickness"]) + float(opts["gap"]), fixed=fixed, rules=rules,
+               judge=judge, base_dir=base_dir, pitch=sp.get("pitch"), beam=int(sp.get("beam", 3)),
+               margin=float(sp.get("margin", 0.5)))
+    if pr["best"] is None or pr["blocked"]:
+        raise ValueError(f"shroud.place: no room for {sorted(pr['blocked']) or 'the parts'} in the design space "
+                         f"with the skin and its gap ({opts['thickness'] + opts['gap']:g} mm) off its walls")
+    lay = pr["best"]
+    out = copy.deepcopy(d)
+    keep = list(out.get("keepOut") or [])
+    for cid, m in lay["meshes"].items():
+        buf = io.BytesIO()
+        m.export(buf, file_type="stl")
+        keep.append({"id": cid, "bore": False,
+                     "shape": {"type": "mesh", "stlBase64": base64.b64encode(buf.getvalue()).decode()}})
+    out["keepOut"] = keep
+    hot = [c for c in comps if c.get("watts") or c.get("maxTemp") is not None]
+    if hot:
+        cool = dict(out.get("cooling") or {})
+        have = {c.get("region") for c in cool.get("components") or []}
+        cool["components"] = list(cool.get("components") or []) + [
+            {"region": c["id"], **({"watts": float(c["watts"])} if c.get("watts") else {}),
+             **({"maxTemp": float(c["maxTemp"])} if c.get("maxTemp") is not None else {})}
+            for c in hot if c["id"] not in have]
+        out["cooling"] = cool
+    sh = dict(out["shroud"])
+    sh.pop("place")
+    sh["conceal"] = list(sh.get("conceal") or []) + [c for c in lay["meshes"] if c not in (sh.get("conceal") or [])]
+    out["shroud"] = sh
+    opts = {**opts, "conceal": sh["conceal"]}
+    report = {"components": {k: {kk: v[kk] for kk in ("centre", "bounds", "roomToSkin", "roomToParts", "matrix")
+                                 if kk in v} for k, v in lay["components"].items()},
+              "centerOfMass": lay.get("centerOfMass"), "cost": lay.get("cost"), "seconds": pr.get("seconds")}
+    return out, opts, report
+
+
 def expand_shroud(d: dict, base_dir: str | None = None, emit=None) -> dict:
     """The study with its `shroud` replaced by the generated exterior: the
     envelope (an .npz signed distance) as the design space and a `skin` of
@@ -521,6 +598,9 @@ def expand_shroud(d: dict, base_dir: str | None = None, emit=None) -> dict:
     opts = _options(v)
     from .spec import study_from_dict
 
+    placed = None
+    if isinstance(v, dict) and v.get("place"):
+        d, opts, placed = _place_parts(d, opts, base_dir, emit)
     seed_d = copy.deepcopy(d)
     seed_d.pop("shroud")
     seed_d.pop("lattice", None)
@@ -556,6 +636,8 @@ def expand_shroud(d: dict, base_dir: str | None = None, emit=None) -> dict:
         meta.write_text(json.dumps(info, indent=1))
     out = copy.deepcopy(d)
     shroud = out.pop("shroud")
+    if placed is not None:
+        info = {**info, "placement": placed}
     out["_shroud"] = {**info, "key": key, "path": str(npz), "options": {k: opts[k] for k in DEFAULTS},
                       "conceal": opts["conceal"], "designSpace": d["designSpace"], "spec": shroud}
     out["designSpace"] = {"type": "sdf", "shroud": key}
