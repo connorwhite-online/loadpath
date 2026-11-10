@@ -1651,13 +1651,24 @@ def run_switch(study, out_dir: str, pitches=None, iterations=None, nonlinear: bo
         solid_nl = _as_printed(xp_nl, floor_nl)[1]
         nl = check_fire_nonlinear(dom_nl, nu, spec_nl, solid_nl, modulus, presses=nonlinear_presses,
                                   floor=floor_nl)
+        unsolved = []
         for row in nl:
+            p = rep["presses"][row["press"]]
             if "nonlinear" in row:
-                p = rep["presses"][row["press"]]
                 p["nonlinearForceGf"] = row["nonlinear"] / GF
                 p["nonlinearOk"] = bool((p["max"] is None or row["nonlinear"] <= p["max"] * 1.02) and
                                         (p["min"] is None or row["nonlinear"] >= p["min"] * 0.98))
+            else:
+                # a press the large-deflection check could not solve (a piece
+                # of skin held on by an edge: a mechanism) is a failure, not
+                # a press to leave out: it once hid a pocket press 2% under
+                # its floor on the shutter remote
+                p["nonlinearOk"] = False
+                p["nonlinearError"] = row.get("error")
+                unsolved.append(int(row["press"]))
         rep["nonlinear"] = nl
+        if unsolved:
+            rep["unsolved"] = unsolved
     rep["seconds"] = round(r.seconds, 1)
-    rep["passes"] = all(p["ok"] for p in rep["presses"])
+    rep["passes"] = all(p["ok"] for p in rep["presses"]) and not rep.get("unsolved")
     return rep
