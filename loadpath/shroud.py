@@ -185,12 +185,17 @@ def envelope_sdf(solid_fn, study, opts: dict, pitch: float, refine=None):
             raise ValueError(f"shroud.conceal: unknown region {cid!r}; known: {sorted(ids)}")
     concealed = [ids[c].shape for c in opts["conceal"]]
     hidden = _contains(concealed, P, dims)
-    # what the skin must stay clear of: concealed regions grown by skin + gap
+    # what the skin must stay clear of: concealed regions grown by skin + gap,
+    # measured from the shapes themselves (an EDT of their nodes reads up to
+    # a pitch short at a corner: a board's corner kept 0.3 mm of its 1 mm
+    # gap on a 1.1 mm grid)
     need = pres.copy()
-    if hidden.any():
-        # (a pitch more: the grid's own distance and the skin's inner
-        # offset each read up to half a pitch short)
-        need |= ndimage.distance_transform_edt(~hidden) * pitch <= t + gap + pitch
+    need_d = None
+    if concealed:
+        dh = np.min([np.asarray(sh.sdf(P), float) for sh in concealed], axis=0).reshape(dims)
+        # (half a pitch more: the skin's inner offset reads up to that short)
+        need_d = (dh - (t + gap + 0.5 * pitch)).astype(np.float32)
+        need |= need_d <= 0
     # keep-outs neither concealed nor bores stay outside the envelope
     outside = [r.shape for r in study.keep_out
                if r.id not in opts["conceal"] and not getattr(r, "bore", True)]
@@ -213,18 +218,22 @@ def envelope_sdf(solid_fn, study, opts: dict, pitch: float, refine=None):
     if sm > 0:
         F = ndimage.gaussian_filter(F, sigma=sm / pitch / 2.0, mode="nearest").astype(np.float32)
     k = 0.5 * sm
-    if need.any():
-        F = _smin(F, _sdf_from_mask(need, pitch), k)
+    need_sdf = _sdf_from_mask(pres, pitch) if pres.any() else None
+    if need_d is not None:
+        need_sdf = need_d if need_sdf is None else np.minimum(need_sdf, need_d)
+    if need_sdf is not None:
+        F = _smin(F, need_sdf, k)
     if excl.any():
         F = _smax(F, -_sdf_from_mask(excl, pitch), min(k, 1.0))
     # inside the design space, its edges rounded off a little
     F = _smax(F, _sdf_from_mask(in_ds, pitch), k)
-    F = F.astype(np.float32)
-    parts = {"need": _sdf_from_mask(need, pitch) if need.any() else None,
+    parts = {"need": need_sdf,
              "excl": -_sdf_from_mask(excl, pitch) if excl.any() else None,
              "ds": _sdf_from_mask(in_ds, pitch), "k": k}
+    F = _hold_need(F, parts).astype(np.float32)
     if refine is not None and int(opts.get("rounds", 0)) > 0:
         F, rinfo = refine(F, lo, pitch, parts)
+        F = _hold_need(F, parts).astype(np.float32)
     else:
         rinfo = None
     inside = F <= 0
@@ -303,7 +312,18 @@ def _blend(F, parts, k_small):
         F = _smin(F, parts["need"], parts["k"])
     if parts["excl"] is not None:
         F = _smax(F, parts["excl"], k_small)
-    return _smax(F, parts["ds"], parts["k"]).astype(np.float32)
+    return _hold_need(_smax(F, parts["ds"], parts["k"]), parts).astype(np.float32)
+
+
+def _hold_need(F, parts):
+    """What the envelope must hold, held exactly: the rounded edge where the
+    envelope meets the design space's wall otherwise pulls in by up to a
+    quarter of its blend, and a concealed board near that wall lost half a
+    millimetre of its skin's gap. Clipped to the design space, which stays
+    the harder limit."""
+    if parts["need"] is None:
+        return F
+    return np.minimum(F, np.maximum(parts["need"], parts["ds"]))
 
 
 def _refiner(study, opts, seed_pitch, seed_solid=None):

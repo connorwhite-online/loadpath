@@ -21,7 +21,8 @@ sys.path.insert(0, str(ROOT))
 
 import numpy as np
 
-os.environ.setdefault("LOADPATH_CACHE", tempfile.mkdtemp(prefix="lp-shroud-"))
+if not os.environ.get("LOADPATH_CACHE"):
+    os.environ["LOADPATH_CACHE"] = tempfile.mkdtemp(prefix="lp-shroud-")
 
 from loadpath.domain import build_domain
 from loadpath.schema import lint
