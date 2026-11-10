@@ -2588,6 +2588,32 @@
                     },
                     "description": "W per component id in this phase (others keep their `watts`)"
                   },
+                  "airflow": {
+                    "type": "object",
+                    "properties": {
+                      "speed": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "m/s (0: still air)"
+                      },
+                      "length": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "mm the surface runs along the flow"
+                      }
+                    },
+                    "required": [
+                      "speed",
+                      "length"
+                    ],
+                    "additionalProperties": false,
+                    "description": "the air over the outside in this phase (as skin.airflow): a product that waits in still air and is cooled once it moves (a drone idling on the ground, then flying). Others keep the skin's h or airflow"
+                  },
+                  "h": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "instead of airflow: W/(m^2 K) of the outside in this phase"
+                  },
                   "steps": {
                     "type": "integer",
                     "minimum": 1,
@@ -2605,7 +2631,7 @@
                 "first",
                 "ambient"
               ],
-              "description": "first (default): the steady state of the first phase's power; ambient: cold"
+              "description": "first (default): the steady state of the first phase's power in its air; ambient: cold"
             },
             "repeat": {
               "type": "boolean",

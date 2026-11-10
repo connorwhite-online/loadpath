@@ -132,12 +132,30 @@ moment: the processor's peak at the end of the burst, the outside's a while
 later, as the heat reaches it. The report gives each peak and when it
 happens (`peakAt`, seconds).
 
+The air outside can change with the phase too. A drone waits on the ground
+with its video link on in still air, and is cooled by the stream only once
+it flies; a handheld is put down, then carried. A phase's `airflow:
+{speed, length}` (as `skin.airflow`; speed 0 is still air: natural
+convection and radiation off the same run) or `h` is the outside's
+coefficient for that phase, and the others keep the skin's:
+
+```json
+"cycle": {"phases": [
+  {"seconds": 180, "watts": {"vtx": 4.0}, "airflow": {"speed": 0, "length": 60}},
+  {"seconds": 240, "watts": {"vtx": 4.0}, "airflow": {"speed": 8, "length": 60}}]}
+```
+
+The start state sits in the first phase's air (with `repeat`, in the time
+mean). A box at 0.5 W that waits ten minutes and then flies ten at 8 m/s
+peaks at the end of the wait and ends the flight at under half of it; each
+phase follows its own exponential to 3% of the exact answer.
+
 The model is backward Euler on the same conduction system with a lumped
 heat capacity per node: the material's density times its card's specific
 heat in each designed cell (in proportion to its density, the rest is
 air), each component's `heatCapacity` (J/K; default 1.8 J/(cm^3 K) times
 its volume, about right for silicon, board and a lithium cell), air at
-1.2 J/(L K). Each step length is factored once, and the adjoint runs back
+1.2 J/(L K). Each step length (and each phase's outside air) is factored once, and the adjoint runs back
 through every step on the same factors, so the gradient of the hottest
 moment is exact (tests/test_cooling.py checks it against finite
 differences to 1e-3, and a near-isothermal box heating up against

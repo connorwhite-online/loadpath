@@ -129,8 +129,11 @@ def test_cycle_sensitivities_match_finite_differences():
     # a burst after idling: the limits read the hottest moment; the adjoint
     # runs back through every step and the steady start
     doc = box()
+    # (the burst in a stream of its own, the rest in the skin's still air:
+    # each phase's convection is in its own steps' systems and adjoints)
     doc["cooling"]["cycle"] = {"phases": [{"seconds": 300, "watts": {"chip": 0.1}, "steps": 3},
-                                          {"seconds": 120, "watts": {"chip": 1.5}, "steps": 4},
+                                          {"seconds": 120, "watts": {"chip": 1.5}, "steps": 4,
+                                           "airflow": {"speed": 3.0, "length": 40.0}},
                                           {"seconds": 60, "watts": {"chip": 0.1}, "steps": 2}]}
     st, dom, fl = _dom(doc, 2.0)
     prob = cooling.CoolingProblem(st, dom, floor=fl)
@@ -269,6 +272,49 @@ def test_airflow_sets_h_from_the_flat_plate():
     try:
         cooling.cooling_from_study(study_from_dict(box(skin={"h": 20, "airflow": {"speed": 8, "length": 40}})))
         raise AssertionError("h and airflow together should be refused")
+    except ValueError as exc:
+        assert "airflow" in str(exc)
+
+
+def test_cycle_phases_have_their_own_air():
+    # a near-isothermal box: 10 min waiting in still air, then 10 min in an
+    # 8 m/s stream at the same power. Each phase relaxes toward its own
+    # W / (h A) with its own time constant C / (h A)
+    doc = box()
+    doc["cooling"]["conductivity"] = 5000.0
+    fly = {"speed": 8.0, "length": 40.0}
+    doc["cooling"]["cycle"] = {"start": "ambient", "phases": [
+        {"seconds": 600, "steps": 40, "airflow": {"speed": 0.0, "length": 40.0}},
+        {"seconds": 600, "steps": 40, "airflow": fly}]}
+    st, dom, fl = _dom(doc, 2.0)
+    spec = cooling.cooling_from_study(st)
+    h0, h1 = cooling.forced_h(0.0, 40.0)["h"], cooling.forced_h(8.0, 40.0)["h"]
+    assert [round(ph[3], 6) for ph in spec.cycle.phases] == [round(h0, 6), round(h1, 6)] and h1 > 4 * h0
+    x = np.ones(dom.n_elem)
+    mdl = cooling.CoolingModel(st, dom, spec, floor=fl)
+    th, first = mdl.history(x)
+    mdl.release_history()
+    cap, area = mdl.capacity(x).sum(), 1e-6 * float(mdl.out_w.sum()) * 4.0
+    t1 = 0.5 / (h0 * area) * (1 - np.exp(-600 * h0 * area / cap))
+    t2 = 0.5 / (h1 * area) + (t1 - 0.5 / (h1 * area)) * np.exp(-600 * h1 * area / cap)
+    assert abs(th[40].mean() - t1) < 0.02 * t1, (th[40].mean(), t1)
+    assert abs(th[80].mean() - t2) < 0.03 * t2, (th[80].mean(), t2)
+    assert t2 < 0.5 * t1                         # the stream cools it: the wait was the hot part
+    r = cooling.cooling_readings(st, dom, x, floor=fl)
+    assert r["components"][0]["peakAt"] == 600 and [p["h"] for p in r["cycle"]["phases"]] == [round(h0, 2), round(h1, 2)]
+    # heat out at the end is read in the last phase's air
+    assert abs(r["heatOut"]["skin"] - h1 * area * th[80].mean()) < 0.03 * r["heatOut"]["skin"]
+    # a steady start sits in the first phase's air; a repeating one in the mean
+    doc["cooling"]["cycle"]["start"] = "first"
+    mdl = cooling.CoolingModel(*_dom(doc, 2.0)[:2], floor=fl)
+    th, _ = mdl.history(x)
+    mdl.release_history()
+    assert abs(th[0].mean() - 0.5 / (h0 * area)) < 0.02 * th[0].mean()
+    assert not lint(doc, "study")
+    doc["cooling"]["cycle"]["phases"][0]["h"] = 12
+    try:
+        cooling.cooling_from_study(study_from_dict(doc))
+        raise AssertionError("h and airflow together in a phase should be refused")
     except ValueError as exc:
         assert "airflow" in str(exc)
 

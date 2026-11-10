@@ -63,7 +63,10 @@ grids agree.
 
 Forced air over the outside (flight, a rotor's wash, a fan blowing on it)
 is `skin.airflow: {speed, length}`: h from the flat plate's correlation
-(forced_h). Not modelled: contact resistance between a component and a printed pad
+(forced_h). In a cycle each phase can have its own (`phases[].airflow`, or
+`h`): a drone idles on the ground in still air with its radio on and is
+cooled by the stream only once it flies, and the hottest moment is the end
+of the wait, not the flight. Not modelled: contact resistance between a component and a printed pad
 resting on it (a thermal pad or paste is assumed), forced air through the inside,
 the hand itself as a heat sink, and sunlight. The structure's own
 softening with temperature (thermal.retention) is in thermal.py's
@@ -157,29 +160,40 @@ class CoolingSpec:
 
 @dataclass
 class Cycle:
-    """Power over time: phases of (seconds, steps, watts per source), from
-    `start` ("first": the steady state of the first phase's power;
-    "ambient": everything at room temperature), or with `repeat` the
-    repeating state, run `cycles` times from the steady state at the mean
-    power and read on the last."""
-    phases: list                      # [(seconds, steps, np.array watts per source)]
+    """Power and the air outside over time: phases of (seconds, steps, watts
+    per source, h of the outside in W/(m^2 K)), from `start` ("first": the
+    steady state of the first phase's power in its air; "ambient":
+    everything at room temperature), or with `repeat` the repeating state,
+    run `cycles` times from the steady state at the mean power and mean h
+    and read on the last. A phase's own h is what a product that sits and
+    then moves needs: a drone idling on the ground with its video link on
+    has still air round it, and the stream that cools it only once it
+    flies."""
+    phases: list                      # [(seconds, steps, np.array watts per source, h)]
     start: str = "first"
     repeat: bool = False
     cycles: int = 3
 
     def steps(self):
-        """[(dt, watts)] for every step of the run, and the first step
+        """[(dt, watts, h)] for every step of the run, and the first step
         the limits read (the last cycle's, with repeat)."""
-        one = [(sec / n, w) for sec, n, w in self.phases for _ in range(n)]
+        one = [(sec / n, w, h) for sec, n, w, h in self.phases for _ in range(n)]
         if not self.repeat:
             return one, 0
         return one * self.cycles, len(one) * (self.cycles - 1)
 
     def start_watts(self):
         if self.repeat:
-            t = sum(sec for sec, _, _ in self.phases)
-            return sum(sec * w for sec, _, w in self.phases) / t
+            t = sum(ph[0] for ph in self.phases)
+            return sum(ph[0] * ph[2] for ph in self.phases) / t
         return None if self.start == "ambient" else self.phases[0][2]
+
+    def start_h(self):
+        """The outside's h the start state is solved in: the first phase's,
+        or with repeat the time mean (the cycles then run in each phase's own)."""
+        if self.repeat:
+            return sum(ph[0] * ph[3] for ph in self.phases) / sum(ph[0] for ph in self.phases)
+        return self.phases[0][3]
 
 
 def _num(v, label, positive=True):
@@ -251,11 +265,7 @@ def cooling_from_study(study) -> CoolingSpec:
         if sk.get("h") is not None or cb.get("h") is not None:
             raise ValueError("cooling.skin: give h or airflow, not both (airflow works h out)")
         af = sk["airflow"]
-        if not isinstance(af, dict) or "speed" not in af or "length" not in af:
-            raise ValueError("cooling.skin.airflow is {speed (m/s), length (mm, the run of the surface along the "
-                             "flow)}: the stream over the outside (flight speed, a fan's or a rotor's wash)")
-        h = forced_h(_num(af["speed"], "cooling.skin.airflow.speed"), _num(af["length"], "cooling.skin.airflow.length"),
-                     ambient)["h"]
+        h = _airflow_h(af, "cooling.skin.airflow", ambient)
     skin_shape = shape_from_spec(sk["shape"], study.base_dir) if sk.get("shape") else None
     vents = []
     for i, v in enumerate(cb.get("vents") or []):
@@ -267,7 +277,7 @@ def cooling_from_study(study) -> CoolingSpec:
     up = -_leg_direction(cb.get("gravity", "-z"), "cooling.gravity")
     if not any(s.max_t is not None for s in sources) and smax is None:
         raise ValueError("cooling: nothing to hold: give a component maxTemp or skin.maxTemp")
-    cyc = _cycle_from(cb.get("cycle"), sources) if cb.get("cycle") is not None else None
+    cyc = _cycle_from(cb.get("cycle"), sources, ambient, h) if cb.get("cycle") is not None else None
     return CoolingSpec(ambient, h, k_air, k_mat, sources, smax, skin_shape, vents, up, cb, cyc)
 
 
@@ -301,9 +311,19 @@ def forced_h(speed: float, length: float, ambient: float = 25.0, rise: float = 2
             "natural": nu_n * k / ell}
 
 
-def _cycle_from(cb, sources) -> Cycle:
+def _airflow_h(af, label, ambient) -> float:
+    """h of the outside (W/(m^2 K)) from an airflow block {speed, length}."""
+    if not isinstance(af, dict) or "speed" not in af or "length" not in af:
+        raise ValueError(f"{label} is {{speed (m/s), length (mm, the run of the surface along the "
+                         "flow)}: the stream over the outside (flight speed, a fan's or a rotor's wash)")
+    return forced_h(_num(af["speed"], f"{label}.speed", positive=False), _num(af["length"], f"{label}.length"),
+                    ambient)["h"]
+
+
+def _cycle_from(cb, sources, ambient: float = 25.0, h_out: float = H_OUT) -> Cycle:
     if not isinstance(cb, dict) or not isinstance(cb.get("phases"), list) or not cb["phases"]:
-        raise ValueError("cooling.cycle is {phases: [{seconds, watts: {component: W}, steps?}], repeat?, start?}")
+        raise ValueError("cooling.cycle is {phases: [{seconds, watts: {component: W}, airflow?, h?, steps?}], "
+                         "repeat?, start?}")
     ids = [s.id for s in sources]
     steps = int(cb.get("steps", 12))
     phases = []
@@ -322,7 +342,17 @@ def _cycle_from(cb, sources) -> Cycle:
         n = int(ph.get("steps", steps))
         if n < 1:
             raise ValueError(f"{label}.steps must be >= 1")
-        phases.append((sec, n, w))
+        # the air outside in this phase: its own stream (speed 0: still air,
+        # natural convection and radiation off the same run) or h; else the skin's
+        if ph.get("airflow") is not None and ph.get("h") is not None:
+            raise ValueError(f"{label}: give h or airflow, not both (airflow works h out)")
+        if ph.get("airflow") is not None:
+            h = _airflow_h(ph["airflow"], f"{label}.airflow", ambient)
+        elif ph.get("h") is not None:
+            h = _num(ph["h"], f"{label}.h")
+        else:
+            h = h_out
+        phases.append((sec, n, w, h))
     start = str(cb.get("start", "first"))
     if start not in ("first", "ambient"):
         raise ValueError("cooling.cycle.start is 'first' (the first phase's steady state) or 'ambient'")
@@ -517,10 +547,12 @@ class CoolingModel:
         # it follows (1.5x on a sphere, which read its outside a third cool)
         bf = faces.nodes[faces.boundary]
         self.out_w = _true_area_weights(study, faces.center[faces.boundary], pitch)
-        w = (spec.h_out * 1e-6 * faces.area) * self.out_w[:, None] * _FACE_M.ravel()[None]
-        self._kc = sp.csr_matrix((w.ravel(), (np.repeat(bf, 4, axis=1).ravel(),
-                                              np.tile(bf, (1, 4)).ravel())),
-                                 shape=(mesh.n_nodes, mesh.n_nodes))
+        w = (1e-6 * faces.area) * self.out_w[:, None] * _FACE_M.ravel()[None]
+        # per unit h (W/(m^2 K)): a cycle's phases each have their own (Cycle)
+        self._kc1 = sp.csr_matrix((w.ravel(), (np.repeat(bf, 4, axis=1).ravel(),
+                                               np.tile(bf, (1, 4)).ravel())),
+                                  shape=(mesh.n_nodes, mesh.n_nodes))
+        self._kc = spec.h_out * self._kc1
         self.solver = ScalarSolver(rtol=1e-9)
         self._ones = np.ones(mesh.n_elem)
         # air share of each cell (1 - x on designed cells, set per design)
@@ -702,32 +734,37 @@ class CoolingModel:
         sw = cyc.start_watts()
         # the steady start (and the vents' flow, frozen from it)
         self.heat_saved = self.heat
+        kc_saved, h0 = self._kc, cyc.start_h()
+        self._kc = h0 * self._kc1                 # the start state sits in the first phase's air
         if sw is not None:
             self.heat = self.src_load @ sw
         theta0 = self.solve(xp, vent_rounds=vent_rounds) if sw is not None else np.zeros(self.mesh.n_nodes)
         if sw is None:
             self.solve(xp, vent_rounds=1)         # K (and the vents at no rise: none)
         self.heat = self.heat_saved
+        self._kc = kc_saved
         self._steady = (self._direct, self._pardiso) if sw is not None else None
         if sw is None:
             self.release()
         self._direct, self._pardiso = None, None
-        kmat = self._mat
+        # conduction alone (and the vents); each step adds its own phase's convection
+        kmat = (self._mat - h0 * self._kc1).tocsr()
+        self._kcond = kmat
         cap = self.capacity(xp)
         self._cap = cap
         self._steps = steps
         self._start_steady = sw is not None
         self._factors = {}
         th = [theta0]
-        for dt, w in steps:
-            solve = self._step_factor(kmat, cap, dt)
+        for dt, w, h in steps:
+            solve = self._step_factor(kmat, cap, dt, h)
             th.append(solve(cap / dt * th[-1] + self.src_load @ w))
         return np.array(th), first + 1
 
-    def _step_factor(self, kmat, cap, dt):
-        key = float(dt)
+    def _step_factor(self, kmat, cap, dt, h):
+        key = (float(dt), float(h))
         if key not in self._factors:
-            a = (kmat + sp.diags(cap / dt)).tocsr()
+            a = (kmat + h * self._kc1 + sp.diags(cap / dt)).tocsr()
             if _HAS_PARDISO and a.shape[0] <= DIRECT_MAX:
                 from .bucklingopt import _factor
                 f, rel = _factor(a)
@@ -761,7 +798,7 @@ class CoolingModel:
             rhs = dj[n].copy()
             if lam_next is not None:
                 rhs += (cap / steps[n][0])[:, None] * lam_next
-            lam = self._factors[float(dt)][0](rhs)
+            lam = self._factors[(float(dt), float(steps[n - 1][2]))][0](rhs)
             lam = lam.reshape(-1, m)
             dth = (th[n] - th[n - 1]) / dt
             for j in range(m):
@@ -923,7 +960,7 @@ def cooling_readings(study, domain: Domain, xp, floor=None, vent_rounds: int = 8
         # step on), and the heat out at the end of the run
         th, first = mdl.history(xp, vent_rounds=vent_rounds)
         mdl.release_history()
-        clock = np.concatenate([[0.0], np.cumsum([dt for dt, _ in mdl._steps])])
+        clock = np.concatenate([[0.0], np.cumsum([st[0] for st in mdl._steps])])
         clock = clock - clock[first - 1]
         hist = th[first:]
         theta = hist.max(axis=0)
@@ -945,7 +982,9 @@ def cooling_readings(study, domain: Domain, xp, floor=None, vent_rounds: int = 8
     f = mdl.faces
     bnd = np.flatnonzero(f.boundary)
     th_face = end[f.nodes[bnd]].mean(axis=1)
-    q_skin = float(np.sum(spec.h_out * 1e-6 * f.area * mdl.out_w * th_face))
+    # (a cycle ends in its last phase's air)
+    h_end = spec.cycle.phases[-1][3] if spec.cycle is not None else spec.h_out
+    q_skin = float(np.sum(h_end * 1e-6 * f.area * mdl.out_w * th_face))
     air = mdl.air(xp)
     rep = {"components": rows, "ambient": spec.ambient, "watts": float(sum(s.watts for s in spec.sources)),
            "heatOut": {"skin": round(q_skin, 4)}, "airRise": round(mdl.air_rise(theta, air), 2),
@@ -965,6 +1004,8 @@ def cooling_readings(study, domain: Domain, xp, floor=None, vent_rounds: int = 8
             rep["skin"]["peakAt"] = round(float(times[1][int(np.argmax(times[0][:, mdl.skin_nodes].max(axis=1)))]), 1)
     if times is not None:
         rep["cycle"] = {"seconds": round(float(times[1][-1]), 1), "steps": int(len(times[1]) - 1),
+                        "phases": [{"seconds": sec, "h": round(float(h), 2), "watts": round(float(np.sum(w)), 4)}
+                                   for sec, _, w, h in spec.cycle.phases],
                         "note": "temperatures are each point's hottest over the cycle; heatOut at its end"}
     rep["ok"] = all(r["ok"] for r in rows) and rep.get("skin", {}).get("ok", True)
     mdl.release()

@@ -1164,10 +1164,20 @@ _COOLING_CYCLE = {
                        "seconds": _POS,
                        "watts": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0},
                                  "description": "W per component id in this phase (others keep their `watts`)"},
+                       "airflow": {"type": "object", "properties": {
+                                       "speed": {"type": "number", "minimum": 0, "description": "m/s (0: still air)"},
+                                       "length": {**_POS, "description": "mm the surface runs along the flow"}},
+                                   "required": ["speed", "length"], "additionalProperties": False,
+                                   "description": "the air over the outside in this phase (as skin.airflow): a "
+                                                  "product that waits in still air and is cooled once it moves "
+                                                  "(a drone idling on the ground, then flying). Others keep "
+                                                  "the skin's h or airflow"},
+                       "h": {**_POS, "description": "instead of airflow: W/(m^2 K) of the outside in this phase"},
                        "steps": {"type": "integer", "minimum": 1, "description": "time steps (default `steps`)"}},
                    "required": ["seconds"], "additionalProperties": False}},
         "start": {"enum": ["first", "ambient"],
-                  "description": "first (default): the steady state of the first phase's power; ambient: cold"},
+                  "description": "first (default): the steady state of the first phase's power in its air; "
+                                 "ambient: cold"},
         "repeat": {"type": "boolean", "description": "the repeating state of the phases, from the mean power"},
         "cycles": {"type": "integer", "minimum": 1, "description": "with repeat: cycles run (default 3), the "
                                                                    "last one read"},
