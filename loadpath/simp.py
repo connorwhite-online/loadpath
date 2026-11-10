@@ -651,8 +651,9 @@ def _relieved(domain, xe):
     phi = _rigid_modes(domain)
     m = node_mass(domain.mesh, np.maximum(xe, 1e-3)) + _carried(domain)
     loads, accs = [], []
+    bodies = getattr(domain, "bodies", None) or []
     for f in raw:
-        fb, acc = inertia_balance(f, m, phi)
+        fb, acc = inertia_balance(f, m, phi, bodies)
         fb[domain.fixed] = 0.0
         loads.append(fb)
         accs.append(acc)
@@ -675,15 +676,14 @@ def _carried(domain):
 
 
 def _rigid_free_m(domain, xe, u):
-    """u less its mass-weighted rigid motion (M-orthogonal to the rigid
-    modes, M from the densities)."""
-    from .domain import node_mass
+    """u less its rigid motion, taken orthogonal to every inertia force a
+    rigid acceleration raises (domain.rigid_free: M from the densities and
+    what the part carries)."""
+    from .domain import node_mass, rigid_free
 
     phi = _rigid_modes(domain)
-    m = np.repeat(node_mass(domain.mesh, np.maximum(xe, 1e-3)) + _carried(domain), 3)
-    mphi = phi * m[:, None]
-    c = np.linalg.solve(phi.T @ mphi, mphi.T @ u)
-    return u - phi @ c
+    m = node_mass(domain.mesh, np.maximum(xe, 1e-3)) + _carried(domain)
+    return rigid_free(u, m, phi, getattr(domain, "bodies", None) or [])
 
 
 def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_stop=None) -> SimpResult:

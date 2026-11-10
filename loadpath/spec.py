@@ -662,6 +662,9 @@ class Study:
     # shape or None, kg)]. A drone frame's motors and battery outweigh it,
     # so they, not the frame, take most of the thrust's inertia.
     inertia_masses: list = field(default_factory=list)
+    # ... and those given with their centre (`at`): rigid bodies, [(region,
+    # shape, kg, at (3,), inertia about the centre (3,) or (3, 3) kg mm^2)]
+    inertia_bodies: list = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
     # where the study's relative mesh paths start (blocks read later:
     # switch.output.bearsOn, switch.clearance, skin.openings)
@@ -684,7 +687,7 @@ class Study:
     @property
     def carried_mass(self) -> float:
         """kg the free part carries (inertiaRelief.masses)."""
-        return float(sum(kg for _, _, kg in self.inertia_masses))
+        return float(sum(kg for _, _, kg in self.inertia_masses) + sum(b[2] for b in self.inertia_bodies))
 
     @property
     def self_equilibrated(self) -> bool:
@@ -1282,7 +1285,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         raise ValueError(f"pressure on {rid!r}: a pressure acts in a keepOut (the fluid's volume); "
                          f"keepOut ids: {sorted(ko_ids)}")
     relief = d.get("inertiaRelief")
-    inertia_masses = []
+    inertia_masses, inertia_bodies = [], []
     if isinstance(relief, dict):
         unknown = set(relief) - {"masses"}
         if unknown:
@@ -1292,7 +1295,26 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
             if not isinstance(m, dict) or not isinstance(m.get("mass"), (int, float)) or m["mass"] <= 0:
                 raise ValueError(f"{label}.mass is the carried mass in kg (> 0): a motor, a battery, a camera")
             region, shape = _target(m, label, base_dir)
-            inertia_masses.append((region, shape, float(m["mass"])))
+            if m.get("at") is None:
+                if m.get("inertia") is not None:
+                    raise ValueError(f"{label}.inertia needs `at`, the carried body's centre of mass")
+                inertia_masses.append((region, shape, float(m["mass"])))
+                continue
+            at = np.asarray(m["at"], float).reshape(-1)
+            if at.shape != (3,) or not np.all(np.isfinite(at)):
+                raise ValueError(f"{label}.at is the carried body's centre of mass [x, y, z] (mm)")
+            inertia = np.zeros(3)
+            if m.get("inertia") is not None:
+                inertia = np.asarray(m["inertia"], float)
+                if inertia.shape not in ((3,), (3, 3)) or np.any(np.diag(inertia) < 0 if inertia.ndim == 2 else
+                                                                   inertia < 0):
+                    raise ValueError(f"{label}.inertia is the body's moments of inertia about its centre, "
+                                     "[Ixx, Iyy, Izz] or a 3x3 (kg mm^2)")
+            elif m.get("size") is not None:
+                a, b, c = (float(v) for v in m["size"])
+                kg = float(m["mass"])
+                inertia = kg / 12.0 * np.array([b * b + c * c, a * a + c * c, a * a + b * b])
+            inertia_bodies.append((region, shape, float(m["mass"]), at, inertia))
         relief = True
     elif relief is not None and not isinstance(relief, bool):
         raise ValueError("inertiaRelief is true, false or {masses: [{region, mass}]}")
@@ -1486,6 +1508,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         vibration=vibration,
         mass_properties=mass_properties,
         inertia_masses=inertia_masses,
+        inertia_bodies=inertia_bodies,
         raw=d,
     )
     if d.get("multiMaterial") is not None:

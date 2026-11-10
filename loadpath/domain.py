@@ -76,6 +76,8 @@ class Domain:
     raw_loads: list | None = None
     # inertiaRelief.masses per node (carried_volume), or None
     carried: np.ndarray | None = None
+    # inertiaRelief.masses with a centre: rigid bodies (carried_bodies)
+    bodies: list = field(default_factory=list)
 
     @property
     def n_elem(self):
@@ -223,17 +225,84 @@ def node_mass(mesh: HexMesh, density) -> np.ndarray:
     return m
 
 
-def inertia_balance(f: np.ndarray, m_node: np.ndarray, phi: np.ndarray):
+def inertia_balance(f: np.ndarray, m_node: np.ndarray, phi: np.ndarray, bodies: list | None = None):
     """Inertia relief: the load less the d'Alembert force of the rigid
     acceleration it gives the free part, f - M Phi a with a = (Phi^T M
     Phi)^-1 Phi^T f, so it has no net force or moment and needs no
     reaction (Nastran's SUPORT / nTop's static analysis with inertia
-    relief). Returns (balanced load, Phi a per dof)."""
+    relief). `bodies` (carried_bodies): rigid bodies carried on the part,
+    each adding its 6x6 mass to Phi^T M Phi and its inertia wrench -Mc a
+    through its attachment nodes. Returns (balanced load, Phi a per dof)."""
     m = np.repeat(m_node, 3)
     mphi = phi * m[:, None]
-    a = np.linalg.solve(phi.T @ mphi, phi.T @ f)
+    mrb = phi.T @ mphi
+    for _, _, mc in bodies or ():
+        mrb = mrb + mc
+    a = np.linalg.solve(mrb, phi.T @ f)
     acc = phi @ a
-    return f - m * acc, acc
+    fb = f - m * acc
+    for dofs, dmat, mc in bodies or ():
+        fb[dofs] -= dmat @ (mc @ a)
+    return fb, acc
+
+
+def rigid_free(u: np.ndarray, m_node: np.ndarray, phi: np.ndarray, bodies: list | None = None):
+    """u less the rigid motion that makes it orthogonal to every inertia
+    force a rigid acceleration raises ((M Phi + sum D Mc)^T u_r = 0), so the
+    change in the acceleration drops out of the relieved load's
+    sensitivity."""
+    m = np.repeat(m_node, 3)
+    mphi = phi * m[:, None]
+    lhs = phi.T @ mphi
+    rhs = mphi.T @ u
+    for dofs, dmat, mc in bodies or ():
+        lhs = lhs + mc
+        rhs = rhs + mc.T @ (dmat.T @ u[dofs])
+    return u - phi @ np.linalg.solve(lhs, rhs)
+
+
+def _rbm(xyz):
+    from .fem import rigid_body_modes
+
+    return rigid_body_modes(xyz)
+
+
+def _skew(d):
+    return np.array([[0.0, -d[2], d[1]], [d[2], 0.0, -d[0]], [-d[1], d[0], 0.0]])
+
+
+def carried_bodies(study: Study, mesh: HexMesh, phi: np.ndarray, tol_floor: float = 0.0) -> list:
+    """inertiaRelief.masses given with their centre (`at`): each a rigid
+    body on its region's nodes, [(dofs, D, Mc)]. Mc is its 6x6 mass in the
+    rigid-mode coordinates of `phi` (fem.rigid_body_modes: translations,
+    then rotations about z, x, y through the nodes' centroid), in mm^3 of
+    the study's material so it adds to node_mass; D (3k x 6) spreads a
+    wrench over its nodes as a rigid patch would (Phi_r (Phi_r^T Phi_r)^+).
+    A battery strapped 30 mm above its posts pulls on them with the moment
+    of its inertia, which mass spread on the posts alone leaves out."""
+    masses = getattr(study, "inertia_bodies", None) or []
+    if not masses:
+        return []
+    rho = float(study.material.density) * 1e-6
+    c0 = mesh.node_xyz.mean(axis=0)
+    # a -> (t, w): w = (a4, a5, a3)
+    g = np.zeros((6, 6))
+    g[0, 0] = g[1, 1] = g[2, 2] = 1.0
+    g[3, 4] = g[4, 5] = g[5, 3] = 1.0
+    out = []
+    for i, (region, shape, kg, at, inertia) in enumerate(masses):
+        nodes = np.flatnonzero(_region_nodes(study, mesh, region, shape, f"inertiaRelief.masses[{i}]",
+                                             tol_floor))
+        dofs = (3 * nodes[:, None] + np.arange(3)[None, :]).ravel()
+        pr = phi[dofs]
+        dmat = pr @ np.linalg.pinv(pr.T @ pr)
+        mv = kg / rho
+        d = np.asarray(at, float) - c0
+        dt = _skew(d)
+        j = np.diag(np.asarray(inertia, float)) if np.ndim(inertia) == 1 else np.asarray(inertia, float)
+        mtw = np.block([[mv * np.eye(3), -mv * dt], [mv * dt, -mv * dt @ dt + j / rho]])
+        out.append((dofs, dmat, g.T @ mtw @ g))
+    return out
 
 
 def carried_volume(study: Study, mesh: HexMesh, tol_floor: float = 0.0) -> np.ndarray | None:
@@ -266,9 +335,10 @@ def _inertia_relief(study: Study, mesh: HexMesh, loads: list, fixed: np.ndarray,
     carried = carried_volume(study, mesh, tol_floor)
     if carried is not None:
         m = m + carried
+    bodies = carried_bodies(study, mesh, phi, tol_floor)
     out = []
     for f in loads:
-        fb, _ = inertia_balance(f, m, phi)
+        fb, _ = inertia_balance(f, m, phi, bodies)
         fb[fixed] = 0.0
         out.append(fb)
     return out
@@ -727,6 +797,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                                   else (study.mass_properties.com_target, study.mass_properties.com_tolerance)),
                   raw_loads=list(bc.raw_loads) if bc.raw_loads else None,
                   carried=carried_volume(study, mesh) if bc.raw_loads else None,
+                  bodies=carried_bodies(study, mesh, _rbm(mesh.node_xyz)) if bc.raw_loads else [],
                   thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
                                      near=_near_cells(mesh, support_nodes | load_nodes)),
                   warp=_warp_term(study, mesh))

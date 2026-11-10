@@ -96,7 +96,8 @@ def _lumped_mass(mesh: HexMesh, density):
 
 
 def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray, n_modes: int = 6,
-                   point_masses: list | None = None, springs=None, free: bool = False) -> ModalResult:
+                   point_masses: list | None = None, springs=None, free: bool = False,
+                   mass_blocks: list | None = None) -> ModalResult:
     """Lowest `n_modes` natural frequencies (Hz) of a voxel model.
 
     modulus: E per element (MPa) or scalar; density: g/cm^3 per element or
@@ -106,7 +107,8 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
     free=True: nothing holds it (a drone in flight); `fixed` is ignored, K
     is shifted by s M to factor it, and the six rigid-body modes (at zero)
     are left out of the result: its first frequency is the first flexible
-    mode."""
+    mode. mass_blocks: [(dofs, dense block, t)] added to M (a carried
+    rigid body on a patch of nodes, domain.carried_bodies)."""
     from scipy.sparse.linalg import eigsh
 
     fixed = np.zeros(mesh.n_dof, bool) if free else np.asarray(fixed, bool)
@@ -120,20 +122,31 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
         nodes = np.asarray(nodes, np.int64)
         m_node[nodes] += kg * 1e-3 / len(nodes)
     m = np.repeat(m_node, 3)
+    mmat = sp.diags(m).tocsr()
+    if mass_blocks:
+        rows, cols, vals = [], [], []
+        for dofs, blk in mass_blocks:
+            dofs = np.asarray(dofs, np.int64)
+            rows.append(np.repeat(dofs, len(dofs)))
+            cols.append(np.tile(dofs, len(dofs)))
+            vals.append(np.asarray(blk, float).ravel())
+        mmat = (mmat + sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+                                     shape=mmat.shape)).tocsr()
     free_dofs = free
     free = np.flatnonzero(~fixed)
     mf = m[free]
+    mff = mmat[free][:, free].tocsc()
     rigid = 6 if free_dofs else 0
     shift = 0.0
     if free_dofs:
         # K + s M is positive definite with the same modes, each at w^2 + s;
         # s at (2 pi 10 Hz)^2 (N/mm per tonne is 1/s^2)
         shift = (2 * np.pi * 10.0) ** 2
-        k = (k + sp.diags(m * shift)).tocsr()
+        k = (k + mmat * shift).tocsr()
     kf = k[free][:, free].tocsc()
     nm = min(n_modes + rigid, len(free) - 2)
     if len(free) <= DIRECT_EIG_DOFS:
-        w, v = eigsh(kf, k=nm, M=sp.diags(mf).tocsc(), sigma=0.0, which="LM")
+        w, v = eigsh(kf, k=nm, M=mff, sigma=0.0, which="LM")
     elif os.environ.get("LOADPATH_MODAL_LOBPCG") != "1":
         # big models: shift-invert Lanczos with the factorization the push
         # pad and buckling solves use (bucklingopt._factor: PARDISO, or a
@@ -155,7 +168,7 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
 
         op = LinearOperator(kf.shape, matvec=inv, dtype=float)
         try:
-            w, v = eigsh(kf, k=nm, M=sp.diags(mf).tocsc(), sigma=0.0, which="LM", OPinv=op)
+            w, v = eigsh(kf, k=nm, M=mff, sigma=0.0, which="LM", OPinv=op)
         finally:
             if free_mem is not None:
                 free_mem()
@@ -167,7 +180,7 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
 
         ml = amg_solver(kf.tocsr())
         x0 = np.random.default_rng(0).standard_normal((len(free), nm + 4))
-        w, v = lobpcg(kf, x0, B=sp.diags(mf), M=ml.aspreconditioner(), largest=False, tol=1e-6, maxiter=400)
+        w, v = lobpcg(kf, x0, B=mff, M=ml.aspreconditioner(), largest=False, tol=1e-6, maxiter=400)
         w, v = w[:nm], v[:, :nm]
     order = np.argsort(w)
     w, v = w[order] - shift, v[:, order]
@@ -176,15 +189,21 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
         nm -= rigid
     w = np.maximum(w, 0.0)
     # mass-normalize (phi^T M phi = 1)
-    v = v / np.sqrt(np.einsum("ik,i,ik->k", v, mf, v))[None, :]
+    mv = mff @ v
+    v = v / np.sqrt(np.einsum("ik,ik->k", v, mv))[None, :]
+    mv = mff @ v
     modes = np.zeros((mesh.n_dof, nm))
     modes[free] = v
     total = m_node.sum()
+    if mass_blocks:
+        # a rigid body's mass is its translational block's: ones^T M ones / 3
+        one = np.ones(mesh.n_dof)
+        total = float(one @ (mmat @ one)) / 3.0
     part = np.zeros((nm, 3))
     for a in range(3):
         r = np.zeros(mesh.n_dof)
         r[a::3] = 1.0
-        g = (v * (mf * r[free])[:, None]).sum(axis=0)          # participation factor phi^T M r
+        g = mv.T @ r[free]                                      # participation factor phi^T M r
         part[:, a] = g ** 2 / total
     return ModalResult(np.sqrt(w) / (2 * np.pi), modes, float(total * 1e3), part, m)
 

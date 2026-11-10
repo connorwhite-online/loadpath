@@ -119,6 +119,61 @@ def test_free_free_modes():
                           "inertiaRelief": {"masses": [{"shape": END_A, "mass": 1.0}, {"shape": END_B, "mass": 1.0}]}})
     out2 = modal_check(sm, bar)
     assert out2["carried"] == 2.0 and out2["firstFrequency"] < 0.2 * out["firstFrequency"]
+    # 50 g on each end as rigid bodies: about the lumped reading; lifted 40 mm
+    # off the bar they rock on it, far lower
+    freq = []
+    for h in (5, 45):
+        ends = [{"shape": END_A, "mass": 0.05, "at": [1, 5, h], "size": [2, 10, 10]},
+                {"shape": END_B, "mass": 0.05, "at": [99, 5, h], "size": [2, 10, 10]}]
+        freq.append(modal_check(study_from_dict({**FREE_BAR, "vibration": {"minFrequency": 100},
+                                                 "inertiaRelief": {"masses": ends}}), bar)["firstFrequency"])
+    lumped = modal_check(study_from_dict({**FREE_BAR, "vibration": {"minFrequency": 100}, "inertiaRelief": {
+        "masses": [{"shape": END_A, "mass": 0.05}, {"shape": END_B, "mass": 0.05}]}}), bar)["firstFrequency"]
+    assert abs(freq[0] - lumped) / lumped < 0.1 and freq[1] < 0.4 * freq[0], (freq, lumped)
+
+
+def test_carried_body_off_its_mounts():
+    # the same dumbbell with its end masses as rigid bodies centred on their
+    # ends reads the same bending; lifted 40 mm above the bar, a push along
+    # the bar makes each end's inertia twist its mount by m a h
+    from loadpath.domain import carried_bodies, inertia_balance, node_mass
+    from loadpath.fem import rigid_body_modes
+    ends = [{"shape": END_A, "mass": 1.0, "at": [1, 5, 5]}, {"shape": END_B, "mass": 1.0, "at": [99, 5, 5]}]
+    s = study_from_dict({**FREE_BAR, "loadCases": [{"name": "mid", "loads": [{"shape": MID, "force": [0, 0, -10]}]}],
+                         "inertiaRelief": {"masses": ends}})
+    assert abs(s.carried_mass - 2.0) < 1e-12 and len(s.inertia_bodies) == 2
+    bar = trimesh.creation.box(extents=[100, 10, 10])
+    bar.apply_translation([50, 5, 5])
+    rep = verify_part(s, bar, max_cells=40_000, refine=0)
+    sigma = 5.0 * 49.0 * 5 / (10 * 10 ** 3 / 12)
+    assert abs(50.0 / rep["safetyFactor"] - sigma) / sigma < 0.15
+    lifted = [{**e, "at": [e["at"][0], 5, 45]} for e in ends]
+    push = {"name": "push", "loads": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [0.01, 11, 11]},
+                                       "force": [10, 0, 0]}]}
+    s2 = study_from_dict({**FREE_BAR, "loadCases": [push], "inertiaRelief": {"masses": lifted}})
+    d = build_domain(s2)
+    f = d.raw_loads[0]
+    xyz = d.mesh.node_xyz
+    phi = rigid_body_modes(xyz)
+    m = node_mass(d.mesh, 1.0)
+    bodies = carried_bodies(s2, d.mesh, phi)
+    fb, _ = inertia_balance(f, m, phi, bodies)
+    # the frame's part and the bodies' wrenches: nothing left over
+    mrb = phi.T @ (phi * np.repeat(m, 3)[:, None]) + sum(b[2] for b in bodies)
+    a = np.linalg.solve(mrb, phi.T @ f)
+    tot = fb.reshape(-1, 3).sum(axis=0)
+    assert np.abs(tot).max() < 1e-8, tot
+    mom = np.cross(xyz - xyz.mean(axis=0), fb.reshape(-1, 3)).sum(axis=0)
+    assert np.abs(mom).max() < 1e-6, mom
+    # what end A's mounts take: about its own nodes, a moment of size m a h
+    da, ma = bodies[0][0], bodies[0][1]
+    fa = np.zeros_like(f)
+    fa[da] = -(ma @ (bodies[0][2] @ a))
+    pa = xyz[da[::3] // 3]
+    moment_a = np.cross(pa - pa.mean(axis=0), fa[da].reshape(-1, 3)).sum(axis=0)
+    acc_x = 10.0 / (2.0 + 0.012)
+    assert abs(abs(moment_a[1]) - 1.0 * acc_x * 40.0) / (acc_x * 40.0) < 0.05, moment_a
+    assert d.bodies and len(d.bodies) == 2
 
 
 def test_inertia_relief_spec_errors():

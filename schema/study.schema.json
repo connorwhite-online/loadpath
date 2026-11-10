@@ -409,6 +409,28 @@
                     "type": "number",
                     "exclusiveMinimum": 0,
                     "description": "kg"
+                  },
+                  "at": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "mm: its centre of mass, when it sits off its mounts (a battery strapped above its posts): it is then a rigid body on the region and pulls on it with the moment of its inertia"
+                  },
+                  "size": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "with at: mm, a box's sides along x, y, z, for its moments of inertia"
+                  },
+                  "inertia": {
+                    "type": "array",
+                    "description": "with at: [Ixx, Iyy, Izz] or a 3x3 about its centre, kg mm^2 (default from size, else a point mass)"
                   }
                 },
                 "x-requireOne": [

@@ -938,13 +938,23 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
             nodes = np.flatnonzero(_region_nodes(study, hm, region, shape, f"inertiaRelief.masses[{i}]",
                                                  tol_floor=pm))
             masses.append((nodes, kg))
+    blocks = []
+    if free and getattr(study, "inertia_bodies", None):
+        from .domain import carried_bodies
+        from .fem import rigid_body_modes
+
+        to_t = float(study.material.density) * 1e-6 * 1e-3       # mm^3 of material -> tonnes
+        for dofs, dmat, mc in carried_bodies(study, hm, rigid_body_modes(hm.node_xyz), tol_floor=pm):
+            blocks.append((dofs, dmat @ (mc * to_t) @ dmat.T))
     res = modal_analysis(hm, float(mat.E) * fill, float(mat.density) * fill, float(mat.nu), bc.fixed, vib.modes,
                          masses,
-                         springs=None if free else springs, free=free)
+                         springs=None if free else springs, free=free, mass_blocks=blocks)
     f1 = float(res.frequencies[0])
     out = {**res.to_dict(), "minFrequency": vib.min_frequency, "firstFrequency": round(f1, 2),
            "ok": bool(f1 >= vib.min_frequency), "pitch": pm, "cells": int(hm.n_elem),
-           "carried": round(sum(kg for _, kg in masses), 5), "seconds": round(time.time() - t0, 2)}
+           "carried": round(sum(kg for _, kg in masses) + sum(b[2] for b in (getattr(study, "inertia_bodies", None)
+                                                                              or []) if free), 5),
+           "seconds": round(time.time() - t0, 2)}
     if free:
         out["free"] = True
     # which way the first mode moves most: what to brace
