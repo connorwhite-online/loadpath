@@ -164,6 +164,89 @@ class Vibration:
 
 
 @dataclass
+class Rotor:
+    """A rotor or fan whose stream the part sits in (aero.RotorStream): the
+    disk's `center` (mm), unit `axis` pointing the way the air goes,
+    `radius` and `hub` (mm), `thrust` (N) at the operating point the cost is
+    weighed at, drag coefficient `cd` of what the stream meets, air density
+    `rho` (kg/m^3), `ducted`, and how far along the axis the stream is
+    followed (`reach` mm, None: three radii)."""
+    name: str
+    center: np.ndarray
+    axis: np.ndarray
+    radius: float
+    thrust: float
+    hub: float = 0.0
+    cd: float = 1.2
+    rho: float = 1.2
+    ducted: bool = False
+    reach: float | None = None
+
+
+@dataclass
+class Aero:
+    """The study's `aero` block: rotors whose streams the part sits in.
+    `in_optimizer`: the drag is a cost in the optimizer's material budget
+    (aero.BlockageCost); `grams_per_newton`: what a newton of drag is worth
+    in carried mass (1000 / 9.81: a craft that hovers on these rotors)."""
+    rotors: list = field(default_factory=list)
+    in_optimizer: bool = True
+    grams_per_newton: float = 1000.0 / 9.81
+
+
+def _aero(v):
+    if v is None:
+        return None
+    if not isinstance(v, dict) or not isinstance(v.get("rotors"), list) or not v["rotors"]:
+        raise ValueError("aero is {rotors: [{center, axis, radius, thrust, ...}]}: the rotors or fans whose "
+                         "streams the part sits in")
+    from .shapes import _vec
+
+    def num(x, label, positive=True, default=None):
+        if x is None and default is not None:
+            return default
+        if isinstance(x, bool) or not isinstance(x, (int, float)) or not np.isfinite(x) or (positive and x <= 0) \
+                or x < 0:
+            raise ValueError(f"{label} must be a {'positive ' if positive else ''}number")
+        return float(x)
+
+    rotors = []
+    for i, r in enumerate(v["rotors"]):
+        label = f"aero.rotors[{i}]"
+        if not isinstance(r, dict):
+            raise ValueError(f"{label} is an object: {{center, axis, radius, thrust, hub, ducted, cd}}")
+        axis = np.asarray(_axis_vector(r.get("axis"), f"{label}.axis"), float)
+        rotors.append(Rotor(
+            str(r.get("name") or f"rotor {i + 1}"),
+            np.asarray(_vec(r.get("center"), name=f"{label}.center"), float), axis,
+            num(r.get("radius"), f"{label}.radius (mm)"), num(r.get("thrust"), f"{label}.thrust (N)"),
+            num(r.get("hub", 0.0), f"{label}.hub (mm)", positive=False),
+            num(r.get("cd"), f"{label}.cd", default=1.2), num(r.get("airDensity"), f"{label}.airDensity", default=1.2),
+            bool(r.get("ducted", False)),
+            None if r.get("reach") is None else num(r["reach"], f"{label}.reach (mm)")))
+        if rotors[-1].hub >= rotors[-1].radius:
+            raise ValueError(f"{label}.hub must be smaller than the radius")
+    gpn = v.get("gramsPerNewton")
+    return Aero(rotors, bool(v.get("inOptimizer", True)),
+                1000.0 / 9.81 if gpn is None else num(gpn, "aero.gramsPerNewton"))
+
+
+def _axis_vector(a, label):
+    """A direction as 'x', '-z' or [x, y, z], as a unit vector."""
+    if isinstance(a, str) and a.lstrip("+-") in ("x", "y", "z") and len(a) <= 2:
+        out = np.zeros(3)
+        out["xyz".index(a.lstrip("+-"))] = -1.0 if a.startswith("-") else 1.0
+        return out
+    try:
+        out = np.asarray(a, float)
+    except (TypeError, ValueError):
+        out = None
+    if out is None or out.shape != (3,) or not np.all(np.isfinite(out)) or np.linalg.norm(out) < 1e-9:
+        raise ValueError(f"{label} is the way the air goes: 'x', '-z' or a vector [x, y, z]")
+    return out / np.linalg.norm(out)
+
+
+@dataclass
 class MassProperties:
     """The study's `massProperties` block. `through` and `direction`: an
     axis the part turns about (a robot link's joint); `max_inertia`
@@ -706,6 +789,8 @@ class Study:
     vibration: Any = None
     # an axis to keep the inertia down about (MassProperties), or None
     mass_properties: Any = None
+    # rotors whose streams the part sits in (Aero), or None
+    aero: Any = None
     # inertiaRelief.masses: what the free part carries, [(region id or None,
     # shape or None, kg)]. A drone frame's motors and battery outweigh it,
     # so they, not the frame, take most of the thrust's inertia.
@@ -1601,6 +1686,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         fits=fits,
         vibration=vibration,
         mass_properties=mass_properties,
+        aero=_aero(d.get("aero")),
         inertia_masses=inertia_masses,
         inertia_bodies=inertia_bodies,
         raw=d,

@@ -79,6 +79,7 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     ht = h.T.tocsr()
     eta_e = opts.eta + opts.erode
 
+    blk = getattr(domain, "blockage", None)
     cases = len(domain.loads)
     force_mag = [float(np.linalg.norm(f.reshape(-1, 3).sum(axis=0))) for f in domain.loads]
     # the vibration block's inertial cases only steer stiffness (domain._inertial_cases)
@@ -258,7 +259,15 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                 record[f"buckling.{domain.case_names[c]}"] = limits.buckling / (v + 1.0) if v > -1.0 else float("inf")
 
         f0 = 10.0 * float(xp[design].mean())
-        df0 = ht @ (printed_grad(am_b, 10.0 * design / design.sum()) * dpb / hs)
+        g0 = 10.0 * design / design.sum()
+        if blk is not None:
+            # aero.rotors: the mass minimized is the part's plus what its drag
+            # in the rotors' streams weighs on a hovering craft (aero.BlockageCost)
+            b_cells, b_grad, b_drag = blk.cost(xp, grad=True)
+            f0 += 10.0 * b_cells / design.sum()
+            g0 = g0 + 10.0 * np.where(design, b_grad, 0.0) / design.sum()
+            record["blockageDrag"] = b_drag
+        df0 = ht @ (printed_grad(am_b, g0) * dpb / hs)
         if domain.mirror:
             df0 = _symmetrize(df0, domain.mirror)
             grads = [_symmetrize(g, domain.mirror) for g in grads]

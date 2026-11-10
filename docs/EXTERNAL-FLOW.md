@@ -61,9 +61,35 @@ an agent, in one command, and says how far to trust it.
 ## Structure in a rotor's stream
 
 `aero.rotor_blockage(mesh, center, axis, radius, thrust, hub=, ducted=)` prices what a part costs a propeller or fan by
-sitting in its air: each column of the disk is followed up and downstream to the first material it meets, and that
-patch drags `cd q dA` against the thrust, with q from the actuator-disk speed at that distance (v_i at the disk, 2 v_i
-far behind, falling off ahead; `ducted` holds it at sqrt(2) v_i, a duct with no diffuser). It returns the blocked
-area, the drag, the share of thrust lost and the carried mass that would cost as much. On a 3.5 in drone a 4 x 35 mm
-arm 10 mm under a prop at hover loses 1% of that motor's thrust (0.8 g of equivalent payload); at full throttle the
-wake is 2.8 times faster and the drag 7.7 times larger.
+sitting in its air. The stream is followed along its own tubes, as momentum theory draws them: the speed on the axis
+(v_i at the disk, 2 v_i far behind, falling off ahead) sets every tube's radius by continuity, so the wake narrows to
+0.71 R behind an open rotor and the inflow widens ahead of it (`ducted` holds the stream at the disk's area and
+sqrt(2) v_i, a duct with no diffuser). The first material each tube meets drags `cd q` on the tube's section there,
+against the thrust; what lies behind it sits in its wake. It returns the blocked area, the drag, the share of thrust
+lost and the carried mass that would cost a hovering craft as much (drag / 9.81). On a 3.5 in drone a 4 x 35 mm arm
+10 mm under a prop at hover loses 0.9% of that motor's thrust (0.7 g of equivalent payload); at full throttle the wake
+is 2.8 times faster and the drag 7.7 times larger.
+
+The same model is a cost inside the optimizer. A study's `aero` block names the rotors:
+
+```json
+"aero": {"rotors": [{"name": "front left", "center": [52, 52, 12], "axis": "-z", "radius": 44.5, "hub": 14,
+                     "thrust": 0.78, "ducted": true}]}
+```
+
+The design's drag in each stream is charged in the material budget as the mass that would weigh as much on a craft
+hovering on these rotors, so a gram of thrust lost trades one for one against a gram of structure: the optimizer
+takes an arm out of the stream, or thins it where the air is fastest, exactly when that is lighter overall. On a
+density field a cell blocks its density cubed of a tube (as SIMP's stiffness: a grey cell is mostly air), which is
+the first-hit rule exactly once the design is solid or void, and its gradient is checked against finite differences.
+A plate from a wall to a tip load with a prop over its middle runs a beam straight under the prop when left alone
+(5 g of thrust blocked on a 9 g part); charged for it, the optimizer splits the beam round the stream. The report
+gives the delivered part's drag per rotor (`report.aero`) and `report.effectiveMass` (mass plus the drag's
+equivalent), which is what the search for the lightest passing part compares. `thrust` is the operating point the
+trade is weighed at: hover, for a craft that mostly hovers. `gramsPerNewton` changes the exchange rate for a fan
+that is not holding a craft up.
+
+What it leaves out: the stream is the actuator disk's (uniform over the disk, speed from the axis formula, no swirl,
+no tip vortices), every member is a bluff body at one `cd` (1.2; a streamlined section is about 0.1 and the model
+does not know the section), a blocked rotor's own loss of efficiency is not counted, and neither is a duct's inlet
+lip, which makes thrust of its own.

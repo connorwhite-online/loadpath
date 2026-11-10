@@ -465,6 +465,46 @@ _VIBRATION = {
     "additionalProperties": False,
 }
 
+_AERO = {
+    "type": "object",
+    "description": "Rotors or fans whose streams the part sits in (a drone's arms and motor mounts under its "
+                   "props, a bracket in front of a fan). Each rotor's stream is followed along its own tubes "
+                   "from momentum theory (it narrows behind an open rotor and widens ahead of it), and the first "
+                   "material each tube meets drags cd x the dynamic pressure there on the tube's section. The "
+                   "optimizer charges that drag in its material budget as the mass a hovering craft would carry "
+                   "for the same thrust (drag / 9.81), so a gram of thrust lost trades one for one against a "
+                   "gram of structure; the report gives the delivered part's drag per rotor (report.aero), and "
+                   "the search weighs outcomes by mass plus that (report.effectiveMass).",
+    "properties": {
+        "rotors": {"type": "array", "minItems": 1, "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "center": {**_VEC3, "description": "the disk's centre, mm"},
+                "axis": {**_SIGNED_AXIS, "description": "the way the air goes: 'x', '-z' or a vector"},
+                "radius": {**_POS, "description": "disk radius, mm"},
+                "hub": {"type": "number", "minimum": 0, "description": "hub (or motor bell) radius left out, mm"},
+                "thrust": {**_POS, "description": "N at the operating point the drag is weighed at (hover, for "
+                                                  "the mass trade)"},
+                "ducted": {"type": "boolean", "description": "a duct with no diffuser: the stream leaves at the "
+                                                             "disk's area (default false: an open rotor, whose "
+                                                             "wake narrows to 0.71 R)"},
+                "cd": {**_POS, "description": "drag coefficient of what the stream meets (default 1.2: a "
+                                              "slender bluff member; a streamlined one is about 0.1)"},
+                "airDensity": {**_POS, "description": "kg/m^3 (default 1.2)"},
+                "reach": {**_POS, "description": "mm along the axis the stream is followed, each way (default "
+                                                 "3 radii)"},
+            },
+            "required": ["center", "axis", "radius", "thrust"], "additionalProperties": False}},
+        "inOptimizer": {"type": "boolean", "description": "charge the drag in the optimizer (default true; "
+                                                          "false: only the report)"},
+        "gramsPerNewton": {**_POS, "description": "what a newton of drag is worth in carried mass (default "
+                                                  "102: 1000 / 9.81, a craft hovering on these rotors)"},
+    },
+    "required": ["rotors"],
+    "additionalProperties": False,
+}
+
 _MASS_PROPERTIES = {
     "type": "object",
     "description": "Mass properties (nTop's mass, centre of mass and moment of inertia responses): every report "
@@ -1528,6 +1568,7 @@ STUDY_SCHEMA = {
                                          "vibration block then reads its free-free modes. Not with gravity, "
                                          "thermal or loads of unknown direction."},
         "massProperties": _MASS_PROPERTIES,
+        "aero": _AERO,
         "thermal": _THERMAL,
         "printDirection": {"type": "string", "pattern": "^[+-]?[xyz]$",
                            "description": "The direction layers stack; turns on overhang control."},

@@ -206,7 +206,12 @@ buckling, printability) you can report to the user.
    that), and the report lists the modes in each band. With a `thermal`
    block the modes are those of the warm part (PA12 under an 80 C motor
    keeps 45% of its stiffness); a free part (`inertiaRelief`) takes a
-   `thermal` block too. A link that turns:
+   `thermal` block too. Structure under a propeller or in front of a fan blocks thrust:
+   `"aero": {"rotors": [{"center": [52, 52, 12], "axis": "-z", "radius":
+   44.5, "hub": 14, "thrust": 0.78, "ducted": true}]}` (thrust at hover, N)
+   charges the optimizer for the drag of what each stream meets, as the
+   mass a hovering craft would carry instead, and the report gives
+   `aero` and `effectiveMass`. A link that turns:
    `"massProperties": {"axis": {"through": [0, 0, 0], "direction": "z"}}`
    keeps its inertia about the joint down, and every report's
    `massProperties` gives mass, centre of mass and inertia.

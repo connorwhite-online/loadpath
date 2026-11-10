@@ -1438,6 +1438,22 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
     except (ValueError, IndexError, FloatingPointError) as exc:
         report.setdefault("warnings", []).append(f"mass properties failed: {exc}")
 
+    aero = getattr(study, "aero", None)
+    if aero is not None:
+        # the delivered part in each rotor's stream (aero.rotor_blockage), and
+        # what that drag is worth in carried mass: the search weighs outcomes
+        # by mass plus it
+        from .aero import rotor_blockage
+
+        rows = [{"name": r.name, **rotor_blockage(mesh, r.center, r.axis, r.radius, r.thrust, r.hub, r.cd, r.rho,
+                                                  r.reach, float(np.clip(r.radius / 90.0, 0.25, 1.0)), r.ducted)}
+                for r in aero.rotors]
+        drag = float(sum(r["drag"] for r in rows))
+        report["aero"] = {"rotors": rows, "drag": round(drag, 5),
+                          "equivalentMass": round(drag * aero.grams_per_newton, 3),
+                          "gramsPerNewton": round(aero.grams_per_newton, 2)}
+        report["effectiveMass"] = report["mass"] + drag * aero.grams_per_newton
+
     design = _union(study.design_space + [r.shape for r in study.preserve])
     keep = _union([r.shape for r in study.keep_out])
     envelope = design - keep if keep is not None else design

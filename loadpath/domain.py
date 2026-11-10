@@ -69,6 +69,9 @@ class Domain:
     # massProperties: each cell's cost in the volume budget, mean 1 over the
     # design cells ((1 - w) + w r^2 / mean r^2 about the axis), or None
     volume_weights: np.ndarray | None = None
+    # aero.rotors: the drag of the design in each rotor's stream as a cost in
+    # the material budget (aero.BlockageCost), or None
+    blockage: object = None
     # massProperties.centerOfMass: (target (3,) with nan on a free axis, tolerance mm), or None
     center_of_mass: tuple | None = None
     # inertiaRelief: the cases' loads as written (BoundaryConditions.raw_loads)
@@ -903,7 +906,7 @@ def _build_domain(study: Study, pitch: float) -> Domain:
 
     from .thermal import study_heat
 
-    return Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
+    dom = Domain(pitch=pitch, origin=origin, dims=tuple(int(d) for d in dims), mesh=mesh,
                   preserve=pres_el, fixed=fixed, loads=loads, case_names=names, case_weights=weights,
                   support_nodes=support_nodes, load_nodes=load_nodes, mirror=mirror, warnings=warnings,
                   springs=bc.springs, gravity=bc.gravity, spreads=spreads, inertial_cases=inertial,
@@ -916,6 +919,12 @@ def _build_domain(study: Study, pitch: float) -> Domain:
                   thermal=study_heat(study, mesh, study.elastic(design=True), fixed,
                                      near=_near_cells(mesh, support_nodes | load_nodes)),
                   warp=_warp_term(study, mesh))
+    aero = getattr(study, "aero", None)
+    if aero is not None and aero.in_optimizer:
+        from .aero import BlockageCost
+
+        dom.blockage = BlockageCost(dom, aero.rotors, float(study.material.density), aero.grams_per_newton)
+    return dom
 
 
 def _volume_weights(study: Study, mesh: HexMesh, preserve: np.ndarray):

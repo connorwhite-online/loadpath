@@ -278,6 +278,13 @@ class StudyResult:
         }
 
 
+def _weigh(report: dict) -> float:
+    """What the search holds outcomes against each other by: the part's
+    mass, plus (aero.rotors) the mass its drag in the rotors' streams is
+    worth (report.effectiveMass, verify_part)."""
+    return report.get("effectiveMass", report.get("mass", float("inf")))
+
+
 def _durability_drives(study: Study) -> bool:
     return study.durability is not None and study.durability.constrain
 
@@ -791,7 +798,7 @@ def _run_pitches(study: Study, starts: int, on_progress, should_stop) -> StudyRe
     rows = []
     for st, r in zip(studies, results):
         o = r.outcomes[r.best] if r.best is not None else None
-        rows.append({"pitch": st.pitch, "mass": o.report["mass"] if o is not None else None,
+        rows.append({"pitch": st.pitch, "mass": _weigh(o.report) if o is not None else None,
                      "passes": bool(o is not None and o.passes), "outcomes": len(r.outcomes)})
     passing = [i for i, x in enumerate(rows) if x["passes"]]
     k = min(passing, key=lambda i: rows[i]["mass"]) if passing else 0
@@ -837,7 +844,7 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
         domain = domain or r.domain
     passing = [i for i, o in enumerate(outcomes) if o.passes]
     pool = passing if passing else ([] if any(o.passes is False for o in outcomes) else range(len(outcomes)))
-    best = min(pool, key=lambda i: outcomes[i].report["mass"]) if pool else None
+    best = min(pool, key=lambda i: _weigh(outcomes[i].report)) if pool else None
     return _build_sim(_slice(_process_checks(StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
                                                          seconds=time.time() - t0, warnings=warnings), on_progress),
                              on_progress), on_progress)
@@ -885,7 +892,7 @@ def _run_restarts(study: Study, on_progress=None, should_stop=None) -> StudyResu
         domain = domain or r.domain
     ok = [i for i in picks if outcomes[i].passes]
     pool = ok or picks
-    best = min(pool, key=lambda i: outcomes[i].report["mass"]) if pool else None
+    best = min(pool, key=lambda i: _weigh(outcomes[i].report)) if pool else None
     if domain is not None:
         domain = dict(domain, restarts=[{"run": outcomes[i].report.get("restart"),
                                          "volumeFraction": outcomes[i].volume_fraction,
@@ -966,7 +973,7 @@ def _print_setup_rescue(result: StudyResult, on_progress=None) -> StudyResult:
     pool = [o for o in result.outcomes if getattr(o, "mesh", None) is not None and ok(o)]
     if not pool:
         return result
-    o = min(pool, key=lambda q: q.report.get("mass", float("inf")))
+    o = min(pool, key=lambda q: _weigh(q.report))
     if on_progress is not None:
         on_progress({"stage": "printSetup"}, None)
     try:
@@ -1081,7 +1088,7 @@ def _slice(result: StudyResult, on_progress=None) -> StudyResult:
                                                                        for o in result.outcomes) else []
     if opts.grade is not None:
         if cost is not None and pool:
-            light = sorted(pool, key=lambda i: result.outcomes[i].report["mass"])[:_GRADE_CANDIDATES]
+            light = sorted(pool, key=lambda i: _weigh(result.outcomes[i].report))[:_GRADE_CANDIDATES]
             todo = sorted(set(light) | ({result.best} if result.best is not None else set()))
         else:
             todo = [result.best] if result.best is not None else []
@@ -1096,7 +1103,7 @@ def _slice(result: StudyResult, on_progress=None) -> StudyResult:
                 [((r.get("graded") or {}).get("slicer") or {}).get(cost)]
             vals = [v for v in vals if v is not None]
             return min(vals) if vals else float("inf")
-        pick = min(pool, key=lambda i: (sliced(i), result.outcomes[i].report["mass"]))
+        pick = min(pool, key=lambda i: (sliced(i), _weigh(result.outcomes[i].report)))
         if sliced(pick) < float("inf") and pick != result.best:
             prev = result.best
             result.best = pick
@@ -1336,7 +1343,7 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     won = [False]     # a probe's passing part lighter than the search's
     promising = [False]   # ... or one near its mass with room to lighten
     settled = [False]
-    ms = pick.report["mass"]
+    ms = _weigh(pick.report)
 
     pending = [None, False]   # a probe's last part, awaiting its tet confirm
 
@@ -1417,7 +1424,7 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
         return r
     mc = None
     if rc.best is not None and rc.outcomes[rc.best].passes:
-        mc = rc.outcomes[rc.best].report["mass"]
+        mc = _weigh(rc.outcomes[rc.best].report)
     choice.update({"searchMass": ms, "constrainedMass": mc})
     if mc is not None and mc < ms:
         if probe:
@@ -2213,7 +2220,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         confirmed = [i for i, q in enumerate(outcomes) if getattr(q, "tet_k", None) and q.passes]
         if not confirmed:
             return
-        o = outcomes[min(confirmed, key=lambda i: outcomes[i].report["mass"])]
+        o = outcomes[min(confirmed, key=lambda i: _weigh(outcomes[i].report))]
         mt = o.report["margin"]
         if mt < _TET_CLOSE:
             return
@@ -2411,7 +2418,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             else:
                 t *= min(ratio ** 0.5, 4.0)
         passing = [i for i, o in enumerate(outcomes) if o.passes]
-        best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+        best = min(passing, key=lambda i: _weigh(outcomes[i].report)) if passing else None
         if best is None and fallback:
             # Search instead, on the search's own grid: the constrained
             # method runs finer (minimum member 2.5 cells across), and the
@@ -2484,7 +2491,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 break
             vf = nxt
         passing = [i for i, o in enumerate(outcomes) if o.passes]
-        best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+        best = min(passing, key=lambda i: _weigh(outcomes[i].report)) if passing else None
         voxel_confirm = True
         if goal.safety_factor is not None and _confirm_on_tets(study, outcomes):
             # The voxel analysis reads peak stress high against a body-fitted
@@ -2499,7 +2506,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             while not (should_stop is not None and should_stop()):
                 passing = [i for i, q in enumerate(outcomes) if q.passes
                            and (tet_fail is None or q.volume_fraction > tet_fail)]
-                best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+                best = min(passing, key=lambda i: _weigh(outcomes[i].report)) if passing else None
                 if best is None:
                     # nothing passes: step up from the largest fraction tried
                     top = max(outcomes, key=lambda q: q.volume_fraction)
@@ -2602,13 +2609,13 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 for i, q in enumerate(outcomes):
                     if i not in confirmed_ok:
                         q.passes = False
-                best = min(confirmed_ok, key=lambda i: outcomes[i].report["mass"]) if confirmed_ok else None
+                best = min(confirmed_ok, key=lambda i: _weigh(outcomes[i].report)) if confirmed_ok else None
             else:
                 for q in outcomes:
                     if getattr(q, "tet_k", None) is None:
                         calibrate(q, 1.0)
                 passing = [i for i, q in enumerate(outcomes) if q.passes]
-                best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+                best = min(passing, key=lambda i: _weigh(outcomes[i].report)) if passing else None
         # Confirm the pick on a finer grid; if it fails there, it no longer
         # passes, and the search steps up from it by the confirmed margin.
         # Once a pick confirms, bisect back down into the gap to the fraction
@@ -2630,7 +2637,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                     conf_failed.append(o.volume_fraction)
                     up = [i for i in confirmed if outcomes[i].volume_fraction > o.volume_fraction]
                     if up:
-                        best = min(up, key=lambda i: outcomes[i].report["mass"])
+                        best = min(up, key=lambda i: _weigh(outcomes[i].report))
                         continue
                     # a heavier part that passed its analysis is confirmed
                     # before anything new runs: stepping up from each lighter
@@ -2638,7 +2645,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                     heavier = [i for i, q in enumerate(outcomes) if q.passes and i not in confirmed
                                and q.volume_fraction > o.volume_fraction]
                     if heavier:
-                        best = min(heavier, key=lambda i: outcomes[i].report["mass"])
+                        best = min(heavier, key=lambda i: _weigh(outcomes[i].report))
                         continue
                     vf = float(np.clip(o.volume_fraction * 1.05 / max(mc, 1e-9), o.volume_fraction + 0.01, _VF_MAX))
                     if any(abs(vf - q.volume_fraction) < 0.005 for q in outcomes):
@@ -2654,7 +2661,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                         break
                     outcomes.append(run_one(vf))
                     passing = [i for i, q in enumerate(outcomes) if q.passes]
-                    best = min(passing, key=lambda i: outcomes[i].report["mass"]) if passing else None
+                    best = min(passing, key=lambda i: _weigh(outcomes[i].report)) if passing else None
                     continue
                 confirmed.add(best)
             if conf_fail is None or o.volume_fraction - conf_fail < max(0.005, 0.1 * o.volume_fraction):
@@ -2685,7 +2692,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                         "analysis grid only; `loadpath verify` it, or give the run more time")
                 else:
                     ok = [i for i in confirmed if outcomes[i].passes]
-                    best = min(ok, key=lambda i: outcomes[i].report["mass"]) if ok else None
+                    best = min(ok, key=lambda i: _weigh(outcomes[i].report)) if ok else None
         if voxel_confirm and best is None and conf_failed:
             top = max(outcomes, key=lambda q: q.volume_fraction)
             mcs = [q.report["confirm"]["margin"] for q in outcomes if (q.report.get("confirm") or {}).get("margin")

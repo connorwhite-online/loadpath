@@ -784,6 +784,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     # so the budget buys material near the axis cheaper than far out
     vw = getattr(domain, "volume_weights", None)
     wdesign = design.astype(float) if vw is None else np.where(design, vw, 0.0)
+    blk = getattr(domain, "blockage", None)
     com_cfg = getattr(domain, "center_of_mass", None)
     com_state = {}
     com_cen = (mesh.origin + (mesh.elem_ijk + 0.5) * mesh.pitch) if com_cfg is not None else None
@@ -1030,6 +1031,17 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             com_rec = {"centerOfMass": [round(float(v), 3) for v in C],
                        "centerOfMassWeight": [round(float(v), 3) for v in w_c]}
         dv = ht @ (printed_grad(am_b, wdesign) * dproj / hs)
+        blk_rec = None
+        if blk is not None:
+            # aero.rotors: the blueprint's drag in each rotor's stream, in
+            # cells of material that weigh as much on a hovering craft, is
+            # part of the budget (aero.BlockageCost). A cell that shadows
+            # faster air behind it has a negative cost of its own; in the
+            # step it is never cheaper than a tenth of its volume.
+            b_cells, b_grad, b_drag = blk.cost(xp, grad=True)
+            dv_b = ht @ (printed_grad(am_b, np.where(design, b_grad, 0.0)) * dproj / hs)
+            dv = np.maximum(dv + dv_b, 0.1 * dv)
+            blk_rec = {"blockageDrag": b_drag, "blockageCells": b_cells}
         if com_cfg is not None:
             # the penalty's pull makes some sensitivities positive; shift by
             # s dv as the thermal swing does (the volume multiplier absorbs it)
@@ -1190,7 +1202,10 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             x_new = _extrude(x_new, columns, design)
             if void is not None:
                 x_new[void] = 0.0
-            vol = float(physical(x_new, beta)[1] @ wdesign)
+            xp_new = physical(x_new, beta)[1]
+            vol = float(xp_new @ wdesign)
+            if blk is not None:
+                vol += blk.cost(xp_new)[0]
             if vol > target:
                 l1 = lm
             else:
@@ -1214,6 +1229,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if swing_step and "swing_max" in heat_state:
             rec.update(swing_rec)
         rec.update(buck_rec)
+        if blk_rec is not None:
+            rec.update(blk_rec)
         if com_rec is not None:
             rec.update(com_rec)
         if excess is not None:

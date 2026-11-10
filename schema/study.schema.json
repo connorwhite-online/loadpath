@@ -649,6 +649,106 @@
       },
       "additionalProperties": false
     },
+    "aero": {
+      "type": "object",
+      "description": "Rotors or fans whose streams the part sits in (a drone's arms and motor mounts under its props, a bracket in front of a fan). Each rotor's stream is followed along its own tubes from momentum theory (it narrows behind an open rotor and widens ahead of it), and the first material each tube meets drags cd x the dynamic pressure there on the tube's section. The optimizer charges that drag in its material budget as the mass a hovering craft would carry for the same thrust (drag / 9.81), so a gram of thrust lost trades one for one against a gram of structure; the report gives the delivered part's drag per rotor (report.aero), and the search weighs outcomes by mass plus that (report.effectiveMass).",
+      "properties": {
+        "rotors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "center": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "the disk's centre, mm"
+              },
+              "axis": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[+-]?[xyz]$",
+                    "description": "like '-x' or '+z'"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "[x, y, z]"
+                  }
+                ],
+                "description": "the way the air goes: 'x', '-z' or a vector"
+              },
+              "radius": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "disk radius, mm"
+              },
+              "hub": {
+                "type": "number",
+                "minimum": 0,
+                "description": "hub (or motor bell) radius left out, mm"
+              },
+              "thrust": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "N at the operating point the drag is weighed at (hover, for the mass trade)"
+              },
+              "ducted": {
+                "type": "boolean",
+                "description": "a duct with no diffuser: the stream leaves at the disk's area (default false: an open rotor, whose wake narrows to 0.71 R)"
+              },
+              "cd": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "drag coefficient of what the stream meets (default 1.2: a slender bluff member; a streamlined one is about 0.1)"
+              },
+              "airDensity": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "kg/m^3 (default 1.2)"
+              },
+              "reach": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "mm along the axis the stream is followed, each way (default 3 radii)"
+              }
+            },
+            "required": [
+              "center",
+              "axis",
+              "radius",
+              "thrust"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "inOptimizer": {
+          "type": "boolean",
+          "description": "charge the drag in the optimizer (default true; false: only the report)"
+        },
+        "gramsPerNewton": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "what a newton of drag is worth in carried mass (default 102: 1000 / 9.81, a craft hovering on these rotors)"
+        }
+      },
+      "required": [
+        "rotors"
+      ],
+      "additionalProperties": false
+    },
     "thermal": {
       "type": "object",
       "description": "Heat in the part, applied in every load case: the temperature is solved on the part itself (conduction through the material, convection off its surface), each cell softens by the material's modulus retention at its temperature, and expansion that the supports or the part's own cooler material stop becomes stress. The optimizer designs for it and verification checks it (stress with the free expansion taken off, strength derated as the modulus is). Needs a way for heat out: a fixed temperature or convection.",

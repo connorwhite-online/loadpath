@@ -40,7 +40,7 @@ import numpy as np
 
 from .flow import C19, FLUID, INLET, LAMBDA, OUTLET, SOLID, _equilibrium, _kernels
 
-__all__ = ["external_flow", "tunnel_grid"]
+__all__ = ["external_flow", "tunnel_grid", "rotor_blockage", "RotorStream", "BlockageCost"]
 
 
 def _rotation_to_x(direction):
@@ -286,97 +286,277 @@ def _load_case(xyz, fw, h, patches, speed):
 
 # --- structure in a rotor's or fan's stream --------------------------------
 
-def _actuator_speed(v_i: float, radius: float, s):
+G = 9.81                       # m/s^2
+OPACITY_POWER = 3.0            # a grey cell's share of a column it blocks: density ** this (as SIMP's stiffness)
+
+
+def _actuator_speed(v_disk: float, radius: float, s):
     """Axial speed on a rotor's axis at signed distance s (mm, + downstream)
-    from an actuator disk inducing v_i at the disk: v_i (1 + s / sqrt(R^2 +
-    s^2)) downstream (2 v_i far behind), v_i (1 + s / sqrt(R^2 + s^2))
-    upstream too (s < 0: it falls off to nothing far ahead)."""
+    from an actuator disk passing v_disk: v_disk (1 + s / sqrt(R^2 + s^2)),
+    twice v_disk far behind and falling off to nothing far ahead."""
     s = np.asarray(s, float)
-    return v_i * (1.0 + s / np.sqrt(radius * radius + s * s))
+    return v_disk * (1.0 + s / np.sqrt(radius * radius + s * s))
+
+
+def _disk_frame(axis):
+    a = np.asarray(axis, float)
+    a = a / np.linalg.norm(a)
+    t = np.array([1.0, 0.0, 0.0]) if abs(a[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    e1 = np.cross(a, t)
+    e1 /= np.linalg.norm(e1)
+    return a, e1, np.cross(a, e1)
+
+
+class RotorStream:
+    """A rotor's stream through a grid of cells, as momentum theory draws
+    it, and the drag of the material it meets.
+
+    The disk (centre, unit `axis` pointing the way the air goes, `radius`
+    mm, `hub` mm left out) passes v_i = sqrt(T / (2 rho A)) at `thrust` N.
+    The stream is followed along its own tubes: the speed on the axis,
+    v(s) = v_i (1 + s / sqrt(R^2 + s^2)), sets every tube's radius by
+    continuity, r(s) = r_disk sqrt(v_i / v(s)), so the wake narrows to
+    R / sqrt(2) far behind the disk and the inflow widens ahead of it:
+    material beside the narrowed wake is out of the stream, and material
+    ahead of the disk beyond its radius is in it. `ducted`: a duct with no
+    diffuser holds the stream at the disk's area, so it passes the disk and
+    leaves at sqrt(T / (rho A)) (all the thrust on the rotor), straight.
+
+    Each tube (a bin of the disk's area dA) is walked in the direction the
+    air goes, ahead of the disk and behind it apart (the rotor fills in what
+    is ahead of it). The first material it meets, at s, drags
+    cd (rho v(s)^2 / 2) on the tube's section there, dA v_disk / v(s); what
+    lies behind that sits in its wake and adds nothing. On a density field
+    a cell blocks its share density^3 of the tube (OPACITY_POWER, as SIMP's
+    stiffness: a grey cell is mostly air), so the drag is
+    sum_k q_k o_k prod_{j<k} (1 - o_j) down each tube, exact for a part
+    that is solid or void, and smooth for the optimizer.
+
+    The grid: `origin` (min corner), `pitch`, `dims`, and `cell_index`
+    (dims-shaped ints: each cell's place in the density vector, -1 for
+    none), or None for a dense field in C order. `smooth`: densities read
+    by trilinear interpolation at half-cell steps (False: the cell each
+    point falls in, at whole-cell steps; a crisp voxel model, which
+    rotor_blockage reads with tubes half a cell across).
+    A slender member's cd is 1.0-1.2 (round to square), a flat plate face
+    on 1.28; a streamlined one is about 0.1."""
+
+    def __init__(self, origin, pitch: float, dims, center, axis, radius: float, thrust: float, hub: float = 0.0,
+                 cd: float = 1.2, rho: float = 1.2, reach: float | None = None, ducted: bool = False,
+                 cell_index=None, smooth: bool = True, bin: float | None = None):
+        import scipy.sparse as sp
+
+        origin = np.asarray(origin, float)
+        dims = np.asarray(dims, int)
+        c = np.asarray(center, float)
+        a, e1, e2 = _disk_frame(axis)
+        self.radius, self.hub, self.thrust, self.cd, self.ducted = float(radius), float(hub), float(thrust), cd, ducted
+        reach = 3.0 * radius if reach is None else float(reach)
+        area_m2 = np.pi * (radius * 1e-3) ** 2
+        self.v_i = float(np.sqrt(max(thrust, 0.0) / (2.0 * rho * area_m2)))
+        v_disk = self.v_i * (np.sqrt(2.0) if ducted else 1.0)
+        self.disk_area = float(np.pi * (radius ** 2 - hub ** 2))
+        n_cells = int(np.prod(dims)) if cell_index is None else int(cell_index.max()) + 1
+        self.n = n_cells
+        # the disk's area in bins of one cell (`bin`: of another size)
+        b = float(pitch if bin is None else bin)
+        nb = int(np.ceil(radius / b))
+        uc = (np.arange(-nb, nb) + 0.5) * b
+        u0, v0 = (g.ravel() for g in np.meshgrid(uc, uc, indexing="ij"))
+        r0 = np.hypot(u0, v0)
+        keep = (r0 <= radius) & (r0 >= hub)
+        u0, v0 = u0[keep], v0[keep]
+        self.d_a = b * b * self.disk_area / max(len(u0) * b * b, 1e-30)     # bins sum to the disk's area exactly
+        self.n_bins = len(u0)
+        # the stretch of the axis the grid spans
+        corners = origin + np.array([[i, j, k] for i in (0, 1) for j in (0, 1) for k in (0, 1)]) * dims * pitch
+        sc = (corners - c) @ a
+        ds = 0.5 * pitch if smooth else pitch
+        s_lo, s_hi = max(-reach, float(sc.min())), min(reach, float(sc.max()))
+        n_s = max(int(np.floor((s_hi - s_lo) / ds)), 0)
+        rows, cols, vals, samp_bin, samp_s = [], [], [], [], []
+        n_samp = 0
+        base = np.outer(u0, e1) + np.outer(v0, e2)
+        for k in range(n_s):
+            s_k = s_lo + (k + 0.5) * ds
+            v = float(_actuator_speed(v_disk, radius, s_k))
+            if ducted and s_k >= 0:
+                v = v_disk
+            if v <= 0.05 * v_disk:
+                continue                        # far ahead: next to no air moves, and the tubes fan out without end
+            pts = c + s_k * a + np.sqrt(v_disk / v) * base
+            g = (pts - origin) / pitch - 0.5
+            if smooth:
+                i0 = np.floor(g).astype(int)
+                fr = g - i0
+                ids, wts = [], []
+                for di in (0, 1):
+                    for dj in (0, 1):
+                        for dk in (0, 1):
+                            ijk = i0 + (di, dj, dk)
+                            w = (np.where(di, fr[:, 0], 1 - fr[:, 0]) * np.where(dj, fr[:, 1], 1 - fr[:, 1])
+                                 * np.where(dk, fr[:, 2], 1 - fr[:, 2]))
+                            ids.append(ijk)
+                            wts.append(w)
+            else:
+                ids, wts = [np.round(g).astype(int)], [np.ones(len(g))]
+            got = np.zeros(len(g), bool)
+            layer = []
+            for ijk, w in zip(ids, wts):
+                ok = np.all((ijk >= 0) & (ijk < dims), axis=1) & (w > 1e-9)
+                flat = np.zeros(len(g), np.int64)
+                if cell_index is None:
+                    flat[ok] = np.ravel_multi_index(ijk[ok].T, dims)
+                else:
+                    flat[ok] = cell_index[tuple(ijk[ok].T)]
+                    ok &= flat >= 0
+                got |= ok
+                layer.append((ok, flat, w))
+            if not got.any():
+                continue
+            local = np.cumsum(got) - 1
+            for ok, flat, w in layer:
+                rows.append(n_samp + local[ok])
+                cols.append(flat[ok])
+                vals.append(w[ok])
+            m = int(got.sum())
+            samp_bin.append(np.flatnonzero(got))
+            samp_s.append(np.full(m, s_k))
+            # N per unit opacity: cd q on the tube's section here, dA v_disk / v
+            n_samp += m
+        if n_samp == 0:
+            self.w = None
+            return
+        samp_bin = np.concatenate(samp_bin)
+        samp_s = np.concatenate(samp_s)
+        w = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n_samp, n_cells))
+        # each tube's samples in the order the air meets them, ahead of the disk and behind it apart
+        side = (samp_s >= 0).astype(int)
+        order = np.lexsort((samp_s, side, samp_bin))
+        self.w = w[order].tocsr()
+        self.wt = self.w.T.tocsr()
+        samp_bin, samp_s, side = samp_bin[order], samp_s[order], side[order]
+        seg = samp_bin * 2 + side
+        self.start = np.flatnonzero(np.r_[True, seg[1:] != seg[:-1]])
+        self.seg_of = np.cumsum(np.r_[True, seg[1:] != seg[:-1]]) - 1
+        self.seg_side = side[self.start]
+        v = _actuator_speed(v_disk, radius, samp_s)
+        if ducted:
+            v = np.where(samp_s >= 0, v_disk, v)
+        self.q = cd * 0.5 * rho * v * v_disk * self.d_a * 1e-6           # N: cd (rho v^2 / 2) (dA v_disk / v)
+
+    def drag(self, x, grad: bool = False):
+        """Drag (N) of the field `x` (one density per cell), with what is
+        blocked: {"drag", "downstream": {"drag", "blockedArea"}, "upstream":
+        {...}} (areas in mm^2 of the disk whose tubes meet material), and
+        with `grad` its derivative per cell."""
+        out = {"drag": 0.0, "downstream": {"blockedArea": 0.0, "drag": 0.0}, "upstream": {"blockedArea": 0.0, "drag": 0.0}}
+        if self.w is None:
+            return (out, np.zeros(self.n)) if grad else out
+        rho = np.clip(self.w @ np.asarray(x, float), 0.0, 1.0)
+        o = np.minimum(rho ** OPACITY_POWER, 1.0 - 1e-9)
+        lg = np.log1p(-o)
+        cs = np.cumsum(lg)
+        excl = cs - lg                                   # sum of logs before each sample, over all tubes
+        t = np.exp(excl - excl[self.start][self.seg_of])  # transmission down to each sample in its own tube
+        term = self.q * o * t
+        seg_drag = np.add.reduceat(term, self.start)
+        ends = np.r_[self.start[1:], len(o)] - 1
+        seg_block = 1.0 - t[ends] * (1.0 - o[ends])
+        for name, sd in (("upstream", 0), ("downstream", 1)):
+            m = self.seg_side == sd
+            out[name] = {"blockedArea": float(seg_block[m].sum() * self.d_a), "drag": float(seg_drag[m].sum())}
+        out["drag"] = float(seg_drag.sum())
+        if not grad:
+            return out
+        ct = np.cumsum(term)
+        behind = (seg_drag + (ct - term)[self.start])[self.seg_of] - ct      # drag of what lies behind each sample
+        d_o = self.q * t - behind / (1.0 - o)
+        d_rho = d_o * OPACITY_POWER * rho ** (OPACITY_POWER - 1.0)
+        return out, self.wt @ d_rho
 
 
 def rotor_blockage(mesh, center, axis, radius: float, thrust: float, hub: float = 0.0, cd: float = 1.2,
                    rho: float = 1.2, reach: float | None = None, pitch: float = 0.5, ducted: bool = False) -> dict:
     """What a part costs a rotor by sitting in its stream (drone arms and
     motor mounts under a prop, a bracket in front of a fan): the drag of the
-    material the disk's air meets, from momentum theory.
+    material the disk's air meets, from momentum theory (RotorStream, on the
+    part voxelized at `pitch`). The same model is a cost inside the
+    optimizer (a study's `aero.rotors`, BlockageCost).
 
-    The disk (centre, unit `axis` pointing the way the air goes, radius mm,
-    hub mm left out) takes in v_i = sqrt(T / (2 rho A)) at `thrust` N. Each
-    column of the disk's area is followed up and downstream (to `reach`,
-    default 3 radii) to the first material it meets at distance s; that
-    patch of area dA carries the dynamic pressure of the stream there,
-    q = rho v(s)^2 / 2 with v from the actuator-disk speed on the axis
-    (2 v_i far behind, falling off ahead), and drags cd q dA along the
-    stream, against the thrust. Only the nearest material in each column
-    counts: what hides behind it sits in its wake. `ducted`: a duct with no
-    diffuser holds the stream at the disk's area, so it leaves at v_e =
-    sqrt(T / (rho A)) (all the thrust on the rotor) and the material under
-    it meets that.
-
-    Returns the blocked area (mm^2, and as a share of the disk), the drag
-    (N) and the same as thrust lost (share) and as a carried mass that
-    would cost as much (g, drag / 9.81 at this thrust), upstream and
-    downstream apart. A slender member's cd is 1.0-1.2 (round to square),
-    a flat plate face on 1.28; a streamlined one is about 0.1."""
+    Returns the blocked area (mm^2 of the disk whose stream meets material,
+    and as a share of the disk), the drag (N) and the same as thrust lost
+    (share) and as a carried mass that would cost a hovering craft as much
+    (g, drag / 9.81), upstream and downstream apart."""
     import trimesh
 
     from .verify import voxelize
 
-    a = np.asarray(axis, float)
-    a = a / np.linalg.norm(a)
+    m = mesh if isinstance(mesh, trimesh.Trimesh) else trimesh.Trimesh(*mesh)
+    a, e1, e2 = _disk_frame(axis)
     c = np.asarray(center, float)
     reach = 3.0 * radius if reach is None else float(reach)
-    # turn the part so the stream runs along +z through the origin
-    z = np.array([0.0, 0.0, 1.0])
-    v = np.cross(a, z)
-    s, cth = np.linalg.norm(v), float(a @ z)
-    if s < 1e-12:
-        rot = np.eye(3) if cth > 0 else np.diag([1.0, -1.0, -1.0])
-    else:
-        k = v / s
-        kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
-        rot = np.eye(3) + s * kx + (1 - cth) * kx @ kx
-    m = mesh.copy() if isinstance(mesh, trimesh.Trimesh) else trimesh.Trimesh(*mesh)
-    m.vertices = (np.asarray(m.vertices) - c) @ rot.T
-    lo = np.array([-radius, -radius, -reach])
-    hi = np.array([radius, radius, reach])
+    # a box round everything the stream can reach: the inflow widens ahead of the disk
+    wide = radius / np.sqrt(0.05)
+    pts = np.array([c + s * a + u * e1 + v * e2 for s in (-reach, reach) for u in (-wide, wide) for v in (-wide, wide)])
+    lo, hi = pts.min(axis=0), pts.max(axis=0)
     mlo, mhi = np.asarray(m.bounds, float)
+    out = {"inducedVelocity": None, "diskArea": round(float(np.pi * (radius ** 2 - hub ** 2)), 1)}
     if np.any(mhi < lo) or np.any(mlo > hi):
-        solid = np.zeros((1, 1, 1), bool)
-        origin = lo
+        stream = RotorStream(lo, pitch, (1, 1, 1), c, a, radius, thrust, hub, cd, rho, reach, ducted, smooth=False)
+        got = stream.drag(np.zeros(1))
     else:
         solid, origin = voxelize(m, pitch, box=(np.maximum(lo, mlo - pitch), np.minimum(hi, mhi + pitch)))
-    v_i = float(np.sqrt(max(thrust, 0.0) / (2.0 * rho * np.pi * (radius * 1e-3) ** 2)))
-    nx, ny, nz = solid.shape
-    xc = origin[0] + (np.arange(nx) + 0.5) * pitch
-    yc = origin[1] + (np.arange(ny) + 0.5) * pitch
-    zc = origin[2] + (np.arange(nz) + 0.5) * pitch
-    rr = np.hypot(xc[:, None], yc[None, :])
-    disk = (rr <= radius) & (rr >= hub)
-    out = {"inducedVelocity": round(v_i, 3), "diskArea": round(float(np.pi * (radius ** 2 - hub ** 2)), 1)}
-    dA = pitch * pitch
-    for side, sel in (("downstream", zc >= 0), ("upstream", zc < 0)):
-        area = 0.0
-        drag = 0.0
-        if sel.any() and solid.any():
-            sub = solid[:, :, sel]
-            zs = zc[sel]
-            order = np.argsort(np.abs(zs))           # nearest the disk first
-            sub, zs = sub[:, :, order], zs[order]
-            hit = sub.any(axis=2) & disk
-            first = np.argmax(sub, axis=2)
-            dist = zs[first]
-            vel = _actuator_speed(v_i, radius, dist)
-            if ducted and side == "downstream":
-                vel = np.full_like(vel, np.sqrt(2.0) * v_i)
-            q = 0.5 * rho * vel ** 2                 # Pa = N/m^2
-            area = float(hit.sum() * dA)
-            drag = float((cd * q * dA * 1e-6)[hit].sum())
-        out[side] = {"blockedArea": round(area, 1), "drag": round(drag, 5)}
+        stream = RotorStream(origin, pitch, solid.shape, c, a, radius, thrust, hub, cd, rho, reach, ducted,
+                             smooth=False, bin=0.5 * pitch)
+        got = stream.drag(solid.ravel().astype(float))
+    out["inducedVelocity"] = round(stream.v_i, 3)
+    for side in ("downstream", "upstream"):
+        out[side] = {"blockedArea": round(got[side]["blockedArea"], 1), "drag": round(got[side]["drag"], 5)}
     total = out["downstream"]["drag"] + out["upstream"]["drag"]
     out.update({"blockedShare": round((out["downstream"]["blockedArea"] + out["upstream"]["blockedArea"])
                                       / max(out["diskArea"], 1e-9), 4),
                 "drag": round(total, 5), "thrustLost": round(total / thrust, 4) if thrust > 0 else 0.0,
-                "equivalentMass": round(total / 9.81 * 1000.0, 2), "cd": cd})
+                "equivalentMass": round(total / G * 1000.0, 2), "cd": cd})
     return out
+
+
+class BlockageCost:
+    """A study's `aero.rotors` as a cost in the optimizer's material budget:
+    the drag of the design in each rotor's stream (RotorStream on the
+    design grid), charged as the material that would weigh on a hovering
+    craft as much, drag / g, in cells of the study's material. A gram of
+    thrust lost under a prop then trades one for one against a gram of
+    structure, so the optimizer moves an arm out of the stream, or thins it
+    where the air is fastest, exactly when that is lighter overall.
+    `rotors`: spec.Rotor list; `density` g/cm^3."""
+
+    def __init__(self, domain, rotors, density: float, grams_per_newton: float = 1000.0 / G):
+        mesh = domain.mesh
+        idx = np.full(domain.dims, -1, np.int64)
+        idx[tuple(mesh.elem_ijk.T)] = np.arange(mesh.n_elem)
+        self.streams = [RotorStream(mesh.origin, mesh.pitch, domain.dims, r.center, r.axis, r.radius, r.thrust,
+                                    r.hub, r.cd, r.rho, r.reach, r.ducted, cell_index=idx) for r in rotors]
+        self.names = [r.name for r in rotors]
+        cell_g = density * 1e-3 * mesh.pitch ** 3
+        self.cells_per_newton = grams_per_newton / cell_g
+        self.grams_per_newton = grams_per_newton
+        self.base = 0.0
+        # what the drawn (preserved) geometry alone costs: no design choice, so off the budget
+        self.base = self.cost(domain.preserve.astype(float))[0]
+
+    def drag(self, x) -> float:
+        return float(sum(st.drag(x)["drag"] for st in self.streams))
+
+    def cost(self, x, grad: bool = False):
+        """(cells of material the field's drag is worth, less the drawn
+        geometry's own; its derivative per cell or None; drag N)."""
+        total, g = 0.0, (np.zeros(len(x)) if grad else None)
+        for st in self.streams:
+            if grad:
+                got, gi = st.drag(x, grad=True)
+                g += gi * self.cells_per_newton
+            else:
+                got = st.drag(x)
+            total += got["drag"]
+        return total * self.cells_per_newton - self.base, g, total
