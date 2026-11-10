@@ -120,6 +120,17 @@ Where it is strongest:
   then puts the joints inside the skin: an alignment lip, snap fits sized
   to the material's strain limit, and screw posts if the designer allows
   holes in one face ([docs/SHELLS.md](docs/SHELLS.md)).
+- **Or no exterior at all**: when nobody has drawn the outside, a
+  `shroud` grows one. loadpath wraps a smooth skin round the load paths
+  and round whatever has to stay hidden (a cable or tendon channel through
+  a robot arm, a board, an exchanger's passages), pulls it in wherever the
+  skin carries little load, and designs the interior with the skin in
+  every analysis, so the skin works as a monocoque instead of a cover
+  added afterwards ([docs/SHROUD.md](docs/SHROUD.md)). Bores and cable
+  ports still cut through, SLS parts get their drain holes, and the
+  result can go through `loadpath split` when it has to open. Topology
+  optimization codes stop at a skeleton, and CAD covers carry no load.
+  This is the layer between them, for the outside as well as the inside.
 - **Any exterior in**: you or your agent draw the shape, loadpath makes
   everything inside it work. A designer's STEP, a mesh, an SDF function
   (numpy, the `sdf` package, libfive style), a build123d part, or a mesh
@@ -311,7 +322,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
-  [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md).
+  [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md).
 
 <!-- gallery:start -->
 
