@@ -77,7 +77,19 @@ class Rotor:
     gap: float = 0.0              # tip gap for a shroud (mm)
     band: tuple = (1.6, 18.0)     # band thickness and height (mm)
     exit: str = "sre"             # what's downstream: sre (a free duct) | uniform (a resistance close behind)
+    skew: float = 0.0             # where the stacking line ends up at the tip, deg round the axis (+ with the rotation)
+    skew_exp: float = 2.0         # ... growing from the hub as ((r - r_hub) / span)^skew_exp
+    lean: float = 0.0             # axial shift of the tip's section, mm (+ toward the inlet)
+    lean_exp: float = 2.0
     design_point: dict = field(default_factory=dict)
+
+    def skew_at(self, r):
+        s = np.clip((np.asarray(r, float) - self.r_hub) / (self.r_tip - self.r_hub), 0, 1)
+        return np.radians(self.skew) * s ** self.skew_exp
+
+    def lean_at(self, r):
+        s = np.clip((np.asarray(r, float) - self.r_hub) / (self.r_tip - self.r_hub), 0, 1)
+        return self.lean * s ** self.lean_exp
 
     @property
     def camber(self):
@@ -108,7 +120,8 @@ class Rotor:
     def from_dict(cls, d):
         keys = ("r", "chord", "kappa1", "kappa2", "thickness")
         kw = {k: np.asarray(d[k], float) for k in keys}
-        rest = {k: d[k] for k in ("te", "blades", "r_hub", "r_tip", "rpm", "tip", "gap", "band", "exit", "design_point") if k in d}
+        rest = {k: d[k] for k in ("te", "blades", "r_hub", "r_tip", "rpm", "tip", "gap", "band", "exit", "skew", "skew_exp",
+                                           "lean", "lean_exp", "design_point") if k in d}
         return cls(**kw, **rest)
 
 
@@ -320,6 +333,7 @@ def design(q: float, dp: float, rpm: float, r_tip: float, r_hub: float, blades: 
            exit: str = "sre") -> Rotor:
     """Blades for dp (Pa, total-to-static if `static`, else total) at flow q (m^3/s) and rpm.
 
+    `diffusion` is one number or (hub, tip): the chord follows it, so a pair shapes the blade's planform.
     The work varies with radius as (r / r_tip)^work_exp: 0 is a free vortex (uniform work, the only loading a free
     duct leaves evenly spread at a low flow coefficient), 1-2 put it outboard where the blade speed is and spare the
     hub, which suits `exit="uniform"` (a resistance close behind holds the flow even). Solidity from the diffusion
@@ -345,6 +359,7 @@ def design(q: float, dp: float, rpm: float, r_tip: float, r_hub: float, blades: 
     b2 = b1.copy()
     re = w1 * sig * pitch / nu
     w0 = dp + 0.5 * rho * cx1 ** 2
+    dif = np.linspace(*diffusion, n) if np.ndim(diffusion) else np.full(n, float(diffusion))
     rev, got, converged = False, 0.0, False
     tf = np.maximum(_tip_factor(tip, gap, r, blades, b1), 0.3)   # an open tip's last few mm can't be made to work
     for _ in range(80):
@@ -354,7 +369,7 @@ def design(q: float, dp: float, rpm: float, r_tip: float, r_hub: float, blades: 
             cx2, rev = _sre(r, ideal - loss, cu2, rho, q)
             cx2 = np.maximum(cx2, 0.05 * cx1)
         w2 = np.hypot(cx2, u - cu2)
-        den = diffusion - 1 + w2 / w1
+        den = dif - 1 + w2 / w1
         sig = np.clip(np.where(den > 0.02, cu2 / (2 * w1 * np.maximum(den, 0.02)), sigma_range[1]), *sigma_range)
         b2 = np.arctan((u - cu2) / cx2)
         re = w1 * sig * pitch / nu
@@ -387,36 +402,57 @@ def design(q: float, dp: float, rpm: float, r_tip: float, r_hub: float, blades: 
     return rotor
 
 
-def optimize(system, *, r_tip: float, r_hub: float, power: float | None = None, rpm=6000.0, blades=range(5, 14),
+def _with_rotor(f):
+    """f(q) or f(q, rotor): a system or objective that depends on the rotor (its size sets what it covers)."""
+    import inspect
+    try:
+        n = len(inspect.signature(f).parameters)
+    except (TypeError, ValueError):
+        n = 1
+    return f if n >= 2 else (lambda x, rotor=None: f(x))
+
+
+def optimize(system, *, r_tip, r_hub, power: float | None = None, rpm=6000.0, blades=range(5, 14),
              axial: float | None = None, air: dict | None = None, tip: str = "band", gap: float = 0.0,
              band: tuple = (1.6, 18.0), stall_margin: float = 0.15, t_min: float = 1.4, te: float = 0.8,
-             starts: int = 3, seed: int = 0, objective=None, exit: str = "sre") -> tuple:
-    """Blades that move the most air through `system` (q -> static Pa the system needs at fan flow q).
+             starts: int = 3, seed: int = 0, objective=None, exit: str = "sre", hub_ratio_max: float = 0.55,
+             iters: int = 220) -> tuple:
+    """Blades that move the most air through `system` (q -> static Pa the system needs at fan flow q; or
+    (q, rotor) -> Pa when the rotor's size changes the system, as a fan covering more of a core does).
 
-    Within: shaft power at the operating point no more than `power` (W); rpm fixed or a (lo, hi) range; every
-    section's axial depth no more than `axial` (mm); unstalled with the stall flow at least `stall_margin` below the
-    operating flow; design diffusion factor 0.30-0.55. Searches blade count and, for each, the design flow, pressure,
-    work exponent, diffusion and speed (Nelder-Mead from several starts). `objective(op) -> float` to maximize
-    instead of the operating flow. Returns (rotor, report)."""
+    Within: shaft power at the operating point no more than `power` (W); rpm, r_tip and r_hub each fixed or a
+    (lo, hi) range (r_hub stays under hub_ratio_max of r_tip); every section's axial depth no more than `axial` (mm);
+    unstalled with the stall flow at least `stall_margin` below the operating flow; diffusion 0.30-0.55 at hub and
+    tip. Searches blade count and, for each, the design flow and pressure, the spanwise work, the diffusion at hub and
+    tip (the planform), speed, diameter and hub (Nelder-Mead from a start where the system takes about a third of
+    the shaft power as air power, warm-started across blade counts, the winner polished). `objective(op)` or
+    `objective(op, rotor)` to maximize instead of the operating flow. Returns (rotor, report)."""
     from scipy.optimize import minimize
 
     air = air or globals()["air"]()
     rng = np.random.default_rng(seed)
-    lo_rpm, hi_rpm = (rpm, rpm) if np.isscalar(rpm) else rpm
-    obj = objective or (lambda op: op["q"])
+    span_of = lambda v: (float(v), float(v)) if np.isscalar(v) else (float(v[0]), float(v[1]))
+    lo_rpm, hi_rpm = span_of(rpm)
+    lo_rt, hi_rt = span_of(r_tip)
+    lo_rh, hi_rh = span_of(r_hub)
+    sysr = _with_rotor(system)
+    obj = _with_rotor(objective) if objective else (lambda op, rotor=None: op["q"])
     best = (None, None, -np.inf)
     tried = []
-    area = np.pi * ((r_tip * 1e-3) ** 2 - (r_hub * 1e-3) ** 2)
-    u_tip = hi_rpm * 2 * np.pi / 60 * r_tip * 1e-3
+    area = np.pi * ((hi_rt * 1e-3) ** 2 - (lo_rh * 1e-3) ** 2)
+    u_tip = hi_rpm * 2 * np.pi / 60 * hi_rt * 1e-3
     q_ref = 0.10 * u_tip * area                             # a flow coefficient of 0.10 to start from
-    dp_ref = max(system(q_ref), 10.0)
+    dp_ref = max(sysr(q_ref, None), 10.0)
+    unit = lambda v, lo, hi: lo + (hi - lo) * float(np.clip(v, 0, 1))
 
     def build(x, z):
-        qd, dpd, wexp, diff, sp = x
-        sp = lo_rpm + (hi_rpm - lo_rpm) * float(np.clip(sp, 0, 1))
-        return design(q_ref * math.exp(qd), dp_ref * math.exp(dpd), sp, r_tip, r_hub, z, work_exp=float(np.clip(wexp, 0, 3)),
-                      diffusion=float(np.clip(diff, 0.30, 0.55)), air=air, tip=tip, gap=gap, band=band, t_min=t_min, te=te,
-                      exit=exit)
+        qd, dpd, wexp, dh, dt, sp, rt, rh = x
+        rt_ = unit(rt, lo_rt, hi_rt)
+        rh_ = min(unit(rh, lo_rh, hi_rh), hub_ratio_max * rt_)
+        return design(q_ref * math.exp(qd), dp_ref * math.exp(dpd), unit(sp, lo_rpm, hi_rpm), rt_, rh_, z,
+                      work_exp=float(np.clip(wexp, 0, 3)),
+                      diffusion=(float(np.clip(dh, 0.30, 0.55)), float(np.clip(dt, 0.30, 0.55))), air=air, tip=tip,
+                      gap=gap, band=band, t_min=t_min, te=te, exit=exit)
 
     def score(x, z):
         try:
@@ -431,7 +467,8 @@ def optimize(system, *, r_tip: float, r_hub: float, power: float | None = None, 
         dpt = rot.design_point
         if not dpt["converged"] or dpt["reversed"]:
             return 1e2 + abs(math.log(max(dpt["achieved"], 1e-3) / dpt["dp"])) + pen, None, None
-        op = operating_point(rot, system, air=air)
+        sy = lambda q: sysr(q, rot)
+        op = operating_point(rot, sy, air=air)
         if op is None:
             return 50.0 + pen, None, None
         if op["stalled"]:
@@ -442,7 +479,7 @@ def optimize(system, *, r_tip: float, r_hub: float, power: float | None = None, 
             pen += 20 * max(0.0, op["power"] - power) / power
         qs = stall_flow(rot, air=air, q_hi=op["q"])
         pen += 10 * max(0.0, qs - (1 - stall_margin) * op["q"]) / op["q"]
-        return -obj(op) / q_ref + pen, rot, op
+        return -obj(op, rot) / q_ref + pen, rot, op
 
     # start where the system takes about a third of the shaft power as air power: a fan's design point sits near there
     q_t = q_ref
@@ -450,18 +487,24 @@ def optimize(system, *, r_tip: float, r_hub: float, power: float | None = None, 
         lo_q, hi_q = 1e-5, 1.0
         for _ in range(60):
             q_t = math.sqrt(lo_q * hi_q)
-            lo_q, hi_q = (q_t, hi_q) if q_t * system(q_t) < 0.35 * power else (lo_q, q_t)
-    x_t = np.array([math.log(q_t / q_ref), math.log(max(system(q_t), 1.0) * 1.15 / dp_ref), 1.4, 0.5, 0.6])
+            lo_q, hi_q = (q_t, hi_q) if q_t * sysr(q_t, None) < 0.35 * power else (lo_q, q_t)
+    x_t = np.array([math.log(q_t / q_ref), math.log(max(sysr(q_t, None), 1.0) * 1.15 / dp_ref), 1.4, 0.45, 0.5, 0.6,
+                    0.8, 0.2])
+    fixed = [lo_rpm == hi_rpm, lo_rt == hi_rt, lo_rh == hi_rh]
+    steps = np.array([0.15, 0.2, 0.4, 0.05, 0.05, 0.25, 0.2, 0.25])
+    for i, f in zip((5, 6, 7), fixed):
+        if f:
+            steps[i] = 0.0
     best_x = None
 
-    def polish(x0, z, iters):
-        res = minimize(lambda x: score(x, z)[0], x0, method="Nelder-Mead",
-                       options={"maxiter": iters, "xatol": 1e-3, "fatol": 1e-4, "initial_simplex": _simplex(x0)})
-        return res.x, score(res.x, z)
-
-    def _simplex(x0):
-        steps = np.array([0.15, 0.2, 0.4, 0.05, 0.25])
-        return np.vstack([x0] + [x0 + np.eye(5)[i] * steps[i] for i in range(5)])
+    def polish(x0, z, n_iter):
+        free = np.flatnonzero(steps > 0)
+        full = lambda xf: np.concatenate([[xf[list(free).index(i)] if i in free else x0[i] for i in range(len(x0))]])
+        simplex = np.vstack([x0[free]] + [x0[free] + np.eye(len(free))[i] * steps[free][i] for i in range(len(free))])
+        res = minimize(lambda xf: score(full(xf), z)[0], x0[free], method="Nelder-Mead",
+                       options={"maxiter": n_iter, "xatol": 1e-3, "fatol": 1e-4, "initial_simplex": simplex})
+        x = full(res.x)
+        return x, score(x, z)
 
     for z in blades:
         for k in range(starts):
@@ -470,26 +513,65 @@ def optimize(system, *, r_tip: float, r_hub: float, power: float | None = None, 
             elif k == 1 and best_x is not None:
                 x0 = best_x.copy()                         # the best so far, at this blade count
             else:
-                x0 = x_t + rng.normal(0, [0.15, 0.2, 0.4, 0.04, 0.25])
-            if hi_rpm == lo_rpm:
-                x0[4] = 1.0
-            x, (f, rot, op) = polish(x0, z, 160)
+                x0 = x_t + rng.normal(0, steps)
+            x, (f, rot, op) = polish(x0, z, iters)
             tried.append({"blades": z, "score": float(f), "q": None if op is None else op["q"],
-                          "power": None if op is None else op["power"]})
+                          "power": None if op is None else op["power"],
+                          "r_tip": None if rot is None else rot.r_tip})
             if rot is not None and op is not None and not op["stalled"] and -f > best[2]:
                 best = (rot, op, -f)
                 best_x, best_z = x, z
     if best_x is not None:                                 # one more polish of the winner
-        x, (f, rot, op) = polish(best_x, best_z, 240)
+        x, (f, rot, op) = polish(best_x, best_z, int(1.5 * iters))
         if rot is not None and op is not None and not op["stalled"] and -f > best[2]:
             best = (rot, op, -f)
     rot, op, _ = best
     if rot is None:
         raise RuntimeError("no unstalled design meets the system within the limits")
     report = {"operating": op, "stall_flow": stall_flow(rot, air=air, q_hi=op["q"]), "tried": tried,
-              "limits": {"power": power, "rpm": [lo_rpm, hi_rpm], "axial": axial, "stall_margin": stall_margin},
+              "limits": {"power": power, "rpm": [lo_rpm, hi_rpm], "r_tip": [lo_rt, hi_rt], "r_hub": [lo_rh, hi_rh],
+                         "axial": axial, "stall_margin": stall_margin},
               "axial_depth_max": float(rot.axial_depth.max())}
     return rot, report
+
+
+def tonal_coherence(rotor: Rotor, op: dict | None = None, harmonics=(1, 2, 3)) -> dict:
+    """How much of each blade's pass across a fixed strut (a bracket arm upstream, a stator) arrives in step along
+    the span, for each harmonic of the blade-passing frequency: |sum w(r) exp(i h B phi_LE(r))| / sum w(r), with
+    phi_LE the leading edge's angle round the axis and w the blade's loading per unit span. 1 for a straight radial
+    leading edge, toward 0 when skew spreads the pass over a blade pitch: the spanwise phase cancellation that skewed
+    fan blades are drawn for (their tones fall by 20 log of this)."""
+    rr = rotor.r
+    phi = np.array([_section(rotor, i)[0, 0] / rr[i] for i in range(len(rr))]) + rotor.skew_at(rr)
+    if op is not None:
+        w = np.array(op["stations"]["dp_t"]) * rr
+    else:
+        w = rotor.chord * rr
+    w = np.maximum(w, 0)
+    out = {}
+    for h in harmonics:
+        z = np.sum(w * np.exp(1j * h * rotor.blades * phi)) / max(np.sum(w), 1e-12)
+        out[h] = float(abs(z))
+    return out
+
+
+def explore(system, variants, **common) -> list:
+    """A family of rotors: optimize(system, **common, **variant) for each variant (blade counts, diameters, a tip
+    treatment ...), then each one's skew and lean applied as the variant says ({"skew": deg, "lean": mm}). Returns
+    [{"variant", "rotor", "report", "coherence"}], for comparing what the shapes buy."""
+    out = []
+    for v in variants:
+        geo = {k: v[k] for k in ("skew", "skew_exp", "lean", "lean_exp") if k in v}
+        kw = {**common, **{k: x for k, x in v.items() if k not in geo and k != "name"}}
+        try:
+            rot, rep = optimize(system, **kw)
+        except RuntimeError as e:
+            out.append({"variant": v, "error": str(e)})
+            continue
+        for k, x in geo.items():
+            setattr(rot, k, x)
+        out.append({"variant": v, "rotor": rot, "report": rep, "coherence": tonal_coherence(rot, rep["operating"])})
+    return out
 
 
 # ----------------------------------------------------------------- strength
@@ -522,6 +604,9 @@ def strength(rotor: Rotor, rpm: float | None = None, op: dict | None = None, den
     else:
         ft = fa = 0.0
     m = math.hypot(ft, fa) * 0.6 * span                                         # resultant at 60 % span from the root
+    if rotor.skew:                                                               # a skewed blade's spin pull bends it
+        rcg = _trapz(areas * r * r, r) / max(_trapz(areas * r, r), 1e-12)
+        m += pull * rcg * abs(math.sin(float(rotor.skew_at(rcg * 1e3) - rotor.skew_at(rotor.r_hub))))
     i_min = min(ix, iy) * 1e-12
     sig = pull / a_root / 1e6 + (m * cmax * 1e-3 / i_min) / 1e6
     allow = yield_mpa * retention
@@ -606,8 +691,8 @@ def blade_mesh(rotor: Rotor, z_mid: float = 0.0, root_in: float = 1.5, tip_in: f
     rings = []
     for j, r in enumerate(rs):
         loop = _section(rotor, 0, chordwise, chord=ch[j], kappa1=k1[j], kappa2=k2[j], thick=tk[j] * swell[j])
-        ang = loop[:, 0] / r * (1 if rotation == "ccw" else -1)
-        rings.append(np.c_[r * np.cos(ang), r * np.sin(ang), loop[:, 1] + z_mid])
+        ang = (loop[:, 0] / r + float(rotor.skew_at(min(r, rotor.r_tip)))) * (1 if rotation == "ccw" else -1)
+        rings.append(np.c_[r * np.cos(ang), r * np.sin(ang), loop[:, 1] + z_mid + float(rotor.lean_at(min(r, rotor.r_tip)))])
     m = len(rings[0])
     v = np.vstack(rings)
     f = []

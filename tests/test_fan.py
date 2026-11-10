@@ -108,6 +108,31 @@ def test_strength_at_speed():
     assert s["safety_factor"] > 1.0 and 5 < s["rotor_mass_g"] < 80
 
 
+def test_skew_spreads_the_pass_and_still_meshes():
+    import dataclasses
+    rot = _rotor()
+    straight = fan.tonal_coherence(rot)[1]
+    pitch_deg = 360.0 / rot.blades
+    skewed = dataclasses.replace(rot, skew=-pitch_deg, lean=2.0)       # the tip a whole blade pitch behind the hub
+    assert fan.tonal_coherence(skewed)[1] < 0.5 * straight
+    m = fan.rotor_mesh(skewed, z0=4.0, z1=22.0)
+    assert m.is_watertight and len(m.split(only_watertight=False)) == 1
+    op = fan.performance(rot, 0.030, air=AIR)
+    assert fan.strength(skewed, op=op)["root_bending_Nm"] > fan.strength(rot, op=op)["root_bending_Nm"]
+
+
+def test_optimizer_uses_diameter_when_coverage_pays():
+    # a core whose resistance falls as the fan covers more of it: dp ~ q^2 / covered area^2, plus a fixed exit loss
+    def system(q, rotor=None):
+        a = (rotor.r_tip if rotor is not None else 70.0) ** 2 / 100.0 ** 2
+        return 6000 * q * q / a ** 2 + 8000 * q * q
+    rot, rep = fan.optimize(system, r_tip=(57.0, 100.0), r_hub=25.0, power=10.0, rpm=(1500, 6400), blades=[9],
+                            axial=14.0, air=AIR, starts=2, exit="uniform", iters=160)
+    small, rs = fan.optimize(system, r_tip=57.0, r_hub=25.0, power=10.0, rpm=(1500, 6400), blades=[9],
+                             axial=14.0, air=AIR, starts=2, exit="uniform", iters=160)
+    assert rot.r_tip > 70.0 and rep["operating"]["q"] > rs["operating"]["q"]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

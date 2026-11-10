@@ -40,6 +40,19 @@ The rotor is cut into stream tubes from hub to tip. In each, the blade row is a 
 - **Sections**: circular-arc camber line, NACA four-digit thickness opened to a printable trailing edge. At the Reynolds
   numbers a small fan runs at (3-8 x 10^4 on the chord) thin cambered plates outperform thick airfoils.
 
+**Shape freedoms.** `diffusion` may run from hub to tip (a pair), which shapes the chord along the span (the
+planform). The stacking line can be skewed round the axis (`Rotor.skew`, degrees at the tip, growing from the hub
+as a power `skew_exp`) and leaned along it (`lean`, mm). In this blade-element model sections stay on their cylinders,
+so skew and lean leave the curve as it is; what they change is noise and stress. `tonal_coherence` scores the first:
+how much of each blade's pass across a fixed strut (a bracket arm upstream) arrives in step along the span, for each
+blade-passing harmonic (1 for a straight leading edge; skew of about a blade pitch spreads it toward 0, the phase
+cancellation skewed fan blades are drawn for). `strength` counts the second: a skewed blade's spin pull bends its root.
+
+**Size.** `optimize` takes `r_tip` and `r_hub` as ranges as well as values, and the system and objective may take
+the rotor (`system(q, rotor)`, `objective(op, rotor)`) when its size changes what it works against, as a fan that
+covers more of a heat exchanger's face does. Nelder-Mead over diameter alongside the blade variables finds local
+optima; for a real decision, grid the diameter and let the optimizer do the rest (`explore` takes a list of variants).
+
 `design` builds blades for one point; `performance` and `curve` evaluate them anywhere; `operating_point` finds the
 crossing with a system; `optimize` searches blade count, design point, spanwise work distribution, diffusion and speed
 (Nelder-Mead from a start where the system takes about a third of the shaft power as air power, warm-started across
@@ -55,6 +68,7 @@ few percent. A useful habit the model makes plain: against a system whose pressu
 shaft power goes as the cube root of the fan's efficiency, so the motor's power usually matters more than the last
 points of blade efficiency.
 
-Tests: `tests/test_fan.py` (design reproduces its point, the curve falls past it and stalls far below, Euler and
+Tests: `tests/test_fan.py` (skew spreads a blade's pass and still meshes as one body and adds root bending; the
+optimizer grows the rotor when coverage pays; design reproduces its point, the curve falls past it and stalls far below, Euler and
 efficiency bounds, a free vortex overloading a small hub, open tip < shroud gap < band, the optimizer beating a hand
 design at the same power, one watertight body, band hoop stress).
