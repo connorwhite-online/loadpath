@@ -1104,6 +1104,11 @@ def _shape(spec, base_dir):
         return MeshShape(mesh, spec["path"])
     if kind == "sdf":
         import os
+        if spec.get("shroud") is not None:
+            # a generated exterior (shroud.py), by its cache key
+            from .shroud import envelope_path
+            full = envelope_path(spec["shroud"])
+            return GridSDF.load(full, f"shroud:{spec['shroud']}")
         path = spec.get("path")
         if not path:
             raise ValueError("sdf shape needs 'path' (an .npz from loadpath.exterior.save_sdf)")

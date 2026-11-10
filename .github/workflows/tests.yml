@@ -33,6 +33,7 @@ jobs:
       - run: python tests/test_switch_lattice.py
       - run: python tests/test_handoff.py
       - run: python tests/test_shells.py
+      - run: python tests/test_shroud.py
       - run: python tests/test_enclosure.py
       - run: python tests/test_feel.py
       - run: python tests/test_touch_zones.py

@@ -727,6 +727,12 @@ def main(argv=None):
     spl.add_argument("--split", help="the split block as a JSON file, instead of the study's own")
     spl.add_argument("--out", default="loadpath-split")
     spl.add_argument("--base-dir", help="where the study's relative paths start (default: its folder)")
+    shr = sub.add_parser("shroud", help="grow a study's exterior: a smooth skin round its load paths and what "
+                                        "shroud.conceal hides, shaped by the skin's own load share; writes the "
+                                        "study with it (run it, or `loadpath split` it) and envelope.stl")
+    shr.add_argument("study", help="a study with a shroud block")
+    shr.add_argument("--out", default="loadpath-shroud")
+    shr.add_argument("--base-dir", help="where the study's relative paths start (default: its folder)")
     en = sub.add_parser("enclosure", help="a product from its outside in: the designer's exterior fixed, the "
                                           "components placed inside it (or as given), their assembly paths, "
                                           "mounts, drops, squeezes, heat, a push pad or feel targets; a study "
@@ -966,6 +972,8 @@ def main(argv=None):
         return _sdf(args)
     if args.cmd == "split":
         return _split(args)
+    if args.cmd == "shroud":
+        return _shroud(args)
     if args.cmd == "enclosure":
         return _enclosure(args)
     if args.cmd == "explore":
@@ -1630,6 +1638,18 @@ def _switch(args):
         return 2
     _write_report(args.out, {"ok": rep["passes"], **rep})
     return 0 if rep["passes"] else 1
+
+
+def _shroud(args):
+    from .shroud import write_shroud
+
+    try:
+        r = write_shroud(args.study, args.out, base_dir=args.base_dir)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    print(json.dumps({"ok": True, **r}, default=float))
+    return 0
 
 
 def _split(args):

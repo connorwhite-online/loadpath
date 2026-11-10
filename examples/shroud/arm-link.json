@@ -1,0 +1,180 @@
+{
+  "name": "shrouded-arm-link",
+  "description": "A robot-arm link between two 22 mm bearings, 140 mm apart, with a cable channel running its length and leaving through a port beside each joint. No exterior is drawn: `shroud` grows a smooth 2 mm skin round the load paths and the channel, and the interior is designed with the skin carrying load. 1 kg at the wrist with a dynamic factor of 2, plus a side load. PA12, SLS.",
+  "designSpace": [
+    {
+      "type": "box",
+      "min": [
+        -18,
+        -22,
+        -14
+      ],
+      "max": [
+        158,
+        22,
+        14
+      ]
+    }
+  ],
+  "preserve": [
+    {
+      "id": "shoulder-boss",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "axis": "z",
+        "length": 24,
+        "r": 16
+      }
+    },
+    {
+      "id": "wrist-boss",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          140,
+          0,
+          0
+        ],
+        "axis": "z",
+        "length": 24,
+        "r": 15
+      }
+    }
+  ],
+  "keepOut": [
+    {
+      "id": "shoulder-bearing",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "axis": "z",
+        "length": 32,
+        "r": 11
+      }
+    },
+    {
+      "id": "wrist-bearing",
+      "shape": {
+        "type": "cylinder",
+        "center": [
+          140,
+          0,
+          0
+        ],
+        "axis": "z",
+        "length": 32,
+        "r": 11
+      }
+    },
+    {
+      "id": "cable-channel",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          24,
+          0,
+          0
+        ],
+        "p1": [
+          116,
+          0,
+          0
+        ],
+        "r": 5
+      }
+    },
+    {
+      "id": "shoulder-port",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          24,
+          0,
+          0
+        ],
+        "p1": [
+          24,
+          0,
+          20
+        ],
+        "r": 5
+      }
+    },
+    {
+      "id": "wrist-port",
+      "shape": {
+        "type": "cylinder",
+        "p0": [
+          116,
+          0,
+          0
+        ],
+        "p1": [
+          116,
+          0,
+          20
+        ],
+        "r": 5
+      }
+    }
+  ],
+  "shroud": {
+    "thickness": 2.0,
+    "conceal": [
+      "cable-channel"
+    ]
+  },
+  "supports": [
+    {
+      "region": "shoulder-bearing"
+    }
+  ],
+  "loadCases": [
+    {
+      "name": "payload",
+      "loads": [
+        {
+          "region": "wrist-bearing",
+          "force": [
+            0,
+            -20,
+            0
+          ],
+          "distribution": "bearing"
+        }
+      ]
+    },
+    {
+      "name": "side",
+      "loads": [
+        {
+          "region": "wrist-bearing",
+          "force": [
+            0,
+            0,
+            8
+          ]
+        }
+      ]
+    }
+  ],
+  "material": "pa12",
+  "process": "sls",
+  "goal": {
+    "safetyFactor": 3.0,
+    "maxDeflection": 0.5
+  },
+  "minMember": 3.0,
+  "resolution": {
+    "pitch": 1.0
+  }
+}

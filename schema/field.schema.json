@@ -1829,11 +1829,23 @@
         },
         "path": {
           "type": "string"
+        },
+        "shroud": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$",
+          "description": "a generated exterior by its key (what a shroud block expands to; `loadpath shroud`)"
         }
       },
+      "x-requireOne": [
+        [
+          "path"
+        ],
+        [
+          "shroud"
+        ]
+      ],
       "required": [
-        "type",
-        "path"
+        "type"
       ],
       "additionalProperties": false
     },

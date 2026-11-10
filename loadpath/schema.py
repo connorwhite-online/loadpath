@@ -105,8 +105,12 @@ _SHAPES = {
                        "inside) relative to the study's folder, as loadpath.exterior.save_sdf writes it, or "
                        "an OpenVDB level set (.vdb, from Houdini, Blender, nTop or `loadpath sdf`). How "
                        "an SDF tool's shape (libfive, the sdf package, a field graph) comes in.",
-        "properties": {"type": {"const": "sdf"}, "path": {"type": "string"}},
-        "required": ["type", "path"],
+        "properties": {"type": {"const": "sdf"}, "path": {"type": "string"},
+                       "shroud": {"type": "string", "pattern": "^[0-9a-f]{20}$",
+                                  "description": "a generated exterior by its key (what a shroud block "
+                                                 "expands to; `loadpath shroud`)"}},
+        "x-requireOne": [["path"], ["shroud"]],
+        "required": ["type"],
         "additionalProperties": False,
     },
     "union": {
@@ -1337,6 +1341,39 @@ STUDY_SCHEMA = {
                      "required": ["thickness"], "additionalProperties": False}],
                  "description": "Skin-and-rib: mm of the design space's outer surface kept as a solid wall; "
                                 "the optimizer designs the ribs behind it."},
+        "_shroud": {"type": "object", "description": "written by a shroud's expansion (loadpath shroud): "
+                                                    "the seed, the envelope and its key; not set by hand"},
+        "shroud": {"anyOf": [{"type": "boolean"}, _POS, {"type": "object", "properties": {
+                       "thickness": {**_POS, "description": "mm of skin (default 2)"},
+                       "reach": {**_POS, "description": "mm, closing radius: gaps and notches between members "
+                                                        "narrower than about twice this are bridged by the skin "
+                                                        "(default 12)"},
+                       "smooth": {**_POS, "description": "mm the envelope's surface is smoothed over, for "
+                                                         "sweeping rather than member-following surfaces (default 8)"},
+                       "gap": {"type": "number", "minimum": 0,
+                               "description": "mm the skin keeps off a concealed region (default 1)"},
+                       "conceal": {"type": "array", "items": {"type": "string"},
+                                   "description": "preserve or keepOut ids wrapped inside the skin: a cable or "
+                                                  "tendon channel (a bore keep-out: it still opens where it "
+                                                  "leaves the part), a board, a motor, an exchanger's passages. "
+                                                  "Keep-outs with bore false that are not listed stay outside"},
+                       "openings": {"type": "array", "items": {"type": "object"},
+                                    "description": "as skin.openings: where the generated skin is left open"},
+                       "seedFraction": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1,
+                                        "description": "volume fraction of the coarse free design the envelope "
+                                                       "is grown round (default 0.15)"},
+                       "seedCells": {"type": "integer", "minimum": 1000,
+                                     "description": "cells of the seed grid (default 60000)"},
+                       "seedIterations": {"type": "integer", "minimum": 5},
+                       "pitch": {**_POS, "description": "mm, the envelope's grid (default half the seed's, "
+                                                        "at most half the skin + 0.25)"}},
+                       "additionalProperties": False}],
+                   "description": "Generated exterior (shroud.py): no drawn exterior; a smooth skin is grown "
+                                  "round the load paths and round what `conceal` lists, becomes the part's "
+                                  "outside, and the interior is designed with it carrying load. Bores cut "
+                                  "through it; drains open sealed interiors on powder and resin processes. "
+                                  "Not with `skin`. `loadpath shroud` writes the expanded study (for "
+                                  "`loadpath split`)."},
         "loadCases": {"type": "array", "items": {"$ref": "#/$defs/loadCase"}, "minItems": 1},
         "loads": {"type": "array", "items": {"$ref": "#/$defs/load"},
                   "description": "Shorthand for a single load case."},

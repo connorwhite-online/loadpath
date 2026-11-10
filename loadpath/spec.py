@@ -1173,6 +1173,11 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
     d = _expand_planar(d)
     from .fits import expand_fits
     d = expand_fits(d)
+    if d.get("shroud") not in (None, False):
+        # a generated exterior (shroud.py): the envelope becomes the design
+        # space and its skin is preserved, so the rest parses as skin-and-rib
+        from .shroud import expand_shroud
+        d = expand_shroud(d, base_dir)
     # kept in raw: a study re-parsed from its raw (orientation, explore)
     # is not compensated twice
     fits = d.get("_fits") or []
