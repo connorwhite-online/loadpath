@@ -102,6 +102,37 @@ def test_one_factor_for_a_matrix():
     assert np.abs(2.0 * u2 - u).max() < 1e-8 * np.abs(u).max()
 
 
+def test_threads_do_not_pile_up():
+    """Factorizations from short-lived threads (every pool here is made per
+    call) must not each leave a team of MKL's workers behind: the wrist
+    yoke's search ended on 229 threads holding 5.9 GB, and the constrained
+    method was skipped for memory (nonlinear.on_mkl_thread)."""
+    import threading
+
+    if direct.backend() != "pardiso" or not os.path.isdir("/proc/self/task"):
+        return
+    mesh, fixed, fs, e = _bar()
+    k = Stiffness(mesh, 0.3, fixed).assemble(e)
+    out = []
+
+    def work():
+        out.append(DirectSolver(mesh.node_ijk).solve(k, fs[0]))
+
+    def run():
+        t = threading.Thread(target=work)
+        t.start()
+        t.join()
+
+    with _env(LOADPATH_THREADS="3"):
+        run()
+        n0 = len(os.listdir("/proc/self/task"))
+        for _ in range(6):
+            run()
+        n1 = len(os.listdir("/proc/self/task"))
+    assert n1 <= n0, (n0, n1)
+    assert all(np.abs(u - out[0]).max() == 0.0 for u in out)
+
+
 def test_mechanism_raises():
     """A block nothing holds makes K singular. The factorization may or may
     not notice; the residual check must, with the RuntimeError the iterative
@@ -232,7 +263,8 @@ def test_slow_multigrid_hands_over():
     assert abs(got.compliance - ref.compliance) < 1e-6 * ref.compliance, (got.compliance, ref.compliance)
 
 
-TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix, test_mechanism_raises,
+TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix, test_threads_do_not_pile_up,
+         test_mechanism_raises,
          test_sizes_and_switches, test_route, test_simp_direct_matches_assembled, test_slow_multigrid_hands_over]
 
 
