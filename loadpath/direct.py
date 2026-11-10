@@ -36,10 +36,11 @@ two sizes.
 from __future__ import annotations
 
 import os
+import threading
 
 import numpy as np
 
-__all__ = ["DirectSolver", "backend", "small_dofs", "large_dofs", "rescue_dofs", "solve_many"]
+__all__ = ["DirectSolver", "backend", "small_dofs", "large_dofs", "rescue_dofs", "factor_budget", "solve_many"]
 
 # dofs up to which a factorization is the first choice / still beats AMG-CG
 _SIZES = {"pardiso": (110_000, 300_000), "superlu": (9_000, 9_000)}
@@ -92,6 +93,29 @@ def large_dofs() -> int:
     return _sizes()[1]
 
 
+# The share of the memory now free that one factor may take. A stiffness
+# matrix's factor depends on the shape as much as the size: what a density
+# design leaves alive factors in tens of MB, a solid block of the same dofs
+# in gigabytes (300k dofs: 3.8 GB). PARDISO's analysis says which before
+# anything is allocated (nonlinear._Pardiso), and a factor over this share
+# is not made: the caller's iterative solver runs instead, as it did before
+# there was a factorization here. A third: two runs side by side (evals
+# --jobs 2) that both factor at once still leave one.
+FACTOR_SHARE = 1.0 / 3.0
+
+
+def factor_budget() -> float | None:
+    """Bytes one factor may hold: FACTOR_SHARE of the memory free now
+    (None where that cannot be read)."""
+    try:
+        from .study import _available_bytes
+
+        free = _available_bytes()
+    except Exception:  # noqa: BLE001 - no reading: no limit
+        return None
+    return FACTOR_SHARE * free if free else None
+
+
 def rescue_dofs() -> int:
     """Up to this many a factorization takes over from a CG that has
     stalled (fem.Solver.STALL)."""
@@ -128,12 +152,12 @@ class DirectSolver:
             if backend() == "pardiso":
                 from .nonlinear import _Pardiso
 
-                fac = _Pardiso(k)
+                fac = _Pardiso(k, budget=factor_budget())
             else:
                 from .nonlinear import _splu
 
                 fac = _splu(k, self.node_ijk)
-        except RuntimeError:
+        except (RuntimeError, MemoryError):
             raise
         except Exception as exc:  # noqa: BLE001 - a factorization that broke down is a solve that failed
             raise RuntimeError(f"direct factorization failed ({type(exc).__name__}: {exc}); "
@@ -174,6 +198,9 @@ class DirectSolver:
         return self.solve_many(k, [f])[0]
 
 
+_ONE_SHOT = threading.Lock()
+
+
 def solve_many(k, fs, node_ijk=None):
     """k x = f for each f on one factorization, or None where that is not
     the quick way (no backend, more than large_dofs()) or it did not hold
@@ -186,7 +213,12 @@ def solve_many(k, fs, node_ijk=None):
     n = k.shape[0]
     if not 0 < n <= large_dofs():
         return None
-    try:
-        return DirectSolver(node_ijk).solve_many(k, fs)
-    except RuntimeError:
-        return None
+    # One at a time: a check's submodels run on threads, and three solid
+    # blocks' factors at once were 10 GB on a 60k-cell bar where the
+    # iterative solves they replaced peaked at 3.8 (PARDISO runs on one
+    # thread and all the cores as it is: nothing is lost by the wait).
+    with _ONE_SHOT:
+        try:
+            return DirectSolver(node_ijk).solve_many(k, fs)
+        except (RuntimeError, MemoryError):
+            return None
