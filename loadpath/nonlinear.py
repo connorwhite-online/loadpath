@@ -476,29 +476,55 @@ class _Pardiso:
     # Newton iteration made one)
     _pool: list = []
 
-    def __init__(self, k, symmetric=True):
+    def __init__(self, k, symmetric=True, budget=None):
+        """`budget` (bytes): where the factor would take more, MemoryError
+        before any of it is allocated. PARDISO's analysis, a tenth of the
+        work, says what the numeric factorization will hold, to a few
+        percent: a solid block of 212k dofs 2.38 GB (2.26 measured), of
+        300k dofs 3.76 GB (3.61)."""
         self._s = None
-        on_mkl_thread(self._factor, k, symmetric)
+        self.bytes = None           # what the factor holds, by PARDISO's analysis
+        on_mkl_thread(self._factor, k, symmetric, budget)
 
-    def _factor(self, k, symmetric):
+    def _factor(self, k, symmetric, budget=None):
         import pypardiso
 
         s = _Pardiso._pool.pop() if _Pardiso._pool else pypardiso.PyPardisoSolver()
         mkl_threads(s)
+        over = None
         for mtype in ((2, -2) if symmetric else (11,)):
             a = sp.triu(k, format="csr") if mtype != 11 else k.tocsr()
             a.sort_indices()
             s.set_matrix_type(mtype)
             try:
-                s.factorize(a)
+                need = None
+                if hasattr(s, "_check_A") and hasattr(s, "_call_pardiso"):
+                    # analysis, then the numbers (pypardiso.factorize is both in one call)
+                    b0 = np.zeros((a.shape[0], 1))
+                    s._check_A(a)
+                    s.set_phase(11)
+                    s._call_pardiso(a, b0)
+                    need = 1024.0 * (float(s.get_iparm(16)) + float(s.get_iparm(17)))
+                    if budget is not None and need > budget:
+                        over = need
+                        break
+                    s.set_phase(22)
+                    s._call_pardiso(a, b0)
+                else:
+                    s.factorize(a)
             except Exception:  # noqa: BLE001 - not positive definite: try the next type
                 s.free_memory(everything=True)
                 continue
             s.set_phase(33)
-            self._s, self._a = s, a
+            self._s, self._a, self.bytes = s, a, need
             break
         if self._s is None:
+            if over is not None:
+                s.free_memory(everything=True)
             _Pardiso._pool.append(s)
+            if over is not None:
+                raise MemoryError(f"a factorization of these {k.shape[0]} dofs would hold {over / 1e9:.1f} GB "
+                                  f"({budget / 1e9:.1f} GB allowed)")
             raise RuntimeError("PARDISO could not factor the tangent")
 
     def solve(self, b):

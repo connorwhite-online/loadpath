@@ -394,10 +394,62 @@ def test_stalled_cg_is_factored():
         raise AssertionError("a part no support holds solved")
 
 
+def test_factor_that_would_not_fit_is_not_made():
+    """PARDISO's analysis says what a factor will hold before any of it is
+    allocated. One over its share of the free memory (direct.FACTOR_SHARE)
+    is not made: a check's one-off solve hands back to the iterative solver
+    (None), and the optimizer finishes on its iterative solvers with the
+    design a factorization gives."""
+    from loadpath import simp
+    from loadpath.nonlinear import _Pardiso
+    from loadpath.simp import SimpOptions, optimize
+
+    if direct.backend() != "pardiso":
+        return                          # (SuperLU has no analysis to ask)
+    mesh, fixed, fs, e = _bar()
+    k = Stiffness(mesh, 0.3, fixed).assemble(e)
+    fac = _Pardiso(k)
+    held = fac.bytes
+    fac.close()
+    assert held and 1e5 < held < 1e9, held
+    try:
+        _Pardiso(k, budget=0.5 * held)
+    except MemoryError as exc:
+        assert "GB" in str(exc)
+    else:
+        raise AssertionError("a factor twice its budget was made")
+    assert _Pardiso(k, budget=2.0 * held).bytes == held
+    old = direct.FACTOR_SHARE
+    st, dom, radius = _mbb()
+    opts = SimpOptions(volume_fraction=0.3, filter_radius=radius, max_iterations=6)
+    seen = []
+    solve = simp._Analysis.solve
+
+    def spy(self, *a, **kw):
+        out = solve(self, *a, **kw)
+        seen.append(self.last_solver)
+        return out
+
+    try:
+        with _env(LOADPATH_SOLVER=None, LOADPATH_DIRECT=None, LOADPATH_DIRECT_DOFS=f"{10 * dom.mesh.n_dof},{10 * dom.mesh.n_dof}"):
+            assert direct.solve_many(k, fs, mesh.node_ijk) is not None
+            ref = optimize(dom, st.elastic(design=True), opts)
+            direct.FACTOR_SHARE = 1e-9
+            assert direct.solve_many(k, fs, mesh.node_ijk) is None
+            simp._Analysis.solve = spy
+            got = optimize(dom, st.elastic(design=True), opts)
+    finally:
+        simp._Analysis.solve = solve
+        direct.FACTOR_SHARE = old
+    assert seen and "direct" not in seen, seen
+    assert abs(got.compliance - ref.compliance) < 2e-3 * ref.compliance, (got.compliance, ref.compliance)
+
+
 TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix, test_threads_do_not_pile_up,
          test_kernels_after_a_factorization_do_not_pile_up, test_mechanism_raises,
          test_sizes_and_switches, test_route, test_simp_direct_matches_assembled, test_slow_multigrid_hands_over,
-         test_stalled_multigrid_answer_is_not_kept, test_stalled_cg_is_factored]
+         test_stalled_multigrid_answer_is_not_kept, test_stalled_cg_is_factored,
+         test_factor_that_would_not_fit_is_not_made]
 
 
 def main():

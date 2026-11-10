@@ -125,6 +125,9 @@ class _Analysis:
         self._mg = None
         # multigrid still trusted on this run's designs (MG_SLOW_ITERS)
         self._mg_ok = True
+        # ... and a factorization still on offer: not once a factor would not
+        # fit in the memory that is free (direct.factor_budget)
+        self._direct_ok = True
         self.last_solver = None
         if _use_mg(mesh.n_elem):
             self._multigrid()
@@ -150,6 +153,8 @@ class _Analysis:
             return "mg"
         if force == "assembled":
             return "amg"
+        if not self._direct_ok:
+            return "mg" if self._mg_ok and (self._mg is not None or mesh.n_elem >= MG_AUTO_CELLS) else "amg"
         if alive.mean() < REDUCE_BELOW:
             nodes = np.zeros(mesh.n_nodes, bool)
             nodes[mesh.enode[alive].ravel()] = True
@@ -231,6 +236,15 @@ class _Analysis:
         """Solve every load case for moduli e. Returns per-case displacement on
         the full node set. `loads` overrides the domain's (self-weight makes
         them depend on the design)."""
+        try:
+            return self._solve(e, xp, us, rtol, loads)
+        except MemoryError:
+            # a factor that would not fit beside what else is running: the
+            # iterative solvers take this design and the rest of the run
+            self._direct_ok = False
+            return self._solve(e, xp, us, rtol, loads)
+
+    def _solve(self, e, xp, us, rtol=None, loads=None):
         d = self.domain
         loads = loads if loads is not None else d.loads
         mesh = d.mesh
@@ -366,14 +380,20 @@ class _Analysis:
 
             stiff, holder = self._full_system()
             mesh = self.domain.mesh
-            mode = "direct" if isinstance(solver, direct.DirectSolver) and mesh.n_dof <= direct.large_dofs() \
-                else "amg"
-            solver = self._solver(holder, mesh, mode, self.rtol)
+            mode = "direct" if isinstance(solver, direct.DirectSolver) and self._direct_ok \
+                and mesh.n_dof <= direct.large_dofs() else "amg"
             k = stiff.assemble(self._last_e)
             if self.domain.springs is not None:
                 k = (k + self.domain.springs).tocsr()
+            try:
+                solver = self._solver(holder, mesh, mode, self.rtol)
+                out = solver.solve_many(k, list(rhss), x0s)
+            except MemoryError:       # (see solve)
+                self._direct_ok = False
+                solver = self._solver(holder, mesh, "amg", self.rtol)
+                out = solver.solve_many(k, list(rhss), x0s)
             self._last = (k, None, solver)
-            return solver.solve_many(k, list(rhss), x0s)
+            return out
         out = []
         for v in sub:
             u = np.zeros(n_dof)
