@@ -79,6 +79,35 @@ Efficiency is energy / (peak force x crush): 1 is a perfect square pulse.
    gives the lowest peak while still holding 1.25x the energy before the core
    densifies. In a field graph, `"grade": true` returns the result as a
    `remap` table node to paste in as the lattice's density.
+5. **Contact** (`contact_curve`, the `striker` key): layers in series are
+   right for a flat-ended block between plates, where every layer carries
+   the whole load. A round tyre against a wall, a domed pad on a floor, or
+   any pad against a ball, a pole or a rounded edge is touched at a point
+   or a line first. A crushing foam does not spread load sideways (its
+   plastic Poisson's ratio is about nil), so the core is cut into columns
+   along the hit, and each column is squeezed only by what the striker has
+   travelled past that column's own face. Within a column the cells are in
+   series, weakest first, with the column's elastic give; the force is the
+   sum over the columns touched, so it grows with the contact patch:
+   sigma_pl A(d). Checked against the closed forms for a cylinder's cap on
+   a wall (chord x length), a ball on a pad (pi (2 R d - d^2)) and a pole
+   on a pad, within 5%; for a flat-ended prism it is the layer model
+   exactly. Faces are placed where the envelope's field crosses zero, not
+   on cell edges. The stroke ends where the first column has locked solid.
+
+   With a growing patch no grade along the hit makes the force flat: a
+   column's stress never falls as it crushes. `grade` then searches
+   straight-line grades from the struck face to the back (and the layer
+   rule's own table, which wins when the contact is flat) for the lowest
+   peak that still holds 1.25x the energy before the first column locks.
+
+   What it changes, on a drone's TPU duct tyre (10 mm of gyroid on a
+   round duct, 4 m/s into a wall, 2.5 J): the layer model crushed the
+   tyre's small first layers ahead of the wall and read 499 N; the contact
+   model reads 586 N for its best grade, because the wall has to travel
+   in before it has any area to push on. The same tyre landing flat on its
+   foot reads the same in both (817 N). A design sized on the layer number
+   would have been 17% short.
 
 ## What to trust, and what not yet
 
@@ -287,6 +316,13 @@ with 1 mm end plates.
               "pointMasses": [{"region": "top", "mass": 5.0}], "modes": 6, "minFrequency": 80,
               "excitation": 50}
 ```
+
+Add `"striker": {"side": "+"}` to the impact block for the contact model: `side`
+is the end of the axis the hit comes from, `shape` is `flat` (a wall or floor,
+the default), `sphere` or `cylinder` (with `radius`, and `along` for the
+cylinder's axis; `at` centres it, otherwise it lands where the core is touched
+first). The report then carries `contact` (the patch area at the stop, the share
+of it locked solid, and the travel at which the first column locks).
 
 Both need a `material`. `loadpath field graph.json` reports `report["impact"]`
 (force-crush curve, response, pass or fail against the force limit; with

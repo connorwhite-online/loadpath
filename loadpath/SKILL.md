@@ -798,7 +798,11 @@ far more material, or for something no interior can do.
   drop pad): give a field graph an `impact` block (envelope, density node,
   mass and velocity or energy, forceLimit, `"grade": true`, cell and minWall).
   It returns the peak force and crush, and a density table that crushes every
-  layer at the same force. A `vibration` block gives natural frequencies with
+  layer at the same force. If the core is round where it is hit (a tyre, a
+  dome) or the thing hit is (a ball, a pole, an edge), add
+  `"striker": {"side": "+", "shape": "flat" | "sphere" | "cylinder", "radius"}`:
+  the force then grows with the contact patch, and the layer model without
+  it reads low (17% on a round tyre against a wall). A `vibration` block gives natural frequencies with
   point masses. See docs/IMPACT.md in the repo.
 - For a part meant to bend (a TPU finger, a flexure, a snap fit, a
   compliant gripper), give the field graph a `largeDeflection` block:

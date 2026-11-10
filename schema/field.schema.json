@@ -788,6 +788,50 @@
           "exclusiveMinimum": 0,
           "description": "mm thinnest printable sheet (default 0.8)"
         },
+        "striker": {
+          "type": "object",
+          "properties": {
+            "side": {
+              "enum": [
+                "+",
+                "-"
+              ],
+              "description": "the end of the axis the hit comes from (default +)"
+            },
+            "shape": {
+              "enum": [
+                "flat",
+                "sphere",
+                "cylinder"
+              ],
+              "description": "a wall or floor (default), a ball, or a pole or rounded edge"
+            },
+            "radius": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "mm, sphere or cylinder"
+            },
+            "along": {
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ],
+              "description": "the cylinder's axis (across the hit)"
+            },
+            "at": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "where a ball or pole is centred, in the two axes across the hit (default: where the core is touched first)"
+            }
+          },
+          "additionalProperties": false,
+          "description": "What the core meets, and from which side: the contact model. A curved core against a wall (a round tyre, a domed pad) or any core against a ball or pole is touched at a point or a line first, and the force grows with the contact patch. Each column of the core along the hit is squeezed only by what the striker has travelled past its own face (a crushing foam does not spread load sideways); its cells crush weakest first. Without a striker the core is a stack of layers that each carry the whole load (right for a flat-ended block between plates)."
+        },
         "rate": {
           "type": "boolean",
           "description": "elastomers (TPU): stiffen the crush law for the impact's crush time (viscoelastic.py; default true)"

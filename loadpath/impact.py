@@ -61,7 +61,7 @@ import numpy as np
 from .lattice import relative_density, sheet_modulus, tpms
 
 __all__ = ["CRUSH", "CRUSH_DATA", "crush_law", "ELASTOMERS", "HYSTERESIS", "collapse_strength", "plateau_stress", "density_for_plateau", "densification_strain",
-           "CrushCurve", "crush_curve", "layer_profile", "impact_response", "grade_for_impact", "solid_impact",
+           "CrushCurve", "crush_curve", "Columns", "contact_columns", "contact_curve", "grade_for_contact", "layer_profile", "impact_response", "grade_for_impact", "solid_impact",
            "limit_load", "foam_stress", "face_load", "grade_3d", "save_density_grid", "impact_report", "sample_core", "DENSIFICATION_ALPHA"]
 
 DENSIFICATION_ALPHA = 1.4    # Gibson & Ashby, open-cell foams: eps_D = 1 - 1.4 rho
@@ -323,6 +323,237 @@ def crush_curve(kind: str, area, rho, h: float, sigma_y: float, modulus: float,
     return CrushCurve(np.array(d), np.array(f), float(crushed + comp * fl.max()), fl, area, rho, stroke)
 
 
+# ---- contact: a curved face against a wall, a pole or a ball -------------------------------
+
+@dataclass
+class Columns:
+    """A core as columns along the hit (contact_columns): per distinct
+    column its cells' relative density from the struck face inwards (padded
+    with nan), how far behind the first touch its face starts (`depth`,
+    mm, the striker's own shape included), and the area it stands for."""
+    rho: np.ndarray            # (n, cells)
+    depth: np.ndarray          # (n,)
+    area: np.ndarray           # (n,) mm^2
+    pitch: float
+
+
+def contact_columns(inside, rho, pitch: float, axis: int = 2, side: str = "+", striker: dict | None = None,
+                    lo=None, field=None) -> Columns:
+    """The voxel core cut into columns along `axis`, read from the struck
+    side ("+": the striker comes from the high end of the axis). A column is
+    the first unbroken run of cells behind its own face: what lies between
+    the striker and whatever backs the core there (the anvil). `striker`:
+    None or {"shape": "flat"} for a wall; {"shape": "sphere", "radius"} or
+    {"shape": "cylinder", "radius", "along": axis} (a ball, a pole or a
+    rounded edge), centred where the core is touched first, or `at`
+    [.., ..] in the two other axes' coordinates (`lo`: the grid's corner).
+    `field`: the envelope's own field at the cell centres (negative
+    inside): each column's face is then put where the field crosses zero
+    between its first cell and the one outside it, not on the cell's edge
+    (a round face read on cell edges touches in steps, a whole ring of
+    columns at a time). Columns with the same cells and depth are merged."""
+    inside = np.asarray(inside, bool)
+    rho = np.broadcast_to(np.asarray(rho, float), inside.shape)
+    other = [i for i in range(3) if i != axis]
+    ins = np.moveaxis(inside, axis, 2)
+    rr = np.moveaxis(rho, axis, 2)
+    if side == "+":
+        ins, rr = ins[:, :, ::-1], rr[:, :, ::-1]
+    elif side != "-":
+        raise ValueError("striker.side is '+' or '-': the end of the axis the hit comes from")
+    nz = ins.shape[2]
+    has = ins.any(axis=2)
+    if not has.any():
+        raise ValueError("the envelope holds no cell on this grid")
+    k0 = np.argmax(ins, axis=2)
+    # the first unbroken run: its length is where the column first leaves the core
+    after = ~ins & (np.arange(nz)[None, None, :] >= k0[:, :, None])
+    k1 = np.where(after.any(axis=2), np.argmax(after, axis=2), nz)
+    face = k0 * pitch
+    if field is not None:
+        ff = np.moveaxis(np.asarray(field, float), axis, 2)
+        if side == "+":
+            ff = ff[:, :, ::-1]
+        ia_, ib_ = np.nonzero(has & (k0 > 0))
+        f_in = ff[ia_, ib_, k0[ia_, ib_]]
+        f_out = ff[ia_, ib_, k0[ia_, ib_] - 1]
+        # from the first cell's centre out to the zero crossing, less the half cell already counted
+        t = np.clip(f_in / np.minimum(f_in - f_out, -1e-12), 0.0, 1.0)
+        face = face.astype(float)
+        face[ia_, ib_] += (0.5 - t) * pitch
+    depth = face - face[has].min()
+    st = striker or {}
+    shape = st.get("shape", "flat")
+    if shape != "flat":
+        r = float(st.get("radius", 0.0))
+        if r <= 0:
+            raise ValueError("striker.radius (mm) is needed for a sphere or a cylinder")
+        ua = (np.arange(ins.shape[0]) + 0.5) * pitch
+        ub = (np.arange(ins.shape[1]) + 0.5) * pitch
+        ga, gb = np.meshgrid(ua, ub, indexing="ij")
+        if st.get("at") is not None:
+            base = np.zeros(3) if lo is None else np.asarray(lo, float)
+            ca, cb = float(st["at"][0]) - base[other[0]], float(st["at"][1]) - base[other[1]]
+        else:
+            first = has & (depth <= depth[has].min() + 1e-9)
+            ca, cb = float(ga[first].mean()), float(gb[first].mean())
+        if shape == "sphere":
+            d2 = (ga - ca) ** 2 + (gb - cb) ** 2
+        elif shape == "cylinder":
+            along = "xyz".index(st.get("along", "xyz"[other[1]]))
+            if along == axis:
+                raise ValueError("striker.along is the cylinder's axis, across the hit: not the crush axis")
+            d2 = (ga - ca) ** 2 if along == other[1] else (gb - cb) ** 2
+        else:
+            raise ValueError("striker.shape is flat, sphere or cylinder")
+        # how far the striker's face has fallen away from its tip there (never touching past its radius)
+        gap = np.where(d2 < r * r, r - np.sqrt(np.maximum(r * r - d2, 0.0)), np.inf)
+        depth = depth + gap
+        depth = depth - depth[has].min()
+    has &= np.isfinite(depth)
+    ia, ib = np.nonzero(has)
+    n = (k1 - k0)[ia, ib]
+    cells = np.full((len(ia), int(n.max())), np.nan)
+    for j in range(cells.shape[1]):
+        m = n > j
+        cells[m, j] = rr[ia[m], ib[m], k0[ia[m], ib[m]] + j]
+    key = np.column_stack([np.round(depth[ia, ib], 6), np.round(np.nan_to_num(cells, nan=-1.0), 5)])
+    _, idx, cnt = np.unique(key, axis=0, return_index=True, return_counts=True)
+    return Columns(cells[idx], depth[ia, ib][idx], cnt * pitch ** 2, float(pitch))
+
+
+def contact_curve(kind: str, cols: Columns, sigma_y: float, modulus: float,
+                  alpha: float = DENSIFICATION_ALPHA, points: int = 160, rho=None) -> CrushCurve:
+    """Force against the striker's travel for a core it meets on a curved
+    face, or with a curved face of its own (a round tyre against a wall, a
+    pad against a pole): columns in parallel, cells in series in each.
+
+    A crushing foam does not spread load sideways (its plastic Poisson's
+    ratio is about nil), so each column along the hit is squeezed by what
+    the striker has travelled past its own face, w = d - depth, and no more:
+    material the striker has not reached carries nothing. Within a column
+    every cell carries the column's stress; the cell with the lowest plateau
+    crushes first, through its densification strain, then the next (the
+    layer model, per column), with the elastic give of the whole column in
+    series. Past its last cell's stroke a column is solid: its stress climbs
+    with the solid's modulus over the solid height left. The force is the
+    sum over the columns touched. For a flat-ended prism this is the layer
+    model exactly; for a round face the force grows with the contact patch,
+    sigma_pl A(d), where the layer model ran the crush front ahead of the
+    striker by 1 / eps_D and read the force that much early.
+
+    `rho` replaces the columns' own densities (same shape). `stroke` is
+    where the first column has every cell locked; the curve runs on past it
+    (that column a solid, the rest still crushing) to where it could give no
+    more. layer_area holds the contact area and layer_stroke the share of it
+    locked, at each d."""
+    r = cols.rho if rho is None else np.asarray(rho, float)
+    live = np.isfinite(r)
+    rz = np.where(live, r, 1.0)
+    h = cols.pitch
+    sig = np.where(live, plateau_stress(kind, rz, sigma_y), np.inf)
+    stroke = np.where(live, densification_strain(rz, alpha) * h, 0.0)
+    comp = np.where(live, h / np.maximum(modulus * sheet_modulus(_base(kind), rz), 1e-12), 0.0).sum(axis=1)
+    solid = np.where(live, h - stroke, 0.0).sum(axis=1)                  # height once every cell has locked
+    length = live.sum(axis=1) * h
+    order = np.argsort(sig, axis=1, kind="stable")
+    sig = np.take_along_axis(sig, order, axis=1)
+    stroke = np.take_along_axis(stroke, order, axis=1)
+    before = np.cumsum(stroke, axis=1) - stroke                         # crushed before each cell starts
+    total = stroke.sum(axis=1)
+    top = np.where(np.isfinite(sig), sig, -np.inf).max(axis=1)
+    # the striker stops at the first column squeezed down to its solid
+    d_end = float(np.min(cols.depth + total + comp * top + 0.98 * np.maximum(solid - comp * top, 0.0)))
+    d_end = min(d_end, float(np.min(cols.depth + 0.999 * length)))
+    dd = np.unique(np.concatenate([np.linspace(0.0, d_end, points), np.minimum(cols.depth, d_end)]))
+    f = np.zeros(len(dd))
+    touch = np.zeros(len(dd))
+    dense = np.zeros(len(dd))
+    for i, d in enumerate(dd):
+        w = d - cols.depth
+        on = w > 0
+        if not on.any():
+            continue
+        ww = w[on]
+        cand = np.minimum(sig[on], (ww[:, None] - before[on]) / np.maximum(comp[on], 1e-12)[:, None])
+        st = np.maximum(cand.max(axis=1), 0.0)
+        over = np.maximum(ww - total[on] - comp[on] * top[on], 0.0)
+        st = st + modulus * over / np.maximum(solid[on], 1e-9)
+        f[i] = float(st @ cols.area[on])
+        touch[i] = float(cols.area[on].sum())
+        dense[i] = float(cols.area[on][over > 0].sum()) / max(touch[i], 1e-12)
+    lock = float(np.min(cols.depth + total + comp * top))             # the first column down to solid
+    return CrushCurve(dd, f, min(lock, d_end), f, touch, np.zeros(len(dd)), dense)
+
+
+def grade_for_contact(kind: str, layers: Columns, n_layers: int, sigma_y: float, modulus: float, energy: float,
+                      force_limit: float | None = None, rho_min: float = 0.12, rho_max: float = 0.5,
+                      reserve: float = 1.25, alpha: float = DENSIFICATION_ALPHA, steps: int = 9,
+                      candidates=None) -> dict:
+    """Density per layer along the hit for the gentlest stop of `energy`
+    (N mm) on a curved contact (contact_curve). `layers`: the core's columns
+    with each cell's layer index (from the struck end) in place of its
+    density. With a contact patch that grows as the striker comes in, no
+    grading makes the force flat (a column's weakest cell crushes first,
+    so its stress only ever rises), and the layer rule (every layer at the
+    same force) does not apply; what is left to choose is how soft the
+    core is and how that changes from the struck face to the back. Every
+    straight-line grade between rho_min and rho_max (`steps` each way; the
+    uniform cores among them, then a finer pass round the best) is tried,
+    with any `candidates` (density tables per layer, e.g. the layer rule's
+    own, which is the answer when the contact is flat), and the one with the lowest peak
+    force that stops `reserve` x the energy before its first column locks
+    solid is kept. `ok` is false if none does, or its peak passes
+    `force_limit`."""
+    idx = np.where(np.isfinite(layers.rho), layers.rho, 0).astype(int)
+    live = np.isfinite(layers.rho)
+    used = np.unique(idx[live])
+    z0, z1 = float(used.min()), float(max(used.max(), used.min() + 1))
+    best, best_any = None, None
+
+    def try_(table):
+        nonlocal best, best_any
+        table = np.clip(np.asarray(table, float), rho_min, rho_max)
+        cv = contact_curve(kind, layers, sigma_y, modulus, alpha, rho=np.where(live, table[idx], np.nan))
+        resp = impact_response(cv, energy)
+        if resp["peakForce"] is None:
+            return
+        row = (resp["peakForce"], table, cv, resp)
+        if best_any is None or row[0] < best_any[0]:
+            best_any = row
+        if cv.energy(cv.stroke) >= reserve * energy and (best is None or row[0] < best[0]):
+            best = row
+
+    def line(ra, rb):
+        return ra + (rb - ra) * (np.arange(n_layers) - z0) / (z1 - z0)
+
+    for t in candidates or ():
+        try_(t)
+    grid = np.linspace(rho_min, rho_max, steps)
+    for ra in grid:
+        for rb in grid:
+            try_(line(ra, rb))
+    # a second, finer pass round the best line found
+    seed = best or best_any
+    if seed is not None:
+        t = seed[1]
+        a0, b0 = float(t[int(z0)]), float(t[min(int(z1), n_layers - 1)])
+        step = (rho_max - rho_min) / max(steps - 1, 1)
+        for ra in np.linspace(a0 - step, a0 + step, 9):
+            for rb in np.linspace(b0 - step, b0 + step, 9):
+                try_(line(ra, rb))
+    ok = best is not None
+    peak, table, cv, resp = best if ok else (best_any or (None, np.full(n_layers, rho_max), None, None))
+    if cv is None:
+        cv = contact_curve(kind, layers, sigma_y, modulus, alpha, rho=np.where(live, rho_max, np.nan))
+        resp = impact_response(cv, energy)
+    if force_limit is not None and (resp["peakForce"] is None or resp["peakForce"] > force_limit):
+        ok = False
+    w = np.array([float((layers.area[:, None] * ((idx == k) & live)).sum()) for k in range(n_layers)])
+    return {"ok": ok, "force": float(peak) if peak is not None else None, "rho": table, "curve": cv,
+            "response": resp, "meanRho": float(np.sum(table * w) / max(np.sum(w), 1e-12)), "layerArea": w}
+
+
 def impact_response(curve: CrushCurve, energy: float, mass: float | None = None) -> dict:
     """Where a mass carrying `energy` (N mm) stops on the curve: crush
     distance, peak force and (with `mass`, kg) peak deceleration in g. If
@@ -499,7 +730,7 @@ def limit_load(mesh, modulus, strength, nu: float, fixed, force, iters: int = 15
 
 # ---- field graphs -------------------------------------------------------------------------
 
-def sample_core(graph, envelope: str, density=None, pitch: float = 0.5, bounds=None):
+def sample_core(graph, envelope: str, density=None, pitch: float = 0.5, bounds=None, with_field: bool = False):
     """Voxel samples of a field graph's lattice core: (inside, rho, lo, pitch)
     with `inside` the cells whose centres are inside the `envelope` solid
     and rho the `density` field there (a number, a node name, or None for
@@ -511,13 +742,16 @@ def sample_core(graph, envelope: str, density=None, pitch: float = 0.5, bounds=N
     dims = np.maximum(np.ceil((hi - lo) / pitch).astype(int), 1)
     axes = [lo[i] + (np.arange(dims[i]) + 0.5) * pitch for i in range(3)]
     P = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
-    inside = (graph.evaluate(P, envelope) < 0).reshape(tuple(dims))
+    phi = np.asarray(graph.evaluate(P, envelope), float).reshape(tuple(dims))
+    inside = phi < 0
     if density is None:
         rho = np.ones(inside.shape)
     elif isinstance(density, (int, float)):
         rho = np.full(inside.shape, float(density))
     else:
         rho = np.broadcast_to(np.asarray(graph.evaluate(P, density), float), (len(P),)).reshape(tuple(dims))
+    if with_field:
+        return inside, np.clip(rho, 0.0, 1.0), lo, pitch, phi
     return inside, np.clip(rho, 0.0, 1.0), lo, pitch
 
 
@@ -535,7 +769,7 @@ def impact_report(graph, spec: dict, material) -> dict:
     kind = spec.get("lattice", "gyroid")
     axis = "xyz".index(spec.get("axis", "z"))
     pitch = float(spec.get("pitch", 0.5))
-    inside, rho, lo, h = sample_core(graph, spec["envelope"], spec.get("density"), pitch)
+    inside, rho, lo, h, phi = sample_core(graph, spec["envelope"], spec.get("density"), pitch, with_field=True)
     law, sy = crush_law(kind, material)
     E = float(material.E)
     other = tuple(i for i in range(3) if i != axis)
@@ -544,7 +778,22 @@ def impact_report(graph, spec: dict, material) -> dict:
     energy = _energy(spec)
     mass = spec.get("mass")
     flim = spec.get("forceLimit")
-    cv = crush_curve(law, area, mean, h, sy, E, layer_force=lf)
+    striker = spec.get("striker")
+    cols = None
+    if striker is not None:
+        # what it hits and from which side: the core as columns under the
+        # contact (contact_curve), not as layers that each carry the whole load
+        if not isinstance(striker, dict):
+            raise ValueError("impact.striker is {side: '+' | '-', shape: flat | sphere | cylinder, radius, along, at}")
+        side = striker.get("side", "+")
+        cols = contact_columns(inside, rho, h, axis, side, striker, lo, field=phi)
+
+    def curve_at(sy_, e_, fac=1.0):
+        if cols is not None:
+            return contact_curve(law, cols, sy_, e_)
+        return crush_curve(law, area, mean, h, sy_, e_, layer_force=lf * fac)
+
+    cv = curve_at(sy, E)
     resp = impact_response(cv, energy, mass)
     rate = None
     if law.endswith(":elastic") and mass and spec.get("rate", True):
@@ -558,7 +807,7 @@ def impact_report(graph, spec: dict, material) -> dict:
             for _ in range(4):
                 t = 2.0 * float(resp["crush"]) * 1e-3 / v
                 fac = float(event_factor(material, t))
-                cv = crush_curve(law, area, mean, h, sy * fac, E * fac, layer_force=lf * fac)
+                cv = curve_at(sy * fac, E * fac, fac)
                 resp = impact_response(cv, energy, mass)
             sy, E = sy * fac, E * fac
             rate = {"eventSeconds": round(t, 4), "stiffening": round(fac, 3)}
@@ -569,6 +818,12 @@ def impact_report(graph, spec: dict, material) -> dict:
            "response": resp, "curve": cv.to_dict()}
     if rate:
         out["rate"] = rate
+    if cols is not None:
+        d_stop = float(resp["crush"])
+        out["contact"] = {"model": "columns", "side": striker.get("side", "+"), "striker": striker.get("shape", "flat"),
+                          "area": round(float(np.interp(d_stop, cv.d, cv.layer_area)), 1),
+                          "lockedShare": round(float(np.interp(d_stop, cv.d, cv.layer_stroke)), 3),
+                          "firstLockAt": round(float(cv.stroke), 3)}
     if law.endswith(":elastic"):
         # an elastomer core springs back: only its hysteresis is dissipated
         hy = HYSTERESIS.get(material.name, 0.3)
@@ -583,19 +838,36 @@ def impact_report(graph, spec: dict, material) -> dict:
             # the thinnest printable wall sets the lowest density at this cell
             rho_min = max(rho_min, float(relative_density(kind, float(spec.get("minWall", 0.8)),
                                                           float(spec["cell"]))))
-        g = grade_for_impact(law, area, h, sy, E, energy, flim, rho_min, float(spec.get("rhoMax", 0.5)))
         z = lo[axis] + (np.arange(len(area)) + 0.5) * h
         keep = area > 0
+        if cols is not None:
+            # layer index of every cell, from the struck end, in place of its density
+            n_l = inside.shape[axis]
+            shp = [1, 1, 1]
+            shp[axis] = n_l
+            k_idx = np.arange(n_l)[::-1] if striker.get("side", "+") == "+" else np.arange(n_l)
+            lay = contact_columns(inside, np.broadcast_to(k_idx.reshape(shp).astype(float), inside.shape), h, axis,
+                                  striker.get("side", "+"), striker, lo, field=phi)
+            g0 = grade_for_impact(law, area, h, sy, E, energy, flim, rho_min, float(spec.get("rhoMax", 0.5)))
+            g = grade_for_contact(law, lay, n_l, sy, E, energy, flim, rho_min, float(spec.get("rhoMax", 0.5)),
+                                  candidates=[g0["rho"][k_idx]])
+            g["rho"] = g["rho"][k_idx]                    # back to the grid's own order along the axis
+        else:
+            g = grade_for_impact(law, area, h, sy, E, energy, flim, rho_min, float(spec.get("rhoMax", 0.5)))
         zs, rs = z[keep], g["rho"][keep]
         # thin the table to every ~1 mm (the field is linear in between)
         step = max(1, int(round(1.0 / h)))
         idx = np.unique(np.r_[np.arange(0, len(zs), step), len(zs) - 1])
         gm = float((g["rho"] * area).sum() * h * material.density / 1000.0)
         # the fair comparison: a uniform core of the same mass
-        cu = crush_curve(law, area, g["meanRho"], h, sy, E)
+        if cols is not None:
+            cu = contact_curve(law, cols, sy, E, rho=np.where(np.isfinite(cols.rho), g["meanRho"], np.nan))
+        else:
+            cu = crush_curve(law, area, g["meanRho"], h, sy, E)
         out["uniformSameMass"] = {"density": round(g["meanRho"], 4), "response": impact_response(cu, energy, mass),
                                   "curve": cu.to_dict()}
-        out["graded"] = {"ok": g["ok"], "plateauForce": round(g["force"], 1), "coreMass": round(gm, 2),
+        out["graded"] = {"ok": g["ok"], "plateauForce": None if g["force"] is None else round(g["force"], 1),
+                         "coreMass": round(gm, 2),
                          "rhoMin": round(rho_min, 4),
                          "response": impact_response(g["curve"], energy, mass), "curve": g["curve"].to_dict(),
                          "density": {"op": "remap", "input": {"op": "coordinate", "axis": "xyz"[axis]},

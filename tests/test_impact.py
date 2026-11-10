@@ -309,6 +309,91 @@ def test_viscoelastic_factors():
     assert approx(shock_margin("gyroid", [0.25, 0.3], 26.0, 24.0, [10.0, 10.0], rate=1.4), 1.4 * base)
 
 
+def _cap_grid(R=20.0, L=30.0, h=0.5):
+    """A half cylinder (axis along y, round side up) on a grid: inside, its field, the grid corner."""
+    lo = np.array([-R - 1.0, 0.0, 0.0])
+    n = (int((2 * R + 2) / h), int(L / h), int((R + 1) / h))
+    x, _, z = np.meshgrid(*[lo[i] + (np.arange(n[i]) + 0.5) * h for i in range(3)], indexing="ij")
+    phi = np.sqrt(x * x + z * z) - R
+    return phi < 0, phi, lo
+
+
+def test_round_cap_against_a_wall_grows_with_the_contact_patch():
+    # a half-cylinder tyre meets a flat wall on a line: F = sigma_pl x chord x length,
+    # chord = 2 sqrt(2 R d - d^2), while nothing has locked
+    from loadpath.impact import contact_columns, contact_curve
+
+    R, L, h, rho, sy, E = 20.0, 30.0, 0.5, 0.2, 40.0, 1700.0
+    inside, phi, lo = _cap_grid(R, L, h)
+    cols = contact_columns(inside, rho, h, 2, "+", None, lo, field=phi)
+    cv = contact_curve("gyroid", cols, sy, 1e3 * E)            # stiff walls: every touched column on its plateau
+    soft = contact_curve("gyroid", cols, sy, E)
+    sp = float(plateau_stress("gyroid", rho, sy))
+    for d in (1.0, 2.0, 4.0):
+        want = sp * 2.0 * np.sqrt(2 * R * d - d * d) * L
+        assert approx(float(np.interp(d, cv.d, cv.f)), want, rel=0.05), d
+        assert approx(float(np.interp(d, cv.d, cv.layer_area)), want / sp, rel=0.05), d
+        # with the real modulus the columns just touched are still on their elastic ramp
+        assert 0.75 * want < float(np.interp(d, soft.d, soft.f)) < float(np.interp(d, cv.d, cv.f))
+
+
+def test_ball_and_pole_on_a_flat_pad():
+    from loadpath.impact import contact_columns, contact_curve
+
+    h, rho, sy, E, R = 0.5, 0.2, 40.0, 1700.0, 25.0
+    inside = np.ones((80, 80, 40), bool)                       # 40 x 40 x 20 mm pad
+    sp = float(plateau_stress("gyroid", rho, sy))
+    E = 1e3 * E                                                # stiff walls: plateau on all that is touched
+    ball = contact_curve("gyroid", contact_columns(inside, rho, h, 2, "+", {"shape": "sphere", "radius": R}), sy, E)
+    pole = contact_curve("gyroid", contact_columns(inside, rho, h, 2, "+",
+                                                   {"shape": "cylinder", "radius": R, "along": "y"}), sy, E)
+    for d in (1.0, 2.0, 3.0):
+        assert approx(float(np.interp(d, ball.d, ball.f)), sp * np.pi * (2 * R * d - d * d), rel=0.06), d
+        assert approx(float(np.interp(d, pole.d, pole.f)), sp * 2 * np.sqrt(2 * R * d - d * d) * 40.0, rel=0.06), d
+    # a flat striker on the same pad is the layer model
+    flat = contact_curve("gyroid", contact_columns(inside, rho, h, 2, "+", None), sy, E)
+    lay = crush_curve("gyroid", np.full(40, 1600.0), rho, h, sy, E)
+    e = 0.5 * lay.energy(lay.stroke)
+    a, b = impact_response(flat, e), impact_response(lay, e)
+    assert approx(a["peakForce"], b["peakForce"], rel=0.01) and approx(a["crush"], b["crush"], rel=0.02), (a, b)
+
+
+def test_field_graph_striker_block():
+    from loadpath.fields import FieldGraph
+    from loadpath.impact import impact_report
+    from loadpath.materials import material_from_spec
+
+    # a domed pad (a ball's cap on a block) dropped dome first onto a floor
+    doc = {"nodes": {"pad": {"op": "expr", "expr": "max(sqrt(x*x + y*y + (z - 0)*(z - 0)) - 20, -z)",
+                             "bounds": {"min": [-21, -21, 0], "max": [21, 21, 21]}},
+                     "rho": {"op": "constant", "value": 0.25}},
+           "material": "pa12"}
+    g = FieldGraph(doc)
+    mat = material_from_spec("pa12")
+    spec = {"envelope": "pad", "density": "rho", "energy": 3.0, "pitch": 0.5, "grade": True}
+    lay = impact_report(g, spec, mat)
+    r = impact_report(g, {**spec, "striker": {"side": "+"}}, mat)
+    c = r["contact"]
+    assert c["model"] == "columns" and c["striker"] == "flat"
+    # the force is the plateau on the patch the floor has reached: pi (2 R d - d^2)
+    d = r["response"]["crush"]
+    sp = float(plateau_stress("gyroid", 0.25, mat.strength))
+    assert approx(c["area"], np.pi * (2 * 20 * d - d * d), rel=0.08), c
+    # ... less the rim of the patch, still on its elastic ramp
+    assert 0.75 * sp * c["area"] < r["response"]["peakForce"] <= sp * c["area"] * 1.001
+    # the layer model crushed the dome's tip ahead of the floor and stopped the hit in less travel
+    assert lay["response"]["crush"] < d
+    # the grade found is no worse than the same mass spread evenly, and comes back as a table
+    gr = r["graded"]
+    assert gr["response"]["peakForce"] <= r["uniformSameMass"]["response"]["peakForce"] * 1.001
+    assert gr["density"]["op"] == "remap" and len(gr["density"]["from"]) == len(gr["density"]["to"])
+    try:
+        impact_report(g, {**spec, "striker": {"shape": "sphere"}}, mat)
+        raise AssertionError("a ball needs a radius")
+    except ValueError:
+        pass
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 
