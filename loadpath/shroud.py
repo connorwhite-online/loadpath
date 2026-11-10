@@ -456,6 +456,10 @@ def expand_shroud(d: dict, base_dir: str | None = None, emit=None) -> dict:
     seed_d.pop("shroud")
     seed_d.pop("lattice", None)
     seed_d.pop("split", None)
+    # the seed is the load paths alone: blocks that design round a skin
+    # (cooling, feel, switch) come back on the expanded study
+    for k in ("cooling", "feel", "switch"):
+        seed_d.pop(k, None)
     key = _key({"study": seed_d, "shroud": {**opts, "openings": None}, "base": str(base_dir or "")})
     cache = _cache_dir()
     npz = cache / f"envelope-{key}.npz"

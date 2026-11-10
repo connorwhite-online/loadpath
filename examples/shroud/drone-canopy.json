@@ -1,0 +1,40 @@
+{
+  "name": "drone-canopy",
+  "description": "A 5-inch drone's canopy, generated: no drawn exterior, only the room over the frame. It carries a 4S battery (60 x 31 x 30 mm), a VTX, a 19 mm camera looking forward through a window, and a receiver, on four frame posts. `shroud` grows a 1.2 mm PA12 skin over the stack, clear of every part by 1 mm, open at the camera's window and the posts' screws, and designs what is under it for a crash on its nose and a 3 g hard landing. The cooling block puts prop wash on the skin (skin.airflow) for `loadpath cooling` on the expanded study.",
+  "designSpace": {"type": "box", "min": [-48, -30, 0], "max": [48, 30, 46]},
+  "preserve": [
+    {"id": "post-fl", "shape": {"type": "cylinder", "center": [30, 20, 3], "axis": "z", "length": 6, "r": 4.5}},
+    {"id": "post-fr", "shape": {"type": "cylinder", "center": [30, -20, 3], "axis": "z", "length": 6, "r": 4.5}},
+    {"id": "post-bl", "shape": {"type": "cylinder", "center": [-30, 20, 3], "axis": "z", "length": 6, "r": 4.5}},
+    {"id": "post-br", "shape": {"type": "cylinder", "center": [-30, -20, 3], "axis": "z", "length": 6, "r": 4.5}}
+  ],
+  "keepOut": [
+    {"id": "screw-fl", "shape": {"type": "cylinder", "center": [30, 20, 3], "axis": "z", "length": 10, "r": 1.6}},
+    {"id": "screw-fr", "shape": {"type": "cylinder", "center": [30, -20, 3], "axis": "z", "length": 10, "r": 1.6}},
+    {"id": "screw-bl", "shape": {"type": "cylinder", "center": [-30, 20, 3], "axis": "z", "length": 10, "r": 1.6}},
+    {"id": "screw-br", "shape": {"type": "cylinder", "center": [-30, -20, 3], "axis": "z", "length": 10, "r": 1.6}},
+    {"id": "frame", "bore": false, "shape": {"type": "box", "min": [-60, -40, -10], "max": [60, 40, 0]}},
+    {"id": "battery", "bore": false, "shape": {"type": "box", "min": [-30, -15.5, 8], "max": [30, 15.5, 38]}},
+    {"id": "vtx", "bore": false, "shape": {"type": "box", "min": [-44, -10, 4], "max": [-32, 10, 12]}},
+    {"id": "camera", "bore": false, "shape": {"type": "box", "min": [32, -9.5, 8], "max": [44, 9.5, 27]}},
+    {"id": "rx", "bore": false, "shape": {"type": "box", "min": [-44, -8, 14], "max": [-34, 8, 20]}},
+    {"id": "camera-window", "shape": {"type": "cylinder", "p0": [40, 0, 17.5], "p1": [52, 0, 17.5], "r": 7}}
+  ],
+  "shroud": {"thickness": 1.2, "reach": 10, "smooth": 6, "gap": 1.0,
+             "conceal": ["battery", "vtx", "camera", "rx"]},
+  "supports": [{"region": "screw-fl"}, {"region": "screw-fr"}, {"region": "screw-bl"}, {"region": "screw-br"}],
+  "loadCases": [
+    {"name": "nose-crash", "loads": [{"shape": {"type": "box", "min": [40, -12, 30], "max": [48, 12, 40]}, "force": [-60, 0, -20]}]},
+    {"name": "hard-landing", "loads": [{"shape": {"type": "box", "min": [-20, -12, 38], "max": [20, 12, 46]}, "force": [0, 0, -40]}]}
+  ],
+  "cooling": {
+    "ambient": 30,
+    "components": [{"region": "vtx", "watts": 4.0, "maxTemp": 85}, {"region": "battery", "maxTemp": 60}],
+    "skin": {"maxTemp": 60, "airflow": {"speed": 8.0, "length": 90}}
+  },
+  "material": "pa12",
+  "process": "sls",
+  "goal": {"safetyFactor": 2.0},
+  "minMember": 2.0,
+  "resolution": {"pitch": 1.0}
+}

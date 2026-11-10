@@ -148,6 +148,34 @@ def test_write_shroud():
         assert m.is_watertight
 
 
+def test_drone_canopy():
+    """The drone canopy example: battery, VTX, camera and RX inside with the
+    skin and gap clear of them, the camera window open through the skin and
+    the cooling block still meaningful on the expanded study."""
+    d = json.loads((ROOT / "examples" / "shroud" / "drone-canopy.json").read_text())
+    assert not [i for i in lint(d, "study") if i["level"] == "error"]
+    d["resolution"] = {"pitch": 2.0}
+    d["shroud"].update({"seedCells": 4000, "seedIterations": 20, "rounds": 2})
+    x = expand_shroud(d, str(ROOT / "examples" / "shroud"))
+    env = GridSDF.load(x["_shroud"]["path"])
+    t, gap = d["shroud"]["thickness"], d["shroud"]["gap"]
+    boxes = {r["id"]: r["shape"] for r in d["keepOut"] if r["id"] in d["shroud"]["conceal"]}
+    for rid, b in boxes.items():
+        lo, hi = np.array(b["min"], float), np.array(b["max"], float)
+        corners = np.array([[(lo, hi)[i >> k & 1][k] for k in range(3)] for i in range(8)])
+        # the floor side sits on the frame; the rest keeps skin and gap clear
+        top = corners[corners[:, 2] > lo[2] + 1e-9]
+        sd = env.sdf(top)
+        assert np.all(sd < 0), (rid, sd)
+        assert np.all(sd <= -(t + gap) + 1.0), (rid, sd)
+    st = study_from_dict(copy.deepcopy(x), str(ROOT / "examples" / "shroud"))
+    dom = build_domain(st)
+    c = dom.mesh.elem_centers()
+    win = (np.linalg.norm(c[:, [1, 2]] - [0, 17.5], axis=1) < 5) & (c[:, 0] > 42)
+    assert not (dom.preserve & win).any(), "the camera window must open through the skin"
+    assert (st.raw or {}).get("cooling", {}).get("components"), "cooling must survive the expansion"
+
+
 if __name__ == "__main__":
     tests = [(k, v) for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
