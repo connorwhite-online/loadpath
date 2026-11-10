@@ -317,7 +317,11 @@ def _margin(study: Study, report: dict) -> float | None:
         # f = sqrt(k / m) / 2 pi: with carried masses the mass barely moves
         # with the fraction and k roughly follows it, so the fraction needed
         # goes as the frequency squared
-        ms.append((vib["firstFrequency"] / vib["minFrequency"]) ** 2)
+        if vib.get("minFrequency") is not None:
+            ms.append((vib["firstFrequency"] / vib["minFrequency"]) ** 2)
+        # excitation bands: the lowest mode a forcing finds has to climb past
+        # the band's top (modal.band_response)
+        ms.extend(r["margin"] for r in vib.get("excitations") or [])
     warp = report.get("warp")
     if warp:
         # buildSim warp limits: the build of the delivered part when it was

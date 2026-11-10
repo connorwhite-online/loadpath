@@ -420,23 +420,45 @@ _GOAL = {
 
 _VIBRATION = {
     "type": "object",
-    "description": "The part's natural frequencies, held above a floor (nTop's natural frequency constraint): "
-                   "the delivered part's first mode, clamped at the supports, with the carried masses, must "
-                   "reach minFrequency. The search counts it with the safety factor and deflection; with masses, "
-                   "the optimizer also stiffens the part against them shaken along each axis (inertial load "
-                   "cases). Needs safetyFactor or maxDeflection in the goal.",
+    "description": "The part's natural frequencies (nTop's natural frequency constraint, and past it): the "
+                   "delivered part's modes, clamped at the supports (free-free with inertiaRelief), with the "
+                   "carried masses, at the part's own temperature when the study has a thermal block (a warm "
+                   "polymer is softer and rings lower). minFrequency is a floor on the first mode; excitations "
+                   "are bands of forcing (a rotor's once-per-rev and blade-pass lines over the throttle range) "
+                   "that no mode may sit in. The search counts both with the safety factor and deflection; "
+                   "with masses, the optimizer also stiffens the part against them shaken along each axis "
+                   "(inertial load cases). Needs safetyFactor or maxDeflection in the goal.",
     "properties": {
         "minFrequency": {**_POS, "description": "Hz the first natural frequency must reach"},
+        "excitations": {"type": "array", "items": {
+            "type": "object",
+            "description": "A forcing that sweeps a band of frequency: every mode inside it is driven at "
+                           "resonance at some speed (magnified 1 / loss factor of the material), and a mode "
+                           "just outside is still magnified 1 / |1 - (f / f_n)^2| at the band's edge. The "
+                           "report gives, per excitation, the modes in the band and the worst magnification "
+                           "of any mode (report.vibration.excitations).",
+            "properties": {
+                "name": {"type": "string"},
+                "band": {"type": "array", "items": _POS, "minItems": 2, "maxItems": 2,
+                         "description": "[lo, hi] Hz the forcing sweeps"},
+                "maxAmplification": {"type": "number", "exclusiveMinimum": 1,
+                                     "description": "the most any mode may magnify this forcing over its static "
+                                                    "response; widens the band on both sides by the distance "
+                                                    "that takes (3: modes kept out of 0.87 lo to 1.22 hi). "
+                                                    "Default: modes only kept out of the band itself"},
+            },
+            "required": ["band"], "additionalProperties": False}},
         "masses": {"type": "array", "items": {
             "type": "object", "description": "A carried mass (a motor, a gripper, a battery) on " + _TARGET,
             "properties": {"region": {"type": "string"}, "shape": {"$ref": "#/$defs/shape"},
                            "mass": {**_POS, "description": "kg"}},
             "x-requireOne": [["region"], ["shape"]], "required": ["mass"], "additionalProperties": False}},
-        "modes": {"type": "integer", "minimum": 1, "maximum": 20, "description": "modes reported (default 3)"},
+        "modes": {"type": "integer", "minimum": 1, "maximum": 20, "description": "modes reported (default 3; "
+                  "with excitations, as many more as it takes to reach the top of the highest band)"},
         "inOptimizer": {"type": "boolean", "description": "add the masses' inertial load cases to the optimizer "
                                                           "(default true; false: only the check)"},
     },
-    "required": ["minFrequency"],
+    "x-requireOne": [["minFrequency"], ["excitations"]],
     "additionalProperties": False,
 }
 

@@ -40,7 +40,7 @@ import scipy.sparse as sp
 
 from .fem import HexMesh, Stiffness
 
-__all__ = ["ModalResult", "modal_analysis", "transmissibility", "base_transmissibility", "LOSS_FACTOR", "loss_factor", "vibration_report"]
+__all__ = ["magnification", "band_keepout", "band_response", "ModalResult", "modal_analysis", "transmissibility", "base_transmissibility", "LOSS_FACTOR", "loss_factor", "vibration_report"]
 
 # Room-temperature loss factor (tan delta) near 10-100 Hz, typical values
 # from DMA data sheets and literature; rough (+-50%), and strongly
@@ -214,6 +214,78 @@ def transmissibility(f_forcing, f_natural, eta: float):
     sqrt(2) f_n (isolation)."""
     r2 = (np.asarray(f_forcing, float) / f_natural) ** 2
     return np.sqrt((1 + eta ** 2) / ((1 - r2) ** 2 + eta ** 2))
+
+
+def magnification(f_forcing, f_natural, eta: float):
+    """|X / X_static| of one mode driven by a force at f_forcing, with
+    structural damping (loss factor eta): 1 at rest, 1 / eta at resonance,
+    falling as (f_n / f)^2 far above it."""
+    r2 = (np.asarray(f_forcing, float) / f_natural) ** 2
+    return 1.0 / np.sqrt((1 - r2) ** 2 + eta ** 2)
+
+
+def band_keepout(lo: float, hi: float, eta: float, max_amplification: float | None = None):
+    """The natural frequencies (f_lo, f_hi) a forcing that sweeps lo..hi Hz
+    must not find. With no limit on magnification that is the band itself: a
+    mode inside it is at resonance at some speed. With one, the band widens
+    to where a mode at its edge is magnified exactly that much: from
+    1 / ((1 - r^2)^2 + eta^2) = A^2, r^2 = 1 -+ sqrt(1 / A^2 - eta^2), so a
+    mode above the band must clear hi / r_below and one below it must stay
+    under lo / r_above. None when resonance itself is within the limit
+    (A >= 1 / eta: a rubber's own damping holds it)."""
+    if max_amplification is None:
+        return float(lo), float(hi)
+    d = 1.0 / max_amplification ** 2 - eta ** 2
+    if d <= 0:
+        return None
+    d = np.sqrt(d)
+    return float(lo / np.sqrt(1.0 + d)), float(hi / np.sqrt(max(1.0 - d, 1e-12)))
+
+
+def band_response(frequencies, excitations, eta: float) -> list[dict]:
+    """Each excitation (name, lo, hi, max amplification or None) against the
+    part's modes: the modes inside the band, the worst magnification any
+    mode gives the forcing anywhere in the band (1 / eta inside it; at the
+    nearer edge outside), the frequencies kept clear (band_keepout), whether
+    the computed modes reach the top of that range (`covered`), and `margin`
+    for the search: the lowest offending mode has to climb past the range's
+    top, and with carried masses the material that takes goes as the
+    frequency squared (as the floor's margin does)."""
+    f = np.asarray(frequencies, float)
+    out = []
+    for name, lo, hi, amp in excitations:
+        keep = band_keepout(lo, hi, eta, amp)
+        row = {"name": name, "band": [lo, hi]}
+        if amp is not None:
+            row["maxAmplification"] = amp
+        # each mode's worst magnification over the band
+        edge = np.clip(f, lo, hi)                    # the forcing frequency nearest the mode
+        mag = magnification(edge, np.maximum(f, 1e-9), eta) if len(f) else np.zeros(0)
+        inside = (f >= lo) & (f <= hi)
+        row["modesInBand"] = [{"mode": int(i) + 1, "frequency": round(float(f[i]), 2)} for i in np.flatnonzero(inside)]
+        if len(f):
+            w = int(np.argmax(mag))
+            row["amplification"] = round(float(mag[w]), 2)
+            row["worstMode"] = {"mode": w + 1, "frequency": round(float(f[w]), 2)}
+        if keep is None:
+            row.update(ok=True, covered=True, margin=float("inf"),
+                       note=f"resonance itself magnifies {1.0 / eta:.1f}x, within the limit")
+            out.append(row)
+            continue
+        row["keepClear"] = [round(keep[0], 2), round(keep[1], 2)]
+        bad = (f > keep[0]) & (f < keep[1])
+        row["covered"] = bool(len(f) and f[-1] >= keep[1])
+        row["ok"] = bool(not bad.any() and row["covered"])
+        if bad.any():
+            row["margin"] = float((f[bad].min() / keep[1]) ** 2)
+        elif not row["covered"]:
+            # every computed mode is under the range and there are more above
+            # the last of them: not shown clear
+            row["margin"] = float((f[-1] / keep[1]) ** 2) if len(f) else 0.0
+        else:
+            row["margin"] = float("inf")
+        out.append(row)
+    return out
 
 
 def base_transmissibility(res: ModalResult, dofs, axis: int, freqs, eta: float, fixed=None,

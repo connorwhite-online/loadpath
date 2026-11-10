@@ -197,7 +197,16 @@ buckling, printability) you can report to the user.
    masses included. A part that carries a motor or a camera
    and must not ring: `"vibration": {"minFrequency": 60, "masses":
    [{"region": "motor-seat", "mass": 0.12}]}` (Hz, kg) holds its first
-   natural frequency with the safety factor. A link that turns:
+   natural frequency with the safety factor. When something forces it
+   over a range of speeds (a rotor's once-per-rev and blade-pass lines
+   from idle to full throttle), give the range instead of a floor:
+   `"vibration": {"excitations": [{"name": "blade pass", "band": [536,
+   1490]}]}` keeps every mode out of the band (add `"maxAmplification": 3`
+   to keep them far enough away that none magnifies the forcing more than
+   that), and the report lists the modes in each band. With a `thermal`
+   block the modes are those of the warm part (PA12 under an 80 C motor
+   keeps 45% of its stiffness); a free part (`inertiaRelief`) takes a
+   `thermal` block too. A link that turns:
    `"massProperties": {"axis": {"through": [0, 0, 0], "direction": "z"}}`
    keeps its inertia about the joint down, and every report's
    `massProperties` gives mass, centre of mass and inertia.

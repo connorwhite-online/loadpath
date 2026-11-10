@@ -504,7 +504,7 @@ PRUNE_BELOW = 1e-3
 PRUNE_PASSES = 3
 
 
-def _prune_dead(fe, domain, xp, us, loads, design, pres):
+def _prune_dead(fe, domain, xp, us, loads, design, pres, soften=None):
     """Delete dead-end material from the delivered design.
 
     Projection continuation freezes the layout once beta is high: a member
@@ -551,6 +551,8 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres):
         loose = (xp > 0.5) & ~fe._connected((xp > 0.5) | fe.anchor) & ~pres
         xp[loose] = 0.0
         e = E_MIN + xp ** PENALTY * (1 - E_MIN)
+        if soften is not None:
+            e = e * soften          # each cell's modulus at its temperature (thermal.StudyHeat.g)
         us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
     return xp, us
 
@@ -684,6 +686,25 @@ def _rigid_free_m(domain, xe, u):
     phi = _rigid_modes(domain)
     m = node_mass(domain.mesh, np.maximum(xe, 1e-3)) + _carried(domain)
     return rigid_free(u, m, phi, getattr(domain, "bodies", None) or [])
+
+
+def _relief_heat_grad(domain, heat, heat_state, xe, us, accs, layout, weights):
+    """Inertia relief under heat (thermal.StudyHeat.sensitivities): the
+    load f - M Phi a moves with the design's mass, and the objective's
+    adjoint is lam (K lam = f - 2 f_th with expansion, u without), so
+    dJ/dx_e = -(pitch^3 / 8) sum over the cell's nodes of (Phi a) . (u + lam),
+    both taken M-orthogonal to the rigid modes (the change in a drops out,
+    as in the cold case, where lam = u and this is the -2 (Phi a) . u there)."""
+    mesh = domain.mesh
+    lams = heat_state.get("lams") if heat.expands else None
+    out = np.zeros(mesh.n_elem)
+    for ci, acc in enumerate(accs):
+        i = layout[ci][0]
+        s = _rigid_free_m(domain, xe, us[i])
+        s = s + (_rigid_free_m(domain, xe, lams[ci]) if lams is not None else s)
+        au = (acc.reshape(-1, 3) * s.reshape(-1, 3)).sum(axis=1)
+        out -= weights[ci] * au[mesh.enode].sum(axis=1) * mesh.pitch ** 3 / 8.0
+    return out
 
 
 def optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should_stop=None) -> SimpResult:
@@ -905,6 +926,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if heat is not None:
             comp, case_c, dc_xp, _ = heat.sensitivities(fe, xe, rhs, us, fth, weights, domain.gravity, heat_state,
                                                         layout, spreads)
+            if accs is not None:
+                dc_xp += _relief_heat_grad(domain, heat, heat_state, xe, us, accs, layout, weights)
         for ci, wc in enumerate(collapse(rhs, layout, us, spreads) if heat is None else ()):
             # the worst direction's sensitivity is its own (envelope theorem),
             # softened over near-ties (directions.SMOOTH)
@@ -1253,13 +1276,26 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         from .domain import gravity_force
         fg = gravity_force(mesh, xp, domain.gravity, domain.fixed)
     fth = None
+    fg0 = fg
     if heat is not None:
         fg, fth = _heat_state(heat, xp, fg)
         e = e * heat.g
     loads, layout = expand(_relieved(domain, xp)[0], spreads, fg)
     us = fe.solve(e, xp, us, rtol=1e-6, loads=loads)
     if opts.prune:
-        xp, us = _prune_dead(fe, domain, xp, us, loads, design, pres)
+        if fth is not None:
+            # dead ends are judged by what the loads put through them. The
+            # displacements under heat carry the free expansion too, whose
+            # strain is no stress: a hot seat growing freely read thousands
+            # of times the energy of the members that carry the load, and
+            # the pruning took the whole design for dead (a free part with
+            # a 80 C motor seat came back empty). So: the loads alone, at
+            # the warm moduli.
+            loads_p, _ = expand(_relieved(domain, xp)[0], spreads, fg0)
+            us_p = fe.solve(e, xp, [None] * len(loads_p), rtol=1e-6, loads=loads_p)
+            xp, _ = _prune_dead(fe, domain, xp, us_p, loads_p, design, pres, heat.g)
+        else:
+            xp, us = _prune_dead(fe, domain, xp, us, loads, design, pres, None if heat is None else heat.g)
         if opts.access is not None:
             # pruning a dead end can leave a void under material: refill
             xq = _machined(domain, xp, opts.access)

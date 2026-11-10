@@ -149,13 +149,18 @@ class Support:
 class Vibration:
     """The study's `vibration` block: the delivered part's first natural
     frequency (clamped at the supports, carrying `masses`) must reach
-    `min_frequency` Hz. `masses`: [(region id or None, shape or None, kg)].
+    `min_frequency` Hz (None: no floor), and no mode may sit where an
+    excitation drives it. `masses`: [(region id or None, shape or None, kg)].
+    `excitations`: [(name, lo Hz, hi Hz, max amplification or None)], each a
+    forcing that sweeps a band (a rotor's once-per-rev and blade-pass lines
+    over the throttle range); see modal.band_response.
     `in_optimizer`: the masses shaken along x, y and z become extra,
     stiffness-only load cases in the optimizer (domain.inertial_cases)."""
-    min_frequency: float
+    min_frequency: float | None
     masses: list = field(default_factory=list)
     modes: int = 3
     in_optimizer: bool = True
+    excitations: list = field(default_factory=list)
 
 
 @dataclass
@@ -1026,13 +1031,33 @@ def _clearances(items, base_dir):
 def _vibration(v, goal, supports, base_dir, free=False):
     if v is None:
         return None
-    if not isinstance(v, dict) or not isinstance(v.get("minFrequency"), (int, float)) or v["minFrequency"] <= 0:
-        raise ValueError("vibration needs minFrequency: the Hz the part's first natural frequency must reach")
+    if not isinstance(v, dict):
+        raise ValueError("vibration must be an object: {minFrequency, excitations, masses, modes}")
+    fmin = v.get("minFrequency")
+    if fmin is not None and (isinstance(fmin, bool) or not isinstance(fmin, (int, float)) or fmin <= 0):
+        raise ValueError("vibration.minFrequency is the Hz the part's first natural frequency must reach")
+    excitations = []
+    for i, ex in enumerate(v.get("excitations") or []):
+        label = f"vibration.excitations[{i}]"
+        band = ex.get("band") if isinstance(ex, dict) else None
+        if (not isinstance(band, (list, tuple)) or len(band) != 2
+                or any(isinstance(b, bool) or not isinstance(b, (int, float)) for b in band)
+                or not 0 < band[0] < band[1]):
+            raise ValueError(f"{label}.band is [lo, hi] in Hz, the range the forcing sweeps (0 < lo < hi)")
+        amp = ex.get("maxAmplification")
+        if amp is not None and (isinstance(amp, bool) or not isinstance(amp, (int, float)) or amp <= 1):
+            raise ValueError(f"{label}.maxAmplification is the most a mode may magnify this forcing over its "
+                             "static response (> 1)")
+        excitations.append((str(ex.get("name") or f"excitation {i + 1}"), float(band[0]), float(band[1]),
+                            None if amp is None else float(amp)))
+    if fmin is None and not excitations:
+        raise ValueError("vibration needs minFrequency (the Hz the first natural frequency must reach) or "
+                         "excitations (bands of forcing no mode may sit in)")
     if not supports and not free:
         raise ValueError("vibration needs supports (natural frequencies of the part clamped where it is held), "
                          "or inertiaRelief for a part that flies free (its free-free modes)")
     if goal.safety_factor is None and goal.max_deflection is None:
-        raise ValueError("vibration.minFrequency is held by the search for the lightest passing part: give the "
+        raise ValueError("vibration is held by the search for the lightest passing part: give the "
                          "goal a safetyFactor or maxDeflection too")
     masses = []
     for i, m in enumerate(v.get("masses") or []):
@@ -1044,7 +1069,8 @@ def _vibration(v, goal, supports, base_dir, free=False):
     modes = int(v.get("modes", 3))
     if not 1 <= modes <= 20:
         raise ValueError("vibration.modes is how many modes to report (1-20)")
-    return Vibration(float(v["minFrequency"]), masses, modes, bool(v.get("inOptimizer", True)))
+    return Vibration(None if fmin is None else float(fmin), masses, modes, bool(v.get("inOptimizer", True)),
+                     excitations)
 
 
 def _extrusion_axis(v):
@@ -1354,8 +1380,8 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         if d.get("gravity") is not None:
             raise ValueError("inertiaRelief with gravity: a free part only falls under its own weight, which "
                              "stresses nothing; give the accelerations as loads (a carried mass, a thrust)")
-        if d.get("thermal") is not None or feel_only:
-            raise ValueError("inertiaRelief does not go with thermal, feel or cooling blocks yet")
+        if feel_only:
+            raise ValueError("inertiaRelief does not go with feel or cooling blocks yet")
         if any(ld.direction is not None for c in cases for ld in c.loads):
             raise ValueError("inertiaRelief takes forces of a known direction: give each direction as a load case")
         if (d.get("goal") or {}).get("method") == "constrained":

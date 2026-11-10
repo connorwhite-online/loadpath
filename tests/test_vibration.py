@@ -107,3 +107,53 @@ def test_search_holds_the_frequency_floor():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+def test_excitation_bands_keep_modes_out():
+    # the clamped bar's modes: two bending near 200 Hz, two near 1200, torsion ~1800
+    from loadpath.modal import band_keepout, magnification
+
+    def check(excitations, **kw):
+        s = study_from_dict({**BAR, "vibration": {"excitations": excitations, **kw}})
+        return s, modal_check(s, _bar())
+
+    s, rep = check([{"name": "once per rev", "band": [100, 400]}, {"name": "clear", "band": [400, 1000]}])
+    f = rep["frequencies"]
+    assert 180 < f[0] < 230 and 1100 < f[2] < 1300, f
+    hit, clear = rep["excitations"]
+    assert not hit["ok"] and [m["mode"] for m in hit["modesInBand"]] == [1, 2] and not rep["ok"]
+    assert abs(hit["amplification"] - 50.0) < 0.5          # 1 / loss factor (0.02) at resonance
+    assert clear["ok"] and not clear["modesInBand"] and clear["covered"]
+    # outside the band a mode is still magnified at the band's nearer edge
+    worst = max(magnification(400, f[1], 0.02), magnification(1000, f[2], 0.02))
+    assert abs(clear["amplification"] - worst) < 0.02 and clear["worstMode"]["mode"] == 3
+    # the search's margin: the lowest mode in the band has to pass its top
+    m = _margin(s, {"safetyFactor": 4.0, "cases": [], "vibration": rep})
+    assert abs(m - (f[0] / 400) ** 2) < 1e-4, m
+    # a limit on magnification widens the band: 3x keeps modes out of 0.87 lo .. 1.22 hi
+    lo, hi = band_keepout(400, 1000, 0.02, 3.0)
+    assert abs(lo / 400 - 0.866) < 0.002 and abs(hi / 1000 - 1.224) < 0.002
+    assert abs(magnification(1000, hi, 0.02) - 3.0) < 1e-6 and abs(magnification(400, lo, 0.02) - 3.0) < 1e-6
+    _, rep3 = check([{"band": [400, 1000], "maxAmplification": 3}])
+    assert not rep3["excitations"][0]["ok"] and rep3["excitations"][0]["keepClear"][1] > f[2]
+    # a limit past resonance itself (1 / eta) is always met
+    _, rep_r = check([{"band": [100, 400], "maxAmplification": 60}])
+    assert rep_r["ok"] and rep_r["excitations"][0]["ok"]
+    # modes are computed up to the band's top, however few were asked for
+    _, rep_w = check([{"band": [2000, 3000]}], modes=1)
+    assert rep_w["frequencies"][-1] >= 3000 and rep_w["excitations"][0]["covered"]
+    assert rep_w["excitations"][0]["ok"]                    # torsion at ~1830, next modes past 3200
+    for bad in ({"excitations": [{"band": [400, 100]}]}, {"excitations": [{"band": [100, 400], "maxAmplification": 1}]},
+                {"modes": 3}):
+        with pytest.raises(ValueError):
+            study_from_dict({**BAR, "vibration": bad})
+
+
+def test_warm_part_rings_lower():
+    # the thermal block's temperature softens the modal check too: PA12 keeps
+    # 45% of its modulus at 80 C, and frequency goes with its square root
+    cold = modal_check(study_from_dict({**BAR, "material": "pa12", "vibration": {"minFrequency": 10}}), _bar())
+    warm = modal_check(study_from_dict({**BAR, "material": "pa12", "vibration": {"minFrequency": 10},
+                                        "thermal": {"ambient": 80}}), _bar())
+    assert abs((warm["firstFrequency"] / cold["firstFrequency"]) ** 2 - 0.45) < 0.01
+    assert warm["thermal"]["maxTemperature"] == 80.0 and "thermal" not in cold

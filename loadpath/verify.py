@@ -880,6 +880,15 @@ def mass_properties(mesh, density: float, axis=None) -> dict:
 MODAL_CELLS = 12_000
 
 
+MODAL_MODES_MAX = 60      # modes computed at most while reaching for the top of an excitation band
+
+
+def band_keepout_(ex, eta):
+    from .modal import band_keepout
+
+    return band_keepout(ex[1], ex[2], eta, ex[3])
+
+
 def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | None = None) -> dict | None:
     """The study's vibration block on a delivered part: its lowest natural
     frequencies clamped at the supports (pins as the stress check holds
@@ -946,15 +955,46 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
         to_t = float(study.material.density) * 1e-6 * 1e-3       # mm^3 of material -> tonnes
         for dofs, dmat, mc in carried_bodies(study, hm, rigid_body_modes(hm.node_xyz), tol_floor=pm):
             blocks.append((dofs, dmat @ (mc * to_t) @ dmat.T))
-    res = modal_analysis(hm, float(mat.E) * fill, float(mat.density) * fill, float(mat.nu), bc.fixed, vib.modes,
-                         masses,
-                         springs=None if free else springs, free=free, mass_blocks=blocks)
+    # Heat (the study's thermal block): the part's own temperature on this
+    # grid, each cell's modulus at it (a PA12 motor mount at 80 C keeps 45%
+    # of its stiffness and rings a third lower than the cold part)
+    moduli, hot = float(mat.E) * fill, None
+    if study.thermal is not None:
+        from .thermal import StudyHeat
+
+        heat = StudyHeat(study, hm, study.elastic(mat), bc.fixed, modulus=mat.E)
+        heat.temperature()
+        if heat.curve is not None:
+            moduli = moduli * heat.g
+            hot = {"maxTemperature": round(float(heat.t_node.max()), 1), "minRetention": round(float(heat.g.min()), 3)}
+    from .modal import band_response, loss_factor
+
+    eta = loss_factor(mat)
+    tops = [k[1] for k in (band_keepout_(ex, eta) for ex in vib.excitations) if k is not None]
+    n_modes = vib.modes if not tops else max(vib.modes, 12)
+    while True:
+        res = modal_analysis(hm, moduli, float(mat.density) * fill, float(mat.nu), bc.fixed, n_modes,
+                             masses,
+                             springs=None if free else springs, free=free, mass_blocks=blocks)
+        # modes up to the top of the highest band: a mode count that stops
+        # short of it has not shown the band clear
+        if not tops or res.frequencies[-1] >= max(tops) or n_modes >= MODAL_MODES_MAX \
+                or len(res.frequencies) < n_modes:
+            break
+        n_modes = min(MODAL_MODES_MAX, 2 * n_modes)
     f1 = float(res.frequencies[0])
     out = {**res.to_dict(), "minFrequency": vib.min_frequency, "firstFrequency": round(f1, 2),
-           "ok": bool(f1 >= vib.min_frequency), "pitch": pm, "cells": int(hm.n_elem),
+           "ok": bool(vib.min_frequency is None or f1 >= vib.min_frequency), "pitch": pm, "cells": int(hm.n_elem),
            "carried": round(sum(kg for _, kg in masses) + sum(b[2] for b in (getattr(study, "inertia_bodies", None)
-                                                                              or []) if free), 5),
-           "seconds": round(time.time() - t0, 2)}
+                                                                              or []) if free), 5)}
+    if hot is not None:
+        out["thermal"] = hot
+    if vib.excitations:
+        rows = band_response(res.frequencies, vib.excitations, eta)
+        out["excitations"] = rows
+        out["lossFactor"] = eta
+        out["ok"] = bool(out["ok"] and all(r["ok"] for r in rows))
+    out["seconds"] = round(time.time() - t0, 2)
     if free:
         out["free"] = True
     # which way the first mode moves most: what to brace
@@ -1730,11 +1770,27 @@ def verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float | 
         if vib is not None:
             report["vibration"] = vib
             report["firstFrequency"] = vib["firstFrequency"]
-            if not vib["ok"]:
+            if vib["minFrequency"] is not None and vib["firstFrequency"] < vib["minFrequency"]:
                 report.setdefault("warnings", []).append(
                     f"first natural frequency {vib['firstFrequency']:.1f} Hz is under vibration.minFrequency "
                     f"{vib['minFrequency']:g} Hz (the mode moves mostly along {vib['firstModeAxis']}): stiffen "
                     "the path from the carried masses to the supports in that direction")
+            for row in vib.get("excitations") or []:
+                if row["ok"]:
+                    continue
+                lo, hi = row["keepClear"]
+                bad = [f for f in vib["frequencies"] if lo < f < hi]
+                if bad:
+                    report.setdefault("warnings", []).append(
+                        f"{len(bad)} mode{'s' if len(bad) > 1 else ''} ({', '.join(f'{f:.0f}' for f in bad[:6])}"
+                        f"{', ...' if len(bad) > 6 else ''} Hz) where '{row['name']}' ({row['band'][0]:g}-"
+                        f"{row['band'][1]:g} Hz) drives {'them' if len(bad) > 1 else 'it'}: the forcing is "
+                        f"magnified up to {row['amplification']:g}x; every mode has to sit under {lo:.0f} Hz or "
+                        f"over {hi:.0f} Hz")
+                else:
+                    report.setdefault("warnings", []).append(
+                        f"the {len(vib['frequencies'])} modes computed stop at {vib['frequencies'][-1]:.0f} Hz, "
+                        f"short of the top of '{row['name']}' ({hi:.0f} Hz): the band is not shown clear")
     from .durability import active, assess
     if active(study):
         # fatigue (cases with cycles), creep and relaxation (hours, preload)

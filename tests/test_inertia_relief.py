@@ -213,3 +213,39 @@ def test_inertia_relief_spec_errors():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+def test_free_part_with_heat():
+    # a free part may carry a thermal block (a drone frame under 80 C motors):
+    # the optimizer's gradient, with the load following the design's mass
+    # and its modulus the design's temperature, against finite differences
+    from loadpath.directions import expand
+    from loadpath.simp import E_MIN, PENALTY, _Analysis, _heat_state, _relief_heat_grad, _relieved
+
+    for expansion in (False, True):
+        s = study_from_dict({**FREE_BAR, "material": "pa12", "resolution": {"pitch": 5.0}, "thermal": {
+            "ambient": 25, "convection": 30, "expansion": expansion,
+            "temperatures": [{"shape": {"type": "box", "min": [-1, -1, -1], "max": [6, 11, 11]}, "t": 80}]}})
+        d = build_domain(s)
+        heat, fe = d.thermal, _Analysis(d, 0.3, 1e-10)
+        w = np.asarray(d.case_weights, float)
+
+        def objective(xe, grad=False):
+            st = {}
+            fg, fth = _heat_state(heat, xe, None)
+            loads, accs = _relieved(d, xe)
+            rhs, layout = expand(loads, [None], fg)
+            us = fe.solve((E_MIN + xe ** PENALTY * (1 - E_MIN)) * heat.g, xe, [None], rtol=1e-10, loads=rhs)
+            j, _, dj, _ = heat.sensitivities(fe, xe, rhs, us, fth, w, None, st, layout, [None])
+            return (j, dj + _relief_heat_grad(d, heat, st, xe, us, accs, layout, w)) if grad else j
+
+        rng = np.random.default_rng(0)
+        x = 0.4 + 0.5 * rng.random(d.mesh.n_elem)
+        _, g = objective(x, True)
+        for e in rng.choice(d.mesh.n_elem, 4, replace=False):
+            xa, xb = x.copy(), x.copy()
+            xa[e] += 1e-4
+            xb[e] -= 1e-4
+            fd = (objective(xa) - objective(xb)) / 2e-4
+            assert abs(fd - g[e]) < 1e-4 * abs(fd), (expansion, e, fd, g[e])
+        assert heat.g.min() < 0.5 and heat.g.max() > 0.9     # hot and soft at one end, cool at the other
