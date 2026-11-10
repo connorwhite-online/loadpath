@@ -368,7 +368,12 @@ buckling, printability) you can report to the user.
    (or `loadpath_start(..., time_limit=45)`) stops the search then and
    delivers the best outcome verified so far, and while it runs `status`
    shows `bestSoFar` (the lightest passing part yet, its STL in
-   `out/partial/`). It says `running` (with its `pid` and elapsed time), `done`, `failed`,
+   `out/partial/`). With `confirmed: true` that part has passed the same
+   re-check the delivered part gets (`confirmedBy`: `tet` or `voxel-fine`),
+   usually a few minutes in: hand it over if the person is waiting, and let
+   the run go on looking for a lighter one (the rest of a search has bought
+   0-16% of mass on the eval parts). Unconfirmed, it has passed the
+   analysis grid only: `loadpath verify` it first. It says `running` (with its `pid` and elapsed time), `done`, `failed`,
    `killed` (a signal), or `died` (the process is gone without a word: out of
    memory, or killed outright); each outcome is written to
    `out/partial/` (STL plus a line in `outcomes.jsonl`) as the search finds

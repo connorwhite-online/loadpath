@@ -982,6 +982,62 @@ def test_run_status_notices_a_dead_run():
     assert run_status(os.path.join(d, "nope"))["state"] == "none"
 
 
+def test_status_hands_over_a_confirmed_part():
+    """While a run goes on, `loadpath status` offers the lightest part that
+    has passed its re-check (the tet cross-check), not a lighter one that
+    has only passed its analysis grid; a part read again replaces its own
+    line, and two parts at one fraction keep a file each."""
+    import json
+    import os
+    import tempfile
+
+    import trimesh
+
+    from loadpath.__main__ import run_status
+    from loadpath.study import Outcome, _save_partial
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "status.json"), "w") as fh:
+        json.dump({"state": "running", "pid": os.getpid(), "started": 1.0}, fh)
+
+    def part(vf, mass, size):
+        o = Outcome(vf, trimesh.creation.box((size, 1.0, 1.0)), {"mass": mass, "safetyFactor": 2.0}, {}, {})
+        o.passes = True
+        return o
+
+    old = os.environ.get("LOADPATH_PARTIAL_DIR")
+    os.environ["LOADPATH_PARTIAL_DIR"] = os.path.join(d, "partial")
+    try:
+        a, b = part(0.2, 30.0, 3.0), part(0.2, 25.0, 2.0)
+        _save_partial(a)
+        _save_partial(b)
+        st = run_status(d)
+        assert st["partialOutcomes"] == 2 and st["bestSoFar"]["mass"] == 25.0 and not st["bestSoFar"]["confirmed"], st
+        assert a.partial_stem != b.partial_stem
+        got = trimesh.load(os.path.join(d, "partial", a.partial_stem + ".stl"))
+        assert abs(got.extents[0] - 3.0) < 1e-6         # a's file is still a's part
+        a.report["confirm"] = {"method": "tet", "margin": 1.2}
+        _save_partial(a)
+        st = run_status(d)
+        best = st["bestSoFar"]
+        assert st["partialOutcomes"] == 2 and best["mass"] == 30.0 and best["confirmed"], st
+        assert best["confirmedBy"] == "tet" and best["stl"].endswith(a.partial_stem + ".stl") and best["afterSeconds"] > 0
+        b.report["confirm"] = {"method": "tet", "margin": 0.8}
+        b.passes = False
+        _save_partial(b)
+        assert run_status(d)["bestSoFar"]["mass"] == 30.0
+        c = part(0.15, 22.0, 1.5)
+        c.report["confirm"] = {"margin": 1.1}            # the finer voxel grid's confirm
+        _save_partial(c)
+        best = run_status(d)["bestSoFar"]
+        assert best["mass"] == 22.0 and best["confirmedBy"] == "voxel-fine", best
+    finally:
+        if old is None:
+            os.environ.pop("LOADPATH_PARTIAL_DIR", None)
+        else:
+            os.environ["LOADPATH_PARTIAL_DIR"] = old
+
+
 def test_viewer_page_carries_fields_and_history():
     """The viewer page embeds the part, its stress and displacement per
     load case, the study's context and the optimization frames, packed so
@@ -1134,6 +1190,7 @@ TESTS = [
     test_fasteners_expand_to_rings_keepouts_and_preload,
     test_mesh_fidelity_counts_cells_the_mesh_dropped,
     test_run_status_notices_a_dead_run,
+    test_status_hands_over_a_confirmed_part,
     test_viewer_page_carries_fields_and_history,
     test_optimize_is_reproducible,
     test_restarts_deliver_the_lightest_confirmed_pick,
