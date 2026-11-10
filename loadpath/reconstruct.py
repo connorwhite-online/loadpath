@@ -66,6 +66,9 @@ class ReconstructOptions:
         # Fillet radius (mm, about) where the organic body meets the skin;
         # 0 or None: a hard inside corner, as before.
         self.skin_fillet = skin_fillet
+        # points (mm) where the surface smoothing is undone: reconstruct's
+        # second pass, at contacts the first one left
+        self.unsmooth = None
 
 
 def _smooth_max(a, b, k):
@@ -1049,7 +1052,7 @@ def _drop_slivers(mesh):
 
 
 def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, keep_thin=False, lamb=0.5,
-                    nu=0.53, min_member=None):
+                    nu=0.53, min_member=None, unsmooth=None, keep_out=()):
     """Smooth the isosurface: alternating steps v += f (L v - v), the first
     shrinking (lamb), the second shrinking on thick members and inflating
     (Taubin's) on members about two cells thick or less.
@@ -1111,6 +1114,33 @@ def _smooth_surface(iso, domain: Domain, xphys: np.ndarray, iterations: int, kee
             for _ in range(2):
                 back = lap @ back
             iso.vertices = v + n * back[:, None]
+    if keep_out:
+        # The field fades to nothing half a cell short of every keep-out, so
+        # the unsmoothed surface stands clear of it; smoothing can carry it
+        # onto the keep-out's face, and the exact cut there leaves the
+        # surface touching the face along lines an STL weld reads as non-
+        # manifold (the shrouded arm link's cable channel: ~400 edges).
+        # Where a vertex came within a quarter cell of a keep-out, it goes
+        # back to where it started, easing over two rings.
+        vv = np.asarray(iso.vertices, float)
+        d_new = np.min([sh.sdf(vv) for sh in keep_out], axis=0)
+        d_old = np.min([sh.sdf(v0) for sh in keep_out], axis=0)
+        w = ((d_new < 0.25 * domain.pitch) & (d_old > d_new)).astype(float)
+        if w.any():
+            for _ in range(2):
+                w = np.maximum(w, lap @ w)
+            iso.vertices = (1.0 - w[:, None]) * vv + w[:, None] * v0
+    if unsmooth is not None and len(unsmooth):
+        # Back to the unsmoothed surface round given points (contacts the
+        # smoothed surface made with itself: see reconstruct), fully within
+        # three cells and easing to the smoothed one at six.
+        from scipy.spatial import cKDTree
+
+        d, _ = cKDTree(np.asarray(unsmooth, float)).query(np.asarray(iso.vertices, float),
+                                                          distance_upper_bound=6.0 * domain.pitch)
+        w = np.clip((6.0 * domain.pitch - d) / (3.0 * domain.pitch), 0.0, 1.0)[:, None]
+        if w.any():
+            iso.vertices = (1.0 - w) * np.asarray(iso.vertices, float) + w * v0
 
 
 HOLD_SPREAD = 10     # averaging passes over the smoothing's shift before _smooth_surface holds a member
@@ -1305,6 +1335,46 @@ def _fragment(man, stage: str, field: "_FieldBodies | None", main: set) -> dict:
 
 def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: ReconstructOptions | None = None):
     """Returns (trimesh.Trimesh, info dict)."""
+    mesh, info = _reconstruct(study, domain, xphys, opts)
+    o = opts or ReconstructOptions()
+    if info.get("watertight", True) or not o.taubin_iterations:
+        return mesh, info
+    # Surface smoothing moves a narrow slot's walls toward each other, and
+    # where they meet the smoothed surface touches itself: the booleans
+    # keep it, the pinch balls cannot close it, and the STL weld reads
+    # non-manifold edges (the shrouded arm link: 2,431, most deep in the
+    # interior; meshed unsmoothed it was watertight). Mesh again with the
+    # smoothing undone round each such edge, three times at most.
+    import copy
+
+    pts = None
+    for _ in range(3):
+        bad = _open_edge_points(mesh)
+        if not len(bad):
+            break
+        pts = bad if pts is None else np.vstack([pts, bad])
+        o2 = copy.copy(o)
+        o2.unsmooth = pts
+        again, info2 = _reconstruct(study, domain, xphys, o2)
+        mesh, info = again, info2
+        info["unsmoothedAt"] = int(len(pts))
+        if info.get("watertight"):
+            break
+    return mesh, info
+
+
+def _open_edge_points(mesh) -> np.ndarray:
+    """Midpoints of the edges an STL weld leaves on other than two faces."""
+    m = mesh.copy()
+    m.vertices = m.vertices.astype(np.float32).astype(float)
+    m.merge_vertices()
+    if not len(m.faces):
+        return np.zeros((0, 3))
+    u, c = np.unique(m.edges_sorted, axis=0, return_counts=True)
+    return m.vertices[u[c != 2]].mean(axis=1)
+
+
+def _reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: ReconstructOptions | None = None):
     import manifold3d as m3d
 
     o = opts or ReconstructOptions()
@@ -1430,7 +1500,8 @@ def reconstruct(study: Study, domain: Domain, xphys: np.ndarray, opts: Reconstru
         # leaning those walls the wrong way for the other mold half; its
         # field was smoothed before the draft and meshes clean without)
         keep_thin = bool((getattr(study, "raw", None) or {}).get("resolution", {}).get("keepThinMembers", False))
-        _smooth_surface(iso, domain, xphys, o.taubin_iterations, keep_thin, min_member=study.min_member)
+        _smooth_surface(iso, domain, xphys, o.taubin_iterations, keep_thin, min_member=study.min_member,
+                        unsmooth=o.unsmooth, keep_out=[r.shape for r in study.keep_out])
     if iso is not None and study.preserve and o.fillet and o.blend > 0:
         _snap_to_flat_faces(iso, [r.shape for r in study.preserve], domain.pitch / o.upsample, o.blend)
     if iso is None:
