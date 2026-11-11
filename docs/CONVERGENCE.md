@@ -83,9 +83,16 @@ separated by a factor of 2 an iteration from the first.
 
 The width that makes sense is the scale on which the densities themselves
 are resolved, and that is set by the projection. `am.overhang_eps` scales
-the width with (beta_max / beta) squared, capped at 1e-2, so the filter is
-smooth while the design is grey and reaches exactly the old value at the
-last stage. The delivered part is filtered at the final width, as before.
+the width with (32 / beta) squared, capped at 1e-2, so the filter is smooth
+while the design is grey and is exactly the old value at beta 32, where the
+search ends. The delivered part is filtered at the final width, as before.
+
+The width follows the design's own sharpness, not how far a run is through
+its schedule. Every study starts from a coarse warm-up run that stops at
+beta 4. Tying the width to the run's last stage gave that warm-up the sharp
+rule on a design still grey: two warm-ups a rounding error apart separated
+by a factor of 2 an iteration and handed the fine run starts 0.1% apart.
+With the width tied to beta they hand over starts within 1e-8.
 
 ## Cause 4: the linear solve was stopped where its answer still depends on the last bit
 
@@ -103,13 +110,34 @@ difference is what another machine, thread count or library build gives,
 so this is the part of the spread a user actually sees.
 
 A solve that has converged does not have this freedom: both runs are then
-within the tolerance of the one true answer. Solved to 1e-5 the hook runs
-end on the same layout (0.0% of cells differ, compliance within 0.03%); to
-1e-7, compliance agrees to 0.00%. `SimpOptions.solve_rtol` is now 1e-5 at
-every stage. It costs about twice the solver iterations (2165 against 1038
-over the hook's run) and 1.7 times the optimizer's wall time on that part.
-An exact direct solve gives the same repeatability without the iterations
-where memory allows one.
+within the tolerance of the one true answer. `SimpOptions.solve_rtol` is now
+1e-4 at every stage. Measured on the hook's first trial (warm-up, fine run,
+mesh, check), two runs one rounding error apart:
+
+| Solve tolerance | Apart after warm-up | Delivered mass apart | Safety factor apart | Time |
+| --- | --- | --- | --- | --- |
+| 1e-2 to 1e-3 (before) | 5e-7 | 0.50% | 0.07% | 1.0 |
+| 1e-4 | 8e-9 | 0.13% | 0.01% | 1.1 |
+| 1e-5 | 6e-9 | 0.06% | 0.05% | about 1.4 |
+| 1e-7 | 2e-10 | 0.04% | 0.04% | 1.7 |
+
+Below 1e-4 the tolerance is no longer what separates the runs (next
+section), so that is where it sits. An exact direct solve would give the
+tightest row without the iterations, where memory allows one.
+
+## What is left: the sharpest stage
+
+At beta 32 a boundary cell's projected density changes 16 times as fast as
+its design variable, and whichever tolerance the solves use, a difference
+of 1e-9 entering that stage leaves it near 3e-4 in compliance. A shorter
+step (aiming at 0.7 or 0.5 of the measured one) and a wider overhang
+corner were both tried there and neither changes it. The stop rule then
+adds its own share: the run ends when six iterations bought less than
+0.2%, the design is still creeping when it does, and two runs 3e-4 apart
+can stop a few iterations apart. Together that is the 0.1% in delivered
+mass in the table. It is 30 times smaller than what the search steps on
+(the hook's safety factor read 3.32 on one run and 2.13 on another before;
+the same trial now reads 2.034 and 2.033), but it is not zero.
 
 ## What it costs
 

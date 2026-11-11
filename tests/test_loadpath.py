@@ -1029,8 +1029,8 @@ def test_printed_search_does_not_amplify_rounding():
     follows the projection and ends at the same value."""
     import os
     from loadpath.am import _EPS, overhang_eps
-    assert overhang_eps(32, 32) == _EPS
-    widths = [overhang_eps(b, 32) for b in (1, 2, 4, 8, 16, 32)]
+    assert overhang_eps(32) == _EPS
+    widths = [overhang_eps(b) for b in (1, 2, 4, 8, 16, 32)]
     assert widths == sorted(widths, reverse=True) and widths[0] == 1e-2
     s = study_from_dict(LUG)
     d = build_domain(s)

@@ -58,27 +58,32 @@ _Q = _P + np.log(_N_SUPPORT) / np.log(_XI0)
 # of the range. Its bias is half the width, so past this more than 5% density
 # would print in empty space.
 _EPS_WIDEST = 1e-2
+# the projection sharpness _EPS is right for
+_BETA_SHARP = 32.0
 
 
-def overhang_eps(beta: float, beta_max: float) -> float:
+def overhang_eps(beta: float) -> float:
     """The smooth minimum's eps for a design projected at sharpness `beta`
-    on its way to `beta_max` (set it on a filter's `.eps`).
+    (set it on a filter's `.eps`).
 
     printed = smin(x, support) has a corner where a cell is exactly as dense
     as what holds it up, rounded over a width sqrt(eps) in density. Langelaar's
-    1e-4 (width 0.01) is right for the finished, near-black-and-white design.
-    On a grey design nearly every cell sits on that corner (a uniform start
-    sits on it exactly), and across it the gradient jumps between "this cell
-    matters" and "its support matters": whichever side the last bits fall
-    decides which cells the next step feeds. Two runs of the printed hook
-    differing by one part in 10^9 at the start were 1% apart 25 iterations
-    later; with the filter off they stayed together to 11 digits.
+    1e-4 (width 0.01) is right for a near-black-and-white design. On a grey
+    design nearly every cell sits on that corner (a uniform start sits on it
+    exactly), and across it the gradient jumps between "this cell matters"
+    and "its support matters": whichever side the last bits fall decides
+    which cells the next step feeds. Two runs of the printed hook differing
+    by one part in 10^9 at the start were 1% apart 25 iterations later; with
+    the filter off they stayed together to 11 digits.
 
     So the rule is only as sharp as the projection feeding it: the corner's
-    width follows the projection's own transition width, 1 / beta, and
-    reaches Langelaar's value with the last stage. Same pair of runs: within
-    a millionth of each other until beta 16 (docs/CONVERGENCE.md)."""
-    return float(min(_EPS * (float(beta_max) / max(float(beta), 1e-9)) ** 2, _EPS_WIDEST))
+    width follows the projection's own transition width, 1 / beta, and is
+    Langelaar's at beta 32, where the search ends. The sharpness is the
+    design's own, not how far along its schedule a run is: the coarse
+    warm-up that stops at beta 4 is as grey at its end as any design at
+    beta 4, and with the full-sharp rule there two warm-ups a rounding
+    error apart handed over starts 0.1% apart (docs/CONVERGENCE.md)."""
+    return float(min(_EPS * (_BETA_SHARP / max(float(beta), 1e-9)) ** 2, _EPS_WIDEST))
 
 
 def parse_build_direction(spec):

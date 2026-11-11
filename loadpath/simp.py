@@ -321,11 +321,12 @@ class SimpOptions:
     # stopped at 1e-2 or 1e-3 gives a gradient good enough to descend on, but
     # which answer it stops at depends on the last bit of its input: two
     # runs one rounding error apart were 4e-7 apart in compliance after the
-    # second solve, and the sharpening projection grew that into layouts
-    # 0.4% different. At 1e-5 they end on the same layout (0.0% of cells,
-    # compliance within 0.03%) for twice the solver iterations; see
-    # docs/CONVERGENCE.md. adaptive_rtol loosens the early stages 10x and 3x.
-    solve_rtol: float = 1e-5
+    # second solve and delivered hooks 0.5% apart in mass. At 1e-4 they stay
+    # within 1e-8 until the sharpest stage and deliver within 0.13%, for a
+    # tenth more time; tighter than that buys nothing the sharpest stage
+    # does not undo (docs/CONVERGENCE.md). adaptive_rtol loosens the early
+    # stages 10x and 3x, as before.
+    solve_rtol: float = 1e-4
     adaptive_rtol: bool = False
     # Stop once beta is at max and compliance has moved less than this
     # (relative) over the last `stall_window` iterations. With the measured
@@ -965,7 +966,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             break
         if opts.build_direction is not None and opts.adaptive_move:
             # the overhang rule only as sharp as the projection it reads (am.overhang_eps)
-            am_b.eps = am_e.eps = am_v.eps = overhang_eps(beta, opts.beta_max)
+            am_b.eps = am_e.eps = am_v.eps = overhang_eps(beta)
         sec = None
         if tool_fill["on"] and beta >= opts.beta_max and since_beta % TOOL_FILL_EVERY == 0:
             tool_fill["mask"] = None
@@ -1466,8 +1467,8 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                     break
 
     if opts.build_direction is not None:
-        # the delivered part prints by the rule at full sharpness, wherever the loop stopped
-        am_b.eps = am_e.eps = am_v.eps = overhang_eps(opts.beta_max, opts.beta_max)
+        # the delivered part prints by the rule its schedule ends on, wherever the loop stopped
+        am_b.eps = am_e.eps = am_v.eps = overhang_eps(max(beta, opts.beta_max))
     xt, xp = physical(x, beta)
     if opts.erode > 0:
         # Deliver the OPENING of the blueprint: erode, then dilate back by the
