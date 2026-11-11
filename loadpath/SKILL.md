@@ -749,6 +749,19 @@ cells, half the design pitch and no finer than 0.5 mm) and, for isolate,
 when a 1 mm design misses on the delivered reading (it closed the
 microphone body's drop). See docs/FEEL.md.
 
+## Will it stay put on the desk (stability)
+
+For anything that sits loose on a desk and gets pressed or has a cable,
+write a stability brief and run `loadpath stability brief.json` (docs/
+STABILITY.md). It gives slide and tip margins for presses, cable tugs,
+sideways levers at the plug and plugging in, and the least mass that holds
+each. Read `minMass_g` against the product's mass before adding ballast,
+and tell the user when no ballast that fits can hold a case (a stiff cable
+nudged sideways usually): then the feet's grip or a softer cable is the
+fix. To find where ballast can go without changing a push pad's feel,
+read the pad back with `readback(..., travel_at=4.0)` and fill only the
+room below the skin's travel envelope.
+
 ## Designing around electronics heat
 
 Inside the same kind of exterior, a `cooling` block designs the interior

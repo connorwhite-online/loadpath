@@ -397,7 +397,7 @@ def _fine_domain(study, pitch):
 PRESS_FILL = 0.5
 
 
-def readback(study, mesh, pitch: float = 0.5, n: int = 4) -> dict:
+def readback(study, mesh, pitch: float = 0.5, n: int = 4, travel_at: float | None = None) -> dict:
     """Fire forces of a delivered mesh, solved on the mesh itself: cut
     cells (cutcell.py, the finite cell method) on the study's grid at
     `pitch`, each cell the surface cuts integrated over its solid part on
@@ -409,7 +409,18 @@ def readback(study, mesh, pitch: float = 0.5, n: int = 4) -> dict:
     E ~ x) did not converge on thin members: a delivered rib design read
     stiffer at every refinement (centre 154 / 217 gf at 0.5 / 0.33 mm under
     the cube), because a half-filled cell across a 1 mm rib is a soft
-    hinge whichever law it is given."""
+    hinge whichever law it is given.
+
+    travel_at (N): also the room the part sweeps inward when pressed hard,
+    out["travelEnvelope"] = {"nodes": (k, 3) mm, "travel": (k,) mm}: at
+    every node, the most it moves along the press direction over all the
+    presses, each pressed at travel_at N or its fire force if higher. Past
+    the click the switch is taken as a stop (its stem bottomed: the
+    plunger's travel held at gap + travel, its seat's give counted), so a
+    hard press bends the skin round the plunger rather than driving it on.
+    Whatever sits inside under the skin (ballast, a board, a battery) needs
+    this much room plus a margin. Linear: read it as an estimate past a
+    few times the fire force."""
     from scipy import ndimage
 
     from .bucklingopt import _factor
@@ -494,6 +505,17 @@ def readback(study, mesh, pitch: float = 0.5, n: int = 4) -> dict:
     a = np.array([prob.l @ u for u in U])
     c = float(prob.l @ lam)
     F = (spec.stroke + spec.trigger * c) / np.maximum(a, 1e-12)
+    if travel_at is not None:
+        cb = float(spec.base_compliance)
+        Fp = np.maximum(F, float(travel_at))
+        R = np.maximum(Fp * a - (spec.gap + spec.travel), 0.0) / max(c + cb, 1e-30)
+        ax = 3 * nodes + spec.press_axis
+        env = np.zeros(len(nodes))
+        for u, f_, r_ in zip(U, Fp, R):
+            env = np.maximum(env, spec.press_sign * (f_ * u[ax] - r_ * lam[ax]))
+        xyz = dom.origin + sub.node_ijk * dom.pitch
+        travel_env = {"nodes": xyz, "travel": env, "force": float(travel_at),
+                      "max": float(env.max()), "stopReaction": R.tolist()}
     out = {"pitch": dom.pitch, "cells": int(sub.n_elem), "cutCells": int(cg.cut.sum()),
            "forceGf": (F / GF).tolist(),
            "inWindow": int(sum(_ok(f, p.min, p.max) for f, p in zip(F, spec.presses))),
@@ -503,6 +525,8 @@ def readback(study, mesh, pitch: float = 0.5, n: int = 4) -> dict:
         clr_q = [spec.press_sign * u[prob.clr_dofs] * Fi for u, Fi in zip(U, F)]
         out["clearanceMax"] = float(max(q.max() for q in clr_q))
         out["clearance"] = clearance_rows(spec, prob, clr_q)
+    if travel_at is not None:
+        out["travelEnvelope"] = travel_env
     out["seconds"] = round(time.time() - t0, 1)
     return out
 
