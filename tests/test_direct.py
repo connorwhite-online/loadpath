@@ -363,6 +363,52 @@ def test_stalled_multigrid_answer_is_not_kept():
     assert seen and set(seen) == {"direct"}, seen
 
 
+def test_multigrid_that_fails_on_the_whole_grid_costs_one_design():
+    """A multigrid that does not converge on the whole grid (its coarse
+    levels average a sharp design's moduli and can lose a thin load path: a
+    drone frame's run died at beta 8 on 2000 CG iterations) ends that
+    design's solve, not the run. Where the system is too big to factor,
+    AMG-CG takes the design, its hierarchy built from the matrix itself,
+    and the multigrid is tried again on the next while most of the grid is
+    live (simp.MG_SLOW_LIVE)."""
+    from loadpath import simp
+    from loadpath.mg import GridElasticity
+    from loadpath.simp import SimpOptions, optimize
+
+    st, dom, radius = _mbb()
+    opts = SimpOptions(volume_fraction=0.3, filter_radius=radius, max_iterations=4)
+    old = simp.MG_AUTO_CELLS
+    seen = []
+    solve, solve_many = simp._Analysis.solve, GridElasticity.solve_many
+
+    def spy(self, *a, **k):
+        out = solve(self, *a, **k)
+        seen.append(self.last_solver)
+        return out
+
+    def flaky(self, fs, x0s=None):
+        if len(seen) == 1:             # the second design
+            raise RuntimeError("linear solve did not converge (2000 iterations)")
+        return solve_many(self, fs, x0s)
+
+    simp.MG_AUTO_CELLS = 1000
+    simp._Analysis.solve = spy
+    out = {}
+    try:
+        with _env(LOADPATH_SOLVER=None, LOADPATH_DIRECT=None, LOADPATH_DIRECT_DOFS="10,20"):
+            out["ref"] = optimize(dom, st.elastic(design=True), opts)
+            assert seen and set(seen) == {"mg"}, seen
+            del seen[:]
+            GridElasticity.solve_many = flaky
+            out["got"] = optimize(dom, st.elastic(design=True), opts)
+    finally:
+        simp._Analysis.solve, GridElasticity.solve_many = solve, solve_many
+        simp.MG_AUTO_CELLS = old
+    assert seen[:3] == ["mg", "amg", "mg"], seen
+    a, b = out["ref"], out["got"]
+    assert abs(a.compliance - b.compliance) < 2e-3 * a.compliance, (a.compliance, b.compliance)
+
+
 def test_stalled_cg_is_factored():
     """CG that is not going to finish hands its system to a factorization
     (fem.Solver.STALL): the answer is the factorization's, the factor serves
@@ -465,7 +511,8 @@ def test_factor_that_would_not_fit_is_not_made():
 TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix, test_threads_do_not_pile_up,
          test_kernels_after_a_factorization_do_not_pile_up, test_mechanism_raises,
          test_sizes_and_switches, test_route, test_simp_direct_matches_assembled, test_slow_multigrid_hands_over,
-         test_stalled_multigrid_answer_is_not_kept, test_stalled_cg_is_factored,
+         test_stalled_multigrid_answer_is_not_kept,
+         test_multigrid_that_fails_on_the_whole_grid_costs_one_design, test_stalled_cg_is_factored,
          test_factor_that_would_not_fit_is_not_made]
 
 
