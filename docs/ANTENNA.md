@@ -487,8 +487,8 @@ sleeve (`antenna.bench_blade(sleeve="petg")`, one grid):
 The plastic touches the metal here, so the shift is large (300 MHz) and
 easy to read: it is the check that a sandwich detunes as much as the
 frame's table says. The step between two plastics (20 MHz from PETG to
-TPU) reads their permittivity, and TPU's loss shows as a resonance that
-is wider and a resistance about 6% higher than PETG's.
+TPU) reads their permittivity, and TPU's loss shows as a resistance at the
+zero about 6% higher than PETG's.
 
 ## Limits
 
