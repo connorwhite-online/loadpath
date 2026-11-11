@@ -653,9 +653,25 @@ def _try_cut(shape, n_faces, occ, fuzzy, want, removed):
             r = _bool_timed("subtract", [shape], occ, fuzzy, _bool_seconds(n_faces))
     except RuntimeError:
         return None
-    if abs(_volume(r) - want) > min(2e-3 * want, 0.25 * removed) + 1e-6:
+    tol = min(2e-3 * want, 0.25 * removed) + 1e-6
+    if abs(_volume(r) - want) > tol:
         return None
-    return r if BRepCheck_Analyzer(r).IsValid() else None
+    if BRepCheck_Analyzer(r).IsValid():
+        return r
+    # A cut that took out the right volume can still fail the check on one
+    # face: a counterbore's flat bottom landing on a facet plane of a pad
+    # (z = 3 on the step-import elbow) came back with that one planar face
+    # flagged, at every fuzz. ShapeFix mends the face's wires and
+    # tolerances without moving geometry; it is kept only if the result is
+    # then valid and still the volume manifold3d says.
+    from OCP.ShapeFix import ShapeFix_Shape
+
+    fix = ShapeFix_Shape(r)
+    fix.Perform()
+    r = fix.Shape()
+    if abs(_volume(r) - want) > tol or not BRepCheck_Analyzer(r).IsValid():
+        return None
+    return r
 
 
 def _screen(body, tools):
