@@ -31,6 +31,7 @@ from scipy import ndimage
 from .directions import collapse, expand
 from .domain import Domain
 from .fem import HexMesh, Solver, Stiffness, hex8_ke
+from .am import overhang_eps
 from .manufacture import AccessFilter, MaxMember, machinable, tie_groups
 
 import os
@@ -310,14 +311,22 @@ class SimpOptions:
     # is not the default.
     beta_schedule: tuple | None = None
     move: float = 0.2
+    # Measure each step's length from how the gradient changed along the last
+    # one (see the loop and docs/CONVERGENCE.md), and keep the printed-part
+    # overhang rule only as sharp as the projection. False: the fixed limits
+    # (move, then move / 2 past beta 4) the benchmarks' reference codes use.
+    adaptive_move: bool = True
     tol: float = 0.01
     # Sensitivities only need a loose solve; the final analysis is tight.
     solve_rtol: float = 1e-3
     adaptive_rtol: bool = True
     # Stop once beta is at max and compliance has moved less than this
-    # (relative) over the last `stall_window` iterations. Projected designs
-    # can chatter at the move limit forever on a handful of boundary cells
-    # while the compliance is flat, so `change` alone never settles.
+    # (relative) over the last `stall_window` iterations. With the measured
+    # step the compliance falls every iteration, so this reads "six more
+    # iterations bought under 0.2%". (With fixed limits a projected design
+    # chatters at the limit and the compliance flickers and drifts up, so
+    # the same test fired on whichever iteration the flicker happened to
+    # cross it: docs/CONVERGENCE.md.)
     stall_rtol: float = 2e-3
     stall_window: int = 6
     eta: float = 0.5
@@ -520,6 +529,15 @@ def density_filter(domain: Domain, radius: float, pad: bool = True):
 # lightest case reads far above it, because each case is judged on its own
 # scale.
 PRUNE_BELOW = 1e-3
+# How closely each step holds the volume (relative): to rounding, so the step
+# is a continuous function of the design it came from
+VOLUME_RTOL = 1e-13
+# The measured step (SimpOptions.adaptive_move): the limit never falls below
+# half or grows past 1.2 times itself in one iteration. An overshoot is acted
+# on at once; room to grow is taken slowly, because the reading is one number
+# for the whole part and the part is not one valley.
+STEP_SHRINK = 0.5
+STEP_GROW = 1.2
 PRUNE_PASSES = 3
 
 
@@ -805,6 +823,14 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
     x = np.full(n, vf)
     if opts.x0 is not None:
         x = np.clip(np.asarray(opts.x0, float), 0.0, 1.0)
+    jit = os.environ.get("LOADPATH_JITTER")
+    if jit:
+        # Repeatability probe: noise of one part in 10^9 on the starting
+        # design, seeded by the variable's value. It stands in for what
+        # another machine, thread count or library build does to the last
+        # bits; runs with different seeds show how far a study's answer
+        # moves for no reason (docs/CONVERGENCE.md).
+        x = np.clip(x * (1.0 + 1e-9 * np.random.default_rng(int(jit)).standard_normal(n)), 0.0, 1.0)
     x[pres] = 1.0
     void = opts.void if opts.void is not None and opts.void.any() else None
     if void is not None:
@@ -918,9 +944,15 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             xe[void] = 0.0
         return printed(am_e, xe)
 
+    step_prev = None
+    move_k = opts.move
     for it in range(1, opts.max_iterations + 1):
         if should_stop is not None and should_stop():
             break
+        if opts.build_direction is not None and opts.adaptive_move:
+            # the overhang rule only as sharp as the projection it reads (am.overhang_eps)
+            am_b.eps = am_e.eps = am_v.eps = overhang_eps(beta, opts.beta_max)
+        sec = None
         if tool_fill["on"] and beta >= opts.beta_max and since_beta % TOOL_FILL_EVERY == 0:
             tool_fill["mask"] = None
             _, xraw = physical(x, beta)
@@ -1241,7 +1273,25 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         dc = _extrude(dc, columns, design)
         dv = _extrude(dv, columns, design)
 
-        move = opts.move if beta <= 4 else opts.move / 2
+        if opts.adaptive_move and not (heat is not None and heat.swing_limit is not None):
+            # The step's length is measured, not scheduled. Along the last
+            # step dx the Lagrangian's slope was a = g_old . dx (downhill)
+            # and is now b = g_new . dx: a parabola through the two puts its
+            # minimum at t = a / (a - b) of that step. t < 1 says the step
+            # overshot (b > 0: the far side of the valley), and the limit
+            # shrinks to what was measured; t > 1 lets it grow, a fifth at a
+            # time, back toward opts.move. See docs/CONVERGENCE.md.
+            if step_prev is not None:
+                dxp, gp, lam_p = step_prev
+                a_s = float(gp @ dxp)
+                b_s = float((dc + lam_p * dv) @ dxp)
+                if a_s < 0:
+                    t_s = a_s / (a_s - b_s) if b_s > a_s else np.inf
+                    sec = t_s
+                    move_k = min(move_k * min(max(t_s, STEP_SHRINK), STEP_GROW), opts.move)
+            move = move_k
+        else:
+            move = opts.move if beta <= 4 else opts.move / 2
         lo_x = np.maximum(0.0, x - move)
         hi_x = np.minimum(1.0, x + move)
         ratio = np.sqrt(-dc / dv)
@@ -1287,28 +1337,61 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             x_new = _extrude(x_new, columns, design)
         if swing_step and "swing_max" in heat_state:
             swing_rec = {"swingPeak": float(heat_state["swing_max"]), "swingLimit": float(heat.swing_limit)}
+        def stepped(lm_):
+            xn = np.clip(x * ratio / np.sqrt(lm_), lo_x, hi_x)
+            xn[pres] = 1.0
+            if void is not None:
+                xn[void] = 0.0
+            if domain.mirror:
+                xn = _symmetrize(xn, domain.mirror)
+            xn = _extrude(xn, columns, design)
+            if void is not None:
+                xn[void] = 0.0
+            xpn = physical(xn, beta)[1]
+            v = float(xpn @ wdesign)
+            if blk is not None:
+                v += blk.cost(xpn)[0]
+            return xn, v - target
+
+        # The volume multiplier: bisection brackets it, then false position
+        # (Illinois) lands on it to rounding. Bisection alone to 1 part in
+        # 10^4 made the step a staircase in its inputs: a difference in the
+        # last bit of a sensitivity could move every free cell by 5e-5 in
+        # one iteration, and two runs were that far apart from then on.
+        f1 = f2 = None
         for _ in range(80 if not swing_step else 0):
             lm = np.sqrt(l1 * l2)
-            x_new = np.clip(x * ratio / np.sqrt(lm), lo_x, hi_x)
-            x_new[pres] = 1.0
-            if void is not None:
-                x_new[void] = 0.0
-            if domain.mirror:
-                x_new = _symmetrize(x_new, domain.mirror)
-            x_new = _extrude(x_new, columns, design)
-            if void is not None:
-                x_new[void] = 0.0
-            xp_new = physical(x_new, beta)[1]
-            vol = float(xp_new @ wdesign)
-            if blk is not None:
-                vol += blk.cost(xp_new)[0]
-            if vol > target:
-                l1 = lm
+            x_new, f = stepped(lm)
+            if f > 0:
+                l1, f1 = lm, f
             else:
-                l2 = lm
-            if l2 / l1 < 1 + 1e-4:
+                l2, f2 = lm, f
+            if l2 / l1 < 1 + 1e-4 and f1 is not None and f2 is not None:
                 break
+        if not swing_step and f1 is not None and f2 is not None:
+            s1, s2 = np.log(l1), np.log(l2)
+            side = 0
+            for _ in range(12):
+                if abs(f) <= VOLUME_RTOL * target or f2 == f1 or s2 - s1 <= 4e-16 * max(abs(s1), abs(s2), 1.0):
+                    break
+                sm = (s1 * f2 - s2 * f1) / (f2 - f1)
+                if not s1 < sm < s2:
+                    sm = 0.5 * (s1 + s2)
+                lm = float(np.exp(sm))
+                x_new, f = stepped(lm)
+                if f > 0:
+                    s1, f1 = sm, f
+                    if side == 1:
+                        f2 *= 0.5
+                    side = 1
+                else:
+                    s2, f2 = sm, f
+                    if side == -1:
+                        f1 *= 0.5
+                    side = -1
         change = float(np.abs(x_new - x)[design].max())
+        if opts.adaptive_move and not swing_step:
+            step_prev = (x_new - x, dc + lm * dv, lm)
         x = x_new
         since_beta += 1
 
@@ -1316,6 +1399,11 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                "volume": float(xp[design].mean()), "beta": beta, "change": change,
                "seconds": time.time() - t0, "cgIterations": fe.last_iters,
                "solvedCells": fe.last_cells}
+        if opts.adaptive_move:
+            rec["move"] = move
+            if sec is not None:
+                # where along the last step the measured minimum sat (1 = on it)
+                rec["stepFit"] = float(min(sec, 99.0))
         if warp_v is not None:
             rec["warpDistortion"] = warp_v["mean"]
             rec["warpMax"] = warp_v["max"]
@@ -1338,11 +1426,17 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         if on_iter is not None:
             on_iter(rec, xp)
 
-        if beta < opts.beta_max and (change < opts.tol * 2 or since_beta >= _beta_hold(opts, beta)):
+        # (a change held down by the step limit is not a design at rest)
+        free_step = not opts.adaptive_move or change < 0.999 * move
+        if beta < opts.beta_max and ((change < opts.tol * 2 and free_step) or since_beta >= _beta_hold(opts, beta)):
             beta = min(beta * 2, opts.beta_max)
             since_beta = 0
+            # the projection is twice as steep: so is the problem's curvature
+            # along any step, and the step it can take is half as long
+            step_prev = None
+            move_k = move_k / 2
         elif beta >= opts.beta_max and it >= 3:
-            if change < opts.tol:
+            if change < opts.tol and free_step:
                 converged = True
                 break
             w = opts.stall_window
@@ -1357,6 +1451,9 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                     converged = True
                     break
 
+    if opts.build_direction is not None:
+        # the delivered part prints by the rule at full sharpness, wherever the loop stopped
+        am_b.eps = am_e.eps = am_v.eps = overhang_eps(opts.beta_max, opts.beta_max)
     xt, xp = physical(x, beta)
     if opts.erode > 0:
         # Deliver the OPENING of the blueprint: erode, then dilate back by the
