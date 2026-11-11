@@ -739,6 +739,32 @@ def bench_monopole(height=28.0, plate=60.0, thickness=1.6, rod=1.3, cap=None):
             "surroundings": sur}
 
 
+def bench_blade(height=28.0, width=8.0, sheet=0.5, plate=60.0, thickness=1.6, pin=1.3, sleeve=None,
+                wall=2.0, margin=3.0):
+    """The second bench test of docs/ANTENNA.md: metal sandwiched in
+    plastic. A flat strip of sheet metal `width` x `sheet` standing
+    `height` mm on the centre pin of a coax jack through a square metal
+    plate (the strip is the brief's `radiator`), and optionally a printed
+    sleeve of `sleeve` (a material) slid over it: `wall` mm of plastic on
+    each face of the strip, `margin` mm past its edges and its top. The
+    sleeve's outline is always in the grid (as air when absent), so its
+    shift is read on one grid."""
+    c, t, w = plate / 2.0, thickness, pin / 1.18
+    top = t + height
+    block = [[c - width / 2 - margin, c - sheet / 2 - wall, t], [c + width / 2 + margin, c + sheet / 2 + wall,
+                                                                top + margin]]
+    return {"name": "bench-blade", "band": [2400, 2483.5], "sweep": [1500, 3400],
+            "board": {"size": [plate, plate], "thickness": t, "material": "fr4",
+                      "ground": [[[0, 0], [plate, 0], [plate, plate], [0, plate]]]},
+            "radiator": [
+                {"name": "pin", "metal": True, "resolution": 0.3,
+                 "box": [[c - w / 2, c - w / 2, t + 0.5], [c + w / 2, c + w / 2, t + 2.0]]},
+                {"name": "blade", "metal": True, "resolution": 0.5,
+                 "box": [[c - width / 2, c - sheet / 2, t + 2.0], [c + width / 2, c + sheet / 2, top]]}],
+            "feed": {"from": [c, c, t], "to": [c, c, t + 0.5], "width": w, "across": "x"},
+            "surroundings": [{"name": "sleeve", "material": sleeve or "air", "box": block}]}
+
+
 # the two printed caps of the bench test: inside width, inside height, wall (mm)
 BENCH_CAPS = {"a": (20.0, 32.0, 2.0), "b": (6.0, 30.0, 4.0)}
 

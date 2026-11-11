@@ -426,9 +426,9 @@ dollars of parts:
   cap A (20 mm square inside, 32 mm tall inside, 2 mm walls) and cap B
   (6 mm square inside, 30 mm tall inside, 4 mm walls). One pair per
   material to be measured.
-- a network analyser that reaches 3 GHz: a NanoVNA V2 Plus4 or a LiteVNA
-  64 (60 to 130 dollars). The original NanoVNA-H stops at 1.5 GHz and
-  cannot do this one.
+- a network analyser that reaches 3 GHz: a LiteVNA 64 (50 kHz to
+  6.3 GHz, 130 to 200 dollars) or a NanoVNA V2 Plus4. The original
+  NanoVNA-H stops at 1.5 GHz and cannot do this one.
 
 **The measurement.** Calibrate at the end of the cable (open, short,
 load) from 1.5 to 3.4 GHz. On the Smith chart, note the frequency where
@@ -466,6 +466,29 @@ and the shift is what the plastic does.
 Seat a cap the same way each time. What follows, once this agrees, is
 the real thing: the inverted-F on a board with an SMA footprint, in its
 shell.
+
+**Metal sandwiched in plastic.** The same plate and jack check the case
+of the section above, metal between two layers of plastic. In place of
+the rod, a strip of sheet metal that takes solder (brass or copper,
+0.5 mm; 8 mm wide, 26 mm long) soldered edge-on to the jack's pin so its
+top stands 28 mm above the plate with 2 mm of pin showing below it. Over
+it slides a printed sleeve, 100% infill: 2 mm of plastic on each face of
+the strip, 3 mm past its edges and top (14 x 4.5 x 31 mm outside, a
+8.4 x 0.8 mm slot). Measure the reactance zero with and without the
+sleeve (`antenna.bench_blade(sleeve="petg")`, one grid):
+
+| | reactance zero | shift | resistance there | heat in the sleeve |
+|---|---|---|---|---|
+| no sleeve | 2265 MHz | | 19.0 ohm | |
+| PETG (2.69, 0.007) | 1953 MHz | -13.8% | 14.5 ohm | 1.1% |
+| PA12 (2.6, 0.02) | 1962 MHz | -13.4% | 15.0 ohm | 3.2% |
+| TPU (3.0, 0.06) | 1932 MHz | -14.7% | 15.4 ohm | 9.5% |
+
+The plastic touches the metal here, so the shift is large (300 MHz) and
+easy to read: it is the check that a sandwich detunes as much as the
+frame's table says. The step between two plastics (20 MHz from PETG to
+TPU) reads their permittivity, and TPU's loss shows as a resonance that
+is wider and a resistance about 6% higher than PETG's.
 
 ## Limits
 
