@@ -317,9 +317,16 @@ class SimpOptions:
     # (move, then move / 2 past beta 4) the benchmarks' reference codes use.
     adaptive_move: bool = True
     tol: float = 0.01
-    # Sensitivities only need a loose solve; the final analysis is tight.
-    solve_rtol: float = 1e-3
-    adaptive_rtol: bool = True
+    # How closely each iteration's displacements are solved. A Krylov solve
+    # stopped at 1e-2 or 1e-3 gives a gradient good enough to descend on, but
+    # which answer it stops at depends on the last bit of its input: two
+    # runs one rounding error apart were 4e-7 apart in compliance after the
+    # second solve, and the sharpening projection grew that into layouts
+    # 0.4% different. At 1e-5 they end on the same layout (0.0% of cells,
+    # compliance within 0.03%) for twice the solver iterations; see
+    # docs/CONVERGENCE.md. adaptive_rtol loosens the early stages 10x and 3x.
+    solve_rtol: float = 1e-5
+    adaptive_rtol: bool = False
     # Stop once beta is at max and compliance has moved less than this
     # (relative) over the last `stall_window` iterations. With the measured
     # step the compliance falls every iteration, so this reads "six more
@@ -830,7 +837,9 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         # another machine, thread count or library build does to the last
         # bits; runs with different seeds show how far a study's answer
         # moves for no reason (docs/CONVERGENCE.md).
-        x = np.clip(x * (1.0 + 1e-9 * np.random.default_rng(int(jit)).standard_normal(n)), 0.0, 1.0)
+        # "<seed>:<size>" sets another size, e.g. 3:1e-15 for last-bit noise.
+        seed, _, size = jit.partition(":")
+        x = np.clip(x * (1.0 + float(size or 1e-9) * np.random.default_rng(int(seed)).standard_normal(n)), 0.0, 1.0)
     x[pres] = 1.0
     void = opts.void if opts.void is not None and opts.void.any() else None
     if void is not None:

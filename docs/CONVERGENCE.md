@@ -10,12 +10,14 @@ differences in the part.
 This page records what was amplifying them, how each cause was isolated, what
 replaced it, and how to measure it again. The short version: three places in
 `simp.optimize` took a step that the physics of the problem did not support,
-and each one is now sized from a quantity the run measures.
+and a fourth stopped a calculation before its answer was settled. Each one
+is now sized from a quantity the run measures.
 
 ## How to measure it
 
 Set `LOADPATH_JITTER=<seed>` and the search starts from a design with 1e-9
-relative noise on it. Run the same study with two seeds and compare
+relative noise on it (`<seed>:<size>` for another size; 1e-15 is last-bit
+noise, what a different machine gives). Run the same study with two seeds and compare
 compliance iteration by iteration. In a well-behaved descent the two stay
 1e-9 apart or close in. If the difference grows by a steady factor per
 iteration, something is amplifying it, and the growth rate tells you how
@@ -85,16 +87,29 @@ the width with (beta_max / beta) squared, capped at 1e-2, so the filter is
 smooth while the design is grey and reaches exactly the old value at the
 last stage. The delivered part is filtered at the final width, as before.
 
-## What is left: the solver tolerance
+## Cause 4: the linear solve was stopped where its answer still depends on the last bit
 
-Early iterations solve the elasticity system loosely (relative residual
-1e-2), because a rough gradient is enough to make progress. A loose
-iterative solve can stop one iteration sooner or later for a last-bit
-reason, which is a difference of about 1e-6 in compliance. That is a noise
-floor, not an amplifier, but it is the largest input left. With tight
-solves (1e-8) two jittered hook runs end 0.0% apart in layout; with the
-default loose solves 0.5%; before these changes 1.4%. An exact direct solve
-removes the floor altogether where memory allows one.
+Early iterations solved the elasticity system to a relative residual of
+1e-2, later ones to 1e-3: a rough gradient is enough to descend on. But a
+conjugate-gradient solve on a stiffness matrix with nine decades of
+contrast is itself sensitive. Stopped that early, which answer it stops at
+depends on the last bit of its input. Two hook runs that started one
+rounding error apart (`LOADPATH_JITTER=1:1e-15` and `2:1e-15`) took the same
+number of solver iterations in every solve and were still 4e-7 apart in
+compliance after the second one. The sharpening projection then grows that
+by about a thousand, and the two runs deliver layouts that differ in 0.4%
+of their cells (2.1% before causes 1 to 3 were fixed). A last-bit
+difference is what another machine, thread count or library build gives,
+so this is the part of the spread a user actually sees.
+
+A solve that has converged does not have this freedom: both runs are then
+within the tolerance of the one true answer. Solved to 1e-5 the hook runs
+end on the same layout (0.0% of cells differ, compliance within 0.03%); to
+1e-7, compliance agrees to 0.00%. `SimpOptions.solve_rtol` is now 1e-5 at
+every stage. It costs about twice the solver iterations (2165 against 1038
+over the hook's run) and 1.7 times the optimizer's wall time on that part.
+An exact direct solve gives the same repeatability without the iterations
+where memory allows one.
 
 ## What it costs
 
