@@ -1127,7 +1127,8 @@ def solid_check(blade: Blade, op: dict, material="pa12", mesh=None, bore: float 
     faces within clamp_height of the bore, default the bore radius out). Returns the peak equivalent stress on the
     blades and its radius, the safety factor on the material's strength, and the beam model's root stress beside it.
     The check the strip beam can't make: the root's fillet, the hub, the section's real shape."""
-    from .crosscheck import _nodal_von_mises, _p2_mesh, _solve, _tet_mesh
+    from .crosscheck import _RESOLVED, _p2_mesh, _read_stress, _solve, _tet_mesh
+    from .failure import material_length
     from .materials import material_from_spec
     mat = material_from_spec(material)
     mesh = mesh if mesh is not None else rotor_mesh(blade, bore=bore)
@@ -1180,7 +1181,10 @@ def solid_check(blade: Blade, op: dict, material="pa12", mesh=None, bore: float 
     fixed[:nv][hold] = True
     E = mat.E
     u = _solve(nodes, conn, E, mat.nu, fixed.ravel(), None, [("spin+air", f, None)], nv, edges)[0]
-    vm = _nodal_von_mises(nodes, conn, u.ravel(), E, mat.nu, nv)
+    # von Mises of the stress averaged over the material's length (crosscheck._averaged_stress): the root
+    # fillet's peak as the material answers to it, the same on any mesh
+    radius = max(material_length(mat)[0], _RESOLVED * size)
+    vm = _read_stress(nodes, conn, [u], E, mat.nu, nv, radius)[0][1]
     away = rxy > blade.r_hub + 0.05                   # the blades and their roots (the hub's bore is held)
     i = int(np.argmax(np.where(away, vm, 0)))
     tip = pts[:, 0].argmax()
