@@ -595,7 +595,18 @@ laid as elastic rods: a pigtail that cannot reach, or would bend past its
 radius, rules the position out; the chosen layout's cables are followed
 along each part's way in (`wires.<id>.assembly.reach`: how far out the
 part can be with the plug mated) and their channels are kept clear.
-`watts` on one part and `maxTemp` on another keeps them apart. When the
+`watts` on one part and `maxTemp` on another keeps them apart. A board
+with an antenna takes `"antenna": {band, board: {size, thickness, ground,
+top}, feed}` (its copper as drawn, `loadpath schema antenna`): the bare
+board's fields are solved once, each layout is priced by what the shell's
+wall and the other parts do to the antenna's port, and the chosen layout
+is solved in full (`enclosure.json`'s `antenna.<id>`: `change.resonanceShift`
+MHz, `installed.inBand.worstS11` against `limit`, `efficiency`, `firstOrder`
+naming the part or wall that costs most). Say what each other part is to a
+radio wave with `rf` (`"metal"` is assumed and warned about; a plastic
+name; `"ignore"`). Alone, with the shell and parts as `surroundings`, it
+is `loadpath antenna brief.json` (MCP `loadpath_antenna`, docs/ANTENNA.md);
+`antenna.tune` solves an inverted-F's arm and tap in place. When the
 board exists in KiCad, give the file instead of a box: `{"id": "board",
 "kicad": {"file": "board.kicad_pcb", "connectors": {"J1": {"opening":
 "usb-port"}}, "power": {"U3": 0.6}, "maxTemp": {"U3": 85}}}` (docs/KICAD.md;

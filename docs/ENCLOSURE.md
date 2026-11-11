@@ -62,6 +62,7 @@ zero is a fit. Among the fits the rules choose:
 | `under: {at, direction, gap}` | that face on the line through `at`, `gap` under the skin: a switch under the spot a finger presses |
 | `near: [ids]` | close to other parts |
 | `ports` and `wires` | the cables between parts, laid as elastic rods for each candidate position: one whose cable is too short or bent past its radius is not a position ([WIRES.md](WIRES.md)) |
+| `antenna`, `rf` | a board's antenna (its copper and feed): every candidate layout is priced by what the wall and the other parts do to its port, from the bare board's solved fields, and the chosen layout is solved in full; `rf` says what each other part is to a radio wave (metal by default) ([ANTENNA.md](ANTENNA.md)) |
 | `watts`, `maxTemp` | a hot part kept off a part with a temperature limit, and hot parts apart (`placement.heat`) |
 | `placement.centerOfMass` | the layout's centre of mass toward a point, or low along an axis |
 

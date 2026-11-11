@@ -3274,14 +3274,135 @@ BUNDLE_SCHEMA = {
                                                             "opensIn": {"type": "array", "items": {"type": "string"}},
                                                             "contains": {"type": "string"}}}}}}
 
+# --- antenna: a board antenna in what surrounds it (antenna.py, rf.py) ---
+_RING = {"type": "array", "minItems": 3, "items": {"type": "array", "items": {"type": "number"}, "minItems": 2,
+                                                   "maxItems": 2},
+         "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"}
+_RF_MATERIAL = {"anyOf": [
+    {"type": "string", "description": "a material with radio-frequency values on file: fr4, pla, petg, abs, tpu, "
+                                      "pa12, pa11, air; or 'metal'"},
+    {"type": "object", "properties": {
+        "base": {"type": "string", "description": "the material whose values are used where none is given"},
+        "permittivity": {"type": "number", "minimum": 1, "description": "relative, at the band"},
+        "lossTangent": {"type": "number", "minimum": 0},
+        "fill": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
+                 "description": "share of the volume that is solid, the rest air (a lattice's relative "
+                                "density; for a printed part its mass over its solid mass, which is more "
+                                "than the slicer's infill setting because walls and skins are solid). The "
+                                "effective permittivity is taken between the Hashin-Shtrikman bounds"},
+        "metal": {"type": "boolean"},
+        "source": {"type": "string", "description": "where the values come from (kept in the report)"}},
+     "additionalProperties": False}]}
+_ANTENNA_BOARD = {
+    "type": "object", "properties": {
+        "size": {"type": "array", "items": _POS, "minItems": 2, "maxItems": 2,
+                 "description": "mm: a rectangular board, its corner at the origin, its bottom face at z = 0"},
+        "outline": _RING,
+        "thickness": {**_POS, "description": "mm (default 1.6); the top copper is at z = thickness"},
+        "material": {**_RF_MATERIAL, "description": "the laminate (default fr4)"},
+        "top": {"type": "array", "items": _RING, "description": "top copper that is not ground: the antenna and "
+                                                                "its feed line"},
+        "bottom": {"type": "array", "items": _RING, "description": "bottom copper that is not ground"},
+        "ground": {"type": "array", "items": _RING,
+                   "description": "ground pour on both faces, stitched: solved as solid metal through the board"},
+        "vias": {"type": "array", "items": {"type": "array", "items": {"type": "number"}, "minItems": 2,
+                                            "maxItems": 2}, "description": "[x, y] of each via joining top "
+                                                                           "copper to bottom"}},
+    "x-requireOne": [["size"], ["outline"]], "additionalProperties": False,
+    "description": "the board and its copper, as drawn"}
+_ANTENNA_FEED = {
+    "type": "object", "properties": {
+        "from": {**_VEC3, "description": "mm: the ground end of the gap the radio drives"},
+        "to": {**_VEC3, "description": "mm: the antenna end of the gap"},
+        "width": {"type": "number", "minimum": 0, "description": "mm: width of the trace the gap is in"},
+        "across": {"type": "string", "enum": ["x", "y", "z"], "description": "the axis `width` lies along"},
+        "impedance": {**_POS, "description": "ohm: the radio's output (default 50)"}},
+    "required": ["from", "to"], "additionalProperties": False,
+    "description": "where the radio connects: a gap between the ground and the antenna's copper"}
+_ANTENNA_BODY = {
+    "type": "object", "properties": {
+        "name": {"type": "string"},
+        "material": _RF_MATERIAL,
+        "metal": {"type": "boolean", "description": "a conductor: a battery, a motor, a shield can, a screw"},
+        "box": {"type": "array", "items": _VEC3, "minItems": 2, "maxItems": 2, "description": "[min, max] mm"},
+        "prism": {"type": "object", "properties": {"outline": _RING, "from": {"type": "number"},
+                                                   "to": {"type": "number"}},
+                  "required": ["outline", "from", "to"], "additionalProperties": False,
+                  "description": "an outline extruded from z = from to z = to"},
+        "mesh": {"type": "string", "description": "a closed STL/OBJ/3MF/GLB, mm"},
+        "matrix": {"type": "array", "description": "4x4: the mesh's frame in the board's frame"},
+        "wire": {"type": "array", "items": _VEC3, "minItems": 2,
+                 "description": "a thin conductor through these points (a lead, a cable's shield)"},
+        "resolution": {**_POS, "description": "mm: cells no larger than this across the body"}},
+    "x-requireOne": [["box"], ["prism"], ["mesh"], ["wire"]], "additionalProperties": False}
+_ANTENNA_PROPS = {
+    "band": {"type": "array", "items": _POS, "minItems": 2, "maxItems": 2,
+             "description": "MHz: the band the radio uses, e.g. [2400, 2483.5]"},
+    "sweep": {"type": "array", "items": _POS, "minItems": 2, "maxItems": 2,
+              "description": "MHz: the range solved (default: the band widened by 30% of its centre each way)"},
+    "board": _ANTENNA_BOARD, "feed": _ANTENNA_FEED,
+    "limit": {"type": "number", "maximum": 0, "description": "dB: the worst reflection (S11) allowed inside "
+                                                             "the band (default -10: a tenth of the power "
+                                                             "comes back)"},
+    "resolution": {"type": "object", "properties": {
+        "copper": {**_POS, "description": "mm: cell size at the copper (default 0.5)"},
+        "body": {**_POS, "description": "mm: cell size across the other bodies (default 1)"},
+        "reach": {**_POS, "description": "mm: how far round the board the sensitivity field is kept "
+                                         "(default an eighth of a wavelength)"}}, "additionalProperties": False}}
+ANTENNA_SCHEMA = {
+    "$schema": _DIALECT,
+    "title": "loadpath antenna brief",
+    "description": "`loadpath antenna`: a board antenna solved in what surrounds it (antenna.py, rf.py). "
+                   "Maxwell's equations in the time domain on the board's copper, its laminate, the printed "
+                   "shell with its measured permittivity and loss, and the metal near it: the reflection "
+                   "(S11) across the band, the resonance and how far the surroundings move it, the input "
+                   "impedance, radiation and total efficiency with the heat split by material, and a "
+                   "sensitivity field (what a piece of plastic or metal at each point would do to the port). "
+                   "Inside a product, give the same block as a component's `antenna` in an enclosure brief.",
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"}, "description": {"type": "string"},
+        **_ANTENNA_PROPS,
+        "surroundings": {"type": "array", "items": _ANTENNA_BODY,
+                         "description": "what is near the board, in the board's frame: the shell, the battery, "
+                                        "screws, cables. Later entries overwrite earlier ones where they overlap"}},
+    "required": ["band", "board", "feed"],
+    "additionalProperties": False,
+}
+
+# an enclosure's antenna: the board's copper on a component, what each other
+# part is to a radio wave, and its weight in the placement search
+_ENC["components"]["items"]["properties"]["antenna"] = {
+    "type": "object", "properties": {
+        **_ANTENNA_PROPS,
+        "origin": {**_VEC3, "description": "mm: the board's corner (bottom face) in the component's own frame "
+                                           "(default: the board is the component's box, centred)"}},
+    "required": ["band", "board", "feed"], "additionalProperties": False,
+    "description": "this component is a board with an antenna (`loadpath schema antenna`): placement prices "
+                   "every layout by what the wall and the other parts do to its port, and the chosen layout "
+                   "is solved in full (report.antenna)"}
+_ENC["components"]["items"]["properties"]["rf"] = {
+    "anyOf": [_RF_MATERIAL, {"type": "string", "enum": ["ignore"]}],
+    "description": "what this part is to a radio wave: 'metal' (the default: batteries, motors, boards, "
+                   "displays), a plastic, or 'ignore'"}
+_ENC["placement"]["properties"]["antenna"] = {
+    "type": "object", "properties": {
+        "weight": {"type": "number", "minimum": 0,
+                   "description": "mm of layout cost per unit of first-order change in the antenna's reflection "
+                                  "coefficient (default 200: a change of 0.1, about what takes a -20 dB "
+                                  "match to -14 dB, costs 20 mm)"}},
+    "additionalProperties": False}
+
+
 SCHEMAS = {"stack": STACK_SCHEMA, "study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
            "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA, "split": SPLIT_SCHEMA,
-           "enclosure": ENCLOSURE_SCHEMA, "wires": WIRES_SCHEMA, "bundle": BUNDLE_SCHEMA}
+           "enclosure": ENCLOSURE_SCHEMA, "wires": WIRES_SCHEMA, "antenna": ANTENNA_SCHEMA,
+           "bundle": BUNDLE_SCHEMA}
 
 
 def schema(kind: str = "study") -> dict:
     """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff', 'split', 'enclosure',
-    'wires', 'stack' or 'bundle' (a results bundle's manifest.json)."""
+    'wires', 'antenna', 'stack' or 'bundle' (a results bundle's manifest.json)."""
     if kind not in SCHEMAS:
         raise ValueError(f"schema kind must be one of {sorted(SCHEMAS)}")
     return copy.deepcopy(SCHEMAS[kind])

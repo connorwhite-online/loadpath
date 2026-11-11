@@ -32,6 +32,8 @@ jobs:
               tests/test_handoff.py tests/test_shells.py tests/test_shroud.py tests/test_feel.py
               tests/test_touch_zones.py tests/test_cooling.py tests/test_rods.py tests/test_wires.py
               tests/test_stack.py tests/test_kicad.py
+          - group: antenna         # ~10 min (rf 1, antenna 8)
+            files: tests/test_rf.py tests/test_antenna.py
           - group: enclosure       # ~11 min
             files: tests/test_enclosure.py
           - group: vibration       # vibration 9.5 min

@@ -74,7 +74,8 @@ def test_published_schema_files_match():
     for kind, fname in (("study", "study.schema.json"), ("heatExchanger", "heat-exchanger.schema.json"),
                         ("lattice", "lattice.schema.json"), ("field", "field.schema.json"),
                         ("handoff", "handoff.schema.json"), ("split", "split.schema.json"),
-                        ("wires", "wires.schema.json"), ("stack", "stack.schema.json"),
+                        ("wires", "wires.schema.json"), ("antenna", "antenna.schema.json"),
+                        ("stack", "stack.schema.json"),
                         ("bundle", "bundle.schema.json")):
         on_disk = json.loads((ROOT / "schema" / fname).read_text())
         assert on_disk == json.loads(json.dumps(SCHEMAS[kind])), \

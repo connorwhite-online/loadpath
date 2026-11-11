@@ -1,0 +1,405 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "loadpath antenna brief",
+  "description": "`loadpath antenna`: a board antenna solved in what surrounds it (antenna.py, rf.py). Maxwell's equations in the time domain on the board's copper, its laminate, the printed shell with its measured permittivity and loss, and the metal near it: the reflection (S11) across the band, the resonance and how far the surroundings move it, the input impedance, radiation and total efficiency with the heat split by material, and a sensitivity field (what a piece of plastic or metal at each point would do to the port). Inside a product, give the same block as a component's `antenna` in an enclosure brief.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "band": {
+      "type": "array",
+      "items": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "MHz: the band the radio uses, e.g. [2400, 2483.5]"
+    },
+    "sweep": {
+      "type": "array",
+      "items": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "MHz: the range solved (default: the band widened by 30% of its centre each way)"
+    },
+    "board": {
+      "type": "object",
+      "properties": {
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "mm: a rectangular board, its corner at the origin, its bottom face at z = 0"
+        },
+        "outline": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
+        },
+        "thickness": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm (default 1.6); the top copper is at z = thickness"
+        },
+        "material": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "a material with radio-frequency values on file: fr4, pla, petg, abs, tpu, pa12, pa11, air; or 'metal'"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "base": {
+                  "type": "string",
+                  "description": "the material whose values are used where none is given"
+                },
+                "permittivity": {
+                  "type": "number",
+                  "minimum": 1,
+                  "description": "relative, at the band"
+                },
+                "lossTangent": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "fill": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1,
+                  "description": "share of the volume that is solid, the rest air (a lattice's relative density; for a printed part its mass over its solid mass, which is more than the slicer's infill setting because walls and skins are solid). The effective permittivity is taken between the Hashin-Shtrikman bounds"
+                },
+                "metal": {
+                  "type": "boolean"
+                },
+                "source": {
+                  "type": "string",
+                  "description": "where the values come from (kept in the report)"
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "description": "the laminate (default fr4)"
+        },
+        "top": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
+          },
+          "description": "top copper that is not ground: the antenna and its feed line"
+        },
+        "bottom": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
+          },
+          "description": "bottom copper that is not ground"
+        },
+        "ground": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
+          },
+          "description": "ground pour on both faces, stitched: solved as solid metal through the board"
+        },
+        "vias": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "description": "[x, y] of each via joining top copper to bottom"
+        }
+      },
+      "x-requireOne": [
+        [
+          "size"
+        ],
+        [
+          "outline"
+        ]
+      ],
+      "additionalProperties": false,
+      "description": "the board and its copper, as drawn"
+    },
+    "feed": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "mm: the ground end of the gap the radio drives"
+        },
+        "to": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "mm: the antenna end of the gap"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "description": "mm: width of the trace the gap is in"
+        },
+        "across": {
+          "type": "string",
+          "enum": [
+            "x",
+            "y",
+            "z"
+          ],
+          "description": "the axis `width` lies along"
+        },
+        "impedance": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "ohm: the radio's output (default 50)"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "additionalProperties": false,
+      "description": "where the radio connects: a gap between the ground and the antenna's copper"
+    },
+    "limit": {
+      "type": "number",
+      "maximum": 0,
+      "description": "dB: the worst reflection (S11) allowed inside the band (default -10: a tenth of the power comes back)"
+    },
+    "resolution": {
+      "type": "object",
+      "properties": {
+        "copper": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm: cell size at the copper (default 0.5)"
+        },
+        "body": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm: cell size across the other bodies (default 1)"
+        },
+        "reach": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "mm: how far round the board the sensitivity field is kept (default an eighth of a wavelength)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "surroundings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "a material with radio-frequency values on file: fr4, pla, petg, abs, tpu, pa12, pa11, air; or 'metal'"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "base": {
+                    "type": "string",
+                    "description": "the material whose values are used where none is given"
+                  },
+                  "permittivity": {
+                    "type": "number",
+                    "minimum": 1,
+                    "description": "relative, at the band"
+                  },
+                  "lossTangent": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "fill": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1,
+                    "description": "share of the volume that is solid, the rest air (a lattice's relative density; for a printed part its mass over its solid mass, which is more than the slicer's infill setting because walls and skins are solid). The effective permittivity is taken between the Hashin-Shtrikman bounds"
+                  },
+                  "metal": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "where the values come from (kept in the report)"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "metal": {
+            "type": "boolean",
+            "description": "a conductor: a battery, a motor, a shield can, a screw"
+          },
+          "box": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[min, max] mm"
+          },
+          "prism": {
+            "type": "object",
+            "properties": {
+              "outline": {
+                "type": "array",
+                "minItems": 3,
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
+              },
+              "from": {
+                "type": "number"
+              },
+              "to": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "outline",
+              "from",
+              "to"
+            ],
+            "additionalProperties": false,
+            "description": "an outline extruded from z = from to z = to"
+          },
+          "mesh": {
+            "type": "string",
+            "description": "a closed STL/OBJ/3MF/GLB, mm"
+          },
+          "matrix": {
+            "type": "array",
+            "description": "4x4: the mesh's frame in the board's frame"
+          },
+          "wire": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "minItems": 2,
+            "description": "a thin conductor through these points (a lead, a cable's shield)"
+          },
+          "resolution": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "mm: cells no larger than this across the body"
+          }
+        },
+        "x-requireOne": [
+          [
+            "box"
+          ],
+          [
+            "prism"
+          ],
+          [
+            "mesh"
+          ],
+          [
+            "wire"
+          ]
+        ],
+        "additionalProperties": false
+      },
+      "description": "what is near the board, in the board's frame: the shell, the battery, screws, cables. Later entries overwrite earlier ones where they overlap"
+    }
+  },
+  "required": [
+    "band",
+    "board",
+    "feed"
+  ],
+  "additionalProperties": false
+}

@@ -167,6 +167,11 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         c["id"] = c.get("id") or f"component-{i}"
         if isinstance(c.get("shape"), str):
             c["shape"] = _shape_spec(c["shape"], base_dir)
+        if c.get("antenna") and c.get("shape") is None and c.get("size") is None:
+            # a board described by its antenna brief is a box that size
+            ab = c["antenna"]["board"]
+            c["size"] = [*(ab.get("size") or np.ptp(np.asarray(ab["outline"], float), axis=0).tolist()),
+                         float(ab.get("thickness", 1.6))]
         comps.append(c)
     byid = {c["id"]: c for c in comps}
 
@@ -223,6 +228,18 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         wo = pl_opts.pop("wires", None) or {}
         judge = placement_judge(b["wires"], comps, weight=float(wo.get("weight", 0.15)),
                                 physics=bool(wo.get("physics", True)))
+    # an antenna on a board: the bare board's fields are solved once, and
+    # every candidate layout is priced by what the wall and the other parts
+    # would do to its port (antenna.py)
+    antennas = []
+    if any(c.get("antenna") for c in comps):
+        from .antenna import both_judges, enclosure_antennas
+        if on_progress:
+            on_progress({"stage": "antenna", "message": "solving the bare board's fields"}, None)
+        antennas, aj = enclosure_antennas(comps, skin_shape, t_skin, b.get("material"), pl_opts, base_dir,
+                                          log=(lambda m: on_progress({"stage": "antenna", "message": m}, None))
+                                          if on_progress else None)
+        judge = both_judges(judge, aj)
     aware = pl_opts.get("assemblyAware", True) and not split
 
     def lay_out(turning):
@@ -329,6 +346,27 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
         keep += wr["keepOut"]
         warnings += wr["warnings"]
         wires_report = wr["report"]
+
+    # the antenna as installed: the chosen layout solved in full
+    antenna_report = None
+    if antennas:
+        if on_progress:
+            on_progress({"stage": "antenna", "message": "solving the antenna in the chosen layout"}, None)
+        skin_mesh = trimesh_from_manifold(skin_shape.to_manifold())
+        antenna_report = {}
+        for a in antennas:
+            r = a.check(lay, skin_mesh, out_dir, base_dir)
+            antenna_report[a.id] = r
+            if not r["ok"]:
+                warnings.append(
+                    f"{a.id}: the antenna's reflection inside the band is {r['installed']['inBand']['worstS11']} dB "
+                    f"as installed (limit {r['limit']} dB; {r['bare']['inBand']['worstS11']} dB on the bare "
+                    f"board): its resonance moved {r['change']['resonanceShift']} MHz. Retune its copper in place "
+                    f"(antenna.tune on {r.get('brief', 'the installed brief')}), or move what is near it "
+                    "(antenna.firstOrder says which part or wall costs most)")
+            if r["takenAsMetal"]:
+                warnings.append(f"{a.id}: {', '.join(r['takenAsMetal'])} taken as metal for the antenna (give "
+                                "each an `rf` material, or \"ignore\", if it is not)")
 
     # 4. supports and loads
     sp = _surface_point(exterior, centre, rest)
@@ -540,6 +578,7 @@ def enclosure(brief: dict, base_dir: str | None, out_dir: str, on_progress=None)
               "loadCases": [c["name"] for c in cases], "supports": supports,
               **({"handoff": handoff_report} if handoff_report else {}),
               **({"wires": wires_report} if wires_report is not None else {}),
+              **({"antenna": antenna_report} if antenna_report is not None else {}),
               "warnings": warnings, "lint": issues, "seconds": round(time.time() - t0, 1)}
     if boards:
         warnings += [f"{r['id']} (KiCad): {w}" for r in boards for w in r["warnings"]]

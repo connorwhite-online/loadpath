@@ -610,8 +610,8 @@ def main(argv=None):
     c.add_argument("--base-dir")
     s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
     s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field",
-                                                                "handoff", "split", "enclosure", "wires", "stack",
-                                                                "bundle"])
+                                                                "handoff", "split", "enclosure", "wires", "antenna",
+                                                                "stack", "bundle"])
     e = sub.add_parser("examples", help="list the packaged examples, or print one")
     e.add_argument("name", nargs="?")
     lt = sub.add_parser("lattice", help="fill a finished part with a stress-graded TPMS lattice")
@@ -785,6 +785,14 @@ def main(argv=None):
     wi.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
     wi.add_argument("--no-viewer", action="store_true")
     wi.add_argument("--quiet", action="store_true")
+    an = sub.add_parser("antenna", help="a board antenna solved in what surrounds it (Maxwell's equations in "
+                                        "the time domain): reflection across the band, resonance and how far "
+                                        "the printed shell and nearby metal move it, impedance, efficiency "
+                                        "with the heat split by material, and the sensitivity field round it")
+    an.add_argument("brief", help="the antenna brief (`loadpath schema antenna`)")
+    an.add_argument("--out", default="loadpath-antenna")
+    an.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
+    an.add_argument("--quiet", action="store_true")
     stk = sub.add_parser("stack", help="boards on standoffs: search the order and the gaps for board temperature "
                                        "(airflow through each gap solved), centre of mass and height; the cables "
                                        "between boards laid as rods; the stack as a carried mass for the frame")
@@ -1069,6 +1077,8 @@ def main(argv=None):
         return _shroud(args)
     if args.cmd == "wires":
         return _wires(args)
+    if args.cmd == "antenna":
+        return _antenna(args)
     if args.cmd == "stack":
         return _stack(args)
     if args.cmd == "kicad":
@@ -1839,6 +1849,34 @@ def _kicad(args):
                       "holes": [{k: h[k] for k in ("ref", "at", "screw")} for h in info["holes"]],
                       "connectors": conns, "warnings": rep["warnings"]}, indent=1))
     return 0
+
+
+def _antenna(args):
+    from .antenna import run_brief
+    from .schema import format_issues, lint
+
+    doc = _load(args.brief)
+    errors = [x for x in lint(doc, "antenna") if x["level"] == "error"]
+    if errors:
+        print(json.dumps({"ok": False, "error": format_issues(errors)}))
+        return 2
+    base = args.base_dir or os.path.dirname(os.path.abspath(args.brief))
+    log = None if args.quiet else (lambda m: print(f"  {m}", file=sys.stderr, flush=True))
+    try:
+        r = run_brief(doc, args.out, base_dir=base, log=log)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    final = r.get("installed") or r["bare"]
+    out = {"ok": r["ok"], "report": os.path.join(args.out, "antenna.json"),
+           "sweep": os.path.join(args.out, "s11.csv"), "limit": r["limit"],
+           "bare": {k: r["bare"].get(k) for k in ("resonance", "inBand", "efficiency")},
+           **({"installed": {k: final.get(k) for k in ("resonance", "inBand", "efficiency", "heat")},
+               "change": r["change"]} if "installed" in r else {}),
+           "sensitivity": r["sensitivity"], "seconds": r["seconds"]}
+    if not args.quiet:
+        print(json.dumps(out, indent=1, default=float))
+    return 0 if r["ok"] else 1
 
 
 def _wires(args):

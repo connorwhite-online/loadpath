@@ -347,6 +347,23 @@ def wires(brief, base_dir: str | None = None) -> dict:
     return out
 
 
+def antenna(brief, base_dir: str | None = None) -> dict:
+    """Validate an antenna brief (antenna.py) and solve it as a background
+    job."""
+    if isinstance(brief, str):
+        from .tasks import read_doc
+        brief, base_dir = read_doc(brief, base_dir)
+    from .schema import format_issues, lint
+    errors = [x for x in lint(brief, "antenna") if x["level"] == "error"]
+    if errors:
+        return {"ok": False, "error": format_issues(errors)}
+    args = ["antenna", "{dir}/brief.json", "--out", "{dir}/out", "--base-dir", base_dir or os.getcwd()]
+    out = _spawn("antenna", brief.get("name") or "antenna", {"brief.json": brief}, args,
+                 base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def stack(brief, base_dir: str | None = None) -> dict:
     """Validate a stack brief (stack.py) and search its board order and
     gaps as a background job."""
@@ -1087,6 +1104,25 @@ def serve():
         in an enclosure brief instead (components[].ports, wires): then only layouts that can be wired
         are kept. Starts a job; poll loadpath_status."""
         return wires(brief, base_dir)
+
+    @tool
+    def loadpath_antenna(brief: dict | str, base_dir: str | None = None) -> dict:
+        """Solve a board antenna in what surrounds it (loadpath_schema('antenna')): the board's copper
+        as drawn (antenna, feed line, ground), its laminate, and `surroundings` in the board's frame
+        (the printed shell as a mesh with its material, a battery or motor as metal, screws, cable
+        runs). Maxwell's equations are solved in the time domain on that geometry; nothing is tuned by
+        rule. Reports, for the bare board and as installed: reflection (S11) across the sweep, the
+        resonance and how far the surroundings moved it, worst S11 and mismatch loss inside the band,
+        bandwidth, input impedance, radiation and total efficiency, and the heat each material takes.
+        Also writes the sensitivity field (out/sensitivity.npz): the change in port impedance per mm3
+        of plastic or metal put at each point, which is the antenna's keep-out as the fields give it.
+        Printed plastics carry measured permittivity and loss (PLA, PETG, ABS, TPU; PA12 is an
+        estimate until measured); `fill` gives infill or a lattice its effective value. Inside a
+        product, put the same block on a component of an enclosure brief (`components[].antenna`):
+        placement then ranks every layout by its effect on the port and the chosen one is solved in
+        full. Starts a job (a minute or two); poll loadpath_status; report out/antenna.json, sweep
+        out/s11.csv."""
+        return antenna(brief, base_dir)
 
     @tool
     def loadpath_stack(brief: dict | str, base_dir: str | None = None) -> dict:

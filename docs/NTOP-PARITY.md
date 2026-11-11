@@ -77,6 +77,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | CFD | lattice-Boltzmann flow for exchangers and lattice cells (`flow.py`, `conjugate.py`); `loadpath external-flow` puts any part in a wind or water tunnel and writes the surface forces as a load case ([EXTERNAL-FLOW.md](EXTERNAL-FLOW.md); coarse LES, reads high, capped Reynolds number) | Have (new, coarse) |
 | Nonlinear, contact, fatigue, creep, impact | `nonlinear.py`, `contact.py`, `durability.py`, `impact.py` | Beyond nTop |
 | (none: nTop has no cable or harness model) | `wires.py`, `rods.py`: wires, bundles and flat cables as Cosserat rods with contact, bend radius, twist and flex-life checks through a joint's motion; cables inside the enclosure placement search and their channels kept clear; connector and clip loads; board stacks ordered and spaced by heat, centre of mass and whether their harness can bend ([WIRES.md](WIRES.md)) | Beyond nTop (new) |
+| (none: nTop has no electromagnetic solver) | `rf.py`, `antenna.py`: a board antenna solved by FDTD inside the printed shell and among the placed parts, with printed plastics' measured permittivity and loss; resonance shift, match, efficiency and heat by material; a reciprocity sensitivity field as the keep-out; in the enclosure placement search; an inverted-F's dimensions solved in place ([ANTENNA.md](ANTENNA.md)) | Beyond nTop (new) |
 
 ## Design for additive manufacturing
 

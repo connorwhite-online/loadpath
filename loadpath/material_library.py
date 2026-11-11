@@ -28,6 +28,8 @@ What the code reads:
   cte                           thermal expansion, um/(m K) -> thermal.EXPANSION
   retention                     modulus kept vs temperature -> thermal.MODULUS_RETENTION
                                 (and, as a proxy, strength: durability)
+  permittivity, lossTangent     relative permittivity and loss tangent at 2 to 4 GHz ->
+                                antenna.rf_properties (a shell's effect on an antenna)
 The rest (elongation, Tg, hdt18, fatigue) is carried for the report and
 for people; fatigue and creep design values live in durability.DURABILITY,
 which cites its own literature.
@@ -167,6 +169,24 @@ SOURCES = {
         "approximate; the cliff at the glass transition is where sources disagree most. Measure it "
         "(DMA, or a heated cantilever) if a part runs warm"),
     "durability": Source("durability.DURABILITY (fatigue and creep design values, cited there)"),
+    "castro-2026": Source(
+        "Castro, Santos, Armas, Schlosser & Heckler 2026, Characterization of the dielectric properties of 3D "
+        "printing filaments using cavity perturbation technique for 5G applications, J. Microwaves, "
+        "Optoelectronics and Electromagnetic Applications 25(2)",
+        "https://doi.org/10.1590/2179-10742026v25i2298896",
+        "printed samples at 100% fill in a 3.5 GHz cavity; the same table has 25, 50 and 75% fill"),
+    "moscato-2016": Source(
+        "Moscato, Bahr, Le, Pasian, Bozzi, Perregrini & Tentzeris 2016, Infill-dependent 3-D-printed material "
+        "based on NinjaFlex filament for antenna applications, IEEE Antennas Wireless Propag. Lett. 15, 1506-1509",
+        "https://doi.org/10.1109/LAWP.2016.2516101",
+        "a printed TPU (NinjaFlex, 85A) ring resonator at 2.4 GHz, 100% infill: permittivity 3.0, loss tangent 0.06"),
+    "pa12-rf": Source(
+        "PA 12 has no microwave measurement on its powder-bed datasheets. Laser-sintered PA 12 falls from about "
+        "3.8 at low frequency to about 2.4 at 1 MHz (Huang et al. 2026, Materials 19(20) 4329, "
+        "doi 10.3390/ma19204329) and sintered PA 2200 is taken as 2.4 at 60 GHz in printed lens work; printed "
+        "nylon filament measures 2.82 / 0.020 at 3.5 GHz (castro-2026)",
+        "", "an estimate between those: measure a printed coupon (docs/ANTENNA.md) before trusting a tight margin; "
+            "nylon takes up water, which raises both numbers"),
 }
 
 # (value, source id, note)
@@ -503,6 +523,24 @@ LIBRARY = {
               specificHeat=(500, "asm-handbook", "J/(kg K)"),
               cte=(17.3, "asm-handbook", "um/(m K), 0-100 C")),
 }
+
+
+# Radio-frequency values (antenna.py): relative permittivity and loss tangent
+# near 2.4 GHz. Printed plastics vary with brand, colour, fill and moisture
+# by more than their datasheet strength does: docs/ANTENNA.md has a coupon
+# test that measures the print in hand.
+_RF = {
+    "pla": (2.89, 0.011, "castro-2026", "printed, 100% fill, 3.5 GHz"),
+    "petg": (2.69, 0.0070, "castro-2026", "printed, 100% fill, 3.5 GHz"),
+    "abs": (2.55, 0.0067, "castro-2026", "printed, 100% fill, 3.5 GHz"),
+    "tpu": (3.0, 0.06, "moscato-2016", "printed NinjaFlex (85A) at 2.4 GHz; a 95A grade is taken as the same"),
+    "tpu88a": (3.0, 0.06, "moscato-2016", "printed NinjaFlex (85A) at 2.4 GHz; sintered 88A is taken as the same"),
+    "pa12": (2.6, 0.02, "pa12-rf", "estimate: 2.4 to 2.9, loss 0.01 to 0.03"),
+    "pa11": (2.6, 0.02, "pa12-rf", "estimate: taken as PA 12"),
+}
+for _k, (_e, _t, _src, _note) in _RF.items():
+    LIBRARY[_k]["values"]["permittivity"] = (_e, _src, _note)
+    LIBRARY[_k]["values"]["lossTangent"] = (_t, _src, _note)
 
 
 def card_names():

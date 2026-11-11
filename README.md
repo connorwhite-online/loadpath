@@ -197,6 +197,16 @@ There is no GUI on purpose; it's a library.
   a product, part of the layout search, so components are only placed
   where their cables can be laid and plugged in, hot parts apart, and the
   harness's space is kept clear of the structure generated round it.
+- **Antennas inside the product** ([docs/ANTENNA.md](docs/ANTENNA.md)): a
+  board antenna solved with Maxwell's equations in the printed shell it
+  will live in, with the shell's measured permittivity and loss, the
+  battery and every placed part: how far the product moves its
+  resonance, what that costs in match and efficiency, and where the watts
+  go. The keep-out is a field read from the solution, not a rule of
+  thumb, and inside a product it is part of the layout search: a battery
+  is placed where it does not detune the radio, and the chosen layout is
+  solved in full. An inverted-F's own dimensions are solved in place.
+  Checked against exact cavity modes, NEC-2 and a measured patch.
 - **KiCad boards in** ([docs/KICAD.md](docs/KICAD.md)): a `.kicad_pcb`
   read for its outline, stackup thickness, every part's body and height
   (its 3D model, else the package's standard height), mass, mounting
@@ -347,7 +357,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
   [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md),
-  [KiCad boards](docs/KICAD.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),
+  [KiCad boards](docs/KICAD.md), [antennas](docs/ANTENNA.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),
   [results bundle](docs/BUNDLE.md).
 
 <!-- gallery:start -->
