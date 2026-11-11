@@ -570,6 +570,23 @@ change the exterior yourself: relay `skinReview.summary` and those
 options to the designer and let them choose. `limitedBy == "interior"`
 needs no designer: re-run finer or longer. See docs/SWITCH.md.
 
+**A scan of what the part must fit goes through `loadpath scan SCAN`
+(MCP `loadpath_scan`; docs/SCAN.md).** A point cloud (PLY, PCD, LAS, E57,
+XYZ), a Gaussian splat (3DGS .ply, .splat) or a scanned mesh. Pass the
+scanner (`--device iphone-lidar`, `artec-eva`, `leica-rtc360`, ... or
+`{sigma, scale}`) and the file's `--units` (LAS/E57/PCD are metres; a splat
+has none: give `--reference cyl-0=31.8+-0.05`, a caliper-measured size).
+Run it with `--features-only` first: each plane and cylinder has an id and a
++- band at 95%. Then `--support` (the bar it clamps, by id) and `--load
+ID=FX,FY,FZ` (the object's weight times its shock, on the face it sits on)
+write the study: the object kept out by its measured clearance plus the
+process's scatter, bars as fits with `mateUncertainty`. Never add your own
+margin: the clearance is the measurement's. If a bar's band is wider than
+its fit (a phone scan), the fit row says `measure`: ask for a caliper
+reading and pass `--known cyl-0=31.8+-0.05`. Relay `unseenArea`
+(rescan those sides) and any `selfConsistency` warning (the device is
+worse than its sigma says).
+
 **Any exterior first goes through `loadpath exterior SRC --out dir`
 (MCP `loadpath_exterior`; docs/EXTERIOR.md).** A designer's STEP or mesh,
 an AI-generated or scanned mesh (a Tripo/Meshy GLB: open, double-walled,

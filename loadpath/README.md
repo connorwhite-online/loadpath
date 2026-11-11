@@ -80,7 +80,7 @@ Tools: `loadpath_guide` (the study format), `loadpath_schema`,
 (outcomes, STL paths and renders), `loadpath_lattice`,
 `loadpath_heat_exchanger`, `loadpath_size_heat_exchanger`, `loadpath_jobs`,
 `loadpath_cancel`, and checks on any mesh file: `loadpath_check_printability`,
-`loadpath_check_isolation`, `loadpath_check_fit`, and `loadpath_import_cad` (a STEP/STL part as a draft study). Everything runs on the agent's own machine; jobs live in
+`loadpath_check_isolation`, `loadpath_check_fit`, `loadpath_import_cad` (a STEP/STL part as a draft study), and `loadpath_scan` (a lidar scan or splat in, a study round the scanned object). Everything runs on the agent's own machine; jobs live in
 `~/.loadpath/jobs` (`LOADPATH_HOME`). See [docs/agents.md](../docs/agents.md).
 
 From Python:

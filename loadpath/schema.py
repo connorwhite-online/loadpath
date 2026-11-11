@@ -184,6 +184,13 @@ _KEEP_OUT = {
                                           "report fits gives the as-built band and whether the fit holds."},
                    "mate": {**_POS, "description": "Diameter of the mating part, mm (default the cylinder's: draw "
                                                    "the keep-out at the bearing's or pin's size)."},
+                   "mateUncertainty": {"type": "number", "minimum": 0,
+                                       "description": "mm, +- on the mating diameter at the study's confidence (a "
+                                                      "scanned bar's measured band, loadpath scan): the fit's "
+                                                      "window shrinks by it from each side so the hole suits every "
+                                                      "mate in the band; when the band is wider than the window, "
+                                                      "sliding and bolt fits are drawn for the largest mate and "
+                                                      "press fits report 'measure'."},
                    "insertFrom": {"anyOf": [{"type": "string", "pattern": "^[+-]?[xyz]$"}, _VEC3, {
                                       "type": "array", "minItems": 1, "description": "a path of legs as the part "
                                       "leaves its place: every leg but the last with a length; the last goes on "

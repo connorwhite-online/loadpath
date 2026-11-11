@@ -633,6 +633,37 @@ def import_cad(path: str, out_dir: str | None = None, base_dir: str | None = Non
     return {"ok": True, "baseDir": out, **r}
 
 
+def scan(path: str, out_dir: str | None = None, base_dir: str | None = None, device=None, units: str | None = None,
+         scale: float | None = None, up: str | None = None, crop=None, keep: str = "all", reference=None,
+         known=None, support=None, loads=None, material: str = "pa12", process: str | None = "sls",
+         grow: float = 15.0, confidence: float = 0.95, fit: str = "slip") -> dict:
+    """A scan's features with their measured uncertainty, and with out_dir,
+    support and loads a study built round the scanned object (scanstudy.py)."""
+    from .scanstudy import scan_to_study
+    full = path if os.path.isabs(path) else os.path.join(base_dir or os.getcwd(), path)
+    if not os.path.exists(full):
+        return {"ok": False, "error": f"no scan at {full}"}
+    if isinstance(support, str):
+        support = [support]
+    if isinstance(loads, list):
+        loads = [(it["feature"], it["force"]) if isinstance(it, dict) else tuple(it) for it in loads]
+    if isinstance(known, dict):
+        known = {k: (v if isinstance(v, dict) else {"diameter": float(v)}) for k, v in known.items()}
+    try:
+        out = None if out_dir is None else os.path.abspath(
+            out_dir if os.path.isabs(out_dir) else os.path.join(base_dir or os.getcwd(), out_dir))
+        r = scan_to_study(full, out, device=device, units=units, scale=scale, up=up, crop=crop, keep=keep,
+                          reference=reference, known=known, support=support, loads=loads, material=material,
+                          process=process, grow=grow, confidence=confidence, bar_fit=fit)
+    except (ValueError, RuntimeError) as exc:
+        return {"ok": False, "error": str(exc)}
+    res = {"ok": True, "summary": r["summary"], "features": r["features"], "todo": r.get("todo", []),
+           "scale": r["report"].get("scale"), "device": r["report"].get("device")}
+    if "studyPath" in r:
+        res.update({"baseDir": out, "study": r["studyPath"], "clearance": r["clearance"]})
+    return json.loads(json.dumps(res, default=float))
+
+
 def exterior(path: str, out_dir: str | None = None, base_dir: str | None = None, size: float | None = None,
              scale: float | None = None, up: str | None = None, place: str | None = None,
              pitch: float | None = None, skin: float | None = 1.0, keep: str = "largest") -> dict:
@@ -1363,6 +1394,30 @@ def serve():
         component's frame (origin at board centre, z up). Solves the placement in the cavity and
         reports cavity, bosses and each port cutout as ok / not / null (could not check)."""
         return check_component_fit(path, components, base_dir)
+
+    @tool
+    def loadpath_scan(path: str, out_dir: str | None = None, base_dir: str | None = None, device=None,
+                      units: str | None = None, scale: float | None = None, up: str | None = None, crop=None,
+                      keep: str = "all", reference=None, known=None, support=None, loads=None,
+                      material: str = "pa12", process: str | None = "sls", grow: float = 15.0,
+                      confidence: float = 0.95, fit: str = "slip") -> dict:
+        """A scan in, a part designed round the scanned object out. Reads point clouds (PLY, PCD, LAS, E57,
+        XYZ), Gaussian splats (3DGS .ply, .splat) and scanned meshes; measures each point's noise, spacing
+        and curvature; fits planes (mounting faces, a wall) and cylinders (bores; bars and tubes a clamp
+        goes round) with RANSAC + least squares, each with a +- band at `confidence` from the fit, the
+        device's published accuracy (device: iphone-lidar, ipad-lidar, artec-eva, artec-leo, leica-rtc360,
+        leica-blk360, faro-focus, or {sigma, scale}) and the scale. units is required unless the format
+        has one (LAS/E57/PCD: m). A splat has no scale: give reference [{feature, diameter, tolerance}] or
+        [{feature, to, distance}] (a caliper-measured size). Call first without out_dir: summary.features
+        lists each feature id. Then with out_dir, support (feature ids that hold the part: the bar it
+        clamps) and loads ([{feature, force: [fx, fy, fz] N}], one case each: the object's weight x its
+        shock on the face it sits on) it writes a study: the object kept out by its own measured clearance
+        plus the process's scatter (no fixed margin; unseen patches by their gap), bars as fitted bores
+        with mateUncertainty (fits.py holds the fit for every bar in the band, or says measure it), faces
+        as pads set off by their band. known {feature: {diameter, tolerance}} replaces a fitted diameter
+        with a caliper's. Then loadpath_check and loadpath_start with base_dir. Seconds to a minute."""
+        return scan(path, out_dir, base_dir, device, units, scale, up, crop, keep, reference, known, support,
+                    loads, material, process, grow, confidence, fit)
 
     @tool
     def loadpath_exterior(path: str, out_dir: str | None = None, base_dir: str | None = None,

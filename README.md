@@ -144,6 +144,15 @@ Where it is strongest:
   pebble, lays out the board and battery, and gets the click it asked for
   without touching the exterior. Interiors go back out as SDF grids
   (`loadpath sdf`).
+- **Scans in, a part that fits out**: a lidar, structured-light or phone
+  scan, or a Gaussian splat, read as points (PLY, PCD, LAS, E57, XYZ,
+  3DGS `.ply` and `.splat`). Planes and cylinders are fitted with a +- band
+  that comes from the fit, the scanner's published accuracy and the scale,
+  and `loadpath scan` writes a study that builds the part round the scanned
+  object. Clearances and fits come from what the scan measured, not a fixed
+  margin: 0.45 mm round a light scanned at Artec-class accuracy for SLS. A
+  phone's +-1 cm says to measure the bar with calipers instead
+  ([docs/SCAN.md](docs/SCAN.md)).
 - **Implicit modelling**: field graphs, graded and conformal lattices (TPMS,
   strut, Voronoi), blends, and exact STEP of lattice parts.
 - **Process awareness**: FDM, SLS, MJF, resin and powder-bed metal rules,
@@ -363,7 +372,7 @@ print(best.report["mass"], best.report["safetyFactor"])
 - [Case studies](docs/case-studies/) and [benchmarks](docs/BENCHMARKS.md).
 - Topics: [fields](docs/fields.md), [materials](docs/materials.md),
   [build simulation](docs/BUILDSIM.md), [calibration](docs/CALIBRATION.md),
-  [CAD import](docs/IMPORT.md), [slicer](docs/slicer.md),
+  [CAD import](docs/IMPORT.md), [scans and splats](docs/SCAN.md), [slicer](docs/slicer.md),
   [multi-material](docs/MULTIMATERIAL.md), [impact](docs/IMPACT.md),
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),

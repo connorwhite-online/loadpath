@@ -326,10 +326,11 @@ def expand_fits(d: dict) -> dict:
     kind, build, holes = _process_of(d)
     if not explicit and kind is None:
         # no fit asked for and no process to compensate for: nothing to change
-        if any(isinstance(k, dict) and ("fit" in k or "mate" in k or "finish" in k) for k in kos):
+        if any(isinstance(k, dict) and ("fit" in k or "mate" in k or "mateUncertainty" in k or "finish" in k)
+               for k in kos):
             d = copy.deepcopy(d)
             for k in d["keepOut"]:
-                for key in ("fit", "mate", "finish", "_size"):
+                for key in ("fit", "mate", "mateUncertainty", "finish", "_size"):
                     k.pop(key, None)
         return d
     d = copy.deepcopy(d)
@@ -345,6 +346,7 @@ def expand_fits(d: dict) -> dict:
             continue
         fit = k.pop("fit", None)
         mate = k.pop("mate", None)
+        mate_u = k.pop("mateUncertainty", None)
         finish = k.pop("finish", "auto")
         size = k.pop("_size", None)
         sh = k.get("shape") or {}
@@ -370,6 +372,28 @@ def expand_fits(d: dict) -> dict:
         drawn = 2.0 * float(sh["r"])
         mate = float(mate) if mate is not None else drawn
         win = fit_window(fit, mate, family, size)
+        mate_note = None
+        if mate_u and win["lo"] is not None:
+            # the mate is only known to +- mate_u (a scanned bar's measured
+            # band): the hole must suit every mate in it, so the window
+            # shrinks by mate_u from each side
+            mu = float(mate_u)
+            lo2, hi2 = win["lo"] + mu, win["hi"] - mu
+            if lo2 <= hi2:
+                win = {**win, "lo": lo2, "hi": hi2, "target": 0.5 * (lo2 + hi2)}
+                mate_note = "held for every mate in its band"
+            elif fit in ("press", "transition"):
+                win = {**win, "lo": lo2, "hi": hi2}
+                mate_note = (f"the mate is known to +-{mu:.3f} mm, wider than this fit's window: no hole holds "
+                             "it for every mate in the band; measure the mate (mate=, mateUncertainty=) or "
+                             "choose a looser fit")
+            else:
+                # sliding, turning, bolt fits: never interfere (the biggest
+                # mate goes in); the smallest has more play than the fit allows
+                win = {**win, "lo": lo2, "hi": lo2 + (win["hi"] - win["lo"]), "target": lo2 + 0.5 * (win["hi"] - win["lo"])}
+                mate_note = (f"the mate is known to +-{mu:.3f} mm, wider than this fit's window: the hole is "
+                             f"drawn for the largest mate, so the smallest has up to {2 * mu:.3f} mm more play; "
+                             "measure the mate to tighten it")
         row = {"id": k.get("id"), "fit": fit, "standard": win["standard"], "mate": round(mate, 4),
                "drawn": round(drawn, 4), "window": [None if win["lo"] is None else round(win["lo"], 4),
                                                     None if win["hi"] is None else round(win["hi"], 4)],
@@ -377,6 +401,10 @@ def expand_fits(d: dict) -> dict:
                "axis": axis.round(4).tolist(), "p0": p0.round(4).tolist(), "p1": p1.round(4).tolist()}
         if size:
             row["size"] = size
+        if mate_u:
+            row["mateUncertainty"] = round(float(mate_u), 4)
+            if mate_note:
+                row["mateNote"] = mate_note
         if kind is None:
             # a fit with no process: draw the target, say it is uncompensated
             designed, bias, tol, orient, how = win["target"], 0.0, None, None, "as-built"
@@ -385,6 +413,8 @@ def expand_fits(d: dict) -> dict:
         else:
             bias, tol, orient = _bias(holes, axis, build, win["target"])
             verdict = _verdict(win["lo"], win["hi"], win["target"], tol, holes["repeat"])
+            if win["lo"] is not None and win["lo"] > win["hi"]:
+                verdict = "measure"            # no hole holds the fit for the mate's whole band
             how = "ream" if finish == "ream" or (finish == "auto" and verdict == "ream") else "as-built"
             if kind == "milled":
                 how = "machine" if fit != "nominal" else "as-built"

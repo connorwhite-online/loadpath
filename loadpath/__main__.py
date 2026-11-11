@@ -256,6 +256,60 @@ def _bundle(args):
     return 0
 
 
+def _scan(args):
+    from .scanstudy import scan_to_study
+    try:
+        dev = args.device
+        if dev and dev.strip().startswith("{"):
+            dev = json.loads(dev)
+        crop = None
+        if args.crop:
+            v = [float(x) for x in args.crop.split(",")]
+            if len(v) != 6:
+                raise ValueError("--crop is xmin,ymin,zmin,xmax,ymax,zmax")
+            crop = [v[:3], v[3:]]
+        loads = []
+        for item in args.load:
+            k, _, v = item.partition("=")
+            f = [float(x) for x in v.split(",")]
+            if len(f) != 3:
+                raise ValueError(f"--load {item!r}: write ID=FX,FY,FZ in N")
+            loads.append((k, f))
+        out_dir = None if args.features_only else args.out
+        r = scan_to_study(args.scan, out_dir, device=dev, units=args.units, scale=args.scale, up=args.up,
+                          crop=crop, keep=args.keep, reference=args.reference or None, known=args.known or None,
+                          support=args.support or None, loads=loads or None, material=args.material,
+                          process=args.process, grow=args.grow, confidence=args.confidence, bar_fit=args.fit,
+                          max_points=args.max_points)
+        if args.mesh:
+            from .scan import load_scan, reconstruct
+            s = load_scan(args.scan, device=dev, units=args.units, scale=args.scale, up=args.up, crop=crop,
+                          keep=args.keep, max_points=args.max_points)
+            m, info = reconstruct(s)
+            m.export(args.mesh)
+            r["mesh"] = {"path": args.mesh, **info["report"]}
+    except (ValueError, RuntimeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    rep = r["report"]
+    out = {"ok": True, **r["summary"], "scale": rep.get("scale"), "units": rep.get("units"),
+           "spacingP95": rep.get("spacing", {}).get("p95"), "noiseCorrelation": rep.get("noise", {}).get("neighbourCorrelation"),
+           "deviceSource": rep.get("device", {}).get("source"), "todo": r.get("todo", [])}
+    if r["features"].get("selfConsistency"):
+        out["selfConsistency"] = r["features"]["selfConsistency"]["verdict"]
+    if "studyPath" in r:
+        out["study"] = r["studyPath"]
+        out["clearance"] = r["clearance"]
+    if "mesh" in r:
+        out["mesh"] = r["mesh"]
+    if args.out and not args.features_only:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "scan-report.json"), "w") as fh:
+            json.dump({"report": rep, "features": r["features"]}, fh, indent=1, default=float)
+    print(json.dumps(out, indent=1, default=float))
+    return 0
+
+
 def _import(args):
     from .cadimport import import_part
 
@@ -953,6 +1007,36 @@ def main(argv=None):
     im.add_argument("--safety-factor", type=float, default=2.0)
     im.add_argument("--tolerance", type=float, default=0.05, help="mm chord error tessellating a STEP")
     im.add_argument("--features-only", action="store_true", help="print the features, write no study")
+    sc = sub.add_parser("scan", help="a lidar / structured-light / photogrammetry scan or a Gaussian splat in: "
+                                     "planes and cylinders fitted with their measured uncertainty, and a study "
+                                     "that builds a part round the scanned object, its clearances from the scan")
+    sc.add_argument("scan", help="PLY (cloud, 3DGS splat or mesh), .splat, PCD, LAS, E57, XYZ/TXT/CSV/PTS, STL/OBJ/GLB")
+    sc.add_argument("--device", help="the scanner: " + ", ".join(sorted(__import__("loadpath.scan", fromlist=["DEVICES"]).DEVICES))
+                    + "; or JSON {\"sigma\": mm, \"scale\": relative} (default: measured scatter only)")
+    sc.add_argument("--units", help="the file's length unit: m, cm, mm, in, ft (required unless the format says)")
+    sc.add_argument("--scale", type=float, help="a factor to mm instead of --units")
+    sc.add_argument("--up", help="the file's up axis, e.g. +y (glTF), -y (most splat trainers)")
+    sc.add_argument("--crop", help="xmin,ymin,zmin,xmax,ymax,zmax in the file's units: cut the object out of a room")
+    sc.add_argument("--keep", choices=["all", "largest"], default="all",
+                    help="all clusters (default; specks dropped) or the largest one")
+    sc.add_argument("--reference", action="append", default=[], metavar="ID=D[+-TOL]",
+                    help="a known dimension that fixes the scale: cyl-0=31.8+-0.05 (a diameter), "
+                         "plane-0/plane-1=40+-0.05 (two faces' distance); repeat for more")
+    sc.add_argument("--known", action="append", default=[], metavar="ID=D[+-TOL]",
+                    help="a measured diameter that replaces a fitted one (calipers: the scan says where, the "
+                         "caliper how big), e.g. cyl-0=31.8+-0.05")
+    sc.add_argument("--support", action="append", default=[], help="feature id the part is held by (repeat)")
+    sc.add_argument("--load", action="append", default=[], metavar="ID=FX,FY,FZ",
+                    help="N on a feature (the face the object sits on); one load case per --load")
+    sc.add_argument("--material", default="pa12")
+    sc.add_argument("--process", default="sls", help="fdm, sls, mjf, sla, ...: its scatter joins the clearance")
+    sc.add_argument("--grow", type=float, default=15.0, help="mm the design space reaches past the features")
+    sc.add_argument("--fit", default="slip", help="the fit on a bar the part mounts round (fits.py)")
+    sc.add_argument("--confidence", type=float, default=0.95)
+    sc.add_argument("--max-points", type=int, default=300_000)
+    sc.add_argument("--mesh", help="also write the reconstructed surface here (STL)")
+    sc.add_argument("--out", help="folder for the study (with --support and --load)")
+    sc.add_argument("--features-only", action="store_true", help="print the features, write nothing")
     bs = sub.add_parser("buildsim", help="simulate printing a part (lpbf, fdm, sls): distortion, residual stress, "
                                          "recoater lift; --compensate writes the pre-distorted part to print")
     bs.add_argument("part", help="STL, 3MF or OBJ, in mm, in its build position")
@@ -1156,6 +1240,8 @@ def main(argv=None):
         return _remesh(args)
     if args.cmd == "import":
         return _import(args)
+    if args.cmd == "scan":
+        return _scan(args)
     if args.cmd == "step":
         return _step(args)
     if args.cmd == "external-flow":
