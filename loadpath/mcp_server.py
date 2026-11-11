@@ -727,6 +727,11 @@ def _study_status(d, r):
     info = {"status": "done", "kind": "study", "deliver": deliver, "best": best, "outcomes": outcomes,
             "warnings": r.get("warnings"),
             "seconds": r.get("seconds"), "report": os.path.join(d, "out", "report.json")}
+    if r.get("bundle"):
+        # the simulation's fields and their meaning, for other viewers and listings
+        info["bundle"] = {"dir": os.path.join(d, "out", "bundle"),
+                          "manifest": os.path.join(d, "out", "bundle", "manifest.json"),
+                          "files": r["bundle"].get("files")}
     if r.get("viewer"):
         info["viewer"] = os.path.join(d, "out", os.path.basename(r["viewer"]))
         info["viewerNote"] = _VIEWER_NOTE

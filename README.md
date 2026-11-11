@@ -281,7 +281,12 @@ loadpath run bracket.json --out out/   # optimize, mesh, verify, render
 ```
 
 `out/` gets an STL and a render per outcome and `report.json`. Every command
-takes `--quick` for a first look in a minute or two.
+takes `--quick` for a first look in a minute or two. `out/bundle/` carries the
+simulation with the part, in files other software opens: a glTF coloured by
+its safety factor with the loads and keep-outs as named objects, the analysis
+as VTK for ParaView, a mass-against-margin CSV, and a manifest that says what
+every field means, its units, criterion and target
+([docs/BUNDLE.md](docs/BUNDLE.md)).
 
 Optional extras: `crosscheck` (tetrahedral verification; recommended),
 `render`, `step` (STEP in and out, OpenCascade), `flow` (lattice-Boltzmann,
@@ -342,7 +347,8 @@ print(best.report["mass"], best.report["safetyFactor"])
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
   [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md),
-  [KiCad boards](docs/KICAD.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md).
+  [KiCad boards](docs/KICAD.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),
+  [results bundle](docs/BUNDLE.md).
 
 <!-- gallery:start -->
 

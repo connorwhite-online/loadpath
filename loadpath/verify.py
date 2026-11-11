@@ -1806,8 +1806,17 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                 # C per node at the hot moment (the cycle's hottest, or the steady state)
                 report["fields"] = {"nodes": hm.node_xyz, "cases": [],
                                     "temperature": t_hot if cold is not None else heat.t_node}
-            report.setdefault("fields", {"nodes": hm.node_xyz, "cases": []})["cases"].append(
-                {"name": case.name, "vonMises": vm, "displacement": disp, "wetted": bc.case_pressure_nodes[ci]})
+            flds = report.setdefault("fields", {"nodes": hm.node_xyz, "cases": []})
+            if "elements" not in flds:
+                # the analysis cells themselves (8 node ids each, fem.CORNERS
+                # order) and the share of each a cut cell fills
+                flds["elements"] = hm.enode
+                flds["pitch"] = float(hm.pitch)
+                if fill is not None:
+                    flds["solidShare"] = np.asarray(fill, np.float32)
+            flds["cases"].append(
+                {"name": case.name, "vonMises": vm, "displacement": disp, "wetted": bc.case_pressure_nodes[ci],
+                 "stress": np.asarray(sig_u, np.float32)})
         wet = bc.case_pressure_nodes[ci]
         if load_nodes.any():
             defl = float(np.linalg.norm(disp[load_nodes].mean(axis=0)))
@@ -1879,6 +1888,29 @@ def _verify_part(study: Study, mesh, max_cells: int = 60_000, min_pitch: float |
                        "cycleStress": float(seq[pc]), "cycleStressRange": float(rng[pc]),
                        "cycleAt": hm.node_xyz[pc].tolist()}
         cf = study.case_factor(case.name)
+        if fields:
+            # the safety factor at every node, by the same criteria as the
+            # case's reading (the equivalent stress over hot retention, the
+            # layer bond, the cycle's cold end), against the same allowance.
+            # The case's own number also reads refined submodels at its
+            # hotspots, so this map's least can sit above it.
+            with np.errstate(divide="ignore", invalid="ignore"):
+                sf_n = np.where(util > 0, mat.strength / (util * STRESS_ALLOWANCE), np.inf)
+                limited = np.zeros(len(sf_n), np.int8)        # 0 in-plane, 1 layer bond, 2 cold
+                if inter is not None:
+                    from .failure import bond_stress
+                    eq_b = bond_stress(sig_u, build_vector(proc.build), bond_shear_ratio(proc))[0]
+                    k_b = 1.0 if g_node is None else g_node
+                    sf_b = np.where(eq_b > 0, k_b * proc.interlayer * mat.strength / (eq_b * STRESS_ALLOWANCE), np.inf)
+                    limited[sf_b < sf_n] = 1
+                    sf_n = np.minimum(sf_n, sf_b)
+                if cold is not None:
+                    sf_cn = np.where(util_c > 0, mat.strength / (util_c * STRESS_ALLOWANCE), np.inf)
+                    limited[sf_cn < sf_n] = 2
+                    sf_n = np.minimum(sf_n, sf_cn)
+            fc = report["fields"]["cases"][-1]
+            fc.update({"safetyFactor": sf_n, "limitedBy": limited, "body": body, "caseFactor": float(cf),
+                       "safetyFactorReported": float(sf)})
         worst_sf = min(worst_sf, sf * cf)
         cases.append({
             "name": case.name,

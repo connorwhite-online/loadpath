@@ -367,7 +367,12 @@ buckling, printability) you can report to the user.
    optimizations plus a fine re-check of the pick: at 20k cells on one core
    expect 10-30 minutes (a fixed `volumeFraction` is a few minutes).
 9. **Read `out/report.json` → `deliver`, and look at the render** before
-   trusting it. `deliver` is the part to hand over: `stl`, `passes`, `mass`,
+   trusting it. When the part goes to someone else (a reviewer, a viewer, a
+   print service's page), hand over `out/bundle/` too: `part.glb` (safety
+   factor map, loads and keep-outs as named nodes), `analysis.vtu`
+   (ParaView) and `manifest.json`, which says what every field means;
+   `loadpath bundle study.json part.stl` makes one for any part
+   (docs/BUNDLE.md). `deliver` is the part to hand over: `stl`, `passes`, `mass`,
    `safetyFactor` and `safetyFactorMethod` (which analysis it comes from:
    `tet`, `voxel-fine`, or `voxel`), `governedBy` (the limit that set its
    size), per-case numbers, and `warnings` gathered from every check (print,

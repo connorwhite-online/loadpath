@@ -217,6 +217,45 @@ def _fe_export(args):
     return 0
 
 
+def _bundle(args):
+    """`loadpath bundle study.json part.stl`: the part verified with its
+    fields and written as a results bundle (bundle.py). A run's report.json
+    beside the STL supplies the analysis grid, the outcome's report and the
+    candidates for tradeoff.csv."""
+    import trimesh
+
+    from .bundle import export_bundle
+    from .spec import study_from_dict
+    from .verify import verify_part
+
+    raw = _load(args.study)
+    try:
+        study = study_from_dict(raw, base_dir=args.base_dir or os.path.dirname(os.path.abspath(args.study)))
+        mesh = trimesh.load(args.part, force="mesh")
+    except (ValueError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    grid = _verified_grid(args.part)
+    kw = {"min_pitch": 0.5 * grid["pitch"], "contact_band": grid["contactBand"]} if grid else {}
+    rep = verify_part(study, mesh, fields=True, **kw)
+    summary, outcome = None, rep
+    rp = os.path.join(os.path.dirname(os.path.abspath(args.part)), "report.json")
+    if os.path.exists(rp):
+        summary = _load(rp)
+        outs = summary.get("outcomes") or []
+        name = os.path.basename(args.part)
+        o = outs[summary["best"]] if name == "best.stl" and summary.get("best") is not None else \
+            next((q for q in outs if os.path.basename(q.get("stl") or "") == name), None)
+        if o is not None:
+            outcome = {**rep, **{k: o[k] for k in ("safetyFactor", "cases", "passes", "bucklingFactor") if k in o}}
+    out = args.out or os.path.splitext(args.part)[0] + "-bundle"
+    man = export_bundle(out, study, mesh, outcome, rep["fields"], summary=summary,
+                        name=os.path.splitext(os.path.basename(args.part))[0], stl=args.part)
+    print(json.dumps({"ok": True, "dir": out, "manifest": os.path.join(out, "manifest.json"),
+                      "files": [f["path"] for f in man["files"]], "verdict": man["verdict"]}, indent=1))
+    return 0
+
+
 def _import(args):
     from .cadimport import import_part
 
@@ -527,6 +566,9 @@ def main(argv=None):
     r.add_argument("--viewer", choices=["best", "all", "none"], default="best",
                    help="interactive HTML viewer (viewer.html) for the best outcome, all of them, or none")
     r.add_argument("--base-dir", help="folder relative mesh paths resolve against (default: the study's)")
+    r.add_argument("--no-bundle", action="store_true",
+                   help="skip the results bundle (out/bundle: part.glb, analysis.vtu, surface.vtp, tradeoff.csv "
+                        "and manifest.json: the simulation's fields and meaning, for other viewers)")
     r.add_argument("--step", action="store_true",
                    help="also write the best outcome as STEP: keep-outs, preserved shapes and the design space "
                         "exact (planes, cylinders), the organic body faceted (needs loadpath[step])")
@@ -568,7 +610,8 @@ def main(argv=None):
     c.add_argument("--base-dir")
     s = sub.add_parser("schema", help="print the JSON Schema for a study, heat exchanger, lattice or field graph")
     s.add_argument("kind", nargs="?", default="study", choices=["study", "heatExchanger", "lattice", "field",
-                                                                "handoff", "split", "enclosure", "wires", "stack"])
+                                                                "handoff", "split", "enclosure", "wires", "stack",
+                                                                "bundle"])
     e = sub.add_parser("examples", help="list the packaged examples, or print one")
     e.add_argument("name", nargs="?")
     lt = sub.add_parser("lattice", help="fill a finished part with a stress-graded TPMS lattice")
@@ -911,6 +954,13 @@ def main(argv=None):
     fx.add_argument("--out", help="deck path; the extension picks the format (.bdf/.nas/.dat or .inp)")
     fx.add_argument("--format", choices=["nastran", "abaqus"], default=None)
     fx.add_argument("--size", type=float, default=None, help="tet edge, mm (default: the cross-check's)")
+    bu = sub.add_parser("bundle", help="a part's results bundle for other viewers: glTF with the safety-factor "
+                                       "map and named loads and keep-outs, the analysis as VTK, a tradeoff CSV and "
+                                       "a manifest saying what every field means (`run` writes one to out/bundle)")
+    bu.add_argument("study")
+    bu.add_argument("part", help="the part's STL (a run's best.stl reads the run's report.json beside it)")
+    bu.add_argument("--out", help="folder (default: <part>-bundle)")
+    bu.add_argument("--base-dir")
     ns = sub.add_parser("nest", help="pack parts (and copies) into one build volume: on the plate (FDM, resin, "
                                      "metal) or stacked in the powder (SLS, MJF), with a measured gap")
     ns.add_argument("parts", nargs="+", help="STL/3MF/OBJ paths, each optionally with :copies (bracket.stl:6)")
@@ -1048,6 +1098,8 @@ def main(argv=None):
         return _external_flow(args)
     if args.cmd == "fe-export":
         return _fe_export(args)
+    if args.cmd == "bundle":
+        return _bundle(args)
     if args.cmd == "nest":
         return _nest(args)
     if args.cmd == "slices":
@@ -1245,12 +1297,24 @@ def main(argv=None):
         best = result.outcomes[result.best]
         summary["lattice"] = _lattice(study, best.mesh, raw["lattice"], args.out, stems[result.best],
                                       not args.no_render)
+    verified = {}
+    if not args.no_bundle and result.best is not None:
+        # the best outcome verified again with its fields, once, for the
+        # bundle and the viewer both
+        from .viewer import verify_kwargs
+        from .verify import verify_part
+        _progress({"stage": "bundle", "message": "fields for the results bundle"})
+        try:
+            verified[result.best] = verify_part(result.study, result.outcomes[result.best].mesh, fields=True,
+                                                **verify_kwargs(result))
+        except Exception as exc:  # noqa: BLE001 - the parts and report matter more
+            summary.setdefault("warnings", []).append(f"bundle not written: {type(exc).__name__}: {exc}")
     if rec is not None and result.outcomes:
         from .viewer import study_viewer
         _progress({"stage": "viewer", "outcomes": args.viewer})
         html = os.path.join(args.out, "viewer.html")
         try:
-            study_viewer(result, html, history=rec, outcomes=args.viewer)
+            study_viewer(result, html, history=rec, outcomes=args.viewer, verified=verified)
             summary["viewer"] = html
         except Exception as exc:  # noqa: BLE001 - the parts and report matter more than the page
             summary.setdefault("warnings", []).append(f"viewer not written: {exc}")
@@ -1265,6 +1329,19 @@ def main(argv=None):
         except Exception as exc:  # noqa: BLE001
             why = f"{type(exc).__name__}: {exc}"
         dv["tetCrossCheck"] = f"not run: {why}" if why else "not run: goal.confirm chose the voxel re-check"
+    if result.best in verified:
+        from .bundle import export_bundle
+        bi = result.best
+        rep = verified[bi]
+        try:
+            man = export_bundle(os.path.join(args.out, "bundle"), result.study, result.outcomes[bi].mesh,
+                                result.outcomes[bi].report, rep["fields"], summary=_jsonable(summary),
+                                name=stems[bi], stl=summary["outcomes"][bi].get("stl"))
+            summary["bundle"] = {"dir": os.path.join(args.out, "bundle"),
+                                 "manifest": os.path.join(args.out, "bundle", "manifest.json"),
+                                 "files": [f["path"] for f in man["files"]]}
+        except Exception as exc:  # noqa: BLE001
+            summary.setdefault("warnings", []).append(f"bundle not written: {type(exc).__name__}: {exc}")
     _write_report(args.out, summary)
     _status("done", report=os.path.join(os.path.abspath(args.out), "report.json"))
     return 0
