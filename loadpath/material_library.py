@@ -185,7 +185,7 @@ SOURCES = {
         "3.8 at low frequency to about 2.4 at 1 MHz (Huang et al. 2026, Materials 19(20) 4329, "
         "doi 10.3390/ma19204329) and sintered PA 2200 is taken as 2.4 at 60 GHz in printed lens work; printed "
         "nylon filament measures 2.82 / 0.020 at 3.5 GHz (castro-2026)",
-        "", "an estimate between those: measure a printed coupon (docs/ANTENNA.md) before trusting a tight margin; "
+        "https://doi.org/10.3390/ma19204329", "an estimate between those: measure a printed coupon (docs/ANTENNA.md) before trusting a tight margin; "
             "nylon takes up water, which raises both numbers"),
 }
 
