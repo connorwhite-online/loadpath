@@ -858,6 +858,13 @@ def _refine(scan, cd, plane_inliers, cyl_inliers, min_points, z2):
              "rms": round(rms, 4)}
         f.update(_bands(scan, c, s_off, 0.0, z2, ids))
         f["tiltSigmaDeg"] = round(math.degrees(s_tilt), 4)
+        rect = _min_rect(uv)
+        if rect is not None:
+            L, W, cen2, ax2, fill = rect
+            f["rect"] = {"length": round(L, 5), "width": round(W, 5),
+                         "center": (c + cen2[0] * e1 + cen2[1] * e2).round(5).tolist(),
+                         "axis": _unit(ax2[0] * e1 + ax2[1] * e2).round(6).tolist(), "fill": round(fill, 3),
+                         "spacing": round(float(np.median(scan.spacing[ids])), 5)}
         if not scan.scaled:
             f["note"] = "unscaled: positions in the file's units x the units factor only"
         # outward normal agrees with the points' normals on balance
@@ -916,6 +923,38 @@ def _refine(scan, cd, plane_inliers, cyl_inliers, min_points, z2):
                      "(its band says how much that costs)")
     f["_ids"] = ids
     return f
+
+
+def _min_rect(uv):
+    """The smallest rectangle round a patch's points in its plane (rotating
+    the hull's edges): (length, width, centre, long axis, hull area /
+    rectangle area). A card fills ~1 of it, a disc pi/4."""
+    from scipy.spatial import ConvexHull
+    if len(uv) < 8:
+        return None
+    try:
+        hull = ConvexHull(uv)
+    except Exception:
+        return None
+    H = uv[hull.vertices]
+    best = None
+    for i in range(len(H)):
+        e = H[(i + 1) % len(H)] - H[i]
+        ln = np.linalg.norm(e)
+        if ln < 1e-12:
+            continue
+        u = e / ln
+        v = np.array([-u[1], u[0]])
+        a, b = H @ u, H @ v
+        area = np.ptp(a) * np.ptp(b)
+        if best is None or area < best[0]:
+            best = (area, u, v, a, b)
+    area, u, v, a, b = best
+    L, W = np.ptp(a), np.ptp(b)
+    cen = u * 0.5 * (a.max() + a.min()) + v * 0.5 * (b.max() + b.min())
+    if W > L:
+        L, W, u = W, L, v
+    return float(L), float(W), cen, u, float(hull.volume / max(area, 1e-12))
 
 
 def _bands(scan, centre, s_fit, size, z2, ids, diameter=False):
@@ -988,10 +1027,11 @@ def apply_reference(scan: Scan, reference, feats: dict | None = None) -> Scan:
         elif "points" in r:
             a, b = (np.asarray(p, float) for p in r["points"])
             known = float(r["distance"])
-            meas = float(np.linalg.norm(b - a))
-            # a picked point sits on the measured surface to its own scatter
+            meas = float(r.get("measured") or np.linalg.norm(b - a))
+            # a picked point sits on the measured surface to its own scatter;
+            # an edge found from points sits within its spacing (edgeSigma)
             ia = scan.nearest([a, b])[1]
-            s_meas = float(np.sqrt((scan.noise[ia] ** 2).sum()))
+            s_meas = float(np.sqrt((scan.noise[ia] ** 2).sum() + 2 * float(r.get("edgeSigma", 0.0)) ** 2))
             cen = 0.5 * (a + b)
         else:
             raise ValueError("a reference names a feature or two points")
@@ -1006,7 +1046,7 @@ def apply_reference(scan: Scan, reference, feats: dict | None = None) -> Scan:
         sig.append(rel * s)
         cens.append(cen)
         rows.append({"known": known, "measured": round(meas, 5), "scale": round(s, 6),
-                     "relSigma": round(rel, 6), **{k: v for k, v in r.items() if k in ("feature", "to")}})
+                     "relSigma": round(rel, 6), **{k: v for k, v in r.items() if k in ("feature", "to", "object")}})
     v, sg = np.array(vals), np.array(sig)
     w = 1 / sg ** 2
     s = float((w * v).sum() / w.sum())
@@ -1180,6 +1220,12 @@ def scale_features(feats: dict, scan: Scan) -> dict:
         f["extent"] = (np.asarray(f["extent"]) * s).round(3).tolist()
         f["area"] = round(f["area"] * s * s, 2)
         f["rms"] = round(f["rms"] * s, 4)
+        if f.get("rect"):
+            r = f["rect"]
+            for k in ("length", "width", "spacing"):
+                if r.get(k) is not None:
+                    r[k] = round(r[k] * s, 5)
+            r["center"] = (np.asarray(r["center"]) * s).round(5).tolist()
         fit = f["sigma"]["fit"] * s
         f.pop("unscaled", None)
         f.pop("note", None)

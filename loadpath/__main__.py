@@ -276,11 +276,23 @@ def _scan(args):
                 raise ValueError(f"--load {item!r}: write ID=FX,FY,FZ in N")
             loads.append((k, f))
         out_dir = None if args.features_only else args.out
+        brief = None
+        if args.brief or args.mount or args.mass is not None or args.shock is not None:
+            brief = json.loads(args.brief) if args.brief else {}
+            for k, v in (("mountOn", args.mount), ("family", args.family), ("hold", args.hold),
+                         ("mass", None if args.mass is None else args.mass / 1000.0), ("shock", args.shock),
+                         ("clamp", args.clamp)):
+                if v is not None:
+                    brief[k] = v
+            brief.setdefault("mountOn", "bar")
         r = scan_to_study(args.scan, out_dir, device=dev, units=args.units, scale=args.scale, up=args.up,
                           crop=crop, keep=args.keep, reference=args.reference or None, known=args.known or None,
                           support=args.support or None, loads=loads or None, material=args.material,
                           process=args.process, grow=args.grow, confidence=args.confidence, bar_fit=args.fit,
-                          max_points=args.max_points)
+                          max_points=args.max_points, brief=brief,
+                          families=[args.family] if args.family else None,
+                          reference_objects=tuple(args.reference_object or ["card"]),
+                          clamp=None if brief else args.clamp, mu=args.mu)
         if args.mesh:
             from .scan import load_scan, reconstruct
             s = load_scan(args.scan, device=dev, units=args.units, scale=args.scale, up=args.up, crop=crop,
@@ -294,7 +306,16 @@ def _scan(args):
     rep = r["report"]
     out = {"ok": True, **r["summary"], "scale": rep.get("scale"), "units": rep.get("units"),
            "spacingP95": rep.get("spacing", {}).get("p95"), "noiseCorrelation": rep.get("noise", {}).get("neighbourCorrelation"),
-           "deviceSource": rep.get("device", {}).get("source"), "todo": r.get("todo", [])}
+           "deviceSource": rep.get("device", {}).get("source"), "asks": r.get("asks", []),
+           "todo": r.get("todo", [])}
+    if r.get("scaledBy"):
+        out["scaledBy"] = r["scaledBy"]
+    if r.get("plan"):
+        out["picked"] = r["plan"].get("picked")
+    if r.get("clamp"):
+        c = r["clamp"]
+        out["clamp"] = {k: c.get(k) for k in ("ok", "bolts", "size", "preloadN", "tighteningTorqueNm", "gap",
+                                              "slipMargin", "openMargin", "warning", "verdict") if c.get(k) is not None}
     if r["features"].get("selfConsistency"):
         out["selfConsistency"] = r["features"]["selfConsistency"]["verdict"]
     if "studyPath" in r:
@@ -1037,6 +1058,25 @@ def main(argv=None):
     sc.add_argument("--mesh", help="also write the reconstructed surface here (STL)")
     sc.add_argument("--out", help="folder for the study (with --support and --load)")
     sc.add_argument("--features-only", action="store_true", help="print the features, write nothing")
+    sc.add_argument("--brief", help="JSON brief: {\"mountOn\": \"bar\", \"family\": \"handlebar\", \"mass\": kg, "
+                                    "\"shock\": g} (scanplan.py): support and loads picked from the features")
+    sc.add_argument("--mount", help="brief: what the part mounts on: bar, wall or a feature id")
+    sc.add_argument("--family", help="brief: the standard sizes the bar can be (handlebar, seatpost, pipe, "
+                                     "tube-inch, shaft, ...: scanstd.FAMILIES); it snaps to one when the band allows")
+    sc.add_argument("--hold", help="brief: the face the part holds (default: the one facing the mount)")
+    sc.add_argument("--mass", type=float, help="brief: grams the part carries")
+    sc.add_argument("--shock", type=float, help="brief: g of shock on top of gravity")
+    sc.add_argument("--clamp", choices=["split", "ring"], help="a bar mount as two bolted halves (split, the "
+                                                                 "brief's default) or a ring that slides on")
+    sc.add_argument("--mu", type=float, help="friction of the clamp on the bar (default 0.2, nylon on dry metal)")
+    sc.add_argument("--reference-object", action="append", choices=sorted(
+        __import__("loadpath.scanstd", fromlist=["REFERENCE_OBJECTS"]).REFERENCE_OBJECTS),
+                    help="an object in the frame that sets an unscaled scan's scale (default card; name the coin)")
+    spc = sub.add_parser("split-clamp", help="cut an optimized bar clamp into body and cap at its plan's gap "
+                                             "(the <name>.clamp.json `loadpath scan` wrote)")
+    spc.add_argument("part", help="the optimized part (STL)")
+    spc.add_argument("plan", help="<name>.clamp.json")
+    spc.add_argument("--out", help="folder for <name>-body.stl and <name>-cap.stl (default: the part's)")
     bs = sub.add_parser("buildsim", help="simulate printing a part (lpbf, fdm, sls): distortion, residual stress, "
                                          "recoater lift; --compensate writes the pre-distorted part to print")
     bs.add_argument("part", help="STL, 3MF or OBJ, in mm, in its build position")
@@ -1242,6 +1282,18 @@ def main(argv=None):
         return _import(args)
     if args.cmd == "scan":
         return _scan(args)
+    if args.cmd == "split-clamp":
+        from .scanplan import split_clamp
+        with open(args.plan) as fh:
+            plan = json.load(fh)
+        if not plan or not plan.get("ok"):
+            print(json.dumps({"ok": False, "error": "the plan has no clamp (see its verdict)"}))
+            return 2
+        od = args.out or os.path.dirname(os.path.abspath(args.part))
+        os.makedirs(od, exist_ok=True)
+        stem = os.path.splitext(os.path.basename(args.plan))[0].replace(".clamp", "")
+        print(json.dumps({"ok": True, **split_clamp(args.part, plan, od, name=stem)}, indent=1))
+        return 0
     if args.cmd == "step":
         return _step(args)
     if args.cmd == "external-flow":

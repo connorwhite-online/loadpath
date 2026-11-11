@@ -636,9 +636,11 @@ def import_cad(path: str, out_dir: str | None = None, base_dir: str | None = Non
 def scan(path: str, out_dir: str | None = None, base_dir: str | None = None, device=None, units: str | None = None,
          scale: float | None = None, up: str | None = None, crop=None, keep: str = "all", reference=None,
          known=None, support=None, loads=None, material: str = "pa12", process: str | None = "sls",
-         grow: float = 15.0, confidence: float = 0.95, fit: str = "slip") -> dict:
+         grow: float = 15.0, confidence: float = 0.95, fit: str = "slip", brief=None, reference_objects=None,
+         clamp: str | None = None, mu: float | None = None) -> dict:
     """A scan's features with their measured uncertainty, and with out_dir,
-    support and loads a study built round the scanned object (scanstudy.py)."""
+    support and loads (or a brief) a study built round the scanned object
+    (scanstudy.py, scanplan.py)."""
     from .scanstudy import scan_to_study
     full = path if os.path.isabs(path) else os.path.join(base_dir or os.getcwd(), path)
     if not os.path.exists(full):
@@ -646,7 +648,8 @@ def scan(path: str, out_dir: str | None = None, base_dir: str | None = None, dev
     if isinstance(support, str):
         support = [support]
     if isinstance(loads, list):
-        loads = [(it["feature"], it["force"]) if isinstance(it, dict) else tuple(it) for it in loads]
+        loads = [it if isinstance(it, dict) and "loads" in it else
+                 (it["feature"], it["force"]) if isinstance(it, dict) else tuple(it) for it in loads]
     if isinstance(known, dict):
         known = {k: (v if isinstance(v, dict) else {"diameter": float(v)}) for k, v in known.items()}
     try:
@@ -654,11 +657,16 @@ def scan(path: str, out_dir: str | None = None, base_dir: str | None = None, dev
             out_dir if os.path.isabs(out_dir) else os.path.join(base_dir or os.getcwd(), out_dir))
         r = scan_to_study(full, out, device=device, units=units, scale=scale, up=up, crop=crop, keep=keep,
                           reference=reference, known=known, support=support, loads=loads, material=material,
-                          process=process, grow=grow, confidence=confidence, bar_fit=fit)
+                          process=process, grow=grow, confidence=confidence, bar_fit=fit, brief=brief,
+                          families=[brief["family"]] if isinstance(brief, dict) and isinstance(brief.get("family"), str)
+                          else None, reference_objects=tuple(reference_objects or ("card",)), clamp=clamp, mu=mu)
     except (ValueError, RuntimeError) as exc:
         return {"ok": False, "error": str(exc)}
-    res = {"ok": True, "summary": r["summary"], "features": r["features"], "todo": r.get("todo", []),
-           "scale": r["report"].get("scale"), "device": r["report"].get("device")}
+    res = {"ok": True, "summary": r["summary"], "features": r["features"], "asks": r.get("asks", []),
+           "todo": r.get("todo", []), "scale": r["report"].get("scale"), "device": r["report"].get("device")}
+    for k in ("scaledBy", "plan", "clamp"):
+        if r.get(k) is not None:
+            res[k] = r[k]
     if "studyPath" in r:
         res.update({"baseDir": out, "study": r["studyPath"], "clearance": r["clearance"]})
     return json.loads(json.dumps(res, default=float))
@@ -1400,7 +1408,9 @@ def serve():
                       units: str | None = None, scale: float | None = None, up: str | None = None, crop=None,
                       keep: str = "all", reference=None, known=None, support=None, loads=None,
                       material: str = "pa12", process: str | None = "sls", grow: float = 15.0,
-                      confidence: float = 0.95, fit: str = "slip") -> dict:
+                      confidence: float = 0.95, fit: str = "slip", brief: dict | None = None,
+                      reference_objects: list | None = None, clamp: str | None = None,
+                      mu: float | None = None) -> dict:
         """A scan in, a part designed round the scanned object out. Reads point clouds (PLY, PCD, LAS, E57,
         XYZ), Gaussian splats (3DGS .ply, .splat) and scanned meshes; measures each point's noise, spacing
         and curvature; fits planes (mounting faces, a wall) and cylinders (bores; bars and tubes a clamp
@@ -1415,9 +1425,19 @@ def serve():
         plus the process's scatter (no fixed margin; unseen patches by their gap), bars as fitted bores
         with mateUncertainty (fits.py holds the fit for every bar in the band, or says measure it), faces
         as pads set off by their band. known {feature: {diameter, tolerance}} replaces a fitted diameter
-        with a caliper's. Then loadpath_check and loadpath_start with base_dir. Seconds to a minute."""
+        with a caliper's. Then loadpath_check and loadpath_start with base_dir. Seconds to a minute.
+
+        Near-zero input: turn the user's sentence into brief {mountOn: "bar"|"wall"|id, family:
+        "handlebar"|"seatpost"|"pipe"|"tube-inch"|"shaft"|..., mass: kg, shock: g, hold?: id, clamp:
+        "split"|"ring"} and pass it with out_dir instead of support and loads: it picks the bar and the face
+        facing it, finds the mass centre, writes shock cases (each axis both ways), snaps the bar to a
+        standard size when its band covers one, and for a bar a split clamp with bolts sized by friction
+        (clamp in the result; after the run, `loadpath split-clamp part.stl <name>.clamp.json` cuts body
+        and cap). An unscaled scan (a splat) takes its scale from an ID-1 card in the frame, or a coin
+        named in reference_objects (e.g. ["us-quarter"]). `asks` lists what only the user can say (mass,
+        shock, which bar; a size pick; one caliper reading when the fit needs it): ask those, once."""
         return scan(path, out_dir, base_dir, device, units, scale, up, crop, keep, reference, known, support,
-                    loads, material, process, grow, confidence, fit)
+                    loads, material, process, grow, confidence, fit, brief, reference_objects, clamp, mu)
 
     @tool
     def loadpath_exterior(path: str, out_dir: str | None = None, base_dir: str | None = None,

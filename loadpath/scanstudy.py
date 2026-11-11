@@ -155,15 +155,21 @@ def _box_of(points, grow):
 def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=None, name: str | None = None,
                  material: str = "pa12", process: str | None = "sls", grow: float = 15.0, pad: float = 2.0,
                  bar_fit: str = "slip", known=None, safety_factor: float = 2.0, mesh_info=None,
-                 space=None, keep_object: bool = True) -> dict:
+                 space=None, keep_object: bool = True, clamp: str | None = None, carry: dict | None = None,
+                 mu: float | None = None) -> dict:
     """Write a study that builds a part around the scanned object (see the
     module docstring) into out_dir and return {"study", "clearance", "todo"}.
 
     support: feature ids the part is held by (a bar it clamps, a wall it
       bolts to); loads: [(feature id, [fx, fy, fz] N)] or {id: force}, each
       its own load case (the object's weight times its shock, on the face it
-      sits on). known: measured sizes that replace fitted ones
-      (known_dimensions). space: [[lo], [hi]] box instead of the grown one."""
+      sits on); or load cases [{"name", "loads": [{"feature": id, "force" |
+      "mass", "at", "direction", ...}]}] (scanplan.plan_from_brief's).
+      known: measured sizes that replace fitted ones (known_dimensions).
+      space: [[lo], [hi]] box instead of the grown one. clamp="split" with
+      carry ({"mass" kg, "shock" g, "gravity", "centre", "hold"}) splits the
+      ring round the support bar into body and cap, bolted, the bolts sized
+      by friction (scanplan.clamp_plan; mu default 0.2)."""
     import trimesh
     from .cadimport import ring_wall
     from .shapes import manifold_from_trimesh, trimesh_from_manifold, Cylinder
@@ -178,12 +184,20 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
     sup = [support] if isinstance(support, str) else list(support or [])
     if isinstance(loads, dict):
         loads = list(loads.items())
-    loads = [(k, [float(x) for x in v]) for k, v in (loads or [])]
-    used = sup + [k for k, _ in loads]
+    cases = []
+    for i, it in enumerate(loads or []):
+        if isinstance(it, dict) and "loads" in it:
+            cases.append({"name": it.get("name", f"load-{i + 1}"), "loads": [dict(x) for x in it["loads"]]})
+        else:
+            k, v = it
+            spec = dict(v) if isinstance(v, dict) else {"force": [float(x) for x in v]}
+            spec["feature"] = k
+            cases.append({"name": f"load-{i + 1}", "loads": [spec]})
+    used = list(dict.fromkeys(sup + [x["feature"] for c in cases for x in c["loads"]]))
     for k in used:
         if k not in byid:
             raise ValueError(f"no feature {k!r}; the scan has {sorted(byid)}")
-    if not sup or not loads:
+    if not sup or not cases:
         raise ValueError("give support (feature ids the part is held by) and loads ([(feature id, force N)]): "
                          "the scan says where things are, not what they carry")
     todo = []
@@ -244,7 +258,7 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
     keep_out, preserve = [], []
     clearance = None
     # ---- bars: fitted cylinders with the measured band
-    bar_ids = []
+    bar_ids, spans = [], {}
     for f in feats.get("cylinders", []):
         if f["kind"] != "bar" or f["id"] not in used:
             continue
@@ -268,11 +282,47 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
             if t_hi - t_lo < 2 * ring_wall(f["r"]):
                 mid = 0.5 * (t_lo + t_hi)
                 t_lo, t_hi = mid - ring_wall(f["r"]), mid + ring_wall(f["r"])
+        spans[f["id"]] = (t_lo, t_hi)
         preserve.append({"id": f"{f['id']}-ring", "shape": {
             "type": "cylinder", "p0": (q0 + t_lo * a).round(4).tolist(), "p1": (q0 + t_hi * a).round(4).tolist(),
             "r": round(f["r"] + ring_wall(f["r"]), 4), "rInner": round(f["r"], 5)}})
         if f.get("warning"):
             todo.append(f"{f['id']}: {f['warning']}")
+    # ---- a split clamp round the support bar: body and cap, bolted
+    clamp_out = None
+    fasteners = []
+    if clamp == "split":
+        from .scanplan import MU_DEFAULT, clamp_plan, clamp_study_parts
+        cb = [k for k in sup if k in spans]
+        if not cb:
+            raise ValueError("clamp='split' needs a bar (a convex cylinder) among the supports")
+        if not carry or carry.get("mass") is None or carry.get("shock") is None or carry.get("centre") is None:
+            raise ValueError("clamp='split' needs carry: {'mass' kg, 'shock' g, 'centre' [x, y, z]} "
+                             "(scanplan.plan_from_brief gives them)")
+        bar = byid[cb[0]]
+        hold = carry.get("hold") or next((x["feature"] for c in cases for x in c["loads"]), None)
+        hc = np.asarray(byid[hold]["center"] if byid[hold]["type"] == "plane" else
+                        0.5 * (np.asarray(byid[hold]["p0"]) + np.asarray(byid[hold]["p1"])), float)
+        qa = np.asarray(bar["p0"], float)
+        ax = np.asarray(bar["axis"], float)
+        toward = hc - (qa + ((hc - qa) @ ax) * ax)
+        clamp_out = clamp_plan(bar, spans[bar["id"]], carry, carry["centre"], toward, material=material,
+                               process=process, bar_fit=bar_fit, sf=safety_factor,
+                               mu=MU_DEFAULT if mu is None else mu)
+        if not clamp_out["ok"]:
+            todo.append(f"clamp: {clamp_out['verdict']}")
+        else:
+            parts = clamp_study_parts(clamp_out, bar, (lo, hi))
+            design = parts["designSpace"]
+            keep_out += parts["keepOut"]
+            fasteners = parts["fasteners"]
+            if clamp_out.get("warning"):
+                todo.append(f"clamp: {clamp_out['warning']}")
+            todo.append(f"after the run, cut body and cap: loadpath split-clamp <part.stl> {stem}.clamp.json "
+                        f"({clamp_out['bolts']} x {clamp_out['size']} with washers and nuts, "
+                        f"{clamp_out['tighteningTorqueNm']:.2f} N m)")
+        with open(os.path.join(out_dir, f"{stem}.clamp.json"), "w") as fh:
+            json.dump(clamp_out, fh, indent=1)
     # ---- bores in the object: kept open out through the design space
     for f in feats.get("cylinders", []):
         if f["kind"] != "bore":
@@ -352,9 +402,12 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
              "designSpace": design, "preserve": preserve, "keepOut": keep_out, "material": material,
              "goal": {"safetyFactor": safety_factor},
              "supports": [{"region": region[k]} for k in sup],
-             "loadCases": [{"name": f"load-{i + 1}", "loads": [{"region": region[k], "force": fv,
-                                                               **({"distribution": "bearing"} if byid[k]["type"] == "cylinder" else {})}]}
-                           for i, (k, fv) in enumerate(loads)]}
+             "loadCases": [{"name": c["name"], "loads": [
+                 {"region": region[x["feature"]], **{kk: vv for kk, vv in x.items() if kk != "feature"},
+                  **({"distribution": "bearing"} if byid[x["feature"]]["type"] == "cylinder" and "at" not in x
+                     else {})} for x in c["loads"]]} for c in cases]}
+    if fasteners:
+        study["fasteners"] = fasteners
     if process:
         study["process"] = process
     path = os.path.join(out_dir, f"{stem}.study.json")
@@ -365,7 +418,7 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
         f.pop("_off", None)
     with open(os.path.join(out_dir, f"{stem}.features.json"), "w") as fh:
         json.dump(feats_out, fh, indent=1)
-    return {"study": study, "studyPath": path, "clearance": clearance, "todo": todo}
+    return {"study": study, "studyPath": path, "clearance": clearance, "todo": todo, "clamp": clamp_out}
 
 
 def _parse_band(txt):
@@ -404,15 +457,30 @@ def parse_reference(items) -> list:
 
 def scan_to_study(path, out_dir=None, *, device=None, units=None, scale=None, up=None, crop=None, keep="all",
                   reference=None, known=None, support=None, loads=None, material="pa12", process="sls",
-                  grow=15.0, confidence=0.95, bar_fit="slip", max_points=300_000, pad=2.0) -> dict:
+                  grow=15.0, confidence=0.95, bar_fit="slip", max_points=300_000, pad=2.0, brief=None,
+                  families=None, reference_objects=("card",), clamp=None, mu=None) -> dict:
     """The whole path: read and measure the scan, fit its features, fix its
-    scale from references, and (with out_dir, support and loads) draft the
-    study round it. Returns {"report", "features", "summary", ...}."""
+    scale (references given, else a card or named coin found in the scan),
+    snap features to standard sizes, and (with out_dir and support and
+    loads, or a brief) draft the study round it. Returns {"report",
+    "features", "summary", "asks", "todo", ...}.
+
+    brief (scanplan.plan_from_brief): {"mountOn", "family", "hold", "mass",
+    "shock", "clamp"}; it picks support and loads from the features and asks
+    for what it cannot know. asks that block the draft (mass, shock, which
+    feature) stop it; a pick between standard sizes or a caliper reading
+    only tightens it and comes back with the study."""
     from .scan import fit_primitives, load_scan, apply_reference, scale_features, summarize
+    from .scanstd import reference_from_features, snap_features
     s = load_scan(path, device=device, units=units, scale=scale, up=up, crop=crop, keep=keep,
                   max_points=max_points, confidence=confidence)
     feats = fit_primitives(s)
     refs = parse_reference(reference) if reference else None
+    found = None
+    if not refs and not s.scaled and reference_objects:
+        refs = reference_from_features(feats, objects=tuple(reference_objects))
+        if refs:
+            found = sorted({(r["object"], r["plane"]) for r in refs})
     if refs:
         s = apply_reference(s, refs, feats)
         feats = scale_features(feats, s)
@@ -423,14 +491,62 @@ def scan_to_study(path, out_dir=None, *, device=None, units=None, scale=None, up
             val, tol = _parse_band(v)
             kk[k] = {"diameter": val, **({"tolerance": tol} if tol is not None else {})}
         known = kk
+    asks, plan, carry = [], None, None
+    brief = dict(brief) if brief else None
+    if brief is not None and s.scaled:
+        from .scanplan import plan_from_brief
+        plan = plan_from_brief(s, feats, brief)
+        asks = plan["asks"]
+        support = support or plan["support"]
+        loads = loads or plan["loads"]
+        clamp = clamp or brief.get("clamp", "split" if brief.get("mountOn", "bar") == "bar" else None)
+        if plan.get("carry"):
+            carry = {**plan["carry"], "gravity": plan["gravity"], "centre": plan.get("centre"),
+                     "hold": next((x["feature"] for c in plan["loads"] for x in c["loads"]), None)}
+    elif s.scaled:
+        snap_features(feats, families)
     out = {"report": s.report, "features": feats, "summary": summarize(s, feats)}
-    if out_dir is not None and (support or loads):
+    if found:
+        out["scaledBy"] = [{"object": o, "plane": p} for o, p in found]
+    if plan is not None:
+        out["plan"] = {k: v for k, v in plan.items() if k != "asks"}
+    blocking = [a for a in asks if a["ask"] in ("mass", "shock", "mount", "hold")]
+    todo = list(s.report.get("todo", []))
+    if out_dir is not None and (support and loads) and not blocking:
         r = draft_around(s, feats, out_dir, support=support, loads=loads, material=material, process=process,
-                         grow=grow, known=known, bar_fit=bar_fit, pad=pad)
+                         grow=grow, known=known, bar_fit=bar_fit, pad=pad, clamp=clamp, carry=carry, mu=mu)
         out.update({"study": r["study"], "studyPath": r["studyPath"], "clearance": r["clearance"],
-                    "todo": s.report.get("todo", []) + r["todo"]})
-    else:
-        out["todo"] = s.report.get("todo", []) + (
-            ["pick support and loads by feature id (summary.features) to draft the study round the object"]
-            if out_dir is not None else [])
+                    "clamp": r["clamp"]})
+        todo += r["todo"]
+        asks += _caliper_asks(r["study"], feats, r["clamp"], known)
+    elif out_dir is not None and not blocking:
+        todo.append("pick support and loads by feature id (summary.features), or give a brief, "
+                    "to draft the study round the object")
+    out["asks"] = asks
+    out["todo"] = todo
     return out
+
+
+def _caliper_asks(study, feats, clamp, known):
+    """One caliper reading, asked only where the fit depends on it: a bar
+    the scan cannot size closely enough for its fit (fits.py drew it for the
+    largest bar in the band, or no hole holds), or a clamp left to close more
+    than it grips well."""
+    from .fits import expand_fits
+    byid = {f["id"]: f for f in feats.get("cylinders", [])}
+    rows = expand_fits(json.loads(json.dumps(study))).get("_fits", [])
+    asks = []
+    for row in rows:
+        f = byid.get(row.get("id"))
+        if f is None or f.get("standard") or str(f.get("source", "")).startswith("known") or (known or {}).get(f["id"]):
+            continue
+        need = row.get("verdictAsBuilt") == "measure" or bool(row.get("mateNote"))
+        if clamp and clamp.get("ok") and f["id"] in {k["id"] for k in study.get("keepOut", [])}:
+            need = bool(clamp.get("warning"))
+        if need:
+            asks.append({"ask": "caliper", "feature": f["id"],
+                         "question": f"measure the bar ({f['id']}, about {f['diameter']:.1f} mm; the scan reads "
+                                     f"+- {f['diameterBand']:.2f}) with calipers, to 0.05 mm, and give it as "
+                                     f"known {f['id']}=<mm>",
+                         "why": row.get("mateNote") or (clamp or {}).get("warning")})
+    return asks

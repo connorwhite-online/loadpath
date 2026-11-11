@@ -151,8 +151,11 @@ Where it is strongest:
   and `loadpath scan` writes a study that builds the part round the scanned
   object. Clearances and fits come from what the scan measured, not a fixed
   margin: 0.45 mm round a light scanned at Artec-class accuracy for SLS. A
-  phone's +-1 cm says to measure the bar with calipers instead
-  ([docs/SCAN.md](docs/SCAN.md)).
+  phone's +-1 cm says to measure the bar with calipers instead. The input
+  can be just the scan and a sentence: a bank card in the frame sets a
+  splat's scale, a bar snaps to its standard size when the band allows,
+  the mount and the loads come from the brief, and a split clamp gets
+  bolts sized by friction ([docs/SCAN.md](docs/SCAN.md)).
 - **Implicit modelling**: field graphs, graded and conformal lattices (TPMS,
   strut, Voronoi), blends, and exact STEP of lattice parts.
 - **Process awareness**: FDM, SLS, MJF, resin and powder-bed metal rules,

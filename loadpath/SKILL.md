@@ -585,7 +585,15 @@ margin: the clearance is the measurement's. If a bar's band is wider than
 its fit (a phone scan), the fit row says `measure`: ask for a caliper
 reading and pass `--known cyl-0=31.8+-0.05`. Relay `unseenArea`
 (rescan those sides) and any `selfConsistency` warning (the device is
-worse than its sigma says).
+worse than its sigma says). **Ask the user for as little as possible:**
+turn their sentence into a brief (`--mount bar --family handlebar --mass
+GRAMS --shock G`, MCP `brief`) and skip support and loads. The bar, the
+held face, the mass centre, the shock cases, a standard size and a split
+clamp with friction-sized bolts all come from the scan. An unscaled splat
+takes its scale from a bank card in the frame. Relay only the result's
+`asks` (mass, shock, a size pick, one caliper reading when the fit needs
+it), once. After the run, `loadpath split-clamp part.stl NAME.clamp.json`
+cuts body and cap; give the user the bolts, washers, nuts and the torque.
 
 **Any exterior first goes through `loadpath exterior SRC --out dir`
 (MCP `loadpath_exterior`; docs/EXTERIOR.md).** A designer's STEP or mesh,

@@ -25,7 +25,69 @@ mesh, info = reconstruct(s)            # watertight surface, U per vertex, unsee
 draft_around(s, feats, "draft/", support="cyl-0", loads={"plane-1": [0, 0, -60]}, process="sls")
 ```
 
-MCP: `loadpath_scan(path, out_dir?, device?, units?, reference?, known?, support?, loads?, ...)`.
+MCP: `loadpath_scan(path, out_dir?, device?, units?, reference?, known?, support?, loads?, brief?, ...)`.
+
+## Near-zero input: a scan and a sentence
+
+The user's whole input can be the scan and one sentence: *"mount this 120 g
+light under my handlebar, I ride trails"*. The agent turns the sentence into
+a brief, and loadpath does the rest:
+
+```bash
+loadpath scan light.splat.ply --mount bar --family handlebar --mass 120 --shock 5 --out draft/
+loadpath run draft/light.study.json --out out/
+loadpath split-clamp out/part.stl draft/light.clamp.json          # body and cap, to print
+```
+
+| What a user would otherwise do | What happens instead |
+|---|---|
+| Measure a reference for scale | An ID-1 card (bank card, 85.60 x 53.98 mm) anywhere in the frame is found by its aspect and fill, and both its sides set the scale. A coin works when named (`--reference-object us-quarter`): coins of one size look alike. |
+| Label the bar and the face | The longest bar is the mount, the face that fills most of the view from it is the face held. Two bars of a length, or no facing face, come back as a question. |
+| Measure the bar | When the band covers exactly one standard size of the family (31.8 mm handlebar clamp, ISO 65 pipe, h6 shaft, ISO 273 M3 hole, bearing seat; `scanstd.FAMILIES`, each with its source), the bar snaps to it and takes the standard's tolerance. |
+| Work out the loads | The held body's points give its mass centre. The weight plus the shock along each axis, both ways (MIL-STD-810 method 516's way), are applied there, so the lever arm is in. |
+| Design the clamp | Bolts sized by friction (below). |
+
+What it cannot know, it asks once, in `asks`: the mass and the shock if the
+sentence lacked them (these block the draft), a pick when the bar's band
+covers several standard sizes, and **one caliper reading** only when the fit
+depends on it: a bar that is no standard size and that the scan can't size
+for its fit, or a band so wide that a clamp would grip at two lines and not
+all round. A splat with a card and a stock handlebar needs no caliper.
+
+Measured on the synthetic splat with a card (three seeds, 1 mm spacing,
+scale unknown to the reader): the scale came out within 0.07% of the truth,
+its stated sigma 0.9% (half a spacing at each end of each side, the honest
+bound for edges found from points), and the bar read 31.77-31.80 mm and
+snapped to 31.8.
+
+### The split clamp
+
+A bar mount is two halves: the body that holds the object and a cap,
+bolted across a split through the bar's axis, its normal toward the object.
+
+- **No slip.** Bolts with total preload F press the halves round the bar.
+  With a cosine pressure (the contact gathers where the halves push) the
+  normal force round the bar is (8/pi) F; uniform pressure would give pi F,
+  so this is the low reading. The grip mu (8/pi) F must hold the worst
+  sqrt((T/r)^2 + F_axial^2) over every shock direction, times the safety
+  factor. mu = 0.2, the low end for nylon on dry metal (`--mu` for a shim).
+- **No opening.** F also exceeds the worst load pulling the body off the bar.
+- **Preload the plastic can keep.** A quarter of the material's strength
+  under an ISO 7089 washer, as `fasteners.py` reads it (plastics relax
+  under sustained bearing), and at most 60% of an 8.8 bolt's proof load.
+  The smallest M3-M6 pair that reaches F is chosen, or four bolts.
+  Tightening torque 0.2 F d (dry steel threads).
+- **The gap.** The halves are cut apart by a gap that closes on the
+  smallest bar in the band inside the largest hole the process prints, plus
+  the print's scatter. So the bore grips before the faces meet.
+
+The study gets the bolts as `fasteners` (seats, the nut faces, the preload
+case), a nut-driver path over each nut, and a design space whose cap side
+is only the clamp. The optimizer designs one piece, and `split-clamp` cuts
+it at the gap. For the 120 g light at 5 g on a 31.8 mm bar in SLS PA12:
+2 x M3 with washers and nuts, 368 N each, 0.22 N m, slip margin 14 at a
+safety factor of 2 (the bearing limit, not the load, sets the preload),
+gap 0.61 mm.
 
 ![A light mount designed round a scan](images/scan/handlebar-mount.png)
 
@@ -113,7 +175,8 @@ loadpath scan room.ply --reference cyl-0=31.8+-0.05                  # a diamete
 loadpath scan room.ply --reference plane-2/plane-5=40.0+-0.05         # two parallel faces' distance
 ```
 
-Python takes `{"points": [a, b], "distance": 85.6}` too (a card's edge). The
+With no reference and no scale, a card or a named coin found in the scan
+sets it (above). Python takes `{"points": [a, b], "distance": 85.6}` too. The
 scale is the weighted mean of known / measured. Its sigma combines each
 fit's sigma with each reference's tolerance (+- read as 2 sigma). With two or
 more references, their scatter is checked against that (chi-squared): a
@@ -192,7 +255,8 @@ cover about 95%.
 | Artec-class (0.1 mm, one bias for the scan) | 0.096 mm, +-0.39, 12/12 | 0.046 mm, +-0.20, 12/12 | 99.2% (U 0.17 mm) |
 | Leica RTC360-class at 1.5 m (1.9 mm) | 1.84 mm, +-7.4, 12/12 | 0.54 mm, +-3.7, 10/10 | 100% (U 3.2 mm) |
 | iPhone lidar (5 mm, 1%, correlated noise) | 2.6 mm, +-19.6, 10/10 | 1.6 mm, +-9.8, 7/7 | 100% (U 8.4 mm) |
-| splat, scaled by the bar (31.8 +- 0.05) | (the reference) | 0.006 mm, +-0.078, 6/6 | 99.2% (U 0.11 mm) |
+| splat, scaled by the bar (31.8 +- 0.05) | (the reference) | 0.006 mm, +-0.078, 12/12 | 99.3% (U 0.11 mm) |
+| Artec-class, an independent bias per view | 0.030 mm, +-0.39, 12/12 | 0.015 mm, +-0.20, 12/12 | |
 
 None of the stated bands missed the truth. Faces the scan saw too thinly
 aren't fitted, which is why fewer than 12 tops were found for the phone and
@@ -248,9 +312,15 @@ Pass it back as `device={"base": "iphone-lidar", "sigma": cal["sigma"]}`.
 
 ## Limits
 
-- A bar mount is drafted as a closed ring, which only goes on over the bar's
-  end. A split clamp (two halves and the bolts that close them,
-  `loadpath split`) is the next step.
+- The split clamp is sized by friction on the bar and by bearing under the
+  washers. The bolts' own thread strip in a nut is far above these
+  preloads and isn't checked. A clamp over a carbon bar needs the bar
+  maker's torque limit, which loadpath doesn't know.
+- Ports (USB-C and other slots) aren't fitted as features yet, so they
+  don't snap to a standard. Only round bars and bores do.
+- Gravity is the scan's -z (after `--up`). A phone scan is gravity-aligned;
+  a splat trainer's frame may not be, so give `--up`, or `gravity` in the
+  brief.
 
 - Planes and cylinders only. Cones, spheres and tori (a tapered bar, a ball
   joint) are kept out by the reconstructed surface but aren't fitted as

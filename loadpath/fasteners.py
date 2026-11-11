@@ -79,11 +79,28 @@ def _tube(p0, p1, r, r_inner=0.0):
 def _exit_distance(d: dict, p, direction) -> float:
     """How far from p along `direction` the ray leaves the bounding box of
     the design space's boxes (0 when it has none)."""
-    boxes = [s for s in d.get("designSpace") or [] if isinstance(s, dict) and s.get("type") == "box"]
+    ds = d.get("designSpace") or []
+    boxes = [s for s in (ds if isinstance(ds, list) else [ds]) if isinstance(s, dict) and s.get("type") == "box"]
     if not boxes:
         return 0.0
-    lo = np.min([b["min"] for b in boxes], axis=0)
-    hi = np.max([b["max"] for b in boxes], axis=0)
+    los, his = [], []
+    for b in boxes:
+        if "min" in b:
+            los.append(b["min"])
+            his.append(b["max"])
+            continue
+        # center + size, turned by axes or not: the box's own bounding box
+        c, sz = np.asarray(b["center"], float), 0.5 * np.asarray(b["size"], float)
+        if b.get("axes") is not None:
+            e1, e2 = (np.asarray(x, float) / np.linalg.norm(x) for x in b["axes"])
+            R = np.stack([e1, e2, np.cross(e1, e2)], 1)
+            ext = np.abs(R) @ sz
+        else:
+            ext = sz
+        los.append(c - ext)
+        his.append(c + ext)
+    lo = np.min(los, axis=0)
+    hi = np.max(his, axis=0)
     p, u = np.asarray(p, float), np.asarray(direction, float)
     t = np.inf
     for k in range(3):

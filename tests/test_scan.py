@@ -217,10 +217,109 @@ def test_calibrate_device_bounds_the_bias():
     assert cal["n"] == 2 and cal["sigma"] >= cal["sigmaEstimate"] > 0.05, cal
 
 
+def test_snap_to_standard_sizes():
+    from loadpath.scanstd import snap
+    # an Artec-grade bar band covers 31.75 (1.25 in tube) and 31.8 (bar clamp): a pick, not a size
+    r = snap(31.803, 0.392, "bar")
+    assert r["snapped"] is None and {31.75, 31.8} <= {c["diameter"] for c in r["candidates"]}
+    # told it is a handlebar, one size is left: the bar's standard and tolerance
+    h = snap(31.803, 0.392, "bar", ["handlebar"])
+    assert h["snapped"]["diameter"] == 31.8 and h["snapped"]["tolerance"] == 0.1
+    # a hole reading 3.42 +- 0.05 is an M3 clearance hole (ISO 273 medium 3.4)
+    b = snap(3.42, 0.05, "bore", ["bolt-hole"])
+    assert b["snapped"]["name"] == "M3"
+    # a 33 mm bar is no handlebar size: nothing snaps, a caliper decides
+    assert not snap(33.0, 0.2, "bar", ["handlebar"])["candidates"]
+
+
+def test_a_card_in_the_frame_sets_the_scale():
+    """A splat (no scale) with an ID-1 card propped in the scene: the card is
+    found by its aspect and fill, its two sides set the scale, and the bar
+    then reads its true size within its band."""
+    from loadpath.scanstudy import scan_to_study
+    mesh, truth = bar_and_light(card=True)
+    P, N, _ = simulate(mesh, ring_views([20, 30, -30], 350, 6), spacing=1.0, sigma_noise=0.05, seed=1)
+    sp = os.path.join(TMP, "card.splat.ply")
+    k = 0.0123
+    write_splat_ply(sp, P, N, spacing=1.0, thickness=0.05, scale_factor=k, seed=1)
+    r = scan_to_study(sp)
+    assert r["scaledBy"] and r["scaledBy"][0]["object"] == "card", r.get("scaledBy")
+    sc = r["report"]["scale"]
+    assert abs(sc["factor"] * k - 1) < 3 * sc["relSigma"] and abs(sc["factor"] * k - 1) < 0.005, sc
+    bar = max((c for c in r["features"]["cylinders"] if c["kind"] == "bar"), key=lambda c: c["points"])
+    assert abs(bar["diameter"] - 31.8) <= bar["diameterBand"], bar
+
+
+def test_a_brief_picks_the_features_and_asks_for_the_rest():
+    from loadpath.scanstudy import scan_to_study
+    from loadpath.schema import lint
+    from loadpath.tasks import check_study
+    path, P, N, truth = _bar_scan()
+    out = os.path.join(TMP, "brief")
+    r = scan_to_study(path, out, device="artec-eva", units="mm", brief={"mountOn": "bar", "family": "handlebar"})
+    # no mass, no shock: asked, nothing drafted
+    assert {a["ask"] for a in r["asks"]} >= {"mass", "shock"} and "study" not in r
+    r = scan_to_study(path, out, device="artec-eva", units="mm",
+                      brief={"mountOn": "bar", "family": "handlebar", "mass": 0.12, "shock": 5})
+    assert not [a for a in r["asks"] if a["ask"] in ("mass", "shock", "mount", "hold")], r["asks"]
+    f = {x["id"]: x for x in r["features"]["planes"] + r["features"]["cylinders"]}
+    bar = f[r["plan"]["support"][0]]
+    assert bar["kind"] == "bar" and bar["diameter"] == 31.8 and bar["source"].startswith("standard")
+    held = f[r["plan"]["loads"][0]["loads"][0]["feature"]]
+    assert held["normal"][2] > 0.99 and abs(held["center"][2] - truth["lightTop"]["z"]) < 0.5, held
+    # the mass centre: the light's own centre (its surface centroid)
+    assert np.linalg.norm(np.asarray(r["plan"]["centre"]) - truth["light"]["center"]) < 3.0, r["plan"]["centre"]
+    assert len(r["study"]["loadCases"]) == 6 and r["study"]["fasteners"]
+    c = r["clamp"]
+    assert c["ok"] and c["bolts"] == 2 and c["slipMargin"] >= 2.0 and c["gap"] > 0, c
+    # a standard bar: no caliper asked
+    assert not [a for a in r["asks"] if a["ask"] == "caliper"], r["asks"]
+    assert not lint(r["study"]), lint(r["study"])
+    chk = check_study(r["study"], out)
+    assert chk["ok"], chk
+
+
+def test_clamp_sizing_is_the_friction_arithmetic():
+    from loadpath.scanplan import clamp_plan, WASHERS
+    from loadpath.fits import BOLT_HOLES
+    bar = {"axis": [1, 0, 0], "p0": [-100, 0, 0], "r": 15.9, "diameter": 31.8, "diameterBand": 0.1}
+    # 1 kg, 4 g of shock, its centre 50 mm below the bar: the worst shock is sideways, across the bar
+    c = clamp_plan(bar, (90, 110), {"mass": 1.0, "shock": 4.0}, [0, 0, -50], [0, 0, -1], sf=2.0, mu=0.2)
+    W = 9.81
+    # worst torque: weight + shock both across the lever, |T| <= (W + 4W) x 50 at most
+    assert c["torqueDemandNmm"] <= 2 * 5 * W * 50 + 1e-6
+    need = c["slipDemandN"] / (0.2 * 8 / np.pi)
+    assert abs(c["preloadNeededN"] - max(need, c["openingDemandN"])) < 0.2
+    # the preload a bolt gets is the bearing a quarter of PA12's 50 MPa allows under its washer
+    A = np.pi / 4 * (WASHERS[c["size"]] ** 2 - BOLT_HOLES[c["size"]][1] ** 2)
+    assert abs(c["preloadN"] - 12.5 * A) < 0.2 and c["bolts"] * c["preloadN"] >= c["preloadNeededN"]
+    assert abs(c["tighteningTorqueNm"] - 0.2 * c["preloadN"] * int(c["size"][1:]) / 1000) < 1e-3
+    # a heavier load needs more bolt
+    big = clamp_plan(bar, (90, 110), {"mass": 5.0, "shock": 4.0}, [0, 0, -50], [0, 0, -1], sf=2.0, mu=0.2)
+    assert (big.get("ok") is False) or big["bolts"] * big["preloadN"] > c["bolts"] * c["preloadN"]
+
+
+def test_split_clamp_cuts_body_and_cap():
+    import trimesh
+    from loadpath.scanplan import split_clamp
+    from loadpath.shapes import manifold_from_trimesh, trimesh_from_manifold
+    block = trimesh.creation.box(extents=[20, 50, 50])
+    hole = trimesh.creation.cylinder(radius=10, height=30, sections=96)
+    hole.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+    part = trimesh_from_manifold(manifold_from_trimesh(block) - manifold_from_trimesh(hole))
+    plan = {"split": {"point": [0, 0, 0], "normal": [0, 0, 1]}, "gap": 0.6}
+    r = split_clamp(part, plan, TMP, name="blk")
+    slab = 0.6 * 20 * (50 - 20)
+    assert r["body"]["bodies"] == 1 and r["cap"]["bodies"] == 1
+    assert abs(r["body"]["volume"] + r["cap"]["volume"] + slab - part.volume) < 0.01 * part.volume, r
+
+
 TESTS = [test_calibrate_device_bounds_the_bias, test_lzf_decoders_agree, test_readers_round_trip, test_units_are_required,
          test_fits_recover_known_geometry_within_their_bands, test_reconstruction_matches_and_covers_the_truth,
          test_splat_needs_and_takes_a_reference, test_fit_with_a_measured_mate, test_draft_round_the_object_checks,
-         test_iphone_scan_says_it_cannot_size_a_bar]
+         test_iphone_scan_says_it_cannot_size_a_bar, test_snap_to_standard_sizes, test_a_card_in_the_frame_sets_the_scale,
+         test_a_brief_picks_the_features_and_asks_for_the_rest, test_clamp_sizing_is_the_friction_arithmetic,
+         test_split_clamp_cuts_body_and_cap]
 
 if __name__ == "__main__":
     failed = 0

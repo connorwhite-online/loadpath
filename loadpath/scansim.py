@@ -127,10 +127,12 @@ def simulate(mesh, views, *, spacing: float, sigma_noise: float, sigma_sys: floa
 
 
 def bar_and_light(bar_d: float = 31.8, bar_len: float = 220.0, light=(60.0, 34.0, 30.0), gap: float = 18.0,
-                  insert_d: float = 6.0):
+                  insert_d: float = 6.0, card: bool = False):
     """A handlebar (a tube along x) and a bike light hanging in front of
     it below the bar, its bottom face with a threaded-insert bore: the scene
-    the scan tutorial builds a mount around. Returns (mesh, truth)."""
+    the scan tutorial builds a mount around. card: an ID-1 card (85.60 x
+    53.98 x 0.76 mm) propped beside the light, for a scan scaled by it.
+    Returns (mesh, truth)."""
     import trimesh
     from .shapes import manifold_from_trimesh, trimesh_from_manifold
     bar = trimesh.creation.cylinder(radius=bar_d / 2, height=bar_len, sections=256)
@@ -145,12 +147,22 @@ def bar_and_light(bar_d: float = 31.8, bar_len: float = 220.0, light=(60.0, 34.0
     hole.apply_translation([0, cy, top])
     lm = manifold_from_trimesh(box) - manifold_from_trimesh(hole)
     body = trimesh_from_manifold(lm)
-    scene = trimesh.util.concatenate([bar, body])
+    parts = [bar, body]
+    card_truth = None
+    if card:
+        c = trimesh.creation.box(extents=[53.98, 85.60, 0.76])
+        c.apply_transform(trimesh.transformations.rotation_matrix(math.radians(35.0), [0, 1, 0]))
+        c.apply_translation([80.0, cy, top - 10.0])
+        parts.append(c)
+        card_truth = {"size": [85.60, 53.98, 0.76], "center": [80.0, cy, top - 10.0]}
+    scene = trimesh.util.concatenate(parts)
     truth = {"bar": {"diameter": bar_d, "axis": [1, 0, 0], "point": [0, 0, 0]},
              "lightTop": {"normal": [0, 0, 1], "z": top},
              "lightFront": {"normal": [0, 1, 0], "y": cy + ly / 2},
              "insert": {"diameter": insert_d, "axis": [0, 0, 1], "point": [0, cy, top]},
              "light": {"size": list(light), "center": [0, cy, top - lz / 2]}}
+    if card_truth:
+        truth["card"] = card_truth
     return scene, truth
 
 
