@@ -209,11 +209,12 @@ concealed keep-outs, so the envelope grows round them, and a part with
 `watts` or `maxTemp` joins the cooling block.
 [examples/shroud/drone-canopy-placed.json](../examples/shroud/drone-canopy-placed.json)
 places the canopy's battery, VTX and receiver this way (the camera stays
-where its window is): the battery low on the posts, the 4 W VTX in the
-top front corner, in the prop wash and as far from the battery's centre as
-the room allows. The search's heat term is a point source between part
-centres, so it does not yet see that the VTX ends up 3.5 mm from the
-battery's face; the cooling block is the check.
+where its window is): the battery low on the posts, the 4 W VTX at the
+top rear, and the receiver at the front, 80 mm from the VTX. The search
+reads a part's heat at the nearest face of the part it warms, from a
+source as big as its own surface (placement._heat_r). The battery fills
+the room end to end, so no spot leaves the VTX more than 3.4 mm off its
+face; the cooling block is the check.
 
 ## Limits
 

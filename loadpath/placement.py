@@ -387,8 +387,9 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
                         "gap": float(u.get("gap", g.margin))}, True
         return None, True
 
-    def candidates(g, occ_state, placed, K):
-        """Up to K (cost, R, t, info) for group g given the room left."""
+    def candidates(g, occ_state, placed, K, per_rot=4):
+        """Up to K (cost, R, t, info) for group g given the room left, at most
+        per_rot of them in any one orientation."""
         out = []
         for ri, R in enumerate(g.rots):
             lr, ok = line_rule(g, R)
@@ -476,7 +477,7 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
         # spread over orientations too
         res, seen = [], {}
         for x in out:
-            if seen.get(x[1], 0) >= 4:
+            if seen.get(x[1], 0) >= per_rot:
                 continue
             seen[x[1]] = seen.get(x[1], 0) + 1
             res.append(x)
@@ -489,84 +490,96 @@ def place(exterior, components: list, *, skin: float = 1.0, openings=None, fixed
 
     gb_all = {x.id: x for x in groups}
     denied = []
-    states = [{"cost": 0.0, "occ": occ0, "poses": {}, "centres": {}, "mass": 0.0, "com": np.zeros(3)}]
+    states = [{"cost": 0.0, "occ": occ0, "poses": {}, "centres": {}, "halves": {}, "mass": 0.0, "com": np.zeros(3)}]
     blocked = {}
     for gi, g in enumerate(order):
         if on_progress:
             on_progress({"stage": "placement", "message": f"placing {g.id} ({gi + 1}/{len(order)})"})
-        nxt = []
-        for s in states:
-            placed = dict(s["centres"])
-            placed["__mass__"] = s["mass"]
-            placed["__com__"] = s["com"]
-            if quick is not None:
-                placed["__tf__"] = _member_tf(s["poses"], gb_all, given_shapes)
-            cands = candidates(g, s["occ"], placed, max(3 * beam, 6))
-            if not cands:
-                continue
-            for cost, ri, R, t, lr in cands:
-                nxt.append((s, cost, R, t, lr))
+        # the cheapest few positions first; when none of them holds up (on
+        # exact distances, or for its way in), eight times as many: a strong
+        # cost term (heat) ranks the tight corners first, and those are the
+        # ones that fail the exact check
+        for widen in (1, 8, 64):
+            nxt = []
+            for s in states:
+                placed = dict(s["centres"])
+                placed["__mass__"] = s["mass"]
+                placed["__com__"] = s["com"]
+                placed["__half__"] = s["halves"]
+                if quick is not None:
+                    placed["__tf__"] = _member_tf(s["poses"], gb_all, given_shapes)
+                cands = candidates(g, s["occ"], placed, max(3 * beam, 6) * widen, 4 * widen)
+                if not cands:
+                    continue
+                for cost, ri, R, t, lr in cands:
+                    nxt.append((s, cost, R, t, lr))
+            if not nxt:
+                break
+            nxt.sort(key=lambda x: x[0]["cost"] + x[1])
+            new_states = []
+            unwired = 0
+            gbid = {x.id: x for x in groups}
+
+            def admit(s, cost, R, t, occ=None, poses=None):
+                """The state with g at (R, t), or None when it cannot be assembled into."""
+                if access is not None:
+                    others = {k: (lambda p, gg=gb_all[k], RR=RT[0], tt=RT[1]: gg.sdf(RR, tt, p), _pbounds(gb_all[k], *RT))
+                              for k, RT in s["poses"].items()}
+                    if not access(g.id, lambda p, RR=R, tt=t: g.sdf(RR, tt, p), _pbounds(g, R, t), others):
+                        denied.append(g.id)
+                        return None
+                if poses is None:
+                    poses = dict(s["poses"])
+                    poses[g.id] = (R, t)
+                com = t + R @ g.com
+                m_new = s["mass"] + g.mass
+                com_tot = (s["mass"] * s["com"] + g.mass * com) / max(m_new, 1e-12)
+                centres = dict(s["centres"])
+                halves = dict(s["halves"])
+                for m in g.members:
+                    centres[m] = t + R @ (np.asarray(meshes[m].bounds).mean(axis=0) - g.pivot)
+                    halves[m] = np.abs(R) @ (0.5 * np.ptp(np.asarray(meshes[m].bounds), axis=0))
+                return {"cost": s["cost"] + cost, "occ": stamp(s["occ"], g, R, t) if occ is None else occ, "poses": poses,
+                        "centres": centres, "halves": halves, "mass": m_new, "com": com_tot}
+
+            pend = []
+            for s, cost, R, t, lr in nxt:
+                if len(new_states) >= beam or len(pend) >= 2 * beam:
+                    break
+                t, fits = _refine(g, R, t, lr, G, exterior, skin, op_shapes, fixed, given_shapes,
+                                  s["poses"], groups_by_id=gbid, rules_g=g.rules)
+                if not fits:
+                    continue        # the grid's fit does not hold on exact distances
+                if judge is None:
+                    st = admit(s, cost, R, t)
+                    if st is not None:
+                        new_states.append(st)
+                    continue
+                # with a judge, a few more than the beam are judged (cables laid),
+                # ranked with its cost in, and only then asked whether they can be assembled
+                occ = stamp(s["occ"], g, R, t)
+                poses = dict(s["poses"])
+                poses[g.id] = (R, t)
+                extra = judge({"transforms": _member_tf(poses, gb_all, given_shapes), "new": list(g.members),
+                               "room": np.minimum(room_base, occ), "origin": G.lo + 0.5 * G.h, "pitch": G.h})
+                if extra is None:
+                    unwired += 1
+                    continue
+                pend.append((s["cost"] + cost + float(extra), s, cost + float(extra), R, t, occ, poses))
+            pend.sort(key=lambda x: x[0])
+            for _, s, cost, R, t, occ, poses in pend:
+                if len(new_states) >= beam:
+                    break
+                st = admit(s, cost, R, t, occ, poses)
+                if st is not None:
+                    new_states.append(st)
+            new_states.sort(key=lambda x: x["cost"])
+            new_states = new_states[:beam]
+            if new_states:
+                break
         if not nxt:
             blocked[g.id] = _closest(g, np.minimum(room_base, states[0]["occ"]), G, P)
             continue
-        nxt.sort(key=lambda x: x[0]["cost"] + x[1])
-        new_states = []
-        unwired = 0
-        gbid = {x.id: x for x in groups}
-
-        def admit(s, cost, R, t, occ=None, poses=None):
-            """The state with g at (R, t), or None when it cannot be assembled into."""
-            if access is not None:
-                others = {k: (lambda p, gg=gb_all[k], RR=RT[0], tt=RT[1]: gg.sdf(RR, tt, p), _pbounds(gb_all[k], *RT))
-                          for k, RT in s["poses"].items()}
-                if not access(g.id, lambda p, RR=R, tt=t: g.sdf(RR, tt, p), _pbounds(g, R, t), others):
-                    denied.append(g.id)
-                    return None
-            if poses is None:
-                poses = dict(s["poses"])
-                poses[g.id] = (R, t)
-            com = t + R @ g.com
-            m_new = s["mass"] + g.mass
-            com_tot = (s["mass"] * s["com"] + g.mass * com) / max(m_new, 1e-12)
-            centres = dict(s["centres"])
-            for m in g.members:
-                centres[m] = t + R @ (np.asarray(meshes[m].bounds).mean(axis=0) - g.pivot)
-            return {"cost": s["cost"] + cost, "occ": stamp(s["occ"], g, R, t) if occ is None else occ, "poses": poses,
-                    "centres": centres, "mass": m_new, "com": com_tot}
-
-        pend = []
-        for s, cost, R, t, lr in nxt:
-            if len(new_states) >= beam or len(pend) >= 2 * beam:
-                break
-            t, fits = _refine(g, R, t, lr, G, exterior, skin, op_shapes, fixed, given_shapes,
-                              s["poses"], groups_by_id=gbid, rules_g=g.rules)
-            if not fits:
-                continue        # the grid's fit does not hold on exact distances
-            if judge is None:
-                st = admit(s, cost, R, t)
-                if st is not None:
-                    new_states.append(st)
-                continue
-            # with a judge, a few more than the beam are judged (cables laid),
-            # ranked with its cost in, and only then asked whether they can be assembled
-            occ = stamp(s["occ"], g, R, t)
-            poses = dict(s["poses"])
-            poses[g.id] = (R, t)
-            extra = judge({"transforms": _member_tf(poses, gb_all, given_shapes), "new": list(g.members),
-                           "room": np.minimum(room_base, occ), "origin": G.lo + 0.5 * G.h, "pitch": G.h})
-            if extra is None:
-                unwired += 1
-                continue
-            pend.append((s["cost"] + cost + float(extra), s, cost + float(extra), R, t, occ, poses))
-        pend.sort(key=lambda x: x[0])
-        for _, s, cost, R, t, occ, poses in pend:
-            if len(new_states) >= beam:
-                break
-            st = admit(s, cost, R, t, occ, poses)
-            if st is not None:
-                new_states.append(st)
-        new_states.sort(key=lambda x: x["cost"])
-        new_states = new_states[:beam]
         if not new_states and unwired and g.id not in denied:
             blocked[g.id] = {"reason": "fits, but its cables cannot be laid from any position tried (too short, "
                                        "or bent past their radius)", "volume": round(g.volume, 1)}
@@ -594,11 +607,31 @@ def _member_tf(poses, groups, given):
     return tf
 
 
+def _heat_r(d, h_src, h_rcv):
+    """The source-to-receiver distance a heat source's rise is read at (mm):
+    the gap between the two parts' boxes (centres d apart, half-extents
+    h_src, h_rcv) plus the radius of the sphere with the source's own
+    surface area. A sphere of radius a in a uniform medium is W / (4 pi k
+    a) above the far field at its surface and W / (4 pi k r) at r from its
+    centre: a part a few mm off a hot board's face sees the board's own
+    surface temperature, not the point source's singularity, and one across
+    the room sees the point source."""
+    hs = np.zeros(3) if h_src is None else np.asarray(h_src, float)
+    hr = np.zeros(3) if h_rcv is None else np.asarray(h_rcv, float)
+    gap = np.linalg.norm(np.maximum(np.abs(d) - hs - hr, 0.0), axis=1)
+    area = 8.0 * (hs[0] * hs[1] + hs[1] * hs[2] + hs[2] * hs[0])
+    return np.maximum(gap + np.sqrt(area / (4.0 * np.pi)), 1.0)
+
+
 def _heat_cost(heat, g, R, T, byid, meshes, placed):
     """Heat in the search, per candidate position T (n, 3): each pair of a
     part being placed and a part already in costs the share of the cooler
     one's temperature budget the other's heat would use up, by a point
-    source in a uniform medium, dT = W / (4 pi k r); half as much again
+    source in a uniform medium, dT = W / (4 pi k r), read at the nearest
+    face of the part it heats and from a source as big as the part's own
+    surface (_heat_r): a hot chip a few mm off a cell's face heats that
+    face, however far the cell's centre is, and no more than its own
+    surface runs; half as much again
     when the heat rises into it (the hot part below, `up` known). A rough
     ranking (the skin, vents and conduction paths are not in it): it keeps
     a hot chip off a cell and two hot parts apart; the cooling block
@@ -618,19 +651,22 @@ def _heat_cost(heat, g, R, T, byid, meshes, placed):
         if not wi and bi is None:
             continue
         pm = T + R @ (np.asarray(meshes[m].bounds).mean(axis=0) - g.pivot)
+        hm = np.abs(R) @ (0.5 * np.ptp(np.asarray(meshes[m].bounds), axis=0))
+        halves = placed.get("__half__") or {}
         for n, pc in placed.items():
             if n.startswith("__") or n in g.members:
                 continue
             cj = byid.get(n) or {}
             wj, bj = float(cj.get("watts") or 0.0), budget(cj)
             d = pc[None, :] - pm
-            r = np.maximum(np.linalg.norm(d, axis=1), 3.0)
-            rise = 1.0 / (4 * np.pi * k * r * 1e-3)
-            cu = (d @ np.asarray(up, float)) / r if up is not None else np.zeros(len(T))
+            dist = np.maximum(np.linalg.norm(d, axis=1), 1e-9)
+            cu = (d @ np.asarray(up, float)) / dist if up is not None else np.zeros(len(T))
             if wi and bj is not None:          # this part heats that one (above it: worse)
-                cost += wi / bj * rise * (1.0 + 0.5 * np.maximum(cu, 0.0))
+                r = _heat_r(d, hm, halves.get(n))
+                cost += wi / bj / (4 * np.pi * k * r * 1e-3) * (1.0 + 0.5 * np.maximum(cu, 0.0))
             if wj and bi is not None:
-                cost += wj / bi * rise * (1.0 + 0.5 * np.maximum(-cu, 0.0))
+                r = _heat_r(d, halves.get(n), hm)
+                cost += wj / bi / (4 * np.pi * k * r * 1e-3) * (1.0 + 0.5 * np.maximum(-cu, 0.0))
     return float(heat["weight"]) * cost
 
 
