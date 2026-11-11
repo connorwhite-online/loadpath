@@ -702,3 +702,14 @@ space. `loadpath handoff` finds these from the assembly order (above).
 - `MeshShape` signed distances come from a 160-cell grid over the mesh's
   largest extent (0.37 mm on a 59 mm part). That sets how well a 0.7 mm
   skin is placed. The exterior in the delivered mesh is exact either way.
+
+## The skin's travel envelope
+
+`switch_lattice.readback(study, mesh, pitch, travel_at=N)` also returns
+`travelEnvelope`: for every node of the mesh, the most it moves along the
+press axis over all the presses, each pressed at N newtons or at its fire
+force if that is higher. Past the click the switch is a stop (plunger held
+at gap + travel, its seat's give counted), so a hard press bends the skin
+round the plunger. Room below `node z - travel` is room the skin never
+reaches at that force: ballast, wires or parts can go there without
+changing the feel (docs/STABILITY.md).

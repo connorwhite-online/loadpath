@@ -822,6 +822,12 @@ def main(argv=None):
     fe.add_argument("--iterations", help="comma-separated, per pitch")
     fe.add_argument("--no-modal", action="store_true", help="skip the modal check of isolate targets")
     fe.add_argument("--base-dir")
+    stb = sub.add_parser("stability", help="will a product stay put on a desk: presses, cable tugs and levers, "
+                                           "plugging in; margins and the least mass that holds (a stability brief, "
+                                           "docs/STABILITY.md)")
+    stb.add_argument("brief")
+    stb.add_argument("--out", help="write the report JSON here")
+    stb.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
     co = sub.add_parser("cooling", help="design the inside of a fixed exterior around the heat its parts make: "
                                         "components under their maxTemp, the touched skin under its touch "
                                         "limit (the study's cooling block; with feel or switch blocks, "
@@ -1038,6 +1044,8 @@ def main(argv=None):
         return _switch(args)
     if args.cmd == "feel":
         return _feel(args)
+    if args.cmd == "stability":
+        return _stability(args)
     if args.cmd == "cooling":
         return _cooling(args)
     if args.cmd == "handoff":
@@ -2017,6 +2025,21 @@ def _feel(args):
         return 2
     _write_report(args.out, {"ok": rep["passes"], **rep})
     return 0 if rep["passes"] else 1
+
+
+def _stability(args):
+    from .stability import run_stability
+    try:
+        rep = dict(run_stability(args.brief, base_dir=args.base_dir))
+    except (ValueError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    out = {"ok": rep["holds"], **rep}
+    if args.out:
+        with open(args.out, "w") as fh:
+            json.dump(out, fh, indent=1, default=float)
+    print(rep["summary"])
+    return 0 if rep["holds"] else 1
 
 
 def _cooling(args):
