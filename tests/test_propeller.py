@@ -95,9 +95,16 @@ def test_root_fillet_and_tip():
     x = pr.ideal_start(3, 44.45, 7.0, 0.775, 14000.0)
     bl = pr.blade_from_params(x, 3, 44.45, 7.0)
     assert bl.chord[-1] < 0.5 * bl.chord[-4]
+    # given the motor's hub, a wide root necks down so its filleted footprint stands inside it
+    x[0] = 25.0
+    wide = pr.blade_from_params(x, 3, 44.45, 7.0)
+    fit = pr.blade_from_params(x, 3, 44.45, 7.0, hub_height=6.0)
+    assert pr.hub_height(wide, 0.8, 0.4) > 6.5
+    assert pr.hub_height(fit, 0.8, 0.4) < 6.1 and fit.chord[0] < wide.chord[0]
+    assert np.allclose(fit.chord[-8:], wide.chord[-8:], rtol=0.05)
 
 
-def test_solid_check_root_fillet_lowers_root_peak():
+def test_solid_check_fillet_lowers_junction_peak():
     try:
         from loadpath.crosscheck import mesher_missing
         if mesher_missing():
@@ -109,8 +116,11 @@ def test_solid_check_root_fillet_lowers_root_peak():
     op = pr.performance(b, 25000)
     sharp = pr.solid_check(b, op, mesh=pr.rotor_mesh(b, fillet=0.0), size=0.6)
     round_ = pr.solid_check(b, op, mesh=pr.rotor_mesh(b, fillet=2.0), size=0.6)
-    print("sharp", sharp["peakStress"], "at", sharp["peakRadius"], "| filleted", round_["peakStress"], "at", round_["peakRadius"])
-    assert round_["peakStress"] < sharp["peakStress"]
+    print("sharp", sharp["peakStress"], sharp["hubPeak"], "| filleted", round_["peakStress"], round_["hubPeak"])
+    # read over PA12's material length, the sharp corner's own peak is the junction's: the fillet takes it
+    # down by half, while the blade's root bending stress outboard of it barely moves
+    assert round_["hubPeak"] < 0.7 * sharp["hubPeak"], (round_["hubPeak"], sharp["hubPeak"])
+    assert abs(round_["peakStress"] / sharp["peakStress"] - 1) < 0.15
 
 
 def test_validation_against_printed_props():

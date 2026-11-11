@@ -99,6 +99,12 @@ the bending both peak. Three things there come from the loads:
   so the union meets the hub with that radius all round.
 - **Hub height** (`hub_height`): the root section's axial depth, fillet included, plus a wall above and below, so the
   root lands whole on the hub.
+- **The motor's hub** (`design(..., hub_height=)`): the hub can only be as tall as the motor takes, which is its shaft
+  length or T-mount. Given that height, the root knot's chord is held to what stands inside it, and the blade necks
+  to a shank. The chord spline carries the shank out to the working chord, and the root's stress, frequency and
+  untwist constraints become the shank's. Without a hub limit, a wide, steep root asks for a hub three or four times
+  taller than any motor shaft. On hum's 1804-class motor (6 mm hub), fitting the hub cost 20-50% of hover power on
+  the PA12 designs. The narrow shank is soft in torsion, so blades untwist 15-25 deg at full throttle.
 - **No overlap**: each section's span round the circle (chord x cos pitch) stays within 80% of its share of the
   circumference, so neighbouring roots don't run into each other on the hub.
 
@@ -108,16 +114,19 @@ the loading the tip-loss factor already gives there. The aerodynamics sees the c
 
 **The printed solid** (`solid_check`): quadratic tetrahedra of the rotor as it will print. Every node carries its
 centrifugal body force, each blade's surface carries its stations' thrust and drag, and the hub is held at the
-bore. It reports the peak stress, where it is, and its safety factor. On hum's 100 mm three-blade prop at full
-throttle:
+bore. Stress is read averaged over the material's own length (PA12's 0.86 mm, held under 4/9 of the thinnest blade
+section, as `crosscheck` reads it), not at a node, so a sharp corner's reading is the part's and not the mesh's. It reports the peak on the blades, its radius,
+its safety factor, and the hub's own peak. For a 3.5 in two-blade at 25,000 rpm (`tests/test_propeller.py`):
 
-| | Beam root | Solid peak |
+| | Blade peak (root bending) | Junction peak |
 |---|---|---|
-| Sharp root | 25.0 MPa | 18.2 MPa, at the root |
-| 3 mm fillet | | 14.6 MPa, moved out onto the blade |
+| Sharp root | 16.4 MPa | 8.2 MPa |
+| 2 mm fillet | 16.3 MPa | 2.4 MPa |
 
-With the fillet, the hub's own peak fell from 14.7 to 2.0 MPa. The solve is linear, so it carries no centrifugal
-stiffening. Its flap deflection and the bending stress that comes with it read high, which errs safe.
+What the fillet buys is the junction: it cuts the stress where the blade meets the hub to under a third, which is where a printed
+part cracks under cyclic load. The blade's root bending stress outboard of the junction is the section's own, and
+the fillet barely changes it. The solve is linear, so it carries no centrifugal stiffening. Its flap deflection and
+the bending stress that comes with it read high, which errs safe.
 
 ## Validation
 

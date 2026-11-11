@@ -891,10 +891,30 @@ def tip_closure(r, r_tip, c_tip):
     return np.sqrt(np.maximum(1.0 - u * u, 0.0))
 
 
-def blade_from_params(x, blades, r_tip, r_hub, stations=24, te=0.3, t_min=0.8):
+def blade_from_params(x, blades, r_tip, r_hub, stations=24, te=0.3, t_min=0.8, hub_height=None):
     """Design variables -> Blade. x: chord at 4 knots (mm), geometric pitch at 3 knots (mm per turn), camber at root
     and tip (deg), thickness ratio at root and tip. Thickness is held to t_min mm (the process's thinnest
-    reliable wall) wherever the ratio would draw it thinner."""
+    reliable wall) wherever the ratio would draw it thinner. With `hub_height` (mm, the motor's shaft length a
+    prop can take), the root knot's chord is held to what stands inside that hub (root_chord_limit): the blade
+    necks down to a shank there, and the chord spline carries it out to the blade's working chord."""
+    x = np.asarray(x, float)
+    bl = _blade_from_params(x, blades, r_tip, r_hub, stations, te, t_min)
+    if hub_height:
+        # the root's footprint on the hub (its section grown by a t_min fillet, with half t_min of hub beyond it,
+        # hub_height()) must stand inside the hub: the footprint's depth goes about as the chord, so scale it in
+        x = x.copy()
+        for _ in range(4):
+            need = _hub_depth(bl, t_min, 0.5 * t_min)
+            if need <= hub_height + 1e-3:
+                break
+            room = hub_height - 3 * t_min
+            x[0] = max(1.0, x[0] * max(room, 0.1) / max(need - 3 * t_min, 1e-3) * 0.995)
+            bl = _blade_from_params(x, blades, r_tip, r_hub, stations, te, t_min)
+        bl.note["hubHeight"] = float(hub_height)
+    return bl
+
+
+def _blade_from_params(x, blades, r_tip, r_hub, stations, te, t_min):
     r = _stations(r_hub, r_tip, stations)
     s = (r - r_hub) / (r_tip - r_hub)
     chord = np.maximum(_spline(s, KNOTS, x[0:4]), 1.0)
@@ -940,12 +960,15 @@ def ideal_start(blades, r_tip, r_hub, hover_thrust, rpm, cl=0.8, alpha_deg=4.0, 
 def design(motor: Motor, battery: Battery, hover_thrust: float, max_thrust: float, r_tip: float, r_hub: float,
            blades=(2, 3, 4), material="pa12", t_min: float = 0.8, te: float = 0.3, sf_min: float = 2.0,
            tip_mach: float = 0.6, frequency_margin: float = 0.08, motors: int = 4, air=None, duct=None,
-           response_time: float | None = None, start=None, maxiter: int = 40, log=None) -> dict:
+           response_time: float | None = None, start=None, maxiter: int = 40, log=None,
+           hub_height: float | None = None) -> dict:
     """The blade that draws the least power from the pack at hover while still giving max_thrust (N per rotor) at
     full throttle, every operating point solved on the flexing blade. Constraints: the root's safety factor at
     full throttle (sf_min, on the material's strength), tip Mach number at full throttle, the blade's flap and lag
     frequencies at least `frequency_margin` off 1x, 2x, 3x and blade-pass at hover, thickness >= t_min mm, and
     optionally the motor-and-rotor response time at hover (ms, `response_time`: what the attitude loop needs).
+    `hub_height` (mm): the hub the motor's shaft takes; the root necks down to stand inside it
+    (blade_from_params), and the root's stress constraint is then the shank's.
     One design per blade count; returns {"best", "designs": [...]} with each one's blade and evaluation."""
     from scipy.optimize import minimize
     out = []
@@ -964,7 +987,7 @@ def design(motor: Motor, battery: Battery, hover_thrust: float, max_thrust: floa
             key = tuple(np.round(z, 10))
             if key not in memo:
                 x = lo + z * scale
-                bl = blade_from_params(x, B, r_tip, r_hub, te=te, t_min=t_min)
+                bl = blade_from_params(x, B, r_tip, r_hub, te=te, t_min=t_min, hub_height=hub_height)
                 try:
                     e = evaluate(bl, motor, battery, hover_thrust, material, motors, air, duct)
                 except Exception as exc:                                # a geometry the model can't solve
@@ -1084,6 +1107,11 @@ def blade_solid(blade: Blade, fillet: float = 0.0, z_mid: float = 0.0, root_in: 
 
 
 def hub_height(blade: Blade, fillet: float = 0.0, wall: float = 1.0) -> float:
+    """The hub's height the root needs (_hub_depth)."""
+    return _hub_depth(blade, fillet, wall)
+
+
+def _hub_depth(blade: Blade, fillet: float = 0.0, wall: float = 1.0) -> float:
     """The hub's height: the root section's own axial depth (fillet included), with `wall` above and below, so the
     root lands whole on the hub's cylinder and its fillet doesn't run off the hub's top or bottom edge."""
     from .fan import _section
@@ -1188,7 +1216,7 @@ def solid_check(blade: Blade, op: dict, material="pa12", mesh=None, bore: float 
     i = int(np.argmax(np.where(away, vm, 0)))
     tip = pts[:, 0].argmax()
     return {"peakStress": float(vm[i]), "peakRadius": float(rxy[i]), "safetyFactor": float(mat.strength / max(vm[i], 1e-9)),
-            "hubPeak": float(vm[~away].max()) if (~away).any() else 0.0, "elements": int(len(tets)), "size": size,
+            "hubPeak": float(vm[~away].max()) if (~away).any() else 0.0, "elements": int(len(tets)), "size": size, "averagedOver_mm": float(radius),
             "tipLift_mm": float(u[tip, 2]), "rpm": op["rpm"], "material": mat.name}
 
 
