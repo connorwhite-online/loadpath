@@ -935,6 +935,11 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
 
     eta_e = opts.eta + opts.erode
     thick = MaxMember(domain, opts.max_member, design) if opts.max_member else None
+    # The step is measured (see the loop) except under a maximum member: that
+    # limit is a weight ramped on a percentile, not a function whose slope
+    # along a step can be read, and with the weight at its cap the measured
+    # step is so short the limit is still unmet after 200 iterations.
+    measured = opts.adaptive_move and thick is None
     mu = 0.0
 
     def eroded(xt, b):
@@ -1273,7 +1278,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         dc = _extrude(dc, columns, design)
         dv = _extrude(dv, columns, design)
 
-        if opts.adaptive_move and not (heat is not None and heat.swing_limit is not None):
+        if measured and not (heat is not None and heat.swing_limit is not None):
             # The step's length is measured, not scheduled. Along the last
             # step dx the Lagrangian's slope was a = g_old . dx (downhill)
             # and is now b = g_new . dx: a parabola through the two puts its
@@ -1390,7 +1395,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
                         f1 *= 0.5
                     side = -1
         change = float(np.abs(x_new - x)[design].max())
-        if opts.adaptive_move and not swing_step:
+        if measured and not swing_step:
             step_prev = (x_new - x, dc + lm * dv, lm)
         x = x_new
         since_beta += 1
@@ -1427,7 +1432,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
             on_iter(rec, xp)
 
         # (a change held down by the step limit is not a design at rest)
-        free_step = not opts.adaptive_move or change < 0.999 * move
+        free_step = not measured or change < 0.999 * move
         if beta < opts.beta_max and ((change < opts.tol * 2 and free_step) or since_beta >= _beta_hold(opts, beta)):
             beta = min(beta * 2, opts.beta_max)
             since_beta = 0

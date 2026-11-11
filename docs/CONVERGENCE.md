@@ -104,6 +104,19 @@ a run takes more optimizer iterations: 94 against 60 on the hook, 96 against
 rounding; the old runs under-delivered about 2%, which read as lighter parts
 with correspondingly less stiffness.
 
+## Where the step is still scheduled
+
+Two limits keep the fixed step, because neither is a function whose slope
+along a step can be read:
+
+- A maximum member size. It is enforced by a weight that is ramped while
+  the solid's 95th-percentile ball is over the limit. With the weight at its
+  cap the measured step is a few thousandths and the limit is still unmet
+  after 200 iterations, where the fixed step meets it in 80. That limit
+  wants a proper constraint (a multiplier solved each step, like volume)
+  before its step can be measured.
+- A temperature-swing limit, which takes its own constrained step.
+
 ## What was tried and dropped
 
 - A deadbeat gain (multiply the limit by t within 0.5 to 2). The controller
