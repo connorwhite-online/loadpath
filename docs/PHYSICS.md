@@ -325,6 +325,14 @@ What changed with it:
   data sheet says 58 against 48 MPa, 1.21x. A 3 mm member in pure bending
   reads 21% lower than its outer fibre; a member in tension reads the
   same.
+- **A thin member limits the radius.** That bending gain is
+  1 / (1 - 3r/4t) for a member of thickness t, and it cannot pass 1.5, the
+  most a rectangular section carries between first yield and collapse. So
+  the radius is held to 4/9 of the thinnest member the design may have
+  (`minMember`; a propeller blade's thinnest section), and not below what
+  the mesh resolves. Without it a 1 mm blade averaged over 0.86 mm read
+  almost none of its bending stress. Studies with members of 2 mm and up
+  are unchanged.
 - **The band left out near loads and supports is measured to the regions
   as drawn**, not to the nodes a mesh put in them, and the peak is read on
   the band's edge itself, between nodes. A hot spot the edge passes through

@@ -44,12 +44,26 @@ def test_material_lengths_are_sourced():
     assert material_length(MATERIALS["pa12-gf"])[0] == 0.86
     assert material_length(MATERIALS["ti64"])[0] == 0.0
     assert material_length(MATERIALS["resin"])[0] == 0.0
-    study = study_from_dict(_BEAM)
+    study = study_from_dict({**_BEAM, "minMember": 3})
     assert cc.stress_radius(study, 1.5)[0] == 0.86
     # a coarse mesh cannot resolve less than half an element
     r, why = cc.stress_radius(study, 3.0)
     assert r == 1.5 and why["of"] == "mesh" and why["materialLength"] == 0.86
 
+
+def test_radius_is_capped_by_the_thinnest_member():
+    """Averaging over more than 4/9 of a bending member's thickness would
+    credit it more than a rectangular section's plastic reserve (1.5)."""
+    pa12 = MATERIALS["pa12"]
+    r, why = cc.reading_radius(pa12, 0.5, thinnest=1.0)
+    assert r == pytest.approx(4.0 / 9.0) and why["of"] == "section" and why["thinnestMember"] == 1.0
+    assert 1.0 / (1.0 - 0.75 * r / 1.0) == pytest.approx(1.5)
+    # thick members read at the material's length; the mesh's floor still holds
+    assert cc.reading_radius(pa12, 0.5, thinnest=3.0)[0] == 0.86
+    r, why = cc.reading_radius(pa12, 1.5, thinnest=1.0)
+    assert r == 0.75 and why["of"] == "mesh"
+    # a study's thinnest member is its minMember
+    assert cc.stress_radius(study_from_dict({**_BEAM, "minMember": 1.8}), 0.5)[0] == pytest.approx(0.8)
 
 def test_average_of_uniform_and_bending_fields():
     E, nu, k = 2000.0, 0.3, 2.0

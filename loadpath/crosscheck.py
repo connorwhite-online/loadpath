@@ -920,17 +920,43 @@ _SAMPLES = _subtet_centroids()
 _RESOLVED = 0.5
 
 
-def stress_radius(study: Study, size: float) -> tuple:
+# The most of a section the stress is averaged over, in section thicknesses:
+# 4/9. Averaging gives a bending member the support a stress gradient gives
+# it (the surface reads 3/8 radius x gradient lower, so a member of
+# thickness t in pure bending reads 1 / (1 - 3 r / 4 t) stronger than one
+# pulled), and no section gains more than its fully plastic moment over
+# its first-yield one, 1.5 for a rectangle: 3 r / 4 t <= 1/3. Without the
+# limit a 1 mm blade read over 0.86 mm had its bending stress averaged
+# away across its whole thickness.
+_SECTION_SHARE = 4.0 / 9.0
+
+
+def reading_radius(material, size: float, thinnest: float | None = None) -> tuple:
     """(radius in mm of the ball stress is averaged over, why): the
-    material's own length (failure.material_length), and no less than the
-    mesh resolves (_RESOLVED elements)."""
+    material's own length (failure.material_length), no less than the mesh
+    resolves (_RESOLVED elements), and no more than _SECTION_SHARE of the
+    thinnest member (`thinnest`, mm) when that is given."""
     from .failure import material_length
 
-    own, source, quality = material_length(study.material)
-    floor = _RESOLVED * size
-    if own >= floor:
-        return own, {"radius": own, "of": "material", "source": source, "quality": quality}
-    return floor, {"radius": floor, "of": "mesh", "materialLength": own, "source": source, "quality": quality}
+    own, source, quality = material_length(material)
+    radius, of = own, "material"
+    why = {"materialLength": own, "source": source, "quality": quality}
+    # a bending member's averaged reading is its outer-fibre stress less
+    # 3 r / 4 t of it; past r = 4/9 t that support would exceed 1.5, the
+    # most a rectangular section gains between first yield and collapse
+    if thinnest and radius > _SECTION_SHARE * thinnest:
+        radius, of = _SECTION_SHARE * float(thinnest), "section"
+        why["thinnestMember"] = float(thinnest)
+    if radius < _RESOLVED * size:
+        radius, of = _RESOLVED * size, "mesh"
+    why.update(radius=radius, of=of)
+    return radius, why
+
+
+def stress_radius(study: Study, size: float) -> tuple:
+    """reading_radius for a study: its material, and the thinnest member its
+    design may have (minMember)."""
+    return reading_radius(study.material, size, getattr(study, "min_member", None) or None)
 
 
 def _averaged_stress(nodes, conn, us, E, nu, n_vertices, radius, chunk=50_000):
