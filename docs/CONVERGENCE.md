@@ -170,5 +170,9 @@ along a step can be read:
   penalty 1 once the overhang filter is on.
 - A sharper overhang maximum (P = 8). The filter becomes badly conditioned.
 - An uncapped smoothing width. Worse compliance, no gain in repeatability.
+- Damping the update's exponent by the measured fraction instead of
+  shortening the move limit. Cells far from balance still move the full
+  limit, compliance jumps back up, and the run stops early on a greyer
+  design.
 - A tighter bisection alone. It removes the staircase and leaves the other
   two.
