@@ -58,6 +58,7 @@ test. **Partial** means part of it. **Missing** means not yet.
 | Mass, centre of mass, moment of inertia responses | `report.massProperties` on every part; `massProperties.axis` weighs inertia into the design, `maxInertia` caps it, `centerOfMass` {target, tolerance} pulls the centre of mass to a point on any of its axes in the optimizer and checks it in the report | Have (new) |
 | Overhang, min / max feature, symmetry, pattern repetition, extrusion | `printDirection` / `process`, `minMember`, `maxMember`, `symmetry`, `pattern`, `extrusion` | Have |
 | Demold, 3- and 5-axis milling | `casting` (draw, sides, draft), `milling` (2.5 / 3 / 5 axis, tool diameter) | Have |
+| (none: nTop has no casting solver) | `casting.py`, `slipcast.py`, `castmold.py`: the part poured in its mold (solidification, shrinkage and feeding by mass conservation, risers sized by solving, dimensionless Niyama porosity, fluidity), ceramics slip cast (filtration, shrinkage, kiln sag), and the pattern or mold written to print; steel plate end-zone length 4.2 thicknesses against 4.2 measured ([CASTING.md](CASTING.md)) | Have (new) |
 | Passive regions | `preserve`, `keepOut` | Have |
 | Thermal topology optimization | `thermal.py` (heat sinks, thermo-elastic) | Have |
 | Buckling as a constraint | `bucklingopt.py` (nTop has no buckling constraint) | Have, beyond nTop |

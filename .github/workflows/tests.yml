@@ -34,6 +34,8 @@ jobs:
               tests/test_stack.py tests/test_kicad.py
           - group: antenna         # ~10 min (rf 1, antenna 8)
             files: tests/test_rf.py tests/test_antenna.py
+          - group: casting         # ~4 min
+            files: tests/test_casting.py tests/test_slipcast.py
           - group: enclosure       # ~11 min
             files: tests/test_enclosure.py
           - group: vibration       # vibration 9.5 min

@@ -1734,9 +1734,34 @@ STUDY_SCHEMA = {
                                                            "and checked facet by facet"},
                                   "parting": {"type": "number",
                                               "description": "two-sided: the parting plane's coordinate along "
-                                                             "the draw axis, mm (default: the widest section)"}},
-                               "required": ["draw"], "additionalProperties": False}],
-                    "description": "Cast or molded: no undercuts along the draw direction."},
+                                                             "the draw axis, mm (default: the widest section)"},
+                                  "process": {"enum": ["sand", "investment", "plaster", "permanent", "die"],
+                                              "description": "pour the delivered part: solidification in the "
+                                                             "mold, where it shrinks and what feeds it, risers "
+                                                             "sized by solving, porosity, whether the thinnest "
+                                                             "wall fills (report castability; docs/CASTING.md). "
+                                                             "investment and plaster molds form round an "
+                                                             "expendable (printed) pattern and need no draw"},
+                                  "alloy": {"anyOf": [{"type": "string"}, {"type": "object"}],
+                                            "description": "a356 (default), a380, wcb (cast carbon steel), "
+                                                           "silicon-bronze, or a card {base, liquidus, solidus, "
+                                                           "...} overriding one"},
+                                  "up": {"type": "string", "pattern": "^[+-]?[xyz]$",
+                                         "description": "which way is up in the mold (default +z): gravity "
+                                                        "decides what feeds what"},
+                                  "pourTemperature": {"type": "number", "description": "C (default liquidus + "
+                                                                                       "the alloy's usual superheat)"},
+                                  "moldTemperature": {"type": "number", "description": "C (default per process)"},
+                                  "head": {"type": "number", "exclusiveMinimum": 0,
+                                           "description": "metal head above the part while it fills, mm "
+                                                          "(default 100)"},
+                                  "risers": {"type": "boolean",
+                                             "description": "true (default): size and place risers until the "
+                                                            "part is sound; false: report the part as poured "
+                                                            "alone"}},
+                               "x-requireOne": [["draw"], ["process"]], "additionalProperties": False}],
+                    "description": "Cast or molded: no undercuts along the draw direction; with a process, "
+                                   "the pour itself is solved."},
         "explore": {"type": "object", "properties": {
                         "methods": {"type": "array", "minItems": 1, "items": {"enum": _EXPLORE_METHODS},
                                     "description": "manufacturing methods to solve for (default fdm, mjf, sla, "

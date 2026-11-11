@@ -197,6 +197,17 @@ There is no GUI on purpose; it's a library.
   a product, part of the layout search, so components are only placed
   where their cables can be laid and plugged in, hot parts apart, and the
   harness's space is kept clear of the structure generated round it.
+- **Casting, poured before it is made** ([docs/CASTING.md](docs/CASTING.md)):
+  a part meant for sand, investment or die casting is poured in its mold:
+  the heat equation with latent heat finds what freezes last, conservation
+  of mass and gravity find the cavity that leaves, and risers are sized
+  by solving until the part is sound; porosity, the thinnest wall the
+  metal will fill and the pattern scale come from the alloy's own
+  numbers. A ceramic part is slip cast the same way: filtration through
+  the growing cake gives the minutes in the plaster mold and the wall the
+  real shape gets, conservation of solids gives the shrinkage, a creep
+  solve gives the kiln sag. Both write the pattern or mold to print. No
+  riser ratios, shrink rules or minimum-wall tables.
 - **Antennas inside the product** ([docs/ANTENNA.md](docs/ANTENNA.md)): a
   board antenna solved with Maxwell's equations in the printed shell it
   will live in, with the shell's measured permittivity and loss, the
@@ -357,7 +368,7 @@ print(best.report["mass"], best.report["safetyFactor"])
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
   [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md),
-  [KiCad boards](docs/KICAD.md), [antennas](docs/ANTENNA.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),
+  [KiCad boards](docs/KICAD.md), [antennas](docs/ANTENNA.md), [casting](docs/CASTING.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),
   [results bundle](docs/BUNDLE.md).
 
 <!-- gallery:start -->

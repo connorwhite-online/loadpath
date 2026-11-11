@@ -468,6 +468,18 @@ Not every part is printed. Leave `process` out and say how it is made:
   molding, 3-5 sand) is built into the delivered walls and read facet by facet
   in `report.json` → `manufacturing.draft` (`underDraftedArea`, mm^2). Run
   holes along the draw; a hole across it needs a side core and is an undercut.
+- **Poured**: add `"process": "sand" | "investment" | "plaster" | "permanent" | "die"`
+  and `"alloy": "a356" | "a380" | "wcb" | "silicon-bronze"` to `casting` and the
+  delivered part is poured in its mold: `report.json` → `castability` has where
+  it shrinks (`shrinkage.hotSpots`), the risers sized by solving until it is
+  sound (`risers`, `yield`), `microporosity`, whether the thinnest wall fills
+  (`fill`), and `contraction.patternScale`. Investment and plaster molds form
+  round a printed pattern, so they need no `draw`. On any mesh:
+  `loadpath cast part.stl --process sand --alloy a356` (MCP `loadpath_cast`)
+  also writes the pattern and mold halves to print. Ceramics:
+  `loadpath slipcast cup.stl --body porcelain --wall 3` (MCP `loadpath_slipcast`)
+  gives minutes in the plaster mold, the wall the shape really gets, shrinkage
+  and mold scale, kiln sag, and the mold halves. docs/CASTING.md.
 - **Milled**: `"milling": {"axes": 3, "directions": ["+z"], "toolDiameter": 6}`
   (`axes: 5` cuts from all six sides, `2.5` puts pocket floors every `stepDown`).
   Every void must be reachable by a cutter coming straight in from a listed

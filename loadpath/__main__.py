@@ -793,6 +793,39 @@ def main(argv=None):
     an.add_argument("--out", default="loadpath-antenna")
     an.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
     an.add_argument("--quiet", action="store_true")
+    ca = sub.add_parser("cast", help="pour a part in metal (sand, investment, plaster, permanent mold, die): "
+                                     "solidification in the mold, where it shrinks and what feeds it, risers "
+                                     "sized by solving, porosity, whether the thinnest wall fills, the pattern "
+                                     "scale; writes the pattern and mold to print (docs/CASTING.md)")
+    ca.add_argument("mesh", help="the part as drawn (.stl, .obj, .3mf; mm)")
+    ca.add_argument("--process", default="sand", choices=["sand", "investment", "plaster", "permanent", "die"])
+    ca.add_argument("--alloy", default="a356", help="a356, a380, wcb (cast carbon steel), silicon-bronze")
+    ca.add_argument("--up", default="+z", help="which way is up in the mold")
+    ca.add_argument("--pour-temperature", type=float, help="C (default liquidus + the alloy's usual superheat)")
+    ca.add_argument("--mold-temperature", type=float, help="C (default per process)")
+    ca.add_argument("--head", type=float, help="metal head above the part while it fills, mm (default 100)")
+    ca.add_argument("--no-risers", action="store_true", help="report the part as poured alone")
+    ca.add_argument("--pitch", type=float, help="grid pitch, mm (default from --cells)")
+    ca.add_argument("--cells", type=int, default=60000, help="cells in the part (default 60000)")
+    ca.add_argument("--no-molds", action="store_true", help="skip the pattern and mold meshes")
+    ca.add_argument("--out", default="loadpath-cast")
+    ca.add_argument("--quiet", action="store_true")
+    sc = sub.add_parser("slipcast", help="slip cast a ceramic part in a plaster mold: the time to build the "
+                                         "wall (filtration), the wall the real shape gets, slip trapped behind "
+                                         "necks, drying and firing shrinkage and the mold scale, kiln sag, green "
+                                         "and fired strength; writes the plaster mold halves and the boxes to "
+                                         "pour them in (docs/CASTING.md)")
+    sc.add_argument("mesh", help="the fired part's outside (.stl, .obj, .3mf; mm)")
+    sc.add_argument("--body", default="porcelain", help="porcelain, stoneware, earthenware, alumina")
+    sc.add_argument("--wall", type=float, default=4.0, help="fired wall thickness, mm (drain casting)")
+    sc.add_argument("--solid", action="store_true", help="solid casting: leave the slip until the walls meet")
+    sc.add_argument("--up", default="+z", help="which way is up in the mold (the pour opening is on top)")
+    sc.add_argument("--casts", type=int, default=5, help="casts the mold takes between dryings (sizes the plaster)")
+    sc.add_argument("--pressure", type=float, default=0.0, help="pressure on the slip, Pa (pressure casting)")
+    sc.add_argument("--pitch", type=float, help="grid pitch, mm")
+    sc.add_argument("--no-molds", action="store_true", help="skip the mold meshes")
+    sc.add_argument("--out", default="loadpath-slipcast")
+    sc.add_argument("--quiet", action="store_true")
     stk = sub.add_parser("stack", help="boards on standoffs: search the order and the gaps for board temperature "
                                        "(airflow through each gap solved), centre of mass and height; the cables "
                                        "between boards laid as rods; the stack as a carried mass for the frame")
@@ -1079,6 +1112,10 @@ def main(argv=None):
         return _wires(args)
     if args.cmd == "antenna":
         return _antenna(args)
+    if args.cmd == "cast":
+        return _cast(args)
+    if args.cmd == "slipcast":
+        return _slipcast(args)
     if args.cmd == "stack":
         return _stack(args)
     if args.cmd == "kicad":
@@ -1849,6 +1886,88 @@ def _kicad(args):
                       "holes": [{k: h[k] for k in ("ref", "at", "screw")} for h in info["holes"]],
                       "connectors": conns, "warnings": rep["warnings"]}, indent=1))
     return 0
+
+
+def _load_part(path):
+    import trimesh
+
+    m = trimesh.load(path, force="mesh")
+    if not len(getattr(m, "faces", ())):
+        raise ValueError(f"{path}: no triangles")
+    return m
+
+
+def _cast(args):
+    from . import casting, castmold
+
+    try:
+        mesh = _load_part(args.mesh)
+        kw = {k: v for k, v in (("pour_temperature", args.pour_temperature),
+                                ("mold_temperature", args.mold_temperature), ("head", args.head)) if v is not None}
+        kw["up"] = args.up
+        log = None if args.quiet else (lambda m, _=None: print(f"  {json.dumps(m, default=float)}",
+                                                               file=sys.stderr, flush=True))
+        report, fields = casting.cast_part(mesh, args.process, args.alloy, pitch=args.pitch, cells=args.cells,
+                                           risers=None if args.no_risers else "auto", on_progress=log, **kw)
+        files = {}
+        if not args.no_molds:
+            try:
+                made = castmold.metal_pattern(mesh, report, casting.setup(args.process, args.alloy, **kw))
+                files = castmold.write_meshes(made["meshes"], args.out)
+                report["pattern"] = made["info"]
+            except Exception as exc:  # noqa: BLE001 - the report stands without its meshes
+                report.setdefault("warnings", []).append(f"pattern and mold not written: {type(exc).__name__}: {exc}")
+    except (ValueError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    os.makedirs(args.out, exist_ok=True)
+    path = os.path.join(args.out, "castability.json")
+    with open(path, "w") as fh:
+        json.dump(report, fh, indent=1, default=float)
+    out = {"ok": report["ok"], "report": path, "files": files,
+           "solidification": report["solidification"], "shrinkage": report["shrinkage"],
+           "risers": report["risers"], "yield": report["yield"], "microporosity": report["microporosity"],
+           "fill": {k: report["fill"].get(k) for k in ("thinnestWall", "minWallAtFlowLength", "misrunShare")},
+           "patternScale": report["contraction"]["patternScale"], "warnings": report["warnings"]}
+    if not args.quiet:
+        print(json.dumps(out, indent=1, default=float))
+    return 0 if report["ok"] else 1
+
+
+def _slipcast(args):
+    from . import castmold, slipcast
+
+    try:
+        mesh = _load_part(args.mesh)
+        report, fields = slipcast.slipcast_part(mesh, args.body, wall=None if args.solid else args.wall,
+                                                solid=args.solid, pitch=args.pitch, up=args.up, casts=args.casts,
+                                                pressure=args.pressure)
+        files = {}
+        if not args.no_molds:
+            try:
+                from .casting import _direction
+
+                made = castmold.slip_mold(mesh, report, fields, up=_direction(args.up), casts=args.casts)
+                meshes = dict(made["meshes"])
+                if not args.solid:
+                    meshes["fired-part"] = castmold.cast_body(mesh, fields)
+                files = castmold.write_meshes(meshes, args.out)
+                report["moldMeshes"] = made["info"]
+            except Exception as exc:  # noqa: BLE001 - the report stands without its meshes
+                report.setdefault("warnings", []).append(f"mold not written: {type(exc).__name__}: {exc}")
+    except (ValueError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    os.makedirs(args.out, exist_ok=True)
+    path = os.path.join(args.out, "slipcast.json")
+    with open(path, "w") as fh:
+        json.dump(report, fh, indent=1, default=float)
+    out = {"ok": report.get("ok", True), "report": path, "files": files,
+           **{k: report[k] for k in ("casting", "shrinkage", "part", "mold", "kiln", "strength", "warnings")
+              if k in report}}
+    if not args.quiet:
+        print(json.dumps(out, indent=1, default=float))
+    return 0 if out["ok"] else 1
 
 
 def _antenna(args):

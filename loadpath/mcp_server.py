@@ -364,6 +364,60 @@ def antenna(brief, base_dir: str | None = None) -> dict:
     return out
 
 
+def cast(mesh: str, process: str = "sand", alloy: str = "a356", up: str = "+z", pour_temperature=None,
+         mold_temperature=None, head=None, risers: bool = True, molds: bool = True,
+         base_dir: str | None = None) -> dict:
+    """Pour a part in metal (casting.py, castmold.py) as a background job."""
+    from .casting import PROCESSES
+    from .casting import alloy as _alloy
+
+    path = mesh if os.path.isabs(mesh) else os.path.join(base_dir or os.getcwd(), mesh)
+    if not os.path.isfile(path):
+        return {"ok": False, "error": f"no such mesh: {path}"}
+    if process not in PROCESSES:
+        return {"ok": False, "error": f"process '{process}': one of {sorted(PROCESSES)}"}
+    try:
+        _alloy(alloy)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    args = ["cast", path, "--process", process, "--alloy", alloy, "--up", up, "--out", "{dir}/out"]
+    for flag, v in (("--pour-temperature", pour_temperature), ("--mold-temperature", mold_temperature),
+                    ("--head", head)):
+        if v is not None:
+            args += [flag, str(float(v))]
+    if not risers:
+        args.append("--no-risers")
+    if not molds:
+        args.append("--no-molds")
+    out = _spawn("cast", os.path.splitext(os.path.basename(path))[0], {}, args, base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
+def slipcast(mesh: str, body: str = "porcelain", wall: float = 4.0, solid: bool = False, up: str = "+z",
+             casts: int = 5, pressure: float = 0.0, molds: bool = True, base_dir: str | None = None) -> dict:
+    """Slip cast a ceramic part (slipcast.py, castmold.py) as a background job."""
+    from .slipcast import body as _body
+
+    path = mesh if os.path.isabs(mesh) else os.path.join(base_dir or os.getcwd(), mesh)
+    if not os.path.isfile(path):
+        return {"ok": False, "error": f"no such mesh: {path}"}
+    try:
+        _body(body)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    args = ["slipcast", path, "--body", body, "--wall", str(float(wall)), "--up", up, "--casts", str(int(casts)),
+            "--pressure", str(float(pressure)), "--out", "{dir}/out"]
+    if solid:
+        args.append("--solid")
+    if not molds:
+        args.append("--no-molds")
+    out = _spawn("slipcast", os.path.splitext(os.path.basename(path))[0], {}, args,
+                 base_dir=base_dir or os.getcwd())
+    out["next"] = _POLL_HINT
+    return out
+
+
 def stack(brief, base_dir: str | None = None) -> dict:
     """Validate a stack brief (stack.py) and search its board order and
     gaps as a background job."""
@@ -1123,6 +1177,40 @@ def serve():
         full. Starts a job (a minute or two); poll loadpath_status; report out/antenna.json, sweep
         out/s11.csv."""
         return antenna(brief, base_dir)
+
+    @tool
+    def loadpath_cast(mesh: str, process: str = "sand", alloy: str = "a356", up: str = "+z",
+                      pour_temperature: float | None = None, mold_temperature: float | None = None,
+                      head: float | None = None, risers: bool = True, molds: bool = True,
+                      base_dir: str | None = None) -> dict:
+        """Pour a part in metal and see whether it comes out sound. `mesh` is the part as drawn
+        (.stl, mm); process is sand, investment, plaster, permanent or die; alloy is a356, a380, wcb
+        (cast carbon steel) or silicon-bronze; `up` is which way is up in the mold. The heat equation
+        with latent heat is solved in the part and its mold, then mass conservation and gravity decide
+        where the shrinkage goes: hot spots, the cavities they leave, and risers sized by solving until
+        the part is sound (position, diameter, pipe depth, yield). Also microporosity (dimensionless
+        Niyama criterion), dendrite arm spacing, whether the thinnest wall fills before the stream
+        freezes, pattern scale from the alloy's contraction, and sprue and ingate areas. Writes
+        out/castability.json and, to print, the casting tree, the split pattern and the mold halves
+        (STL). Nothing is a rule of thumb; docs/CASTING.md lists what each number was checked against.
+        In a study, `casting: {draw, process, alloy}` pours the optimized part the same way. Starts a
+        job (under a minute); poll loadpath_status."""
+        return cast(mesh, process, alloy, up, pour_temperature, mold_temperature, head, risers, molds, base_dir)
+
+    @tool
+    def loadpath_slipcast(mesh: str, body: str = "porcelain", wall: float = 4.0, solid: bool = False,
+                          up: str = "+z", casts: int = 5, pressure: float = 0.0, molds: bool = True,
+                          base_dir: str | None = None) -> dict:
+        """Slip cast a ceramic part in a plaster mold. `mesh` is the fired part's outside (.stl, mm);
+        body is porcelain, stoneware, earthenware or alumina; `wall` is the fired wall in mm (drain
+        casting) or solid=true. Filtration through the growing cake gives the time in the mold and the
+        wall the real shape gets (thicker in inside corners, slip trapped behind necks); conservation
+        of solids gives drying and firing shrinkage and the mold scale; a creep solve under self-weight
+        gives the kiln sag; Weibull statistics give the chance the green part breaks coming out of the
+        mold. Writes out/slipcast.json and, to print or pour, the plaster mold halves at mold scale,
+        the boxes to pour them in, and the fired part with its real inside. Starts a job (under a
+        minute); poll loadpath_status."""
+        return slipcast(mesh, body, wall, solid, up, casts, pressure, molds, base_dir)
 
     @tool
     def loadpath_stack(brief: dict | str, base_dir: str | None = None) -> dict:

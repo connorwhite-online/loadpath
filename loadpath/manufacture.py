@@ -78,7 +78,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage
 
-__all__ = ["Access", "Pattern", "AccessFilter", "MaxMember", "parse_milling", "parse_casting",
+__all__ = ["Access", "Pattern", "AccessFilter", "MaxMember", "parse_milling", "parse_casting", "parse_foundry",
            "parse_pattern", "tie_groups", "machinable", "member_thickness", "report", "AXIS_DIRECTIONS",
            "drafted_distance", "parting_index", "draft_report", "machining_report", "MACHINING"]
 
@@ -226,8 +226,14 @@ def parse_casting(v) -> Access | None:
         return None
     if isinstance(v, str):
         v = {"draw": v}
-    if not isinstance(v, dict) or "draw" not in v:
-        raise ValueError("casting is {draw: '+z', sides: 1 | 2}: the direction the mold opens")
+    if not isinstance(v, dict) or ("draw" not in v and "process" not in v):
+        raise ValueError("casting is {draw: '+z', sides: 1 | 2}: the direction the mold opens "
+                         "(or {process, alloy} alone for a mold formed round an expendable pattern)")
+    if "draw" not in v:
+        if v["process"] not in ("investment", "plaster"):
+            raise ValueError(f"casting.process '{v['process']}' pulls a pattern or a die out of the mold: "
+                             "give casting.draw (only investment and plaster molds need none)")
+        return None
     draw = _axis_direction(v["draw"], "casting.draw")
     sides = v.get("sides", 2)
     if sides not in (1, 2):
@@ -245,6 +251,34 @@ def parse_casting(v) -> Access | None:
     dirs = [draw] if sides == 1 else [draw, (draw[0], -draw[1])]
     return Access("casting", dirs, draw=draw, draft=float(draft),
                   parting=None if parting is None else float(parting))
+
+
+def parse_foundry(v) -> dict | None:
+    """The pour of a `casting` block that names a process: the keyword
+    arguments of casting.cast_part, or None when the study only asks for
+    mold access."""
+    if not isinstance(v, dict) or v.get("process") is None:
+        return None
+    from .casting import PROCESSES, alloy
+
+    if v["process"] not in PROCESSES:
+        raise ValueError(f"casting.process '{v['process']}': one of {sorted(PROCESSES)}")
+    out = {"process": v["process"], "alloy_name": v.get("alloy", "a356")}
+    alloy(out["alloy_name"])                                  # raises on an unknown alloy
+    for key, kw in (("pourTemperature", "pour_temperature"), ("moldTemperature", "mold_temperature"),
+                    ("head", "head")):
+        if v.get(key) is not None:
+            if not isinstance(v[key], (int, float)) or isinstance(v[key], bool):
+                raise ValueError(f"casting.{key} is a number")
+            out[kw] = float(v[key])
+    if v.get("up") is not None:
+        _axis_direction(v["up"], "casting.up")
+        out["up"] = v["up"]
+    risers = v.get("risers", True)
+    if not isinstance(risers, bool):
+        raise ValueError("casting.risers is true (size risers) or false (the part poured alone)")
+    out["risers"] = "auto" if risers else None
+    return out
 
 
 def parse_pattern(v) -> Pattern | None:

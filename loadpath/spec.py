@@ -825,6 +825,9 @@ class Study:
     # Milling or casting access (manufacture.Access), a circular pattern
     # (manufacture.Pattern), and the thickest member allowed (mm).
     access: Any = None
+    # casting with a process: the pour to solve on the delivered part
+    # (manufacture.parse_foundry), or None
+    foundry: Any = None
     pattern: Any = None
     max_member: float | None = None
     # Every material to try (a list in the study); `material` is the first.
@@ -1766,7 +1769,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         shells.append(("skin", t))
     from .durability import durability_from_spec
     durability = durability_from_spec(d.get("durability"))
-    from .manufacture import parse_casting, parse_milling, parse_pattern
+    from .manufacture import parse_casting, parse_foundry, parse_milling, parse_pattern
 
     if d.get("milling") is not None and d.get("casting") is not None:
         raise ValueError("a study is milled or cast, not both: give milling or casting")
@@ -1803,6 +1806,7 @@ def study_from_dict(d: dict, base_dir: str | None = None) -> Study:
         print_direction=print_direction,
         extrusion=_extrusion_axis(d.get("extrusion")),
         access=access,
+        foundry=parse_foundry(d.get("casting")),
         pattern=parse_pattern(d.get("pattern")),
         max_member=float(max_member) if max_member is not None else None,
         process=process,

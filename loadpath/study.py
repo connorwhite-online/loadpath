@@ -241,6 +241,7 @@ class Outcome:
             **({"manufacturing": r["manufacturing"]} if "manufacturing" in r else {}),
             **({"slicer": r["slicer"]} if "slicer" in r else {}),
             **({"buildSim": r["buildSim"]} if "buildSim" in r else {}),
+            **({"castability": r["castability"]} if "castability" in r else {}),
             **({"graded": r["graded"]} if "graded" in r else {}),
             "warnings": r.get("warnings", []),
             "margin": r.get("margin"),
@@ -910,7 +911,7 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
                           search=lambda st: _run_restarts(st, on_progress, should_stop))
         else:
             r = _run_restarts(study, on_progress, should_stop)
-        return _build_sim(_slice(_process_checks(r, on_progress), on_progress), on_progress)
+        return _castability(_build_sim(_slice(_process_checks(r, on_progress), on_progress), on_progress), on_progress)
     t0 = time.time()
     outcomes, warnings, domain = [], [], None
     for r in _parallel([dataclasses.replace(study, material=m, materials=[m]) for m in mats],
@@ -921,9 +922,9 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     passing = [i for i, o in enumerate(outcomes) if o.passes]
     pool = passing if passing else ([] if any(o.passes is False for o in outcomes) else range(len(outcomes)))
     best = min(pool, key=lambda i: _weigh(outcomes[i].report)) if pool else None
-    return _build_sim(_slice(_process_checks(StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
-                                                         seconds=time.time() - t0, warnings=warnings), on_progress),
-                             on_progress), on_progress)
+    return _castability(_build_sim(_slice(_process_checks(
+        StudyResult(study=study, domain=domain, outcomes=outcomes, best=best, seconds=time.time() - t0,
+                    warnings=warnings), on_progress), on_progress), on_progress), on_progress)
 
 
 # goal.restarts: the k-th search starts at the goal's volumeFraction times
@@ -976,6 +977,29 @@ def _run_restarts(study: Study, on_progress=None, should_stop=None) -> StudyResu
                                         for i in picks])
     return StudyResult(study=study, domain=domain, outcomes=outcomes, best=best,
                        seconds=time.time() - t0, warnings=warnings)
+
+
+def _castability(result: StudyResult, on_progress=None) -> StudyResult:
+    """casting.process: pour the delivered outcome (casting.py) into its
+    report as "castability" (solidification, shrinkage and what feeds it,
+    risers, porosity, filling), with its warnings."""
+    fd = result.study.foundry
+    if fd is None or result.best is None:
+        return result
+    o = result.outcomes[result.best]
+    if getattr(o, "mesh", None) is None:
+        return result
+    from .casting import cast_part
+
+    if on_progress is not None:
+        on_progress({"stage": "castability", "process": fd["process"]}, None)
+    try:
+        rep, _ = cast_part(o.mesh, **fd)
+    except Exception as exc:  # noqa: BLE001 - a failed pour leaves the part's report standing
+        rep = {"process": fd["process"], "error": f"{type(exc).__name__}: {exc}", "warnings": []}
+    o.report["castability"] = rep
+    o.report.setdefault("warnings", []).extend(f"casting: {w}" for w in rep.get("warnings", []))
+    return result
 
 
 def _build_sim(result: StudyResult, on_progress=None) -> StudyResult:
