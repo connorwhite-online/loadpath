@@ -342,6 +342,15 @@ What changed with it:
   one time). Only when the memory really there cannot hold the planned grid
   is it made coarser.
 
+One limit, measured: the average is only as good as the field under it. On
+the yoke's blended surfaces the default 1.5 mm elements and a 1.0 mm mesh
+agree (3.65 to 3.73 against 3.68). At a perfectly sharp inside corner (an L
+bracket, `tests/test_stress_read.py`) elements twice the radius under-read
+by about 10%: 14.7 to 15.0 MPa at 1.7 mm, 16.4 to 17.2 at 1.2 mm, 16.4 at
+0.9 mm. Refining the mesh to the radius where the stress is highest is the
+next step; a delivered part's corners are blended, so it has not been
+needed yet.
+
 The idealized clamp is still there (row 1 below): the band still hides what
 a rigid support does to the stress beside it. What is new is that
 everything outside the band is a number the part has, on any mesh.
