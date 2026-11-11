@@ -760,7 +760,10 @@ and tell the user when no ballast that fits can hold a case (a stiff cable
 nudged sideways usually): then the feet's grip or a softer cable is the
 fix. To find where ballast can go without changing a push pad's feel,
 read the pad back with `readback(..., travel_at=4.0)` and fill only the
-room below the skin's travel envelope.
+room below the skin's travel envelope: `loadpath massfill` does that
+(fills to a target mass or to the most the room holds, in the product's own
+material by default, so a one-piece print stays one piece). Read the feel
+back after filling: fill fused to a wall stiffens it.
 
 ## Designing around electronics heat
 

@@ -48,6 +48,46 @@ plug being pushed home, and the report says to hold the product).
   at the plug (the twist), and `plug` (a connector name from
   `connectors.py`, or the insertion force in N).
 
+## Making it heavier: massfill
+
+`loadpath massfill brief.json --out fill.stl` (Python:
+`loadpath.massfill.run_massfill`) fills the room a product doesn't need
+with its own material (or any other), bottom up, and reports the most it
+can reach (`maxFill_g`) and, with a `target_g`, whether it gets there.
+Room is everything inside the exterior that is:
+
+- off each keep-out by its `clearance` (and, with `noOverhang`, never over
+  its plan above its base, so the part still drops in from above);
+- `margin` below the skin's travel envelope (`travel.envelope`, an npz of
+  `nodes` and `travel` from `readback(..., travel_at=N)`): the room the skin
+  never reaches when pressed at N;
+- over `floor`, if given.
+
+With `moving` (a flap on a hinge: `axis` {point, direction}, `against` the
+fixed part, `parts` that move, `fuseTo` the moving part, `clearance`,
+`angles`), the room splits in two: fill that rides with the moving part
+(its whole swing clears the fixed part) and fill fused to the fixed part
+(clear of everything the moving side sweeps, the moving fill included,
+checked again exactly on the meshes). Each fill reaches about a voxel into
+what it is fused to: union it with that part. The fills are opened to
+`minSection` mm (1.0 by default), meshed and smoothed, then cut exactly off
+the keep-outs.
+
+```json
+{"exterior": "closed.stl", "floor": 2.7, "pitch": 0.25, "material": "tpu88a",
+ "keepouts": [{"id": "board", "mesh": "board.stl", "clearance": 0.15, "noOverhang": true},
+              {"id": "switch", "mesh": "switch.stl", "clearance": 0.3, "noOverhang": true},
+              {"id": "wires", "mesh": "wires.stl", "clearance": 0.3}],
+ "travel": {"envelope": "rb.env.npz", "margin": 0.5},
+ "moving": {"against": "body.stl", "parts": ["flap.stl", "board.stl", "switch.stl"], "fuseTo": "flap.stl",
+            "axis": {"point": [0, 28.54, 3.45], "direction": [0.996, -0.085, 0]}, "clearance": 0.3},
+ "target_g": 30, "otherMass_g": 12.4, "out": "fill.stl"}
+```
+
+A fill fused to a wall stiffens the wall: read the feel back on the filled
+part before trusting it (the travel margin keeps the fill off the moving
+skin, not off the walls that hold it).
+
 ## Finding room for ballast
 
 The switch read-back (`switch_lattice.readback(..., travel_at=N)`) also

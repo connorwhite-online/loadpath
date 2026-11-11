@@ -828,6 +828,13 @@ def main(argv=None):
     stb.add_argument("brief")
     stb.add_argument("--out", help="write the report JSON here")
     stb.add_argument("--base-dir", help="where the brief's relative paths start (default: the brief's folder)")
+    mfp = sub.add_parser("massfill", help="make a product as heavy as it can be (or a target mass) without changing "
+                                          "how it presses, swings or assembles: fill only the room under the skin it "
+                                          "never reaches, off keep-outs, clear of a hinge's sweep (docs/STABILITY.md)")
+    mfp.add_argument("brief")
+    mfp.add_argument("--out", help="the fill STL (with a moving part: -moving.stl and -fixed.stl)")
+    mfp.add_argument("--report", help="write the report JSON here")
+    mfp.add_argument("--base-dir")
     co = sub.add_parser("cooling", help="design the inside of a fixed exterior around the heat its parts make: "
                                         "components under their maxTemp, the touched skin under its touch "
                                         "limit (the study's cooling block; with feel or switch blocks, "
@@ -1044,6 +1051,8 @@ def main(argv=None):
         return _switch(args)
     if args.cmd == "feel":
         return _feel(args)
+    if args.cmd == "massfill":
+        return _massfill(args)
     if args.cmd == "stability":
         return _stability(args)
     if args.cmd == "cooling":
@@ -2025,6 +2034,22 @@ def _feel(args):
         return 2
     _write_report(args.out, {"ok": rep["passes"], **rep})
     return 0 if rep["passes"] else 1
+
+
+def _massfill(args):
+    from .massfill import run_massfill
+    try:
+        rep = run_massfill(args.brief, base_dir=args.base_dir, out=args.out)
+    except (ValueError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    ok = rep.get("reaches", True)
+    if args.report:
+        with open(args.report, "w") as fh:
+            json.dump({"ok": ok, **rep}, fh, indent=1, default=float)
+    print(json.dumps({k: rep[k] for k in ("room_cm3", "maxFill_g", "fill_g", "fills", "reaches", "note") if k in rep},
+                     default=float))
+    return 0 if ok else 1
 
 
 def _stability(args):
