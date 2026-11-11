@@ -86,6 +86,39 @@ The start is momentum theory's best rotor: even induced velocity, chord from the
 coefficient. Chord is held where blade-element momentum still holds: local solidity under 0.3 from 0.4 R out. Past
 that the blades act as a cascade, which this model doesn't represent.
 
+## Root, hub and tip
+
+The beam model reads the root as a section, but the printed root is a joint, and that's where the centrifugal pull and
+the bending both peak. Three things there come from the loads:
+
+- **Root fillet** (`root_fillet`): a shoulder fillet of radius r on a root of thickness t raises the bending stress
+  by Kt = 1 + 0.2 (r/t)^-0.55 (a fit to Peterson's stepped bar in bending). The radius is the smallest that keeps
+  Kt x the full-throttle root stress within strength / sf. It is never under the process's thinnest wall, and never
+  over three root thicknesses. `rotor_mesh(..., fillet=r)` grows each root section's thickness and chord by the
+  circular fillet's profile over the last r before the hub. Every section lies on a cylinder concentric with the hub,
+  so the union meets the hub with that radius all round.
+- **Hub height** (`hub_height`): the root section's axial depth, fillet included, plus a wall above and below, so the
+  root lands whole on the hub.
+- **No overlap**: each section's span round the circle (chord x cos pitch) stays within 80% of its share of the
+  circumference, so neighbouring roots don't run into each other on the hub.
+
+The tip closes over its last half chord as a quarter ellipse (`tip_closure`). A square-cut tip at full chord sheds
+a vortex off each corner. Closing it brings the chord, and with it the circulation, to zero at the tip, which is
+the loading the tip-loss factor already gives there. The aerodynamics sees the closed planform.
+
+**The printed solid** (`solid_check`): quadratic tetrahedra of the rotor as it will print. Every node carries its
+centrifugal body force, each blade's surface carries its stations' thrust and drag, and the hub is held at the
+bore. It reports the peak stress, where it is, and its safety factor. On hum's 100 mm three-blade prop at full
+throttle:
+
+| | Beam root | Solid peak |
+|---|---|---|
+| Sharp root | 25.0 MPa | 18.2 MPa, at the root |
+| 3 mm fillet | | 14.6 MPa, moved out onto the blade |
+
+With the fillet, the hub's own peak fell from 14.7 to 2.0 MPa. The solve is linear, so it carries no centrifugal
+stiffening. Its flap deflection and the bending stress that comes with it read high, which errs safe.
+
 ## Validation
 
 Against published static tests of 3D-printed propellers (UIUC propeller database volume 2; Deters, Ananda & Selig,

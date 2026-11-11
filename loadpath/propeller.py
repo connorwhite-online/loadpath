@@ -882,6 +882,15 @@ def _spline(s, knots, vals):
     return PchipInterpolator(knots, vals)(np.clip(s, 0, 1))
 
 
+def tip_closure(r, r_tip, c_tip):
+    """How the planform closes at the tip: a blade cut off square at full chord ends in a flat face whose two corners
+    each shed a vortex; closed over the last half chord as a quarter ellipse, the chord (and with it the circulation)
+    falls to zero at the tip, the loading the tip-loss factor already says the air takes there. A factor on chord."""
+    l = max(0.5 * c_tip, 1e-6)
+    u = np.clip((np.asarray(r, float) - (r_tip - l)) / l, 0.0, 1.0)
+    return np.sqrt(np.maximum(1.0 - u * u, 0.0))
+
+
 def blade_from_params(x, blades, r_tip, r_hub, stations=24, te=0.3, t_min=0.8):
     """Design variables -> Blade. x: chord at 4 knots (mm), geometric pitch at 3 knots (mm per turn), camber at root
     and tip (deg), thickness ratio at root and tip. Thickness is held to t_min mm (the process's thinnest
@@ -889,11 +898,16 @@ def blade_from_params(x, blades, r_tip, r_hub, stations=24, te=0.3, t_min=0.8):
     r = _stations(r_hub, r_tip, stations)
     s = (r - r_hub) / (r_tip - r_hub)
     chord = np.maximum(_spline(s, KNOTS, x[0:4]), 1.0)
+    chord = chord * tip_closure(r, r_tip, float(chord[-1]))
+    chord = np.maximum(chord, 1.0)
     pitch_len = _spline(s, np.array([0.0, 0.5, 1.0]), x[4:7])
     pitch = np.arctan(pitch_len / (2 * np.pi * r))
+    # neighbouring blades can't overlap: each section's span round the circle, chord x cos(pitch), stays within 80%
+    # of its share of that radius's circumference (it's the hub's at the root)
+    chord = np.minimum(chord, 0.8 * 2 * np.pi * r / (int(blades) * np.maximum(np.cos(pitch), 0.05)))
     camber = np.radians(np.interp(s, [0, 1], x[7:9]))
     tr = np.interp(s, [0, 1], x[9:11])
-    tr = np.maximum(tr, t_min / chord)
+    tr = np.minimum(np.maximum(tr, t_min / chord), 0.3)
     return Blade(r, chord, pitch, camber, tr, int(blades), r_hub, r_tip, te,
                  note={"params": [float(v) for v in x], "t_min": t_min})
 
@@ -1002,16 +1016,183 @@ def to_fan_rotor(blade: Blade):
                  blades=blade.blades, r_hub=blade.r_hub, r_tip=blade.r_tip, rpm=0.0, tip="open")
 
 
-def rotor_mesh(blade: Blade, bore: float = 5.0, height: float = 6.0, rotation: str = "ccw", hub_r: float | None = None):
-    """The printable rotor (mm): blades on a hub ring of outer radius hub_r (default the blade's r_hub) and `height`,
-    bored for the motor's shaft. `rotation`: the way it turns seen from above (the inlet side); a quad needs two of
-    each. Watertight (manifold3d union)."""
-    from .fan import rotor_mesh as fan_mesh
+def root_fillet(blade: Blade, root_stress: float, strength: float, sf: float = 2.0, t_min: float = 0.8) -> dict:
+    """The radius of the fillet where the blade meets the hub, from the stress it has to carry. A shoulder fillet of
+    radius r on a section of thickness t raises the bending stress by Kt = 1 + 0.2 (r / t)^-0.55 (a fit to Peterson's
+    stepped flat bar in bending at a large step, within 0.1 of his chart for r / t 0.05-0.3, above it beyond). The
+    radius is the smallest that keeps Kt x the root's nominal stress (structure()['rootStress'], at full throttle)
+    within strength / sf, and never under the process's thinnest wall nor over three root thicknesses."""
+    t = float(blade.thickness()[0])
+    kt_allow = strength / max(sf * root_stress, 1e-9)
+    if kt_allow <= 1.0:
+        r = 3.0 * t
+    else:
+        r = t * (0.2 / (kt_allow - 1.0)) ** (1 / 0.55)
+    r = float(np.clip(r, t_min, 3.0 * t))
+    return {"radius": r, "rootThickness": t, "Kt": 1 + 0.2 * (r / t) ** -0.55, "KtAllowed": kt_allow}
+
+
+def _fillet_growth(d, rf):
+    """Extra width (both sides together) of a circular fillet of radius rf at distance d from the surface it meets."""
+    d = np.asarray(d, float)
+    g = 2 * (rf - np.sqrt(np.maximum(rf * rf - (rf - np.clip(d, 0, rf)) ** 2, 0.0)))
+    return np.where(d <= 0, 2 * rf, g)
+
+
+def blade_solid(blade: Blade, fillet: float = 0.0, z_mid: float = 0.0, root_in: float = 1.5, rotation: str = "ccw",
+                spanwise: int = 60, chordwise: int = 48):
+    """One blade as a closed mesh (mm) along +x, its sections (the analysed ones: fan._section's circular-arc camber
+    line and NACA thickness) stacked on their centroids at z_mid, reaching root_in into the hub. Over the last
+    `fillet` mm before the hub (r_hub) the section's thickness and chord both grow by a circular fillet's profile,
+    so the union with the hub's cylinder (on which every section lies at its own radius) meets it with that radius
+    all round the root."""
+    import trimesh
+    from .fan import _section
     rot = to_fan_rotor(blade)
-    rh = hub_r or blade.r_hub
-    hub = [(0.5 * bore, 0.0), (rh, 0.0), (rh, height), (0.5 * bore, height)]
-    rot.band = (0.0, height)
-    return fan_mesh(rot, z0=0.0, z1=height, hub=hub, rotation=rotation)
+    rs = np.concatenate([np.linspace(blade.r_hub - root_in, blade.r_hub + max(fillet, 0.5), 12)[:-1],
+                         np.linspace(blade.r_hub + max(fillet, 0.5), blade.r_tip, spanwise)])
+    rc = np.clip(rs, blade.r[0], blade.r[-1])
+    it = lambda v: np.interp(rc, blade.r, v)
+    ch, k1, k2, tk = it(rot.chord), it(rot.kappa1), it(rot.kappa2), it(rot.thickness)
+    grow = _fillet_growth(rs - blade.r_hub, fillet) if fillet > 0 else np.zeros_like(rs)
+    rings = []
+    for j, r in enumerate(rs):
+        loop = _section(rot, 0, chordwise, chord=ch[j] + grow[j], kappa1=k1[j], kappa2=k2[j], thick=tk[j] + grow[j])
+        ang = loop[:, 0] / r * (1 if rotation == "ccw" else -1)
+        rings.append(np.c_[r * np.cos(ang), r * np.sin(ang), loop[:, 1] + z_mid])
+    m = len(rings[0])
+    v = np.vstack(rings)
+    f = []
+    for j in range(len(rings) - 1):
+        for k in range(m):
+            a, b = j * m + k, j * m + (k + 1) % m
+            f += [[a, b, b + m], [a, b + m, a + m]]
+    up = list(range(chordwise))
+    lo = [0] + [chordwise + (chordwise - 1 - k) for k in range(1, chordwise)]
+    cap = []
+    for k in range(chordwise - 1):
+        if k == 0:
+            cap.append([up[0], up[1], lo[1]])
+        else:
+            cap += [[up[k], up[k + 1], lo[k + 1]], [up[k], lo[k + 1], lo[k]]]
+    cap = np.array(cap)
+    last = (len(rings) - 1) * m
+    mesh = trimesh.Trimesh(v, np.vstack([np.array(f), cap[:, ::-1], cap + last]), process=True)
+    if mesh.volume < 0:
+        mesh.invert()
+    return mesh
+
+
+def hub_height(blade: Blade, fillet: float = 0.0, wall: float = 1.0) -> float:
+    """The hub's height: the root section's own axial depth (fillet included), with `wall` above and below, so the
+    root lands whole on the hub's cylinder and its fillet doesn't run off the hub's top or bottom edge."""
+    from .fan import _section
+    rot = to_fan_rotor(blade)
+    loop = _section(rot, 0, 48, chord=rot.chord[0] + 2 * fillet, thick=rot.thickness[0] + 2 * fillet)
+    return float(np.ptp(loop[:, 1]) + 2 * wall)
+
+
+def rotor_mesh(blade: Blade, bore: float = 5.0, height: float | None = None, rotation: str = "ccw",
+               fillet: float | None = None, wall: float = 1.0):
+    """The printable rotor (mm): its blades on a hub ring of radius r_hub bored for the motor's shaft, the hub as
+    tall as the root needs (hub_height; or `height`), each root filleted onto it (`fillet` mm; default 0.6 x the
+    root's thickness, Kt about 1.25: pass root_fillet()['radius'] to size it from the stress). `rotation`: the way
+    it turns seen from above (the inlet side); a quad needs two of each. Watertight (manifold3d union)."""
+    import manifold3d as m3d
+    import trimesh
+    from .fan import _revolve
+    rf = 0.6 * float(blade.thickness()[0]) if fillet is None else float(fillet)
+    h = height or hub_height(blade, rf, wall)
+    one = blade_solid(blade, rf, z_mid=0.5 * h, rotation=rotation)
+    parts = [one.copy().apply_transform(trimesh.transformations.rotation_matrix(2 * np.pi * k / blade.blades, (0, 0, 1)))
+             for k in range(blade.blades)]
+    parts.append(_revolve([(0.5 * bore, 0.0), (blade.r_hub, 0.0), (blade.r_hub, h), (0.5 * bore, h)]))
+
+    def man(t):
+        return m3d.Manifold(m3d.Mesh(vert_properties=np.asarray(t.vertices, np.float32), tri_verts=np.asarray(t.faces, np.uint32)))
+
+    u = m3d.Manifold.batch_boolean([man(p) for p in parts], m3d.OpType.Add)
+    o = u.to_mesh()
+    out = trimesh.Trimesh(np.asarray(o.vert_properties)[:, :3], np.asarray(o.tri_verts), process=True)
+    out.metadata.update({"hubHeight": h, "fillet": rf, "bore": bore})
+    return out
+
+
+def solid_check(blade: Blade, op: dict, material="pa12", mesh=None, bore: float = 5.0, size: float | None = None,
+                clamp_height: float | None = None) -> dict:
+    """The printed rotor as a 3D solid (quadratic tetrahedra) under its spin and its air loads at the operating
+    point `op` (performance() on this blade, e.g. evaluate()['full']['performance']): every node carries its share
+    of the centrifugal body force rho omega^2 r, and each blade's surface carries its stations' thrust and drag
+    forces over the band of radius each station stands for. Held at the bore (the shaft and its nut clamp the hub's
+    faces within clamp_height of the bore, default the bore radius out). Returns the peak equivalent stress on the
+    blades and its radius, the safety factor on the material's strength, and the beam model's root stress beside it.
+    The check the strip beam can't make: the root's fillet, the hub, the section's real shape."""
+    from .crosscheck import _nodal_von_mises, _p2_mesh, _solve, _tet_mesh
+    from .materials import material_from_spec
+    mat = material_from_spec(material)
+    mesh = mesh if mesh is not None else rotor_mesh(blade, bore=bore)
+    t_root = float(blade.thickness()[0])
+    size = size or max(0.35 * t_root, 0.25)
+    pts, tets = _tet_mesh(mesh, size)
+    nodes, conn, edges = _p2_mesh(pts, tets)
+    nv = len(pts)
+    om = op["rpm"] * 2 * np.pi / 60
+    rho = mat.density * 1e-9                        # kg/mm^3
+    # lumped vertex volumes (a quarter of each tet to each vertex)
+    x = pts[tets]
+    vol = np.abs(np.einsum("ij,ij->i", np.cross(x[:, 1] - x[:, 0], x[:, 2] - x[:, 0]), x[:, 3] - x[:, 0])) / 6
+    vv = np.zeros(nv)
+    np.add.at(vv, tets.ravel(), np.repeat(vol / 4, 4))
+    f = np.zeros((nv, 3))
+    rxy = np.linalg.norm(pts[:, :2], axis=1)
+    # centrifugal: kg mm^-3 x mm^3 x s^-2 x mm = kg mm s^-2 = 1e-3 N
+    f[:, :2] += (rho * vv * om * om)[:, None] * pts[:, :2] * 1e-3
+    # air loads: per station band, spread over that band's surface vertices of each blade by area
+    import trimesh
+    surf = trimesh.Trimesh(pts, _boundary(tets), process=False)
+    area = np.zeros(nv)
+    np.add.at(area, surf.faces.ravel(), np.repeat(surf.area_faces / 3, 3))
+    st = op["stations"]
+    r_st = np.asarray(st["r"])
+    edges_r = np.concatenate([[blade.r_hub], 0.5 * (r_st[1:] + r_st[:-1]), [blade.r_tip + 1]])
+    dT = np.asarray(st["dT"]) / blade.blades          # N/mm per blade
+    dQ = np.asarray(st["dQ"]) / blade.blades          # N m / mm per blade
+    ang = np.arctan2(pts[:, 1], pts[:, 0])
+    on_blade = area > 0
+    for k in range(blade.blades):
+        a0 = 2 * np.pi * k / blade.blades
+        near = np.abs(np.angle(np.exp(1j * (ang - a0)))) < np.pi / blade.blades
+        for i in range(len(r_st)):
+            sel = on_blade & near & (rxy >= edges_r[i]) & (rxy < edges_r[i + 1]) & (rxy > blade.r_hub + 0.2)
+            if not sel.any():
+                continue
+            w = area[sel] / area[sel].sum()
+            span = edges_r[i + 1] - edges_r[i]
+            fz = dT[i] * span                                         # thrust, +z (the inlet side)
+            ft = dQ[i] * span / (r_st[i] * 1e-3)                      # drag, against the rotation (ccw from +z)
+            tang = np.c_[-pts[sel, 1], pts[sel, 0]] / np.maximum(rxy[sel, None], 1e-9)
+            f[sel, 2] += fz * w
+            f[sel, :2] -= ft * w[:, None] * tang
+    ch = clamp_height if clamp_height is not None else 0.5 * bore
+    hold = (rxy <= 0.5 * bore + 0.05) | ((rxy <= 0.5 * bore + ch) & ((pts[:, 2] < pts[:, 2].min() + 0.05) |
+                                                                    (pts[:, 2] > pts[:, 2].max() - 0.05)))
+    fixed = np.zeros((len(nodes), 3), bool)
+    fixed[:nv][hold] = True
+    E = mat.E
+    u = _solve(nodes, conn, E, mat.nu, fixed.ravel(), None, [("spin+air", f, None)], nv, edges)[0]
+    vm = _nodal_von_mises(nodes, conn, u.ravel(), E, mat.nu, nv)
+    away = rxy > blade.r_hub + 0.05                   # the blades and their roots (the hub's bore is held)
+    i = int(np.argmax(np.where(away, vm, 0)))
+    tip = pts[:, 0].argmax()
+    return {"peakStress": float(vm[i]), "peakRadius": float(rxy[i]), "safetyFactor": float(mat.strength / max(vm[i], 1e-9)),
+            "hubPeak": float(vm[~away].max()) if (~away).any() else 0.0, "elements": int(len(tets)), "size": size,
+            "tipLift_mm": float(u[tip, 2]), "rpm": op["rpm"], "material": mat.name}
+
+
+def _boundary(tets):
+    f = np.sort(np.vstack([tets[:, [0, 1, 2]], tets[:, [0, 1, 3]], tets[:, [0, 2, 3]], tets[:, [1, 2, 3]]]), axis=1)
+    u, c = np.unique(f, axis=0, return_counts=True)
+    return u[c == 1]
 
 
 # ----------------------------------------------------------------- validation
