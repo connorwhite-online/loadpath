@@ -662,6 +662,52 @@ def board_brief(design, width, ground, thickness=1.0, laminate="fr4", side=1.0, 
     return out
 
 
+def frame_brief(size=(40.0, 100.0, 8.0), wall=1.5, clearance=8.0, split=24.0, tap=2.5, gap=1.5,
+                plate=(3.0, 4.0), tie=True, fill="pa12", cover=None, cover_thickness=1.5,
+                band=(2400, 2483.5), sweep=None):
+    """A brief for a product whose metal frame is the antenna: a band of
+    metal `wall` thick round a body `size` (x, y, z; corner at the origin),
+    a metal plate inside it (the chassis: board ground, battery tray)
+    joined to the band along its sides and stopping `clearance` short of
+    the +y end, one split `gap` wide in the +y edge starting `split` from
+    x = 0, filled with `fill`, and the radio between the plate's edge and
+    the band `tap` beyond the split. The stretch of band from the split round to
+    where the plate meets it is the radiator; `tie` joins the band to the
+    plate just beyond the split so the rest of the edge is ground. Nothing
+    here says how long that stretch should be: `tune` solves `split` and
+    `tap` from the fields. `cover` is a material the frame is sandwiched
+    in (`cover_thickness` over every outer face, and in the split), given
+    as surroundings so the bare frame and the covered one can be compared.
+    `tap` is measured from the split's far edge, so the feed cannot land on
+    the split whatever the two are moved to."""
+    W, L, H = (float(v) for v in size)
+    tap = split + gap + max(float(tap), 0.0)
+    if not (wall + 3.0 <= split and tap <= W - wall):
+        raise ValueError(f"split at {split:.1f} mm and feed at {tap:.1f} mm do not fit the {W:.0f} mm edge")
+    z0, z1 = plate
+    zm = z1
+    rad = [
+        {"name": "frame", "metal": True, "prism": {
+            "outline": [_rect(0, W, 0, L), _rect(wall, W - wall, wall, L - wall)], "from": 0.0, "to": H}},
+        {"name": "chassis", "metal": True, "box": [[wall, wall, z0], [W - wall, L - clearance, z1]]}]
+    if tie:
+        rad.append({"name": "tie", "metal": True,
+                    "box": [[split - 3.0, L - clearance, z0], [split - 1.0, L - wall, z1]]})
+    rad += [{"name": "split", "material": cover or fill, "box": [[split, L - wall, 0.0], [split + gap, L, H]]},
+            {"name": "feed", "wire": [[tap, L - wall, zm], [tap, L - clearance + 1.0, zm]]}]
+    out = {"band": list(band), "radiator": rad,
+           "feed": {"from": [tap, L - clearance, zm], "to": [tap, L - clearance + 1.0, zm]}}
+    if cover:
+        c = float(cover_thickness)
+        out["surroundings"] = [
+            {"name": "cover", "material": cover, "box": [[-c, -c, -c], [W + c, L + c, H + c]]},
+            {"name": "inside", "material": {"permittivity": 1.0, "lossTangent": 0.0},
+             "box": [[wall, wall, 0.0], [W - wall, L - wall, H]]}]
+    if sweep:
+        out["sweep"] = list(sweep)
+    return out
+
+
 def bench_monopole(height=28.0, plate=60.0, thickness=1.6, rod=1.3, cap=None):
     """The bench test of docs/ANTENNA.md as a brief: a round rod `rod` mm
     across standing `height` mm on the centre pin of a coax jack through a
@@ -730,8 +776,9 @@ def scene_from_brief(brief, base_dir=None, surroundings=True):
     and not the grid (a change of grid alone moves a 2.4 GHz resonance by
     a few tenths of a percent)."""
     ghost = surroundings == "air"
-    b = brief["board"]
-    t = float(b.get("thickness", 1.6))
+    b = brief.get("board")
+    if b is None and not brief.get("radiator"):
+        raise ValueError("an antenna brief needs a board, a radiator (metal of the product itself) or both")
     sc = Scene(brief["band"], brief.get("sweep"))
     sc.materials = {}
     # the surroundings first: the board and its copper sit in them
@@ -764,18 +811,47 @@ def scene_from_brief(brief, base_dir=None, surroundings=True):
                 M = np.asarray(s["matrix"], float)
                 v = v @ M[:3, :3].T + M[:3, 3]
             sc.add_solid(name, eps, tan, metal, mesh=(v, m[1]), **kw)
-    outline = b.get("outline") or _rect(0, b["size"][0], 0, b["size"][1])
-    eps, tan, note = rf_properties(b.get("material", "fr4"))
-    sc.materials["board"] = {"permittivity": eps, "lossTangent": tan, "source": note}
-    sc.add_solid("board", eps, tan, prism=(outline, 0.0, t), rank=2)
-    for ring in b.get("ground") or []:
-        sc.add_solid("ground", metal=True, prism=(ring, 0.0, t), rank=2)
-    for ring in b.get("top") or []:
-        sc.add_sheet(t, ring, "top copper")
-    for ring in b.get("bottom") or []:
-        sc.add_sheet(0.0, ring, "bottom copper")
-    for v in b.get("vias") or []:
-        sc.add_wire([[v[0], v[1], 0.0], [v[0], v[1], t]], "via")
+    lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+    if b is not None:
+        t = float(b.get("thickness", 1.6))
+        outline = b.get("outline") or _rect(0, b["size"][0], 0, b["size"][1])
+        eps, tan, note = rf_properties(b.get("material", "fr4"))
+        sc.materials["board"] = {"permittivity": eps, "lossTangent": tan, "source": note}
+        sc.add_solid("board", eps, tan, prism=(outline, 0.0, t), rank=2)
+        for ring in b.get("ground") or []:
+            sc.add_solid("ground", metal=True, prism=(ring, 0.0, t), rank=2)
+        for ring in b.get("top") or []:
+            sc.add_sheet(t, ring, "top copper")
+        for ring in b.get("bottom") or []:
+            sc.add_sheet(0.0, ring, "bottom copper")
+        for v in b.get("vias") or []:
+            sc.add_wire([[v[0], v[1], 0.0], [v[0], v[1], t]], "via")
+        ring = np.asarray(outline, float)
+        lo, hi = np.r_[ring.min(0), 0.0], np.r_[ring.max(0), t]
+    # the product's own metal that the radio drives (a frame, a plate, a
+    # foil) and what is built into it (the plastic in a split): part of the
+    # antenna, so there in the bare solve too
+    for i, s in enumerate(brief.get("radiator") or []):
+        name = s.get("name") or f"radiator{i}"
+        if "wire" in s:
+            sc.add_wire(s["wire"], name)
+            pts = np.asarray(s["wire"], float)
+            lo, hi = np.minimum(lo, pts.min(0)), np.maximum(hi, pts.max(0))
+            continue
+        eps, tan, metal, note = _material(s.get("material", "metal") if not s.get("metal") else "metal")
+        sc.materials[name] = ({"metal": True} if metal else
+                              {"permittivity": round(eps, 3), "lossTangent": round(tan, 4), "source": note})
+        if "box" in s:
+            sc.add_solid(name, eps, tan, metal, box=s["box"], fine=s.get("resolution"), rank=2)
+        elif "prism" in s:
+            sc.add_solid(name, eps, tan, metal, prism=(s["prism"]["outline"], s["prism"]["from"],
+                                                       s["prism"]["to"]), fine=s.get("resolution"), rank=2)
+        else:
+            raise ValueError(f"radiator body {name!r}: give a box, a prism or a wire (drawn shapes whose "
+                             "faces become grid lines)")
+        e = Scene._extent(sc.solids[-1])
+        lo, hi = np.minimum(lo, e[0]), np.maximum(hi, e[1])
+    sc.antenna_box = (lo, hi)
     f = brief["feed"]
     across = f.get("across")
     sc.set_port(f["from"], f["to"], width=float(f.get("width", 0.0)),
@@ -867,10 +943,7 @@ def simulate_brief(brief, base_dir=None, installed=True, fields=False, log=None)
     if fields:
         sc.build(fine=float(res.get("copper", 0.5)), body=float(res.get("body", 1.0)))
         reach = float(res.get("reach", C0 / sc.band[0] * 1e3 / 8.0))
-        b = brief["board"]
-        ring = np.asarray(b.get("outline") or _rect(0, b["size"][0], 0, b["size"][1]), float)
-        kw["field_box"] = _field_box(sc, sc.sim, reach, np.r_[ring.min(0), 0.0],
-                                     np.r_[ring.max(0), float(b.get("thickness", 1.6))])
+        kw["field_box"] = _field_box(sc, sc.sim, reach, *sc.antenna_box)
     summary, out = simulate(sc, fine=float(res.get("copper", 0.5)), body=float(res.get("body", 1.0)),
                             log=log, **kw)
     summary["materials"] = sc.materials
@@ -998,12 +1071,16 @@ def _sens_summary(sens, scene):
     vol = np.diff(ex)[:, None, None] * np.diff(ey)[None, :, None] * np.diff(ez)[None, None, :]
     # distance to the antenna's own copper (the top sheets), by bounding box
     lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
-    zt = max(s["z"] for s in scene.sheets)
-    for s in scene.sheets:
-        if s["z"] == zt:
-            for r in s["rings"]:
-                lo[:2], hi[:2] = np.minimum(lo[:2], r.min(0)), np.maximum(hi[:2], r.max(0))
-    lo[2] = hi[2] = zt
+    if scene.sheets:
+        zt = max(s["z"] for s in scene.sheets)
+        for s in scene.sheets:
+            if s["z"] == zt:
+                for r in s["rings"]:
+                    lo[:2], hi[:2] = np.minimum(lo[:2], r.min(0)), np.maximum(hi[:2], r.max(0))
+        lo[2] = hi[2] = zt
+    else:
+        # no board copper: the product's own metal is the antenna
+        lo, hi = (np.array(v, float) for v in scene.antenna_box)
     d = np.sqrt(sum(np.maximum(np.maximum(l - c, c - h), 0) ** 2 for c, l, h in zip((x, y, z), lo, hi)))
     wgt = np.abs(sens["metal"]) * vol
     order = np.argsort(d.ravel())

@@ -607,6 +607,11 @@ radio wave with `rf` (`"metal"` is assumed and warned about; a plastic
 name; `"ignore"`). Alone, with the shell and parts as `surroundings`, it
 is `loadpath antenna brief.json` (MCP `loadpath_antenna`, docs/ANTENNA.md);
 `antenna.tune` solves an inverted-F's arm and tap in place. When the
+product's own metal is the antenna (a frame, a plate between plastic
+layers), give it as the brief's `radiator` (boxes, outlines, wires; a
+split is a plastic box through the metal; `antenna.frame_brief` writes a
+split frame fed from its chassis and `tune` solves the split and feed
+positions, bare or inside the plastic laid over it). When the
 board exists in KiCad, give the file instead of a box: `{"id": "board",
 "kicad": {"file": "board.kicad_pcb", "connectors": {"J1": {"opening":
 "usb-port"}}, "power": {"U3": 0.6}, "maxTemp": {"U3": 85}}}` (docs/KICAD.md;

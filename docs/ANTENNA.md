@@ -332,6 +332,82 @@ checking them, and the rest of that path uses what is already here:
    parts ([KICAD.md](KICAD.md)); reading its copper layers makes any
    board's antenna the brief, with no redrawing.
 
+## The product's own metal as the antenna
+
+Phones, watches and trackers mostly carry no separate antenna. A stretch
+of the metal frame, a plate between two layers of plastic, a foil on the
+inside of the shell: the radio drives a piece of the product itself
+against the chassis. The brief takes that metal as `radiator`, with or
+without a board:
+
+```json
+{
+  "band": [2400, 2483.5],
+  "radiator": [
+    {"name": "frame", "metal": true, "prism": {"outline": [
+        [[0, 0], [40, 0], [40, 100], [0, 100]],
+        [[1.5, 1.5], [38.5, 1.5], [38.5, 98.5], [1.5, 98.5]]], "from": 0, "to": 8}},
+    {"name": "chassis", "metal": true, "box": [[1.5, 1.5, 3], [38.5, 92, 4]]},
+    {"name": "tie", "metal": true, "box": [[21.3, 92, 3], [23.3, 98.5, 4]]},
+    {"name": "split", "material": "pa12", "box": [[24.3, 98.5, 0], [25.8, 100, 8]]},
+    {"name": "feed", "wire": [[28, 98.5, 4], [28, 93, 4]]}
+  ],
+  "feed": {"from": [28, 92, 4], "to": [28, 93, 4]}
+}
+```
+
+Boxes, extruded outlines (a ring inside a ring is a hole) and wires;
+later entries overwrite earlier ones, so a split is a box of plastic
+through the metal. Unlike `surroundings`, the radiator is the antenna: it
+is there in the bare solve, and what is laid over it (an overmould, a
+back cover, a case) goes in `surroundings` and is what the comparison
+reports.
+
+`antenna.frame_brief(size, wall, clearance, split, tap, ...)` writes this
+for a metal band round a body with a chassis plate inside it and one
+split in its end. The stretch of band between the split and where the
+chassis meets it is the radiator: its length sets the frequency, and
+where the feed lands on it sets the resistance the radio sees. Neither
+is given by a rule. `antenna.tune` moves the split and the feed and
+solves the fields again until the reflection at the band's centre is
+gone, the same way it solves an inverted-F's arm and tap.
+
+A 40 x 100 x 8 mm product, 1.5 mm aluminium band, chassis plate stopping
+8 mm short of the end, split 1.5 mm wide filled with PA12:
+
+| | split, feed past it (mm) | resonance | worst S11 in band | total efficiency | heat in plastic |
+|---|---|---|---|---|---|
+| first guess (arm a quarter wave long) | 10, 18.5 | 1547 MHz | -0.4 dB | 8% | 3% |
+| solved bare (11 solves, 10 min) | 24.3, 2.2 | 2448 MHz | -14.9 dB | 94% | 3% |
+| the same, sandwiched in 1.5 mm TPU | 24.3, 2.2 | 1999 MHz (-449) | -3.7 dB | 48 to 54% | 15% |
+| solved inside the TPU (11 solves) | 30.4, 0.5 | 2360 MHz | -11.5 dB | 75 to 77% | 19% |
+
+Three things the fields said that a rule would not:
+
+- **The whole product is in it.** The first guess resonated at 1.5 GHz
+  because a 100 mm body is itself half a wavelength long there, and the
+  split's end faces grounded metal 1.5 mm away across plastic, which
+  loads the arm as more length would. The arm that works is 13 mm of
+  band, not the 31 mm a quarter wave suggests.
+- **An overmould is not a detail.** 1.5 mm of TPU (permittivity 3.0,
+  loss tangent 0.06) over the frame and in the split moves the resonance
+  449 MHz, 18%: far outside any band. The frame has to be solved in the
+  plastic it will wear.
+- **Retuning brings the match back, not the loss.** Solved inside the
+  TPU the band is covered again, but a fifth of the power still heats
+  the TPU, most of it in and around the split where the field is
+  strongest. A low-loss plastic in the split and over the arm (PETG or
+  ABS, loss tangent 0.007) is the physical fix; the heat split by body
+  says where it matters. In that last row the feed ran to the nearest
+  it may sit to the split (0.5 mm), so the reflection stopped at -13 dB
+  at the band's centre and not the -20 dB asked for.
+
+Aluminium is a perfect conductor here; for solid metal at 2.4 GHz the
+loss that leaves out is small against the plastic's, but it is not in
+the number. A slot in a metal back and a foil or plated trace on the
+shell's inner surface are the same brief with other bodies; a trace
+that follows a curved shell waits on conformal conductors (below).
+
 ## A bench test
 
 None of this has been measured on a print yet, and one cheap test checks
@@ -395,6 +471,10 @@ shell.
 
 - **Conductors are perfect.** Copper loss at 2.4 GHz on a board antenna
   is a few percent of efficiency; it is not in the number yet.
+- **A radiator is drawn, not read from the enclosure yet.** `radiator`
+  takes boxes, extruded outlines and wires in a standalone brief; an
+  enclosure's metal parts are not yet offered to the radio as one, and
+  the layout search does not move splits.
 - **PA12's radio-frequency values are an estimate** (2.6, range 2.4 to
   2.9). Across that range the shell's shift changes by about a third.
   The bench test measures it.

@@ -263,6 +263,37 @@ def test_placement_judge():
         cost["ground"], cost["antenna"]))
 
 
+def test_frame_is_the_antenna():
+    """No board antenna at all: a 40 x 100 x 8 mm product's metal frame, one
+    plastic-filled split in its end, fed from the chassis plate inside
+    (A.frame_brief; the split and feed positions are what `tune`
+    solved, bare and inside 1.5 mm of TPU). Bare it covers the band; the
+    TPU pulls it down by hundreds of MHz and takes a real share of the
+    power; with the two positions solved inside the TPU it covers the band
+    again, at the efficiency the TPU's loss leaves."""
+    bare_dims, tpu_dims = {"split": 24.288, "tap": 2.212}, {"split": 30.432, "tap": 0.5}
+    b = A.frame_brief(**bare_dims)
+    assert not [m for m in lint(b, "antenna") if m["level"] == "error"]
+    assert [m for m in lint({"band": b["band"], "feed": b["feed"]}, "antenna") if m["level"] == "error"]
+    bare, _, _ = A.simulate_brief(b, installed=False)
+    assert bare["resonance"]["insideBand"] and bare["inBand"]["worstS11"] < -12, bare["inBand"]
+    assert min(bare["efficiency"]["total"]) > 0.9, bare["efficiency"]
+    assert max(abs(v) for v in bare["efficiency"]["unaccounted"]) < 0.01
+    worn, _, _ = A.simulate_brief(A.frame_brief(cover="tpu", **bare_dims))
+    shift = worn["resonance"]["frequency"] - bare["resonance"]["frequency"]
+    assert -520 < shift < -360, shift                        # -449 MHz
+    assert worn["inBand"]["worstS11"] > -6, worn["inBand"]
+    assert 0.07 < worn["efficiency"]["heat"]["cover"][1] < 0.12, worn["efficiency"]["heat"]
+    tuned, _, _ = A.simulate_brief(A.frame_brief(cover="tpu", **tpu_dims))
+    assert tuned["inBand"]["worstS11"] < -10 and tuned["bandwidth"]["-10dB"]["coversBand"], tuned["inBand"]
+    assert 0.70 < min(tuned["efficiency"]["total"]) < 0.85, tuned["efficiency"]
+    print("frame as the antenna ok: bare %.0f MHz, %.1f dB, %.0f%%; in TPU %+.0f MHz, %.1f dB; solved in TPU "
+          "%.1f dB, %.0f%% (TPU takes %.0f%%)"
+          % (bare["resonance"]["frequency"], bare["inBand"]["worstS11"], 100 * bare["efficiency"]["total"][1],
+             shift, worn["inBand"]["worstS11"], tuned["inBand"]["worstS11"], 100 * tuned["efficiency"]["total"][1],
+             100 * (tuned["efficiency"]["heat"]["cover"][1] + tuned["efficiency"]["heat"]["split"][1])))
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn) and (len(sys.argv) < 2 or sys.argv[1] in name):

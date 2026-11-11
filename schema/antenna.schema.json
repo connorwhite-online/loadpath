@@ -225,6 +225,172 @@
       "additionalProperties": false,
       "description": "where the radio connects: a gap between the ground and the antenna's copper"
     },
+    "radiator": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "a material with radio-frequency values on file: fr4, pla, petg, abs, tpu, pa12, pa11, air; or 'metal'"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "base": {
+                    "type": "string",
+                    "description": "the material whose values are used where none is given"
+                  },
+                  "permittivity": {
+                    "type": "number",
+                    "minimum": 1,
+                    "description": "relative, at the band"
+                  },
+                  "lossTangent": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "fill": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1,
+                    "description": "share of the volume that is solid, the rest air (a lattice's relative density; for a printed part its mass over its solid mass, which is more than the slicer's infill setting because walls and skins are solid). The effective permittivity is taken between the Hashin-Shtrikman bounds"
+                  },
+                  "metal": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "where the values come from (kept in the report)"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "metal": {
+            "type": "boolean",
+            "description": "a conductor: a battery, a motor, a shield can, a screw"
+          },
+          "box": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[min, max] mm"
+          },
+          "prism": {
+            "type": "object",
+            "properties": {
+              "outline": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "minItems": 3,
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "minItems": 3,
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      },
+                      "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
+                    },
+                    "minItems": 1
+                  }
+                ],
+                "description": "one closed outline [[x, y], ...], or several (a ring inside a ring is a hole: a frame is its outer and inner outline)"
+              },
+              "from": {
+                "type": "number"
+              },
+              "to": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "outline",
+              "from",
+              "to"
+            ],
+            "additionalProperties": false,
+            "description": "an outline extruded from z = from to z = to"
+          },
+          "mesh": {
+            "type": "string",
+            "description": "a closed STL/OBJ/3MF/GLB, mm"
+          },
+          "matrix": {
+            "type": "array",
+            "description": "4x4: the mesh's frame in the board's frame"
+          },
+          "wire": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "[x, y, z]"
+            },
+            "minItems": 2,
+            "description": "a thin conductor through these points (a lead, a cable's shield)"
+          },
+          "resolution": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "mm: cells no larger than this across the body"
+          }
+        },
+        "x-requireOne": [
+          [
+            "box"
+          ],
+          [
+            "prism"
+          ],
+          [
+            "mesh"
+          ],
+          [
+            "wire"
+          ]
+        ],
+        "additionalProperties": false
+      },
+      "description": "metal of the product itself that the radio drives, with or without a board: a frame, a plate between plastic layers, a foil on the shell, the chassis it works against, the wire or spring that feeds it, and the plastic built into it (a split's fill). Boxes, prisms and wires; later entries overwrite earlier ones, so a split is a plastic box through the metal. Unlike `surroundings` it is the antenna, so it is in the bare solve too"
+    },
     "limit": {
       "type": "number",
       "maximum": 0,
@@ -322,17 +488,39 @@
             "type": "object",
             "properties": {
               "outline": {
-                "type": "array",
-                "minItems": 3,
-                "items": {
-                  "type": "array",
-                  "items": {
-                    "type": "number"
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "minItems": 3,
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
                   },
-                  "minItems": 2,
-                  "maxItems": 2
-                },
-                "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "minItems": 3,
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      },
+                      "description": "a closed outline, [x, y] mm in the board's frame (its corner at the origin)"
+                    },
+                    "minItems": 1
+                  }
+                ],
+                "description": "one closed outline [[x, y], ...], or several (a ring inside a ring is a hole: a frame is its outer and inner outline)"
               },
               "from": {
                 "type": "number"
@@ -398,8 +586,15 @@
   },
   "required": [
     "band",
-    "board",
     "feed"
+  ],
+  "x-requireOne": [
+    [
+      "board"
+    ],
+    [
+      "radiator"
+    ]
   ],
   "additionalProperties": false
 }

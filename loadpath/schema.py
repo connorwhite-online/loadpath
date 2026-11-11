@@ -3325,8 +3325,11 @@ _ANTENNA_BODY = {
         "material": _RF_MATERIAL,
         "metal": {"type": "boolean", "description": "a conductor: a battery, a motor, a shield can, a screw"},
         "box": {"type": "array", "items": _VEC3, "minItems": 2, "maxItems": 2, "description": "[min, max] mm"},
-        "prism": {"type": "object", "properties": {"outline": _RING, "from": {"type": "number"},
-                                                   "to": {"type": "number"}},
+        "prism": {"type": "object", "properties": {
+            "outline": {"anyOf": [_RING, {"type": "array", "items": _RING, "minItems": 1}],
+                        "description": "one closed outline [[x, y], ...], or several (a ring inside a ring "
+                                       "is a hole: a frame is its outer and inner outline)"},
+            "from": {"type": "number"}, "to": {"type": "number"}},
                   "required": ["outline", "from", "to"], "additionalProperties": False,
                   "description": "an outline extruded from z = from to z = to"},
         "mesh": {"type": "string", "description": "a closed STL/OBJ/3MF/GLB, mm"},
@@ -3341,6 +3344,13 @@ _ANTENNA_PROPS = {
     "sweep": {"type": "array", "items": _POS, "minItems": 2, "maxItems": 2,
               "description": "MHz: the range solved (default: the band widened by 30% of its centre each way)"},
     "board": _ANTENNA_BOARD, "feed": _ANTENNA_FEED,
+    "radiator": {"type": "array", "items": _ANTENNA_BODY,
+                 "description": "metal of the product itself that the radio drives, with or without a board: a "
+                                "frame, a plate between plastic layers, a foil on the shell, the chassis it "
+                                "works against, the wire or spring that feeds it, and the plastic built into it "
+                                "(a split's fill). Boxes, prisms and wires; later entries overwrite earlier "
+                                "ones, so a split is a plastic box through the metal. Unlike `surroundings` it "
+                                "is the antenna, so it is in the bare solve too"},
     "limit": {"type": "number", "maximum": 0, "description": "dB: the worst reflection (S11) allowed inside "
                                                              "the band (default -10: a tenth of the power "
                                                              "comes back)"},
@@ -3366,7 +3376,7 @@ ANTENNA_SCHEMA = {
         "surroundings": {"type": "array", "items": _ANTENNA_BODY,
                          "description": "what is near the board, in the board's frame: the shell, the battery, "
                                         "screws, cables. Later entries overwrite earlier ones where they overlap"}},
-    "required": ["band", "board", "feed"],
+    "required": ["band", "feed"], "x-requireOne": [["board"], ["radiator"]],
     "additionalProperties": False,
 }
 
