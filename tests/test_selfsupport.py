@@ -4,19 +4,33 @@ import math
 import numpy as np
 import pytest
 
-from loadpath.selfsupport import SELF_SUPPORT, crown_height, needs_shaping, round_limit
+from loadpath.selfsupport import (SELF_SUPPORT, arch_sdf, crown_area, crown_height, crown_radius, needs_shaping,
+                                  round_limit)
 
 
-def test_round_until_the_process_limit_then_a_smooth_egg():
+def test_round_until_the_process_limit_then_the_lowest_round_tipped_crown():
     assert crown_height(3.0, "lpbf") == 3.0                      # a 6 mm hole builds round in metal
     assert math.isclose(crown_height(4.0, "lpbf"), 4.0)          # 8 mm: the limit, still a circle
     assert crown_height(4.01, "lpbf") >= 4.01                    # just past it: never under the circle
-    h = crown_height(6.0, "lpbf")
-    assert 6.0 < h < 6.0 * math.sqrt(2.0) + 6.0
-    # the egg's own crown flatter than 45 degrees is the chord the 8 mm circle closes
-    r, a = 6.0, math.radians(45.0)
-    x = r * r * math.tan(a) / math.sqrt(h * h + r * r * math.tan(a) ** 2)
-    assert math.isclose(2.0 * x, 0.9 * 8.0 * math.sin(a), rel_tol=1e-9)     # DESIGN_MARGIN
+    rho = crown_radius("lpbf")
+    assert math.isclose(rho, 0.9 * 4.0)                          # DESIGN_MARGIN of the 8 mm circle
+    for r in (6.0, 7.0, 23.0):
+        h = crown_height(r, "lpbf")
+        # the tangent flanks at 45 degrees meet the round tip: the hull of the two circles
+        assert math.isclose(h, (r - rho) * math.sqrt(2.0) + rho)
+        assert r < h < r * math.sqrt(2.0)                        # under the sharp teardrop's point
+    assert crown_height(23.0, "lpbf") < 32.0                     # a 46 mm metal bore: 31 mm, not 206
+    # the field: its top is h up, it is the circle below, and its area matches crown_area
+    r, h = 7.0, crown_height(7.0, "lpbf")
+    g = np.linspace(-10.0, 12.0, 881)
+    L, U = np.meshgrid(g, g)
+    s = arch_sdf(L, U, r, h, rho)
+    inside = s < 0
+    assert abs(U[inside].max() - h) < 0.05 and abs(L[inside].max() - r) < 0.05 and abs(U[inside].min() + r) < 0.05
+    assert math.isclose(inside.sum() * (g[1] - g[0]) ** 2, crown_area(r, h, rho), rel_tol=5e-3)
+    # its flanks lean 45 degrees: on the right flank, half way up, the gradient points 45 degrees up
+    beta = math.asin((r - rho) / (h - rho))
+    assert math.isclose(beta, math.radians(45.0), rel_tol=1e-9)
     for p in ("sls", "mjf"):
         assert not needs_shaping(p) and round_limit(p) == math.inf and crown_height(30.0, p) == 30.0
     assert round_limit("fdm") > 20.0 and needs_shaping("fdm")

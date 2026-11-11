@@ -485,18 +485,20 @@ def rate_design(hx, report, duty):
 
 
 def _port_bores(hx, report):
-    """Each fluid's port as a round bore of the same flow area: an egg-crowned
-    bore (heatx: a level port past the round span its process builds) is a
-    half circle under its axis and a half ellipse over it, area
-    pi r (r + crown) / 2. The narrower of a fluid's two ports sets its loss."""
+    """Each fluid's port as a round bore of the same flow area: a crowned bore
+    (heatx: a level port past the round span its process builds) is its circle
+    and the tangent flanks to a round tip over it (selfsupport.crown_area). The
+    narrower of a fluid's two ports sets its loss."""
     from .heatx import port_diameter
+    from .selfsupport import crown_area, crown_radius
 
     out = []
     for f, n in enumerate(hx.names):
         r = 0.5 * port_diameter(hx, f)
         crowns = [z.get("portCrown", r) for k, z in (report.get("zones") or {}).items() if k.startswith(n + "-")]
         h = min(crowns) if crowns else r
-        out.append(2.0 * np.sqrt(0.5 * r * (r + max(h, r))))
+        area = crown_area(r, h, crown_radius(hx.process)) if h > r + 1e-9 else np.pi * r * r
+        out.append(2.0 * np.sqrt(area / np.pi))
     return tuple(out)
 
 

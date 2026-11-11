@@ -192,9 +192,9 @@
   {
    "file": "hx/report.json",
    "value": "r['report']['solidVolume'] * 2.67 / 1000",
-   "min": 206,
-   "max": 214,
-   "what": "part mass in AlSi10Mg (210), g"
+   "min": 205,
+   "max": 213,
+   "what": "part mass in AlSi10Mg (209), g"
   },
   {
    "file": "hx/report.json",
@@ -342,9 +342,9 @@
   {
    "file": "hx-final/report.json",
    "value": "r['report']['solidVolume'] * 2.67 / 1000",
-   "what": "final: part mass (195), g",
-   "min": 191,
-   "max": 199
+   "what": "final: part mass (193), g",
+   "min": 189,
+   "max": 197
   }
  ],
  "files": [

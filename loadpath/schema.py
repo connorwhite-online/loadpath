@@ -1879,7 +1879,7 @@ HEAT_EXCHANGER_SCHEMA = {
                                    "(selfsupport.py). Plenums are round-vaulted and ports round for every "
                                    "process; sls / mjf get no build shaping at all (the powder holds every "
                                    "layer); fdm, lpbf (laser powder-bed metal, SLM / DMLS: AlSi10Mg, Ti64, "
-                                   "316L), sla and dlp raise a level bore or vault into a smooth egg only past "
+                                   "316L), sla and dlp give a level bore or vault a round-tipped crown only past "
                                    "the round span they build (lpbf ~8 mm). Only fdm keeps the skirt and port "
                                    "gussets. In lpbf the report's internalCeilings.unbuildableArea must be near "
                                    "zero: nothing inside can be supported."},

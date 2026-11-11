@@ -29,7 +29,7 @@ import numpy as np
 
 from itertools import permutations
 
-from .selfsupport import crown_height, needs_shaping
+from .selfsupport import arch_sdf, crown_height, crown_radius, needs_shaping
 from .sdf_kit import (
     box, capsule, dual_sheet, mask, seal_ramp, smin, subtract, tpms_dist, union,
 )
@@ -103,8 +103,8 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
                   each channel ends in a peaked roof rather than a ceiling;
                 - port bores that run sideways stay round up to the size
                   `process` builds round (selfsupport: ~8 mm in powder-bed
-                  metal), and past it rise over their axis as a half ellipse
-                  (a smooth egg, no peak).
+                  metal), and past it rise over their axis on tangent flanks
+                  to a round tip the process closes (smooth, no point).
               Built along a cube diagonal (e.g. [1, 1, 1]) every face of a box
               plenum already leans 54.7 degrees and almost nothing changes.
               `field.exclude` marks the untouched TPMS core, for
@@ -433,7 +433,7 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
         r = per_port_r[name]
         exit_pt = mouth + axis * (skin + 2.0)
         # a level bore wider than the process builds round rises to its crown over its axis
-        # (an egg): the plug covers it
+        # on tangent flanks to a round tip: the plug covers it
         crown = crown_height(r, process) if up is not None and abs(float(axis @ up)) < 0.7 else r
         tear = crown > r + 1e-9
         bores.append((c, exit_pt, r, crown if tear else None))
@@ -547,7 +547,7 @@ def exchanger_core(size, cell=8.0, wall=1.0, kind="gyroid", flow="cross",
         for a, b, r, crown in bores:
             hole = capsule(P, a, b, r)
             if crown is not None:
-                hole = np.minimum(hole, _egg_crown(P, np.asarray(a, float), np.asarray(b, float), r, crown, up))
+                hole = np.minimum(hole, _bore_crown(P, np.asarray(a, float), np.asarray(b, float), r, crown, crown_radius(process), up))
             solid = subtract(solid, hole)
         # Hoods join with a smooth union (exterior fillet) so the loft reads
         # as one continuous form, not a pipe glued onto a box. Only ever ADDS
@@ -755,22 +755,19 @@ def _roomiest(cav, c, half, out, n=9):
     return Q[int(np.argmin(d))]
 
 
-def _egg_crown(P, a, b, r, h, up):
-    """Over a level bore from a to b: a half ellipse r wide and h tall above
-    its axis (the bore's own capsule supplies the round bottom), tangent to
-    the circle at its sides, so the bore is a smooth egg."""
+def _bore_crown(P, a, b, r, h, rho, up):
+    """Over a level bore from a to b: its top rising h over its axis on tangent
+    flanks to a round tip of radius rho (selfsupport.arch_sdf; the bore's own
+    capsule supplies the round bottom), so the bore stays smooth all round."""
     length = float(np.linalg.norm(b - a))
     ax = (b - a) / length
     v = up - (up @ ax) * ax
     v /= np.linalg.norm(v)
     w = np.cross(ax, v)
     q = P - a
-    t, u, l = q @ ax, q @ v, np.abs(q @ w)
-    uu = np.maximum(u, 0.0)
-    qq = np.sqrt((l / r) ** 2 + (uu / h) ** 2)
-    g = np.sqrt((l / r ** 2) ** 2 + (uu / h ** 2) ** 2)
-    egg = (qq - 1.0) * qq / np.maximum(g, 1e-9)
-    return np.maximum(np.maximum(egg, -u), np.maximum(-t, t - length))
+    t, u, l = q @ ax, q @ v, q @ w
+    crown = arch_sdf(l, u, r, h, rho).astype(float)
+    return np.maximum(np.maximum(crown, -u), np.maximum(-t, t - length))
 
 
 # Hood/barb geometry constants shared by the profile helpers below (defined
