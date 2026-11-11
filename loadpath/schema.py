@@ -541,6 +541,33 @@ _AERO = {
                 "ducted": {"type": "boolean", "description": "a duct with no diffuser: the stream leaves at the "
                                                              "disk's area (default false: an open rotor, whose "
                                                              "wake narrows to 0.71 R)"},
+                "duct": {
+                    "type": "object",
+                    "description": "the duct's geometry (implies ducted), for what it gives and costs "
+                                   "(aero.duct_performance; report.aero.rotors[].duct): thrust against the same "
+                                   "rotor in the open at equal induced power, from momentum theory less the lip's "
+                                   "entrance loss, wall friction, the diffuser's loss and the tip gap's leak; the "
+                                   "share of the thrust the duct's lip carries (a load on the frame); and at "
+                                   "aero.cruiseSpeed its drag. `thrust` is then the whole unit's, rotor and duct. "
+                                   "The gain is credited in report.effectiveMass at gramsPerNewton.",
+                    "properties": {
+                        "tipGap": {"type": "number", "minimum": 0, "description": "blade tip to wall, mm"},
+                        "lipRadius": {"type": "number", "minimum": 0,
+                                      "description": "radius of the inlet lip, mm (0: a sharp edge)"},
+                        "lengthAbove": {"type": "number", "minimum": 0,
+                                        "description": "wall ahead of the disk, mm (with lengthBelow, the "
+                                                       "height its outside shows a cross wind)"},
+                        "lengthBelow": {"type": "number", "minimum": 0,
+                                        "description": "wall behind the disk, mm: friction, and the diffuser's "
+                                                       "length"},
+                        "diffuserAngle": {"type": "number", "minimum": 0,
+                                          "description": "half-angle of the wall behind the disk, degrees "
+                                                         "(default 0; the flow follows it to about 7)"},
+                        "outerRadius": {**_POS, "description": "the duct's outside radius, mm: its profile in "
+                                                               "a cross wind, and the open rotor that would "
+                                                               "fit in its place"},
+                    },
+                    "additionalProperties": False},
                 "cd": {**_POS, "description": "drag coefficient of what the stream meets (default 1.2: a "
                                               "slender bluff member; a streamlined one is about 0.1)"},
                 "airDensity": {**_POS, "description": "kg/m^3 (default 1.2)"},
@@ -552,6 +579,10 @@ _AERO = {
                                                           "false: only the report)"},
         "gramsPerNewton": {**_POS, "description": "what a newton of drag is worth in carried mass (default "
                                                   "102: 1000 / 9.81, a craft hovering on these rotors)"},
+        "cruiseSpeed": {**_POS, "description": "m/s edgewise (a multirotor flying forward): each duct's drag "
+                                               "is reported there (report.aero.cruise), with the thrust the "
+                                               "craft adds to hold it. Reported, not charged: how much of a "
+                                               "flight is cruise is the mission's to say"},
     },
     "required": ["rotors"],
     "additionalProperties": False,
@@ -1518,6 +1549,23 @@ STUDY_SCHEMA = {
                                   "description": "shape steps from the skin's load share (default 10; 0: the "
                                                  "seed's smoothed hull)"},
                        "step": {**_POS, "description": "mm, the largest move of a shape step (default 1.5)"},
+                       "place": {"anyOf": [{"type": "array", "items": {"type": "object"}}, {"type": "object", "properties": {
+                                     "components": {"type": "array", "items": {"type": "object"}},
+                                     "rules": {"type": "object", "description": "as enclosure.placement: "
+                                               "centerOfMass {target | low, weight}, heat {weight, ambient, "
+                                               "conductivity, up}"},
+                                     "wires": {"type": "array", "items": {"type": "object"},
+                                               "description": "as enclosure.wires: each layout's cables are "
+                                                              "laid, and one that cannot be wired is dropped"},
+                                     "pitch": _POS, "beam": {"type": "integer", "minimum": 1},
+                                     "margin": {"type": "number", "minimum": 0}},
+                                     "required": ["components"], "additionalProperties": False}],
+                                 "description": "parts with no drawn outside to go in: each {id, size | shape, "
+                                                "mass, watts, maxTemp, against, near, rotate, installedOn} is "
+                                                "placed in the design space (heat, centre of mass, wires; "
+                                                "placement.py), kept the skin and its gap off its walls, then "
+                                                "concealed: the skin is grown round them. Parts with watts or "
+                                                "maxTemp join the cooling block"},
                        "pitch": {**_POS, "description": "mm, the envelope's grid (default half the seed's, "
                                                         "at most half the skin + 0.25)"}},
                        "additionalProperties": False}],
@@ -1831,7 +1879,7 @@ HEAT_EXCHANGER_SCHEMA = {
                                    "(selfsupport.py). Plenums are round-vaulted and ports round for every "
                                    "process; sls / mjf get no build shaping at all (the powder holds every "
                                    "layer); fdm, lpbf (laser powder-bed metal, SLM / DMLS: AlSi10Mg, Ti64, "
-                                   "316L), sla and dlp raise a level bore or vault into a smooth egg only past "
+                                   "316L), sla and dlp give a level bore or vault a round-tipped crown only past "
                                    "the round span they build (lpbf ~8 mm). Only fdm keeps the skirt and port "
                                    "gussets. In lpbf the report's internalCeilings.unbuildableArea must be near "
                                    "zero: nothing inside can be supported."},
@@ -3174,14 +3222,66 @@ STACK_SCHEMA = {
     "additionalProperties": False,
 }
 
+_BUNDLE_RANGE = {"type": "object", "properties": {
+    "min": {"type": ["number", "null"]}, "max": {"type": ["number", "null"]}, "p01": {"type": "number"},
+    "p50": {"type": "number"}, "p99": {"type": "number"},
+    "worstAt": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                "description": "mm: where the worst value is (least for a margin, most for a stress)"}}}
+_BUNDLE_FIELD = {"type": "object", "required": ["id", "quantity", "units", "reason"], "properties": {
+    "id": {"type": "string", "description": "'<quantity>/<case or flow>': the array names in the files"},
+    "quantity": {"type": "string"}, "units": {"type": "string", "description": "'1' for a ratio"},
+    "case": {"type": "string"}, "flow": {"type": "string"},
+    "criterion": {"type": "string", "description": "how the value is judged (a failure criterion)"},
+    "target": {"type": ["number", "null"], "description": "the value the brief asks for (a safety factor, a limit)"},
+    "limit": {"type": ["number", "null"]}, "limitMeaning": {"type": "string"},
+    "betterIs": {"type": "string"}, "components": {"type": "string"}, "range": _BUNDLE_RANGE,
+    "reported": {"type": ["number", "null"], "description": "the run's reported number for it (refined submodels "
+                                                             "included, so it can be lower than the map's least)"},
+    "limitedBy": {"type": "object", "additionalProperties": {"type": "string"},
+                  "description": "limitedBy array codes in analysis.vtu and what each means"},
+    "reason": {"type": "string", "description": "why the field is there and how to read it"},
+    "source": {"type": "string"}, "excludes": {"type": "string"}, "cap": {"type": "string"},
+    "contactBand": {"type": "string"}, "cases": {"type": "array", "items": {"type": "string"}}}}
+BUNDLE_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "loadpath results bundle manifest",
+    "description": "manifest.json of a results bundle (bundle.py): what each file holds, and the meaning, units, "
+                   "criterion, target and range of every simulated field and the role of every object.",
+    "type": "object", "required": ["loadpath", "part", "units", "frame", "verdict", "fields", "objects", "files"],
+    "properties": {
+        "loadpath": {"type": "object", "required": ["bundle"], "properties": {
+            "bundle": {"type": "integer", "minimum": 1}, "version": {"type": ["string", "null"]},
+            "created": {"type": "string"}}},
+        "part": {"type": "object", "required": ["name", "material"], "properties": {
+            "name": {"type": "string"}, "material": {"type": "object"}, "process": {"type": ["object", "null"]},
+            "mass": {"type": ["number", "null"]}, "volume": {"type": ["number", "null"]},
+            "loadCases": {"type": "array", "items": {"type": "object"}}}},
+        "units": {"type": "object", "additionalProperties": {"type": "string"}},
+        "frame": {"type": "string"},
+        "verdict": {"type": "object", "properties": {
+            "passes": {"type": ["boolean", "null"]}, "safetyFactor": {"type": ["number", "null"]},
+            "target": {"type": ["number", "null"]}, "warnings": {"type": "array", "items": {"type": "string"}}}},
+        "source": {"type": "object"},
+        "fields": {"type": "array", "items": _BUNDLE_FIELD},
+        "objects": {"type": "array", "items": {"type": "object", "required": ["id", "role", "reason"], "properties": {
+            "id": {"type": "string"}, "role": {"type": "string"},
+            "node": {"type": "string", "description": "the node's name in part.glb (its extras.loadpath repeat this)"},
+            "reason": {"type": "string", "description": "what it is there for, physically"}}}},
+        "tables": {"type": "array", "items": {"type": "object", "required": ["path", "columns"]}},
+        "steps": {"type": ["string", "null"]},
+        "colorScale": {"type": "object"},
+        "files": {"type": "array", "items": {"type": "object", "required": ["path", "format", "contains"],
+                                             "properties": {"path": {"type": "string"}, "format": {"type": "string"},
+                                                            "opensIn": {"type": "array", "items": {"type": "string"}},
+                                                            "contains": {"type": "string"}}}}}}
+
 SCHEMAS = {"stack": STACK_SCHEMA, "study": STUDY_SCHEMA, "heatExchanger": HEAT_EXCHANGER_SCHEMA, "lattice": LATTICE_SCHEMA,
            "field": FIELD_SCHEMA, "handoff": HANDOFF_SCHEMA, "split": SPLIT_SCHEMA,
-           "enclosure": ENCLOSURE_SCHEMA, "wires": WIRES_SCHEMA}
+           "enclosure": ENCLOSURE_SCHEMA, "wires": WIRES_SCHEMA, "bundle": BUNDLE_SCHEMA}
 
 
 def schema(kind: str = "study") -> dict:
     """A copy of one schema: 'study', 'heatExchanger', 'lattice', 'field', 'handoff', 'split', 'enclosure',
-    'wires' or 'stack'."""
+    'wires', 'stack' or 'bundle' (a results bundle's manifest.json)."""
     if kind not in SCHEMAS:
         raise ValueError(f"schema kind must be one of {sorted(SCHEMAS)}")
     return copy.deepcopy(SCHEMAS[kind])

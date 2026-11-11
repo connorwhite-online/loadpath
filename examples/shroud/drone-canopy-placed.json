@@ -1,0 +1,329 @@
+{
+ "name": "drone-canopy-placed",
+ "description": "The drone canopy with nothing placed by hand but the camera (it looks out of its window): the battery, VTX and receiver are placed by shroud.place in the room over the frame, the VTX's 4 W kept off the battery and receiver and the centre of mass low, then the skin is grown round them.",
+ "designSpace": {
+  "type": "box",
+  "min": [
+   -48,
+   -30,
+   0
+  ],
+  "max": [
+   48,
+   30,
+   46
+  ]
+ },
+ "preserve": [
+  {
+   "id": "post-fl",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     30,
+     20,
+     3
+    ],
+    "axis": "z",
+    "length": 6,
+    "r": 4.5
+   }
+  },
+  {
+   "id": "post-fr",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     30,
+     -20,
+     3
+    ],
+    "axis": "z",
+    "length": 6,
+    "r": 4.5
+   }
+  },
+  {
+   "id": "post-bl",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     -30,
+     20,
+     3
+    ],
+    "axis": "z",
+    "length": 6,
+    "r": 4.5
+   }
+  },
+  {
+   "id": "post-br",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     -30,
+     -20,
+     3
+    ],
+    "axis": "z",
+    "length": 6,
+    "r": 4.5
+   }
+  }
+ ],
+ "keepOut": [
+  {
+   "id": "screw-fl",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     30,
+     20,
+     3
+    ],
+    "axis": "z",
+    "length": 10,
+    "r": 1.6
+   }
+  },
+  {
+   "id": "screw-fr",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     30,
+     -20,
+     3
+    ],
+    "axis": "z",
+    "length": 10,
+    "r": 1.6
+   }
+  },
+  {
+   "id": "screw-bl",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     -30,
+     20,
+     3
+    ],
+    "axis": "z",
+    "length": 10,
+    "r": 1.6
+   }
+  },
+  {
+   "id": "screw-br",
+   "shape": {
+    "type": "cylinder",
+    "center": [
+     -30,
+     -20,
+     3
+    ],
+    "axis": "z",
+    "length": 10,
+    "r": 1.6
+   }
+  },
+  {
+   "id": "frame",
+   "bore": false,
+   "shape": {
+    "type": "box",
+    "min": [
+     -60,
+     -40,
+     -10
+    ],
+    "max": [
+     60,
+     40,
+     0
+    ]
+   }
+  },
+  {
+   "id": "camera",
+   "bore": false,
+   "shape": {
+    "type": "box",
+    "min": [
+     32,
+     -9.5,
+     8
+    ],
+    "max": [
+     44,
+     9.5,
+     27
+    ]
+   }
+  },
+  {
+   "id": "camera-window",
+   "shape": {
+    "type": "cylinder",
+    "p0": [
+     40,
+     0,
+     17.5
+    ],
+    "p1": [
+     52,
+     0,
+     17.5
+    ],
+    "r": 7
+   }
+  }
+ ],
+ "shroud": {
+  "thickness": 1.2,
+  "reach": 10,
+  "smooth": 6,
+  "gap": 1.0,
+  "conceal": [
+   "camera"
+  ],
+  "place": {
+   "components": [
+    {
+     "id": "battery",
+     "size": [
+      60,
+      31,
+      30
+     ],
+     "mass": 0.19,
+     "maxTemp": 60,
+     "against": "-z",
+     "rotate": "z"
+    },
+    {
+     "id": "vtx",
+     "size": [
+      20,
+      12,
+      8
+     ],
+     "mass": 0.008,
+     "watts": 4.0,
+     "maxTemp": 85,
+     "rotate": "z"
+    },
+    {
+     "id": "rx",
+     "size": [
+      16,
+      10,
+      6
+     ],
+     "mass": 0.003,
+     "maxTemp": 85,
+     "rotate": "z"
+    }
+   ],
+   "rules": {
+    "centerOfMass": {
+     "low": "z",
+     "weight": 1.0
+    }
+   }
+  }
+ },
+ "supports": [
+  {
+   "region": "screw-fl"
+  },
+  {
+   "region": "screw-fr"
+  },
+  {
+   "region": "screw-bl"
+  },
+  {
+   "region": "screw-br"
+  }
+ ],
+ "loadCases": [
+  {
+   "name": "nose-crash",
+   "loads": [
+    {
+     "shape": {
+      "type": "box",
+      "min": [
+       40,
+       -12,
+       30
+      ],
+      "max": [
+       48,
+       12,
+       40
+      ]
+     },
+     "force": [
+      -60,
+      0,
+      -20
+     ]
+    }
+   ]
+  },
+  {
+   "name": "hard-landing",
+   "loads": [
+    {
+     "shape": {
+      "type": "box",
+      "min": [
+       -20,
+       -12,
+       38
+      ],
+      "max": [
+       20,
+       12,
+       46
+      ]
+     },
+     "force": [
+      0,
+      0,
+      -40
+     ]
+    }
+   ]
+  }
+ ],
+ "cooling": {
+  "ambient": 30,
+  "skin": {
+   "maxTemp": 60,
+   "airflow": {
+    "speed": 8.0,
+    "length": 90
+   }
+  },
+  "components": [
+   {
+    "region": "battery",
+    "maxTemp": 60
+   }
+  ]
+ },
+ "material": "pa12",
+ "process": "sls",
+ "goal": {
+  "safetyFactor": 2.0
+ },
+ "minMember": 2.0,
+ "resolution": {
+  "pitch": 1.0
+ }
+}

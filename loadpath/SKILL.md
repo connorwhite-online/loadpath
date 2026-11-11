@@ -222,7 +222,19 @@ buckling, printability) you can report to the user.
    44.5, "hub": 14, "thrust": 0.78, "ducted": true}]}` (thrust at hover, N)
    charges the optimizer for the drag of what each stream meets, as the
    mass a hovering craft would carry instead, and the report gives
-   `aero` and `effectiveMass`. A link that turns:
+   `aero` and `effectiveMass`. A drawn duct: add `"duct": {"tipGap": 1,
+   "lipRadius": 6.5, "lengthAbove": 6.5, "lengthBelow": 16, "outerRadius":
+   56}` to the rotor (and `"cruiseSpeed"` m/s to `aero`) and the report
+   says what it gives over the open rotor at equal power, credits that in
+   `effectiveMass`, and gives the thrust its lip carries (`ductThrust`:
+   put it on the duct as a load) and its drag in forward flight.
+   The rotor itself is `loadpath.propeller` (docs/PROPELLERS.md):
+   `pr.design(motor, pack, hover_thrust, max_thrust, r_tip, r_hub)` gives
+   the blade for the least pack watts at hover on its motor, with the
+   spinning blade's untwist, root stress and frequencies solved in, and
+   `pr.rotor_mesh(blade, rotation="cw")` prints it; its hover rpm, thrust
+   and torque are the numbers to put in `aero.rotors` and in the vibration
+   bands. A link that turns:
    `"massProperties": {"axis": {"through": [0, 0, 0], "direction": "z"}}`
    keeps its inertia about the joint down, and every report's
    `massProperties` gives mass, centre of mass and inertia.
@@ -355,7 +367,12 @@ buckling, printability) you can report to the user.
    optimizations plus a fine re-check of the pick: at 20k cells on one core
    expect 10-30 minutes (a fixed `volumeFraction` is a few minutes).
 9. **Read `out/report.json` → `deliver`, and look at the render** before
-   trusting it. `deliver` is the part to hand over: `stl`, `passes`, `mass`,
+   trusting it. When the part goes to someone else (a reviewer, a viewer, a
+   print service's page), hand over `out/bundle/` too: `part.glb` (safety
+   factor map, loads and keep-outs as named nodes), `analysis.vtu`
+   (ParaView) and `manifest.json`, which says what every field means;
+   `loadpath bundle study.json part.stl` makes one for any part
+   (docs/BUNDLE.md). `deliver` is the part to hand over: `stl`, `passes`, `mass`,
    `safetyFactor` and `safetyFactorMethod` (which analysis it comes from:
    `tet`, `voxel-fine`, or `voxel`), `governedBy` (the limit that set its
    size), per-case numbers, and `warnings` gathered from every check (print,

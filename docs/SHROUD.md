@@ -197,6 +197,24 @@ The envelope is cached by the study's content (`LOADPATH_CACHE`, default
 seed. The expanded study names its envelope by key
 (`{"type": "sdf", "shroud": key}`).
 
+## Parts with nowhere drawn to go
+
+`shroud.place` takes the parts themselves, `{id, size | shape, mass,
+watts, maxTemp, against, near, rotate, installedOn}`, and lays them out in
+the design space before anything is wrapped: the same search `loadpath
+enclosure` runs inside a drawn exterior (placement.py: heat, a low or
+targeted centre of mass, `near`, wires when given), with every part kept
+the skin and its gap off the room's walls. The placed parts become
+concealed keep-outs, so the envelope grows round them, and a part with
+`watts` or `maxTemp` joins the cooling block.
+[examples/shroud/drone-canopy-placed.json](../examples/shroud/drone-canopy-placed.json)
+places the canopy's battery, VTX and receiver this way (the camera stays
+where its window is): the battery low on the posts, the 4 W VTX in the
+top front corner, in the prop wash and as far from the battery's centre as
+the room allows. The search's heat term is a point source between part
+centres, so it does not yet see that the VTX ends up 3.5 mm from the
+battery's face; the cooling block is the check.
+
 ## Limits
 
 - The skin has one thickness everywhere. A thinner skin where it idles

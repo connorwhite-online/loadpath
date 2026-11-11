@@ -63,7 +63,7 @@
   "expect": {
     "maxMass": 1900,
     "minWallBetweenFluids": 0.9,
-    "maxInternalFlatArea": 2000,
+    "maxUnbuildableCeiling": 50,
     "maxTrappedVolume": 100,
     "minEffectiveness": 0.75,
     "maxPressureDrop": {

@@ -206,6 +206,14 @@ There is no GUI on purpose; it's a library.
   its hot parts are heat sources where they sit; named in a stack, its
   size, heights, ports and watts come off the file. An agent can design
   the board; loadpath designs the part it lives in.
+- **Propellers and rotors** ([docs/PROPELLERS.md](docs/PROPELLERS.md)):
+  blade-element momentum on section polars from the section that's
+  printed (NeuralFoil at each station's Reynolds number), on the motor and
+  pack that turn it, with the spinning blade's own bending and untwisting
+  solved in. Designs the blade for the least watts at hover that still
+  reaches full-throttle thrust, strength, tip Mach and frequency margins,
+  and writes it in both hands. Within 14% RMS of published static tests of
+  3D-printed propellers.
 - **Mesh checks without a study** (`loadpath.checks`): wall thickness,
   overhangs, trapped voids, fluid-network isolation, component fit.
 
@@ -226,6 +234,8 @@ In short:
   compression tests of printed lattices, the stiffness check has a median
   error of 1.23x (held out) and the strength check stays under the measured
   value on all 33.
+- **Propellers match published tests**: thrust and power within 14% RMS
+  of static tests of 3D-printed propellers (2, 3 and 4 blades, 5 and 9 in).
 - **Warp prediction is fitted to measured data** (NIST AM-Bench 2018 for
   LPBF IN625, a published ABS study for FDM) and misses other alloys and
   materials by 30-60%.
@@ -271,7 +281,12 @@ loadpath run bracket.json --out out/   # optimize, mesh, verify, render
 ```
 
 `out/` gets an STL and a render per outcome and `report.json`. Every command
-takes `--quick` for a first look in a minute or two.
+takes `--quick` for a first look in a minute or two. `out/bundle/` carries the
+simulation with the part, in files other software opens: a glTF coloured by
+its safety factor with the loads and keep-outs as named objects, the analysis
+as VTK for ParaView, a mass-against-margin CSV, and a manifest that says what
+every field means, its units, criterion and target
+([docs/BUNDLE.md](docs/BUNDLE.md)).
 
 Optional extras: `crosscheck` (tetrahedral verification; recommended),
 `render`, `step` (STEP in and out, OpenCascade), `flow` (lattice-Boltzmann,
@@ -332,7 +347,8 @@ print(best.report["mass"], best.report["safetyFactor"])
   [mechanisms](docs/MECHANISMS.md), [whole products inside a fixed exterior](docs/ENCLOSURE.md),
   [push pads](docs/SWITCH.md), [feel targets](docs/FEEL.md), [cooling](docs/COOLING.md), [any exterior in](docs/EXTERIOR.md),
   [split shells](docs/SHELLS.md), [wires and cables](docs/WIRES.md), [generated exteriors](docs/SHROUD.md),
-  [KiCad boards](docs/KICAD.md).
+  [KiCad boards](docs/KICAD.md), [propellers](docs/PROPELLERS.md), [fans](docs/FANS.md),
+  [results bundle](docs/BUNDLE.md).
 
 <!-- gallery:start -->
 

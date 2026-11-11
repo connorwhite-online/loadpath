@@ -127,6 +127,71 @@ def test_aero_block_is_checked():
             study_from_dict({**PLATE, "aero": bad})
 
 
+def test_duct_is_momentum_theory_less_its_losses():
+    from loadpath.aero import duct_performance, inlet_loss
+
+    # a bellmouth, no gap, no wall: the ideal 2^(1/3), half the thrust on the lip
+    ideal = duct_performance(45.0, 1.0, lip_radius=30.0)
+    assert abs(ideal["idealRatio"] - 2 ** (1 / 3)) < 1e-3, ideal
+    assert 1.22 < ideal["thrustRatio"] < 2 ** (1 / 3) and 0.47 < ideal["ductShare"] < 0.5, ideal
+    v = np.sqrt(1.0 / (1.2 * np.pi * 0.045 ** 2))               # T = rho A v^2 when the wake keeps the disk's area
+    assert abs(ideal["diskVelocity"] - v) < 1e-6 * v and abs(ideal["rotorThrust"] + ideal["ductThrust"] - 1.0) < 1e-9
+    # a diffuser that doubles the exit: (2 sigma)^(1/3), rotor share 1 / (2 sigma)
+    wide = duct_performance(45.0, 1.0, lip_radius=30.0, length=150.0, diffuser_angle=7.0)
+    s = wide["exitAreaRatio"]
+    assert abs(wide["idealRatio"] - (2 * s) ** (1 / 3)) < 1e-3 and s > 1.4, wide
+    # the wall holds the flow only so far: a steeper cone widens no further
+    assert duct_performance(45.0, 1.0, length=150.0, diffuser_angle=20.0)["exitAreaRatio"] == s
+    # each loss costs: a sharper lip, a wider gap, a longer wall
+    base = dict(tip_gap=1.0, lip_radius=6.5, length=16.0, hub=14.0)
+    ref = duct_performance(44.5, 0.78, **base)
+    assert 1.05 < ref["thrustRatio"] < 1.2, ref
+    for worse in (dict(lip_radius=2.0), dict(tip_gap=2.0), dict(length=60.0)):
+        assert duct_performance(44.5, 0.78, **{**base, **worse})["thrustRatio"] < ref["thrustRatio"], worse
+    # a sharp-edged duct is worse than none
+    assert inlet_loss(0.0, 90.0) == 0.5 and duct_performance(44.5, 0.78, **{**base, "lip_radius": 0.0})["thrustRatio"] < 1
+    # the open rotor's tip loss, from a blade model, is the duct's to save: by its 2/3 power
+    tip = duct_performance(44.5, 0.78, **base, open_factor=1.1)
+    assert abs(tip["thrustRatio"] / ref["thrustRatio"] - 1.1 ** (2 / 3)) < 1e-6
+    # in a climb the wake needs less holding and the gain fades
+    assert duct_performance(44.5, 0.78, **base, speed=8.0)["idealRatio"] < 1.1
+    # edgewise: the swallowed air's momentum, and the outside as a cylinder
+    fwd = duct_performance(44.5, 0.78, **base, outer_radius=56.0, height=22.5, cruise=15.0)
+    mdot = 1.2 * np.pi * (0.0445 ** 2 - 0.014 ** 2) * fwd["diskVelocity"]
+    assert abs(fwd["momentumDrag"] - mdot * 15.0) < 1e-9
+    assert abs(fwd["profileDrag"] - 0.5 * 1.2 * 15.0 ** 2 * 0.112 * 0.0225) < 1e-9
+    # the same width spent on blade does at least as well
+    assert fwd["thrustRatioSameSize"] < 1.0, fwd
+
+
+def test_duct_block_reaches_the_report():
+    import pytest
+
+    from loadpath.spec import study_from_dict
+
+    duct = {"tipGap": 1, "lipRadius": 6.5, "lengthAbove": 6.5, "lengthBelow": 16, "outerRadius": 56}
+    s = study_from_dict({**PLATE, "aero": {"rotors": [{**PROP, "duct": duct}], "cruiseSpeed": 15}})
+    r = s.aero.rotors[0]
+    assert r.ducted and r.duct["lengthBelow"] == 16 and s.aero.cruise_speed == 15
+    for bad in ({"gap": 1}, {"tipGap": -1}, {"outerRadius": 10}):
+        with pytest.raises(ValueError):
+            study_from_dict({**PLATE, "aero": {"rotors": [{**PROP, "duct": bad}]}})
+    # the plate itself as the part: the report credits the duct's gain and
+    # prices its drag at cruise as the thrust level flight adds
+    from loadpath.aero import duct_performance
+    from loadpath.verify import verify_part
+
+    plate = trimesh.creation.box(extents=[100, 60, 6])
+    plate.apply_translation([50, 0, 3])
+    rep = verify_part(s, plate, max_cells=4000, refine=1)
+    want = duct_performance(25, 0.24, 1, 6.5, 16, 0, 56, 22.5, cruise=15)
+    a = rep["aero"]
+    assert abs(a["rotors"][0]["duct"]["thrustRatio"] - want["thrustRatio"]) < 1e-3, a
+    assert abs(a["ductThrustGained"] - want["thrustGained"]) < 1e-4
+    assert abs(rep["effectiveMass"] - (rep["mass"] + (a["drag"] - want["thrustGained"]) * a["gramsPerNewton"])) < 0.01
+    assert abs(a["cruise"]["extraThrust"] - (np.hypot(0.24, want["drag"]) - 0.24)) < 1e-3, a["cruise"]
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-q"]))

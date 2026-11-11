@@ -190,7 +190,10 @@ class Rotor:
     `radius` and `hub` (mm), `thrust` (N) at the operating point the cost is
     weighed at, drag coefficient `cd` of what the stream meets, air density
     `rho` (kg/m^3), `ducted`, and how far along the axis the stream is
-    followed (`reach` mm, None: three radii)."""
+    followed (`reach` mm, None: three radii). `duct`: the duct's geometry
+    (tipGap, lipRadius, lengthAbove, lengthBelow, diffuserAngle, outerRadius;
+    mm, degrees) for aero.duct_performance; `thrust` is then the whole
+    unit's, rotor and duct."""
     name: str
     center: np.ndarray
     axis: np.ndarray
@@ -201,6 +204,7 @@ class Rotor:
     rho: float = 1.2
     ducted: bool = False
     reach: float | None = None
+    duct: dict | None = None
 
 
 @dataclass
@@ -208,10 +212,12 @@ class Aero:
     """The study's `aero` block: rotors whose streams the part sits in.
     `in_optimizer`: the drag is a cost in the optimizer's material budget
     (aero.BlockageCost); `grams_per_newton`: what a newton of drag is worth
-    in carried mass (1000 / 9.81: a craft that hovers on these rotors)."""
+    in carried mass (1000 / 9.81: a craft that hovers on these rotors).
+    `cruise_speed` (m/s): the edgewise speed the ducts' drag is read at."""
     rotors: list = field(default_factory=list)
     in_optimizer: bool = True
     grams_per_newton: float = 1000.0 / 9.81
+    cruise_speed: float | None = None
 
 
 def _impact_case(b, ci, loads, free):
@@ -271,13 +277,24 @@ def _aero(v):
             num(r.get("radius"), f"{label}.radius (mm)"), num(r.get("thrust"), f"{label}.thrust (N)"),
             num(r.get("hub", 0.0), f"{label}.hub (mm)", positive=False),
             num(r.get("cd"), f"{label}.cd", default=1.2), num(r.get("airDensity"), f"{label}.airDensity", default=1.2),
-            bool(r.get("ducted", False)),
+            bool(r.get("ducted", False)) or r.get("duct") is not None,
             None if r.get("reach") is None else num(r["reach"], f"{label}.reach (mm)")))
         if rotors[-1].hub >= rotors[-1].radius:
             raise ValueError(f"{label}.hub must be smaller than the radius")
+        d = r.get("duct")
+        if d is not None:
+            keys = ("tipGap", "lipRadius", "lengthAbove", "lengthBelow", "diffuserAngle", "outerRadius")
+            if not isinstance(d, dict) or set(d) - set(keys):
+                raise ValueError(f"{label}.duct is {{{', '.join(keys)}}} (mm, degrees)")
+            duct = {k: num(d[k], f"{label}.duct.{k}", positive=False) for k in keys if d.get(k) is not None}
+            if "outerRadius" in duct and duct["outerRadius"] < rotors[-1].radius + duct.get("tipGap", 0.0):
+                raise ValueError(f"{label}.duct.outerRadius is the duct's outside: at least radius + tipGap")
+            rotors[-1].duct = duct
     gpn = v.get("gramsPerNewton")
+    cs = v.get("cruiseSpeed")
     return Aero(rotors, bool(v.get("inOptimizer", True)),
-                1000.0 / 9.81 if gpn is None else num(gpn, "aero.gramsPerNewton"))
+                1000.0 / 9.81 if gpn is None else num(gpn, "aero.gramsPerNewton"),
+                None if cs is None else num(cs, "aero.cruiseSpeed (m/s)"))
 
 
 def _axis_vector(a, label):

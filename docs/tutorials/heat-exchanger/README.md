@@ -40,7 +40,8 @@ on 4 cores.
   inside may need support (the channels close in peaked roofs, not flat
   ceilings) and no skirt. The plenums are round vaults and the ports round
   whatever the process; only a level bore or vault wider than the process
-  builds round (about 8 mm in powder-bed metal) rises into a smooth egg, and
+  builds round (about 8 mm in powder-bed metal) rises to a round tip on
+  tangent flanks, the lowest top it builds, and
   SLS or MJF (`process: "sls"`) shapes nothing at all;
 - `duty`: the two streams and the wall material, which turns the design
   into a rating;
@@ -103,7 +104,7 @@ Full grid, as the commands above run:
 |---|---|
 | fluids isolated / each connected / watertight | **yes / yes / yes** |
 | thinnest wall between the fluids | 0.94 mm (1.0 drawn, measured on a 0.47 mm grid) |
-| part | 65 x 46 x 131 mm overall, 78.6 cm³ of aluminium: **210 g** |
+| part | 65 x 46 x 131 mm overall, 78.2 cm³ of aluminium: **209 g** |
 | internal ceiling no edge holds up (metal) | 0 mm² (315 mm² lies within 20° of level, almost all of it the round vaults' and ports' crowns, which build) |
 | trapped pockets | 19, 7.3 mm³ in all |
 
@@ -189,10 +190,10 @@ loadpath heatx spec-final.json --out hx-final/
 | trapped pockets | 7.3 mm³ | 6.0 mm³ | **4.2 mm³** |
 | internal ceiling no edge holds up | 0 mm² | | **0 mm²** |
 | thinnest wall between the fluids | 0.94 mm | 0.94 mm | **0.95 mm** |
-| part mass (AlSi10Mg) | 210 g | | **195 g** |
+| part mass (AlSi10Mg) | 209 g | | **193 g** |
 | fluids isolated, connected, watertight | yes | yes | **yes** |
 
-Both fluids are now inside 5 kPa with room to spare (oil 23%, water 60%),
+Both fluids are now inside 5 kPa with room to spare (oil 23%, water 58%),
 the metal checks are inside their bars, and the part is 16 g lighter.
 (Trapped pockets are 15-20 slivers of a voxel or two each, so their total
 moves by a few mm³ with the grid: 7.1 mm³ on the quick grid.)

@@ -190,3 +190,27 @@ if __name__ == "__main__":
             print(f"FAIL {name}")
             traceback.print_exc()
     sys.exit(1 if failed else 0)
+
+
+def test_shroud_places_parts_with_no_drawn_outside():
+    """shroud.place: parts laid out in the room (no exterior drawn), each
+    the skin and its gap off the room's walls and clear of the others, then
+    concealed; a part with watts joins the cooling block."""
+    d = json.loads((ROOT / "examples" / "shroud" / "drone-canopy-placed.json").read_text())
+    assert not [i for i in lint(d, "study") if i["level"] == "error"]
+    d["resolution"] = {"pitch": 2.0}
+    d["shroud"].update({"seedCells": 4000, "seedIterations": 20, "rounds": 0})
+    x = expand_shroud(d, str(ROOT / "examples" / "shroud"))
+    pl = x["_shroud"]["placement"]["components"]
+    assert set(pl) == {"battery", "vtx", "rx"}
+    t, gap = d["shroud"]["thickness"], d["shroud"]["gap"]
+    for k, v in pl.items():
+        assert v["roomToSkin"] >= -1e-6, (k, v["roomToSkin"])
+        assert min(v["roomToParts"].values()) > 0, (k, v["roomToParts"])
+    assert {"battery", "vtx", "rx", "camera"} <= set(x["_shroud"]["conceal"])
+    assert any(c["region"] == "vtx" and c["watts"] == 4.0 for c in x["cooling"]["components"])
+    env = GridSDF.load(x["_shroud"]["path"])
+    for k, v in pl.items():
+        lo, hi = (np.asarray(b, float) for b in v["bounds"])
+        c = 0.5 * (lo + hi)
+        assert env.sdf(c[None])[0] < -(t + gap), k

@@ -233,6 +233,14 @@ printed optimized part.
 | Heat sink and cold plate ratings | Simulation only, grid-checked | Conjugate LBM flow plus finite-volume heat, energy balance closed to 1e-6. Results still move about 8% per grid refinement; differences smaller than that are ties ([cold plate case study](case-studies/cold-plate.md)). |
 | Two-fluid heat exchanger effectiveness and pressure drop | Simulation only | Effectiveness-NTU rating from cell correlations; whole-exchanger porous and LBM runs disagree with the rating by up to 2x on header losses. |
 
+## Propellers and rotors
+
+| Claim | Label | Evidence |
+| --- | --- | --- |
+| Static thrust and power of printed propellers | Published tests | Against the UIUC database's static tests of the 3D-printed NR640 (Clark Y sections; 5 and 9 in; 2, 3 and 4 blades; two pitches), three speeds each: CT +8% mean, 14% RMS; CP -4% mean, 14% RMS. The 2-blade 9 in props are within about 10%; 3 and 4 blades read 15-25% high on thrust, and the 20 deg pitch reads about 20% low on power (`tests/test_propeller.py`, [PROPELLERS.md](PROPELLERS.md)). |
+| Rotating blade bending and frequencies | Analytic | Cantilever tip deflection within 2%; first rotating flap frequency within 3% of Southwell's w0^2 + 1.193 Omega^2; torsion against its closed form within 2%. |
+| Elastic twist of a spinning printed blade, motor and pack model | Simulation only | Centrifugal twisting moment, pitching moment and lift offset on a strip beam; three-constant motor behind the ESC's and pack's resistance. No thrust-stand check yet. |
+
 ## Build simulation (warp and residual stress)
 
 | Claim | Label | Evidence |

@@ -40,7 +40,8 @@ import numpy as np
 
 from .flow import C19, FLUID, INLET, LAMBDA, OUTLET, SOLID, _equilibrium, _kernels
 
-__all__ = ["external_flow", "tunnel_grid", "rotor_blockage", "RotorStream", "BlockageCost"]
+__all__ = ["external_flow", "tunnel_grid", "rotor_blockage", "RotorStream", "BlockageCost", "duct_performance",
+           "inlet_loss"]
 
 
 def _rotation_to_x(direction):
@@ -560,3 +561,146 @@ class BlockageCost:
                 got = st.drag(x)
             total += got["drag"]
         return total * self.cells_per_newton - self.base, g, total
+
+
+# Entrance loss of a pipe inlet by the radius of its lip over the bore
+# (fraction of the dynamic head inside; Idelchik, Handbook of Hydraulic
+# Resistance, and Crane TP-410: a sharp flush edge 0.5, a well-rounded
+# bellmouth 0.03-0.04). What a duct's lip fails to recover.
+_INLET_K = ((0.0, 0.50), (0.02, 0.28), (0.04, 0.24), (0.06, 0.15), (0.10, 0.09), (0.15, 0.04), (0.20, 0.03))
+DIFFUSER_MAX_HALF_ANGLE = 7.0     # deg: a conical diffuser's wall holds the flow to about here
+DIFFUSER_EFFICIENCY = 0.85        # pressure recovered of the ideal, attached
+TIP_DISCHARGE = 0.8               # tip-gap leakage jet (turbomachinery tip-leakage models use 0.6-0.84)
+
+
+def inlet_loss(lip_radius: float, bore: float) -> float:
+    """Entrance loss coefficient of a duct lip of radius `lip_radius` on a
+    bore of diameter `bore` (same unit)."""
+    r = max(float(lip_radius), 0.0) / float(bore)
+    xs, ks = zip(*_INLET_K)
+    return float(np.interp(r, xs, ks))
+
+
+def _duct_state(thrust, speed, area, sigma, k_loss, gap_area, rho):
+    """A ducted disk making `thrust` in an axial stream `speed`: (disk speed,
+    exit speed, rotor pressure rise, leak share, shaft power)."""
+    # T = rho A v (w - V), w = v / sigma
+    b, c = -speed * sigma, -thrust * sigma / (rho * area)
+    v = 0.5 * (-b + np.sqrt(b * b - 4.0 * c))
+    w = v / sigma
+    dp = 0.5 * rho * (w * w - speed * speed) + k_loss * 0.5 * rho * v * v
+    leak = TIP_DISCHARGE * gap_area / area * np.sqrt(max(2.0 * dp / rho, 0.0)) / v
+    return v, w, dp, leak, dp * area * v * (1.0 + leak)
+
+
+def _open_thrust(power, speed, area, rho, kappa):
+    """Thrust an open rotor makes from `power` (induced, with factor kappa)
+    in an axial stream: P = kappa T (V + v_i), T = 2 rho A v_i (V + v_i)."""
+    lo, hi = 0.0, 1e6
+    for _ in range(200):
+        t = 0.5 * (lo + hi)
+        vi = 0.5 * (-speed + np.sqrt(speed * speed + 2.0 * t / (rho * area)))
+        if kappa * t * (speed + vi) > power:
+            hi = t
+        else:
+            lo = t
+    return 0.5 * (lo + hi)
+
+
+def duct_performance(radius: float, thrust: float, tip_gap: float = 0.0, lip_radius: float = 0.0,
+                     length: float = 0.0, diffuser_angle: float = 0.0, outer_radius: float | None = None,
+                     height: float | None = None, hub: float = 0.0, rho: float = 1.2, speed: float = 0.0,
+                     cruise: float | None = None, open_factor: float = 1.0) -> dict:
+    """What a duct round a rotor gives and costs, against the same rotor in
+    the open at equal induced power. mm, N, m/s; `radius` is the blade tip's.
+
+    The ideal first (momentum theory): a duct whose flow leaves at sigma x
+    the disk's area keeps the wake from contracting, so the same thrust
+    needs less induced power, T^1.5 / sqrt(4 sigma rho A) against T^1.5 /
+    sqrt(2 rho A) in the open; at equal power that is (2 sigma)^(1/3) the
+    thrust (1.26 with no diffuser), and the rotor itself carries only 1 /
+    (2 sigma) of it. The rest is suction on the inlet lip: the duct's
+    thrust, which its wall carries into the frame.
+
+    Then what a small duct loses, each as total pressure the rotor must
+    make up or as flow it must pump twice:
+
+    - the lip: a pipe entrance of that radius (inlet_loss), from a sharp
+      edge's half a dynamic head to a bellmouth's few percent;
+    - the wall: pipe friction over `length` below the disk (Blasius);
+    - a diffuser (`diffuser_angle`, half-angle in degrees over `length`):
+      it widens the exit only as far as its wall holds the flow
+      (DIFFUSER_MAX_HALF_ANGLE) and recovers DIFFUSER_EFFICIENCY of the
+      ideal;
+    - the tip gap: the rotor's pressure rise drives a jet back through the
+      gap's ring, C_d A_gap sqrt(2 dp / rho), air that is pumped and makes
+      no thrust. (The same order as turbomachinery's rule of 1-2% of
+      efficiency per 1% of blade height. A gap wide enough for the tip
+      vortex to re-form, a few percent of the radius, loses more than
+      this: read the number there as the most the duct gives.)
+
+    Both rotors are ideal disks otherwise, so the ratio is the duct's own
+    doing. A real open rotor also loses at its blade tips, which a duct's
+    wall stops: `open_factor` is the open rotor's induced power over the
+    ducted one's for that (a blade-element model's tip loss; about 1.05 to
+    1.1 for a small two- or three-blade prop), and the ratio rises by its
+    2/3 power. Profile power is left out of both: at equal shaft power the
+    gain is smaller by the share of power that is not induced.
+
+    `speed`: an axial stream (climb), where the duct's gain fades as the
+    wake needs less holding. `cruise`: an edgewise speed (a multirotor
+    flying forward). A duct that turns all the air it swallows to
+    its axis pays the momentum drag m' V: `momentumDrag` is that bound (a
+    duct short against its bore turns less of it), and `profileDrag` its own
+    outside as a short cylinder in cross flow (`outer_radius`, `height`).
+    Past a cross flow of about half the disk speed the windward lip stalls
+    and the hover gain is not kept, which this does not model
+    (`crossflowRatio` says where it is).
+
+    Returns thrustRatio (ducted over open, same blade radius, equal induced
+    power), thrustGained (N at that power), thrustRatioSameSize (the open
+    rotor as big as the duct's outside: what the duct's width would do as
+    blade), idealRatio, ductThrust and rotorThrust (N at `thrust`),
+    ductShare, the losses, diskVelocity and exitVelocity (m/s), power (W,
+    induced), and with `cruise`: momentumDrag, profileDrag, drag (N)."""
+    r_d = (radius + tip_gap) * 1e-3
+    # the blades' own annulus makes the thrust: the gap's ring carries the leak back
+    area = np.pi * ((radius * 1e-3) ** 2 - (hub * 1e-3) ** 2)
+    bore = 2.0 * r_d
+    lm = max(length, 0.0) * 1e-3
+    half = min(max(diffuser_angle, 0.0), DIFFUSER_MAX_HALF_ANGLE)
+    r_e = r_d + lm * np.tan(np.radians(half))
+    sigma = float(r_e ** 2 / r_d ** 2)
+    k_in = inlet_loss(lip_radius, 2.0 * (radius + tip_gap))
+    k_diff = (1.0 - DIFFUSER_EFFICIENCY) * (1.0 - 1.0 / sigma ** 2)
+    gap_area = np.pi * (r_d ** 2 - (radius * 1e-3) ** 2)
+    # wall friction at the disk speed's Reynolds number (two passes: K depends on v weakly)
+    k_f = 0.0
+    for _ in range(3):
+        v, w, dp, leak, power = _duct_state(thrust, speed, area, sigma, k_in + k_diff + k_f, gap_area, rho)
+        re = max(v * bore / 1.5e-5, 1.0)
+        k_f = 0.316 * re ** -0.25 * lm / bore
+    v, w, dp, leak, power = _duct_state(thrust, speed, area, sigma, k_in + k_diff + k_f, gap_area, rho)
+    ideal_power = _duct_state(thrust, speed, area, sigma, 0.0, 0.0, rho)[4]
+    a_open = np.pi * ((radius * 1e-3) ** 2 - (hub * 1e-3) ** 2)
+    t_open = _open_thrust(power, speed, a_open, rho, open_factor)
+    t_open_ideal = _open_thrust(ideal_power, speed, a_open, rho, 1.0)
+    rotor = float(min(dp * area, thrust * 10.0))
+    out = {"thrustRatio": float(thrust / t_open), "idealRatio": float(thrust / t_open_ideal),
+           "rotorThrust": rotor, "ductThrust": float(thrust - rotor), "ductShare": float(1.0 - rotor / thrust),
+           "exitAreaRatio": sigma, "diskVelocity": float(v), "exitVelocity": float(w), "power": float(power),
+           "losses": {"lip": k_in, "wall": float(k_f), "diffuser": float(k_diff), "tipLeak": float(leak)},
+           "thrustGained": float(thrust - t_open)}
+    if outer_radius is not None:
+        a_big = np.pi * ((outer_radius * 1e-3) ** 2 - (hub * 1e-3) ** 2)
+        out["thrustRatioSameSize"] = float(thrust / _open_thrust(power, speed, a_big, rho, open_factor))
+    if cruise is not None and cruise > 0:
+        hv = _duct_state(thrust, 0.0, area, sigma, k_in + k_diff + k_f, gap_area, rho)[0]
+        mom = rho * area * hv * cruise
+        ro = (outer_radius if outer_radius is not None else radius + tip_gap) * 1e-3
+        hh = (height if height is not None else length) * 1e-3
+        prof = 1.0 * 0.5 * rho * cruise ** 2 * 2.0 * ro * hh
+        out.update(cruiseSpeed=float(cruise), momentumDrag=float(mom), profileDrag=float(prof),
+                   drag=float(mom + prof), crossflowRatio=float(cruise / hv))
+    return out
+

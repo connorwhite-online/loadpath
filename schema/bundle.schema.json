@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "loadpath results bundle manifest",
+  "description": "manifest.json of a results bundle (bundle.py): what each file holds, and the meaning, units, criterion, target and range of every simulated field and the role of every object.",
+  "type": "object",
+  "required": [
+    "loadpath",
+    "part",
+    "units",
+    "frame",
+    "verdict",
+    "fields",
+    "objects",
+    "files"
+  ],
+  "properties": {
+    "loadpath": {
+      "type": "object",
+      "required": [
+        "bundle"
+      ],
+      "properties": {
+        "bundle": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created": {
+          "type": "string"
+        }
+      }
+    },
+    "part": {
+      "type": "object",
+      "required": [
+        "name",
+        "material"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "material": {
+          "type": "object"
+        },
+        "process": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "mass": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "volume": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "loadCases": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "units": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "frame": {
+      "type": "string"
+    },
+    "verdict": {
+      "type": "object",
+      "properties": {
+        "passes": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "safetyFactor": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "target": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object"
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "quantity",
+          "units",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "'<quantity>/<case or flow>': the array names in the files"
+          },
+          "quantity": {
+            "type": "string"
+          },
+          "units": {
+            "type": "string",
+            "description": "'1' for a ratio"
+          },
+          "case": {
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "criterion": {
+            "type": "string",
+            "description": "how the value is judged (a failure criterion)"
+          },
+          "target": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "the value the brief asks for (a safety factor, a limit)"
+          },
+          "limit": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "limitMeaning": {
+            "type": "string"
+          },
+          "betterIs": {
+            "type": "string"
+          },
+          "components": {
+            "type": "string"
+          },
+          "range": {
+            "type": "object",
+            "properties": {
+              "min": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "max": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "p01": {
+                "type": "number"
+              },
+              "p50": {
+                "type": "number"
+              },
+              "p99": {
+                "type": "number"
+              },
+              "worstAt": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "mm: where the worst value is (least for a margin, most for a stress)"
+              }
+            }
+          },
+          "reported": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "the run's reported number for it (refined submodels included, so it can be lower than the map's least)"
+          },
+          "limitedBy": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "limitedBy array codes in analysis.vtu and what each means"
+          },
+          "reason": {
+            "type": "string",
+            "description": "why the field is there and how to read it"
+          },
+          "source": {
+            "type": "string"
+          },
+          "excludes": {
+            "type": "string"
+          },
+          "cap": {
+            "type": "string"
+          },
+          "contactBand": {
+            "type": "string"
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string",
+            "description": "the node's name in part.glb (its extras.loadpath repeat this)"
+          },
+          "reason": {
+            "type": "string",
+            "description": "what it is there for, physically"
+          }
+        }
+      }
+    },
+    "tables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "columns"
+        ]
+      }
+    },
+    "steps": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "colorScale": {
+      "type": "object"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "format",
+          "contains"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "opensIn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "contains": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -38,8 +38,9 @@ every point in space through its nearest surface point. Then:
   needs it (selfsupport.py): nothing for powder-bed polymer (SLS, MJF), whose
   powder carries every layer; for FDM, resin and powder-bed metal, a round
   span builds up to a size (about 8 mm in metal, 21 mm in FDM), and only a
-  vault or level bore wider than that rises over its axis as a half
-  ellipse instead of a half circle: a smooth egg, never a peak;
+  vault or level bore wider than that runs on along its tangents where it
+  turns 45 degrees and closes over a round tip that size: the lowest top
+  the process builds, tangent all round, never a point;
 - a zone that faces up or down (along `build`, for a process that needs
   shaping) gets a vertical cone at 55 degrees instead, over a level circle
   inside the zone (so a tilted top works too), rising (or falling) to its
@@ -82,7 +83,7 @@ from scipy import ndimage
 
 from .lattice import tpms
 from .reconstruct import _smooth_union
-from .selfsupport import crown_height, needs_shaping
+from .selfsupport import arch_sdf, crown_height, crown_radius, needs_shaping
 from .shapes import Cylinder, Shape, shape_from_spec
 
 __all__ = ["HeatExchangerSpec", "Zone", "design_heat_exchanger", "grid_plan", "heat_exchanger_from_spec",
@@ -327,6 +328,10 @@ def _surface_zones(hx, zones, pitch, lo, hi, up=None):
     inside = d < 0
     far = (ndimage.distance_transform_edt(~inside) - ndimage.distance_transform_edt(inside)) * pitch
     far -= 0.5 * pitch * np.sign(far)
+    # the direction off the core from every grid point (the gradient of the field the design
+    # grid uses: the core's own near its surface, the far field beyond)
+    g_far = np.stack(np.gradient(np.where(np.abs(far) > 3.0 * pitch, far, d), pitch), -1)
+    g_far /= np.maximum(np.linalg.norm(g_far, axis=-1, keepdims=True), 1e-9)
     sp, sn = pts.reshape(*dims, 3)[surf], n[surf]
     clo, chi = hx.core.bounds()
     score = np.full((len(sp), len(zones)), -np.inf)
@@ -380,7 +385,22 @@ def _surface_zones(hx, zones, pitch, lo, hi, up=None):
             c = c - hx.core.sdf(c[None])[0] * nc
         mean_n = n[zk].sum(axis=0)
         mean_n /= np.linalg.norm(mean_n)
+        # the core's normal at the nearest point well inside the zone (two grid steps from its
+        # edge: an edge's own normal is the corner's mean): the zone's frame off its edges
+        held = zk & (inside >= 2.0 * pitch)
+        idx = ndimage.distance_transform_edt(~(held if held.any() else zk), return_distances=False, return_indices=True)
+        zone_n = n[idx[0], idx[1], idx[2]]
+        del idx, held
+        # cos t: how square a grid point sits over that normal (1 over the zone; less round
+        # its convex edges), from the same far field the design grid uses; 1 wherever the
+        # nearest surface point lies a step inside the zone, so its face keeps its own frame
+        cos_t = np.clip(np.einsum("...i,...i->...", g_far, zone_n), 0.0, 1.0)
+        held_w = np.clip(lk / pitch, 0.0, 1.0)
+        cos_t = (held_w + (1.0 - held_w) * cos_t).astype(np.float32)
+        del held_w
+        del zone_n
         info.append({"center": c, "normal": nc, "meanNormal": mean_n, "ellMax": float(vals[top].mean() - 0.5 * pitch),
+                     "cosT": cos_t,
                      "surface": (sp, sn), "patch": (pts.reshape(*dims, 3)[zk], inside[zk] - 0.5 * pitch)})
     return ell, slopes, far, lo, pitch, info
 
@@ -458,17 +478,17 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
             zi["exit"] = p0 + a * reach_out
         zi["roof"] = "pyramid" if pyramid else "vault"
         # how far the bore rises over its axis: round, unless it runs level and the process
-        # cannot build a round top that size (selfsupport: then a smooth egg, never a point)
+        # cannot build a round top that size (selfsupport: then tangent flanks to a round tip)
         level = up is not None and abs(float(a @ up)) <= 0.7
         zi["crown"] = crown_height(r_port, hx.process) if level else r_port
         zi["height"] = float(h)
         zi["axis"] = a
         if not pyramid:
             # a top edge's vault spans the plenum's depth h: a half circle where the process
-            # builds a round span that wide, else a half ellipse just tall enough
+            # builds a round span that wide, else tangent flanks to a round tip
             zi["vaultRise"] = crown_height(0.5 * h, hx.process) / (0.5 * h) if up is not None else 1.0
             if level and zi["crown"] > r_port + 1e-9:
-                # an egg-crowned bore leaves through the lid under the top edge's vault: were its
+                # a crowned bore leaves through the lid under the top edge's vault: were its
                 # crown to reach into the vault, the two crowns would meet in a ceiling wider
                 # than either, which the process cannot close. Lowered just enough, if need be
                 pp, depth = zi["patch"]
@@ -557,14 +577,27 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
                 del hull
             else:
                 # a plenum of even depth whose edges are round vaults from the core to the lid,
-                # a half circle over the zone's edge; over a top edge the vault rises as a half
-                # ellipse where the process cannot build that round span (selfsupport)
+                # a half circle over the zone's edge; over a top edge the vault rises to a round
+                # tip on tangent flanks where the process cannot build that round span (selfsupport)
                 rise = 1.0
                 if up is not None:
                     top = ndimage.map_coordinates(top_grids[k], coords, order=1, mode="nearest", output=np.float32)
                     rise = 1.0 + (zi["vaultRise"] - 1.0) * top
                     del top
-                vault = _vault(d, ell[k], cap, 0.5 * zi["height"], rise)
+                # (d, ell) are the distance off the core and the lateral distance of the nearest
+                # surface point: over the zone a plane's own coordinates, but around a convex edge
+                # of the core polar ones (every point round the edge has the edge's ell), which
+                # would sweep the vault's section round the edge into a bulge under the part. In
+                # the zone's own frame a point off the edge is d cos t out along its normal and
+                # d sin t past its edge, t the angle between grad d and the zone's normal at its
+                # nearest point well inside the zone (on a curved zone, its own local normal)
+                cos_t = ndimage.map_coordinates(zi["cosT"], coords, order=1, mode="nearest", output=np.float32)
+                out = d > 0.0
+                d_z = np.where(out, d * cos_t, d)
+                ell_z = np.where(out, ell[k] - d * np.sqrt(1.0 - cos_t * cos_t), ell[k])
+                del cos_t, out
+                vault = _vault(d_z, ell_z, cap, 0.5 * zi["height"], rise, crown_radius(hx.process))
+                del d_z, ell_z
                 void = np.minimum(void, vault)
                 body.append(vault - hx.shell)
                 del vault
@@ -724,7 +757,7 @@ def design_heat_exchanger(hx: HeatExchangerSpec, fluid_meshes: bool = False, gri
 
 
 def _shaping_up(hx):
-    """The build direction the design shapes for (roofs, closure, egg crowns),
+    """The build direction the design shapes for (roofs, closure, bore crowns),
     or None: no build axis, or a process that builds anything unsupported
     (SLS, MJF: the powder carries every layer)."""
     if hx.build is None or not needs_shaping(hx.process):
@@ -732,20 +765,19 @@ def _shaping_up(hx):
     return _unit(hx.build)
 
 
-def _vault(d, ell, cap, R, rise=1.0):
+def _vault(d, ell, cap, R, rise=1.0, rho=np.inf):
     """A plenum of depth 2R over its zone whose edges are round vaults: in the
     plane across an edge (x = d - R from the plenum's middle, y = how far past
     the vault's spring line toward the zone's edge), a half circle of radius R,
-    or a half ellipse R wide and R * rise tall. The spring line sits R * rise in
-    from the zone's edge less `cap`, so the vault's top never leaves the zone.
+    or, rising R * rise over the spring line, tangent flanks to a round tip of
+    radius rho (selfsupport.arch_sdf). The spring line sits R * rise in from
+    the zone's edge less `cap`, so the vault's top never leaves the zone.
     Near-distance (mm), < 0 inside."""
     x = d - np.float32(R)
-    y = np.float32(cap) + np.float32(R) * rise - ell
+    H = np.float32(R) * rise
+    y = np.float32(cap) + H - ell
     slab = np.abs(x) - np.float32(R)
-    ry = np.float32(R) * rise
-    q = np.sqrt((x / R) ** 2 + (np.maximum(y, 0.0) / ry) ** 2)
-    g = np.sqrt((x / R ** 2) ** 2 + (np.maximum(y, 0.0) / ry ** 2) ** 2)
-    arch = (q - 1.0) * q / np.maximum(g, np.float32(1e-6))
+    arch = arch_sdf(x, np.maximum(y, 0.0), R, H, rho)
     return np.where(y > 0.0, arch, slab).astype(np.float32, copy=False)
 
 
@@ -1203,23 +1235,19 @@ def _port_box(hx, zi, pts, up, bed):
     return np.all((pts >= blo) & (pts <= bhi), axis=1)
 
 
-def _egg(u, l, r, h):
-    """Across a bore: a circle of radius r under its axis (u <= 0) and a half
-    ellipse r wide, h tall over it; tangent where they meet. Near-distance."""
+def _crowned(u, l, r, h, rho):
+    """Across a bore: its circle of radius r, rising h over its axis on tangent
+    flanks to a round tip of radius rho (selfsupport.arch_sdf). Near-distance."""
     if h <= r + 1e-9:
         return np.sqrt(u * u + l * l) - np.float32(r)
-    up_ = np.maximum(u, 0.0)
-    q = np.sqrt((l / r) ** 2 + (up_ / h) ** 2)
-    g = np.sqrt((l / r ** 2) ** 2 + (up_ / h ** 2) ** 2)
-    top = (q - 1.0) * q / np.maximum(g, np.float32(1e-6))
-    return np.where(u > 0.0, top, np.sqrt(u * u + l * l) - np.float32(r)).astype(np.float32, copy=False)
+    return arch_sdf(l, u, r, h, rho)
 
 
 def _port(hx, zi, pts, up, bed):
     """A port's bore (void) and tube (solid) fields. The bore is round. One
     that runs level, wider than the process builds round (selfsupport), keeps
-    its round bottom and sides and rises over its axis as a half ellipse
-    (zi["crown"]): smooth all round, an egg, never a point. With a skirt (FDM:
+    its round bottom and sides and rises zi["crown"] over its axis on tangent
+    flanks to a round tip the process closes: smooth all round, never a point. With a skirt (FDM:
     an outside overhang cannot grow off removable supports), a gusset under
     the tube rises at 45 degrees from the plenum wall."""
     r = 0.5 * zi["portDiameter"]
@@ -1239,11 +1267,12 @@ def _port(hx, zi, pts, up, bed):
     del q
     hc = float(zi.get("crown", r))
     if hc > r + 1e-9:
-        bore = np.maximum(_egg(u, l, r, hc), np.maximum(-a, a - length - 2.0))
-        # the tube follows the egg, a shell over it; it starts a shell back toward the core,
+        rho = crown_radius(hx.process)
+        bore = np.maximum(_crowned(u, l, r, hc, rho), np.maximum(-a, a - length - 2.0))
+        # the tube follows the crowned bore, a shell over it; it starts a shell back toward the core,
         # so where the crown rises past the plenum's vault the bore's root is closed, not open
         back = hx.shell + 1.0
-        tube = np.minimum(tube, np.maximum(_egg(u, l, ro, hc + hx.shell), np.maximum(-a - back, a - length)))
+        tube = np.minimum(tube, np.maximum(_crowned(u, l, ro, hc + hx.shell, rho + hx.shell), np.maximum(-a - back, a - length)))
     if hx.skirt:
         # gusset: under the tube, its underside rising 45 degrees from the wall to the tube's end
         under = (a - length - u - ro) / _SQRT2         # < 0 above the 45 degree plane
@@ -1311,7 +1340,7 @@ def _check(hx, zones, zinfo, grid, side_a, d_body, d_core, dims, step, lo, cap, 
     for zi in zinfo:
         p0, p1 = zi["port"]
         ax = (p1 - p0) / np.linalg.norm(p1 - p0)
-        # a level port's egg-crowned bore rises zi["crown"] over its axis (_port): its mouth
+        # a level port's crowned bore rises zi["crown"] over its axis (_port): its mouth
         # reaches that far, so the check leaves out that far too
         r_m = max(0.5 * zi["portDiameter"], zi.get("crown", 0.0))
         sel = _port_box(hx, zi, pts, None, None)

@@ -313,6 +313,83 @@ def test_flip_needles_removes_zero_area_faces():
     assert out.is_watertight and out.is_winding_consistent and out.area_faces.min() > 0.1, out.area_faces
     assert abs(out.volume - m.volume) < 1e-9
 
+def _padded_plan():
+    """A meshed body clipped to a meshed envelope, two kept pads (one mesh,
+    two bodies, their bases on the envelope's base) unioned back, and a
+    screw hole drilled through each pad: the step-import tutorial's plan."""
+    import trimesh
+
+    from loadpath.shapes import Cylinder, MeshShape, Union
+    from loadpath.sharp import Exact, Op, Organic
+
+    def box(lo, hi):
+        m = trimesh.creation.box(extents=np.subtract(hi, lo))
+        m.apply_translation(np.add(lo, hi) / 2.0)
+        return m
+
+    body = trimesh.creation.icosphere(subdivisions=4, radius=1.0)
+    body.apply_scale([22.0, 12.0, 9.0])
+    env = MeshShape(box([-20, -10, 0], [20, 10, 12]))
+    pads = MeshShape(trimesh.util.concatenate([box([-18, -4, 0], [-10, 4, 3]), box([10, -4, 0], [18, 4, 3])]))
+    holes = Union([Cylinder([-14, 0, -1], [-14, 0, 14], 1.7), Cylinder([14, 0, -1], [14, 0, 14], 1.7)])
+    p = Op("intersect", [Organic(None, ["organic"], mesh=body), Exact(Union([env, pads]), "envelope")])
+    p = Op("union", [p, Exact(pads, "preserve")])
+    return Op("subtract", [p, Exact(holes, "keep-out")])
+
+
+def test_step_of_a_part_with_meshed_pads_is_one_valid_solid_with_exact_holes():
+    """Facets against facets (the body, a meshed envelope, kept pads) are
+    manifold3d's; OpenCascade cuts the exact holes. Fused by OpenCascade,
+    pad faces lying on the body's came back empty, invalid, or never (the
+    step-import tutorial ran past 30 minutes in one boolean)."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    from loadpath import step
+
+    two = step._faceted(_padded_plan().kids[0].kids[1].shape.mesh)       # one mesh, two bodies
+    from OCP.BRepCheck import BRepCheck_Analyzer
+
+    assert BRepCheck_Analyzer(two).IsValid()
+    with tempfile.TemporaryDirectory() as td:
+        t0 = time.time()
+        rep = export_step(_padded_plan(), os.path.join(td, "padded.step"), faces=4000)
+        assert rep["valid"] and rep["solids"] == 1, rep
+        assert rep["faces"].get("cylinder", 0) >= 2, rep["faces"]
+        assert not [n for n in rep.get("decimated", []) if "warning" in n], rep["decimated"]
+        body, tools = step._normal(_padded_plan(), {}, 4000, [])
+        want = body.volume() - sum((t[1] ^ body).volume() for t in tools)
+        assert abs(rep["volume"] / want - 1) < 2e-3, (rep["volume"], want)
+        assert time.time() - t0 < 120
+
+
+def test_step_boolean_that_does_not_finish_is_written_as_facets():
+    """An OpenCascade boolean runs under a clock; one that does not come
+    back in time leaves its cutters to manifold3d (facets), noted, and the
+    file is still one valid solid of the right volume."""
+    if not available():
+        print("  (OpenCascade not installed: skipped)")
+        return
+    from loadpath import step
+
+    old = step.BOOL_INLINE, os.environ.get("LOADPATH_STEP_BOOL_SECONDS")
+    step.BOOL_INLINE, os.environ["LOADPATH_STEP_BOOL_SECONDS"] = 0, "0.01"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            rep = export_step(_padded_plan(), os.path.join(td, "padded.step"), faces=4000)
+    finally:
+        step.BOOL_INLINE = old[0]
+        if old[1] is None:
+            del os.environ["LOADPATH_STEP_BOOL_SECONDS"]
+        else:
+            os.environ["LOADPATH_STEP_BOOL_SECONDS"] = old[1]
+    assert rep["valid"] and rep["solids"] == 1, rep
+    assert rep["faces"].get("cylinder", 0) == 0, rep["faces"]
+    assert any("facets" in n.get("warning", "") for n in rep["decimated"]), rep["decimated"]
+    body, tools = step._normal(_padded_plan(), {}, 4000, [])
+    want = body.volume() - sum((t[1] ^ body).volume() for t in tools)
+    assert abs(rep["volume"] / want - 1) < 2e-3, (rep["volume"], want)
+
 
 TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact_where_the_field_rounds_it,
          test_mesh_distance_matches_trimesh, test_step_keeps_the_bore_a_cylinder,
@@ -320,7 +397,9 @@ TESTS = [test_plan_splits_at_hard_booleans_with_shapes, test_sharp_bore_is_exact
          test_collapse_keeps_holes, test_step_smooth_patches,
          test_smooth_step_keeps_the_bore_exact, test_smooth_step_keeps_sealed_voids,
          test_write_step_keeps_points_unrounded_when_rounding_breaks_the_part,
-         test_step_keeps_a_gyroid_cores_tunnels, test_flip_needles_removes_zero_area_faces]
+         test_step_keeps_a_gyroid_cores_tunnels, test_flip_needles_removes_zero_area_faces,
+         test_step_of_a_part_with_meshed_pads_is_one_valid_solid_with_exact_holes,
+         test_step_boolean_that_does_not_finish_is_written_as_facets]
 
 
 def main():
