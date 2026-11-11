@@ -748,7 +748,7 @@ def _save_partial(o, pitch: float | None = None) -> None:
 
 def _confirm_cells(st: Study | None = None) -> int:
     """Cells for the confirming re-analysis: LOADPATH_CONFIRM_CELLS, else
-    150k, but no more than fit in the memory free right now. A brief-eval
+    150k, but no more than fit in the machine's memory (_plan_bytes). A brief-eval
     agent's search on a shared 15 GB box was OOM-killed at this stage after
     35 minutes, losing every verified outcome; a coarser confirm (never
     under the design grid) is better than none."""
@@ -756,11 +756,16 @@ def _confirm_cells(st: Study | None = None) -> int:
     if env:
         return max(1000, int(env))
     floor = max(st.max_elements if st is not None else 0, 20_000)
-    avail = _available_bytes()
-    if not avail:
+    def cells_in(budget):
+        return min(_CONFIRM_CELLS, int((budget - _RUN_BASE_BYTES) // _RUN_CELL_BYTES))
+
+    # (the machine's memory, not what is free this minute: on a 15 GB box
+    # 150k cells never fitted 60% of the free memory, so the confirm's grid,
+    # and the margin read on it, were different every run)
+    budget = _plan_bytes(lambda b: _run_bytes(cells_in(b)))
+    if not budget:
         return _CONFIRM_CELLS
-    fit = int((0.6 * avail - _RUN_BASE_BYTES) // _RUN_CELL_BYTES)
-    return int(max(floor, min(_CONFIRM_CELLS, fit)))
+    return int(max(floor, cells_in(budget)))
 
 
 def _solve_alone(study: Study) -> StudyResult:

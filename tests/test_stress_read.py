@@ -91,12 +91,14 @@ def test_grids_are_sized_from_the_machine_not_from_free_memory(monkeypatch):
     monkeypatch.setattr(st, "_own_bytes", lambda: 0.0)
     monkeypatch.delenv("LOADPATH_TET_MEMORY", raising=False)
     seen = []
-    for free in (15e9, 12e9, 9e9):
+    for free in (15e9, 13e9, 11e9):
         monkeypatch.setattr(st, "_available_bytes", lambda free=free: free)
         # a solve that needs 5 GB fits in all three: the plan does not move
-        seen.append((st._plan_bytes(lambda b: 5e9), cc.fit_size(180_000.0, 1.5), cc.fit_size(2_000_000.0, 1.5)))
+        seen.append((st._plan_bytes(lambda b: 5e9), cc.fit_size(180_000.0, 1.5), cc.fit_size(2_000_000.0, 1.5),
+                     st._confirm_cells()))
     assert seen[0] == seen[1] == seen[2], seen
     assert seen[0][0] == st._PLAN_SHARE * 16e9
+    assert seen[0][3] == st._CONFIRM_CELLS
     # only when the memory really there cannot hold the plan's grid does it shrink
     monkeypatch.setattr(st, "_available_bytes", lambda: 3e9)
     assert st._plan_bytes(lambda b: 5e9) == st._PLAN_SHARE * 3e9
