@@ -81,6 +81,38 @@ def test_mesh_watertight():
         assert 43.5 < np.linalg.norm(m.vertices[:, :2], axis=1).max() < 45.0
 
 
+def test_root_fillet_and_tip():
+    # Peterson's trend: a larger fillet, a lower Kt; asked for little margin it grows, with lots it stays small
+    b = pr.Blade.uniform(44.45, 7.0, 3, 9.0, pitch_in=3.0, t_ratio=0.09)
+    tight = pr.root_fillet(b, 24.0, 50.0, 2.0)
+    loose = pr.root_fillet(b, 5.0, 50.0, 2.0)
+    assert tight["radius"] > loose["radius"] and tight["Kt"] < loose["Kt"]
+    m0 = pr.rotor_mesh(b, fillet=0.0)
+    m1 = pr.rotor_mesh(b, fillet=tight["radius"])
+    assert m1.is_watertight and m1.volume > m0.volume
+    assert m1.metadata["hubHeight"] > m0.metadata["hubHeight"]
+    # the planform closes to (nearly) nothing at the tip
+    x = pr.ideal_start(3, 44.45, 7.0, 0.775, 14000.0)
+    bl = pr.blade_from_params(x, 3, 44.45, 7.0)
+    assert bl.chord[-1] < 0.5 * bl.chord[-4]
+
+
+def test_solid_check_root_fillet_lowers_root_peak():
+    try:
+        from loadpath.crosscheck import mesher_missing
+        if mesher_missing():
+            print("skip: no tet mesher")
+            return
+    except Exception:
+        return
+    b = pr.Blade.uniform(44.45, 7.0, 2, 8.0, pitch_in=3.0, t_ratio=0.12, stations=14)
+    op = pr.performance(b, 25000)
+    sharp = pr.solid_check(b, op, mesh=pr.rotor_mesh(b, fillet=0.0), size=0.6)
+    round_ = pr.solid_check(b, op, mesh=pr.rotor_mesh(b, fillet=2.0), size=0.6)
+    print("sharp", sharp["peakStress"], "at", sharp["peakRadius"], "| filleted", round_["peakStress"], "at", round_["peakRadius"])
+    assert round_["peakStress"] < sharp["peakStress"]
+
+
 def test_validation_against_printed_props():
     if not pr._have_neuralfoil():
         print("skip: NeuralFoil not installed (pip install loadpath[aero])")
