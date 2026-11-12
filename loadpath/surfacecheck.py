@@ -133,6 +133,9 @@ class _Exact:
 
     def __init__(self, mesh, cap):
         T = np.ascontiguousarray(mesh.triangles, float)
+        # a triangle with no area (booleans leave them) has no surface, and divides by zero in the distance
+        area = np.linalg.norm(np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0]), axis=1)
+        T = np.ascontiguousarray(T[area > 1e-12 * max(float(area.max()), 1e-30)])
         lo, hi = T.min(axis=(0, 1)) - 1e-6, T.max(axis=(0, 1)) + 1e-6
         h = max(float(np.max(hi - lo)) / 160.0, 0.25)
         n = np.maximum(np.ceil((hi - lo) / h).astype(np.int64), 1)

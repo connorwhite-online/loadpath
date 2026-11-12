@@ -24,6 +24,12 @@ def test_exact_distance():
     P = np.array([[0, 0, 1.3], [0, 0, 0.6], [1.5, 1.5, 0], [2, 2, 2], [0.2, -0.4, 1.0]], float)
     want = [0.3, 0.4, np.sqrt(0.5), np.sqrt(3.0), 0.0]
     assert np.allclose(d(P), want, atol=1e-9), d(P)
+    # a triangle with no area (booleans leave them) is ignored, not divided by
+    box = trimesh.creation.box(extents=[2, 2, 2])
+    v = np.vstack([box.vertices, [[5.0, 5.0, 5.0]]])
+    f = np.vstack([box.faces, [[8, 8, 8]]])
+    d = S._Exact(trimesh.Trimesh(v, f, process=False), cap=5.0)
+    assert np.allclose(d(P), want, atol=1e-9), d(P)
 
 
 def test_exterior_kept_or_not():
