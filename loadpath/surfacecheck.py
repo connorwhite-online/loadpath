@@ -271,22 +271,38 @@ def _shade(d, px):
     return np.where(np.isfinite(d), img, 1.0)
 
 
-def ortho_sheet(original, new, path, tolerance=0.05, cuts=(), scale=1.0, title=None, result=None):
+def ortho_sheet(original, new, path, tolerance=0.05, cuts=(), scale=1.0, title=None, result=None,
+                highlight=None, highlight_label=None):
     """Six orthographic views of the original and the new assembly side by
     side, with the difference under each pair (red: new surface proud or
     added outline; blue: sunk or missing). Returns compare_exterior's
-    result."""
+    result. highlight: the parts of the new assembly to tint (a metal band
+    let into a shell changes no surface, and still has to be seen)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     res = result or compare_exterior(original, new, tolerance, cuts=cuts, scale=scale)
     px = res["pixel"]
+    hl = None
+    if highlight is not None:
+        d0 = res["depth"]["new"]["top"]
+        b = _meshes(new).bounds
+        lo = np.minimum(_meshes(original).bounds[0] * scale, b[0]) - 2 * px
+        hi = lo + np.array([d0.shape[0], d0.shape[1], res["depth"]["new"]["front"].shape[1]]) * px
+        hl = depth_maps(highlight, (lo, hi), px)
     fig, axs = plt.subplots(3, 6, figsize=(24, 12.5), dpi=110)
     for k, (name, *_r) in enumerate(VIEWS):
         flip = name in ("bottom", "front", "left")       # seen from the other side: mirror left-right
         for row, key in ((0, "original"), (1, "new")):
             img = _shade(res["depth"][key][name], px).T[::-1]
-            axs[row, k].imshow(img[:, ::-1] if flip else img, cmap="gray", vmin=0, vmax=1, interpolation="bilinear")
+            img = img[:, ::-1] if flip else img
+            axs[row, k].imshow(img, cmap="gray", vmin=0, vmax=1, interpolation="bilinear")
+            if row == 1 and hl is not None:
+                on = (np.abs(hl[name] - res["depth"]["new"][name]) < 1e-3).T[::-1]
+                on = on[:, ::-1] if flip else on
+                tint = np.zeros(on.shape + (4,))
+                tint[on] = (0.95, 0.62, 0.15, 0.55)
+                axs[row, k].imshow(tint, interpolation="nearest")
             axs[row, k].set_title(f"{name}: {key}", fontsize=11)
         m = res["maps"][name]
         lim = max(4 * tolerance, 0.2)
@@ -304,6 +320,8 @@ def ortho_sheet(original, new, path, tolerance=0.05, cuts=(), scale=1.0, title=N
         for s in a.spines.values():
             s.set_visible(False)
     verdict = "exterior kept" if res["pass"] else "EXTERIOR CHANGED"
+    if hl is not None and highlight_label:
+        verdict += f"; tinted: {highlight_label}"
     fig.suptitle(f"{title + ': ' if title else ''}{verdict} (tolerance {tolerance} mm, max deviation "
                  f"{res['maxDeviation']} mm)", fontsize=15, color="black" if res["pass"] else "#b00020")
     fig.tight_layout(rect=(0, 0, 1, 0.96))

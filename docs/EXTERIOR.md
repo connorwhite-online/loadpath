@@ -119,3 +119,37 @@ volume made elsewhere can drive a lattice or a remap. `loadpath.vdb` reads
 and writes the files in pure Python: zip, blosc (with the `blosc` package),
 active-mask and half-float files read, and files it writes open in the
 OpenVDB library to float precision.
+
+## Has the exterior been kept?
+
+The outside of a product is the designer's. Work done inside it, or a
+change the brief asks for (a metal band let into the wall as an antenna, a
+port), must leave every other part of the surface where it was.
+`loadpath.surfacecheck` measures that the way a person checks it, from the
+six orthographic directions:
+
+```python
+from loadpath import surfacecheck
+res = surfacecheck.ortho_sheet(original_parts, new_parts, "sheet.png",
+                               tolerance=0.05, cuts=[(lo, hi)],     # declared changes
+                               highlight=band_parts, highlight_label="aluminium band")
+assert res["pass"], res["views"]
+```
+
+Each view reads the first surface at every pixel of both assemblies. Every
+point of new surface is measured to the original (exact point-to-triangle
+distance), and every point of original surface to the new assembly, so
+both added or moved surface and missing surface are found. Deviations
+inside a declared cut are reported apart and do not fail; `scale` compares
+against the original scaled down, for a smaller device of the same form.
+The sheet draws original over new over the difference for all six views,
+with chosen parts tinted, since a band let in flush changes no surface
+and still has to be seen. It is meant to be looked at before any part is
+sent anywhere.
+
+Why it exists: a first antenna study on a wearable rebuilt its shells from
+the board cavity's outline when the enclosure's meshes were not at hand.
+Every number in that study was computed; the form was not the designer's.
+The check fails that case in every view (the whole surface off by more
+than 2 mm) and passes the rebuilt one, where a 1.5 mm aluminium band is
+cut out of the original side wall and the surface is unchanged.

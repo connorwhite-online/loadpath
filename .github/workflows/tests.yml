@@ -57,7 +57,7 @@ jobs:
           # paths without it
           - group: exterior
             extras: ",exterior"
-            files: tests/test_exterior.py tests/test_scan.py
+            files: tests/test_exterior.py tests/test_scan.py tests/test_surfacecheck.py
             pytest: >-
               tests/test_materials.py tests/test_preview.py tests/test_interfaces.py tests/test_multimat.py
               tests/test_interlock.py tests/test_threemf_multi.py tests/test_voxelprint.py
