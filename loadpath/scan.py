@@ -762,10 +762,14 @@ def fit_primitives(scan: Scan, *, min_points: int | None = None, max_features: i
             print("candidate", cd[0], best[0], "free", len(idx_free), "seed", len(idx_seed), "->",
                   None if feat is None else (feat["type"], feat["points"]))
         if feat is None:
-            # the candidate's patch seeds no more candidates (its points stay
-            # free to belong to another surface)
+            # the candidate's points seed no more candidates (they stay free
+            # to belong to another surface). All of them, not only its
+            # largest patch: a surface scattered in fragments, none of them
+            # min_points, is proposed again from any fragment's seed and wins
+            # every round over a small real feature (a tapped hole beside a
+            # boss's leftovers), until the fails run out
             m = plane_inliers(cd[1], cd[2]) if cd[0] == "plane" else cyl_inliers(cd[1], cd[2], cd[3])
-            seedable[_component(scan, m)] = False
+            seedable[m] = False
             fails += 1
             continue
         fails = 0

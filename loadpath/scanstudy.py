@@ -141,6 +141,39 @@ def _closed(mesh):
     return out
 
 
+def _bolted_holes(feats, sup, byid, max_tilt_deg=5.0):
+    """{hole id: face id}: the threaded holes (bores snapped to a tapped or
+    insert size) whose axis is square to a support face (within max_tilt)
+    and comes out through it, inside the face's fitted extent."""
+    out = {}
+    cos = math.cos(math.radians(max_tilt_deg))
+    for h in feats.get("cylinders", []):
+        st = h.get("standard") or {}
+        if h["kind"] != "bore" or st.get("family") not in ("tapped", "insert") or not st.get("name"):
+            continue
+        a = np.asarray(h["axis"], float)
+        q = np.asarray(h["p0"], float)
+        for pid in sup:
+            pl = byid.get(pid)
+            if pl is None or pl["type"] != "plane":
+                continue
+            n = np.asarray(pl["normal"], float)
+            if abs(a @ n) < cos:
+                continue
+            c = np.asarray(pl["center"], float)
+            m = q + a * (((c - q) @ n) / (a @ n))
+            # the mouth must be near the hole's end, not far along its axis
+            if min(np.linalg.norm(m - np.asarray(h["p0"])), np.linalg.norm(m - np.asarray(h["p1"]))) > 2 * h["r"]:
+                continue
+            e1, e2 = (np.asarray(x, float) for x in pl["axes"])
+            (u0, v0), (u1, v1) = pl["extent"]
+            u, v = (m - c) @ e1, (m - c) @ e2
+            if u0 - h["r"] <= u <= u1 + h["r"] and v0 - h["r"] <= v <= v1 + h["r"]:
+                out[h["id"]] = pid
+                break
+    return out
+
+
 def _cyl_keepout(f, extend_lo, extend_hi):
     a = np.asarray(f["axis"], float)
     p0, p1 = np.asarray(f["p0"], float), np.asarray(f["p1"], float)
@@ -156,7 +189,7 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
                  material: str = "pa12", process: str | None = "sls", grow: float = 15.0, pad: float = 2.0,
                  bar_fit: str = "slip", known=None, safety_factor: float = 2.0, mesh_info=None,
                  space=None, keep_object: bool = True, clamp: str | None = None, carry: dict | None = None,
-                 mu: float | None = None) -> dict:
+                 mu: float | None = None, bolt: bool = True, grip=None) -> dict:
     """Write a study that builds a part around the scanned object (see the
     module docstring) into out_dir and return {"study", "clearance", "todo"}.
 
@@ -169,7 +202,13 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
       space: [[lo], [hi]] box instead of the grown one. clamp="split" with
       carry ({"mass" kg, "shock" g, "gravity", "centre", "hold"}) splits the
       ring round the support bar into body and cap, bolted, the bolts sized
-      by friction (scanplan.clamp_plan; mu default 0.2)."""
+      by friction (scanplan.clamp_plan; mu default 0.2).
+      bolt: a threaded hole (a bore snapped to `tapped` or `insert`) that
+      opens square through a support face becomes a screw through the part
+      into it (a `fasteners` entry: ISO 273 clearance hole, head and driver
+      path kept clear, seat and face rings, preload). grip: the part's
+      thickness under the head (mm, or {hole id: mm}); default the screw's
+      diameter, at least the two rings fasteners.py draws (a choice)."""
     import trimesh
     from .cadimport import ring_wall
     from .shapes import manifold_from_trimesh, trimesh_from_manifold, Cylinder
@@ -285,7 +324,9 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
         spans[f["id"]] = (t_lo, t_hi)
         preserve.append({"id": f"{f['id']}-ring", "shape": {
             "type": "cylinder", "p0": (q0 + t_lo * a).round(4).tolist(), "p1": (q0 + t_hi * a).round(4).tolist(),
-            "r": round(f["r"] + ring_wall(f["r"]), 4), "rInner": round(f["r"], 5)}})
+            # its bore no smaller than the largest bar the band allows (the
+            # keep-out's fit opens it further)
+            "r": round(f["r"] + ring_wall(f["r"]), 4), "rInner": round(f["r"] + f["rBand"], 5)}})
         if f.get("warning"):
             todo.append(f"{f['id']}: {f['warning']}")
     # ---- a split clamp round the support bar: body and cap, bolted
@@ -323,9 +364,11 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
                         f"{clamp_out['tighteningTorqueNm']:.2f} N m)")
         with open(os.path.join(out_dir, f"{stem}.clamp.json"), "w") as fh:
             json.dump(clamp_out, fh, indent=1)
+    # ---- threaded holes in a face the part bolts to: a screw through the part
+    bolted = _bolted_holes(feats, sup, byid) if bolt else {}
     # ---- bores in the object: kept open out through the design space
     for f in feats.get("cylinders", []):
-        if f["kind"] != "bore":
+        if f["kind"] != "bore" or f["id"] in bolted:
             continue
         a = np.asarray(f["axis"], float)
         p0, p1 = np.asarray(f["p0"]), np.asarray(f["p1"])
@@ -360,6 +403,37 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
             "size": [round(u1 - u0, 3), round(v1 - v0, 3), round(depth, 3)],
             "axes": [e1.round(6).tolist(), e2.round(6).tolist()]}})
         f["_off"] = off
+    # ---- each bolted hole: a fastener from a seat on this part, through a
+    # clearance hole, clamping the part down on the face (fasteners.py)
+    from .fasteners import METRIC
+    for hid, pid in bolted.items():
+        h, pl = byid[hid], byid[pid]
+        size = h["standard"]["name"]
+        hole_d = METRIC[size][0]
+        nominal = float(size[1:])
+        n = np.asarray(pl["normal"], float)
+        a = np.asarray(h["axis"], float)
+        a = a if a @ n > 0 else -a
+        q = np.asarray(h["p0"], float)
+        c = np.asarray(pl["center"], float)
+        mouth = q + a * (((c - q) @ n) / (a @ n))
+        g = float((grip or {}).get(hid, max(nominal, 2 * max(2.0, 0.4 * nominal))) if isinstance(grip, dict)
+                  else grip if grip is not None else max(nominal, 2 * max(2.0, 0.4 * nominal)))
+        seat = mouth + n * (pl.get("_off", 0.0) + g)
+        fasteners.append({"id": f"{hid}-bolt", "size": size, "seat": seat.round(4).tolist(),
+                          "direction": (-n).round(6).tolist(), "grip": round(g, 4),
+                          "end": "face", "headOn": "this"})
+        # will the screw find its hole? the hole's centre is known to the
+        # fit's position band; the clearance hole's slack must cover it
+        slack = 0.5 * (hole_d - nominal)
+        pos = z1 * math.hypot(float(h.get("axisPositionSigma", 0.0)),
+                              float(h["sigma"]["total"]) / math.sqrt(max(int(h.get("points", 1)), 1)))
+        tilt = math.radians(float(h.get("axisSigmaDeg", 0.0))) * z1 * g
+        if pos + tilt > slack:
+            todo.append(f"{hid}-bolt: the hole's centre is known to {pos + tilt:.2f} mm, more than the {size} "
+                        f"clearance hole's {slack:.2f} mm slack: rescan it closer, or give fit='loose'")
+        todo.append(f"{hid}-bolt: {size} socket head screw through the part into {hid} "
+                    f"(grip {g:g} mm of part above {pid}: a choice, give grip= to change it)")
     # ---- the object itself, moved out by its clearance
     if keep_object:
         if mesh_info is None:
@@ -385,7 +459,7 @@ def draft_around(scan: Scan, feats: dict, out_dir: str, *, support=None, loads=N
         if len(obj.faces):
             path = os.path.join(out_dir, f"{stem}-object-clear.stl")
             obj.export(path)
-            keep_out.append({"id": "object", "bore": False, "shape": {"type": "mesh", "path": path}})
+            keep_out.append({"id": "object", "bore": False, "shape": {"type": "mesh", "path": os.path.basename(path)}})
         if info["report"].get("unseenShare", 0) > 0.01:
             todo.append(f"{100 * info['report']['unseenShare']:.1f}% of the object was not seen (worst gap "
                         f"{info['report']['unseenWorstGap']:.1f} mm): kept clear by the gap, rescan those sides "

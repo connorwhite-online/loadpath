@@ -202,6 +202,10 @@ weighted least squares. Nothing in it is a set tolerance:
   smallest eigenvector of the normals' scatter, the circle a least-squares fit
   across it. A big radius needs a wide patch to show its curvature above the
   normals' scatter.
+- a candidate that no connected patch of min_points supports seeds no more
+  candidates from any of its points: a surface left in fragments otherwise
+  wins every round over a small real feature (a tapped hole beside a boss's
+  leftovers) until the search gives up.
 - **bars and bores**: a convex cylinder (normals away from the axis) is a
   `bar` (a tube or handlebar a clamp goes round); a concave one is a `bore`.
 - **self-consistency**: pieces of one surface fitted apart (a mug either side
@@ -232,6 +236,19 @@ weighted least squares. Nothing in it is a set tolerance:
   side kept out.
 - **bores** in the object (an insert, a socket), kept open along their axis
   through the design space so a screw still goes in.
+- **threaded holes the part bolts to.** A bore snapped to a `tapped` or
+  `insert` size whose axis is square to a support face (within 5 degrees)
+  and comes out through it becomes a screw through the part into it: a
+  `fasteners` entry (fasteners.py) with that size, its seat on the part's
+  top face above the hole, `end: "face"` on the support face, so the study
+  gets an ISO 273 clearance hole drawn for the process, the head and driver
+  path kept clear out of the design space, seat and face rings, and a
+  preload case. The part's thickness under the head (`grip=`) is a choice:
+  by default the screw's diameter, at least the two rings fasteners.py
+  draws. The todo says so, and warns when the hole's fitted position
+  (its axis sigma, at the scan's confidence, plus its tilt over the grip)
+  is more than the clearance hole's slack: the screw might not find its
+  hole. `bolt=False` keeps the old behaviour (the bore kept open only).
 - supports and loads by feature id. The design space is a box round the
   features the part touches, grown `--grow` mm; that box is a design choice,
   and the todo says so.
@@ -274,6 +291,22 @@ What this validates: the noise measurement, the correlation, the fits, the
 error propagation and the reconstruction, *given* a device that behaves as
 its spec says. It doesn't validate the specs. That needs a real scan of
 something with known sizes (see `calibrate_device`).
+
+### Designing inside a scanned space
+
+`examples/scan/fit_in_space.py` scans `scansim.bay_with_pipe()` (a floor,
+walls, two bosses with M8 tapped holes, a 25 mm pipe across them) from the
+open front and top only, at Artec-class accuracy, and drafts a bracket that
+bolts to both bosses, carries the pipe and stays inside the walls. The part
+is then checked against the **true** scene: no overlap with it, inside the
+free space, an 8 mm screw on each true hole centre clear of the part, the
+part seated on each boss top, material round the pipe.
+
+The holes are 6.8 mm across and about 10 mm deep, so a scan gets only
+100-300 points inside each, close to the fitter's `min_points` (0.1% of the
+scan). One that falls short isn't found, so it isn't bolted to (it is still
+kept out with the object): look for both in the fits, and rescan a missing
+hole from above and closer before drafting.
 
 ### Real scans (public)
 
@@ -322,6 +355,12 @@ Pass it back as `device={"base": "iphone-lidar", "sigma": cal["sigma"]}`.
   a splat trainer's frame may not be, so give `--up`, or `gravity` in the
   brief.
 
+- An **open scene seen from inside** (a bay, a cavity) isn't a closed
+  object, and the winding-number reconstruction doesn't close it well: on
+  the bay stand-in part of the true bay falls outside the object keep-out
+  and the part reaches 0.37 mm into a boss edge. Keeping out everything
+  the sensor's rays did not see empty (free space from the rays; the
+  points need their sensor positions) is the fix, not done yet.
 - Planes and cylinders only. Cones, spheres and tori (a tapered bar, a ball
   joint) are kept out by the reconstructed surface but aren't fitted as
   mounts yet.
