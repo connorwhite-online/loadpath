@@ -53,6 +53,7 @@
     }
   ],
   "material": "petg",
+  "process": {"type": "fdm", "buildDirection": "+z"},
   "printDirection": "+z",
   "goal": {
     "safetyFactor": 2.5,

@@ -898,10 +898,14 @@ def run_study(study: Study, on_progress=None, should_stop=None) -> StudyResult:
     import dataclasses
 
     if study.process is not None and study.process.build == "auto":
-        # opt-in: compare build directions on a coarse grid and keep the best
-        from .orient import choose_build_direction
+        # compare build directions for the free design on supports, search
+        # it, then decide at the fraction it was delivered at whether
+        # growing it self-supporting is cheaper (orient.settle_supports)
+        from .orient import choose_build_direction, settle_supports
 
-        study = choose_build_direction(study, on_progress=on_progress)["study"]
+        free = choose_build_direction(study, on_progress=on_progress, self_supporting=False)["study"]
+        return settle_supports(study, run_study(free, on_progress, should_stop),
+                               lambda st: run_study(st, on_progress, should_stop), on_progress)
     mats = study.materials or [study.material]
     if len(mats) == 1:
         if study.goal.method == "auto":

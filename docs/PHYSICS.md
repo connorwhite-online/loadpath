@@ -184,10 +184,24 @@ is a filament, PA12 a sintered powder, AlSi10Mg a laser-melted one, so a
 study that names no `process` takes its material's (`spec._infer_process`),
 with that process's minimum wall and hole, its layer bond, its powder
 escapes. Where layers matter (fdm, lpbf) the direction is not assumed to
-be +z: `orient.choose_build_direction` designs for each of the six axis
-directions on a coarse grid and keeps the one the loads are carried best
-in, per gram. Which process is intent, and a study that names one keeps
-it; which way the layers should run is physics, so the library decides.
+be +z, and supports are not assumed to be worse than the strength it
+takes to do without them. `orient.choose_build_direction` prices every
+way of building the part by what it costs to make at equal strength
+(`costing.estimate` with the process's rates): the free design printed on
+the supports it needs (their material, machine time and removal from every
+supported face) in each of the six axis directions, and, where that could
+be beaten, the design grown under that direction's overhang rule. Height
+counts (layers to recoat), and so does strength: a weaker direction needs
+more material to carry the same loads. Whether a self-supporting design
+pays depends on how thin its members are, so that choice is made at the
+fraction the search delivers (`orient.settle_supports`): the LPBF bell
+crank at 25% reads the same either way, at 12.5% SF 10.4 on 1.8 cm^3 of
+support against 5.2 self-supporting. Ranked by strength per gram alone,
+the crank stood on its 3 mm edge (6% more per gram on a coarse grid, 66 mm
+of layers, 1.6 cm^3 of support) and read SF 0.60 designed in full. Which
+process is intent, and a study that names one keeps it; which way the
+layers run and whether it stands on supports are physics and cost, so the
+library decides.
 `loadpath check` says what it took. `"process": "none"` asks for an ideal
 isotropic solid on purpose (a benchmark, a part made some other way), and a
 study with a `milling` or `casting` block is milled or cast.
@@ -374,7 +388,7 @@ Not fixed in this pass. Ranked by how much each distorts a real part;
 | 2 | Contact band (`verify.py`) | Stress within a band of loads and supports is left out of the peak | Parts often break exactly there: under a bolt head, at a clamp's edge. The band hides the solver's artefact and the real concentration together | High where interfaces govern (turret: 76% of mass is interfaces) | follows #1: with real contact and uniform tractions (done) the band can shrink. Outside it the tet re-check reads stress over the material's length (section 8), so the band no longer has to hide mesh noise |
 | 3 | Thin members (`verify.py`, `fits.py`) | The delivered geometry is the printed geometry | A 1.4 mm member printed 0.2 mm under is 37% less stiff in bending and 27% weaker; FDM walls come in whole bead widths; thin SLS walls are weaker than thick ones. Only bores carry a tolerance today | High for parts sized by the minimum member | new: as-printed section on thin members (calibration coupons S, T) |
 | 4 | The search (`study.py`) | A study that times none of its loads is still designed as applied once | A part an agent ships without answering the check's question lasts ~600 cycles | High, but asked and priced | no library default (decided): the agent declares the life from the user's intent, and a declared life is designed for |
-| 5 | Process (`spec.py`) | A process named without `buildDirection` still builds along +z (fdm, lpbf) | The study's z is taken for the printer's; the best direction can be 2x stronger across the bonds | Medium (no process at all now takes the material's and chooses) | default `buildDirection` to `"auto"`; costs six coarse designs per run |
+| 5 | Process (`spec.py`) | A process named without `buildDirection` still builds along +z (fdm, lpbf) | The study's z is taken for the printer's; the best direction can be 2x stronger across the bonds | Medium (no process at all now takes the material's and chooses) | default `buildDirection` to `"auto"`; costs one coarse free design and its per-axis checks, plus the self-supporting designs that could beat supports |
 | 6 | Load direction (`spec.py`) | A force points exactly where the study says | Nobody loads a hook within 0° of vertical. `direction: cone` exists; nothing applies it by default | Medium to high on slender, single-direction parts | new: a default misalignment, or an off-axis capacity reading (three extra solves) |
 | 7 | Incidental loads | Only declared cases exist | Parts are dropped, plugged into, leaned on and shipped. `feel.drop` covers a part on a mount inside an enclosure; structural studies have nothing | Medium to high for handheld parts | partly in flight (touch-mic USB insertion load); general handling case is new |
 | 8 | Moisture (`material_library.py`) | Nylon cards are dry as printed | Nylons lose stiffness and strength as they take up water: a little for PA12, about half for PA6-based filaments | Medium for nylons in service | new: `conditioned` values on the cards |

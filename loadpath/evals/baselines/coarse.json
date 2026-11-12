@@ -340,65 +340,53 @@
   "tier": "coarse",
   "pass": true,
   "best": {
-   "volumeFraction": 0.09375,
-   "mass": 26.89958232486685,
-   "massReduction": 0.821537473276844,
-   "safetyFactor": 3.858754679689174,
-   "p5Member": 3.941050412028832,
-   "minMember": 1.6890216051552138,
+   "volumeFraction": 0.03979653447518099,
+   "mass": 22.944175480389138,
+   "massReduction": 0.8476251980143868,
+   "safetyFactor": 3.179800796114475,
+   "p5Member": 3.5577702984160258,
+   "minMember": 2.41468838210462,
    "creaseLength": 0.0,
-   "p5Thickness": 2.7313533092267828,
-   "p1Thickness": 2.3438391905376004,
-   "deflection": 0.0404764254635522,
+   "p5Thickness": 3.0993515889351726,
+   "p1Thickness": 3.0117664217306586,
+   "deflection": 0.07646654963730672,
    "iterations": 30,
-   "optimizerSeconds": 3.962380886077881,
-   "bucklingFactor": 12.59787847870567
+   "optimizerSeconds": 42.24125647544861,
+   "bucklingFactor": 4.394555993062872
   },
   "pareto": {
-   "points": 7,
+   "points": 3,
    "front": [
     [
-     22.999821801866847,
-     2.384874127196853
+     22.503388983769835,
+     2.1072012411801166
     ],
     [
-     24.332436419216826,
-     2.792142495592341
+     22.944175480389138,
+     3.179800796114475
     ],
     [
-     25.52495338052431,
-     2.820169498758139
-    ],
-    [
-     26.89958232486685,
-     3.858754679689174
-    ],
-    [
-     31.79023150148999,
-     6.532911981322374
-    ],
-    [
-     51.41624277858232,
-     24.512506027793176
+     25.930267612398346,
+     5.712886855980464
     ]
    ],
-   "solidMass": 150.72958350856157,
+   "solidMass": 150.57722918357243,
    "target": 3.0,
-   "massAtTarget": 25.762969690232374,
+   "massAtTarget": 22.870286056657733,
    "bracketed": true,
-   "hypervolume": 1.6428812273714746
+   "hypervolume": 1.5994405801079625
   },
   "checks": [
    {
     "check": "safetyFactor",
-    "value": 3.858754679689174,
+    "value": 3.179800796114475,
     "op": ">=",
     "limit": 3.0,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 1.0880185641326534e-14,
+    "value": 0.0,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -419,17 +407,20 @@
    },
    {
     "check": "buckling",
-    "value": 12.59787847870567,
+    "value": 4.394555993062872,
     "op": ">=",
     "limit": 3.0,
     "pass": true
    }
   ],
-  "seconds": 1751.3696208000183,
+  "seconds": 1156.3602895736694,
   "methodChoice": {
-   "method": "search",
-   "stressUtilization": 0.3177644307922587,
-   "reason": "stress utilization 0.32 >= 0.19: the search part is worked evenly"
+   "method": "constrained",
+   "stressUtilization": 0.2001382172864347,
+   "searchMass": 23.20125675621294,
+   "constrainedMass": 22.944175480389138,
+   "probe": true,
+   "reason": "stress utilization 0.20: constrained 22.9 g against search 23.2 g"
   }
  },
  {
@@ -486,54 +477,46 @@
   "tier": "coarse",
   "pass": true,
   "best": {
-   "volumeFraction": 0.24860616300253963,
-   "mass": 14.72533695075987,
-   "massReduction": 0.7750070750708979,
-   "safetyFactor": 1.5838281087322446,
+   "volumeFraction": 0.22555533889553336,
+   "mass": 13.023082619439487,
+   "massReduction": 0.8010163393925026,
+   "safetyFactor": 1.5552991805337446,
    "p5Member": 4.143032641352253,
-   "minMember": 4.143032641352253,
-   "creaseLength": 0.0,
-   "p5Thickness": 3.9496862682542706,
-   "p1Thickness": 2.796664769089048,
-   "deflection": 3.2847788822791277,
+   "minMember": 1.7755854177223942,
+   "creaseLength": 0.4422024199387437,
+   "p5Thickness": 3.815048248012248,
+   "p1Thickness": 2.299661551280552,
+   "deflection": 3.796796033788366,
    "iterations": 30,
-   "optimizerSeconds": 4.440819501876831,
-   "bucklingFactor": 0.3179758772646134
+   "optimizerSeconds": 3.9243979454040527,
+   "bucklingFactor": 0.23376821365844203
   },
   "pareto": {
-   "points": 6,
+   "points": 3,
    "front": [
     [
-     13.213766819246032,
-     1.4188943771641607
+     13.023082619439487,
+     1.5552991805337446
     ],
     [
-     14.72533695075987,
-     1.5838281087322446
+     18.449978675123468,
+     2.0549280822595444
     ],
     [
-     16.165890476199294,
-     1.7551382494639138
-    ],
-    [
-     18.458101228559023,
-     2.002377069959865
-    ],
-    [
-     21.786080097431576,
-     2.4733751754128
+     22.380977548056155,
+     3.024876859337316
     ]
    ],
-   "solidMass": 65.448,
+   "solidMass": 65.44800000000001,
    "target": 1.5,
-   "massAtTarget": 13.957076485564192,
-   "bracketed": true,
-   "hypervolume": 1.2539794612265591
+   "massAtTarget": 13.023082619439487,
+   "bracketed": false,
+   "hypervolume": 1.4843278564091458
   },
   "checks": [
    {
     "check": "safetyFactor",
-    "value": 1.5838281087322446,
+    "value": 1.5552991805337446,
     "op": ">=",
     "limit": 1.5,
     "pass": true
@@ -546,11 +529,13 @@
     "pass": true
    }
   ],
-  "seconds": 984.9322049617767,
+  "seconds": 838.8546855449677,
   "methodChoice": {
    "method": "search",
-   "stressUtilization": 0.20012930947373916,
-   "reason": "stress utilization 0.20 >= 0.19: the search part is worked evenly"
+   "stressUtilization": 0.18175203499583495,
+   "searchMass": 13.023082619439487,
+   "constrainedMass": 31.051160101331366,
+   "reason": "stress utilization 0.18: constrained 31.1 g against search 13.0 g"
   }
  },
  {
@@ -559,51 +544,44 @@
   "pass": true,
   "best": {
    "volumeFraction": 0.3,
-   "mass": 26.14281164851822,
-   "massReduction": 0.7068347629879346,
-   "safetyFactor": 6.197956079848829,
-   "p5Member": 2.217114280747568,
-   "minMember": 2.217114280747568,
-   "creaseLength": 26.71719626195327,
-   "p5Thickness": 2.1746137034442206,
-   "p1Thickness": 1.6014470869417177,
-   "deflection": 0.399369054097392,
+   "mass": 26.969011967880643,
+   "massReduction": 0.6966354289701605,
+   "safetyFactor": 3.94699540759317,
+   "p5Member": 2.2614565663625195,
+   "minMember": 2.2614565663625195,
+   "creaseLength": 49.801546338895854,
+   "p5Thickness": 2.342922561116434,
+   "p1Thickness": 1.8136229082303552,
+   "deflection": 0.4939489048468817,
    "iterations": 30,
-   "optimizerSeconds": 3.738710403442383
+   "optimizerSeconds": 2.6082212924957275,
+   "bucklingFactor": 43.12791565845429
   },
   "pareto": {
-   "points": 3,
+   "points": 1,
    "front": [
     [
-     18.83294537160556,
-     3.616091246008903
-    ],
-    [
-     26.14281164851822,
-     6.197956079848829
-    ],
-    [
-     35.82353155035764,
-     9.152671431422988
+     26.969011967880643,
+     3.94699540759317
     ]
    ],
-   "solidMass": 89.17432337805553,
+   "solidMass": 88.89967564876889,
    "target": 2.0,
-   "massAtTarget": 18.83294537160556,
+   "massAtTarget": 26.969011967880643,
    "bracketed": false,
-   "hypervolume": 1.561880033508267
+   "hypervolume": 1.3748084194559609
   },
   "checks": [
    {
     "check": "safetyFactor",
-    "value": 6.197956079848829,
+    "value": 3.94699540759317,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 2.0112150649367912e-14,
+    "value": 7.133237143325255e-15,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -621,13 +599,96 @@
     "op": "==",
     "limit": 1,
     "pass": true
+   },
+   {
+    "check": "buckling",
+    "value": 43.12791565845429,
+    "op": ">=",
+    "limit": 2.0,
+    "pass": true
    }
   ],
-  "seconds": 61.11469268798828,
+  "seconds": 333.82881259918213,
   "methodChoice": {
    "method": "search",
-   "stressUtilization": 0.19897542158941137,
-   "reason": "no passing search part to compare"
+   "stressUtilization": 0.19080251350546273,
+   "reason": "deflection-bound: the search's compliance design is the right one"
+  },
+  "process": {
+   "type": "fdm",
+   "inferred": true,
+   "overhangControl": false,
+   "buildDirection": "+y",
+   "supports": {
+    "volumeFraction": 0.3,
+    "ranking": [
+     {
+      "direction": "+y",
+      "overhangs": false,
+      "safetyFactor": 3.7485245698757734,
+      "mass": 26.969011967880643,
+      "supportVolume": 0.0,
+      "makeCost": 12.61
+     },
+     {
+      "direction": "+x",
+      "overhangs": false,
+      "safetyFactor": 3.8746863588529696,
+      "mass": 26.969011967880643,
+      "supportVolume": 7583.5425483139825,
+      "makeCost": 13.33
+     },
+     {
+      "direction": "-x",
+      "overhangs": false,
+      "safetyFactor": 3.8746863588529696,
+      "mass": 26.969011967880643,
+      "supportVolume": 7791.467662758055,
+      "makeCost": 13.33
+     },
+     {
+      "direction": "+z",
+      "overhangs": false,
+      "safetyFactor": 3.037892992315862,
+      "mass": 26.969011967880643,
+      "supportVolume": 1733.2507586861361,
+      "makeCost": 13.15
+     },
+     {
+      "direction": "+x",
+      "overhangs": true,
+      "safetyFactor": 2.4547524767864726,
+      "mass": 25.70164156940848,
+      "supportVolume": 1232.36942625588,
+      "makeCost": 13.55
+     },
+     {
+      "direction": "-x",
+      "overhangs": true,
+      "safetyFactor": 2.4351573479553252,
+      "mass": 25.715951395738184,
+      "supportVolume": 1228.1227991027374,
+      "makeCost": 13.55
+     },
+     {
+      "direction": "-y",
+      "overhangs": false,
+      "safetyFactor": 3.7485245698757734,
+      "mass": 26.969011967880643,
+      "supportVolume": 40025.89394285666,
+      "makeCost": 16.08
+     },
+     {
+      "direction": "-z",
+      "overhangs": false,
+      "safetyFactor": 3.037892992315862,
+      "mass": 26.969011967880643,
+      "supportVolume": 48597.62225643217,
+      "makeCost": 16.51
+     }
+    ],
+    "chosen": "on supports"
+   }
   }
  },
  {
@@ -1013,61 +1074,57 @@
   "tier": "coarse",
   "pass": true,
   "best": {
-   "volumeFraction": 0.08496332340288573,
-   "mass": 48.45683303805063,
-   "massReduction": 0.8840179503917632,
-   "safetyFactor": 3.01030669621144,
+   "volumeFraction": 0.06874875759365881,
+   "mass": 41.592882793745254,
+   "massReduction": 0.9004469030870077,
+   "safetyFactor": 3.1207788935773078,
    "p5Member": 4.33674040581902,
    "minMember": 1.8586030310652943,
-   "creaseLength": 3.3582556964889942,
-   "p5Thickness": 3.994009467443295,
-   "p1Thickness": 3.142889476932823,
-   "deflection": 0.13149163173449804,
+   "creaseLength": 1.0856887189878037,
+   "p5Thickness": 4.304228350914622,
+   "p1Thickness": 3.17518013090474,
+   "deflection": 0.18980607995247734,
    "iterations": 30,
-   "optimizerSeconds": 123.28689646720886,
-   "bucklingFactor": 26.9802022061937
+   "optimizerSeconds": 64.44226622581482,
+   "bucklingFactor": 13.103880921375545
   },
   "pareto": {
-   "points": 5,
+   "points": 6,
    "front": [
     [
-     29.417342082098173,
-     0.9341561481526282
+     30.102688487417147,
+     1.3282366516570134
     ],
     [
-     32.87760125518182,
-     1.0398303221891485
+     30.413720033117716,
+     1.6514918436281838
     ],
     [
-     34.921469588890766,
-     1.0966583099286793
+     32.639872672098015,
+     1.7624851466406974
     ],
     [
-     36.67592935708038,
-     1.502755656389752
-    ],
-    [
-     48.45683303805063,
-     3.01030669621144
+     41.592882793745254,
+     3.1207788935773078
     ]
    ],
-   "solidMass": 417.7959710293766,
+   "solidMass": 417.7959710293769,
    "target": 2.5,
-   "massAtTarget": 44.468991912265466,
+   "massAtTarget": 37.501102403798434,
    "bracketed": true,
-   "hypervolume": 1.0883873663446015
+   "hypervolume": 1.143061095878598
   },
   "checks": [
    {
     "check": "safetyFactor",
-    "value": 3.01030669621144,
+    "value": 3.1207788935773078,
     "op": ">=",
     "limit": 2.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": -8.761369993219581e-16,
+    "value": 4.010590043933022e-15,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -1095,19 +1152,95 @@
    },
    {
     "check": "buckling",
-    "value": 26.9802022061937,
+    "value": 13.103880921375545,
     "op": ">=",
     "limit": 2.5,
     "pass": true
    }
   ],
-  "seconds": 1627.0562062263489,
+  "seconds": 1634.9177463054657,
   "methodChoice": {
    "method": "constrained",
-   "stressUtilization": 0.12657696988794104,
-   "searchMass": 68.68055592153897,
-   "constrainedMass": 48.45683303805063,
-   "reason": "stress utilization 0.13: constrained 48.5 g against search 68.7 g"
+   "stressUtilization": 0.11493185527313901,
+   "searchMass": 48.0955179318945,
+   "constrainedMass": 41.592882793745254,
+   "reason": "stress utilization 0.11: constrained 41.6 g against search 48.1 g"
+  },
+  "process": {
+   "type": "fdm",
+   "inferred": true,
+   "overhangControl": false,
+   "buildDirection": "-z",
+   "supports": {
+    "volumeFraction": 0.06874875759365881,
+    "ranking": [
+     {
+      "direction": "-z",
+      "overhangs": false,
+      "safetyFactor": 5.831993509054688,
+      "mass": 41.592882793745254,
+      "supportVolume": 1979.7626914997995,
+      "makeCost": 12.05
+     },
+     {
+      "direction": "+x",
+      "overhangs": false,
+      "safetyFactor": 4.1823258413271915,
+      "mass": 41.592882793745254,
+      "supportVolume": 0.0,
+      "makeCost": 14.16
+     },
+     {
+      "direction": "-x",
+      "overhangs": false,
+      "safetyFactor": 4.1823258413271915,
+      "mass": 41.592882793745254,
+      "supportVolume": 15556.942521267123,
+      "makeCost": 15.08
+     },
+     {
+      "direction": "+y",
+      "overhangs": false,
+      "safetyFactor": 3.57668595497793,
+      "mass": 41.592882793745254,
+      "supportVolume": 14271.004097683459,
+      "makeCost": 16.08
+     },
+     {
+      "direction": "-y",
+      "overhangs": false,
+      "safetyFactor": 3.57668595497793,
+      "mass": 41.592882793745254,
+      "supportVolume": 14254.201766364857,
+      "makeCost": 16.11
+     },
+     {
+      "direction": "-z",
+      "overhangs": true,
+      "safetyFactor": 4.2042845314926485,
+      "mass": 58.39554115752406,
+      "supportVolume": 5111.56222407468,
+      "makeCost": 16.11
+     },
+     {
+      "direction": "+z",
+      "overhangs": false,
+      "safetyFactor": 5.831993509054688,
+      "mass": 41.592882793745254,
+      "supportVolume": 129623.2651904862,
+      "makeCost": 19.69
+     },
+     {
+      "direction": "+z",
+      "overhangs": true,
+      "safetyFactor": 1.47950514651795,
+      "mass": 55.222859594626186,
+      "supportVolume": 146122.17401315912,
+      "makeCost": 38.66
+     }
+    ],
+    "chosen": "on supports"
+   }
   }
  },
  {

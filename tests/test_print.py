@@ -267,11 +267,14 @@ def test_rank_orientations_reads_what_verify_reads():
 
 
 def test_choose_build_direction_halves_and_shares():
-    """The orientation search by successive halving: every direction half
-    way and checked cheaply, only the leaders finished. A flat lug pulled in
-    its plane bends along its length (x): stood on its root (+-x) that
-    bending crosses the layers."""
-    from loadpath.orient import _FINALISTS, choose_build_direction
+    """The orientation search: the free design (no overhang control) is one
+    design for every direction, verified once per axis and printed on its
+    supports; a direction is grown self-supporting only when the free
+    design's cost there without any supports would still beat the best
+    supported print; every option is priced at equal strength and the
+    cheapest is kept. A flat lug pulled in its plane bends along its length
+    (x): stood on its root (+-x) that bending crosses the layers."""
+    from loadpath.orient import _FINALISTS, _make_cost, choose_build_direction
 
     spec = {
         "designSpace": {"type": "box", "min": [0, -15, -4], "max": [60, 15, 4]},
@@ -283,29 +286,63 @@ def test_choose_build_direction_halves_and_shares():
         "loadCases": [{"name": "pull", "loads": [{"region": "pin", "force": [0, -80, 0]}]}],
         "material": "petg", "process": {"type": "fdm", "buildDirection": "auto"},
         "goal": {"volumeFraction": 0.35}, "maxIterations": 60}
+    study = study_from_dict(spec)
     events = []
-    out = choose_build_direction(study_from_dict(spec), candidates=["+z", "-z", "+y", "+x"], max_elements=1500,
+    out = choose_build_direction(study, candidates=["+z", "-z", "+y", "+x"], max_elements=1500,
                                  on_progress=lambda e, _: events.append(e))
     rows = out["candidates"]
-    assert {r["direction"] for r in rows} == {"+z", "-z", "+y", "+x"}
-    done = [r for r in rows if r["designed"]]
-    dropped = [r for r in rows if not r["designed"]]
-    assert 1 <= len(done) <= _FINALISTS and dropped, rows
-    # the finalists were the best half-way, and the pick is one of them
-    eff = lambda r: r["screenSafetyFactor"] / r["screenMass"]  # noqa: E731
-    assert min(eff(r) for r in done) >= max(eff(r) for r in dropped), rows
-    assert rows[0]["designed"] and rows[0]["direction"] == out["chosen"]
-    assert all(r["safetyFactor"] is None for r in dropped)
+    free = {r["direction"]: r for r in rows if not r["overhangs"]}
+    assert set(free) == {"+z", "-z", "+y", "+x"} and all(r["designed"] for r in free.values())
+    # one design: opposite directions read alike, across the layers weaker
+    assert free["+z"]["safetyFactor"] == free["-z"]["safetyFactor"]
+    assert free["+x"]["safetyFactor"] < free["+z"]["safetyFactor"]
+    # self-supporting only where its bound (the free design's cost there with
+    # no supports at all) is under the best supported print
+    best_free = min(r["makeCost"] for r in free.values())
+    tried = {r["direction"] for r in rows if r["overhangs"]}
+    for d, r in free.items():
+        bound = _make_cost(r | {"supportVolume": 0.0, "supportArea": 0.0}, study, study.process, 1.0
+                           if study.goal.safety_factor else max(x["strength"] for x in free.values()))
+        assert (d in tried) == (bound < best_free), (d, bound, best_free)
+    # the cheapest designed option is the pick, and the study carries it
+    designed = [r for r in rows if r["designed"]]
+    assert rows[0]["makeCost"] == min(r["makeCost"] for r in designed)
     assert out["study"].process.build == parse_build_direction(out["chosen"])
+    assert out["study"].process.overhangs == rows[0]["overhangs"]
+    assert any("supported" in e for e in events)
+    # more self-supporting candidates than finalists: successive halving
+    # (layered design stiffness makes every direction's design its own)
+    ani = choose_build_direction(study_from_dict({**spec, "process": {"type": "fdm", "buildDirection": "auto",
+                                                                      "anisotropic": True}}),
+                                 candidates=["+z", "-z", "+y", "+x"], max_elements=1500,
+                                 on_progress=lambda e, _: events.append(e))
+    done = [r for r in ani["candidates"] if r["designed"]]
+    dropped = [r for r in ani["candidates"] if not r["designed"]]
+    assert 1 <= len(done) <= _FINALISTS and dropped, ani["candidates"]
+    assert all(r["safetyFactor"] is None for r in dropped)
     assert any("screen" in e for e in events)
     # without overhang control every direction shares the one design: it is
     # verified once per axis, nothing is optimized per direction
     sls = choose_build_direction(study_from_dict({**spec, "process": {"type": "sls", "buildDirection": "auto"}}),
                                  candidates=["+z", "-z", "+x"], max_elements=1500)
     by = {r["direction"]: r for r in sls["candidates"]}
-    assert all(r["designed"] for r in by.values())
+    assert all(r["designed"] and not r["overhangs"] for r in by.values())
     assert by["+z"]["safetyFactor"] == by["-z"]["safetyFactor"]
     assert by["+x"]["safetyFactor"] < by["+z"]["safetyFactor"]
+
+
+def test_supports_are_priced_from_the_part():
+    """costing.estimate with the part's own supports: more support (and more
+    supported face) costs more, and none costs less than the flat allowance."""
+    from loadpath import costing
+
+    g = {"volume": 10.0, "surface": 0.0, "extent": [0, 0, 0], "box": 0.0, "height": 10.0}
+    for kind, mat in (("lpbf", "alsi10mg"), ("fdm", "petg")):
+        flat = costing.estimate(kind, mat, mass=27.0, geometry=g)["unitCost"]
+        none = costing.estimate(kind, mat, mass=27.0, geometry=g, support={"volume": 0, "area": 0})["unitCost"]
+        some = costing.estimate(kind, mat, mass=27.0, geometry=g, support={"volume": 2000, "area": 800})
+        assert none < flat and none < some["unitCost"], (kind, none, flat, some)
+        assert some["breakdown"]["supportRemoval"] > 0 and some["breakdown"]["supportMaterial"] > 0
 
 
 def test_write_3mf_places_part_on_bed():

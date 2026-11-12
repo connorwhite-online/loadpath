@@ -1483,66 +1483,59 @@
   "tier": "full",
   "pass": true,
   "best": {
-   "volumeFraction": 0.3,
-   "mass": 27.600593260298297,
-   "massReduction": 0.6904872140909298,
-   "safetyFactor": 3.6477734814190086,
-   "p5Member": 1.4625000000000001,
-   "minMember": 1.4625000000000001,
-   "creaseLength": 0.0,
-   "p5Thickness": 2.8420350548557223,
-   "p1Thickness": 2.438248249812051,
-   "deflection": 0.4302090519152167,
-   "iterations": 58,
-   "optimizerSeconds": 20.49313187599182
+   "volumeFraction": 0.24758388508133686,
+   "mass": 26.26405070933324,
+   "massReduction": 0.7045652808329795,
+   "safetyFactor": 4.2418076701007505,
+   "p5Member": 3.8562478134552065,
+   "minMember": 2.453975881289677,
+   "creaseLength": 4.112178642165565,
+   "p5Thickness": 3.22061891405771,
+   "p1Thickness": 3.0720623142111125,
+   "deflection": 0.4938115982358172,
+   "iterations": 48,
+   "optimizerSeconds": 302.09897232055664,
+   "bucklingFactor": 38.23594670647741
   },
   "pareto": {
-   "points": 3,
+   "points": 1,
    "front": [
     [
-     20.553914822784797,
-     1.5877369829865806
-    ],
-    [
-     27.600593260298297,
-     3.6477734814190086
-    ],
-    [
-     38.083594871610515,
-     7.175541963400411
+     26.26405070933324,
+     4.2418076701007505
     ]
    ],
-   "solidMass": 89.17432337805555,
+   "solidMass": 88.89967564876888,
    "target": 2.0,
-   "massAtTarget": 21.96412523157286,
-   "bracketed": true,
-   "hypervolume": 1.423003795586443
+   "massAtTarget": 26.26405070933324,
+   "bracketed": false,
+   "hypervolume": 1.409130561665959
   },
   "checks": [
    {
     "check": "massReduction",
-    "value": 0.6904872140909298,
+    "value": 0.7045652808329795,
     "op": ">=",
     "limit": 0.6,
     "pass": true
    },
    {
     "check": "safetyFactor",
-    "value": 3.6477734814190086,
+    "value": 4.2418076701007505,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    },
    {
     "check": "deflection",
-    "value": 0.4302090519152167,
+    "value": 0.4938115982358172,
     "op": "<=",
     "limit": 0.5,
     "pass": true
    },
    {
     "check": "keepOutIntrusion",
-    "value": 3.32938573359534e-14,
+    "value": 7.367831388396806e-16,
     "op": "<=",
     "limit": 1.0,
     "pass": true
@@ -1563,13 +1556,112 @@
    },
    {
     "check": "member",
-    "value": 2.8420350548557223,
+    "value": 3.22061891405771,
+    "op": ">=",
+    "limit": 2.0,
+    "pass": true
+   },
+   {
+    "check": "buckling",
+    "value": 38.23594670647741,
     "op": ">=",
     "limit": 2.0,
     "pass": true
    }
   ],
-  "seconds": 117.28323125839233
+  "seconds": 1061.8261206150055,
+  "methodChoice": {
+   "method": "constrained",
+   "stressUtilization": 0.19232436822566565,
+   "searchMass": 30.080876096293736,
+   "constrainedMass": 26.26405070933324,
+   "probe": true,
+   "reason": "stress utilization 0.19: constrained 26.3 g against search 30.1 g"
+  },
+  "process": {
+   "type": "fdm",
+   "inferred": true,
+   "overhangControl": false,
+   "buildDirection": "+y",
+   "supports": {
+    "volumeFraction": 0.24758388508133686,
+    "ranking": [
+     {
+      "direction": "+y",
+      "overhangs": false,
+      "safetyFactor": 2.8456090121165403,
+      "mass": 26.26405070933324,
+      "supportVolume": 145.05302606857958,
+      "makeCost": 12.64
+     },
+     {
+      "direction": "+x",
+      "overhangs": false,
+      "safetyFactor": 4.150049841589164,
+      "mass": 26.26405070933324,
+      "supportVolume": 8955.301354176516,
+      "makeCost": 13.17
+     },
+     {
+      "direction": "-x",
+      "overhangs": false,
+      "safetyFactor": 4.150049841589164,
+      "mass": 26.26405070933324,
+      "supportVolume": 8940.235073015801,
+      "makeCost": 13.17
+     },
+     {
+      "direction": "+x",
+      "overhangs": true,
+      "safetyFactor": 2.3963819458966795,
+      "mass": 23.655484904228064,
+      "supportVolume": 1612.6988286556423,
+      "makeCost": 16.81
+     },
+     {
+      "direction": "+y",
+      "overhangs": true,
+      "safetyFactor": 1.3146352464379085,
+      "mass": 23.758071745681214,
+      "supportVolume": 0.0,
+      "makeCost": 17.5
+     },
+     {
+      "direction": "+z",
+      "overhangs": false,
+      "safetyFactor": 2.2867311981667777,
+      "mass": 26.26405070933324,
+      "supportVolume": 3712.395789834739,
+      "makeCost": 13.53
+     },
+     {
+      "direction": "-y",
+      "overhangs": false,
+      "safetyFactor": 2.8456090121165403,
+      "mass": 26.26405070933324,
+      "supportVolume": 37987.86487128624,
+      "makeCost": 15.55
+     },
+     {
+      "direction": "-z",
+      "overhangs": false,
+      "safetyFactor": 2.2867311981667777,
+      "mass": 26.26405070933324,
+      "supportVolume": 44560.610167441264,
+      "makeCost": 16.12
+     },
+     {
+      "direction": "-x",
+      "overhangs": true,
+      "safetyFactor": 2.319234746007382,
+      "mass": 23.6997535394648,
+      "supportVolume": 1609.5277938298013,
+      "makeCost": 16.79
+     }
+    ],
+    "chosen": "on supports"
+   }
+  }
  },
  {
   "case": "printed-hook",

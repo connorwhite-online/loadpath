@@ -27,6 +27,12 @@ What each model counts, per part at `quantity` parts:
              melt rate + height / layer x recoat seconds) x $/h, a build
              set-up share and post-processing (stress relief, cut from the
              plate, support removal) per part.
+
+  Given the part's own supports (`support`: printcheck's supportVolume and
+  supportArea for its build direction), fdm and lpbf count them instead of
+  the flat allowance: the support's volume at its fill density as material
+  and machine time, and its removal (breaking off, cutting and finishing
+  the scarred downward faces) per cm^2 of supported face.
   cast       tooling (pattern and core boxes) once per order, metal (mass x 2
              for gates and risers) x $/kg, foundry labour per part, and
              machining of the preserved interfaces (bores, faces) per part.
@@ -58,7 +64,10 @@ MATERIAL_PRICE = {
 # per method; see the module docstring for what each number is
 RATES = {
     "fdm": {"materialFactor": 1.1, "machinePerHour": 3.0, "depositionCm3PerHour": 12.0,
-            "hoursPer10mmHeight": 0.1, "perPart": 5.0, "queueDays": 2.0, "hoursPerDay": 20.0},
+            "hoursPer10mmHeight": 0.1, "perPart": 5.0, "queueDays": 2.0, "hoursPerDay": 20.0,
+            # slicer support at ~15% fill; break-away support comes off at a
+            # few cm^2 a minute of a $30/h hand, and the face it leaves is rough
+            "supportDensity": 0.15, "supportRemovalPerCm2": 0.15},
     "sls": {"partPerCm3": 0.45, "boxPerCm3": 0.04, "perPart": 10.0, "queueDays": 6.0},
     "mjf": {"partPerCm3": 0.40, "boxPerCm3": 0.04, "perPart": 10.0, "queueDays": 5.0},
     "sla": {"materialFactor": 1.3, "machinePerHour": 5.0, "layerMm": 0.05, "secondsPerLayer": 9.0,
@@ -71,7 +80,11 @@ RATES = {
                    "perPart": 15.0, "queueDays": 5.0, "hoursPerDay": 16.0},
     "lpbf": {"materialFactor": 1.3, "machinePerHour": 60.0, "meltCm3PerHour": 18.0, "layerMm": 0.04,
              "recoatSeconds": 8.0, "buildSetup": 150.0, "postPerPart": 80.0, "queueDays": 10.0,
-             "hoursPerDay": 22.0},
+             "hoursPerDay": 22.0,
+             # block and lattice supports scan at ~25% of solid; they are cut
+             # and ground off welded metal, ~1 cm^2 a minute at $60/h, and the
+             # downward face is left rough (Ra 15-25 um) to finish
+             "supportDensity": 0.25, "supportRemovalPerCm2": 1.0},
     "cast": {"tooling": 900.0, "materialFactor": 2.0, "perPart": 25.0, "interfaceMachining": 30.0,
              "queueDays": 25.0, "hoursPerDay": 8.0, "hoursPerPart": 0.5},
     "milled": {"programming": 180.0, "setupPerSide": 45.0, "stockMarginMm": 3.0,
@@ -134,13 +147,17 @@ def _geometry(mesh, build=None) -> dict:
 
 def estimate(method: str, material: str, mesh=None, *, mass: float | None = None, quantity: int = 1,
              build=None, milling_sides: int = 1, milling_axes: float = 3, print_seconds: float | None = None,
-             rates: dict | None = None, geometry: dict | None = None, machining: dict | None = None) -> dict:
+             rates: dict | None = None, geometry: dict | None = None, machining: dict | None = None,
+             support: dict | None = None) -> dict:
     """{"unitCost", "orderCost", "fixedCost", "machineHours", "leadDays",
     "breakdown", ...} for `quantity` parts of `mesh` made by `method` in
     `material`. `mass` (g) is the verified mass; `print_seconds` the
     slicer's print time when there is one (FDM); `machining` the
     outcome's manufacture.machining_report (milled), whose cutter-path
-    minutes and set-ups replace the volume/area estimate."""
+    minutes and set-ups replace the volume/area estimate; `support`
+    ({"volume": mm^3, "area": mm^2}, printcheck's supportVolume and
+    supportArea) the part's own supports (fdm, lpbf), which replace the flat
+    allowance for them."""
     fam = method_family(method)
     if fam == "milled" and str(method).lower().startswith("milled-"):
         milling_axes = float(str(method).lower()[7:].replace("axis", "") or milling_axes)
@@ -155,12 +172,18 @@ def estimate(method: str, material: str, mesh=None, *, mass: float | None = None
     parts = {}
     hours = 0.0
     note = None
+    sup_cm3 = sup_cm2 = 0.0
+    if support is not None and fam in ("fdm", "lpbf"):
+        # the part's own supports in place of the flat allowance
+        r["materialFactor"] = 1.0
+        sup_cm3 = float(support.get("volume") or 0.0) / 1000.0 * r["supportDensity"]
+        sup_cm2 = float(support.get("area") or 0.0) / 100.0
     if fam == "fdm":
         if print_seconds:
             hours = print_seconds / 3600.0
             note = "printer hours from the slicer"
         else:
-            hours = g["volume"] / r["depositionCm3PerHour"] + r["hoursPer10mmHeight"] * g["height"] / 10.0
+            hours = (g["volume"] + sup_cm3) / r["depositionCm3PerHour"] + r["hoursPer10mmHeight"] * g["height"] / 10.0
             note = "printer hours estimated (no slicer run): solid deposition rate and height"
         parts = {"material": kg * r["materialFactor"] * price, "machine": hours * r["machinePerHour"],
                  "handling": r["perPart"]}
@@ -178,7 +201,8 @@ def estimate(method: str, material: str, mesh=None, *, mass: float | None = None
                  "machine": hours * r["machinePerHour"], "handling": r["perPart"]}
     elif fam == "lpbf":
         melt = (rates or {}).get("lpbf", {}).get("meltCm3PerHour") or _LPBF_MELT.get(material, r["meltCm3PerHour"])
-        hours = g["volume"] * r["materialFactor"] / melt + g["height"] / r["layerMm"] * r["recoatSeconds"] / 3600.0
+        hours = ((g["volume"] * r["materialFactor"] + sup_cm3) / melt
+                 + g["height"] / r["layerMm"] * r["recoatSeconds"] / 3600.0)
         fixed = r["buildSetup"]
         parts = {"powder": kg * r["materialFactor"] * price, "machine": hours * r["machinePerHour"],
                  "postProcessing": r["postPerPart"]}
@@ -209,6 +233,10 @@ def estimate(method: str, material: str, mesh=None, *, mass: float | None = None
             note += "; machine hours and set-ups from the part's machining report (cutter reach per direction)"
         if float(milling_axes) == 5:
             note += "; 5-axis reaches every side from 2 set-ups (3+2 positioning)"
+    if support is not None and fam in ("fdm", "lpbf"):
+        density = (mass / g["volume"]) if mass and g["volume"] > 0 else 1.0
+        parts["supportMaterial"] = sup_cm3 * density / 1000.0 * price
+        parts["supportRemoval"] = sup_cm2 * r["supportRemovalPerCm2"]
     unit_var = float(sum(parts.values()))
     order = unit_var * q + fixed
     lead = float(r["queueDays"]) + hours * q / float(r.get("hoursPerDay", 24.0))

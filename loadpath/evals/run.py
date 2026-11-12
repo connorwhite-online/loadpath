@@ -824,9 +824,11 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None, spre
         result = run_study(study, on_progress=lambda e, _x: (
             print(json.dumps(_jsonable({k: v for k, v in e.items()
                                         if k in ("stage", "volumeFraction", "safetyFactor", "mass", "method",
-                                                 "bucklingFactor", "margin")}
+                                                 "bucklingFactor", "margin", "chosen", "selfSupporting",
+                                                 "supports", "direction")}
                                        | {"case": name, "t": round(time.time() - t0)})),
-                  file=sys.stderr, flush=True) if e.get("stage") in ("outcome", "method", "confirmed") else None))
+                  file=sys.stderr, flush=True) if e.get("stage") in ("outcome", "method", "confirmed") or (
+                      e.get("stage") == "orient" and ("chosen" in e or "supports" in e)) else None))
         row = score_case(raw, result, time.time() - t0, study, tier)
         if result.best is not None or result.outcomes:
             o = result.outcomes[result.best if result.best is not None else -1]
@@ -851,6 +853,17 @@ def run_case(path, out: str, tier: str = "full", critic: str | None = None, spre
             # utilization, constrained vs search mass, a skipped or
             # time-boxed constrained stage)
             row["methodChoice"] = result.choice
+        proc = result.study.process
+        if proc is not None:
+            # how it is built: the process (declared or the material's), the
+            # layer direction and whether it stands on supports
+            from ..am import direction_label
+            row["process"] = {"type": proc.kind, "inferred": bool(getattr(proc, "inferred", False)),
+                              "overhangControl": bool(proc.overhangs),
+                              "buildDirection": direction_label(proc.build) if proc.build not in (None, "auto")
+                              else proc.build}
+            if "supports" in result.study.raw:
+                row["process"]["supports"] = result.study.raw["supports"]
         row["trace"] = [o.summary() for o in result.outcomes]
         for t in row["trace"]:
             t.pop("cases", None)
@@ -1148,7 +1161,7 @@ def main(argv=None):
         fh.write(md)
     if args.save_baseline:
         keep = ("case", "tier", "pass", "skipped", "best", "pareto", "checks", "seconds", "error", "spread",
-                "methodChoice")
+                "methodChoice", "process")
         with open(args.save_baseline, "w") as fh:
             json.dump(_jsonable([{k: r[k] for k in keep if k in r} for r in rows]), fh, indent=1)
     print(md)

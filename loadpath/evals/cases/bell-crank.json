@@ -93,6 +93,7 @@
     }
   ],
   "material": "alsi10mg",
+  "process": {"type": "lpbf", "buildDirection": "auto"},
   "goal": {
     "safetyFactor": 3.0,
     "volumeFraction": 0.25

@@ -41,6 +41,7 @@
     }
   ],
   "material": "pa12",
+  "process": "none",
   "goal": {
     "safetyFactor": 1.5,
     "volumeFraction": 0.3,
