@@ -102,6 +102,20 @@ def test_one_factor_for_a_matrix():
     assert np.abs(2.0 * u2 - u).max() < 1e-8 * np.abs(u).max()
 
 
+def _threads() -> int:
+    """This process's threads, once the ones that have ended are gone: a
+    joined thread is still listed while the kernel takes it down, so on a
+    busy machine one read can be one high (seen: 3 then 4). The least of a
+    few reads."""
+    import time
+
+    n = len(os.listdir("/proc/self/task"))
+    for _ in range(10):
+        time.sleep(0.05)
+        n = min(n, len(os.listdir("/proc/self/task")))
+    return n
+
+
 def test_threads_do_not_pile_up():
     """Factorizations from short-lived threads (every pool here is made per
     call) must not each leave a team of MKL's workers behind: the wrist
@@ -125,16 +139,16 @@ def test_threads_do_not_pile_up():
 
     with _env(LOADPATH_THREADS="3"):
         run()
-        n0 = len(os.listdir("/proc/self/task"))
+        n0 = _threads()
         for _ in range(6):
             run()
-        n1 = len(os.listdir("/proc/self/task"))
+        n1 = _threads()
     assert n1 <= n0, (n0, n1)
     assert all(np.abs(u - out[0]).max() == 0.0 for u in out)
 
 
 _KERNELS_AFTER_MKL = """
-import os, sys, threading
+import os, sys, threading, time
 sys.path.insert(0, sys.argv[1])
 import numpy as np, scipy.sparse as sp
 from numba import njit, prange
@@ -153,11 +167,18 @@ DirectSolver().solve(k, np.ones(n))          # MKL first, as the optimizer's fir
 a = np.ones(200000)
 def run():
     t = threading.Thread(target=kern, args=(a,)); t.start(); t.join()
+def threads():
+    # the least of a few reads: a joined thread is listed until the kernel has taken it down
+    n = len(os.listdir("/proc/self/task"))
+    for _ in range(10):
+        time.sleep(0.05)
+        n = min(n, len(os.listdir("/proc/self/task")))
+    return n
 run()
-n0 = len(os.listdir("/proc/self/task"))
+n0 = threads()
 for _ in range(6):
     run()
-print(n0, len(os.listdir("/proc/self/task")))
+print(n0, threads())
 """
 
 
