@@ -1199,6 +1199,46 @@ def test_restarts_deliver_the_lightest_confirmed_pick():
     assert r.outcomes[r.best].report["mass"] == 45.0 and len(r.domain["restarts"]) == 3
 
 
+def test_auto_method_holds_a_lighter_part_to_the_process_check():
+    """The constrained method's lighter part takes the search's place only
+    if the process can make it where it can make the search's: of the
+    constrained run's passing parts, the lightest whose process check
+    passes. (The MJF wrist link: 20.7 g with walls under 0.8 mm against
+    34.5 g.)"""
+    import trimesh
+    from loadpath import study as S
+
+    raw = {"name": "lug",
+           "designSpace": {"type": "box", "min": [0, -15, -4], "max": [60, 15, 4]},
+           "preserve": [{"id": "eye", "shape": {"type": "cylinder", "center": [48, 0, 0], "axis": "z", "length": 8,
+                                                "r": 9}}],
+           "keepOut": [{"id": "pin", "shape": {"type": "cylinder", "center": [48, 0, 0], "axis": "z", "length": 12,
+                                               "r": 4}}],
+           "supports": [{"shape": {"type": "box", "min": [-1, -16, -5], "max": [0.01, 16, 5]}}],
+           "loadCases": [{"name": "pull", "loads": [{"region": "pin", "force": [0, -80, 0]}]}],
+           "material": "pa12", "process": "mjf", "goal": {"safetyFactor": 2.0}, "resolution": {"pitch": 2.0}}
+
+    def part(thickness, mass, passes=True):
+        return S.Outcome(volume_fraction=0.1, mesh=trimesh.creation.box(extents=(40, 20, thickness)),
+                         report={"mass": mass, "material": {"name": "pa12"}}, optimizer={}, reconstruction={},
+                         passes=passes)
+
+    study = study_from_dict(raw)
+    search = part(6.0, 30.0)
+    # a 2 mm plate, a 0.4 mm foil (under MJF's 0.8 mm wall), and a lighter foil that failed its own checks
+    rc = S.StudyResult(study, {}, [part(2.0, 20.0), part(0.4, 10.0), part(0.4, 8.0, passes=False)], 1, 0.0)
+    best, unmade = S._makeable(study, search, rc, 30.0)
+    assert best == 0 and [u["mass"] for u in unmade] == [10.0] and "0.8 mm" in unmade[0]["why"], (best, unmade)
+    # nothing lighter the process can make: no constrained part
+    best, unmade = S._makeable(study, search, S.StudyResult(study, {}, [part(0.4, 10.0)], 0, 0.0), 30.0)
+    assert best is None and len(unmade) == 1
+    # the search's own part fails the check: by mass, as before
+    assert S._makeable(study, part(0.4, 30.0), rc, 30.0) == (1, [])
+    # a process whose print checks are not these (FDM): by mass
+    fdm = study_from_dict({**raw, "material": "petg", "process": "fdm"})
+    assert S._makeable(fdm, search, rc, 30.0) == (1, [])
+
+
 TESTS = [
     test_voxelize_keeps_a_whole_grid_box,
     test_pitch_starts_keep_the_lightest_passing_grid,
@@ -1246,6 +1286,7 @@ TESTS = [
     test_viewer_page_carries_fields_and_history,
     test_optimize_is_reproducible,
     test_restarts_deliver_the_lightest_confirmed_pick,
+    test_auto_method_holds_a_lighter_part_to_the_process_check,
 ]
 
 

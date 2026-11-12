@@ -1587,6 +1587,16 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     mc = None
     if rc.best is not None and rc.outcomes[rc.best].passes:
         mc = _weigh(rc.outcomes[rc.best].report)
+    unmade = None
+    if mc is not None and mc < ms:
+        # the lighter part must be one the process can make, where the
+        # search's is (_makeable)
+        best, unmade = _makeable(study, pick, rc, ms)
+        if best != rc.best:
+            rc.best = best
+            mc = _weigh(rc.outcomes[best].report) if best is not None else None
+        if unmade:
+            choice["constrainedUnmakeable"] = unmade
     choice.update({"searchMass": ms, "constrainedMass": mc})
     if mc is not None and mc < ms:
         if probe:
@@ -1604,7 +1614,8 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     if probe:
         choice["probe"] = True
     choice["reason"] = (f"stress utilization {u:.2f}: constrained "
-                        + (f"{mc:.1f} g" if mc is not None else "found no passing part")
+                        + (f"{mc:.1f} g" if mc is not None
+                           else "found no part the process check passes" if unmade else "found no passing part")
                         + f" against search {ms:.1f} g"
                         + (f" (probe stopped: a {beaten[0]:.1f} g part failed)" if beaten[0] is not None else ""))
     if settled[0]:
@@ -1614,6 +1625,52 @@ def _run_auto_rest(study, st, cst, spec, on_progress, should_stop, search) -> St
     r.choice = choice
     r.seconds += rc.seconds
     return r
+
+
+def _makeable(study: Study, pick: Outcome, rc: StudyResult, search_mass: float):
+    """The constrained run's part to hold against the search's `pick`: its
+    lightest passing part that the process's own checks pass
+    (processcheck.check_process: walls under the process's minimum, trapped
+    powder or resin, warp), where they pass the search's part. Returns
+    (index into rc.outcomes or None, the lighter parts set aside as
+    [{"mass", "why"}]).
+
+    The constrained method goes on to lighter parts than the search does,
+    and a process's limits are not among the optimizer's: the robot-arm
+    wrist link (MJF, 0.8 mm walls) came out at 20.7 g against the search's
+    34.5 g, strong enough on tetrahedra, and failed its wall check, which
+    only the delivered part was ever given. A part the process check
+    rejects does not take the place of one it passes. Where the search's
+    own part fails the check, or the process has none (FDM, metal: their
+    print checks are printcheck's), the choice is by mass as before."""
+    proc = study.process
+    if proc is None or pick is None or getattr(pick, "mesh", None) is None:
+        return rc.best, []
+    from .processcheck import RULES, check_process
+
+    if proc.kind not in RULES:
+        return rc.best, []
+
+    def verdict(o):
+        try:
+            mat = _material_named((o.report.get("material") or {}).get("name"), study)
+            return check_process(o.mesh, proc, material=mat, drawn=[(r.id, r.shape) for r in study.preserve])
+        except Exception:  # noqa: BLE001 - no reading is no objection
+            return {"ok": None, "warnings": []}
+
+    if verdict(pick).get("ok") is not True:
+        return rc.best, []
+    order = sorted((i for i, o in enumerate(rc.outcomes)
+                    if o.passes and getattr(o, "mesh", None) is not None and _weigh(o.report) < search_mass),
+                   key=lambda i: _weigh(rc.outcomes[i].report))
+    unmade = []
+    for i in order:
+        rep = verdict(rc.outcomes[i])
+        if rep.get("ok") is not False:
+            return i, unmade
+        unmade.append({"mass": _weigh(rc.outcomes[i].report),
+                       "why": "; ".join(rep.get("warnings") or []) or "the process check fails"})
+    return None, unmade
 
 
 def _strength_to_spare(margin: float | None) -> bool:

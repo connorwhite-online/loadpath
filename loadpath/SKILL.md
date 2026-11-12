@@ -470,7 +470,11 @@ buckling, printability) you can report to the user.
   Mises, under 0.15) and stiffness is not what sets its mass, or when the
   search's part passes with strength to spare (1.3x the goal or more, one
   trial part); the lighter
-  part is kept and `methodChoice` says which and why. Brackets with one
+  part is kept and `methodChoice` says which and why. On SLS, MJF and
+  resin the lighter part must also pass the process check where the
+  search's does (walls, trapped powder, warp): the lightest that does is
+  kept, and `methodChoice.constrainedUnmakeable` lists the ones set aside.
+  Brackets with one
   hot corner come out 20-55% lighter that way, at up to 4.5x the time.
   `"search"` or `"constrained"` force one.
 - `{"volumeFraction": 0.25, "outcomes": [0.15, 0.4]}`: fixed fractions, a
