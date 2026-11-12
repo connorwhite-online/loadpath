@@ -314,12 +314,94 @@ def test_split_clamp_cuts_body_and_cap():
     assert abs(r["body"]["volume"] + r["cap"]["volume"] + slab - part.volume) < 0.01 * part.volume, r
 
 
-TESTS = [test_calibrate_device_bounds_the_bias, test_lzf_decoders_agree, test_readers_round_trip, test_units_are_required,
+def test_a_part_bolts_to_tapped_holes_in_a_scanned_bay():
+    """The bay stand-in (scansim.bay_with_pipe): two bosses with M8 tapped
+    holes. Their tops as supports, the holes snapped to tapped, the draft
+    bolts through them: an M8 fastener per hole on its fitted axis, its
+    seat above the boss top by the grip, and no bare 'kept open' bore."""
+    from loadpath.scansim import bay_with_pipe
+    from loadpath.scanstd import snap_features
+    from loadpath.scanstudy import draft_around
+    from loadpath.schema import lint
+    from loadpath.tasks import check_study
+    mesh, truth = bay_with_pipe()
+    views = ring_views([0, -10, 20], 350, 8, elevations=(20.0, 45.0, 70.0))
+    views = views[views[:, 1] < 30]
+    P, N, meta = simulate(mesh, views, spacing=0.8, sigma_noise=0.05, sigma_sys=0.1, scale=0.0003, seed=1)
+    path = write_ply(os.path.join(TMP, "bay.ply"), P, N)
+    s = load_scan(path, device="artec-eva", units="mm")
+    f = fit_primitives(s)
+    taps = [c["id"] for c in f["cylinders"] if c["kind"] == "bore"]
+    snap_features(f, {t: ["tapped"] for t in taps})
+    assert sorted(c.get("standard", {}).get("name") for c in f["cylinders"] if c["id"] in taps) == ["M8", "M8"]
+    tops = [min((p for p in f["planes"] if p["normal"][2] > 0.99),
+                key=lambda p: np.linalg.norm(np.asarray(p["center"]) - b["center"]))["id"] for b in truth["bosses"]]
+    pipe = min((c for c in f["cylinders"] if c["kind"] == "bar"), key=lambda c: abs(c["p0"][2] - 45))
+    out = os.path.join(TMP, "bay-draft")
+    r = draft_around(s, f, out, support=tops, loads={pipe["id"]: [0, 0, -75]}, space=truth["region"],
+                     process="sls", keep_object=False)
+    st = r["study"]
+    assert not lint(st), lint(st)
+    fs = st["fasteners"]
+    assert len(fs) == 2 and {x["size"] for x in fs} == {"M8"}
+    for b in truth["bosses"]:
+        c = np.asarray(b["center"], float)
+        x = min(fs, key=lambda x: np.linalg.norm(np.asarray(x["seat"])[:2] - c[:2]))
+        seat = np.asarray(x["seat"])
+        # on the true hole's centre to far inside the M8 clearance hole's 0.5 mm slack
+        assert np.linalg.norm(seat[:2] - c[:2]) < 0.1, (seat, c)
+        # the grip down from the seat lands on the boss top, within the face's band
+        assert 0 < seat[2] - x["grip"] - c[2] < 0.5 and np.asarray(x["direction"])[2] < -0.99
+    assert not [k for k in st["keepOut"] if k["id"].endswith("-open")]
+    assert not [t for t in r["todo"] if "slack" in t], r["todo"]
+    chk = check_study(st, out)
+    assert chk["ok"], chk
+
+
+def test_free_space_from_rays_stays_off_the_true_scene():
+    """The bay scanned from the front and top, each point with its sensor
+    position: every free node is outside the true scene by at least a
+    spacing, the space behind the pipe (no ray reached it) is not free, the
+    open bay above the bosses is, and the keep-out mesh is closed and holds
+    every node that is not free."""
+    import trimesh
+    from loadpath.freespace import carve, keepout_mesh
+    from loadpath.scansim import bay_with_pipe
+    mesh, truth = bay_with_pipe()
+    views = ring_views([0, -10, 20], 350, 8, elevations=(20.0, 45.0, 70.0))
+    views = views[views[:, 1] < 30]
+    P, N, meta = simulate(mesh, views, spacing=1.0, sigma_noise=0.05, sigma_sys=0.1, scale=0.0003, seed=2)
+    path = write_ply(os.path.join(TMP, "bay-rays.ply"), P, N, meta["viewpoints"])
+    s = load_scan(path, device="artec-eva", units="mm")
+    assert s.sensors is not None and s.sensors.shape == s.points.shape
+    lo, hi = (np.asarray(x, float) for x in truth["region"])
+    fs = carve(s, lo, hi, pitch=1.5)
+    p = fs["pitch"]
+    idx = np.argwhere(fs["free"])
+    X = lo + idx * p
+    # outside the true solid, clear of its surface
+    d = trimesh.proximity.signed_distance(mesh, X[::7])     # > 0 inside
+    assert d.max() < -0.5, d.max()
+    def node(x):
+        return tuple(np.round((np.asarray(x, float) - lo) / p).astype(int))
+    pipe = np.asarray(truth["pipe"]["point"], float)
+    r = 0.5 * truth["pipe"]["diameter"]
+    assert not fs["free"][node(pipe + [0, r + 4, -r - 4])]  # behind and under the pipe: never seen
+    assert fs["free"][node([35, 0, 30])]                    # above a boss, open to the sensor
+    k = keepout_mesh(fs)
+    assert k.is_watertight and k.volume > 0
+    nf = np.argwhere(~fs["free"])
+    sample = lo + nf[np.random.default_rng(0).choice(len(nf), 2000)] * p
+    assert k.contains(sample).all()
+    assert k.contains(X[np.random.default_rng(1).choice(len(X), 2000)]).mean() < 0.01
+
+
+TESTS = [test_calibrate_device_bounds_the_bias, test_free_space_from_rays_stays_off_the_true_scene, test_lzf_decoders_agree, test_readers_round_trip, test_units_are_required,
          test_fits_recover_known_geometry_within_their_bands, test_reconstruction_matches_and_covers_the_truth,
          test_splat_needs_and_takes_a_reference, test_fit_with_a_measured_mate, test_draft_round_the_object_checks,
          test_iphone_scan_says_it_cannot_size_a_bar, test_snap_to_standard_sizes, test_a_card_in_the_frame_sets_the_scale,
          test_a_brief_picks_the_features_and_asks_for_the_rest, test_clamp_sizing_is_the_friction_arithmetic,
-         test_split_clamp_cuts_body_and_cap]
+         test_split_clamp_cuts_body_and_cap, test_a_part_bolts_to_tapped_holes_in_a_scanned_bay]
 
 if __name__ == "__main__":
     failed = 0

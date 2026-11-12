@@ -69,6 +69,10 @@ step = ["cadquery-ocp>=7.7", "embreex>=4.3"]   # embreex: fast ray casts for sur
 # reads open, self-intersecting, double-walled meshes (AI-generated, scanned)
 # right; without it a flood fill seals holes up to a few grid cells
 exterior = ["libigl>=2.5"]
+# scans simulated in software (scansim.py): embree's ray casts. trimesh's own
+# intersector works, chunked, but the bay scene in the tests took it about 8
+# minutes and 8 GB (2026-11-12) where embree takes seconds
+scan = ["embreex>=4.3"]
 # section polars for propellers (propeller.py): NeuralFoil, a network trained on XFOIL (MIT; brings aerosandbox)
 aero = ["neuralfoil>=0.3"]
 "3mf" = ["lib3mf>=2.4", "pillow>=9"]   # lattice3mf.py: implicit (TPMS) and beam-lattice 3MF; pillow writes the 16-bit image stacks

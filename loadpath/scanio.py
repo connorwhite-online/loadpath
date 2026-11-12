@@ -122,6 +122,10 @@ def _from_columns(c):
         if all(f"f_dc_{i}" in c for i in range(3)):
             sh0 = 0.28209479177387814
             out["colors"] = np.clip(0.5 + sh0 * np.stack([c[f"f_dc_{i}"] for i in range(3)], 1), 0, 1).astype(np.float32)
+    # the sensor's position for each point (the Imprint format's sx sy sz):
+    # the ray each point was measured along, which says what space it saw empty
+    if all(k in c for k in ("sx", "sy", "sz")):
+        out["viewpoints"] = np.stack([c["sx"], c["sy"], c["sz"]], 1).astype(np.float64)
     for k in ("confidence", "intensity", "scalar_confidence"):
         if k in c:
             out[k.replace("scalar_", "")] = np.asarray(c[k], np.float64)

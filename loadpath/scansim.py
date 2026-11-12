@@ -29,7 +29,7 @@ import math
 
 import numpy as np
 
-__all__ = ["simulate", "ring_views", "bar_and_light", "write_ply", "write_splat_ply", "DEVICE_PROFILES"]
+__all__ = ["simulate", "ring_views", "bar_and_light", "bay_with_pipe", "write_ply", "write_splat_ply", "DEVICE_PROFILES"]
 
 # what each device's simulated scan looks like: point spacing at the working
 # distance (mm), random noise (mm), patch correlation length (mm), working
@@ -104,9 +104,15 @@ def simulate(mesh, views, *, spacing: float, sigma_noise: float, sigma_sys: floa
             continue
         origins = np.repeat(s[None], len(idx), 0)
         dirs = -u[idx]
-        locs, ray_i, tri = mesh.ray.intersects_location(origins, dirs, multiple_hits=False)
         hit_d = np.full(len(idx), np.inf)
-        hit_d[ray_i] = np.linalg.norm(locs - s, axis=1)
+        # in chunks: without embree, trimesh's own intersector holds every
+        # ray's candidate triangles at once, which runs out of memory on a
+        # scene of a few hundred thousand rays
+        step = len(idx) if getattr(trimesh.ray, "has_embree", False) else 4000
+        for k in range(0, len(idx), step):
+            locs, ray_i, tri = mesh.ray.intersects_location(origins[k:k + step], dirs[k:k + step],
+                                                            multiple_hits=False)
+            hit_d[k + ray_i] = np.linalg.norm(locs - s, axis=1)
         seen = idx[np.abs(hit_d - dist[idx]) < 0.25 * spacing]
         # subsample: each view sees the surface at its own spacing (not all of the dense set)
         seen = seen[rng.random(len(seen)) < 1.0 / max(1.0, len(views) / 3.0)]
@@ -166,8 +172,46 @@ def bar_and_light(bar_d: float = 31.8, bar_len: float = 220.0, light=(60.0, 34.0
     return scene, truth
 
 
-def write_ply(path, points, normals=None):
-    """A binary point-cloud PLY (x y z [nx ny nz], float32)."""
+def bay_with_pipe(pipe_d: float = 25.0, boss_d: float = 16.0, boss_h: float = 12.0, tap_d: float = 6.8,
+                  tap_depth: float = 10.0, boss_x: float = 35.0):
+    """A small bay to design inside: a floor, a back wall and two side walls,
+    two bosses standing on the floor with M8 tapped holes (6.8 mm tap drill,
+    ISO 2306) in their tops, and a pipe running across the bay above and
+    behind them. The scan-to-design stand-in for a real space (an engine
+    bay): a part bolts to the bosses, holds the pipe, and stays inside the
+    walls. Returns (mesh, truth); truth["region"] is the free space inside
+    the walls, 1 mm off each."""
+    import trimesh
+    from .shapes import manifold_from_trimesh, trimesh_from_manifold
+
+    def box(ext, at):
+        b = trimesh.creation.box(extents=ext)
+        b.apply_translation(at)
+        return manifold_from_trimesh(b)
+
+    m = box([152, 96, 6], [0, -3, -3]) + box([152, 6, 76], [0, 48, 32]) + \
+        box([6, 96, 76], [-73, -3, 32]) + box([6, 96, 76], [73, -3, 32])
+    for x in (-boss_x, boss_x):
+        b = trimesh.creation.cylinder(radius=boss_d / 2, height=boss_h, sections=128)
+        b.apply_translation([x, 0, boss_h / 2])
+        h = trimesh.creation.cylinder(radius=tap_d / 2, height=tap_depth + 1, sections=128)
+        h.apply_translation([x, 0, boss_h - tap_depth / 2 + 0.5])
+        m = m + manifold_from_trimesh(b) - manifold_from_trimesh(h)
+    pipe = trimesh.creation.cylinder(radius=pipe_d / 2, height=146, sections=256)
+    pipe.apply_transform(trimesh.transformations.rotation_matrix(math.pi / 2, [0, 1, 0]))
+    pipe.apply_translation([0, 22, 45])
+    m = m + manifold_from_trimesh(pipe)
+    truth = {"pipe": {"diameter": pipe_d, "axis": [1, 0, 0], "point": [0, 22, 45]},
+             "bosses": [{"center": [x, 0, boss_h], "diameter": boss_d, "tap": tap_d, "thread": "M8",
+                         "depth": tap_depth} for x in (-boss_x, boss_x)],
+             "region": [[-69, -50, 1], [69, 44, 69]]}
+    return trimesh_from_manifold(m), truth
+
+
+def write_ply(path, points, normals=None, sensors=None):
+    """A binary point-cloud PLY (x y z [nx ny nz] [sx sy sz], float32):
+    sensors, each point's sensor position (simulate's meta["viewpoints"]),
+    the Imprint format's columns."""
     P = np.asarray(points, np.float32)
     cols = [("x", "f4"), ("y", "f4"), ("z", "f4")]
     data = [P[:, 0], P[:, 1], P[:, 2]]
@@ -175,6 +219,10 @@ def write_ply(path, points, normals=None):
         Nn = np.asarray(normals, np.float32)
         cols += [("nx", "f4"), ("ny", "f4"), ("nz", "f4")]
         data += [Nn[:, 0], Nn[:, 1], Nn[:, 2]]
+    if sensors is not None:
+        S = np.asarray(sensors, np.float32)
+        cols += [("sx", "f4"), ("sy", "f4"), ("sz", "f4")]
+        data += [S[:, 0], S[:, 1], S[:, 2]]
     arr = np.empty(len(P), dtype=cols)
     for (k, _), v in zip(cols, data):
         arr[k] = v
