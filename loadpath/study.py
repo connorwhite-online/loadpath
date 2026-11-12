@@ -2855,7 +2855,15 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                 break
             limits = Limits(stress * t if stress is not None else None,
                             goal.max_deflection * t if goal.max_deflection is not None else None, mat.E,
-                            buckling=sf_b * kb / t if sf_b is not None else None, bond=_layer_bond_limit(study))
+                            buckling=sf_b * kb / t if sf_b is not None else None,
+                            # the layer bond is held in the strength polish, where the limit is
+                            # set from the check's own reading. From scratch it over-constrains:
+                            # measured on two brackets the check passes without it (wall bracket
+                            # 34.7 g against 30.6 g, motor mount 29.3 against 27.8 g), until the
+                            # optimizer and the check share one stress reading
+                            # (docs/CONVERGENCE.md). LOADPATH_BOND_CONSTRAINED=1 turns it on.
+                            bond=_layer_bond_limit(study)
+                            if os.environ.get("LOADPATH_BOND_CONSTRAINED") == "1" else None)
             try:
                 o = run_constrained(limits, x_pass)
             except (RuntimeError, ValueError) as exc:

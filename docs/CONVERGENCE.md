@@ -232,6 +232,17 @@ as the design moves, and that buckling starts to bind near 27 g. Both are
 the next steps: one stress reading for the optimizer and the check, and
 buckling held in the polish.
 
+The bond limit is held in the polish only. Given to the stress-constrained
+method from its start it made two brackets heavier that the check passes
+without it: the wall bracket 34.7 g against 30.6 g, the motor mount 29.3 g
+against 27.8 g. The optimizer reads the bond at every cell corner and the
+check reads it averaged over the material's length, so from scratch the
+limit holds material the check never asks for; in the polish the limit is
+set from the check's own reading of the part in hand, which is why it works
+there. With the limit in the polish only, the wall bracket is back at
+30.6 g and the polish leaves it alone (it is not limited by its bond). One
+shared reading removes the difference, and then the limit belongs in both.
+
 ## What it costs
 
 Nothing. The whole hook search (three grids, every trial, every
