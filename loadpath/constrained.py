@@ -86,6 +86,8 @@ BUCKLING_CRISP_BETA = 4.0
 BUCKLING_CRISP_EVERY = 12
 BUCKLING_CRISP_MAX = 8.0
 STRESS_POINTS = "corners"     # where cell stress is sampled: "corners" or "center"
+# the node (fem.CORNERS order: x, then y, then z) each corner sample sits on, in the order they are taken (x outermost)
+_CORNER_OF = (0, 4, 2, 6, 1, 5, 3, 7)
 _VM = np.array([
     [1.0, -0.5, -0.5, 0, 0, 0],
     [-0.5, 1.0, -0.5, 0, 0, 0],
@@ -98,11 +100,39 @@ _VM = np.array([
 
 class Limits:
     def __init__(self, stress: float | None, deflection: float | None, modulus: float,
-                 buckling: float | None = None):
+                 buckling: float | None = None, bond: tuple | None = None,
+                 contact_band: float | None = None):
         self.stress = stress            # MPa, allowable peak von Mises
         self.deflection = deflection    # mm at the loads
         self.modulus = modulus          # MPa, to turn unit-E displacements into mm
         self.buckling = buckling        # smallest load factor at which the design may buckle
+        # A part built in layers: (the bond's tensile strength over the
+        # in-plane strength, the unit normal the layers stack along, the
+        # bond's tensile over its shear strength). The stress limit then
+        # holds the layer bond as verification reads it (failure.bond_stress:
+        # the tension pulling the layers apart and the shear sliding them,
+        # against the bond's strength) beside von Mises, each cell judged on
+        # whichever is nearer its limit.
+        self.bond = bond
+        # Stress is left out this far (mm) from a load or a support, node by
+        # node, as the checks leave it out (study.contact_band): nearer, the
+        # peak is the edge of an idealized rigid patch, not the part, and a
+        # limit held there spends material the checks never ask for. None:
+        # only the cells the loads and supports touch are left out.
+        self.contact_band = contact_band
+
+
+def _bond_form(normal):
+    """The layer bond's stress in Voigt terms (sx, sy, sz, txy, tyz, tzx), for
+    layers stacked along unit `normal`: (m, q) with the stress normal to the
+    layers m . sigma and the squared shear on them sigma . q . sigma."""
+    n = np.asarray(normal, float)
+    n = n / np.linalg.norm(n)
+    t = np.array([[n[0], 0, 0, n[1], 0, n[2]],
+                  [0, n[1], 0, n[0], n[2], 0],
+                  [0, 0, n[2], 0, n[1], n[0]]])           # traction on the layer plane
+    m = n @ t
+    return m, t.T @ t - np.outer(m, m)
 
 
 def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: Limits,
@@ -147,6 +177,17 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     # Stress is not counted in cells where loads and supports are applied.
     contact = (domain.support_nodes | domain.load_nodes)[mesh.enode].any(axis=1)
     counted = ~contact
+    # ... or, with limits.contact_band, every sample point within that
+    # distance of a loaded or supported node (pt_counted: per cell, per corner)
+    pt_counted = None
+    if limits.contact_band and STRESS_POINTS == "corners" and (domain.support_nodes | domain.load_nodes).any():
+        from scipy.spatial import cKDTree
+
+        held = domain.support_nodes | domain.load_nodes
+        xyz = mesh.node_ijk * mesh.pitch
+        near = cKDTree(xyz[held]).query(xyz, k=1, distance_upper_bound=float(limits.contact_band))[0] < np.inf
+        pt_counted = ~near[mesh.enode]                       # (cells, 8), in fem.CORNERS order
+        counted = pt_counted.any(axis=1)
     # Stress per unit-E displacement (6x24) at each sample point: the cell's
     # 8 corners (STRESS_POINTS), with the element's own strain there
     # (fem.hex8_b: the incompatible-mode bubbles carry part of a member's
@@ -154,6 +195,11 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
     # bent member peaks; the cell centre read it 1.5-3.4x low on the eval
     # cases (MBB, bell crank, hook, motor mount, wrist yoke at 15k cells),
     # the corners 1.2-2x.
+    bond = limits.bond if limits.stress is not None else None
+    if bond is not None:
+        bond_ratio = float(bond[0])
+        bond_m, bond_q = _bond_form(bond[1])
+        bond_k2 = float(bond[2]) ** 2
     c0 = elastic_c(1.0, nu)
     if STRESS_POINTS == "corners":
         cbs = [c0 @ hex8_b(a, b, cz, nu) / mesh.pitch for a in (-1.0, 1.0) for b in (-1.0, 1.0) for cz in (-1.0, 1.0)]
@@ -258,13 +304,27 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                 edof = mesh.edof[act]
                 ue = us[c][edof]                             # (cells, 24)
                 xa = xe[act]
-                nc = max(int(counted.sum()), 1) * len(cbs)
+                nc = (max(int(counted.sum()), 1) * len(cbs) if pt_counted is None else max(int(pt_counted.sum()), 1)) \
+                    * (2 if bond is not None else 1)
+                bond_limit = limits.stress * bond_ratio if bond is not None else None
                 parts = []
-                for cbk in cbs:
+                for kp, cbk in enumerate(cbs):
                     sig = ue @ cbk.T                         # (cells, 6) solid stress, MPa
+                    if pt_counted is not None:
+                        # a point inside the contact band reads no stress: no share of the
+                        # aggregate and no term in either gradient
+                        sig = sig * pt_counted[act, _CORNER_OF[kp]][:, None]
                     sv = sig @ _VM
                     vm = np.sqrt(np.maximum(np.einsum("ij,ij->i", sv, sig), 1e-30))
-                    parts.append((cbk, sv, vm, xa ** _Q * vm / limits.stress))
+                    parts.append((cbk, sv, vm, limits.stress, xa ** _Q * vm / limits.stress))
+                    if bond is not None:
+                        # the layer bond there, as an equivalent stress whose
+                        # square is quadratic in sigma on each side of zero
+                        # tension (so the same adjoint terms carry it)
+                        sn = np.maximum(sig @ bond_m, 0.0)
+                        sb = sn[:, None] * bond_m + bond_k2 * (sig @ bond_q)
+                        eq = np.sqrt(np.maximum(np.einsum("ij,ij->i", sb, sig), 1e-30))
+                        parts.append((cbk, sb, eq, bond_limit, xa ** _Q * eq / bond_limit))
                 smax = max((float(sr.max()) for *_, sr in parts if len(sr)), default=0.0)
                 # the p-norm scaled by the peak, so a design that lets go
                 # (stress 1e40) does not overflow sr ** P to inf and hand
@@ -275,12 +335,12 @@ def optimize_constrained(domain: Domain, nu: float, opts: SimpOptions, limits: L
                 g = kappa[c] * pm
                 g_xe = np.zeros(n)
                 rhs = np.zeros(mesh.n_dof)
-                for cbk, sv, vm, srel in parts:
+                for cbk, sv, vm, lim, srel in parts:
                     dg_ds = kappa[c] * (srel / max(pm, 1e-30)) ** (_P - 1) / nc
                     # explicit: d s / d xe at fixed u
-                    g_xe[act] += dg_ds * (_Q * np.maximum(xa, 1e-12) ** (_Q - 1) * vm / limits.stress)
+                    g_xe[act] += dg_ds * (_Q * np.maximum(xa, 1e-12) ** (_Q - 1) * vm / lim)
                     # adjoint right-hand side: dg/du
-                    coef = dg_ds * (xa ** _Q / (vm * limits.stress))                        # (cells,)
+                    coef = dg_ds * (xa ** _Q / (vm * lim))                                  # (cells,)
                     dvm_du = sv @ cbk                                                       # d(vm^2)/2du
                     rhs += np.bincount(edof.ravel(), weights=(coef[:, None] * dvm_du).ravel(),
                                        minlength=mesh.n_dof)

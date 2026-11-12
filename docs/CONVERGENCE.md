@@ -187,12 +187,50 @@ the middle of main's draws, not the best.
 
 The hook breaks at its layer bond, and the optimizer minimizes compliance
 with an isotropic stiffness: it cannot tell a member loaded across the
-layers from one loaded along them. Giving the design stiffness the bond's
-weakness across the layers (`process.anisotropic: "bond"`) produced hooks
-16 to 25% stronger at equal mass in three of six tries, and in the other
-three a support column thinner than the minimum member that the delivery
-step removes, leaving the part above it unprintable. Closing that is the
-way to the light hooks without drawing for them.
+layers from one loaded along them. Every hook the search delivered was
+limited by the bond with in-plane strength standing idle (a margin of 4 to
+6 in plane beside 2 to 2.5 on the bond). Three things came of following
+that up (2026-11-12).
+
+**A design stiffness cut across the layers is a weak lever.** With the
+across-layer terms at the bond's strength ratio (`process.anisotropic:
+"bond"`) the search's hook came out 33.4 g against 39.7 g, on one grid of
+three; on the other two it was no lighter. Softer still is worse: at the
+ratio to the powers 2, 3 and 4 the 33 g hook read safety factor 2.05, 1.80
+and 1.43 against 2.56. Compliance puts material where it is stiff, so a
+mode made soft is one the design stops using, and the shear a cantilever
+has to carry across its layers ends up in frames that bend. It stays
+opt-in.
+
+**The delivery step dropped members the optimizer had analysed.** Half of
+the bond-aware hooks came out broken: a print-support column, analysed one
+cell across and counted on to hold up everything above it, was not grown
+back by the opening, and the overhang rule then removed the top chord's
+root (safety factor 0.2 for an analysed 2.5). The opening now returns the
+blueprint round every analysed cell it lost (`simp._keep_cores`); a design
+that lost none is delivered exactly as before.
+
+**The pick is finished on the limit it breaks by.** After the search's
+pick is confirmed, a part limited by its layer bond goes to the optimizer
+that holds stress as a limit, now with the bond in that limit as
+verification reads it, and has material taken off in short strides, each
+one checked (`study._search.strength_polish`). Printed hook, full tier,
+tet-confirmed, grams:
+
+| Design stiffness | Search's pick | After the polish |
+| --- | --- | --- |
+| isotropic (default) | 39.7 | 33.7 |
+| bond ratio (opt-in) | 33.4 | 29.7 |
+
+Main's three draws were 36.8, 39.9 and 42.6 g. The polish does not remove
+the dependence on layout: on the two unlucky grids it took 37.3 to 36.3 g
+and 40.1 to 39.4 g, and a run keeps the best of its grids. Held at one
+limit for 120 iterations with no check in between, the same optimizer
+reached 23 to 24 g at 80% of the target, so the hook has more to give; what
+stops it is that the optimizer's stress reading and the check's drift apart
+as the design moves, and that buckling starts to bind near 27 g. Both are
+the next steps: one stress reading for the optimizer and the check, and
+buckling held in the polish.
 
 ## What it costs
 

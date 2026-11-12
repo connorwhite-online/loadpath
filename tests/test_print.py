@@ -381,6 +381,59 @@ def test_verify_reports_print_block_and_layered_bond():
     assert up["safetyFactor"] < 0.75 * side["safetyFactor"]
 
 
+def test_delivery_keeps_every_analysed_member():
+    """The opening returns a member's analysed core at the blueprint's
+    width even where the core is one cell across (a print-support column,
+    which the optimizer makes as thin as it is allowed), and still drops a
+    sheet that has no core."""
+    from types import SimpleNamespace
+
+    from loadpath.simp import _keep_cores
+
+    dims = (9, 9, 6)
+    ijk = np.stack(np.meshgrid(*[np.arange(n) for n in dims], indexing="ij"), axis=-1).reshape(-1, 3)
+
+    def full_grid(v):
+        g = np.zeros(dims)
+        g[tuple(ijk.T)] = v
+        return g
+
+    dom = SimpleNamespace(pitch=2.0, mesh=SimpleNamespace(elem_ijk=ijk), full_grid=full_grid)
+    col = (np.abs(ijk[:, 0] - 2) <= 1) & (np.abs(ijk[:, 1] - 2) <= 1)       # a column 3 x 3 cells in the blueprint
+    core = (ijk[:, 0] == 2) & (ijk[:, 1] == 2)                                  # ... analysed one cell across
+    sheet = (ijk[:, 0] == 7)                                                    # a one-cell sheet, never analysed
+    blueprint = (col | sheet).astype(float)
+    analysed = core.astype(float)
+    opened = np.zeros(len(ijk))                                                 # the filter lost the thin core
+    out = _keep_cores(dom, opened, analysed, blueprint, radius=4.0)
+    # reach: 4 / 2.6 + 1 = 2.54 mm, the six face neighbours of each core cell
+    back = col & (np.abs(ijk[:, 0] - 2) + np.abs(ijk[:, 1] - 2) <= 1)
+    assert np.array_equal(out > 0.5, back), "the column comes back round its core, and only there"
+    assert not (out[sheet] > 0).any(), "a sheet with no analysed core stays out"
+    whole = np.where(col, 1.0, 0.0)
+    assert _keep_cores(dom, whole, analysed, blueprint, radius=4.0) is whole, "nothing lost: delivered as opened"
+
+
+def test_constrained_stress_limit_reads_the_layer_bond_as_verification_does():
+    """constrained._bond_form is failure.bond_stress (the criterion the
+    check uses), and its half-gradient is the one the adjoint is fed."""
+    from loadpath.constrained import _bond_form
+    from loadpath.failure import bond_stress
+
+    rng = np.random.default_rng(0)
+    for n in ((0, 0, 1), (1, 0, 0), (0.3, -0.5, 0.8)):
+        m, q = _bond_form(n)
+        sig, k = rng.standard_normal((40, 6)), 1.9
+        sb = np.maximum(sig @ m, 0.0)[:, None] * m + k * k * (sig @ q)
+        assert np.abs(np.sqrt(np.einsum("ij,ij->i", sb, sig)) - bond_stress(sig, n, k)[0]).max() < 1e-12
+        h, g = 1e-6, np.zeros_like(sig)
+        for j in range(6):
+            d = np.zeros(6)
+            d[j] = h
+            g[:, j] = (bond_stress(sig + d, n, k)[0] ** 2 - bond_stress(sig - d, n, k)[0] ** 2) / (4 * h)
+        assert np.abs(g - sb).max() < 1e-7
+
+
 TESTS = [v for k, v in dict(globals()).items() if k.startswith("test_")]
 
 

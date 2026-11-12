@@ -792,6 +792,41 @@ def _prune_dead(fe, domain, xp, us, loads, design, pres, soften=None):
     return xp, us
 
 
+def _keep_cores(domain, opened, analysed, blueprint, radius):
+    """The opening, with every member the optimizer analysed still in it.
+
+    The opening grows the analysed (eroded) design back by filtering it and
+    cutting at eta - erode. That returns a member whose analysed core is at
+    least about a third of the filter radius across, and nothing for a
+    thinner core: a round column whose blueprint is the minimum member wide
+    has a core one cell across, the filter spreads that cell below the cut,
+    and the column is not delivered. The optimizer does build such columns.
+    Under overhang control a column that only holds up what is printed above
+    it carries no load, so it is made as thin as the analysed design allows;
+    its stiffness was credited for nothing, but everything above it was
+    credited as printable because of it. Delivered without it, the overhang
+    rule takes that away too (the printed hook lost its top chord's root at
+    the wall and read safety factor 0.2 for an analysed 2.5).
+
+    So a cell analysed as solid and opened as void brings back the blueprint
+    round it, out to half the minimum member the filter enforces (R / 1.3,
+    see filter_radius): the member returns at the width the volume was
+    counted at, and a sheet with no analysed core (the membranes the opening
+    is there to drop) still has nothing to bring it back. A design with no
+    such cell is delivered exactly as before."""
+    lost = (analysed > 0.5) & (opened < 0.5)
+    if not lost.any():
+        return opened
+    # a cell is in reach when any of it is: its centre within the reach plus half a cell
+    reach = radius / 2.6 + 0.5 * domain.pitch
+    n = int(np.ceil(reach / domain.pitch))
+    g = np.mgrid[-n:n + 1, -n:n + 1, -n:n + 1]
+    ball = (g ** 2).sum(axis=0) * domain.pitch ** 2 <= reach ** 2 * (1.0 + 1e-9)
+    ijk = tuple(domain.mesh.elem_ijk.T)
+    near = ndimage.binary_dilation(domain.full_grid(lost.astype(float)) > 0.5, structure=ball)[ijk]
+    return np.where(near, np.maximum(opened, blueprint), opened)
+
+
 def _held_pieces(fe, domain, xp) -> int:
     """How many separate pieces of the design hold something: a drawn
     region, a load or a support (fe.anchor). One for a sound part."""
@@ -1772,6 +1807,7 @@ def _optimize(domain: Domain, nu: float, opts: SimpOptions, on_iter=None, should
         # crank's frame) does not come back.
         xe = eroded(xt, beta)
         xp = _project((h @ xe) / hs, beta, opts.eta - opts.erode)
+        xp = _keep_cores(domain, xp, xe, _project(xt, beta, opts.eta), opts.filter_radius)
         xp[pres] = 1.0
         xp = printed(am_v, xp)
     if opts.dilate > 0:

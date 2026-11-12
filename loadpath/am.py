@@ -39,8 +39,21 @@ neither beat the isotropic design reliably: compliance cannot tell tension
 across layers (which breaks bonds) from compression (which doesn't), and
 the layout shift moved the von Mises peak more than it saved the bond. So
 the default designs isotropic; the bond enters through the safety-factor
-search (verified margins include it) and the choice of build direction
-(orient.py).
+search (verified margins include it), the choice of build direction
+(orient.py), and the strength polish that follows the search's pick
+(study._search.strength_polish), which holds the bond as a stress limit
+and takes off what it does not need.
+
+Measured again on the printed hook, full tier, 2026-11-12: a softer
+surrogate is worse, not better (across-layer terms at the bond ratio to
+the powers 1, 2, 3, 4: safety factor 2.56, 2.05, 1.80, 1.43 at 33 g).
+Compliance puts material where it is stiff, so a mode made very soft is
+one the design stops using, and the shear a cantilever must carry across
+its layers goes into frames that bend instead. At the bond ratio itself
+the hook's search came out 33.4 g against 39.7 g isotropic and its
+polished part 29.7 g against 33.7 g, but on one of three grids only; and
+a part bound by deflection (the motor mount) wants its true stiffness,
+which the surrogate is not. It stays opt-in.
 """
 from __future__ import annotations
 

@@ -77,6 +77,11 @@ delamination criterion.
   the same as before (their tension side governs); struts and seats in
   compression read up to 17% lower, notch roots and bosses in triaxial
   tension higher.
+  The optimizer holds it too. The constrained method's stress limit reads
+  each cell on von Mises and on this bond criterion, whichever is nearer
+  its limit, and a search pick limited by its bond is then trimmed on that
+  limit (the strength polish, CONVERGENCE.md): the printed hook went from
+  39.7 to 33.7 g.
 
 A 16 mm PETG boss printed standing, 40 mm tall, held at its foot:
 
