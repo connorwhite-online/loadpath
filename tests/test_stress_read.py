@@ -136,10 +136,13 @@ def test_peak_at_a_sharp_corner_does_not_move_with_the_mesh():
     """An L bracket with a sharp inside corner, meshed at two sizes that
     both resolve the averaging radius: the nodal peak there grows as the
     mesh is refined (the stress is unbounded at the corner); the stress
-    averaged over the material's length is the same on both. (Measured:
-    16.4 to 17.2 MPa at 1.2 mm on two meshes, 16.4 at 0.9 mm. Elements
-    twice the radius under-read a corner this sharp: 14.7 to 15.0 MPa at
-    1.7 mm.)"""
+    averaged over the material's length is the same on both, to the scatter
+    the mesher itself brings. fTetWild returns a different mesh of the same
+    surface on every call (crosscheck._tetwild), so each reading is one
+    draw: over ten uncached meshes each, 16.4 to 17.2 MPa at 1.2 mm and
+    15.4 to 16.9 MPa at 0.9 mm, the widest pair 12% apart. (A 10% bound
+    failed about one run in eight.) Elements twice the radius under-read a
+    corner this sharp: 14.7 to 15.0 MPa at 1.7 mm.)"""
     m3d = pytest.importorskip("manifold3d")
     from loadpath.shapes import trimesh_from_manifold
 
@@ -160,4 +163,4 @@ def test_peak_at_a_sharp_corner_does_not_move_with_the_mesh():
         # the corner governs
         assert np.linalg.norm(np.asarray(c["peakAt"])[[0, 2]] - [10, 10]) < 2.0, c["peakAt"]
         peaks.append(c["peakStress"])
-    assert abs(peaks[0] - peaks[1]) < 0.10 * peaks[1], peaks
+    assert abs(peaks[0] - peaks[1]) < 0.15 * peaks[1], peaks
