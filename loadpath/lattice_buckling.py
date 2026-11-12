@@ -159,7 +159,7 @@ def unit_cell_buckling(kind: str, wall_over_cell: float, direction=(0.0, 0.0, 1.
 
     try:
         mu, _ = eigsh(-kgf, k=n_modes, M=kf.tocsr(), Minv=op, which="LA", tol=1e-4, ncv=max(20, 4 * n_modes),
-                      maxiter=600)
+                      maxiter=600, v0=np.random.default_rng(0).standard_normal(nf))
     except ArpackNoConvergence as e:
         # clustered modes (a cell whose struts buckle in many equal ways):
         # the converged ones, else the iteration's best estimate

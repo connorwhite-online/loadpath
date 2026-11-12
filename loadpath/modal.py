@@ -145,8 +145,12 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
         k = (k + mmat * shift).tocsr()
     kf = k[free][:, free].tocsc()
     nm = min(n_modes + rigid, len(free) - 2)
+    # a fixed start vector: left to itself ARPACK draws a new one every call
+    # (scipy 1.17 on), and the modes' last digits, and a design held to them,
+    # then differ from one run to the next
+    v0 = np.random.default_rng(0).standard_normal(len(free))
     if len(free) <= DIRECT_EIG_DOFS:
-        w, v = eigsh(kf, k=nm, M=mff, sigma=0.0, which="LM")
+        w, v = eigsh(kf, k=nm, M=mff, sigma=0.0, which="LM", v0=v0)
     elif os.environ.get("LOADPATH_MODAL_LOBPCG") != "1":
         # big models: shift-invert Lanczos with the factorization the push
         # pad and buckling solves use (bucklingopt._factor: PARDISO, or a
@@ -168,7 +172,7 @@ def modal_analysis(mesh: HexMesh, modulus, density, nu: float, fixed: np.ndarray
 
         op = LinearOperator(kf.shape, matvec=inv, dtype=float)
         try:
-            w, v = eigsh(kf, k=nm, M=mff, sigma=0.0, which="LM", OPinv=op)
+            w, v = eigsh(kf, k=nm, M=mff, sigma=0.0, which="LM", OPinv=op, v0=v0)
         finally:
             if free_mem is not None:
                 free_mem()

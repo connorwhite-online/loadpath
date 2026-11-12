@@ -508,12 +508,64 @@ def test_factor_that_would_not_fit_is_not_made():
     assert abs(got.compliance - ref.compliance) < 2e-3 * ref.compliance, (got.compliance, ref.compliance)
 
 
+def _box(a, b):
+    return {"type": "box", "min": a, "max": b}
+
+
+# a free craft (as tests/test_vibration.py's): thrust at four corners, a heavy canopy carried on top
+_PADS = [_box([x - 1, y - 1, -1], [x + 7, y + 7, 4]) for x in (0, 54) for y in (0, 54)]
+_CANOPY = _box([20, 20, 26], [40, 40, 31])
+_CRAFT = {"designSpace": _box([0, 0, 0], [60, 60, 30]),
+          "preserve": [{"shape": m} for m in _PADS] + [{"shape": _CANOPY}],
+          "loadCases": [{"name": "thrust", "loads": [{"shape": m, "force": [0, 0, 3]} for m in _PADS]}],
+          "material": "pa12", "goal": {"safetyFactor": 2}, "resolution": {"pitch": 3.0},
+          "inertiaRelief": {"masses": [{"shape": _CANOPY, "mass": 0.14}] + [{"shape": m, "mass": 0.02} for m in _PADS]}}
+
+
+def test_a_design_repeats_to_the_bit():
+    """The same study designed again is the same design, bit for bit, as it
+    is on the iterative solvers. Left to its defaults PARDISO's solve of
+    this free part on its 3-2-1 hold returned a different vector almost
+    every call (ten from one matrix), and ARPACK draws a new start vector
+    every call, so a design held to a frequency floor rang at 410, 153 or
+    78 Hz from one run to the next (nonlinear.CNR_THREADS, modal.py)."""
+    from loadpath.domain import build_domain
+    from loadpath.simp import SimpOptions, optimize
+    from loadpath.spec import study_from_dict
+
+    from loadpath import simp
+
+    seen = []
+    solve = simp._Analysis.solve
+
+    def spy(self, *a, **k):
+        out = solve(self, *a, **k)
+        seen.append(self.last_solver)
+        return out
+
+    simp._Analysis.solve = spy
+    try:
+        for vib in (None, {"minFrequency": 600.0}):
+            runs = []
+            for _ in range(3):
+                st = study_from_dict({**_CRAFT, **({"vibration": vib} if vib else {})})
+                res = optimize(build_domain(st), 0.3, SimpOptions(volume_fraction=0.1, filter_radius=4.5, max_iterations=5))
+                runs.append((res.xphys.tobytes(), [repr(h["compliance"]) for h in res.history],
+                             [h.get("frequencies") for h in res.history]))
+            assert runs[1] == runs[0] and runs[2] == runs[0], (vib, [r[1] for r in runs])
+            assert vib is None or any(runs[0][2]), "the frequency floor was not read"
+    finally:
+        simp._Analysis.solve = solve
+    assert direct.backend() is None or set(seen) == {"direct"}, set(seen)
+
+
 TESTS = [test_matches_iterative_solver, test_one_factor_for_a_matrix, test_threads_do_not_pile_up,
          test_kernels_after_a_factorization_do_not_pile_up, test_mechanism_raises,
          test_sizes_and_switches, test_route, test_simp_direct_matches_assembled, test_slow_multigrid_hands_over,
          test_stalled_multigrid_answer_is_not_kept,
          test_multigrid_that_fails_on_the_whole_grid_costs_one_design, test_stalled_cg_is_factored,
-         test_factor_that_would_not_fit_is_not_made]
+         test_factor_that_would_not_fit_is_not_made,
+         test_a_design_repeats_to_the_bit]
 
 
 def main():
