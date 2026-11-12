@@ -419,7 +419,7 @@ def scan_voxelize(mesh, pitch, origin, dims, chunk=200_000):
     j1 = np.clip(np.floor((tri[:, :, 1].max(1) - oy) / pitch) + 1, 0, dims[1]).astype(np.int64)
     ni, nj = np.maximum(i1 - i0, 0), np.maximum(j1 - j0, 0)
     cnt = ni * nj
-    cols, zs = [], []
+    cols, zs, sg = [], [], []
     t_all = np.nonzero(cnt)[0]
     start = 0
     while start < len(t_all):
@@ -446,16 +446,21 @@ def scan_voxelize(mesh, pitch, origin, dims, chunk=200_000):
         z = l0 * a[:, 2] + l1 * b[:, 2] + l2 * cc[:, 2]
         cols.append((ii * dims[1] + jj)[hit])
         zs.append(z[hit])
+        sg.append(np.sign(d)[hit])
     solid = np.zeros(dims, bool)
     if not cols:
         return solid
     col = np.concatenate(cols)
     z = np.concatenate(zs)
-    order = np.lexsort((z, col))
-    col, z = col[order], z[order]
-    # merge near-duplicate hits in a column (a shared edge counted twice)
+    sgn = np.concatenate(sg)
+    order = np.lexsort((sgn, z, col))
+    col, z, sgn = col[order], z[order], sgn[order]
+    # merge near-duplicate hits in a column (a shared edge counted twice),
+    # facing the same way only: two faces meeting back to back (a sheet of
+    # no thickness, as a boolean leaves where a surface grazes a cut plane)
+    # are two crossings, and merging them turned the rest of the column over
     dup = np.zeros(len(z), bool)
-    dup[1:] = (col[1:] == col[:-1]) & (np.diff(z) <= 1e-7)
+    dup[1:] = (col[1:] == col[:-1]) & (np.diff(z) <= 1e-7) & (sgn[1:] == sgn[:-1])
     col, z = col[~dup], z[~dup]
     first = np.r_[True, col[1:] != col[:-1]]
     run = np.cumsum(first) - 1

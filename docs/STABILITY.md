@@ -105,3 +105,38 @@ never tip or slide it). A 0.3 N cable tug needs 50 g at mu 0.5 and 33 g on
 wood. A 0.3 N sideways nudge at the plug needs about 90 to 130 g, more than
 the pad can hold at its size, so the cable's stiffness matters more than
 the ballast there.
+
+## Finishing the inside: seats
+
+`loadpath.seats.finish_seats(part, keepouts, region)` reworks the inside
+of a part round the components it holds, so it reads as designed rather
+than as clearance boxes. On a fine signed-distance grid (`pitch`, 0.1 mm):
+
+- a closing of radius `fillet` rounds every inside corner, where a rib,
+  fin or block meets the floor it stands on (the root of a stiffener is
+  where it wants material);
+- each keep-out is cut back by true distance at its `clearance`, so a
+  pocket is the component grown by a ball and its own corners are round;
+  `noOverhang` keeps its plan clear above its base; `leadIn` (deg) flares
+  the walls over `leadHeight` mm (1.0) from `leadFrom` mm above its base so
+  it drops in by itself, then the wall rises straight;
+- an opening of radius `round_` softens the outside edges (rims, the tops
+  of walls);
+- the result is meshed (marching cubes, a `smooth`-voxel blur and Taubin
+  smoothing), taken inside `region` only and joined to the exact part
+  outside it, and the keep-outs are cut again exactly, so the blur cannot
+  loosen a seat.
+
+Keep the region off mating faces (a hinge strap, a bead and rebate): they
+stay exact. A lead-in eats the wall beside the part by
+`leadHeight * tan(leadIn)`: where that wall is a stop under a soft skin,
+leave the lead-in off and let the rounded rim do.
+
+**Read the feel back after finishing**, at the pitch the unfinished part
+was read at. A finished part's marching-cubes surface meets the exact part
+along the region's faces; keep those faces off the part's own surfaces
+(start the region inside a floor, not on its top face), since a cut plane
+that grazes a face leaves back-to-back sheets of no thickness. The
+read-back's voxelizer counts those as two crossings since this round (it
+had merged them as one shared edge and turned whole columns over, which
+read as a hole in the skin).

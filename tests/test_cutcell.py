@@ -117,3 +117,16 @@ def test_cut_cells_are_the_default_except_under_pressure():
     # nor with a thermal block (the expansion load is assembled on whole cells)
     assert not use_cut_cells(study_from_dict(base | force | {"thermal": {"ambient": 25, "heat": [
         {"shape": {"type": "box", "min": [39, -1, -1], "max": [41, 11, 11]}, "watts": 1.0}]}}))
+
+
+def test_scan_voxelize_back_to_back_faces():
+    """Two faces meeting back to back (a sheet a boolean leaves where a surface
+    grazes a cut plane) are two crossings: merged as one shared edge they
+    turned the rest of each column over."""
+    import trimesh
+    from loadpath.cutcell import scan_voxelize
+    a = trimesh.creation.box([2, 2, 1]); a.apply_translation([0, 0, 0.5])
+    b = trimesh.creation.box([2, 2, 1]); b.apply_translation([0, 0, 1.5])
+    m = trimesh.util.concatenate([a, b])
+    v = scan_voxelize(m, 0.25, np.array([-1.0, -1.0, 0.0]), np.array([8, 8, 8]))
+    assert v.all()

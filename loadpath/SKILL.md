@@ -833,7 +833,11 @@ read the pad back with `readback(..., travel_at=4.0)` and fill only the
 room below the skin's travel envelope: `loadpath massfill` does that
 (fills to a target mass or to the most the room holds, in the product's own
 material by default, so a one-piece print stays one piece). Read the feel
-back after filling: fill fused to a wall stiffens it.
+back after filling: fill fused to a wall stiffens it. Then finish the
+inside with `loadpath.seats.finish_seats` (fillets at stiffener roots,
+seats cut by true distance with an optional lead-in, rounded rims) so the
+seats are not left as clearance boxes, and read the feel back again on
+the finished part at the same pitch.
 
 ## Designing around electronics heat
 
