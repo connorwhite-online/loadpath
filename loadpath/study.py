@@ -2169,11 +2169,15 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                   "sf": goal_.safety_factor if (goal_.buckling and goal_.safety_factor and _BUCKLING_SEARCH
                                                 and study.gravity is None and study.thermal is None) else None}
 
-    def attempt(vf: float, x0, beta0, replay=None) -> Outcome:
+    def attempt(vf: float, x0, beta0, replay=None, made=None) -> Outcome:
         def on_iter(rec, xp):
             emit({"stage": "optimize", "volumeFraction": vf, **rec}, xp)
 
-        if replay is None:
+        if made is not None:
+            # a design made here by another optimizer (the strength polish): mesh and verify it
+            x, xphys, opt = made
+            warp = None
+        elif replay is None:
             breq = buck_state["sf"] * buck_state["kb"] if buck_state["on"] else None
             res = optimize(domain, study.elastic(design=True),
                            SimpOptions(volume_fraction=vf, filter_radius=radius,
@@ -2188,10 +2192,6 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                    **({"caseDirection": res.case_direction} if any(d is not None for d in res.case_direction) else {}),
                    "achievedVolumeFraction": res.volume_fraction,
                    **({"escape": res.escape} if res.escape else {})}
-        elif len(replay) > 2:
-            # a design made here by another optimizer (the strength polish): mesh and verify it
-            x, xphys, opt = replay
-            warp = None
         else:
             # a stored design for this very problem: mesh and verify it, no optimizing
             x, xphys = replay[0], replay[1]
@@ -2218,7 +2218,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
             # _BUCKLING_SEARCH_ON of the safety factor, at sf * kb, kb the
             # optimizer's own reading over the verified one (last run)
             lv = report["bucklingFactor"]
-            lo = res.history[-1].get("buckling") if replay is None and res.history else None
+            lo = res.history[-1].get("buckling") if replay is None and made is None and res.history else None
             if lo is not None and np.isfinite(lo) and lo > 0 and lv > 0:
                 kb = buck_state["kb"]
                 buck_state["kb"] = float(np.clip(lo / lv, 0.5 * kb, 2.0 * kb))
@@ -2250,7 +2250,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
         o.xphys = xphys
         o.x = x
         o.voxel_sf = report.get("safetyFactor")
-        if memory is not None and not (replay is not None and len(replay) > 2):
+        if memory is not None and made is None:
             # (a polished design is not the compliance design of its fraction: not one to recall as that)
             memory.add(vf, x, xphys, report)
         m = _margin(study, report)
@@ -2681,7 +2681,7 @@ def _search(study: Study, on_progress, should_stop, fallback: bool, prefetch: _T
                     res = optimize_constrained(domain, study.elastic(), opts(cur, stride), Limits(
                         s_lim, d_lim, study.material.E, bond=bond, contact_band=band),
                         on_iter=on_iter, should_stop=should_stop)
-                    q = attempt(res.volume_fraction, None, None, replay=(res.x, res.xphys, {
+                    q = attempt(res.volume_fraction, None, None, made=(res.x, res.xphys, {
                         "iterations": res.iterations, "converged": res.converged, "seconds": res.seconds,
                         "achievedVolumeFraction": res.volume_fraction, "method": "strength polish",
                         "limits": {"stress": s_lim, **({"deflection": d_lim} if d_lim is not None else {})}}))
