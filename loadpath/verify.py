@@ -1020,6 +1020,8 @@ def modal_check(study: Study, mesh, vol: float | None = None, pitch: float | Non
     # grid, each cell's modulus at it (a PA12 motor mount at 80 C keeps 45%
     # of its stiffness and rings a third lower than the cold part)
     moduli, hot = float(mat.E) * fill, None
+    if stock and getattr(hm, "stock_scale", None) is not None:
+        moduli = moduli * hm.stock_scale
     if study.thermal is not None:
         from .thermal import StudyHeat
 
@@ -1184,11 +1186,6 @@ def _analysis_grid(study: Study, mesh, vol: float, max_cells: int, min_pitch=Non
         if stock:
             m.stock_fill = None if fill_el is None else np.asarray(fill_el, float)
             m.stock_elastic = nu_grid
-            if cg is not None:
-                # the cut cells' own matrices, for taking the printed share of a member's cell off
-                pos = np.full(cg.mesh.n_elem, -1, np.int64)
-                pos[cg.cut_index] = np.arange(len(cg.cut_index))
-                m.stock_ke_cut = (pos if keep is None else pos[keep], cg.ke_cut)
         return m
 
     pitch = (vol / max_cells) ** (1.0 / 3.0)
@@ -1279,6 +1276,10 @@ def _solve_grid(study: Study, g, nu, moduli, rhs):
 
     mat = study.material
     hm, bc, fixed = g.hm, g.bc, g.bc.fixed
+    scale = getattr(hm, "stock_scale", None)
+    if scale is not None:
+        # a bought member's cells hold only their printed share of the modulus (stock.py)
+        moduli = np.broadcast_to(moduli, (hm.n_elem,)) * scale
     if g.cg is not None:
         return _solve_cut(g.cg, nu, fixed, bc.springs, mat.E, moduli, rhs)
     if g.fill is not None:
@@ -1447,6 +1448,9 @@ def _internal_force(stiff, hm, u, moduli, fill=None, cg=None, el=None):
     mod = np.broadcast_to(np.asarray(moduli, float), (n_el,))[el].copy()
     if fill is not None and cg is None:
         mod *= fill[el]
+    scale = getattr(hm, "stock_scale", None)
+    if scale is not None:
+        mod *= scale[el]
     edof = hm.edof[el]
     ue = u[edof]
     fe = (ue @ stiff.ke) * mod[:, None]

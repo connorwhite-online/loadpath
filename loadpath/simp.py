@@ -121,7 +121,13 @@ class _Analysis:
         lbl, _ = ndimage.label(g, structure=_CONN26)
         el = lbl[tuple(ijk.T)]
         keep_l = np.unique(el[alive & self.support_touch])
-        return alive & np.isin(el, keep_l[keep_l > 0])
+        keep = alive & np.isin(el, keep_l[keep_l > 0])
+        stock = getattr(self.domain, "stock", None)
+        if stock is not None:
+            # a bought member's cells stay in every reduced system: its stiffness is a fixed operator
+            # on them (stock.py) less the printed material's, which only holds with the cell there
+            keep = keep | stock
+        return keep
 
     # Reuse one reduced system (its CSR layout and its multigrid hierarchy)
     # while the live cells stay inside it, for at most REUSE iterations.
@@ -165,6 +171,10 @@ class _Analysis:
         loads = loads if loads is not None else d.loads
         mesh = d.mesh
         rtol = rtol or self.rtol
+        scale = getattr(mesh, "stock_scale", None)
+        if scale is not None:
+            # a bought member's cells hold only their printed share of this modulus (stock.py)
+            e = e * scale
         alive = (xp > ALIVE) | self.anchor
         if self._mg is not None:
             return self._solve_mg(e, alive, us, rtol, loads)

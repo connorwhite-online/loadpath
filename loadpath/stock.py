@@ -30,11 +30,15 @@ What it does to the analysis. The member's cells are in the mesh the
 optimizer and the verification solve, with the member's own elasticity: an
 orthotropic matrix per cell, turned to the member's axis (a tube's fibres
 run along it, its wall is ten times softer across them). The solver's grid
-keeps one element matrix for the printed material, so the member enters as
-the difference: on each of its cells, share x (K_member - K_printed), a
-fixed sparse operator added to the stiffness the same way a pin's springs
-are (`stock_operator`, in domain.boundary_conditions, so the optimizer and
-the verification solve the same assembly). Its mass enters the same way
+keeps one element matrix for the printed material, so the member enters in
+two parts: its own stiffness, share x K_member, a fixed sparse operator
+added the way a pin's springs are (`stock_operator`, in
+domain.boundary_conditions, so the optimizer and the verification solve
+the same assembly), and a factor on each of its cells' printed modulus,
+the share of the cell that really is printed (`mesh.stock_scale`, applied
+wherever a solver sets element moduli). The operator only ever adds, so
+the stiffness stays positive whatever a solver does to the printed
+modulus (heat, penalization, a reduced system). Its mass enters
 (`mesh.stock_density`), for self-weight and for a free part's inertia.
 
 What is read from the solved assembly (`assess`), per load case:
@@ -748,7 +752,10 @@ def _design_spans(m: Member, design, wall: float, step: float = 0.5) -> list:
             end = s[i] + half if v else s[i] - half
             if end - start >= 2.0:
                 # (rounded for the study's raw, and never past the member's own ends)
-                spans.append((float(max(round(start, 3), 0.0)), float(min(round(end, 3), m.length))))
+                a_, b_ = max(round(start, 3), 0.0), min(round(end, 3), m.length)
+                if m.length - b_ < 2e-3:
+                    b_ = m.length                  # to the member's end, not a micron short of it
+                spans.append((float(a_), float(b_)))
             start = None
     return spans
 
@@ -1175,12 +1182,20 @@ class StockCells:
             p = self.per[mi]
             dens[p["cells"]] += p["share"] * m.material.density / rho_p
         dens[self.cells] -= self.sub[self.cells]
+        # The share of each cell's own (printed) stiffness that stays: every solver multiplies its
+        # element moduli by this (mesh.stock_scale), so the member's operator only ever adds. Taking
+        # the printed share off as a fixed operator went negative wherever a solver had lowered the
+        # cell's modulus first (the thermal block derates every cell by its temperature: a drone
+        # frame's first solve broke down on both solvers).
+        self.scale = np.ones(n)
+        self.scale[self.cells] = 1.0 - self.sub[self.cells] / np.maximum(fill[self.cells], 1e-12)
         # relative to the printed material's density, on top of the cell's own (domain.node_mass, gravity_force)
         self.density = dens
 
     def operator(self, fixed=None):
-        """Sum over member cells of share x K_member - sub x K_printed, N/mm
-        (held dofs' rows and columns cleared)."""
+        """Sum over member cells of share x K_member, N/mm (held dofs' rows
+        and columns cleared). The printed material's share of those cells is
+        the grid's own, scaled by `scale`."""
         import scipy.sparse as sp
 
         mesh = self.mesh
@@ -1190,21 +1205,7 @@ class StockCells:
         c = self.cells
         if k is None or not len(c):
             return None
-        kes = -self.sub[c][:, None, None] * self.ke_print[None]
-        cut = getattr(mesh, "stock_ke_cut", None)
-        if cut is not None:
-            # a cut-cell grid (verify): a cell the surface crosses holds its own matrix, not its fill x
-            # the whole cell's; taking that share of the same matrix off leaves what stays positive
-            pos, ke_cut = cut
-            kc = pos[c]
-            on = kc >= 0
-            if on.any():
-                frac = self.sub[c][on] / np.maximum(self.fill[c][on], 1e-12)
-                kes[on] = -frac[:, None, None] * ke_cut[kc[on]] * self.e_print
-        vals = kes.reshape(-1)
-        r = np.repeat(mesh.edof[c], 24, axis=1).reshape(-1)
-        cc = np.tile(mesh.edof[c], (1, 24)).reshape(-1)
-        k = (k + sp.csr_matrix((vals, (r, cc)), shape=k.shape)).tocsr()
+        k = k.tocsr()
         if fixed is not None and np.any(fixed):
             free = sp.diags((~np.asarray(fixed, bool)).astype(float))
             k = (free @ k @ free).tocsr()
@@ -1222,6 +1223,7 @@ def stock_cells(study, mesh) -> StockCells | None:
         sc.key = id(study.stock)
         mesh._stock_cells = sc
         mesh.stock_density = sc.density
+        mesh.stock_scale = sc.scale
     return sc
 
 
