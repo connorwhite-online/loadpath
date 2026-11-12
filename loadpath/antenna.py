@@ -243,7 +243,7 @@ class Scene:
         self.sheets.append({"z": float(z), "rings": [np.asarray(r, float) for r in rings], "name": name})
 
     def add_solid(self, name, eps_r=None, tan_d=0.0, metal=False, box=None, mesh=None, prism=None,
-                  fine=None, rank=1):
+                  fine=None, rank=1, curved=False):
         """A body: `box` ((x0, y0, z0), (x1, y1, z1)), `prism` (rings, z0,
         z1: outlines in x, y extruded between two heights) or `mesh`
         (vertices, faces). Dielectric with eps_r and tan_d, or metal. Bodies
@@ -252,7 +252,10 @@ class Scene:
         lines, so it is represented exactly; a mesh is sampled. Where two
         bodies' faces are closer than half the copper's cell, the one of
         higher `rank` keeps its line (the board's own parts are 2, the
-        copper 3) and the other's face moves to it."""
+        copper 3) and the other's face moves to it. `curved` is for a
+        prism whose outline is a curve of many points: its vertices are
+        not made grid lines (only its two heights are), and a cell belongs
+        to it when its centre is inside, so resolve it with `fine`."""
         if sum(v is not None for v in (box, mesh, prism)) != 1:
             raise ValueError("a solid is a box, a prism or a mesh")
         if box is not None:
@@ -265,7 +268,8 @@ class Scene:
         else:
             mesh = (np.asarray(mesh[0], float), np.asarray(mesh[1]))
         self.solids.append({"name": name, "eps_r": eps_r, "tan_d": tan_d, "metal": bool(metal),
-                            "prism": prism, "mesh": mesh, "fine": fine, "rank": int(rank)})
+                            "prism": prism, "mesh": mesh, "fine": fine, "rank": int(rank),
+                            "curved": bool(curved)})
 
     @staticmethod
     def _extent(s):
@@ -336,7 +340,7 @@ class Scene:
                 fixed[a] += [(v, d, 0) for v in np.linspace(b[0][a], b[1][a], n + 1)]
             if s["prism"] is not None:
                 # a prism's own faces are lines; the board's before any other body's
-                for r in s["prism"][0]:
+                for r in ([] if s.get("curved") else s["prism"][0]):
                     for a in (0, 1):
                         fixed[a] += [(v, d, s["rank"]) for v in np.unique(np.round(r[:, a], 6))]
                 fixed[2] += [(s["prism"][1], d, s["rank"]), (s["prism"][2], d, s["rank"])]
@@ -1051,6 +1055,118 @@ def tune(make, start, target=None, steps=None, bounds=None, depth=-20.0, rounds=
     return {**{k: round(float(v), 3) for k, v in zip(names, xb)}, "history": hist, "summary": summary,
             "brief": brief, "s11AtTarget": round(20 * math.log10(max(norm, 1e-6)), 1),
             "converged": bool(20 * math.log10(max(norm, 1e-6)) < depth), "solves": len(hist)}
+
+
+_E24 = np.array([1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0, 2.2, 2.4, 2.7, 3.0, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6,
+                 6.2, 6.8, 7.5, 8.2, 9.1])
+
+
+def match(freqs, z, bands, z0=50.0, parts=2, q_inductor=40.0, q_capacitor=150.0, efficiency=None):
+    """The lumped network between a 50 ohm radio and an antenna whose
+    impedance `z` (complex, at `freqs` in Hz) has been solved: every ladder
+    of up to `parts` standard-value inductors and capacitors (series or
+    shunt, in either order) is tried, and the one kept delivers the most
+    power to the antenna at its worst frequency inside `bands` ([[lo, hi],
+    ...] MHz: one fixed network for all of them). The parts lose power
+    (inductor and capacitor quality factors of ordinary 0402 parts), and
+    that loss is in the number. Nothing here changes the antenna: a
+    network trades reflection for loss and bandwidth, and what it cannot
+    recover (the Bode-Fano limit of a small radiator) shows as a worst
+    case that stays low whatever the parts.
+
+    Returns {"network": [{"place", "part", "value"}...] from the antenna
+    toward the radio, "delivered": the fraction of the radio's power that
+    reaches the antenna at each band's worst frequency, "worst", "s11"
+    (dB, at `freqs`), and with `efficiency` (radiation efficiency at
+    `freqs`) "radiated": delivered x radiation efficiency."""
+    freqs, z = np.asarray(freqs, float), np.asarray(z, complex)
+    sel = np.zeros(len(freqs), bool)
+    for lo, hi in bands:
+        sel |= (freqs >= lo * 1e6) & (freqs <= hi * 1e6)
+    if not sel.any():
+        raise ValueError("no solved frequency inside the bands")
+    w = 2 * math.pi * freqs
+    ind = np.concatenate([_E24 * d for d in (1e-9, 1e-8)])[:40]            # 1 to 47 nH
+    ind = ind[ind <= 47e-9]
+    cap = np.concatenate([_E24 * d for d in (1e-13, 1e-12, 1e-11)])
+    cap = cap[(cap >= 0.2e-12) & (cap <= 33e-12)]
+    kinds = [("series", "L"), ("series", "C"), ("shunt", "L"), ("shunt", "C")]
+
+    def imp(part, values, fi):
+        v = np.asarray(values, float)[:, None]
+        if part == "L":
+            x = w[None, fi] * v
+            return x / q_inductor + 1j * x
+        x = 1.0 / (w[None, fi] * v)
+        return x / q_capacitor - 1j * x
+
+    def through(place, part, values, zl, pl, fi):
+        """Add one part toward the radio. zl: impedance seen so far (n, f);
+        pl: fraction of the power entering there that reaches the antenna."""
+        ze = imp(part, values, fi)                      # (m, f)
+        zl, pl = zl[:, None, :], pl[:, None, :]
+        if place == "series":
+            zin = zl + ze[None]
+            frac = zl.real / np.maximum(zin.real, 1e-12)
+        else:
+            y = 1.0 / zl + 1.0 / ze[None]
+            zin = 1.0 / y
+            frac = (1.0 / zl).real / np.maximum(y.real, 1e-18)
+        return zin.reshape(-1, len(fi)), (pl * frac).reshape(-1, len(fi))
+
+    def gain(zin, pl):
+        g = (zin - z0) / (zin + z0)
+        return (1 - np.abs(g) ** 2) * pl, g
+
+    # the search runs on the in-band frequencies only (thinned to a few
+    # dozen), one ladder shape at a time, so three parts fit in memory;
+    # the network kept is then evaluated at every solved frequency
+    idx = np.flatnonzero(sel)
+    if len(idx) > 32:
+        idx = idx[np.unique(np.linspace(0, len(idx) - 1, 32).round().astype(int))]
+    full = np.arange(len(freqs))
+    best = [None]
+
+    def ladder(net, fi):
+        zin, pl = z[None, fi], np.ones((1, len(fi)))
+        for place, part, values in net:
+            zin, pl = through(place, part, values, zin, pl, fi)
+        return zin, pl
+
+    def visit(net, zin, pl):
+        g, _ = gain(zin, pl)
+        worst = g.min(axis=1)
+        k = int(np.argmax(worst))
+        # a part more has to earn its place
+        if best[0] is None or worst[k] > best[0][0] + (0.005 if len(net) > len(best[0][1]) else 0.0):
+            vals, kk = [], k
+            for _, _, values in reversed(net):          # earlier parts vary slowest
+                vals.append(float(values[kk % len(values)]))
+                kk //= len(values)
+            best[0] = (float(worst[k]), [(pl_, pt, v) for (pl_, pt, _), v in zip(net, reversed(vals))])
+        if len(net) == parts:
+            return
+        for place, part in kinds:
+            if net and net[-1][0] == place:
+                continue                                # two in a row of one kind are one part
+            values = ind if part == "L" else cap
+            z2, p2 = through(place, part, values, zin, pl, idx)
+            visit(net + [(place, part, values)], z2, p2)
+
+    visit([], z[None, idx], np.ones((1, len(idx))))
+    net = best[0][1]
+    zin, pl = ladder([(pl_, pt, [v]) for pl_, pt, v in net], full)
+    g, refl = gain(zin, pl)
+    g, refl = g[0], refl[0]
+    worst = float(g[sel].min())
+    out = {"network": [{"place": pl_, "part": pt, "value": (round(v * 1e9, 2) if pt == "L" else round(v * 1e12, 2)),
+                        "unit": "nH" if pt == "L" else "pF"} for pl_, pt, v in net],
+           "worst": round(worst, 4), "worst_dB": round(10 * math.log10(max(worst, 1e-9)), 2),
+           "delivered": [round(float(g[(freqs >= lo * 1e6) & (freqs <= hi * 1e6)].min()), 4) for lo, hi in bands],
+           "gain": g, "s11": 20 * np.log10(np.maximum(np.abs(refl), 1e-6))}
+    if efficiency is not None:
+        out["radiated"] = g * np.asarray(efficiency, float)
+    return out
 
 
 def run_brief(brief, out_dir, base_dir=None, log=None):

@@ -294,6 +294,53 @@ def test_frame_is_the_antenna():
              100 * (tuned["efficiency"]["heat"]["cover"][1] + tuned["efficiency"]["heat"]["split"][1])))
 
 
+def test_matching_network():
+    """A 10 ohm load takes a known L network to 50 ohm (series 20 ohm,
+    shunt 25 ohm): the search finds the nearest standard parts, lossless
+    parts deliver nearly everything, real parts lose what their Q says,
+    and three parts fit in memory."""
+    f = np.linspace(0.9e9, 1.1e9, 81)
+    z = np.full(len(f), 10.0 + 0j)
+    m = A.match(f, z, [[995, 1005]], parts=2, q_inductor=1e9, q_capacitor=1e9)
+    assert m["worst"] > 0.98, m["worst"]
+    # 20 ohm in series at the load and 25 ohm across at the radio, of opposite signs, at 1 GHz
+    w1 = 2 * np.pi * 1e9
+    x = [w1 * n["value"] * 1e-9 if n["part"] == "L" else -1.0 / (w1 * n["value"] * 1e-12) for n in m["network"]]
+    assert [n["place"] for n in m["network"]] == ["series", "shunt"], m["network"]
+    assert abs(abs(x[0]) - 20) < 2.5 and abs(abs(x[1]) - 25) < 3 and x[0] * x[1] < 0, m["network"]
+    lossy = A.match(f, z, [[995, 1005]], parts=2)
+    assert 0.85 < lossy["worst"] < m["worst"]
+    # a small radiator (series RLC, Q 40 at 800 MHz) over 10% of bandwidth: Bode-Fano allows
+    # at most 1 - exp(-2 pi / (Q B)) = 0.78 of the power, and three parts get part of that
+    w, w0 = 2 * np.pi * f * 0.8, 2 * np.pi * 0.8e9
+    L = 40 * 3.0 / w0
+    zr = 3.0 + 1j * (w * L - 1.0 / (w * (1.0 / (w0 * w0 * L))))
+    wide = A.match(f * 0.8, zr, [[760, 840]], parts=3, q_inductor=1e9, q_capacitor=1e9)
+    narrow = A.match(f * 0.8, zr, [[798, 802]], parts=3, q_inductor=1e9, q_capacitor=1e9)
+    assert narrow["worst"] > 0.9 and wide["worst"] < 0.78, (narrow["worst"], wide["worst"])
+    assert len(wide["gain"]) == len(f)
+
+
+def test_conductors_are_labelled():
+    """Two plates a gap apart are two conductors; a wire across the gap
+    makes them one."""
+    def labels(wire):
+        sc = A.Scene((2400, 2483.5))
+        sc.add_solid("a", metal=True, box=((0, 0, 0), (10, 10, 1)))
+        sc.add_solid("b", metal=True, box=((0, 0, 4), (10, 10, 5)))
+        if wire:
+            sc.add_wire([[5, 5, 0.5], [5, 5, 4.5]], "tie")
+        sc.set_port([2, 2, 1], [2, 2, 4])
+        sim = sc.build(fine=1.0, body=1.0)
+        lab = sim.conductors()
+        at = lambda p: lab[tuple(int(np.argmin(abs(np.asarray(g) - v))) for g, v in zip(sc.grid_mm, p))]
+        return at((8, 8, 0.5)), at((8, 8, 4.5))
+    a, b = labels(False)
+    assert a and b and a != b
+    a, b = labels(True)
+    assert a and a == b
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn) and (len(sys.argv) < 2 or sys.argv[1] in name):

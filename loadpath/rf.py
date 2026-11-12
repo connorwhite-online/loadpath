@@ -693,6 +693,28 @@ class Sim:
             out["dissipated"] = heat.sum(axis=(1, 2, 3))
         return out
 
+    def conductors(self):
+        """Which pieces of metal are one conductor: an integer per grid node
+        (0 where no metal touches it), equal for nodes joined through
+        perfectly conducting edges. A cell of clearance that a curved
+        surface closed, or a tie that missed its ground, shows here before
+        it shows as a wrong resonance."""
+        from scipy.sparse import coo_matrix
+        from scipy.sparse.csgraph import connected_components
+        nx, ny, nz = (n + 1 for n in self.n)
+        idx = np.arange(nx * ny * nz).reshape(nx, ny, nz)
+        ax = np.nonzero(self.pec_x)
+        ay = np.nonzero(self.pec_y)
+        az = np.nonzero(self.pec_z)
+        a = np.r_[idx[ax], idx[ay], idx[az]]
+        b = np.r_[idx[ax[0] + 1, ax[1], ax[2]], idx[ay[0], ay[1] + 1, ay[2]], idx[az[0], az[1], az[2] + 1]]
+        g = coo_matrix((np.ones(len(a), np.int8), (a, b)), shape=(idx.size, idx.size))
+        _, lab = connected_components(g, directed=False)
+        touched = np.zeros(idx.size, bool)
+        touched[a] = touched[b] = True
+        lab = np.where(touched, lab + 1, 0)
+        return lab.reshape(nx, ny, nz)
+
     def port_spectra(self, freqs, port=0):
         """Reflection, impedance and powers of a port at `freqs` from its
         voltage record."""

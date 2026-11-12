@@ -408,6 +408,25 @@ the number. A slot in a metal back and a foil or plated trace on the
 shell's inner surface are the same brief with other bodies; a trace
 that follows a curved shell waits on conformal conductors (below).
 
+### A matching network on the solved impedance
+
+A radiator that is small for its band cannot be brought to 50 ohm by its
+own dimensions alone. `antenna.match(freqs, z, bands)` takes the solved
+impedance and tries every ladder of up to three standard-value inductors
+and capacitors, with the loss of ordinary 0402 parts in the number, and
+returns the one that delivers the most power at the worst frequency of
+the bands. It does not change the antenna: what the size of the radiator
+forbids (Bode-Fano) shows as a worst case that stays low whatever the
+parts, and that is the honest answer to "can this band be covered".
+
+### Checking what is joined
+
+On a body with a curved outline a gap of a cell can close and a tie can
+miss its ground. `Sim.conductors()` labels the metal the solver actually
+has, so two segments that should be apart, or a feed that should land on
+the band, are checked before a solve is read. Curved outlines are passed
+with `curved=True`, which keeps their vertices from becoming grid lines.
+
 ## A bench test
 
 None of this has been measured on a print yet, and one cheap test checks
