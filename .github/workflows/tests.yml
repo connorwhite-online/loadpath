@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # by hand on any branch (Actions > tests > Run workflow, or the API): work
+  # that lands on main without a pull request is checked on its branch first
+  workflow_dispatch:
 
 jobs:
   # The suite is split by file into groups that each take 10-15 minutes on a
