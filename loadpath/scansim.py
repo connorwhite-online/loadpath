@@ -104,9 +104,15 @@ def simulate(mesh, views, *, spacing: float, sigma_noise: float, sigma_sys: floa
             continue
         origins = np.repeat(s[None], len(idx), 0)
         dirs = -u[idx]
-        locs, ray_i, tri = mesh.ray.intersects_location(origins, dirs, multiple_hits=False)
         hit_d = np.full(len(idx), np.inf)
-        hit_d[ray_i] = np.linalg.norm(locs - s, axis=1)
+        # in chunks: without embree, trimesh's own intersector holds every
+        # ray's candidate triangles at once, which runs out of memory on a
+        # scene of a few hundred thousand rays
+        step = len(idx) if getattr(trimesh.ray, "has_embree", False) else 4000
+        for k in range(0, len(idx), step):
+            locs, ray_i, tri = mesh.ray.intersects_location(origins[k:k + step], dirs[k:k + step],
+                                                            multiple_hits=False)
+            hit_d[k + ray_i] = np.linalg.norm(locs - s, axis=1)
         seen = idx[np.abs(hit_d - dist[idx]) < 0.25 * spacing]
         # subsample: each view sees the surface at its own spacing (not all of the dense set)
         seen = seen[rng.random(len(seen)) < 1.0 / max(1.0, len(views) / 3.0)]
